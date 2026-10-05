@@ -268,8 +268,13 @@ fn test_go_family_load_and_folder_keybindings() {
     };
 
     assert_eq!(global(&["g", "l"]).as_deref(), Some("repos:load"));
-    assert_eq!(global(&["g", "f"]).as_deref(), Some("metarecord-list:folder"));
+    // A command opening a panel names its default target (doc "Panel slots and
+    // layout"); the same sequence after `w` / `b` opens in the other slot / a
+    // new workspace.
+    assert_eq!(global(&["g", "f"]).as_deref(), Some("metarecord-list:folder here"));
+    assert_eq!(global(&["b", "g", "f"]).as_deref(), Some("metarecord-list:folder new"));
     // The family's other members keep their picks.
     assert_eq!(global(&["g", "o"]).as_deref(), Some("repos:switch"));
-    assert_eq!(global(&["g", "r"]).as_deref(), Some("recent"));
+    assert_eq!(global(&["g", "r"]).as_deref(), Some("recent other"));
+    assert_eq!(global(&["w", "g", "r"]).as_deref(), Some("recent other"));
 }

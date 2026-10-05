@@ -1,7 +1,7 @@
 title: $:/mf/gen/GUI command/metarecord-list:folder
 catalog: GUI command
 target: metarecord-list:folder
-summary: List the selected metarecord's folder in the metarecord list (focused panel)
+summary: List the selected metarecord's folder in the metarecord list (here / other / new)
 
 !! Reference
 
@@ -9,4 +9,7 @@ summary: List the selected metarecord's folder in the metarecord list (focused p
 
 !! Default keys
 
-* ``g f`` → ``metarecord-list:folder``
+* ``b g f`` → ``metarecord-list:folder new``
+* ``g f`` → ``metarecord-list:folder here``
+* ``i g f`` → ``metarecord-list:folder here``
+* ``w g f`` → ``metarecord-list:folder other``

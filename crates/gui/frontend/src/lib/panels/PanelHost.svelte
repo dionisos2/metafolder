@@ -85,13 +85,16 @@
     // theme, matching the old linked-theme-then-panel cascade order.
 
     const visibilityGate = createVisibilityGate();
+    const panelContext = (): ExecContext => ({
+      ws: wsId,
+      slot: visibleSlots.get(key) ?? store.layout.focused,
+    });
     const apiInst = createPanelApi(
       {
         invoke,
         // A panel's commands run in its own workspace, in the slot showing it
         // (the focused one while it is not on screen).
-        dispatch: (invocation: string) =>
-          dispatch(invocation, { ws: wsId, slot: visibleSlots.get(key) ?? store.layout.focused }),
+        dispatch: (invocation: string) => dispatch(invocation, panelContext()),
         claimCommand: (name) => {
           if (dropUserCommand(name)) {
             void status(
@@ -125,6 +128,7 @@
         panelDefaults: store.panelDefaults[panelType],
         root: shadow,
         visibilityGate,
+        context: panelContext,
       },
     );
 

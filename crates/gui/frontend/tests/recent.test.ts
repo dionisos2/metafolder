@@ -22,6 +22,8 @@ const state = {
 const calls = {
   invoked: [] as string[],
   sets: [] as { key: string; value: unknown }[],
+  /** The open targets the command moved to (`mf.atTarget`). */
+  targets: [] as string[],
 };
 
 /** The `mf` a user command is handed (doc "User commands"), faked. */
@@ -46,15 +48,19 @@ function fakeMf() {
       calls.invoked.push(invocation);
       return Promise.resolve({ ok: true });
     },
+    atTarget: async (where: string, body: (mf: unknown) => unknown) => {
+      calls.targets.push(where);
+      return body(fakeMf());
+    },
   };
 }
 
 function complete() {
-  return shipped['recent'].args[0].complete(fakeMf() as never);
+  return shipped['recent'].args[1].complete(fakeMf() as never);
 }
 
-function run(choice: string) {
-  return shipped['recent'].run(fakeMf() as never, choice);
+function run(choice: string, where = 'other') {
+  return shipped['recent'].run(fakeMf() as never, where, choice);
 }
 
 const str = (value: string): Metafolder.Value => ({ type: 'string', value });
@@ -144,18 +150,36 @@ describe('the candidate lines', () => {
 });
 
 describe('opening the pick', () => {
-  test('the selection is published and the file panel revealed in the other slot', async () => {
+  test('the selection is published and the file panel opened at the target', async () => {
     viewed('u1', [['name', str('jazz.mp3')]], 'music/jazz.mp3');
     const [line] = await complete();
 
     await run(line);
 
+    // Written *at* the target: in a new workspace, the copy shows the pick.
+    expect(calls.targets).toEqual(['other']);
     expect(calls.sets).toEqual([
       { key: 'selected_metarecord', value: { uuid: 'u1', repo: 'r' } },
       { key: 'selected_paths', value: ['/srv/music/jazz.mp3'] },
     ]);
-    // `panel:open other` switches the *other* slot — the focus stays where it is.
-    expect(calls.invoked).toEqual(['panel:open other file']);
+    expect(calls.invoked).toEqual(['panel:open here file']);
+  });
+
+  test('the target is the first argument: here, other or new', async () => {
+    viewed('u1', [['name', str('jazz.mp3')]], 'music/jazz.mp3');
+    const [line] = await complete();
+
+    await run(line, 'new');
+
+    expect(calls.targets).toEqual(['new']);
+    const where = shipped['recent'].args[0] as unknown as {
+      name: string;
+      initial: () => string;
+      complete: () => string[];
+    };
+    expect(where.name).toBe('where');
+    expect(where.initial()).toBe('other'); // the default, offered for editing
+    expect(where.complete()).toEqual(['here', 'other', 'new']);
   });
 
   test('the detail panel is revealed when the metarecord has no file', async () => {
@@ -165,11 +189,13 @@ describe('opening the pick', () => {
     await run(line);
 
     expect(calls.sets[1].value).toEqual([]);
-    expect(calls.invoked).toEqual(['panel:open other metarecord-detail']);
+    expect(calls.invoked).toEqual(['panel:open here metarecord-detail']);
   });
 
   test('no line matches: the failure is thrown, for the shell to report', async () => {
     await expect(run('Nope')).rejects.toThrow('no recently-viewed metarecord matches "Nope"');
+    // Refused before anything moved: no stray workspace for a failed pick.
+    expect(calls.targets).toEqual([]);
     expect(calls.sets).toEqual([]);
     expect(calls.invoked).toEqual([]);
   });

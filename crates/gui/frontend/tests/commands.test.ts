@@ -68,8 +68,8 @@ describe('recent (shipped commands.js)', () => {
     const shipped = (await import('../../default-config/commands.js')).default;
     const spec = shipped['recent'].args;
 
-    expect(spec.map((a: { name: string }) => a.name)).toEqual(['metarecord']);
-    expect(spec[0].prompt()).toBe('Recently viewed:');
+    expect(spec.map((a: { name: string }) => a.name)).toEqual(['where', 'metarecord']);
+    expect(spec[1].prompt()).toBe('Recently viewed:');
   });
 });
 

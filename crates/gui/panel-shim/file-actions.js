@@ -361,7 +361,7 @@ export function metarecordMenuItems({
     if (revealFolder) {
       items.push({
         label: 'Open folder in file manager',
-        action: () => void commands.invoke('file-manager:reveal'),
+        action: () => void commands.invoke('file-manager:reveal here'),
       });
     }
     // The metarecord-list counterpart: the folder's *metarecords* rather than
@@ -369,7 +369,7 @@ export function metarecordMenuItems({
     // which is precisely where "and now show me these as metarecords" is asked.
     items.push({
       label: 'Open folder in metarecord-list',
-      action: () => void commands.invoke('metarecord-list:folder'),
+      action: () => void commands.invoke('metarecord-list:folder here'),
     });
   }
   items.push({ label: 'Copy UUID', action: () => void copyText(uuid) }, ...trailing);

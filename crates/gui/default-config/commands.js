@@ -117,6 +117,23 @@ function parentDir(path) {
 }
 
 /**
+ * The first argument of a command that opens a panel type: where (doc "Panel
+ * slots and layout") — `here`, `other` (this workspace in the other slot) or
+ * `new` (a copy of it). The command's default is offered for editing; its
+ * keybindings name the target explicitly. The command reads what it needs
+ * where it is, then does the rest at the target with `mf.atTarget`.
+ * @param {string} fallback the command's default target
+ */
+function whereArg(fallback) {
+  return {
+    name: 'where',
+    prompt: () => 'Open where? (here / other / new)',
+    initial: () => fallback,
+    complete: () => ['here', 'other', 'new'],
+  };
+}
+
+/**
  * `value` as a DSL string literal. Only `"` and `\` are escaped — every other
  * backslash escape is passed through verbatim by the DSL (doc "Query DSL grammar"),
  * so touching them would change the string.
@@ -260,15 +277,16 @@ export default {
   },
 
   // Reveal folder (doc "Cross-panel selection"): open the folder of the
-  // current selection in the file manager, replacing the focused panel — the
+  // current selection in the file manager, at the target (here by default) — the
   // folder itself when a directory is selected, or the folder containing the
   // selected file, highlighted. The path is statted to tell the two apart (a
   // path that is gone counts as a file, so its folder opens), and the answer is
   // written as the file manager's location — `file-manager:dir` and
   // `file-manager:cursor`, which ARE where it is.
   'file-manager:reveal': {
-    label: "Open the selected metarecord's folder in the file manager (focused panel)",
-    run: async (/** @type {MetafolderApi} */ mf) => {
+    label: "Open the selected metarecord's folder in the file manager (here / other / new)",
+    args: [whereArg('here')],
+    run: async (/** @type {MetafolderApi} */ mf, /** @type {string} */ where = 'here') => {
       const paths = await mf.workspace.get('selected_paths');
       const path = Array.isArray(paths) ? paths.find((p) => typeof p === 'string') : undefined;
       if (!path) {
@@ -281,23 +299,28 @@ export default {
       } catch {
         /* gone: taken for a file, so its folder opens */
       }
-      await mf.workspace.set('file-manager:dir', isDir ? path : parentDir(path));
-      await mf.workspace.set('file-manager:cursor', isDir ? null : path.slice(path.lastIndexOf('/') + 1));
-      await mf.invoke('panel:open here file-manager');
+      const dir = isDir ? path : parentDir(path);
+      const cursor = isDir ? null : path.slice(path.lastIndexOf('/') + 1);
+      await mf.atTarget(where, async (/** @type {MetafolderApi} */ mf) => {
+        await mf.workspace.set('file-manager:dir', dir);
+        await mf.workspace.set('file-manager:cursor', cursor);
+        await mf.invoke('panel:open here file-manager');
+      });
     },
   },
 
   // The mirror image of `file-manager:reveal` (keybindings.toml "g f"): show
-  // the same folder's *metarecords* instead of its disk entries, replacing the
-  // focused panel (doc "Cross-panel selection"). The folder becomes the DSL
+  // the same folder's *metarecords* instead of its disk entries, at the target
+  // (here by default; doc "Cross-panel selection"). The folder becomes the DSL
   // `mfr_path -> "<folder>"` (Follows: its files *and* its subdirectories, the
   // contents a file manager shows), landed in the DSL zone frozen so it stays
   // visible and editable. Repository-relative paths follow the `mfr_path`
   // convention throughout: `''` is the repository root, a descendant is
   // leading-"/"-rooted.
   'metarecord-list:folder': {
-    label: "List the selected metarecord's folder in the metarecord list (focused panel)",
-    run: async (/** @type {MetafolderApi} */ mf) => {
+    label: "List the selected metarecord's folder in the metarecord list (here / other / new)",
+    args: [whereArg('here')],
+    run: async (/** @type {MetafolderApi} */ mf, /** @type {string} */ where = 'here') => {
       const repo = /** @type {string | null} */ (await mf.workspace.get('active_repo'));
       if (!repo) {
         await mf.statusBar.error('no active repository');
@@ -322,13 +345,15 @@ export default {
         await mf.statusBar.error('the selection lies outside the repository');
         return;
       }
-      // The list's query variables are its state: written here, the list
-      // shows them whether it is on screen already or not.
-      await mf.workspace.set('metarecord-list:normal-query', `mfr_path -> ${dslString(folder)}`);
-      await mf.workspace.set('metarecord-list:normal-shown', true);
-      await mf.workspace.set('metarecord-list:normal-frozen', true);
-      await mf.invoke('panel:open here metarecord-list');
-      await mf.statusBar.message(`Listing ${folder || '/'}`);
+      // The list's query variables are its state: written at the target, the
+      // list there shows them whether it is on screen already or not.
+      await mf.atTarget(where, async (/** @type {MetafolderApi} */ mf) => {
+        await mf.workspace.set('metarecord-list:normal-query', `mfr_path -> ${dslString(folder)}`);
+        await mf.workspace.set('metarecord-list:normal-shown', true);
+        await mf.workspace.set('metarecord-list:normal-frozen', true);
+        await mf.invoke('panel:open here metarecord-list');
+        await mf.statusBar.message(`Listing ${folder || '/'}`);
+      });
     },
   },
 
@@ -441,14 +466,15 @@ export default {
 
   // Open a recently-viewed metarecord (keybindings.toml "g r"): the pick
   // completes over the recently-viewed list (newest first), and the choice
-  // publishes the selection and reveals the matching viewer in the *other*
-  // slot, exactly like a metarecord-list open (doc "Cross-panel selection")
+  // publishes the selection and opens the matching viewer at the target — the
+  // *other* slot by default, like a metarecord-list open (doc "Cross-panel selection")
   // — the file panel when the metarecord has a file, the detail
   // panel when it has none. The candidate lines are shaped by `recentLine`
   // above: reshape it to reshape the pick.
   'recent': {
-    label: 'Open a recently-viewed metarecord',
+    label: 'Open a recently-viewed metarecord (here / other / new)',
     args: [
+      whereArg('other'),
       {
         name: 'metarecord',
         prompt: () => 'Recently viewed:',
@@ -474,7 +500,13 @@ export default {
         },
       },
     ],
-    run: async (/** @type {MetafolderApi} */ mf, /** @type {string} */ choice = '') => {
+    run: async (
+      /** @type {MetafolderApi} */ mf,
+      /** @type {string} */ where = 'other',
+      /** @type {string[]} */ ...words
+    ) => {
+      // The pick is the last argument: typed inline, its words arrive apart.
+      const choice = words.join(' ');
       const repo = /** @type {string | null} */ (await mf.workspace.get('active_repo'));
       const uuid = recentChoices.get(choice) ?? null;
       // Thrown rather than reported: the shell posts a command's failure itself.
@@ -482,9 +514,11 @@ export default {
         throw new Error(`no recently-viewed metarecord matches "${choice}"`);
       }
       const paths = await mf.daemon.metarecordPaths(repo, { uuid });
-      await mf.workspace.set('selected_metarecord', { uuid, repo });
-      await mf.workspace.set('selected_paths', paths);
-      await mf.invoke(paths.length > 0 ? 'panel:open other file' : 'panel:open other metarecord-detail');
+      await mf.atTarget(where, async (/** @type {MetafolderApi} */ mf) => {
+        await mf.workspace.set('selected_metarecord', { uuid, repo });
+        await mf.workspace.set('selected_paths', paths);
+        await mf.invoke(`panel:open here ${paths.length > 0 ? 'file' : 'metarecord-detail'}`);
+      });
     },
   },
 

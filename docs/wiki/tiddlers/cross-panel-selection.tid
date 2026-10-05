@@ -22,15 +22,20 @@ metarecord: ''Unsaved changes — discard and switch metarecord?''
 
 !! Showing the folder
 
-Two commands show the folder of the selection, ''in place of the focused panel''. Both
-are also in the right-click menu of the panels showing metarecords.
+Two commands show the folder of the selection, ''in place of the focused panel'' by
+default. Both are also in the right-click menu of the panels showing metarecords. Their
+first argument is the [[open target|Panel slots and layout]]: `here`, `other` (the other
+slot) or `new` (a copy of the workspace) — <<key "metarecord-list:folder other" "w g f">>
+lists the folder in the other slot, <<key "metarecord-list:folder new" "b g f">> in a
+new workspace, leaving the list here as it was.
 
 * `file-manager:reveal` (''Open folder in file manager'') shows it on disk: the folder itself when the selection is a folder, else the folder holding the file, with the file highlighted.
 * `metarecord-list:folder` (<<key "metarecord-list:folder" "g f">>, ''Open folder in metarecord-list'') shows the same folder's ''metarecords'' instead — its files and subfolders, as the query `mfr_path -> "<folder>"`. The folder is the selected metarecord's (itself when it is a folder), else the selected path's (an untracked file has no metarecord to ask), else the file manager's current folder, else the repository's root. A selection outside the repository is refused, rather than silently answered for the root.
 
-The two are defined in the shipped `gui/commands.js` ([[User commands]]), and
-switch the slot after writing what the target panel is to show, in the variables that
-''are'' its state — the panel follows them whether it was on screen already or not.
+The two are defined in the shipped `gui/commands.js` ([[User commands]]). They read
+the selection where they run, then move to the target (`mf.atTarget`) and write there
+what the panel is to show, in the variables that ''are'' its state — the panel follows
+them whether it was on screen already or not — before opening it.
 `metarecord-list:folder` writes the list's query variables, the normal zone shown and
 frozen ([[metarecord-list panel]]); `file-manager:reveal` stats the path, to tell a
 folder from a file, and writes the file manager's location, `file-manager:dir` and

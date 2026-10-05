@@ -215,6 +215,7 @@ describe('the file-manager:reveal command (shipped commands.js)', () => {
     sets: [] as { key: string; value: unknown }[],
     invoked: [] as string[],
     status: [] as string[],
+    targets: [] as string[],
   };
   const state = { paths: null as unknown, dirs: ['/repo/sub'] as string[] };
 
@@ -236,6 +237,10 @@ describe('the file-manager:reveal command (shipped commands.js)', () => {
         calls.invoked.push(invocation);
         return Promise.resolve({ ok: true });
       },
+      atTarget: async (where: string, body: (mf: unknown) => unknown): Promise<unknown> => {
+        calls.targets.push(where);
+        return body(fakeMf());
+      },
       statusBar: {
         message: async () => {},
         error: async (error: unknown) => {
@@ -249,21 +254,25 @@ describe('the file-manager:reveal command (shipped commands.js)', () => {
     calls.sets.length = 0;
     calls.invoked.length = 0;
     calls.status.length = 0;
+    calls.targets.length = 0;
     state.paths = ['/repo/sub/song.mp3'];
   });
+
+  const reveal = (where = 'here') => shipped['file-manager:reveal'].run(fakeMf() as never, where);
 
   test('no selection: says so, and switches nothing', async () => {
     state.paths = null;
 
-    await shipped['file-manager:reveal'].run(fakeMf() as never);
+    await reveal();
 
     expect(calls.status).toEqual(['no file or folder is selected']);
+    expect(calls.targets).toEqual([]);
     expect(calls.sets).toEqual([]);
     expect(calls.invoked).toEqual([]);
   });
 
   test('a file: its folder, with the file highlighted, then the panel switches', async () => {
-    await shipped['file-manager:reveal'].run(fakeMf() as never);
+    await reveal();
 
     expect(calls.sets).toEqual([
       { key: 'file-manager:dir', value: '/repo/sub' },
@@ -272,10 +281,18 @@ describe('the file-manager:reveal command (shipped commands.js)', () => {
     expect(calls.invoked).toEqual(['panel:open here file-manager']);
   });
 
+  test('the target is the first argument, and the location is written there', async () => {
+    await reveal('other');
+
+    expect(calls.targets).toEqual(['other']);
+    expect(calls.sets[0]).toEqual({ key: 'file-manager:dir', value: '/repo/sub' });
+    expect(calls.invoked).toEqual(['panel:open here file-manager']);
+  });
+
   test('a folder: the folder itself, nothing highlighted', async () => {
     state.paths = ['/repo/sub'];
 
-    await shipped['file-manager:reveal'].run(fakeMf() as never);
+    await reveal();
 
     expect(calls.sets).toEqual([
       { key: 'file-manager:dir', value: '/repo/sub' },
@@ -286,7 +303,7 @@ describe('the file-manager:reveal command (shipped commands.js)', () => {
   test('a path that is gone is taken for a file: its folder opens', async () => {
     state.paths = ['/repo/gone/old.txt'];
 
-    await shipped['file-manager:reveal'].run(fakeMf() as never);
+    await reveal();
 
     expect(calls.sets).toEqual([
       { key: 'file-manager:dir', value: '/repo/gone' },
@@ -297,7 +314,7 @@ describe('the file-manager:reveal command (shipped commands.js)', () => {
   test('the first *string* entry is taken (the selection carries metadata too)', async () => {
     state.paths = [42, '/repo/top.txt', '/repo/sub/song.mp3'];
 
-    await shipped['file-manager:reveal'].run(fakeMf() as never);
+    await reveal();
 
     expect(calls.sets[0]).toEqual({ key: 'file-manager:dir', value: '/repo' });
   });

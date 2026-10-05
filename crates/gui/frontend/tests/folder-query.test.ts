@@ -37,6 +37,8 @@ const calls = {
   sets: [] as { key: string; value: unknown }[],
   invoked: [] as string[],
   status: [] as { kind: string; text: string }[],
+  /** The open targets the command moved to (`mf.atTarget`). */
+  targets: [] as string[],
 };
 
 const state = {
@@ -86,6 +88,10 @@ function fakeMf() {
       calls.invoked.push(invocation);
       return Promise.resolve({ ok: true });
     },
+    atTarget: async (where: string, body: (mf: unknown) => unknown) => {
+      calls.targets.push(where);
+      return body(fakeMf());
+    },
     statusBar: {
       message: async (text: string) => {
         calls.status.push({ kind: 'info', text });
@@ -98,8 +104,8 @@ function fakeMf() {
   };
 }
 
-async function run() {
-  await shipped['metarecord-list:folder'].run(fakeMf() as never);
+async function run(where = 'here') {
+  await shipped['metarecord-list:folder'].run(fakeMf() as never, where);
 }
 
 /** The DSL that landed in the panel, or null when nothing was asked of it. */
@@ -201,6 +207,8 @@ describe('the folder a selection designates', () => {
     expect(calls.status).toEqual([
       { kind: 'error', text: 'the selection lies outside the repository' },
     ]);
+    // Refused before anything moved: no stray workspace for a failed listing.
+    expect(calls.targets).toEqual([]);
     expect(calls.invoked).toEqual([]);
   });
 });
@@ -223,9 +231,23 @@ describe('the request it lands', () => {
       { key: 'metarecord-list:normal-shown', value: true },
       { key: 'metarecord-list:normal-frozen', value: true },
     ]);
-    // The state is written before the panel switch that shows it.
+    // Written at the target, before the panel switch that shows it.
+    expect(calls.targets).toEqual(['here']);
     expect(calls.invoked).toEqual(['panel:open here metarecord-list']);
     expect(calls.status).toEqual([{ kind: 'info', text: 'Listing /live/2024' }]);
+  });
+
+  test('the target is the first argument: in a new workspace, the copy lists it', async () => {
+    state.selection = { uuid: 'u1', repo: 'r' };
+    state.treePaths = { u1: ['/live'] };
+    state.type = 'dir';
+
+    await run('new');
+
+    expect(calls.targets).toEqual(['new']);
+    expect(landedDsl()).toBe('mfr_path -> "/live"');
+    const [where] = shipped['metarecord-list:folder'].args;
+    expect(where.initial()).toBe('here');
   });
 
   test('the repository root is the empty path', async () => {

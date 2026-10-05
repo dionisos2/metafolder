@@ -6,7 +6,7 @@
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { dispatch } from '../src/lib/commands';
-import { createUserCommandApi, type PanelApiDeps } from '../src/lib/panels/api';
+import { createPanelApi, createUserCommandApi, type PanelApiDeps } from '../src/lib/panels/api';
 import { store } from '../src/lib/store.svelte';
 import type { ExecContext } from '../src/lib/types';
 
@@ -133,5 +133,40 @@ describe('mf.atTarget', () => {
     await expect(mf.atTarget('nowhere', body)).rejects.toThrow(/nowhere/);
     expect(body).not.toHaveBeenCalled();
     expect(calls).toEqual([]);
+  });
+});
+
+describe('a panel’s atTarget', () => {
+  test('moves from where the panel is: its workspace, in the slot showing it', async () => {
+    const calls: { command: string; args?: Record<string, unknown> }[] = [];
+    const { api } = createPanelApi(
+      {
+        invoke: async (command: string, args?: Record<string, unknown>) => {
+          calls.push({ command, args });
+          return null;
+        },
+        dispatch: async () => ({ ok: true }),
+        registerHandler: () => {},
+        registerArgs: () => {},
+        onCommandsChanged: () => {},
+        addDefaultMenuItems: () => {},
+      },
+      {
+        wsId: 'ws-5',
+        panelType: 'treeref',
+        guiServer: 'http://127.0.0.1:7524',
+        sessionToken: 'token',
+        root: null as unknown as ShadowRoot,
+        visibilityGate: { visible: true, set: () => {}, whenVisible: (fn) => fn() },
+        context: () => ({ ws: 'ws-5', slot: 'right' }),
+      },
+    );
+    const panel = api as unknown as {
+      context: ExecContext;
+      atTarget<T>(where: string, body: (mf: { context: ExecContext }) => T): Promise<T>;
+    };
+    expect(panel.context).toEqual({ ws: 'ws-5', slot: 'right' });
+    expect(await panel.atTarget('other', (m) => m.context)).toEqual({ ws: 'ws-5', slot: 'left' });
+    expect(calls).toEqual([{ command: 'tab_assign', args: { wsId: 'ws-5', slot: 'left' } }]);
   });
 });

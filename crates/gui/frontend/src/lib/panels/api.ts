@@ -96,6 +96,9 @@ export interface PanelApiCtx {
   panelDefaults?: Record<string, unknown>;
   root: ShadowRoot;
   visibilityGate: VisibilityGate;
+  /** Where the panel's commands run: its workspace, in the slot showing it.
+   *  Without one, its workspace in the left slot. */
+  context?: () => ExecContext;
 }
 
 export interface PanelApiInstance {
@@ -177,26 +180,7 @@ export function createUserCommandApi(
     get context() {
       return ctx.context();
     },
-    /** Runs `body` with an API acting in `context` — for that block only: this
-     *  API, and every other command, stay where they were. */
-    withContext: <T>(context: ExecContext, body: (mf: MetafolderApi) => Promise<T> | T) =>
-      Promise.resolve(body(createUserCommandApi(deps, { ...ctx, context: () => context }))),
-    /** Runs `body` at an open target (doc "Panel slots and layout") — `here`,
-     *  `other` (this workspace in the other slot) or `new` (a fork of it) —
-     *  with an API acting there. A command opening a panel writes its body
-     *  once, for "here", and offers the targets it accepts in `targets`. */
-    atTarget: async <T>(
-      where: string,
-      body: (mf: MetafolderApi) => Promise<T> | T,
-      options: { targets?: readonly string[] } = {},
-    ) => {
-      const target = await resolveTarget(
-        checkTarget(where, options.targets),
-        ctx.context(),
-        deps.invoke,
-      );
-      return body(createUserCommandApi(deps, { ...ctx, context: () => target }));
-    },
+    ...contextMembers(deps, ctx, ctx.context),
     commands: {
       invoke: (invocation: string) => api.commands.invoke(invocation),
       keybindings: () => api.commands.keybindings(),
@@ -208,8 +192,43 @@ export function createUserCommandApi(
   } as unknown as MetafolderApi & { commands: { invoke: (i: string) => unknown } });
 }
 
+/**
+ * The members that move a command's work elsewhere (doc "Commands"), for an
+ * API acting in `context`: `withContext` runs a block with an API acting in
+ * another context, `atTarget` at an open target (doc "Panel slots and
+ * layout") — `here`, `other` (this workspace in the other slot) or `new` (a
+ * fork of it) — so a command opening a panel is written once, for "here", and
+ * offers the targets it accepts in `targets`. The API handed to the block is a
+ * user-command API (no panel of its own): what it acts on is its context.
+ */
+function contextMembers(
+  deps: PanelApiDeps,
+  server: { guiServer: string; sessionToken: string },
+  context: () => ExecContext,
+) {
+  const elsewhere = (target: ExecContext) =>
+    createUserCommandApi(deps, {
+      guiServer: server.guiServer,
+      sessionToken: server.sessionToken,
+      context: () => target,
+    });
+  return {
+    withContext: <T>(target: ExecContext, body: (mf: MetafolderApi) => Promise<T> | T) =>
+      Promise.resolve(body(elsewhere(target))),
+    atTarget: async <T>(
+      where: string,
+      body: (mf: MetafolderApi) => Promise<T> | T,
+      options: { targets?: readonly string[] } = {},
+    ) => {
+      const target = await resolveTarget(checkTarget(where, options.targets), context(), deps.invoke);
+      return body(elsewhere(target));
+    },
+  };
+}
+
 export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiInstance {
   const { invoke } = deps;
+  const panelContext = (): ExecContext => ctx.context?.() ?? { ws: ctx.wsId, slot: 'left' };
 
   // Per-instance state (was module-global in the shim).
   const varListeners = new Map<string, Set<(value: unknown, key?: string) => void>>();
@@ -588,6 +607,12 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     // the call it makes most should not need a path through the object. The
     // same alias the user-command API installs — one API to learn, not two.
     invoke: (invocation: string) => deps.dispatch(invocation),
+
+    /** Where this panel's commands run (doc "Commands"). */
+    get context(): ExecContext {
+      return panelContext();
+    },
+    ...contextMembers(deps, ctx, panelContext),
 
     addKeybinding(
       invocation: string,

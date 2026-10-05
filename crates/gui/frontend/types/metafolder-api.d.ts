@@ -627,21 +627,21 @@ declare namespace Metafolder {
      *  not need a path through the object. Panels get the alias too — one API
      *  to learn, not two. */
     invoke(invocation: string): unknown;
-    /** User commands only (doc "Commands"): where this API acts — a workspace
-     *  and a slot, the focused ones unless the command moved. */
-    readonly context?: { ws: string | null; slot: 'left' | 'right' };
-    /** User commands only: runs `body` with an API acting in `context`, for
-     *  that block alone — this API, and every other command, stay where they
-     *  were. */
-    withContext?<T>(
+    /** Where this API acts (doc "Commands"): a workspace and a slot — for a
+     *  user command the focused ones unless it moved, for a panel its own
+     *  workspace in the slot showing it. */
+    readonly context: { ws: string | null; slot: 'left' | 'right' };
+    /** Runs `body` with an API acting in `context`, for that block alone —
+     *  this API, and every other command, stay where they were. */
+    withContext<T>(
       context: { ws: string | null; slot: 'left' | 'right' },
       body: (mf: Api) => Promise<T> | T,
     ): Promise<T>;
-    /** User commands only: runs `body` at an open target (doc "Panel slots
-     *  and layout") — `here`, `other` (this workspace in the other slot) or
-     *  `new` (a fork of it) — with an API acting there. `targets` lists the
-     *  ones the command offers; another is refused before anything moves. */
-    atTarget?<T>(
+    /** Runs `body` at an open target (doc "Panel slots and layout") —
+     *  `here`, `other` (this workspace in the other slot) or `new` (a fork of
+     *  it) — with an API acting there. `targets` lists the ones the command
+     *  offers; another is refused before anything moves. */
+    atTarget<T>(
       where: string,
       body: (mf: Api) => Promise<T> | T,
       options?: { targets?: readonly string[] },

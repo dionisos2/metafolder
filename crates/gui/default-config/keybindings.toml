@@ -171,7 +171,10 @@
 # Go to a recently-viewed metarecord ("g" = go): opens the `recent` picker in
 # the command input, filtered by ordered substring like the finder. Global
 # (works from any panel); the "g" prefix is otherwise free.
-"g r" = { command = "recent" }
+"g r" = { command = "recent other" }
+"i g r" = { command = "recent here" }
+"w g r" = { command = "recent other" }
+"b g r" = { command = "recent new" }
 
 # Run an installed helper script ("g s" = go → script): opens the `script:run`
 # picker in the command input, completing over ~/.config/metafolder/scripts/
@@ -202,7 +205,10 @@
 # `mfr_path -> "<folder>"` lands in the DSL zone, frozen so it stays editable.
 # Global because it acts on the selection, whichever panel carries it (the file
 # manager included: "and now show me these as metarecords").
-"g f" = { command = "metarecord-list:folder" }
+"g f" = { command = "metarecord-list:folder here" }
+"i g f" = { command = "metarecord-list:folder here" }
+"w g f" = { command = "metarecord-list:folder other" }
+"b g f" = { command = "metarecord-list:folder new" }
 
 # Number the selection's folder ("m o" = metarecord → order): `mf:order` on the
 # selected folder, or on the selected file's folder — no prompt, the status bar

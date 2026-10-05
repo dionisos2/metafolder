@@ -325,9 +325,9 @@ describe('metarecordMenuItems', () => {
     item(items, 'Open in panel file').action!();
     expect(commands.invoke).toHaveBeenCalledWith('panel:open other file');
     item(items, 'Open folder in file manager').action!();
-    expect(commands.invoke).toHaveBeenCalledWith('file-manager:reveal');
+    expect(commands.invoke).toHaveBeenCalledWith('file-manager:reveal here');
     item(items, 'Open folder in metarecord-list').action!();
-    expect(commands.invoke).toHaveBeenCalledWith('metarecord-list:folder');
+    expect(commands.invoke).toHaveBeenCalledWith('metarecord-list:folder here');
   });
 
   test('a metarecord with no file offers only detail and Copy UUID', () => {
