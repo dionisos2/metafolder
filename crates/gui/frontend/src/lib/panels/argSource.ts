@@ -5,8 +5,9 @@
 // `when`) close over the state of the instance that declared them, so a
 // registry keyed by name alone hands the focused workspace whatever instance
 // mounted last — its completions against another workspace's handler. Here the
-// specs are keyed by instance and answered for the *focused* workspace, the
-// same one `setPanelDispatch` runs the handler on.
+// specs are keyed by instance and answered for the workspace the command runs
+// in — the focused one unless its context says otherwise — the same one
+// `setPanelDispatch` runs the handler on.
 
 import type { ArgSpec, PanelArgSource } from '../commands';
 
@@ -46,8 +47,8 @@ export function createPanelArgSource(deps: PanelArgSourceDeps): PanelArgRegistry
     // A workspace that has never displayed the owning panel has no instance of
     // it, and so no spec: mount it first, or the command would run with the
     // arguments it was invoked with and never ask for the rest.
-    async prepare(name) {
-      const wsId = deps.focusedWs();
+    async prepare(name, inWs) {
+      const wsId = inWs === undefined ? deps.focusedWs() : inWs;
       const owner = deps.ownerOf(name);
       if (!wsId || !owner) return; // a shell builtin, or nothing focused
       await deps.ensureMounted(wsId, owner);
@@ -55,8 +56,8 @@ export function createPanelArgSource(deps: PanelArgSourceDeps): PanelArgRegistry
 
     // Command names are unique across panel types (the registry is keyed by
     // name), so the panel type need not be known to find the spec.
-    resolve(name) {
-      const wsId = deps.focusedWs();
+    resolve(name, inWs) {
+      const wsId = inWs === undefined ? deps.focusedWs() : inWs;
       if (!wsId) return undefined;
       for (const [key, args] of specs) {
         if (key.startsWith(`${wsId}|`) && key.endsWith(`|${name}`)) return args;

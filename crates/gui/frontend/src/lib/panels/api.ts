@@ -8,6 +8,7 @@ import { createPathResolver } from '../../../../panel-shim/resolve.js';
 import { showMenu } from '../../../../panel-shim/menu.js';
 import { type ArgSpec, withTopLevelInvoke } from '../commands';
 import { invoke as ipcInvoke } from '../ipc';
+import type { ExecContext } from '../types';
 import { daemonWork } from '../working';
 import { createChangeFeed, type ChangeEvent } from './changes';
 import {
@@ -60,8 +61,9 @@ interface VisibilityGate {
 
 export interface PanelApiDeps {
   invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
-  /** Runs a command invocation through the shell dispatcher (commands.ts). */
-  dispatch: (invocation: string) => Promise<unknown>;
+  /** Runs a command invocation through the shell dispatcher (commands.ts), in
+   *  `context` — the focused workspace and slot when none is given. */
+  dispatch: (invocation: string, context?: ExecContext) => Promise<unknown>;
   /** Told a panel is about to register `name`, before its handler and
    *  arguments are recorded: the shell drops a `commands.js` entry of that
    *  name, which must not shadow a panel's command (doc "User commands"). */
@@ -134,25 +136,30 @@ function camelCaseKeys(table: Record<string, unknown>): Record<string, unknown> 
  */
 export function createUserCommandApi(
   deps: PanelApiDeps,
-  ctx: { guiServer: string; sessionToken: string; focusedWs: () => string | null },
+  ctx: { guiServer: string; sessionToken: string; context: () => ExecContext },
 ): MetafolderApi {
-  const { api } = createPanelApi(deps, {
-    // Read at every call: the focused workspace is wherever the user is when
-    // the command fires, not wherever they were when the file was loaded.
-    get wsId() {
-      return ctx.focusedWs() ?? '';
+  // Commands invoked from here run where this API acts.
+  const { api } = createPanelApi(
+    { ...deps, dispatch: (invocation: string) => deps.dispatch(invocation, ctx.context()) },
+    {
+      // Read at every call: the API that follows the focus acts wherever the
+      // user is when the command fires, not wherever they were when the file
+      // was loaded; one bound to a context returns that context every time.
+      get wsId() {
+        return ctx.context().ws ?? '';
+      },
+      panelType: '',
+      guiServer: ctx.guiServer,
+      sessionToken: ctx.sessionToken,
+      root: null as unknown as ShadowRoot,
+      visibilityGate: {
+        visible: () => true,
+        whenVisible: (fn: () => unknown) => void fn(),
+        onVisibility: () => {},
+        set: () => {},
+      } as unknown as VisibilityGate,
     },
-    panelType: '',
-    guiServer: ctx.guiServer,
-    sessionToken: ctx.sessionToken,
-    root: null as unknown as ShadowRoot,
-    visibilityGate: {
-      visible: () => true,
-      whenVisible: (fn: () => unknown) => void fn(),
-      onVisibility: () => {},
-      set: () => {},
-    } as unknown as VisibilityGate,
-  });
+  );
 
   // The panel-only members (`panelType`, `pageSize`, `defaults`, the visibility
   // gate) are dropped rather than faked. Spread-and-delete rather than
@@ -165,6 +172,14 @@ export function createUserCommandApi(
 
   return withTopLevelInvoke({
     ...rest,
+    /** Where this API acts: a workspace and a slot. */
+    get context() {
+      return ctx.context();
+    },
+    /** Runs `body` with an API acting in `context` — for that block only: this
+     *  API, and every other command, stay where they were. */
+    withContext: <T>(context: ExecContext, body: (mf: MetafolderApi) => Promise<T> | T) =>
+      Promise.resolve(body(createUserCommandApi(deps, { ...ctx, context: () => context }))),
     commands: {
       invoke: (invocation: string) => api.commands.invoke(invocation),
       keybindings: () => api.commands.keybindings(),

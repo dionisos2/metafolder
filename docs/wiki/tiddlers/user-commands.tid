@@ -41,7 +41,8 @@ receives nothing.
 `mf` is the object panels get as `metafolder`, with `mf.invoke("<invocation>")` to
 run a command as if it were typed. A user command belongs to no panel, so:
 
-* it acts on the ''focused workspace'', looked up each time it runs: `mf.workspace.get('active_repo')` is the repository of where you are now;
+* it acts in its ''execution context'' ([[Commands]]): the focused workspace and slot when it runs — `mf.workspace.get('active_repo')` is the repository of where you are now — and `mf.context` says which (`{ws, slot}`);
+* `mf.withContext({ws, slot}, async (mf) => …)` runs a block elsewhere: inside it, `mf` and the commands it invokes act on that workspace and slot; outside, nothing has moved;
 * what only means something inside a panel is absent — the panel's type, page size, default values and visibility, and `commands.register`.
 
 A command here is meant to ''combine existing commands''. `mf.daemon` is there for

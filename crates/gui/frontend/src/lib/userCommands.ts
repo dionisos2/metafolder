@@ -15,7 +15,8 @@ import {
 } from './commands';
 import { invoke } from './ipc';
 import { createUserCommandApi } from './panels/api';
-import { focusedWs, refreshCommands, store } from './store.svelte';
+import { focusedContext, refreshCommands, store } from './store.svelte';
+import type { ExecContext } from './types';
 
 /** Bumped on every reload so the WebView re-imports instead of serving its
  *  cached module — the same cache-bust PanelHost applies to panel modules. */
@@ -46,28 +47,32 @@ export async function loadUserCommands(): Promise<string[]> {
   const previous = clearUserCommands();
   if (previous.length > 0) await invoke('forget_user_commands', { names: previous });
 
-  const api = createUserCommandApi(
-    {
-      invoke,
-      dispatch,
-      // A user command has no panel, so it registers no panel handler, no
-      // per-instance arg spec (`commands.register` is not even offered to it —
-      // its arguments are declared in the exported definition and land in the
-      // shell-wide registry) and contributes no context menu; the command set
-      // it changes is refreshed by this loader, not per registration.
-      registerHandler: () => {},
-      registerArgs: () => {},
-      onCommandsChanged: () => {},
-      addDefaultMenuItems: () => {},
-    },
-    { guiServer: base, sessionToken: store.sessionToken, focusedWs },
-  );
+  const deps = {
+    invoke,
+    dispatch,
+    // A user command has no panel, so it registers no panel handler, no
+    // per-instance arg spec (`commands.register` is not even offered to it —
+    // its arguments are declared in the exported definition and land in the
+    // shell-wide registry) and contributes no context menu; the command set
+    // it changes is refreshed by this loader, not per registration.
+    registerHandler: () => {},
+    registerArgs: () => {},
+    onCommandsChanged: () => {},
+    addDefaultMenuItems: () => {},
+  };
+  const server = { guiServer: base, sessionToken: store.sessionToken };
+  // The prompts and completions follow the focus; a run gets an API bound to
+  // the context it runs in (doc "Commands").
+  const api = createUserCommandApi(deps, { ...server, context: focusedContext });
+  const apiFor = (context: ExecContext) =>
+    createUserCommandApi(deps, { ...server, context: () => context });
   const refused: string[] = [];
   const names = await installUserCommands(
     module.default,
     api,
     (name, label, log) => invoke<boolean>('register_user_command', { name, label, log }),
     (name) => refused.push(name),
+    apiFor,
   );
   await refreshCommands();
   // Said rather than swallowed: the entry is in the file and does nothing.

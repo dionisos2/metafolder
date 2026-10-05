@@ -37,18 +37,28 @@ The GUI builds every installed panel type once at startup, hidden, so that all t
 commands exist from the start ([[Panel types]]). The names follow one rule
 ([[Command naming]]).
 
+!! A command runs in a context
+
+Every command runs in an ''execution context'': a workspace and a slot. It is the
+focused workspace in the focused slot when you run it, from a key or the command
+input. A command can move elsewhere for a part of its own work — a [[user command|User commands]]
+with `mf.withContext({ws, slot}, async (mf) => …)` — and what it invokes from there
+runs there too. The context belongs to the command: another command, or the next key
+you press, starts from the focus again.
+
 !! A command runs on its panel, focused or not
 
 Every command is listed and can be run whatever panel has the focus. A panel's
-command is handed to the panel type that registered it, in the ''focused workspace'':
-acting on a panel that is not focused — or not even displayed — is legitimate. The
-arrow keys of the [[file panel]] run `metarecord-list:next` and `metarecord-list:prev`
-on the list of the other slot; a workspace that never showed the panel has it built
-for the occasion.
+command is handed to the panel type that registered it, in the ''context's
+workspace'': acting on a panel that is not focused — or not even displayed — is
+legitimate. The arrow keys of the [[file panel]] run `metarecord-list:next` and
+`metarecord-list:prev` on the list of the other slot; a workspace that never showed
+the panel has it built for the occasion. What a panel invokes runs in its own
+workspace, in the slot that shows it.
 
 A command registered with `reveal` shows its panel first when it is not on screen —
 in the other slot when that one shows the same workspace, else in place of the
-focused panel.
+context's panel.
 
 What depends on the focus is the ''key'', not the command: a keybinding may be
 restricted to a panel type (`when`, [[Keybindings]]).

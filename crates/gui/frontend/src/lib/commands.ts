@@ -24,9 +24,9 @@ import {
 } from './ignore';
 import { invoke } from './ipc';
 import { type ExpandDeps, expandShellPlaceholders, shellQuote } from './placeholders';
-import { focusedWs, flashStatus, store, workspaceById } from './store.svelte';
+import { focusedContext, focusedWs, flashStatus, store, workspaceById } from './store.svelte';
 import { daemonWork } from './working';
-import type { CommandDef, LayoutView } from './types';
+import type { CommandDef, ExecContext, LayoutView } from './types';
 
 export type ParsedInvocation = { name: string; args: string[] } | { shell: string } | null;
 
@@ -326,8 +326,9 @@ const argSpecs = new Map<string, ArgSpec[]>();
  *  uncollected — and `resolve` reads that instance's declared arguments.
  *  Installed by PanelHost. */
 export interface PanelArgSource {
-  prepare(name: string): Promise<void>;
-  resolve(name: string): ArgSpec[] | undefined;
+  /** `wsId`: the workspace the command runs in, the focused one by default. */
+  prepare(name: string, wsId?: string | null): Promise<void>;
+  resolve(name: string, wsId?: string | null): ArgSpec[] | undefined;
 }
 
 let panelArgs: PanelArgSource | null = null;
@@ -357,8 +358,8 @@ export function registerArgs(name: string, args: ArgSpec[]): void {
  *  synchronous question — does this command prompt? — for a panel the focused
  *  workspace has not mounted. Anything that will actually run the functions
  *  awaits `prepare` first (see `dispatch`). */
-export function argSpecFor(name: string): ArgSpec[] | undefined {
-  return panelArgs?.resolve(name) ?? argSpecs.get(name);
+export function argSpecFor(name: string, wsId?: string | null): ArgSpec[] | undefined {
+  return panelArgs?.resolve(name, wsId) ?? argSpecs.get(name);
 }
 
 /** Whether invoking `invocation` reopens the minibuffer to collect input,
@@ -427,7 +428,7 @@ export interface UserCompletionView {
   items: UserCompletionFn;
 }
 
-const userHandlers = new Map<string, (...args: string[]) => unknown>();
+const userHandlers = new Map<string, (context: ExecContext, ...args: string[]) => unknown>();
 
 // Set by the loader at boot. Late-bound because the loader imports this module
 // (for installUserCommands), so importing it back would be a cycle.
@@ -465,6 +466,9 @@ export async function installUserCommands(
   mf: unknown,
   register: (name: string, label: string, log: boolean) => Promise<boolean | void>,
   onRefused: (name: string) => void = () => {},
+  // The API a command's `run` gets, for the context it runs in; `mf` (the one
+  // following the focus) serves the argument prompts and completions.
+  mfFor: (context: ExecContext) => unknown = () => mf,
 ): Promise<string[]> {
   const names: string[] = [];
   for (const [name, command] of validateUserCommands(module)) {
@@ -501,7 +505,7 @@ export async function installUserCommands(
         })),
       );
     }
-    userHandlers.set(name, (...args: string[]) => command.run(mf, ...args));
+    userHandlers.set(name, (context, ...args: string[]) => command.run(mfFor(context), ...args));
     names.push(name);
   }
   return names;
@@ -523,10 +527,14 @@ export function withTopLevelInvoke<T extends { commands: { invoke: (i: string) =
 }
 
 /** Runs a user command; false when no such command is installed. */
-export async function runUserCommand(name: string, args: string[]): Promise<boolean> {
+export async function runUserCommand(
+  name: string,
+  args: string[],
+  context: ExecContext = focusedContext(),
+): Promise<boolean> {
   const handler = userHandlers.get(name);
   if (!handler) return false;
-  await handler(...args);
+  await handler(context, ...args);
   return true;
 }
 
@@ -571,9 +579,9 @@ async function daemonJson(method: string, path: string, body: unknown = null): P
   return res.body;
 }
 
-/** The active repo of the focused workspace, or null. */
-function focusedRepo(): string | null {
-  return workspaceById(focusedWs())?.active_repo ?? null;
+/** The active repo of the workspace `ws` (the one a command runs in), or null. */
+function repoOf(ws: string | null): string | null {
+  return workspaceById(ws)?.active_repo ?? null;
 }
 
 /** The repository's filesystem root (via GET /repos), or '' when not found. */
@@ -636,27 +644,26 @@ registerArgs('ignore:set', [
 /** The directory the `ignore:*` commands act on, as a repo-root-relative path,
  *  plus the repo it belongs to. Null (with a status message) when there is no
  *  active repository. */
-async function ignoreContext(): Promise<{ repo: string; dir: string } | null> {
-  const repo = focusedRepo();
+async function ignoreContext(ws: string | null): Promise<{ repo: string; dir: string } | null> {
+  const repo = repoOf(ws);
   if (!repo) {
     await status('no active repository');
     return null;
   }
-  return { repo, dir: await defaultTargetDir(repo) };
+  return { repo, dir: await defaultTargetDir(repo, ws) };
 }
 
 /** The directory a path-scoped builtin acts on by default: the file manager's
  *  current directory, else the selected metarecord's directory, else the
  *  repository root — as a repo-root-relative path (`''` is the root). Shared by
  *  the `ignore:*` commands. */
-async function defaultTargetDir(repo: string): Promise<string> {
-  return await targetDir(await targetDirContext(repo));
+async function defaultTargetDir(repo: string, ws: string | null): Promise<string> {
+  return await targetDir(await targetDirContext(repo, ws));
 }
 
 /** What the target-directory rules read: the file manager's current directory
  *  and the workspace's selected metarecord. */
-async function targetDirContext(repo: string): Promise<TargetDirOptions> {
-  const ws = focusedWs();
+async function targetDirContext(repo: string, ws: string | null): Promise<TargetDirOptions> {
   const fmDir = ws
     ? await invoke<string | null>('ws_get_var', { wsId: ws, key: 'file-manager:dir' })
     : null;
@@ -678,8 +685,12 @@ async function targetDirContext(repo: string): Promise<TargetDirOptions> {
 /** Applies one preset to the context directory with the given mode, reporting
  *  the target it resolved — applying a preset to the wrong directory would be
  *  silent otherwise. */
-async function runIgnore(choice: string, mode: 'add' | 'remove' | 'set'): Promise<void> {
-  const context = await ignoreContext();
+async function runIgnore(
+  choice: string,
+  mode: 'add' | 'remove' | 'set',
+  ws: string | null,
+): Promise<void> {
+  const context = await ignoreContext(ws);
   if (!context) return;
   const preset = await resolvePresetName(choice, invoke);
   if (!preset) {
@@ -721,10 +732,9 @@ async function runIgnore(choice: string, mode: 'add' | 'remove' | 'set'): Promis
 /** `ignore:list`: the installed presets and the target's active set, in the
  *  message panel (read-only, so it is also the safe way to look before
  *  applying). */
-async function listIgnore(): Promise<void> {
-  const context = await ignoreContext();
+async function listIgnore(ws: string | null): Promise<void> {
+  const context = await ignoreContext(ws);
   if (!context) return;
-  const ws = focusedWs();
   if (!ws) return;
   const presets =
     await invoke<{ name: string; description: string; patterns: string[] }[]>('ignore_presets');
@@ -763,13 +773,13 @@ async function listIgnore(): Promise<void> {
 /** `mf:order`: numbers the direct children of the selected folder (or of the
  *  selected file's folder; the file manager's directory when nothing is
  *  selected), files and directories independently, and marks the folder. */
-async function runOrder(): Promise<void> {
-  const repo = focusedRepo();
+async function runOrder(ws: string | null): Promise<void> {
+  const repo = repoOf(ws);
   if (!repo) {
     await status('no active repository');
     return;
   }
-  const path = await orderTargetDir(await targetDirContext(repo));
+  const path = await orderTargetDir(await targetDirContext(repo, ws));
   if (path === null) {
     await status('no folder or file is selected: nothing to number');
     return;
@@ -785,8 +795,8 @@ async function runOrder(): Promise<void> {
  *  counts live in the daemon's memory and in no log, so the change feed's poll
  *  cannot report the reset: the panels are told here, or a file manager would
  *  keep showing the old counts. */
-async function resetWatchActivity(): Promise<void> {
-  const repo = focusedRepo();
+async function resetWatchActivity(ws: string | null): Promise<void> {
+  const repo = repoOf(ws);
   if (!repo) {
     await status('no active repository');
     return;
@@ -1023,7 +1033,11 @@ export function discardActiveInput(el: Element | null): boolean {
 
 // ── Panel dispatch hook (wired by PanelHost) ───────────────────────────
 
-export type PanelDispatch = (command: CommandDef, args: string[]) => Promise<void>;
+export type PanelDispatch = (
+  command: CommandDef,
+  args: string[],
+  context: ExecContext,
+) => Promise<void>;
 let panelDispatch: PanelDispatch | null = null;
 
 export function setPanelDispatch(fn: PanelDispatch | null) {
@@ -1334,7 +1348,10 @@ export type DispatchResult = { ok: true } | { ok: false; error: string };
  * external `POST /gui/command`). The result lets external callers observe
  * success/failure; internal callers (keybindings, command input) ignore it.
  */
-export async function dispatch(invocation: string): Promise<DispatchResult> {
+export async function dispatch(
+  invocation: string,
+  context: ExecContext = focusedContext(),
+): Promise<DispatchResult> {
   const parsed = parseInvocation(invocation);
   if (parsed === null) return { ok: true };
   if ('shell' in parsed) {
@@ -1355,7 +1372,7 @@ export async function dispatch(invocation: string): Promise<DispatchResult> {
 
   const { name } = parsed;
   let { args } = parsed;
-  const ws = focusedWs();
+  const { ws } = context;
 
   // Interactive arguments (doc "Interactive command arguments"): a command declaring arguments
   // invoked with fewer than declared collects the missing tail through the
@@ -1365,8 +1382,8 @@ export async function dispatch(invocation: string): Promise<DispatchResult> {
   // same one `runCommand` will hand the collected arguments to.
   // (`if`, not `?.`: awaiting the undefined of an absent source would defer
   // the rest of the dispatch by a microtask for nothing.)
-  if (panelArgs) await panelArgs.prepare(name);
-  const specs = argSpecFor(name);
+  if (panelArgs) await panelArgs.prepare(name, ws);
+  const specs = argSpecFor(name, ws);
   if (specs) {
     const collected = await collectArgs(specs, args, promptForArg);
     if (collected === null) return { ok: true };
@@ -1385,7 +1402,7 @@ export async function dispatch(invocation: string): Promise<DispatchResult> {
   }
 
   try {
-    const handled = await runCommand(name, args, ws);
+    const handled = await runCommand(name, args, context);
     if (!handled) {
       const message = `unknown command: ${name}`;
       await status(message);
@@ -1404,7 +1421,8 @@ export async function dispatch(invocation: string): Promise<DispatchResult> {
  * recognised (a shell builtin, a goto-tab shortcut, or a panel command),
  * false for an unknown name. Throws on handler failure (caught by `dispatch`).
  */
-async function runCommand(name: string, args: string[], ws: string | null): Promise<boolean> {
+async function runCommand(name: string, args: string[], context: ExecContext): Promise<boolean> {
+  const { ws } = context;
   switch (name) {
     case 'command-input:focus':
       // One widget, two modes: command (`:`) and bash (`!`, the line runs as a
@@ -1503,7 +1521,7 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       await invoke('panel_unsplit');
       return true;
     case 'panel:hide':
-      await invoke('slot_hide', { slot: store.layout.focused });
+      await invoke('slot_hide', { slot: context.slot });
       return true;
     case 'panel:toggle':
       if (args[0] === 'split') await invoke('panel_split_toggle');
@@ -1523,7 +1541,7 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
         await status(`unknown setting: "${args[0] ?? ''}" (expected type)`);
         return true;
       }
-      if (args[1]) await invoke('panel_set_type', { slot: store.layout.focused, panelType: args[1] });
+      if (args[1]) await invoke('panel_set_type', { slot: context.slot, panelType: args[1] });
       return true;
     case 'panel:swap':
       await invoke('panel_swap');
@@ -1532,7 +1550,7 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       // Shows the given panel type for the SAME workspace in the other
       // slot, opening it if hidden (doc "Cross-panel selection").
       if (!args[0] || !ws) return true;
-      const other = store.layout.focused === 'left' ? 'right' : 'left';
+      const other = context.slot === 'left' ? 'right' : 'left';
       await invoke('tab_assign', { wsId: ws, slot: other });
       await invoke('panel_set_type', { slot: other, panelType: args[0] });
       return true;
@@ -1559,14 +1577,14 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
     case 'ignore:set': {
       // The `preset` argument was collected by dispatch (with completion).
       const choice = args.join(' ').trim();
-      if (choice) await runIgnore(choice, name.slice('ignore:'.length) as 'add' | 'remove' | 'set');
+      if (choice) await runIgnore(choice, name.slice('ignore:'.length) as 'add' | 'remove' | 'set', ws);
       return true;
     }
     case 'ignore:list':
-      await listIgnore();
+      await listIgnore(ws);
       return true;
     case 'mf:order':
-      await runOrder();
+      await runOrder(ws);
       return true;
     case 'reconcile:run':
       if (ws) await invoke('reconcile_run', { wsId: ws });
@@ -1586,7 +1604,7 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
         await status(`unknown operation: "${args[0] ?? ''}" (expected reset)`);
         return true;
       }
-      await resetWatchActivity();
+      await resetWatchActivity(ws);
       return true;
     case 'orphan:detect':
       // Mark the orphaned metarecords (doc "Finding and clearing orphans").
@@ -1621,7 +1639,7 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       if (ws) await invoke('log_navigate', { wsId: ws, redo: true });
       return true;
     case 'repos:open':
-      await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'repos' });
+      await invoke('panel_set_type', { slot: context.slot, panelType: 'repos' });
       return true;
     case 'file:open-with':
       // The `program` argument was collected by dispatch (completing over the
@@ -1663,7 +1681,7 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       if (!ws) return true;
       const topic = args.join(' ');
       await invoke('ws_set_var', { wsId: ws, key: 'help.request', value: { topic, nonce: Date.now() } });
-      await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'help' });
+      await invoke('panel_set_type', { slot: context.slot, panelType: 'help' });
       return true;
     }
     case 'help:cursor':
@@ -1729,7 +1747,6 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       return true;
     case 'status:clear': {
       // Dismiss the transient status-bar message (and the last-command echo).
-      const ws = focusedWs();
       if (ws) {
         store.status[ws] = { text: '', kind: 'info', timeout_ms: null };
         store.lastCommand[ws] = '';
@@ -1757,11 +1774,11 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
 
   // Not a shell builtin: a user command, then a panel's. Builtins win, so a
   // commands.js entry can add to the set but never quietly replace part of it.
-  if (await runUserCommand(name, args)) return true;
+  if (await runUserCommand(name, args, context)) return true;
 
   const command = store.commands.find((c) => c.name === name);
   if (command && command.owner && panelDispatch) {
-    await panelDispatch(command, args);
+    await panelDispatch(command, args, context);
     return true;
   }
   return false;

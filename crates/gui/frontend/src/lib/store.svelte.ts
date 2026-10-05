@@ -11,6 +11,7 @@ import type {
   Binding,
   CommandDef,
   ConfigInfo,
+  ExecContext,
   InitialState,
   LayoutView,
   SlotId,
@@ -349,6 +350,12 @@ export function slotPayload(id: SlotId) {
 
 export function focusedWs(): string | null {
   return slotPayload(store.layout.focused).workspace_id;
+}
+
+/** Where a command runs unless it says otherwise: the focused workspace, in
+ *  the focused slot. */
+export function focusedContext(): ExecContext {
+  return { ws: focusedWs(), slot: store.layout.focused };
 }
 
 export function focusedPanelType(): string | null {

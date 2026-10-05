@@ -16,7 +16,7 @@
   import { createPanelArgSource } from './argSource';
   import { setFindRootProvider } from './roots';
   import { helpCursorSheet } from '../cursor';
-  import type { CommandDef, SlotId } from '../types';
+  import type { CommandDef, ExecContext, SlotId } from '../types';
   import { createVisibilityGate } from '../../../../panel-shim/visibility.js';
   import { scopedProvider } from '../../../../panel-shim/menu.js';
 
@@ -88,7 +88,10 @@
     const apiInst = createPanelApi(
       {
         invoke,
-        dispatch,
+        // A panel's commands run in its own workspace, in the slot showing it
+        // (the focused one while it is not on screen).
+        dispatch: (invocation: string) =>
+          dispatch(invocation, { ws: wsId, slot: visibleSlots.get(key) ?? store.layout.focused }),
         claimCommand: (name) => {
           if (dropUserCommand(name)) {
             void status(
@@ -333,16 +336,21 @@
 
     // Commands owned by panel types (doc "Writing a panel type": lazy hidden instantiation;
     // reveal switches a slot to the owning panel type).
-    setPanelDispatch(async (command: CommandDef, args: string[]) => {
-      const wsId = focusedWs();
+    setPanelDispatch(async (command: CommandDef, args: string[], context: ExecContext) => {
+      // The command runs in its context's workspace — the focused one unless
+      // the command that invoked it moved elsewhere (doc "Commands").
+      const wsId = context.ws;
       if (!wsId || !command.owner) throw 'no workspace in the focused slot';
       const key = instanceKey(wsId, command.owner);
 
       if (command.reveal && !visibleSlots.has(key)) {
-        const other: SlotId = store.layout.focused === 'left' ? 'right' : 'left';
+        const other: SlotId = context.slot === 'left' ? 'right' : 'left';
         const otherPayload = slotPayload(other);
         const target =
-          otherPayload.visible && otherPayload.workspace_id === wsId ? other : store.layout.focused;
+          otherPayload.visible && otherPayload.workspace_id === wsId ? other : context.slot;
+        if (slotPayload(target).workspace_id !== wsId) {
+          await invoke('tab_assign', { wsId, slot: target });
+        }
         await invoke('panel_set_type', { slot: target, panelType: command.owner });
       }
 

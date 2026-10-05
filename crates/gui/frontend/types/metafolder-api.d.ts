@@ -617,6 +617,16 @@ declare namespace Metafolder {
      *  not need a path through the object. Panels get the alias too — one API
      *  to learn, not two. */
     invoke(invocation: string): unknown;
+    /** User commands only (doc "Commands"): where this API acts — a workspace
+     *  and a slot, the focused ones unless the command moved. */
+    readonly context?: { ws: string | null; slot: 'left' | 'right' };
+    /** User commands only: runs `body` with an API acting in `context`, for
+     *  that block alone — this API, and every other command, stay where they
+     *  were. */
+    withContext?<T>(
+      context: { ws: string | null; slot: 'left' | 'right' },
+      body: (mf: Api) => Promise<T> | T,
+    ): Promise<T>;
     /** Suggests a binding for one of this panel's commands. `when` defaults to
      *  this panel type; pass it explicitly to widen or narrow the scope. */
     addKeybinding(
