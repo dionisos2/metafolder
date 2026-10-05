@@ -1240,7 +1240,21 @@ impl GuiState {
                 "visible": prior.visible,
             });
 
+            // The workspace primitives (doc "Workspaces"): an empty workspace —
+            // not a fork, so the caller's own list state cannot override the
+            // seed — sent the seed and the request that makes it a picker.
             let ws_id = inner.new_workspace(spec.repo.clone(), None);
+            let mut vars = spec.panel.vars.clone();
+            vars.insert(
+                "pick_request".into(),
+                json!({
+                    "caller_ws": spec.caller_ws,
+                    "token": spec.token,
+                    "picker_slot": slot_name(picker_slot),
+                    "restore": restore,
+                    "result": spec.result.clone().unwrap_or_else(|| "uuid".into()),
+                }),
+            );
             {
                 let ws = inner.workspace_mut(&ws_id)?;
                 if let Some(name) = &spec.name {
@@ -1249,26 +1263,12 @@ impl GuiState {
                     ws.name = name.clone();
                     ws.auto_index = None;
                 }
-                ws.vars.insert(
-                    "pick_request".into(),
-                    json!({
-                        "caller_ws": spec.caller_ws,
-                        "token": spec.token,
-                        "picker_slot": slot_name(picker_slot),
-                        "restore": restore,
-                        "result": spec.result.clone().unwrap_or_else(|| "uuid".into()),
-                    }),
-                );
+                ws.vars.extend(vars);
                 ws.last_panel.insert(picker_slot, spec.panel.panel_type.clone());
-                for (key, value) in &spec.panel.vars {
-                    ws.vars.insert(key.clone(), value.clone());
-                }
             }
-            // Show the picker in the other slot and focus it (the user navigates
-            // there and confirms); the caller slot is left untouched.
-            inner.assign(&ws_id, picker_slot)?;
-            inner.slot_mut(picker_slot).visible = true;
-            inner.focused = picker_slot;
+            // Shown in the other slot, focused (the user navigates there and
+            // confirms); the caller slot is left untouched.
+            inner.show_new_workspace(&ws_id, Some(picker_slot))?;
             Ok((ws_id, Emit::BOTH))
         })?;
 
@@ -1356,8 +1356,9 @@ impl GuiState {
             Ok(((), Emit::BOTH))
         })?;
 
-        // Deliver the result (emits WORKSPACE_VAR_CHANGED for the caller).
-        self.set_var(&caller_ws, "pick_result", result)
+        // Deliver the result through the one channel between workspaces
+        // (emits WORKSPACE_VAR_CHANGED for the caller).
+        self.send_vars(&caller_ws, Map::from_iter([("pick_result".to_string(), result)]))
     }
 
     // ── Status bar / message log ─────────────────────────────────────────
@@ -2272,6 +2273,22 @@ mod tests {
         assert_eq!(layout.right.panel_type.as_deref(), Some("metarecord-list"));
         assert!(layout.left.visible && layout.right.visible);
         assert_eq!(layout.focused, SlotId::Right);
+    }
+
+    #[test]
+    fn test_pick_start_starts_empty_not_from_the_callers_state() {
+        let (_, state) = state();
+        // The caller's list shows a frozen query of its own: copied, it would
+        // run instead of the field's seed.
+        state.set_var("ws-1", "metarecord-list:normal-query", json!("rating > 3")).unwrap();
+        state.set_var("ws-1", "metarecord-list:normal-frozen", json!(true)).unwrap();
+        let picker = state.pick_start(pick_spec("ws-1")).unwrap();
+        assert_eq!(state.get_var(&picker, "metarecord-list:normal-frozen").unwrap(), Value::Null);
+        assert_eq!(state.get_var(&picker, "metarecord-list:normal-query").unwrap(), Value::Null);
+        assert_eq!(
+            state.get_var(&picker, "metarecord-list:query").unwrap(),
+            json!("mf_schema = \"tag\"")
+        );
     }
 
     #[test]

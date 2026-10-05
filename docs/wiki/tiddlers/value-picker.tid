@@ -45,14 +45,17 @@ it knows what the picker is for:
 |`prompt` |the text shown in its status bar |
 |`result` |`uuid` (the default): the picker's `selected_metarecord`. `path`: the first of its `selected_paths` |
 
-The GUI creates the workspace, records `pick_request` on it — who asked, the token,
-which slot it took and what that slot showed — and shows it in the slot other than
-the caller's.
+The GUI composes it from the workspace primitives ([[Workspaces]]): it creates an
+''empty'' workspace — not a copy of the caller's, whose own list state (a frozen query)
+would otherwise run instead of the seed — sends it the panel's variables and
+`pick_request` — who asked, the token, which slot it took and what that slot showed —
+and shows it in the slot other than the caller's. A picker is not forked
+([[workspace:fork]]).
 
 On confirmation it reads the selection, closes the picker, restores the slot and
-writes `pick_result` in the ''caller's'' workspace: `{token, uuid}` or
-`{token, path}`, and `{token, cancelled: true}` for a cancellation. This is the one
-write across workspaces, and it is why the protocol is in the GUI's Rust side: a
-panel only reads and writes the variables of its own workspace.
+sends `pick_result` to the ''caller's'' workspace: `{token, uuid}` or
+`{token, path}`, and `{token, cancelled: true}` for a cancellation. Like every write
+across workspaces, it goes through `workspace:send` — a panel's `workspace` reads and
+writes the variables of its own workspace only.
 
 `createPickRunner` of `/__value-widget.js` wraps the exchange in a promise.
