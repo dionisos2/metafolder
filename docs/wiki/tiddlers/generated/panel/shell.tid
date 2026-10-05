@@ -1,0 +1,8 @@
+title: $:/mf/gen/Panel/shell panel
+catalog: Panel
+target: shell panel
+summary: The shell panel type
+
+!! Commands
+
+None of its own.

@@ -19,6 +19,7 @@ summary: Change a layout setting (type)
 * ``t m`` → ``panel:set type file-manager``
 * ``t o`` → ``panel:set type log``
 * ``t r`` → ``panel:set type repos``
+* ``t s`` → ``panel:set type shell``
 * ``t t`` → ``panel:set type treeref``
 * ``t u`` → ``panel:set type duplicates``
 * ``t v`` → ``panel:set type recent``

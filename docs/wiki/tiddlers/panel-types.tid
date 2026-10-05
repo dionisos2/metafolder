@@ -30,7 +30,8 @@ the file manager…
 |[[trash panel]] |the repository's trash |
 |[[duplicates panel]] |groups of byte-identical files |
 |`sync` |synchronisation between two repositories |
-|[[message panel]] |the workspace's messages: status messages, commands run, shell output, the daemon's reports |
+|[[message panel]] |the workspace's messages: status messages, commands run, the daemon's reports |
+|[[shell panel]] |what the shell lines and scripts run in the workspace printed, like a terminal |
 |[[workspace-info panel]] |the workspace's variables, live — for debugging panels and scripts |
 |[[help panel]] |this documentation |
 |[[hello panel]] |a minimal example to start a panel type from |

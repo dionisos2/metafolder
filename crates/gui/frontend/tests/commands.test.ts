@@ -19,7 +19,7 @@ import {
   installUserCommands,
   filterCompletions,
   listedCommands,
-  needsMessagePanel,
+  needsPanel,
   parseInvocation,
   promptsForInput,
   registerArgs,
@@ -186,7 +186,7 @@ describe('parseInvocation', () => {
   });
 });
 
-describe('needsMessagePanel', () => {
+describe('needsPanel', () => {
   const slot = (visible: boolean, workspace_id: string | null, panel_type: string | null) => ({
     visible,
     workspace_id,
@@ -195,34 +195,40 @@ describe('needsMessagePanel', () => {
   const layout = (left: ReturnType<typeof slot>, right: ReturnType<typeof slot>): LayoutView =>
     ({ left, right, focused: 'left' });
 
-  test('needed when no slot of the workspace shows message', () => {
+  test('needed when no slot of the workspace shows the type', () => {
     const l = layout(slot(true, 'ws1', 'file'), slot(false, null, null));
-    expect(needsMessagePanel(l, 'ws1')).toBe(true);
+    expect(needsPanel(l, 'ws1', 'shell')).toBe(true);
   });
 
-  test('not needed when the focused slot already shows message', () => {
+  test('not needed when the focused slot already shows it', () => {
+    const l = layout(slot(true, 'ws1', 'shell'), slot(false, null, null));
+    expect(needsPanel(l, 'ws1', 'shell')).toBe(false);
+  });
+
+  test('not needed when the other slot already shows it', () => {
+    const l = layout(slot(true, 'ws1', 'file'), slot(true, 'ws1', 'shell'));
+    expect(needsPanel(l, 'ws1', 'shell')).toBe(false);
+  });
+
+  test('another type does not count', () => {
     const l = layout(slot(true, 'ws1', 'message'), slot(false, null, null));
-    expect(needsMessagePanel(l, 'ws1')).toBe(false);
+    expect(needsPanel(l, 'ws1', 'shell')).toBe(true);
+    expect(needsPanel(l, 'ws1', 'message')).toBe(false);
   });
 
-  test('not needed when the other slot already shows message', () => {
-    const l = layout(slot(true, 'ws1', 'file'), slot(true, 'ws1', 'message'));
-    expect(needsMessagePanel(l, 'ws1')).toBe(false);
+  test('a hidden slot does not count', () => {
+    const l = layout(slot(true, 'ws1', 'file'), slot(false, 'ws1', 'shell'));
+    expect(needsPanel(l, 'ws1', 'shell')).toBe(true);
   });
 
-  test('a hidden message slot does not count', () => {
-    const l = layout(slot(true, 'ws1', 'file'), slot(false, 'ws1', 'message'));
-    expect(needsMessagePanel(l, 'ws1')).toBe(true);
-  });
-
-  test('a message slot of another workspace does not count', () => {
-    const l = layout(slot(true, 'ws1', 'file'), slot(true, 'ws2', 'message'));
-    expect(needsMessagePanel(l, 'ws1')).toBe(true);
+  test('a slot of another workspace does not count', () => {
+    const l = layout(slot(true, 'ws1', 'file'), slot(true, 'ws2', 'shell'));
+    expect(needsPanel(l, 'ws1', 'shell')).toBe(true);
   });
 
   test('no focused workspace: never needed', () => {
     const l = layout(slot(false, null, null), slot(false, null, null));
-    expect(needsMessagePanel(l, null)).toBe(false);
+    expect(needsPanel(l, null, 'shell')).toBe(false);
   });
 });
 

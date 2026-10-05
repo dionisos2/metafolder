@@ -1,7 +1,7 @@
 title: Running shipped scripts
 tags: [[Scripting the GUI]]
 kind: guide
-summary: script:run lists the scripts installed with the configuration and runs the one you pick; its output goes to the message panel and it shows in the task bar until it ends.
+summary: script:run lists the scripts installed with the configuration and runs the one you pick; its output goes to the shell panel and it shows in the task bar until it ends.
 
 
 <<key "script:run" "g s">> (`script:run`) opens the command input on the list of
@@ -37,7 +37,7 @@ The script is run as `bash <path>`, ''without arguments'': a shipped script asks
 the GUI for what it was not given — a tag, a folder, which set to act on
 ([[A query is the scope]]).
 
-* Its output, and its exit code when not zero, go to the message log of the workspace it was launched from; the focused slot switches to the [[message panel]] unless that workspace already shows it.
+* Its output, and its exit code when not zero, go to the shell log of the workspace it was launched from; the focused slot switches to the [[shell panel]] unless that workspace already shows it.
 * It shows in the task bar under its file name, spinning while it works and still while it waits for you ([[Status bar and task bar]]).
 * Its questions appear in a bar above the status line, and Escape stops it — Ctrl+Escape kills one that would not stop ([[Script sessions]]).
 * A script that fails says so in red on the status bar of the workspace it was launched from: ''gui-tag-folder.sh failed (exit 1)''.

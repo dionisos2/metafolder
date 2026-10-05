@@ -1,0 +1,89 @@
+<!doctype html>
+<!-- Built-in panel type: what the shell lines run in the workspace printed,
+     read like a terminal (doc "shell panel"). -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>shell</title>
+    <style>
+      [hidden] {
+        display: none !important;
+      }
+      .mf-panel-body {
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        font-size: 13px;
+      }
+      #toolbar {
+        padding: 4px 8px;
+        background: var(--mf-bg-raised, #26262e);
+      }
+      button {
+        font: inherit;
+        background: var(--mf-bg, #1e1e24);
+        color: var(--mf-fg, #d8d8e0);
+        border: 1px solid var(--mf-fg-dim, #8a8a96);
+        border-radius: 3px;
+        padding: 1px 8px;
+        cursor: pointer;
+      }
+      #log {
+        flex: 1;
+        overflow-y: auto;
+        margin: 0;
+        padding: 6px 8px;
+        font-family: var(--mf-font-mono, monospace);
+        font-size: 0.9em;
+      }
+      #empty {
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      .run + .run {
+        margin-top: 8px;
+      }
+      .head {
+        display: flex;
+        gap: 8px;
+      }
+      .command {
+        flex: 1;
+        font-weight: bold;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      .command::before {
+        content: '$ ';
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      .ts {
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      .out {
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      .stderr {
+        color: var(--mf-error, #e06c75);
+      }
+      .status {
+        color: var(--mf-fg-dim, #8a8a96);
+        font-style: italic;
+      }
+      .status[data-failed] {
+        color: var(--mf-error, #e06c75);
+      }
+      .status::before {
+        content: '[';
+      }
+      .status::after {
+        content: ']';
+      }
+    </style>
+  </head>
+  <body>
+    <div id="toolbar"><button id="clear">Clear (shell:clear)</button></div>
+    <div id="log"><div id="empty">No shell line run yet: type ! in the command input.</div></div>
+  </body>
+</html>

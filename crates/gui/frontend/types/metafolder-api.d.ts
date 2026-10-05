@@ -547,6 +547,22 @@ declare namespace Metafolder {
     onAppend(listener: (entry: unknown) => void): void;
   }
 
+  /** One line of the shell log (doc "shell panel"). */
+  interface ShellEntry {
+    ts_ms: number;
+    /** The run it belongs to: every line of one shell line shares it. */
+    run: string;
+    kind: 'command' | 'stdout' | 'stderr' | 'status';
+    text: string;
+  }
+
+  /** What the shell lines run in this workspace printed (doc "shell panel"). */
+  interface Shell {
+    list(): Promise<ShellEntry[]>;
+    /** `entry` is null when the log was cleared. */
+    onAppend(listener: (entry: ShellEntry | null) => void): void;
+  }
+
   /** One context-menu entry, a `{header}` category label, or the string `'-'`
    *  for a separator. A header is non-interactive: it groups the entries below
    *  it (metarecord / file / text operations). The menu is normalized before it
@@ -618,6 +634,7 @@ declare namespace Metafolder {
     readonly recent: Recent;
     readonly statusBar: StatusBar;
     readonly messages: Messages;
+    readonly shell: Shell;
     readonly contextMenu: ContextMenu;
   }
 }

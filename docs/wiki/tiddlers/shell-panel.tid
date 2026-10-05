@@ -1,0 +1,39 @@
+title: shell panel
+tags: Panel [[Panel types]]
+kind: reference
+aliases: terminal output
+summary: What the shell lines run in the workspace printed, read like a terminal: oldest first, one block per run, stderr in red, how a run ended.
+
+Open it with `panel:set type shell` (<<key "panel:set type shell" "t s">>). A shell
+line typed after `!` ([[Bash mode]]), a script started with `script:run`
+([[Running shipped scripts]]) and a program started with `file:open-with`
+([[Opening a file with another program]]) write their output here, not to the
+[[message panel]].
+
+It reads like a terminal, the oldest run at the ''top'':
+
+* each run is a block headed by its command line and the time it started, followed by its output line by line, as it comes;
+* what the run wrote on its standard error is in red;
+* a run that failed ends with `[exit N]` in red, one stopped by `script:stop` with `[stopped]` (`[killed]` after `script:kill`); a run that succeeded adds nothing.
+
+Two runs at once each keep their own block: a line goes into the block of the run that
+printed it, not after whatever was printed last.
+
+While the view is at the bottom it follows the output; once you have scrolled up into
+older output, it does not move.
+
+<<cmd "shell:clear">>, or the panel's ''Clear'' button, empties the log. Each workspace
+has its own, and none outlives the session.
+
+!! What stays in the message log
+
+The [[message panel]] keeps a line `$ command` for each run, so that its history still
+says what ran and when, and the status bar still reports a failure or a stop — and so
+the message log. Only the output moved.
+
+!! Why a panel of its own
+
+The [[message panel]] puts the newest line at the top, which suits a history of
+one-line messages and reverses a command's output: the last line of an `ls` came
+first. Output is read top to bottom, grouped by what printed it — so it has the
+reading order of a terminal, in a panel of its own.

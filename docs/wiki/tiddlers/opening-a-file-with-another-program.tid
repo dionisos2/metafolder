@@ -22,9 +22,9 @@ That list is a set of suggestions, not a limit: any command line may be typed, a
 is run as typed — flags included (`gimp -n`, `env FOO=1 mpv`) — with the selected
 paths quoted and appended.
 
-It runs like a `!` command: the program's output goes to the [[message panel]], and the
+It runs like a `!` command: the program's output goes to the [[shell panel]], and the
 task bar shows it while it runs ([[Status bar and task bar]]). Unlike a `!` command,
-it does not switch the focused slot to the [[message panel]] — opening a viewer should
+it does not switch the focused slot to the [[shell panel]] — opening a viewer should
 leave the screen as it was.
 
 With nothing selected, it says ''no file or folder is selected'' and does nothing.

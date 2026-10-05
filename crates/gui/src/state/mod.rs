@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
-use workspace::{MessageEntry, Workspace, WorkspaceInfo};
+use workspace::{MessageEntry, ShellEntry, ShellLine, Workspace, WorkspaceInfo};
 
 /// Default panel type shown when a workspace is first displayed: `repos`
 /// when no repository is active (entry point), `metarecord-list` otherwise.
@@ -144,6 +144,7 @@ impl Inner {
             auto_index: Some(index),
             vars: Default::default(),
             messages: Vec::new(),
+            shell: Vec::new(),
             last_panel: Default::default(),
             ready_panels: Default::default(),
             split: false,
@@ -645,6 +646,10 @@ impl GuiState {
 
     pub fn messages(&self, ws_id: &str) -> Result<Vec<MessageEntry>, String> {
         Ok(self.lock().workspace(ws_id)?.messages.clone())
+    }
+
+    pub fn shell_log(&self, ws_id: &str) -> Result<Vec<ShellEntry>, String> {
+        Ok(self.lock().workspace(ws_id)?.shell.clone())
     }
 
     pub fn get_var(&self, ws_id: &str, key: &str) -> Result<Value, String> {
@@ -1314,6 +1319,32 @@ impl GuiState {
         inner.workspace_mut(ws_id)?.messages.push(entry.clone());
         self.notifier
             .emit(events::MESSAGE_APPENDED, json!({ "workspace_id": ws_id, "entry": entry }));
+        Ok(())
+    }
+
+    /// Appends one line of run `run` to the shell log (doc "shell panel").
+    pub fn append_shell(
+        &self,
+        ws_id: &str,
+        run: &str,
+        kind: ShellLine,
+        text: &str,
+    ) -> Result<(), String> {
+        let entry =
+            ShellEntry { ts_ms: now_ms(), run: run.to_string(), kind, text: text.to_string() };
+        let mut inner = self.lock();
+        inner.workspace_mut(ws_id)?.shell.push(entry.clone());
+        self.notifier
+            .emit(events::SHELL_APPENDED, json!({ "workspace_id": ws_id, "entry": entry }));
+        Ok(())
+    }
+
+    pub fn clear_shell(&self, ws_id: &str) -> Result<(), String> {
+        let mut inner = self.lock();
+        inner.workspace_mut(ws_id)?.shell.clear();
+        // A null entry tells shell panels the log was cleared.
+        self.notifier
+            .emit(events::SHELL_APPENDED, json!({ "workspace_id": ws_id, "entry": Value::Null }));
         Ok(())
     }
 
@@ -2260,5 +2291,35 @@ mod tests {
         let appended = notifier.payloads(events::MESSAGE_APPENDED);
         assert_eq!(appended.len(), 2);
         assert_eq!(appended[1]["entry"], Value::Null);
+    }
+
+    #[test]
+    fn test_shell_log_is_apart_from_the_message_log() {
+        let (notifier, state) = state();
+        notifier.clear();
+        state.append_shell("ws-1", "script-1", ShellLine::Stdout, "hello").unwrap();
+        state.append_shell("ws-1", "script-1", ShellLine::Stderr, "oops").unwrap();
+
+        let log = state.shell_log("ws-1").unwrap();
+        assert_eq!(log.len(), 2);
+        assert_eq!(log[0].run, "script-1");
+        assert_eq!(log[0].kind, ShellLine::Stdout);
+        assert_eq!(log[1].text, "oops");
+        // Neither the message log nor the status bar sees shell output.
+        assert!(state.messages("ws-1").unwrap().is_empty());
+        assert!(notifier.payloads(events::MESSAGE_APPENDED).is_empty());
+        let appended = notifier.payloads(events::SHELL_APPENDED);
+        assert_eq!(appended.len(), 2);
+        assert_eq!(appended[1]["workspace_id"], "ws-1");
+        assert_eq!(appended[1]["entry"]["kind"], "stderr");
+        assert_eq!(appended[1]["entry"]["run"], "script-1");
+
+        assert!(state.append_shell("ws-99", "script-1", ShellLine::Stdout, "x").is_err());
+
+        state.clear_shell("ws-1").unwrap();
+        assert!(state.shell_log("ws-1").unwrap().is_empty());
+        let appended = notifier.payloads(events::SHELL_APPENDED);
+        assert_eq!(appended.len(), 3);
+        assert_eq!(appended[2]["entry"], Value::Null);
     }
 }

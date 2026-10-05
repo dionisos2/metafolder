@@ -5,6 +5,8 @@ pub const LAYOUT_CHANGED: &str = "layout-changed";
 pub const WORKSPACE_VAR_CHANGED: &str = "workspace-var-changed";
 pub const STATUS_MESSAGE: &str = "status-message";
 pub const MESSAGE_APPENDED: &str = "message-appended";
+/// A line of the shell log (doc "shell panel"), `entry` null when cleared.
+pub const SHELL_APPENDED: &str = "shell-appended";
 pub const KEYBINDINGS_CHANGED: &str = "keybindings-changed";
 pub const STYLE_CHANGED: &str = "style-changed";
 pub const DAEMON_HEALTH_CHANGED: &str = "daemon-health-changed";

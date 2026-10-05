@@ -24,6 +24,9 @@ pub struct Workspace {
     pub vars: HashMap<String, Value>,
     /// Append-only log shown by the `message` panel type.
     pub messages: Vec<MessageEntry>,
+    /// What the shell lines run in this workspace printed, shown by the
+    /// `shell` panel type (doc "shell panel").
+    pub shell: Vec<ShellEntry>,
     /// Last panel type displayed per slot, restored on re-assignment.
     pub last_panel: HashMap<SlotId, String>,
     /// Panel count remembered while this workspace owned the window: `true`
@@ -49,6 +52,30 @@ pub struct MessageEntry {
     /// Milliseconds since the Unix epoch (formatted by the frontend).
     pub ts_ms: u64,
     pub text: String,
+}
+
+/// One line of the shell log (doc "shell panel").
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct ShellEntry {
+    /// Milliseconds since the Unix epoch (formatted by the frontend).
+    pub ts_ms: u64,
+    /// The run it belongs to (`script-N`, the run's task id): two runs at once
+    /// interleave their lines, and the panel groups them back by run.
+    pub run: String,
+    pub kind: ShellLine,
+    pub text: String,
+}
+
+/// What a shell-log line is.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ShellLine {
+    /// The command line run, first line of its run.
+    Command,
+    Stdout,
+    Stderr,
+    /// How the run ended, when worth saying: `exit N`, `stopped`, `killed`.
+    Status,
 }
 
 /// Public descriptor used by `workspaces-changed` and the GUI HTTP API.

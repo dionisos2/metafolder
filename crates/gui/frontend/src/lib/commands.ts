@@ -748,7 +748,7 @@ async function listIgnore(): Promise<void> {
         : `Patterns governing ${here} (inherited from ${source}):`,
   );
   for (const pattern of effective.patterns) lines.push(`  ${pattern}`);
-  if (needsMessagePanel(store.layout, ws)) {
+  if (needsPanel(store.layout, ws, 'message')) {
     await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'message' });
   }
   await invoke('append_message', { wsId: ws, text: lines.join('\n') });
@@ -887,11 +887,11 @@ registerArgs('file:open-with', [
   },
 ]);
 
-/** Runs an installed script, surfacing its output in the message panel exactly
+/** Runs an installed script, surfacing its output in the shell panel exactly
  *  as a `!` command does. */
 async function runScript(path: string, ws: string | null): Promise<void> {
-  if (needsMessagePanel(store.layout, ws)) {
-    await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'message' });
+  if (needsPanel(store.layout, ws, 'shell')) {
+    await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'shell' });
   }
   await runShell(`bash ${shellQuote(path)}`);
 }
@@ -1185,14 +1185,14 @@ export async function runShell(commandLine: string): Promise<void> {
   }
 }
 
-/** Whether running a `!` command should switch the focused slot to the
- *  `message` panel: true unless some visible slot of `ws` already shows it
- *  (which also avoids the "two visible slots, same type" rejection). */
-export function needsMessagePanel(layout: LayoutView, ws: string | null): boolean {
+/** Whether surfacing output should switch the focused slot to `panelType`:
+ *  true unless some visible slot of `ws` already shows it (which also avoids
+ *  the "two visible slots, same type" rejection). */
+export function needsPanel(layout: LayoutView, ws: string | null, panelType: string): boolean {
   if (!ws) return false;
-  const showsMessage = (slot: LayoutView['left']) =>
-    slot.visible && slot.workspace_id === ws && slot.panel_type === 'message';
-  return !(showsMessage(layout.left) || showsMessage(layout.right));
+  const shows = (slot: LayoutView['left']) =>
+    slot.visible && slot.workspace_id === ws && slot.panel_type === panelType;
+  return !(shows(layout.left) || shows(layout.right));
 }
 
 /** Data sources for `%`-placeholder expansion, reading the selection from the
@@ -1344,10 +1344,10 @@ export async function dispatch(invocation: string): Promise<DispatchResult> {
       await status(expanded.error);
       return { ok: false, error: expanded.error };
     }
-    // Surface the output: switch the focused slot to the message panel unless
+    // Surface the output: switch the focused slot to the shell panel unless
     // one is already visible in this workspace.
-    if (needsMessagePanel(store.layout, ws)) {
-      await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'message' });
+    if (needsPanel(store.layout, ws, 'shell')) {
+      await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'shell' });
     }
     await runShell(expanded.value);
     return { ok: true };
@@ -1539,6 +1539,9 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
     }
     case 'message:clear':
       if (ws) await invoke('clear_messages', { wsId: ws });
+      return true;
+    case 'shell:clear':
+      if (ws) await invoke('clear_shell', { wsId: ws });
       return true;
     case 'config:reload': {
       const report = await invoke<string>('config_reload', { what: args[0] });

@@ -102,6 +102,8 @@ export interface PanelApiInstance {
   pushVarChanged(key: string, value: unknown): void;
   /** A message-log entry was appended (null = the log was cleared). */
   pushMessageAppended(entry: unknown): void;
+  /** A shell-log entry was appended (null = the log was cleared). */
+  pushShellAppended(entry: unknown): void;
   /** The panel's slot visibility changed. */
   pushVisibility(visible: boolean, slot: string | null): void;
 }
@@ -180,6 +182,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
   // Per-instance state (was module-global in the shim).
   const varListeners = new Map<string, Set<(value: unknown, key?: string) => void>>();
   const messageListeners = new Set<(entry: unknown) => void>();
+  const shellListeners = new Set<(entry: Metafolder.ShellEntry | null) => void>();
   const visibilityListeners = new Set<(visible: boolean, slot: string | null) => void>();
   const resolvers = new Map<string, ReturnType<typeof createPathResolver>>();
   const repoInfos = new Map<string, Record<string, unknown>>();
@@ -690,6 +693,14 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         messageListeners.add(listener);
       },
     },
+
+    /** What the shell lines run in this workspace printed (doc "shell panel"). */
+    shell: {
+      list: () => invoke('get_shell_log', { wsId: ctx.wsId }) as Promise<Metafolder.ShellEntry[]>,
+      onAppend(listener: (entry: Metafolder.ShellEntry | null) => void) {
+        shellListeners.add(listener);
+      },
+    },
     contextMenu,
   };
 
@@ -701,6 +712,9 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     },
     pushMessageAppended(entry) {
       for (const l of messageListeners) l(entry);
+    },
+    pushShellAppended(entry) {
+      for (const l of shellListeners) l(entry as Metafolder.ShellEntry | null);
     },
     pushVisibility(visible, slot) {
       ctx.visibilityGate.set(visible);

@@ -1,7 +1,9 @@
 //! `!` shell commands from the command input (doc "Bash mode"):
-//! run as a subprocess; stdout/stderr lines go to the workspace message
-//! log (message panel type) and to the terminal that launched the GUI.
+//! run as a subprocess; stdout/stderr lines go to the workspace shell log
+//! (shell panel type) and to the terminal that launched the GUI. The message
+//! log only records that the line ran, as `$ command`.
 
+use crate::state::workspace::ShellLine;
 use crate::state::GuiState;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -15,13 +17,15 @@ pub async fn run_to_completion(
     ws_id: String,
     command_line: String,
 ) -> Result<(), String> {
-    // Fail fast on unknown workspaces (and log the invocation).
-    gui.append_message(&ws_id, &format!("$ {command_line}"))?;
-
     // A per-run id the subprocess can address its own progress with
     // (`mf gui progress` reads it from METAFOLDER_GUI_TASK); session-unique.
+    // It also groups the run's lines in the shell log.
     static RUN_SEQ: AtomicU64 = AtomicU64::new(1);
     let task_id = format!("script-{}", RUN_SEQ.fetch_add(1, Ordering::Relaxed));
+
+    // Fail fast on unknown workspaces (and log the invocation).
+    gui.append_message(&ws_id, &format!("$ {command_line}"))?;
+    gui.append_shell(&ws_id, &task_id, ShellLine::Command, &command_line)?;
 
     let mut command = Command::new("sh");
     command
@@ -47,8 +51,9 @@ pub async fn run_to_completion(
     let stdout = child.stdout.take().expect("stdout piped");
     let stderr = child.stderr.take().expect("stderr piped");
 
-    let out_task = tokio::spawn(forward(gui.clone(), ws_id.clone(), stdout, false));
-    let err_task = tokio::spawn(forward(gui.clone(), ws_id.clone(), stderr, true));
+    let out_task =
+        tokio::spawn(forward(gui.clone(), ws_id.clone(), task_id.clone(), stdout, false));
+    let err_task = tokio::spawn(forward(gui.clone(), ws_id.clone(), task_id.clone(), stderr, true));
 
     let status = child.wait().await.map_err(|e| format!("shell command failed: {e}"))?;
     // Reaped: the pid is now free to be recycled, so it must stop naming this
@@ -60,7 +65,7 @@ pub async fn run_to_completion(
     if let Some(how) = gui.script_stopped(&task_id) {
         // Asked for by the user: neither a failure nor an exit code worth
         // naming (a signal has none), and nothing in red.
-        gui.append_message(&ws_id, &format!("[{how}]"))?;
+        gui.append_shell(&ws_id, &task_id, ShellLine::Status, how)?;
         let _ = gui.post_status(
             &ws_id,
             &format!("{} {how}", script_label(&command_line)),
@@ -69,8 +74,8 @@ pub async fn run_to_completion(
         );
     } else if !status.success() {
         let code = status.code().map_or("?".to_string(), |c| c.to_string());
-        gui.append_message(&ws_id, &format!("[exit {code}]"))?;
-        // The message log alone is not enough: a GUI script writes it into a
+        gui.append_shell(&ws_id, &task_id, ShellLine::Status, &format!("exit {code}"))?;
+        // The shell log alone is not enough: a GUI script writes it into a
         // scratch workspace its own teardown removes, so a run killed by
         // `set -e` would vanish without a trace. Say so on the launching
         // workspace's status bar too (doc "Script sessions").
@@ -114,22 +119,25 @@ pub fn script_label(command_line: &str) -> String {
     trimmed.to_string()
 }
 
-/// Streams one output pipe into the message log, echoing to the terminal
+/// Streams one output pipe into the shell log, echoing to the terminal
 /// that launched the GUI.
 async fn forward(
     gui: Arc<GuiState>,
     ws_id: String,
+    run: String,
     reader: impl tokio::io::AsyncRead + Unpin,
     to_stderr: bool,
 ) {
     let mut lines = BufReader::new(reader).lines();
     while let Ok(Some(line)) = lines.next_line().await {
-        if to_stderr {
+        let kind = if to_stderr {
             eprintln!("{line}");
+            ShellLine::Stderr
         } else {
             println!("{line}");
-        }
-        let _ = gui.append_message(&ws_id, &line);
+            ShellLine::Stdout
+        };
+        let _ = gui.append_shell(&ws_id, &run, kind, &line);
     }
 }
 
@@ -212,6 +220,7 @@ mod tests {
     use super::*;
     use crate::notifier::RecordingNotifier;
     use crate::state::layout::SlotId;
+    use crate::state::workspace::ShellLine;
     use serde_json::json;
     use std::time::Duration;
 
@@ -220,24 +229,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_output_lines_reach_the_message_log() {
+    async fn test_output_lines_reach_the_shell_log() {
         let gui = gui();
         run_to_completion(gui.clone(), "ws-1".into(), "echo hello; echo oops 1>&2".into())
             .await
             .unwrap();
 
-        let log = gui.messages("ws-1").unwrap();
-        let texts: Vec<&str> = log.iter().map(|m| m.text.as_str()).collect();
-        assert!(texts.iter().any(|t| t.contains("hello")), "stdout missing: {texts:?}");
-        assert!(texts.iter().any(|t| t.contains("oops")), "stderr missing: {texts:?}");
+        let log = gui.shell_log("ws-1").unwrap();
+        let lines: Vec<(ShellLine, &str)> = log.iter().map(|e| (e.kind, e.text.as_str())).collect();
+        assert_eq!(lines[0], (ShellLine::Command, "echo hello; echo oops 1>&2"));
+        assert!(lines.contains(&(ShellLine::Stdout, "hello")), "stdout missing: {lines:?}");
+        assert!(lines.contains(&(ShellLine::Stderr, "oops")), "stderr missing: {lines:?}");
+        // Every line of one run carries the same run id, so the panel can
+        // group a run's lines even when two runs interleave.
+        assert!(log.iter().all(|e| e.run == log[0].run && e.run.starts_with("script-")));
+    }
+
+    #[tokio::test]
+    async fn test_the_message_log_keeps_only_the_command_line() {
+        let gui = gui();
+        run_to_completion(gui.clone(), "ws-1".into(), "echo hello".into()).await.unwrap();
+        let texts: Vec<String> =
+            gui.messages("ws-1").unwrap().into_iter().map(|m| m.text).collect();
+        assert_eq!(texts, ["$ echo hello"]);
     }
 
     #[tokio::test]
     async fn test_nonzero_exit_is_logged() {
         let gui = gui();
         run_to_completion(gui.clone(), "ws-1".into(), "exit 3".into()).await.unwrap();
-        let log = gui.messages("ws-1").unwrap();
-        assert!(log.iter().any(|m| m.text.contains("exit") && m.text.contains('3')));
+        let log = gui.shell_log("ws-1").unwrap();
+        let last = log.last().unwrap();
+        assert_eq!((last.kind, last.text.as_str()), (ShellLine::Status, "exit 3"));
     }
 
     #[tokio::test]
@@ -296,9 +319,12 @@ mod tests {
         );
         let last = statuses.last().expect("the stop is reported");
         assert_eq!(last["text"], json!("sleep 30 & sleep 30 stopped"));
-        let log = gui.messages("ws-1").unwrap();
-        assert!(log.iter().any(|m| m.text == "[stopped]"), "the log says so too");
-        assert!(log.iter().all(|m| !m.text.starts_with("[exit")), "and names no exit code");
+        let log = gui.shell_log("ws-1").unwrap();
+        assert!(
+            log.iter().any(|e| e.kind == ShellLine::Status && e.text == "stopped"),
+            "the shell log says so too"
+        );
+        assert!(log.iter().all(|e| !e.text.starts_with("exit")), "and names no exit code");
         // The run is gone from the registry, so a second stop finds nothing.
         assert!(!stop_script(&gui, &task_id, Stop::Terminate));
     }

@@ -317,6 +317,13 @@
           }
         }
       }),
+      listen<{ workspace_id: string; entry: unknown }>('shell-appended', (event) => {
+        for (const instance of instances.values()) {
+          if (instance.wsId === event.payload.workspace_id) {
+            instance.apiInst.pushShellAppended(event.payload.entry);
+          }
+        }
+      }),
     ];
 
     // The focused workspace's instance answers for a panel command's declared

@@ -496,6 +496,24 @@ describe('panel api — misc surface', () => {
     expect(listener).toHaveBeenCalledWith({ text: 'x' });
   });
 
+  test('shell.list reads the shell log, shell.onAppend fires on pushShellAppended', async () => {
+    const { api, instance, invoke } = setup();
+    invoke.mockResolvedValueOnce([{ run: 'script-1', kind: 'stdout', text: 'hi', ts_ms: 1 }]);
+    expect(await api.shell.list()).toEqual([
+      { run: 'script-1', kind: 'stdout', text: 'hi', ts_ms: 1 },
+    ]);
+    expect(invoke).toHaveBeenCalledWith('get_shell_log', { wsId: 'ws-1' });
+    const listener = vi.fn();
+    api.shell.onAppend(listener);
+    instance.pushShellAppended({ text: 'x' });
+    expect(listener).toHaveBeenCalledWith({ text: 'x' });
+    // The message log's listeners do not hear it.
+    const messages = vi.fn();
+    api.messages.onAppend(messages);
+    instance.pushShellAppended({ text: 'y' });
+    expect(messages).not.toHaveBeenCalled();
+  });
+
   test('bench.record forwards to bench_record', () => {
     const { api, invoke } = setup();
     api.bench.record('mf:list:render', 2.5);

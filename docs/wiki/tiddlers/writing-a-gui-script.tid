@@ -83,7 +83,7 @@ queries name it — the empty string, where `mf path --relative` prints `/`
 
 !! A failure must be seen
 
-A GUI script that dies shows nothing by itself: its output goes to a message log
+A GUI script that dies shows nothing by itself: its output goes to a shell log
 nobody is looking at. The library therefore installs an `ERR` trap naming the command
 and the line, on the status bar of the launching workspace. Three habits keep it
 honest:

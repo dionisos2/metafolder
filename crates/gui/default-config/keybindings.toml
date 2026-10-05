@@ -99,6 +99,7 @@
 "t e" = { command = "panel:set type log-detail" }
 "t r" = { command = "panel:set type repos" }
 "t g" = { command = "panel:set type message" }
+"t s" = { command = "panel:set type shell" }
 "t w" = { command = "panel:set type workspace-info" }
 "t t" = { command = "panel:set type treeref" }
 "t b" = { command = "panel:set type trash" }

@@ -7,7 +7,7 @@ use crate::config::ConfigDir;
 use crate::daemon_proxy::{DaemonProxy, ProxyResponse};
 use crate::keybindings::{CompiledBinding, KeybindingSet};
 use crate::state::layout::{LayoutView, SlotId};
-use crate::state::workspace::{MessageEntry, WorkspaceInfo};
+use crate::state::workspace::{MessageEntry, ShellEntry, WorkspaceInfo};
 use crate::state::GuiState;
 use metafolder_core::sync::MutexExt;
 use serde::Serialize;
@@ -423,6 +423,16 @@ pub fn get_messages(app: AppHandle, ws_id: String) -> Result<Vec<MessageEntry>, 
 #[tauri::command]
 pub fn clear_messages(app: AppHandle, ws_id: String) -> Result<(), String> {
     app.gui.clear_messages(&ws_id)
+}
+
+#[tauri::command]
+pub fn get_shell_log(app: AppHandle, ws_id: String) -> Result<Vec<ShellEntry>, String> {
+    app.gui.shell_log(&ws_id)
+}
+
+#[tauri::command]
+pub fn clear_shell(app: AppHandle, ws_id: String) -> Result<(), String> {
+    app.gui.clear_shell(&ws_id)
 }
 
 /// Appends a line to the workspace message log (used by the command

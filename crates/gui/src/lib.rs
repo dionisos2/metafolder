@@ -104,6 +104,7 @@ fn register_builtins(registry: &CommandRegistry) {
         ("panel:swap", "Exchange the two slots' panel types", true),
         ("panel:reveal", "Show a panel type for this workspace in the other slot", true),
         ("message:clear", "Clear the workspace message log", true),
+        ("shell:clear", "Clear the workspace shell log", true),
         ("status:clear", "Clear the status bar message", false),
         ("config:open", "Open the settings view", true),
         (
@@ -583,6 +584,8 @@ pub fn run(options: Options) {
             commands::get_messages,
             commands::clear_messages,
             commands::append_message,
+            commands::get_shell_log,
+            commands::clear_shell,
             commands::open_devtools,
             commands::set_fullscreen,
             commands::quit,

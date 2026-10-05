@@ -90,6 +90,7 @@ function stubApi(panelType: string, defaults: Record<string, unknown> = {}) {
     history: { read: async () => [], append: async () => {} },
     statusBar: { message: async () => {}, error: async () => {} },
     messages: { list: async () => [], append: async () => {}, onAppend: noop },
+    shell: { list: async () => [], onAppend: noop },
     contextMenu: Object.assign(noop, { addDefaultItems: noop }),
   };
 }

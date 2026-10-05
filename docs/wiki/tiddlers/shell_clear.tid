@@ -1,0 +1,6 @@
+title: shell:clear
+tags: [[GUI command]] GUI
+kind: reference
+summary: Clear the workspace shell log
+
+Empties the focused workspace's shell log, the output the [[shell panel]] shows. Other workspaces keep theirs, and the message log is left alone.
