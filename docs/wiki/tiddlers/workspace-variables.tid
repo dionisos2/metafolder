@@ -29,9 +29,10 @@ A panel keeps its own variables under its name — `metarecord-list:query`,
 `file-manager:dir`, `treeref:scope`. Some of them are its ''state'': the panel shows
 what they hold, so another panel or a command shows something there by writing them,
 and a workspace holding the same variables shows the same thing — the list's query
-variables are ([[metarecord-list panel]]). `file-manager:reveal-path` is still a
-request, with a `nonce` so that the same request made twice acts twice and a request
-acts only once ([[Cross-panel selection]]).
+variables are ([[metarecord-list panel]]), and the file manager's location
+([[file-manager panel]]). There are no one-shot requests among them: what a command
+writes is what the panel shows, so writing it twice is harmless
+([[Cross-panel selection]]).
 
 !! The selection is a pair, published metarecord first
 

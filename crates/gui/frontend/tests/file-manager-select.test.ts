@@ -56,7 +56,7 @@ function stub(vars: Record<string, unknown>, existing: Set<string>) {
   const handlers = new Map<string, Handler>();
   const store = new Map<string, unknown>([
     ['active_repo', 'r'],
-    ['file-manager:start-dir', '/repo/music'],
+    ['file-manager:dir', '/repo/music'],
     ...Object.entries(vars),
   ]);
   const listeners = new Map<string, Set<Listener>>();

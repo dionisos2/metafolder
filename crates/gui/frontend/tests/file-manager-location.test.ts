@@ -1,8 +1,10 @@
-// file-manager "reveal a folder" flow (doc "Cross-panel selection"): the
-// panel honours a `file-manager:reveal-path` workspace variable — set by the
-// `file-manager:reveal` command from another panel — navigating to the
-// metarecord's folder (its parent for a file, highlighting the file), both when
-// it mounts and while already mounted, guarded by the request nonce.
+// file-manager follows its location variables (doc "Cross-panel selection"):
+// `file-manager:dir` (the folder shown) and `file-manager:cursor` (the name of
+// the entry highlighted in it) ARE its location. A command shows a folder by
+// writing them — `file-manager:reveal` does, for the selection's folder — and
+// the panel goes there, at mount and while mounted; what it compares a write
+// with is the location it last showed or wrote, so its own writes coming back
+// change nothing.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -110,79 +112,103 @@ function cursorName(root: ShadowRoot): string | null {
   return root.querySelector('li.cursor .name')?.textContent ?? null;
 }
 
-describe('file-manager reveal-folder', () => {
+/** Lets a coalesced variable write and the listing it starts land. */
+async function settle() {
+  for (let i = 0; i < 5; i += 1) await new Promise((r) => setTimeout(r, 0));
+}
+
+/** Writes variables as a command does, each pushed to the panel. */
+async function push(s: ReturnType<typeof stub>, vars: Record<string, unknown>) {
+  for (const [key, value] of Object.entries(vars)) {
+    await s.api.workspace.set(key, value);
+    s.subscriptions.get(key)?.(value);
+  }
+  await settle();
+}
+
+describe('file-manager location variables', () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = () => {}; // jsdom has no scrollIntoView
   });
 
-  test('a file request opens its containing folder and highlights the file', async () => {
-    const s = stub('r', { 'file-manager:reveal-path': { path: '/repo/sub/song.mp3', nonce: 1 } });
+  test('a location present at mount is opened, its entry highlighted', async () => {
+    const s = stub('r', { 'file-manager:dir': '/repo/sub', 'file-manager:cursor': 'song.mp3' });
     await mount(s);
     expect(s.fs.readDir).toHaveBeenCalledWith('/repo/sub');
+    expect(s.fs.readDir).not.toHaveBeenCalledWith('/repo');
     expect(s.setVar).toHaveBeenCalledWith('selected_paths', ['/repo/sub/song.mp3']);
     expect(cursorName(s.root)).toBe('song.mp3');
   });
 
-  test('a directory request opens the folder itself, nothing highlighted', async () => {
-    const s = stub('r', { 'file-manager:reveal-path': { path: '/repo/sub', nonce: 1 } });
+  test('a folder alone is opened with nothing highlighted', async () => {
+    const s = stub('r', { 'file-manager:dir': '/repo/sub' });
     await mount(s);
     expect(s.fs.readDir).toHaveBeenCalledWith('/repo/sub');
-    // The current directory is the folder itself; no file is highlighted.
     expect(s.setVar).not.toHaveBeenCalledWith('selected_paths', ['/repo/sub/song.mp3']);
   });
 
-  test('no reveal request falls back to the repo root', async () => {
+  test('no location falls back to the repo root', async () => {
     const s = stub('r', {});
     await mount(s);
     expect(s.fs.readDir).toHaveBeenCalledWith('/repo');
     expect(s.fs.readDir).not.toHaveBeenCalledWith('/repo/sub');
   });
 
-  test('a request while already mounted navigates on the onChange', async () => {
-    const s = stub('r', {}); // no request at mount
+  test('a location written while mounted is gone to', async () => {
+    const s = stub('r', {});
     await mount(s);
     s.fs.readDir.mockClear();
-    // The command sets the variable, then the panel's onChange fires.
-    await s.api.workspace.set('file-manager:reveal-path', {
-      path: '/repo/sub/song.mp3',
-      nonce: 7,
-    });
-    s.subscriptions.get('file-manager:reveal-path')!({ path: '/repo/sub/song.mp3', nonce: 7 });
-    await new Promise((r) => setTimeout(r, 0));
+    await push(s, { 'file-manager:dir': '/repo/sub', 'file-manager:cursor': 'song.mp3' });
     expect(s.fs.readDir).toHaveBeenCalledWith('/repo/sub');
     expect(cursorName(s.root)).toBe('song.mp3');
   });
 
-  test('the same nonce is acted on only once', async () => {
-    const s = stub('r', { 'file-manager:reveal-path': { path: '/repo/sub/song.mp3', nonce: 1 } });
-    await mount(s); // start() handles nonce 1
+  test('the location it already shows is not listed again', async () => {
+    const s = stub('r', { 'file-manager:dir': '/repo/sub', 'file-manager:cursor': 'song.mp3' });
+    await mount(s);
     s.fs.readDir.mockClear();
-    // A second delivery of the identical request (same nonce) does nothing.
-    s.subscriptions.get('file-manager:reveal-path')!({ path: '/repo/sub/song.mp3', nonce: 1 });
-    await new Promise((r) => setTimeout(r, 0));
+    await push(s, { 'file-manager:dir': '/repo/sub', 'file-manager:cursor': 'song.mp3' });
     expect(s.fs.readDir).not.toHaveBeenCalled();
   });
 
-  test('a target outside the repo root drops the constraint to navigate there', async () => {
-    const s = stub('r', { 'file-manager:reveal-path': { path: '/elsewhere/far.txt', nonce: 1 } });
+  test('navigating writes the location, and its own writes coming back change nothing', async () => {
+    const s = stub('r', {});
+    await mount(s);
+    await s.handlers.get('file-manager:find')!('sub');
+    // The cursor is on `sub`: that is the location now.
+    expect(s.setVar).toHaveBeenCalledWith('file-manager:cursor', 'sub');
+    s.fs.readDir.mockClear();
+    s.setVar.mockClear();
+    // The shell pushes every write back to the panel that made it.
+    s.subscriptions.get('file-manager:dir')?.('/repo');
+    s.subscriptions.get('file-manager:cursor')?.('sub');
+    await settle();
+    expect(s.fs.readDir).not.toHaveBeenCalled();
+    expect(cursorName(s.root)).toBe('sub');
+  });
+
+  test('opening a folder resets the cursor variable', async () => {
+    const s = stub('r', { 'file-manager:dir': '/repo', 'file-manager:cursor': 'top.txt' });
+    await mount(s);
+    s.setVar.mockClear();
+    await push(s, { 'file-manager:dir': '/repo/sub', 'file-manager:cursor': null });
+    expect(s.fs.readDir).toHaveBeenCalledWith('/repo/sub');
+    expect(cursorName(s.root)).toBe(null);
+  });
+
+  test('a location outside the repo root drops the constraint to go there', async () => {
+    const s = stub('r', { 'file-manager:dir': '/elsewhere', 'file-manager:cursor': 'far.txt' });
     await mount(s);
     expect(s.fs.readDir).toHaveBeenCalledWith('/elsewhere');
     expect(s.root.getElementById('constrain')).toHaveProperty('checked', false);
     expect(cursorName(s.root)).toBe('far.txt');
   });
-
-  test('a malformed request is ignored (falls back to the root)', async () => {
-    const s = stub('r', { 'file-manager:reveal-path': { nonce: 1 } }); // no path
-    await mount(s);
-    expect(s.fs.readDir).toHaveBeenCalledWith('/repo');
-    expect(s.fs.readDir).not.toHaveBeenCalledWith('/repo/sub');
-  });
 });
 
 // ── The command side, as the shipped `commands.js` defines it ───────────────
-// `file-manager:reveal` publishes the selection's first path as the request
-// and switches the focused slot; everything above is what honours it. What is
-// pinned here is the request shape ({path, nonce}) and the switch.
+// `file-manager:reveal` resolves the selection's first path to a folder and the
+// entry to highlight in it — statting it to tell a folder from a file — writes
+// them as the panel's location, and switches the focused slot.
 
 describe('the file-manager:reveal command (shipped commands.js)', () => {
   const calls = {
@@ -190,7 +216,7 @@ describe('the file-manager:reveal command (shipped commands.js)', () => {
     invoked: [] as string[],
     status: [] as string[],
   };
-  const state = { paths: null as unknown };
+  const state = { paths: null as unknown, dirs: ['/repo/sub'] as string[] };
 
   function fakeMf() {
     return {
@@ -198,6 +224,12 @@ describe('the file-manager:reveal command (shipped commands.js)', () => {
         get: async (key: string) => (key === 'selected_paths' ? state.paths : null),
         set: async (key: string, value: unknown) => {
           calls.sets.push({ key, value });
+        },
+      },
+      fs: {
+        stat: async (path: string) => {
+          if (path.includes('gone')) throw new Error('no such file');
+          return { is_dir: state.dirs.includes(path) };
         },
       },
       invoke: (invocation: string) => {
@@ -230,16 +262,36 @@ describe('the file-manager:reveal command (shipped commands.js)', () => {
     expect(calls.invoked).toEqual([]);
   });
 
-  test('the selection is published as the request, then the panel switches', async () => {
+  test('a file: its folder, with the file highlighted, then the panel switches', async () => {
     await shipped['file-manager:reveal'].run(fakeMf() as never);
 
     expect(calls.sets).toEqual([
-      {
-        key: 'file-manager:reveal-path',
-        value: { path: '/repo/sub/song.mp3', nonce: expect.any(Number) },
-      },
+      { key: 'file-manager:dir', value: '/repo/sub' },
+      { key: 'file-manager:cursor', value: 'song.mp3' },
     ]);
     expect(calls.invoked).toEqual(['panel:set type file-manager']);
+  });
+
+  test('a folder: the folder itself, nothing highlighted', async () => {
+    state.paths = ['/repo/sub'];
+
+    await shipped['file-manager:reveal'].run(fakeMf() as never);
+
+    expect(calls.sets).toEqual([
+      { key: 'file-manager:dir', value: '/repo/sub' },
+      { key: 'file-manager:cursor', value: null },
+    ]);
+  });
+
+  test('a path that is gone is taken for a file: its folder opens', async () => {
+    state.paths = ['/repo/gone/old.txt'];
+
+    await shipped['file-manager:reveal'].run(fakeMf() as never);
+
+    expect(calls.sets).toEqual([
+      { key: 'file-manager:dir', value: '/repo/gone' },
+      { key: 'file-manager:cursor', value: 'old.txt' },
+    ]);
   });
 
   test('the first *string* entry is taken (the selection carries metadata too)', async () => {
@@ -247,6 +299,6 @@ describe('the file-manager:reveal command (shipped commands.js)', () => {
 
     await shipped['file-manager:reveal'].run(fakeMf() as never);
 
-    expect((calls.sets[0].value as { path: string }).path).toBe('/repo/top.txt');
+    expect(calls.sets[0]).toEqual({ key: 'file-manager:dir', value: '/repo' });
   });
 });

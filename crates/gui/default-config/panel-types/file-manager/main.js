@@ -38,7 +38,6 @@ import {
   getClipboard,
   setClipboard,
   hasClipboard,
-  revealFolder,
   metarecordMenuItems,
 } from '/__file-actions.js';
 
@@ -118,10 +117,6 @@ export async function mount(root, metafolder) {
   /** The current directory's tracking scope — patterns are matched relative to
    *  it, so an ad-hoc pattern must be written in that frame. @type {string|null} */
   let watchScope = null;
-  /** The nonce of the last handled `file-manager:reveal-path` request, so the
-   *  same request is never acted on twice (start + onChange).
-   *  @type {unknown} */
-  let revealNonce = null;
 
   const entriesList = byId(root, 'entries');
   // The checked multi-selection (workspace `selected_metarecords`, doc
@@ -314,9 +309,13 @@ export async function mount(root, metafolder) {
     cursorIndex = -1;
     rendered = Math.min(PAGE, listing.length);
     render(); // rows appear at once; tracked badges fill in just below
-    // Published so the shell's `ignore:*` commands know which directory the
-    // user is looking at (doc "Setting ignore patterns").
+    // The location is the panel's state (doc "Cross-panel selection"): a new
+    // folder, nothing highlighted in it yet. The shell's `ignore:*` commands
+    // read it too, to know which directory the user is looking at (doc
+    // "Setting ignore patterns").
+    appliedLocation = { dir, cursor: null };
     await workspace.set('file-manager:dir', dir);
+    await workspace.set('file-manager:cursor', null);
     const dirUuid = await enrichSelfParent();
     await enrichChildren(dirUuid);
     await refreshEligibility();
@@ -521,6 +520,9 @@ export async function mount(root, metafolder) {
     }
     if (!listing[cursorIndex]) return;
     root.querySelector('li.cursor')?.scrollIntoView({ block: 'nearest' });
+    const cursor = listing[cursorIndex].name;
+    appliedLocation = { ...appliedLocation, cursor };
+    await workspace.set('file-manager:cursor', cursor);
     await propagateSelection();
   }
 
@@ -814,14 +816,58 @@ export async function mount(root, metafolder) {
     gotoRootButton.textContent = repoRoot === null ? 'root' : 'repo root';
   }
 
-  // ── Reveal a path (doc "Cross-panel selection") ───────────────────────
-  // Another panel asks the file manager to show a metarecord's folder: the
-  // folder itself for a directory, or the containing folder (with the file
-  // highlighted) for a file. The request travels through the workspace variable
-  // `file-manager:reveal-path` = { path, nonce }, honoured both when the panel
-  // mounts (start) and while it is already mounted (onChange). The `nonce` guard
-  // makes an identical repeated request re-trigger, yet the same request act
-  // only once across the two paths.
+  // ── The location is the state (doc "Cross-panel selection") ─────────────
+  // `file-manager:dir` (the folder shown) and `file-manager:cursor` (the name of
+  // the entry highlighted in it) are not a record of where the panel is: they
+  // ARE it. A command shows a folder by writing them — `file-manager:reveal`
+  // does — and a forked workspace opens where this one is. A write is compared
+  // with the location this panel last showed or wrote, so its own writes coming
+  // back change nothing; the two of a command's writes are gathered.
+
+  /** @type {{dir: string|null, cursor: string|null}} */
+  let appliedLocation = { dir: null, cursor: null };
+
+  /** @returns {Promise<{dir: string|null, cursor: string|null}>} */
+  async function variableLocation() {
+    const [dir, cursor] = await Promise.all([
+      workspace.get('file-manager:dir'),
+      workspace.get('file-manager:cursor'),
+    ]);
+    return {
+      dir: typeof dir === 'string' && dir ? dir : null,
+      cursor: typeof cursor === 'string' && cursor ? cursor : null,
+    };
+  }
+
+  /** Goes to `dir` and highlights `cursor` in it. A folder outside the
+   *  constrained repository root is an explicit request: the constraint is
+   *  dropped rather than the request refused.
+   *  @param {string} dir @param {string|null} cursor */
+  async function showLocation(dir, cursor) {
+    if (constrainToRoot && repoRoot !== null && !insideRoot(dir)) {
+      constrainToRoot = false;
+      constrainBox.checked = false;
+    }
+    if (dir !== currentDir) await open(dir);
+    if (cursor) await selectByName(cursor);
+  }
+
+  async function followLocationVariables() {
+    const next = await variableLocation();
+    if (next.dir === null) return;
+    if (next.dir === appliedLocation.dir && next.cursor === appliedLocation.cursor) return;
+    await showLocation(next.dir, next.cursor);
+  }
+
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let followTimer;
+  function scheduleFollowLocation() {
+    clearTimeout(followTimer);
+    followTimer = setTimeout(
+      () => metafolder.whenVisible(() => void followLocationVariables()),
+      0,
+    );
+  }
 
   /** The current listing's real entries — the synthetic "." / ".." rows are
    *  not jump targets — as the rows `file-manager:find` searches. Directories
@@ -835,53 +881,9 @@ export async function mount(root, metafolder) {
 
   /** Highlights the entry named `name` in the current listing, if present.
    *  @param {string} name */
-  function selectByName(name) {
+  async function selectByName(name) {
     const index = listing.findIndex((item) => item.name === name);
-    if (index >= 0) void select(index);
-  }
-
-  /** Resolves a reveal request to the folder to open and the entry to
-   *  highlight, statting the path to tell a directory from a file (a path that
-   *  no longer exists is treated as a file, so its parent opens).
-   *  @param {string} path @returns {Promise<{dir: string, select: string|null}>} */
-  async function targetFor(path) {
-    let isDir = false;
-    try {
-      isDir = !!(/** @type {{is_dir?: boolean}} */ (await fs.stat(path))).is_dir;
-    } catch {
-      /* gone: fall through as a file, so revealFolder opens the parent */
-    }
-    return revealFolder(path, isDir);
-  }
-
-  /** Reads a fresh `file-manager:reveal-path` request (marking its nonce
-   *  handled) and resolves it, or null when there is none / already handled.
-   *  @returns {Promise<{dir: string, select: string|null}|null>} */
-  async function consumeReveal() {
-    const req = await workspace.get('file-manager:reveal-path');
-    if (!req || typeof req !== 'object') return null;
-    const { path, nonce } = /** @type {{path?: unknown, nonce?: unknown}} */ (req);
-    if (typeof path !== 'string' || !path || nonce === revealNonce) return null;
-    revealNonce = nonce;
-    return targetFor(path);
-  }
-
-  /** @param {{dir: string, select: string|null}} revealed */
-  async function applyReveal(revealed) {
-    if (constrainToRoot && repoRoot !== null && !insideRoot(revealed.dir)) {
-      // The target lies outside the constrained root (a metarecord whose file is
-      // outside the repo): honour the explicit request by dropping the
-      // constraint rather than refusing to navigate.
-      constrainToRoot = false;
-      constrainBox.checked = false;
-    }
-    await open(revealed.dir);
-    if (revealed.select) selectByName(revealed.select);
-  }
-
-  async function handleReveal() {
-    const revealed = await consumeReveal();
-    if (revealed) await applyReveal(revealed);
+    if (index >= 0) await select(index);
   }
 
   // ── Filesystem operations (doc "file-manager panel") ─────────────
@@ -1270,10 +1272,6 @@ export async function mount(root, metafolder) {
   async function start() {
     repo = /** @type {string|null} */ ((await workspace.get('active_repo')) ?? null);
     constrainBox.disabled = repo === null;
-    // A value picker (doc "Value picker") can seed the directory to open
-    // at — e.g. the repos panel's folder picker starts from the typed path.
-    const seedDir = await workspace.get('file-manager:start-dir');
-    const seedStart = typeof seedDir === 'string' && seedDir ? seedDir : null;
     // Detect a folder-path pick session so the context menu can offer to confirm
     // the choice (the picker workspace carries `pick_request`, set at start-up).
     const pickReq = await workspace.get('pick_request');
@@ -1301,21 +1299,21 @@ export async function mount(root, metafolder) {
       placeholderElement.textContent = 'No active repository — browsing the disk.';
     }
     renderRootButton();
-    // A pending reveal request (from another panel's "open folder" action) wins
-    // over the plain seed; otherwise fall back to the seed, the repo root, or /.
-    const revealed = await consumeReveal();
-    if (revealed) await applyReveal(revealed);
-    else await open(seedStart ?? repoRoot ?? '/');
+    // Where the variables say — a command, a value picker (the repos panel's
+    // folder picker starts from the typed path) or a forked workspace put it
+    // there — else the repo root, else /.
+    const location = await variableLocation();
+    if (location.dir !== null) await showLocation(location.dir, location.cursor);
+    else await open(repoRoot ?? '/');
   }
 
   // The first directory listing waits for the first actual display.
   const deferredStart = () => void start();
   workspace.onChange('active_repo', () => metafolder.whenVisible(deferredStart));
-  // A reveal request while the panel is already mounted: navigate to the folder
-  // when it next becomes visible (start() handles a request present at mount).
-  workspace.onChange('file-manager:reveal-path', () =>
-    metafolder.whenVisible(() => void handleReveal()),
-  );
+  // A location written while the panel is mounted: go there when it next is
+  // visible (start() handles the one present at mount).
+  workspace.onChange('file-manager:dir', scheduleFollowLocation);
+  workspace.onChange('file-manager:cursor', scheduleFollowLocation);
   // Re-query the current directory's tracked status and repaint — the response
   // to a change we did not learn through our own query round-trip (the change
   // feed, or a mutation nudge). Cheap: one `tree/children` read.
@@ -1364,5 +1362,6 @@ export async function mount(root, metafolder) {
     detachScroll();
     unsubscribeChanges();
     catchup.cancel();
+    clearTimeout(followTimer);
   };
 }

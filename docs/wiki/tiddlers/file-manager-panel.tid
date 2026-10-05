@@ -126,9 +126,15 @@ click then starts with ''Pick this folder'', which confirms without a key.
 !! Its variables
 
 |!Variable |!Holds |
-|`file-manager:dir` |the directory shown, written at each listing — what the `ignore:*` commands take as their target |
-|`file-manager:start-dir` |the directory to open first, instead of the repository root — how a folder picker is started where the form already points |
-|`file-manager:reveal-path` |`{path, nonce}` — a path another panel asks it to show, which `file-manager:reveal` writes ([[Cross-panel selection]]) |
+|`file-manager:dir` |the directory shown — what the `ignore:*` commands take as their target |
+|`file-manager:cursor` |the name of the entry highlighted in it, or `null` |
+
+The two are the panel's ''location'', not a record of it: written by a command, a
+script or another panel, the panel goes there — at once when it is on screen, when it
+next is otherwise; with no `file-manager:dir`, it opens at the repository root.
+`file-manager:reveal` writes them, and so does a folder picker, to start where the form
+already points. A write of where the panel already is, or of what it wrote itself,
+does nothing ([[Cross-panel selection]]).
 
 The view settings — the root constraint, hidden files, the activity or operations order — are
 not variables: they are the panel's, for the session.

@@ -68,7 +68,7 @@ describe('createPickRunner', () => {
 
     const promise = runner.request({
       panel: 'file-manager',
-      vars: { 'file-manager:start-dir': '/home/user' },
+      vars: { 'file-manager:dir': '/home/user' },
       result: 'path',
       repo: null,
       name: 'Pick a folder',

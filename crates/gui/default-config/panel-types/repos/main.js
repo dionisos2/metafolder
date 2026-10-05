@@ -108,7 +108,7 @@ export async function mount(root, metafolder) {
     const start = targetInput.value.trim() || (await homeDirCached());
     const path = await pickRunner.request({
       panel: 'file-manager',
-      vars: { 'file-manager:start-dir': start },
+      vars: { 'file-manager:dir': start },
       result: 'path',
       repo: null, // browse the raw disk: the folder is not a repo yet
       name: 'Pick a folder',
@@ -131,7 +131,7 @@ export async function mount(root, metafolder) {
   async function loadPicked() {
     const path = await pickRunner.request({
       panel: 'file-manager',
-      vars: { 'file-manager:start-dir': await homeDirCached() },
+      vars: { 'file-manager:dir': await homeDirCached() },
       result: 'path',
       repo: null, // browse the raw disk: the folder is not a loaded repo yet
       name: 'Pick a repository',

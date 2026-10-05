@@ -262,10 +262,10 @@ export default {
   // Reveal folder (doc "Cross-panel selection"): open the folder of the
   // current selection in the file manager, replacing the focused panel — the
   // folder itself when a directory is selected, or the folder containing the
-  // selected file. What crosses is the path, as the `file-manager:reveal-path`
-  // request ({path, nonce} — the nonce re-triggers an identical repeat); the
-  // file manager, which reads the disk, stats it to tell a directory from a
-  // file and highlights the file.
+  // selected file, highlighted. The path is statted to tell the two apart (a
+  // path that is gone counts as a file, so its folder opens), and the answer is
+  // written as the file manager's location — `file-manager:dir` and
+  // `file-manager:cursor`, which ARE where it is.
   'file-manager:reveal': {
     label: "Open the selected metarecord's folder in the file manager (focused panel)",
     run: async (/** @type {MetafolderApi} */ mf) => {
@@ -275,7 +275,14 @@ export default {
         await mf.statusBar.error('no file or folder is selected');
         return;
       }
-      await mf.workspace.set('file-manager:reveal-path', { path, nonce: Date.now() });
+      let isDir = false;
+      try {
+        isDir = !!(/** @type {{ is_dir?: boolean } | null} */ (await mf.fs.stat(path))?.is_dir);
+      } catch {
+        /* gone: taken for a file, so its folder opens */
+      }
+      await mf.workspace.set('file-manager:dir', isDir ? path : parentDir(path));
+      await mf.workspace.set('file-manager:cursor', isDir ? null : path.slice(path.lastIndexOf('/') + 1));
       await mf.invoke('panel:set type file-manager');
     },
   },
