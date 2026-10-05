@@ -113,7 +113,8 @@ function fakeDaemon() {
 function setup(options: { activeRepo?: string | null } = {}) {
   const daemon = fakeDaemon();
   const vars = new Map<string, unknown>([['active_repo', options.activeRepo ?? null]]);
-  const dispatch = vi.fn(async (_invocation: string) => {});
+  const dispatch = vi.fn(async (_invocation: string, _context?: unknown) => {});
+  const created: string[] = [];
   const handlers = new Map<string, (...a: string[]) => unknown>();
   /** Every value-picker session the panel opened (doc "Value picker"). */
   const picks: Record<string, unknown>[] = [];
@@ -148,6 +149,9 @@ function setup(options: { activeRepo?: string | null } = {}) {
       case 'pick_start':
         picks.push((args!.spec as Record<string, unknown>));
         return 'ws-2';
+      case 'workspace_create':
+        created.push(args!.activeRepo as string);
+        return 'ws-new';
       case 'post_status':
       case 'append_message':
       case 'suggest_keybinding':
@@ -187,6 +191,7 @@ function setup(options: { activeRepo?: string | null } = {}) {
     handlers,
     initRepo,
     picks,
+    created,
     pushVarChanged: instance.pushVarChanged,
   };
 }
@@ -283,7 +288,7 @@ describe('repos panel', () => {
   });
 
   test('opening a repository when one is already active opens a new tab', async () => {
-    const { api, daemon, dispatch, vars } = setup({ activeRepo: 'other-repo' });
+    const { api, daemon, dispatch, vars, created } = setup({ activeRepo: 'other-repo' });
     daemon.repos.push({ repo_uuid: 'r1', name: 'photos', root: '/tmp/photos' });
     const shadow = shadowForRepos();
     await mount(shadow, api);
@@ -292,7 +297,12 @@ describe('repos panel', () => {
     (shadow.querySelector('#repo-list .repo-head') as HTMLElement).click();
     await settle();
 
-    expect(dispatch).toHaveBeenCalledWith('workspace:new r1');
+    // An empty workspace on the repository, the list opened in it.
+    expect(created).toEqual(['r1']);
+    expect(dispatch).toHaveBeenCalledWith(
+      'panel:open here metarecord-list',
+      expect.objectContaining({ ws: 'ws-new' }),
+    );
     expect(vars.get('active_repo')).toBe('other-repo'); // unchanged
   });
 

@@ -21,20 +21,32 @@ const calls = {
   daemon: [] as string[],
   adopted: [] as string[],
   invoked: [] as string[],
+  /** The repositories workspaces were created on (`mf.workspace.create`). */
+  created: [] as string[],
+  /** Where each invocation ran: the workspace id, null for the command's own. */
+  ranIn: [] as (string | null)[],
 };
 
 const state = {
   activeRepo: null as unknown,
 };
 
-/** The `mf` a user command is handed (doc "User commands"), faked. */
-function fakeMf() {
+/** The `mf` a user command is handed (doc "User commands"), faked; `ws` is
+ *  the workspace it acts in (null: the command's own). */
+function fakeMf(ws: string | null = null): unknown {
   return {
+    context: { ws, slot: 'left' },
+    withContext: async (context: { ws: string }, body: (mf: unknown) => unknown) =>
+      body(fakeMf(context.ws)),
     workspace: {
       get: async (key: string) => (key === 'active_repo' ? state.activeRepo : null),
       set: async () => {},
       adoptRepo: async (repo: string) => {
         calls.adopted.push(repo);
+      },
+      create: async (options: { repo: string }) => {
+        calls.created.push(options.repo);
+        return 'ws-new';
       },
     },
     daemon: {
@@ -45,6 +57,7 @@ function fakeMf() {
     },
     invoke: (invocation: string) => {
       calls.invoked.push(invocation);
+      calls.ranIn.push(ws);
       return Promise.resolve({ ok: true });
     },
     statusBar: {
@@ -100,9 +113,12 @@ describe('opening the pick', () => {
 
     await run('u-1');
 
-    // `active_repo` cannot change: a different repository takes a workspace.
+    // `active_repo` cannot change: a different repository takes a workspace —
+    // an empty one, the list opened in it.
     expect(calls.adopted).toEqual([]);
-    expect(calls.invoked).toEqual(['workspace:new u-1']);
+    expect(calls.created).toEqual(['u-1']);
+    expect(calls.invoked).toEqual(['panel:open here metarecord-list']);
+    expect(calls.ranIn).toEqual(['ws-new']);
   });
 
   test('a bare repo name resolves', async () => {
@@ -110,18 +126,18 @@ describe('opening the pick', () => {
 
     await run('Films');
 
-    expect(calls.invoked).toEqual(['workspace:new a-b-c-d']);
+    expect(calls.created).toEqual(['a-b-c-d']);
   });
 
   test('a uuid resolves with or without its dashes', async () => {
     state.activeRepo = 'u-9';
 
     await run('abcd');
-    expect(calls.invoked).toEqual(['workspace:new a-b-c-d']);
+    expect(calls.created).toEqual(['a-b-c-d']);
 
-    calls.invoked.length = 0;
+    calls.created.length = 0;
     await run('a-b-c-d');
-    expect(calls.invoked).toEqual(['workspace:new a-b-c-d']);
+    expect(calls.created).toEqual(['a-b-c-d']);
   });
 
   test('nothing matches: the failure is thrown, for the shell to report', async () => {

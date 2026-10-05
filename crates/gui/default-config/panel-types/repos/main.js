@@ -455,7 +455,12 @@ export async function mount(root, metafolder) {
         await workspace.adoptRepo(repoUuid);
         await commands.invoke('panel:open here metarecord-list');
       } else {
-        await commands.invoke(`workspace:new ${repoUuid}`);
+        // A workspace's repository never changes: an empty workspace on it,
+        // the list opened there (doc "Workspaces").
+        const ws = await workspace.create({ repo: repoUuid });
+        await metafolder.withContext({ ws, slot: metafolder.context.slot }, (mf) =>
+          mf.invoke('panel:open here metarecord-list'),
+        );
       }
       void announceSchemaConflicts(repoUuid); // once-per-repo heads-up
     } catch (error) {

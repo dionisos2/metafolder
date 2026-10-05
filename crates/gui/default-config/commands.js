@@ -456,7 +456,12 @@ export default {
       if (uuid === null) throw new Error(`no loaded repository matches "${choice}"`);
       const current = await mf.workspace.get('active_repo');
       if (current) {
-        await mf.invoke(`workspace:new ${uuid}`);
+        // A workspace's repository never changes: an empty workspace on the
+        // pick, the list opened in it (doc "Workspaces").
+        const ws = await mf.workspace.create({ repo: uuid });
+        await mf.withContext({ ws, slot: mf.context.slot }, (mf) =>
+          mf.invoke('panel:open here metarecord-list'),
+        );
       } else {
         await mf.workspace.adoptRepo(uuid);
         await mf.invoke('panel:open here metarecord-list');
