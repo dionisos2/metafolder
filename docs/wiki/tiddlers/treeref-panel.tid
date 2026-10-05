@@ -64,7 +64,9 @@ tag -> (path =>* "music/jazz")    the node and every tag below it
 
 <<key "treeref:list-refs" l>> (`treeref:list-refs`, or ''List what tag points at here''
 in the right-click menu) runs it in a [[metarecord-list panel]] opened in the
-''other'' slot: the tree stays in view for the next node. The query lands in the
+''other'' slot: the tree stays in view for the next node. <<key "treeref:list-refs new" "b l">>
+runs it in a new workspace instead, <<key "treeref:list-refs here" "i l">> in place of the
+tree ([[open targets|Panel slots and layout]]). The query lands in the
 list's normal DSL, shown and frozen, where it can be narrowed or combined with
 anything else ([[Following references]]).
 

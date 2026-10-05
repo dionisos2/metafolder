@@ -10,7 +10,7 @@ summary: The treeref panel type
 * ``treeref:find`` — TreeRef explorer: jump to a child by name
 * ``treeref:first`` — TreeRef explorer: move to the first child
 * ``treeref:last`` — TreeRef explorer: move to the last loaded child
-* ``treeref:list-refs`` — TreeRef explorer: list the metarecords pointing at the selected node
+* ``treeref:list-refs`` — TreeRef explorer: list the metarecords pointing at the selected node (here / other / new)
 * ``treeref:next`` — TreeRef explorer: move the cursor down
 * ``treeref:parent`` — TreeRef explorer: go up one level
 * ``treeref:prev`` — TreeRef explorer: move the cursor up

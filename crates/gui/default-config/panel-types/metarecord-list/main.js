@@ -1,7 +1,7 @@
 // metarecord-list panel: metarecords of the active repo filtered by an embedded
 // DSL query; primary selection source (doc "metarecord-list panel").
 
-import { byId, el, fields, messageOf, qs, thumbnail } from '/__ui.js';
+import { byId, el, fields, messageOf, qs, thumbnail, whereArg } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { fetchMounts, offlineMountFor, relativeTo, unavailableLabel } from '/__mounts.js';
 import { createPagedList } from '/__paged-list.js';
@@ -904,11 +904,15 @@ export async function mount(root, metafolder) {
     await selection.clear();
   }
 
-  async function openSelected() {
+  /** Opens the highlighted row — the file panel when it has a file, the
+   *  detail otherwise — at the target: the other slot by default. The row is
+   *  the published selection already, so a new workspace's copy shows it.
+   *  @param {string} where `here`, `other` or `new` */
+  async function openSelected(where = 'other') {
     const metarecord = metarecords[cursorIndex];
     if (!metarecord) return;
     const paths = pathsOf(metarecord);
-    await commands.invoke(`panel:open other ${paths.length > 0 ? 'file' : 'metarecord-detail'}`);
+    await commands.invoke(`panel:open ${where} ${paths.length > 0 ? 'file' : 'metarecord-detail'}`);
   }
 
   // ── Query (two-zone editor) ─────────────────────────────────────────────
@@ -1502,8 +1506,9 @@ export async function mount(root, metafolder) {
     },
   });
   void commands.register('metarecord-list:open', {
-    label: 'Metarecord list: open the selection in the other panel',
-    handler: () => openSelected(),
+    label: 'Metarecord list: open the selection (here / other / new)',
+    args: [whereArg('other')],
+    handler: (where) => openSelected(where),
   });
   // ── Zones ───────────────────────────────────────────────────────────────
   //

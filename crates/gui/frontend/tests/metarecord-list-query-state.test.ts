@@ -31,6 +31,10 @@ function shadowFor(): ShadowRoot {
 
 type Call = { method: string; path: string; body: unknown };
 
+type Handler = (...args: string[]) => unknown;
+const handlers = new Map<string, Handler>();
+const specs = new Map<string, unknown[]>();
+
 function stubApi(vars: Record<string, unknown>, calls: Call[]) {
   const noop = () => {};
   const store = new Map<string, unknown>([['active_repo', 'r'], ...Object.entries(vars)]);
@@ -86,7 +90,14 @@ function stubApi(vars: Record<string, unknown>, calls: Call[]) {
         adoptRepo: async () => {},
         onChange: (key: string, fn: (value: unknown) => void) => void listeners.set(key, fn),
       },
-      commands: { register: async () => null, invoke: () => null },
+      commands: {
+        register: async (name: string, opts: { handler?: Handler; args?: unknown[] }) => {
+          if (opts.handler) handlers.set(name, opts.handler);
+          if (opts.args) specs.set(name, opts.args);
+          return null;
+        },
+        invoke: vi.fn(() => null),
+      },
       addKeybinding: async () => null,
       fs: { readDir: async () => [], stat: async () => ({}), exists: async () => true, homeDir: async () => '/home/user' },
       trash: { list: async () => [], restore: async () => '', remove: async () => {}, empty: async () => 0 },
@@ -213,5 +224,22 @@ describe('metarecord-list query variables', () => {
     await p.push('metarecord-list:normal-shown', true); // what it already is
     expect(p.queryInput.value).toBe('half typ');
     expect(ranQueries(p.calls)).toEqual([]);
+  });
+});
+
+describe('metarecord-list:open', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('[]', { status: 200 })));
+    document.body.replaceChildren();
+  });
+
+  test('takes the open target first, the other slot by default', async () => {
+    await mountPanel({});
+    const [where] = specs.get('metarecord-list:open') as {
+      name: string;
+      initial: () => string;
+    }[];
+    expect(where.name).toBe('where');
+    expect(where.initial()).toBe('other');
   });
 });

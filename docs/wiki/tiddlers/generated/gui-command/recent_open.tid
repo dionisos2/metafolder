@@ -1,7 +1,7 @@
 title: $:/mf/gen/GUI command/recent:open
 catalog: GUI command
 target: recent:open
-summary: Recent: open the highlighted metarecord in the other panel
+summary: Recent: open the highlighted metarecord (here / other / new)
 
 !! Reference
 
@@ -9,5 +9,7 @@ summary: Recent: open the highlighted metarecord in the other panel
 
 !! Default keys
 
-* ``enter`` → ``recent:open`` (in the ``recent`` panel)
-* ``right`` → ``recent:open`` (in the ``recent`` panel)
+* ``b enter`` → ``recent:open new`` (in the ``recent`` panel)
+* ``enter`` → ``recent:open other`` (in the ``recent`` panel)
+* ``i enter`` → ``recent:open here`` (in the ``recent`` panel)
+* ``right`` → ``recent:open other`` (in the ``recent`` panel)

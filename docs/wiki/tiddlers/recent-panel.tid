@@ -26,7 +26,7 @@ per metarecord: its `label`, else its `name`, else the start of its uuid; its pa
 how long ago it was viewed.
 
 * <<key "recent:next" "↓ or j">> / <<key "recent:prev" "↑ or k">>, <<key "recent:first" Home>> / <<key "recent:last" End>> — move the cursor. The row under it is the workspace's selection, so a detail or file panel beside it follows.
-* <<key "recent:open" "Enter or →">>, or a double click — show it in the other slot, as the pick does.
+* <<key "recent:open" "Enter or →">>, or a double click — show it in the other slot, as the pick does; <<key "recent:open new" "b Enter">> in a new workspace, <<key "recent:open here" "i Enter">> in place of this panel ([[open targets|Panel slots and layout]]).
 * <<key "recent:find" f>> — jump to a row by name; a candidate carries its path, which tells two rows of the same name apart ([[Jumping to an entry]]).
 * <<key "recent:refresh" r>> — read the list again.
 

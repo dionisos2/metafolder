@@ -13,7 +13,7 @@
 // new node under the current one (schema type first, then the name), the way
 // the file manager creates a folder. doc "treeref panel".
 
-import { byId, el } from '/__ui.js';
+import { byId, el, whereArg } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
 import { createSelect } from '/__select.js';
 import { fileActionsProvider, metarecordMenuItems } from '/__file-actions.js';
@@ -201,20 +201,24 @@ export async function mount(root, metafolder) {
     queryPreview.textContent = currentQueryDsl();
   }
 
-  /** Runs the query in metarecord-list, in the *other* slot: the tree stays
-   *  visible so the next node can be asked about straight away — the pairing
-   *  the ref-list panel used to provide. */
-  async function listRefs() {
+  /** Runs the query in metarecord-list, at the target — the *other* slot by
+   *  default: the tree stays visible so the next node can be asked about
+   *  straight away, the pairing the ref-list panel used to provide.
+   *  @param {string} where `here`, `other` or `new` */
+  async function listRefs(where = 'other') {
     if (selectedPath() === null) {
       await statusBar.message('select a node first');
       return;
     }
+    const dsl = currentQueryDsl();
     // The list's query variables are its state (doc "Cross-panel selection"):
     // the normal zone, shown and frozen, so the query stays visible.
-    await workspace.set('metarecord-list:normal-query', currentQueryDsl());
-    await workspace.set('metarecord-list:normal-shown', true);
-    await workspace.set('metarecord-list:normal-frozen', true);
-    await commands.invoke('panel:open other metarecord-list');
+    await metafolder.atTarget(where, async (mf) => {
+      await mf.workspace.set('metarecord-list:normal-query', dsl);
+      await mf.workspace.set('metarecord-list:normal-shown', true);
+      await mf.workspace.set('metarecord-list:normal-frozen', true);
+      await mf.commands.invoke('panel:open here metarecord-list');
+    });
   }
 
   // ── Adding an element ─────────────────────────────────────────────────────
@@ -566,8 +570,9 @@ export async function mount(root, metafolder) {
   });
 
   void commands.register('treeref:list-refs', {
-    label: 'TreeRef explorer: list the metarecords pointing at the selected node',
-    handler: listRefs,
+    label: 'TreeRef explorer: list the metarecords pointing at the selected node (here / other / new)',
+    args: [whereArg('other')],
+    handler: (where) => listRefs(where),
   });
 
   // Adding an element to the forest (doc "treeref panel"), on the
@@ -650,7 +655,7 @@ export async function mount(root, metafolder) {
             ...(picking
               ? [{ label: pickLabel, action: () => void commands.invoke('pick:confirm') }]
               : []),
-            { label: listLabel, action: () => void listRefs() },
+            { label: listLabel, action: () => void listRefs('other') },
           ],
         }),
       );

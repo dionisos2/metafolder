@@ -12,7 +12,7 @@ summary: The metarecord-list panel type
 * ``metarecord-list:insert`` — Metarecord list: insert text into a zone
 * ``metarecord-list:last`` — Metarecord list: move the selection to the last loaded row
 * ``metarecord-list:next`` — Metarecord list: move the selection down
-* ``metarecord-list:open`` — Metarecord list: open the selection in the other panel
+* ``metarecord-list:open`` — Metarecord list: open the selection (here / other / new)
 * ``metarecord-list:open-bulk-edit`` — Metarecord list: open the bulk edit / delete form (set/add/remove/unset/delete)
 * ``metarecord-list:page`` — Metarecord list: load a page (next)
 * ``metarecord-list:prev`` — Metarecord list: move the selection up

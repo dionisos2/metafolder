@@ -84,6 +84,12 @@ function stub() {
     },
     statusBar,
     contextMenu: Object.assign(noop, { addDefaultItems: noop }),
+    // `mf.atTarget`, faked: the body runs on this same stub, the target noted.
+    targets: [] as string[],
+    atTarget: vi.fn(async (where: string, body: (mf: unknown) => unknown): Promise<unknown> => {
+      api.targets.push(where);
+      return body(api);
+    }),
   };
   return { api, handlers, specs, statusBar, root: shadowRoot() };
 }
@@ -168,12 +174,14 @@ describe('treeref:set field', () => {
 });
 
 describe('listing what refers to the selected node', () => {
-  test('writes the query into the list’s variables, then shows the list', async () => {
+  test('writes the query into the list’s variables at the target, then shows the list', async () => {
     const s = stub();
     await mount(s);
     await s.handlers.get('treeref:find')!('music');
     s.api.workspace.set.mockClear();
-    await s.handlers.get('treeref:list-refs')!();
+    await s.handlers.get('treeref:list-refs')!('new');
+    // At the target: in a new workspace, the list here stays as it was.
+    expect(s.api.targets).toEqual(['new']);
     // The list's query variables are its state: the normal zone, shown and
     // frozen — no request, no nonce.
     const written = s.api.workspace.set.mock.calls as unknown as [string, unknown][];
@@ -185,6 +193,23 @@ describe('listing what refers to the selected node', () => {
     expect(written[0][1]).toEqual(expect.stringContaining('mfr_path'));
     expect(written[1][1]).toBe(true);
     expect(written[2][1]).toBe(true);
-    expect(s.api.commands.invoke).toHaveBeenCalledWith('panel:open other metarecord-list');
+    expect(s.api.commands.invoke).toHaveBeenCalledWith('panel:open here metarecord-list');
+  });
+
+  test('the target is its first argument, the other slot by default', async () => {
+    const s = stub();
+    await mount(s);
+    const [where] = s.specs.get('treeref:list-refs')!;
+    expect(where.name).toBe('where');
+    expect(where.initial!([])).toBe('other');
+    expect(await where.complete!('', [])).toEqual(['here', 'other', 'new']);
+  });
+
+  test('nothing selected: says so, and moves nowhere', async () => {
+    const s = stub();
+    await mount(s);
+    await s.handlers.get('treeref:list-refs')!('new');
+    expect(s.api.targets).toEqual([]);
+    expect(s.statusBar.message).toHaveBeenCalledWith('select a node first');
   });
 });

@@ -305,21 +305,32 @@
   # In the find bar, Enter walks to the next match (shift+Enter the previous),
   # the way a browser's find behaves.
   { command = "find:next", focus = "find" },
-  { command = "metarecord-list:open", when = "metarecord-list" },
+  { command = "metarecord-list:open other", when = "metarecord-list" },
   { command = "file-manager:activate", when = "file-manager" },
   { command = "treeref:descend", when = "treeref" },
   { command = "log:toggle ops", when = "log" },
   { command = "trash:restore", when = "trash" },
-  { command = "recent:open", when = "recent" },
+  { command = "recent:open other", when = "recent" },
   { command = "duplicates:toggle", when = "duplicates" },
   { command = "metarecord:row-edit", when = "metarecord-detail" },
 ]
 
+# The lists' Enter opens the row in the other slot; after a target key it opens
+# it here ("i") or in a new workspace ("b") instead (doc "Panel slots and layout").
+"i enter" = [
+  { command = "metarecord-list:open here", when = "metarecord-list" },
+  { command = "recent:open here", when = "recent" },
+]
+"b enter" = [
+  { command = "metarecord-list:open new", when = "metarecord-list" },
+  { command = "recent:open new", when = "recent" },
+]
+
 # Right / left: descend into / go up (open in the other panel for lists).
 "right" = [
-  { command = "metarecord-list:open", when = "metarecord-list" },
+  { command = "metarecord-list:open other", when = "metarecord-list" },
   { command = "treeref:descend", when = "treeref" },
-  { command = "recent:open", when = "recent" },
+  { command = "recent:open other", when = "recent" },
   { command = "duplicates:toggle", when = "duplicates" },
   # In the file panel left/right seek the previewed media (see the transport
   # section below); with no media shown they do nothing.
@@ -509,7 +520,10 @@
 # treeref: build the "what points at this node?" query and run it in a
 # metarecord-list opened in the other slot ("l"), or pick the Ref field it
 # follows back ("e"). See doc "treeref panel".
-"l" = { command = "treeref:list-refs", when = "treeref" }
+"l" = { command = "treeref:list-refs other", when = "treeref" }
+"w l" = { command = "treeref:list-refs other", when = "treeref" }
+"b l" = { command = "treeref:list-refs new", when = "treeref" }
+"i l" = { command = "treeref:list-refs here", when = "treeref" }
 "e" = { command = "treeref:set ref-field", when = "treeref" }
 "q" = { command = "metarecord-list:clear normal", when = "metarecord-list" }
 "c" = { command = "metarecord-list:clear all", when = "metarecord-list" }

@@ -9,6 +9,6 @@ summary: The recent panel type
 * ``recent:first`` — Recent: jump to the most recent
 * ``recent:last`` — Recent: jump to the oldest
 * ``recent:next`` — Recent: move down
-* ``recent:open`` — Recent: open the highlighted metarecord in the other panel
+* ``recent:open`` — Recent: open the highlighted metarecord (here / other / new)
 * ``recent:prev`` — Recent: move up
 * ``recent:refresh`` — Recent: reload the list
