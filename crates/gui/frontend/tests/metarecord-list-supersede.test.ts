@@ -154,22 +154,22 @@ describe('metarecord-list supersede', () => {
 
   test('a count still running when the query changes is aborted', async () => {
     counter = hangUntilAborted;
-    const p = await mountPanel({ 'metarecord-list:query-request': { dsl: 'old', nonce: 1 } });
+    const p = await mountPanel({ 'metarecord-list:query': 'old' });
     const oldCount = p.reads.find((r) => r.kind === 'count' && dsl(r) === 'old')!;
     expect(oldCount.signal?.aborted).toBe(false);
 
-    await p.push('metarecord-list:query-request', { dsl: 'new', nonce: 2 });
+    await p.push('metarecord-list:query', 'new');
     expect(oldCount.signal?.aborted).toBe(true);
   });
 
   test('a page still loading when the query changes is aborted, and the new query runs', async () => {
     pager = (read) =>
       dsl(read) === 'old' ? hangUntilAborted(read) : Promise.resolve({ records: [], nextCursor: null, total: null });
-    const p = await mountPanel({ 'metarecord-list:query-request': { dsl: 'old', nonce: 1 } });
+    const p = await mountPanel({ 'metarecord-list:query': 'old' });
     const oldPage = p.reads.find((r) => r.kind === 'page' && dsl(r) === 'old')!;
     expect(oldPage.signal?.aborted).toBe(false);
 
-    await p.push('metarecord-list:query-request', { dsl: 'new', nonce: 2 });
+    await p.push('metarecord-list:query', 'new');
     await vi.waitFor(() => expect(p.reads.some((r) => r.kind === 'page' && dsl(r) === 'new')).toBe(true));
     expect(oldPage.signal?.aborted).toBe(true);
     // An abort is not a failure: nothing to report.

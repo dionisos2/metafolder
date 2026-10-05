@@ -970,6 +970,7 @@ export async function mount(root, metafolder) {
   }
 
   async function persistQueryState() {
+    appliedState = { ...appliedState, query: queryInput.value, normal: normalInput.value };
     await workspace.set('metarecord-list:query', queryInput.value);
     await workspace.set('metarecord-list:normal-query', normalInput.value);
   }
@@ -1019,38 +1020,76 @@ export async function mount(root, metafolder) {
     await showQuery(`same(mfr_duplicate_group, ${uuid})`);
   }
 
-  // ── Listing a folder (doc "Cross-panel selection") ───────────────────
+  // ── The query variables are the state (doc "Cross-panel selection") ─────
+  // `metarecord-list:query`, `:normal-query`, `:normal-frozen` and
+  // `:normal-shown` are not a record of what the panel shows: they ARE it.
+  // Another panel or a command shows a query by writing them, and a forked
+  // workspace shows the same list because it has the same variables. What a
+  // write is compared with is the state this panel last applied or wrote — not
+  // the inputs, which hold a draft until it is applied — so its own writes
+  // coming back, and a write of what it already shows, change nothing. A
+  // command writes several of them in a row: they are gathered and run once,
+  // on the final state.
 
-  /** Put `dsl` in the normal zone — shown and frozen, so a query the GUI wrote
+  /** @typedef {{query: string, normal: string, frozen: boolean, shown: boolean}} QueryState */
+
+  /** @type {QueryState} the state last applied or written by this panel */
+  let appliedState = { query: '', normal: '', frozen: false, shown: true };
+
+  /** @param {QueryState} a @param {QueryState} b */
+  function sameQueryState(a, b) {
+    return a.query === b.query && a.normal === b.normal && a.frozen === b.frozen && a.shown === b.shown;
+  }
+
+  /** @returns {Promise<QueryState>} the state the variables hold now */
+  async function variableQueryState() {
+    const [query, normal, frozen, shown] = await Promise.all([
+      workspace.get('metarecord-list:query'),
+      workspace.get('metarecord-list:normal-query'),
+      workspace.get('metarecord-list:normal-frozen'),
+      workspace.get('metarecord-list:normal-shown'),
+    ]);
+    return {
+      query: asText(query),
+      normal: asText(normal),
+      frozen: frozen === true,
+      // Zone B is revealed by default: only an explicit stored `false` hides it.
+      shown: shown !== false,
+    };
+  }
+
+  /** Brings the zones to what the variables say, and runs it when it differs
+   *  from what this panel last applied. */
+  async function followQueryVariables() {
+    const next = await variableQueryState();
+    if (sameQueryState(next, appliedState)) return;
+    queryInput.value = next.query;
+    if (next.shown !== normalShown) await setNormalShown(next.shown);
+    if (next.frozen !== normalFrozen) await setNormalFrozen(next.frozen);
+    // After the setters: unfreezing refreshes B from A, which is what an
+    // unfrozen B shows anyway; a frozen B is the variable's text.
+    if (next.frozen) normalInput.value = next.normal;
+    await applyQuery();
+  }
+
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let followTimer;
+  function scheduleFollowQueryVariables() {
+    clearTimeout(followTimer);
+    followTimer = setTimeout(
+      () => metafolder.whenVisible(() => void followQueryVariables()),
+      0,
+    );
+  }
+
+  /** Puts `dsl` in the normal zone — shown and frozen, so a query the GUI wrote
    *  stays visible, hand-editable and composable rather than being a hidden
-   *  override — and run it. @param {string} dsl */
+   *  override — and runs it. @param {string} dsl */
   async function showQuery(dsl) {
     normalInput.value = dsl;
     if (!normalShown) await setNormalShown(true);
     if (!normalFrozen) await setNormalFrozen(true);
     await applyQuery();
-  }
-
-  // Another panel asks the list to show a folder's contents (the metarecords
-  // whose `mfr_path` parent is that folder). The request travels through the
-  // workspace variable `metarecord-list:query-request` = { dsl, nonce },
-  // honoured both when the panel mounts (`start`) and while it is already
-  // mounted (`onChange`). The `nonce` guard makes an identical repeated request
-  // re-trigger, yet the same request act only once across the two paths.
-
-  /** @type {unknown} the nonce of the last honoured folder request */
-  let folderQueryNonce = null;
-
-  /** Applies a fresh `metarecord-list:query-request` request, marking its nonce
-   *  handled. @returns {Promise<boolean>} whether one ran (it fetched itself) */
-  async function consumeFolderQuery() {
-    const req = await workspace.get('metarecord-list:query-request');
-    if (!req || typeof req !== 'object') return false;
-    const { dsl, nonce } = /** @type {{dsl?: unknown, nonce?: unknown}} */ (req);
-    if (typeof dsl !== 'string' || dsl === '' || nonce === folderQueryNonce) return false;
-    folderQueryNonce = nonce;
-    await showQuery(dsl);
-    return true;
   }
 
   /** Debounced live mirror of expand(A) into B (preview only — does not run). */
@@ -1081,6 +1120,7 @@ export async function mount(root, metafolder) {
     normalEditor.hidden = !shown;
     normalToggle.textContent = shown ? 'Hide normal DSL' : 'Show normal DSL';
     if (shown && !normalFrozen) await refreshPreview();
+    appliedState = { ...appliedState, shown };
     await workspace.set('metarecord-list:normal-shown', shown);
   }
 
@@ -1090,6 +1130,7 @@ export async function mount(root, metafolder) {
     normalFreeze.checked = frozen;
     normalInput.readOnly = !frozen;
     if (!frozen && normalShown) await refreshPreview();
+    appliedState = { ...appliedState, frozen };
     await workspace.set('metarecord-list:normal-frozen', frozen);
   }
 
@@ -1852,9 +1893,6 @@ export async function mount(root, metafolder) {
         pickFocused = true;
         finderInput.focus();
       }
-      // A folder listing requested before this panel existed supersedes the
-      // stored query; it runs the fetch itself, so there is nothing left to do.
-      if (await consumeFolderQuery()) return;
     }
     if (queryRan) await fetchPage(true);
     else render(); // no repo: empty list
@@ -1880,9 +1918,14 @@ export async function mount(root, metafolder) {
     scheduleCatchupSync();
   });
   workspace.onChange('active_repo', () => metafolder.whenVisible(deferredStart));
-  workspace.onChange('metarecord-list:query-request', () =>
-    metafolder.whenVisible(() => void consumeFolderQuery()),
-  );
+  for (const key of [
+    'metarecord-list:query',
+    'metarecord-list:normal-query',
+    'metarecord-list:normal-frozen',
+    'metarecord-list:normal-shown',
+  ]) {
+    workspace.onChange(key, scheduleFollowQueryVariables);
+  }
 
   // Keep the list live when the daemon reflects a change out-of-band from our
   // own query round-trip — chiefly a watcher-driven update (a GUI rename lands
@@ -1939,17 +1982,15 @@ export async function mount(root, metafolder) {
   updateFinderFieldsLabel();
 
   // Restore the two-zone query editor (values only — no daemon call here).
-  queryInput.value = asText(await workspace.get('metarecord-list:query'));
-  normalInput.value = asText(await workspace.get('metarecord-list:normal-query'));
-  normalFrozen = (await workspace.get('metarecord-list:normal-frozen')) === true;
+  // Zone B is revealed by default: the expanded DSL is what actually runs, so
+  // showing it teaches the mapping.
+  appliedState = await variableQueryState();
+  queryInput.value = appliedState.query;
+  normalInput.value = appliedState.normal;
+  normalFrozen = appliedState.frozen;
   normalFreeze.checked = normalFrozen;
   normalInput.readOnly = !normalFrozen;
-  // Zone B is revealed by default: the expanded DSL is what actually runs, so
-  // showing it teaches the mapping. Only an explicit stored `false` hides it.
-  const storedNormalShown = await workspace.get('metarecord-list:normal-shown');
-  normalShown = storedNormalShown === null || storedNormalShown === undefined
-    ? true
-    : storedNormalShown === true;
+  normalShown = appliedState.shown;
   normalEditor.hidden = !normalShown;
   normalToggle.textContent = normalShown ? 'Hide normal DSL' : 'Show normal DSL';
 
@@ -1957,6 +1998,7 @@ export async function mount(root, metafolder) {
 
   return () => {
     clearTimeout(finderTimer);
+    clearTimeout(followTimer);
     catchup.cancel();
     finderHistory.detach();
     queryHistory.detach();

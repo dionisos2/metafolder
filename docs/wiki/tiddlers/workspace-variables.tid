@@ -26,10 +26,12 @@ live.
 |`pick_result` |object or `null` |the picker's answer, delivered to the workspace that asked |
 
 A panel keeps its own variables under its name — `metarecord-list:query`,
-`file-manager:dir`, `treeref:scope` — and some are requests another panel or a
-command leaves for it: `file-manager:reveal-path` and `metarecord-list:query-request`
-carry a `nonce`, so that the same request made twice acts twice and a request acts
-only once ([[Cross-panel selection]]).
+`file-manager:dir`, `treeref:scope`. Some of them are its ''state'': the panel shows
+what they hold, so another panel or a command shows something there by writing them,
+and a workspace holding the same variables shows the same thing — the list's query
+variables are ([[metarecord-list panel]]). `file-manager:reveal-path` is still a
+request, with a `nonce` so that the same request made twice acts twice and a request
+acts only once ([[Cross-panel selection]]).
 
 !! The selection is a pair, published metarecord first
 

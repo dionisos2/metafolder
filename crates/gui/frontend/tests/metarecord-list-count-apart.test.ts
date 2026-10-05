@@ -135,7 +135,7 @@ describe('metarecord-list count', () => {
   });
 
   test('the first page is asked for without a count', async () => {
-    const p = await mountPanel({ 'metarecord-list:query-request': { dsl: 'x', nonce: 1 } });
+    const p = await mountPanel({ 'metarecord-list:query': 'x' });
     const pages = p.calls.filter((c) => c.method === 'QUERY');
     expect(pages.length).toBeGreaterThan(0);
     for (const page of pages) expect((page.body as { count?: boolean }).count).toBeUndefined();
@@ -144,7 +144,7 @@ describe('metarecord-list count', () => {
   test('the count is asked apart, and shows once it arrives', async () => {
     let answer: (v: unknown) => void = () => {};
     counter = () => new Promise((r) => (answer = r));
-    const p = await mountPanel({ 'metarecord-list:query-request': { dsl: 'x', nonce: 1 } });
+    const p = await mountPanel({ 'metarecord-list:query': 'x' });
     const counts = p.calls.filter((c) => (c.body as { count?: boolean })?.count === true);
     expect(counts).toHaveLength(1);
     expect((counts[0].body as { query?: { dsl?: string } }).query?.dsl).toBe('x');
@@ -157,8 +157,8 @@ describe('metarecord-list count', () => {
   test('a count for a query no longer shown is dropped', async () => {
     const answers: ((v: unknown) => void)[] = [];
     counter = () => new Promise((r) => answers.push(r));
-    const p = await mountPanel({ 'metarecord-list:query-request': { dsl: 'old', nonce: 1 } });
-    await p.push('metarecord-list:query-request', { dsl: 'new', nonce: 2 });
+    const p = await mountPanel({ 'metarecord-list:query': 'old' });
+    await p.push('metarecord-list:query', 'new');
     expect(answers).toHaveLength(2);
     answers[1]({ total: 7, results: [] }); // the current query's count
     await settle();

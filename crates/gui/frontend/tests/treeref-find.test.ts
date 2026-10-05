@@ -166,3 +166,25 @@ describe('treeref:set field', () => {
     expect(s.api.workspace.set).toHaveBeenCalledWith('treeref:field', 'tag');
   });
 });
+
+describe('listing what refers to the selected node', () => {
+  test('writes the query into the list’s variables, then shows the list', async () => {
+    const s = stub();
+    await mount(s);
+    await s.handlers.get('treeref:find')!('music');
+    s.api.workspace.set.mockClear();
+    await s.handlers.get('treeref:list-refs')!();
+    // The list's query variables are its state: the normal zone, shown and
+    // frozen — no request, no nonce.
+    const written = s.api.workspace.set.mock.calls as unknown as [string, unknown][];
+    expect(written.map(([key]) => key)).toEqual([
+      'metarecord-list:normal-query',
+      'metarecord-list:normal-shown',
+      'metarecord-list:normal-frozen',
+    ]);
+    expect(written[0][1]).toEqual(expect.stringContaining('mfr_path'));
+    expect(written[1][1]).toBe(true);
+    expect(written[2][1]).toBe(true);
+    expect(s.api.commands.invoke).toHaveBeenCalledWith('panel:reveal metarecord-list');
+  });
+});

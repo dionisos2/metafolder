@@ -209,10 +209,11 @@ export async function mount(root, metafolder) {
       await statusBar.message('select a node first');
       return;
     }
-    await workspace.set('metarecord-list:query-request', {
-      dsl: currentQueryDsl(),
-      nonce: Date.now(),
-    });
+    // The list's query variables are its state (doc "Cross-panel selection"):
+    // the normal zone, shown and frozen, so the query stays visible.
+    await workspace.set('metarecord-list:normal-query', currentQueryDsl());
+    await workspace.set('metarecord-list:normal-shown', true);
+    await workspace.set('metarecord-list:normal-frozen', true);
     await commands.invoke('panel:reveal metarecord-list');
   }
 

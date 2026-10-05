@@ -1,9 +1,9 @@
 // Listing a folder in the metarecord list (doc "Cross-panel selection"),
 // as the shipped `commands.js` defines it since `metarecord-list:folder` left
 // the shell builtins: the repo-relative folder a selection designates, and the
-// DSL that lists its direct children, landed as the
-// `metarecord-list:query-request` the panel honours (the panel side is
-// metarecord-list-query-request.test.ts).
+// DSL that lists its direct children, written into the list's query variables
+// — the normal zone, shown and frozen — which the panel follows (the panel side
+// is metarecord-list-query-state.test.ts).
 //
 // The command is configuration now, so what is pinned is the resolution and
 // the query it lands: reshaping the wording is free; answering with the wrong
@@ -104,8 +104,8 @@ async function run() {
 
 /** The DSL that landed in the panel, or null when nothing was asked of it. */
 function landedDsl(): string | null {
-  const request = calls.sets.find((s) => s.key === 'metarecord-list:query-request');
-  return request ? (request.value as { dsl: string }).dsl : null;
+  const written = calls.sets.find((s) => s.key === 'metarecord-list:normal-query');
+  return written ? (written.value as string) : null;
 }
 
 beforeEach(() => {
@@ -216,10 +216,14 @@ describe('the request it lands', () => {
     // `mfr_path -> "<folder>"`: Follows — the metarecords whose mfr_path parent
     // is that node, its files *and* its subdirectories.
     expect(landedDsl()).toBe('mfr_path -> "/live/2024"');
-    const request = calls.sets[0];
-    expect(request.key).toBe('metarecord-list:query-request');
-    expect((request.value as { nonce: unknown }).nonce).toEqual(expect.any(Number));
-    // The request lands before the panel switch that delivers it.
+    // The normal zone, shown and frozen: the query stays visible and is what
+    // runs. No nonce — the variables are the list's state, not a request.
+    expect(calls.sets).toEqual([
+      { key: 'metarecord-list:normal-query', value: 'mfr_path -> "/live/2024"' },
+      { key: 'metarecord-list:normal-shown', value: true },
+      { key: 'metarecord-list:normal-frozen', value: true },
+    ]);
+    // The state is written before the panel switch that shows it.
     expect(calls.invoked).toEqual(['panel:set type metarecord-list']);
     expect(calls.status).toEqual([{ kind: 'info', text: 'Listing /live/2024' }]);
   });

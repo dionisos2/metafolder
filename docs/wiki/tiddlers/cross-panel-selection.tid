@@ -28,10 +28,13 @@ are also in the right-click menu of the panels showing metarecords.
 * `file-manager:reveal` (''Open folder in file manager'') shows it on disk: the folder itself when the selection is a folder, else the folder holding the file, with the file highlighted.
 * `metarecord-list:folder` (<<key "metarecord-list:folder" "g f">>, ''Open folder in metarecord-list'') shows the same folder's ''metarecords'' instead — its files and subfolders, as the query `mfr_path -> "<folder>"`. The folder is the selected metarecord's (itself when it is a folder), else the selected path's (an untracked file has no metarecord to ask), else the file manager's current folder, else the repository's root. A selection outside the repository is refused, rather than silently answered for the root.
 
-The two are defined in the shipped `gui/commands.js` ([[User commands]]). They leave their request in a
-variable of the target panel — `file-manager:reveal-path`, `metarecord-list:query-request`,
-each with a `nonce` — then switch the slot, so the panel acts on it whether it was
-already there or not, once per request.
+The two are defined in the shipped `gui/commands.js` ([[User commands]]), and
+switch the slot after writing what the target panel is to show.
+`metarecord-list:folder` writes the list's own query variables — the normal zone,
+shown and frozen — which ''are'' its state: the list follows them whether it was on
+screen already or not ([[metarecord-list panel]]). `file-manager:reveal` leaves a
+request in `file-manager:reveal-path`, with a `nonce`, so that the panel acts on it
+once per request.
 
 !! The checked selection
 

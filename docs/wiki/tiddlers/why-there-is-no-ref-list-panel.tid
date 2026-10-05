@@ -12,8 +12,8 @@ selected in `treeref`. It was removed (`b4755563`) for two reasons:
 
 The [[treeref panel]] writes the query instead, and says which before running it: its
 ref bar shows `tag -> (path = "music/jazz")` for the node under the cursor.
-`treeref:list-refs` hands that text to [[metarecord-list panel]] through
-`metarecord-list:query-request` and opens the list in the ''other'' slot — the pairing
+`treeref:list-refs` writes that text into the query variables of
+[[metarecord-list panel]] and opens the list in the ''other'' slot — the pairing
 `ref-list` provided. It lands in the normal DSL, shown and frozen: a starting point,
 not a mode. The same choice is made by `metarecord-list:folder` and
 `metarecord-list:query`.

@@ -124,7 +124,14 @@ script can read and set.
 |`metarecord-list:effective-query` |what was last run, finder included, as [[Query IR]] — what `metarecord:bulk` acts on |
 |`metarecord-list:effective-query-text` |the same as DSL text (empty for everything), which [[mf gui query]] prints |
 |`metarecord-list:base-query-text` |the query without the finder, as DSL text |
-|`metarecord-list:query-request` |`{dsl, nonce}` — a query another panel asks it to show |
+
+The four query variables (`:query`, `:normal-query`, `:normal-shown`,
+`:normal-frozen`) are the list's ''state'', not a record of it: written by another
+panel, a command or a script, they are put in the zones and run — at once when the
+list is on screen, when it next is otherwise. A burst of writes runs once, on the final
+state; a write of what the list already shows, or of what it wrote itself, runs
+nothing, and a query being typed but not yet applied is left alone. A copy of the
+workspace's variables therefore shows the same list ([[Cross-panel selection]]).
 
 `metarecord-list:insert <zone> <text>` writes into one of the four fields (`finder`,
 `simplified`, `normal`, `columns`) at the caret, and `metarecord-list:apply <zone>`

@@ -315,10 +315,11 @@ export default {
         await mf.statusBar.error('the selection lies outside the repository');
         return;
       }
-      await mf.workspace.set('metarecord-list:query-request', {
-        dsl: `mfr_path -> ${dslString(folder)}`,
-        nonce: Date.now(),
-      });
+      // The list's query variables are its state: written here, the list
+      // shows them whether it is on screen already or not.
+      await mf.workspace.set('metarecord-list:normal-query', `mfr_path -> ${dslString(folder)}`);
+      await mf.workspace.set('metarecord-list:normal-shown', true);
+      await mf.workspace.set('metarecord-list:normal-frozen', true);
       await mf.invoke('panel:set type metarecord-list');
       await mf.statusBar.message(`Listing ${folder || '/'}`);
     },
