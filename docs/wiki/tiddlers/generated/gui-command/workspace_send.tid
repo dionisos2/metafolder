@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/workspace:send
+catalog: GUI command
+target: workspace:send
+summary: Write a variable into a workspace, by id
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

@@ -1,0 +1,10 @@
+title: workspace:fork
+tags: [[GUI command]] Workspaces
+kind: reference
+summary: Open a copy of this workspace in a new tab
+
+Opens a new workspace identical to the one the command runs in: the same repository,
+a copy of every [[workspace variable|Workspace variables]] and the same panels, so it
+shows what this one shows — the same query in the list, the same folder in the file
+manager. From then on the two are separate. A [[value picker|Value picker]] is not
+forked: the copy would answer the same form a second time. See [[Workspaces]].

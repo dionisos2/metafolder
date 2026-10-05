@@ -1,0 +1,11 @@
+title: workspace:send
+tags: [[GUI command]] Workspaces
+kind: reference
+summary: Write a variable into a workspace, by id
+
+`workspace:send <id> <variable> <value>` writes one [[workspace variable|Workspace variables]]
+into the workspace `<id>` — any workspace, not only the one it runs in. The value is
+read as JSON when it parses (`true`, `3`, `"text"`, `{"a": 1}`), as plain text
+otherwise; it is the last argument and takes the rest of the line, so a query needs
+no quoting. `active_repo` cannot be written: it is fixed when the workspace is created.
+From a command, `mf.workspace.send(id, {…})` writes several at once. See [[Workspaces]].

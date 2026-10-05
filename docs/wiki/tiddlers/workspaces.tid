@@ -26,6 +26,17 @@ therefore can never end up read against another.
 `workspace:new` opens the new workspace on the focused workspace's repository
 unless it is given another one.
 
+!! Creating, copying, writing into one
+
+A command composes what it needs from three calls ([[User commands]]):
+
+* `mf.workspace.create({repo, slot})` — a new workspace with ''nothing'' in it but its repository (the command's own when omitted, none with `null`), shown in `slot` or like a new tab; it answers the new workspace's id;
+* `mf.workspace.send(id, {…})` — writes variables into the workspace `id`. It is the ''one channel between workspaces'': a panel reads and writes the variables of its own workspace only, and anything that crosses goes through it (also as the command [[workspace:send]]);
+* `mf.workspace.fork()` — `create` plus a `send` of every variable, and the same panels: a copy of the workspace, from then on separate (also as the command [[workspace:fork]]). A value picker is not forked.
+
+Since the panels show what their variables hold ([[Workspace variables]]), a copy shows
+the same thing, and a workspace sent the right variables shows what was asked.
+
 !! The tab bar
 
 One tab per workspace, in creation order, each with its name:

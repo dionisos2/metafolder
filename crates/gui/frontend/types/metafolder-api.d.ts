@@ -218,6 +218,16 @@ declare namespace Metafolder {
      *  what moves afterwards). */
     all(): Promise<Record<string, unknown>>;
     adoptRepo(repo: string): Promise<void>;
+    /** A new, empty workspace (doc "Workspaces") on `repo` — this workspace's
+     *  repository when omitted, none with `null` — shown in `slot`, which
+     *  takes the focus, or like a new tab. Resolves to its id. */
+    create(options?: { repo?: string | null; slot?: 'left' | 'right' }): Promise<string>;
+    /** Writes variables into the workspace `id`: the one channel between
+     *  workspaces. `active_repo` is refused, with the rest. */
+    send(id: string, vars: Record<string, unknown>): Promise<void>;
+    /** A copy of this workspace — its repository, variables and panels — in a
+     *  new tab. Refused for a value picker. Resolves to its id. */
+    fork(): Promise<string>;
     /** Subscribe to one variable, or to `'*'` for every change (the listener
      *  then also receives the key). */
     onChange(key: string, listener: (value: unknown, key?: string) => void): void;

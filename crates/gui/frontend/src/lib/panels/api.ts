@@ -510,6 +510,19 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         invoke('ws_set_var', { wsId: ctx.wsId, key, value }) as Promise<void>,
       all: () => invoke('ws_vars', { wsId: ctx.wsId }) as Promise<Record<string, unknown>>,
       adoptRepo: (repo: string) => invoke('adopt_repo', { wsId: ctx.wsId, repo }) as Promise<void>,
+      // The workspace primitives (doc "Workspaces"): an empty workspace, the
+      // one channel between workspaces, and a copy.
+      create: async (options: { repo?: string | null; slot?: 'left' | 'right' } = {}) =>
+        (await invoke('workspace_create', {
+          activeRepo:
+            options.repo === undefined
+              ? ((await invoke('ws_get_var', { wsId: ctx.wsId, key: 'active_repo' })) ?? null)
+              : options.repo,
+          slot: options.slot ?? null,
+        })) as string,
+      send: (id: string, vars: Record<string, unknown>) =>
+        invoke('workspace_send', { wsId: id, vars }) as Promise<void>,
+      fork: () => invoke('workspace_fork', { wsId: ctx.wsId }) as Promise<string>,
       onChange(key: string, listener: (value: unknown, key?: string) => void) {
         let set = varListeners.get(key);
         if (!set) {

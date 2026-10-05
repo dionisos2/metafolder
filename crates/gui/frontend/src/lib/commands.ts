@@ -1070,6 +1070,16 @@ registerArgs('workspace:new', [
   { name: 'repo', optional: true, prompt: () => 'On which repository? (empty: none)' },
 ]);
 
+registerArgs('workspace:send', [
+  {
+    name: 'workspace',
+    prompt: () => 'To which workspace? (its id)',
+    complete: () => store.workspaces.map((w) => w.id),
+  },
+  { name: 'variable', prompt: () => 'Which variable?' },
+  { name: 'value', prompt: () => 'Its value (JSON, or text):' },
+]);
+
 registerArgs('workspace:rename', [
   {
     name: 'name',
@@ -1486,6 +1496,26 @@ async function runCommand(name: string, args: string[], context: ExecContext): P
       // (used by the repos panel).
       await invoke('workspace_new', { activeRepo: args[0] ?? null });
       return true;
+    case 'workspace:fork':
+      // A copy of the context's workspace, in a new tab (doc "Workspaces").
+      if (ws) await invoke('workspace_fork', { wsId: ws });
+      return true;
+    case 'workspace:send': {
+      // `workspace:send <id> <key> <value…>`: the value is JSON when it parses,
+      // the text otherwise — the last argument absorbs the remaining tokens,
+      // so a query needs no quoting.
+      const [target, key, ...rest] = args;
+      if (!target || !key) return true;
+      const text = rest.join(' ');
+      let value: unknown = text;
+      try {
+        value = JSON.parse(text);
+      } catch {
+        /* plain text */
+      }
+      await invoke('workspace_send', { wsId: target, vars: { [key]: value } });
+      return true;
+    }
     case 'workspace:close':
       await invoke('workspace_close');
       return true;

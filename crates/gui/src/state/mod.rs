@@ -213,6 +213,19 @@ impl Inner {
         Ok(())
     }
 
+    /// Shows a workspace just created: in `slot`, focused, or — without one —
+    /// like a new tab, in both slots ([`assign_both`](Self::assign_both)).
+    fn show_new_workspace(&mut self, ws_id: &str, slot: Option<SlotId>) -> Result<(), String> {
+        match slot {
+            Some(slot) => {
+                self.assign(ws_id, slot)?;
+                self.focused = slot;
+                Ok(())
+            }
+            None => self.assign_both(ws_id),
+        }
+    }
+
     /// Assigns a workspace to both slots at once. The focused slot is assigned
     /// first (so it keeps its preferred panel type and the other slot pairs
     /// with it) and is always shown; the other slot follows the workspace's
@@ -753,6 +766,68 @@ impl GuiState {
             // on different workspaces.
             inner.assign_both(&id).expect("freshly created workspace");
             (id, Emit::BOTH)
+        })
+    }
+
+    /// `mf.workspace.create` — a workspace with nothing in it but its
+    /// repository, named by the caller (none is inherited: a fork is
+    /// [`fork`](Self::fork)). Shown in `show_in`, which takes the focus, or —
+    /// without one — like a new tab, in both slots. Returns its id.
+    pub fn workspace_create(
+        &self,
+        active_repo: Option<String>,
+        repo_name: Option<String>,
+        show_in: Option<SlotId>,
+    ) -> Result<String, String> {
+        self.mutate(|inner| {
+            let id = inner.new_workspace(active_repo, repo_name);
+            inner.show_new_workspace(&id, show_in)?;
+            Ok((id, Emit::BOTH))
+        })
+    }
+
+    /// `workspace:send` — writes variables into a workspace, any workspace:
+    /// the one channel between workspaces (doc "Workspaces"). All or nothing:
+    /// `active_repo`, fixed at creation, refuses the whole send.
+    pub fn send_vars(&self, ws_id: &str, vars: Map<String, Value>) -> Result<(), String> {
+        if vars.contains_key("active_repo") {
+            return Err("active_repo is set at workspace creation and cannot change".into());
+        }
+        let mut inner = self.lock();
+        let ws = inner.workspace_mut(ws_id)?;
+        for (key, value) in &vars {
+            ws.vars.insert(key.clone(), value.clone());
+        }
+        for (key, value) in vars {
+            self.notifier.emit(
+                events::WORKSPACE_VAR_CHANGED,
+                json!({ "workspace_id": ws_id, "key": key, "value": value }),
+            );
+        }
+        Ok(())
+    }
+
+    /// `workspace:fork` — a new workspace identical to `source`: its
+    /// repository, every variable, the panels it showed and its panel count;
+    /// shown like a new tab. A value picker is not forked: the copy would be a
+    /// second picker answering the same form. Returns the fork's id.
+    pub fn fork(&self, source: &str) -> Result<String, String> {
+        self.mutate(|inner| {
+            let ws = inner.workspace(source)?;
+            if ws.vars.get("pick_request").is_some_and(|v| !v.is_null()) {
+                return Err("a value picker cannot be forked: confirm or cancel it first".into());
+            }
+            let (repo, repo_name) = (ws.active_repo.clone(), ws.repo_name.clone());
+            let (vars, last_panel, split) = (ws.vars.clone(), ws.last_panel.clone(), ws.split);
+            let id = inner.new_workspace(repo, repo_name);
+            {
+                let fork = inner.workspace_mut(&id)?;
+                fork.vars = vars;
+                fork.last_panel = last_panel;
+                fork.split = split;
+            }
+            inner.show_new_workspace(&id, None)?;
+            Ok((id, Emit::BOTH))
         })
     }
 
@@ -2069,6 +2144,91 @@ mod tests {
         let (_, state) = state();
         assert!(state.set_var("ws-99", "k", json!(1)).is_err());
         assert!(state.get_var("ws-99", "k").is_err());
+    }
+
+    // ── Creating, sending to and forking workspaces ─────────────────────
+
+    #[test]
+    fn test_workspace_create_is_empty_and_shown_where_asked() {
+        let (_, state) = state();
+        state.set_var("ws-1", "k", json!(1)).unwrap();
+        let id = state
+            .workspace_create(Some("repo-2".into()), Some("music".into()), Some(SlotId::Right))
+            .unwrap();
+        // Nothing inherited: its own repository, no variables.
+        assert_eq!(state.get_var(&id, "active_repo").unwrap(), json!("repo-2"));
+        assert_eq!(state.get_var(&id, "k").unwrap(), Value::Null);
+        let layout = state.layout();
+        assert_eq!(layout.left.workspace_id.as_deref(), Some("ws-1"));
+        assert_eq!(layout.right.workspace_id.as_deref(), Some(id.as_str()));
+        assert_eq!(layout.focused, SlotId::Right);
+    }
+
+    #[test]
+    fn test_workspace_create_without_a_slot_opens_like_a_new_tab() {
+        let (_, state) = state();
+        let id = state.workspace_create(None, None, None).unwrap();
+        assert_eq!(state.get_var(&id, "active_repo").unwrap(), Value::Null);
+        assert_eq!(state.layout().left.workspace_id.as_deref(), Some(id.as_str()));
+    }
+
+    #[test]
+    fn test_send_vars_writes_them_all_and_announces_each() {
+        let (notifier, state) = state();
+        let id = state.workspace_create(None, None, None).unwrap();
+        let mut vars = Map::new();
+        vars.insert("a".into(), json!(1));
+        vars.insert("b".into(), json!("two"));
+        state.send_vars(&id, vars).unwrap();
+        assert_eq!(state.get_var(&id, "a").unwrap(), json!(1));
+        assert_eq!(state.get_var(&id, "b").unwrap(), json!("two"));
+        let changed = notifier.payloads(events::WORKSPACE_VAR_CHANGED);
+        assert!(changed.iter().any(|p| p["workspace_id"] == json!(id) && p["key"] == "b"));
+    }
+
+    #[test]
+    fn test_send_vars_refuses_all_or_nothing() {
+        let (_, state) = state();
+        let mut vars = Map::new();
+        vars.insert("a".into(), json!(1));
+        assert!(state.send_vars("ws-99", vars.clone()).is_err());
+        // `active_repo` is fixed at creation: the whole send is refused, the
+        // other variables included.
+        vars.insert("active_repo".into(), json!("repo-2"));
+        assert!(state.send_vars("ws-1", vars).is_err());
+        assert_eq!(state.get_var("ws-1", "a").unwrap(), Value::Null);
+    }
+
+    #[test]
+    fn test_fork_copies_the_repository_the_variables_and_the_panels() {
+        let (_, state) = state();
+        state.adopt_repo("ws-1", "repo-1").unwrap();
+        state.set_var("ws-1", "metarecord-list:query", json!("rating > 3")).unwrap();
+        state.set_var("ws-1", "file-manager:dir", json!("/music")).unwrap();
+        state.set_panel_type(SlotId::Left, "file-manager").unwrap();
+
+        let fork = state.fork("ws-1").unwrap();
+        assert_ne!(fork, "ws-1");
+        assert_eq!(state.get_var(&fork, "active_repo").unwrap(), json!("repo-1"));
+        assert_eq!(state.get_var(&fork, "metarecord-list:query").unwrap(), json!("rating > 3"));
+        assert_eq!(state.get_var(&fork, "file-manager:dir").unwrap(), json!("/music"));
+        // Shown like a new tab, on the panel the original showed.
+        let layout = state.layout();
+        assert_eq!(layout.left.workspace_id.as_deref(), Some(fork.as_str()));
+        assert_eq!(layout.left.panel_type.as_deref(), Some("file-manager"));
+        // Two workspaces from then on: a change to one is not the other's.
+        state.set_var(&fork, "metarecord-list:query", json!("x")).unwrap();
+        assert_eq!(state.get_var("ws-1", "metarecord-list:query").unwrap(), json!("rating > 3"));
+    }
+
+    #[test]
+    fn test_fork_refuses_a_value_picker_and_an_unknown_workspace() {
+        let (_, state) = state();
+        let picker = state.pick_start(pick_spec("ws-1")).unwrap();
+        let before = state.workspaces().len();
+        assert!(state.fork(&picker).is_err());
+        assert!(state.fork("ws-99").is_err());
+        assert_eq!(state.workspaces().len(), before);
     }
 
     // ── Value picker ─────────────────────────────────────────────────────

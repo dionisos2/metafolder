@@ -38,6 +38,9 @@ function stubWorkspace(vars: Record<string, unknown> = {}) {
       },
       all: async () => ({}),
       adoptRepo: async () => {},
+      create: async () => '',
+      send: async () => {},
+      fork: async () => '',
       onChange: (key: string, listener: Listener) => {
         let set = listeners.get(key);
         if (!set) {

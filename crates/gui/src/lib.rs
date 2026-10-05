@@ -90,6 +90,8 @@ fn register_builtins(registry: &CommandRegistry) {
         ("editing:goto", "Move the cursor to the line start / line end", false),
         ("completion:cycle", "Cycle the prompt's completion views (forward / back)", false),
         ("workspace:new", "Create a workspace and show it in both slots", true),
+        ("workspace:fork", "Open a copy of this workspace in a new tab", true),
+        ("workspace:send", "Write a variable into a workspace, by id", true),
         ("workspace:close", "Close the focused slot's workspace", true),
         ("workspace:rename", "Rename the focused slot's workspace", true),
         ("workspace:goto", "Move both panels to workspace number N", true),
@@ -487,6 +489,9 @@ pub fn run(options: Options) {
         .invoke_handler(tauri::generate_handler![
             commands::get_initial_state,
             commands::workspace_new,
+            commands::workspace_create,
+            commands::workspace_send,
+            commands::workspace_fork,
             commands::workspace_close,
             commands::workspace_close_ws,
             commands::workspace_rename,

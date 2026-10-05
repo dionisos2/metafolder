@@ -138,6 +138,39 @@ pub async fn workspace_new(
     Ok(app.gui.workspace_new_named(active_repo, repo_name))
 }
 
+/// `mf.workspace.create` — an empty workspace on `active_repo` (none: no
+/// repository; nothing is inherited), shown in `slot` or like a new tab.
+#[tauri::command]
+pub async fn workspace_create(
+    app: AppHandle<'_>,
+    active_repo: Option<String>,
+    slot: Option<SlotId>,
+) -> Result<String, String> {
+    let repo_name = match &active_repo {
+        Some(uuid) => app.daemon.repo_name(uuid).await,
+        None => None,
+    };
+    app.gui.workspace_create(active_repo, repo_name, slot)
+}
+
+/// `workspace:send` / `mf.workspace.send` — writes variables into any
+/// workspace: the one channel between workspaces.
+#[tauri::command]
+pub fn workspace_send(
+    app: AppHandle,
+    ws_id: String,
+    vars: Map<String, Value>,
+) -> Result<(), String> {
+    app.gui.send_vars(&ws_id, vars)
+}
+
+/// `workspace:fork` / `mf.workspace.fork` — a new workspace identical to
+/// `ws_id`, shown like a new tab.
+#[tauri::command]
+pub fn workspace_fork(app: AppHandle, ws_id: String) -> Result<String, String> {
+    app.gui.fork(&ws_id)
+}
+
 #[tauri::command]
 pub fn workspace_close(app: AppHandle) -> Result<(), String> {
     app.gui.workspace_close()
