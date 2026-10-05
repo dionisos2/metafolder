@@ -4,8 +4,8 @@ kind: reference
 aliases: file-manager files file-browser
 summary: The disk, one directory at a time: which entries have a metarecord, which are left out and why, and the file operations of a file browser.
 
-Open it with `panel:set type file-manager`
-(<<key "panel:set type file-manager" "t m">>). It reads the disk itself and asks the
+Open it with `panel:open here file-manager`
+(<<key "panel:open here file-manager" "t m">>). It reads the disk itself and asks the
 daemon only what the repository knows about the entries shown. So it lists a file
 whether it is tracked or not, and it works with no repository at all, as a plain disk
 browser.

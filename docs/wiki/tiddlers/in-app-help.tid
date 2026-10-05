@@ -15,7 +15,7 @@ the shell, so they work before the help panel was ever shown.
 ''exact name'' of one, and searches every page for it otherwise:
 
 * a page's title, such as `find in a panel` (case does not matter), or one of its other names: `ctrl-f`, `shortcuts`;
-* a command, with or without arguments: `panel:set type treeref` opens the note of `panel:set`. A command with no note of its own leads to its panel;
+* a command, with or without arguments: `panel:open here treeref` opens the note of `panel:open`. A command with no note of its own leads to its panel;
 * a panel type, when no page has that very name: `log-detail` opens the note of the `log-detail` panel.
 
 A `#` in front always searches: `help #trash` lists the pages that mention the
@@ -35,7 +35,7 @@ the list…), and the page of the panel otherwise. `Escape` gives up.
 it:
 
 ```
-t l runs panel:set type metarecord-list — Set the focused slot's panel type
+t l runs panel:open here metarecord-list — Set the focused slot's panel type
 ```
 
 The answer is what the key would do ''now'': it is looked up for the panel that has

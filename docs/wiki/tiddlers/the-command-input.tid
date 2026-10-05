@@ -32,13 +32,13 @@ A row ending in `…` is a command that will ask for something before acting
 the name.
 
 The list holds every command, and one more row for each ''key bound to an invocation
-with arguments'': `panel:set type file` has its row, with its key, because a key runs
+with arguments'': `panel:open here file` has its row, with its key, because a key runs
 it. So every shortcut can be found by reading the list, and the variants nobody bound
 do not fill it — they are reached by running the command bare and answering.
 
 A line whose first word is already a command's whole name is run ''as typed'', whatever
-the list shows: `panel:set type` then `Enter` asks for the type, it does not run the
-first `panel:set type …` listed. Moving the highlight is a choice, and then the
+the list shows: `panel:open here` then `Enter` asks for the type, it does not run the
+first `panel:open here …` listed. Moving the highlight is a choice, and then the
 highlighted row runs.
 
 !! Editing keys

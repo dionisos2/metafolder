@@ -4,8 +4,8 @@ kind: reference
 aliases: workspace-info
 summary: Every variable of the workspace with its value, live — to see what the panels tell one another, and what a script would read.
 
-Open it with `panel:set type workspace-info`
-(<<key "panel:set type workspace-info" "t w">>). It shows the
+Open it with `panel:open here workspace-info`
+(<<key "panel:open here workspace-info" "t w">>). It shows the
 [[workspace variables|Workspace variables]] of its workspace, one row each, the value
 as JSON, updated as it changes.
 

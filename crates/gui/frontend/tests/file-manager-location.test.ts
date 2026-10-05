@@ -269,7 +269,7 @@ describe('the file-manager:reveal command (shipped commands.js)', () => {
       { key: 'file-manager:dir', value: '/repo/sub' },
       { key: 'file-manager:cursor', value: 'song.mp3' },
     ]);
-    expect(calls.invoked).toEqual(['panel:set type file-manager']);
+    expect(calls.invoked).toEqual(['panel:open here file-manager']);
   });
 
   test('a folder: the folder itself, nothing highlighted', async () => {

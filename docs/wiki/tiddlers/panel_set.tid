@@ -1,6 +1,0 @@
-title: panel:set
-tags: [[GUI command]] [[Panel slots and layout]]
-kind: reference
-summary: Change a layout setting (type)
-
-`panel:set type <name>` switches the focused slot to that panel type; the header's panel menu does the same. It is refused when the other visible slot already shows that type for the same workspace. See [[Panel types]].

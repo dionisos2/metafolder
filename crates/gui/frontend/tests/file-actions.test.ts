@@ -321,9 +321,9 @@ describe('metarecordMenuItems', () => {
       'Copy UUID',
     ]);
     item(items, 'Open in panel metarecord-detail').action!();
-    expect(commands.invoke).toHaveBeenCalledWith('panel:reveal metarecord-detail');
+    expect(commands.invoke).toHaveBeenCalledWith('panel:open other metarecord-detail');
     item(items, 'Open in panel file').action!();
-    expect(commands.invoke).toHaveBeenCalledWith('panel:reveal file');
+    expect(commands.invoke).toHaveBeenCalledWith('panel:open other file');
     item(items, 'Open folder in file manager').action!();
     expect(commands.invoke).toHaveBeenCalledWith('file-manager:reveal');
     item(items, 'Open folder in metarecord-list').action!();

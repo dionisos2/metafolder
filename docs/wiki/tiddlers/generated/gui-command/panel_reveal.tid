@@ -1,9 +1,0 @@
-title: $:/mf/gen/GUI command/panel:reveal
-catalog: GUI command
-target: panel:reveal
-summary: Show a panel type for this workspace in the other slot
-
-!! Reference
-
-* Defined by the shell (a builtin)
-* No default key

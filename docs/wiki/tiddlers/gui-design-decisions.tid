@@ -107,6 +107,6 @@ pass, which froze every edited file at its old version.
 !! Open: choosing a panel type
 
 The slot header's menu lists every installed type, which will not scale to many.
-The keyboard already has two other ways — the `t` sequences and `panel:set type`
+The keyboard already has two other ways — the `t` sequences and `panel:open here`
 with completion in the command input ([[Panel types]]) — so the menu is left as it
 is until the number of types makes it a problem.

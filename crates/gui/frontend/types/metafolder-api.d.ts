@@ -637,6 +637,15 @@ declare namespace Metafolder {
       context: { ws: string | null; slot: 'left' | 'right' },
       body: (mf: Api) => Promise<T> | T,
     ): Promise<T>;
+    /** User commands only: runs `body` at an open target (doc "Panel slots
+     *  and layout") — `here`, `other` (this workspace in the other slot) or
+     *  `new` (a fork of it) — with an API acting there. `targets` lists the
+     *  ones the command offers; another is refused before anything moves. */
+    atTarget?<T>(
+      where: string,
+      body: (mf: Api) => Promise<T> | T,
+      options?: { targets?: readonly string[] },
+    ): Promise<T>;
     /** Suggests a binding for one of this panel's commands. `when` defaults to
      *  this panel type; pass it explicitly to widen or narrow the scope. */
     addKeybinding(

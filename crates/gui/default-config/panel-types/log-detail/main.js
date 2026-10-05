@@ -127,7 +127,7 @@ export async function mount(root, metafolder) {
         : [relPath === '' ? rootPath : `${rootPath}${relPath}`];
     await workspace.set('selected_metarecord', { uuid, repo });
     await workspace.set('selected_paths', paths);
-    await commands.invoke('panel:reveal metarecord-detail');
+    await commands.invoke('panel:open other metarecord-detail');
   }
 
   /** A metarecord uuid, clickable, followed by its current path once known.

@@ -43,6 +43,7 @@ run a command as if it were typed. A user command belongs to no panel, so:
 
 * it acts in its ''execution context'' ([[Commands]]): the focused workspace and slot when it runs — `mf.workspace.get('active_repo')` is the repository of where you are now — and `mf.context` says which (`{ws, slot}`);
 * `mf.withContext({ws, slot}, async (mf) => …)` runs a block elsewhere: inside it, `mf` and the commands it invokes act on that workspace and slot; outside, nothing has moved;
+* `mf.atTarget(where, async (mf) => …, {targets})` runs a block at an [[open target|Panel slots and layout]] — `here`, `other`, `new` — so a command that opens a panel is written once, for `here`, and takes the target as its first argument;
 * what only means something inside a panel is absent — the panel's type, page size, default values and visibility, and `commands.register`.
 
 A command here is meant to ''combine existing commands''. `mf.daemon` is there for
@@ -69,7 +70,7 @@ then runs nothing ([[Changing keybindings]]).
 !! Names
 
 Any name will do; `user:` keeps yours apart from the shipped ones. A name that is
-already a command — of the shell (`quit`, `panel:set`…) or of a panel
+already a command — of the shell (`quit`, `panel:open`…) or of a panel
 (`log:find`…) — is ''left out'': the existing command stays as it is, and the status
 bar names the entry that was ignored. An entry can add to the command set, never
 replace part of it unnoticed.

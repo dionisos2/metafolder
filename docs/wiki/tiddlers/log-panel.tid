@@ -3,7 +3,7 @@ tags: Panel [[Event log]]
 kind: reference
 summary: The repository's history, revision by revision — badges saying what each is, the watcher's revisions hideable, a cursor that reaches single operations.
 
-Open it with `panel:set type log` (<<key "panel:set type log" "t o">>). One row per
+Open it with `panel:open here log` (<<key "panel:open here log" "t o">>). One row per
 revision, newest first: its number, time, operation count and ''status'' badges — what
 decides whether undoing it makes sense:
 

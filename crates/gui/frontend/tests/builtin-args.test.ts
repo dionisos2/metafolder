@@ -1,17 +1,11 @@
 // The shell builtins declare their arguments like every other command (doc
 // "Interactive command arguments"), so an invocation that merely omits one is collected in the
 // minibuffer — with its completions — instead of reaching the handler and
-// failing there. `panel:set` typed bare asks which setting, then which panel
-// type; `panel:set type` supplies the first and asks only the second.
+// failing there. `panel:open` typed bare asks where, then which panel type;
+// `panel:open here` supplies the first and asks only the second.
 
 import { describe, expect, test, vi } from 'vitest';
-import {
-  type ArgPromptRequest,
-  argSpecFor,
-  collectArgs,
-  dispatch,
-  promptsForInput,
-} from '../src/lib/commands';
+import { dispatch, promptsForInput } from '../src/lib/commands';
 import { store } from '../src/lib/store.svelte';
 
 const { invoked } = vi.hoisted(() => ({ invoked: [] as { cmd: string; args: unknown }[] }));
@@ -41,15 +35,15 @@ async function answer(value: string | null): Promise<void> {
   await settle();
 }
 
-describe('panel:set', () => {
-  test('asks its setting, then the panel type, and only then acts', async () => {
+describe('panel:open', () => {
+  test('asks where, then the panel type, and only then acts', async () => {
     store.panelTypes = ['file', 'log'];
-    const done = dispatch('panel:set');
+    const done = dispatch('panel:open');
 
     await settle();
-    expect(store.ui.promptText).toBe('Which setting? (type)');
-    expect(store.ui.promptCompletions).toEqual(['type']);
-    await answer('type');
+    expect(store.ui.promptText).toBe('Open where? (here / other / new)');
+    expect(store.ui.promptCompletions).toEqual(['here', 'other', 'new']);
+    await answer('here');
 
     expect(store.ui.promptText).toBe('Which panel type?');
     expect(store.ui.promptCompletions).toEqual(['file', 'log']);
@@ -64,7 +58,7 @@ describe('panel:set', () => {
 
   test('a supplied argument is not asked again, the next one still is', async () => {
     store.panelTypes = ['file', 'log'];
-    const done = dispatch('panel:set type');
+    const done = dispatch('panel:open here');
 
     await settle();
     expect(store.ui.promptText).toBe('Which panel type?');
@@ -78,7 +72,7 @@ describe('panel:set', () => {
   });
 
   test('a complete invocation runs without opening the minibuffer', async () => {
-    expect(await dispatch('panel:set type file')).toEqual({ ok: true });
+    expect(await dispatch('panel:open here file')).toEqual({ ok: true });
     expect(store.ui.promptText).toBeNull();
     expect(invoked).toContainEqual({
       cmd: 'panel_set_type',
@@ -86,20 +80,15 @@ describe('panel:set', () => {
     });
   });
 
-  test('the value is asked only for a setting that takes one', async () => {
-    // `when` drops the value of an unknown setting — naming it is the
-    // handler's job — and an argument supplied inline is not asked again.
-    const requests: ArgPromptRequest[] = [];
-    const collected = await collectArgs(argSpecFor('panel:set')!, ['nonsense'], async (request) => {
-      requests.push(request);
-      return 'x';
-    });
-    expect(requests).toEqual([]);
-    expect(collected).toEqual(['nonsense']);
+  test('an unknown target is not collected further: the handler names it', async () => {
+    invoked.length = 0;
+    expect(await dispatch('panel:open nowhere file')).toEqual({ ok: true });
+    expect(store.ui.promptText).toBeNull();
+    expect(invoked.map((c) => c.cmd)).not.toContain('panel_set_type');
   });
 
   test('escape abandons the whole invocation, quietly', async () => {
-    const done = dispatch('panel:set');
+    const done = dispatch('panel:open');
     await settle();
     await answer(null);
     expect(await done).toEqual({ ok: true });
@@ -108,16 +97,16 @@ describe('panel:set', () => {
 });
 
 describe('the other builtins that take arguments', () => {
-  test('panel:reveal asks the panel type and completes over the installed ones', async () => {
-    // Reveal shows the type for the *same workspace* in the other slot, so it
+  test('panel:open other asks the panel type and completes over the installed ones', async () => {
+    // `other` shows the type for the *same workspace* in the other slot, so it
     // needs one on screen.
     store.panelTypes = ['file', 'help'];
     store.workspaces = [{ id: 'ws-1', name: 'music', active_repo: null, repo_name: null }];
     store.layout.left = { visible: true, workspace_id: 'ws-1', panel_type: 'message' };
-    const done = dispatch('panel:reveal');
+    const done = dispatch('panel:open other');
 
     await settle();
-    expect(store.ui.promptText).toBe('Show which panel type?');
+    expect(store.ui.promptText).toBe('Which panel type?');
     expect(store.ui.promptCompletions).toEqual(['file', 'help']);
     await answer('help');
 
@@ -237,9 +226,9 @@ describe('an optional trailing argument is never asked for', () => {
   });
 
   test('and the "…" marker follows: only a missing required argument earns it', () => {
-    expect(promptsForInput('panel:set')).toBe(true);
-    expect(promptsForInput('panel:set type')).toBe(true);
-    expect(promptsForInput('panel:set type file')).toBe(false);
+    expect(promptsForInput('panel:open')).toBe(true);
+    expect(promptsForInput('panel:open here')).toBe(true);
+    expect(promptsForInput('panel:open here file')).toBe(false);
     expect(promptsForInput('workspace:rename')).toBe(true);
     expect(promptsForInput('workspace:rename music')).toBe(false);
     expect(promptsForInput('workspace:next')).toBe(false);

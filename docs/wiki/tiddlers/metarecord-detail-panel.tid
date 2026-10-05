@@ -4,8 +4,8 @@ kind: reference
 aliases: metarecord-detail detail edit-field
 summary: Every field of the selected metarecord, one row each, edited in place; references are followed like links, and notes say whether its file is gone or unwatched.
 
-Open it with `panel:set type metarecord-detail`
-(<<key "panel:set type metarecord-detail" "t d">>). It shows the workspace's selected
+Open it with `panel:open here metarecord-detail`
+(<<key "panel:open here metarecord-detail" "t d">>). It shows the workspace's selected
 metarecord ([[Cross-panel selection]]): its uuid and [[version|Metarecord version]],
 then one row per field row — name, type, value. A field holding several values has as
 many rows ([[Fields and values]]). With nothing selected it says so, and offers ''New

@@ -65,7 +65,7 @@ function describeMessage(
   const combo = formatCombo(keys);
   if (found.fired) {
     // Only the first token is a name: a binding may pre-fill arguments
-    // (`panel:set type metarecord-list`), and a shell invocation (`!…`) names
+    // (`panel:open here metarecord-list`), and a shell invocation (`!…`) names
     // no command at all. The description is the registry label.
     const name = found.fired.invocation.trim().split(/\s+/)[0] ?? '';
     const label = name.startsWith('!') ? '' : labelOf(name);

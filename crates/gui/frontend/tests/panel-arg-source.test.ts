@@ -80,7 +80,7 @@ describe('prepare', () => {
 
   test('a shell builtin owns no panel and mounts nothing', async () => {
     const { source, mounted } = setup();
-    await source.prepare('panel:set');
+    await source.prepare('panel:open');
     expect(mounted).toEqual([]);
   });
 

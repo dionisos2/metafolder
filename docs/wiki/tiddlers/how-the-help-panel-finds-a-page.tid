@@ -53,7 +53,7 @@ replaces the content of each such element with the keys bound to the command, re
 from `metafolder.commands.keybindings()` (`applyKeyHints`, `/__keyhints.js`):
 
 * the attribute holds one invocation, or several separated by commas — the keys of any of them, each once, in the order of the table. That is how a row common to several panels is written;
-* a bare command name matches every invocation of it (`panel:set` lists the keys of all its bindings), a fuller one only itself (`panel:set type treeref`) — the rule the command input uses to show a command's keys;
+* a bare command name matches every invocation of it (`panel:open` lists the keys of all its bindings), a fuller one only itself (`panel:open here treeref`) — the rule the command input uses to show a command's keys;
 * modifiers are capitalised (`Ctrl+Shift+z`), arrows drawn as arrows, a sequence written as its keys in order (`t l`), several keys joined by ''or'';
 * a command nothing is bound to reads `unbound`;
 * the table is read again at each page shown.

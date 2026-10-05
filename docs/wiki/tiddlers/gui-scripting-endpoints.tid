@@ -97,7 +97,7 @@ state.
 
 !! Commands
 
-`POST /gui/command` takes `{"invocation": "panel:set type file", "timeout_ms": null}`.
+`POST /gui/command` takes `{"invocation": "panel:open here file", "timeout_ms": null}`.
 The line is handed to the shell's own dispatcher — the one the command input and the
 keys use, so there is a single path — and parsed like typed text; a leading `!` runs a
 shell line. The request blocks until the command resolves:

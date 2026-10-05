@@ -393,9 +393,9 @@ describe('deadInvocations', () => {
   });
 
   test('a pre-filled argument is not part of the name', () => {
-    // `panel:set type file` names `panel:set`; reading the whole invocation as
+    // `panel:open here file` names `panel:open`; reading the whole invocation as
     // a name would report every parameterized binding as dead.
-    const dead = deadInvocations([command('panel:set')], [binding(['s', 'f'], 'panel:set type file')]);
+    const dead = deadInvocations([command('panel:open')], [binding(['s', 'f'], 'panel:open here file')]);
     expect(dead).toEqual([]);
   });
 
@@ -461,7 +461,7 @@ describe('listedCommands', () => {
 
   test('the bare entry shows only the combos bound to it exactly', () => {
     // Without this the bare command would collect every parameterized combo —
-    // `panel:set type` used to print 14 of them on one line, with nothing
+    // `panel:open here` used to print 14 of them on one line, with nothing
     // saying which combo went with which panel type.
     const listed = listedCommands(commands, keytable);
     expect(listed.find((c) => c.name === 'metarecord:bulk')?.shortcuts).toEqual(['m b']);
@@ -905,21 +905,21 @@ describe('resolveSubmission', () => {
   });
 
   test('a typed invocation of a known command wins over the list', () => {
-    // `panel:set type` is an incomplete invocation: it asks for the type. It
+    // `panel:open here` is an incomplete invocation: it asks for the type. It
     // must not run the first bound variant the list happens to show.
-    const known = ['panel:set', 'help', 'help:cursor'];
-    const variants = [{ name: 'panel:set type duplicates' }, { name: 'panel:set type file' }];
-    expect(resolveSubmission('panel:set type', variants, 0, known)).toBe('panel:set type');
+    const known = ['panel:open', 'help', 'help:cursor'];
+    const variants = [{ name: 'panel:open here duplicates' }, { name: 'panel:open here file' }];
+    expect(resolveSubmission('panel:open here', variants, 0, known)).toBe('panel:open here');
     // An abbreviation names no command: the highlighted row runs.
-    expect(resolveSubmission('pan ty', variants, 0, known)).toBe('panel:set type duplicates');
+    expect(resolveSubmission('pan ty', variants, 0, known)).toBe('panel:open here duplicates');
     // A highlight the user moved is a choice, and wins.
-    expect(resolveSubmission('panel:set type', variants, 1, known)).toBe('panel:set type file');
+    expect(resolveSubmission('panel:open here', variants, 1, known)).toBe('panel:open here file');
     const helps = [{ name: 'help' }, { name: 'help:cursor' }];
     expect(resolveSubmission('help', helps, 1, known)).toBe('help:cursor');
   });
 
   test('falls back to the typed text when there is no suggestion', () => {
-    expect(resolveSubmission('panel:set type file', [], 0)).toBe('panel:set type file');
+    expect(resolveSubmission('panel:open here file', [], 0)).toBe('panel:open here file');
     expect(resolveSubmission('!ls', [], 0)).toBe('!ls');
   });
 });

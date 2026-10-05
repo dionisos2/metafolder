@@ -4,7 +4,7 @@ kind: reference
 aliases: message messages
 summary: The workspace's message log, newest first: every status message, every command run, every shell line run, the daemon's reports.
 
-Open it with `panel:set type message` (<<key "panel:set type message" "t g">>). It
+Open it with `panel:open here message` (<<key "panel:open here message" "t g">>). It
 shows what the workspace's message log holds, each line with its time, the newest at
 the ''top'':
 

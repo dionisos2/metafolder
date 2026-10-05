@@ -1,0 +1,75 @@
+title: $:/mf/gen/GUI command/panel:open
+catalog: GUI command
+target: panel:open
+summary: Open a panel type here, in the other slot, or in a new workspace
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``b t b`` → ``panel:open new trash``
+* ``b t d`` → ``panel:open new metarecord-detail``
+* ``b t e`` → ``panel:open new log-detail``
+* ``b t f`` → ``panel:open new file``
+* ``b t g`` → ``panel:open new message``
+* ``b t h`` → ``panel:open new help``
+* ``b t l`` → ``panel:open new metarecord-list``
+* ``b t m`` → ``panel:open new file-manager``
+* ``b t o`` → ``panel:open new log``
+* ``b t r`` → ``panel:open new repos``
+* ``b t s`` → ``panel:open new shell``
+* ``b t t`` → ``panel:open new treeref``
+* ``b t u`` → ``panel:open new duplicates``
+* ``b t v`` → ``panel:open new recent``
+* ``b t w`` → ``panel:open new workspace-info``
+* ``b t y`` → ``panel:open new sync``
+* ``i t b`` → ``panel:open here trash``
+* ``i t d`` → ``panel:open here metarecord-detail``
+* ``i t e`` → ``panel:open here log-detail``
+* ``i t f`` → ``panel:open here file``
+* ``i t g`` → ``panel:open here message``
+* ``i t h`` → ``panel:open here help``
+* ``i t l`` → ``panel:open here metarecord-list``
+* ``i t m`` → ``panel:open here file-manager``
+* ``i t o`` → ``panel:open here log``
+* ``i t r`` → ``panel:open here repos``
+* ``i t s`` → ``panel:open here shell``
+* ``i t t`` → ``panel:open here treeref``
+* ``i t u`` → ``panel:open here duplicates``
+* ``i t v`` → ``panel:open here recent``
+* ``i t w`` → ``panel:open here workspace-info``
+* ``i t y`` → ``panel:open here sync``
+* ``t b`` → ``panel:open here trash``
+* ``t d`` → ``panel:open here metarecord-detail``
+* ``t e`` → ``panel:open here log-detail``
+* ``t f`` → ``panel:open here file``
+* ``t g`` → ``panel:open here message``
+* ``t h`` → ``panel:open here help``
+* ``t l`` → ``panel:open here metarecord-list``
+* ``t m`` → ``panel:open here file-manager``
+* ``t o`` → ``panel:open here log``
+* ``t r`` → ``panel:open here repos``
+* ``t s`` → ``panel:open here shell``
+* ``t t`` → ``panel:open here treeref``
+* ``t u`` → ``panel:open here duplicates``
+* ``t v`` → ``panel:open here recent``
+* ``t w`` → ``panel:open here workspace-info``
+* ``t y`` → ``panel:open here sync``
+* ``w t b`` → ``panel:open other trash``
+* ``w t d`` → ``panel:open other metarecord-detail``
+* ``w t e`` → ``panel:open other log-detail``
+* ``w t f`` → ``panel:open other file``
+* ``w t g`` → ``panel:open other message``
+* ``w t h`` → ``panel:open other help``
+* ``w t l`` → ``panel:open other metarecord-list``
+* ``w t m`` → ``panel:open other file-manager``
+* ``w t o`` → ``panel:open other log``
+* ``w t r`` → ``panel:open other repos``
+* ``w t s`` → ``panel:open other shell``
+* ``w t t`` → ``panel:open other treeref``
+* ``w t u`` → ``panel:open other duplicates``
+* ``w t v`` → ``panel:open other recent``
+* ``w t w`` → ``panel:open other workspace-info``
+* ``w t y`` → ``panel:open other sync``

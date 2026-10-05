@@ -6,7 +6,7 @@ summary: A key runs a command: every binding is a line of one file, restricted i
 
 A ''keybinding'' maps a key — or a sequence of keys — to a command invocation,
 arguments included: `ctrl+t` to `workspace:new`, `t l` to
-`panel:set type metarecord-list`. Nothing else is behind a key, so whatever a key
+`panel:open here metarecord-list`. Nothing else is behind a key, so whatever a key
 does can also be typed in [[the command input|The command input]], clicked or sent
 by a script ([[Commands]]).
 

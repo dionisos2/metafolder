@@ -4,7 +4,7 @@ kind: reference
 aliases: terminal output
 summary: What the shell lines run in the workspace printed, read like a terminal: oldest first, one block per run, stderr in red, how a run ended.
 
-Open it with `panel:set type shell` (<<key "panel:set type shell" "t s">>). A shell
+Open it with `panel:open here shell` (<<key "panel:open here shell" "t s">>). A shell
 line typed after `!` ([[Bash mode]]), a script started with `script:run`
 ([[Running shipped scripts]]) and a program started with `file:open-with`
 ([[Opening a file with another program]]) write their output here, not to the

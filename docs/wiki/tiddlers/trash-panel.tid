@@ -4,7 +4,7 @@ kind: reference
 aliases: restore empty
 summary: Lists the repository's trash entries, newest first, to restore or delete them.
 
-Open it with `panel:set type trash` (<<key "panel:set type trash" "t b">>). One
+Open it with `panel:open here trash` (<<key "panel:open here trash" "t b">>). One
 row per entry — name, size, age, reason, the path it was trashed from — newest
 first.
 

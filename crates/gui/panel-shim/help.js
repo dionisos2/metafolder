@@ -51,7 +51,7 @@ const PANEL_SUFFIX = ' panel';
  *
  *  Order: empty/`#`-prefixed → null; a direct id/title/alias hit; else, for a
  *  `prefix:rest` command name, the command itself without its arguments (so
- *  `panel:set type treeref` → the `panel:set` note), then the more specific
+ *  `panel:open here treeref` → the `panel:open` note), then the more specific
  *  `rest` taken as an alias (so `metarecord-list:focus-query` → the queries
  *  page), then the `prefix` taken as a panel type (so every `panel:command`
  *  lands on at least its panel's page); else a panel type and its

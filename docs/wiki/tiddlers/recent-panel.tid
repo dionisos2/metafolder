@@ -21,7 +21,7 @@ there to change what a line shows.
 
 !! As a panel
 
-Open it with `panel:set type recent` (<<key "panel:set type recent" "t v">>). One row
+Open it with `panel:open here recent` (<<key "panel:open here recent" "t v">>). One row
 per metarecord: its `label`, else its `name`, else the start of its uuid; its path;
 how long ago it was viewed.
 

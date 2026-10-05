@@ -283,7 +283,7 @@ export default {
       }
       await mf.workspace.set('file-manager:dir', isDir ? path : parentDir(path));
       await mf.workspace.set('file-manager:cursor', isDir ? null : path.slice(path.lastIndexOf('/') + 1));
-      await mf.invoke('panel:set type file-manager');
+      await mf.invoke('panel:open here file-manager');
     },
   },
 
@@ -327,7 +327,7 @@ export default {
       await mf.workspace.set('metarecord-list:normal-query', `mfr_path -> ${dslString(folder)}`);
       await mf.workspace.set('metarecord-list:normal-shown', true);
       await mf.workspace.set('metarecord-list:normal-frozen', true);
-      await mf.invoke('panel:set type metarecord-list');
+      await mf.invoke('panel:open here metarecord-list');
       await mf.statusBar.message(`Listing ${folder || '/'}`);
     },
   },
@@ -434,7 +434,7 @@ export default {
         await mf.invoke(`workspace:new ${uuid}`);
       } else {
         await mf.workspace.adoptRepo(uuid);
-        await mf.invoke('panel:set type metarecord-list');
+        await mf.invoke('panel:open here metarecord-list');
       }
     },
   },
@@ -484,7 +484,7 @@ export default {
       const paths = await mf.daemon.metarecordPaths(repo, { uuid });
       await mf.workspace.set('selected_metarecord', { uuid, repo });
       await mf.workspace.set('selected_paths', paths);
-      await mf.invoke(paths.length > 0 ? 'panel:reveal file' : 'panel:reveal metarecord-detail');
+      await mf.invoke(paths.length > 0 ? 'panel:open other file' : 'panel:open other metarecord-detail');
     },
   },
 

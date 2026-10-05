@@ -59,15 +59,15 @@ describe('bindingMatches', () => {
   });
 
   test('a parameterised invocation matches its bare command name', () => {
-    expect(bindingMatches(bind(['t', 'l'], 'panel:set type metarecord-list'), 'panel:set type')).toBe(
+    expect(bindingMatches(bind(['t', 'l'], 'panel:open here metarecord-list'), 'panel:open here')).toBe(
       true,
     );
   });
 
   test('a fuller query matches only that exact invocation', () => {
-    const b = bind(['t', 'l'], 'panel:set type metarecord-list');
-    expect(bindingMatches(b, 'panel:set type metarecord-list')).toBe(true);
-    expect(bindingMatches(b, 'panel:set type treeref')).toBe(false);
+    const b = bind(['t', 'l'], 'panel:open here metarecord-list');
+    expect(bindingMatches(b, 'panel:open here metarecord-list')).toBe(true);
+    expect(bindingMatches(b, 'panel:open here treeref')).toBe(false);
   });
 
   test('a command name is not a prefix of another command', () => {

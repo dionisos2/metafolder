@@ -24,7 +24,8 @@ import {
 } from './ignore';
 import { invoke } from './ipc';
 import { type ExpandDeps, expandShellPlaceholders, shellQuote } from './placeholders';
-import { focusedContext, focusedWs, flashStatus, store, workspaceById } from './store.svelte';
+import { focusedContext, focusedWs, flashStatus, slotPayload, store, workspaceById } from './store.svelte';
+import { isTarget, resolveTarget, TARGETS } from './targets';
 import { daemonWork } from './working';
 import type { CommandDef, ExecContext, LayoutView } from './types';
 
@@ -68,7 +69,7 @@ export function shortcutsFor(
  * and never validated; this is the runtime half of that guard.
  *
  * Only the first token is a name: a binding may pre-fill arguments
- * (`panel:set type file`), and reading the whole invocation as a name would
+ * (`panel:open here file`), and reading the whole invocation as a name would
  * report every parameterized binding as dead. Shell invocations (`!…`) name no
  * command at all.
  */
@@ -104,7 +105,7 @@ export interface ListedCommand extends CommandDef {
  * only pays for what the user actually put on a key.
  *
  * Combos are matched *exactly* here, unlike `shortcutsFor`: the bare entry
- * must not collect its variants' combos. `panel:set type` used to print all
+ * must not collect its variants' combos. `panel:open here` used to print all
  * fourteen of them on one line with nothing saying which went with which panel
  * type — the expansion turns that into fourteen findable rows.
  */
@@ -156,12 +157,12 @@ export function filterCommands<C extends { name: string }>(commands: C[], query:
 
 /** What the command input runs on Enter (command mode only): the
  *  highlighted suggestion when the list is non-empty, otherwise the raw
- *  typed text. Commands with arguments (e.g. `panel:set type file`) empty
+ *  typed text. Commands with arguments (e.g. `panel:open here file`) empty
  *  the suggestion list, so they fall through to the typed text.
  *
  *  A line whose first word is a command's whole name is an invocation, not an
- *  abbreviation, and runs as typed: `panel:set type` asks for the type — it
- *  used to run the first bound `panel:set type …` the list happened to show.
+ *  abbreviation, and runs as typed: `panel:open here` asks for the type — it
+ *  used to run the first bound `panel:open here …` the list happened to show.
  *  That holds while the highlight is where typing left it; a highlight the
  *  user moved is a choice and wins (doc "The command input"). */
 export function resolveSubmission(
@@ -1047,8 +1048,8 @@ export function setPanelDispatch(fn: PanelDispatch | null) {
 // ── Builtin argument declarations (doc "Interactive command arguments") ─────────────────
 // Every argument a builtin takes is declared here, like a panel command's, so
 // a missing one is collected in the minibuffer — with its completions — instead
-// of reaching the handler and failing there. `panel:set` typed bare asks which
-// setting, then which panel type; `panel:set type` supplies the first and asks
+// of reaching the handler and failing there. `panel:open` typed bare asks which
+// setting, then which panel type; `panel:open here` supplies the first and asks
 // only the second. A required argument is asked for whenever the invocation
 // does not supply it; an `optional` one is the trailing modifier whose absence
 // is itself the documented meaning (`workspace:next` moves both panels,
@@ -1120,18 +1121,13 @@ registerArgs('panel:focus', [
   },
 ]);
 
-registerArgs('panel:set', [
-  { name: 'setting', prompt: () => 'Which setting? (type)', complete: () => ['type'] },
+registerArgs('panel:open', [
   {
-    name: 'value',
-    when: (prior) => prior[0] === 'type',
-    prompt: () => 'Which panel type?',
-    complete: () => [...store.panelTypes],
+    name: 'target',
+    prompt: () => `Open where? (${TARGETS.join(' / ')})`,
+    complete: () => [...TARGETS],
   },
-]);
-
-registerArgs('panel:reveal', [
-  { name: 'type', prompt: () => 'Show which panel type?', complete: () => [...store.panelTypes] },
+  { name: 'type', prompt: () => 'Which panel type?', complete: () => [...store.panelTypes] },
 ]);
 
 registerArgs('mf:duplicate', [
@@ -1566,25 +1562,25 @@ async function runCommand(name: string, args: string[], context: ExecContext): P
         await invoke('focus_slot', { slot: args[0] });
       else await status(`unknown slot: "${args[0]}" (expected next / left / right)`);
       return true;
-    case 'panel:set':
-      if (args[0] !== 'type') {
-        await status(`unknown setting: "${args[0] ?? ''}" (expected type)`);
+    case 'panel:open': {
+      // `panel:open <here|other|new> <type>` (doc "Panel slots and layout").
+      const [where, panelType] = args;
+      if (!isTarget(where)) {
+        await status(`unknown target: "${where ?? ''}" (expected ${TARGETS.join(' / ')})`);
         return true;
       }
-      if (args[1]) await invoke('panel_set_type', { slot: context.slot, panelType: args[1] });
+      if (!panelType) return true;
+      const target = await resolveTarget(where, context, invoke);
+      // A context's workspace need not be on screen: shown in its slot first.
+      if (target.ws && slotPayload(target.slot).workspace_id !== target.ws && where === 'here') {
+        await invoke('tab_assign', { wsId: target.ws, slot: target.slot });
+      }
+      await invoke('panel_set_type', { slot: target.slot, panelType });
       return true;
+    }
     case 'panel:swap':
       await invoke('panel_swap');
       return true;
-    case 'panel:reveal': {
-      // Shows the given panel type for the SAME workspace in the other
-      // slot, opening it if hidden (doc "Cross-panel selection").
-      if (!args[0] || !ws) return true;
-      const other = context.slot === 'left' ? 'right' : 'left';
-      await invoke('tab_assign', { wsId: ws, slot: other });
-      await invoke('panel_set_type', { slot: other, panelType: args[0] });
-      return true;
-    }
     case 'message:clear':
       if (ws) await invoke('clear_messages', { wsId: ws });
       return true;
@@ -1738,7 +1734,7 @@ async function runCommand(name: string, args: string[], context: ExecContext): P
       // `setting` and `value` were collected by dispatch (inline or in the
       // minibuffer). `url` is the only setting there is, but `set <setting>
       // <value>` is the naming convention (doc "Command naming"), so
-      // the shape matches `panel:set`.
+      // the shape matches `panel:open`.
       if (args[0] !== 'url') {
         await status(`unknown setting: "${args[0] ?? ''}" (expected url)`);
         return true;

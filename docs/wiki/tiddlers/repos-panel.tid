@@ -4,7 +4,7 @@ kind: reference
 aliases: repos
 summary: The repositories the daemon has loaded, each with its running tasks and tracking notices; opens them, loads and creates new ones, unloads them.
 
-Open it with `repos:open` or `panel:set type repos` (<<key "panel:set type repos" "t r">>).
+Open it with `repos:open` or `panel:open here repos` (<<key "panel:open here repos" "t r">>).
 One row per repository the daemon has loaded: its name, its root and the start of its
 uuid. The list is read when the panel is built, after each thing the panel does, and
 by <<key "repos:refresh" r>> (`repos:refresh`) — a repository loaded from the command

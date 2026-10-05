@@ -11,10 +11,10 @@ configuration, so they can be read and changed like the rest of it
 ([[Updating the configuration]]); a new directory there is a new panel type,
 listed next to the others ([[Writing a panel type]]).
 
-Choose one with the panel menu of the slot's header, with `panel:set type <name>`,
-or with the `t` keys: <<key "panel:set type metarecord-list" "t l">> for the list,
-<<key "panel:set type metarecord-detail" "t d">> the detail,
-<<key "panel:set type file" "t f">> the file, <<key "panel:set type file-manager" "t m">>
+Choose one with the panel menu of the slot's header, with `panel:open here <name>`,
+or with the `t` keys: <<key "panel:open here metarecord-list" "t l">> for the list,
+<<key "panel:open here metarecord-detail" "t d">> the detail,
+<<key "panel:open here file" "t f">> the file, <<key "panel:open here file-manager" "t m">>
 the file manager…
 
 |!Panel type |!Shows |

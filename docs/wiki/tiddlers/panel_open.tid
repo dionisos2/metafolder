@@ -1,0 +1,14 @@
+title: panel:open
+tags: [[GUI command]] [[Panel slots and layout]]
+kind: reference
+summary: Open a panel type here, in the other slot, or in a new workspace
+
+`panel:open <target> <type>` opens a panel type, at one of the three
+[[open targets|Panel slots and layout]]:
+
+* `here` — in place of the panel of the slot the command runs in; the header's panel menu does the same (<<key "panel:open here metarecord-list" "t l">> and the other `t` sequences);
+* `other` — for the same workspace, in the other slot, opening it if it was hidden and taking it over if it showed another workspace — what a double-click in `metarecord-list` does ([[Cross-panel selection]]);
+* `new` — in a new workspace, a copy of this one ([[workspace:fork]]), so the panel opens on the same state.
+
+It is refused when the other visible slot already shows that type for the same
+workspace. See [[Panel types]].

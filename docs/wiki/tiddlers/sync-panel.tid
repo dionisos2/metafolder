@@ -3,7 +3,7 @@ tags: Panel
 kind: reference
 summary: Synchronises two repositories: pick the pair, read their status, compute and review a plan, resolve its conflicts, run it.
 
-Open it with `panel:set type sync` (<<key "panel:set type sync" "t y">>). It drives
+Open it with `panel:open here sync` (<<key "panel:open here sync" "t y">>). It drives
 the same sync engine as `mf sync`, so nothing here needs a shell ([[Sync]],
 [[Syncing two repositories]]).
 

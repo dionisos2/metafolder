@@ -3,7 +3,7 @@ tags: Panel [[TreeRef forest]]
 kind: reference
 summary: Walks a tree of metarecords — the files, or a tag hierarchy — from its roots down; adds nodes to it, and lists what points at a node.
 
-Open it with `panel:set type treeref` (<<key "panel:set type treeref" "t t">>). It
+Open it with `panel:open here treeref` (<<key "panel:open here treeref" "t t">>). It
 walks one [[TreeRef forest]] — the tree a `tree_ref` field draws — the way the file
 manager walks the disk, for any such field: `mfr_path`, the files, or a hierarchy of
 tags ([[Hierarchical tags]]).

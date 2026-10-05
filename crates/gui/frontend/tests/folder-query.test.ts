@@ -224,7 +224,7 @@ describe('the request it lands', () => {
       { key: 'metarecord-list:normal-frozen', value: true },
     ]);
     // The state is written before the panel switch that shows it.
-    expect(calls.invoked).toEqual(['panel:set type metarecord-list']);
+    expect(calls.invoked).toEqual(['panel:open here metarecord-list']);
     expect(calls.status).toEqual([{ kind: 'info', text: 'Listing /live/2024' }]);
   });
 

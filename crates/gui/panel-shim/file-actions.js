@@ -350,13 +350,13 @@ export function metarecordMenuItems({
   if (revealDetail) {
     items.push({
       label: 'Open in panel metarecord-detail',
-      action: () => void commands.invoke('panel:reveal metarecord-detail'),
+      action: () => void commands.invoke('panel:open other metarecord-detail'),
     });
   }
   if (hasFile) {
     items.push({
       label: 'Open in panel file',
-      action: () => void commands.invoke('panel:reveal file'),
+      action: () => void commands.invoke('panel:open other file'),
     });
     if (revealFolder) {
       items.push({

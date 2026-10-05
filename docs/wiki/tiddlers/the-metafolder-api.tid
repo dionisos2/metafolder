@@ -87,12 +87,12 @@ The [[workspace variables|Workspace variables]] of the instance's workspace.
 !! `commands`, `invoke`, `addKeybinding`
 
 ```
-metafolder.commands.register('my-panel:set-mode', {
+metafolder.commands.register('my-panel:open-mode', {
   label: 'My panel: change the display mode',
   args: [{ name: 'mode', prompt: () => 'Mode?', complete: () => ['list', 'grid'] }],
   handler: (mode) => setMode(mode),
 });
-metafolder.addKeybinding('my-panel:set-mode list', 'ctrl+l');
+metafolder.addKeybinding('my-panel:open-mode list', 'ctrl+l');
 metafolder.addKeybinding('my-panel:open-form', 'ctrl+e', { textInput: true });
 await metafolder.invoke('panel:split');
 ```

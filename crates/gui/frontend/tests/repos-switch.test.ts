@@ -92,7 +92,7 @@ describe('opening the pick', () => {
 
     expect(calls.adopted).toEqual(['u-1']);
     // And shows it in the list, panel replaced in place.
-    expect(calls.invoked).toEqual(['panel:set type metarecord-list']);
+    expect(calls.invoked).toEqual(['panel:open here metarecord-list']);
   });
 
   test('a workspace with a repository opens a new one on the pick', async () => {

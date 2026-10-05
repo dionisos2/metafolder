@@ -90,23 +90,77 @@
 "z" = { command = "panel:toggle fullscreen" }
 
 # Panel type switching: "t" then one letter (the status bar lists the
-# continuations while the sequence is pending; escape cancels it).
-"t l" = { command = "panel:set type metarecord-list" }
-"t d" = { command = "panel:set type metarecord-detail" }
-"t f" = { command = "panel:set type file" }
-"t m" = { command = "panel:set type file-manager" }
-"t o" = { command = "panel:set type log" }
-"t e" = { command = "panel:set type log-detail" }
-"t r" = { command = "panel:set type repos" }
-"t g" = { command = "panel:set type message" }
-"t s" = { command = "panel:set type shell" }
-"t w" = { command = "panel:set type workspace-info" }
-"t t" = { command = "panel:set type treeref" }
-"t b" = { command = "panel:set type trash" }
-"t y" = { command = "panel:set type sync" }
-"t h" = { command = "panel:set type help" }
-"t v" = { command = "panel:set type recent" }
-"t u" = { command = "panel:set type duplicates" }
+# continuations while the sequence is pending; escape cancels it). It opens the
+# type here, in place of the focused panel; the same sequence after a target key
+# says where (doc "Panel slots and layout"): "i" here, "w" the other slot (the
+# other window), "b" a new workspace — a copy of this one.
+"t l" = { command = "panel:open here metarecord-list" }
+"t d" = { command = "panel:open here metarecord-detail" }
+"t f" = { command = "panel:open here file" }
+"t m" = { command = "panel:open here file-manager" }
+"t o" = { command = "panel:open here log" }
+"t e" = { command = "panel:open here log-detail" }
+"t r" = { command = "panel:open here repos" }
+"t g" = { command = "panel:open here message" }
+"t s" = { command = "panel:open here shell" }
+"t w" = { command = "panel:open here workspace-info" }
+"t t" = { command = "panel:open here treeref" }
+"t b" = { command = "panel:open here trash" }
+"t y" = { command = "panel:open here sync" }
+"t h" = { command = "panel:open here help" }
+"t v" = { command = "panel:open here recent" }
+"t u" = { command = "panel:open here duplicates" }
+
+"i t l" = { command = "panel:open here metarecord-list" }
+"i t d" = { command = "panel:open here metarecord-detail" }
+"i t f" = { command = "panel:open here file" }
+"i t m" = { command = "panel:open here file-manager" }
+"i t o" = { command = "panel:open here log" }
+"i t e" = { command = "panel:open here log-detail" }
+"i t r" = { command = "panel:open here repos" }
+"i t g" = { command = "panel:open here message" }
+"i t s" = { command = "panel:open here shell" }
+"i t w" = { command = "panel:open here workspace-info" }
+"i t t" = { command = "panel:open here treeref" }
+"i t b" = { command = "panel:open here trash" }
+"i t y" = { command = "panel:open here sync" }
+"i t h" = { command = "panel:open here help" }
+"i t v" = { command = "panel:open here recent" }
+"i t u" = { command = "panel:open here duplicates" }
+
+"w t l" = { command = "panel:open other metarecord-list" }
+"w t d" = { command = "panel:open other metarecord-detail" }
+"w t f" = { command = "panel:open other file" }
+"w t m" = { command = "panel:open other file-manager" }
+"w t o" = { command = "panel:open other log" }
+"w t e" = { command = "panel:open other log-detail" }
+"w t r" = { command = "panel:open other repos" }
+"w t g" = { command = "panel:open other message" }
+"w t s" = { command = "panel:open other shell" }
+"w t w" = { command = "panel:open other workspace-info" }
+"w t t" = { command = "panel:open other treeref" }
+"w t b" = { command = "panel:open other trash" }
+"w t y" = { command = "panel:open other sync" }
+"w t h" = { command = "panel:open other help" }
+"w t v" = { command = "panel:open other recent" }
+"w t u" = { command = "panel:open other duplicates" }
+
+"b t l" = { command = "panel:open new metarecord-list" }
+"b t d" = { command = "panel:open new metarecord-detail" }
+"b t f" = { command = "panel:open new file" }
+"b t m" = { command = "panel:open new file-manager" }
+"b t o" = { command = "panel:open new log" }
+"b t e" = { command = "panel:open new log-detail" }
+"b t r" = { command = "panel:open new repos" }
+"b t g" = { command = "panel:open new message" }
+"b t s" = { command = "panel:open new shell" }
+"b t w" = { command = "panel:open new workspace-info" }
+"b t t" = { command = "panel:open new treeref" }
+"b t b" = { command = "panel:open new trash" }
+"b t y" = { command = "panel:open new sync" }
+"b t h" = { command = "panel:open new help" }
+"b t v" = { command = "panel:open new recent" }
+"b t u" = { command = "panel:open new duplicates" }
 
 # Help (doc "In-app help"). "h" then a letter; F1 also arms the help cursor.
 "h h" = { command = "help:open" }

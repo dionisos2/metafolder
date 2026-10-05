@@ -154,8 +154,8 @@ describe('opening the pick', () => {
       { key: 'selected_metarecord', value: { uuid: 'u1', repo: 'r' } },
       { key: 'selected_paths', value: ['/srv/music/jazz.mp3'] },
     ]);
-    // `panel:reveal` switches the *other* slot — the focus stays where it is.
-    expect(calls.invoked).toEqual(['panel:reveal file']);
+    // `panel:open other` switches the *other* slot — the focus stays where it is.
+    expect(calls.invoked).toEqual(['panel:open other file']);
   });
 
   test('the detail panel is revealed when the metarecord has no file', async () => {
@@ -165,7 +165,7 @@ describe('opening the pick', () => {
     await run(line);
 
     expect(calls.sets[1].value).toEqual([]);
-    expect(calls.invoked).toEqual(['panel:reveal metarecord-detail']);
+    expect(calls.invoked).toEqual(['panel:open other metarecord-detail']);
   });
 
   test('no line matches: the failure is thrown, for the shell to report', async () => {

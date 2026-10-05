@@ -3,7 +3,7 @@ tags: Panel Duplicates
 kind: reference
 summary: The repository's duplicate groups, worst reclaimable space first, to expand and to delete copies from.
 
-Open it with `panel:set type duplicates` (<<key "panel:set type duplicates" "t u">>).
+Open it with `panel:open here duplicates` (<<key "panel:open here duplicates" "t u">>).
 The groups are listed collapsed, worst reclaimable space first: reclaimable
 space, file size, number of copies, hash. The ''Scan'' button runs
 `mf:duplicate scan` ([[Finding duplicates]]).

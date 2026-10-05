@@ -11,13 +11,34 @@ with its own panel type — a list on the left, the detail of its selection on t
 right, sharing that workspace's variables — or two different workspaces.
 
 One workspace cannot show the same panel type in both slots: each workspace has one
-instance of each panel type. Asking for it (`panel:set type`) is refused; a slot that
+instance of each panel type. Asking for it ([[panel:open]]) is refused; a slot that
 would get it falls back to `metarecord-detail`, or to no panel at all, the header
 then asking for one.
 
 The ''focused'' slot has a coloured border (the theme's `--mf-focus-border`) and
 receives the keys. <<key "panel:focus next" o>> moves the focus to the other slot; a
 click in a slot focuses it.
+
+!! Open targets
+
+A command that opens a panel type opens it at one of three ''targets'', named by its
+first argument:
+
+|!Target |!Key |!Opens the panel type |
+|`here` |`i` |in place of the panel of the slot the command runs in |
+|`other` |`w` |for the same workspace, in the other slot — opened if hidden, taken over if it showed another workspace |
+|`new` |`b` |in a new workspace, a copy of this one ([[workspace:fork]]): the same repository, variables and panels, so it shows the same thing |
+
+[[panel:open]] is the plain form: <<key "panel:open here file" "t f">> opens the file
+panel here. Each command opening a panel type has a default target — the short key
+sequence — and the same sequence after a target key opens it there: `w t f` in the
+other slot, `b t f` in a new workspace, `i t f` here. A command offers only the targets
+that mean something for it: opening another repository, for one, is only ever `new`.
+
+The command is written once, for `here`: the target moves its whole work
+(`mf.atTarget`, [[User commands]]) — in a new workspace, what it reads is the copy of
+what it would have read here, since the panels show what their variables hold
+([[Workspace variables]]).
 
 !! Splitting
 
@@ -45,7 +66,7 @@ new workspace starts with one panel.
 
 Each slot has a thin header bar:
 
-* the ''panel menu'', naming the panel type shown; choosing another one is `panel:set type <name>` ([[Panel types]]);
+* the ''panel menu'', naming the panel type shown; choosing another one is `panel:open here <name>` ([[Panel types]]);
 * the ''repository indicator'': the name of the workspace's repository, or ''no repo'' (its uuid is in the tooltip). It only informs: a workspace's repository never changes ([[Workspaces]]);
 * the mouse's layout commands: ◫ to split when the slot is alone; ⇄ to swap and × to hide ''this'' slot when both are shown; ⛶ to focus this slot and go fullscreen.
 

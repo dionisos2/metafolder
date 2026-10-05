@@ -7,8 +7,8 @@ summary: A command run without all its arguments asks for the missing ones in th
 A command that takes arguments ''declares'' them — the shell's builtins as much as
 the panels' commands. When an invocation supplies fewer than declared, whether it
 comes from a key, the command input or a script, the command input asks for the
-missing ones in order. `panel:set` asks which setting, then which panel type;
-`panel:set type` asks only the type; `panel:set type file` asks nothing. Asking is
+missing ones in order. `panel:open` asks which setting, then which panel type;
+`panel:open here` asks only the type; `panel:open here file` asks nothing. Asking is
 what happens to an incomplete invocation, not a separate mode.
 
 A wrong ''value'' is another matter: it reaches the command, which says what is wrong

@@ -4,8 +4,8 @@ kind: reference
 aliases: metarecord-list columns metarecords quick-filter query-editor
 summary: The metarecords a query selects, as a table or a grid: a finder and a two-form query above, chosen columns, a cursor that is the workspace's selection, and bulk edits.
 
-Open it with `panel:set type metarecord-list`
-(<<key "panel:set type metarecord-list" "t l">>). It lists the metarecords of the
+Open it with `panel:open here metarecord-list`
+(<<key "panel:open here metarecord-list" "t l">>). It lists the metarecords of the
 workspace's repository that match its query — all of them while the query is empty —
 and runs that query as soon as it is shown, without waiting for an `Enter`.
 

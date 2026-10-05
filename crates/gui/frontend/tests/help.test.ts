@@ -53,7 +53,7 @@ describe('resolvePage', () => {
   const WIKI_NOTES = [
     { id: 'find-in-a-panel', title: 'Find in a panel', file: 'a.html', aliases: ['find'] },
     { id: 'trash_find', title: 'trash:find', file: 'b.html' },
-    { id: 'panel_set', title: 'panel:set', file: 'c.html' },
+    { id: 'panel_open', title: 'panel:open', file: 'c.html' },
     { id: 'trash', title: 'Trash', file: 'd.html', aliases: ['bin'] },
   ];
 
@@ -64,7 +64,7 @@ describe('resolvePage', () => {
   });
 
   test('an invocation with arguments opens the note of its command', () => {
-    expect(resolvePage(WIKI_NOTES, 'panel:set type treeref')?.id).toBe('panel_set');
+    expect(resolvePage(WIKI_NOTES, 'panel:open here treeref')?.id).toBe('panel_open');
   });
 
   test('a command without a note still falls back to its verb, then its panel', () => {

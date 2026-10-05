@@ -8,6 +8,7 @@ import { createPathResolver } from '../../../../panel-shim/resolve.js';
 import { showMenu } from '../../../../panel-shim/menu.js';
 import { type ArgSpec, withTopLevelInvoke } from '../commands';
 import { invoke as ipcInvoke } from '../ipc';
+import { checkTarget, resolveTarget } from '../targets';
 import type { ExecContext } from '../types';
 import { daemonWork } from '../working';
 import { createChangeFeed, type ChangeEvent } from './changes';
@@ -180,6 +181,22 @@ export function createUserCommandApi(
      *  API, and every other command, stay where they were. */
     withContext: <T>(context: ExecContext, body: (mf: MetafolderApi) => Promise<T> | T) =>
       Promise.resolve(body(createUserCommandApi(deps, { ...ctx, context: () => context }))),
+    /** Runs `body` at an open target (doc "Panel slots and layout") — `here`,
+     *  `other` (this workspace in the other slot) or `new` (a fork of it) —
+     *  with an API acting there. A command opening a panel writes its body
+     *  once, for "here", and offers the targets it accepts in `targets`. */
+    atTarget: async <T>(
+      where: string,
+      body: (mf: MetafolderApi) => Promise<T> | T,
+      options: { targets?: readonly string[] } = {},
+    ) => {
+      const target = await resolveTarget(
+        checkTarget(where, options.targets),
+        ctx.context(),
+        deps.invoke,
+      );
+      return body(createUserCommandApi(deps, { ...ctx, context: () => target }));
+    },
     commands: {
       invoke: (invocation: string) => api.commands.invoke(invocation),
       keybindings: () => api.commands.keybindings(),

@@ -112,6 +112,18 @@ than breaking them.
     `mf_watch = true` no longer reads as unwatched.
 
 ### Changed
+- **GUI: commands open a panel type `here`, in the `other` slot or in a `new`
+  workspace** (doc "Panel slots and layout"). `panel:open <target> <type>`
+  replaces `panel:set type <type>` (now `panel:open here <type>`) and
+  `panel:reveal <type>` (now `panel:open other <type>`): a keybinding or a
+  `commands.js` entry still naming the old commands must be renamed. The `t`
+  sequences open here; the same sequence after `w` opens in the other slot,
+  after `b` in a new workspace — a copy of this one (`workspace:fork`), which
+  shows the same thing because the panels now follow their variables (the
+  list's query, the file manager's `file-manager:dir`/`:cursor`; the
+  `{…, nonce}` requests are gone). Commands run in an execution context
+  (`mf.withContext`, `mf.atTarget`), and `workspace:send` /
+  `mf.workspace.send` is the one channel between workspaces.
 - **`metarecord:field remove` names a value, not a row — and a seeded ref by
   its path.** `m d` used to ask "Which value to remove?" over row labels of the
   form `tag = <uuid>`: deleting a tag meant knowing (or reading) its uuid — the

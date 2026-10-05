@@ -5,7 +5,7 @@ aliases: log-detail snapshot before after diff selected_log_entry
 summary: What a revision — or one operation of it — changed, field by field, following the log panel's cursor.
 
 The [[log panel]] says ''that'' a revision happened; `log-detail` says what it did. Put
-it in the other slot (`panel:set type log-detail`, <<key "panel:set type log-detail" "t e">>):
+it in the other slot (`panel:open here log-detail`, <<key "panel:open here log-detail" "t e">>):
 it follows the log panel's cursor (`selected_log_entry`) and reads the revision with its
 snapshots.
 

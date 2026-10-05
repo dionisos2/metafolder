@@ -7,7 +7,7 @@ summary: The smallest panel type: it shows its workspace and the active reposito
 
 `hello` is an example, not a tool: two files, about forty lines, to copy under
 `~/.config/metafolder/gui/panel-types/<your-name>/` ([[Writing a panel type]]).
-Show it with `panel:set type hello`.
+Show it with `panel:open here hello`.
 
 It does one thing of each kind a panel does:
 

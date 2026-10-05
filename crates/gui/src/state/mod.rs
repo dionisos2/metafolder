@@ -1109,7 +1109,7 @@ impl GuiState {
         })
     }
 
-    /// `panel:set type` — switches the panel type displayed in a slot.
+    /// `panel:open here` — switches the panel type displayed in a slot.
     /// Rejected when the other slot already shows the same panel type of
     /// the same workspace (one instance per (workspace, panel type)).
     pub fn set_panel_type(&self, slot_id: SlotId, panel_type: &str) -> Result<(), String> {

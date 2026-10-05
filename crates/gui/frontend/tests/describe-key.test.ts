@@ -24,8 +24,8 @@ const table: Binding[] = [
   b(['f'], 'treeref:find', 'treeref'),
   b(['f'], 'trash:find', 'trash'),
   b(['f'], 'recent:find', 'recent'),
-  b(['t', 'l'], 'panel:set type metarecord-list'),
-  b(['t', 'd'], 'panel:set type metarecord-detail'),
+  b(['t', 'l'], 'panel:open here metarecord-list'),
+  b(['t', 'd'], 'panel:open here metarecord-detail'),
   b(['ctrl+x'], '!echo hi'),
   b(['z'], 'panel:toggle fullscreen'),
   b(['ctrl+enter'], 'metarecord-list:apply finder', null, false, 'finder'),
@@ -36,7 +36,7 @@ const table: Binding[] = [
 
 const labels: Record<string, string> = {
   'file-manager:find': 'Jump to an entry of the displayed directory by name',
-  'panel:set': 'Change a layout setting (type)',
+  'panel:open': 'Open a panel type here, in the other slot, or in a new workspace',
 };
 
 const seen: string[] = [];
@@ -62,9 +62,9 @@ describe('describeKeyStep — what a key runs', () => {
     const step = describeKeyStep(['t'], 'l', table, inList, labelOf);
     expect(step).toEqual({
       reported: true,
-      message: 't l runs panel:set type metarecord-list — Change a layout setting (type)',
+      message: 't l runs panel:open here metarecord-list — Open a panel type here, in the other slot, or in a new workspace',
     });
-    expect(seen).toContain('panel:set');
+    expect(seen).toContain('panel:open');
   });
 
   test('a command with no description reads without the suffix', () => {

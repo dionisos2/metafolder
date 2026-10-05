@@ -4,7 +4,7 @@ kind: reference
 aliases: file viewer preview zoom gif
 summary: A preview of the selected file — image, video, audio, PDF, text — or a folder as a grid of thumbnails, with zoom, a media player's keys and a way up.
 
-Open it with `panel:set type file` (<<key "panel:set type file" "t f">>). It shows
+Open it with `panel:open here file` (<<key "panel:open here file" "t f">>). It shows
 the file the workspace has selected, and follows the selection: move the cursor in
 [[metarecord-list panel]] or [[file-manager panel]] beside it and the preview changes
 ([[Cross-panel selection]]). The file need not be tracked. With nothing selected it

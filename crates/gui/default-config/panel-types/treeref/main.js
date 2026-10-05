@@ -214,7 +214,7 @@ export async function mount(root, metafolder) {
     await workspace.set('metarecord-list:normal-query', currentQueryDsl());
     await workspace.set('metarecord-list:normal-shown', true);
     await workspace.set('metarecord-list:normal-frozen', true);
-    await commands.invoke('panel:reveal metarecord-list');
+    await commands.invoke('panel:open other metarecord-list');
   }
 
   // ── Adding an element ─────────────────────────────────────────────────────

@@ -453,7 +453,7 @@ export async function mount(root, metafolder) {
       const current = await workspace.get('active_repo');
       if (current === null) {
         await workspace.adoptRepo(repoUuid);
-        await commands.invoke('panel:set type metarecord-list');
+        await commands.invoke('panel:open here metarecord-list');
       } else {
         await commands.invoke(`workspace:new ${repoUuid}`);
       }
@@ -472,7 +472,7 @@ export async function mount(root, metafolder) {
     const current = await workspace.get('active_repo');
     if (current === null) {
       await workspace.adoptRepo(repoUuid);
-      await commands.invoke('panel:set type metarecord-list');
+      await commands.invoke('panel:open here metarecord-list');
     } else {
       void statusBar.message(
         `Repository ready: ${repoUuid.slice(0, 8)}… (open it from the list)`,

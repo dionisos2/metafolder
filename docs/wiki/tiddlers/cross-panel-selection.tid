@@ -15,7 +15,7 @@ either slot; a slot showing another workspace is not affected.
 ''Opening'' a row of `metarecord-list` — a double-click, or
 <<key "metarecord-list:open" Enter>> — shows it in the other slot of the same
 workspace: in the [[file panel]] when the metarecord has a path, in
-`metarecord-detail` otherwise (`panel:reveal`). A hidden slot is opened for it.
+`metarecord-detail` otherwise (`panel:open other`). A hidden slot is opened for it.
 
 When `metarecord-detail` is editing a field, it asks before showing another
 metarecord: ''Unsaved changes — discard and switch metarecord?''
