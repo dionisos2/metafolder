@@ -124,7 +124,9 @@ pub const SCENARIOS: &[Scenario] = &[
         "api.watch.pause_resume",
         &[(P, "/repos/:repo/watch/pause"), (P, "/repos/:repo/watch/resume")],
     ),
-    s("api.watch.exceeded_set", &[(P, "/repos/:repo/watch/exceeded")]),
+    // A rule changed: the watch set is recomputed, a walk of the watched
+    // folders (doc "Watch and ignore fields").
+    whole("api.watch.exceeded_set", &[(P, "/repos/:repo/watch/exceeded")]),
     s("api.watch.activity_reset", &[(P, "/repos/:repo/watch/activity/reset")]),
     s("api.track", &[(P, "/repos/:repo/track")]),
     s("api.slow.clear", &[("DELETE", "/repos/:repo/slow")]),
@@ -154,7 +156,8 @@ pub const SCENARIOS: &[Scenario] = &[
     whole("api.repo.restore_by_root", &[(P, "/repos/restore")]),
     s("api.repo.reload", &[(P, "/repos/:repo/unload"), (P, "/repos/load")]),
     s("api.repo.init", &[(P, "/repos/init")]),
-    s("api.log.prune", &[(P, "/repos/:repo/log/prune")]),
+    // Reads the whole log to find what lies outside the target's subtree.
+    whole("api.log.prune", &[(P, "/repos/:repo/log/prune")]),
 ];
 
 /// Routes the sweep does not measure, and why (read by the coverage test).
