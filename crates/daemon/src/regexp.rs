@@ -134,6 +134,35 @@ pub fn anchored_prefix(pattern: &str) -> Option<String> {
     (!prefix.is_empty()).then_some(prefix)
 }
 
+/// The literal text every match of `pattern` ends with, when the pattern is
+/// anchored at the end of the text — the mirror of [`anchored_prefix`]: the
+/// last name of a matching path ends with it, so the names holding it are the
+/// candidates (doc "The forest in the store"). `None` when there is no such
+/// text: not anchored, anchored under an alternation, or closing on anything
+/// but a literal.
+pub fn anchored_suffix(pattern: &str) -> Option<String> {
+    use regex_syntax::hir::{HirKind, Look};
+
+    let hir = regex_syntax::parse(pattern).ok()?;
+    let HirKind::Concat(items) = hir.kind() else { return None };
+    let mut items = items.iter().rev().peekable();
+    let mut anchored = false;
+    while items.next_if(|i| matches!(i.kind(), HirKind::Look(Look::End))).is_some() {
+        anchored = true;
+    }
+    if !anchored {
+        return None;
+    }
+    let mut reversed: Vec<&[u8]> = Vec::new();
+    for item in items {
+        let HirKind::Literal(lit) = item.kind() else { break };
+        reversed.push(&lit.0);
+    }
+    let bytes: Vec<u8> = reversed.into_iter().rev().flatten().copied().collect();
+    let suffix = String::from_utf8(bytes).ok()?;
+    (!suffix.is_empty()).then_some(suffix)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,6 +196,27 @@ mod tests {
         assert_eq!(prefix("^"), None, "nothing to seek");
         assert_eq!(prefix("^.x"), None);
         assert_eq!(prefix("^("), None, "not a pattern");
+    }
+
+    #[test]
+    fn anchored_suffix_is_what_every_match_ends_with() {
+        let suffix = |p: &str| anchored_suffix(p);
+        assert_eq!(suffix("mp3$").as_deref(), Some("mp3"));
+        assert_eq!(suffix(r"\.mp3$").as_deref(), Some(".mp3"));
+        assert_eq!(suffix(r"^/music/.*\.mp3$").as_deref(), Some(".mp3"), "up to the repetition");
+        assert_eq!(suffix(r"jazz/a\.mp3$").as_deref(), Some("jazz/a.mp3"));
+        assert_eq!(suffix(r"x\.mp3?$"), None, "an optional char is not required");
+        assert_eq!(suffix(r"mp3$$").as_deref(), Some("mp3"));
+        assert_eq!(suffix(r"mp3\z").as_deref(), Some("mp3"), "\\z is the text's end too");
+        assert_eq!(suffix(r"(mp3|flac)$"), None, "a group is no literal");
+        assert_eq!(suffix("(?i)a.MP$"), None, "a folded letter is no literal");
+        assert_eq!(suffix("(?i)a.mp3$").as_deref(), Some("3"), "a digit folds to itself");
+        assert_eq!(suffix("x$|mp3$"), None, "an alternation has no one suffix");
+        assert_eq!(suffix("(?m)mp3$"), None, "a line end is not the text's");
+        assert_eq!(suffix("mp3"), None, "not anchored");
+        assert_eq!(suffix("$"), None, "nothing to seek");
+        assert_eq!(suffix("x.$"), None);
+        assert_eq!(suffix("x($"), None, "not a pattern");
     }
 
     #[test]

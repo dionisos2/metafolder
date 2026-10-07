@@ -434,6 +434,16 @@ fn an_anchored_path_pattern_walks_its_prefix_only() {
     bounded("anchored, then any", &path_matches("^/d0/file.*3\\.txt$"), &[], true);
 }
 
+/// A pattern anchored at the end only, on a literal: the path's last name
+/// ends with that literal, so the names holding it are the candidates, each
+/// verified on its assembled path (doc "The forest in the store").
+#[test]
+fn a_path_pattern_anchored_at_the_end_reads_its_candidates() {
+    bounded("name suffix", &path_matches("000123\\.txt$"), &[], true);
+    bounded("folder and name", &path_matches("d100/file000123\\.txt$"), &[], true);
+    bounded("anything, then a name", &path_matches("^/d.*/file000123\\.txt$"), &[], true);
+}
+
 /// The keys the schema check's candidate questions read on a healthy
 /// repository, where none of them has an answer worth reading past its limit
 /// (doc "Schema"): files that all hold an `int` `rating`, ten of a rare `kind`.

@@ -191,10 +191,45 @@ fn path_patterns_agree_on_every_engine() {
         "^ot",
         "(?i)^/MUSIC",
         "mp3$",
+        "\\.mp3$",
+        "a\\.mp3$",
+        "/a\\.mp3$",
+        "jazz/a\\.mp3$",
+        "z/a\\.mp3$",
+        "music/c\\.mp3$",
+        "^/music/c\\.mp3$",
+        "/c\\.mp3$",
+        "x/c\\.mp3$",
+        "(?i)MP3$",
+        "(?i)A\\.mp3$",
+        "mp3\\z",
+        "(?m)mp3$",
+        "mp3$|mkv$",
+        "s$",
+        "/$",
+        "!$",
+        "music$",
+        "/music$",
+        "shared$",
+        "/leaf$",
+        "red/shared/leaf$",
+        "tags/red$",
+        "tags$",
+        "other$",
         "^$",
         "^^/music",
     ] {
         f.run(&matches("mfr_path", pattern));
         f.run(&matches("tag", pattern));
     }
+}
+
+#[test]
+fn a_pattern_anchored_at_the_end_matches_on_the_last_name() {
+    let mut f = fixture();
+    assert_eq!(f.run(&matches("mfr_path", "mp3$")).len(), 3);
+    assert_eq!(f.run(&matches("mfr_path", "jazz/a\\.mp3$")).len(), 1);
+    assert!(f.run(&matches("mfr_path", "z/c\\.mp3$")).is_empty(), "c.mp3 is not in jazz");
+    assert_eq!(f.run(&matches("tag", "red/shared$")).len(), 1);
+    assert_eq!(f.run(&matches("tag", "^tags$")).len(), 1, "a root's path is its name");
 }

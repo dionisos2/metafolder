@@ -149,13 +149,29 @@ fn path_leaf_matches(
     let uuids = match &narrow {
         // A path assembled from a name the store does not hold as text is
         // not one a seek can spell: walk.
-        Narrow::Exact(p) | Narrow::Differs(p) | Narrow::Prefix(p) | Narrow::Range(_, p)
+        Narrow::Exact(p)
+        | Narrow::Differs(p)
+        | Narrow::Prefix(p)
+        | Narrow::Suffix(p)
+        | Narrow::Range(_, p)
             if p.contains(char::REPLACEMENT_CHARACTER) =>
         {
             cache.path_matches_with(store, field, pred.as_ref()).map_err(ApiError::from)?
         }
         Narrow::Exact(path) => seek_all(PathSeek::Exact(path))?,
         Narrow::Prefix(prefix) => seek_all(PathSeek::Prefix(prefix))?,
+        Narrow::Suffix(suffix) => {
+            let seeded = match names {
+                Some(names) => path_suffix_seeded(store, names, field, suffix, pred.as_ref())?,
+                None => None,
+            };
+            match seeded {
+                Some(uuids) => uuids,
+                None => {
+                    cache.path_matches_with(store, field, pred.as_ref()).map_err(ApiError::from)?
+                }
+            }
+        }
         Narrow::Range(op, operand) => seek_all(PathSeek::Below(below(operand, *op).as_ref()))?,
         // Every node has one path: all but the one at the operand.
         Narrow::Differs(path) => {
@@ -203,37 +219,12 @@ fn osm_path_seeded(
     let pattern = format!("(?i){}", regex::escape(anchor));
     let literals = crate::regexp::required_literals(&pattern);
     let within = anchors_within(names, field, &terms[..terms.len() - 1], &literals);
-    // The candidates with their positions, from one read of their rows where
-    // the source can; else the names scanned, then the positions read.
-    let found = match crate::regexp::compile(&pattern) {
-        Ok(re) => {
-            names.src.named_positions(field, &|name| re.is_match(name), &literals, within.as_ref())
-        }
-        Err(_) => None,
-    };
-    let found = match found {
-        Some(found) => found,
-        None => {
-            let probe = Query::Matches {
-                field: field.to_string(),
-                pattern,
-                // On a tree_ref, the `value` aspect is the node's name.
-                aspect: Aspect::Value,
-            };
-            let Ok((candidates, _)) =
-                names.evaluate_page_with_roots(&probe, &[], None, None, &QueryRoots::new())
-            else {
-                return Ok(None);
-            };
-            let mut found = Vec::with_capacity(candidates.len());
-            for uuid in candidates {
-                found.push((uuid, store.positions(field, uuid).map_err(ApiError::from)?));
-            }
-            found
-        }
+    let Some(found) = named_candidates(store, names, field, pattern, &literals, within.as_ref())?
+    else {
+        return Ok(None);
     };
     let terms_lower: Vec<String> = terms.iter().map(|t| lower(t)).collect();
-    let mut paths = AncestorPaths { store, field, known: HashMap::new() };
+    let mut paths = AncestorPaths { store, field, fold: lower, known: HashMap::new() };
     let mut subtrees = Vec::new();
     for (uuid, positions) in found {
         // doc "One position per forest".
@@ -256,6 +247,90 @@ fn osm_path_seeded(
         target: FollowTarget::Condition(Box::new(Query::UuidIn { uuids: subtrees })),
         inclusive: true,
     }))
+}
+
+/// The nodes of `field`'s forest whose name matches `pattern`, with their
+/// positions: from one read of their rows where the source can (narrowed by
+/// the trigrams of `literals`, within `within`); else the names scanned, then
+/// the positions read. `None` when the index declines the name scan.
+fn named_candidates(
+    store: &dyn Rows,
+    names: &Eval<'_>,
+    field: &str,
+    pattern: String,
+    literals: &[String],
+    within: Option<&RoaringBitmap>,
+) -> Result<Option<Vec<Named>>, ApiError> {
+    let found = match crate::regexp::compile(&pattern) {
+        Ok(re) => names.src.named_positions(field, &|name| re.is_match(name), literals, within),
+        Err(_) => None,
+    };
+    if let Some(found) = found {
+        return Ok(Some(found));
+    }
+    let probe = Query::Matches {
+        field: field.to_string(),
+        pattern,
+        // On a tree_ref, the `value` aspect is the node's name.
+        aspect: Aspect::Value,
+    };
+    let Ok((candidates, _)) =
+        names.evaluate_page_with_roots(&probe, &[], None, None, &QueryRoots::new())
+    else {
+        return Ok(None);
+    };
+    let mut found = Vec::with_capacity(candidates.len());
+    for uuid in candidates {
+        found.push((uuid, store.positions(field, uuid).map_err(ApiError::from)?));
+    }
+    Ok(Some(found))
+}
+
+/// A `:path` pattern anchored at the end on `suffix`, answered from the store
+/// without walking the forest.
+///
+/// A path ends with its last name, so of a suffix free of the separator, every
+/// matching node's name ends with it; of one containing it, the name *is* what
+/// follows its last `/`. The names doing so are the candidates — narrowed by
+/// their trigrams, as a text search is — each verified on its assembled paths
+/// with the whole pattern (`pred`). `None` when the index declines the name
+/// scan: the caller walks instead.
+fn path_suffix_seeded(
+    store: &dyn Rows,
+    names: &Eval<'_>,
+    field: &str,
+    suffix: &str,
+    pred: &dyn Fn(&str) -> bool,
+) -> Result<Option<Vec<Uuid>>, ApiError> {
+    let pattern = match suffix.rsplit_once('/') {
+        Some((_, last)) => format!("^{}$", regex::escape(last)),
+        None => format!("{}$", regex::escape(suffix)),
+    };
+    // The trigram index folds a name whole, and a capital sigma folds by what
+    // surrounds it, which the suffix alone does not say: no trigrams then
+    // (the names are scanned).
+    let literals =
+        if suffix.contains('Σ') { Vec::new() } else { crate::regexp::required_literals(&pattern) };
+    let Some(found) = named_candidates(store, names, field, pattern, &literals, None)? else {
+        return Ok(None);
+    };
+    let mut paths = AncestorPaths { store, field, fold: str::to_string, known: HashMap::new() };
+    let mut matched = Vec::new();
+    for (uuid, positions) in found {
+        // Every path of the node, as the walk visits them.
+        for (parent, name) in positions {
+            let path = match parent {
+                None => Some(name),
+                Some(parent) => paths.path(parent)?.map(|above| format!("{above}/{name}")),
+            };
+            if path.is_some_and(|p| pred(&p)) {
+                matched.push(uuid);
+                break;
+            }
+        }
+    }
+    matched.sort_unstable();
+    Ok(Some(matched))
 }
 
 /// Where the anchors of an `osm` path can be, when an earlier term says so
@@ -308,11 +383,16 @@ fn lower(s: &str) -> String {
 /// A node's `(parent, name)` in a forest — `None` for a root's parent.
 type Position = (Option<Uuid>, String);
 
-/// The lower-cased path of each node, as `TreeCache::path_of` assembles it,
-/// remembered, so candidates sharing a folder read its ancestry once.
+/// A node of a forest and its positions there.
+type Named = (Uuid, Vec<Position>);
+
+/// The path of each node, as `TreeCache::path_of` assembles it, each name
+/// passed through `fold` (lower-cased for an `osm` path), remembered, so
+/// candidates sharing a folder read its ancestry once.
 struct AncestorPaths<'a> {
     store: &'a dyn Rows,
     field: &'a str,
+    fold: fn(&str) -> String,
     known: HashMap<Uuid, Option<String>>,
 }
 
@@ -343,8 +423,8 @@ impl AncestorPaths<'_> {
         for (node, first) in chain.into_iter().rev() {
             let path = match first {
                 None => None,
-                Some((None, name)) => Some(lower(&name)),
-                Some((Some(_), name)) => above.map(|a| format!("{a}/{}", lower(&name))),
+                Some((None, name)) => Some((self.fold)(&name)),
+                Some((Some(_), name)) => above.map(|a| format!("{a}/{}", (self.fold)(&name))),
             };
             self.known.insert(node, path.clone());
             above = path;
@@ -365,6 +445,8 @@ enum Narrow {
     Differs(String),
     /// The paths starting with this text.
     Prefix(String),
+    /// The paths ending with this text, whose last name is not empty.
+    Suffix(String),
     /// The paths on one side of this one.
     Range(Op, String),
     /// Anywhere.
@@ -385,8 +467,7 @@ fn path_predicate(q: &Query) -> Option<PathPredicate<'_>> {
         Q::Matches { field, pattern, aspect: Aspect::Path } => {
             // An invalid pattern is a 400, raised where every other one is.
             let re = crate::regexp::compile(pattern).ok()?;
-            let narrow =
-                crate::regexp::anchored_prefix(pattern).map_or(Narrow::Walk, Narrow::Prefix);
+            let narrow = pattern_narrow(pattern);
             return Some((field, Box::new(move |path: &str| re.is_match(path)), narrow));
         }
         _ => return None,
@@ -413,6 +494,25 @@ fn path_predicate(q: &Query) -> Option<PathPredicate<'_>> {
         }),
         narrow,
     ))
+}
+
+/// What a `:path` pattern lets the search leave out. A prefix reaching below
+/// a forest's root seeks one folder, the narrowest there is; a suffix reads
+/// the names ending with it, fewer than a prefix within the root reaches
+/// (every path of the forest starts with the root's name).
+fn pattern_narrow(pattern: &str) -> Narrow {
+    let prefix = crate::regexp::anchored_prefix(pattern);
+    let below_a_root = |p: &String| p.rsplit_once('/').is_some_and(|(dir, _)| dir.contains('/'));
+    if let Some(prefix) = prefix.as_ref().filter(|p| below_a_root(p)) {
+        return Narrow::Prefix(prefix.clone());
+    }
+    let suffix = crate::regexp::anchored_suffix(pattern)
+        .filter(|s| s.rsplit('/').next().is_some_and(|last| !last.is_empty()));
+    match (suffix, prefix) {
+        (Some(suffix), _) => Narrow::Suffix(suffix),
+        (None, Some(prefix)) => Narrow::Prefix(prefix),
+        (None, None) => Narrow::Walk,
+    }
 }
 
 #[derive(Clone, Copy)]

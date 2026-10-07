@@ -10,15 +10,6 @@ the end.
 The recurring defect of this project is a cost that grows with the repository
 where it should grow with the answer. Each item names where.
 
-** TODO unanchored =:path= patterns walk the whole stored forest
-=aff0be6= made a =:path= comparison and a pattern anchored on a literal prefix
-seek their paths on KV (=PathSeek=, 64 648 → 6 key reads for an exact path).
-A pattern with no anchor (=mfr_path:path ~ "mp3$"=) still walks every node.
-The =osm= path's way out applies in part: a pattern ending with =$= and no =/=
-in its last literal can only match on the last name, so the trigrams of that
-literal give the candidates, verified on their assembled paths. Low priority:
-the GUI's finder builds =osm= queries, not these.
-
 ** TODO the query planner: the next choices
 Built September 2026 from the cases profiling found, not from the old design
 (the old adaptive planner stays a record: doc "Indexing architecture"): a deferred text leaf's
