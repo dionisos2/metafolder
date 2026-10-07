@@ -31,15 +31,6 @@ is left, each to measure before building:
   phase, a read is logged from 100 ms or 100 000 keys, and =mf slow replay=
   runs a logged query again for its phases now (doc "Slow log").
 
-* TODO query API
-** TODO the CLI cannot read a scope by batches: no =--cursor=
-The daemon pages (=POST /query=: =limit=, an opaque keyset =cursor=,
-=next_cursor=), and =mf metarecord get --count= exists, but =--limit N= caps the
-total and pages internally: a shell client takes everything or a prefix. What
-is left is exposure: print =next_cursor= and accept =--cursor <token>=. To
-write down in the spec with it: a cursor is bound to a hash of (query, sort),
-and a record edited between two pages moves with its sort key.
-
 * TODO watcher
 ** TODO keep hunting with the simulated kernel
 =watchd/src/sim.rs= (a kernel kept in step with the real filesystem, held to

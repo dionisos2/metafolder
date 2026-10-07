@@ -650,6 +650,130 @@ fn test_get_count_rejects_a_uuid_selector_and_the_output_flags() {
     }
 }
 
+/// The `next-cursor <token>` line `--limit` leaves on stderr, if any.
+fn next_cursor(out: &Out) -> Option<String> {
+    out.stderr.lines().find_map(|l| l.strip_prefix("next-cursor ")).map(str::to_string)
+}
+
+#[test]
+fn test_get_reads_a_scope_by_batches_with_cursor() {
+    let (repo, _root) = init_repo("get_cursor");
+    for i in 0..5 {
+        create_metarecord(&repo, &[&format!("rating:int={i}")]);
+    }
+    // A page size smaller than the batch: the cursor printed must be the one
+    // after the last *printed* record, not after an internal page.
+    let cfg = temp_dir("cursor_cfg");
+    let cli = cfg.path().join("metafolder").join("cli");
+    std::fs::create_dir_all(&cli).unwrap();
+    std::fs::write(cli.join("config.toml"), "[settings]\npage-size = 2\n").unwrap();
+    let xdg = cfg.path().to_str().unwrap();
+    let get = |extra: &[&str]| {
+        let mut args = vec!["-u", &repo, "metarecord", "-q", "rating >= 0", "get"];
+        args.extend_from_slice(&["--sort", "rating"]);
+        args.extend_from_slice(extra);
+        mf_full(&args, None, &[("XDG_CONFIG_HOME", xdg)], true)
+    };
+    let all = get(&[]);
+    assert_ok(&all);
+    assert_eq!(next_cursor(&all), None, "a full read has nothing to resume");
+    let all: Vec<&str> = all.stdout.lines().collect();
+    assert_eq!(all.len(), 5);
+
+    // First batch: three uuids on stdout, the resume token on stderr only.
+    let first = get(&["--limit", "3"]);
+    assert_ok(&first);
+    assert_eq!(first.stdout.lines().collect::<Vec<_>>(), all[..3]);
+    let cursor = next_cursor(&first).expect("a truncated read prints its next cursor");
+
+    // The rest, from the cursor: exactly what was left, and no further cursor.
+    let rest = get(&["--cursor", &cursor]);
+    assert_ok(&rest);
+    assert_eq!(rest.stdout.lines().collect::<Vec<_>>(), all[3..]);
+    assert_eq!(next_cursor(&rest), None, "stderr: {}", rest.stderr);
+
+    // A limit that ends exactly on the last match has nothing to resume either.
+    let exact = get(&["--cursor", &cursor, "--limit", "2"]);
+    assert_ok(&exact);
+    assert_eq!(exact.stdout.lines().collect::<Vec<_>>(), all[3..]);
+    assert_eq!(next_cursor(&exact), None, "stderr: {}", exact.stderr);
+
+    // A cursor is bound to its query and sort: another one is refused.
+    let mut args = vec!["-u", &repo, "metarecord", "-q", "rating >= 1", "get"];
+    args.extend_from_slice(&["--sort", "rating", "--cursor", &cursor]);
+    let other = mf_full(&args, None, &[("XDG_CONFIG_HOME", xdg)], true);
+    assert_eq!(other.code, 1, "stdout: {}\nstderr: {}", other.stdout, other.stderr);
+    assert!(other.stderr.contains("cursor"), "stderr: {}", other.stderr);
+}
+
+#[test]
+fn test_get_cursor_also_resumes_the_whole_repository_and_select() {
+    let (repo, _root) = init_repo("get_cursor_all");
+    for i in 0..3 {
+        create_metarecord(&repo, &[&format!("rating:int={i}")]);
+    }
+    // No selector: the whole repository (root metarecord included) by batches.
+    let all = mf(&["-u", &repo, "metarecord", "get"]);
+    assert_ok(&all);
+    let first = mf(&["-u", &repo, "metarecord", "get", "--limit", "1"]);
+    assert_ok(&first);
+    let cursor = next_cursor(&first).unwrap();
+    let rest = mf(&["-u", &repo, "metarecord", "get", "--cursor", &cursor]);
+    assert_ok(&rest);
+    assert_eq!(format!("{}{}", first.stdout, rest.stdout), all.stdout);
+
+    // `--select` output (one JSON array per batch) resumes the same way.
+    let first = mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-q",
+        "rating >= 0",
+        "get",
+        "--select",
+        "rating",
+        "--sort",
+        "rating",
+        "--limit",
+        "2",
+    ]);
+    assert_ok(&first);
+    let cursor = next_cursor(&first).unwrap();
+    let rest = mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-q",
+        "rating >= 0",
+        "get",
+        "--select",
+        "rating",
+        "--sort",
+        "rating",
+        "--cursor",
+        &cursor,
+    ]);
+    assert_ok(&rest);
+    let rest: serde_json::Value = serde_json::from_str(&rest.stdout).unwrap();
+    assert_eq!(rest.as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn test_get_cursor_usage_errors() {
+    let (repo, _root) = init_repo("cursor_usage");
+    let uuid = create_metarecord(&repo, &["x:int=1"]);
+    // One metarecord has no batches.
+    let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "get", "--cursor", "abc"]);
+    assert_eq!(out.code, 2, "stdout: {}\nstderr: {}", out.stdout, out.stderr);
+    // Neither has a count nor a tree resolution.
+    for flag in [vec!["--count"], vec!["--resolve-tree", "mfr_path"]] {
+        let mut args = vec!["-u", &repo, "metarecord", "-q", "x = 1", "get", "--cursor", "abc"];
+        args.extend(flag.iter().copied());
+        let out = mf(&args);
+        assert_eq!(out.code, 2, "{flag:?} should conflict with --cursor: {}", out.stderr);
+    }
+}
+
 #[test]
 fn test_list_prints_uuids_one_per_line() {
     let (repo, _root) = init_repo("list");

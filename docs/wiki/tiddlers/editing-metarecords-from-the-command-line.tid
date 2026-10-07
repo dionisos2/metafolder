@@ -13,12 +13,14 @@ specifications, `name:type=value` ([[Field specifications]]).
 mf -n music metarecord -i 3f2a… get                       # the full JSON, field ids included
 mf -n music metarecord -q 'rating > 3' get                # the matching uuids, one per line
 mf -n music metarecord -q 'rating > 3' get --count        # how many — one round-trip
+mf -n music metarecord -q 'rating > 3' get --limit 500 --cursor "$token"  # the next batch
 mf -n music metarecord -q 'artist = "Nina"' get --select title,rating --tsv
 mf -n music metarecord -q 'mfr_type = "dir"' get --resolve-tree mfr_path
 mf -n music metarecord -i 3f2a… field get tag --resolve path
 ```
 
 * `--select a,b` prints the selected fields; with `--tsv`, one tab-separated row per metarecord (each field's first value, empty when absent) — the compact form scripts read. `--values` prints raw values, one per line. `--sort field[:asc|desc]` and `--limit N` shape the list.
+* `--limit N` with `--cursor` reads a scope by batches. When the limit stops the read while more match, `mf` prints `next-cursor <token>` on ''stderr'' (stdout stays the data); passing `--cursor <token>` with the same query and `--sort` resumes strictly after the last record printed. The token is the daemon's cursor ([[Pagination and sorting]]): bound to that query and sort (another one is refused), it does not expire, and a record whose sort value changes between two batches moves with it — it may come twice or be skipped. Query selectors only.
 * `--count` prints the number of matches alone; it is exact and costs one request whatever the size. Query selectors only.
 * `--resolve-tree <field>` prints each selected metarecord's path in that `tree_ref` field, sorted — in one request, the bulk form of `mf path`; with `--tsv`, `uuid<TAB>path`. The repository's root prints an empty line.
 * `--eq name[:type]=value` (repeatable, AND-ed) selects by exact value without writing a query: the value is escaped, so quotes in it cannot break anything. Scripts use it instead of quoting `title = "$X"` by hand.

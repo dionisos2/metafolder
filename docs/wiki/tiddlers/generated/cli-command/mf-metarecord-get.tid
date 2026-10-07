@@ -18,7 +18,10 @@ Options:
           Sort key field[:asc|desc]; repeatable (query selectors only)
 
       --limit <LIMIT>
-          Stop after N metarecords
+          Stop after N metarecords; when more match, print `next-cursor <token>` on stderr
+
+      --cursor <CURSOR>
+          Resume after a previous read's `next-cursor` token, to read a scope by batches with --limit. Valid only for the same query and --sort. Query selectors only (-q, or none)
 
       --count
           Print how many metarecords the selector matches, instead of them. One round-trip, exact, and O(1) on the index — the count a walk needs per question. Query selectors only (-q, or none)

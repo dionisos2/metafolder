@@ -568,13 +568,19 @@ enum MetarecordVerb {
         /// Sort key field[:asc|desc]; repeatable (query selectors only)
         #[arg(long = "sort")]
         sort: Vec<String>,
-        /// Stop after N metarecords
+        /// Stop after N metarecords; when more match, print `next-cursor
+        /// <token>` on stderr
         #[arg(long)]
         limit: Option<usize>,
+        /// Resume after a previous read's `next-cursor` token, to read a scope
+        /// by batches with --limit. Valid only for the same query and --sort.
+        /// Query selectors only (-q, or none)
+        #[arg(long)]
+        cursor: Option<String>,
         /// Print how many metarecords the selector matches, instead of them.
         /// One round-trip, exact, and O(1) on the index — the count a walk
         /// needs per question. Query selectors only (-q, or none).
-        #[arg(long, conflicts_with_all = ["select", "values", "sort", "limit", "tsv", "resolve_tree"])]
+        #[arg(long, conflicts_with_all = ["select", "values", "sort", "limit", "cursor", "tsv", "resolve_tree"])]
         count: bool,
         /// Print the selected field's raw values, one per line
         #[arg(long, requires = "select")]
@@ -589,7 +595,7 @@ enum MetarecordVerb {
         /// Resolve this tree_ref field of each selected metarecord to its
         /// root-relative path(s), one per line (the bulk form of `mf path`).
         /// Needs a selector (-q or -i).
-        #[arg(long = "resolve-tree", conflicts_with_all = ["select", "values", "sort"])]
+        #[arg(long = "resolve-tree", conflicts_with_all = ["select", "values", "sort", "cursor"])]
         resolve_tree: Option<String>,
     },
     /// Create a metarecord with the given fields and print its UUID (no selector)
@@ -1404,13 +1410,14 @@ fn dispatch_metarecord(
         select: None,
         sort: Vec::new(),
         limit: None,
+        cursor: None,
         count: false,
         values: false,
         tsv: false,
         resolve_tree: None,
     });
     match verb {
-        MetarecordVerb::Get { select, sort, limit, count, values, tsv, resolve_tree } => {
+        MetarecordVerb::Get { select, sort, limit, cursor, count, values, tsv, resolve_tree } => {
             commands::metarecord_get(
                 ctx,
                 selector.as_deref(),
@@ -1418,6 +1425,7 @@ fn dispatch_metarecord(
                 select.as_deref(),
                 &sort,
                 limit,
+                cursor.as_deref(),
                 count,
                 values,
                 tsv,

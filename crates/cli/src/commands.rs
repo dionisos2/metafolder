@@ -544,6 +544,9 @@ pub struct QueryArgs {
     pub select: Option<String>,
     pub sort: Vec<String>,
     pub limit: Option<usize>,
+    /// Resume after this `next_cursor` (doc "Pagination and sorting") instead
+    /// of from the first match: the next batch of a scope read by batches.
+    pub cursor: Option<String>,
     /// Print the selected field's raw values, one per line, instead of
     /// metarecord JSON (requires `--select` with exactly one field).
     pub values: bool,
@@ -692,10 +695,14 @@ fn run_query(ctx: &Ctx, query: Json, args: &QueryArgs) -> Result<i32, CliError> 
 
     let mut objects = Vec::new();
     let mut remaining = args.limit;
-    let mut cursor: Option<String> = None;
+    let mut cursor = args.cursor.clone();
+    // Set when `--limit` stops the read while matches remain: the token that
+    // resumes it, printed on stderr so stdout stays the data alone.
+    let mut resume: Option<String> = None;
     loop {
         let page = remaining.map_or(ctx.page_size, |r| r.min(ctx.page_size));
         if page == 0 {
+            resume = cursor;
             break;
         }
         let mut body = json!({"query": query, "sort": sort, "limit": page});
@@ -740,6 +747,9 @@ fn run_query(ctx: &Ctx, query: Json, args: &QueryArgs) -> Result<i32, CliError> 
     }
     if select.is_some() && !args.values && !args.tsv {
         print_pretty(&Json::Array(objects));
+    }
+    if let Some(token) = resume {
+        eprintln!("next-cursor {token}");
     }
     Ok(0)
 }
@@ -836,6 +846,7 @@ pub fn metarecord_get(
     select: Option<&str>,
     sort: &[String],
     limit: Option<usize>,
+    cursor: Option<&str>,
     count: bool,
     values: bool,
     tsv: bool,
@@ -881,6 +892,7 @@ pub fn metarecord_get(
                 select: select.map(String::from),
                 sort: sort.to_vec(),
                 limit,
+                cursor: cursor.map(String::from),
                 values,
                 tsv,
                 simplified: false,
@@ -891,6 +903,9 @@ pub fn metarecord_get(
         // The *typed flag* decides, never the shape of the text: a bare UUID is
         // valid DSL (doc "Query DSL grammar", the uuid-atom bullet), so `-q <uuid>` is an
         // ordinary query and must print a UUID line like any other `-q`.
+        Some(_) if by_id && cursor.is_some() => Err(CliError::Usage(
+            "mf metarecord get --cursor takes a query selector (-q) or none, not -i".into(),
+        )),
         Some(s) if by_id => {
             let fields: Option<Vec<String>> = select
                 .filter(|sel| *sel != "*")
@@ -918,6 +933,7 @@ pub fn metarecord_get(
                 select: select.map(String::from),
                 sort: sort.to_vec(),
                 limit,
+                cursor: cursor.map(String::from),
                 values,
                 tsv,
                 simplified: false,
@@ -1031,6 +1047,7 @@ pub fn field_get(
                     select: Some(name.to_string()),
                     sort: vec![],
                     limit: None,
+                    cursor: None,
                     values: true,
                     tsv: false,
                     simplified: false,
