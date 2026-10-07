@@ -246,6 +246,23 @@ pub(crate) fn value_key(value: &Value) -> Option<Vec<u8>> {
     })
 }
 
+/// The type tag leading the value keys of a value type ([`value_key`]): `int`
+/// and `float` share one, compared together as numbers. `None` for a type no
+/// value key carries.
+pub(crate) fn type_tag(value_type: &str) -> Option<u8> {
+    Some(match value_type {
+        "bool" => 0,
+        "int" | "float" => 1,
+        "string" => 2,
+        "datetime" => 3,
+        "ref" => 4,
+        "refbase" => 5,
+        "externalref" => 6,
+        "tree_ref" => 7,
+        _ => return None,
+    })
+}
+
 /// The key of a `tree_ref` value in the name partition.
 pub(crate) fn name_part_key(value: &Value) -> Option<Vec<u8>> {
     match value {
@@ -1296,6 +1313,27 @@ mod tests {
 
     fn has(diff: &[String], start: &str) -> bool {
         diff.iter().any(|line| line.starts_with(start))
+    }
+
+    #[test]
+    fn a_value_key_starts_with_its_type_tag() {
+        let u = uuid::Uuid::new_v4();
+        let values = [
+            Value::Bool(true),
+            Value::Int(-3),
+            Value::Float(2.5),
+            Value::String("x".into()),
+            Value::DateTime(1_000),
+            Value::Ref(u),
+            Value::RefBase(u),
+            Value::ExternalRef { repo: u, metarecord: u },
+            Value::TreeRef { parent: Some(u), name: "n".into() },
+        ];
+        for v in values {
+            let ty = crate::rows::encode_value(&v).value_type;
+            assert_eq!(value_key(&v).unwrap()[0], type_tag(ty).unwrap(), "{ty}");
+        }
+        assert_eq!(type_tag("nothing"), None);
     }
 
     #[test]

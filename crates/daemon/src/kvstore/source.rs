@@ -26,8 +26,8 @@ use roaring::{MultiOps, RoaringBitmap};
 use uuid::Uuid;
 
 use super::derived::{
-    self, dense, id_of, long_prefix, part_prefix, read_set, text_key, value_key, MULTI, NAME,
-    TARGET, VALUE,
+    self, dense, id_of, long_prefix, part_prefix, read_set, text_key, type_tag, value_key, MULTI,
+    NAME, TARGET, VALUE,
 };
 use super::{dec_row, name_key, uuid_of, KvStore, Tables};
 use crate::index::keys::{sort_rep, CmpOp, SortRep};
@@ -517,6 +517,134 @@ impl KvSource<'_> {
         holds: &dyn Fn(&Value) -> bool,
     ) -> RoaringBitmap {
         ids.iter().filter(|&id| self.values(id, field).iter().any(holds)).collect()
+    }
+
+    // ── The schema check's candidates (doc "Schema") ────────────────────────
+    //
+    // `store::Questions`, answered from the sets and the value partition: a
+    // healthy repository answers each from a few bitmaps, where reading the
+    // constrained fields' rows cost a key per row (`tests/kv_cost.rs`). Each
+    // gives the answer of `store::derive`'s, in id order rather than row order.
+
+    /// The value types `field` holds rows of (`field_types`).
+    fn types_of(&self, field: &str) -> Result<Vec<String>> {
+        let prefix = name_key(field);
+        let mut out = Vec::new();
+        for e in self.t.field_types.prefix_iter(&self.r, &prefix)? {
+            self.read_keys(1)?;
+            out.push(String::from_utf8(e?.0[prefix.len()..].to_vec())?);
+        }
+        Ok(out)
+    }
+
+    /// The ids holding a row of `field`, `Nothing` or not.
+    fn holders(&self, field: &str) -> RoaringBitmap {
+        self.set(derived::PRESENT, Some(field)) | self.set(derived::ABSENT, Some(field))
+    }
+
+    /// The ids that may hold more than one row of `field`: several values, or
+    /// a `Nothing` beside anything. Every other holder holds exactly one.
+    fn maybe_several(&self, field: &str) -> RoaringBitmap {
+        self.set(MULTI, Some(field)) | self.set(derived::ABSENT, Some(field))
+    }
+
+    /// The uuids of up to `limit` of `ids`, and the first read error met.
+    fn uuids_of(&self, ids: impl Iterator<Item = u32>, limit: i64) -> Result<Vec<Uuid>> {
+        let limit = usize::try_from(limit).unwrap_or(0);
+        let mut out = Vec::new();
+        for id in ids {
+            if out.len() >= limit {
+                break;
+            }
+            if let Some(u) = self.uuid(id) {
+                out.push(u);
+            }
+        }
+        self.take_error().map_or(Ok(out), Err)
+    }
+
+    /// Up to `limit` metarecords holding a non-`Nothing` row of `field` of
+    /// another type than `allowed`. A field holds one type (the `Writer` keeps
+    /// it so): when it is not `allowed`, every holder of a value. Mixed types
+    /// are read off the value partition's run of each other type, a type tag
+    /// apart — but `int` and `float` share theirs, so those rows are read back
+    /// for their type.
+    pub(crate) fn wrong_type(&self, field: &str, allowed: &str, limit: i64) -> Result<Vec<Uuid>> {
+        let types = self.types_of(field)?;
+        if let [only] = types.as_slice() {
+            let ids = if only == allowed {
+                RoaringBitmap::new()
+            } else {
+                self.set(derived::PRESENT, Some(field))
+            };
+            return self.uuids_of(ids.iter(), limit);
+        }
+        let mut out = RoaringBitmap::new();
+        for ty in types {
+            if ty == allowed {
+                continue;
+            }
+            let Some(tag) = type_tag(&ty) else { continue };
+            let (from, to) = ([tag], [tag + 1]);
+            let run =
+                self.part_ids(field, VALUE, Bound::Included(&from), Bound::Excluded(&to), &|_| {
+                    true
+                });
+            out |= if type_tag(allowed) == Some(tag) {
+                self.having(run, field, &|v| crate::rows::encode_value(v).value_type == ty)
+            } else {
+                run
+            };
+        }
+        self.uuids_of(out.iter(), limit)
+    }
+
+    /// Up to `limit` metarecords with more than `max` rows of `field`.
+    pub(crate) fn count_over(&self, field: &str, max: i64, limit: i64) -> Result<Vec<Uuid>> {
+        let over = if max < 1 {
+            self.holders(field)
+        } else {
+            let ids = self.maybe_several(field);
+            ids.iter().filter(|&id| self.values(id, field).len() as i64 > max).collect()
+        };
+        self.uuids_of(over.iter(), limit)
+    }
+
+    /// Up to `limit` metarecords holding `field`, with fewer than `min` rows:
+    /// every single-row holder once `min` is 2, then the others counted.
+    pub(crate) fn count_under(&self, field: &str, min: i64, limit: i64) -> Result<Vec<Uuid>> {
+        if min <= 1 {
+            return self.uuids_of(std::iter::empty(), limit);
+        }
+        let holders = self.holders(field);
+        let several = &holders & self.maybe_several(field);
+        let single = holders - &several;
+        let counted = several.into_iter().filter(|&id| (self.values(id, field).len() as i64) < min);
+        self.uuids_of(single.iter().chain(counted), limit)
+    }
+
+    /// Up to `limit` metarecords with no `field` row at all.
+    pub(crate) fn missing(&self, field: &str, limit: i64) -> Result<Vec<Uuid>> {
+        let ids = self.set(derived::UNIVERSE, None) - self.holders(field);
+        self.uuids_of(ids.iter(), limit)
+    }
+
+    /// Up to `limit` metarecords declared one of `types` (`mf_schema`) with no
+    /// `field` row.
+    pub(crate) fn typed_missing(
+        &self,
+        types: &[String],
+        field: &str,
+        limit: i64,
+    ) -> Result<Vec<Uuid>> {
+        let mut declared = RoaringBitmap::new();
+        for ty in types {
+            let value = Value::String(ty.clone());
+            let key = value_key(&value).expect("a string has a value key");
+            declared |= self.equal("mf_schema", &key, &value);
+        }
+        let ids = declared - self.holders(field);
+        self.uuids_of(ids.iter(), limit)
     }
 
     /// The ids holding exactly `value` in the value partition: its bucket,

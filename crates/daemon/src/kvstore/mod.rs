@@ -612,6 +612,8 @@ impl Read<'_> {
     fn field_rows(&self, name: &str) -> Result<Vec<(Uuid, FieldRow)>> {
         let mut out = Vec::new();
         for e in self.t.by_field.prefix_iter(self.r, &name_key(name))? {
+            // The index entry and the cell it names.
+            self.count(2)?;
             let (k, owner) = e?;
             let id = from_be(&k[k.len() - 8..]);
             let cell = self.t.cells.get(self.r, &key(&[&cell_prefix(owner, name), &be(id)]))?;
@@ -874,6 +876,7 @@ macro_rules! kv_reads {
                 $with(&mut |$read: &Read| {
                     let mut out = Vec::new();
                     for e in $read.t.metarecords.iter($read.r)? {
+                        $read.count(1)?;
                         out.push(uuid_of(e?.0));
                     }
                     Ok(out)
@@ -1223,8 +1226,6 @@ macro_rules! kv_reads {
                 Ok(first.context("a revision without operations")?.parent_id)
             }
         }
-
-        impl Questions for $ty {}
     };
 }
 
@@ -1232,6 +1233,30 @@ kv_reads!(KvStore, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
     let r = me.env.read_txn()?;
     f(&Read { t: &me.t, r: &r, reads: Some(&me.reads) })
 });
+
+/// A write transaction is answered by `store::derive`: no query source reads
+/// its uncommitted writes.
+impl Questions for KvTxn<'_> {}
+
+/// The schema check's candidates come off the derived key spaces (doc
+/// "Schema"); the other questions are `store::derive`'s.
+impl Questions for KvStore {
+    fn wrong_type(&self, field: &str, allowed: &str, limit: i64) -> Result<Vec<Uuid>> {
+        self.source()?.wrong_type(field, allowed, limit)
+    }
+    fn count_over(&self, field: &str, max: i64, limit: i64) -> Result<Vec<Uuid>> {
+        self.source()?.count_over(field, max, limit)
+    }
+    fn count_under(&self, field: &str, min: i64, limit: i64) -> Result<Vec<Uuid>> {
+        self.source()?.count_under(field, min, limit)
+    }
+    fn missing(&self, field: &str, limit: i64) -> Result<Vec<Uuid>> {
+        self.source()?.missing(field, limit)
+    }
+    fn typed_missing(&self, types: &[String], field: &str, limit: i64) -> Result<Vec<Uuid>> {
+        self.source()?.typed_missing(types, field, limit)
+    }
+}
 
 impl KvStore {
     /// How many keys the store's reads and query sources have read.

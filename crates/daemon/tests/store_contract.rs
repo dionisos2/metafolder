@@ -574,3 +574,93 @@ fn a_healthy_store_checks_clean() {
     conn.reindex().unwrap();
     assert!(conn.check().unwrap().is_empty());
 }
+
+/// The schema check's candidate questions (doc "Schema"): a backend may answer
+/// them its own way, but with the answers of `store::derive`, which reads them
+/// off `Rows` — as sets, and within a limit, a part of that set.
+#[test]
+fn the_schema_questions_answer_like_their_derivation() {
+    use metafolder_daemon::store::{derive, Questions};
+    use std::collections::BTreeSet;
+
+    // Written below the `Writer`, which keeps one type per field: mixed types
+    // are what an older store or a forced write can leave, and the answers
+    // must hold there too.
+    let (mut conn, _dir) = open();
+    let tx = conn.begin_write().unwrap();
+    let film = || ("mf_schema", s("film"));
+    let rating = |v: Value| ("rating", v);
+    let mk = |fields: Vec<(&str, Value)>| {
+        let m = Uuid::new_v4();
+        tx.create_metarecord(m, 1).unwrap();
+        for (name, value) in fields {
+            tx.insert_row(m, name, &value, None).unwrap();
+        }
+    };
+    mk(vec![rating(Value::Int(1)), ("label", s("one"))]);
+    mk(vec![film(), rating(Value::Int(2)), ("label", s("two"))]);
+    mk(vec![rating(Value::Float(1.5))]);
+    mk(vec![film(), rating(s("high"))]);
+    mk(vec![rating(Value::Nothing), ("label", Value::Nothing)]);
+    mk(vec![rating(Value::Int(3)), rating(Value::Nothing)]);
+    mk(vec![rating(Value::Int(4)), rating(Value::Int(5))]);
+    mk(vec![film(), rating(Value::Int(6)), rating(Value::Float(7.0)), rating(Value::Int(8))]);
+    mk(vec![film()]);
+    mk(vec![("mf_schema", s("song"))]);
+    mk(vec![("other", Value::Bool(true))]);
+    tx.commit().unwrap();
+    let store: &dyn Store = &conn;
+    let all = i64::MAX;
+
+    let same = |what: &str, got: Vec<Uuid>, want: Vec<Uuid>| {
+        let got_set: BTreeSet<Uuid> = got.iter().copied().collect();
+        assert_eq!(got.len(), got_set.len(), "{what}: no uuid twice");
+        let want: BTreeSet<Uuid> = want.into_iter().collect();
+        assert_eq!(got_set, want, "{what}");
+    };
+    for allowed in ["int", "float", "string", "bool", "tree_ref"] {
+        for field in ["rating", "label", "none"] {
+            same(
+                &format!("wrong_type {field} {allowed}"),
+                Questions::wrong_type(store, field, allowed, all).unwrap(),
+                derive::wrong_type(store, field, allowed, all).unwrap(),
+            );
+        }
+    }
+    for n in 0..4 {
+        same(
+            &format!("count_over {n}"),
+            Questions::count_over(store, "rating", n, all).unwrap(),
+            derive::count_over(store, "rating", n, all).unwrap(),
+        );
+        same(
+            &format!("count_under {n}"),
+            Questions::count_under(store, "rating", n, all).unwrap(),
+            derive::count_under(store, "rating", n, all).unwrap(),
+        );
+    }
+    for field in ["rating", "none", "mf_schema"] {
+        same(
+            &format!("missing {field}"),
+            Questions::missing(store, field, all).unwrap(),
+            derive::missing(store, field, all).unwrap(),
+        );
+    }
+    for types in [vec![], vec!["film"], vec!["film", "song"], vec!["book"]] {
+        let types: Vec<String> = types.into_iter().map(String::from).collect();
+        same(
+            &format!("typed_missing {types:?}"),
+            Questions::typed_missing(store, &types, "rating", all).unwrap(),
+            derive::typed_missing(store, &types, "rating", all).unwrap(),
+        );
+    }
+
+    // A limit takes part of the answer, never more.
+    let whole: BTreeSet<Uuid> =
+        Questions::missing(store, "rating", all).unwrap().into_iter().collect();
+    let part = Questions::missing(store, "rating", 2).unwrap();
+    assert_eq!(part.len(), 2);
+    assert!(part.iter().all(|u| whole.contains(u)), "{part:?} within {whole:?}");
+    let part = Questions::count_under(store, "rating", 2, 1).unwrap();
+    assert_eq!(part.len(), 1);
+}

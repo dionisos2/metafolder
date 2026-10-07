@@ -433,3 +433,30 @@ fn an_anchored_path_pattern_walks_its_prefix_only() {
     bounded("anchored name prefix", &path_matches("^/d0/file00000"), &[], true);
     bounded("anchored, then any", &path_matches("^/d0/file.*3\\.txt$"), &[], true);
 }
+
+/// The keys the schema check's candidate questions read on a healthy
+/// repository, where none of them has an answer worth reading past its limit
+/// (doc "Schema"): files that all hold an `int` `rating`, ten of a rare `kind`.
+fn schema_candidate_reads(kv: &KvStore) -> u64 {
+    use metafolder_daemon::store::Questions;
+    let before = kv.reads();
+    assert!(Questions::wrong_type(kv, "rating", "int", 21).unwrap().is_empty());
+    assert!(Questions::count_over(kv, "rating", 1, 21).unwrap().is_empty());
+    assert!(Questions::count_under(kv, "rating", 1, 21).unwrap().is_empty());
+    assert!(Questions::typed_missing(kv, &["rare".into()], "rating", 21).unwrap().is_empty());
+    // Answers that grow, read up to their limit: the folders lack a rating,
+    // and a field the schema types `int` holds strings in every file.
+    assert_eq!(Questions::missing(kv, "rating", 21).unwrap().len(), 21);
+    assert_eq!(Questions::wrong_type(kv, "name", "int", 21).unwrap().len(), 21);
+    kv.reads() - before
+}
+
+#[test]
+fn the_schema_candidates_read_their_answers_not_the_fields() {
+    // The once-per-open schema heads-up of the GUI: it took a minute on a
+    // large repository while every constrained field was read whole.
+    let (small, _a) = repository_in(2_000, 50);
+    let (large, _b) = repository_in(16_000, 50);
+    let (s, l) = (schema_candidate_reads(&small), schema_candidate_reads(&large));
+    assert!(l <= s + s / 2 + 20, "8x the repository, {l} keys read instead of {s}");
+}

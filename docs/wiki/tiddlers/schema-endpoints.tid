@@ -14,6 +14,13 @@ violations returned: the scan stops once it is passed — a repository with hund
 of thousands of violations never builds an unusable answer — and the answer then
 says `truncated: true`, `checked` counting the metarecords actually examined.
 
+A whole-repository check does not read every metarecord: it validates only the
+*candidates* — the holders of a field of the wrong type, of too many or too few
+rows, the records missing a required field — which the store answers from its
+derived sets, so a healthy repository costs a few bitmaps whatever its size
+(pinned by `tests/kv_cost.rs`). The GUI runs it each time a repository is
+opened, for its heads-up message.
+
 ```
 {"checked": 1542, "truncated": false,
  "violations": [
