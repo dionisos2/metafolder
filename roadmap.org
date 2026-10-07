@@ -109,11 +109,22 @@ No conversion was shipped, because it is not known whether any such data
 exists: check, and write the conversion if it does.
 
 * TODO tooling
-** TODO test coverage has not been measured outside the broker
-=cargo llvm-cov= is wired into =scripts/check.sh= behind =--coverage=; it has
-only been used on =metafolder-watchd= (100 % of its production lines, the
-privileged ones on the host). One pass over the daemon, the CLI and the GUI
-crate to find what is untested.
+** TODO the untested parts the coverage pass found
+Measured 7 October 2026 (=cargo llvm-cov --workspace=, every test): 87 % of
+the lines, by crate core 94 %, daemon 93 %, watchd 96 %, cli 87 %, gui 82 %
+(the bench, a harness run by =scripts/bench.sh= and not by tests, 15 %).
+What is worth a test, most first:
+- =daemon/src/state.rs= =record_watch_frontier= / =write_watch_frontier=:
+  writing =mfr_watch_exceeded= when the watch budget runs out is never run by
+  a test — a write path, and the one behind doc "The watch budget";
+- the GUI's own orchestration around the core flows, each the =async run= of
+  its module: =gui/src/duplicates.rs= (12 %), =trash.rs= (40 %), =sync.rs=
+  (53 %), =ignore.rs= (55 %), =orphan.rs= (59 %), =undo.rs= (62 % — its
+  "blocked revert" report included). The core underneath is tested; these
+  are the reports and status messages;
+- =cli/src/commands.rs=: 405 lines missed of 2 343, spread thin.
+The Tauri wrappers (=gui/src/commands.rs=, =lib.rs=) are uncovered by
+construction: thin, and only a running WebView calls them.
 
 * TODO structure
 Not problems of behaviour; worth doing for navigability, each a large diff.
