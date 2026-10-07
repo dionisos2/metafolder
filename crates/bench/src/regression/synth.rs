@@ -56,8 +56,14 @@ pub(crate) fn prng(i: u64) -> u64 {
 /// The store is dropped before returning: it is held under an exclusive lock
 /// for its lifetime, so a daemon could not load what this still had open.
 pub fn build(dir: &Path, shape: &Shape) -> Result<Uuid> {
+    build_named(dir, shape, shape.label)
+}
+
+/// [`build`], the repository named `name` — a name is unique among the
+/// repositories a daemon has loaded.
+pub fn build_named(dir: &Path, shape: &Shape, name: &str) -> Result<Uuid> {
     std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
-    let opened = repo::init_repository(dir, None, Some(shape.label), false)
+    let opened = repo::init_repository(dir, None, Some(name), false)
         .with_context(|| format!("init a repository at {}", dir.display()))?;
     let repo_uuid = opened.config.repo_uuid;
     let store = opened.metafolder_dir.join(repo::INTERNAL_DIR).join(repo::KV_DIR);
@@ -119,4 +125,47 @@ pub fn build(dir: &Path, shape: &Shape) -> Result<Uuid> {
 
     drop(conn);
     Ok(repo_uuid)
+}
+
+/// Writes the files of a repository [`build`] generated, empty, in its tree on
+/// disk — all but the first `missing`, whose metarecords are then orphans.
+/// For the API sweep (`api.rs`), whose routes read the disk: a check of what
+/// is watched, a reconcile, an orphan scan. Returns how many it wrote.
+pub fn write_files(dir: &Path, shape: &Shape, missing: usize) -> Result<usize> {
+    let mut paths: Vec<std::path::PathBuf> = Vec::with_capacity(shape.dirs);
+    for k in 0..shape.dirs {
+        let parent = if k == 0 { dir.to_path_buf() } else { paths[(k - 1) / 8].clone() };
+        let path = parent.join(format!("dir{k}"));
+        std::fs::create_dir_all(&path).with_context(|| format!("create {}", path.display()))?;
+        paths.push(path);
+    }
+    let mut written = 0;
+    for i in missing..shape.files {
+        let file = paths[i % paths.len().max(1)].join(format!("file{i}.txt"));
+        std::fs::write(&file, b"").with_context(|| format!("write {}", file.display()))?;
+        written += 1;
+    }
+    Ok(written)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_files_on_disk_are_the_generated_tree_but_the_missing_ones() {
+        let dir = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("bench-synth-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let shape = Shape { label: "T", dirs: 10, files: 30, revisions: 0 };
+        let written = write_files(&dir, &shape, 3).unwrap();
+        assert_eq!(written, 27);
+        // dir9's parent is dir1 ((9 - 1) / 8), under dir0.
+        assert!(dir.join("dir0/dir1/dir9").is_dir());
+        // file19 is in dir9 (19 % 10); file1, missing, is nowhere.
+        assert!(dir.join("dir0/dir1/dir9/file19.txt").is_file());
+        assert!(!dir.join("dir0/dir1/file1.txt").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

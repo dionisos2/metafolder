@@ -5,6 +5,7 @@
 #   scripts/bench.sh --quick          # the small size only, for a fast answer
 #   scripts/bench.sh --big            # + the large size (minutes to generate)
 #   scripts/bench.sh --real           # + copies of the benchmarks/bench_data* folders
+#   scripts/bench.sh --api            # + a scenario per route of the daemon (its own repos)
 #   scripts/bench.sh --filter log.    # only the scenarios whose id starts with log.
 #   scripts/bench.sh --no-history     # measure and compare, record nothing
 #   scripts/bench.sh --report         # print the recorded history, measure nothing
@@ -34,7 +35,7 @@ args=()
 for arg in "$@"; do
     case "$arg" in
         --debug) profile=debug ;;
-        -h|--help) sed -n '2,27p' "$0" | sed 's/^# \?//'; exit 0 ;;
+        -h|--help) sed -n '2,28p' "$0" | sed 's/^# \?//'; exit 0 ;;
         *) args+=("$arg") ;;
     esac
 done

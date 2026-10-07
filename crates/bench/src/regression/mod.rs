@@ -10,6 +10,7 @@
 //! that doubled — and is run on purpose, before and after a change that could
 //! cost something.
 
+pub mod api;
 pub mod history;
 pub mod memory;
 pub mod real;
@@ -38,6 +39,8 @@ pub struct Options {
     pub big: bool,
     /// Also the persistent data folders, when they exist.
     pub real: bool,
+    /// Also the API sweep: a scenario per route of the daemon (`api.rs`).
+    pub api: bool,
     /// Only the scenarios whose id starts with this.
     pub filter: Option<String>,
     /// Measure and compare, record nothing.
@@ -53,6 +56,7 @@ impl Default for Options {
             quick: false,
             big: false,
             real: false,
+            api: false,
             filter: None,
             no_history: false,
             report: false,
@@ -367,12 +371,21 @@ async fn post(url: &str, body: &serde_json::Value) -> Result<()> {
 /// included (an allocation the allocator keeps is only visible the first
 /// time). `None` for the memory where it cannot be read.
 async fn measure(id: &str, ctx: &Ctx, pid: u32) -> Result<(f64, f64, Option<f64>)> {
+    measure_with(id, pid, || run_scenario(id, ctx)).await
+}
+
+/// [`measure`], for any way of running the scenario once.
+async fn measure_with<F, Fut>(id: &str, pid: u32, mut once: F) -> Result<(f64, f64, Option<f64>)>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<()>>,
+{
     let sampler = memory::Sampler::start(pid);
-    run_scenario(id, ctx).await.with_context(|| format!("scenario {id}"))?;
+    once().await.with_context(|| format!("scenario {id}"))?;
     let mut values = Vec::with_capacity(RUNS);
     for _ in 0..RUNS {
         let t = Instant::now();
-        run_scenario(id, ctx).await?;
+        once().await.with_context(|| format!("scenario {id}"))?;
         values.push(ms(t.elapsed()));
     }
     let min = values.iter().copied().fold(f64::INFINITY, f64::min);
@@ -493,10 +506,61 @@ pub async fn run(opts: &Options) -> Result<i32> {
             }
         }
     }
+
+    // The API sweep, on repositories of its own (see `api`).
+    if opts.api {
+        for shape in &shapes {
+            let dir = root.join("target/bench-data").join(format!("{}-api", shape.label));
+            let peer = root.join("target/bench-data").join(format!("{}-api-peer", shape.label));
+            if dir.exists() {
+                std::fs::remove_dir_all(&dir)?;
+            }
+            print!("generating {} for the API sweep ... ", dir.display());
+            use std::io::Write as _;
+            std::io::stdout().flush().ok();
+            let t = Instant::now();
+            synth::build_named(&dir, shape, &format!("{}-api", shape.label))?;
+            synth::write_files(&dir, shape, api::ORPHANS)?;
+            println!("{:.1}s", t.elapsed().as_secs_f64());
+            let ctx = api::prepare(&daemon.url, &dir, &peer).await?;
+            let size = shape.label.to_string();
+            println!("── API sweep, size {size} ({})", dir.display());
+            for scenario in api::SCENARIOS {
+                let id = scenario.id;
+                if opts.filter.as_ref().is_some_and(|f| !id.starts_with(f.as_str())) {
+                    continue;
+                }
+                let (median, min, mem) =
+                    measure_with(id, daemon.pid(), || api::run(id, &ctx)).await?;
+                let record = |scenario: String, unit: &str, median: f64, min: f64| Record {
+                    at: now.clone(),
+                    commit: commit.clone(),
+                    dirty,
+                    machine: machine.clone(),
+                    cpu: cpu.clone(),
+                    cores,
+                    profile: profile.to_string(),
+                    rustc: rustc.clone(),
+                    scenario,
+                    size: size.clone(),
+                    unit: unit.to_string(),
+                    median,
+                    min,
+                    runs: RUNS,
+                };
+                records.push(record(id.to_string(), "ms", median, min));
+                if let Some(mib) = mem {
+                    records.push(record(format!("mem.{id}"), "MiB", mib, mib));
+                }
+            }
+            api::teardown(&ctx, &peer).await?;
+        }
+    }
     drop(daemon);
 
     let baselines = history::baselines(&history::read(&history_path)?);
     let regressions = print_table(&records, &baselines, opts.tolerance);
+    print_growth(&records);
 
     if opts.no_history {
         println!("\n(--no-history: nothing recorded)");
@@ -544,6 +608,54 @@ fn print_table(
         );
     }
     regressions
+}
+
+/// Scenarios whose cost follows the repository's size by nature: the others
+/// should cost about the same on every size.
+fn grows(scenario: &str) -> bool {
+    scenario == "log.whole_tree" || api::SCENARIOS.iter().any(|s| s.grows && s.id == scenario)
+}
+
+/// How much more a scenario costs on the larger size than on `S`, flagged when
+/// that is more than [`GROWTH_LIMIT`] times for a scenario that should not
+/// grow — the sizes are ten times apart, so a cost that follows the
+/// repository shows up as a ratio near ten. Below [`GROWTH_FLOOR`] ms on the
+/// larger size, a ratio is noise and is not flagged.
+const GROWTH_LIMIT: f64 = 3.0;
+const GROWTH_FLOOR: f64 = 2.0;
+
+/// The ratios [`print_growth`] flags, as `(scenario, size, ratio, small, large)`.
+fn growth(records: &[Record]) -> Vec<(String, String, f64, f64, f64)> {
+    let small = |scenario: &str| {
+        records.iter().find(|r| r.unit == "ms" && r.size == "S" && r.scenario == scenario)
+    };
+    records
+        .iter()
+        .filter(|r| r.unit == "ms" && (r.size == "M" || r.size == "L"))
+        .filter(|r| !grows(&r.scenario))
+        .filter_map(|r| {
+            let s = small(&r.scenario)?;
+            let ratio = r.median / s.median.max(0.001);
+            (ratio > GROWTH_LIMIT && r.median >= GROWTH_FLOOR)
+                .then(|| (r.scenario.clone(), r.size.clone(), ratio, s.median, r.median))
+        })
+        .collect()
+}
+
+/// Prints the scenarios that grew with the repository when they should not.
+fn print_growth(records: &[Record]) {
+    if !records.iter().any(|r| r.size == "M" || r.size == "L") {
+        return;
+    }
+    let flagged = growth(records);
+    if flagged.is_empty() {
+        println!("\nno scenario grows with the repository but those expected to.");
+        return;
+    }
+    println!("\nscenarios that grow with the repository (more than {GROWTH_LIMIT}x on S):");
+    for (scenario, size, ratio, small, large) in flagged {
+        println!("  {scenario:<36} {size}  {large:>10.2}ms vs {small:.2}ms on S  ({ratio:.1}x)");
+    }
 }
 
 /// `--report`: what the history holds, newest last.
@@ -798,4 +910,44 @@ fn timestamp() -> String {
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
     metafolder_core::date::iso8601_from_ms(ms)
+}
+
+#[cfg(test)]
+mod growth_tests {
+    use super::*;
+
+    fn record(scenario: &str, size: &str, median: f64) -> Record {
+        Record {
+            at: String::new(),
+            commit: String::new(),
+            dirty: false,
+            machine: String::new(),
+            cpu: String::new(),
+            cores: 0,
+            profile: String::new(),
+            rustc: String::new(),
+            scenario: scenario.into(),
+            size: size.into(),
+            unit: "ms".into(),
+            median,
+            min: median,
+            runs: RUNS,
+        }
+    }
+
+    #[test]
+    fn only_what_should_not_grow_and_grew_is_flagged() {
+        let records = vec![
+            record("api.query.page", "S", 1.0),
+            record("api.query.page", "M", 9.0), // grew
+            record("api.repo.get", "S", 0.2),
+            record("api.repo.get", "M", 1.5), // grew, but below the floor: noise
+            record("api.repo.check", "S", 10.0),
+            record("api.repo.check", "M", 100.0), // grows by nature
+            record("api.metarecord.get", "S", 1.0),
+            record("api.metarecord.get", "M", 2.5), // within the limit
+        ];
+        let flagged: Vec<String> = growth(&records).into_iter().map(|f| f.0).collect();
+        assert_eq!(flagged, ["api.query.page"]);
+    }
 }

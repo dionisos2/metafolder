@@ -10,6 +10,7 @@ scripts/bench.sh                  # the standard suite: generated data, release 
 scripts/bench.sh --quick          # the small size only, for a fast answer
 scripts/bench.sh --big            # also the large size (minutes to generate)
 scripts/bench.sh --real           # also copies of the benchmarks/bench_data* folders
+scripts/bench.sh --api            # also a scenario per route of the daemon (the API sweep)
 scripts/bench.sh --filter log.    # only the scenarios whose name starts with log.
 scripts/bench.sh --tolerance 0.5  # the threshold, as a fraction (default 0.30)
 scripts/bench.sh --no-history     # measure and compare, record nothing
@@ -59,6 +60,34 @@ purpose, rather than comparing two different things silently.
 * `query.size_range_in_folder` measures a known gap: a range over a number of many distinct values reads its matches one by one ([[Sorting and postings]]).
 * `tree.write` moves a position in a forest of its own, so it measures the ''upkeep'' and not the size of the tree: updating one position costs the position, anything whole-forest costs the repository, and the two differ on the larger sizes while looking alike on the small one ([[The forest in the store]]). Each run writes a different name — rewriting the same one would move nothing.
 * `repo.load` is the only scenario that is not one request: the load answers as soon as the uuid is known and finishes in the background, so "loaded" means "answers a query" ([[Creating and loading a repository]]). The store's pages stay in the operating system's cache across the unload: it measures the work, not the disk.
+
+!! The API sweep
+
+`--api` adds one scenario or more per route of the daemon's router, `api.<area>.<name>`
+(`crates/bench/src/regression/api.rs`): reads, writes, the background tasks waited
+for, the whole-repository operations, a backup and the two restores, a prune. A test
+of the bench crate holds the list to the router: a route no scenario measures fails
+it, unless it is listed as not measured, with the reason.
+
+It runs on a repository of its own, `<size>-api`, ''generated afresh on every run''
+with its files on disk — empty, in the generated tree, all but ten whose metarecords
+are then orphans — tracking enabled, a schema with a few constraints, and a second,
+empty repository for the sync routes. Its own because it writes, trashes, rolls back,
+prunes and restores, and the repository the other scenarios reuse must not carry that
+over; on disk because a watch check, a reconcile and an orphan scan read the disk. A
+scenario that changes something puts it back or changes something new each run, so
+its five repetitions measure the same work; one whose first run does all the work (a
+reconcile, a prune, a clear) measures the steady state after the warm-up.
+
+!! Growth with the repository
+
+After the table, the suite prints the scenarios that cost more than three times as
+much on `M` (or `L`) as on `S` — the sizes are ten times apart, so a cost that
+follows the repository shows up near ten — leaving out those that grow by nature
+(`log.whole_tree`, and the sweep's whole-repository scenarios: a reconcile, a check, a
+reindex, a backup, an orphan scan…) and anything under 2 ms on the larger size, where
+a ratio is noise. It needs no history: it is how a route that became linear is seen on
+the first run.
 
 !! Sizes
 

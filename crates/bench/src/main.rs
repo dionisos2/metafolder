@@ -635,6 +635,7 @@ async fn main() -> Result<()> {
             "--quick" => opts.quick = true,
             "--big" => opts.big = true,
             "--real" => opts.real = true,
+            "--api" => opts.api = true,
             "--no-history" => opts.no_history = true,
             "--report" => opts.report = true,
             "--filter" => opts.filter = Some(it.next().context("--filter needs a prefix")?),
