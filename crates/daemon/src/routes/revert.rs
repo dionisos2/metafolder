@@ -578,8 +578,11 @@ pub(super) async fn rollback_step(
             // after a write that touched those fields (doc "Navigation"). Not per step: the states
             // in between need
             // not be consistent even when the final one is.
-            let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-            repo_state.refresh_watches(&conn);
+            if plan.touches_watch() {
+                let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+                let _phase = slowlog::phase("settle.watches");
+                repo_state.refresh_watches(&conn);
+            }
         }
         Ok(Json(json!({"op": null, "remaining": 0})))
     })
@@ -592,18 +595,26 @@ pub(super) async fn rollback_abort(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        {
+        let touches_watch = {
             let mut guard = repo_state.rollback_lock.lock_recover();
-            if guard.is_none() {
-                return Err(ApiError::conflict("no rollback navigation in progress"));
-            }
+            let touches_watch = match guard.as_ref() {
+                None => return Err(ApiError::conflict("no rollback navigation in progress")),
+                // A plan taken out by a step still running says nothing yet:
+                // that step may move a rule.
+                Some(RollbackLock::Navigate { plan }) => plan.is_empty() || plan.touches_watch(),
+                Some(RollbackLock::Revert { .. }) => true,
+            };
             *guard = None;
-        }
+            touches_watch
+        };
         crate::executor::flush_pending(repo_state)?;
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         // An abort keeps the state it stopped at, mid-navigation: the watch set
-        // follows that state too (doc "Navigation").
-        repo_state.refresh_watches(&conn);
+        // follows that state too (doc "Navigation"), when a step moved a rule.
+        if touches_watch {
+            let _phase = slowlog::phase("settle.watches");
+            repo_state.refresh_watches(&conn);
+        }
         let head = crate::store::Log::head(&*conn)?;
         Ok(Json(json!({"head": head})))
     })

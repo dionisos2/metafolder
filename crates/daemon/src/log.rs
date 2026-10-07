@@ -247,6 +247,30 @@ pub struct NavResult {
     pub new_head: Option<i64>,
     pub operations_unapplied: usize,
     pub operations_applied: usize,
+    /// Whether an operation it took back or applied moved a field that
+    /// decides which folders are watched: what tells the caller the watch set
+    /// must follow, like [`WriteEffects::touches_watch`] after a write. Not on
+    /// the wire.
+    #[serde(skip)]
+    pub touches_watch: bool,
+}
+
+/// The fields that decide which folders are watched: a write or a
+/// navigation that moves one of them recomputes the watch set.
+const DECIDES_WATCHES: &[&str] = &["mf_watch", "mf_ignore", crate::eligibility::WATCH_EXCEEDED];
+
+/// Whether `op` moved a field of [`DECIDES_WATCHES`]: its own field, or a row
+/// of the metarecord it created, deleted or set whole.
+fn op_decides_watches(tx: &dyn WriteTxn, op: &OpRow) -> Result<bool> {
+    if let Some(field) = &op.field_name {
+        return Ok(DECIDES_WATCHES.contains(&field.as_str()));
+    }
+    for after in [false, true] {
+        if tx.snapshots(op.id, after)?.iter().any(|r| DECIDES_WATCHES.contains(&r.name.as_str())) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Outcome of [`Writer::retype_field`]: how many rows were converted and the
@@ -268,6 +292,7 @@ pub fn navigate(store: &mut dyn Begin, target: Option<i64>) -> Result<NavResult>
             new_head: target,
             operations_unapplied: 0,
             operations_applied: 0,
+            touches_watch: false,
         });
     }
 
@@ -285,6 +310,8 @@ pub fn navigate(store: &mut dyn Begin, target: Option<i64>) -> Result<NavResult>
                 new_head: None,
                 operations_unapplied: unapplied,
                 operations_applied: 0,
+                // Every metarecord went, the root's rules with them.
+                touches_watch: true,
             });
         }
         (None, Some(t)) => {
@@ -304,12 +331,15 @@ pub fn navigate(store: &mut dyn Begin, target: Option<i64>) -> Result<NavResult>
         }
     };
 
+    let mut touches_watch = false;
     for op_id in &unapply {
         let op = tx.op(*op_id)?.context("operation vanished during navigation")?;
+        touches_watch |= op_decides_watches(&*tx, &op)?;
         apply_inverse(&*tx, &op)?;
     }
     for op_id in &apply {
         let op = tx.op(*op_id)?.context("operation vanished during navigation")?;
+        touches_watch |= op_decides_watches(&*tx, &op)?;
         apply_forward(&*tx, &op)?;
     }
     tx.set_head(target)?;
@@ -320,6 +350,7 @@ pub fn navigate(store: &mut dyn Begin, target: Option<i64>) -> Result<NavResult>
         new_head: target,
         operations_unapplied: unapply.len(),
         operations_applied: apply.len(),
+        touches_watch,
     })
 }
 
@@ -455,6 +486,8 @@ pub fn nav_path(
 #[derive(Debug, Clone, Default)]
 pub struct NavPlan {
     steps: std::collections::VecDeque<(i64, NavDir)>,
+    /// Whether a step taken so far moved a field of [`DECIDES_WATCHES`].
+    touches_watch: bool,
 }
 
 impl NavPlan {
@@ -462,7 +495,13 @@ impl NavPlan {
     pub fn new(log: &dyn Log, target: Option<i64>) -> Result<NavPlan> {
         let head = log.head()?;
         let steps = nav_path(log, head, target)?.into_iter().map(|(op, dir)| (op.id, dir));
-        Ok(NavPlan { steps: steps.collect() })
+        Ok(NavPlan { steps: steps.collect(), touches_watch: false })
+    }
+
+    /// Whether a step taken so far moved a field that decides which folders
+    /// are watched ([`NavResult::touches_watch`]).
+    pub fn touches_watch(&self) -> bool {
+        self.touches_watch
     }
 
     /// How many steps are left.
@@ -502,6 +541,7 @@ impl NavPlan {
         if skip {
             enqueue_restoration(&*tx, &op, dir)?;
         }
+        let decides_watches = op_decides_watches(&*tx, &op)?;
         let new_head = match dir {
             NavDir::Inverse => {
                 apply_inverse(&*tx, &op)?;
@@ -515,6 +555,7 @@ impl NavPlan {
         tx.set_head(new_head)?;
         tx.commit()?;
         self.steps.pop_front();
+        self.touches_watch |= decides_watches;
         Ok(new_head)
     }
 }
@@ -1002,8 +1043,6 @@ impl<'c> Writer<'c> {
                 self.tree_lost_seen.entry(row.name.clone()).or_default().insert(entity);
             }
         }
-        const DECIDES_WATCHES: &[&str] =
-            &["mf_watch", "mf_ignore", crate::eligibility::WATCH_EXCEEDED];
         for row in before.iter().chain(after) {
             if DECIDES_WATCHES.contains(&row.name.as_str()) {
                 self.effects.watch = true;

@@ -44,6 +44,13 @@ the state it stopped at) — never in between, where each step is a fragment of 
 and the states passed need not be consistent. Without it, a repository watched nothing
 after a rollback that restored its tracking, until some unrelated write touched a rule.
 
+And, as after a write, ''only when an operation taken back or applied moved a rule'' — its
+field is `mf_watch`, `mf_ignore` or `mfr_watch_exceeded`, or the metarecord it created,
+deleted or set whole held one (a coordinated navigation remembers it from step to step).
+Recomputing walks every watched folder on disk: a rollback that took back a tag paid it on
+every call, 70 ms on a repository of a thousand folders where the navigation itself cost
+ten (found by the API sweep of [[The timed regression suite]]).
+
 The watcher stays live throughout; its events are held until the navigation ends
 ([[Filesystem coordination]]).
 

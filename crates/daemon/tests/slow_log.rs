@@ -18,6 +18,7 @@ use metafolder_daemon::daemon_config::DaemonSettings;
 use metafolder_daemon::routes;
 use metafolder_daemon::state::AppState;
 use serde_json::{json, Value};
+type Json = Value;
 use tower::util::ServiceExt;
 
 mod common;
@@ -480,4 +481,55 @@ async fn test_a_watch_check_stats_the_disk_before_taking_the_database() {
     assert!(stat.is_some() && wait.is_some(), "both phases named: {names:?}");
     assert!(stat < wait, "the disk is read before the connection is taken: {names:?}");
     assert!(names.contains(&"explain"), "the verdicts have their own phase: {names:?}");
+}
+
+/// Sets `name` on `uuid` and answers HEAD from before the write: the target
+/// of the rollback that takes it back.
+async fn write_then_head_before(f: &Fixture, uuid: &str, name: &str, value: Json) -> i64 {
+    let base = format!("/repos/{}", f.repo);
+    let (_, log) =
+        request(&f.app, "GET", &format!("{base}/log?mode=active&limit=1"), None, &[]).await;
+    let uri = format!("{base}/metarecords/{uuid}/fields/{name}");
+    let (status, body) = request(&f.app, "PUT", &uri, Some(json!({"value": value})), &[]).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    log["head"].as_i64().unwrap()
+}
+
+#[tokio::test]
+async fn test_a_rollback_recomputes_the_watched_folders_only_when_it_moves_a_rule() {
+    // Recomputing the watch set walks every eligible folder on disk: a
+    // rollback that took back a tag paid it on every call, as a write does
+    // only when it changes `mf_watch`, `mf_ignore` or an exclusion.
+    let f = fixture("rollback_watch", 1).await;
+    let base = format!("/repos/{}", f.repo);
+    let tag = json!({"fields": [{"name": "tag", "value": {"type": "string", "value": "a"}}]});
+    let (_, created) =
+        request(&f.app, "POST", &format!("{base}/metarecords"), Some(tag), &[]).await;
+    let record = created["uuid"].as_str().unwrap().to_string();
+    let (_, root) = request(
+        &f.app,
+        "POST",
+        &format!("{base}/tree/resolve-path"),
+        Some(json!({"path": ""})),
+        &[],
+    )
+    .await;
+    let root = root["uuid"].as_str().unwrap().to_string();
+
+    let value = json!({"type": "string", "value": "b"});
+    let before = write_then_head_before(&f, &record, "tag", value).await;
+    let target = json!({"target": {"id": before}});
+    f.while_busy("POST", &format!("{base}/rollback"), Some(target), &[]).await;
+    let value = json!({"type": "bool", "value": true});
+    let before = write_then_head_before(&f, &root, "mf_watch", value).await;
+    let target = json!({"target": {"id": before}});
+    f.while_busy("POST", &format!("{base}/rollback"), Some(target), &[]).await;
+
+    let entries = f.entries();
+    let rollbacks: Vec<&slowlog::Entry> =
+        entries.iter().filter(|e| e.op == "POST /repos/:repo/rollback").collect();
+    assert_eq!(rollbacks.len(), 2, "{entries:?}");
+    // Newest first: the mf_watch one, then the tag one.
+    assert!(phase(rollbacks[0], "settle.watches").is_some(), "a rule moved: {:?}", rollbacks[0]);
+    assert!(phase(rollbacks[1], "settle.watches").is_none(), "no rule moved: {:?}", rollbacks[1]);
 }

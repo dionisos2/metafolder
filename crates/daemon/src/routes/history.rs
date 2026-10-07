@@ -266,10 +266,15 @@ pub(super) async fn rollback(
             let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
             let resolved = crate::log::resolve_target(&*conn, &target)?;
             let result = crate::log::navigate(&mut *conn, resolved)?;
-            // And the watch set with it: navigation restores `mf_watch`/
-            // `mf_ignore` rows like any other, so the live watches must follow
-            // the state HEAD landed on (doc "Navigation").
-            repo_state.refresh_watches(&conn);
+            // And the watch set with it, when the navigation moved a rule:
+            // it restores `mf_watch`/`mf_ignore` rows like any other, so the
+            // live watches must follow the state HEAD landed on (doc
+            // "Navigation") — and otherwise there is nothing to follow, and
+            // recomputing walks every watched folder on disk.
+            if result.touches_watch {
+                let _phase = slowlog::phase("settle.watches");
+                repo_state.refresh_watches(&conn);
+            }
             Ok(Json(result))
         })
     })
