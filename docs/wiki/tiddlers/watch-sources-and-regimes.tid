@@ -20,7 +20,10 @@ twice). A socket path where nothing listens is how to stay on inotify on purpose
 One non-recursive watch per ''eligible'' directory, found by the walk reconcile uses:
 through eligible directories only, never following a symlinked directory (so a watch
 never escapes the root — a Wine `dosdevices/z: -> /` is not traversed), skipping an
-unreadable directory rather than failing. A fresh repository (`mf_watch = false`
+unreadable directory rather than failing — and an entry a listing fails to return part-way
+(EIO, ESTALE), reported in the daemon's diagnostics. Reconcile and the executor's scan of
+a directory that arrived whole skip it the same way, through the same function, so
+none of the three walks sees a directory differently. A fresh repository (`mf_watch = false`
 everywhere) is watched nowhere. The root is the walk's base, not a gate: a directory
 with `mf_watch = true` is watched even when the root is not. The set follows directories
 appearing and disappearing, and is recomputed after a write changing `mf_watch`,

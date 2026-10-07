@@ -371,7 +371,7 @@ fn collect_eligible_dirs(root: &Path, base: &RelPath, rules: &WatchRules, walk: 
             Ok(entries) => entries,
             Err(_) => continue, // Not a directory, or unreadable (EACCES): skip.
         };
-        for entry in entries.flatten() {
+        for entry in crate::reconcile::readable_entries(&abs, entries, "watcher") {
             let path = entry.path();
             if path == *walk.internal_dir {
                 continue;

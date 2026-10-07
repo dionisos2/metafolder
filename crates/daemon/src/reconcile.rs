@@ -631,8 +631,7 @@ fn walk(
                 Ok(entries) => entries,
                 Err(_) => continue, // Not a directory or unreadable.
             };
-            for entry in entries {
-                let entry = entry?;
+            for entry in readable_entries(&abs, entries, "reconcile") {
                 // A POSIX name is a byte string, and the daemon tracks such a
                 // file like any other (doc "Tree names").
                 let name = TreeName::from_bytes(file_name_bytes(&entry.file_name()));
@@ -675,6 +674,32 @@ fn walk(
         depth += 1;
     }
     Ok(paths)
+}
+
+/// The entries of `dir` that could be read. A listing that fails part-way
+/// (EIO, ESTALE on a network mount) loses that entry, reported under `scope`,
+/// and the walk carries on — as it does past a directory it cannot open. Shared
+/// by [`walk`], the watcher's placement (`watcher::inotify`) and the executor's
+/// scan of a directory that arrived whole, so they cannot disagree on what a
+/// directory holds. Skipping is safe here: whether a
+/// tracked file is gone is asked of the disk directly, never inferred from
+/// the walk not having met it.
+pub(crate) fn readable_entries<T>(
+    dir: &Path,
+    entries: impl Iterator<Item = std::io::Result<T>>,
+    scope: &'static str,
+) -> impl Iterator<Item = T> {
+    let dir = dir.to_path_buf();
+    entries.filter_map(move |entry| match entry {
+        Ok(entry) => Some(entry),
+        Err(err) => {
+            crate::diagnostics::warn(
+                scope,
+                format!("skipped an entry of {} that could not be read: {err}", dir.display()),
+            );
+            None
+        }
+    })
 }
 
 /// Stats each path from the pure [`walk`], building the `(path, Metadata)` list
@@ -820,4 +845,30 @@ fn maybe_extract_metadata(
     }
     writer.set_field_as(OpType::FileModified, uuid, "mfr_meta_extracted", Value::Bool(true))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod entry_tests {
+    use super::readable_entries;
+    use std::io;
+    use std::path::Path;
+
+    /// A directory listing that fails part-way (EIO, ESTALE on a network
+    /// mount) loses that entry, not the walk: the reconcile and the watcher's
+    /// placement both carry on with the rest, and say so.
+    #[test]
+    fn an_entry_that_cannot_be_read_is_skipped_and_reported() {
+        let dir = Path::new("/entry-tests/a-dir-failing-mid-listing");
+        let listing = vec![Ok(1), Err(io::Error::from_raw_os_error(5)), Ok(2)];
+        let got: Vec<i32> = readable_entries(dir, listing.into_iter(), "reconcile").collect();
+        assert_eq!(got, vec![1, 2]);
+        let page = crate::diagnostics::read(0, crate::diagnostics::CAPACITY);
+        let warning = page
+            .entries
+            .iter()
+            .find(|d| d.message.contains("a-dir-failing-mid-listing"))
+            .expect("the skipped entry is reported");
+        assert_eq!(warning.scope, "reconcile");
+        assert_eq!(warning.level, crate::diagnostics::Level::Warning);
+    }
 }

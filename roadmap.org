@@ -87,12 +87,6 @@ so rolling back to a state written before =4ffe261= can restore a metarecord
 at two positions. =mf repo check= names it afterwards. Refuse it, or accept and
 document it — to decide.
 
-** TODO =compute_watched_dirs= swallows an unreadable directory entry
-It mirrors =reconcile::walk=, but the walk propagates a failed =DirEntry=
-(=entry?=, =reconcile.rs=) while the watcher's version drops it
-(=entries.flatten()=, =watcher/inotify.rs=). The reconcile aborts where the
-watcher silently skips. Decide which is right and make both do it.
-
 ** TODO the GUI orphan colouring has no test on a broken symlink
 =fs_exists= (the entry itself, links included) is unit-tested in Rust, but no
 frontend test mounts =metarecord-list= with a broken symlink and checks the

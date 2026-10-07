@@ -875,11 +875,12 @@ impl Apply<'_, '_> {
         let mut stack = vec![rel.clone()];
         let mut ingested = 0usize;
         while let Some(dir) = stack.pop() {
-            let entries = match std::fs::read_dir(self.abs(&dir)) {
+            let abs = self.abs(&dir);
+            let entries = match std::fs::read_dir(&abs) {
                 Ok(entries) => entries,
                 Err(_) => continue, // Vanished mid-scan; a reconcile can catch up.
             };
-            for entry in entries.flatten() {
+            for entry in crate::reconcile::readable_entries(&abs, entries, "executor") {
                 // A pasted tree can be arbitrarily large, and it all rides on
                 // one event: the stop is honoured here too, not only between
                 // events — and so is the progress report, or this one event
