@@ -4,6 +4,8 @@ kind: reference
 summary: List the slow operations, newest first — the default
 
 The newest entries first, both processes merged: [[Diagnosing a slow operation]].
+Times are in the local time zone (`TZ`, else the system's); `--json` keeps the
+logged Unix milliseconds (`at_ms`), which `mf slow replay --at` takes.
 `--since` takes the durations of `mf trash prune -d` (`30m`, `2h`, `7d`), `--op`
 keeps the entries whose operation contains a substring, `--json` prints the raw
 entries one per line.

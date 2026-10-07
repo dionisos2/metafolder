@@ -19,6 +19,10 @@ ureq = { version = "2", default-features = false, features = ["json"] }
 # Reading the GUI's config.toml to discover its port (doc "mf gui").
 toml = "1.0"
 
+[target.'cfg(unix)'.dependencies]
+# `localtime_r`: the local time `mf slow` shows (doc "mf slow list").
+libc = "0.2"
+
 [dev-dependencies]
 metafolder-daemon = { path = "../daemon" }
 tokio = { version = "1", features = ["full"] }

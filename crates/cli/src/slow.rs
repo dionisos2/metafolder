@@ -10,7 +10,7 @@ use metafolder_core::slowlog::{Entry, Phase};
 pub fn render(entry: &Entry) -> Vec<String> {
     let mut lines = vec![format!(
         "{}  {:>7}  {:<6}  {}",
-        timestamp(entry.at_ms),
+        timestamp(entry.at_ms, local_offset_secs(entry.at_ms)),
         format_ms(entry.ms),
         entry.source,
         entry.op
@@ -99,13 +99,40 @@ pub fn replay_body(entry: &Entry) -> Result<serde_json::Value, String> {
     Ok(body)
 }
 
-/// `2026-09-09 14:03:22` — the ISO form without the `T` and the `Z`, which is
-/// what a person reads a log with.
-fn timestamp(at_ms: i64) -> String {
-    metafolder_core::date::iso8601_from_ms(at_ms)
+/// `2026-09-09 14:03:22` at `offset_secs` east of UTC — the ISO form without
+/// the `T` and the `Z`, which is what a person reads a log with.
+fn timestamp(at_ms: i64, offset_secs: i64) -> String {
+    metafolder_core::date::iso8601_from_ms(at_ms + offset_secs * 1000)
         .replace('T', " ")
         .trim_end_matches('Z')
         .to_string()
+}
+
+/// The local time zone's offset east of UTC at `at_ms`, in seconds, as the C
+/// library reads it (`TZ`, else `/etc/localtime`; summer time included): the
+/// log is read against the reader's clock, and a UTC time with no `Z` reads
+/// as a local one hours off. 0 where it cannot be told.
+fn local_offset_secs(at_ms: i64) -> i64 {
+    #[cfg(unix)]
+    {
+        // POSIX, but not bound by the `libc` crate.
+        extern "C" {
+            fn tzset();
+        }
+        let t = at_ms.div_euclid(1000) as libc::time_t;
+        // SAFETY: `tzset` reads `TZ` into the C library's own state;
+        // `localtime_r` writes only into `tm`, a plain struct it fully
+        // initializes on success.
+        unsafe {
+            tzset();
+            let mut tm: libc::tm = std::mem::zeroed();
+            if !libc::localtime_r(&t, &mut tm).is_null() {
+                return tm.tm_gmtoff as i64;
+            }
+        }
+    }
+    let _ = at_ms;
+    0
 }
 
 /// `840ms`, `4.82s`, `1m04s` — three ranges, because a log that says "4820ms"
@@ -133,6 +160,14 @@ mod tests {
             Phase { name: "validate.schema".into(), ms: 900, count: 12, depth: 1, reads: 0 },
         ];
         e
+    }
+
+    #[test]
+    fn test_the_time_is_shifted_by_the_local_offset() {
+        // 2025-09-09 14:03:22 UTC.
+        assert_eq!(timestamp(1_757_426_602_000, 0), "2025-09-09 14:03:22");
+        assert_eq!(timestamp(1_757_426_602_000, 2 * 3600), "2025-09-09 16:03:22");
+        assert_eq!(timestamp(1_757_426_602_000, -15 * 3600), "2025-09-08 23:03:22");
     }
 
     #[test]

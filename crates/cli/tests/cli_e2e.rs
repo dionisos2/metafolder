@@ -4908,6 +4908,25 @@ fn test_slow_lists_the_log_newest_first_and_clears_it() {
 }
 
 #[test]
+fn test_slow_shows_when_in_the_local_time() {
+    // The log stores Unix ms; a reader compares it with their own clock.
+    use metafolder_core::slowlog::{self, Entry};
+
+    let (repo, root) = init_repo("slow-local-time");
+    let dir = slowlog::slow_dir(&root.join(".metafolder").join("internal"));
+    // 2025-09-09 14:03:22 UTC, in summer time in Paris (UTC+2).
+    let at = 1_757_426_602_000;
+    slowlog::Sink::new(&dir, "daemon").append(&Entry::new("daemon", "POST /x", at, 4820));
+
+    let out = mf_full(&["-u", &repo, "slow"], None, &[("TZ", "Europe/Paris")], true);
+    assert_ok(&out);
+    assert!(out.stdout.starts_with("2025-09-09 16:03:22 "), "{}", out.stdout);
+    let out = mf_full(&["-u", &repo, "slow"], None, &[("TZ", "UTC")], true);
+    assert_ok(&out);
+    assert!(out.stdout.starts_with("2025-09-09 14:03:22 "), "{}", out.stdout);
+}
+
+#[test]
 fn test_slow_replay_runs_a_logged_query_again_and_shows_where_it_goes() {
     use metafolder_core::slowlog::{self, Entry};
 
