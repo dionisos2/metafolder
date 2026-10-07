@@ -4331,6 +4331,22 @@ fn test_order_numbers_folder_children() {
     assert_eq!(again.stdout.trim(), "0", "second run must write nothing");
     assert_eq!(pos(&song0, "order_file"), "1");
     assert_eq!(pos(&album_uuid, "order_numbered"), "true", "the marker survives a re-run");
+
+    // The numbering was one revision: one undo takes back every position and
+    // the marker (it used to take one undo per child).
+    assert_ok(&mf(&["-u", &repo, "log", "undo"]));
+    for (uuid, field) in [
+        (&song0, "order_file"),
+        (&song1, "order_file"),
+        (&song3, "order_file"),
+        (&readme, "order_file"),
+        (&extra, "order_dir"),
+        (&album_uuid, "order_numbered"),
+    ] {
+        let out = mf(&["-u", &repo, "metarecord", "-i", uuid, "field", "get", field]);
+        assert!(out.stdout.trim().is_empty(), "{field} of {uuid} survived the undo");
+    }
+    assert_eq!(pos(&song0, "track_no"), "3", "the undo stops at the numbering");
 }
 
 // ── CLI primitives: --eq, --tsv, --resolve ────────────────────────────────────

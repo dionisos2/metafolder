@@ -42,14 +42,6 @@ is left, each to measure before building:
   phase, a read is logged from 100 ms or 100 000 keys, and =mf slow replay=
   runs a logged query again for its phases now (doc "Slow log").
 
-** TODO =mf order= writes one revision per child
-N children cost N =PUT=s: N transactions, N fsyncs and N revisions, so undoing
-a numbering takes N undos. The read side is bulk already; the write loop is
-=core/src/order.rs= (=client.put= per planned position). Blocked on a
-decision: the set layer applies the *same* value to a whole set, and each
-child here gets its own — it needs an endpoint taking =(uuid, value)= pairs
-(additive, no =API_VERSION= bump).
-
 * TODO query API
 ** TODO no native =In { field, values }=
 "This field is one of these N values" is still an =Or= of N =Eq=: about 2N

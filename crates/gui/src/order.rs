@@ -109,12 +109,16 @@ mod tests {
             &self,
             method: &str,
             path: &str,
-            _body: Option<&Value>,
+            body: Option<&Value>,
         ) -> Result<Value, DaemonError> {
-            if method == "PUT" {
-                self.writes.borrow_mut().push(path.to_string());
+            if path.ends_with("/query/fields/batch") {
+                // The names each op of the batch writes.
+                for op in body.unwrap()["ops"].as_array().unwrap() {
+                    self.writes.borrow_mut().push(op["name"].as_str().unwrap().to_string());
+                }
                 return Ok(json!({}));
             }
+            assert_ne!(method, "PUT", "a write outside the batch: {path}");
             if path.ends_with("/tree/resolve-path") {
                 return Ok(json!({ "uuid": self.uuid }));
             }
@@ -148,7 +152,7 @@ mod tests {
         assert!(report.message.contains("/album"), "got {}", report.message);
         assert!(report.message.contains('1'), "the count is reported: {}", report.message);
         assert!(
-            client.writes.borrow().iter().any(|p| p.ends_with("/fields/order_numbered")),
+            client.writes.borrow().iter().any(|n| n == "order_numbered"),
             "the folder is marked"
         );
     }

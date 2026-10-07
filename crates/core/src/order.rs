@@ -211,6 +211,9 @@ use serde_json::{json, Value};
 /// dry run, and left alone when it is already `true` (no revision on a re-run).
 pub const FIELD_NUMBERED: &str = "order_numbered";
 
+/// Writes per `query/fields/batch` request, each about 150 bytes of JSON.
+const BATCH_OPS: usize = 2000;
+
 /// One planned write, in the reporting form both front-ends print.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Planned {
@@ -350,23 +353,28 @@ pub fn run(
         return Ok(Outcome { path, planned, written: 0, marked: false });
     }
 
-    for p in &planned {
-        client.put(
-            &format!("{base}/metarecords/{}/fields/{}", p.key, p.field),
-            &json!({ "value": {"type": "int", "value": p.position} }),
-        )?;
-    }
-
-    // The folder marker: written once, so re-running `order` on an already
-    // numbered folder produces no revision at all.
+    // The positions and the marker in one batch — one revision, so one undo
+    // takes the whole numbering back. Each op targets its one child (a
+    // `uuid_in` of one) since each gets its own value. The marker is written
+    // once: re-running `order` on an already numbered folder sends nothing.
     let already = field_value(&folder["fields"], FIELD_NUMBERED)
         .map(|v| v["value"] == Value::Bool(true))
         .unwrap_or(false);
+    let set = |uuid: &str, name: &str, value: Value| {
+        json!({"op": "set", "query": {"type": "uuid_in", "uuids": [uuid]},
+               "name": name, "value": value})
+    };
+    let mut ops: Vec<Value> = planned
+        .iter()
+        .map(|p| set(&p.key, p.field, json!({"type": "int", "value": p.position})))
+        .collect();
     if !already {
-        client.put(
-            &format!("{base}/metarecords/{folder_uuid}/fields/{FIELD_NUMBERED}"),
-            &json!({ "value": {"type": "bool", "value": true} }),
-        )?;
+        ops.push(set(folder_uuid, FIELD_NUMBERED, json!({"type": "bool", "value": true})));
+    }
+    // Under the daemon's 2 MiB body limit: a folder with more children than a
+    // batch holds is numbered in several revisions.
+    for chunk in ops.chunks(BATCH_OPS) {
+        client.post(&format!("{base}/query/fields/batch"), &json!({ "ops": chunk }))?;
     }
 
     let written = planned.len();
@@ -496,14 +504,37 @@ mod orchestration_tests {
         fn new(folder: Value, children: Value) -> Self {
             Self { calls: Mutex::new(Vec::new()), folder, children }
         }
-        fn writes(&self) -> Vec<(String, Value)> {
+        /// The write requests: anything but a read.
+        fn write_requests(&self) -> Vec<(String, String, Option<Value>)> {
             self.calls
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|(m, _, _)| m == "PUT")
-                .map(|(_, p, b)| (p.clone(), b.clone().unwrap_or(Value::Null)))
+                .filter(|(m, p, _)| {
+                    m != "GET" && !p.ends_with("/query") && !p.ends_with("/resolve-tree")
+                })
+                .cloned()
                 .collect()
+        }
+
+        /// Every field written, as `(uuid, name, value)`, from the batches.
+        fn writes(&self) -> Vec<(String, String, Value)> {
+            let mut out = Vec::new();
+            for (_, path, body) in self.write_requests() {
+                assert!(path.ends_with("/query/fields/batch"), "a write outside a batch: {path}");
+                for op in body.unwrap()["ops"].as_array().unwrap() {
+                    assert_eq!(op["op"], "set");
+                    assert_eq!(op["query"]["type"], "uuid_in");
+                    let uuids = op["query"]["uuids"].as_array().unwrap();
+                    assert_eq!(uuids.len(), 1, "one record per op: each gets its own value");
+                    out.push((
+                        uuids[0].as_str().unwrap().to_string(),
+                        op["name"].as_str().unwrap().to_string(),
+                        op["value"].clone(),
+                    ));
+                }
+            }
+            out
         }
     }
 
@@ -565,11 +596,44 @@ mod orchestration_tests {
         let writes = stub.writes();
         let marker = writes
             .iter()
-            .find(|(p, _)| p.ends_with(&format!("/metarecords/folder/fields/{FIELD_NUMBERED}")))
+            .find(|(u, n, _)| u == "folder" && n == FIELD_NUMBERED)
             .expect("the folder carries the numbered marker");
-        assert_eq!(marker.1, json!({ "value": {"type": "bool", "value": true} }));
-        assert!(writes.iter().any(|(p, _)| p.contains("/metarecords/a/fields/order_file")));
-        assert!(writes.iter().any(|(p, _)| p.contains("/metarecords/c/fields/order_dir")));
+        assert_eq!(marker.2, json!({"type": "bool", "value": true}));
+        assert!(writes.iter().any(|(u, n, _)| u == "a" && n == FIELD_FILE));
+        assert!(writes.iter().any(|(u, n, _)| u == "c" && n == FIELD_DIR));
+    }
+
+    /// A numbering is one revision, so one undo takes it back: the positions
+    /// and the marker go in a single batch, not one request per child.
+    #[test]
+    fn test_run_writes_the_whole_numbering_in_one_request() {
+        let stub = Stub::new(json!({"uuid": "folder", "fields": []}), children());
+        run(&stub, "repo", "folder", "mfr_meta_track", DEFAULT_MAX_GAP, 500, false).unwrap();
+        assert_eq!(stub.write_requests().len(), 1, "{:?}", stub.write_requests());
+        assert_eq!(stub.writes().len(), 4, "three positions and the marker");
+    }
+
+    /// A folder with nothing left to number and already marked writes nothing:
+    /// not even an empty batch (which would still be a revision).
+    #[test]
+    fn test_a_rerun_sends_no_write_at_all() {
+        let folder = json!({
+            "uuid": "folder",
+            "fields": [field(FIELD_NUMBERED, json!({"type": "bool", "value": true}))]
+        });
+        let numbered = json!({ "results": [{
+            "uuid": "a",
+            "fields": [
+                field("mfr_path", json!({"type": "tree_ref", "value": {"parent": "folder", "name": "x"}})),
+                field("mfr_type", json!({"type": "string", "value": "file"})),
+                field(FIELD_FILE, json!({"type": "int", "value": 1})),
+            ]
+        }]});
+        let stub = Stub::new(folder, numbered);
+        let outcome =
+            run(&stub, "repo", "folder", "mfr_meta_track", DEFAULT_MAX_GAP, 500, false).unwrap();
+        assert_eq!(outcome.written, 0);
+        assert!(stub.write_requests().is_empty(), "{:?}", stub.write_requests());
     }
 
     #[test]
@@ -585,7 +649,7 @@ mod orchestration_tests {
             run(&stub, "repo", "folder", "mfr_meta_track", DEFAULT_MAX_GAP, 500, false).unwrap();
         assert!(!outcome.marked, "an existing marker is left alone");
         assert!(
-            !stub.writes().iter().any(|(p, _)| p.ends_with(FIELD_NUMBERED)),
+            !stub.writes().iter().any(|(_, n, _)| n == FIELD_NUMBERED),
             "no write on the marker"
         );
     }
