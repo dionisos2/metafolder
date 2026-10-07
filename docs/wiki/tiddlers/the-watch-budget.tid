@@ -30,7 +30,7 @@ It means nothing else: the subtree stays tracked — reconcile walks it, queries
 it, the scans consider it, `mf_watch` still says what you ''want'' watched. Changes there
 are noticed by the next reconcile instead of immediately.
 
-* The daemon writes it only on the ''frontier'' — the subtree roots the placement did not enter, never every directory beneath — which is what keeps it affordable in exactly the case that triggers it. Only the budget regime writes it on its own.
+* The daemon writes it only on the ''frontier'' — the subtree roots the placement did not enter, never every directory beneath — which is what keeps it affordable in exactly the case that triggers it. Only the budget regime writes it on its own. It is its own revision, written just ''after'' the placement that found the frontier: a placement runs under the store's lock (at load, after a write moving a rule, after a navigation), and writing from inside it deadlocked the whole repository the first time the budget ran out there — untested until October 2026, found by the first coverage pass.
 * It is ''sticky'': never cleared by the daemon, so the uncovered set is stable across sessions and yours to reshape. Grown headroom shows in `watch_budget`; reclaiming it is explicit.
 * Writing it takes effect at once (re-placement, or a new event filter).
 * Setting it is always allowed. Clearing it is refused with `409` in the budget regime when there is no headroom, naming what to set first; under coverage it is always allowed.

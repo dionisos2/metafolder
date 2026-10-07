@@ -114,9 +114,6 @@ Measured 7 October 2026 (=cargo llvm-cov --workspace=, every test): 87 % of
 the lines, by crate core 94 %, daemon 93 %, watchd 96 %, cli 87 %, gui 82 %
 (the bench, a harness run by =scripts/bench.sh= and not by tests, 15 %).
 What is worth a test, most first:
-- =daemon/src/state.rs= =record_watch_frontier= / =write_watch_frontier=:
-  writing =mfr_watch_exceeded= when the watch budget runs out is never run by
-  a test — a write path, and the one behind doc "The watch budget";
 - the GUI's own orchestration around the core flows, each the =async run= of
   its module: =gui/src/duplicates.rs= (12 %), =trash.rs= (40 %), =sync.rs=
   (53 %), =ignore.rs= (55 %), =orphan.rs= (59 %), =undo.rs= (62 % — its

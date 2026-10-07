@@ -81,6 +81,11 @@ pub struct RepoState {
     watch_budget_share: u8,
     /// Where the fanotify broker is probed at load (`[settings] watchd-socket`).
     watchd_socket: PathBuf,
+    /// This repository, weakly: what a placement hands the thread that records
+    /// its frontier, since the placement runs under the store's lock and the
+    /// record is a write (see [`Self::refresh_watches`]). Set when the watcher
+    /// starts — no watcher, no placement.
+    this: std::sync::OnceLock<std::sync::Weak<RepoState>>,
     /// The kernel refused watches while this daemon was still under its own
     /// ceiling: another program holds the budget. A *state*, not a message —
     /// it lasts as long as the condition, so a client can keep it on screen
@@ -198,6 +203,7 @@ impl RepoState {
             ready: std::sync::atomic::AtomicBool::new(false),
             watch_budget_share: settings.watch_budget_share,
             watchd_socket: settings.watchd_socket.clone(),
+            this: std::sync::OnceLock::new(),
             starved_watches: std::sync::atomic::AtomicBool::new(false),
             exceeded_dirs: std::sync::atomic::AtomicUsize::new(0),
             watch_quiet_period: settings.watch_quiet_period(),
@@ -461,7 +467,20 @@ impl RepoState {
             handles.watcher.refresh(conn, &cache, &self.config.root, &self.internal_dir(), cap)
         };
         if !placement.frontier.is_empty() {
-            self.record_watch_frontier(&placement.frontier);
+            // Not here: every caller holds the store's lock (`conn` is its
+            // guard), and recording is a write that takes it — a deadlock of the
+            // whole repository the first time the budget ran out on a load or
+            // after a rule change. The record waits for the lock on its own
+            // thread, holding the repository weakly; its write settles like any
+            // other, and the marked subtrees leave the next placement's frontier.
+            if let Some(this) = self.this.get().cloned() {
+                let frontier = placement.frontier;
+                std::thread::spawn(move || {
+                    if let Some(repo) = this.upgrade() {
+                        repo.record_watch_frontier(&frontier);
+                    }
+                });
+            }
         }
         self.starved_watches.store(placement.starved > 0, std::sync::atomic::Ordering::Relaxed);
         let excluded = crate::store::Questions::holding(
@@ -672,6 +691,7 @@ impl RepoState {
     /// Applies whatever the watcher buffered, then starts the watcher and its
     /// executor and places the watches. Runs *after* [`Self::warmup`].
     fn activate(self: &Arc<Self>) -> Result<(), ApiError> {
+        let _ = self.this.set(Arc::downgrade(self));
         // Each step is announced: the replay below applies whatever the
         // filesystem did while the daemon was down, which on a repository that
         // moved a lot is the longest part of a load (doc "The daemon's startup report").

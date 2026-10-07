@@ -548,3 +548,67 @@ async fn watch_activity_validates_its_input() {
         request(&app, "GET", &format!("/repos/{repo}/watch/activity?path=relative"), None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
+
+// When the watch budget runs out, the subtrees the placement could not afford
+// are recorded as `mfr_watch_exceeded = true` on their roots (doc "The watch
+// budget"), so `mf watch exceeded` lists them and the user can choose what to
+// give up. A share of 0 floors the budget at one watch: the root takes it, and
+// its sub-directories are the frontier. Neither is tracked yet, so the
+// mark has to create their metarecords too.
+#[tokio::test]
+async fn an_exhausted_watch_budget_marks_the_subtrees_it_left_out() {
+    let settings = metafolder_daemon::daemon_config::DaemonSettings {
+        watch_budget_share: 0,
+        // The budget is the inotify regime's: no broker, whatever this host runs.
+        watchd_socket: common::tests_root().join("no-broker-here.sock"),
+        ..Default::default()
+    };
+    let app = routes::build(std::sync::Arc::new(AppState::new().with_settings(settings)));
+    let root = TempDir::new("watch_budget");
+    std::fs::create_dir_all(root.join("music/jazz")).unwrap();
+    std::fs::create_dir_all(root.join("photos")).unwrap();
+    let repo = init_repo(&app, &root).await;
+    let root_uuid = root_metarecord(&app, &repo).await;
+
+    put_field(&app, &repo, &root_uuid, "mf_watch", json!({"type": "bool", "value": true})).await;
+
+    let marked = json!({
+        "query": {"type": "eq", "field": "mfr_watch_exceeded",
+                  "value": {"type": "bool", "value": true}},
+        "field": "mfr_path",
+    });
+    // The mark is written once the write that moved the rule has let go of the
+    // store: the placement runs under its lock, and writing from there was a
+    // deadlock of the whole repository.
+    let mut paths: Vec<String> = Vec::new();
+    for _ in 0..500 {
+        let (status, body) = request(
+            &app,
+            "POST",
+            &format!("/repos/{repo}/query/fields/resolve-tree"),
+            Some(marked.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        paths = body
+            .as_object()
+            .unwrap()
+            .values()
+            .flat_map(|p| p.as_array().unwrap().iter().map(|p| p.as_str().unwrap().to_string()))
+            .collect();
+        if !paths.is_empty() {
+            break; // one revision records the whole frontier
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    paths.sort_unstable();
+    // `.metafolder/` is a directory of the root like any other (only its
+    // `internal/` is never tracked nor watched).
+    assert_eq!(paths, vec!["/.metafolder", "/music", "/photos"], "the frontier, and only it");
+
+    // What the mark does: the subtree is no longer watched, and says why.
+    let (_, body) = check_paths(&app, &repo, json!({"paths": ["/music/jazz"]})).await;
+    let jazz = result_for(&body, "/music/jazz");
+    assert_eq!(jazz["watched"], json!(false), "{jazz}");
+    assert_eq!(jazz["excluded_by"], json!("/music"), "{jazz}");
+}
