@@ -320,18 +320,27 @@ pub(super) async fn watch_check(
         } else {
             crate::watcher::Coverage::Tree
         };
+        // The disk first, outside the connection: a stat per path is most of
+        // a check on a cold disk, and every other request of the repository
+        // would wait behind it.
+        let on_disk = slowlog::timed("disk.stat", || {
+            crate::watcher::dirs_on_disk(&repo_state.config.root, &body.paths)
+        });
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let rules = repo_state.watch_rules(&conn)?;
         let cache = repo_state.tree();
-        let statuses = crate::watcher::explain_watched(
-            &conn,
-            &cache,
-            &rules,
-            &repo_state.config.root,
-            repo_state.internal_dir().as_path(),
-            coverage,
-            &body.paths,
-        )?;
+        let statuses = slowlog::timed("explain", || {
+            crate::watcher::explain_watched(
+                &conn,
+                &cache,
+                &rules,
+                &repo_state.config.root,
+                repo_state.internal_dir().as_path(),
+                coverage,
+                &body.paths,
+                &on_disk,
+            )
+        })?;
         let mut results = Vec::with_capacity(statuses.len());
         for (path, s) in body.paths.iter().zip(&statuses) {
             let e = &s.eligibility;

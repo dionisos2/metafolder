@@ -52,6 +52,9 @@ synonym:
 |`validate.schema` |schema validation of a write |
 |`commit` |committing the transaction (the store's `fsync`) |
 |`rules.load` |re-reading the watch-rule index after HEAD moved |
+|`disk.stat` |a watch check's stat of each path, before it takes the store handle |
+|`explain` |a watch check's verdicts, under the store handle |
+|`mounts.offline` |finding the declared mount points that are unplugged |
 |`settle.rules` |re-reading it after a write that moved a rule |
 |`settle.watches` |recomputing the watched directories |
 |`watcher.compact` |compacting a batch of buffered events |

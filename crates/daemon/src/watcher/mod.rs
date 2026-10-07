@@ -322,6 +322,11 @@ pub struct WatchedStatus {
 /// an excluded subtree or on an unplugged volume is still not watched, and the
 /// reason says which. Read-only; the rule index and one offline-mounts
 /// snapshot serve the whole batch.
+///
+/// `on_disk` is [`dirs_on_disk`] of `rel_paths`: the disk is read by the
+/// caller, before it takes the connection, so a cold disk does not hold the
+/// repository.
+#[allow(clippy::too_many_arguments)]
 pub fn explain_watched(
     conn: &dyn crate::store::Store,
     cache: &TreeCache,
@@ -330,12 +335,40 @@ pub fn explain_watched(
     internal_dir: &Path,
     coverage: Coverage<'_>,
     rel_paths: &[String],
+    on_disk: &[bool],
 ) -> Result<Vec<WatchedStatus>> {
     let mut offline = None;
     rel_paths
         .iter()
+        .zip(on_disk)
+        .map(|(rel, &on_disk)| {
+            let is_dir = on_disk || dir_in_store(conn, cache, rel)?;
+            explain_watched_one(
+                conn,
+                cache,
+                rules,
+                root,
+                internal_dir,
+                coverage,
+                rel,
+                is_dir,
+                &mut offline,
+            )
+        })
+        .collect()
+}
+
+/// Whether each repo-root-relative path is a directory on disk right now
+/// (symlink metadata — a symlinked directory is never watched, matching the
+/// walk's `file_type().is_dir()`). Touches no store: what
+/// [`explain_watched`] needs from the disk, read before the connection.
+pub fn dirs_on_disk(root: &Path, rel_paths: &[String]) -> Vec<bool> {
+    rel_paths
+        .iter()
         .map(|rel| {
-            explain_watched_one(conn, cache, rules, root, internal_dir, coverage, rel, &mut offline)
+            std::fs::symlink_metadata(abs_of(root, rel))
+                .map(|md| md.file_type().is_dir())
+                .unwrap_or(false)
         })
         .collect()
 }
@@ -354,9 +387,9 @@ fn explain_watched_one(
     internal_dir: &Path,
     coverage: Coverage<'_>,
     rel_path: &str,
+    is_dir: bool,
     offline: &mut Option<crate::mount::OfflineMounts>,
 ) -> Result<WatchedStatus> {
-    let is_dir = dir_like(conn, cache, root, rel_path)?;
     let cover = if is_dir { rel_path.to_string() } else { parent_of(rel_path) };
     let covered = match coverage {
         Coverage::Watches(set) => set.contains(&abs_of(root, &cover)),
@@ -377,8 +410,10 @@ fn explain_watched_one(
     } else if abs_of(root, &cover).starts_with(internal_dir) {
         (WatchedReason::Internal, None, None)
     } else {
-        let mounts = offline
-            .get_or_insert_with(|| crate::mount::offline(conn, cache, root).unwrap_or_default());
+        let mounts = offline.get_or_insert_with(|| {
+            let _phase = metafolder_core::slowlog::phase("mounts.offline");
+            crate::mount::offline(conn, cache, root).unwrap_or_default()
+        });
         if let Some(mount) = mounts.paths().iter().find(|m| covers(m, &cover)) {
             (WatchedReason::Offline, None, Some((*mount).clone()))
         } else if let Some(by) = rules.exceeded_by(&rules.rel_of_text(&cover)) {
@@ -398,23 +433,11 @@ fn explain_watched_one(
     })
 }
 
-/// Whether the path denotes a directory: the disk first (symlink metadata —
-/// a symlinked directory is never watched, matching the walk's
-/// `file_type().is_dir()`), the metarecord's `mfr_type` when the path is gone
-/// (an orphan's stale path still says what it was), else a file — a
-/// not-yet-existing path is treated as the file that would appear there.
-fn dir_like(
-    conn: &dyn crate::store::Store,
-    cache: &TreeCache,
-    root: &Path,
-    rel: &str,
-) -> Result<bool> {
-    if std::fs::symlink_metadata(abs_of(root, rel))
-        .map(|md| md.file_type().is_dir())
-        .unwrap_or(false)
-    {
-        return Ok(true);
-    }
+/// Whether a path that is not a directory on disk ([`dirs_on_disk`]) still
+/// denotes one: the metarecord's `mfr_type` when the path is gone (an orphan's
+/// stale path still says what it was), else a file — a not-yet-existing path
+/// is treated as the file that would appear there.
+fn dir_in_store(conn: &dyn crate::store::Store, cache: &TreeCache, rel: &str) -> Result<bool> {
     match cache.resolve_path(conn, "mfr_path", rel)? {
         Some(uuid) => {
             Ok(conn.string_fields(uuid, "mfr_type")?.first().map(|t| t == "dir").unwrap_or(false))
@@ -463,8 +486,10 @@ fn covered_by_tree(
     if abs_of(root, cover).starts_with(internal_dir) {
         return false;
     }
-    let mounts =
-        offline.get_or_insert_with(|| crate::mount::offline(conn, cache, root).unwrap_or_default());
+    let mounts = offline.get_or_insert_with(|| {
+        let _phase = metafolder_core::slowlog::phase("mounts.offline");
+        crate::mount::offline(conn, cache, root).unwrap_or_default()
+    });
     if mounts.paths().iter().any(|m| covers(m, cover)) {
         return false;
     }
@@ -765,6 +790,7 @@ mod tests {
             let internal = self.internal_dir();
             let paths: Vec<String> = paths.iter().map(|p| p.to_string()).collect();
             let rules = self.rules();
+            let on_disk = super::dirs_on_disk(&self.root, &paths);
             explain_watched(
                 &self.conn,
                 &self.cache,
@@ -773,6 +799,7 @@ mod tests {
                 &internal,
                 coverage,
                 &paths,
+                &on_disk,
             )
             .unwrap()
         }

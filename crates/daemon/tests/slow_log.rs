@@ -451,3 +451,33 @@ fn test_a_slow_watcher_flush_names_itself() {
     assert!(phase(entry, "watcher.apply").is_some(), "{entry:?}");
     assert_eq!(context(entry, "events"), Some("1"));
 }
+
+#[tokio::test]
+async fn test_a_watch_check_stats_the_disk_before_taking_the_database() {
+    // `POST /watch/check` stats every path it is asked about; on a cold disk
+    // that is most of its time. Done under the connection, it held every other
+    // request of the repository behind it (a GUI listing, 500 paths, 6.7 s).
+    let f = fixture("watch_check", 1).await;
+    std::fs::create_dir_all(f._root.join("dir")).unwrap();
+    let (status, body) = f
+        .while_busy(
+            "POST",
+            &format!("/repos/{}/watch/check", f.repo),
+            Some(json!({"paths": ["/dir", "/dir/file"]})),
+            &[],
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let entries = f.entries();
+    let entry = entries
+        .iter()
+        .find(|e| e.op == "POST /repos/:repo/watch/check")
+        .unwrap_or_else(|| panic!("the check is logged: {entries:?}"));
+    let names: Vec<&str> = entry.phases.iter().map(|p| p.name.as_str()).collect();
+    let stat = names.iter().position(|n| *n == "disk.stat");
+    let wait = names.iter().position(|n| *n == "wait:conn");
+    assert!(stat.is_some() && wait.is_some(), "both phases named: {names:?}");
+    assert!(stat < wait, "the disk is read before the connection is taken: {names:?}");
+    assert!(names.contains(&"explain"), "the verdicts have their own phase: {names:?}");
+}
