@@ -13,10 +13,11 @@ property of the query — and refused with `400` naming the limit and the value 
 
 Neither is a limit of the evaluator — a wide `OR` is N bitmap unions. A query past
 them is almost always a mistake in whatever built it, and is better refused than
-served. What reaches them is membership — "this field is one of these N values" —
-written as an `OR` of N `=`: when the values are uuids, use `uuid_in(…)` (the DSL
-folds an `OR` of bare uuids into one on its own). The DSL also caps nesting at 128
-levels ([[Query DSL grammar]]).
+served. What used to reach them is membership — "this field is one of these N
+values" written as an `OR` of N `=`. It is one node instead: `in(field, v1, v2, …)`
+for field values (the `in` node, [[Query IR]]), `uuid_in(…)` for metarecords (the DSL
+folds an `OR` of bare uuids into one on its own). Neither caps its list. The DSL also
+caps nesting at 128 levels ([[Query DSL grammar]]).
 
 !! Time
 

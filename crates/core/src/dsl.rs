@@ -504,6 +504,8 @@ impl Parser {
             self.same_call()
         } else if self.peek_uuid_in_call() {
             self.uuid_in_call()
+        } else if self.peek_in_call() {
+            self.in_call()
         } else if let Some(uuid) = self.peek_uuid_atom() {
             self.next();
             Ok(Query::UuidIn { uuids: vec![uuid] })
@@ -550,6 +552,47 @@ impl Parser {
     fn peek_uuid_in_call(&self) -> bool {
         matches!(self.peek(), Some(Tok::Ident(name)) if name == "uuid_in")
             && self.tokens.get(self.pos + 1) == Some(&Tok::LParen)
+    }
+
+    /// `in` is a function-call operator too, recognised only when the
+    /// identifier is immediately followed by `(` — so a field literally named
+    /// `in` stays usable as an ordinary predicate.
+    fn peek_in_call(&self) -> bool {
+        matches!(self.peek(), Some(Tok::Ident(name)) if name == "in")
+            && self.tokens.get(self.pos + 1) == Some(&Tok::LParen)
+    }
+
+    /// `"in" "(" field [ ":" aspect ] { "," literal } [","] ")"` — the field
+    /// equals one of the literals: one `In` node, which is the `Or` of their
+    /// `=` (doc "Query DSL grammar"). Like `uuid_in`, a trailing comma is
+    /// accepted and an empty list is the empty set.
+    fn in_call(&mut self) -> Result<Query, String> {
+        self.next(); // the `in` identifier
+        self.expect(Tok::LParen)?;
+        let field = match self.next() {
+            Some(Tok::Ident(name)) => name,
+            Some(Tok::Hex(text)) => text,
+            Some(tok) => {
+                return Err(format!("expected a field name in in(...), got {}", describe(&tok)))
+            }
+            None => return Err("expected a field name in in(...)".into()),
+        };
+        let aspect = self.aspect()?;
+        let mut values = Vec::new();
+        loop {
+            match self.next() {
+                Some(Tok::RParen) => return Ok(Query::In { field, values, aspect }),
+                Some(Tok::Comma) => {}
+                Some(tok) => {
+                    return Err(format!("expected ',' or ')' in in(...), got {}", describe(&tok)))
+                }
+                None => return Err("expected ',' or ')' in in(...)".into()),
+            }
+            if self.peek() == Some(&Tok::RParen) {
+                continue; // a trailing comma
+            }
+            values.push(self.literal()?);
+        }
     }
 
     /// `"uuid_in" "(" [ uuid { "," uuid } [","] ] ")"` — an explicit set of
@@ -1693,6 +1736,90 @@ mod tests {
             ok("uuid_in IS PRESENT"),
             Query::IsPresent { field: "uuid_in".into(), aspect: Aspect::Raw }
         );
+    }
+
+    // ── the value-set atom `in(...)` ────────────────────────────────────────
+
+    fn in_(field: &str, values: Vec<Value>, aspect: Aspect) -> Query {
+        Query::In { field: field.into(), values, aspect }
+    }
+
+    #[test]
+    fn test_in_call() {
+        assert_eq!(
+            ok("in(rating, 1, 2, 3)"),
+            in_("rating", vec![Value::Int(1), Value::Int(2), Value::Int(3)], Aspect::Raw)
+        );
+        assert_eq!(
+            ok(r#"in(genre, "jazz", "blues")"#),
+            in_(
+                "genre",
+                vec![Value::String("jazz".into()), Value::String("blues".into())],
+                Aspect::Raw
+            )
+        );
+        // Mixed literal types are allowed: each is one `=`.
+        assert_eq!(
+            ok("in(x, 1, \"a\", true, @0)"),
+            in_(
+                "x",
+                vec![
+                    Value::Int(1),
+                    Value::String("a".into()),
+                    Value::Bool(true),
+                    Value::DateTime(0)
+                ],
+                Aspect::Raw
+            )
+        );
+    }
+
+    #[test]
+    fn test_in_takes_an_aspect() {
+        assert_eq!(
+            ok(r#"in(mfr_path:path, "/a", "/b")"#),
+            in_(
+                "mfr_path",
+                vec![Value::String("/a".into()), Value::String("/b".into())],
+                Aspect::Path
+            )
+        );
+    }
+
+    #[test]
+    fn test_in_trailing_comma_and_empty_list() {
+        assert_eq!(
+            ok("in(rating, 1, 2,)"),
+            in_("rating", vec![Value::Int(1), Value::Int(2)], Aspect::Raw)
+        );
+        assert_eq!(ok("in(rating)"), in_("rating", vec![], Aspect::Raw));
+        assert_eq!(ok("in(rating,)"), in_("rating", vec![], Aspect::Raw));
+    }
+
+    #[test]
+    fn test_in_composes_like_any_atom() {
+        assert_eq!(
+            ok("NOT in(rating, 1)"),
+            Query::Not { operand: Box::new(in_("rating", vec![Value::Int(1)], Aspect::Raw)) }
+        );
+    }
+
+    #[test]
+    fn test_field_named_in_still_usable() {
+        assert_eq!(
+            ok("in = 3"),
+            Query::Eq { field: "in".into(), value: Value::Int(3), aspect: Aspect::Raw }
+        );
+    }
+
+    #[test]
+    fn test_in_rejects_bad_shapes() {
+        err("in(rating 1)"); // missing comma
+        err("in(rating, 1 2)");
+        err("in(rating, 1"); // unclosed
+        err("in(, 1)"); // no field
+        err(&format!("in(x, {U1})")); // a uuid is no literal
+        err("in(x, (a = 1))");
     }
 
     #[test]

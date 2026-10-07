@@ -41,14 +41,6 @@ is left, each to measure before building:
   runs a logged query again for its phases now (doc "Slow log").
 
 * TODO query API
-** TODO no native =In { field, values }=
-"This field is one of these N values" is still an =Or= of N =Eq=: about 2N
-nodes, against the caps of =query_validate.rs= (=MAX_QUERY_NODES= 2000,
-=MAX_COMBINATOR_OPERANDS= 200 — kept as guards against a malformed query,
-decided September 2026). A native =In= is one node and makes the caps painless
-for membership. Uuids are done already: =uuid_in=, and the DSL folds an =Or= of
-bare uuids into one.
-
 ** TODO the CLI cannot read a scope by batches: no =--cursor=
 The daemon pages (=POST /query=: =limit=, an opaque keyset =cursor=,
 =next_cursor=), and =mf metarecord get --count= exists, but =--limit N= caps the

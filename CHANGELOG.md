@@ -14,6 +14,12 @@ than breaking them.
 ## [Unreleased]
 
 ### Added
+- **`in`: "this field is one of these values" as one query node** — JSON
+  `{"type": "in", "field": …, "values": [...], "aspect"?}`, DSL
+  `in(field[:aspect], v1, v2, …)`. It means exactly the `or` of one `eq` per
+  value, aspect included, but counts as one node against the size caps (2000
+  nodes, 200 operands per `and`/`or`) where that `or` counted N + 1 — so a long
+  membership list is no longer refused (doc "Query IR", doc "Query limits").
 - **`metafolder-watchd`: the privileged fanotify broker** (`crates/watchd`,
   `scripts/metafolder-watchd.service`) — groundwork for the fanotify watch
   source (docs/watcher-fanotify.md "The broker"). One process per machine holds

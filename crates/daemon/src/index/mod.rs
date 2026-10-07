@@ -126,6 +126,9 @@ pub fn collect_node_paths(q: &Query, out: &mut Vec<(String, String)>) {
         Query::And { operands } | Query::Or { operands } => {
             operands.iter().for_each(|o| collect_node_paths(o, out));
         }
+        Query::In { .. } => {
+            q.in_operands().expect("an `in`").for_each(|eq| collect_node_paths(&eq, out));
+        }
         Query::Not { operand } => collect_node_paths(operand, out),
         Query::Follows { target, .. } | Query::FollowsTransitive { target, .. } => {
             if let FollowTarget::Condition(c) = target {
@@ -1045,6 +1048,14 @@ impl Eval<'_> {
             }
             Query::Gte { field, value, aspect } => {
                 self.compare(field, CmpOp::Gte, value, roots, *aspect)
+            }
+
+            Query::In { .. } => {
+                let mut acc = RoaringBitmap::new();
+                for eq in q.in_operands().expect("an `in`") {
+                    acc |= self.eval_within(&eq, roots, restrict)?;
+                }
+                Ok(acc)
             }
 
             Query::And { operands } => self.intersect(operands, roots, restrict),

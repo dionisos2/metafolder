@@ -62,6 +62,10 @@ pub fn validate_query_types(
             check_aspect(field, *aspect, ReadKind::Equality, type_of)?;
             check_operand(field, *aspect, value)
         }
+        Query::In { field, values, aspect } => {
+            check_aspect(field, *aspect, ReadKind::Equality, type_of)?;
+            values.iter().try_for_each(|value| check_operand(field, *aspect, value))
+        }
         Query::Lt { field, value, aspect }
         | Query::Lte { field, value, aspect }
         | Query::Gt { field, value, aspect }
@@ -160,10 +164,8 @@ fn check_operand(field: &str, aspect: Aspect, value: &Value) -> Result<(), ApiEr
 /// against a query that is cheap to send but expensive to *walk* (a wide
 /// `And`/`Or`, deep nesting) before any data is read. Generous on purpose —
 /// realistic hand- or UI-built queries are well under it; a membership filter
-/// over a very large value list (an `Or` of many `Eq`) should be decomposed. A
-/// membership filter over *uuids* already is one node: `uuid_in`, which the DSL
-/// folds an `Or` of bare uuid atoms into. (A native `In` over field values
-/// would do the same for them — on the roadmap.)
+/// over a very large value list is one node: `in` over field values, `uuid_in`
+/// over metarecords (which the DSL folds an `Or` of bare uuid atoms into).
 pub const MAX_QUERY_NODES: usize = 2000;
 
 /// Maximum number of operands in a single `And`/`Or`.
@@ -257,6 +259,7 @@ pub fn check_query_size(q: &Query) -> Result<(), ApiError> {
 pub fn validate_query(q: &Query) -> Result<(), ApiError> {
     match q {
         Query::Eq { value, .. } | Query::Neq { value, .. } => validate_comparison(value, false),
+        Query::In { values, .. } => values.iter().try_for_each(|v| validate_comparison(v, false)),
         Query::Lt { value, .. }
         | Query::Lte { value, .. }
         | Query::Gt { value, .. }

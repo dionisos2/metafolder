@@ -516,6 +516,13 @@ fn eval(data: &Data, q: &Query) -> Result<Set, ApiError> {
         Query::UuidIn { uuids } => {
             uuids.iter().filter(|u| data.universe.contains(u)).copied().collect()
         }
+        Query::In { .. } => {
+            let mut out = Set::new();
+            for eq in q.in_operands().expect("an `in`") {
+                out.extend(eval(data, &eq)?);
+            }
+            out
+        }
     })
 }
 

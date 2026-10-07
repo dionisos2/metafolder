@@ -1499,3 +1499,152 @@ async fn test_batch_of_writes_is_one_revision() {
 
     drop(root);
 }
+
+// ── `in`: one node for "this field is one of these values" ──────────────────
+
+/// An `in` is exactly the `or` of one `eq` per value, with the same aspect —
+/// through the whole serving path, the forest's rewrites included (the
+/// `:path` aspect, an exact node, a `:parent`).
+#[tokio::test]
+async fn test_in_answers_what_the_or_of_its_eq_answers() {
+    let (app, repo, _root) = setup("in_or").await;
+    let tref = |parent: Option<&str>, name: &str| {
+        json!({"name": "loc", "value": {"type": "tree_ref",
+               "value": {"parent": parent, "name": name}}})
+    };
+    let top = create(&app, &repo, json!([tref(None, "top")])).await;
+    let a = create(
+        &app,
+        &repo,
+        json!([tref(Some(&top), "a"),
+        {"name": "genre", "value": {"type": "string", "value": "jazz"}}]),
+    )
+    .await;
+    create(
+        &app,
+        &repo,
+        json!([tref(Some(&top), "b"),
+        {"name": "genre", "value": {"type": "string", "value": "rock"}},
+        {"name": "genre", "value": {"type": "string", "value": "blues"}}]),
+    )
+    .await;
+    create(
+        &app,
+        &repo,
+        json!([tref(Some(&a), "c"),
+        {"name": "genre", "value": {"type": "string", "value": "pop"}},
+        {"name": "rating", "value": {"type": "int", "value": 3}}]),
+    )
+    .await;
+
+    let uuids = |q: Value| {
+        let app = app.clone();
+        let repo = repo.clone();
+        async move {
+            let (status, body) =
+                request(&app, "POST", &format!("/repos/{repo}/query"), Some(json!({"query": q})))
+                    .await;
+            assert_eq!(status, StatusCode::OK, "{q}: {body}");
+            body
+        }
+    };
+    let s = |v: &str| json!({"type": "string", "value": v});
+    for (field, aspect, values, non_empty) in [
+        ("genre", "raw", vec![s("jazz"), s("blues"), s("nope")], true),
+        ("genre", "raw", vec![s("jazz"), json!({"type": "int", "value": 3})], true),
+        ("rating", "raw", vec![json!({"type": "int", "value": 3})], true),
+        ("loc", "path", vec![s("top/a"), s("top/a/c"), s("top/zz")], true),
+        ("loc", "value", vec![s("b"), s("c")], true),
+        ("loc", "parent", vec![s("top"), s("top/a")], true),
+        ("loc", "raw", vec![s("top/b"), s("/top/a")], false),
+        ("genre", "raw", vec![], false),
+    ] {
+        let mut in_q = json!({"type": "in", "field": field, "values": values});
+        let operands: Vec<Value> = values
+            .iter()
+            .map(|v| {
+                let mut eq = json!({"type": "eq", "field": field, "value": v});
+                if aspect != "raw" {
+                    eq["aspect"] = json!(aspect);
+                }
+                eq
+            })
+            .collect();
+        if aspect != "raw" {
+            in_q["aspect"] = json!(aspect);
+        }
+        let got = uuids(in_q.clone()).await;
+        let expected = if operands.is_empty() {
+            json!([])
+        } else {
+            uuids(json!({"type": "or", "operands": operands})).await
+        };
+        assert_eq!(got, expected, "{in_q}");
+        if non_empty {
+            assert!(!got.as_array().unwrap().is_empty(), "a vacuous comparison: {in_q}");
+        }
+    }
+}
+
+/// The point of the node: a membership over many values is one node against
+/// the size caps, where the `or` it stands for is refused for its width.
+#[tokio::test]
+async fn test_in_over_many_values_is_one_node() {
+    let (app, repo, _root) = setup("in_wide").await;
+    let a = create(&app, &repo, json!([{"name": "n", "value": {"type": "int", "value": 7}}])).await;
+    let values: Vec<Value> = (0..5000).map(|i| json!({"type": "int", "value": i})).collect();
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "in", "field": "n", "values": values}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!([a]));
+
+    let operands: Vec<Value> =
+        values.iter().map(|v| json!({"type": "eq", "field": "n", "value": v})).collect();
+    let (status, _) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "or", "operands": operands}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// Each value is checked as its `eq` would be, before evaluation.
+#[tokio::test]
+async fn test_in_values_are_validated_like_eq() {
+    let (app, repo, _root) = setup("in_reject").await;
+    create(&app, &repo, json!([{"name": "label", "value": {"type": "string", "value": "x"}}]))
+        .await;
+    for (query, needle) in [
+        (
+            json!({"type": "in", "field": "label",
+                   "values": [{"type": "string", "value": "x"}, {"type": "nothing", "value": null}]}),
+            "nothing",
+        ),
+        (
+            json!({"type": "in", "field": "label", "aspect": "parent",
+                   "values": [{"type": "string", "value": "x"}]}),
+            "tree_ref",
+        ),
+        (
+            json!({"type": "in", "field": "label", "aspect": "path",
+                   "values": [{"type": "int", "value": 1}]}),
+            "string",
+        ),
+    ] {
+        let (status, body) =
+            request(&app, "POST", &format!("/repos/{repo}/query"), Some(json!({"query": query})))
+                .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "expected a 400 for {query}, got {body}");
+        assert!(
+            body["error"].as_str().unwrap_or_default().contains(needle),
+            "the error should name '{needle}': {body}"
+        );
+    }
+}

@@ -13,6 +13,7 @@ A query travels as a recursive JSON object, internally tagged by `type`
 |IsUnknown |`is_unknown` |the field does not exist |
 |Eq / Neq |`eq` / `neq` |equality, inequality |
 |Lt / Lte / Gt / Gte |`lt` / `lte` / `gt` / `gte` |ordered comparison |
+|In |`in` |the field equals one of `values` — the `or` of one `eq` per value, same aspect; empty matches nothing |
 |And / Or |`and` / `or` |all / at least one of `operands` |
 |Not |`not` |`operand` does not match |
 |Follows |`follows` |a `ref` or `tree_ref` whose direct referent matches `target` |
@@ -22,8 +23,8 @@ A query travels as a recursive JSON object, internally tagged by `type`
 |SameAs |`same_as` |shares a value of `field` with a metarecord matching `target` |
 |UuidIn |`uuid_in` |the metarecord's uuid is in `uuids` (32 hex; empty matches nothing) |
 
-Every predicate that reads a value — `is_present`, `is_absent`, the comparisons
-and `matches` — takes an optional `aspect` (`value`, `parent`, `path`; omitted for the
+Every predicate that reads a value — `is_present`, `is_absent`, the comparisons,
+`in` and `matches` — takes an optional `aspect` (`value`, `parent`, `path`; omitted for the
 default `raw`). `osm` has its own `mode` instead; `is_unknown` reads no component and has none. A
 `follows` target is a bare path string or a query object.
 
@@ -32,9 +33,16 @@ default `raw`). `osm` has its own `mode` instead; `is_unknown` reads no componen
   {"type": "gt", "field": "rating", "value": {"type": "int", "value": 3}},
   {"type": "follows_transitive", "field": "mfr_path", "target": "/music/jazz", "inclusive": false}]}
 {"type": "osm", "field": "mfr_path", "terms": ["scien", "fic"], "mode": "path"}
+{"type": "in", "field": "genre", "values": [{"type": "string", "value": "jazz"}, {"type": "string", "value": "blues"}]}
 {"type": "same_as", "field": "mfr_duplicate_group", "target": {"type": "uuid_in", "uuids": ["3f2a…"]}}
 ```
 
 `uuid_in` is the bridge between the resource layer and the set layer: it lets every
 `/query/*` operation target an explicit set — a GUI multi-selection — in one request
 rather than one per uuid. The DSL spells it as a bare uuid or `uuid_in(…)`.
+
+`in` is its counterpart over field values: one node where the `or` of its `eq` would
+be N + 1, so a long membership list stays clear of the size caps ([[Query limits]]).
+It means exactly that `or` — every value is validated as its `eq` would be (no
+`nothing`; a `:path` operand is a string), and under `:path` the daemon rewrites it
+into that `or` before the forest resolves each path.

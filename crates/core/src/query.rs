@@ -78,6 +78,17 @@ pub enum Query {
         aspect: Aspect,
     },
 
+    /// The field equals one of `values` — exactly the `Or` of one `Eq` per
+    /// value, with the same aspect ([`Query::in_operands`]), spelled as one
+    /// node: a membership filter over N values counts once against the query
+    /// size caps instead of N + 1 times. An empty list matches nothing.
+    In {
+        field: String,
+        values: Vec<Value>,
+        #[serde(default, skip_serializing_if = "Aspect::is_raw")]
+        aspect: Aspect,
+    },
+
     // --- Graph traversal ---
     /// On a `Ref` field, `target` is a sub-query the referent must satisfy.
     /// On a `TreeRef` field, `target` is a path string and matches metarecords
@@ -156,6 +167,22 @@ pub enum Query {
         #[serde(with = "crate::metarecord::hex_uuid_vec")]
         uuids: Vec<uuid::Uuid>,
     },
+}
+
+impl Query {
+    /// The `Eq` an `In` stands for, one per value, in order; `None` on any
+    /// other node. What every engine evaluates an `In` as, so its meaning is
+    /// written once.
+    pub fn in_operands(&self) -> Option<impl Iterator<Item = Query> + '_> {
+        match self {
+            Query::In { field, values, aspect } => Some(values.iter().map(|value| Query::Eq {
+                field: field.clone(),
+                value: value.clone(),
+                aspect: *aspect,
+            })),
+            _ => None,
+        }
+    }
 }
 
 /// Matching target of an [`Query::Osm`] node (JSON: snake_case string).
@@ -364,6 +391,43 @@ mod tests {
             r#"{"type":"uuid_in","uuids":["0000000000000000000000000000002b"]}"#
         );
         assert_eq!(roundtrip(&q), q);
+    }
+
+    #[test]
+    fn test_in_json_format_and_roundtrip() {
+        let q = Query::In {
+            field: "rating".into(),
+            values: vec![Value::Int(3), Value::Int(5)],
+            aspect: Aspect::Raw,
+        };
+        // `aspect` is omitted when raw, as on every comparison.
+        assert_eq!(
+            serde_json::to_string(&q).unwrap(),
+            r#"{"type":"in","field":"rating","values":[{"type":"int","value":3},{"type":"int","value":5}]}"#
+        );
+        assert_eq!(roundtrip(&q), q);
+        let q = Query::In {
+            field: "mfr_path".into(),
+            values: vec![Value::String("/a".into())],
+            aspect: Aspect::Path,
+        };
+        assert_eq!(roundtrip(&q), q);
+    }
+
+    #[test]
+    fn test_in_is_an_or_of_eq() {
+        let q = Query::In {
+            field: "tag".into(),
+            values: vec![Value::String("a".into()), Value::String("b".into())],
+            aspect: Aspect::Value,
+        };
+        let eq = |v: &str| Query::Eq {
+            field: "tag".into(),
+            value: Value::String(v.into()),
+            aspect: Aspect::Value,
+        };
+        assert_eq!(q.in_operands().unwrap().collect::<Vec<_>>(), vec![eq("a"), eq("b")]);
+        assert!(Query::IsUnknown { field: "x".into() }.in_operands().is_none());
     }
 
     #[test]

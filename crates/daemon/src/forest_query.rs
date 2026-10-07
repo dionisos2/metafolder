@@ -68,6 +68,12 @@ pub fn resolve_path_leaves(
             target: rewrite_target(cache, store, names, target)?,
             inclusive: *inclusive,
         },
+        // Under `:path` each value is a forest leaf of its own: the `in` is
+        // rewritten as the `or` it stands for. An empty one stays (nothing).
+        Query::In { values, aspect: Aspect::Path, .. } if !values.is_empty() => {
+            let operands: Vec<Query> = q.in_operands().expect("an `in`").collect();
+            Query::Or { operands: rewrite_all(cache, store, names, &operands)? }
+        }
         other => other.clone(),
     })
 }

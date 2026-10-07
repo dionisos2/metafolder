@@ -443,6 +443,24 @@ fn uuid_in_explicit_set() {
 }
 
 #[test]
+fn in_is_the_or_of_its_eq() {
+    let mut o = Oracle::new();
+    o.create(vec![Field::new("tag", s("jazz")), Field::new("tag", s("live"))]);
+    o.create(vec![Field::new("tag", s("blues"))]);
+    o.create(vec![Field::new("tag", Value::Nothing)]);
+    o.create(vec![Field::new("other", s("jazz"))]);
+
+    let in_ = |values: Vec<Value>| Query::In { field: "tag".into(), values, aspect: Aspect::Raw };
+    o.check(&in_(vec![s("jazz"), s("blues")]));
+    o.check(&in_(vec![s("live"), Value::Int(3), s("rock")])); // a mismatched operand
+    o.check(&in_(vec![s("rock")])); // empty
+    o.check(&in_(vec![])); // no value: nothing
+    o.check(&not(in_(vec![s("jazz")])));
+    o.check(&and(vec![in_(vec![s("jazz"), s("blues")]), present("tag")]));
+    o.check_count(&in_(vec![s("jazz"), s("blues")]));
+}
+
+#[test]
 fn categorical_string_neq_multimap() {
     // {jazz, live} must match Neq("jazz") via the "live" row; {jazz} alone
     // must not. A type-mismatched operand differs from every row.
