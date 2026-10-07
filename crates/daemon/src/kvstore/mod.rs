@@ -562,6 +562,7 @@ impl Read<'_> {
     }
 
     fn version(&self, uuid: Uuid) -> Result<Option<u64>> {
+        self.count(1)?;
         Ok(self.t.metarecords.get(self.r, uuid.as_bytes())?.map(|b| from_be(b) as u64))
     }
 
@@ -601,6 +602,8 @@ impl Read<'_> {
     }
 
     fn row(&self, id: i64) -> Result<Option<(Uuid, FieldRow)>> {
+        // The owner, and the cell.
+        self.count(2)?;
         let Some(prefix) = self.t.row_owner.get(self.r, &be(id))? else { return Ok(None) };
         let cell = self.t.cells.get(self.r, &key(&[prefix, &be(id)]))?;
         Ok(match cell {
@@ -690,6 +693,7 @@ impl Read<'_> {
             return Ok(key_end.to_vec());
         }
         let cell = key(&[&cell_prefix(&v[..16], field), &v[16..24]]);
+        self.count(1)?;
         let row = self.t.cells.get(self.r, &cell)?.context("a forest position without its row")?;
         match dec_row(row)?.value {
             Value::TreeRef { name, .. } => Ok(name.as_bytes().to_vec()),
@@ -869,7 +873,10 @@ macro_rules! kv_reads {
             }
             fn owner_of_row(&self, id: i64) -> Result<Option<Uuid>> {
                 let $me = self;
-                $with(&mut |$read: &Read| Ok($read.t.row_owner.get($read.r, &be(id))?.map(uuid_of)))
+                $with(&mut |$read: &Read| {
+                    $read.count(1)?;
+                    Ok($read.t.row_owner.get($read.r, &be(id))?.map(uuid_of))
+                })
             }
             fn metarecords(&self) -> Result<Vec<Uuid>> {
                 let $me = self;
@@ -890,6 +897,7 @@ macro_rules! kv_reads {
                 let $me = self;
                 $with(&mut |$read: &Read| {
                     for e in $read.t.row_owner.iter($read.r)? {
+                        $read.count(2)?;
                         let (k, prefix) = e?;
                         let cell = $read.t.cells.get($read.r, &key(&[prefix, k]))?;
                         f(
@@ -912,6 +920,7 @@ macro_rules! kv_reads {
                     let prefix = name_key(name);
                     let mut out = Vec::new();
                     for e in $read.t.field_types.prefix_iter($read.r, &prefix)? {
+                        $read.count(1)?;
                         let (k, _) = e?;
                         out.push(String::from_utf8(k[prefix.len()..].to_vec())?);
                     }
@@ -924,6 +933,7 @@ macro_rules! kv_reads {
                     let mut seen = HashSet::new();
                     let mut out = Vec::new();
                     for e in $read.t.by_field.prefix_iter($read.r, &name_key(name))? {
+                        $read.count(1)?;
                         let u = uuid_of(e?.1);
                         if seen.insert(u) {
                             out.push(u);
@@ -1002,6 +1012,7 @@ macro_rules! kv_reads {
                 $with(&mut |$read: &Read| {
                     let mut out = Vec::new();
                     for e in $read.t.forest.iter($read.r)? {
+                        $read.count(1)?;
                         let (k, v) = e?;
                         // field · parent · name bytes: the field's end is its
                         // `00 00` terminator.
@@ -1832,7 +1843,9 @@ impl WriteTxn for KvTxn<'_> {
         let revs: Vec<i64> = {
             let txn = self.txn.borrow();
             let mut out = Vec::new();
+            let read = Read { t: &self.t, r: &txn, reads: Some(self.reads) };
             for e in self.t.revisions.iter(&txn)? {
+                read.count(1)?;
                 out.push(from_be(e?.0));
             }
             out
