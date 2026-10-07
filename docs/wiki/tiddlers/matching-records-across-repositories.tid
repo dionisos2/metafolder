@@ -15,8 +15,10 @@ of its `tree_ref` fields ([[TreeRef forest]]) — `mfr_path` for a file, the tag
 forest for a tag. A position holds one record, so the path names at most one
 counterpart.
 
-* ''One position'' (a file, a tag): the record at that path on the other side, found through `tree/resolve-path` — any forest, whatever its root convention ([[TreeRef path conventions]]). None there: a ''bare'' record is planned, created by the run and placed at that path by the link's first sync.
+* ''One position'' (a file, a tag): the record at that path on the other side, found through the forest's own path resolution (`tree/resolve-path`) — any forest, whatever its root convention ([[TreeRef path conventions]]). None there: a ''bare'' record is planned, created by the run and placed at that path by the link's first sync.
 * ''Several positions'': each position's occupant on the other side. Two different occupants, or one that already sits elsewhere in a forest where this record's position is free, is an ''incoherence'': the plan stops and names the record and its positions, so that no half-plan is written; `mf sync link` settles it by hand. One occupant, otherwise: linked to it. None: a bare record.
+
+The plan asks for the occupants by set, not per record: an `or` of exact-node equalities (`field = "path"`, up to 200 positions a request) and `query/fields/resolve-tree` to map each answer back to the position it holds. An answer that does not map back by its text — a case-insensitive repository spelling the name otherwise — is asked again through `tree/resolve-path`, and a position is read as free only when every occupant found was accounted for.
 
 ''Content is never what matches'': a file moved on one side before it was ever
 linked is matched by its new path. When that duplicates it, delete the copy you do

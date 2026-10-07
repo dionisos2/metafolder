@@ -50,14 +50,6 @@ decision: the set layer applies the *same* value to a whole set, and each
 child here gets its own — it needs an endpoint taking =(uuid, value)= pairs
 (additive, no =API_VERSION= bump).
 
-** TODO =mf sync plan=: the target-side position lookup is per record
-=record_at_path= (=core/src/sync/plan.rs=, also used by =run.rs=) asks for the
-occupant of one position on the other side, once per identity position. The
-mechanism for a set is there: an =Or= of =field:path = "…"= equalities is
-resolved by the forest into one =uuid_in= set (and on KV each one is now a
-seek, not a walk), and =query/fields/resolve-tree= maps the answers back to
-their paths. What is left is rewriting the caller.
-
 * TODO query API
 ** TODO no native =In { field, values }=
 "This field is one of these N values" is still an =Or= of N =Eq=: about 2N
