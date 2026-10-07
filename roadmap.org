@@ -10,15 +10,6 @@ the end.
 The recurring defect of this project is a cost that grows with the repository
 where it should grow with the answer. Each item names where.
 
-** TODO =FollowsTransitive= materialises the whole subtree
-One descendant bitmap per root, read whole where only the page is wanted.
-Only an unsorted query could stop early: a sort needs the full candidate set.
-Measured 28 September 2026 (=query.folder=, a page of 100 under a folder
-holding the whole repository, L = 105 000 nodes): +0.4 ms over =query.page=,
-about 4 ms extrapolated to a million. Small; one of the planner's choices
-(below) rather than an item of its own: a per-candidate ancestry check with an
-early stop, for an unsorted page under a large subtree.
-
 ** TODO unanchored =:path= patterns walk the whole stored forest
 =aff0be6= made a =:path= comparison and a pattern anchored on a literal prefix
 seek their paths on KV (=PathSeek=, 64 648 → 6 key reads for an exact path).
@@ -34,7 +25,14 @@ Built September 2026 from the cases profiling found, not from the old design
 candidates narrowed by trigrams (=495ea1b=), and the first choice made on a
 cost — an =osm= path's anchors cut by a rare earlier term (=1140e07=). What
 is left, each to measure before building:
-- the page under a large subtree (above);
+- an unsorted page under a large subtree: =FollowsTransitive= reads the
+  root's whole descendant bitmap where a page wants 100 ids. Measured 7
+  October 2026 (=query.folder= against =query.page=, a folder holding the
+  whole repository): +0.08 ms on M (21 000 nodes), +0.4 ms on L (105 000),
+  about 4 ms extrapolated to a million. The way out — a per-candidate
+  ancestry check stopping at the page — costs ≈ 100 × depth × 2 µs ≈ 1 ms,
+  so it loses below roughly 300 000 nodes, and its walk cannot be budgeted
+  without the subtree's size, which the store does not keep. Not built;
 - a two-term =osm= path whose earlier term is common: the bench's finder,
   still ≈ 5 ms on L, nearly all of it each anchor's ancestry (≈ 2 µs a random
   read). No bitmap formulation found cheaper on that shape;
