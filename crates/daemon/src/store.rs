@@ -195,9 +195,9 @@ macro_rules! forward_to_store {
                 let $me = self;
                 Log::ops_after($conn, op)
             }
-            fn ops_after_count(&self, op: i64) -> Result<i64> {
+            fn ops_after_count(&self, op: i64, cap: i64) -> Result<i64> {
                 let $me = self;
-                Log::ops_after_count($conn, op)
+                Log::ops_after_count($conn, op, cap)
             }
             fn ancestor_at_or_before(&self, head: i64, timestamp_ms: i64) -> Result<Option<i64>> {
                 let $me = self;
@@ -472,8 +472,10 @@ pub trait Log {
     fn version_before_revision(&self, rev: i64, entity: Uuid) -> Result<Option<u64>>;
     /// The operations newer than `op`, oldest first (the change feed).
     fn ops_after(&self, op: i64) -> Result<Vec<OpRow>>;
-    /// How many operations are newer than `op`.
-    fn ops_after_count(&self, op: i64) -> Result<i64>;
+    /// How many operations are newer than `op`, counted no further than
+    /// `cap`: a client far behind asks whether the gap passes a limit, and
+    /// counting the whole of it would read the log since.
+    fn ops_after_count(&self, op: i64, cap: i64) -> Result<i64>;
     /// Walking back from `head`, the first operation whose revision is at or
     /// before `timestamp_ms`.
     fn ancestor_at_or_before(&self, head: i64, timestamp_ms: i64) -> Result<Option<i64>>;

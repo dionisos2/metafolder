@@ -34,7 +34,7 @@ same on every machine, so it runs in `cargo test` and in `scripts/check.sh`, and
 regression fails like any broken test.
 
 ```
-cargo test -p metafolder-daemon --test kv_cost --test log_cost
+cargo test -p metafolder-daemon --test kv_cost --test log_cost --test api_cost
 ```
 
 One assertion carries the layer, ''growth invariance'': the same operation runs on
@@ -44,6 +44,7 @@ caught on a few thousand rows, in under a second.
 
 |!File |!Holds |
 |`crates/daemon/tests/log_cost.rs` |the log: a window of fifty operations, a window of twenty revisions, one metarecord read, one trim, one navigation step — the ''same'' number of keys on a log sixteen times longer, or a target further away ([[Reading the log costs the window]], [[What undoing used to cost]]) |
+|`crates/daemon/tests/api_cost.rs` |whole HTTP routes, on a loaded repository and on one eight times larger in files, folders and revisions: undoing one write, the plans twenty operations back, marking a folder exceeded, a prune with nothing to prune, what the GUI reads on opening a repository (a change feed far behind included: it counted the whole gap) — where an extra walk can hide around an operation that is bounded itself |
 |`crates/daemon/tests/kv_cost.rs` |queries: a rare value, a sorted page, a text search, a subtree, the finder's search, combined operands, a path comparison — on 2 000 and 16 000 files, the same answer for at most half as many keys again ([[Sorting and postings]], [[Text search in the store]], [[The forest in the store]]) |
 |`crates/daemon/tests/executor.rs` |the watcher's flush: the same arrivals cost the same in a repository eight times larger |
 |`crates/daemon/tests/query_interrupt.rs`, `kv_postings.rs` |an abandoned query stops reading; a posting is read instead of its rows |

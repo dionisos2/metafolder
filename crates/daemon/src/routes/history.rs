@@ -108,7 +108,9 @@ pub(super) async fn get_log_since(
         let mut truncated = false;
         let operations = match params.op {
             Some(since) => {
-                if crate::store::Log::ops_after_count(&*conn, since)? > limit {
+                if crate::store::Log::ops_after_count(&*conn, since, limit.saturating_add(1))?
+                    > limit
+                {
                     // Oversized delta: signal a coarse refresh instead of
                     // streaming every operation (a large reconcile would flood
                     // the client).

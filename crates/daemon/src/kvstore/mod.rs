@@ -1197,12 +1197,13 @@ macro_rules! kv_reads {
                     $read.ops_with_origins(ids.into_iter())
                 })
             }
-            fn ops_after_count(&self, op: i64) -> Result<i64> {
+            fn ops_after_count(&self, op: i64, cap: i64) -> Result<i64> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
                     let from = be(op.saturating_add(1));
                     let range = (std::ops::Bound::Included(&from[..]), std::ops::Bound::Unbounded);
-                    let n = $read.t.ops.range($read.r, &range)?.count();
+                    let cap = usize::try_from(cap).unwrap_or(0);
+                    let n = $read.t.ops.range($read.r, &range)?.take(cap).count();
                     $read.count(n as u64 + 1)?;
                     Ok(n as i64)
                 })

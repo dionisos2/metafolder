@@ -384,8 +384,9 @@ fn targets_are_found_along_the_ancestry() {
     let all = store.all_ops().unwrap();
     let head = store.head().unwrap().unwrap();
     assert_eq!(store.ops_after(all[0].id).unwrap().len(), 2);
-    assert_eq!(store.ops_after_count(all[0].id).unwrap(), 2);
-    assert_eq!(store.ops_after_count(head).unwrap(), 0);
+    assert_eq!(store.ops_after_count(all[0].id, 10).unwrap(), 2);
+    assert_eq!(store.ops_after_count(head, 10).unwrap(), 0);
+    assert_eq!(store.ops_after_count(all[0].id, 1).unwrap(), 1, "counted up to the cap");
     // Before the second revision: the last operation of the first.
     assert_eq!(store.before_revision_of(head).unwrap(), Some(all[1].id));
     assert_eq!(store.before_revision_of(all[1].id).unwrap(), None, "before the first: empty");
