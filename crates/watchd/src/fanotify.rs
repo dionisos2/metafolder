@@ -135,7 +135,7 @@ pub struct Handle {
 
 impl Handle {
     /// What a handle is remembered by.
-    fn key(&self) -> ([i32; 2], Vec<u8>) {
+    pub(crate) fn key(&self) -> ([i32; 2], Vec<u8>) {
         (self.fsid, self.bytes.clone())
     }
 }
@@ -1008,6 +1008,17 @@ impl<R: Resolve + IgnoreMarks> Translator<R> {
         ReadOutcome { events, kernel_overflow }
     }
 
+    /// The marks were placed again (a subscription came or went, the mount
+    /// table changed): every path and verdict remembered is forgotten, and
+    /// every ignore mark flushed ([`flush_ignores`](Self::flush_ignores)). A
+    /// drive's objects resolve through a mount point of it under a root, and
+    /// that may be another one now — or none.
+    pub fn marks_placed(&mut self) {
+        self.resolver.forget();
+        self.scope.verdicts.clear();
+        self.flush_ignores();
+    }
+
     /// Takes every ignore mark off and starts counting over. For when which
     /// directories are outside the roots may have changed wholesale — new
     /// roots, a mount come or gone — and lifting by handle may not be
@@ -1183,8 +1194,9 @@ impl Fanotify {
         let points: Vec<PathBuf> = table.iter().map(|(_, point)| point.clone()).collect();
         let Plan { wanted, mut paths, roots_on, mut failed, skipped } =
             plan_marks(&self.roots, &points, coverable_fsid);
-        // Which directories are outside the roots may have changed.
-        self.translator.flush_ignores();
+        // Which directories are outside the roots, and the paths a drive's
+        // objects are reached by, may have changed.
+        self.translator.marks_placed();
         for message in skipped {
             eprintln!("[watchd] {message}");
         }
@@ -1964,6 +1976,26 @@ mod tests {
         assert_eq!(asked(&t), ["ignore 1", "flush"], "the count starts over");
         t.translate(&creations(&handle(1), 1));
         assert_eq!(asked(&t), ["ignore 1", "flush", "ignore 1"]);
+    }
+
+    #[test]
+    fn test_placing_the_marks_again_forgets_every_path_and_verdict() {
+        // A drive mounted at two points of a root, the first unmounted: its
+        // objects are named through the second now. A path remembered through
+        // the first — or a verdict reached through it — would name a mount
+        // point that holds something else, for as long as it was remembered.
+        let mut t = marking();
+        t.resolver.inner.at(&handle(4), "/home/me/repo/a");
+        let created = |t: &mut Translator<Marking>| t.translate(&creations(&handle(4), 1)).events;
+        let at = |p: &str| vec![Event::Create { path: PathBuf::from(p).into() }];
+        assert_eq!(created(&mut t), at("/home/me/repo/a/f0"));
+        t.resolver.inner.at(&handle(4), "/home/me/repo/b");
+        assert_eq!(created(&mut t), at("/home/me/repo/a/f0"), "remembered for a moment");
+        t.marks_placed();
+        assert_eq!(created(&mut t), at("/home/me/repo/b/f0"));
+        t.resolver.inner.at(&handle(4), "/home/me/elsewhere");
+        t.marks_placed();
+        assert_eq!(created(&mut t), vec![], "the verdict is asked again too");
     }
 
     #[test]

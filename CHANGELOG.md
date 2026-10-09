@@ -204,6 +204,13 @@ than breaking them.
   mounting the remote repository over SSHFS is deferred (spec-sync).
 
 ### Fixed
+- **`metafolder-watchd`: a drive's files reported at a mount point it had
+  left.** The broker remembers each resolved handle's path for two seconds; a
+  drive mounted at two points of a repository and unmounted from the first —
+  or moved from one repository to another — had its changes reported at the
+  old mount point meanwhile, to the wrong repository or at a path holding
+  something else. Every remembered path and verdict is now forgotten whenever
+  the marks are placed again (a subscription or the mount table changing).
 - **`metafolder-watchd`: a drive leaving a repository blinded the repository.**
   When a filesystem mounted under a root was unmounted there (unplugged, or
   still mounted elsewhere), the broker lifted its mark by the old mount point —

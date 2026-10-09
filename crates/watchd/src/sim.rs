@@ -20,6 +20,15 @@
 //! [`Memo`] cache), the server, the per-uid filter, the wire protocol — is the
 //! production code, run as the binary runs it ([`service::serve`]).
 //!
+//! - **the mount table**: a drive mounted under a root ([`SimFs::mount_tmpfs`],
+//!   [`SimFs::bind_mount`]) is a filesystem of its own, with its own fsid and
+//!   handles, marked while a mount of it is under a root and resolved through
+//!   the first such mount — as the broker's resync marks it and its resolver
+//!   resolves it. The mounts are real (a user namespace's), so whatever asks
+//!   the kernel's mount table — the daemon — sees them; the simulator only
+//!   keeps its table in step. A mount change is resynced at once, where the
+//!   broker's resync follows the mount table's change a moment later.
+//!
 //! Two ways to drive it: the operations (`write`, `rename`, `remove_dir_all`…,
 //! named after `std::fs`), and [`SimFs::emit`] for a record the operations
 //! would not produce — the kernel's queue overflow, or an event with no change
@@ -55,7 +64,8 @@ use crate::filter::{AccessFilter, SystemCreds};
 use crate::server::Uncovered;
 use crate::service::{self, Group};
 
-/// The simulated filesystem's id: every handle it hands out carries it.
+/// The simulated filesystem's id: every handle it hands out carries it — and
+/// each drive mounted later, the next one up.
 const SIM_FSID: [i32; 2] = [0x6d66_7369, 0x6d75_6c61];
 
 /// How long an operation waits for the broker to read what it queued.
@@ -119,16 +129,25 @@ pub struct SimResolver {
 struct Shared {
     state: Mutex<State>,
     changed: Condvar,
+    /// The broker's resync, run after each mount change — its `MountWatch`.
+    resync: Mutex<Option<Box<dyn Fn() + Send>>>,
 }
 
 struct State {
     mount: PathBuf,
     /// Every object ever known, by id (its handle); `0` is `mount` itself.
     objects: Vec<Obj>,
+    /// The filesystems: `0` is the one at `mount`, the others drives mounted
+    /// beneath it.
+    filesystems: Vec<Filesystem>,
+    /// The mounts beneath `mount`, in the order they were made — an
+    /// overmount after what it covers.
+    mounts: Vec<Mounted>,
+    /// The roots covered ([`Group::cover`]): which filesystems are marked,
+    /// and through which mount a drive's handles resolve.
+    roots: Vec<PathBuf>,
     /// Queued and not yet read.
     queue: VecDeque<Queued>,
-    /// Whether any root is marked: an unmarked filesystem queues nothing.
-    marked: bool,
     /// The group's `max_queued_events`: unread events beyond it are dropped
     /// for one overflow event ([`State::push`]).
     max_events: usize,
@@ -145,6 +164,9 @@ struct State {
 }
 
 struct Obj {
+    /// The filesystem it is on: an index of `filesystems`.
+    fs: usize,
+    /// Its directory — itself, for a filesystem's root.
     parent: usize,
     name: OsString,
     dir: bool,
@@ -166,19 +188,23 @@ struct Record {
     name: Option<OsString>,
 }
 
+struct Filesystem {
+    /// Its root directory's object.
+    root: usize,
+    fsid: [i32; 2],
+    /// Whether the group holds a mark on it: an unmarked filesystem queues
+    /// nothing.
+    marked: bool,
+}
+
+/// One mount of a drive: its filesystem, over the directory it hides.
+struct Mounted {
+    fs: usize,
+    over: usize,
+}
+
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
-}
-
-fn handle_of(id: usize) -> Handle {
-    Handle { fsid: SIM_FSID, handle_type: 1, bytes: (id as u64).to_ne_bytes().to_vec() }
-}
-
-fn id_of(handle: &Handle) -> Option<usize> {
-    if handle.fsid != SIM_FSID {
-        return None;
-    }
-    Some(u64::from_ne_bytes(handle.bytes.as_slice().try_into().ok()?) as usize)
 }
 
 /// How far back an event looks for one to merge into (the kernel's
@@ -223,11 +249,42 @@ impl State {
         p
     }
 
+    fn handle(&self, id: usize) -> Handle {
+        let fsid = self.filesystems[self.objects[id].fs].fsid;
+        Handle { fsid, handle_type: 1, bytes: (id as u64).to_ne_bytes().to_vec() }
+    }
+
+    /// The object a handle names — one of the filesystem it was handed out
+    /// for.
+    fn id_of(&self, handle: &Handle) -> Option<usize> {
+        let id = u64::from_ne_bytes(handle.bytes.as_slice().try_into().ok()?) as usize;
+        let obj = self.objects.get(id)?;
+        (self.filesystems[obj.fs].fsid == handle.fsid).then_some(id)
+    }
+
+    /// What is seen at the directory `id`: the root of the drive mounted
+    /// last over it, if any — and so on up a stack of mounts.
+    fn crossed(&self, mut id: usize) -> usize {
+        while let Some(m) = self.mounts.iter().rev().find(|m| m.over == id) {
+            id = self.filesystems[m.fs].root;
+        }
+        id
+    }
+
     /// The object at `comps`, made known on the way: whatever was there
-    /// before the simulator was, is found on first use.
+    /// before the simulator was, is found on first use. A mount point is the
+    /// root of what is mounted there.
     fn lookup(&mut self, comps: &[OsString]) -> usize {
+        let beneath = self.lookup_beneath(comps);
+        self.crossed(beneath)
+    }
+
+    /// [`lookup`](Self::lookup), but the last component as it is beneath
+    /// whatever is mounted on it.
+    fn lookup_beneath(&mut self, comps: &[OsString]) -> usize {
         let mut id = 0;
         for (i, name) in comps.iter().enumerate() {
+            id = self.crossed(id);
             id = match self.objects[id].children.get(name) {
                 Some(&child) => child,
                 None => {
@@ -245,6 +302,7 @@ impl State {
     fn add_child(&mut self, parent: usize, name: &OsStr, dir: bool) -> usize {
         let id = self.objects.len();
         self.objects.push(Obj {
+            fs: self.objects[parent].fs,
             parent,
             name: name.to_os_string(),
             dir,
@@ -269,7 +327,9 @@ impl State {
     }
 
     /// Where the object is now: `None` once it, or a directory above it, is
-    /// gone.
+    /// gone. A drive's object is named through the first of its mounts that
+    /// is under a root — the broker resolves through those alone — and not
+    /// at all once none is.
     fn path_of(&self, mut id: usize) -> Option<PathBuf> {
         let mut names = Vec::new();
         loop {
@@ -277,13 +337,70 @@ impl State {
             if !obj.alive {
                 return None;
             }
-            if id == 0 {
+            if obj.parent == id {
                 break;
             }
             names.push(obj.name.clone());
             id = obj.parent;
         }
-        Some(self.disk(&names.into_iter().rev().collect::<Vec<_>>()))
+        let base = match self.objects[id].fs {
+            0 => self.mount.clone(),
+            fs => self.mounts.iter().filter(|m| m.fs == fs).find_map(|m| {
+                let at = self.path_of(m.over)?;
+                self.under_root(&at).then_some(at)
+            })?,
+        };
+        Some(names.into_iter().rev().fold(base, |p, n| p.join(n)))
+    }
+
+    /// Whether `path` is strictly under a covered root.
+    fn under_root(&self, path: &Path) -> bool {
+        self.roots.iter().any(|r| path.starts_with(r) && path != r)
+    }
+
+    /// A new filesystem, its root directory included — empty, as a fresh
+    /// tmpfs is.
+    fn add_filesystem(&mut self) -> usize {
+        let (fs, root) = (self.filesystems.len(), self.objects.len());
+        self.objects.push(Obj {
+            fs,
+            parent: root,
+            name: OsString::new(),
+            dir: true,
+            alive: true,
+            children: HashMap::new(),
+        });
+        let fsid = [SIM_FSID[0], SIM_FSID[1] + fs as i32];
+        self.filesystems.push(Filesystem { root, fsid, marked: false });
+        fs
+    }
+
+    /// The marks as the broker places them after a resync: one on each
+    /// filesystem a root is on or has a mount of beneath it.
+    fn remark(&mut self) {
+        let mut marked = vec![false; self.filesystems.len()];
+        for root in self.roots.clone() {
+            let fs = if root == self.mount {
+                0
+            } else {
+                match self.components(&root) {
+                    Ok(comps) => {
+                        let id = self.lookup(&comps);
+                        self.objects[id].fs
+                    }
+                    Err(_) => continue,
+                }
+            };
+            marked[fs] = true;
+        }
+        for m in &self.mounts {
+            if self.path_of(m.over).is_some_and(|at| self.under_root(&at)) {
+                marked[m.fs] = true;
+            }
+        }
+        for (fs, marked) in self.filesystems.iter_mut().zip(marked) {
+            fs.marked = marked;
+        }
     }
 
     /// Queues one event — merged into an unread one with the very same
@@ -304,7 +421,11 @@ impl State {
     /// object's own records and the marked directory's removal from *its*
     /// parent are untouched. All of it as the kernel does, fidelity-tested.
     fn push(&mut self, mut mask: u64, records: Vec<Record>) {
-        if !self.marked {
+        let marked = match records.first() {
+            Some(r) => self.filesystems[self.objects[r.object].fs].marked,
+            None => self.filesystems.iter().any(|fs| fs.marked),
+        };
+        if !marked {
             return;
         }
         let silenced = records
@@ -427,7 +548,7 @@ impl State {
         out[16..20].copy_from_slice(&(-1i32).to_ne_bytes()); // FAN_NOFD
         out[20..24].copy_from_slice(&(std::process::id() as i32).to_ne_bytes());
         for rec in &ev.records {
-            let h = handle_of(rec.object);
+            let h = self.handle(rec.object);
             let name = rec.name.as_ref().map(|n| n.as_bytes());
             let raw_len = 20 + h.bytes.len() + name.map_or(0, |n| n.len() + 1);
             // FANOTIFY_EVENT_ALIGN: 4, and `len` includes the padding.
@@ -457,6 +578,7 @@ impl SimFs {
     pub fn new(mount: &Path) -> io::Result<SimFs> {
         let mount = std::fs::canonicalize(mount)?;
         let root = Obj {
+            fs: 0,
             parent: 0,
             name: OsString::new(),
             dir: true,
@@ -468,8 +590,10 @@ impl SimFs {
                 state: Mutex::new(State {
                     mount,
                     objects: vec![root],
+                    filesystems: vec![Filesystem { root: 0, fsid: SIM_FSID, marked: false }],
+                    mounts: Vec::new(),
+                    roots: Vec::new(),
                     queue: VecDeque::new(),
-                    marked: false,
                     max_events: DEFAULT_MAX_QUEUED_EVENTS,
                     holds: 0,
                     reader_idle: false,
@@ -477,6 +601,7 @@ impl SimFs {
                     ignored: HashSet::new(),
                 }),
                 changed: Condvar::new(),
+                resync: Mutex::new(None),
             }),
         })
     }
@@ -492,6 +617,18 @@ impl SimFs {
         let out = op(&mut lock(&self.shared.state))?;
         self.settle()?;
         Ok(out)
+    }
+
+    /// [`apply`](Self::apply) for a change of the mount table: the broker
+    /// resyncs its marks before anything more is read. Out of the state's
+    /// lock: the resync takes the group's, which a translation holds while it
+    /// resolves through the state.
+    fn remount(&self, op: impl FnOnce(&mut State) -> io::Result<()>) -> io::Result<()> {
+        op(&mut lock(&self.shared.state))?;
+        if let Some(resync) = lock(&self.shared.resync).as_ref() {
+            resync();
+        }
+        self.settle()
     }
 
     fn settle(&self) -> io::Result<()> {
@@ -666,6 +803,72 @@ impl SimFs {
         })
     }
 
+    /// `mount -t tmpfs`: a new, empty drive mounted over the directory
+    /// `at`, hiding what is in it until unmounted. A real mount — inside a
+    /// user namespace (`unshare -rm`), where the test may make one.
+    pub fn mount_tmpfs(&self, at: impl AsRef<Path>) -> io::Result<()> {
+        self.remount(|st| {
+            let comps = st.components(at.as_ref())?;
+            sys_mount(Some(Path::new("tmpfs")), &st.disk(&comps), Some("tmpfs"), 0)?;
+            let over = st.lookup(&comps);
+            let fs = st.add_filesystem();
+            st.mounts.push(Mounted { fs, over });
+            st.remark();
+            Ok(())
+        })
+    }
+
+    /// `mount --bind`: the drive mounted at `from` (its root — a bind of one
+    /// of its directories is not modelled) mounted at `at` too.
+    pub fn bind_mount(&self, from: impl AsRef<Path>, at: impl AsRef<Path>) -> io::Result<()> {
+        self.remount(|st| {
+            let source = st.components(from.as_ref())?;
+            let id = st.lookup(&source);
+            let fs = st.objects[id].fs;
+            if fs == 0 || st.filesystems[fs].root != id {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("{} is not where a drive is mounted", from.as_ref().display()),
+                ));
+            }
+            let comps = st.components(at.as_ref())?;
+            sys_mount(Some(&st.disk(&source)), &st.disk(&comps), None, libc::MS_BIND)?;
+            let over = st.lookup(&comps);
+            st.mounts.push(Mounted { fs, over });
+            st.remark();
+            Ok(())
+        })
+    }
+
+    /// `umount`: the mount made last at `at` goes. The drive's objects stay
+    /// known — mounted again, they resolve again — but resolve nowhere while
+    /// no mount of it is under a root, and what it queued unread is lost.
+    pub fn unmount(&self, at: impl AsRef<Path>) -> io::Result<()> {
+        self.remount(|st| {
+            let comps = st.components(at.as_ref())?;
+            let disk = st.disk(&comps);
+            let mut top = None;
+            let mut id = st.lookup_beneath(&comps);
+            while let Some(n) = st.mounts.iter().rposition(|m| m.over == id) {
+                top = Some(n);
+                id = st.filesystems[st.mounts[n].fs].root;
+            }
+            let Some(n) = top else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("{} is not a mount point", disk.display()),
+                ));
+            };
+            let c = std::ffi::CString::new(disk.as_os_str().as_bytes())?;
+            if unsafe { libc::umount2(c.as_ptr(), 0) } != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            st.mounts.remove(n);
+            st.remark();
+            Ok(())
+        })
+    }
+
     /// Queues one record by hand — nothing on disk changes, and the table
     /// only learns of paths it did not know yet.
     pub fn emit(&self, raw: Raw) -> io::Result<()> {
@@ -810,6 +1013,28 @@ impl SimFs {
     }
 }
 
+/// `mount(2)`.
+fn sys_mount(
+    source: Option<&Path>,
+    target: &Path,
+    fstype: Option<&str>,
+    flags: libc::c_ulong,
+) -> io::Result<()> {
+    let c = |b: &[u8]| std::ffi::CString::new(b).map_err(io::Error::other);
+    let source = source.map(|p| c(p.as_os_str().as_bytes())).transpose()?;
+    let target = c(target.as_os_str().as_bytes())?;
+    let fstype = fstype.map(|t| c(t.as_bytes())).transpose()?;
+    let ptr = |s: &Option<std::ffi::CString>| s.as_ref().map_or(std::ptr::null(), |s| s.as_ptr());
+    let rc = unsafe {
+        libc::mount(ptr(&source), target.as_ptr(), ptr(&fstype), flags, std::ptr::null())
+    };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
 impl Drop for Hold<'_> {
     fn drop(&mut self) {
         lock(&self.fs.shared.state).holds -= 1;
@@ -821,15 +1046,16 @@ impl Drop for Hold<'_> {
 
 impl Resolve for SimResolver {
     fn resolve(&mut self, handle: &Handle) -> Option<PathBuf> {
-        lock(&self.fs.shared.state).path_of(id_of(handle)?)
+        let st = lock(&self.fs.shared.state);
+        st.path_of(st.id_of(handle)?)
     }
 }
 
 impl IgnoreMarks for SimResolver {
     fn ignore(&mut self, dir: &Handle) -> io::Result<()> {
-        let id = id_of(dir).ok_or_else(|| io::Error::from_raw_os_error(libc::ESTALE))?;
         let mut st = lock(&self.fs.shared.state);
-        if !st.objects.get(id).is_some_and(|o| o.alive) {
+        let id = st.id_of(dir).ok_or_else(|| io::Error::from_raw_os_error(libc::ESTALE))?;
+        if !st.objects[id].alive {
             return Err(io::Error::from_raw_os_error(libc::ESTALE));
         }
         st.ignored.insert(id);
@@ -837,8 +1063,9 @@ impl IgnoreMarks for SimResolver {
     }
 
     fn lift(&mut self, dir: &Handle) {
-        if let Some(id) = id_of(dir) {
-            lock(&self.fs.shared.state).ignored.remove(&id);
+        let mut st = lock(&self.fs.shared.state);
+        if let Some(id) = st.id_of(dir) {
+            st.ignored.remove(&id);
         }
     }
 
@@ -852,10 +1079,11 @@ impl Group for SimGroup {
         let mut st = lock(&self.fs.shared.state);
         let (covered, uncovered): (Vec<PathBuf>, Vec<PathBuf>) =
             roots.iter().cloned().partition(|root| root.starts_with(&st.mount) && root.is_dir());
-        st.marked = !covered.is_empty();
+        st.roots = covered.clone();
+        st.remark();
         drop(st);
         self.translator.set_roots(covered);
-        self.translator.flush_ignores();
+        self.translator.marks_placed();
         uncovered
             .into_iter()
             .map(|root| Uncovered { root, reason: "not on the simulated filesystem".to_string() })
@@ -875,6 +1103,16 @@ impl SimBroker {
             service::bind(socket).map_err(|e| io::Error::other(format!("{e:#}")))?;
         lock(&fs.shared.state).served = true;
         let group = Arc::new(Mutex::new(fs.group()));
+        {
+            // Weak both: the kernel holds this, and must not hold itself.
+            let (group, shared) = (Arc::downgrade(&group), Arc::downgrade(&fs.shared));
+            *lock(&fs.shared.resync) = Some(Box::new(move || {
+                if let (Some(group), Some(shared)) = (group.upgrade(), shared.upgrade()) {
+                    let roots = lock(&shared.state).roots.clone();
+                    lock(&group).cover(&roots);
+                }
+            }));
+        }
         let reader = fs.clone();
         std::thread::spawn(move || {
             let err = service::serve(listener, group, AccessFilter::new(SystemCreds), |buf| {
@@ -1437,6 +1675,172 @@ mod tests {
         assert_eq!(tree(&received(&mut inner)), vec![]);
     }
 
+    // ── Mounts ───────────────────────────────────────────────────────────────
+    //
+    // Real mounts, so inside a user namespace: the daemon behind the simulator
+    // asks the real mount table whether a path is a mount point.
+
+    fn in_userns(test: &str) -> bool {
+        crate::test_support::in_userns(&format!("sim::tests::{test}"))
+    }
+
+    #[test]
+    fn test_a_drive_under_a_root_is_reported_and_unplugged_leaves_the_root_covered() {
+        if !in_userns("test_a_drive_under_a_root_is_reported_and_unplugged_leaves_the_root_covered")
+        {
+            return;
+        }
+        let (broker, root, mut r) = started("drive");
+        let fs = broker.fs();
+        fs.create_dir(root.join("usb")).unwrap();
+        fs.mount_tmpfs(root.join("usb")).unwrap();
+        fs.write(root.join("usb/a"), b"a").unwrap();
+        fs.create_dir(root.join("usb/d")).unwrap();
+        fs.rename(root.join("usb/a"), root.join("usb/d/a")).unwrap();
+        fs.unmount(root.join("usb")).unwrap();
+        // The directory beneath, on the root's own filesystem again.
+        fs.write(root.join("usb/under"), b"u").unwrap();
+        fs.write(root.join("top"), b"t").unwrap();
+        assert_eq!(
+            tree(&received(&mut r)),
+            vec![
+                Event::Create { path: p(&root, "usb") },
+                Event::Create { path: p(&root, "usb/a") },
+                Event::Create { path: p(&root, "usb/d") },
+                Event::Rename { from: p(&root, "usb/a"), to: p(&root, "usb/d/a") },
+                Event::Create { path: p(&root, "usb/under") },
+                Event::Create { path: p(&root, "top") },
+            ]
+        );
+        assert!(!root.join("usb/d").exists(), "the drive's content went with it");
+    }
+
+    #[test]
+    fn test_what_a_drive_queued_unread_goes_with_it() {
+        // Its handles no longer resolve: no path on the root names its
+        // filesystem any more.
+        if !in_userns("test_what_a_drive_queued_unread_goes_with_it") {
+            return;
+        }
+        let (broker, root, mut r) = started("driveunread");
+        let fs = broker.fs();
+        fs.create_dir(root.join("usb")).unwrap();
+        fs.mount_tmpfs(root.join("usb")).unwrap();
+        received(&mut r);
+        {
+            let _held = fs.hold();
+            fs.write(root.join("usb/a"), b"a").unwrap();
+            fs.unmount(root.join("usb")).unwrap();
+            fs.write(root.join("top"), b"t").unwrap();
+        }
+        assert_eq!(tree(&received(&mut r)), vec![Event::Create { path: p(&root, "top") }]);
+    }
+
+    /// A drive kept mounted at `store`, outside every root, to be bound into
+    /// one and taken out again with its content intact — a drive unplugged
+    /// and plugged back.
+    fn drive(fs: &SimFs, name: &str) -> PathBuf {
+        let store = fs.mount().join(name);
+        fs.create_dir(&store).unwrap();
+        fs.mount_tmpfs(&store).unwrap();
+        store
+    }
+
+    #[test]
+    fn test_a_drive_outside_every_root_queues_nothing_until_mounted_under_one() {
+        if !in_userns("test_a_drive_outside_every_root_queues_nothing_until_mounted_under_one") {
+            return;
+        }
+        let (broker, root, mut r) = started("driveoutside");
+        let fs = broker.fs();
+        let store = drive(fs, "store");
+        fs.write(store.join("x"), b"x").unwrap();
+        assert_eq!(tree(&received(&mut r)), vec![]);
+        fs.create_dir(root.join("usb")).unwrap();
+        fs.bind_mount(&store, root.join("usb")).unwrap();
+        // Written where it is kept: the one path under a root names it.
+        fs.write(store.join("y"), b"y").unwrap();
+        assert_eq!(
+            tree(&received(&mut r)),
+            vec![
+                Event::Create { path: p(&root, "usb") },
+                Event::Create { path: p(&root, "usb/y") }
+            ]
+        );
+    }
+
+    #[test]
+    fn test_a_drive_plugged_back_resolves_its_objects_again() {
+        if !in_userns("test_a_drive_plugged_back_resolves_its_objects_again") {
+            return;
+        }
+        let (broker, root, mut r) = started("driveback");
+        let fs = broker.fs();
+        let store = drive(fs, "store");
+        fs.create_dir(root.join("usb")).unwrap();
+        fs.bind_mount(&store, root.join("usb")).unwrap();
+        fs.write(root.join("usb/x"), b"1").unwrap();
+        fs.unmount(root.join("usb")).unwrap();
+        fs.write(store.join("away"), b"a").unwrap();
+        fs.bind_mount(&store, root.join("usb")).unwrap();
+        fs.rename(root.join("usb/x"), root.join("usb/y")).unwrap();
+        assert_eq!(
+            tree(&received(&mut r)),
+            vec![
+                Event::Create { path: p(&root, "usb") },
+                Event::Create { path: p(&root, "usb/x") },
+                Event::Rename { from: p(&root, "usb/x"), to: p(&root, "usb/y") },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_a_drive_at_two_points_is_reported_through_one() {
+        // One filesystem, one mark, one handle per object: a record names no
+        // mount, and the broker resolves through the first mount point it
+        // knows of the filesystem.
+        if !in_userns("test_a_drive_at_two_points_is_reported_through_one") {
+            return;
+        }
+        let (broker, root, mut r) = started("drivetwice");
+        let fs = broker.fs();
+        let store = drive(fs, "store");
+        fs.create_dir(root.join("a")).unwrap();
+        fs.create_dir(root.join("b")).unwrap();
+        fs.bind_mount(&store, root.join("a")).unwrap();
+        fs.bind_mount(&store, root.join("b")).unwrap();
+        received(&mut r);
+        fs.write(root.join("b/x"), b"x").unwrap();
+        assert_eq!(tree(&received(&mut r)), vec![Event::Create { path: p(&root, "a/x") }]);
+        fs.unmount(root.join("a")).unwrap();
+        fs.write(root.join("b/y"), b"y").unwrap();
+        assert_eq!(tree(&received(&mut r)), vec![Event::Create { path: p(&root, "b/y") }]);
+    }
+
+    #[test]
+    fn test_a_drive_over_a_full_directory_hides_it_and_gives_it_back() {
+        if !in_userns("test_a_drive_over_a_full_directory_hides_it_and_gives_it_back") {
+            return;
+        }
+        let (broker, root, mut r) = started("driveover");
+        let fs = broker.fs();
+        fs.create_dir(root.join("d")).unwrap();
+        fs.write(root.join("d/old"), b"o").unwrap();
+        received(&mut r);
+        fs.mount_tmpfs(root.join("d")).unwrap();
+        assert!(!root.join("d/old").exists());
+        fs.write(root.join("d/new"), b"n").unwrap();
+        fs.unmount(root.join("d")).unwrap();
+        fs.rename(root.join("d/old"), root.join("d/kept")).unwrap();
+        assert_eq!(
+            tree(&received(&mut r)),
+            vec![
+                Event::Create { path: p(&root, "d/new") },
+                Event::Rename { from: p(&root, "d/old"), to: p(&root, "d/kept") },
+            ]
+        );
+    }
+
     // ── Fidelity: the same work, on the kernel and on the simulator ──────────
 
     /// The operations both sides run.
@@ -1450,6 +1854,9 @@ mod tests {
         fn symlink(&self, t: &Path, l: &Path);
         fn ignore(&self, dir: &Path);
         fn flush_ignores(&self);
+        fn mount_tmpfs(&self, at: &Path);
+        fn bind_mount(&self, from: &Path, at: &Path);
+        fn unmount(&self, at: &Path);
     }
 
     struct Kernel<'a>(&'a std::cell::RefCell<crate::fanotify::Fanotify>);
@@ -1483,6 +1890,28 @@ mod tests {
         fn flush_ignores(&self) {
             self.0.borrow_mut().flush_ignores()
         }
+        // The mount table changed: the broker resyncs its marks.
+        fn mount_tmpfs(&self, at: &Path) {
+            run("mount", &["-t", "tmpfs", "t"], &[at]);
+            self.0.borrow_mut().resync().unwrap()
+        }
+        fn bind_mount(&self, from: &Path, at: &Path) {
+            run("mount", &["--bind"], &[from, at]);
+            self.0.borrow_mut().resync().unwrap()
+        }
+        fn unmount(&self, at: &Path) {
+            run("umount", &[], &[at]);
+            self.0.borrow_mut().resync().unwrap()
+        }
+    }
+
+    fn run(program: &str, args: &[&str], paths: &[&Path]) {
+        let ok = std::process::Command::new(program)
+            .args(args)
+            .args(paths)
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(ok, "{program} {args:?} {paths:?}");
     }
 
     impl Ops for SimFs {
@@ -1513,6 +1942,15 @@ mod tests {
         }
         fn flush_ignores(&self) {
             SimFs::flush_ignores(self)
+        }
+        fn mount_tmpfs(&self, at: &Path) {
+            SimFs::mount_tmpfs(self, at).unwrap()
+        }
+        fn bind_mount(&self, from: &Path, at: &Path) {
+            SimFs::bind_mount(self, from, at).unwrap()
+        }
+        fn unmount(&self, at: &Path) {
+            SimFs::unmount(self, at).unwrap()
         }
     }
 
@@ -1622,13 +2060,47 @@ mod tests {
         drain("the directory removed");
     }
 
+    /// Work on a drive plugged in under the root, mounted at a second point,
+    /// unplugged — and on the directory it was mounted over.
+    fn mount_script(ops: &dyn Ops, root: &Path, drain: &mut dyn FnMut(&str)) {
+        let at = |rel: &str| root.join(rel);
+        ops.create_dir(&at("usb"));
+        ops.write(&at("usb/hidden"), b"h");
+        ops.create_dir(&at("other"));
+        drain("setup");
+        ops.mount_tmpfs(&at("usb"));
+        drain("a drive mounted over a directory");
+        ops.write(&at("usb/f"), b"f");
+        drain("a file written on the drive");
+        ops.create_dir(&at("usb/d"));
+        ops.rename(&at("usb/f"), &at("usb/d/f"));
+        drain("a directory made and a file moved on the drive");
+        ops.chmod(&at("usb"), 0o700);
+        drain("the drive's root changed");
+        ops.bind_mount(&at("usb"), &at("other"));
+        drain("the drive mounted at a second point");
+        ops.write(&at("other/g"), b"g");
+        drain("written through the second point");
+        ops.unmount(&at("other"));
+        drain("the second point unmounted");
+        ops.write(&at("usb/d/f"), b"ff");
+        drain("written on the drive again");
+        ops.write(&at("usb/late"), b"l");
+        ops.unmount(&at("usb"));
+        drain("written, then the drive unplugged before the read");
+        ops.write(&at("usb/hidden"), b"hh");
+        ops.write(&at("top"), b"t");
+        drain("written beneath, and on the root");
+    }
+
     /// One step's records, with handles replaced by the order they first
     /// appeared in — the one property of a handle both sides share.
-    fn normalized(raws: Vec<RawEvent>, seen: &mut Vec<Vec<u8>>) -> Vec<String> {
-        let mut id = |h: &Handle| match seen.iter().position(|b| *b == h.bytes) {
+    fn normalized(raws: Vec<RawEvent>, seen: &mut Vec<([i32; 2], Vec<u8>)>) -> Vec<String> {
+        // By filesystem too: two of them number their objects alike.
+        let mut id = |h: &Handle| match seen.iter().position(|b| *b == h.key()) {
             Some(n) => n,
             None => {
-                seen.push(h.bytes.clone());
+                seen.push(h.key());
                 seen.len() - 1
             }
         };
@@ -1671,7 +2143,9 @@ mod tests {
             assert!(mounted);
             dir
         };
-        for (name, script) in [("work", script as Script), ("ignore", ignore_script)] {
+        for (name, script) in
+            [("work", script as Script), ("ignore", ignore_script), ("mount", mount_script)]
+        {
             let kroot = tmpfs(&format!("kernel-{name}"));
             let group = std::cell::RefCell::new(crate::fanotify::Fanotify::open().unwrap());
             group.borrow_mut().sync_roots(std::slice::from_ref(&kroot)).unwrap();
