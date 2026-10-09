@@ -47,7 +47,15 @@ roots behave; a root moved away freezes its repository until it is loaded
 again (doc "When the root moves"). A kernel overflow end to end
 (=tests/watch_overflow.rs=): its diagnostic named only =mf reconcile=, which
 recovers neither a lost deletion nor a lost rename of an unhashed file; it names
-the orphan scan now. Nothing named is left to drive.
+the orphan scan now.
+
+Next: *the mount table*, which the simulator does not have (one filesystem, no
+mount, no unmount). A drive leaving a root blinded the whole repository under
+the broker (=1b759a84=) — listed until then as "costs work, not correctness",
+and found by a real-fanotify unit test in a namespace, not by a journey. Still
+undriven end to end (daemon + broker): a drive plugged in and unplugged under a
+root with work going on, a mount over a non-empty tracked directory, a drive
+mounted at two points of one repository.
 
 ** TODO fanotify: what the note leaves open
 From doc "Watcher open questions" (and doc "The fanotify broker"):
