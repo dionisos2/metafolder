@@ -773,6 +773,22 @@ struct Apply<'a, 'c> {
     ignored: usize,
 }
 
+/// Which of the departures `open` (still tracked, alike to `arrival` by the
+/// stat a rename keeps) the arrival is. The stat cannot tell alike files
+/// apart, so the name decides — a move keeps it: the one departure of the
+/// same name, else the only departure there is. Anything else is a guess,
+/// and a wrong one hands a file another file's fields: no pair, the arrival
+/// is tracked anew and the departures are orphaned, for `mf orphan relink`
+/// to match by content.
+fn pick_departure(arrival: &RelPath, open: Vec<RelPath>) -> Option<RelPath> {
+    let named: Vec<&RelPath> = open.iter().filter(|from| from.name() == arrival.name()).collect();
+    match (named.as_slice(), open.len()) {
+        ([one], _) => Some((*one).clone()),
+        ([], 1) => open.into_iter().next(),
+        _ => None,
+    }
+}
+
 /// The stat a rename preserves exactly — kind, size, mtime — as a lookup key.
 type StatKey = (String, i64, i64);
 
@@ -1198,13 +1214,16 @@ impl Apply<'_, '_> {
             Some(paths) => paths.clone(),
             None => return Ok(None),
         };
+        // Still tracked? An earlier arrival in this batch may have taken it.
+        let mut open = Vec::new();
         for from in candidates {
-            // Still tracked? An earlier arrival in this batch may have taken it.
-            if self.resolve(&from)?.is_some() {
-                return Ok(Some(from));
+            // The same path twice is one departure (a directory's watch and
+            // its parent's both report it leaving), not two to choose from.
+            if !open.contains(&from) && self.resolve(&from)?.is_some() {
+                open.push(from);
             }
         }
-        Ok(None)
+        Ok(pick_departure(rel, open))
     }
 
     /// Builds [`Apply::departed_index`] once per group: the batch's departures

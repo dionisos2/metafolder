@@ -43,8 +43,12 @@ appeared", and everything attached to the metarecord stays on an orphan. So the 
 directory's scan re-pairs: a path arriving with no metarecord is matched against the paths ''renamed away in the same batch'' that
 are gone from disk and still tracked, on type, size and mtime — what a rename keeps
 exactly (a watcher-created metarecord carries no hashes, and the old file is gone, so
-there is nothing to hash). A match is an ordinary move; a moved directory carries its
-subtree. The fanotify source delivers such a move whole (the new directory's `Create`
+there is nothing to hash). Files alike by that stat (copies made together, generated
+files) are told apart by their name, which a move keeps: the one departure of the
+arrival's name, else the only departure there is. Anything else would be a guess, and a
+wrong one hands a file another file's fields — so there is no pair: the arrival is new,
+the departures are orphaned, and `mf orphan relink` matches them by content. A match is
+an ordinary move; a moved directory carries its subtree. The fanotify source delivers such a move whole (the new directory's `Create`
 and a `Rename(Both)` into it), so the new directory's scan leaves every path a move of
 the batch lands on to that move — scanning it first created a second metarecord that the
 move then orphaned.

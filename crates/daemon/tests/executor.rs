@@ -405,6 +405,110 @@ fn test_a_file_moved_out_of_a_folder_just_moved_keeps_its_metarecord() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// Writes each of `rels` with the same content length and the same mtime: files
+/// the stat a rename keeps (kind, size, mtime) cannot tell apart.
+fn write_alike(root: &Path, rels: &[&str]) {
+    let when = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+    for rel in rels {
+        write_file(root, rel, b"same");
+        let file = std::fs::File::options().write(true).open(root.join(&rel[1..])).unwrap();
+        file.set_modified(when).unwrap();
+    }
+}
+
+#[test]
+fn test_files_alike_moved_out_of_a_folder_just_moved_keep_their_own_records() {
+    // Two departures from a moved folder with the same kind, size and mtime:
+    // the stat alone cannot say which arrival is which. The name can — a move
+    // keeps it — whatever order the arrivals come in.
+    let (repo, root, _) = setup("alike_out_of_moved");
+    write_alike(&root, &["/d/p", "/d/q"]);
+    enqueue(
+        &repo,
+        &[
+            FsEvent::Create("/d".into()),
+            FsEvent::Create("/d/p".into()),
+            FsEvent::Create("/d/q".into()),
+        ],
+    );
+    executor::flush_pending(&repo).unwrap();
+    let (p, q) = (resolve(&repo, "/d/p").unwrap(), resolve(&repo, "/d/q").unwrap());
+
+    std::fs::rename(root.join("d"), root.join("e")).unwrap();
+    std::fs::rename(root.join("e/q"), root.join("q")).unwrap();
+    std::fs::rename(root.join("e/p"), root.join("p")).unwrap();
+    enqueue(
+        &repo,
+        &[
+            FsEvent::Rename("/d".into(), "/e".into()),
+            FsEvent::RenameTo("/q".into()),
+            FsEvent::RenameTo("/p".into()),
+        ],
+    );
+    executor::flush_pending(&repo).unwrap();
+
+    assert_eq!(resolve(&repo, "/q"), Some(q), "q keeps q's record");
+    assert_eq!(resolve(&repo, "/p"), Some(p), "p keeps p's record");
+}
+
+#[test]
+fn test_an_arrival_two_departures_could_be_is_paired_with_neither() {
+    // One file moved out and renamed, the other removed, both alike: either
+    // record could be the arrival's, and a wrong guess hands a file another
+    // one's fields. Neither is taken — both are orphaned, the arrival is new,
+    // and `mf orphan relink` can match them by content.
+    let (repo, root, _) = setup("alike_ambiguous");
+    write_alike(&root, &["/d/p", "/d/q"]);
+    enqueue(
+        &repo,
+        &[
+            FsEvent::Create("/d".into()),
+            FsEvent::Create("/d/p".into()),
+            FsEvent::Create("/d/q".into()),
+        ],
+    );
+    executor::flush_pending(&repo).unwrap();
+    let (p, q) = (resolve(&repo, "/d/p").unwrap(), resolve(&repo, "/d/q").unwrap());
+
+    std::fs::rename(root.join("d"), root.join("e")).unwrap();
+    std::fs::rename(root.join("e/p"), root.join("r")).unwrap();
+    std::fs::remove_file(root.join("e/q")).unwrap();
+    enqueue(&repo, &[FsEvent::Rename("/d".into(), "/e".into()), FsEvent::RenameTo("/r".into())]);
+    executor::flush_pending(&repo).unwrap();
+
+    let r = resolve(&repo, "/r").expect("the arrival is tracked");
+    assert!(r != p && r != q, "the arrival took a record it cannot be sure of");
+    assert_eq!(field_value(&repo, p, "mfr_path"), Some(Value::Nothing));
+    assert_eq!(field_value(&repo, q, "mfr_path"), Some(Value::Nothing));
+}
+
+#[test]
+fn test_a_departure_reported_twice_is_still_one_to_pair_with() {
+    // `mkdir albums && mv trip albums/` read by the inotify source: the
+    // folder's own watch and its parent's both report it leaving, and the new
+    // folder's scan finds it. One departure, so no ambiguity.
+    let (repo, root, _) = setup("departure_twice");
+    write_file(&root, "trip/x.jpg", b"x");
+    enqueue(&repo, &[FsEvent::Create("/trip".into()), FsEvent::Create("/trip/x.jpg".into())]);
+    executor::flush_pending(&repo).unwrap();
+    let (trip, x) = (resolve(&repo, "/trip").unwrap(), resolve(&repo, "/trip/x.jpg").unwrap());
+
+    std::fs::create_dir(root.join("albums")).unwrap();
+    std::fs::rename(root.join("trip"), root.join("albums/trip")).unwrap();
+    enqueue(
+        &repo,
+        &[
+            FsEvent::Create("/albums".into()),
+            FsEvent::RenameFrom("/trip".into()),
+            FsEvent::RenameFrom("/trip".into()),
+        ],
+    );
+    executor::flush_pending(&repo).unwrap();
+
+    assert_eq!(resolve(&repo, "/albums/trip"), Some(trip));
+    assert_eq!(resolve(&repo, "/albums/trip/x.jpg"), Some(x));
+}
+
 #[test]
 fn test_remove_records_mfr_path_old_for_the_whole_subtree() {
     // Orphaning a subtree snapshots each metarecord's last real path into

@@ -621,6 +621,25 @@ async fn test_a_folder_renamed_and_a_file_moved_out_of_the_repository_unread(reg
     assert_eq!(orphan_count(&app, &repo).await, 1, "x left: its record is the one orphan");
 }
 
+async fn test_a_folder_renamed_worked_in_and_its_name_reused_unread(regime: Regime) {
+    let (app, repo, root) = repo_with("dirreuse", regime, &["d/x", "d/y"]).await;
+    let (x, y) = (uuid_at(&app, &repo, "d/x").await, uuid_at(&app, &repo, "d/y").await);
+    let fs = regime.fs();
+    {
+        let _late = fs.hold();
+        fs.rename(root.join("d"), root.join("e")).unwrap();
+        fs.remove_file(root.join("e/x")).unwrap();
+        fs.create_dir(root.join("d")).unwrap();
+        fs.write(root.join("d/x"), b"a new x").unwrap();
+        fs.rename(root.join("e/y"), root.join("d/y")).unwrap();
+    }
+    settle_on(&app, &repo, &["", "d", "d/x", "d/y", "e"]).await;
+    reconcile_agrees(&app, &repo, "folder renamed, worked in, name reused").await;
+    assert_eq!(uuid_at(&app, &repo, "d/y").await, y, "y's record follows it back into d");
+    assert_ne!(uuid_at(&app, &repo, "d/x").await, x, "the new d/x is a new file");
+    assert_eq!(orphan_count(&app, &repo).await, 1, "only the removed x is gone");
+}
+
 on_every_regime!(
     test_first_minutes_of_a_repository,
     test_moving_a_folder_keeps_the_watcher_and_reconcile_in_agreement,
@@ -638,4 +657,5 @@ on_every_regime!(
     test_a_file_renamed_twice_removed_and_its_name_reused_unread,
     test_a_folder_renamed_and_a_file_removed_from_it_unread,
     test_a_folder_renamed_and_a_file_moved_out_of_the_repository_unread,
+    test_a_folder_renamed_worked_in_and_its_name_reused_unread,
 );
