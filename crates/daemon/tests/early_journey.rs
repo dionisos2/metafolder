@@ -458,6 +458,41 @@ async fn test_a_folder_renamed_worked_in_and_its_name_reused_unread(regime: Regi
     assert_eq!(orphan_count(&app, &repo).await, 1, "only the removed x is gone");
 }
 
+// ── A busy folder from outside ────────────────────────────────────────────────
+
+/// A folder outside the repository busy enough for the broker to ask the
+/// kernel to stop reporting it (an ignore mark, doc "The fanotify broker"),
+/// then moved in and written in before the broker reads the move: what is
+/// written meanwhile is never reported, and the folder's arrival — walked —
+/// is what tracks it.
+async fn test_a_busy_folder_moved_in_and_worked_in_unread_is_tracked_whole(regime: Regime) {
+    let (app, repo, root) = repo_with("busyin", regime, &[]).await;
+    let fs = regime.fs();
+    let away = common::TempDir::new("busyin_away");
+    let cache = away.join("cache");
+    fs.create_dir(&cache).unwrap();
+    {
+        let _late = fs.hold();
+        let busy = metafolder_watchd::fanotify::IGNORE_AFTER;
+        for i in 0..busy {
+            fs.write(cache.join(format!("f{i}")), b"x").unwrap();
+        }
+        for i in 1..busy {
+            fs.remove_file(cache.join(format!("f{i}"))).unwrap();
+        }
+    }
+    {
+        let _late = fs.hold();
+        fs.rename(&cache, root.join("cache")).unwrap();
+        fs.write(root.join("cache/new"), b"n").unwrap();
+        fs.write(root.join("cache/f0"), b"changed").unwrap();
+    }
+    settle_on(&app, &repo, &["", "cache", "cache/f0", "cache/new"]).await;
+    reconcile_agrees(&app, &repo, "a busy folder moved in and worked in").await;
+    fs.write(root.join("cache/later"), b"l").unwrap();
+    settle_on(&app, &repo, &["", "cache", "cache/f0", "cache/later", "cache/new"]).await;
+}
+
 // ── The repository root itself moved ─────────────────────────────────────────
 
 /// The repository answers data requests again (its `load` task done).
@@ -611,6 +646,7 @@ on_every_regime!(
     test_a_folder_renamed_and_a_file_removed_from_it_unread,
     test_a_folder_renamed_and_a_file_moved_out_of_the_repository_unread,
     test_a_folder_renamed_worked_in_and_its_name_reused_unread,
+    test_a_busy_folder_moved_in_and_worked_in_unread_is_tracked_whole,
     test_a_moved_root_unloads_the_repository_until_loaded_at_its_new_path,
     test_a_root_replaced_by_another_directory_is_lost_too,
     test_unloading_a_lost_repository_forgets_it,

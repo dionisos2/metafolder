@@ -57,11 +57,31 @@ hangs up is let go entirely.
 * ''Versions'': `FAN_REPORT_FID` 5.1, `FAN_REPORT_DFID_NAME` 5.9, `FAN_REPORT_TARGET_FID` 5.17 (also 5.15.154, 5.10.220) — detected at startup.
 * ''Limits'': `max_user_groups`, `max_user_marks`, `max_queued_events`; an overflow is announced, never a silent gap. No events for `mmap` writes, none remote on network filesystems (inotify is the fallback), some FUSE report a zero fsid, a filesystem without export handles cannot be marked at all.
 
+!! Busy directories outside the roots
+
+A filesystem mark queues everything on the filesystem; what is outside the roots is dropped
+by `Scope`, but only once the kernel has queued it and the broker read it — a cache or a
+build tree beside a repository fills the queue every subscriber shares, and can overflow
+it. So a directory outside every root whose events have been dropped
+`IGNORE_AFTER` (1000) times is given an ''ignore mark'' (`FAN_MARK_IGNORE`, 6.0+), and the
+kernel stops queuing them. Verified on the kernel (the simulator's fidelity test):
+
+* the mark silences what names that directory as the parent of the entry or as itself: entries created, deleted, written, their attributes and its own. Not its subdirectories, not a file's own records (`FAN_DELETE_SELF`, its link count), not its removal from ''its'' parent;
+* ''never a move'': `FAN_RENAME` is left out of the ignore mask, since the kernel lets the ignore mask of either side silence a move — a file moved from an ignored directory into a root would never arrive;
+* the mark is on the inode and goes where the directory goes. When a directory move is read, every marked directory now under a root has its mark lifted. What was written in it between the move and its read was silenced — the move reaches the daemon as an arrival, and an arrival is walked (`scan_dir`), which finds it (`early_journey.rs`, a busy folder moved in);
+* the mark goes to the object through `/proc/self/fd/N` of an `O_PATH` handle: `fanotify_mark` refuses an `O_PATH` descriptor, and the path itself could name another directory by then.
+
+An ignore mark is never wrong — it silences only what the filter would drop — so the
+policy is simple: no rate, no expiry, at most `IGNORED_MAX` (1024) marks, which count
+against `max_user_marks`. Whenever the marks are placed again (a subscription comes or goes,
+a mount changes) ''every'' ignore mark is flushed (`FAN_MARK_FLUSH`: the group's only inode
+marks) and the busy directories earn theirs again: which directories are outside may have
+changed, and lifting one by handle needs a path on its filesystem, which may be gone. A
+kernel answering EINVAL (before 6.0) is not asked again.
+
 !! Open
 
 A mark whose filesystem is still mounted elsewhere after it left a root cannot be lifted
 by path and stays until the broker restarts (its events are dropped by the filter).
-Events outside the roots still cost the kernel's queue; ignore marks
-(`FAN_MARK_IGNORE`, 6.0+) on busy outside directories would stop them there — not built.
 A per-repository override of the source has not been asked for. Testing it:
 [[Testing the watcher]].

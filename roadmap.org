@@ -51,10 +51,6 @@ the orphan scan now. Nothing named is left to drive.
 
 ** TODO fanotify: what the note leaves open
 From doc "Watcher open questions" (and doc "The fanotify broker"):
-- events of the covered filesystems outside the roots are dropped by the
-  broker, but still queued and read: a flood of them can overflow the group's
-  queue for everyone. Ignore marks (=FAN_MARK_IGNORE=, 6.0+) on the busiest
-  outside directories would stop them in the kernel;
 - a mark whose filesystem left the root but is still mounted elsewhere stays
   until the broker restarts (costs work, not correctness);
 - network filesystems: a per-repository override of the source, not asked

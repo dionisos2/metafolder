@@ -34,7 +34,7 @@
 //! [`Scope`]: crate::fanotify::Scope
 //! [`Memo`]: crate::fanotify::Memo
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::{OsStr, OsString};
 use std::io;
 use std::os::unix::ffi::OsStrExt;
@@ -46,9 +46,10 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 
 use crate::fanotify::{
-    Handle, ReadOutcome, Resolve, Translator, FAN_ATTRIB, FAN_CLOSE_WRITE, FAN_CREATE, FAN_DELETE,
-    FAN_DELETE_SELF, FAN_MODIFY, FAN_ONDIR, FAN_Q_OVERFLOW, FAN_RENAME, INFO_TYPE_DFID_NAME,
-    INFO_TYPE_FID, INFO_TYPE_NEW_DFID_NAME, INFO_TYPE_OLD_DFID_NAME, METADATA_LEN,
+    ignore_mask, Handle, IgnoreMarks, ReadOutcome, Resolve, Translator, FAN_ATTRIB,
+    FAN_CLOSE_WRITE, FAN_CREATE, FAN_DELETE, FAN_DELETE_SELF, FAN_EVENT_ON_CHILD, FAN_MODIFY,
+    FAN_ONDIR, FAN_Q_OVERFLOW, FAN_RENAME, INFO_TYPE_DFID_NAME, INFO_TYPE_FID,
+    INFO_TYPE_NEW_DFID_NAME, INFO_TYPE_OLD_DFID_NAME, METADATA_LEN,
 };
 use crate::filter::{AccessFilter, SystemCreds};
 use crate::server::Uncovered;
@@ -138,6 +139,9 @@ struct State {
     reader_idle: bool,
     /// A broker reads this queue: operations wait for it to be read.
     served: bool,
+    /// The directories holding an ignore mark ([`crate::fanotify::ignore_mask`]).
+    /// A mark is on the object: it moves with it, and goes with it.
+    ignored: HashSet<usize>,
 }
 
 struct Obj {
@@ -292,9 +296,25 @@ impl State {
     /// unless one already waits — `fsnotify_insert_event`, whose check comes
     /// before the merge. The real limit cannot be lowered in a user namespace,
     /// so this one is not in the fidelity test: it follows the kernel's source.
-    fn push(&mut self, mask: u64, records: Vec<Record>) {
+    ///
+    /// An ignore mark silences what it covers before any of that: every
+    /// [`crate::fanotify::ignore_mask`] event a directory record of which
+    /// names a marked directory — as the parent of the entry, or as itself
+    /// (`"."`). The rest of the event goes on; a move (never in the mask), an
+    /// object's own records and the marked directory's removal from *its*
+    /// parent are untouched. All of it as the kernel does, fidelity-tested.
+    fn push(&mut self, mut mask: u64, records: Vec<Record>) {
         if !self.marked {
             return;
+        }
+        let silenced = records
+            .iter()
+            .any(|r| r.info_type == INFO_TYPE_DFID_NAME && self.ignored.contains(&r.object));
+        if silenced {
+            mask &= !(ignore_mask() & !(FAN_ONDIR | FAN_EVENT_ON_CHILD));
+            if mask & !FAN_ONDIR == 0 {
+                return;
+            }
         }
         let overflow_queued = || self.queue.iter().any(|q| q.mask & FAN_Q_OVERFLOW != 0);
         if mask & FAN_Q_OVERFLOW != 0 || self.queue.len() >= self.max_events {
@@ -454,6 +474,7 @@ impl SimFs {
                     holds: 0,
                     reader_idle: false,
                     served: false,
+                    ignored: HashSet::new(),
                 }),
                 changed: Condvar::new(),
             }),
@@ -760,6 +781,29 @@ impl SimFs {
         queue.iter().flat_map(|ev| st.encode(ev)).collect()
     }
 
+    /// An ignore mark on the directory at `path`, as the broker places one
+    /// ([`crate::fanotify::IgnoreMarks`]).
+    pub fn ignore(&self, path: impl AsRef<Path>) -> io::Result<()> {
+        let mut st = lock(&self.shared.state);
+        let comps = st.components(path.as_ref())?;
+        let id = st.lookup(&comps);
+        st.ignored.insert(id);
+        Ok(())
+    }
+
+    /// Whether the directory at `path` holds an ignore mark.
+    pub fn is_ignored(&self, path: impl AsRef<Path>) -> io::Result<bool> {
+        let mut st = lock(&self.shared.state);
+        let comps = st.components(path.as_ref())?;
+        let id = st.lookup(&comps);
+        Ok(st.ignored.contains(&id))
+    }
+
+    /// Every ignore mark taken off ([`crate::fanotify::IgnoreMarks::flush`]).
+    pub fn flush_ignores(&self) {
+        lock(&self.shared.state).ignored.clear();
+    }
+
     /// The group a broker runs over this kernel.
     pub fn group(&self) -> SimGroup {
         SimGroup { fs: self.clone(), translator: Translator::new(SimResolver { fs: self.clone() }) }
@@ -781,6 +825,28 @@ impl Resolve for SimResolver {
     }
 }
 
+impl IgnoreMarks for SimResolver {
+    fn ignore(&mut self, dir: &Handle) -> io::Result<()> {
+        let id = id_of(dir).ok_or_else(|| io::Error::from_raw_os_error(libc::ESTALE))?;
+        let mut st = lock(&self.fs.shared.state);
+        if !st.objects.get(id).is_some_and(|o| o.alive) {
+            return Err(io::Error::from_raw_os_error(libc::ESTALE));
+        }
+        st.ignored.insert(id);
+        Ok(())
+    }
+
+    fn lift(&mut self, dir: &Handle) {
+        if let Some(id) = id_of(dir) {
+            lock(&self.fs.shared.state).ignored.remove(&id);
+        }
+    }
+
+    fn flush(&mut self) {
+        self.fs.flush_ignores();
+    }
+}
+
 impl Group for SimGroup {
     fn cover(&mut self, roots: &[PathBuf]) -> Vec<Uncovered> {
         let mut st = lock(&self.fs.shared.state);
@@ -789,6 +855,7 @@ impl Group for SimGroup {
         st.marked = !covered.is_empty();
         drop(st);
         self.translator.set_roots(covered);
+        self.translator.flush_ignores();
         uncovered
             .into_iter()
             .map(|root| Uncovered { root, reason: "not on the simulated filesystem".to_string() })
@@ -1124,6 +1191,70 @@ mod tests {
         assert_eq!(tree(&received(&mut r)), vec![Event::RenameTo { path: p(&root, "f") }]);
     }
 
+    /// `dir` made outside the roots, then [`IGNORE_AFTER`] files in it: busy.
+    ///
+    /// [`IGNORE_AFTER`]: crate::fanotify::IGNORE_AFTER
+    fn busy(fs: &SimFs, dir: &Path) {
+        fs.create_dir(dir).unwrap();
+        let _late = fs.hold();
+        for i in 0..crate::fanotify::IGNORE_AFTER {
+            fs.write(dir.join(format!("f{i}")), b"x").unwrap();
+        }
+    }
+
+    #[test]
+    fn test_a_busy_directory_outside_is_silenced_and_heard_again_once_moved_in() {
+        let (broker, root, mut r) = started("busy");
+        let fs = broker.fs();
+        let cache = fs.mount().join("cache");
+        busy(fs, &cache);
+        assert!(fs.is_ignored(&cache).unwrap(), "the kernel is asked to stop queuing it");
+        assert_eq!(tree(&received(&mut r)), vec![]);
+
+        fs.rename(&cache, root.join("cache")).unwrap();
+        assert!(!fs.is_ignored(root.join("cache")).unwrap(), "lifted when the move is read");
+        fs.write(root.join("cache/new"), b"n").unwrap();
+        assert_eq!(
+            tree(&received(&mut r)),
+            vec![
+                Event::RenameTo { path: p(&root, "cache") },
+                Event::Create { path: p(&root, "cache/new") },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_a_busy_directory_moved_in_and_written_unread_arrives_silenced() {
+        // What happens in it between the move and its read is silenced: the
+        // mark is lifted only once the move is read. The move itself is
+        // there — an arrival, which the daemon walks, finding `new` then.
+        let (broker, root, mut r) = started("busylate");
+        let fs = broker.fs();
+        let cache = fs.mount().join("cache");
+        busy(fs, &cache);
+        {
+            let _late = fs.hold();
+            fs.rename(&cache, root.join("cache")).unwrap();
+            fs.write(root.join("cache/new"), b"n").unwrap();
+        }
+        assert_eq!(tree(&received(&mut r)), vec![Event::RenameTo { path: p(&root, "cache") }]);
+        fs.write(root.join("cache/later"), b"l").unwrap();
+        assert_eq!(tree(&received(&mut r)), vec![Event::Create { path: p(&root, "cache/later") }]);
+    }
+
+    #[test]
+    fn test_a_new_subscription_flushes_the_ignore_marks() {
+        let (broker, _root, _r) = started("busyflush");
+        let fs = broker.fs();
+        let cache = fs.mount().join("cache");
+        busy(fs, &cache);
+        assert!(fs.is_ignored(&cache).unwrap());
+        let other = fs.mount().join("other");
+        std::fs::create_dir(&other).unwrap();
+        let _s = subscriber(&broker, &other);
+        assert!(!fs.is_ignored(&cache).unwrap());
+    }
+
     #[test]
     fn test_records_can_be_emitted_by_hand() {
         let (broker, root, mut r) = started("emit");
@@ -1317,11 +1448,13 @@ mod tests {
         fn remove_dir_all(&self, p: &Path);
         fn chmod(&self, p: &Path, mode: u32);
         fn symlink(&self, t: &Path, l: &Path);
+        fn ignore(&self, dir: &Path);
+        fn flush_ignores(&self);
     }
 
-    struct Kernel;
+    struct Kernel<'a>(&'a std::cell::RefCell<crate::fanotify::Fanotify>);
 
-    impl Ops for Kernel {
+    impl Ops for Kernel<'_> {
         fn write(&self, p: &Path, d: &[u8]) {
             std::fs::write(p, d).unwrap()
         }
@@ -1343,6 +1476,12 @@ mod tests {
         }
         fn symlink(&self, t: &Path, l: &Path) {
             std::os::unix::fs::symlink(t, l).unwrap()
+        }
+        fn ignore(&self, dir: &Path) {
+            self.0.borrow_mut().ignore_path(dir).unwrap()
+        }
+        fn flush_ignores(&self) {
+            self.0.borrow_mut().flush_ignores()
         }
     }
 
@@ -1368,6 +1507,12 @@ mod tests {
         }
         fn symlink(&self, t: &Path, l: &Path) {
             SimFs::symlink(self, t, l).unwrap()
+        }
+        fn ignore(&self, dir: &Path) {
+            SimFs::ignore(self, dir).unwrap()
+        }
+        fn flush_ignores(&self) {
+            SimFs::flush_ignores(self)
         }
     }
 
@@ -1427,6 +1572,56 @@ mod tests {
         drain("renamed there, back, and there again before the read");
     }
 
+    /// Work around a directory holding an ignore mark ([`crate::fanotify::
+    /// ignore_mask`]): what it silences and what it lets through.
+    fn ignore_script(ops: &dyn Ops, root: &Path, drain: &mut dyn FnMut(&str)) {
+        let at = |rel: &str| root.join(rel);
+        ops.create_dir(&at("busy"));
+        ops.create_dir(&at("busy/sub"));
+        ops.write(&at("busy/f"), b"x");
+        ops.write(&at("busy/g"), b"x");
+        ops.create_dir(&at("other"));
+        drain("setup");
+        ops.ignore(&at("busy"));
+        drain("the ignore mark placed");
+        ops.write(&at("busy/new"), b"n");
+        drain("a file made in the ignored directory");
+        ops.write(&at("busy/f"), b"y");
+        drain("a file of it written");
+        ops.create_dir(&at("busy/d2"));
+        drain("a directory made in it");
+        ops.chmod(&at("busy/f"), 0o600);
+        drain("an entry's mode changed");
+        ops.chmod(&at("busy"), 0o700);
+        drain("the directory's own mode changed");
+        ops.write(&at("busy/sub/h"), b"h");
+        drain("a file made in its subdirectory");
+        ops.rename(&at("busy/f"), &at("other/f"));
+        drain("a file moved out of it");
+        ops.rename(&at("other/f"), &at("busy/f"));
+        drain("a file moved into it");
+        ops.rename(&at("busy/new"), &at("busy/new2"));
+        drain("a file renamed inside it");
+        ops.remove_file(&at("busy/new2"));
+        drain("a file of it unlinked");
+        ops.rename(&at("busy/d2"), &at("other/d2"));
+        drain("a directory moved out of it");
+        ops.rename(&at("busy"), &at("other/busy"));
+        drain("the directory itself moved");
+        ops.write(&at("other/busy/g"), b"z");
+        drain("written in it where it moved");
+        ops.create_dir(&at("quiet"));
+        ops.ignore(&at("quiet"));
+        drain("a second directory ignored");
+        ops.flush_ignores();
+        drain("every ignore mark flushed");
+        ops.write(&at("other/busy/g"), b"zz");
+        ops.write(&at("quiet/q"), b"q");
+        drain("written in both after the flush");
+        ops.remove_dir_all(&at("other/busy"));
+        drain("the directory removed");
+    }
+
     /// One step's records, with handles replaced by the order they first
     /// appeared in — the one property of a handle both sides share.
     fn normalized(raws: Vec<RawEvent>, seen: &mut Vec<Vec<u8>>) -> Vec<String> {
@@ -1476,26 +1671,33 @@ mod tests {
             assert!(mounted);
             dir
         };
-        let kroot = tmpfs("kernel");
-        let mut group = crate::fanotify::Fanotify::open().unwrap();
-        group.sync_roots(std::slice::from_ref(&kroot)).unwrap();
-        let mut kernel = Vec::new();
-        let mut kseen = Vec::new();
-        script(&Kernel, &kroot, &mut |step| {
-            kernel.push((step.to_string(), normalized(group.drain_raw(), &mut kseen)));
-        });
+        for (name, script) in [("work", script as Script), ("ignore", ignore_script)] {
+            let kroot = tmpfs(&format!("kernel-{name}"));
+            let group = std::cell::RefCell::new(crate::fanotify::Fanotify::open().unwrap());
+            group.borrow_mut().sync_roots(std::slice::from_ref(&kroot)).unwrap();
+            let mut kernel = Vec::new();
+            let mut kseen = Vec::new();
+            script(&Kernel(&group), &kroot, &mut |step| {
+                kernel.push((step.to_string(), normalized(group.borrow().drain_raw(), &mut kseen)));
+            });
 
-        let sroot = tmpfs("sim");
-        let fs = SimFs::new(&sroot).unwrap();
-        assert!(fs.group().cover(std::slice::from_ref(&sroot)).is_empty());
-        let mut sim = Vec::new();
-        let mut sseen = Vec::new();
-        script(&fs, &sroot, &mut |step| {
-            sim.push((step.to_string(), normalized(parse(&fs.take_bytes()).0, &mut sseen)));
-        });
+            let sroot = tmpfs(&format!("sim-{name}"));
+            let fs = SimFs::new(&sroot).unwrap();
+            assert!(fs.group().cover(std::slice::from_ref(&sroot)).is_empty());
+            let mut sim = Vec::new();
+            let mut sseen = Vec::new();
+            script(&fs, &sroot, &mut |step| {
+                sim.push((step.to_string(), normalized(parse(&fs.take_bytes()).0, &mut sseen)));
+            });
 
-        for ((step, k), (_, s)) in kernel.iter().zip(&sim) {
-            assert_eq!(s, k, "step {step:?}: the simulator (left) and the kernel (right) differ");
+            for ((step, k), (_, s)) in kernel.iter().zip(&sim) {
+                assert_eq!(
+                    s, k,
+                    "{name}, step {step:?}: the simulator (left) and the kernel (right) differ"
+                );
+            }
         }
     }
+
+    type Script = fn(&dyn Ops, &Path, &mut dyn FnMut(&str));
 }

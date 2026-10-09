@@ -61,6 +61,7 @@ pub(crate) const FAN_DELETE: u64 = 0x0000_0200;
 pub(crate) const FAN_DELETE_SELF: u64 = 0x0000_0400;
 pub(crate) const FAN_Q_OVERFLOW: u64 = 0x0000_4000;
 pub(crate) const FAN_RENAME: u64 = 0x1000_0000;
+pub(crate) const FAN_EVENT_ON_CHILD: u64 = 0x0800_0000;
 pub(crate) const FAN_ONDIR: u64 = 0x4000_0000;
 
 pub(crate) const FAN_CLASS_NOTIF: u32 = 0x0000_0000;
@@ -73,7 +74,10 @@ pub(crate) const FAN_REPORT_TARGET_FID: u32 = 0x0000_1000;
 
 pub(crate) const FAN_MARK_ADD: u32 = 0x0000_0001;
 pub(crate) const FAN_MARK_REMOVE: u32 = 0x0000_0002;
+pub(crate) const FAN_MARK_FLUSH: u32 = 0x0000_0080;
+pub(crate) const FAN_MARK_IGNORED_SURV_MODIFY: u32 = 0x0000_0040;
 pub(crate) const FAN_MARK_FILESYSTEM: u32 = 0x0000_0100;
+pub(crate) const FAN_MARK_IGNORE: u32 = 0x0000_0400;
 
 pub(crate) const INFO_TYPE_FID: u8 = 1;
 pub(crate) const INFO_TYPE_DFID_NAME: u8 = 2;
@@ -126,6 +130,13 @@ pub struct Handle {
     pub fsid: [i32; 2],
     pub handle_type: i32,
     pub bytes: Vec<u8>,
+}
+
+impl Handle {
+    /// What a handle is remembered by.
+    fn key(&self) -> ([i32; 2], Vec<u8>) {
+        (self.fsid, self.bytes.clone())
+    }
 }
 
 /// Turns handles into paths — the privileged step (`open_by_handle_at` needs
@@ -219,6 +230,8 @@ pub struct PathResolver {
     fs_paths: HashMap<[i32; 2], Vec<PathBuf>>,
     /// The descriptors of the current batch.
     open: HashMap<[i32; 2], OwnedFd>,
+    /// The group, for the ignore marks ([`IgnoreMarks`]).
+    group: Option<Arc<OwnedFd>>,
 }
 
 impl PathResolver {
@@ -265,6 +278,93 @@ impl Resolve for PathResolver {
     }
 }
 
+/// What an ignore mark on a directory outside every root stops in the kernel:
+/// the events that name that directory alone — its entries created, deleted,
+/// written to, their attributes, its own attributes. Never `FAN_RENAME`: a
+/// move names two directories, and the kernel lets the ignore mask of either
+/// silence it — a file moved from an ignored directory into a root would
+/// never arrive. Never `FAN_DELETE_SELF`: rare, and resolved by the object.
+pub(crate) fn ignore_mask() -> u64 {
+    FAN_CREATE
+        | FAN_DELETE
+        | FAN_MODIFY
+        | FAN_CLOSE_WRITE
+        | FAN_ATTRIB
+        | FAN_ONDIR
+        | FAN_EVENT_ON_CHILD
+}
+
+/// Ignore marks on directories, by handle — the kernel half of
+/// [`Scope`]'s busy directories. Kept beside [`Resolve`]: both open a handle,
+/// the privileged step.
+pub trait IgnoreMarks {
+    /// Asks the kernel to stop queuing [`ignore_mask`] events for the
+    /// directory `dir`.
+    fn ignore(&mut self, dir: &Handle) -> io::Result<()>;
+    /// Takes the mark off again; a directory gone took its mark with it.
+    fn lift(&mut self, dir: &Handle);
+    /// Takes every ignore mark off — the group holds no other inode mark.
+    fn flush(&mut self);
+}
+
+impl IgnoreMarks for PathResolver {
+    fn ignore(&mut self, dir: &Handle) -> io::Result<()> {
+        self.mark_dir(dir, FAN_MARK_ADD)
+    }
+
+    fn lift(&mut self, dir: &Handle) {
+        let _ = self.mark_dir(dir, FAN_MARK_REMOVE);
+    }
+
+    fn flush(&mut self) {
+        if let Some(group) = &self.group {
+            flush_ignores(group.as_raw_fd());
+        }
+    }
+}
+
+impl PathResolver {
+    /// The group the ignore marks go to (none: every mark is refused).
+    pub fn with_group(group: Arc<OwnedFd>) -> Self {
+        Self { group: Some(group), ..Self::default() }
+    }
+
+    fn mark_dir(&mut self, dir: &Handle, op: u32) -> io::Result<()> {
+        let group = self.group.clone().ok_or_else(|| io::Error::from_raw_os_error(libc::EBADF))?;
+        let fs_fd =
+            self.fs_fd(dir.fsid).ok_or_else(|| io::Error::from_raw_os_error(libc::ESTALE))?;
+        // Opened as resolution opens (`O_PATH`, the least it can ask), but
+        // `fanotify_mark` takes a descriptor through `fdget`, which refuses an
+        // `O_PATH` file: the mark goes through its magic link instead, which
+        // names the very object, whatever path it has by now.
+        let fd = open_handle(fs_fd, dir, libc::O_PATH | libc::O_DIRECTORY)?;
+        let link = format!("/proc/self/fd/{}", fd.as_raw_fd());
+        mark_ignore(group.as_raw_fd(), Path::new(&link), op)
+    }
+}
+
+/// Removes every inode mark of the group: the ignore marks, which are all the
+/// inode marks it has (`FAN_MARK_FLUSH` without a mount or filesystem flag).
+fn flush_ignores(group: RawFd) {
+    unsafe { libc::fanotify_mark(group, FAN_MARK_FLUSH, 0, libc::AT_FDCWD, std::ptr::null()) };
+}
+
+/// Adds (`op` = `FAN_MARK_ADD`) or removes an ignore mark of [`ignore_mask`]
+/// on the directory at `path`.
+fn mark_ignore(group: RawFd, path: &Path, op: u32) -> io::Result<()> {
+    let c = CString::new(path.as_os_str().as_bytes()).map_err(io::Error::other)?;
+    // An ignore mask on a directory must survive modification
+    // (`FAN_MARK_IGNORE` without it is EISDIR).
+    let flags = op | FAN_MARK_IGNORE | FAN_MARK_IGNORED_SURV_MODIFY;
+    let rc =
+        unsafe { libc::fanotify_mark(group, flags, ignore_mask(), libc::AT_FDCWD, c.as_ptr()) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
 fn resolve_handle(fs_fd: RawFd, handle: &Handle) -> Option<PathBuf> {
     // ESTALE is routine — gone by now, the man page warns about it — and is
     // what most failures here are: not worth a word per event.
@@ -274,6 +374,25 @@ fn resolve_handle(fs_fd: RawFd, handle: &Handle) -> Option<PathBuf> {
 /// [`resolve_handle`], saying which step failed and why — what [`preflight`]
 /// reports when the machine will not let the broker resolve anything.
 fn resolve_handle_verbose(fs_fd: RawFd, handle: &Handle) -> Result<PathBuf> {
+    // A directory first, with `O_DIRECTORY`: without CAP_DAC_READ_SEARCH over
+    // the whole machine — the broker in a user namespace, over a filesystem
+    // that namespace mounted (Linux 6.10+) — the kernel decodes a handle only
+    // for a directory, and only when asked for one. Nearly every handle here
+    // is a directory (the parents events name); an object's own handle
+    // (`FAN_DELETE_SELF`) may not be, and is asked again as anything.
+    let open =
+        |flags: libc::c_int| open_handle(fs_fd, handle, flags | libc::O_PATH | libc::O_NOFOLLOW);
+    let fd = match open(libc::O_DIRECTORY) {
+        Err(err) if err.raw_os_error() == Some(libc::ENOTDIR) => open(0),
+        fd => fd,
+    }
+    .context("open_by_handle_at failed")?;
+    std::fs::read_link(format!("/proc/self/fd/{}", fd.as_raw_fd()))
+        .context("reading /proc/self/fd (the path of the opened handle) failed")
+}
+
+/// `open_by_handle_at(fs_fd, handle, flags)`, close-on-exec.
+fn open_handle(fs_fd: RawFd, handle: &Handle, flags: libc::c_int) -> io::Result<OwnedFd> {
     // `struct file_handle` is a header (u32 + i32) followed by the opaque
     // bytes — laid out by hand because the uapi struct ends in a flexible
     // array.
@@ -282,29 +401,12 @@ fn resolve_handle_verbose(fs_fd: RawFd, handle: &Handle) -> Result<PathBuf> {
     buf[4..8].copy_from_slice(&handle.handle_type.to_ne_bytes());
     buf[8..].copy_from_slice(&handle.bytes);
     let fh = buf.as_mut_ptr() as *mut libc::file_handle;
-    // A directory first, with `O_DIRECTORY`: without CAP_DAC_READ_SEARCH over
-    // the whole machine — the broker in a user namespace, over a filesystem
-    // that namespace mounted (Linux 6.10+) — the kernel decodes a handle only
-    // for a directory, and only when asked for one. Nearly every handle here
-    // is a directory (the parents events name); an object's own handle
-    // (`FAN_DELETE_SELF`) may not be, and is asked again as anything.
-    let open = |flags: libc::c_int| unsafe {
-        libc::open_by_handle_at(
-            fs_fd,
-            fh,
-            flags | libc::O_PATH | libc::O_CLOEXEC | libc::O_NOFOLLOW,
-        )
-    };
-    let mut fd = open(libc::O_DIRECTORY);
-    if fd < 0 && io::Error::last_os_error().raw_os_error() == Some(libc::ENOTDIR) {
-        fd = open(0);
-    }
+    let fd = unsafe { libc::open_by_handle_at(fs_fd, fh, flags | libc::O_CLOEXEC) };
     if fd < 0 {
-        return Err(io::Error::last_os_error()).context("open_by_handle_at failed");
+        return Err(io::Error::last_os_error());
     }
-    let link = std::fs::read_link(format!("/proc/self/fd/{fd}"));
-    unsafe { libc::close(fd) };
-    link.context("reading /proc/self/fd (the path of the opened handle) failed")
+    // SAFETY: a fresh descriptor, owned by nothing else.
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
 }
 
 /// The `fsid` of the filesystem holding `path` (`statfs` reports the same
@@ -766,6 +868,12 @@ pub struct Scope {
     roots: Vec<PathBuf>,
     /// Directory handle → under a root.
     verdicts: HashMap<([i32; 2], Vec<u8>), bool>,
+    /// The directories outside the roots whose events were dropped, one entry
+    /// per event an ignore mark would have silenced — what [`Translator`]
+    /// counts to find the busy ones.
+    dropped_in: Vec<Handle>,
+    /// A directory moved since this was last taken.
+    moved: bool,
 }
 
 impl Scope {
@@ -780,6 +888,7 @@ impl Scope {
     pub fn relevant(&mut self, raw: &RawEvent, resolver: &mut dyn Resolve) -> bool {
         if is_directory_move(raw) {
             self.verdicts.clear();
+            self.moved = true;
         }
         let dirs = [&raw.parent, &raw.old, &raw.new].into_iter().flatten().map(|(h, _)| h);
         let mut any_dir = false;
@@ -787,6 +896,11 @@ impl Scope {
             any_dir = true;
             if self.dir_under_root(dir, resolver) {
                 return true;
+            }
+        }
+        if raw.mask & ignore_mask() & !(FAN_ONDIR | FAN_EVENT_ON_CHILD) != 0 {
+            if let Some((dir, _)) = &raw.parent {
+                self.dropped_in.push(dir.clone());
             }
         }
         // An event about the object alone (`FAN_DELETE_SELF`, the only word on
@@ -820,20 +934,49 @@ impl Scope {
 
 // ── Translator: bytes to wire events ─────────────────────────────────────────
 
+/// Events dropped in one directory outside the roots before it is given an
+/// ignore mark ([`IgnoreMarks`]). Low enough that a cache or a build tree
+/// stops costing the queue within seconds; an ignore mark is never wrong
+/// (it silences only what would have been dropped), so a quiet directory
+/// marked after a day costs one mark and nothing else.
+pub const IGNORE_AFTER: u32 = 1000;
+
+/// At most this many ignore marks: they count against `max_user_marks`.
+const IGNORED_MAX: usize = 1024;
+
 /// Everything between a `read(2)` of the group and the wire events — parsing,
-/// the [`Scope`] filter, handle resolution — with the resolver as its one
-/// seam. The real group runs it over `open_by_handle_at`; the simulated one
+/// the [`Scope`] filter, handle resolution, the ignore marks on busy
+/// directories outside the roots — with the resolver as its one seam. The
+/// real group runs it over `open_by_handle_at`; the simulated one
 /// (`crate::sim`) over a table of the objects it made, so what a test feeds in
 /// takes the very path the kernel's bytes do.
-pub struct Translator<R: Resolve> {
+pub struct Translator<R: Resolve + IgnoreMarks> {
     /// What is under a root, by directory handle ([`Scope`]).
     pub scope: Scope,
     pub resolver: Memo<R>,
+    /// Events dropped per directory outside the roots, since the marks were
+    /// last flushed.
+    dropped: HashMap<([i32; 2], Vec<u8>), u32>,
+    /// The directories holding an ignore mark.
+    ignored: HashMap<([i32; 2], Vec<u8>), Handle>,
+    /// The kernel does not know ignore marks (before 6.0): none is asked.
+    refused: bool,
+    /// [`IGNORE_AFTER`], [`IGNORED_MAX`] — fields for the tests.
+    pub ignore_after: u32,
+    pub ignored_max: usize,
 }
 
-impl<R: Resolve> Translator<R> {
+impl<R: Resolve + IgnoreMarks> Translator<R> {
     pub fn new(resolver: R) -> Self {
-        Self { scope: Scope::default(), resolver: Memo::new(resolver) }
+        Self {
+            scope: Scope::default(),
+            resolver: Memo::new(resolver),
+            dropped: HashMap::new(),
+            ignored: HashMap::new(),
+            refused: false,
+            ignore_after: IGNORE_AFTER,
+            ignored_max: IGNORED_MAX,
+        }
     }
 
     pub fn set_roots(&mut self, roots: Vec<PathBuf>) {
@@ -842,12 +985,87 @@ impl<R: Resolve> Translator<R> {
 
     /// Turns one read's bytes into wire events — those under a subscribed
     /// root: the rest is dropped by directory handle ([`Scope`]) before
-    /// anything is resolved for it.
+    /// anything is resolved for it, and a directory whose events keep being
+    /// dropped is given an ignore mark.
     pub fn translate(&mut self, buf: &[u8]) -> ReadOutcome {
         let (raws, kernel_overflow) = parse(buf);
         let events = translate_batch(&raws, &mut self.scope, &mut self.resolver);
+        self.settle_ignores();
         self.resolver.end_batch();
         ReadOutcome { events, kernel_overflow }
+    }
+
+    /// Takes every ignore mark off and starts counting over. For when which
+    /// directories are outside the roots may have changed wholesale — new
+    /// roots, a mount come or gone — and lifting by handle may not be
+    /// possible: a filesystem with no path left to open a handle from still
+    /// holds its marks.
+    pub fn flush_ignores(&mut self) {
+        self.resolver.inner.flush();
+        self.ignored.clear();
+        self.dropped.clear();
+    }
+
+    /// After a batch: the marks a directory move brought under a root are
+    /// lifted, then the directories that became busy are marked.
+    ///
+    /// A mark lifted only when the move is *read* has silenced what happened
+    /// in the directory in between — the move reaches the daemon as an
+    /// arrival, and an arrival is walked (doc "The fanotify broker").
+    fn settle_ignores(&mut self) {
+        if std::mem::take(&mut self.scope.moved) {
+            for (key, dir) in std::mem::take(&mut self.ignored) {
+                match self.resolver.resolve_fresh(&dir) {
+                    Some(path) if !self.scope.under_root(&path) => {
+                        self.ignored.insert(key, dir);
+                    }
+                    // Under a root now — or gone, its mark with it (lifting
+                    // then fails, harmlessly).
+                    _ => {
+                        self.resolver.inner.lift(&dir);
+                        self.dropped.remove(&key);
+                    }
+                }
+            }
+        }
+        for dir in std::mem::take(&mut self.scope.dropped_in) {
+            if self.dropped.len() >= SCOPE_MAX {
+                self.dropped.clear();
+            }
+            let count = self.dropped.entry(dir.key()).or_insert(0);
+            *count += 1;
+            if *count == self.ignore_after {
+                self.ignore(dir);
+            }
+        }
+    }
+
+    fn ignore(&mut self, dir: Handle) {
+        if self.refused
+            || self.ignored.len() >= self.ignored_max
+            || self.ignored.contains_key(&dir.key())
+        {
+            return;
+        }
+        // Where it is now: the verdict that counted its events can predate a
+        // move into a root that is not read yet.
+        match self.resolver.resolve_fresh(&dir) {
+            Some(path) if !self.scope.under_root(&path) => {}
+            _ => return,
+        }
+        match self.resolver.inner.ignore(&dir) {
+            Ok(()) => {
+                self.ignored.insert(dir.key(), dir);
+            }
+            Err(err) if err.raw_os_error() == Some(libc::EINVAL) => {
+                self.refused = true;
+                eprintln!(
+                    "[watchd] the kernel refuses ignore marks ({err}; Linux 6.0+): \
+                     busy directories outside the roots keep costing the event queue"
+                );
+            }
+            Err(_) => {}
+        }
     }
 }
 
@@ -895,12 +1113,13 @@ impl Fanotify {
         .context("fanotify_init failed")?;
         // SAFETY: a fresh descriptor, owned by nothing else.
         let fd = Arc::new(unsafe { OwnedFd::from_raw_fd(fd) });
+        let resolver = PathResolver::with_group(Arc::clone(&fd));
         Ok(Self {
             fd,
             marks: HashMap::new(),
             roots: Vec::new(),
             mask: mask(),
-            translator: Translator::new(PathResolver::default()),
+            translator: Translator::new(resolver),
         })
     }
 
@@ -948,6 +1167,8 @@ impl Fanotify {
             .unwrap_or_default();
         let Plan { wanted, mut paths, roots_on, mut failed, skipped } =
             plan_marks(&self.roots, &points, coverable_fsid);
+        // Which directories are outside the roots may have changed.
+        self.translator.flush_ignores();
         for message in skipped {
             eprintln!("[watchd] {message}");
         }
@@ -1018,6 +1239,23 @@ impl Fanotify {
             }
             out.extend(parse(&buf[..n as usize]).0);
         }
+    }
+
+    /// An ignore mark on the directory at `path`, as the broker places one on
+    /// a busy directory — what the simulator's fidelity test compares itself
+    /// against.
+    #[cfg(test)]
+    pub(crate) fn ignore_path(&mut self, path: &Path) -> io::Result<()> {
+        // By path, not by handle as the broker does: opening a handle needs
+        // `CAP_DAC_READ_SEARCH`, which a container's user namespace may not
+        // grant — the marks are what this compares, not how they are placed.
+        mark_ignore(self.fd.as_raw_fd(), path, FAN_MARK_ADD)
+    }
+
+    /// Every ignore mark taken off ([`IgnoreMarks::flush`]).
+    #[cfg(test)]
+    pub(crate) fn flush_ignores(&mut self) {
+        self.translator.resolver.inner.flush();
     }
 
     fn mark_fs(&mut self, at: &Path, op: u32) -> Result<()> {
@@ -1513,6 +1751,201 @@ mod tests {
         assert_eq!(old_kernel & FAN_RENAME, 0);
         assert_eq!(old_kernel & (FAN_MOVED_FROM | FAN_MOVED_TO), FAN_MOVED_FROM | FAN_MOVED_TO);
         assert_eq!(old_kernel & !(FAN_MOVED_FROM | FAN_MOVED_TO), wanted & !FAN_RENAME);
+    }
+
+    // ── Ignore marks on busy directories outside the roots ───────────────────
+
+    /// A [`Table`] standing for the kernel's ignore marks too: what it was
+    /// asked, in order, and an error to answer them with.
+    #[derive(Default)]
+    struct Marking {
+        table: std::collections::HashMap<Vec<u8>, PathBuf>,
+        asked: Vec<String>,
+        refuse: Option<i32>,
+    }
+
+    impl Marking {
+        fn at(&mut self, h: &Handle, path: &str) {
+            self.table.insert(h.bytes.clone(), PathBuf::from(path));
+        }
+    }
+
+    impl Resolve for Marking {
+        fn resolve(&mut self, h: &Handle) -> Option<PathBuf> {
+            self.table.get(&h.bytes).cloned()
+        }
+    }
+
+    impl IgnoreMarks for Marking {
+        fn ignore(&mut self, dir: &Handle) -> io::Result<()> {
+            self.asked.push(format!("ignore {}", dir.bytes[0]));
+            match self.refuse {
+                Some(errno) => Err(io::Error::from_raw_os_error(errno)),
+                None => Ok(()),
+            }
+        }
+        fn lift(&mut self, dir: &Handle) {
+            self.asked.push(format!("lift {}", dir.bytes[0]));
+        }
+        fn flush(&mut self) {
+            self.asked.push("flush".to_string());
+        }
+    }
+
+    /// A translator over `/home/me/repo`, with `.cache` (handle 1) and
+    /// `Downloads` (handle 2) beside it, marking after 10 events.
+    fn marking() -> Translator<Marking> {
+        let mut r = Marking::default();
+        r.at(&handle(1), "/home/me/.cache");
+        r.at(&handle(2), "/home/me/Downloads");
+        r.at(&handle(3), "/home/me/repo");
+        let mut t = Translator::new(r);
+        t.ignore_after = 10;
+        t.set_roots(vec![PathBuf::from("/home/me/repo")]);
+        t
+    }
+
+    /// `n` creations in the directory `dir`, as one read.
+    fn creations(dir: &Handle, n: usize) -> Vec<u8> {
+        (0..n)
+            .flat_map(|i| {
+                let mut b = Buf::new(FAN_CREATE, 1);
+                b.fid_record(INFO_TYPE_DFID_NAME, dir, Some(&format!("f{i}")));
+                b.finish()
+            })
+            .collect()
+    }
+
+    fn dir_move(from: &Handle, to: &Handle, name: &str) -> Vec<u8> {
+        let mut b = Buf::new(FAN_RENAME | FAN_ONDIR, 1);
+        b.fid_record(INFO_TYPE_OLD_DFID_NAME, from, Some(name));
+        b.fid_record(INFO_TYPE_NEW_DFID_NAME, to, Some(name));
+        b.finish()
+    }
+
+    fn asked(t: &Translator<Marking>) -> Vec<String> {
+        t.resolver.inner.asked.clone()
+    }
+
+    #[test]
+    fn test_a_busy_directory_outside_the_roots_is_given_an_ignore_mark() {
+        // What a filesystem mark reports outside the roots is dropped, but
+        // only after the kernel queued it and the broker read it: a busy
+        // directory there (a cache, a build tree) costs the queue everyone
+        // shares. Past a number of events, the kernel is asked to stop.
+        let mut t = marking();
+        t.translate(&creations(&handle(1), 9));
+        assert_eq!(asked(&t), Vec::<String>::new(), "not busy yet");
+        t.translate(&creations(&handle(1), 1));
+        assert_eq!(asked(&t), ["ignore 1"]);
+        t.translate(&creations(&handle(1), 30));
+        assert_eq!(asked(&t), ["ignore 1"], "asked once");
+    }
+
+    #[test]
+    fn test_a_directory_under_a_root_is_never_ignored() {
+        let mut t = marking();
+        let out = t.translate(&creations(&handle(3), 30));
+        assert_eq!(out.events.len(), 30);
+        assert_eq!(asked(&t), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_moves_outside_the_roots_do_not_make_a_directory_busy() {
+        // A move is never silenced (it names two directories, and the root
+        // may be the other one): counting it would mark for nothing.
+        let mut t = marking();
+        let mut bytes = Vec::new();
+        for i in 0..30 {
+            let mut b = Buf::new(FAN_RENAME, 1);
+            b.fid_record(INFO_TYPE_OLD_DFID_NAME, &handle(1), Some(&format!("a{i}")));
+            b.fid_record(INFO_TYPE_NEW_DFID_NAME, &handle(2), Some(&format!("a{i}")));
+            bytes.extend(b.finish());
+        }
+        t.translate(&bytes);
+        assert_eq!(asked(&t), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_an_ignored_directory_moved_under_a_root_is_lifted() {
+        // The mark is on the directory, and goes where it goes. Moved into a
+        // repository, its events concern a subscriber again: the mark comes
+        // off as soon as the move is read. (What happened in it before that
+        // is in the move's arrival, which the daemon walks.)
+        let mut t = marking();
+        t.translate(&creations(&handle(1), 10));
+        t.resolver.inner.at(&handle(1), "/home/me/repo/cache");
+        t.translate(&dir_move(&handle(4), &handle(3), "cache"));
+        assert_eq!(asked(&t), ["ignore 1", "lift 1"]);
+        t.translate(&dir_move(&handle(3), &handle(2), "cache"));
+        assert_eq!(asked(&t), ["ignore 1", "lift 1"], "lifted once, not marked again on sight");
+    }
+
+    #[test]
+    fn test_an_ignored_directory_moved_elsewhere_outside_keeps_its_mark() {
+        let mut t = marking();
+        t.translate(&creations(&handle(1), 10));
+        t.resolver.inner.at(&handle(1), "/home/me/Downloads/cache");
+        t.translate(&dir_move(&handle(4), &handle(2), "cache"));
+        assert_eq!(asked(&t), ["ignore 1"]);
+    }
+
+    #[test]
+    fn test_a_directory_found_under_a_root_when_marking_is_not_marked() {
+        // The verdict that counted the events can be older than the
+        // directory's position: moved into a root, the move not read yet.
+        let mut t = marking();
+        t.translate(&creations(&handle(1), 9));
+        t.resolver.inner.at(&handle(1), "/home/me/repo/cache");
+        t.translate(&creations(&handle(1), 1));
+        assert_eq!(asked(&t), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_covering_anew_flushes_every_ignore_mark() {
+        // New roots, or a mount come or gone: which directories are outside
+        // may have changed, and an ignore mark cannot always be lifted by
+        // handle (its filesystem may have no path left to open one from).
+        // All of them go; the busy ones earn theirs again.
+        let mut t = marking();
+        t.translate(&creations(&handle(1), 10));
+        t.flush_ignores();
+        assert_eq!(asked(&t), ["ignore 1", "flush"]);
+        t.translate(&creations(&handle(1), 9));
+        assert_eq!(asked(&t), ["ignore 1", "flush"], "the count starts over");
+        t.translate(&creations(&handle(1), 1));
+        assert_eq!(asked(&t), ["ignore 1", "flush", "ignore 1"]);
+    }
+
+    #[test]
+    fn test_a_kernel_without_ignore_marks_is_not_asked_again() {
+        // `FAN_MARK_IGNORE` is Linux 6.0: older kernels answer EINVAL. The
+        // broker works without — events outside the roots are dropped as
+        // before — and does not ask per busy directory.
+        let mut t = marking();
+        t.resolver.inner.refuse = Some(libc::EINVAL);
+        t.translate(&creations(&handle(1), 10));
+        t.translate(&creations(&handle(2), 10));
+        assert_eq!(asked(&t), ["ignore 1"]);
+    }
+
+    #[test]
+    fn test_a_mark_that_failed_otherwise_is_asked_again_for_another_directory() {
+        let mut t = marking();
+        t.resolver.inner.refuse = Some(libc::ENOSPC);
+        t.translate(&creations(&handle(1), 10));
+        t.translate(&creations(&handle(2), 10));
+        assert_eq!(asked(&t), ["ignore 1", "ignore 2"]);
+    }
+
+    #[test]
+    fn test_the_number_of_ignore_marks_is_bounded() {
+        // Marks count against the user's `max_user_marks`.
+        let mut t = marking();
+        t.ignored_max = 1;
+        t.translate(&creations(&handle(1), 10));
+        t.translate(&creations(&handle(2), 10));
+        assert_eq!(asked(&t), ["ignore 1"]);
     }
 
     // ── Edges of parsing and translation ─────────────────────────────────────

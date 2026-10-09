@@ -2,8 +2,7 @@ title: Watcher open questions
 tags: [[Watcher]]
 kind: question
 status: deferred
-summary: A repository found again on a remounted drive by its volume identity; ignore marks for busy directories outside the roots.
+summary: A repository found again on a remounted drive by its volume identity; a per-repository choice of source.
 
 * ''A repository coming back on a remounted drive.'' A root that moves, vanishes or is replaced freezes the repository until it is loaded again ([[When the root moves]]). What is open is finding it again by itself: the absolute `root` is no stable identity across remounts, and a drive plugged back in could be recognised by its volume identity (as `mfr_mount` records one) rather than waiting for a load.
-* ''Events outside the roots'' still cost the fanotify group's queue and can overflow it for everyone; kernel ignore marks on the busiest outside directories would stop them ([[The fanotify broker]]).
 * ''A per-repository choice of source'' (forcing inotify for one repository while the broker serves the others) has not been asked for; today the socket is the only switch.
