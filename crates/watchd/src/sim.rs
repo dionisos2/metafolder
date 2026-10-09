@@ -128,6 +128,9 @@ struct State {
     queue: VecDeque<Queued>,
     /// Whether any root is marked: an unmarked filesystem queues nothing.
     marked: bool,
+    /// The group's `max_queued_events`: unread events beyond it are dropped
+    /// for one overflow event ([`State::push`]).
+    max_events: usize,
     /// Open [`Hold`]s: while any is, reads take nothing.
     holds: usize,
     /// A reader waits in [`SimFs::read`] with nothing to take — whatever it
@@ -177,6 +180,10 @@ fn id_of(handle: &Handle) -> Option<usize> {
 /// How far back an event looks for one to merge into (the kernel's
 /// `FANOTIFY_MAX_MERGE_EVENTS`).
 const MERGE_WINDOW: usize = 128;
+
+/// A group's queue length unless told otherwise (the kernel's
+/// `FANOTIFY_DEFAULT_MAX_EVENTS`, the `max_queued_events` sysctl's default).
+pub const DEFAULT_MAX_QUEUED_EVENTS: usize = 16384;
 
 impl State {
     /// `path` as components under the mount: its parent resolved on disk (it
@@ -279,8 +286,21 @@ impl State {
     /// records, as the kernel does (`fanotify_should_merge`): a creation, the
     /// data written and the close are one event; a move repeated before the
     /// read is one move.
+    ///
+    /// A full queue (`max_events` unread) takes nothing more, merges
+    /// included: the event is dropped and the overflow event queued instead,
+    /// unless one already waits — `fsnotify_insert_event`, whose check comes
+    /// before the merge. The real limit cannot be lowered in a user namespace,
+    /// so this one is not in the fidelity test: it follows the kernel's source.
     fn push(&mut self, mask: u64, records: Vec<Record>) {
         if !self.marked {
+            return;
+        }
+        let overflow_queued = || self.queue.iter().any(|q| q.mask & FAN_Q_OVERFLOW != 0);
+        if mask & FAN_Q_OVERFLOW != 0 || self.queue.len() >= self.max_events {
+            if !overflow_queued() {
+                self.queue.push_back(Queued { mask: FAN_Q_OVERFLOW, records: Vec::new() });
+            }
             return;
         }
         let new = Queued { mask, records };
@@ -290,11 +310,9 @@ impl State {
                 && q.mask & FAN_RENAME == new.mask & FAN_RENAME
                 && q.records == new.records
         };
-        if new.mask & FAN_Q_OVERFLOW == 0 {
-            if let Some(q) = self.queue.iter_mut().rev().take(MERGE_WINDOW).find(|q| same_kind(q)) {
-                q.mask |= new.mask;
-                return;
-            }
+        if let Some(q) = self.queue.iter_mut().rev().take(MERGE_WINDOW).find(|q| same_kind(q)) {
+            q.mask |= new.mask;
+            return;
         }
         self.queue.push_back(new);
     }
@@ -432,6 +450,7 @@ impl SimFs {
                     objects: vec![root],
                     queue: VecDeque::new(),
                     marked: false,
+                    max_events: DEFAULT_MAX_QUEUED_EVENTS,
                     holds: 0,
                     reader_idle: false,
                     served: false,
@@ -684,6 +703,15 @@ impl SimFs {
             st.push(mask, records);
             Ok(())
         })
+    }
+
+    /// The group's queue length (`/proc/sys/fs/fanotify/max_queued_events`,
+    /// 16384 by default): what is done while that many events wait unread is
+    /// lost, and the overflow event says so. Small, it lets a test overflow
+    /// the queue under a [`hold`](Self::hold) without making thousands of
+    /// files. For the whole kernel, every subscriber of it included.
+    pub fn set_max_queued_events(&self, n: usize) {
+        lock(&self.shared.state).max_events = n;
     }
 
     /// Lets the operations pile up unread until the guard drops; then they
@@ -978,6 +1006,34 @@ mod tests {
                 Event::Rename { from: p(&root, "ping"), to: p(&root, "pong") },
             ]
         );
+    }
+
+    #[test]
+    fn test_a_full_queue_drops_what_follows_and_says_so_once() {
+        // The kernel's `fsnotify_insert_event`: once `max_queued_events` are
+        // unread, an event is dropped and the overflow event queued in its
+        // place — once, however many follow — and a full queue merges nothing
+        // either (the check comes before the merge). Reading makes room again.
+        let mount = scratch("overflow");
+        let fs = SimFs::new(&mount).unwrap();
+        assert!(fs.group().cover(std::slice::from_ref(&mount)).is_empty());
+        fs.set_max_queued_events(2);
+        fs.write(mount.join("a"), b"a").unwrap(); // One event: creation and data merge.
+        fs.write(mount.join("b"), b"b").unwrap(); // The queue is full.
+        fs.write(mount.join("e"), b"e").unwrap(); // Lost.
+        fs.write(mount.join("a"), b"aa").unwrap(); // Would merge; lost all the same.
+        fs.create_dir(mount.join("d")).unwrap(); // Lost; one overflow is enough.
+        let (raws, overflow) = parse(&fs.take_bytes());
+        assert!(overflow, "the overflow is queued");
+        let names: Vec<_> =
+            raws.iter().map(|r| r.parent.as_ref().map(|(_, n)| n.clone()).unwrap()).collect();
+        assert_eq!(names, ["a", "b"], "what came before the queue was full, nothing after");
+        let bytes = fs.take_bytes();
+        assert!(bytes.is_empty(), "a single overflow event: {:?}", parse(&bytes));
+        fs.write(mount.join("c"), b"c").unwrap();
+        let (raws, overflow) = parse(&fs.take_bytes());
+        assert!(!overflow);
+        assert_eq!(raws.len(), 1, "read, the queue takes events again");
     }
 
     #[test]

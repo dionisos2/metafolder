@@ -16,8 +16,8 @@ Reconcile never does; it leaves a stale path in place ([[Reconcile]]).
 
 What the watcher cannot see, it cannot record: a daemon that is down, a broker that
 disconnected, a queue that overflowed — each such gap is announced, and closed by a
-reconcile you run. Nothing is inferred from a gap, and no reconcile is
-started on its own.
+reconcile you run, then an orphan scan for what moved or went meanwhile ([[Orphans]]).
+Nothing is inferred from a gap, and no reconcile is started on its own.
 
 !! Use it
 

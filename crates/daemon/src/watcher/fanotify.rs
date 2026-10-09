@@ -40,6 +40,13 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long between reconnection attempts once the stream has died.
 const RECONNECT_DELAY: Duration = Duration::from_secs(2);
 
+/// What closes a gap in the stream, as a diagnostic says it: what a daemon
+/// that was down does. A reconcile picks up the new files, but follows a move
+/// only on a full hash (most files have none: it offers a candidate) and never
+/// writes `nothing` — what moved or went is the orphan scan's (doc "Orphans").
+const CLOSE_THE_GAP: &str = "run `mf reconcile` to pick up the new files, then \
+                             `mf orphan detect` for those moved or deleted meanwhile";
+
 pub(crate) struct Source {
     // The connection lives on the client thread, which carries the
     // repository's `Uuid` for diagnostics and *no* `Arc<RepoState>` — an Arc
@@ -150,7 +157,7 @@ impl Source {
                                 "watcher",
                                 format!(
                                     "the fanotify broker is back at {}: changes made while it \
-                                     was away were not seen — run `mf reconcile` to pick them up",
+                                     was away were not seen — {CLOSE_THE_GAP}",
                                     socket.display()
                                 ),
                                 repo_uuid,
@@ -178,8 +185,8 @@ impl Source {
                 crate::diagnostics::error_for(
                     "watcher",
                     format!(
-                        "the fanotify broker connection was lost: changes go unnoticed until it \
-                         returns — run `mf reconcile` once it has ({})",
+                        "the fanotify broker connection was lost ({}): changes go unnoticed \
+                         until it returns — then {CLOSE_THE_GAP}",
                         socket.display()
                     ),
                     repo_uuid,
@@ -245,13 +252,12 @@ fn pump(
                 }
             }
             Ok(ServerMsg::Overflow {}) => {
-                // The broker dropped events for us (a slow consumer). Never
+                // Events were dropped: the kernel's queue or ours at the
+                // broker overflowed — the marker does not say which. Never
                 // silent: the gap is exactly as real as a disconnect.
                 crate::diagnostics::error_for(
                     "watcher",
-                    "the fanotify broker dropped events (this daemon was too slow): \
-                     run `mf reconcile` to pick up what was lost"
-                        .to_string(),
+                    format!("changes were lost (a fanotify queue overflowed): {CLOSE_THE_GAP}"),
                     *repo,
                 );
             }

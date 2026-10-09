@@ -14,6 +14,7 @@
 #![allow(dead_code)] // each test binary uses its own subset
 
 pub mod engines;
+pub mod journey;
 pub mod kv;
 
 /// The two watch sources a repository can run on (doc "Watch sources and regimes"): the inotify

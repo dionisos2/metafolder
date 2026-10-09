@@ -44,8 +44,13 @@ reason of a watch check.
 !! When the broker goes away
 
 The coverage source's broker is a separate process. A disconnect, a reconnect and an
-overflow are each announced by a diagnostic naming `mf reconcile`, and the gap closes
-with that reconcile — the posture of a daemon that was down. Reconciling stays manual:
+overflow — the kernel's queue or the broker's queue for this daemon, the marker does not
+say which — are each announced by a diagnostic naming `mf reconcile` and then `mf orphan
+detect`, and the gap closes with them — the posture of a daemon that was down. The
+reconcile creates the new files; it follows a move only on a full hash, which a file the
+watcher tracked does not have, so a lost rename comes back as a ''candidate'' to confirm
+([[Moves and candidates]]), and a lost deletion as a stale path the scan finds
+([[Orphans]]). `tests/watch_overflow.rs` walks exactly that. Reconciling stays manual:
 not after an overflow (it comes from load, a reconcile would add to it), not after a
 reconnection (a flaky socket would fire one per blink).
 

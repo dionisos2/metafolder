@@ -217,8 +217,9 @@ pub enum ServerMsg {
         event: Event,
     },
     /// Events were *dropped* for this subscriber: its queue overflowed (a slow
-    /// consumer). Everything between this marker and the previous message is
-    /// gone. The subscriber recovers the way a daemon that was down does — a
+    /// consumer), or the kernel's did (announced to every subscriber) — the
+    /// marker does not say which. Everything between this marker and the
+    /// previous message is gone. The subscriber recovers the way a daemon that was down does — a
     /// reconcile (doc "Reconcile") — never by guessing.
     Overflow {},
     Error {
