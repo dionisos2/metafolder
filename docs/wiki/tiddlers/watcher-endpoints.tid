@@ -24,6 +24,7 @@ summary: GET /watch and pause/resume, watch check, the activity counts, the exce
 * `paused` — in memory: a reload or restart starts unpaused. `pending_events` — events in the buffer, exact, read without the repository's lock, so it answers while the flush being stopped holds it.
 * `quiet_period_ms` — so a client that just changed the disk itself (the GUI renaming or trashing a file) schedules its re-read from it, not from a guess.
 * `backend`, `backend_reason` ([[Watch sources and regimes]]); `watched_dirs` and `watch_budget` are `null` under coverage ([[The watch budget]]).
+* The whole view answers while the watches are being placed: the placement (a walk of every eligible directory, seconds on a large tree, the last step of a load) runs without the lock this route takes.
 
 Pausing and resuming are idempotent (`200`, nothing changes). The check's answer carries,
 per path: `watched`, `reason`, `watched_dir` (the directory the answer was computed

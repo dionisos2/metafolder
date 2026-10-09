@@ -458,14 +458,15 @@ impl RepoState {
             );
         }
         let cap = crate::watcher::budget_cap_for(self.watch_budget_share);
-        let placement = {
-            let handles = self.handles.lock_recover();
-            let Some(handles) = handles.as_ref() else {
-                return 0;
-            };
-            let cache = self.tree();
-            handles.watcher.refresh(conn, &cache, &self.config.root, &self.internal_dir(), cap)
+        // The walk runs on a copy of the handle, not under `handles`: it reads
+        // every eligible directory — seconds on a large tree — and `GET /watch`
+        // takes that lock, while the GUI polls it through a load. Two
+        // placements cannot overlap anyway: each caller holds the store's lock.
+        let Some(watcher) = self.handles.lock_recover().as_ref().map(|h| h.watcher.clone()) else {
+            return 0;
         };
+        let placement =
+            watcher.refresh(conn, &self.tree(), &self.config.root, &self.internal_dir(), cap);
         if !placement.frontier.is_empty() {
             // Not here: every caller holds the store's lock (`conn` is its
             // guard), and recording is a write that takes it — a deadlock of the
@@ -1259,5 +1260,107 @@ impl AppState {
             repos.values().flat_map(|r| r.tasks.list()).collect();
         tasks.sort_by(|a, b| a.started_at.cmp(&b.started_at).then(a.id.cmp(&b.id)));
         tasks
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::watcher::{Placement, Regime, Source, WatcherHandle};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    /// A source whose placement signals that it started, then blocks until
+    /// the test releases it — a walk of a large tree, made to last.
+    struct BlockingSource {
+        entered: Mutex<mpsc::Sender<()>>,
+        release: Mutex<mpsc::Receiver<()>>,
+    }
+
+    impl Source for BlockingSource {
+        fn name(&self) -> &'static str {
+            "blocking"
+        }
+        fn regime(&self) -> Regime {
+            Regime::Budget
+        }
+        fn refresh(
+            &self,
+            _conn: &dyn crate::store::Store,
+            _cache: &TreeCache,
+            _root: &Path,
+            _internal_dir: &Path,
+            _cap: Option<usize>,
+        ) -> Placement {
+            let _ = self.entered.lock_recover().send(());
+            let _ = self.release.lock_recover().recv();
+            Placement { watched: 0, starved: 0, frontier: Vec::new() }
+        }
+        fn watched(&self) -> usize {
+            0
+        }
+        fn watched_set(&self) -> HashSet<PathBuf> {
+            HashSet::new()
+        }
+        fn maintain(
+            &self,
+            _repo: &RepoState,
+            _root: &Path,
+            _internal_dir: &Path,
+            _events: &[(crate::executor::FsEvent, Option<i64>)],
+        ) {
+        }
+    }
+
+    /// `GET /watch` is what the GUI polls while a repository loads, and the
+    /// load's last step places the watches — a walk of every eligible
+    /// directory, seconds on a large tree. The view must not wait for it: the
+    /// slow log of a real repository held a `GET /watch` of 2 to 2.6 s.
+    #[test]
+    fn the_watch_view_answers_while_the_watches_are_placed() {
+        let root = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf_state_watch_view_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let state = AppState::new();
+        let uuid = state.init_repo(&root, None, None, false).unwrap();
+        let repo = state.repo(uuid).unwrap();
+
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let source = Arc::new(BlockingSource {
+            entered: Mutex::new(entered_tx),
+            release: Mutex::new(release_rx),
+        });
+        repo.handles.lock_recover().as_mut().unwrap().watcher = WatcherHandle::from_source(source);
+
+        let walking = Arc::clone(&repo);
+        let walker = std::thread::spawn(move || {
+            let conn = walking.conn.lock_recover();
+            walking.refresh_watches(&conn);
+        });
+        entered_rx.recv_timeout(Duration::from_secs(10)).expect("the placement started");
+
+        let (answer_tx, answer_rx) = mpsc::channel();
+        let viewing = Arc::clone(&repo);
+        std::thread::spawn(move || {
+            let _ = answer_tx.send((
+                viewing.watched_dirs(),
+                viewing.watch_backend(),
+                viewing.watch_budget_regime(),
+                viewing.watch_backend_reason(),
+            ));
+        });
+        let answered = answer_rx.recv_timeout(Duration::from_secs(5));
+
+        release_tx.send(()).unwrap();
+        walker.join().unwrap();
+        drop(repo);
+        state.unload_repo(uuid).unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+
+        let (_, backend, budget, _) = answered.expect("the watch view waited for the placement");
+        assert_eq!(backend, "blocking");
+        assert!(budget);
     }
 }

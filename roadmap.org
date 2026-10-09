@@ -29,7 +29,10 @@ is left, each to measure before building:
   read). No bitmap formulation found cheaper on that shape;
 - whatever the slow log shows next on a real repository: reads are logged per
   phase, a read is logged from 100 ms or 100 000 keys, and =mf slow replay=
-  runs a logged query again for its phases now (doc "Slow log").
+  runs a logged query again for its phases now (doc "Slow log"). Read 9
+  October 2026 on =benchmarks/real/=: no query, only =GET /watch= at 2–2.6 s
+  from the GUI, which was waiting for the watch placement's lock (fixed);
+  look again once that repository has run a while longer.
 
 * TODO watcher
 ** TODO keep hunting with the simulated kernel

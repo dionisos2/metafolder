@@ -117,6 +117,7 @@ pub struct Placement {
     pub frontier: Vec<String>,
 }
 
+#[derive(Clone)]
 pub struct WatcherHandle {
     // Dropping the last strong `Arc` drops the source (stopping event
     // delivery). The event callback holds only a `Weak`, so it is not a cycle.
@@ -127,6 +128,13 @@ pub struct WatcherHandle {
 }
 
 impl WatcherHandle {
+    /// A handle over an arbitrary source — for the unit tests that need a
+    /// source whose behaviour they control (one whose placement blocks).
+    #[cfg(test)]
+    pub(crate) fn from_source(source: Arc<dyn Source>) -> Self {
+        Self { source, fallback: None }
+    }
+
     /// Why this repository is not on the fanotify broker (no broker at the
     /// socket, the root refused…); `None` when it is.
     pub fn backend_reason(&self) -> Option<&str> {
