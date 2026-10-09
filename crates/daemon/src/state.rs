@@ -138,6 +138,15 @@ pub struct RepoState {
     /// Held per repository because the log lives inside it, and shared as an
     /// `Arc` because every instrumented path takes a clone.
     pub slowlog: Arc<metafolder_core::slowlog::Recorder>,
+    /// The root directory's identity (`st_dev`, `st_ino`) when the repository
+    /// was opened: what tells the root moved, removed or replaced from a root
+    /// still there (doc "When the root moves"). `None` where it could not be
+    /// read then, and nothing is checked.
+    root_identity: Option<(u64, u64)>,
+    /// The root was found gone ([`RepoState::root_present`]). Sticky: the
+    /// repository stays frozen until it is loaded again, even if the root
+    /// comes back.
+    root_lost: std::sync::atomic::AtomicBool,
 }
 
 /// State of an in-progress coordinated operation. Both kinds suspend the
@@ -172,6 +181,7 @@ impl RepoState {
         let repo_uuid = opened.config.repo_uuid;
         let name = Mutex::new(opened.config.name.clone());
         let log_retention = opened.config.log_retention(settings.log_retention());
+        let root_identity = root_identity_of(&opened.config.root);
         let slow_dir =
             metafolder_core::slowlog::slow_dir(&opened.metafolder_dir.join(repo::INTERNAL_DIR));
         let slowlog = Arc::new(
@@ -217,7 +227,42 @@ impl RepoState {
             log_retention,
             ingestion_paused: std::sync::atomic::AtomicBool::new(false),
             slowlog,
+            root_identity,
+            root_lost: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Whether the root is still the directory the repository was opened on.
+    /// Once it is not — moved, removed, unmounted, or another directory in its
+    /// place — the repository is frozen for good (doc "When the root moves"):
+    /// every path under the old root reads as gone, and acting on that would
+    /// orphan the whole repository. Following the root is deliberately not
+    /// done: `mf repo load <new root>` resumes it, explicitly.
+    pub fn root_present(&self) -> bool {
+        use std::sync::atomic::Ordering;
+        if self.root_lost.load(Ordering::Acquire) {
+            return false;
+        }
+        let Some(expected) = self.root_identity else { return true };
+        if root_identity_of(&self.config.root) == Some(expected) {
+            return true;
+        }
+        if !self.root_lost.swap(true, Ordering::AcqRel) {
+            crate::diagnostics::warn_for("repo", self.root_lost_message(), self.uuid());
+        }
+        false
+    }
+
+    /// What a request to a repository whose root is gone is told.
+    pub fn root_lost_message(&self) -> String {
+        format!(
+            "the root of repository '{}' is no longer at {} (moved, removed or unmounted): \
+             the repository is frozen, nothing is recorded or orphaned for it — if it moved, \
+             load it where it is now: `mf repo load <its new root>` (an external .metafolder: \
+             correct `root` in its config.json, then `mf repo load --metafolder <dir>`)",
+            self.name(),
+            self.config.root.display()
+        )
     }
 
     /// Opens a logged write on this repository. The only way a loaded
@@ -851,6 +896,13 @@ impl RepoState {
     }
 }
 
+/// The identity of the directory at `root` (`st_dev`, `st_ino`), following a
+/// symlinked root as the repository does; `None` when it cannot be read.
+fn root_identity_of(root: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(root).ok().map(|m| (m.dev(), m.ino()))
+}
+
 /// Writes `mfr_watch_exceeded = true` on each subtree root of `frontier`,
 /// creating the directory's metarecord when it has none yet.
 fn write_watch_frontier(
@@ -997,8 +1049,16 @@ impl AppState {
         };
         if RepoConfig::exists(&metafolder_dir) {
             let config = RepoConfig::read(&metafolder_dir)?;
-            if self.repos.lock_recover().contains_key(&config.repo_uuid) {
-                return Ok(config.repo_uuid);
+            let loaded = self.repos.lock_recover().get(&config.repo_uuid).cloned();
+            if let Some(loaded) = loaded {
+                if loaded.root_present() {
+                    return Ok(config.repo_uuid);
+                }
+                // Frozen on a root that went away: this load is the explicit
+                // word that it is here now (doc "When the root moves"). The
+                // frozen one lets go of its store first.
+                drop(loaded);
+                self.unload_repo(config.repo_uuid)?;
             }
         }
         let opened = repo::load_repository(RepoLocator::Metafolder(metafolder_dir))?;
@@ -1213,6 +1273,9 @@ impl AppState {
             return Err(ApiError::unavailable(format!(
                 "repository {repo_uuid} is still loading; watch its `load` task"
             )));
+        }
+        if !repo.root_present() {
+            return Err(ApiError::unavailable(repo.root_lost_message()));
         }
         Ok(repo)
     }

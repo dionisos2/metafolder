@@ -47,4 +47,5 @@ whole. The daemon keeps a relative `root` as written when it rewrites `config.js
 * The repository keeps its uuid and its name; a load is refused while another loaded repository has the same name ([[Creating and loading a repository]]).
 * Case sensitivity is probed again at the load, so a repository moved to a filesystem of the other kind follows it ([[Case sensitivity]]).
 * The store must not be on a network filesystem ([[Network and special filesystems]]).
+* Moving the root while the repository is loaded freezes it until it is loaded again at its new place: nothing is followed, nothing orphaned ([[When the root moves]]).
 * Moving the files does not change their metadata: the metarecords are the same, and nothing is reconciled on its own. A `mf reconcile` after a copy that did not preserve modification times refreshes them.

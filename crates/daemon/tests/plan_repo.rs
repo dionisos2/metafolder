@@ -51,8 +51,9 @@ async fn request(
     (status, value)
 }
 
-/// Initialises a system (plan) repository; returns its uuid.
-async fn init_system_repo(app: &Router) -> String {
+/// Initialises a system (plan) repository; returns its uuid, and the guard
+/// keeping its root on disk (a repository whose root is gone answers nothing).
+async fn init_system_repo(app: &Router) -> (String, TempDir) {
     let root = temp_dir("root");
     let (status, body) = request(
         app,
@@ -62,13 +63,13 @@ async fn init_system_repo(app: &Router) -> String {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "init failed: {body}");
-    body["repo_uuid"].as_str().unwrap().to_string()
+    (body["repo_uuid"].as_str().unwrap().to_string(), root)
 }
 
 #[tokio::test]
 async fn test_system_repo_hidden_unless_all() {
     let app = app();
-    let uuid = init_system_repo(&app).await;
+    let (uuid, _root) = init_system_repo(&app).await;
 
     // Hidden from the default listing …
     let (status, list) = request(&app, "GET", "/repos", None).await;
@@ -98,7 +99,7 @@ async fn test_system_repo_hidden_unless_all() {
 #[tokio::test]
 async fn test_plan_metarecord_roundtrip() {
     let app = app();
-    let plan = init_system_repo(&app).await;
+    let (plan, _root) = init_system_repo(&app).await;
     let repo_a = Uuid::new_v4().as_simple().to_string();
     let record_a = Uuid::new_v4().as_simple().to_string();
 

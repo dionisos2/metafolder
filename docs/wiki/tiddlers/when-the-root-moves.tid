@@ -1,0 +1,37 @@
+title: When the root moves
+tags: [[Watcher]] Platform
+kind: reference
+summary: A repository whose root moved, vanished or was replaced is frozen until it is loaded again where it is — never followed, never orphaned.
+
+
+Every tracked path is relative to the root, so a root that is no longer there makes every
+path read as gone. Acting on that orphans the whole repository: the watcher, still
+holding watches or a filesystem mark, reports what happens at the new place under the old
+root's names (an inotify source did exactly that — a file removed in the moved
+directory was orphaned as if it had been removed under the old one).
+
+''Detection.'' At the open, the daemon records the root directory's identity (`st_dev`,
+`st_ino`). Every data request and every flush checks it with one `stat`: the path gone,
+or another directory at it (moved away and one made in its place), is a lost root. The
+check does not depend on the watch source, and covers a root renamed, removed, or on a
+drive unplugged.
+
+''Freezing.'' A lost root freezes the repository for good, even if the root comes back:
+
+* every data request answers `503`, naming the old root and how to resume — reads included, unlike an [[offline subtree|Offline subtrees]], since nothing about the files can be told any more;
+* each flush drops what the watcher buffered, writing nothing;
+* a warning in the repository's diagnostics says so once.
+
+''Resuming is explicit.'' The daemon does not follow the root, even a rename it could
+prove (decided October 2026: a moved directory is the user's to confirm). Loading the
+repository again where it is now unloads the frozen one — letting go of its store — and
+loads it there, as [[Moving a repository]] describes: `mf repo load NEW_ROOT`, or for an
+external `.metafolder/`, `root` corrected in its `config.json` and `mf repo load
+--metafolder DIR`. Loading it by its old path works the same once it is back there.
+
+What changed while it was frozen is not replayed: the buffer was dropped. Nothing is
+reconciled on its own after a load ([[Moving a repository]]); a removal made meanwhile
+leaves a stale path, which `mf orphan detect` finds.
+
+Left open ([[Watcher open questions]]): finding a repository that comes back on a
+remounted drive by its volume identity, rather than waiting for a load.

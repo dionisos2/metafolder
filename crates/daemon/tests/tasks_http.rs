@@ -53,18 +53,19 @@ async fn send(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (St
     (status, value)
 }
 
-/// Returns (router, state, repo_uuid hex).
-fn app_with_repo(prefix: &str) -> (Router, Arc<AppState>, String) {
+/// Returns (router, state, repo_uuid hex, the guard keeping its root on disk —
+/// a repository whose root is gone answers nothing).
+fn app_with_repo(prefix: &str) -> (Router, Arc<AppState>, String, TempDir) {
     let state = Arc::new(AppState::new());
     let app = routes::build(state.clone());
     let root = temp_dir(prefix);
     let repo = state.init_repo(&root, None, None, false).unwrap();
-    (app, state, repo.as_simple().to_string())
+    (app, state, repo.as_simple().to_string(), root)
 }
 
 #[tokio::test]
 async fn list_repo_tasks_is_empty_initially() {
-    let (app, _state, repo) = app_with_repo("empty");
+    let (app, _state, repo, _root) = app_with_repo("empty");
     let (status, body) = request(&app, "GET", &format!("/repos/{repo}/tasks")).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, serde_json::json!([]));
@@ -72,7 +73,7 @@ async fn list_repo_tasks_is_empty_initially() {
 
 #[tokio::test]
 async fn list_repo_tasks_returns_seeded_task() {
-    let (app, state, repo) = app_with_repo("seed");
+    let (app, state, repo, _root) = app_with_repo("seed");
     let repo_uuid = Uuid::parse_str(&repo).unwrap();
     let id = state.repo(repo_uuid).unwrap().tasks.start(TaskKind::Reconcile);
     state.repo(repo_uuid).unwrap().tasks.mark_running(id);
@@ -95,7 +96,7 @@ async fn list_repo_tasks_returns_seeded_task() {
 
 #[tokio::test]
 async fn get_single_task_by_id() {
-    let (app, state, repo) = app_with_repo("single");
+    let (app, state, repo, _root) = app_with_repo("single");
     let repo_uuid = Uuid::parse_str(&repo).unwrap();
     let id = state.repo(repo_uuid).unwrap().tasks.start(TaskKind::Query);
     let hex = id.as_simple().to_string();
@@ -109,7 +110,7 @@ async fn get_single_task_by_id() {
 
 #[tokio::test]
 async fn get_unknown_task_is_404() {
-    let (app, _state, repo) = app_with_repo("ghost");
+    let (app, _state, repo, _root) = app_with_repo("ghost");
     let ghost = Uuid::new_v4().as_simple().to_string();
     let (status, _) = request(&app, "GET", &format!("/repos/{repo}/tasks/{ghost}")).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -117,7 +118,7 @@ async fn get_unknown_task_is_404() {
 
 #[tokio::test]
 async fn tasks_on_unknown_repo_is_404() {
-    let (app, _state, _repo) = app_with_repo("norepo");
+    let (app, _state, _repo, _root) = app_with_repo("norepo");
     let other = Uuid::new_v4().as_simple().to_string();
     let (status, _) = request(&app, "GET", &format!("/repos/{other}/tasks")).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -125,7 +126,7 @@ async fn tasks_on_unknown_repo_is_404() {
 
 #[tokio::test]
 async fn query_registers_an_observable_task() {
-    let (app, _state, repo) = app_with_repo("queryobs");
+    let (app, _state, repo, _root) = app_with_repo("queryobs");
     // A query is synchronous; its observation task is retained after completion.
     let (status, _) = post(
         &app,
@@ -174,7 +175,7 @@ async fn seed_history(app: &Router, repo: &str) -> String {
 
 #[tokio::test]
 async fn prune_registers_an_observable_task() {
-    let (app, _state, repo) = app_with_repo("pruneobs");
+    let (app, _state, repo, _root) = app_with_repo("pruneobs");
     seed_history(&app, &repo).await;
 
     // Prune everything before the current HEAD (a synchronous, lock-holding
@@ -206,7 +207,7 @@ async fn prune_registers_an_observable_task() {
 
 #[tokio::test]
 async fn rollback_registers_an_observable_task() {
-    let (app, _state, repo) = app_with_repo("rollbackobs");
+    let (app, _state, repo, _root) = app_with_repo("rollbackobs");
     seed_history(&app, &repo).await;
 
     let (status, body) = post(
@@ -236,7 +237,7 @@ async fn rollback_registers_an_observable_task() {
 /// like `flush`/`load` and unlike `query`.
 #[tokio::test]
 async fn cancel_prune_or_rollback_task_is_400() {
-    let (app, state, repo) = app_with_repo("cancelnav");
+    let (app, state, repo, _root) = app_with_repo("cancelnav");
     let repo_uuid = Uuid::parse_str(&repo).unwrap();
     for kind in [TaskKind::Prune, TaskKind::Rollback] {
         let id = state.repo(repo_uuid).unwrap().tasks.start(kind);
@@ -249,7 +250,7 @@ async fn cancel_prune_or_rollback_task_is_400() {
 
 #[tokio::test]
 async fn concurrent_reconcile_is_rejected_with_409() {
-    let (app, state, repo) = app_with_repo("dedup");
+    let (app, state, repo, _root) = app_with_repo("dedup");
     let repo_uuid = Uuid::parse_str(&repo).unwrap();
     // Occupy the reconcile slot with an active task.
     state.repo(repo_uuid).unwrap().tasks.start_unique(TaskKind::Reconcile).unwrap();
@@ -262,7 +263,7 @@ async fn concurrent_reconcile_is_rejected_with_409() {
 async fn concurrent_duplicate_scan_is_rejected_with_409() {
     // Same rule as reconcile, and for the same reason: a second run would only
     // redo work already in progress (doc "Task concurrency").
-    let (app, state, repo) = app_with_repo("dupdedup");
+    let (app, state, repo, _root) = app_with_repo("dupdedup");
     let repo_uuid = Uuid::parse_str(&repo).unwrap();
     state.repo(repo_uuid).unwrap().tasks.start_unique(TaskKind::Duplicates).unwrap();
 
@@ -274,7 +275,7 @@ async fn concurrent_duplicate_scan_is_rejected_with_409() {
 async fn a_duplicate_scan_task_is_cancellable() {
     // Unlike prune/rollback: hashes are committed in batches, so stopping keeps
     // the expensive work already done.
-    let (app, state, repo) = app_with_repo("dupcancel");
+    let (app, state, repo, _root) = app_with_repo("dupcancel");
     let repo_uuid = Uuid::parse_str(&repo).unwrap();
     let id = state.repo(repo_uuid).unwrap().tasks.start(TaskKind::Duplicates);
     state.repo(repo_uuid).unwrap().tasks.mark_running(id);
@@ -286,7 +287,7 @@ async fn a_duplicate_scan_task_is_cancellable() {
 
 #[tokio::test]
 async fn cancel_active_reconcile_sets_the_flag_and_returns_the_task() {
-    let (app, state, repo) = app_with_repo("cancelok");
+    let (app, state, repo, _root) = app_with_repo("cancelok");
     let repo_uuid = Uuid::parse_str(&repo).unwrap();
     // Seed a running reconcile (no real worker, so it stays running with the
     // flag set; the route's contract is what we assert here).
@@ -306,7 +307,7 @@ async fn cancel_flush_task_stops_it_and_pauses_ingestion() {
     // stoppable — and stopping it pauses the repository's tracking, or the next
     // event would start the very flush that was just stopped
     // (doc "Pausing the watcher").
-    let (app, state, repo) = app_with_repo("cancelflush");
+    let (app, state, repo, _root) = app_with_repo("cancelflush");
     let repo_uuid = Uuid::parse_str(&repo).unwrap();
     let id = state.repo(repo_uuid).unwrap().tasks.start(TaskKind::Flush);
     state.repo(repo_uuid).unwrap().tasks.mark_running(id);
@@ -325,7 +326,7 @@ async fn cancel_flush_task_stops_it_and_pauses_ingestion() {
 #[tokio::test]
 async fn cancel_load_task_is_400() {
     // `load` is a warmup with nothing to roll back: still not cancellable.
-    let (app, state, repo) = app_with_repo("cancelload");
+    let (app, state, repo, _root) = app_with_repo("cancelload");
     let repo_uuid = Uuid::parse_str(&repo).unwrap();
     let id = state.repo(repo_uuid).unwrap().tasks.start(TaskKind::Load);
     let hex = id.as_simple().to_string();
@@ -335,7 +336,7 @@ async fn cancel_load_task_is_400() {
 
 #[tokio::test]
 async fn cancel_terminal_task_is_409() {
-    let (app, state, repo) = app_with_repo("cancelterm");
+    let (app, state, repo, _root) = app_with_repo("cancelterm");
     let repo_uuid = Uuid::parse_str(&repo).unwrap();
     let id = state.repo(repo_uuid).unwrap().tasks.start(TaskKind::Reconcile);
     state.repo(repo_uuid).unwrap().tasks.finish(id, None);
@@ -346,7 +347,7 @@ async fn cancel_terminal_task_is_409() {
 
 #[tokio::test]
 async fn cancel_unknown_task_is_404() {
-    let (app, _state, repo) = app_with_repo("cancelghost");
+    let (app, _state, repo, _root) = app_with_repo("cancelghost");
     let ghost = Uuid::new_v4().as_simple().to_string();
     let (status, _) = request(&app, "POST", &format!("/repos/{repo}/tasks/{ghost}/cancel")).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -430,7 +431,7 @@ async fn unload_is_refused_while_a_load_warmup_is_active() {
     // database locked with no reachable task to wait on, so it is refused (409)
     // until the warmup finishes. Seed an active load task directly (a real
     // warmup of a tiny repo finishes too fast to observe).
-    let (app, state, repo) = app_with_repo("loadunload");
+    let (app, state, repo, _root) = app_with_repo("loadunload");
     let repo_uuid = Uuid::parse_str(&repo).unwrap();
     let id = state.repo(repo_uuid).unwrap().tasks.start(TaskKind::Load);
     state.repo(repo_uuid).unwrap().tasks.mark_running(id);
@@ -446,7 +447,7 @@ async fn unload_is_refused_while_a_load_warmup_is_active() {
 
 #[tokio::test]
 async fn global_tasks_lists_across_repos() {
-    let (app, state, repo) = app_with_repo("global");
+    let (app, state, repo, _root) = app_with_repo("global");
     let repo_uuid = Uuid::parse_str(&repo).unwrap();
     let id = state.repo(repo_uuid).unwrap().tasks.start(TaskKind::Reconcile);
 

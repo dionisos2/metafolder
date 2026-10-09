@@ -1244,9 +1244,9 @@ mod tests {
             ]
         );
         // Its subscriber is told nothing: the root no longer resolves where it
-        // was, and the new name is not its root. What a daemon should do then
-        // is open (doc "Watcher open questions", the repository root going
-        // away); this pins today's answer, so a change to it is deliberate.
+        // was, and the new name is not its root. The daemon does not rely on
+        // the broker for it: it checks its root itself (doc "When the root
+        // moves").
         assert_eq!(tree(&received(&mut inner)), vec![]);
     }
 

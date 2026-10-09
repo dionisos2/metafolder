@@ -39,8 +39,10 @@ async fn request(
 }
 
 /// A repository whose root is watched and carries one ignore pattern, with a
-/// `work` directory tracked and given its own (replacing) pattern set.
-async fn setup() -> (Router, String) {
+/// `work` directory tracked and given its own (replacing) pattern set. The
+/// guard keeps the root on disk: a repository whose root is gone answers
+/// nothing (doc "When the root moves").
+async fn setup() -> (Router, String, TempDir) {
     let app = routes::build(std::sync::Arc::new(AppState::new()));
     let root = TempDir::new("ignhttp");
     std::fs::create_dir_all(root.join("work")).unwrap();
@@ -85,7 +87,7 @@ async fn setup() -> (Router, String) {
         json!([{"type": "string", "value": r"target(/.*)?$"}]),
     )
     .await;
-    (app, repo)
+    (app, repo, root)
 }
 
 async fn tree_root(app: &Router, repo: &str) -> String {
@@ -111,7 +113,7 @@ async fn put_field(app: &Router, repo: &str, uuid: &str, name: &str, values: Val
 
 #[tokio::test]
 async fn test_eligibility_explains_each_path() {
-    let (app, repo) = setup().await;
+    let (app, repo, _root) = setup().await;
     let (status, body) = request(
         &app,
         "POST",
@@ -146,7 +148,7 @@ async fn test_eligibility_explains_each_path() {
 
 #[tokio::test]
 async fn test_eligibility_rejects_an_oversized_batch() {
-    let (app, repo) = setup().await;
+    let (app, repo, _root) = setup().await;
     let paths: Vec<String> = (0..1001).map(|i| format!("/f{i}")).collect();
     let (status, body) = request(
         &app,
@@ -160,7 +162,7 @@ async fn test_eligibility_rejects_an_oversized_batch() {
 
 #[tokio::test]
 async fn test_eligibility_rejects_a_path_without_leading_slash() {
-    let (app, repo) = setup().await;
+    let (app, repo, _root) = setup().await;
     let (status, body) = request(
         &app,
         "POST",
@@ -173,7 +175,7 @@ async fn test_eligibility_rejects_a_path_without_leading_slash() {
 
 #[tokio::test]
 async fn test_effective_ignore_reports_source_and_directness() {
-    let (app, repo) = setup().await;
+    let (app, repo, _root) = setup().await;
 
     // A directory with its own set.
     let (status, body) =

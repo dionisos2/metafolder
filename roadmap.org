@@ -43,9 +43,9 @@ Driven 9 October 2026: bursts mixing renames and removals of the same names
 read late (=early_journey.rs=, every regime), and nested roots of two
 subscribers (=sim.rs=). They found two bugs, both in the inotify half the
 journey runs beside the simulator (=77776ca1=, =5614e701=); the overlapping
-roots behave. Not yet driven: a kernel overflow end to end, and the
-repository root itself moved — a subscriber is told nothing, which pins doc
-"Watcher open questions" (undefined for now) rather than answering it.
+roots behave; a root moved away freezes its repository until it is loaded
+again (doc "When the root moves"). Not yet driven: a kernel overflow end to
+end.
 
 ** TODO fanotify: what the note leaves open
 From doc "Watcher open questions" (and doc "The fanotify broker"):

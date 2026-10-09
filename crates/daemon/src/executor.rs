@@ -423,6 +423,14 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
     if repo.is_ingestion_paused() {
         return Ok(FlushStats::default());
     }
+    // The root is gone (doc "When the root moves"): what the buffer holds is
+    // named under a root that is not there, and every path would read as a
+    // deletion. Dropped — a reconcile after the load at the new root is the
+    // word on what changed meanwhile.
+    if !repo.root_present() {
+        drop(take_pending(repo));
+        return Ok(FlushStats::default());
+    }
     // Timed from here, waiting for the connection included: what the summary
     // line reports is how long the flush took, not how long it worked.
     let started = std::time::Instant::now();

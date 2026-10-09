@@ -2,8 +2,8 @@ title: Watcher open questions
 tags: [[Watcher]]
 kind: question
 status: deferred
-summary: The repository root itself going away while the daemon runs; ignore marks for busy directories outside the roots.
+summary: A repository found again on a remounted drive by its volume identity; ignore marks for busy directories outside the roots.
 
-* ''The repository root going away.'' A removable volume ''inside'' a repository is handled (it goes offline and its subtree freezes). The root itself vanishing while the daemon runs — the whole repository on an unplugged drive, or the root renamed — is not: the root has no ancestor to compare devices with, its `.metafolder/internal/kv/` may vanish under an open, locked store, and the absolute `root` of `config.json` is no stable identity across remounts. The daemon should detect it, mark the repository unavailable and let go of its store — and, coming back, find the repository by volume identity rather than by path. Undefined for now.
+* ''A repository coming back on a remounted drive.'' A root that moves, vanishes or is replaced freezes the repository until it is loaded again ([[When the root moves]]). What is open is finding it again by itself: the absolute `root` is no stable identity across remounts, and a drive plugged back in could be recognised by its volume identity (as `mfr_mount` records one) rather than waiting for a load.
 * ''Events outside the roots'' still cost the fanotify group's queue and can overflow it for everyone; kernel ignore marks on the busiest outside directories would stop them ([[The fanotify broker]]).
 * ''A per-repository choice of source'' (forcing inotify for one repository while the broker serves the others) has not been asked for; today the socket is the only switch.

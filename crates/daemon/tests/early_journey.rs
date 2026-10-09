@@ -640,6 +640,90 @@ async fn test_a_folder_renamed_worked_in_and_its_name_reused_unread(regime: Regi
     assert_eq!(orphan_count(&app, &repo).await, 1, "only the removed x is gone");
 }
 
+// ── The repository root itself moved ─────────────────────────────────────────
+
+/// The repository answers data requests again (its `load` task done).
+async fn wait_ready(app: &Router, repo: &str) {
+    for _ in 0..200 {
+        let (status, _) = request(app, "GET", &format!("/repos/{repo}/fields"), None).await;
+        if status == StatusCode::OK {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("the repository never became ready again");
+}
+
+async fn test_a_moved_root_freezes_the_repository_until_loaded_at_its_new_path(regime: Regime) {
+    // Freezing, not following: every path under the old root reads as gone,
+    // and nothing may be orphaned for it. The repository answers again once
+    // loaded at its new path — explicitly (doc "When the root moves").
+    let (app, repo, root) = repo_with("rootmove", regime, &["d/x", "y"]).await;
+    let x = uuid_at(&app, &repo, "d/x").await;
+    let fs = regime.fs();
+    let elsewhere = TempDir::new("rootmove_elsewhere");
+    let moved = elsewhere.join("repo");
+    fs.rename(&root, &moved).unwrap();
+    // A change at the new place before anything is loaded there: the watcher
+    // may report it under the old root, and it must not be acted on.
+    fs.remove_file(moved.join("y")).unwrap();
+    // Longer than the quiet period (500 ms here) and a flush.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "is_present", "field": "mfr_path"}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "a lost root serves no data: {body}");
+    let message = body["error"].as_str().unwrap_or_default();
+    assert!(message.contains("mf repo load"), "the error says how to resume: {message}");
+
+    let (status, body) =
+        request(&app, "POST", "/repos/load", Some(json!({"root": moved.to_str().unwrap()}))).await;
+    assert_eq!(status, StatusCode::OK, "loading at the new path: {body}");
+    assert_eq!(body["repo_uuid"], repo.as_str(), "the same repository");
+    wait_ready(&app, &repo).await;
+    let (_, info) = request(&app, "GET", &format!("/repos/{repo}"), None).await;
+    assert_eq!(info["root"], moved.canonicalize().unwrap().to_str().unwrap(), "{info}");
+    assert_eq!(uuid_at(&app, &repo, "d/x").await, x, "the records are where they were");
+    assert_eq!(orphan_count(&app, &repo).await, 0, "the move orphaned nothing");
+
+    // Watching again, at the new place.
+    fs.write(moved.join("z"), b"z").unwrap();
+    settle_on(&app, &repo, &["", "d", "d/x", "y", "z"]).await;
+    // y went while the repository was frozen: only a reconcile can tell, and
+    // it never orphans — it is `mf orphan detect`'s to find.
+    let _ = root;
+}
+
+async fn test_a_root_replaced_by_another_directory_is_lost_too(regime: Regime) {
+    // The same path, another directory: an empty one read as the root would
+    // orphan everything the repository holds.
+    let (app, repo, root) = repo_with("rootswap", regime, &["d/x"]).await;
+    let fs = regime.fs();
+    let elsewhere = TempDir::new("rootswap_elsewhere");
+    fs.rename(&root, elsewhere.join("repo")).unwrap();
+    fs.create_dir(&root).unwrap();
+    fs.write(root.join("stranger"), b"s").unwrap();
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let (status, body) = request(&app, "GET", &format!("/repos/{repo}/fields"), None).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+
+    // Back where it was, the original is loaded again by the same path.
+    fs.remove_file(root.join("stranger")).unwrap();
+    fs.remove_dir(&root).unwrap();
+    fs.rename(elsewhere.join("repo"), &root).unwrap();
+    let (status, body) =
+        request(&app, "POST", "/repos/load", Some(json!({"root": root.to_str().unwrap()}))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    wait_ready(&app, &repo).await;
+    assert_eq!(tracked_paths(&app, &repo).await, vec!["", "d", "d/x"]);
+    assert_eq!(orphan_count(&app, &repo).await, 0);
+}
+
 on_every_regime!(
     test_first_minutes_of_a_repository,
     test_moving_a_folder_keeps_the_watcher_and_reconcile_in_agreement,
@@ -658,4 +742,6 @@ on_every_regime!(
     test_a_folder_renamed_and_a_file_removed_from_it_unread,
     test_a_folder_renamed_and_a_file_moved_out_of_the_repository_unread,
     test_a_folder_renamed_worked_in_and_its_name_reused_unread,
+    test_a_moved_root_freezes_the_repository_until_loaded_at_its_new_path,
+    test_a_root_replaced_by_another_directory_is_lost_too,
 );
