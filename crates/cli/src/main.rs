@@ -260,7 +260,8 @@ enum Command {
 
 #[derive(Subcommand)]
 enum RepoCommand {
-    /// List the loaded repositories (pretty-printed JSON)
+    /// List the loaded repositories (pretty-printed JSON), and those whose root
+    /// went away, marked `"lost": true`
     List {
         /// Also list daemon-internal system repos (e.g. sync plan repos)
         #[arg(long)]

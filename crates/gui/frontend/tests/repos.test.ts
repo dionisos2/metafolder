@@ -39,6 +39,7 @@ interface Repo {
   name: string;
   root: string;
   internal_dir?: string;
+  lost?: boolean;
 }
 
 /** A minimal in-memory stand-in for the daemon's repository endpoints. */
@@ -55,7 +56,11 @@ function fakeDaemon() {
   function request(method: string, path: string, body: unknown) {
     calls.push({ method, path, body });
     const bare = path.split('?')[0];
-    if (method === 'GET' && bare === '/repos') return { status: 200, body: repos.slice() };
+    if (method === 'GET' && bare === '/repos') {
+      // Lost repositories only when asked for (doc "When the root moves").
+      const lost = path.includes('lost=true');
+      return { status: 200, body: repos.filter((r) => lost || !r.lost) };
+    }
     if (method === 'GET' && bare === '/tasks') return { status: 200, body: tasks.slice() };
     if (method === 'POST' && /^\/repos\/[^/]+\/tasks\/[^/]+\/cancel$/.test(bare)) {
       cancelled.push(bare.split('/')[4]);
@@ -319,6 +324,47 @@ describe('repos panel', () => {
 
     expect(daemon.repos).toHaveLength(0);
     expect(shadow.querySelectorAll('#repo-list > li')).toHaveLength(0);
+  });
+});
+
+describe('repos panel — a lost repository', () => {
+  beforeEach(() => changeFeed._reset());
+
+  test('is listed, marked, says how to resume, and cannot be opened', async () => {
+    const { api, daemon, dispatch, created, calls } = (() => {
+      const s = setup({ activeRepo: null });
+      return { ...s, calls: s.daemon.calls };
+    })();
+    daemon.repos.push({ repo_uuid: 'r1', name: 'photos', root: '/tmp/photos', lost: true });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    const row = shadow.querySelector('#repo-list > li') as HTMLElement;
+    expect(row).not.toBeNull();
+    expect(row.classList.contains('lost')).toBe(true);
+    expect(row.textContent).toContain('mf repo load');
+    // Nothing to retype in, nothing to open, no watcher to ask about.
+    expect(row.textContent).not.toContain('Retype');
+    (row.querySelector('.repo-head') as HTMLElement).click();
+    await settle();
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(created).toEqual([]);
+    expect(calls.some((c) => c.path === '/repos/r1/watch')).toBe(false);
+  });
+
+  test('forgetting it unloads it', async () => {
+    const { api, daemon } = setup({ activeRepo: null });
+    daemon.repos.push({ repo_uuid: 'r1', name: 'photos', root: '/tmp/photos', lost: true });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    const forget = shadow.querySelector('#repo-list .repo-unload') as HTMLElement;
+    expect(forget.textContent).toBe('Forget');
+    forget.click();
+    await settle();
+    expect(daemon.repos).toHaveLength(0);
   });
 });
 

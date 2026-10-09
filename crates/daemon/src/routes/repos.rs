@@ -87,13 +87,22 @@ pub(super) async fn diagnostics_since(
 pub(super) struct ListReposParams {
     #[serde(default)]
     all: bool,
+    /// Also the repositories unloaded because their root went away, marked
+    /// `lost` (doc "When the root moves").
+    #[serde(default)]
+    lost: bool,
 }
 
 pub(super) async fn list_repos(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ListReposParams>,
 ) -> Json<serde_json::Value> {
-    Json(serde_json::to_value(state.list_repos(params.all)).expect("repo list serialization"))
+    let mut repos = state.list_repos(params.all);
+    if params.lost {
+        repos.extend(state.lost_repos(params.all));
+        repos.sort_by_key(|r| r.repo_uuid);
+    }
+    Json(serde_json::to_value(repos).expect("repo list serialization"))
 }
 
 /// `GET /repos/:repo` — one loaded repository's info (404 if not loaded).

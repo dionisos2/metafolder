@@ -1,7 +1,7 @@
 title: When the root moves
 tags: [[Watcher]] Platform
 kind: reference
-summary: A repository whose root moved, vanished or was replaced is frozen until it is loaded again where it is — never followed, never orphaned.
+summary: A repository whose root moved, vanished or was replaced is unloaded and listed as lost until it is loaded again where it is — never followed, never orphaned.
 
 
 Every tracked path is relative to the root, so a root that is no longer there makes every
@@ -16,20 +16,32 @@ or another directory at it (moved away and one made in its place), is a lost roo
 check does not depend on the watch source, and covers a root renamed, removed, or on a
 drive unplugged.
 
-''Freezing.'' A lost root freezes the repository for good, even if the root comes back:
+''Unloading.'' A lost root takes the repository out of service for good, even if the root
+comes back:
 
-* every data request answers `503`, naming the old root and how to resume — reads included, unlike an [[offline subtree|Offline subtrees]], since nothing about the files can be told any more;
-* each flush drops what the watcher buffered, writing nothing;
+* the daemon unloads it — tasks asked to stop, a rollback lock dropped, watcher and executor stopped, the store and its lock let go — on a thread of its own, since the executor can be the one that found the root gone and the unload joins it;
+* until that is done, each flush drops what the watcher buffered, writing nothing;
 * a warning in the repository's diagnostics says so once.
+
+It stays known as ''lost'' until it is loaded again or unloaded: every request addressed to
+it answers `503`, naming the old root and how to resume — reads included, unlike an
+[[offline subtree|Offline subtrees]], since nothing about the files can be told any more —
+and `GET /repos?lost=true` lists it with `lost: true`, which is what the GUI's
+[[repos panel]] and `mf repo list` show. The plain `GET /repos` does not: it is the list
+of repositories a client can use, and the GUI maps file paths to repositories with it —
+a lost one there would claim a root that is no longer its own, or another directory now in
+its place. Unloading a lost repository (`mf repo unload`, ''Forget'' in the panel) forgets
+it.
 
 ''Resuming is explicit.'' The daemon does not follow the root, even a rename it could
 prove (decided October 2026: a moved directory is the user's to confirm). Loading the
-repository again where it is now unloads the frozen one — letting go of its store — and
-loads it there, as [[Moving a repository]] describes: `mf repo load NEW_ROOT`, or for an
-external `.metafolder/`, `root` corrected in its `config.json` and `mf repo load
---metafolder DIR`. Loading it by its old path works the same once it is back there.
+repository where it is now is an ordinary load, as [[Moving a repository]] describes:
+`mf repo load NEW_ROOT`, or for an external `.metafolder/`, `root` corrected in its
+`config.json` and `mf repo load --metafolder DIR`. Loading it by its old path works the
+same once it is back there. A lost repository of the same uuid or name is no longer
+listed once another is loaded.
 
-What changed while it was frozen is not replayed: the buffer was dropped. Nothing is
+What changed while it was lost is not replayed: the buffer was dropped. Nothing is
 reconciled on its own after a load ([[Moving a repository]]); a removal made meanwhile
 leaves a stale path, which `mf orphan detect` finds.
 

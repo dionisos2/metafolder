@@ -11,7 +11,7 @@ Repository management (default: list)
 Usage: mf repo [COMMAND]
 
 Commands:
-  list     List the loaded repositories (pretty-printed JSON)
+  list     List the loaded repositories (pretty-printed JSON), and those whose root went away, marked `"lost": true`
   init     Initialise a new repository and print its UUID
   load     Load an existing repository, wait for its warmup and print its UUID
   unload   Unload the selected repository (stops its watcher, releases its DB lock)

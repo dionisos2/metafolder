@@ -285,6 +285,47 @@ fn test_repos_lists_loaded_repositories() {
 }
 
 #[test]
+fn test_a_lost_repository_is_listed_as_lost_and_explained() {
+    // Its root moved away (doc "When the root moves"): unloaded by the
+    // daemon, still listed so the user can tell why it answers nothing.
+    let (repo, root) = init_repo("lostroot");
+    let elsewhere = temp_dir("lostroot_elsewhere");
+    let moved = elsewhere.join("repo");
+    std::fs::rename(&root, &moved).unwrap();
+    let out = mf(&["-u", &repo, "metarecord", "get"]);
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    assert!(out.stderr.contains("mf repo load"), "says how to resume: {}", out.stderr);
+
+    let mut entry = serde_json::Value::Null;
+    for _ in 0..100 {
+        let listed: serde_json::Value =
+            serde_json::from_str(&mf(&["repo", "list"]).stdout).unwrap();
+        entry = listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["repo_uuid"] == repo.as_str())
+            .cloned()
+            .unwrap_or_default();
+        if entry["lost"] == true {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert_eq!(entry["lost"], true, "{entry}");
+
+    // Loaded again where it is now: the same repository, no longer lost.
+    let out = mf(&["repo", "load", moved.to_str().unwrap()]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), repo);
+    let listed: serde_json::Value = serde_json::from_str(&mf(&["repo", "list"]).stdout).unwrap();
+    let entry =
+        listed.as_array().unwrap().iter().find(|r| r["repo_uuid"] == repo.as_str()).unwrap();
+    assert_eq!(entry["lost"], false, "{entry}");
+    assert_ok(&mf(&["-u", &repo, "repo", "unload"]));
+}
+
+#[test]
 fn test_unload_removes_repo_and_allows_reload() {
     let (repo, root) = init_repo("unload");
 

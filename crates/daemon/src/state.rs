@@ -147,6 +147,10 @@ pub struct RepoState {
     /// repository stays frozen until it is loaded again, even if the root
     /// comes back.
     root_lost: std::sync::atomic::AtomicBool,
+    /// What finding the root lost sets off: the [`AppState`] holding this
+    /// repository unloads it (see [`AppState::register`]). Unset in a
+    /// repository built outside one (unit tests): it is only frozen.
+    on_root_lost: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>>,
 }
 
 /// State of an in-progress coordinated operation. Both kinds suspend the
@@ -229,12 +233,14 @@ impl RepoState {
             slowlog,
             root_identity,
             root_lost: std::sync::atomic::AtomicBool::new(false),
+            on_root_lost: std::sync::OnceLock::new(),
         }
     }
 
     /// Whether the root is still the directory the repository was opened on.
     /// Once it is not — moved, removed, unmounted, or another directory in its
-    /// place — the repository is frozen for good (doc "When the root moves"):
+    /// place — the repository is frozen for good, then unloaded by the
+    /// [`AppState`] holding it (doc "When the root moves"):
     /// every path under the old root reads as gone, and acting on that would
     /// orphan the whole repository. Following the root is deliberately not
     /// done: `mf repo load <new root>` resumes it, explicitly.
@@ -249,6 +255,9 @@ impl RepoState {
         }
         if !self.root_lost.swap(true, Ordering::AcqRel) {
             crate::diagnostics::warn_for("repo", self.root_lost_message(), self.uuid());
+            if let Some(unload) = self.on_root_lost.get() {
+                unload();
+            }
         }
         false
     }
@@ -302,6 +311,7 @@ impl RepoState {
             internal_dir: self.internal_dir(),
             created_at: self.config.created_at,
             system: self.config.system,
+            lost: self.root_lost.load(std::sync::atomic::Ordering::Acquire),
         }
     }
 
@@ -896,6 +906,23 @@ impl RepoState {
     }
 }
 
+/// Unloads a repository whose root went away, whatever it was doing: nothing
+/// it runs can succeed without its files (doc "When the root moves"). Its
+/// tasks are asked to stop and a rollback lock is dropped, then the watcher
+/// and executor are stopped *here* — joined from this thread, never the
+/// executor's own — so the last reference, wherever it ends, releases the
+/// store and nothing else.
+fn let_go(repo: Arc<RepoState>) {
+    for task in repo.tasks.list() {
+        if task.status.is_active() {
+            let _ = repo.tasks.request_cancel(task.id);
+        }
+    }
+    *repo.rollback_lock.lock_recover() = None;
+    let handles = repo.handles.lock_recover().take();
+    drop(handles);
+}
+
 /// The identity of the directory at `root` (`st_dev`, `st_ino`), following a
 /// symlinked root as the repository does; `None` when it cannot be read.
 fn root_identity_of(root: &Path) -> Option<(u64, u64)> {
@@ -962,7 +989,11 @@ pub struct RepoHandles {
 
 #[derive(Default)]
 pub struct AppState {
-    repos: Mutex<HashMap<Uuid, Arc<RepoState>>>,
+    /// Shared, weakly, with each repository's root-lost hook ([`AppState::register`]),
+    /// which unloads it without holding the state itself.
+    repos: Arc<Mutex<HashMap<Uuid, Arc<RepoState>>>>,
+    /// Repositories unloaded because their root went away, still listed.
+    lost: Arc<Mutex<HashMap<Uuid, LostRepo>>>,
     /// Shipped default schema copied into each new repo at init (doc "Schema").
     /// `None` (the default, used by tests) disables seeding.
     seed_schema_path: Option<PathBuf>,
@@ -973,7 +1004,7 @@ pub struct AppState {
 }
 
 /// Public description of a loaded repository (`GET /repos`).
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct RepoInfo {
     #[serde(with = "metafolder_core::metarecord::hex_uuid")]
     pub repo_uuid: Uuid,
@@ -986,6 +1017,19 @@ pub struct RepoInfo {
     /// A daemon-internal repository (the sync plan repo, doc "The sync plan"), hidden from the
     /// default `GET /repos` listing.
     pub system: bool,
+    /// Its root went away (doc "When the root moves"): the repository was
+    /// unloaded, and is listed — by `GET /repos?lost=true` only — so that
+    /// clients can say why it answers nothing, until it is loaded again or
+    /// unloaded.
+    pub lost: bool,
+}
+
+/// A repository unloaded because its root went away: what is still said about
+/// it, until it is loaded again or unloaded (doc "When the root moves").
+#[derive(Clone)]
+struct LostRepo {
+    info: RepoInfo,
+    message: String,
 }
 
 impl AppState {
@@ -1028,7 +1072,7 @@ impl AppState {
         // A fresh repository is tiny, so warm it synchronously (no progress bar):
         // `init` returns a repository that already answers.
         repo_state.warm(&|_, _, _| {})?;
-        self.repos.lock_recover().insert(uuid, repo_state);
+        self.register(repo_state);
         Ok(uuid)
     }
 
@@ -1054,11 +1098,14 @@ impl AppState {
                 if loaded.root_present() {
                     return Ok(config.repo_uuid);
                 }
-                // Frozen on a root that went away: this load is the explicit
+                // Lost, and its unload not done yet: this load is the explicit
                 // word that it is here now (doc "When the root moves"). The
-                // frozen one lets go of its store first.
+                // lost one lets go of its store first.
                 drop(loaded);
-                self.unload_repo(config.repo_uuid)?;
+                let removed = self.repos.lock_recover().remove(&config.repo_uuid);
+                if let Some(removed) = removed {
+                    let_go(removed);
+                }
             }
         }
         let opened = repo::load_repository(RepoLocator::Metafolder(metafolder_dir))?;
@@ -1071,7 +1118,7 @@ impl AppState {
         // Before registering: an invalid schema must fail the load, not leave a
         // registered repository that never becomes ready.
         repo_state.load_config()?;
-        self.repos.lock_recover().insert(uuid, repo_state);
+        self.register(repo_state);
         Ok(uuid)
     }
 
@@ -1085,6 +1132,34 @@ impl AppState {
             )));
         }
         Ok(())
+    }
+
+    /// Makes `repo_state` one of the loaded repositories — and the one it
+    /// replaces, if it was lost, no longer listed. Installs the hook that
+    /// unloads it when its root goes away (doc "When the root moves"): on a
+    /// thread of its own, since the root can be found gone by the executor,
+    /// whose thread the unload joins.
+    fn register(&self, repo_state: Arc<RepoState>) {
+        let uuid = repo_state.uuid();
+        let name = repo_state.name();
+        // Weakly: the map holds this repository, so a strong reference here
+        // would keep both alive — and the store locked — after the state is gone.
+        let repos = Arc::downgrade(&self.repos);
+        let lost = Arc::downgrade(&self.lost);
+        let _ = repo_state.on_root_lost.set(Box::new(move || {
+            let (repos, lost) = (repos.clone(), lost.clone());
+            std::thread::spawn(move || {
+                let (Some(repos), Some(lost)) = (repos.upgrade(), lost.upgrade()) else { return };
+                let Some(repo) = repos.lock_recover().remove(&uuid) else { return };
+                let entry = LostRepo { info: repo.info(), message: repo.root_lost_message() };
+                lost.lock_recover().insert(uuid, entry);
+                let_go(repo);
+            });
+        }));
+        // A lost repository of the same uuid is this one back; one of the same
+        // name would make `-n <name>` ambiguous.
+        self.lost.lock_recover().retain(|u, l| *u != uuid && l.info.name != name);
+        self.repos.lock_recover().insert(uuid, repo_state);
     }
 
     /// Takes the automatic backup of every loaded repository that is due
@@ -1217,6 +1292,10 @@ impl AppState {
     /// - a `load` warmup is in flight: it holds the connection, so the unload
     ///   waits for it to finish (warmup is not cancellable).
     pub fn unload_repo(&self, repo_uuid: Uuid) -> Result<(), ApiError> {
+        // Already unloaded, its root gone: unloading it forgets it.
+        if self.lost.lock_recover().remove(&repo_uuid).is_some() {
+            return Ok(());
+        }
         let removed = {
             let mut repos = self.repos.lock_recover();
             let Some(repo_state) = repos.get(&repo_uuid) else {
@@ -1253,11 +1332,13 @@ impl AppState {
 
     /// Fetches a loaded repository or fails with 404.
     pub fn repo(&self, repo_uuid: Uuid) -> Result<Arc<RepoState>, ApiError> {
-        self.repos
-            .lock_recover()
-            .get(&repo_uuid)
-            .cloned()
-            .ok_or_else(|| ApiError::not_found(format!("Repository not found: {repo_uuid}")))
+        if let Some(repo) = self.repos.lock_recover().get(&repo_uuid) {
+            return Ok(Arc::clone(repo));
+        }
+        if let Some(lost) = self.lost.lock_recover().get(&repo_uuid) {
+            return Err(ApiError::unavailable(lost.message.clone()));
+        }
+        Err(ApiError::not_found(format!("Repository not found: {repo_uuid}")))
     }
 
     /// The repository, if it can serve *data*.
@@ -1283,16 +1364,38 @@ impl AppState {
     /// Loaded repositories, sorted by UUID. `include_system` keeps daemon-internal
     /// repos (sync plan repos, doc "The sync plan") that are otherwise hidden.
     pub fn list_repos(&self, include_system: bool) -> Vec<RepoInfo> {
-        let repos = self.repos.lock_recover();
+        // A repository found lost a moment ago is still in the map until its
+        // unload runs: it is not one a client can use any more.
         let mut infos: Vec<RepoInfo> =
-            repos.values().map(|r| r.info()).filter(|i| include_system || !i.system).collect();
+            self.repos.lock_recover().values().map(|r| r.info()).collect();
+        infos.retain(|i| (include_system || !i.system) && !i.lost);
+        infos.sort_by_key(|i| i.repo_uuid);
+        infos
+    }
+
+    /// The repositories unloaded because their root went away, still listed
+    /// until they are loaded again or unloaded (doc "When the root moves") —
+    /// what `GET /repos?lost=true` adds. Apart from the loaded ones on purpose:
+    /// a client mapping paths to repositories must not find one under a root
+    /// that is no longer its own.
+    pub fn lost_repos(&self, include_system: bool) -> Vec<RepoInfo> {
+        let mut infos: Vec<RepoInfo> =
+            self.repos.lock_recover().values().map(|r| r.info()).filter(|i| i.lost).collect();
+        let tombstones = self.lost.lock_recover();
+        infos.retain(|i| !tombstones.contains_key(&i.repo_uuid));
+        infos.extend(tombstones.values().map(|l| l.info.clone()));
+        infos.retain(|i| include_system || !i.system);
         infos.sort_by_key(|i| i.repo_uuid);
         infos
     }
 
     /// One loaded repository's info, or 404.
     pub fn repo_info(&self, repo_uuid: Uuid) -> Result<RepoInfo, ApiError> {
-        Ok(self.repo(repo_uuid)?.info())
+        let repo = self.repo(repo_uuid)?;
+        if !repo.root_present() {
+            return Err(ApiError::unavailable(repo.root_lost_message()));
+        }
+        Ok(repo.info())
     }
 
     /// Renames a loaded repository, keeping names unique among loaded repos

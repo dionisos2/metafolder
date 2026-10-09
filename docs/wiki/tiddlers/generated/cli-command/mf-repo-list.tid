@@ -1,12 +1,12 @@
 title: $:/mf/gen/CLI command/mf repo list
 catalog: CLI command
 target: mf repo list
-summary: List the loaded repositories (pretty-printed JSON)
+summary: List the loaded repositories (pretty-printed JSON), and those whose root went away, marked `"lost": true`
 
 !! Reference
 
 ```
-List the loaded repositories (pretty-printed JSON)
+List the loaded repositories (pretty-printed JSON), and those whose root went away, marked `"lost": true`
 
 Usage: mf repo list [OPTIONS]
 

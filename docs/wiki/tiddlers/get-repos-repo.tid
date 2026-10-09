@@ -2,6 +2,6 @@ title: GET /repos/:repo
 tags: [[HTTP endpoint]] [[Repository endpoints]]
 kind: reference
 audience: dev
-summary: One loaded repository; 404 when it is not loaded.
+summary: One loaded repository; 404 when it is not loaded, 503 when its root went away.
 
 Bodies, answers and errors: [[Repository endpoints]].

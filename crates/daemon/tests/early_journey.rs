@@ -654,7 +654,21 @@ async fn wait_ready(app: &Router, repo: &str) {
     panic!("the repository never became ready again");
 }
 
-async fn test_a_moved_root_freezes_the_repository_until_loaded_at_its_new_path(regime: Regime) {
+/// Waits for `repo` to be listed as lost (its unload runs on its own thread),
+/// and returns its entry.
+async fn wait_lost(app: &Router, repo: &str) -> Value {
+    for _ in 0..200 {
+        let (_, repos) = request(app, "GET", "/repos?lost=true", None).await;
+        let entry = repos.as_array().and_then(|a| a.iter().find(|r| r["repo_uuid"] == repo));
+        if let Some(entry) = entry.filter(|e| e["lost"] == true) {
+            return entry.clone();
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("{repo} was never listed as lost");
+}
+
+async fn test_a_moved_root_unloads_the_repository_until_loaded_at_its_new_path(regime: Regime) {
     // Freezing, not following: every path under the old root reads as gone,
     // and nothing may be orphaned for it. The repository answers again once
     // loaded at its new path — explicitly (doc "When the root moves").
@@ -681,6 +695,25 @@ async fn test_a_moved_root_freezes_the_repository_until_loaded_at_its_new_path(r
     let message = body["error"].as_str().unwrap_or_default();
     assert!(message.contains("mf repo load"), "the error says how to resume: {message}");
 
+    // Unloaded, but still listed — as lost, where it was.
+    let listed = wait_lost(&app, &repo).await;
+    assert_eq!(listed["root"], root.to_str().unwrap(), "{listed}");
+    // Not among the repositories a client can use: neither listed by default
+    // (a path under the old root must not map to it), nor described alone.
+    let (_, repos) = request(&app, "GET", "/repos", None).await;
+    assert!(repos.as_array().unwrap().iter().all(|r| r["repo_uuid"] != repo.as_str()), "{repos}");
+    let (status, info) = request(&app, "GET", &format!("/repos/{repo}"), None).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{info}");
+    // Its store is let go: another daemon can take it (the lock is exclusive).
+    let other = routes::build(std::sync::Arc::new(common::watching_state_on(regime)));
+    let (status, body) =
+        request(&other, "POST", "/repos/load", Some(json!({"root": moved.to_str().unwrap()})))
+            .await;
+    assert_eq!(status, StatusCode::OK, "the store is still held: {body}");
+    wait_ready(&other, &repo).await;
+    let (status, body) = request(&other, "POST", &format!("/repos/{repo}/unload"), None).await;
+    assert!(status.is_success(), "{body}");
+
     let (status, body) =
         request(&app, "POST", "/repos/load", Some(json!({"root": moved.to_str().unwrap()}))).await;
     assert_eq!(status, StatusCode::OK, "loading at the new path: {body}");
@@ -688,6 +721,7 @@ async fn test_a_moved_root_freezes_the_repository_until_loaded_at_its_new_path(r
     wait_ready(&app, &repo).await;
     let (_, info) = request(&app, "GET", &format!("/repos/{repo}"), None).await;
     assert_eq!(info["root"], moved.canonicalize().unwrap().to_str().unwrap(), "{info}");
+    assert_eq!(info["lost"], false, "{info}");
     assert_eq!(uuid_at(&app, &repo, "d/x").await, x, "the records are where they were");
     assert_eq!(orphan_count(&app, &repo).await, 0, "the move orphaned nothing");
 
@@ -697,6 +731,22 @@ async fn test_a_moved_root_freezes_the_repository_until_loaded_at_its_new_path(r
     // y went while the repository was frozen: only a reconcile can tell, and
     // it never orphans — it is `mf orphan detect`'s to find.
     let _ = root;
+}
+
+async fn test_unloading_a_lost_repository_forgets_it(regime: Regime) {
+    let (app, repo, root) = repo_with("rootforget", regime, &[]).await;
+    let elsewhere = TempDir::new("rootforget_elsewhere");
+    regime.fs().rename(&root, elsewhere.join("repo")).unwrap();
+    // Found by a request this time, with no event to flush.
+    let (status, _) = request(&app, "GET", &format!("/repos/{repo}/fields"), None).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    wait_lost(&app, &repo).await;
+    let (status, body) = request(&app, "POST", &format!("/repos/{repo}/unload"), None).await;
+    assert!(status.is_success(), "{body}");
+    let (_, repos) = request(&app, "GET", "/repos?lost=true", None).await;
+    assert!(repos.as_array().unwrap().iter().all(|r| r["repo_uuid"] != repo.as_str()), "{repos}");
+    let (status, _) = request(&app, "GET", &format!("/repos/{repo}"), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 async fn test_a_root_replaced_by_another_directory_is_lost_too(regime: Regime) {
@@ -711,6 +761,7 @@ async fn test_a_root_replaced_by_another_directory_is_lost_too(regime: Regime) {
     tokio::time::sleep(Duration::from_millis(1500)).await;
     let (status, body) = request(&app, "GET", &format!("/repos/{repo}/fields"), None).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    wait_lost(&app, &repo).await;
 
     // Back where it was, the original is loaded again by the same path.
     fs.remove_file(root.join("stranger")).unwrap();
@@ -742,6 +793,7 @@ on_every_regime!(
     test_a_folder_renamed_and_a_file_removed_from_it_unread,
     test_a_folder_renamed_and_a_file_moved_out_of_the_repository_unread,
     test_a_folder_renamed_worked_in_and_its_name_reused_unread,
-    test_a_moved_root_freezes_the_repository_until_loaded_at_its_new_path,
+    test_a_moved_root_unloads_the_repository_until_loaded_at_its_new_path,
     test_a_root_replaced_by_another_directory_is_lost_too,
+    test_unloading_a_lost_repository_forgets_it,
 );

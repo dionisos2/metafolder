@@ -248,8 +248,14 @@ pub fn load(
 }
 
 pub fn repos(ctx: &Ctx, all: bool) -> Result<i32, CliError> {
-    let query: &[(&str, String)] = if all { &[("all", "true".to_string())] } else { &[] };
-    let resp = ctx.client.get("/repos", query)?;
+    // The lost ones too, marked `lost`: unloaded because their root went away,
+    // they are shown so the user can tell why they answer nothing (doc "When
+    // the root moves").
+    let mut query = vec![("lost", "true".to_string())];
+    if all {
+        query.push(("all", "true".to_string()));
+    }
+    let resp = ctx.client.get("/repos", &query)?;
     print_pretty(&resp);
     Ok(0)
 }

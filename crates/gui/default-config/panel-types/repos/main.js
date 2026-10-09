@@ -7,7 +7,7 @@ import { createSelect } from '/__select.js';
 
 /**
  * A loaded repository, as `GET /repos` lists it.
- * @typedef {{repo_uuid: string, name: string, root: string}} Repo
+ * @typedef {{repo_uuid: string, name: string, root: string, lost?: boolean}} Repo
  *
  * An in-flight daemon task (doc "Tasks").
  * @typedef {{id: string, repo_uuid: string, kind: string, status: string,
@@ -150,11 +150,49 @@ export async function mount(root, metafolder) {
     }
   }
 
+  /**
+   * A repository whose root went away: no longer loaded, nothing in it can be
+   * opened, retyped or watched. It says where it was and how to resume; Forget
+   * unloads it for good.
+   * @param {Repo} repo
+   */
+  function lostRow(repo) {
+    return el(
+      'li',
+      { class: 'repo lost' },
+      el(
+        'div',
+        { class: 'repo-head' },
+        el('strong', {}, repo.name),
+        el('span', { class: 'root' }, repo.root),
+        el('span', { class: 'uuid' }, repo.repo_uuid.slice(0, 8)),
+        el(
+          'button',
+          {
+            class: 'repo-unload',
+            type: 'button',
+            title: 'Stop listing this repository',
+            onclick: () => void unloadRepo(repo.repo_uuid),
+          },
+          'Forget',
+        ),
+      ),
+      el(
+        'div',
+        { class: 'repo-lost' },
+        'Its root is no longer there (moved, removed or unmounted). ' +
+          'If it moved, load it where it is now: mf repo load <new root>, or Load… above.',
+      ),
+    );
+  }
+
   async function refresh() {
     /** @type {Repo[]} */
     let repos;
     try {
-      repos = /** @type {Repo[]} */ ((await daemon.call('GET', '/repos')) ?? []);
+      // The lost ones too: unloaded because their root went away, they are
+      // listed so the user sees why they answer nothing (doc "When the root moves").
+      repos = /** @type {Repo[]} */ ((await daemon.call('GET', '/repos?lost=true')) ?? []);
     } catch (error) {
       await statusBar.error(error);
       return;
@@ -162,48 +200,50 @@ export async function mount(root, metafolder) {
     empty.hidden = repos.length > 0;
     list.replaceChildren(
       ...repos.map((repo) =>
-        el(
-          'li',
-          { class: 'repo' },
-          // Only the header opens the repo; the tasks block below it carries its
-          // own (stop) buttons, so it must not share the row's click target.
-          el(
-            'div',
-            { class: 'repo-head', onclick: () => openRepo(repo.repo_uuid) },
-            el('strong', {}, repo.name),
-            el('span', { class: 'root' }, repo.root),
-            el('span', { class: 'uuid' }, repo.repo_uuid.slice(0, 8)),
-            el(
-              'button',
-              {
-                class: 'repo-unload',
-                type: 'button',
-                title: 'Convert a field type across this repository',
-                onclick: (/** @type {Event} */ event) => {
-                  event.stopPropagation();
-                  openRetype(repo.repo_uuid, repo.name);
-                },
-              },
-              'Retype…',
+        repo.lost
+          ? lostRow(repo)
+          : el(
+              'li',
+              { class: 'repo' },
+              // Only the header opens the repo; the tasks block below it carries its
+              // own (stop) buttons, so it must not share the row's click target.
+              el(
+                'div',
+                { class: 'repo-head', onclick: () => openRepo(repo.repo_uuid) },
+                el('strong', {}, repo.name),
+                el('span', { class: 'root' }, repo.root),
+                el('span', { class: 'uuid' }, repo.repo_uuid.slice(0, 8)),
+                el(
+                  'button',
+                  {
+                    class: 'repo-unload',
+                    type: 'button',
+                    title: 'Convert a field type across this repository',
+                    onclick: (/** @type {Event} */ event) => {
+                      event.stopPropagation();
+                      openRetype(repo.repo_uuid, repo.name);
+                    },
+                  },
+                  'Retype…',
+                ),
+                el(
+                  'button',
+                  {
+                    class: 'repo-unload',
+                    type: 'button',
+                    title: 'Unload this repository from the daemon',
+                    // The header row opens the repo on click; keep that from firing.
+                    onclick: (/** @type {Event} */ event) => {
+                      event.stopPropagation();
+                      void unloadRepo(repo.repo_uuid);
+                    },
+                  },
+                  'Unload',
+                ),
+              ),
+              el('ul', { class: 'repo-tasks', 'data-tasks-for': repo.repo_uuid }),
+              el('div', { class: 'repo-watch', 'data-watch-for': repo.repo_uuid }),
             ),
-            el(
-              'button',
-              {
-                class: 'repo-unload',
-                type: 'button',
-                title: 'Unload this repository from the daemon',
-                // The header row opens the repo on click; keep that from firing.
-                onclick: (/** @type {Event} */ event) => {
-                  event.stopPropagation();
-                  void unloadRepo(repo.repo_uuid);
-                },
-              },
-              'Unload',
-            ),
-          ),
-          el('ul', { class: 'repo-tasks', 'data-tasks-for': repo.repo_uuid }),
-          el('div', { class: 'repo-watch', 'data-watch-for': repo.repo_uuid }),
-        ),
       ),
     );
     // Repaint the (now empty) task blocks right away so they don't wait a full
