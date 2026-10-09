@@ -486,6 +486,141 @@ async fn test_a_folder_moved_out_and_back_unread_keeps_its_records(regime: Regim
     std::fs::remove_dir_all(root).ok();
 }
 
+/// The metarecord tracked at `rel` (repo-relative), if one is.
+async fn uuid_at(app: &Router, repo: &str, rel: &str) -> Option<String> {
+    let (status, body) = request(
+        app,
+        "POST",
+        &format!("/repos/{repo}/query/fields/resolve-tree"),
+        Some(json!({
+            "query": {"type": "is_present", "field": "mfr_path"},
+            "field": "mfr_path",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "resolve-tree failed: {body}");
+    body.as_object().expect("a uuid → paths map").iter().find_map(|(uuid, paths)| {
+        let at = paths.as_array()?.iter().filter_map(|p| p.as_str());
+        at.into_iter().any(|p| p.trim_start_matches('/') == rel).then(|| uuid.clone())
+    })
+}
+
+// ── Renames and removals of the same names, unread ───────────────────────────
+//
+// The names are reused within one unread burst, so a path in the stream can
+// stand for two objects in turn: each scenario checks the identities a user
+// would expect to survive, beside the reconcile oracle.
+
+async fn test_two_files_swapped_through_a_temporary_unread_keep_their_records(regime: Regime) {
+    let (app, repo, root) = repo_with("swaptmp", regime, &["a", "b"]).await;
+    let (a, b) = (uuid_at(&app, &repo, "a").await, uuid_at(&app, &repo, "b").await);
+    let fs = regime.fs();
+    {
+        let _late = fs.hold();
+        fs.rename(root.join("a"), root.join("t")).unwrap();
+        fs.rename(root.join("b"), root.join("a")).unwrap();
+        fs.rename(root.join("t"), root.join("b")).unwrap();
+    }
+    for _ in 0..100 {
+        if uuid_at(&app, &repo, "a").await == b {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    settle_on(&app, &repo, &["", "a", "b"]).await;
+    reconcile_agrees(&app, &repo, "swapped through a temporary").await;
+    assert_eq!(uuid_at(&app, &repo, "a").await, b, "b's record follows it to a");
+    assert_eq!(uuid_at(&app, &repo, "b").await, a, "a's record follows it to b");
+    assert_eq!(orphan_count(&app, &repo).await, 0, "a swap orphans nothing");
+}
+
+async fn test_a_file_renamed_over_another_and_its_name_reused_unread(regime: Regime) {
+    let (app, repo, root) = repo_with("overreuse", regime, &["a", "b"]).await;
+    let a = uuid_at(&app, &repo, "a").await;
+    let fs = regime.fs();
+    {
+        let _late = fs.hold();
+        fs.rename(root.join("a"), root.join("b")).unwrap();
+        fs.write(root.join("a"), b"a new one").unwrap();
+    }
+    for _ in 0..100 {
+        if uuid_at(&app, &repo, "b").await == a {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    settle_on(&app, &repo, &["", "a", "b"]).await;
+    reconcile_agrees(&app, &repo, "renamed over, name reused").await;
+    assert_eq!(uuid_at(&app, &repo, "b").await, a, "a's record follows it onto b");
+    assert_ne!(uuid_at(&app, &repo, "a").await, a, "the new a is a new file");
+    assert_eq!(orphan_count(&app, &repo).await, 1, "only the replaced b is gone");
+}
+
+async fn test_a_file_removed_and_another_renamed_onto_its_name_unread(regime: Regime) {
+    let (app, repo, root) = repo_with("rmonto", regime, &["a", "b"]).await;
+    let b = uuid_at(&app, &repo, "b").await;
+    let fs = regime.fs();
+    {
+        let _late = fs.hold();
+        fs.remove_file(root.join("a")).unwrap();
+        fs.rename(root.join("b"), root.join("a")).unwrap();
+    }
+    settle_on(&app, &repo, &["", "a"]).await;
+    reconcile_agrees(&app, &repo, "removed, another renamed onto it").await;
+    assert_eq!(uuid_at(&app, &repo, "a").await, b, "b's record follows it to a");
+    assert_eq!(orphan_count(&app, &repo).await, 1, "only the removed a is gone");
+}
+
+async fn test_a_file_renamed_twice_removed_and_its_name_reused_unread(regime: Regime) {
+    let (app, repo, root) = repo_with("chainrm", regime, &["a"]).await;
+    let a = uuid_at(&app, &repo, "a").await;
+    let fs = regime.fs();
+    {
+        let _late = fs.hold();
+        fs.rename(root.join("a"), root.join("b")).unwrap();
+        fs.rename(root.join("b"), root.join("c")).unwrap();
+        fs.remove_file(root.join("c")).unwrap();
+        fs.write(root.join("c"), b"another c").unwrap();
+    }
+    settle_on(&app, &repo, &["", "c"]).await;
+    reconcile_agrees(&app, &repo, "renamed twice, removed, name reused").await;
+    // A removal whose path exists again at flush time is a refresh (doc
+    // "Event semantics", undone deletions): c is the record a became.
+    assert_eq!(uuid_at(&app, &repo, "c").await, a, "the file at c keeps a's record");
+    assert_eq!(orphan_count(&app, &repo).await, 0, "the name came back: nothing is orphaned");
+}
+
+async fn test_a_folder_renamed_and_a_file_removed_from_it_unread(regime: Regime) {
+    // The removal happens inside the folder's new name before the source read
+    // the rename: a watch per directory still answers to the old one.
+    let (app, repo, root) = repo_with("renamerm", regime, &["d/x", "d/y"]).await;
+    let y = uuid_at(&app, &repo, "d/y").await;
+    let fs = regime.fs();
+    {
+        let _late = fs.hold();
+        fs.rename(root.join("d"), root.join("e")).unwrap();
+        fs.remove_file(root.join("e/x")).unwrap();
+    }
+    settle_on(&app, &repo, &["", "e", "e/y"]).await;
+    reconcile_agrees(&app, &repo, "folder renamed, a file removed from it").await;
+    assert_eq!(uuid_at(&app, &repo, "e/y").await, y);
+    assert_eq!(orphan_count(&app, &repo).await, 1, "the removed x is the one orphan");
+}
+
+async fn test_a_folder_renamed_and_a_file_moved_out_of_the_repository_unread(regime: Regime) {
+    let (app, repo, root) = repo_with("renameout", regime, &["d/x", "d/y"]).await;
+    let fs = regime.fs();
+    let away = common::TempDir::new("renameout_away");
+    {
+        let _late = fs.hold();
+        fs.rename(root.join("d"), root.join("e")).unwrap();
+        fs.rename(root.join("e/x"), away.join("x")).unwrap();
+    }
+    settle_on(&app, &repo, &["", "e", "e/y"]).await;
+    reconcile_agrees(&app, &repo, "folder renamed, a file moved out").await;
+    assert_eq!(orphan_count(&app, &repo).await, 1, "x left: its record is the one orphan");
+}
+
 on_every_regime!(
     test_first_minutes_of_a_repository,
     test_moving_a_folder_keeps_the_watcher_and_reconcile_in_agreement,
@@ -497,4 +632,10 @@ on_every_regime!(
     test_an_atomic_save_unread_keeps_the_saved_file,
     test_a_folder_removed_and_made_again_unread_is_tracked,
     test_a_folder_moved_out_and_back_unread_keeps_its_records,
+    test_two_files_swapped_through_a_temporary_unread_keep_their_records,
+    test_a_file_renamed_over_another_and_its_name_reused_unread,
+    test_a_file_removed_and_another_renamed_onto_its_name_unread,
+    test_a_file_renamed_twice_removed_and_its_name_reused_unread,
+    test_a_folder_renamed_and_a_file_removed_from_it_unread,
+    test_a_folder_renamed_and_a_file_moved_out_of_the_repository_unread,
 );

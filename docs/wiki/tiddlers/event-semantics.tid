@@ -55,6 +55,10 @@ entries of each directory a `Rename(Both)` of the batch lands on or leaves, that
 gone from disk, count as departures too — direct entries only. The batch's departures
 are indexed once by that key: pairing each arrival with each departure (a `stat` and a
 store read per pair) held the repository a minute for a few hundred files each way.
+What no arrival takes back is a removal — `mv d e && rm e/x`, or `mv e/x` out of the
+repository — applied as one last revision of the flush, once every arrival has had its
+chance. Before that step, `e/x` stayed tracked at a path that no longer existed, and
+reconcile, which never orphans, never took it back.
 
 ''Orphan origin.'' Orphaning captures the last path into `mfr_path_old`, a frozen string
 — not a position, never rewritten by later moves — so where every orphan lived is

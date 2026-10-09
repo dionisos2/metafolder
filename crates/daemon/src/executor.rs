@@ -540,7 +540,13 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
         let mut revisions = 0;
         let mut ignored = 0usize;
         let mut applied = 0usize;
-        for (_, group) in groups {
+        // The batch's groups, then — when it moved a directory — one last
+        // revision for the departures the source never delivered
+        // (`Apply::remove_vanished_from_moved`).
+        let sweep = (!moved.is_empty()).then(Vec::new);
+        for (kind, group) in
+            groups.into_iter().map(|(k, g)| (Some(k), g)).chain(sweep.map(|g| (None, g)))
+        {
             let mut writer = repo.writer(&mut conn, None)?;
             // The filesystem's doing, not a client's (doc "Revisions and operations"): an arrival
             // is a `create_metarecord` like any other, so
@@ -582,6 +588,14 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
                     total: n_events,
                     elapsed: started.elapsed(),
                 });
+            }
+            if kind.is_none() {
+                let ops_before = apply.writer.op_count();
+                apply.remove_vanished_from_moved()?;
+                let ops = apply.writer.op_count() - ops_before;
+                if ops > 0 {
+                    written.push((moved.clone(), ops as u64));
+                }
             }
             let wrote = apply.writer.op_count() > 0;
             // Read before the commit moves the writer out of `apply`.
@@ -1229,27 +1243,7 @@ impl Apply<'_, '_> {
         // hand moves out of a folder it just moved.
         let moved = self.moved; // a plain `&[RelPath]`: not borrowed from `self`
         for dir in moved {
-            // Where the directory is now, on disk and in the database: at a
-            // side it has left, every entry would look gone.
-            if !self.is_dir(dir) {
-                continue;
-            }
-            let Some(uuid) = self.resolve(dir)? else { continue };
-            for (_, child) in self.cache.children_of(self.writer.store(), "mfr_path", uuid)? {
-                // The exact name, from the record: the cache's is for display.
-                let Some(name) = Rows::rows_named(self.writer.store(), child, "mfr_path")?
-                    .into_iter()
-                    .find_map(|row| match row.value {
-                        Value::TreeRef { parent: Some(p), name } if p == uuid => Some(name),
-                        _ => None,
-                    })
-                else {
-                    continue;
-                };
-                let path = dir.child(name);
-                if std::fs::symlink_metadata(self.abs(&path)).is_ok() {
-                    continue;
-                }
+            for (path, child) in self.vanished_entries(dir)? {
                 let Some(record) = Rows::metarecord(self.writer.store(), child)? else {
                     continue;
                 };
@@ -1267,6 +1261,56 @@ impl Apply<'_, '_> {
             }
         }
         self.departed_index = Some(index);
+        Ok(())
+    }
+
+    /// The direct entries `dir` (a directory this batch moved) still holds in
+    /// the database but no longer on disk, with their metarecords. Where the
+    /// directory is now, on disk and in the database: at a side it has left,
+    /// every entry would look gone.
+    fn vanished_entries(&mut self, dir: &RelPath) -> Result<Vec<(RelPath, Uuid)>> {
+        let mut out = Vec::new();
+        if !self.is_dir(dir) {
+            return Ok(out);
+        }
+        let Some(uuid) = self.resolve(dir)? else { return Ok(out) };
+        for (_, child) in self.cache.children_of(self.writer.store(), "mfr_path", uuid)? {
+            // The exact name, from the record: the cache's is for display.
+            let Some(name) = Rows::rows_named(self.writer.store(), child, "mfr_path")?
+                .into_iter()
+                .find_map(|row| match row.value {
+                    Value::TreeRef { parent: Some(p), name } if p == uuid => Some(name),
+                    _ => None,
+                })
+            else {
+                continue;
+            };
+            let path = dir.child(name);
+            if std::fs::symlink_metadata(self.abs(&path)).is_err() {
+                out.push((path, child));
+            }
+        }
+        Ok(out)
+    }
+
+    /// The departures from a moved directory that nothing re-paired: applied
+    /// as removals once every arrival of the batch has had its chance. The
+    /// inotify source never delivers them (see [`Apply::index_departures`]),
+    /// so without this step `mv d e && rm e/x`, read late, left `e/x` tracked
+    /// at a path that no longer exists — and reconcile, which never orphans,
+    /// never took it back.
+    fn remove_vanished_from_moved(&mut self) -> Result<()> {
+        let moved = self.moved; // a plain `&[RelPath]`: not borrowed from `self`
+        let mut seen = std::collections::HashSet::new();
+        for dir in moved {
+            if !seen.insert(dir) {
+                continue;
+            }
+            for (path, _) in self.vanished_entries(dir)? {
+                self.check_cancelled()?;
+                self.apply(FsEvent::Remove(path))?;
+            }
+        }
         Ok(())
     }
 
