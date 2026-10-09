@@ -51,8 +51,6 @@ the orphan scan now. Nothing named is left to drive.
 
 ** TODO fanotify: what the note leaves open
 From doc "Watcher open questions" (and doc "The fanotify broker"):
-- a mark whose filesystem left the root but is still mounted elsewhere stays
-  until the broker restarts (costs work, not correctness);
 - network filesystems: a per-repository override of the source, not asked
   for so far.
 

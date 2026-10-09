@@ -38,6 +38,7 @@ use std::collections::HashMap;
 use std::ffi::{CString, OsStr, OsString};
 use std::io;
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -524,11 +525,23 @@ fn open_fs_fd(path: &Path) -> Result<OwnedFd> {
 /// field, with the kernel's octal escapes (`\040` for a space, …) undone —
 /// the bytes behind them are the real path. Malformed lines are skipped.
 pub fn mount_points(table: &[u8]) -> Vec<PathBuf> {
+    mount_table(table).into_iter().map(|(_, point)| point).collect()
+}
+
+/// [`mount_points`], each with the device of its filesystem (the third
+/// field, `major:minor` — what `stat` reports as `st_dev` on it).
+fn mount_table(table: &[u8]) -> Vec<(libc::dev_t, PathBuf)> {
+    let number = |b: &[u8]| std::str::from_utf8(b).ok()?.parse::<u32>().ok();
     table
         .split(|&b| b == b'\n')
-        .filter_map(|line| line.split(|&b| b == b' ').nth(4))
-        .filter(|field| field.first() == Some(&b'/'))
-        .map(|field| PathBuf::from(OsStr::from_bytes(&unescape_octal(field))))
+        .filter_map(|line| {
+            let mut fields = line.split(|&b| b == b' ');
+            let dev = fields.nth(2)?;
+            let point = fields.nth(1).filter(|field| field.first() == Some(&b'/'))?;
+            let colon = dev.iter().position(|&b| b == b':')?;
+            let dev = libc::makedev(number(&dev[..colon])?, number(&dev[colon + 1..])?);
+            Some((dev, PathBuf::from(OsStr::from_bytes(&unescape_octal(point)))))
+        })
         .collect()
 }
 
@@ -1076,6 +1089,9 @@ impl<R: Resolve + IgnoreMarks> Translator<R> {
 struct Mark {
     /// A path on the filesystem — what `fanotify_mark` was given.
     at: PathBuf,
+    /// The filesystem's device: where else in the mount table it may be found
+    /// once `at` names something else ([`Fanotify::lift`]).
+    dev: libc::dev_t,
 }
 
 /// What one `read(2)` produced.
@@ -1162,9 +1178,9 @@ impl Fanotify {
     /// [`resync`](Self::resync), answering each root it could not cover with
     /// why — every other root is covered.
     pub fn place_marks(&mut self) -> Vec<Uncovered> {
-        let points = std::fs::read("/proc/self/mountinfo")
-            .map(|table| mount_points(&table))
-            .unwrap_or_default();
+        let table =
+            std::fs::read("/proc/self/mountinfo").map(|t| mount_table(&t)).unwrap_or_default();
+        let points: Vec<PathBuf> = table.iter().map(|(_, point)| point.clone()).collect();
         let Plan { wanted, mut paths, roots_on, mut failed, skipped } =
             plan_marks(&self.roots, &points, coverable_fsid);
         // Which directories are outside the roots may have changed.
@@ -1172,13 +1188,12 @@ impl Fanotify {
         for message in skipped {
             eprintln!("[watchd] {message}");
         }
-        // Marks nothing needs any more are lifted. One whose filesystem was
-        // unmounted is already gone with it, so a failure here says nothing.
+        // Marks nothing needs any more are lifted.
         let stale: Vec<[i32; 2]> =
             self.marks.keys().copied().filter(|f| !wanted.contains_key(f)).collect();
         for fsid in stale {
             if let Some(mark) = self.marks.remove(&fsid) {
-                let _ = self.mark_fs(&mark.at, FAN_MARK_REMOVE);
+                self.lift(fsid, &mark, &table);
             }
             self.translator.resolver.inner.remove_fs(fsid);
         }
@@ -1195,7 +1210,8 @@ impl Fanotify {
             match self.mark_fs(&at, FAN_MARK_ADD) {
                 Ok(()) => {
                     self.translator.resolver.inner.set_fs(fsid, reachable);
-                    self.marks.insert(fsid, Mark { at });
+                    let dev = std::fs::metadata(&at).map(|m| m.dev()).unwrap_or(0);
+                    self.marks.insert(fsid, Mark { at, dev });
                 }
                 Err(err) if is_root => {
                     // Every root on the filesystem shares the mark it lacks.
@@ -1256,6 +1272,39 @@ impl Fanotify {
     #[cfg(test)]
     pub(crate) fn flush_ignores(&mut self) {
         self.translator.resolver.inner.flush();
+    }
+
+    /// Lifts the filesystem mark `mark` of `fsid`, from wherever that
+    /// filesystem is still mounted. Not by `mark.at` blindly: a filesystem
+    /// that left the root left a directory of the one beneath at that path,
+    /// and a mark lifted there was the *root's* — the root went blind and the
+    /// drive, still mounted elsewhere, stayed marked. So the path is checked
+    /// to be on `fsid` through a descriptor, and the mark lifted through that
+    /// very descriptor; failing `mark.at`, the mount table's points on the
+    /// same device are tried. None at all: the filesystem is unmounted
+    /// everywhere and the kernel took its mark with it.
+    fn lift(&mut self, fsid: [i32; 2], mark: &Mark, table: &[(libc::dev_t, PathBuf)]) {
+        let elsewhere = table.iter().filter(|(dev, _)| *dev == mark.dev).map(|(_, point)| point);
+        for path in std::iter::once(&mark.at).chain(elsewhere) {
+            let Ok(fd) = open_fs_fd(path) else { continue };
+            if fsid_of_fd(fd.as_raw_fd()).ok() != Some(fsid) {
+                continue;
+            }
+            let rc = unsafe {
+                libc::fanotify_mark(
+                    self.fd.as_raw_fd(),
+                    FAN_MARK_REMOVE | FAN_MARK_FILESYSTEM,
+                    self.mask,
+                    fd.as_raw_fd(),
+                    std::ptr::null(),
+                )
+            };
+            if rc != 0 {
+                let err = io::Error::last_os_error();
+                eprintln!("[watchd] cannot lift the mark at {}: {err}", path.display());
+            }
+            return;
+        }
     }
 
     fn mark_fs(&mut self, at: &Path, op: u32) -> Result<()> {
@@ -2690,6 +2739,80 @@ mod tests {
         fa.sync_roots(&[]).unwrap();
         assert!(fa.marks.is_empty());
         assert!(fa.translator.resolver.inner.fs_paths.is_empty(), "nor anything to resolve on");
+    }
+
+    #[test]
+    fn test_a_filesystem_that_left_the_root_but_is_mounted_elsewhere_is_unmarked() {
+        // A drive mounted under the root and elsewhere, then unmounted from
+        // under the root: its mark was placed at a path that now names a
+        // directory of the root's own filesystem. Lifted by that path, the
+        // removal took the root's mark and left the drive's.
+        if !in_userns("test_a_filesystem_that_left_the_root_but_is_mounted_elsewhere_is_unmarked") {
+            return;
+        }
+        let root = tmpfs("left");
+        let usb = root.join("usb");
+        mount_tmpfs(&usb);
+        let elsewhere = crate::test_support::scratch().join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        let bound =
+            std::process::Command::new("mount").arg("--bind").arg(&usb).arg(&elsewhere).status();
+        assert!(bound.is_ok_and(|s| s.success()), "bind the drive elsewhere");
+        let mut fa = Fanotify::open().unwrap();
+        fa.sync_roots(std::slice::from_ref(&root)).unwrap();
+        assert_eq!(fa.marks.len(), 2);
+        let rx = names(&fa);
+
+        let ok = std::process::Command::new("umount").arg(&usb).status();
+        assert!(ok.is_ok_and(|s| s.success()));
+        fa.resync().unwrap();
+        assert_eq!(fa.marks.len(), 1, "only the root's filesystem is wanted");
+
+        std::fs::write(elsewhere.join("outside.txt"), b"x").unwrap();
+        std::fs::write(root.join("inside.txt"), b"y").unwrap();
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        let mut seen = Vec::new();
+        while !seen.iter().any(|n| n == "inside.txt") {
+            match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                Ok(name) => seen.push(name),
+                Err(_) => panic!("the root is still covered; reported only {seen:?}"),
+            }
+        }
+        assert!(!seen.iter().any(|n| n == "outside.txt"), "the drive's mark was lifted: {seen:?}");
+    }
+
+    #[test]
+    fn test_a_filesystem_unplugged_from_under_the_root_leaves_the_root_covered() {
+        // The kernel took the drive's mark with it; its path now names a
+        // directory of the root's filesystem, whose mark must stay.
+        if !in_userns("test_a_filesystem_unplugged_from_under_the_root_leaves_the_root_covered") {
+            return;
+        }
+        let root = tmpfs("unplug");
+        mount_tmpfs(&root.join("usb"));
+        let mut fa = Fanotify::open().unwrap();
+        fa.sync_roots(std::slice::from_ref(&root)).unwrap();
+        let rx = names(&fa);
+        let ok = std::process::Command::new("umount").arg(root.join("usb")).status();
+        assert!(ok.is_ok_and(|s| s.success()));
+        fa.resync().unwrap();
+        assert_eq!(fa.marks.len(), 1);
+        std::fs::write(root.join("after.txt"), b"y").unwrap();
+        expect_names(&rx, &["after.txt"]);
+    }
+
+    #[test]
+    fn test_mount_devices_are_read_with_their_points() {
+        let table = b"22 1 8:1 / / rw - ext4 /dev/sda1 rw\n\
+            30 22 0:30 / /mnt/my\\040disk rw,nosuid - vfat /dev/sdb1 rw\n\
+            bad line\n";
+        assert_eq!(
+            mount_table(table),
+            vec![
+                (libc::makedev(8, 1), PathBuf::from("/")),
+                (libc::makedev(0, 30), PathBuf::from("/mnt/my disk")),
+            ]
+        );
     }
 
     #[test]

@@ -204,6 +204,14 @@ than breaking them.
   mounting the remote repository over SSHFS is deferred (spec-sync).
 
 ### Fixed
+- **`metafolder-watchd`: a drive leaving a repository blinded the repository.**
+  When a filesystem mounted under a root was unmounted there (unplugged, or
+  still mounted elsewhere), the broker lifted its mark by the old mount point —
+  by then a directory of the root's own filesystem — and so lifted the root's
+  mark instead: nothing more was reported for that repository until the broker
+  restarted, and a drive still mounted elsewhere stayed marked. A mark is now
+  lifted through a descriptor checked to be on its filesystem, found at its
+  path or at a mount point of the same device (doc "The fanotify broker").
 - **A rollback left the watch set behind, and a nested tracking scope was never
   watched at all.** Two halves of one symptom — `mf watch check` answering
   `unwatched` for files that are tracked. History navigation restores
