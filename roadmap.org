@@ -39,9 +39,13 @@ is left, each to measure before building:
 =watchd/src/sim.rs= (a kernel kept in step with the real filesystem, held to
 the real one by a fidelity test) found a bug a commit on its first day
 (=8dea90c=, =3a9c64a=, =287a225=, and the inotify one it led to, =5e013ff=).
-Not yet driven:
-bursts mixing renames and removals of the same names while the broker is
-held, several subscribers on one filesystem with overlapping roots.
+Driven 9 October 2026: bursts mixing renames and removals of the same names
+read late (=early_journey.rs=, every regime), and nested roots of two
+subscribers (=sim.rs=). They found two bugs, both in the inotify half the
+journey runs beside the simulator (=77776ca1=, =5614e701=); the overlapping
+roots behave. Not yet driven: a kernel overflow end to end, and the
+repository root itself moved — a subscriber is told nothing, which pins doc
+"Watcher open questions" (undefined for now) rather than answering it.
 
 ** TODO fanotify: what the note leaves open
 From doc "Watcher open questions" (and doc "The fanotify broker"):

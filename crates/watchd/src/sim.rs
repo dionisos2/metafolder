@@ -1132,6 +1132,124 @@ mod tests {
         assert_eq!(events, 3);
     }
 
+    // ── Several subscribers on one filesystem ────────────────────────────────
+
+    /// A broker with two subscribers whose roots nest: `repo` and `repo/sub`.
+    fn nested(name: &str) -> (SimBroker, PathBuf, BufReader<UnixStream>, BufReader<UnixStream>) {
+        let (broker, root, outer) = started(name);
+        broker.fs().create_dir(root.join("sub")).unwrap();
+        let inner = subscriber(&broker, &root.join("sub"));
+        (broker, root, outer, inner)
+    }
+
+    #[test]
+    fn test_nested_roots_each_see_a_move_across_the_boundary_from_their_side() {
+        let (broker, root, mut outer, mut inner) = nested("nested");
+        received(&mut outer);
+        let fs = broker.fs();
+        fs.write(root.join("sub/f"), b"f").unwrap();
+        fs.write(root.join("g"), b"g").unwrap();
+        fs.rename(root.join("g"), root.join("sub/g")).unwrap();
+        fs.rename(root.join("sub/f"), root.join("f")).unwrap();
+        assert_eq!(
+            tree(&received(&mut outer)),
+            vec![
+                Event::Create { path: p(&root, "sub/f") },
+                Event::Create { path: p(&root, "g") },
+                Event::Rename { from: p(&root, "g"), to: p(&root, "sub/g") },
+                Event::Rename { from: p(&root, "sub/f"), to: p(&root, "f") },
+            ]
+        );
+        assert_eq!(
+            tree(&received(&mut inner)),
+            vec![
+                Event::Create { path: p(&root, "sub/f") },
+                Event::RenameTo { path: p(&root, "sub/g") },
+                Event::RenameFrom { path: p(&root, "sub/f") },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_nested_roots_read_late_each_get_where_things_are_by_then() {
+        // One read serves both: a folder made in the inner root, filled, and
+        // moved out to the outer one before the broker reads anything.
+        let (broker, root, mut outer, mut inner) = nested("nestedlate");
+        received(&mut outer);
+        let fs = broker.fs();
+        {
+            let _held = fs.hold();
+            fs.create_dir(root.join("sub/d")).unwrap();
+            fs.write(root.join("sub/d/x"), b"x").unwrap();
+            fs.rename(root.join("sub/d"), root.join("d")).unwrap();
+            fs.remove_file(root.join("d/x")).unwrap();
+        }
+        let outer_got = tree(&received(&mut outer));
+        let inner_got = tree(&received(&mut inner));
+        assert_eq!(
+            outer_got,
+            // Resolved when read: the file is where its folder went — outside
+            // the inner root — and so reported there, ahead of the rename.
+            vec![
+                Event::Create { path: p(&root, "sub/d") },
+                Event::Create { path: p(&root, "d/x") },
+                Event::Remove { path: p(&root, "d/x") },
+                Event::Rename { from: p(&root, "sub/d"), to: p(&root, "d") },
+            ],
+        );
+        assert_eq!(
+            inner_got,
+            vec![
+                Event::Create { path: p(&root, "sub/d") },
+                Event::RenameFrom { path: p(&root, "sub/d") },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_a_subscriber_leaving_leaves_the_overlapping_one_covered() {
+        for leaving_outer in [false, true] {
+            let name = if leaving_outer { "leaveouter" } else { "leaveinner" };
+            let (broker, root, mut outer, inner) = nested(name);
+            received(&mut outer);
+            let (gone, mut stays) = if leaving_outer { (outer, inner) } else { (inner, outer) };
+            drop(gone);
+            // The server notices the hang-up on its own time; what the other
+            // one sees must not depend on when.
+            std::thread::sleep(Duration::from_millis(100));
+            broker.fs().write(root.join("sub/after"), b"a").unwrap();
+            assert_eq!(
+                tree(&received(&mut stays)),
+                vec![Event::Create { path: p(&root, "sub/after") }],
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_the_inner_root_moved_away_is_not_announced_to_its_subscriber() {
+        let (broker, root, mut outer, mut inner) = nested("innermoved");
+        received(&mut outer);
+        let fs = broker.fs();
+        fs.write(root.join("sub/f"), b"f").unwrap();
+        received(&mut inner);
+        received(&mut outer);
+        fs.rename(root.join("sub"), root.join("moved")).unwrap();
+        fs.write(root.join("moved/g"), b"g").unwrap();
+        assert_eq!(
+            tree(&received(&mut outer)),
+            vec![
+                Event::Rename { from: p(&root, "sub"), to: p(&root, "moved") },
+                Event::Create { path: p(&root, "moved/g") },
+            ]
+        );
+        // Its subscriber is told nothing: the root no longer resolves where it
+        // was, and the new name is not its root. What a daemon should do then
+        // is open (doc "Watcher open questions", the repository root going
+        // away); this pins today's answer, so a change to it is deliberate.
+        assert_eq!(tree(&received(&mut inner)), vec![]);
+    }
+
     // ── Fidelity: the same work, on the kernel and on the simulator ──────────
 
     /// The operations both sides run.
