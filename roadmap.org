@@ -81,11 +81,12 @@ Measured 7 October 2026 (=cargo llvm-cov --workspace=, every test): 87 % of
 the lines, by crate core 94 %, daemon 93 %, watchd 96 %, cli 87 %, gui 82 %
 (the bench, a harness run by =scripts/bench.sh= and not by tests, 15 %).
 What is worth a test, most first:
-- the GUI's own orchestration around the core flows, each the =async run= of
-  its module: =gui/src/duplicates.rs= (12 %), =trash.rs= (40 %), =sync.rs=
-  (53 %), =ignore.rs= (55 %), =orphan.rs= (59 %), =undo.rs= (62 % — its
-  "blocked revert" report included). The core underneath is tested; these
-  are the reports and status messages;
+- the GUI's own orchestration around the core flows: done 10 October 2026
+  (reports, refusals and status messages of =duplicates=, =trash=, =orphan=,
+  =undo= — the blocked revert included —, =sync='s runner, =ignore='s parse).
+  Lines after it: =duplicates.rs= 80 %, =orphan.rs= 80 %, =undo.rs= 75 %,
+  =sync.rs= 64 %, =trash.rs= 62 %, =ignore.rs= 59 %, the gui crate 85 %; what
+  is left in them is the =#[tauri::command]= wrappers;
 - =cli/src/commands.rs=: 405 lines missed of 2 343, spread thin.
 The Tauri wrappers (=gui/src/commands.rs=, =lib.rs=) are uncovered by
 construction: thin, and only a running WebView calls them.
