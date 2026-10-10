@@ -41,13 +41,29 @@ forbids WebKit's sandbox ([[Sandboxing the media decoders]]). A run takes about 
 seconds, most of it the GUI starting. It is not part of `scripts/check.sh`, which runs
 without a display.
 
+!! Confirmations
+
+A confirmed command (`metarecord:trash`, `orphan:delete`, an `ignore:add` that would
+shadow inherited patterns) is driven with `answering yes|no <command…>`, which passes
+`--confirm` to [[mf gui command]] and keeps the questions asked in `LAST_QUESTIONS`. A
+plain `run` answers `no` as well, and fails if anything was asked: a dialog nobody
+answers blocks the shell's dispatcher, and every command after it would time out.
+
 !! Adding a scenario
 
 A `scenario_<name>` function: `new_repo <name>` for the repository and the workspace,
-`df_mf` to prepare data through the daemon, `run <command…>` to type a command, then
-`status_is <name> <kind> <glob>`, `command_ok`, or the `assert_*` of
-`scripts/lib/assert.sh`. Add its name to the default list at the top.
+`df_mf` to prepare data through the daemon, `run` or `answering` to type a command,
+then `status_is <name> <kind> <glob>`, `command_ok`, or the `assert_*` of
+`scripts/lib/assert.sh`. `select_path <abs path>` makes a path's metarecord the
+selection (through the `file` panel); `show_panel <slot> <type> <command>` shows a
+panel and waits until one of its commands answers. Add the name to the default list
+at the top.
 
-A command that opens a browser dialog (`window.confirm`, as `metarecord:trash` does
-before trashing) blocks the dispatcher until someone answers it, and nothing in the
-scripting API answers it: only its refusals can be tested this way.
+Name the target of a command that acts on the selection, even when the default would
+do: the workspaces show the `message` panel because the metarecord list selects a
+record of its own once loaded, at a moment no scenario controls.
+
+!! Not covered
+
+The `sync` panel's commands act on the pair chosen in the panel's own fields and report
+on the panel's own status line, neither of which the scripting API reaches.

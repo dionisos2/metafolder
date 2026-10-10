@@ -23,7 +23,8 @@
 #   - a display ($DISPLAY or $WAYLAND_DISPLAY).
 #
 # Usage:  scripts/gui-e2e.sh [--unsandboxed] [--keep-logs] [scenario...]
-#   with no scenario, runs them all: undo-redo duplicates orphans errors.
+#   with no scenario, runs them all: undo-redo duplicates orphans trash
+#   reconcile ignore errors.
 #   --unsandboxed  pass --allow-unsandboxed-webview to the GUI (a container
 #                  that forbids WebKit's sandbox; never on real data)
 #   --keep-logs    keep the work directory (daemon.log, gui.log) on exit
@@ -47,7 +48,8 @@ for arg in "$@"; do
         *) SCENARIOS+=("$arg") ;;
     esac
 done
-[ ${#SCENARIOS[@]} -gt 0 ] || SCENARIOS=(undo-redo duplicates orphans errors)
+[ ${#SCENARIOS[@]} -gt 0 ] \
+    || SCENARIOS=(undo-redo duplicates orphans trash reconcile ignore errors)
 
 # shellcheck source=lib/daemon-fixture.sh
 . scripts/lib/daemon-fixture.sh
@@ -113,24 +115,65 @@ fi
 WS=""
 
 # new_repo <name> — a repository of its own under the work directory, empty of
-# files until the scenario writes some, shown in a fresh focused workspace.
+# files until the scenario writes some, shown in a fresh focused workspace. The
+# workspace shows the message panel: the metarecord list would select a record
+# of its own once loaded, and the selection is what several commands act on.
 new_repo() {
     local dir="$WORK/repos/$1"
     mkdir -p "$dir"
     df_init_repo "$dir"
     REPO_DIR=$dir
-    WS=$(mfg workspace new --repo "$DF_REPO" --left metarecord-list) || die "workspace new"
+    WS=$(mfg workspace new --repo "$DF_REPO" --left message) || die "workspace new"
     mfg layout left "$WS" >/dev/null || die "layout left $WS"
 }
 
-# run <invocation…> — a command typed into the focused workspace. A marker is
-# posted first, so a command that reports nothing leaves the marker on the bar
-# instead of passing on a stale message.
-run() {
+# answering <yes|no> <invocation…> — a command typed into the focused
+# workspace, every confirmation it asks answered so. LAST_QUESTIONS holds the
+# questions (one per line), LAST_ERR what `mf gui command` reported, LAST_RC
+# its exit status. A marker is posted first, so a command that reports nothing
+# leaves the marker on the bar instead of passing on a stale message.
+answering() {
+    local answer=$1
+    shift
     mfg message --workspace "$WS" "e2e: before $*" >/dev/null
-    LAST_OUT=$(mfg command --timeout-ms 60000 "$@" 2>&1)
+    LAST_QUESTIONS=$(mfg command --timeout-ms 60000 --confirm "$answer" "$@" 2>"$WORK/err")
     LAST_RC=$?
+    LAST_ERR=$(cat "$WORK/err")
 }
+
+# run <invocation…> — a command expected to ask nothing. It is still answered
+# (no): a dialog left open would block every command after it, so an
+# unexpected question fails here, naming itself, instead.
+run() {
+    answering no "$@"
+    if [ -n "$LAST_QUESTIONS" ]; then
+        fail=$((fail + 1))
+        printf 'FAIL %s asked an unexpected confirmation (refused):\n%s\n' "$*" "$LAST_QUESTIONS"
+    fi
+}
+
+# select_path <abs path> — show it in the left slot's file panel, which makes
+# its metarecord the workspace's selection.
+select_path() { mfg view left file --path "$1" >/dev/null || die "view file $1"; }
+
+# show_panel <slot> <type> <command> — shows a panel type and waits until it
+# has mounted: until its own `command` (one that loads, so the panel's data is
+# there too) is known and resolves.
+show_panel() {
+    local slot=$1 type=$2 command=$3
+    mfg view "$slot" "$type" >/dev/null || die "view $slot $type"
+    for _ in $(seq 1 40); do
+        mfg command --timeout-ms 10000 "$command" >/dev/null 2>&1 && return 0
+        sleep 0.25
+    done
+    die "the $type panel never answered $command"
+}
+
+# uuid_of <abs path> — the metarecord tracking a path.
+uuid_of() { df_mf track "$1"; }
+
+# ignore_count <uuid> — how many mf_ignore rows the metarecord has.
+ignore_count() { df_mf metarecord -i "$1" field get mf_ignore 2>/dev/null | grep -c .; }
 
 # status_is <name> <kind> <glob> — the last status message, kind and text.
 status_is() {
@@ -191,10 +234,101 @@ scenario_orphans() {
     status_is "orphan detect: marks the orphan" info \
         "1 orphaned metarecord marked orphan = true (1 new, 0 no longer orphaned)."
 
+    answering no orphan:delete
+    assert_contains "orphan delete: asks first" "$LAST_QUESTIONS" \
+        "Delete 1 metarecord marked orphan = true?"
+    status_is "orphan delete refused: nothing deleted" info "e2e: before *"
+
+    answering yes orphan:delete
+    status_is "orphan delete: deletes the marked set" info \
+        "Deleted 1 orphaned metarecord — undo takes them back."
+
     printf 'x\n' >"$REPO_DIR/gone.txt"
     run orphan:detect
     status_is "orphan detect: the file is back" info \
         "No orphans — every tracked metarecord has its file."
+}
+
+scenario_trash() {
+    new_repo trash
+    printf 'x\n' >"$REPO_DIR/f.txt"
+    df_mf track "$REPO_DIR/f.txt" >/dev/null
+    select_path "$REPO_DIR/f.txt"
+
+    answering no metarecord:trash
+    assert_eq "trash: asks first" "Send the selected metarecord's file to the trash?" \
+        "$LAST_QUESTIONS"
+    status_is "trash refused: nothing said" info "e2e: before *"
+    assert "trash refused: the file stays" test -e "$REPO_DIR/f.txt"
+
+    answering yes metarecord:trash
+    status_is "trash: trashes the file" info "Trashed f.txt — restore it from the trash panel"
+    assert_not "trash: the file is gone" test -e "$REPO_DIR/f.txt"
+
+    show_panel left trash trash:refresh
+    run trash:first
+    run trash:restore
+    status_is "trash restore: says where" info "Restored $REPO_DIR/f.txt"
+    assert "trash restore: the file is back" test -e "$REPO_DIR/f.txt"
+}
+
+scenario_reconcile() {
+    new_repo reconcile
+    mkdir -p "$REPO_DIR/sub"
+    printf 'a\n' >"$REPO_DIR/a.txt"
+    printf 'b\n' >"$REPO_DIR/sub/b.txt"
+    # Eligible for the walk; the watcher, placed after the files exist, hears
+    # nothing of them — finding them is the reconcile's job.
+    df_mf metarecord -i "$DF_ROOT" field set mf_watch:bool=true >/dev/null
+
+    run reconcile:run
+    command_ok "reconcile: the command resolves"
+    status_is "reconcile: creates the new files' records" info \
+        "Reconcile: 3 created, 0 moved, 0 candidates."
+
+    run reconcile:run
+    status_is "reconcile again: nothing new" info "Reconcile: 0 created, 0 moved, 0 candidates."
+    df_mf metarecord -i "$DF_ROOT" field set mf_watch:bool=false >/dev/null
+}
+
+scenario_ignore() {
+    new_repo ignore
+    mkdir -p "$REPO_DIR/kept" "$REPO_DIR/fresh"
+    local root_count kept fresh
+    root_count=$(ignore_count "$DF_ROOT")
+    kept=$(uuid_of "$REPO_DIR/kept")
+    fresh=$(uuid_of "$REPO_DIR/fresh")
+
+    select_path "$REPO_DIR"
+    run ignore:list
+    assert_contains "ignore list: the presets" "$(mfg messages --workspace "$WS")" "Ignore presets:"
+    assert_contains "ignore list: the root's own set" "$(mfg messages --workspace "$WS")" \
+        "Patterns of / (its own):"
+
+    # The target is the selected directory, else the root: name it anyway.
+    select_path "$REPO_DIR"
+    # Every shipped preset is part of the root's default set: take one out
+    # and put it back.
+    run ignore:remove git
+    status_is "ignore remove on the root" info \
+        "Ignore: git removed from / — $((root_count - 1)) pattern(s)"
+    run ignore:add git
+    status_is "ignore add on the root" info "Ignore: git applied to / — $root_count pattern(s)"
+
+    # A directory inheriting the root's set: adding to it asks whether to copy
+    # the inherited patterns first, or the new set would shadow them.
+    select_path "$REPO_DIR/kept"
+    answering yes ignore:add git
+    assert_contains "ignore add under the root: asks about the inherited set" \
+        "$LAST_QUESTIONS" "/kept has no ignore patterns of its own"
+    status_is "ignore add, inherited set copied" info \
+        "Ignore: git applied to /kept — $root_count pattern(s)"
+    assert_eq "ignore add, inherited set copied: written" "$root_count" "$(ignore_count "$kept")"
+
+    select_path "$REPO_DIR/fresh"
+    answering no ignore:add git
+    status_is "ignore add, starting empty" info "Ignore: git applied to /fresh — 1 pattern(s)"
+    assert_eq "ignore add, starting empty: written" "1" "$(ignore_count "$fresh")"
 }
 
 scenario_errors() {
@@ -202,7 +336,7 @@ scenario_errors() {
 
     run nope:nope
     assert_eq "unknown command: fails" "1" "$LAST_RC"
-    assert_contains "unknown command: says so" "$LAST_OUT" "unknown command"
+    assert_contains "unknown command: says so" "$LAST_ERR" "unknown command"
 
     run metarecord:trash
     status_is "trash with nothing selected: refused" error "no metarecord is selected"
