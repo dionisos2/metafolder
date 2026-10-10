@@ -5735,3 +5735,274 @@ fn test_undo_and_redo_of_a_trashing_across_watcher_writes() {
     assert!(uuids_at(&repo, "doc.txt").is_empty());
     assert_eq!(repo_trash(&root).entries().unwrap().len(), 1);
 }
+
+// ── Watch check and the watch budget's exclusions ─────────────────────────────
+
+/// `mf watch check` answers one line per path, and says why a path is not
+/// watched in terms a person can act on; any path not watched makes it exit 1.
+#[test]
+fn test_watch_check_explains_each_path() {
+    let (repo, root) = init_repo("watchcheck");
+    std::fs::create_dir_all(root.join("music")).unwrap();
+    std::fs::write(root.join("music/a.mp3"), b"a").unwrap();
+    std::fs::create_dir_all(root.join(".hidden")).unwrap();
+    std::fs::write(root.join(".hidden/x"), b"x").unwrap();
+    let a = root.join("music/a.mp3");
+    let a = a.to_str().unwrap();
+
+    // Tracking is opt-in: a fresh repository's root says `mf_watch = false`.
+    let out = mf(&["-u", &repo, "watch", "check", a]);
+    assert_eq!(out.code, 1, "stdout: {}\nstderr: {}", out.stdout, out.stderr);
+    assert!(out.stdout.starts_with("NOT watched"), "stdout: {}", out.stdout);
+    assert!(out.stdout.contains("/music/a.mp3"), "stdout: {}", out.stdout);
+    assert!(out.stdout.contains("mf_watch = false inherited from /\n"), "{}", out.stdout);
+
+    let root_uuid = mf(&["-u", &repo, "metarecord", "get"]).stdout.trim().to_string();
+    assert_ok(&mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-i",
+        &root_uuid,
+        "field",
+        "set",
+        "mf_watch:bool=true",
+    ]));
+    assert_ok(&mf(&["-u", &repo, "reconcile"]));
+
+    // The root itself is shown as `/`, and both paths are watched: exit 0.
+    let out = mf(&["-u", &repo, "watch", "check", root.to_str().unwrap(), a]);
+    assert_ok(&out);
+    let lines: Vec<&str> = out.stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "stdout: {}", out.stdout);
+    assert!(lines[0].starts_with("watched") && lines[0].contains("\t/\t"), "{}", lines[0]);
+    assert!(lines[1].contains("/music/a.mp3") && lines[1].contains("recorded"), "{}", lines[1]);
+
+    // The default preset ignores hidden entries: the pattern and its holder are named.
+    let out = mf(&["-u", &repo, "watch", "check", root.join(".hidden/x").to_str().unwrap()]);
+    assert_eq!(out.code, 1, "stdout: {}", out.stdout);
+    assert!(out.stdout.contains("mf_ignore pattern"), "stdout: {}", out.stdout);
+
+    // An mf_watch = false below the root names where it is inherited from.
+    let music = query_one(&repo, r#"mfr_path = "/music""#);
+    assert_ok(&mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-i",
+        &music,
+        "field",
+        "set",
+        "mf_watch:bool=false",
+    ]));
+    let out = mf(&["-u", &repo, "watch", "check", a]);
+    assert_eq!(out.code, 1, "stdout: {}", out.stdout);
+    assert!(out.stdout.contains("mf_watch = false inherited from /music\n"), "{}", out.stdout);
+
+    // A path gone from disk is taken as repo-root-relative only with a leading slash.
+    let out = mf(&["-u", &repo, "watch", "check", "/music/gone.mp3", "--json"]);
+    assert_ok(&out);
+    let body: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(body["results"][0]["path"], "/music/gone.mp3", "{body}");
+    assert_eq!(body["results"][0]["watched"], false, "{body}");
+    let out = mf(&["-u", &repo, "watch", "check", "nowhere/at/all"]);
+    assert_eq!(out.code, 2, "a relative path that does not exist is a usage error");
+    assert!(out.stderr.contains("must start with '/'"), "stderr: {}", out.stderr);
+    let out = mf(&["-u", &repo, "watch", "check"]);
+    assert_eq!(out.code, 2, "at least one path is required: {}", out.stderr);
+}
+
+/// `mf watch exceeded set` gives a subtree up, `list` shows it, `watch check`
+/// says why a path inside is not watched, and `clear` watches it again.
+#[test]
+fn test_watch_exceeded_set_list_and_clear() {
+    let (repo, root) = tracked_repo("watchexceeded", &[("big/f.txt", b"f")]);
+    let f = root.join("big/f.txt");
+    let f = f.to_str().unwrap();
+
+    let out = mf(&["-u", &repo, "watch", "exceeded"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("no subtree is excluded"), "stdout: {}", out.stdout);
+
+    let out = mf(&["-u", &repo, "watch", "exceeded", "set", "/big"]);
+    assert_ok(&out);
+    assert!(out.stdout.starts_with("/big: no longer watched"), "stdout: {}", out.stdout);
+
+    let out = mf(&["-u", &repo, "watch", "exceeded", "list"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.lines().next(), Some("/big"), "stdout: {}", out.stdout);
+    let out = mf(&["-u", &repo, "watch", "exceeded", "--json"]);
+    assert_ok(&out);
+    let body: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(body["exceeded"], serde_json::json!(["/big"]), "{body}");
+
+    let out = mf(&["-u", &repo, "watch", "check", f]);
+    assert_eq!(out.code, 1, "stdout: {}", out.stdout);
+    assert!(out.stdout.contains("inside /big (mfr_watch_exceeded"), "stdout: {}", out.stdout);
+
+    // The budget regime counts the exclusion in `watch status` too.
+    let status: serde_json::Value =
+        serde_json::from_str(&mf(&["-u", &repo, "watch", "status", "--json"]).stdout).unwrap();
+    let out = mf(&["-u", &repo, "watch", "status"]);
+    assert_ok(&out);
+    if status["watch_budget"]["exceeded_dirs"].as_i64().unwrap_or(0) > 0 {
+        assert!(out.stdout.contains("subtree(s) left unwatched"), "stdout: {}", out.stdout);
+    }
+
+    let out = mf(&["-u", &repo, "watch", "exceeded", "clear", "/big"]);
+    assert_ok(&out);
+    assert!(out.stdout.starts_with("/big: watched again"), "stdout: {}", out.stdout);
+    assert_ok(&mf(&["-u", &repo, "watch", "check", f]));
+
+    let out = mf(&["-u", &repo, "watch", "exceeded", "set", "/no/such/dir"]);
+    assert_eq!(out.code, 1, "an untracked directory is an operation error");
+    assert!(out.stderr.contains("No metarecord at /no/such/dir"), "stderr: {}", out.stderr);
+}
+
+// ── Orphans: relink, and the confirmation of clear ────────────────────────────
+
+/// `mf orphan relink` re-homes an orphan onto the file now carrying its
+/// content: the orphan keeps its uuid and its metadata.
+#[test]
+fn test_orphan_relink_re_homes_an_orphan() {
+    let (repo, root) = tracked_repo("orphanrelink", &[("song.mp3", b"some audio content")]);
+    let song = root.join("song.mp3");
+    let original = query_one(&repo, r#"mfr_path = "/song.mp3""#);
+    // The fingerprints the duplicate scan would have stored.
+    let partial = metafolder_daemon::fingerprint::partial_hash(&song).unwrap();
+    let full = metafolder_daemon::fingerprint::full_hash(&song).unwrap();
+    for spec in
+        [format!("mfr_partial_hash:string={partial}"), format!("mfr_full_hash:string={full}")]
+    {
+        let out =
+            mf(&["-u", &repo, "metarecord", "-i", &original, "field", "set", &spec, "--force"]);
+        assert_ok(&out);
+    }
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &original, "field", "set", "rating:int=5"]));
+
+    // Renamed while nothing was recorded: the old record is orphaned, and
+    // reconcile tracks the new name afresh. (Not `mf track`: it writes
+    // `mf_watch = false`, a field relink will not absorb.)
+    assert_ok(&mf(&["-u", &repo, "watch", "pause"]));
+    std::fs::rename(&song, root.join("renamed.mp3")).unwrap();
+    assert_ok(&mf(&["-u", &repo, "orphan", "clear", "-y"]));
+    assert_ok(&mf(&["-u", &repo, "reconcile"]));
+    let fresh = query_one(&repo, r#"mfr_path = "/renamed.mp3""#);
+    assert_ne!(fresh, original);
+
+    let out = mf(&["-u", &repo, "orphan", "relink"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), "relinked: 1  conflicts: 0  skipped: 0", "{}", out.stdout);
+    let out = mf(&["-u", &repo, "path", &original]);
+    assert_ok(&out);
+    assert!(out.stdout.trim().ends_with("/renamed.mp3"), "stdout: {}", out.stdout);
+    let out = mf(&["-u", &repo, "metarecord", "-i", &original, "field", "get", "rating"]);
+    assert_eq!(out.stdout.trim(), "5", "the metadata came back with it");
+
+    // Nothing left to do; --json prints the task's result.
+    let out = mf(&["-u", &repo, "orphan", "relink", "--json"]);
+    assert_ok(&out);
+    let body: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(body["relinked"], 0, "{body}");
+
+    // --no-wait prints the task id alone, which `mf task show` knows.
+    let out = mf(&["-u", &repo, "orphan", "relink", "--no-wait"]);
+    assert_ok(&out);
+    let task = out.stdout.trim().to_string();
+    assert!(!task.is_empty() && !task.contains(char::is_whitespace), "stdout: {}", out.stdout);
+    assert_ok(&mf(&["-u", &repo, "task", "show", &task]));
+}
+
+/// Without `-y`, `mf orphan clear` lists what it would orphan on stderr and
+/// asks; a refusal leaves the records alone.
+#[test]
+fn test_orphan_clear_asks_before_clearing() {
+    let (repo, root) = init_repo("orphanask");
+    let file = root.join("gone.txt");
+    std::fs::write(&file, b"data").unwrap();
+    let uuid = mf(&["-u", &repo, "track", file.to_str().unwrap()]).stdout.trim().to_string();
+
+    let out = mf(&["-u", &repo, "orphan", "clear"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("No orphans to clear."), "stdout: {}", out.stdout);
+
+    std::fs::remove_file(&file).unwrap();
+    let clear = |answer: &str| {
+        mf_full(&["-p", daemon_port(), "-u", &repo, "orphan", "clear"], Some(answer), &[], false)
+    };
+    let out = clear("n\n");
+    assert_ok(&out);
+    assert!(out.stdout.contains("Aborted."), "stdout: {}", out.stdout);
+    assert!(out.stderr.contains(&uuid) && out.stderr.contains("/gone.txt"), "{}", out.stderr);
+    assert!(out.stderr.contains("Orphan 1 metarecord(s)"), "stderr: {}", out.stderr);
+    let out = mf(&["-u", &repo, "orphan", "list"]);
+    assert!(out.stdout.contains(&uuid), "a refusal clears nothing: {}", out.stdout);
+
+    let out = clear("y\n");
+    assert_ok(&out);
+    assert!(out.stdout.contains("cleared 1"), "stdout: {}", out.stdout);
+}
+
+// ── field get over a query, duplicate list's sort and limit ───────────────────
+
+/// `field get` with a query selector prints each match's values; `--resolve`
+/// needs a single metarecord.
+#[test]
+fn test_field_get_with_a_query_selector() {
+    let (repo, _root) = init_repo("fieldgetq");
+    create_metarecord(&repo, &["kind:string=fgq", "title:string=first"]);
+    create_metarecord(&repo, &["kind:string=fgq", "title:string=second"]);
+
+    let out = mf(&["-u", &repo, "metarecord", "-q", r#"kind = "fgq""#, "field", "get", "title"]);
+    assert_ok(&out);
+    let mut values: Vec<&str> = out.stdout.lines().collect();
+    values.sort();
+    assert_eq!(values, ["first", "second"], "stdout: {}", out.stdout);
+
+    let out = mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-q",
+        r#"kind = "fgq""#,
+        "field",
+        "get",
+        "title",
+        "--resolve",
+        "name",
+    ]);
+    assert_eq!(out.code, 2, "stdout: {}\nstderr: {}", out.stdout, out.stderr);
+    assert!(out.stderr.contains("--resolve requires -i"), "stderr: {}", out.stderr);
+}
+
+/// `duplicate list --sort field:asc` reverses the default order, `--limit`
+/// caps the groups listed, and an unknown order is a usage error.
+#[test]
+fn test_duplicate_list_sort_and_limit() {
+    let (repo, _dir) = tracked_repo(
+        "dupsort",
+        &[
+            ("s1.txt", b"short"),
+            ("s2.txt", b"short"),
+            ("l1.txt", b"a much longer content"),
+            ("l2.txt", b"a much longer content"),
+        ],
+    );
+    assert_ok(&mf(&["-u", &repo, "duplicate", "scan"]));
+    let rows = |args: &[&str]| -> Vec<String> {
+        let mut all = vec!["-u", &repo, "duplicate", "list"];
+        all.extend_from_slice(args);
+        let out = mf(&all);
+        assert_ok(&out);
+        out.stdout.lines().skip(1).map(str::to_string).collect()
+    };
+    let desc = rows(&[]);
+    assert_eq!(desc.len(), 2, "{desc:?}");
+    let asc = rows(&["--sort", "mfr_duplicate_reclaimable:asc"]);
+    assert_eq!(asc, desc.iter().rev().cloned().collect::<Vec<_>>());
+    assert_eq!(rows(&["--sort", "mfr_content_size:desc", "--limit", "1"]), desc[..1]);
+
+    let out = mf(&["-u", &repo, "duplicate", "list", "--sort", "size:sideways"]);
+    assert_eq!(out.code, 2, "stderr: {}", out.stderr);
+    assert!(out.stderr.contains("unknown sort order 'sideways'"), "stderr: {}", out.stderr);
+}
