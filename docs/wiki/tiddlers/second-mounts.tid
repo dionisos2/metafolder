@@ -31,8 +31,15 @@ one mount now — live, and found by a reconcile as a drive plugged in is
 ([[Offline subtrees]]); the first one, a declared mount point with nothing mounted, is
 frozen.
 
+''A drive in two repositories'' is the same question between repositories: each tracks
+it at its own mount point. The broker resolves a record through one mount of the
+filesystem and then tells the event again at every other mount showing that path — the
+whole drive, or the part of it a bind shows (`Aliases`, from the mount table read at each
+resync) — so each subscriber hears of it under its own root, and a repository holding
+both mounts receives the second path too, which it drops as above. Under inotify each
+repository has a watch of its own on the inode.
+
 Not covered: a later mount showing ''more'' than an earlier one (the earlier one is a
-part of it, reached twice); and the same drive mounted in two repositories, which the
-broker resolves through one of them only — the other repository hears nothing from that
-drive. `tests/watch_mounts.rs` drives the case of one repository under both sources.
+part of it, reached twice). `tests/watch_mounts.rs` drives one drive at two points of a
+repository and in two repositories, under both sources.
 

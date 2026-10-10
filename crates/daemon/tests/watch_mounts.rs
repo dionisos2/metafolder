@@ -291,8 +291,42 @@ async fn a_drive_mounted_at_two_points(regime: Regime) {
     fs.unmount(&store).unwrap();
 }
 
+// ── One drive in two repositories ────────────────────────────────────────────
+
+async fn a_drive_in_two_repositories(regime: Regime) {
+    let fs = regime.fs();
+    let (app1, repo1, root1) = journey_repo("tworepos1", regime).await;
+    let (app2, repo2, root2) = journey_repo("tworepos2", regime).await;
+    let store = drive(&fs, "shared");
+    std::fs::write(store.join("photo.jpg"), b"p").unwrap();
+    for (app, repo, root) in [(&app1, &repo1, &root1), (&app2, &repo2, &root2)] {
+        fs.create_dir(root.join("usb")).unwrap();
+        settle_on(app, repo, &["", "usb"]).await;
+        fs.bind_mount(&store, root.join("usb")).unwrap();
+    }
+    mount_table_read_again().await;
+    for (app, repo) in [(&app1, &repo1), (&app2, &repo2)] {
+        let result = reconcile(app, repo, "the drive plugged in").await;
+        assert_eq!(result["created"], 1, "{result}");
+    }
+
+    // Worked on through either repository: both hear of it.
+    fs.write(root2.join("usb/new.jpg"), b"n").unwrap();
+    fs.rename(root1.join("usb/photo.jpg"), root1.join("usb/kept.jpg")).unwrap();
+    for (app, repo) in [(&app1, &repo1), (&app2, &repo2)] {
+        settle_on(app, repo, &["", "usb", "usb/kept.jpg", "usb/new.jpg"]).await;
+        reconcile_agrees(app, repo, "worked on through either repository").await;
+        assert_eq!(orphan_count(app, repo).await, 0);
+    }
+
+    fs.unmount(root1.join("usb")).unwrap();
+    fs.unmount(root2.join("usb")).unwrap();
+    fs.unmount(&store).unwrap();
+}
+
 on_both_sources!(
     a_drive_plugged_in_and_out_with_work_going_on,
     a_drive_mounted_over_a_tracked_directory,
     a_drive_mounted_at_two_points,
+    a_drive_in_two_repositories,
 );

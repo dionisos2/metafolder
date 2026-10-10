@@ -58,13 +58,10 @@ source never watched a drive plugged in (=75c6022f=); and two points of one
 drive could only ever be reported through one — a second mount is now an
 entry, never walked (doc "Second mounts").
 
-Next: *one drive in two repositories*. The broker resolves a drive's handles
-through the first of its mount points under any root, so a drive mounted under
-two repositories is heard by one of them only (doc "Second mounts", "Not
-covered"). Resolving through a mount point under each subscriber's root —
-per root, or by rewriting the path through the other mount points of the same
-filesystem — is the way out; reproduce it in the simulator first (two
-subscribers, one drive bound under each).
+One drive in two repositories, the case it left: the broker resolved through
+one mount point, so the other repository heard nothing; each event is now told
+again at every mount of the filesystem showing its path (doc "Second mounts").
+Nothing named is left to drive.
 
 ** TODO fanotify: what the note leaves open
 From doc "Watcher open questions" (and doc "The fanotify broker"):

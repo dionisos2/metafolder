@@ -142,6 +142,19 @@ pub enum Event {
 }
 
 impl Event {
+    /// The same event at another path — one naming a single path.
+    pub fn with_path(&self, path: WirePath) -> Event {
+        match self {
+            Event::Create { .. } => Event::Create { path },
+            Event::Remove { .. } => Event::Remove { path },
+            Event::RenameFrom { .. } => Event::RenameFrom { path },
+            Event::RenameTo { .. } => Event::RenameTo { path },
+            Event::ModifyData { .. } => Event::ModifyData { path },
+            Event::ModifyMeta { .. } => Event::ModifyMeta { path },
+            Event::Rename { .. } => panic!("a move names two paths"),
+        }
+    }
+
     /// Every path this event names.
     pub fn paths(&self) -> Vec<&WirePath> {
         match self {

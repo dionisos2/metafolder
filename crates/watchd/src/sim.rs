@@ -353,6 +353,20 @@ impl State {
         Some(names.into_iter().rev().fold(base, |p, n| p.join(n)))
     }
 
+    /// The mount table as `/proc/self/mountinfo` lists it: the simulated
+    /// filesystem, then each drive mount in order, each showing its whole
+    /// drive.
+    fn mount_entries(&self) -> Vec<crate::fanotify::MountEntry> {
+        let entry = |fs: usize, point: PathBuf| crate::fanotify::MountEntry {
+            dev: fs as libc::dev_t,
+            point,
+            root: PathBuf::from("/"),
+        };
+        std::iter::once(entry(0, self.mount.clone()))
+            .chain(self.mounts.iter().filter_map(|m| Some(entry(m.fs, self.path_of(m.over)?))))
+            .collect()
+    }
+
     /// Whether `path` is strictly under a covered root.
     fn under_root(&self, path: &Path) -> bool {
         self.roots.iter().any(|r| path.starts_with(r) && path != r)
@@ -1081,8 +1095,10 @@ impl Group for SimGroup {
             roots.iter().cloned().partition(|root| root.starts_with(&st.mount) && root.is_dir());
         st.roots = covered.clone();
         st.remark();
+        let mounts = st.mount_entries();
         drop(st);
         self.translator.set_roots(covered);
+        self.translator.set_mounts(mounts);
         self.translator.marks_placed();
         uncovered
             .into_iter()
@@ -1795,11 +1811,11 @@ mod tests {
     }
 
     #[test]
-    fn test_a_drive_at_two_points_is_reported_through_one() {
+    fn test_a_drive_at_two_points_is_reported_at_both() {
         // One filesystem, one mark, one handle per object: a record names no
-        // mount, and the broker resolves through the first mount point it
-        // knows of the filesystem.
-        if !in_userns("test_a_drive_at_two_points_is_reported_through_one") {
+        // mount. The broker resolves through one mount point and tells the
+        // event again at every other one showing the path.
+        if !in_userns("test_a_drive_at_two_points_is_reported_at_both") {
             return;
         }
         let (broker, root, mut r) = started("drivetwice");
@@ -1811,10 +1827,46 @@ mod tests {
         fs.bind_mount(&store, root.join("b")).unwrap();
         received(&mut r);
         fs.write(root.join("b/x"), b"x").unwrap();
-        assert_eq!(tree(&received(&mut r)), vec![Event::Create { path: p(&root, "a/x") }]);
+        assert_eq!(
+            tree(&received(&mut r)),
+            vec![Event::Create { path: p(&root, "a/x") }, Event::Create { path: p(&root, "b/x") }]
+        );
         fs.unmount(root.join("a")).unwrap();
         fs.write(root.join("b/y"), b"y").unwrap();
         assert_eq!(tree(&received(&mut r)), vec![Event::Create { path: p(&root, "b/y") }]);
+    }
+
+    #[test]
+    fn test_a_drive_in_two_repositories_is_heard_in_each() {
+        // The broker resolves through one mount point of the drive; each
+        // subscriber is told at the path its own root shows.
+        if !in_userns("test_a_drive_in_two_repositories_is_heard_in_each") {
+            return;
+        }
+        let (broker, one, mut r1) = started("drivetworepos");
+        let fs = broker.fs();
+        let two = fs.mount().join("two");
+        fs.create_dir(&two).unwrap();
+        let mut r2 = subscriber(&broker, &two);
+        let store = drive(fs, "store");
+        fs.create_dir(one.join("usb")).unwrap();
+        fs.create_dir(two.join("usb")).unwrap();
+        fs.bind_mount(&store, one.join("usb")).unwrap();
+        fs.bind_mount(&store, two.join("usb")).unwrap();
+        received(&mut r1);
+        received(&mut r2);
+        fs.write(two.join("usb/x"), b"x").unwrap();
+        fs.rename(one.join("usb/x"), one.join("usb/y")).unwrap();
+        for (r, root) in [(&mut r1, &one), (&mut r2, &two)] {
+            assert_eq!(
+                tree(&received(r)),
+                vec![
+                    Event::Create { path: p(root, "usb/x") },
+                    Event::Rename { from: p(root, "usb/x"), to: p(root, "usb/y") },
+                ],
+                "{root:?}"
+            );
+        }
     }
 
     #[test]

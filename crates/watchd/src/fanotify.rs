@@ -531,18 +531,137 @@ pub fn mount_points(table: &[u8]) -> Vec<PathBuf> {
 /// [`mount_points`], each with the device of its filesystem (the third
 /// field, `major:minor` — what `stat` reports as `st_dev` on it).
 fn mount_table(table: &[u8]) -> Vec<(libc::dev_t, PathBuf)> {
+    mount_entries(table).into_iter().map(|e| (e.dev, e.point)).collect()
+}
+
+/// One line of the mount table: a filesystem's device, where it is mounted,
+/// and what part of it shows there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MountEntry {
+    pub dev: libc::dev_t,
+    pub point: PathBuf,
+    /// The directory of the filesystem shown at `point` (`/` for the whole
+    /// of it, one of its directories for a bind).
+    pub root: PathBuf,
+}
+
+/// The lines of a `/proc/self/mountinfo` table, in order.
+pub fn mount_entries(table: &[u8]) -> Vec<MountEntry> {
     let number = |b: &[u8]| std::str::from_utf8(b).ok()?.parse::<u32>().ok();
+    let path = |b: &[u8]| PathBuf::from(OsStr::from_bytes(&unescape_octal(b)));
     table
         .split(|&b| b == b'\n')
         .filter_map(|line| {
             let mut fields = line.split(|&b| b == b' ');
             let dev = fields.nth(2)?;
-            let point = fields.nth(1).filter(|field| field.first() == Some(&b'/'))?;
+            let root = fields.next()?;
+            let point = fields.next().filter(|field| field.first() == Some(&b'/'))?;
             let colon = dev.iter().position(|&b| b == b':')?;
             let dev = libc::makedev(number(&dev[..colon])?, number(&dev[colon + 1..])?);
-            Some((dev, PathBuf::from(OsStr::from_bytes(&unescape_octal(point)))))
+            Some(MountEntry { dev, point: path(point), root: path(root) })
         })
         .collect()
+}
+
+/// A filesystem mounted at several points shows each of its files at several
+/// paths, and a record names none of them: the resolver answers through one
+/// mount, and each subscriber must hear of the file at the path *its* root
+/// shows (a drive under two repositories, doc "Second mounts"). So each event
+/// is told again at every other mount showing its path.
+#[derive(Debug, Default)]
+pub struct Aliases {
+    table: Vec<MountEntry>,
+    /// Whether any filesystem is mounted twice: if not, nothing to do.
+    shared: bool,
+}
+
+impl Aliases {
+    pub fn new(table: Vec<MountEntry>) -> Self {
+        let shared =
+            table.iter().enumerate().any(|(i, e)| table[..i].iter().any(|o| o.dev == e.dev));
+        Self { table, shared }
+    }
+
+    /// The mount `path` is seen through: the deepest mount point above it,
+    /// the one made last for a directory mounted over.
+    fn mount_of(&self, path: &Path) -> Option<usize> {
+        self.table
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| path.starts_with(&e.point))
+            .max_by_key(|(_, e)| e.point.components().count())
+            .map(|(i, _)| i)
+    }
+
+    /// `path` at every other mount of its filesystem that shows it, with that
+    /// mount's index.
+    fn elsewhere(&self, path: &Path) -> Vec<(usize, PathBuf)> {
+        let Some(own) = self.mount_of(path) else { return Vec::new() };
+        let mount = &self.table[own];
+        let Ok(rel) = path.strip_prefix(&mount.point) else { return Vec::new() };
+        let at = join(&mount.root, rel);
+        self.table
+            .iter()
+            .enumerate()
+            .filter(|&(i, e)| i != own && e.dev == mount.dev)
+            .filter_map(|(i, e)| Some((i, join(&e.point, at.strip_prefix(&e.root).ok()?))))
+            .collect()
+    }
+
+    /// `events`, each followed by itself at the other mounts showing it. A
+    /// move is one filesystem's (never across mounts): told at each mount
+    /// showing either side — whole, or as the side that mount shows.
+    pub fn expand(&self, events: Vec<Event>) -> Vec<Event> {
+        if !self.shared {
+            return events;
+        }
+        let mut out = Vec::with_capacity(events.len());
+        for event in events {
+            let more: Vec<Event> = match &event {
+                Event::Rename { from, to } => {
+                    let (from, to) = (self.elsewhere(from.as_path()), self.elsewhere(to.as_path()));
+                    let at = |side: &[(usize, PathBuf)], i: usize| {
+                        side.iter().find(|(j, _)| *j == i).map(|(_, p)| p.as_path().into())
+                    };
+                    let mut mounts: Vec<usize> = from.iter().chain(&to).map(|(i, _)| *i).collect();
+                    mounts.sort_unstable();
+                    mounts.dedup();
+                    mounts
+                        .into_iter()
+                        .map(|i| match (at(&from, i), at(&to, i)) {
+                            (Some(from), Some(to)) => Event::Rename { from, to },
+                            (Some(path), None) => Event::RenameFrom { path },
+                            (None, Some(path)) => Event::RenameTo { path },
+                            (None, None) => unreachable!("a mount of one side or the other"),
+                        })
+                        .collect()
+                }
+                Event::Create { path }
+                | Event::Remove { path }
+                | Event::RenameFrom { path }
+                | Event::RenameTo { path }
+                | Event::ModifyData { path }
+                | Event::ModifyMeta { path } => self
+                    .elsewhere(path.as_path())
+                    .into_iter()
+                    .map(|(_, p)| event.with_path(p.as_path().into()))
+                    .collect(),
+            };
+            out.push(event);
+            out.extend(more);
+        }
+        out
+    }
+}
+
+/// `base` and `rel` joined — `base` itself for an empty `rel`, with no
+/// trailing separator.
+fn join(base: &Path, rel: &Path) -> PathBuf {
+    if rel.as_os_str().is_empty() {
+        base.to_path_buf()
+    } else {
+        base.join(rel)
+    }
 }
 
 fn unescape_octal(field: &[u8]) -> Vec<u8> {
@@ -974,6 +1093,8 @@ pub struct Translator<R: Resolve + IgnoreMarks> {
     ignored: HashMap<([i32; 2], Vec<u8>), Handle>,
     /// The kernel does not know ignore marks (before 6.0): none is asked.
     refused: bool,
+    /// Every event told again at the other mounts of its filesystem.
+    aliases: Aliases,
     /// [`IGNORE_AFTER`], [`IGNORED_MAX`] — fields for the tests.
     pub ignore_after: u32,
     pub ignored_max: usize,
@@ -987,6 +1108,7 @@ impl<R: Resolve + IgnoreMarks> Translator<R> {
             dropped: HashMap::new(),
             ignored: HashMap::new(),
             refused: false,
+            aliases: Aliases::default(),
             ignore_after: IGNORE_AFTER,
             ignored_max: IGNORED_MAX,
         }
@@ -996,6 +1118,11 @@ impl<R: Resolve + IgnoreMarks> Translator<R> {
         self.scope.set_roots(roots);
     }
 
+    /// The mount table as it is now ([`Aliases`]).
+    pub fn set_mounts(&mut self, table: Vec<MountEntry>) {
+        self.aliases = Aliases::new(table);
+    }
+
     /// Turns one read's bytes into wire events — those under a subscribed
     /// root: the rest is dropped by directory handle ([`Scope`]) before
     /// anything is resolved for it, and a directory whose events keep being
@@ -1003,6 +1130,7 @@ impl<R: Resolve + IgnoreMarks> Translator<R> {
     pub fn translate(&mut self, buf: &[u8]) -> ReadOutcome {
         let (raws, kernel_overflow) = parse(buf);
         let events = translate_batch(&raws, &mut self.scope, &mut self.resolver);
+        let events = self.aliases.expand(events);
         self.settle_ignores();
         self.resolver.end_batch();
         ReadOutcome { events, kernel_overflow }
@@ -1189,9 +1317,12 @@ impl Fanotify {
     /// [`resync`](Self::resync), answering each root it could not cover with
     /// why — every other root is covered.
     pub fn place_marks(&mut self) -> Vec<Uncovered> {
-        let table =
-            std::fs::read("/proc/self/mountinfo").map(|t| mount_table(&t)).unwrap_or_default();
+        let entries =
+            std::fs::read("/proc/self/mountinfo").map(|t| mount_entries(&t)).unwrap_or_default();
+        let table: Vec<(libc::dev_t, PathBuf)> =
+            entries.iter().map(|e| (e.dev, e.point.clone())).collect();
         let points: Vec<PathBuf> = table.iter().map(|(_, point)| point.clone()).collect();
+        self.translator.set_mounts(entries);
         let Plan { wanted, mut paths, roots_on, mut failed, skipped } =
             plan_marks(&self.roots, &points, coverable_fsid);
         // Which directories are outside the roots, and the paths a drive's
@@ -2365,6 +2496,91 @@ mod tests {
             "strictly under the root, by component — not by string prefix"
         );
         assert!(covered_mounts(Path::new("/home/me/repo/usb"), &points).is_empty());
+    }
+
+    #[test]
+    fn test_the_mount_table_is_read_with_each_mounts_root() {
+        let table = b"1 0 8:1 / / rw - ext4 /dev/sda1 rw
+2 1 8:17 / /media/usb rw - ext4 /dev/sdb1 rw
+3 1 8:17 /photos /home/me/my\\040repo/photos rw - ext4 /dev/sdb1 rw
+";
+        let at = |dev: (u32, u32), point: &str, root: &str| MountEntry {
+            dev: libc::makedev(dev.0, dev.1),
+            point: PathBuf::from(point),
+            root: PathBuf::from(root),
+        };
+        assert_eq!(
+            mount_entries(table),
+            [
+                at((8, 1), "/", "/"),
+                at((8, 17), "/media/usb", "/"),
+                at((8, 17), "/home/me/my repo/photos", "/photos"),
+            ]
+        );
+    }
+
+    /// `/media/usb` holds a drive, shown again whole at `/r1/usb` and in part
+    /// (its `photos`) at `/r2/pics`; `/r1/other` is a drive mounted once.
+    fn aliases() -> Aliases {
+        let at = |dev: u32, point: &str, root: &str| MountEntry {
+            dev: libc::makedev(8, dev),
+            point: PathBuf::from(point),
+            root: PathBuf::from(root),
+        };
+        Aliases::new(vec![
+            at(1, "/", "/"),
+            at(17, "/media/usb", "/"),
+            at(17, "/r1/usb", "/"),
+            at(17, "/r2/pics", "/photos"),
+            at(33, "/r1/other", "/"),
+        ])
+    }
+
+    fn w(p: &str) -> WirePath {
+        PathBuf::from(p).into()
+    }
+
+    #[test]
+    fn test_an_event_on_a_drive_mounted_several_times_is_told_at_each_mount() {
+        let a = aliases();
+        assert_eq!(
+            a.expand(vec![Event::Create { path: w("/r1/usb/photos/x") }]),
+            [
+                Event::Create { path: w("/r1/usb/photos/x") },
+                Event::Create { path: w("/media/usb/photos/x") },
+                Event::Create { path: w("/r2/pics/x") },
+            ]
+        );
+        // Outside the part `/r2/pics` shows: not there.
+        assert_eq!(
+            a.expand(vec![Event::ModifyData { path: w("/media/usb/notes") }]),
+            [
+                Event::ModifyData { path: w("/media/usb/notes") },
+                Event::ModifyData { path: w("/r1/usb/notes") },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_a_move_is_told_at_each_mount_showing_either_side() {
+        let a = aliases();
+        assert_eq!(
+            a.expand(vec![Event::Rename { from: w("/media/usb/photos/x"), to: w("/media/usb/y") }]),
+            [
+                Event::Rename { from: w("/media/usb/photos/x"), to: w("/media/usb/y") },
+                Event::Rename { from: w("/r1/usb/photos/x"), to: w("/r1/usb/y") },
+                Event::RenameFrom { path: w("/r2/pics/x") },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_what_is_mounted_once_is_told_once() {
+        let a = aliases();
+        for path in ["/r1/other/f", "/home/me/f", "/r1/usb-not/f"] {
+            let event = Event::Create { path: w(path) };
+            assert_eq!(a.expand(vec![event.clone()]), [event], "{path}");
+        }
     }
 
     /// A broker that cannot resolve a handle must say *which* call failed and

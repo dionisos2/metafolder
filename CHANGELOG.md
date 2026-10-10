@@ -213,6 +213,11 @@ than breaking them.
   mounting the remote repository over SSHFS is deferred (spec-sync).
 
 ### Fixed
+- **`metafolder-watchd`: a drive mounted under two repositories was heard by one
+  only.** The broker resolves a file through one mount point of its
+  filesystem; the repository under another mount point of the same drive got
+  nothing. Each event is now told again at every mount showing its path — the
+  whole drive, or the part a bind mount shows.
 - **A drive plugged in under a repository was never watched (inotify).** An
   inotify watch is on an inode: the one placed on the mount point stayed on the
   directory hidden beneath, and nothing placed the watches again, so nothing
