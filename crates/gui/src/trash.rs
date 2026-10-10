@@ -138,7 +138,7 @@ pub fn trash_tracked(
 
 /// Blocking worker behind [`trash_selected_metarecord`]: resolves the selected
 /// metarecord's file, then trashes it through [`trash_tracked`].
-fn trash_selected_blocking(base: String, uuid: String, repo: String) -> Result<String, String> {
+pub fn trash_selected_blocking(base: String, uuid: String, repo: String) -> Result<String, String> {
     let client = BlockingClient::new(base.clone());
     let info = client.get(&format!("/repos/{repo}")).map_err(|e| e.message)?;
     let (root, internal) = root_and_internal(&info)?;
@@ -253,7 +253,7 @@ pub fn trash_query(base: &str, repo: &str, query: &Value) -> Result<BulkTrashOut
 
 /// Blocking worker behind [`trash_restore`]: validates the restore, re-links the
 /// metarecords, then moves the blob back. Returns the restored path.
-fn restore_blocking(base: String, repo: String, id: String) -> Result<String, String> {
+pub fn restore_blocking(base: String, repo: String, id: String) -> Result<String, String> {
     let client = BlockingClient::new(base);
     let info = client.get(&format!("/repos/{repo}")).map_err(|e| e.message)?;
     let (root, internal) = root_and_internal(&info)?;
@@ -476,6 +476,43 @@ mod tests {
         // Defensive against a leading slash.
         assert_eq!(abs_path("/data", "/song.mp3"), PathBuf::from("/data/song.mp3"));
         assert_eq!(abs_path("/data", "song.mp3"), PathBuf::from("/data/song.mp3"));
+    }
+
+    #[test]
+    fn bulk_trash_message_names_what_moved_and_what_did_not() {
+        let one = BulkTrashOutcome { trashed: 1, ..Default::default() };
+        assert_eq!(bulk_trash_message(&one), "Trashed 1 file — restore from the trash panel");
+
+        let all = BulkTrashOutcome {
+            trashed: 3,
+            inside: 1,
+            without_file: 2,
+            root_kept: true,
+            failed: vec!["a.txt: busy".into(), "b.txt: gone".into()],
+        };
+        assert_eq!(
+            bulk_trash_message(&all),
+            "Trashed 3 files — restore from the trash panel · 1 metarecord inside a trashed \
+             folder · 2 metarecords without a file kept · the repository root kept · failed: \
+             a.txt: busy; b.txt: gone"
+        );
+    }
+
+    #[test]
+    fn plan_bulk_trash_keeps_the_outermost_paths() {
+        let paths = json!({
+            "a": ["/a.txt"], "d": ["/dir"], "b": ["/dir/b.txt"],
+            "x": ["/dirx/c.txt"], "n": [], "r": [""],
+        });
+        let (items, outcome) = plan_bulk_trash(paths.as_object().unwrap());
+        assert_eq!(
+            items,
+            [("a", "/a.txt"), ("d", "/dir"), ("x", "/dirx/c.txt")]
+                .map(|(u, p)| (u.to_string(), p.to_string()))
+        );
+        assert_eq!(outcome.inside, 1, "only what is under /dir/, not /dirx");
+        assert_eq!(outcome.without_file, 1);
+        assert!(outcome.root_kept);
     }
 
     #[test]
