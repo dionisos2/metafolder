@@ -90,11 +90,13 @@ What is worth a test, most first:
 - =cli/src/commands.rs=: 405 lines missed of 2 343, spread thin.
 The Tauri wrappers now count: =scripts/coverage.sh= (10 October 2026; doc
 "Measuring coverage") runs =scripts/gui-e2e.sh= on instrumented binaries and
-merges it with the tests. Measured then: 88.8 % of the lines, gui 90 %
-(=lib.rs= 82 %, =duplicates.rs= 94 %, =orphan.rs= 95 %, =sync.rs= 85 %,
-=trash.rs= 78 %, =undo.rs= 78 %, =ignore.rs= 86 %); what is left there is
-=gui/src/commands.rs= (36 %), the wrappers no scenario types yet, and
-=repo_init.rs= (0 %).
+merges it with the tests. With the =repos=, =list=, =layout= and =script=
+scenarios: 89.2 % of the lines, gui 91.8 % (=commands.rs= 64 %, =lib.rs=
+82 %, =repo_init.rs= 96 %). Left at zero in =commands.rs=: what only a mouse
+or a keyboard reaches — the keybinding editor of the config overlay
+(=set/remove_user_keybinding=, =suggest_keybinding=, =config_info=), the value
+picker (=pick_*=), a tab's close button, the command input's prompt and
+history, the detail panel's ref seeds, =open_with=, =devtools:open=.
 
 * TODO structure
 Not problems of behaviour; worth doing for navigability, each a large diff.
