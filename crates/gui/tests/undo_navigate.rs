@@ -5,9 +5,13 @@
 //! daemon on an ephemeral port.
 
 use axum::extract::State;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Json;
+use metafolder_gui::commands::StatusTimeouts;
 use metafolder_gui::daemon_proxy::DaemonProxy;
+use metafolder_gui::events;
 use metafolder_gui::notifier::RecordingNotifier;
 use metafolder_gui::state::GuiState;
 use metafolder_gui::undo;
@@ -26,6 +30,10 @@ struct Stub {
     filesystem_steps: u64,
     /// Bodies of the received POST /repos/:repo/rollback/start calls.
     starts: Arc<Mutex<Vec<Value>>>,
+    /// Body served by GET /repos/:repo/revert/plan.
+    revert_plan: Arc<Mutex<Value>>,
+    /// Whether POST /repos/:repo/rollback refuses (500).
+    rollback_refused: Arc<Mutex<bool>>,
 }
 
 async fn spawn_stub(log: Value) -> (String, Stub) {
@@ -39,6 +47,10 @@ async fn spawn_stub_with(log: Value, filesystem_steps: u64) -> (String, Stub) {
         reverts: Arc::new(Mutex::new(Vec::new())),
         filesystem_steps,
         starts: Arc::new(Mutex::new(Vec::new())),
+        revert_plan: Arc::new(Mutex::new(json!({"revertable": true, "requires_lock": false,
+                                                "operations": [{"id": 9}], "blocked": [],
+                                                "dependents": []}))),
+        rollback_refused: Arc::new(Mutex::new(false)),
     };
     let router = axum::Router::new()
         // Where the repository is: the navigation locates the trash-bin.
@@ -73,20 +85,23 @@ async fn spawn_stub_with(log: Value, filesystem_steps: u64) -> (String, Stub) {
             "/repos/:repo/rollback",
             post(|State(stub): State<Stub>, Json(body): Json<Value>| async move {
                 stub.rollbacks.lock().unwrap().push(body);
+                if *stub.rollback_refused.lock().unwrap() {
+                    let refusal = Json(json!({"error": "the repository is locked"}));
+                    return (StatusCode::INTERNAL_SERVER_ERROR, refusal).into_response();
+                }
                 Json(json!({
                     "previous_head": 4,
                     "new_head": 2,
                     "operations_unapplied": 2,
                     "operations_applied": 0,
                 }))
+                .into_response()
             }),
         )
         .route(
             "/repos/:repo/revert/plan",
-            get(|| async {
-                Json(json!({"revertable": true, "requires_lock": false,
-                                       "operations": [{"id": 9}], "blocked": [],
-                                       "dependents": []}))
+            get(|State(stub): State<Stub>| async move {
+                Json(stub.revert_plan.lock().unwrap().clone())
             }),
         )
         .route(
@@ -291,4 +306,144 @@ async fn test_no_active_repo_is_an_error() {
     let daemon = Arc::new(DaemonProxy::new(url));
 
     assert!(undo::navigate(gui, daemon, ws, false, Default::default()).await.is_err());
+}
+
+fn timeouts() -> StatusTimeouts {
+    StatusTimeouts { message_ms: 222, error_ms: 111 }
+}
+
+/// Like [`setup`], keeping the notifier to read the statuses back.
+fn setup_watched(url: &str) -> (Arc<GuiState>, Arc<DaemonProxy>, String, Arc<RecordingNotifier>) {
+    let notifier = Arc::new(RecordingNotifier::new());
+    let gui = Arc::new(GuiState::new(notifier.clone()));
+    let ws = gui.create_workspace(Some("cafe".into()));
+    (gui, Arc::new(DaemonProxy::new(url.to_string())), ws, notifier)
+}
+
+/// `(text, kind, timeout_ms)` of the last status posted.
+fn last_status(notifier: &RecordingNotifier) -> (String, String, Value) {
+    let p = notifier.payloads(events::STATUS_MESSAGE).pop().expect("a status was posted");
+    (
+        p["text"].as_str().unwrap().into(),
+        p["kind"].as_str().unwrap().into(),
+        p["timeout_ms"].clone(),
+    )
+}
+
+/// The user's change (rev 2), then one of the watcher's (rev 3): an undo has to
+/// revert rev 2 in place.
+fn log_with_the_watcher_on_top() -> Value {
+    json!({
+        "head": 3,
+        "operations": [op(1, None, 1), op(2, Some(1), 2), op(3, Some(2), 3)],
+        "revisions": [rev(1, None), rev(2, None), rev(3, Some("watcher"))],
+    })
+}
+
+#[tokio::test]
+async fn test_undo_reports_the_rolled_back_revision() {
+    let (url, _stub) = spawn_stub(linear_log(json!(4))).await;
+    let (gui, daemon, ws, notifier) = setup_watched(&url);
+
+    undo::navigate(gui, daemon, ws, false, timeouts()).await.unwrap();
+
+    let (text, kind, timeout) = last_status(&notifier);
+    assert!(text.starts_with("Undo: revision 2 rolled back ("), "status: {text}");
+    assert_eq!((kind.as_str(), timeout), ("info", json!(222)));
+}
+
+#[tokio::test]
+async fn test_undo_with_nothing_to_undo_says_so() {
+    let log = json!({"head": null, "operations": [], "revisions": []});
+    let (url, stub) = spawn_stub(log).await;
+    let (gui, daemon, ws, notifier) = setup_watched(&url);
+
+    undo::navigate(gui, daemon, ws, false, timeouts()).await.unwrap();
+
+    assert_eq!(last_status(&notifier), ("Nothing to undo.".into(), "info".into(), json!(222)));
+    assert!(stub.rollbacks.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn test_redo_with_nothing_to_redo_says_so() {
+    let (url, _stub) = spawn_stub(linear_log(json!(4))).await;
+    let (gui, daemon, ws, notifier) = setup_watched(&url);
+
+    undo::navigate(gui, daemon, ws, true, timeouts()).await.unwrap();
+
+    assert_eq!(last_status(&notifier).0, "Nothing to redo.");
+}
+
+#[tokio::test]
+async fn test_redo_reports_the_revision_it_re_applied() {
+    let (url, _stub) = spawn_stub(linear_log(json!(2))).await;
+    let (gui, daemon, ws, notifier) = setup_watched(&url);
+
+    undo::navigate(gui, daemon, ws, true, timeouts()).await.unwrap();
+
+    let text = last_status(&notifier).0;
+    assert!(text.starts_with("Redo: revision 2 re-applied ("), "status: {text}");
+}
+
+#[tokio::test]
+async fn test_a_refused_rollback_is_reported_and_fails_the_command() {
+    let (url, stub) = spawn_stub(linear_log(json!(4))).await;
+    *stub.rollback_refused.lock().unwrap() = true;
+    let (gui, daemon, ws, notifier) = setup_watched(&url);
+
+    let error =
+        undo::navigate(gui.clone(), daemon, ws.clone(), false, timeouts()).await.unwrap_err();
+
+    assert!(error.contains("locked"), "error: {error}");
+    assert_eq!(last_status(&notifier), (error, "error".into(), json!(111)));
+    assert_eq!(gui.get_var(&ws, "metarecords:dirty").unwrap(), Value::Null, "nothing changed");
+}
+
+#[tokio::test]
+async fn test_undo_under_the_watcher_reverts_and_reports_the_new_revision() {
+    let (url, stub) = spawn_stub(log_with_the_watcher_on_top()).await;
+    let (gui, daemon, ws, notifier) = setup_watched(&url);
+
+    undo::navigate(gui, daemon, ws, false, timeouts()).await.unwrap();
+
+    assert!(stub.rollbacks.lock().unwrap().is_empty(), "HEAD must not move");
+    assert_eq!(stub.reverts.lock().unwrap().len(), 1);
+    assert_eq!(
+        last_status(&notifier),
+        (
+            "Revision 2 reverted as revision 42 (1 operations) — the daemon's own revisions \
+             were left in place."
+                .into(),
+            "info".into(),
+            json!(222)
+        )
+    );
+}
+
+/// A later change overwrote what the undone revision wrote: the GUI does not
+/// pull that change in behind the user's back. It says what blocks and where
+/// the way through is, and the command itself does not fail.
+#[tokio::test]
+async fn test_a_blocked_undo_names_the_blocker_and_the_way_through() {
+    let (url, stub) = spawn_stub(log_with_the_watcher_on_top()).await;
+    *stub.revert_plan.lock().unwrap() = json!({
+        "revertable": false, "requires_lock": false, "operations": [{"id": 2}],
+        "blocked": [{"op_id": 2, "rev_id": 7}], "dependents": [],
+    });
+    let (gui, daemon, ws, notifier) = setup_watched(&url);
+
+    undo::navigate(gui.clone(), daemon, ws.clone(), false, timeouts()).await.unwrap();
+
+    assert!(stub.reverts.lock().unwrap().is_empty(), "nothing is forced");
+    assert_eq!(
+        last_status(&notifier),
+        (
+            "Cannot take revision 2 back: a later change by revision 7 overwrote what it wrote. \
+             Open the log panel and use log:revert with-dependents to undo both."
+                .into(),
+            "error".into(),
+            json!(111)
+        )
+    );
+    assert_eq!(gui.get_var(&ws, "metarecords:dirty").unwrap(), Value::Null);
 }
