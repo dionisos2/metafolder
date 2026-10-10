@@ -37,6 +37,7 @@ reported" is a failure, not zero failures. `scripts/check.sh` runs all of the ab
 |CLI |`crates/cli/tests/cli_e2e.rs` |the real `mf` binary against one in-process daemon on an ephemeral port, shared by the file |
 |GUI, Rust |`crates/gui/tests/*.rs`, unit tests in `src/` |the GUI's router with `oneshot` and a stub daemon on an ephemeral port; state, keybindings and the registry as unit tests, events caught by a `RecordingNotifier` |
 |GUI, JavaScript |`crates/gui/frontend/tests/` |vitest under jsdom: the key matcher, command parsing, the panel API, the panels' own modules |
+|GUI, end to end |`scripts/gui-e2e.sh` |a real GUI against a throwaway daemon, its commands typed through `mf gui command` and their messages read back; needs a display, not in `check.sh` ([[Testing the GUI end to end]]) |
 |broker |`crates/watchd/tests/`, `scripts/watchd-live-test.sh` |[[Testing the watcher]] |
 |shipped scripts |`scripts/test-*.sh` |[[Testing shipped scripts]] |
 |tooling |`scripts/test-{check,check-deps,complete-build,prune-target,run-tests}.sh`, `docs/wiki/tools/*.test.mjs` |each script against stubbed probes |

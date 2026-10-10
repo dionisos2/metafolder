@@ -1,0 +1,53 @@
+title: Testing the GUI end to end
+tags: Development
+kind: guide
+audience: dev
+aliases: gui-e2e
+summary: scripts/gui-e2e.sh runs the GUI's commands in a real window against a throwaway daemon, and checks what they said — never what they look like.
+
+The Rust tests of the GUI drive its orchestration against a stub daemon, and the vitest
+suites its JavaScript under jsdom ([[Testing conventions]]). Neither reaches the chain
+between them: the shell's dispatcher, the Tauri `invoke`, the `#[tauri::command]`
+wrapper. A command misnamed in the shell, or an argument the wrapper never receives,
+passes both. `scripts/gui-e2e.sh` runs that chain for real:
+
+```
+scripts/gui-e2e.sh [--unsandboxed] [--keep-logs] [scenario...]
+```
+
+It boots an isolated daemon — the fixture the shipped scripts' integration tests use:
+private token directory, empty configuration, ephemeral port — and a real
+`metafolder-gui` on top of it, then gives each scenario a repository of its own, shown
+in a fresh focused workspace. A scenario types commands with [[mf gui command]] and
+reads back the outcome with [[mf gui status-bar]] (kind and text of the last status
+message) and [[mf gui messages]] (the message log).
+
+!! What is asserted
+
+What a command ''said'', not how the window shows it: no pixel, no DOM, no panel
+layout. A change of style never breaks a scenario; a change of wording or of
+behaviour does, which is the point.
+
+Before each command the script posts a marker message of its own. A command that
+reports nothing leaves the marker on the bar, so it fails instead of passing on the
+message of the command before it.
+
+!! Running it
+
+It needs the binaries and the frontend built ([[Building]]), the configuration
+installed (the GUI reads its panels from it — [[Updating the configuration]]), and a
+display. `--unsandboxed` passes `--allow-unsandboxed-webview`, for a container that
+forbids WebKit's sandbox ([[Sandboxing the media decoders]]). A run takes about ten
+seconds, most of it the GUI starting. It is not part of `scripts/check.sh`, which runs
+without a display.
+
+!! Adding a scenario
+
+A `scenario_<name>` function: `new_repo <name>` for the repository and the workspace,
+`df_mf` to prepare data through the daemon, `run <command…>` to type a command, then
+`status_is <name> <kind> <glob>`, `command_ok`, or the `assert_*` of
+`scripts/lib/assert.sh`. Add its name to the default list at the top.
+
+A command that opens a browser dialog (`window.confirm`, as `metarecord:trash` does
+before trashing) blocks the dispatcher until someone answers it, and nothing in the
+scripting API answers it: only its refusals can be tested this way.
