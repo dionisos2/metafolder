@@ -18,6 +18,10 @@ as an empty, readable directory — so paths at or below an offline mount point 
 are what make acting on the answer safe: neither a permission drop nor an unplugged
 drive can orphan a subtree.
 
+A file ''hidden'' by a drive mounted over its directory is reported: nothing tells it
+apart from a file deleted from that drive while it was plugged in elsewhere, which is
+exactly what the scan is for. Reported is not recorded — clearing is asked for.
+
 |!Route |!Does |
 |<<cmd "POST /repos/:repo/orphans/scan">> |read-only: `{"count": N, "orphans": [{"uuid", "stale_path"}]}` |
 |<<cmd "POST /repos/:repo/orphans/mark">> |writes `orphan = true` on both kinds and unmarks the rest, one revision: `{"orphans": N, "marked": A, "unmarked": B}` |

@@ -204,6 +204,14 @@ than breaking them.
   mounting the remote repository over SSHFS is deferred (spec-sync).
 
 ### Fixed
+- **A drive plugged in under a repository was never watched (inotify).** An
+  inotify watch is on an inode: the one placed on the mount point stayed on the
+  directory hidden beneath, and nothing placed the watches again, so nothing
+  done on the drive was recorded until the daemon restarted or a watch rule
+  changed — plugged in for the first time or plugged back. The daemon now
+  follows the kernel's mount table: a mount point coming or going under a root
+  drops what was watched there and places the watch set again (and the mount
+  table snapshot is read afresh).
 - **`metafolder-watchd`: a drive's files reported at a mount point it had
   left.** The broker remembers each resolved handle's path for two seconds; a
   drive mounted at two points of a repository and unmounted from the first —

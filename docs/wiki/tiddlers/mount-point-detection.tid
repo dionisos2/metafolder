@@ -13,7 +13,9 @@ source that gets both of these right:
 
 The table is re-read at most once per second, as a process-wide snapshot: every directory
 a reconcile touches asks, and the kernel regenerates the file on each read. A second of
-staleness is harmless — mounting triggers nothing by itself. Paths are matched verbatim
+staleness is harmless — mounting triggers nothing by itself — and the daemon drops the
+snapshot whenever the kernel signals a change of the table, which it follows for the
+watch set ([[Offline subtrees]]). Paths are matched verbatim
 against the table's canonical form: every path the daemon builds starts at the
 canonicalised root and never crosses a symlinked directory, so no per-probe
 `canonicalize` is needed.

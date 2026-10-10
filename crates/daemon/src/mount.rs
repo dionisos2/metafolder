@@ -293,6 +293,19 @@ impl MountTable {
         self.by_path.contains_key(abs)
     }
 
+    /// The mount points strictly under `root`, each with its device — what a
+    /// repository's watch set depends on ([`follow`]). Sorted.
+    pub fn points_under(&self, root: &Path) -> Vec<(PathBuf, (u64, u64))> {
+        let mut out: Vec<(PathBuf, (u64, u64))> = self
+            .by_path
+            .iter()
+            .filter(|(p, _)| p.starts_with(root) && p.as_path() != root)
+            .map(|(p, e)| (p.clone(), (e.major, e.minor)))
+            .collect();
+        out.sort();
+        out
+    }
+
     /// The type of the filesystem `abs` is on: its nearest mount point's.
     /// `None` when the table is empty (unreadable).
     pub fn filesystem_of(&self, abs: &Path) -> Option<&str> {
@@ -332,6 +345,14 @@ pub mod table {
 
     static CACHE: OnceLock<Mutex<Cached>> = OnceLock::new();
 
+    /// Drops the snapshot: the table has changed ([`super::follow`]), and the
+    /// next caller reads it again.
+    pub fn invalidate() {
+        if let Some(cell) = CACHE.get() {
+            *cell.lock_recover() = None;
+        }
+    }
+
     /// The current snapshot, re-reading the table when the cached one has
     /// expired. An unreadable table (no `/proc`, a hardened container) yields
     /// an empty one, and callers then fall back to the device-id comparison.
@@ -361,6 +382,100 @@ pub mod table {
     #[cfg(not(target_os = "linux"))]
     fn read_table() -> MountTable {
         MountTable::default()
+    }
+}
+
+// ── Following the table ─────────────────────────────────────────────────────
+
+/// Follows the kernel's mount table for the loaded repositories (doc "Offline
+/// subtrees"): a drive plugged in or unplugged under a root changes what the
+/// budget regime must watch — an inotify watch is on an inode, and the path
+/// of a mount point names another one once something is mounted there or
+/// leaves it. The kernel signals a change of `/proc/self/mountinfo`
+/// ([`metafolder_watchd::fanotify::MountWatch`], as the broker follows it);
+/// each repository whose mount points changed is told which
+/// ([`crate::state::RepoState::mounts_changed`]).
+///
+/// One thread for the process, holding the repositories weakly. Where the
+/// table cannot be watched (no `/proc`), nothing is followed: a drive plugged
+/// in is then watched from the next placement on.
+pub mod follow {
+    use super::*;
+    use crate::state::RepoState;
+    use metafolder_core::sync::MutexExt;
+    use std::sync::{Mutex, OnceLock, Weak};
+
+    struct Followed {
+        repo: Weak<RepoState>,
+        root: PathBuf,
+        points: Vec<(PathBuf, (u64, u64))>,
+    }
+
+    static FOLLOWED: OnceLock<Option<Mutex<Vec<Followed>>>> = OnceLock::new();
+
+    /// Starts following the mount points under `repo`'s root.
+    pub fn register(repo: &Arc<RepoState>) {
+        let Some(followed) = FOLLOWED.get_or_init(start) else { return };
+        let mut followed = followed.lock_recover();
+        followed.retain(|f| f.repo.strong_count() > 0);
+        // Under the lock the thread compares under: a change it reads before
+        // this entry is in is in `points` already.
+        table::invalidate();
+        let root = repo.config.root.clone();
+        let points = table::current().points_under(&root);
+        followed.push(Followed { repo: Arc::downgrade(repo), root, points });
+    }
+
+    fn start() -> Option<Mutex<Vec<Followed>>> {
+        let mut watch = match metafolder_watchd::fanotify::MountWatch::open() {
+            Ok(watch) => watch,
+            Err(err) => {
+                crate::diagnostics::warn(
+                    "watcher",
+                    format!("{err:#}: a drive plugged in is watched from the next placement on"),
+                );
+                return None;
+            }
+        };
+        std::thread::spawn(move || loop {
+            if let Err(err) = watch.wait() {
+                crate::diagnostics::warn("watcher", format!("{err:#}: mounts no longer followed"));
+                return;
+            }
+            if let Some(Some(followed)) = FOLLOWED.get() {
+                changed(&mut followed.lock_recover());
+            }
+        });
+        Some(Mutex::new(Vec::new()))
+    }
+
+    /// The table changed: each repository whose mount points did is told
+    /// which, on a thread of its own — it waits for the repository's lock.
+    fn changed(followed: &mut Vec<Followed>) {
+        table::invalidate();
+        let table = table::current();
+        followed.retain(|f| f.repo.strong_count() > 0);
+        for f in followed.iter_mut() {
+            let now = table.points_under(&f.root);
+            if now == f.points {
+                continue;
+            }
+            let mut moved: Vec<PathBuf> = now
+                .iter()
+                .filter(|p| !f.points.contains(p))
+                .chain(f.points.iter().filter(|p| !now.contains(p)))
+                .map(|(p, _)| p.clone())
+                .collect();
+            moved.sort();
+            moved.dedup();
+            f.points = now;
+            let repo = f.repo.clone();
+            std::thread::spawn(move || {
+                if let Some(repo) = repo.upgrade() {
+                    repo.mounts_changed(&moved);
+                }
+            });
+        }
     }
 }
 

@@ -601,6 +601,22 @@ impl crate::watcher::Source for Source {
         self.watched.lock_recover().clone()
     }
 
+    /// A watch is on an inode: the one at a mount point's path, and every one
+    /// beneath, is not what that path names now. They go; the placement that
+    /// follows watches what is there.
+    fn remounted(&self, points: &[PathBuf]) {
+        let stale: Vec<PathBuf> = self
+            .watched
+            .lock_recover()
+            .iter()
+            .filter(|dir| points.iter().any(|m| dir.starts_with(m)))
+            .cloned()
+            .collect();
+        for dir in stale {
+            self.unwatch_dir(&dir);
+        }
+    }
+
     fn maintain(
         &self,
         repo: &RepoState,

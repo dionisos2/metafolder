@@ -18,9 +18,11 @@ The freeze follows the ''presence'' of a mount, not its identity: a different vo
 mounted there makes the subtree live — those files really are there; the mismatch is
 reported by the mount status, and changes nothing else.
 
-Plugging the volume back resumes tracking — the watch set is re-applied at the next
-refresh (a re-placement under the budget regime, nothing to place under coverage) — but
-does ''not'' start a reconcile: its cost is unbounded on a large disk, and the volume may
+Plugging the volume back resumes tracking at once — the daemon follows the kernel's
+mount table (`mount::follow`, as the broker does), and a mount point coming or going
+under a root places the watch set again under the budget regime: an inotify watch is on
+an inode, so what was watched at that path, and beneath it, is dropped and what is there
+now watched; under coverage the broker marks the drive. It does ''not'' start a reconcile: its cost is unbounded on a large disk, and the volume may
 have been used elsewhere for hours. Changes made while it was away are picked up by an
 explicit `mf reconcile --metarecord <mount point>`, which a client should offer rather
 than run behind your back.

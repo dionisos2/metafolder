@@ -549,6 +549,19 @@ impl RepoState {
         placement.watched
     }
 
+    /// The mount points at `points` came, went or changed volume (doc
+    /// "Offline subtrees"): what was watched at and under them was another
+    /// directory, and the watch set is placed again — the mount table read
+    /// afresh, a drive plugged in is live and one unplugged frozen.
+    pub fn mounts_changed(&self, points: &[std::path::PathBuf]) {
+        let conn = self.conn.lock_recover();
+        let Some(watcher) = self.handles.lock_recover().as_ref().map(|h| h.watcher.clone()) else {
+            return;
+        };
+        watcher.remounted(points);
+        self.refresh_watches(&conn);
+    }
+
     /// Records the subtree roots the watch budget could not afford, as
     /// `mfr_watch_exceeded = true` (doc "The watch budget").
     ///
@@ -834,6 +847,8 @@ impl RepoState {
             crate::watcher::start(self, executor.pinger())?
         };
         *self.handles.lock_recover() = Some(RepoHandles { watcher, executor });
+        // Before the placement: a drive plugged in meanwhile is a change.
+        crate::mount::follow::register(self);
 
         // The watches go last: placing them walks every eligible directory, and
         // that walk reads each directory's eligibility from the rule index

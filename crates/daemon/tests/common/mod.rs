@@ -138,6 +138,34 @@ impl Fs {
         }
     }
 
+    /// `mount -t tmpfs` over the directory `at`: a new, empty drive. Real
+    /// mounts need a user namespace ([`in_userns`]).
+    pub fn mount_tmpfs(&self, at: impl AsRef<Path>) -> std::io::Result<()> {
+        match self {
+            Fs::Std => run_mount(&["-t", "tmpfs", "t"], &[at.as_ref()]),
+            Fs::Sim(sim) => sim.mount_tmpfs(at),
+        }
+    }
+
+    /// `mount --bind`: the drive mounted at `from` mounted at `at` too.
+    pub fn bind_mount(&self, from: impl AsRef<Path>, at: impl AsRef<Path>) -> std::io::Result<()> {
+        match self {
+            Fs::Std => run_mount(&["--bind"], &[from.as_ref(), at.as_ref()]),
+            Fs::Sim(sim) => sim.bind_mount(from, at),
+        }
+    }
+
+    /// `umount`.
+    pub fn unmount(&self, at: impl AsRef<Path>) -> std::io::Result<()> {
+        match self {
+            Fs::Std => {
+                let ok = std::process::Command::new("umount").arg(at.as_ref()).status()?;
+                ok.success().then_some(()).ok_or_else(|| std::io::Error::other("umount failed"))
+            }
+            Fs::Sim(sim) => sim.unmount(at),
+        }
+    }
+
     /// Lets what is done meanwhile pile up before the broker reads it, as a
     /// broker that fell behind (the simulated kernel only; the real ones read
     /// when they read).
@@ -147,6 +175,41 @@ impl Fs {
             Fs::Sim(sim) => Some(sim.hold()),
         }
     }
+}
+
+fn run_mount(args: &[&str], paths: &[&Path]) -> std::io::Result<()> {
+    let ok = std::process::Command::new("mount").args(args).args(paths).status()?;
+    ok.success().then_some(()).ok_or_else(|| std::io::Error::other("mount failed"))
+}
+
+/// `true` inside a new user and mount namespace (`unshare -rm`), where the
+/// test may mount what it likes; outside, runs the test `test` (its name in
+/// the binary) there, alone, asserts it passed, and returns `false`. Skipped,
+/// and announced, where user namespaces are refused.
+pub fn in_userns(test: &str) -> bool {
+    const CHILD: &str = "METAFOLDER_DAEMON_TEST_USERNS";
+    if std::env::var_os(CHILD).is_some() {
+        return true;
+    }
+    let usable = std::process::Command::new("unshare")
+        .args(["-rm", "true"])
+        .status()
+        .is_ok_and(|s| s.success());
+    if !usable {
+        eprintln!("SKIP {test}: user namespaces are not available here");
+        return false;
+    }
+    let out = std::process::Command::new("unshare")
+        .args(["-rm", "--"])
+        .arg(std::env::current_exe().unwrap())
+        .args([test, "--exact", "--nocapture", "--test-threads=1"])
+        .env(CHILD, "1")
+        .output()
+        .unwrap();
+    let text =
+        String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success() && text.contains("1 passed"), "{text}");
+    false
 }
 
 /// Whether a fanotify broker answers at the daemon's default socket — the

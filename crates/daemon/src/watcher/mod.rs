@@ -88,6 +88,10 @@ pub(crate) trait Source: Send + Sync {
     /// A snapshot of the absolute paths currently covered — what
     /// `POST /repos/:repo/watch/check` answers against.
     fn watched_set(&self) -> HashSet<PathBuf>;
+    /// Something was mounted or unmounted at each of `points`: what was
+    /// covered at and under them is another directory now. Nothing to do for
+    /// a source that does not cover directories one by one.
+    fn remounted(&self, _points: &[PathBuf]) {}
     /// Keeps coverage in step with the directory arrivals and departures in
     /// `events`.
     fn maintain(
@@ -163,6 +167,11 @@ impl WatcherHandle {
     /// placement's target: a starved directory is absent).
     pub fn watched_set(&self) -> HashSet<PathBuf> {
         self.source.watched_set()
+    }
+
+    /// See [`Source::remounted`].
+    pub fn remounted(&self, points: &[PathBuf]) {
+        self.source.remounted(points)
     }
 
     /// Brings the watch set in line with the repository's eligibility, within
