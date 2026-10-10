@@ -1020,6 +1020,53 @@ async fn test_command_dispatch_resolves_ok() {
     assert!(!ctx.commands.resolve(id, CommandOutcome::Ok));
 }
 
+/// `confirm` answers the confirmations the command asks while it runs (doc
+/// "GUI scripting endpoints"): forwarded to the shell, which reports back the
+/// questions it answered.
+#[tokio::test]
+async fn test_command_dispatch_with_confirm_reports_the_questions_answered() {
+    let ctx = setup().await;
+    ctx.notifier.clear();
+
+    let router = ctx.router.clone();
+    let waiting = tokio::spawn(async move {
+        let body = json!({"invocation": "metarecord:trash", "confirm": true});
+        request(&router, "POST", "/gui/command", Some(body)).await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let payloads = ctx.notifier.payloads(events::COMMAND_REQUESTED);
+    assert_eq!(payloads.last().unwrap()["confirm"], json!(true));
+    let (id, _) = last_command_request(&ctx);
+    let questions = vec!["Send the selected metarecord's file to the trash?".to_string()];
+    assert!(ctx.commands.resolve_with(id, CommandOutcome::Ok, questions));
+    let (status, body) = waiting.await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body,
+        json!({"event": "ok",
+               "confirmations": ["Send the selected metarecord's file to the trash?"]})
+    );
+}
+
+#[tokio::test]
+async fn test_command_dispatch_without_confirm_leaves_the_dialogs_to_the_user() {
+    let ctx = setup().await;
+    ctx.notifier.clear();
+
+    let router = ctx.router.clone();
+    let waiting = tokio::spawn(async move {
+        request(&router, "POST", "/gui/command", Some(json!({"invocation": "panel:split"}))).await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let payloads = ctx.notifier.payloads(events::COMMAND_REQUESTED);
+    assert_eq!(payloads.last().unwrap()["confirm"], Value::Null);
+    let (id, _) = last_command_request(&ctx);
+    ctx.commands.resolve(id, CommandOutcome::Ok);
+    assert_eq!(waiting.await.unwrap().1, json!({"event": "ok"}), "no confirmations member");
+}
+
 #[tokio::test]
 async fn test_command_dispatch_reports_error() {
     let ctx = setup().await;

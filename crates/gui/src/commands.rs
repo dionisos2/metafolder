@@ -645,7 +645,13 @@ pub fn bench_record(app: AppHandle, name: String, duration_ms: f64) {
 /// Reports the outcome of a `POST /gui/command` invocation back to the waiting
 /// HTTP handler. Called by the frontend after its `dispatch()` resolves.
 #[tauri::command]
-pub fn command_done(app: AppHandle, invocation_id: String, ok: bool, error: Option<String>) {
+pub fn command_done(
+    app: AppHandle,
+    invocation_id: String,
+    ok: bool,
+    error: Option<String>,
+    confirmations: Option<Vec<String>>,
+) {
     use crate::server::command_wait::CommandOutcome;
     let Ok(id) = uuid::Uuid::parse_str(&invocation_id) else {
         return;
@@ -656,7 +662,7 @@ pub fn command_done(app: AppHandle, invocation_id: String, ok: bool, error: Opti
         CommandOutcome::Error(error.unwrap_or_else(|| "command failed".into()))
     };
     // A missing wait (already timed out) is fine: nothing to resolve.
-    app.commands.resolve(id, outcome);
+    app.commands.resolve_with(id, outcome, confirmations.unwrap_or_default());
 }
 
 /// Command-input resolution of a `POST /gui/prompt` wait.

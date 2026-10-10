@@ -21,9 +21,18 @@ pub enum CommandOutcome {
     Closed,
 }
 
+/// What a command wait resolves to: the outcome, and the confirmations the
+/// shell answered on the caller's behalf while the command ran (the questions,
+/// in the order asked; empty unless the request carried `confirm`).
+#[derive(Debug, PartialEq)]
+pub struct Resolution {
+    pub outcome: CommandOutcome,
+    pub confirmations: Vec<String>,
+}
+
 #[derive(Default)]
 pub struct CommandWait {
-    pending: Mutex<HashMap<Uuid, oneshot::Sender<CommandOutcome>>>,
+    pending: Mutex<HashMap<Uuid, oneshot::Sender<Resolution>>>,
 }
 
 impl CommandWait {
@@ -33,7 +42,7 @@ impl CommandWait {
 
     /// Registers a new command wait, returning its id (forwarded to the
     /// frontend) and the receiver the HTTP handler awaits.
-    pub fn begin(&self) -> (Uuid, oneshot::Receiver<CommandOutcome>) {
+    pub fn begin(&self) -> (Uuid, oneshot::Receiver<Resolution>) {
         let id = Uuid::new_v4();
         let (sender, receiver) = oneshot::channel();
         self.pending.lock_recover().insert(id, sender);
@@ -43,9 +52,19 @@ impl CommandWait {
     /// Resolves the wait with the given id. Returns false when no wait is
     /// registered under that id (already resolved, timed out, or unknown).
     pub fn resolve(&self, id: Uuid, outcome: CommandOutcome) -> bool {
+        self.resolve_with(id, outcome, Vec::new())
+    }
+
+    /// [`resolve`](Self::resolve), with the confirmations answered meanwhile.
+    pub fn resolve_with(
+        &self,
+        id: Uuid,
+        outcome: CommandOutcome,
+        confirmations: Vec<String>,
+    ) -> bool {
         match self.pending.lock_recover().remove(&id) {
             Some(sender) => {
-                let _ = sender.send(outcome);
+                let _ = sender.send(Resolution { outcome, confirmations });
                 true
             }
             None => false,
@@ -60,7 +79,8 @@ impl CommandWait {
     /// GUI teardown: every pending waiter receives "closed".
     pub fn close_all(&self) {
         for (_, sender) in self.pending.lock_recover().drain() {
-            let _ = sender.send(CommandOutcome::Closed);
+            let _ = sender
+                .send(Resolution { outcome: CommandOutcome::Closed, confirmations: Vec::new() });
         }
     }
 }
@@ -77,12 +97,12 @@ mod tests {
         assert_ne!(id_a, id_b);
 
         assert!(wait.resolve(id_a, CommandOutcome::Ok));
-        assert_eq!(rx_a.try_recv().unwrap(), CommandOutcome::Ok);
+        assert_eq!(rx_a.try_recv().unwrap().outcome, CommandOutcome::Ok);
         // The other wait is untouched.
         assert!(rx_b.try_recv().is_err());
 
         assert!(wait.resolve(id_b, CommandOutcome::Error("boom".into())));
-        assert_eq!(rx_b.try_recv().unwrap(), CommandOutcome::Error("boom".into()));
+        assert_eq!(rx_b.try_recv().unwrap().outcome, CommandOutcome::Error("boom".into()));
     }
 
     #[test]
@@ -96,7 +116,7 @@ mod tests {
         let wait = CommandWait::new();
         let (_, mut rx) = wait.begin();
         wait.close_all();
-        assert_eq!(rx.try_recv().unwrap(), CommandOutcome::Closed);
+        assert_eq!(rx.try_recv().unwrap().outcome, CommandOutcome::Closed);
     }
 
     #[test]

@@ -18,6 +18,11 @@ Options:
       --timeout-ms <TIMEOUT_MS>
           
 
+      --confirm <CONFIRM>
+          Answer every confirmation the command asks while it runs (yes or no), and print the questions; without it they are the user's
+          
+          [possible values: yes, no]
+
   -h, --help
           Print help
 ```

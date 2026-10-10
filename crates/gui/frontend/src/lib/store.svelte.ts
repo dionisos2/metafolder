@@ -4,6 +4,7 @@
 
 import { dispatch } from './commands';
 import { completionLabels } from './completions';
+import { createConfirmAnswerer } from './confirm';
 import type { LoadedView } from './completions';
 import { invoke, listen } from './ipc';
 import { startChangePolling } from './panels/api';
@@ -491,19 +492,27 @@ export async function initStore() {
   });
   // An external POST /gui/command: run it through the very same dispatch()
   // the command input and keybindings use, then report the outcome back so
-  // the waiting HTTP handler resolves.
-  const onCommandRequested = async (event: {
-    payload: { invocation_id: string; invocation: string };
-  }) => {
-    const { invocation_id, invocation } = event.payload;
-    const result = await dispatch(invocation);
+  // the waiting HTTP handler resolves. With `confirm`, the confirmations it
+  // asks are answered for it (`mf gui command --confirm`, lib/confirm.ts).
+  const confirmations = createConfirmAnswerer(window);
+  type CommandRequest = { invocation_id: string; invocation: string; confirm?: boolean | null };
+  const onCommandRequested = async (event: { payload: CommandRequest }) => {
+    const { invocation_id, invocation, confirm = null } = event.payload;
+    let result: Awaited<ReturnType<typeof dispatch>>;
+    let questions: string[] = [];
+    try {
+      ({ result, questions } = await confirmations.answering(confirm, () => dispatch(invocation)));
+    } catch (error) {
+      result = { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
     await invoke('command_done', {
       invocationId: invocation_id,
       ok: result.ok,
       error: result.ok ? null : result.error,
+      confirmations: questions,
     });
   };
-  await listen<{ invocation_id: string; invocation: string }>(
+  await listen<CommandRequest>(
     'command-requested',
     (event) => void onCommandRequested(event),
   );

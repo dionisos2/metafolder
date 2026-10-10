@@ -4,3 +4,5 @@ kind: reference
 summary: Run a command invocation through the GUI (same as the command input)
 
 Runs a GUI command as if typed in the command input — a leading `!` runs a shell line — and returns when it has resolved: exit 1 with its message when it failed, is unknown, timed out, or the GUI closed ([[Commands]]). A command given fewer arguments than it needs asks for them in the command input, and this waits. A panel the command opened may still be drawing when it returns.
+
+A command that asks for a confirmation opens a dialog, and the dialog waits for the user. `--confirm yes` or `--confirm no` answers it instead: every confirmation the command asks ''while it runs'' gets that answer, and its question is printed on stdout, one per line, so a script can check what it agreed to. The answer goes with the command and ends with it — it is never armed in advance, so it cannot accept a dialog the user opens later. Two commands answering confirmations at the same time are refused rather than mixed up ([[GUI scripting endpoints]]).

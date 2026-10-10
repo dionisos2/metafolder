@@ -1095,6 +1095,10 @@ enum GuiCommand {
         invocation: Vec<String>,
         #[arg(long)]
         timeout_ms: Option<u64>,
+        /// Answer every confirmation the command asks while it runs (yes or
+        /// no), and print the questions; without it they are the user's
+        #[arg(long, value_parser = ["yes", "no"])]
+        confirm: Option<String>,
     },
     /// Wait for one of the given keys and print it
     Input {
@@ -1799,8 +1803,9 @@ fn dispatch_gui(gui_url: Option<String>, command: GuiCommand) -> CmdResult {
             gui::message(&gui_ctx, &text, workspace.as_deref(), timeout_ms)
         }
         GuiCommand::Bench { clear } => gui::bench(&gui_ctx, clear),
-        GuiCommand::Command { invocation, timeout_ms } => {
-            gui::command(&gui_ctx, &invocation.join(" "), timeout_ms)
+        GuiCommand::Command { invocation, timeout_ms, confirm } => {
+            let confirm = confirm.map(|answer| answer == "yes");
+            gui::command(&gui_ctx, &invocation.join(" "), timeout_ms, confirm)
         }
         GuiCommand::Input { keys, prompt, timeout_ms } => {
             gui::input(&gui_ctx, &keys, prompt.as_deref(), timeout_ms)

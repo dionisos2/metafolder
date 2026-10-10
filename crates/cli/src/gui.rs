@@ -333,9 +333,24 @@ pub fn bench(ctx: &GuiCtx, clear: bool) -> Result<i32, CliError> {
 /// Runs an arbitrary command invocation through the GUI's dispatcher (the
 /// same path as the command input). Blocks until the command resolves; exit 1
 /// on error/timeout/close.
-pub fn command(ctx: &GuiCtx, invocation: &str, timeout_ms: Option<u64>) -> Result<i32, CliError> {
-    let body = json!({"invocation": invocation, "timeout_ms": timeout_ms});
+/// `mf gui command [--confirm yes|no] <invocation…>` — runs a command through
+/// the GUI's dispatcher. With `confirm`, every confirmation the command asks
+/// while it runs is answered so (`true` = accept) and its question printed, one
+/// per line; without, the dialogs are the user's.
+pub fn command(
+    ctx: &GuiCtx,
+    invocation: &str,
+    timeout_ms: Option<u64>,
+    confirm: Option<bool>,
+) -> Result<i32, CliError> {
+    let mut body = json!({"invocation": invocation, "timeout_ms": timeout_ms});
+    if let Some(confirm) = confirm {
+        body["confirm"] = json!(confirm);
+    }
     let resp = ctx.client.post("/gui/command", &body)?;
+    for question in resp["confirmations"].as_array().into_iter().flatten() {
+        println!("{}", question.as_str().unwrap_or_default());
+    }
     match resp["event"].as_str() {
         Some("ok") => Ok(0),
         Some("error") => {

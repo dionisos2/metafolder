@@ -348,6 +348,10 @@ pub struct CommandBody {
     invocation: String,
     #[serde(default)]
     timeout_ms: Option<u64>,
+    /// The answer to every confirmation the command asks while it runs
+    /// (`true` = accept). Absent: the dialogs are the user's, as when typed.
+    #[serde(default)]
+    confirm: Option<bool>,
 }
 
 /// Runs an arbitrary command invocation through the frontend's own
@@ -370,7 +374,11 @@ pub async fn post_command(
     let (id, receiver) = state.commands.begin();
     state.gui.notify(
         events::COMMAND_REQUESTED,
-        json!({"invocation_id": id.simple().to_string(), "invocation": body.invocation}),
+        json!({
+            "invocation_id": id.simple().to_string(),
+            "invocation": body.invocation,
+            "confirm": body.confirm,
+        }),
     );
 
     let outcome = match body.timeout_ms {
@@ -382,12 +390,16 @@ pub async fn post_command(
     };
     state.commands.end(id); // release on the timeout path
 
-    let payload = match outcome {
+    let mut payload = match outcome.as_ref().map(|r| &r.outcome) {
         Some(CommandOutcome::Ok) => json!({"event": "ok"}),
         Some(CommandOutcome::Error(message)) => json!({"event": "error", "message": message}),
         Some(CommandOutcome::Closed) => json!({"event": "closed"}),
         None => json!({"event": "timeout"}),
     };
+    // Only a caller that asked for answers is told which questions got them.
+    if body.confirm.is_some() {
+        payload["confirmations"] = json!(outcome.map(|r| r.confirmations).unwrap_or_default());
+    }
     Json(payload).into_response()
 }
 

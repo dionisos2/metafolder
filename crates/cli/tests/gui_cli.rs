@@ -136,6 +136,24 @@ fn start_stub(input_response: Json_, prompt_response: Json_) -> StubGui {
                 }),
             )
             .route(
+                "/gui/command",
+                // Answers like the shell: an unknown command fails, and a
+                // request carrying `confirm` is told the questions answered.
+                post(|State(s): State<Recorded>, Json(body): Json<Json_>| async move {
+                    s.push("POST", "/gui/command", body.clone());
+                    let invocation = body["invocation"].as_str().unwrap_or_default().to_string();
+                    if invocation.starts_with("bogus") {
+                        return Json(json!({"event": "error",
+                                           "message": format!("unknown command: {invocation}")}));
+                    }
+                    match body.get("confirm") {
+                        Some(c) if !c.is_null() => Json(json!({"event": "ok",
+                            "confirmations": ["Send the file to the trash?", "Really?"]})),
+                        _ => Json(json!({"event": "ok"})),
+                    }
+                }),
+            )
+            .route(
                 "/gui/workspaces/:id/messages",
                 get(|Path(id): Path<String>| async move { stub_messages(&id) }),
             )
@@ -676,4 +694,51 @@ fn test_gui_status_bar_prints_nothing_when_nothing_was_posted() {
     let out = mf_gui(&gui, &["status-bar", "--workspace", "ws-3"]);
     assert_ok(&out);
     assert_eq!(out.stdout, "");
+}
+
+// ── mf gui command ────────────────────────────────────────────────────────────
+
+fn command_bodies(gui: &StubGui) -> Vec<Json_> {
+    gui.recorded.all().into_iter().filter(|(_, p, _)| p == "/gui/command").map(|r| r.2).collect()
+}
+
+#[test]
+fn test_gui_command_runs_the_invocation_and_prints_nothing() {
+    let gui = stub();
+    let out = mf_gui(&gui, &["command", "panel:open", "here", "file"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout, "");
+    let bodies = command_bodies(&gui);
+    assert_eq!(bodies[0]["invocation"], "panel:open here file");
+    assert!(bodies[0].get("confirm").is_none(), "no answer unless asked: {}", bodies[0]);
+}
+
+#[test]
+fn test_gui_command_failure_is_exit_1_with_the_message() {
+    let gui = stub();
+    let out = mf_gui(&gui, &["command", "bogus:cmd"]);
+    assert_eq!(out.code, 1);
+    assert!(out.stderr.contains("unknown command: bogus:cmd"), "stderr: {}", out.stderr);
+}
+
+#[test]
+fn test_gui_command_confirm_answers_and_prints_the_questions() {
+    let gui = stub();
+    let out = mf_gui(&gui, &["command", "--confirm", "yes", "metarecord:trash"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout, "Send the file to the trash?\nReally?\n");
+
+    let out = mf_gui(&gui, &["command", "--confirm", "no", "metarecord:trash"]);
+    assert_ok(&out);
+    let bodies = command_bodies(&gui);
+    assert_eq!(bodies[0]["confirm"], json!(true));
+    assert_eq!(bodies[1]["confirm"], json!(false));
+}
+
+#[test]
+fn test_gui_command_confirm_takes_yes_or_no() {
+    let gui = stub();
+    let out = mf_gui(&gui, &["command", "--confirm", "maybe", "metarecord:trash"]);
+    assert_eq!(out.code, 2, "stderr: {}", out.stderr);
+    assert!(command_bodies(&gui).is_empty());
 }

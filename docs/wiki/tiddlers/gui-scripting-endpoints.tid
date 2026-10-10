@@ -110,7 +110,15 @@ shell line. The request blocks until the command resolves:
 |`{"event": "closed"}` |the GUI is closing |
 
 All with `200`; an empty or missing `invocation` is `400`. Several may be in flight at
-once. ''Resolved'' means the command and what it awaits returned — not that a panel it
+once.
+
+`"confirm": true` (or `false`) answers the confirmations the command asks while it
+runs — the shell's `window.confirm`, which the panels share — instead of opening them,
+and the answer carries `"confirmations": ["<question>", …]`, the questions answered in
+order (present whenever the request had `confirm`, empty when nothing was asked).
+Without `confirm` the dialogs are the user's, as when typed. The answer belongs to the
+command: it holds until the command resolves and is never kept for a later one. While
+one answering command runs, a second is refused (`error`). ''Resolved'' means the command and what it awaits returned — not that a panel it
 opened has finished drawing.
 
 !! Messages and progress
