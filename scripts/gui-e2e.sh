@@ -29,7 +29,7 @@
 #
 # Usage:  scripts/gui-e2e.sh [--unsandboxed] [--keep-logs] [scenario...]
 #   with no scenario, runs them all: undo-redo duplicates orphans trash
-#   reconcile ignore sync repos errors.
+#   reconcile ignore sync repos list layout errors.
 #   --unsandboxed  pass --allow-unsandboxed-webview to the GUI (a container
 #                  that forbids WebKit's sandbox; never on real data)
 #   --keep-logs    keep the work directory (daemon.log, gui.log) on exit
@@ -54,7 +54,7 @@ for arg in "$@"; do
     esac
 done
 [ ${#SCENARIOS[@]} -gt 0 ] \
-    || SCENARIOS=(undo-redo duplicates orphans trash reconcile ignore sync repos errors)
+    || SCENARIOS=(undo-redo duplicates orphans trash reconcile ignore sync repos list layout errors)
 
 # shellcheck source=lib/daemon-fixture.sh
 . scripts/lib/daemon-fixture.sh
@@ -179,6 +179,19 @@ uuid_of() { df_mf track "$1"; }
 
 # ignore_count <uuid> — how many mf_ignore rows the metarecord has.
 ignore_count() { df_mf metarecord -i "$1" field get mf_ignore 2>/dev/null | grep -c .; }
+
+# gui_status <python expression> — evaluated over `mf gui status` as `s`.
+gui_status() {
+    mfg status | python3 -c 'import json, sys
+s = json.load(sys.stdin)
+print(eval(sys.argv[1]))' "$1"
+}
+
+# ws_count — how many workspaces the GUI holds.
+ws_count() { gui_status 'len(s["workspaces"])'; }
+
+# slot_ws <left|right> — the workspace a slot shows, None when hidden.
+slot_ws() { gui_status "(s['layout']['$1'] or {}).get('workspace_id')"; }
 
 # repo_named <name> — the uuid of the loaded repository so named, or nothing.
 repo_named() {
@@ -400,6 +413,110 @@ scenario_repos() {
     run repos:unload made
     status_is "repos unload: says so" info "repository unloaded"
     assert_eq "repos unload: the daemon let it go" "" "$(repo_named made)"
+}
+
+scenario_list() {
+    new_repo list
+    df_mf metarecord add note:string=hello >/dev/null
+    df_mf metarecord add note:string=bye >/dev/null
+
+    # The list reads its query from the workspace when it mounts: a simplified
+    # text, expanded then parsed by the GUI backend.
+    run workspace:send "$WS" metarecord-list:query note=hello
+    command_ok "list: the query is sent to the workspace"
+    show_panel left metarecord-list metarecord-list:refresh
+    assert_eq "list: the simplified query is expanded" 'note = "hello"' "$(mfg query)"
+
+    run workspace:send "$WS" metarecord-list:query 'note = = ='
+    run metarecord-list:refresh
+    assert_eq "list: an invalid query is not run" 'note = "hello"' "$(mfg query)"
+}
+
+scenario_layout() {
+    new_repo layout
+    local n0 forked
+    n0=$(ws_count)
+
+    run workspace:rename Renamed tab
+    assert_eq "workspace rename" "Renamed tab" \
+        "$(gui_status "next(w['name'] for w in s['workspaces'] if w['id'] == '$WS')")"
+
+    run workspace:fork
+    assert_eq "workspace fork: a new tab" $((n0 + 1)) "$(ws_count)"
+    forked=$(gui_status "s['workspaces'][-1]['id']")
+    assert_eq "workspace fork: on the same repository" "$DF_REPO" \
+        "$(gui_status "s['workspaces'][-1]['active_repo']")"
+
+    run workspace:new
+    assert_eq "workspace new: a new tab" $((n0 + 2)) "$(ws_count)"
+
+    run workspace:goto 1
+    assert_eq "workspace goto 1" "$(gui_status "s['workspaces'][0]['id']")" "$(slot_ws left)"
+    run workspace:next
+    assert_eq "workspace next" "$(gui_status "s['workspaces'][1]['id']")" "$(slot_ws left)"
+    run workspace:prev
+    assert_eq "workspace prev" "$(gui_status "s['workspaces'][0]['id']")" "$(slot_ws left)"
+
+    mfg layout left "$WS" >/dev/null
+    run workspace:goto nope
+    status_is "workspace goto: a non-number is refused" error 'not a workspace number: "nope"'
+    run panel:split
+    assert_not "panel split: the right slot shows" test "$(slot_ws right)" = None
+    run panel:focus right
+    assert_eq "panel focus right" True "$(gui_status "s['layout']['right']['focused']")"
+    run panel:focus next
+    assert_eq "panel focus next: back left" True "$(gui_status "s['layout']['left']['focused']")"
+    run panel:focus up
+    status_is "panel focus: an unknown slot is refused" error 'unknown slot: "up"*'
+
+    local right_before
+    right_before=$(slot_ws right)
+    run workspace:next slot
+    assert_eq "workspace next slot: the other slot stays" "$right_before" "$(slot_ws right)"
+    run workspace:prev slot
+    assert_eq "workspace prev slot: back" "$WS" "$(slot_ws left)"
+
+    mfg view right help >/dev/null
+    run panel:swap
+    assert_eq "panel swap: the types change sides" "help message" \
+        "$(gui_status "s['layout']['left']['panel_type'] + ' ' + s['layout']['right']['panel_type']")"
+    run panel:swap
+
+    run panel:toggle split
+    assert_eq "panel toggle split: hides the right slot" None "$(slot_ws right)"
+    run panel:toggle split
+    assert_not "panel toggle split: shows it again" test "$(slot_ws right)" = None
+    run panel:toggle sideways
+    status_is "panel toggle: an unknown flag is refused" error 'unknown flag: "sideways"*'
+    run panel:unsplit
+    assert_eq "panel unsplit" None "$(slot_ws right)"
+    run panel:toggle fullscreen
+    command_ok "panel toggle fullscreen: on"
+    run panel:toggle fullscreen
+    command_ok "panel toggle fullscreen: off"
+
+    mfg message --workspace "$WS" "e2e: to be cleared" >/dev/null
+    run message:clear
+    assert_not "message clear: the log is emptied" \
+        grep -q "to be cleared" <<<"$(mfg messages --workspace "$WS")"
+    run shell:clear
+    command_ok "shell clear"
+
+    run config:reload keybindings
+    status_is "config reload keybindings: reports" info "reloaded keybindings"
+    run config:reload all
+    status_is "config reload all: reports" info \
+        "reloaded keybindings, style, grammar, commands"
+    run config:reload nothing
+    status_is "config reload: an unknown target is refused" error 'unknown reload target: "nothing"*'
+    run daemon:set url "http://127.0.0.1:$DF_PORT"
+    command_ok "daemon set url: the same daemon"
+    assert_eq "daemon set url: still connected" True "$(gui_status "s['daemon_connected']")"
+
+    mfg layout left "$forked" >/dev/null
+    run workspace:close
+    assert_eq "workspace close: the tab goes" $((n0 + 1)) "$(ws_count)"
+    mfg layout left "$WS" >/dev/null
 }
 
 scenario_errors() {
