@@ -1,0 +1,36 @@
+title: Measuring coverage
+tags: Development
+kind: guide
+summary: scripts/coverage.sh measures the Rust line coverage of the tests and of the GUI end-to-end run together, so the Tauri wrappers only a real window reaches count too.
+audience: dev
+aliases: coverage.sh llvm-cov
+
+```
+scripts/coverage.sh [--no-gui] [--unsandboxed] [--html]
+```
+
+`scripts/check.sh --coverage` ([[Static checks]]) counts what `cargo test` reaches. That
+leaves out the code only a running WebView calls: the `#[tauri::command]` wrappers and
+the start-up in `gui/src/lib.rs`. [[Testing the GUI end to end]] runs that code in a
+real window; this script makes it count.
+
+!! What it does
+
+It sources `cargo llvm-cov show-env` with `CARGO_TARGET_DIR=target/llvm-cov-target` —
+the directory `cargo llvm-cov` itself uses, so `target/debug` is left alone and the two
+share their build. Then, under that one instrumentation:
+
+# `cargo llvm-cov clean --workspace` — the profiles of an earlier run would be merged into this one;
+# `cargo test --workspace`;
+# the daemon, `mf` and the GUI built instrumented, and `scripts/gui-e2e.sh` pointed at them through `METAFOLDER_BIN_DIR` (which `scripts/lib/daemon-fixture.sh` reads too);
+# one report, `cargo llvm-cov report --summary-only`, or `--html` under `target/llvm-cov-target/llvm-cov/html`.
+
+A failing test or scenario fails the run, and the report is still written. With no
+display the end-to-end half is a loud skip, and `--no-gui` asks for that skip.
+
+!! A profile is written at exit
+
+An instrumented process writes its profile when it exits normally; a killed one writes
+nothing. That is why `gui-e2e.sh` ends by typing `quit` and waiting for the GUI to exit
+(an assertion of its own), instead of killing it. The fixture daemon is still killed:
+the code it runs is the daemon library, which the tests reach in-process.

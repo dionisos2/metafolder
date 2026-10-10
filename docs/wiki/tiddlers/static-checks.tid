@@ -27,7 +27,7 @@ status is 1 when a check failed.
 |`lint` |`npx eslint .` |type-aware rules: a floating promise, an async handler where a void return is expected |
 |`deny` |`cargo deny check` |vulnerabilities, licenses and sources of the dependencies |
 |`semgrep` |`semgrep scan --config .semgrep/invariants.yml` |the project's invariants no type checker can express |
-|`coverage` |`cargo llvm-cov --workspace --summary-only` |only with `--coverage` |
+|`coverage` |`cargo llvm-cov --workspace --summary-only` |only with `--coverage`; the GUI end-to-end run counted too: [[Measuring coverage]] |
 
 A missing optional tool — `cargo-deny`, `semgrep`, `cargo-llvm-cov`, `node`, the npm
 packages — makes its check a ''skip'', printed with the line that installs it, and

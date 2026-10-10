@@ -18,6 +18,7 @@ suites=(
     test-complete-build.sh  # the full build's order and the paths it runs
     test-check.sh           # the static checks' disk-space warning
     test-doc-tools.sh       # the documentation wiki's scripts/doc
+    test-coverage.sh        # coverage.sh's steps: tests + instrumented GUI e2e, one report
 )
 
 if [ -t 1 ]; then

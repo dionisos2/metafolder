@@ -22,6 +22,11 @@
 #     its panels and keybindings from ~/.config/metafolder/gui/;
 #   - a display ($DISPLAY or $WAYLAND_DISPLAY).
 #
+# METAFOLDER_BIN_DIR (default target/debug) names the directory of the three
+# binaries; scripts/coverage.sh points it at instrumented ones, which is why
+# the GUI is quit through its own `quit` command at the end and never killed:
+# a killed process writes no coverage profile.
+#
 # Usage:  scripts/gui-e2e.sh [--unsandboxed] [--keep-logs] [scenario...]
 #   with no scenario, runs them all: undo-redo duplicates orphans trash
 #   reconcile ignore sync errors.
@@ -35,7 +40,7 @@ set -uo pipefail
 
 cd "$(git -C "$(dirname "$0")" rev-parse --show-toplevel)" || exit 2
 
-GUI_BIN="target/debug/metafolder-gui"
+GUI_BIN="${METAFOLDER_BIN_DIR:-target/debug}/metafolder-gui"
 UNSANDBOXED=false
 KEEP_LOGS=false
 SCENARIOS=()
@@ -390,5 +395,20 @@ for scenario in "${SCENARIOS[@]}"; do
     echo "── $scenario"
     "$fn"
 done
+
+# Last, and not a scenario: the GUI quits on its own command. A clean exit is
+# what writes an instrumented binary's coverage profile.
+echo "── quit"
+mfg command --timeout-ms 2000 quit >/dev/null 2>&1
+exited=false
+for _ in $(seq 1 40); do
+    kill -0 "$GUI_PID" 2>/dev/null || { exited=true; break; }
+    sleep 0.25
+done
+if $exited; then
+    wait "$GUI_PID" 2>/dev/null
+    GUI_PID=""
+fi
+assert_eq "quit: the GUI exits" true "$exited"
 
 assert_summary

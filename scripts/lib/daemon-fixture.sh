@@ -27,8 +27,11 @@ DF_ROOT=""
 _DF_DPID=""
 _DF_TMP=""
 
-_DF_DAEMON="target/debug/metafolder-daemon"
-_DF_MF="target/debug/mf"
+# METAFOLDER_BIN_DIR: where the binaries are (scripts/coverage.sh points it at
+# the instrumented ones).
+_DF_BIN="${METAFOLDER_BIN_DIR:-target/debug}"
+_DF_DAEMON="$_DF_BIN/metafolder-daemon"
+_DF_MF="$_DF_BIN/mf"
 
 df_available() { [ -x "$_DF_DAEMON" ] && [ -x "$_DF_MF" ]; }
 
@@ -79,7 +82,8 @@ df_hybrid() { # <repo-uuid>
     mkdir -p "$bin"
     HY_DIR="$_DF_TMP/hy"; mkdir -p "$HY_DIR"; : >"$HY_DIR/log"
     export HY_DIR
-    export HYBRID_REAL_MF="$PWD/$_DF_MF"
+    HYBRID_REAL_MF=$(realpath "$_DF_MF")
+    export HYBRID_REAL_MF
     export HYBRID_PORT="$DF_PORT"
     export HYBRID_REPO="$1"
     cat >"$bin/mf" <<'SHIM'

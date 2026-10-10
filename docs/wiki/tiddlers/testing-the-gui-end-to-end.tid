@@ -39,7 +39,10 @@ installed (the GUI reads its panels from it — [[Updating the configuration]]),
 display. `--unsandboxed` passes `--allow-unsandboxed-webview`, for a container that
 forbids WebKit's sandbox ([[Sandboxing the media decoders]]). A run takes about ten
 seconds, most of it the GUI starting. It is not part of `scripts/check.sh`, which runs
-without a display.
+without a display. `METAFOLDER_BIN_DIR` (default `target/debug`) names the directory of
+the binaries; [[Measuring coverage]] points it at instrumented ones, and the run ends
+by quitting the GUI through its `quit` command — never a kill — so that their profiles
+get written.
 
 !! Confirmations
 
