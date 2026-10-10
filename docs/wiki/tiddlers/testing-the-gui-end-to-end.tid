@@ -22,6 +22,19 @@ in a fresh focused workspace. A scenario types commands with [[mf gui command]] 
 reads back the outcome with [[mf gui status-bar]] (kind and text of the last status
 message) and [[mf gui messages]] (the message log).
 
+!! Its own configuration
+
+The GUI reads a private copy of the installed configuration (`XDG_CONFIG_HOME` under
+the work directory; the rendered docs are only linked), so a user's edits — a
+keybinding, a user command — cannot change an outcome, and a scenario can install
+what it needs: the `script` scenario's `e2e-ask.sh`, which asks one key with
+[[mf gui input]]. What the GUI runs finds the run's own `mf` first on its `PATH`, and
+this GUI through `METAFOLDER_GUI_URL`.
+
+A command that runs a script (`script:run`) resolves when the script ends, so the
+scenario starts it in the background and answers meanwhile; what the script says may
+land just after the command resolved, and is waited for (`until_ok`), never assumed.
+
 !! What is asserted
 
 What a command ''said'', not how the window shows it: no pixel, no DOM, no panel
@@ -57,7 +70,7 @@ answers blocks the shell's dispatcher, and every command after it would time out
 A `scenario_<name>` function: `new_repo <name>` for the repository and the workspace,
 `df_mf` to prepare data through the daemon, `run` or `answering` to type a command,
 then `status_is <name> <kind> <glob>`, `command_ok`, or the `assert_*` of
-`scripts/lib/assert.sh`. `select_path <abs path>` makes a path's metarecord the
+`scripts/lib/assert.sh`. `gui_status <python expression>` evaluates one over [[mf gui status]] (`ws_count`, `slot_ws <slot>` are built on it). `select_path <abs path>` makes a path's metarecord the
 selection (through the `file` panel); `show_panel <slot> <type> <command>` shows a
 panel and waits until one of its commands answers. Add the name to the default list
 at the top.

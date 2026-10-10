@@ -29,7 +29,7 @@
 #
 # Usage:  scripts/gui-e2e.sh [--unsandboxed] [--keep-logs] [scenario...]
 #   with no scenario, runs them all: undo-redo duplicates orphans trash
-#   reconcile ignore sync repos list layout errors.
+#   reconcile ignore sync repos list layout script errors.
 #   --unsandboxed  pass --allow-unsandboxed-webview to the GUI (a container
 #                  that forbids WebKit's sandbox; never on real data)
 #   --keep-logs    keep the work directory (daemon.log, gui.log) on exit
@@ -54,7 +54,7 @@ for arg in "$@"; do
     esac
 done
 [ ${#SCENARIOS[@]} -gt 0 ] \
-    || SCENARIOS=(undo-redo duplicates orphans trash reconcile ignore sync repos list layout errors)
+    || SCENARIOS=(undo-redo duplicates orphans trash reconcile ignore sync repos list layout script errors)
 
 # shellcheck source=lib/daemon-fixture.sh
 . scripts/lib/daemon-fixture.sh
@@ -93,9 +93,35 @@ trap cleanup EXIT
 
 mfg() { "$_DF_MF" gui --gui-url "http://127.0.0.1:$GUI_PORT" "$@"; }
 
+# The GUI reads a private copy of the installed configuration, so a scenario can
+# install a script of its own and the user's edits to theirs (keybindings, a
+# user command) cannot change an outcome. The rendered docs are only linked.
+CONFIG_SRC="${XDG_CONFIG_HOME:-$HOME/.config}/metafolder"
+CONFIG_HOME="$WORK/config"
+mkdir -p "$CONFIG_HOME/metafolder"
+for part in cli core daemon gui scripts; do
+    [ -d "$CONFIG_SRC/$part" ] && cp -r "$CONFIG_SRC/$part" "$CONFIG_HOME/metafolder/"
+done
+[ -d "$CONFIG_SRC/docs" ] && ln -s "$CONFIG_SRC/docs" "$CONFIG_HOME/metafolder/docs"
+[ -d "$CONFIG_HOME/metafolder/gui" ] || die "no installed configuration in $CONFIG_SRC (metafolder-sync-config)"
+mkdir -p "$CONFIG_HOME/metafolder/scripts"
+# A script for the `script` scenario: one question, and what it got is said.
+cat >"$CONFIG_HOME/metafolder/scripts/e2e-ask.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+# Summary: e2e: asks for a key and says which one it got
+if key=$(mf gui input y n); then
+    mf gui message "e2e-ask: got $key"
+else
+    mf gui message "e2e-ask: no answer"
+fi
+SCRIPT
+
 gui_args=(--gui-port "$GUI_PORT" --daemon-port "$DF_PORT")
 $UNSANDBOXED && gui_args+=(--allow-unsandboxed-webview)
-"$GUI_BIN" "${gui_args[@]}" >"$WORK/gui.log" 2>&1 &
+# What the GUI runs (scripts) finds this mf first, and this GUI with it.
+XDG_CONFIG_HOME="$CONFIG_HOME" PATH="$(cd "$(dirname "$_DF_MF")" && pwd):$PATH" \
+    METAFOLDER_GUI_URL="http://127.0.0.1:$GUI_PORT" \
+    "$GUI_BIN" "${gui_args[@]}" >"$WORK/gui.log" 2>&1 &
 GUI_PID=$!
 
 # Ready = the shell dispatches commands (its listener is the last thing it
@@ -517,6 +543,59 @@ scenario_layout() {
     run workspace:close
     assert_eq "workspace close: the tab goes" $((n0 + 1)) "$(ws_count)"
     mfg layout left "$WS" >/dev/null
+}
+
+# until <seconds> <command…> — polls until the command succeeds.
+until_ok() {
+    local tries=$(($1 * 4))
+    shift
+    for _ in $(seq 1 "$tries"); do
+        "$@" && return 0
+        sleep 0.25
+    done
+    return 1
+}
+
+# says <text> — the last status message of the scenario's workspace is <text>.
+says() { [ "$(mfg status-bar --workspace "$WS")" = "info"$'\t'"$1" ]; }
+
+asking() { [ "$(gui_status "s['input_wait_active']")" = True ]; }
+not_asking() { ! asking; }
+
+scenario_script() {
+    new_repo script
+    local runner
+
+    # script:run resolves when the script ends: it runs beside the scenario,
+    # which answers its question meanwhile.
+    mfg command --timeout-ms 60000 script:run e2e-ask >/dev/null 2>&1 &
+    runner=$!
+    assert "script run: the script asks" until_ok 20 asking
+
+    run script-keys:toggle
+    status_is "script keys toggle: off" info "script keys disabled"
+    run script-keys:toggle
+    status_is "script keys toggle: on again" info "script keys enabled"
+
+    run answer:send y
+    wait "$runner"
+    assert_eq "script run: resolves once the script ends" 0 "$?"
+    # Its message may land just after the run resolves: waited for, not assumed.
+    until_ok 10 says "e2e-ask: got y"
+    status_is "script run: the script got the answer" info "e2e-ask: got y"
+
+    mfg command --timeout-ms 60000 script:run e2e-ask >/dev/null 2>&1 &
+    runner=$!
+    assert "script run again: the script asks" until_ok 20 asking
+    run script:stop
+    wait "$runner"
+    assert "script stop: the question is withdrawn" until_ok 10 not_asking
+    assert_not "script stop: no answer was given" \
+        grep -q "e2e-ask: got" <<<"$(mfg status-bar --workspace "$WS")"
+
+    run script:run no-such-script
+    status_is "script run: an unknown script is refused" error \
+        'no installed script matches "no-such-script"'
 }
 
 scenario_errors() {
