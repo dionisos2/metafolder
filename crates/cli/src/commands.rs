@@ -2345,6 +2345,11 @@ fn not_watched_phrase(entry: &serde_json::Value) -> String {
             "on the volume mounted at {}, which is unplugged",
             entry["offline_mount"].as_str().unwrap_or("?")
         ),
+        Some("second_mount") => format!(
+            "inside {}, a second mount of what the repository reaches already \
+             (tracked where it is first mounted)",
+            entry["second_mount"].as_str().unwrap_or("?")
+        ),
         Some("internal") => {
             "inside the daemon's own runtime directory (.metafolder/internal)".into()
         }

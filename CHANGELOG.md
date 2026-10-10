@@ -14,6 +14,15 @@ than breaking them.
 ## [Unreleased]
 
 ### Added
+- **Second mounts: a drive mounted twice in a repository is tracked once.** A
+  mount point under a root showing what the repository reaches already — the
+  same drive mounted again, a directory of it, or a directory of the root's own
+  filesystem bound into it — is an entry, never walked: the reconcile, the
+  watch placement, the event filter and the orphan scan leave it alone, and a
+  change made through it is recorded where the drive was mounted first (the
+  watcher could only ever report one of the two paths). `POST /watch/check`,
+  `mf watch check` and the GUI say why with the reason `second_mount` (doc
+  "Second mounts").
 - **`in`: "this field is one of these values" as one query node** — JSON
   `{"type": "in", "field": …, "values": [...], "aspect"?}`, DSL
   `in(field[:aspect], v1, v2, …)`. It means exactly the `or` of one `eq` per

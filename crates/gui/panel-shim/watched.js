@@ -20,6 +20,7 @@
  *   dir_eligible: boolean, dir_eligibility_reason: string,
  *   dir_watch_scope: string|null, dir_ignore_source: string|null,
  *   dir_pattern: string|null, excluded_by: string|null, offline_mount: string|null,
+ *   second_mount: string|null,
  * }} Result
  */
 
@@ -107,6 +108,11 @@ export function watchedLabel(r) {
         );
       case 'offline':
         return `on the volume mounted at ${r.offline_mount ?? '?'}, which is unplugged`;
+      case 'second_mount':
+        return (
+          `inside ${r.second_mount ?? '?'}, a second mount of what the repository ` +
+          'reaches already (tracked where it is first mounted)'
+        );
       case 'internal':
         return 'inside the daemon\u2019s own runtime directory (.metafolder/internal)';
       case 'unwatched':

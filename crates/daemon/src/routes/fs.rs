@@ -362,6 +362,7 @@ pub(super) async fn watch_check(
                 "dir_pattern": d.pattern,
                 "excluded_by": s.excluded_by,
                 "offline_mount": s.offline_mount,
+                "second_mount": s.second_mount,
             }));
         }
         Ok(Json(json!({ "results": results })))

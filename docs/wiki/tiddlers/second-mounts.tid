@@ -1,0 +1,38 @@
+title: Second mounts
+tags: [[Mount points]]
+kind: reference
+summary: A filesystem, or part of one, mounted a second time inside a repository is an entry, never walked: tracked once, where it is reached first.
+
+A drive bound at two directories of a repository, or a directory of the repository bound
+into it again, shows the same files at two paths. The kernel tells them apart nowhere: a
+fanotify record names an object, not a mount, and the broker resolves it through one
+mount point; an inotify watch is on an inode, which both paths name. So the watcher could
+only ever report one of the two, and a reconcile walking both kept a second record of
+every file that nothing would keep up to date.
+
+So a repository reaches each part of a filesystem ''once''. A mount point under the root
+is a ''second mount'' when what it shows is reached already — through the root itself
+(a directory of the root's own filesystem bound into it), or through a mount made before
+it, in the order of the kernel's mount table (a whole drive mounted again, or a
+directory of it). Like a symlinked directory, a second mount is an entry, tracked as a
+directory, and never entered: not walked by the reconcile nor by the watch placement,
+events beneath it dropped, its records "unknown" to the orphan scan. What it shows is
+tracked where it is first reached, and a change made through it is recorded there.
+
+|!Component |!At a second mount |
+|reconcile |the directory itself is tracked; nothing beneath it is walked |
+|watcher |no watch beneath it; an event beneath it is dropped |
+|orphan scan |"unknown", never an orphan |
+|watch check |`second_mount`, naming it ([[Checking whether a path is watched]]) |
+
+It is decided afresh from the mount table each time it is asked (`mount::offline`,
+`MountTable::second_mounts_under`): the first mount unmounted, the second is the drive's
+one mount now — live, and found by a reconcile as a drive plugged in is
+([[Offline subtrees]]); the first one, a declared mount point with nothing mounted, is
+frozen.
+
+Not covered: a later mount showing ''more'' than an earlier one (the earlier one is a
+part of it, reached twice); and the same drive mounted in two repositories, which the
+broker resolves through one of them only — the other repository hears nothing from that
+drive. `tests/watch_mounts.rs` drives the case of one repository under both sources.
+

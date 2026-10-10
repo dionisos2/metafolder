@@ -25,6 +25,7 @@ function result(overrides = {}) {
     dir_pattern: null,
     excluded_by: null,
     offline_mount: null,
+    second_mount: null,
     ...overrides,
   };
 }
@@ -101,6 +102,12 @@ describe('watchedLabel', () => {
     expect(
       watchedLabel(result({ watched: false, reason: 'offline', offline_mount: '/media/photos' })),
     ).toBe('not watched — on the volume mounted at /media/photos, which is unplugged');
+    expect(
+      watchedLabel(result({ watched: false, reason: 'second_mount', second_mount: '/copy' })),
+    ).toBe(
+      'not watched — inside /copy, a second mount of what the repository reaches already ' +
+        '(tracked where it is first mounted)',
+    );
     expect(watchedLabel(result({ watched: false, reason: 'internal' }))).toContain(
       'runtime directory',
     );

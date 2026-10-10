@@ -283,6 +283,9 @@ pub enum WatchedReason {
     /// Under a declared mount point with nothing mounted: frozen until the
     /// volume returns (doc "Offline subtrees").
     Offline,
+    /// Inside a second mount of what the repository reaches already: tracked
+    /// where it is first reached, never here (doc "Second mounts").
+    SecondMount,
     /// Inside the daemon's own runtime directory: never watched, whatever the
     /// eligibility says.
     Internal,
@@ -299,6 +302,7 @@ impl WatchedReason {
             WatchedReason::Untracked => "untracked",
             WatchedReason::Excluded => "excluded",
             WatchedReason::Offline => "offline",
+            WatchedReason::SecondMount => "second_mount",
             WatchedReason::Internal => "internal",
             WatchedReason::Unwatched => "unwatched",
         }
@@ -330,6 +334,9 @@ pub struct WatchedStatus {
     /// The offline mount point the path sits under
     /// ([`WatchedReason::Offline`] only).
     pub offline_mount: Option<String>,
+    /// The second mount the path sits under ([`WatchedReason::SecondMount`]
+    /// only).
+    pub second_mount: Option<String>,
 }
 
 /// The watched state of a batch of repo-root-relative paths, answering
@@ -416,6 +423,7 @@ fn explain_watched_one(
     let dir_eligibility =
         if is_dir { eligibility.clone() } else { rules.explain(&rules.rel_of_text(&cover))? };
     let watched = covered && eligibility.eligible;
+    let mut second_mount = None;
     let (reason, excluded_by, offline_mount) = if watched {
         (WatchedReason::Watched, None, None)
     } else if !eligibility.eligible || !dir_eligibility.eligible {
@@ -433,6 +441,9 @@ fn explain_watched_one(
         });
         if let Some(mount) = mounts.paths().iter().find(|m| covers(m, &cover)) {
             (WatchedReason::Offline, None, Some((*mount).clone()))
+        } else if let Some(mount) = mounts.second().iter().find(|m| covers(m, &cover)) {
+            second_mount = Some(mount.clone());
+            (WatchedReason::SecondMount, None, None)
         } else if let Some(by) = rules.exceeded_by(&rules.rel_of_text(&cover)) {
             (WatchedReason::Excluded, Some(by), None)
         } else {
@@ -447,6 +458,7 @@ fn explain_watched_one(
         dir_eligibility,
         excluded_by,
         offline_mount,
+        second_mount,
     })
 }
 
@@ -507,7 +519,7 @@ fn covered_by_tree(
         let _phase = metafolder_core::slowlog::phase("mounts.offline");
         crate::mount::offline(conn, cache, root).unwrap_or_default()
     });
-    if mounts.paths().iter().any(|m| covers(m, cover)) {
+    if mounts.paths().iter().chain(mounts.second()).any(|m| covers(m, cover)) {
         return false;
     }
     rules.exceeded_by(&rules.rel_of_text(cover)).is_none()

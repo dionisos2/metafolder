@@ -228,7 +228,71 @@ async fn a_drive_mounted_over_a_tracked_directory(regime: Regime) {
     assert_eq!(orphan_count(&app, &repo).await, 0);
 }
 
+// ── One drive mounted at two points of a repository ──────────────────────────
+
+/// What `POST /watch/check` says of `path`: `(watched, reason)`.
+async fn watch_check(app: &Router, repo: &str, path: &str) -> (bool, String) {
+    let (_, body) = request(
+        app,
+        "POST",
+        &format!("/repos/{repo}/watch/check"),
+        Some(serde_json::json!({"paths": [path]})),
+    )
+    .await;
+    let r = &body["results"][0];
+    (
+        r["watched"].as_bool().unwrap_or_else(|| panic!("watch check: {body}")),
+        r["reason"].to_string(),
+    )
+}
+
+async fn a_drive_mounted_at_two_points(regime: Regime) {
+    let fs = regime.fs();
+    let (app, repo, root) = journey_repo("twice", regime).await;
+    fs.create_dir(root.join("a")).unwrap();
+    fs.create_dir(root.join("b")).unwrap();
+    settle_on(&app, &repo, &["", "a", "b"]).await;
+    let store = drive(&fs, "twice");
+    std::fs::write(store.join("x.jpg"), b"x").unwrap();
+    fs.bind_mount(&store, root.join("a")).unwrap();
+    fs.bind_mount(&store, root.join("b")).unwrap();
+    mount_table_read_again().await;
+
+    // Tracked once, where it was mounted first: the second mount is an
+    // entry, never walked — as a symlinked directory (doc "Second mounts").
+    let result = reconcile(&app, &repo, "the drive at two points").await;
+    assert_eq!(result["created"], 1, "{result}");
+    assert_eq!(tracked_paths(&app, &repo).await, sorted(&["", "a", "a/x.jpg", "b"]));
+    assert_eq!(watch_check(&app, &repo, "/b/x.jpg").await, (false, "\"second_mount\"".into()));
+    reconcile_agrees(&app, &repo, "the drive at two points").await;
+
+    // Written through the second point: recorded where the drive is tracked.
+    fs.write(root.join("b/y.jpg"), b"y").unwrap();
+    settle_on(&app, &repo, &["", "a", "a/x.jpg", "a/y.jpg", "b"]).await;
+    reconcile_agrees(&app, &repo, "written through the second point").await;
+    fs.rename(root.join("b/x.jpg"), root.join("b/z.jpg")).unwrap();
+    settle_on(&app, &repo, &["", "a", "a/y.jpg", "a/z.jpg", "b"]).await;
+    reconcile_agrees(&app, &repo, "renamed through the second point").await;
+
+    // The first point unmounted: frozen there, and the second is the drive's
+    // one mount now — live, found by a reconcile as a drive plugged in is.
+    fs.unmount(root.join("a")).unwrap();
+    mount_table_read_again().await;
+    let result = reconcile(&app, &repo, "the first point unmounted").await;
+    assert_eq!(result["created"], 2, "{result}");
+    fs.write(root.join("b/w.jpg"), b"w").unwrap();
+    let after = ["", "a", "a/y.jpg", "a/z.jpg", "b", "b/w.jpg", "b/y.jpg", "b/z.jpg"];
+    settle_on(&app, &repo, &after).await;
+    reconcile_agrees(&app, &repo, "the first point unmounted").await;
+    assert_eq!(orphan_count(&app, &repo).await, 0);
+    assert_eq!(orphans_scanned(&app, &repo).await, Vec::<String>::new());
+
+    fs.unmount(root.join("b")).unwrap();
+    fs.unmount(&store).unwrap();
+}
+
 on_both_sources!(
     a_drive_plugged_in_and_out_with_work_going_on,
     a_drive_mounted_over_a_tracked_directory,
+    a_drive_mounted_at_two_points,
 );

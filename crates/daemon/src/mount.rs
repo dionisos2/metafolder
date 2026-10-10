@@ -188,30 +188,38 @@ fn abs_of(root: &Path, rel: &str) -> PathBuf {
     root.join(rel.trim_start_matches('/'))
 }
 
-/// The repo-root-relative paths of the *offline* mount points: the subtrees
-/// every component must leave frozen (doc "Offline subtrees").
+/// The repo-root-relative paths of the mount points nothing may enter: the
+/// *offline* ones, whose subtrees every component must leave frozen (doc
+/// "Offline subtrees"), and the *second* mounts of what the repository
+/// reaches already, walked and watched once, elsewhere (doc "Second mounts").
 #[derive(Debug, Clone, Default)]
 pub struct OfflineMounts {
     paths: Vec<String>,
+    second: Vec<String>,
 }
 
 impl OfflineMounts {
     /// Whether `rel` (repo-root-relative, leading `/`) is at or below an
-    /// offline mount point.
+    /// offline mount point or a second mount.
     pub fn contains(&self, rel: &str) -> bool {
-        self.paths.iter().any(|m| {
+        self.paths.iter().chain(&self.second).any(|m| {
             rel == m
                 || (rel.len() > m.len() && rel.starts_with(m) && rel.as_bytes()[m.len()] == b'/')
         })
     }
 
     pub fn is_empty(&self) -> bool {
-        self.paths.is_empty()
+        self.paths.is_empty() && self.second.is_empty()
     }
 
     /// The offline mount point paths themselves.
     pub fn paths(&self) -> &[String] {
         &self.paths
+    }
+
+    /// The second mounts' paths.
+    pub fn second(&self) -> &[String] {
+        &self.second
     }
 }
 
@@ -233,7 +241,21 @@ pub fn offline(
             paths.push(rel);
         }
     }
-    Ok(OfflineMounts { paths })
+    let second = table::current()
+        .second_mounts_under(root)
+        .iter()
+        .filter_map(|abs| {
+            let rel = abs.strip_prefix(root).ok()?;
+            let mut out = crate::relpath::RelPath::root();
+            for name in rel.iter() {
+                out = out.child(metafolder_core::metarecord::TreeName::from_bytes(
+                    crate::relpath::file_name_bytes(name),
+                ));
+            }
+            Some(out.display())
+        })
+        .collect();
+    Ok(OfflineMounts { paths, second })
 }
 
 /// Whether a filesystem type is a network one: a key-value store refuses to
@@ -302,6 +324,41 @@ impl MountTable {
             .filter(|(p, _)| p.starts_with(root) && p.as_path() != root)
             .map(|(p, e)| (p.clone(), (e.major, e.minor)))
             .collect();
+        out.sort();
+        out
+    }
+
+    /// The mount points under `root` showing what the repository reaches
+    /// already (doc "Second mounts"): a filesystem, or a part of it, seen
+    /// through the root itself or through a mount made before it. Entered once
+    /// — like a symlinked directory, a second mount is an entry, never walked.
+    /// A mount beneath one of them is not reached at all, and not listed.
+    /// Sorted.
+    pub fn second_mounts_under(&self, root: &Path) -> Vec<PathBuf> {
+        let Some((at, own)) = root.ancestors().find_map(|a| self.by_path.get_key_value(a)) else {
+            return Vec::new();
+        };
+        // Where the root itself is, in its own filesystem.
+        let inside = root.strip_prefix(at).unwrap_or(Path::new(""));
+        let mut reached = vec![((own.major, own.minor), own.root.join(inside))];
+        let mut under: Vec<(&PathBuf, &MountInfoEntry)> = self
+            .by_path
+            .iter()
+            .filter(|(p, _)| p.starts_with(root) && p.as_path() != root)
+            .collect();
+        under.sort_by_key(|(_, e)| e.order);
+        let mut out: Vec<PathBuf> = Vec::new();
+        for (point, e) in under {
+            if out.iter().any(|second| point.starts_with(second)) {
+                continue;
+            }
+            let dev = (e.major, e.minor);
+            if reached.iter().any(|(d, part)| *d == dev && e.root.starts_with(part)) {
+                out.push(point.clone());
+            } else {
+                reached.push((dev, e.root.clone()));
+            }
+        }
         out.sort();
         out
     }
@@ -528,6 +585,11 @@ fn by_dev(dir: &str, major: u64, minor: u64) -> Option<String> {
 struct MountInfoEntry {
     major: u64,
     minor: u64,
+    /// Where in its filesystem the mount starts (`/` for the whole of it, a
+    /// directory of it for a bind).
+    root: PathBuf,
+    /// Its line in the table: mounts are listed in the order they were made.
+    order: usize,
     /// The filesystem type: `ext4`, `nfs4`, `fuse.sshfs`, …
     fstype: String,
     /// The mount source: `/dev/sdb1`, `user@host:/export`, `tmpfs`, …
@@ -539,7 +601,7 @@ struct MountInfoEntry {
 /// a directory mounted over twice reports the volume actually visible.
 fn parse_mountinfo(text: &str) -> HashMap<PathBuf, MountInfoEntry> {
     let mut out = HashMap::new();
-    for line in text.lines() {
+    for (order, line) in text.lines().enumerate() {
         let fields: Vec<&str> = line.split(' ').collect();
         if fields.len() < 7 {
             continue;
@@ -560,7 +622,14 @@ fn parse_mountinfo(text: &str) -> HashMap<PathBuf, MountInfoEntry> {
         };
         out.insert(
             PathBuf::from(unescape(fields[4])),
-            MountInfoEntry { major, minor, fstype: fstype.to_string(), source: unescape(source) },
+            MountInfoEntry {
+                major,
+                minor,
+                root: PathBuf::from(unescape(fields[3])),
+                order,
+                fstype: fstype.to_string(),
+                source: unescape(source),
+            },
         );
     }
     out
@@ -677,6 +746,38 @@ mod tests {
     }
 
     #[test]
+    fn a_filesystem_already_reached_in_the_repository_is_a_second_mount() {
+        // `/media/usb` holds a drive (8:17) kept outside the repository; bound
+        // at `photos`, then `copy`: `copy` is the second mount of it under the
+        // root — and `copy/x`, mounted beneath it, is not reached either. A
+        // subdirectory of the root's own filesystem bound into it is reached
+        // already through the root; a bind of the drive's subdirectory, through
+        // `photos`. Another drive is a drive of its own.
+        let table = MountTable::from_text(
+            "1 0 8:1 / / rw - ext4 /dev/sda1 rw
+2 1 8:17 / /media/usb rw - ext4 /dev/sdb1 rw
+3 1 8:17 / /home/me/repo/photos rw - ext4 /dev/sdb1 rw
+4 1 8:17 / /home/me/repo/copy rw - ext4 /dev/sdb1 rw
+5 4 0:50 / /home/me/repo/copy/x rw - tmpfs tmpfs rw
+6 1 8:1 /home/me/repo/docs /home/me/repo/docs-again rw - ext4 /dev/sda1 rw
+7 1 8:1 /home/me/elsewhere /home/me/repo/elsewhere rw - ext4 /dev/sda1 rw
+8 1 8:17 /2024 /home/me/repo/year rw - ext4 /dev/sdb1 rw
+9 1 8:33 / /home/me/repo/other rw - ext4 /dev/sdc1 rw
+",
+        );
+        let at = |p: &str| PathBuf::from(p);
+        assert_eq!(
+            table.second_mounts_under(Path::new("/home/me/repo")),
+            [at("/home/me/repo/copy"), at("/home/me/repo/docs-again"), at("/home/me/repo/year"),]
+        );
+        assert_eq!(
+            table.second_mounts_under(Path::new("/media/usb")),
+            Vec::<PathBuf>::new(),
+            "nothing of the drive's own is mounted under it"
+        );
+    }
+
+    #[test]
     fn mountinfo_last_line_wins_for_an_overmounted_directory() {
         let text = "1 0 8:1 / /mnt rw - ext4 /dev/sda1 rw\n2 0 8:2 / /mnt rw - ext4 /dev/sda2 rw\n";
         assert_eq!(parse_mountinfo(text).get(Path::new("/mnt")).unwrap().source, "/dev/sda2");
@@ -730,11 +831,15 @@ mod tests {
 
     #[test]
     fn offline_mounts_cover_the_point_itself_and_its_subtree() {
-        let off = OfflineMounts { paths: vec!["/media/photos".into()] };
+        let off =
+            OfflineMounts { paths: vec!["/media/photos".into()], second: vec!["/copy".into()] };
         assert!(off.contains("/media/photos"));
         assert!(off.contains("/media/photos/2024/a.jpg"));
         assert!(!off.contains("/media/photos-backup/a.jpg"));
         assert!(!off.contains("/media"));
         assert!(!off.contains(""));
+        assert!(off.contains("/copy/x"), "a second mount is never entered either");
+        assert!(!off.contains("/copy-2"));
+        assert_eq!(off.paths(), ["/media/photos"], "offline ones alone");
     }
 }

@@ -49,13 +49,22 @@ again (doc "When the root moves"). A kernel overflow end to end
 recovers neither a lost deletion nor a lost rename of an unhashed file; it names
 the orphan scan now.
 
-Next: *the mount table*, which the simulator does not have (one filesystem, no
-mount, no unmount). A drive leaving a root blinded the whole repository under
-the broker (=1b759a84=) — listed until then as "costs work, not correctness",
-and found by a real-fanotify unit test in a namespace, not by a journey. Still
-undriven end to end (daemon + broker): a drive plugged in and unplugged under a
-root with work going on, a mount over a non-empty tracked directory, a drive
-mounted at two points of one repository.
+The mount table, driven 10 October 2026 (=tests/watch_mounts.rs=, both
+sources, each test in a user namespace; the simulator keeps a mount table held
+to the kernel by the fidelity test): a drive plugged in and out with work going
+on, mounted over a tracked directory, mounted at two points of one repository.
+Found: the broker's path memo outlived a mount change (=701881a0=); the inotify
+source never watched a drive plugged in (=75c6022f=); and two points of one
+drive could only ever be reported through one — a second mount is now an
+entry, never walked (doc "Second mounts").
+
+Next: *one drive in two repositories*. The broker resolves a drive's handles
+through the first of its mount points under any root, so a drive mounted under
+two repositories is heard by one of them only (doc "Second mounts", "Not
+covered"). Resolving through a mount point under each subscriber's root —
+per root, or by rewriting the path through the other mount points of the same
+filesystem — is the way out; reproduce it in the simulator first (two
+subscribers, one drive bound under each).
 
 ** TODO fanotify: what the note leaves open
 From doc "Watcher open questions" (and doc "The fanotify broker"):
