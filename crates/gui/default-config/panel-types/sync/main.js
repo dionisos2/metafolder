@@ -148,7 +148,9 @@ export function mount(root, metafolder) {
       const body = /** @type {{ links?: { uuid?: string, state?: string }[] }} */ (
         await sync.status(uuidOf(repoA), uuidOf(repoB))
       );
-      renderStatus(body.links ?? []);
+      const links = body.links ?? [];
+      renderStatus(links);
+      void statusBar.message(`Sync status: ${statusSummary(links)}`, statusMessageMs);
     } catch (error) {
       await statusBar.error(error, 8000);
       setView(placeholder('Status failed.'));
@@ -164,7 +166,9 @@ export function mount(root, metafolder) {
     try {
       const report = await sync.plan(uuidOf(repoA), uuidOf(repoB), intentsInput.value.trim());
       await discoverPlanRepo();
-      setStatus(`Plan: ${report.operations} operation(s)${report.warnings.length ? ` · ${report.warnings.length} warning(s)` : ''}`);
+      const summary = `Plan: ${report.operations} operation(s)${report.warnings.length ? ` · ${report.warnings.length} warning(s)` : ''}`;
+      setStatus(summary);
+      void statusBar.message(summary, statusMessageMs);
       await renderPlan(report);
     } catch (error) {
       await statusBar.error(error, 8000);
@@ -222,6 +226,17 @@ export function mount(root, metafolder) {
   /** @param {Select} select */
   function label(select) {
     return repos.find((r) => r.uuid === uuidOf(select))?.name || uuidOf(select);
+  }
+
+  /** "3 links (2 in_sync, 1 changed_a)": the count, then how many in each state.
+   *  @param {{ state?: string }[]} links */
+  function statusSummary(links) {
+    if (links.length === 0) return '0 links';
+    /** @type {Map<string, number>} */
+    const byState = new Map();
+    for (const l of links) byState.set(l.state ?? '?', (byState.get(l.state ?? '?') ?? 0) + 1);
+    const states = [...byState].map(([state, n]) => `${n} ${state}`).join(', ');
+    return `${links.length === 1 ? '1 link' : `${links.length} links`} (${states})`;
   }
 
   /** @param {{ uuid?: string, state?: string }[]} links */
@@ -435,10 +450,64 @@ export function mount(root, metafolder) {
     setBusy(false);
   }
 
-  void commands.register('sync:status', { label: 'Sync: show the pair status', handler: () => doStatus() });
-  void commands.register('sync:plan', { label: 'Sync: compute the plan', handler: () => doPlan() });
-  void commands.register('sync:open', { label: 'Sync: show the plan overlay', handler: () => doShow() });
-  void commands.register('sync:run', { label: 'Sync: run the plan', handler: () => doRun() });
+  // ── commands ────────────────────────────────────────────────────────────
+  // They take what the toolbar holds as arguments too, so a script can drive a
+  // sync without it (doc "sync panel"), and they refuse rather than do nothing.
+
+  /** A loaded repository by name or uuid. @param {string} which */
+  function repoNamed(which) {
+    const found = repos.find((r) => r.name === which) ?? repos.find((r) => r.uuid === which);
+    if (!found) throw new Error(`no loaded repository named "${which}"`);
+    return found.uuid;
+  }
+
+  function requirePair() {
+    if (!pairOk()) throw new Error('a sync needs two different repositories (sync:pair A B)');
+  }
+
+  /** @param {string} a @param {string} b */
+  async function choosePair(a, b) {
+    const [ua, ub] = [repoNamed(a), repoNamed(b)];
+    if (ua === ub) throw new Error('a sync needs two different repositories');
+    repoA.setValue(ua);
+    repoB.setValue(ub);
+    await discoverPlanRepo();
+    setBusy(false);
+    void statusBar.message(`Sync: ${label(repoA)} ⇄ ${label(repoB)}`, statusMessageMs);
+  }
+
+  /** @param {string} [intents] */
+  async function planCommand(intents) {
+    requirePair();
+    if (intents) intentsInput.value = intents;
+    if (intentsInput.value.trim() === '') throw new Error('no intents file: sync:plan <path>');
+    await doPlan();
+  }
+
+  /** @param {() => Promise<void>} action */
+  const withPair = (action) => () => {
+    requirePair();
+    return action();
+  };
+
+  const repoArg = (/** @type {string} */ name) => ({
+    name,
+    prompt: () => `Repository ${name}?`,
+    complete: () => repos.map((r) => r.name || r.uuid),
+  });
+  void commands.register('sync:pair', {
+    label: 'Sync: choose the two repositories',
+    args: [repoArg('A'), repoArg('B')],
+    handler: choosePair,
+  });
+  void commands.register('sync:status', { label: 'Sync: show the pair status', handler: withPair(doStatus) });
+  void commands.register('sync:plan', {
+    label: 'Sync: compute the plan (from the intents file given, else the toolbar\'s)',
+    args: [{ name: 'intents', optional: true, prompt: () => 'Intents file?' }],
+    handler: planCommand,
+  });
+  void commands.register('sync:open', { label: 'Sync: show the plan overlay', handler: withPair(doShow) });
+  void commands.register('sync:run', { label: 'Sync: run the plan', handler: withPair(doRun) });
 
   // Keybindings for this panel live in keybindings.toml (when = "sync").
 

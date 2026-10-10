@@ -65,5 +65,6 @@ record of its own once loaded, at a moment no scenario controls.
 
 !! Not covered
 
-The `sync` panel's commands act on the pair chosen in the panel's own fields and report
-on the panel's own status line, neither of which the scripting API reaches.
+The `sync` panel's conflict editor: a resolution is chosen in a row of the panel and
+saved with its button, which no command reaches. The `sync` scenario runs a plan
+without conflicts.

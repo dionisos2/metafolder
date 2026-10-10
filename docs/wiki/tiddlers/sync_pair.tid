@@ -1,0 +1,8 @@
+title: sync:pair
+tags: [[GUI command]] Sync
+kind: reference
+summary: Sync: choose the two repositories
+
+Sets the [[sync panel]]'s repositories A and B, each by name or uuid, as its toolbar
+would: `sync:pair laptop nas`. An unknown repository, or the same one twice, is
+refused. What the panel's other commands act on.

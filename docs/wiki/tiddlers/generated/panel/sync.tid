@@ -6,6 +6,7 @@ summary: The sync panel type
 !! Commands
 
 * ``sync:open`` — Sync: show the plan overlay
-* ``sync:plan`` — Sync: compute the plan
+* ``sync:pair`` — Sync: choose the two repositories
+* ``sync:plan`` — Sync: compute the plan (from the intents file given, else the toolbar\
 * ``sync:run`` — Sync: run the plan
 * ``sync:status`` — Sync: show the pair status

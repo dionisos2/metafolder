@@ -1,7 +1,10 @@
 title: sync:plan
 tags: [[GUI command]] Sync
 kind: reference
-summary: Sync: compute the plan
+summary: Sync: compute the plan (from the intents file given, else the toolbar's)
 
 See [[sync panel]] and [[The sync plan]]. Conflicts are not asked: they are left
 skipped, to decide in the panel ([[Sync conflicts]]).
+
+`sync:plan <path>` takes the intents file as an argument, and fills the toolbar's
+field with it; without one, the field's is used, and an empty field is refused.

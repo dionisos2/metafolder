@@ -1,7 +1,7 @@
 title: $:/mf/gen/GUI command/sync:plan
 catalog: GUI command
 target: sync:plan
-summary: Sync: compute the plan
+summary: Sync: compute the plan (from the intents file given, else the toolbar\
 
 !! Reference
 

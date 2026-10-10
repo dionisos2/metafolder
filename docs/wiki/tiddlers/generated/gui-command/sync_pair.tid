@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/sync:pair
+catalog: GUI command
+target: sync:pair
+summary: Sync: choose the two repositories
+
+!! Reference
+
+* Defined by the ``sync`` panel
+* No default key

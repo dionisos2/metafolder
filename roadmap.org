@@ -92,10 +92,9 @@ The Tauri wrappers (=gui/src/commands.rs=, =lib.rs=, the =#[tauri::command]=
 of each module) are out of =cargo test='s reach: only a running WebView calls
 them. =scripts/gui-e2e.sh= (10 October 2026; doc "Testing the GUI end to end")
 now runs them in a real window — undo/redo, the duplicate scan, orphans,
-trash, reconcile, ignore, refusals; confirmed commands through =mf gui command
---confirm= — but outside the coverage count. Left: the =sync= panel (its pair
-and its report live in the panel's own fields, out of the scripting API's
-reach: its commands would need the pair as arguments), and a run under an
+trash, reconcile, ignore, a sync (=sync:pair A B= and =sync:plan <intents>=
+since 10 October 2026), refusals; confirmed commands through =mf gui command
+--confirm= — but outside the coverage count. Left: a run under an
 instrumented GUI binary (=cargo llvm-cov= + =LLVM_PROFILE_FILE=) so they count.
 
 * TODO structure

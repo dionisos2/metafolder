@@ -24,7 +24,7 @@
 #
 # Usage:  scripts/gui-e2e.sh [--unsandboxed] [--keep-logs] [scenario...]
 #   with no scenario, runs them all: undo-redo duplicates orphans trash
-#   reconcile ignore errors.
+#   reconcile ignore sync errors.
 #   --unsandboxed  pass --allow-unsandboxed-webview to the GUI (a container
 #                  that forbids WebKit's sandbox; never on real data)
 #   --keep-logs    keep the work directory (daemon.log, gui.log) on exit
@@ -49,7 +49,7 @@ for arg in "$@"; do
     esac
 done
 [ ${#SCENARIOS[@]} -gt 0 ] \
-    || SCENARIOS=(undo-redo duplicates orphans trash reconcile ignore errors)
+    || SCENARIOS=(undo-redo duplicates orphans trash reconcile ignore sync errors)
 
 # shellcheck source=lib/daemon-fixture.sh
 . scripts/lib/daemon-fixture.sh
@@ -331,6 +331,40 @@ scenario_ignore() {
     assert_eq "ignore add, starting empty: written" "1" "$(ignore_count "$fresh")"
 }
 
+scenario_sync() {
+    new_repo sync-b
+    local b=$DF_REPO b_dir=$REPO_DIR
+    new_repo sync-a
+    local a=$DF_REPO intents="$WORK/sync-intents.toml"
+    printf 'world\n' >"$REPO_DIR/hello.txt"
+    df_mf track "$REPO_DIR/hello.txt" >/dev/null
+    printf "[[intents]]\nrepo = '%s'\nquery = 'mfr_type = \"file\"'\n" "$a" >"$intents"
+
+    # The pair is named, not left to the toolbar's defaults: B would be
+    # whichever other repository the daemon lists first.
+    show_panel left sync "sync:pair $a $b"
+    run sync:pair "$a" "$b"
+    status_is "sync pair: says which" info "Sync: sync-a ⇄ sync-b"
+
+    run sync:status
+    status_is "sync status: no link yet" info "Sync status: 0 links"
+
+    # A file B lacks: create-link, sync, copy and chmod (doc "The sync plan").
+    run sync:plan "$intents"
+    status_is "sync plan: one file to create in B" info "Plan: 4 operation(s)"
+
+    answering no sync:run
+    assert_eq "sync run: asks first" "Run the sync plan for sync-a ⇄ sync-b?" "$LAST_QUESTIONS"
+    assert_not "sync run refused: nothing copied" test -e "$b_dir/hello.txt"
+
+    answering yes sync:run
+    status_is "sync run: carries the plan out" info "Ran: 4 done, 0 skipped"
+    assert_eq "sync run: the file is in B" "world" "$(cat "$b_dir/hello.txt" 2>/dev/null)"
+
+    run sync:status
+    status_is "sync status: the link is in sync" info "Sync status: 1 link (1 in_sync)"
+}
+
 scenario_errors() {
     new_repo errors
 
@@ -340,6 +374,11 @@ scenario_errors() {
 
     run metarecord:trash
     status_is "trash with nothing selected: refused" error "no metarecord is selected"
+
+    show_panel left sync sync:status
+    run sync:pair errors nowhere
+    assert_contains "sync pair: an unknown repository is refused" "$LAST_ERR" \
+        'no loaded repository named "nowhere"'
 }
 
 for scenario in "${SCENARIOS[@]}"; do
