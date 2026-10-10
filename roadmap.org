@@ -75,14 +75,6 @@ creates under =internal/=, never a tracked path, which is why the
 =mf-path-exists-follows-symlinks= semgrep rule leaves it out. Revisit only if
 that file ever becomes user-placeable.
 
-* TODO data
-** TODO tags still in the old format
-The tag model moved to singular names and a =path= TreeRef (=tag=,
-=negative_tag=, =mixed_tag=). Tags written before (refs =tags= /
-=negative_tags=, the hierarchy in a string =name=) are invisible to =mf tag=.
-No conversion was shipped, because it is not known whether any such data
-exists: check, and write the conversion if it does.
-
 * TODO tooling
 ** TODO the untested parts the coverage pass found
 Measured 7 October 2026 (=cargo llvm-cov --workspace=, every test): 87 % of
