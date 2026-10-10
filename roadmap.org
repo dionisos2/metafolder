@@ -87,7 +87,12 @@ What is worth a test, most first:
   Lines after it: =duplicates.rs= 80 %, =orphan.rs= 80 %, =undo.rs= 75 %,
   =sync.rs= 64 %, =trash.rs= 62 %, =ignore.rs= 59 %, the gui crate 85 %; what
   is left in them is the =#[tauri::command]= wrappers;
-- =cli/src/commands.rs=: 405 lines missed of 2 343, spread thin.
+- =cli/src/commands.rs=: done 10 October 2026 (=watch check=, =watch
+  exceeded=, =orphan relink=, =orphan clear='s prompt, =field get -q=,
+  =duplicate list --sort/--limit=; it found =-i= run as a query when not a
+  UUID, =a150685d=): 197 lines missed of 2 326, was 365. What is left is
+  thin: error branches, =slow=, =trash prune='s modes, =watch activity='s
+  path argument.
 The Tauri wrappers now count: =scripts/coverage.sh= (10 October 2026; doc
 "Measuring coverage") runs =scripts/gui-e2e.sh= on instrumented binaries and
 merges it with the tests. With the =repos=, =list=, =layout= and =script=
