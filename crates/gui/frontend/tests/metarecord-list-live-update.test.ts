@@ -42,6 +42,9 @@ function fakeDaemon() {
   /** A directory holding one file: renaming it moves the file's path. */
   let docsName = 'docs';
   let head = 1;
+  /** Whether the tracked file is a symlink whose target is gone: the entry is
+   *  on disk, what it points to is not. */
+  let notesIsBrokenLink = false;
   /** When set, tree resolutions wait on it (to overlap with another call). */
   let stall: Promise<void> | null = null;
   /** Operations since each head, as `GET /log/since` reports them. */
@@ -155,7 +158,14 @@ function fakeDaemon() {
       head += 1;
       ops.push({ head, entity: DOCS_UUID });
     },
-    /** Absolute paths that exist on disk (the orphan check stats these). */
+    /** Turns the tracked file into a symlink to a target that does not exist
+     *  (nothing for the watcher to record: the path still names an entry). */
+    breakLink() {
+      notesIsBrokenLink = true;
+    },
+    /** Whether the entry at `path` is a symlink whose target is gone. */
+    isBrokenLink: (path: string) => notesIsBrokenLink && path === `${ROOT_PATH}/${notesName}`,
+    /** Absolute paths whose entry exists on disk, links included. */
     exists: (path: string) =>
       [ROOT_PATH, `/${notesName}`, `/${docsName}`, `/${docsName}/report.txt`]
         .map((p) => (p === ROOT_PATH ? p : `${ROOT_PATH}${p}`))
@@ -188,7 +198,9 @@ function setup() {
         for (const cb of varListeners.get(args!.key as string) ?? []) cb(args!.value);
         return null;
       case 'fs_stat':
-        if (!daemon.exists(args!.path as string)) throw new Error('no such file');
+        // A stat follows symlinks: a broken one fails like a missing file.
+        if (!daemon.exists(args!.path as string) || daemon.isBrokenLink(args!.path as string))
+          throw new Error('no such file');
         return { path: args!.path, is_dir: false, size: 1, mtime: 0 };
       // What the orphan check actually asks now: the entry itself, links
       // included (`fs_stat` follows them, so it cannot answer for a broken one).
@@ -332,5 +344,21 @@ describe('metarecord-list live update', () => {
     const after = rows(shadow);
     expect(after.map((r) => r.path)).not.toContain('/docs/report.txt');
     expect(after.every((r) => !r.orphan)).toBe(true);
+  });
+
+  // A symlink whose target is gone is still a file in the folder: the tracked
+  // path names an entry, which the watcher has no reason to report as deleted.
+  // Colouring it as an orphan would tell the user it vanished while `ls` shows
+  // it. (The Rust side of `fs_exists` is unit-tested; this is the panel's.)
+  test('a broken symlink is not coloured as an orphan', async () => {
+    const { api, daemon } = setup();
+    daemon.breakLink();
+    const shadow = shadowFor();
+    await mountPanel(api, shadow);
+    await settle();
+
+    const notes = rows(shadow).find((r) => r.path === '/notes.txt');
+    expect(notes).toBeDefined();
+    expect(notes!.orphan).toBe(false);
   });
 });

@@ -76,13 +76,6 @@ so rolling back to a state written before =4ffe261= can restore a metarecord
 at two positions. =mf repo check= names it afterwards. Refuse it, or accept and
 document it — to decide.
 
-** TODO the GUI orphan colouring has no test on a broken symlink
-=fs_exists= (the entry itself, links included) is unit-tested in Rust, but no
-frontend test mounts =metarecord-list= with a broken symlink and checks the
-row is not coloured as an orphan. The harness is there
-(=metarecord-list-live-update.test.ts= models the files on disk and routes
-=fs_exists=).
-
 ** TODO =daemon/src/sync.rs= =locate()= uses =Path::exists()=
 It follows symlinks. Harmless — it probes the sync database file metafolder
 creates under =internal/=, never a tracked path, which is why the
