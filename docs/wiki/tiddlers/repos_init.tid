@@ -1,0 +1,6 @@
+title: repos:init
+tags: [[GUI command]] Repository
+kind: reference
+summary: Repos: create a repository in a folder (name optional, default: the folder name)
+
+`repos:init <folder> [name]` creates a repository in the folder — the [[repos panel]]'s ''Init new repo…'' without its form, for a keybinding or a script. The new root gets the `default` ignore preset ([[Ignore presets]]), as from the form and from `mf repo init`. A workspace with no repository adopts the new one; otherwise it is announced in the status bar. A refusal ([[Creating and loading a repository]]) is the command's error.

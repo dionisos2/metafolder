@@ -569,6 +569,60 @@ describe('repos panel — commands', () => {
     );
   });
 
+  // `repos:init` is the form's keyboard and script path: the folder and the
+  // name as arguments, the same creation (repo_init, ignore preset included).
+  test('init creates the repository from its arguments and adopts it', async () => {
+    const { api, daemon, vars, dispatch, handlers, initRepo } = setup({ activeRepo: null });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    await command(handlers, 'repos:init')('/tmp/photos', 'pics');
+    await settle();
+
+    expect(initRepo).toHaveBeenCalledWith(
+      expect.objectContaining({ root: '/tmp/photos', name: 'pics' }),
+    );
+    expect(daemon.repos.map((r) => r.name)).toEqual(['pics']);
+    expect(shadow.querySelectorAll('#repo-list > li')).toHaveLength(1);
+    expect(vars.get('active_repo')).toBe(daemon.repos[0].repo_uuid);
+    expect(dispatch).toHaveBeenCalledWith('panel:open here metarecord-list');
+  });
+
+  test('init without a name leaves it to the daemon, and announces the repository', async () => {
+    const { api, daemon, handlers, initRepo, invoke } = setup({ activeRepo: 'r0' });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    await command(handlers, 'repos:init')('/tmp/photos');
+    await settle();
+
+    expect(initRepo).toHaveBeenCalledWith(expect.objectContaining({ root: '/tmp/photos' }));
+    expect(initRepo.mock.calls[0][0].name ?? null).toBe(null);
+    expect(daemon.repos.map((r) => r.name)).toEqual(['photos']);
+    // The workspace has its repository already: the new one is announced.
+    expect(
+      invoke.mock.calls.some(
+        ([name, args]) =>
+          name === 'post_status' &&
+          String((args as { text?: string }).text ?? '').startsWith('Repository ready'),
+      ),
+    ).toBe(true);
+  });
+
+  test('a refused init is a failure of the command', async () => {
+    const { api, handlers, initRepo } = setup();
+    initRepo.mockRejectedValueOnce(new Error('already a repository'));
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    await expect(command(handlers, 'repos:init')('/tmp/photos')).rejects.toThrow(
+      'already a repository',
+    );
+  });
+
   // `repos:load` is the keyboard path: no form to fill, just the folder picker
   // and the load — the typed-path form stays behind the "Load repo" button.
   test('load opens the folder picker and loads what was picked', async () => {

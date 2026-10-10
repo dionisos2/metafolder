@@ -648,6 +648,21 @@ export async function mount(root, metafolder) {
     label: 'Repos: open the init form',
     handler: () => toggleForm(initForm, true),
   });
+  // The form's keyboard and script path: the same creation (the ignore preset
+  // included), with the folder and the name as arguments. A refusal throws, and
+  // the shell reports it like any command's failure.
+  void commands.register('repos:init', {
+    label: 'Repos: create a repository in a folder (name optional, default: the folder name)',
+    args: [
+      { name: 'root', prompt: () => 'Create a repository in which folder?' },
+      { name: 'name', optional: true, prompt: () => 'Name (empty: the folder name):' },
+    ],
+    handler: async (root_, name) => {
+      const trimmed = (name ?? '').trim();
+      const opts = trimmed ? { root: root_.trim(), name: trimmed } : { root: root_.trim() };
+      await onCreated(initForm, await daemon.initRepo(opts));
+    },
+  });
   void commands.register('repos:load', {
     label: 'Repos: pick a folder and load the repository in it',
     handler: loadPicked,

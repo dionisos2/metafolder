@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/repos:init
+catalog: GUI command
+target: repos:init
+summary: Repos: create a repository in a folder (name optional, default: the folder name)
+
+!! Reference
+
+* Defined by the ``repos`` panel
+* No default key

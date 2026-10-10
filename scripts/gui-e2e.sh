@@ -29,7 +29,7 @@
 #
 # Usage:  scripts/gui-e2e.sh [--unsandboxed] [--keep-logs] [scenario...]
 #   with no scenario, runs them all: undo-redo duplicates orphans trash
-#   reconcile ignore sync errors.
+#   reconcile ignore sync repos errors.
 #   --unsandboxed  pass --allow-unsandboxed-webview to the GUI (a container
 #                  that forbids WebKit's sandbox; never on real data)
 #   --keep-logs    keep the work directory (daemon.log, gui.log) on exit
@@ -54,7 +54,7 @@ for arg in "$@"; do
     esac
 done
 [ ${#SCENARIOS[@]} -gt 0 ] \
-    || SCENARIOS=(undo-redo duplicates orphans trash reconcile ignore sync errors)
+    || SCENARIOS=(undo-redo duplicates orphans trash reconcile ignore sync repos errors)
 
 # shellcheck source=lib/daemon-fixture.sh
 . scripts/lib/daemon-fixture.sh
@@ -179,6 +179,13 @@ uuid_of() { df_mf track "$1"; }
 
 # ignore_count <uuid> — how many mf_ignore rows the metarecord has.
 ignore_count() { df_mf metarecord -i "$1" field get mf_ignore 2>/dev/null | grep -c .; }
+
+# repo_named <name> — the uuid of the loaded repository so named, or nothing.
+repo_named() {
+    df_mf repo list | python3 -c 'import json, sys
+print(next((r["repo_uuid"] for r in json.load(sys.stdin)
+            if r["name"] == sys.argv[1] and not r.get("lost")), ""))' "$1"
+}
 
 # status_is <name> <kind> <glob> — the last status message, kind and text.
 status_is() {
@@ -368,6 +375,31 @@ scenario_sync() {
 
     run sync:status
     status_is "sync status: the link is in sync" info "Sync status: 1 link (1 in_sync)"
+}
+
+scenario_repos() {
+    new_repo repos-host
+    local dir="$WORK/repos/created" uuid root
+    mkdir -p "$dir"
+    show_panel left repos repos:refresh
+
+    # The workspace has its repository: the new one is announced, not adopted.
+    run repos:init "$dir" made
+    command_ok "repos init: the command resolves"
+    status_is "repos init: announces the repository" info "Repository ready: *"
+    uuid=$(repo_named made)
+    assert "repos init: the daemon holds it, under its name" test -n "$uuid"
+    root=$(df_mf -u "$uuid" metarecord get | head -1)
+    assert "repos init: the default ignore preset is on its root" \
+        test "$(df_mf -u "$uuid" metarecord -i "$root" field get mf_ignore | grep -c .)" -gt 0
+
+    run repos:init "$dir" again
+    assert_eq "repos init on a repository: fails" "1" "$LAST_RC"
+    assert_contains "repos init on a repository: says why" "$LAST_ERR" "already"
+
+    run repos:unload made
+    status_is "repos unload: says so" info "repository unloaded"
+    assert_eq "repos unload: the daemon let it go" "" "$(repo_named made)"
 }
 
 scenario_errors() {
