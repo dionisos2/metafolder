@@ -370,6 +370,32 @@ fn test_invalid_repo_uuid_is_usage_error() {
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);
 }
 
+/// `-i` names one metarecord: text that is not a UUID is a usage error, never
+/// run as a query (that is `-q`'s job) — and never a panic.
+#[test]
+fn test_metarecord_id_selector_must_be_a_uuid() {
+    let (repo, _root) = init_repo("id_not_uuid");
+    create_metarecord(&repo, &["genre:string=idq"]);
+    let dsl = r#"genre = "idq""#;
+    for verb in [
+        &["get"][..],
+        &["get", "--select", "genre", "--tsv"],
+        &["field", "get", "genre"],
+        &["field", "set", "genre:string=x"],
+        &["delete", "--force"],
+    ] {
+        let mut args = vec!["-u", &repo, "metarecord", "-i", dsl];
+        args.extend_from_slice(verb);
+        let out = mf(&args);
+        assert_eq!(out.code, 2, "{verb:?}: stdout: {}\nstderr: {}", out.stdout, out.stderr);
+        assert!(out.stderr.contains("-i takes a metarecord UUID"), "{verb:?}: {}", out.stderr);
+    }
+    let out = mf(&["-u", &repo, "metarecord", "-q", dsl, "get"]);
+    assert_eq!(out.stdout.lines().count(), 1, "nothing was written or deleted");
+    let out = mf(&["-u", &repo, "metarecord", "-q", dsl, "field", "get", "genre"]);
+    assert_eq!(out.stdout.trim(), "idq");
+}
+
 #[test]
 fn test_unreachable_daemon_is_operation_error() {
     let out = mf_full(&["-p", "1", "repo", "list"], None, &[], false);

@@ -143,7 +143,14 @@ pub fn resolve_selector(
         return Ok(Some(eq_to_dsl(eq)?));
     }
     match (query, id) {
-        (None, Some(uuid)) => Ok(Some(uuid.to_string())),
+        // Checked here, once for every verb: a `-i` that is not a UUID would
+        // otherwise parse as DSL further down and run as a query.
+        (None, Some(id)) => match Uuid::parse_str(id) {
+            Ok(uuid) => Ok(Some(uuid.as_simple().to_string())),
+            Err(_) => Err(CliError::Usage(format!(
+                "-i takes a metarecord UUID, not {id:?} (a query is -q)"
+            ))),
+        },
         (Some(q), None) => Ok(Some(if simplified { expand_simplified(q)? } else { q.to_string() })),
         (Some(_), Some(_)) | (None, None) => Ok(None),
     }
@@ -362,61 +369,16 @@ pub fn rename_repo(ctx: &Ctx, name: &str) -> Result<i32, CliError> {
 
 // ── MetaRecord manipulation (doc "Data model") ───────────────────────────────────
 
-pub fn get(
-    ctx: &Ctx,
-    target: &str,
-    fields: Option<&[String]>,
-    sort: &[String],
-    limit: Option<usize>,
-) -> Result<i32, CliError> {
+/// `mf metarecord -i <uuid> get`: the full metarecord, as a one-element JSON
+/// array, its fields restricted to `fields` when given.
+fn get_one(ctx: &Ctx, uuid: Uuid, fields: Option<&[String]>) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
-    let metarecords = match parse_target(target)? {
-        Target::Entry(uuid) => {
-            // --sort / --limit do not apply to a single metarecord.
-            let mut metarecord =
-                ctx.client.get(&format!("{base}/metarecords/{}", uuid.as_simple()), &[])?;
-            if let (Some(filter), Some(rows)) = (fields, metarecord["fields"].as_array_mut()) {
-                rows.retain(|f| f["name"].as_str().is_some_and(|n| filter.iter().any(|w| w == n)));
-            }
-            json!([metarecord])
-        }
-        Target::Predicate(query) => {
-            let sort = parse_sort(sort)?;
-            let select = match fields {
-                Some(list) => json!(list),
-                None => json!("*"),
-            };
-            // Paginate internally (like `mf query`): never a single unbounded
-            // request. `--limit` caps the total; without it, all matches are
-            // fetched page by page.
-            let mut objects = Vec::new();
-            let mut remaining = limit;
-            let mut cursor: Option<String> = None;
-            loop {
-                let page = remaining.map_or(ctx.page_size, |r| r.min(ctx.page_size));
-                if page == 0 {
-                    break;
-                }
-                let mut body =
-                    json!({"query": query, "select": select, "sort": sort, "limit": page});
-                if let Some(c) = &cursor {
-                    body["cursor"] = json!(c);
-                }
-                let resp = ctx.client.post(&format!("{base}/query"), &body)?;
-                let results = resp["results"].as_array().cloned().unwrap_or_default();
-                objects.extend(results.iter().cloned());
-                if let Some(r) = remaining.as_mut() {
-                    *r = r.saturating_sub(results.len());
-                }
-                match resp["next_cursor"].as_str() {
-                    Some(c) => cursor = Some(c.to_string()),
-                    None => break,
-                }
-            }
-            json!(objects)
-        }
-    };
-    print_pretty(&metarecords);
+    let mut metarecord =
+        ctx.client.get(&format!("{base}/metarecords/{}", uuid.as_simple()), &[])?;
+    if let (Some(filter), Some(rows)) = (fields, metarecord["fields"].as_array_mut()) {
+        rows.retain(|f| f["name"].as_str().is_some_and(|n| filter.iter().any(|w| w == n)));
+    }
+    print_pretty(&json!([metarecord]));
     Ok(0)
 }
 
@@ -922,14 +884,12 @@ pub fn metarecord_get(
                     CliError::Usage("--tsv requires --select with a field list".into())
                 })?;
                 let base = ctx.repo_base()?;
-                let record = ctx.client.get(
-                    &format!("{base}/metarecords/{}", Uuid::parse_str(s).unwrap().as_simple()),
-                    &[],
-                )?;
+                let record = ctx.client.get(&format!("{base}/metarecords/{s}"), &[])?;
                 println!("{}", tsv_row(&record, &names));
                 Ok(0)
             } else {
-                get(ctx, s, fields.as_deref(), &[], None)
+                let uuid = Uuid::parse_str(s).map_err(|e| CliError::Usage(format!("{s}: {e}")))?;
+                get_one(ctx, uuid, fields.as_deref())
             }
         }
         Some(s) => query(
