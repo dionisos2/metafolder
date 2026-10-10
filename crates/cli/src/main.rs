@@ -1019,6 +1019,22 @@ enum GuiCommand {
         #[arg(long)]
         workspace: Option<String>,
     },
+    /// Print a workspace's message log, oldest first
+    Messages {
+        /// Workspace id (default: the focused workspace)
+        #[arg(long)]
+        workspace: Option<String>,
+        /// Only the newest N entries
+        #[arg(long)]
+        last: Option<usize>,
+    },
+    /// Print the last status-bar message posted, as `<kind>TAB<text>` (nothing
+    /// when none was)
+    StatusBar {
+        /// Workspace id (default: the focused workspace)
+        #[arg(long)]
+        workspace: Option<String>,
+    },
     /// Workspace (tab) management
     Workspace {
         #[command(subcommand)]
@@ -1760,6 +1776,10 @@ fn dispatch_gui(gui_url: Option<String>, command: GuiCommand) -> CmdResult {
         GuiCommand::Repo => gui::repo(&gui_ctx),
         GuiCommand::Query { workspace } => gui::query(&gui_ctx, workspace.as_deref()),
         GuiCommand::Selected { workspace } => gui::selected(&gui_ctx, workspace.as_deref()),
+        GuiCommand::Messages { workspace, last } => {
+            gui::messages(&gui_ctx, workspace.as_deref(), last)
+        }
+        GuiCommand::StatusBar { workspace } => gui::status_bar(&gui_ctx, workspace.as_deref()),
         GuiCommand::Workspace { command } => match command {
             GuiWorkspaceCommand::New { repo, left, right } => {
                 gui::workspace_new(&gui_ctx, repo.as_deref(), left.as_deref(), right.as_deref())

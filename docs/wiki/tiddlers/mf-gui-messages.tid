@@ -1,0 +1,8 @@
+title: mf gui messages
+tags: [[CLI command]] [[Scripting the GUI]]
+kind: reference
+summary: Print a workspace's message log, oldest first
+
+Prints the message log of the focused workspace (`--workspace` names another), oldest first: the entries the [[message panel]] shows, each as it was written, so a multi-line entry — a duplicate scan's detail — stays multi-line. `--last N` keeps the newest `N`. An empty log prints nothing, with exit 0.
+
+It reads what the commands ''said'', not how the shell draws it, which is what lets a script or an end-to-end test check a command's outcome without depending on the window's look. Its sibling [[mf gui status-bar]] prints the last status message alone, with its kind. Both read `GET /gui/workspaces/:id/messages` ([[GUI scripting endpoints]]).

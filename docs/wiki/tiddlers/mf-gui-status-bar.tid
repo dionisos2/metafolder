@@ -1,0 +1,8 @@
+title: mf gui status-bar
+tags: [[CLI command]] [[Scripting the GUI]]
+kind: reference
+summary: Print the last status-bar message posted, as kind TAB text
+
+Prints the last status message posted in the focused workspace (`--workspace` names another) as `<kind>⇥<text>` — the kind being `info`, `error`, `busy`… ([[Status bar and task bar]]). Nothing at all, with exit 0, when none was posted.
+
+It is the last one ''posted'', whether or not the bar still shows it: `status:clear` blanks the line, not this answer. Every status message also lands in the log [[mf gui messages]] prints; this command adds the kind, which is how a test tells a refusal from a success.

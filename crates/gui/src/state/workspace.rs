@@ -24,6 +24,10 @@ pub struct Workspace {
     pub vars: HashMap<String, Value>,
     /// Append-only log shown by the `message` panel type.
     pub messages: Vec<MessageEntry>,
+    /// The last status-bar message posted, whether or not the bar still shows
+    /// it (a timed one clears itself in the shell). Read by scripts and tests
+    /// through `GET /gui/workspaces/:id/messages` (doc "mf gui").
+    pub last_status: Option<StatusEntry>,
     /// What the shell lines run in this workspace printed, shown by the
     /// `shell` panel type (doc "shell panel").
     pub shell: Vec<ShellEntry>,
@@ -52,6 +56,16 @@ pub struct MessageEntry {
     /// Milliseconds since the Unix epoch (formatted by the frontend).
     pub ts_ms: u64,
     pub text: String,
+}
+
+/// A status-bar message as posted: what it said and how (`info`, `error`,
+/// `busy`…).
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct StatusEntry {
+    /// Milliseconds since the Unix epoch.
+    pub ts_ms: u64,
+    pub text: String,
+    pub kind: String,
 }
 
 /// One line of the shell log (doc "shell panel").

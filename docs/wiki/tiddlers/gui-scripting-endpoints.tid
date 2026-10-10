@@ -21,6 +21,7 @@ through events, so a script and the window always agree ([[GUI]]).
 |<<cmd "POST /gui/workspaces">> |creates one |
 |<<cmd "DELETE /gui/workspaces/:id">> |closes one |
 |<<cmd "GET /gui/workspaces/:id/vars/:key">> |reads one workspace variable |
+|<<cmd "GET /gui/workspaces/:id/messages">> |its message log and last status message |
 |<<cmd "GET /gui/layout">>, <<cmd "PUT /gui/layout">> |which workspace each slot shows |
 |<<cmd "GET /gui/panels/:slot/view">>, <<cmd "PUT /gui/panels/:slot/view">> |the panel type of a slot |
 |<<cmd "POST /gui/command">> |runs a command |
@@ -118,6 +119,17 @@ opened has finished drawing.
 status bar and in the message log of the workspace named by `?workspace_id=`, by
 default the focused one (`409` when the focused slot has no workspace). `timeout_ms` is accepted
 and hides nothing any more ([[Status bar and task bar]]).
+
+`GET /gui/workspaces/:id/messages` reads them back:
+
+```
+{"messages": [{"ts_ms": 1760090000000, "text": "Scanning for duplicates…"}, …],
+ "status": {"ts_ms": 1760090001000, "text": "Duplicates: 2 groups, …", "kind": "info"}}
+```
+
+`messages` is the whole log, oldest first; `status` the last status message posted,
+`null` when there was none — kept whether or not the bar still shows it. Only an unknown
+workspace is a `404`. `mf gui messages` and `mf gui status-bar` print it.
 
 `POST /gui/progress` takes
 

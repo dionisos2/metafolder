@@ -69,6 +69,23 @@ pub async fn get_workspace_var(
     }
 }
 
+/// `GET /gui/workspaces/:id/messages`: the workspace's message log and the
+/// last status-bar message posted — what a command *said*, without anything of
+/// how the shell draws it (doc "mf gui").
+pub async fn get_workspace_messages(
+    State(state): State<ServerState>,
+    Path(id): Path<String>,
+) -> Response {
+    let read =
+        state.gui.messages(&id).and_then(|messages| Ok((messages, state.gui.last_status(&id)?)));
+    match read {
+        Ok((messages, status)) => {
+            Json(json!({ "messages": messages, "status": status })).into_response()
+        }
+        Err(error) => map_state_error(error),
+    }
+}
+
 #[derive(Deserialize, Default)]
 pub struct CreateWorkspaceBody {
     #[serde(default)]

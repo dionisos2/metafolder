@@ -1,0 +1,19 @@
+title: $:/mf/gen/CLI command/mf gui status-bar
+catalog: CLI command
+target: mf gui status-bar
+summary: Print the last status-bar message posted, as `<kind>TAB<text>` (nothing when none was)
+
+!! Reference
+
+```
+Print the last status-bar message posted, as `<kind>TAB<text>` (nothing when none was)
+
+Usage: mf gui status-bar [OPTIONS]
+
+Options:
+      --workspace <WORKSPACE>
+          Workspace id (default: the focused workspace)
+
+  -h, --help
+          Print help
+```

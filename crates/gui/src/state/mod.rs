@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
-use workspace::{MessageEntry, ShellEntry, ShellLine, Workspace, WorkspaceInfo};
+use workspace::{MessageEntry, ShellEntry, ShellLine, StatusEntry, Workspace, WorkspaceInfo};
 
 /// Default panel type shown when a workspace is first displayed: `repos`
 /// when no repository is active (entry point), `metarecord-list` otherwise.
@@ -144,6 +144,7 @@ impl Inner {
             auto_index: Some(index),
             vars: Default::default(),
             messages: Vec::new(),
+            last_status: None,
             shell: Vec::new(),
             last_panel: Default::default(),
             ready_panels: Default::default(),
@@ -659,6 +660,11 @@ impl GuiState {
 
     pub fn messages(&self, ws_id: &str) -> Result<Vec<MessageEntry>, String> {
         Ok(self.lock().workspace(ws_id)?.messages.clone())
+    }
+
+    /// The last status-bar message posted in `ws_id` ([`Workspace::last_status`]).
+    pub fn last_status(&self, ws_id: &str) -> Result<Option<StatusEntry>, String> {
+        Ok(self.lock().workspace(ws_id)?.last_status.clone())
     }
 
     pub fn shell_log(&self, ws_id: &str) -> Result<Vec<ShellEntry>, String> {
@@ -1372,6 +1378,8 @@ impl GuiState {
         timeout_ms: Option<u64>,
     ) -> Result<(), String> {
         self.push_message(ws_id, text)?;
+        self.lock().workspace_mut(ws_id)?.last_status =
+            Some(StatusEntry { ts_ms: now_ms(), text: text.to_string(), kind: kind.to_string() });
         self.notifier.emit(
             events::STATUS_MESSAGE,
             json!({
@@ -2450,6 +2458,24 @@ mod tests {
         assert_eq!(log.len(), 1);
         assert_eq!(log[0].text, "Entry deleted.");
         assert_eq!(notifier.payloads(events::MESSAGE_APPENDED).len(), 1);
+    }
+
+    #[test]
+    fn test_the_last_status_is_kept_whatever_the_log_does() {
+        let (_notifier, state) = state();
+        assert_eq!(state.last_status("ws-1").unwrap(), None, "nothing posted yet");
+
+        state.post_status("ws-1", "Scanning…", "busy", None).unwrap();
+        state.post_status("ws-1", "No orphans.", "info", Some(5000)).unwrap();
+        let status = state.last_status("ws-1").unwrap().unwrap();
+        assert_eq!((status.text.as_str(), status.kind.as_str()), ("No orphans.", "info"));
+
+        // The log and the status bar are two things: neither appending to the
+        // log nor clearing it touches what the bar last said.
+        state.append_message("ws-1", "detail").unwrap();
+        state.clear_messages("ws-1").unwrap();
+        assert_eq!(state.last_status("ws-1").unwrap().unwrap().text, "No orphans.");
+        assert!(state.last_status("ws-99").is_err());
     }
 
     #[test]

@@ -1,0 +1,22 @@
+title: $:/mf/gen/CLI command/mf gui messages
+catalog: CLI command
+target: mf gui messages
+summary: Print a workspace's message log, oldest first
+
+!! Reference
+
+```
+Print a workspace's message log, oldest first
+
+Usage: mf gui messages [OPTIONS]
+
+Options:
+      --workspace <WORKSPACE>
+          Workspace id (default: the focused workspace)
+
+      --last <LAST>
+          Only the newest N entries
+
+  -h, --help
+          Print help
+```

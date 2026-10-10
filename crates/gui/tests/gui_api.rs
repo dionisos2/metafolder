@@ -463,6 +463,29 @@ async fn test_message_targets_focused_or_explicit_workspace() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+#[tokio::test]
+async fn test_messages_returns_the_log_and_the_last_status() {
+    let ctx = setup().await;
+
+    let (status, body) = request(&ctx.router, "GET", "/gui/workspaces/ws-1/messages", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({"messages": [], "status": null}));
+
+    ctx.gui.post_status("ws-1", "Deleted 2 metarecords.", "info", Some(5000)).unwrap();
+    ctx.gui.append_message("ws-1", "detail").unwrap();
+    let (status, body) = request(&ctx.router, "GET", "/gui/workspaces/ws-1/messages", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let texts: Vec<&str> =
+        body["messages"].as_array().unwrap().iter().map(|m| m["text"].as_str().unwrap()).collect();
+    assert_eq!(texts, ["Deleted 2 metarecords.", "detail"]);
+    assert_eq!(body["status"]["text"], "Deleted 2 metarecords.");
+    assert_eq!(body["status"]["kind"], "info");
+    assert!(body["status"]["ts_ms"].as_u64().is_some());
+
+    let (status, _) = request(&ctx.router, "GET", "/gui/workspaces/ws-99/messages", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
 // ── Script progress ───────────────────────────────────────────────────────
 
 #[tokio::test]

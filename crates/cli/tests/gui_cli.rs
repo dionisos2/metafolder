@@ -136,6 +136,10 @@ fn start_stub(input_response: Json_, prompt_response: Json_) -> StubGui {
                 }),
             )
             .route(
+                "/gui/workspaces/:id/messages",
+                get(|Path(id): Path<String>| async move { stub_messages(&id) }),
+            )
+            .route(
                 "/gui/workspaces/:id/vars/:key",
                 get(|Path((id, key)): Path<(String, String)>| async move { stub_var(&id, &key) }),
             )
@@ -603,4 +607,73 @@ fn test_gui_selected_on_an_unknown_workspace_fails() {
     let out = mf_gui(&gui, &["selected", "--workspace", "ws-404"]);
     assert_eq!(out.code, 1, "stdout: {} stderr: {}", out.stdout, out.stderr);
     assert!(out.stderr.contains("unknown workspace"), "stderr: {}", out.stderr);
+}
+
+// ── mf gui messages / status-bar ──────────────────────────────────────────────
+
+/// `ws-1` (focused) has a log and a status, `ws-3` neither; any other id is
+/// unknown.
+fn stub_messages(id: &str) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    match id {
+        "ws-1" => Json(json!({
+            "messages": [
+                {"ts_ms": 1, "text": "Scanning…"},
+                {"ts_ms": 2, "text": "Duplicates: 1 groups."},
+                {"ts_ms": 3, "text": "{\n  \"groups\": 1\n}"},
+            ],
+            "status": {"ts_ms": 2, "text": "Duplicates: 1 groups.", "kind": "info"},
+        }))
+        .into_response(),
+        "ws-3" => Json(json!({"messages": [], "status": null})).into_response(),
+        _ => (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(json!({"error": format!("unknown workspace: {id}")})),
+        )
+            .into_response(),
+    }
+}
+
+#[test]
+fn test_gui_messages_prints_the_focused_workspace_log() {
+    let gui = stub();
+    let out = mf_gui(&gui, &["messages"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout, "Scanning…\nDuplicates: 1 groups.\n{\n  \"groups\": 1\n}\n");
+}
+
+#[test]
+fn test_gui_messages_last_keeps_the_newest_entries() {
+    let gui = stub();
+    let out = mf_gui(&gui, &["messages", "--last", "2"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout, "Duplicates: 1 groups.\n{\n  \"groups\": 1\n}\n");
+}
+
+#[test]
+fn test_gui_messages_on_an_empty_or_unknown_workspace() {
+    let gui = stub();
+    let out = mf_gui(&gui, &["messages", "--workspace", "ws-3"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout, "");
+
+    let out = mf_gui(&gui, &["messages", "--workspace", "ws-404"]);
+    assert_eq!(out.code, 1, "stdout: {} stderr: {}", out.stdout, out.stderr);
+    assert!(out.stderr.contains("unknown workspace"), "stderr: {}", out.stderr);
+}
+
+#[test]
+fn test_gui_status_bar_prints_the_kind_and_the_text() {
+    let gui = stub();
+    let out = mf_gui(&gui, &["status-bar"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout, "info\tDuplicates: 1 groups.\n");
+}
+
+#[test]
+fn test_gui_status_bar_prints_nothing_when_nothing_was_posted() {
+    let gui = stub();
+    let out = mf_gui(&gui, &["status-bar", "--workspace", "ws-3"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout, "");
 }

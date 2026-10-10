@@ -130,10 +130,7 @@ pub(crate) fn query_text(text: &Json) -> Option<String> {
 /// `mf gui query [--workspace <id>]` — prints the query the metarecord list
 /// shows (see [`query_text`]); an empty line means every metarecord.
 pub fn query(ctx: &GuiCtx, workspace: Option<&str>) -> Result<i32, CliError> {
-    let workspace = match workspace {
-        Some(id) => id.to_string(),
-        None => focused_workspace(&ctx.client.get("/gui/status", &[])?)?.to_string(),
-    };
+    let workspace = target_workspace(ctx, workspace)?;
     let resp = ctx.client.get(
         &format!("/gui/workspaces/{workspace}/vars/metarecord-list:effective-query-text"),
         &[],
@@ -155,16 +152,57 @@ pub fn query(ctx: &GuiCtx, workspace: Option<&str>) -> Result<i32, CliError> {
 /// a failure). The half of the old `mf gui query` precedence that grew into
 /// its own command, so a script asks which it wants instead of inheriting one.
 pub fn selected(ctx: &GuiCtx, workspace: Option<&str>) -> Result<i32, CliError> {
-    let workspace = match workspace {
-        Some(id) => id.to_string(),
-        None => focused_workspace(&ctx.client.get("/gui/status", &[])?)?.to_string(),
-    };
+    let workspace = target_workspace(ctx, workspace)?;
     let resp =
         ctx.client.get(&format!("/gui/workspaces/{workspace}/vars/selected_metarecords"), &[])?;
     if let Some(uuid) = resp["value"].as_array() {
         for uuid in uuid.iter().filter_map(Json::as_str) {
             println!("{uuid}");
         }
+    }
+    Ok(0)
+}
+
+/// The workspace a command targets: `--workspace`, else the focused one.
+fn target_workspace(ctx: &GuiCtx, workspace: Option<&str>) -> Result<String, CliError> {
+    match workspace {
+        Some(id) => Ok(id.to_string()),
+        None => Ok(focused_workspace(&ctx.client.get("/gui/status", &[])?)?.to_string()),
+    }
+}
+
+/// `mf gui messages [--workspace <id>] [--last <n>]` — prints the workspace's
+/// message log, oldest first, each entry as it was written (a multi-line entry
+/// stays multi-line). What the commands *said*, not how the shell shows it.
+pub fn messages(
+    ctx: &GuiCtx,
+    workspace: Option<&str>,
+    last: Option<usize>,
+) -> Result<i32, CliError> {
+    let workspace = target_workspace(ctx, workspace)?;
+    let resp = ctx.client.get(&format!("/gui/workspaces/{workspace}/messages"), &[])?;
+    let texts: Vec<&str> = resp["messages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry["text"].as_str())
+        .collect();
+    let skip = last.map_or(0, |n| texts.len().saturating_sub(n));
+    for text in &texts[skip..] {
+        println!("{text}");
+    }
+    Ok(0)
+}
+
+/// `mf gui status-bar [--workspace <id>]` — prints the last status-bar message
+/// posted as `<kind>\t<text>` (`info`, `error`, `busy`…), whether or not the
+/// bar still shows it; nothing at all when none was posted.
+pub fn status_bar(ctx: &GuiCtx, workspace: Option<&str>) -> Result<i32, CliError> {
+    let workspace = target_workspace(ctx, workspace)?;
+    let resp = ctx.client.get(&format!("/gui/workspaces/{workspace}/messages"), &[])?;
+    let status = &resp["status"];
+    if let (Some(kind), Some(text)) = (status["kind"].as_str(), status["text"].as_str()) {
+        println!("{kind}\t{text}");
     }
     Ok(0)
 }
