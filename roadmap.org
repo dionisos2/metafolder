@@ -69,13 +69,6 @@ From doc "Watcher open questions" (and doc "The fanotify broker"):
   for so far.
 
 * TODO correctness, minor
-** TODO a rollback can bring back a node at several positions
-Navigation puts rows back without going through the Writer's checks (as it does
-for a detached node, see =index_oracle.rs= =tree_ref_sort_with_a_detached_node=),
-so rolling back to a state written before =4ffe261= can restore a metarecord
-at two positions. =mf repo check= names it afterwards. Refuse it, or accept and
-document it — to decide.
-
 ** TODO =daemon/src/sync.rs= =locate()= uses =Path::exists()=
 It follows symlinks. Harmless — it probes the sync database file metafolder
 creates under =internal/=, never a tracked path, which is why the
