@@ -63,7 +63,7 @@ out=$(run DISPLAY=:9 --); rc=$?
 assert_eq "exits 0 when everything passes" 0 "$rc"
 assert_eq "the steps, in order" \
 "cargo llvm-cov clean --workspace target=$cov profile=$cov/p-%p.profraw
-cargo test --workspace target=$cov profile=$cov/p-%p.profraw
+cargo test --workspace --no-fail-fast target=$cov profile=$cov/p-%p.profraw
 cargo build -p metafolder-daemon -p metafolder-cli -p metafolder-gui target=$cov profile=$cov/p-%p.profraw
 gui-e2e bin=$cov/debug profile=$cov/p-%p.profraw
 cargo llvm-cov report --summary-only target=$cov profile=$cov/p-%p.profraw" \

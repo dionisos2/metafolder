@@ -49,7 +49,9 @@ status=0
 # Stale profiles of an earlier run would be merged into this one's report.
 cargo llvm-cov clean --workspace || exit 2
 
-cargo test --workspace || status=1
+# --no-fail-fast: one failing test binary must not leave the ones after it
+# unrun, and their code uncounted.
+cargo test --workspace --no-fail-fast || status=1
 
 if ! $gui; then
     :
