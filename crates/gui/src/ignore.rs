@@ -223,6 +223,13 @@ pattern-set = ["node", "git"]
     }
 
     #[test]
+    fn test_target_parsing_names_a_bad_uuid() {
+        let uuid = Uuid::new_v4();
+        assert_eq!(parse_target(&uuid.as_simple().to_string()).unwrap(), uuid);
+        assert_eq!(parse_target("nope").unwrap_err(), "invalid metarecord uuid 'nope'");
+    }
+
+    #[test]
     fn test_mode_parsing() {
         assert_eq!(parse_mode("add").unwrap(), Mode::Add);
         assert_eq!(parse_mode("remove").unwrap(), Mode::Remove);

@@ -243,6 +243,29 @@ mod tests {
         assert_eq!(p.warnings.into_inner().unwrap(), vec!["first", "second"]);
     }
 
+    #[tokio::test]
+    async fn blocking_returns_the_result_with_the_warnings_emitted() {
+        let (out, warnings) = blocking("http://127.0.0.1:1".into(), |ctx| {
+            ctx.prompter.warn("a link points nowhere");
+            assert_eq!(ctx.page_size, PAGE_SIZE);
+            Ok(42)
+        })
+        .await
+        .unwrap();
+        assert_eq!(out, 42);
+        assert_eq!(warnings, vec!["a link points nowhere"]);
+    }
+
+    #[tokio::test]
+    async fn blocking_reports_the_orchestration_error_by_its_message() {
+        let error = blocking::<(), _>("http://127.0.0.1:1".into(), |_| {
+            Err(SyncError::Usage("repo a and repo b are the same".into()))
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(error, "repo a and repo b are the same");
+    }
+
     #[test]
     fn plan_json_shape() {
         let uuid = Uuid::from_bytes([0xab; 16]);
