@@ -1,5 +1,5 @@
-//! HTTP-level tests for `POST /reconcile`, `POST /track` and the
-//! single-entry `POST /metadata/:uuid/reconcile`.
+//! HTTP-level tests for `POST /reconcile`, `POST /metarecords` with a path
+//! and the single-entry `POST /metadata/:uuid/reconcile`.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -58,52 +58,6 @@ async fn get_metarecord(app: &Router, repo: &str, uuid: &str) -> Value {
 
 fn field<'a>(entry: &'a Value, name: &str) -> Option<&'a Value> {
     entry["fields"].as_array().unwrap().iter().find(|f| f["name"] == name).map(|f| &f["value"])
-}
-
-#[tokio::test]
-async fn test_track_creates_record_and_parents_untracked() {
-    let (app, repo, root) = setup("track").await;
-    std::fs::create_dir_all(root.join("docs/notes")).unwrap();
-    std::fs::write(root.join("docs/notes/todo.txt"), b"todo").unwrap();
-
-    let abs = root.join("docs/notes/todo.txt");
-    let (status, body) = request(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/track"),
-        Some(json!({"path": abs.to_str().unwrap()})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "track failed: {body}");
-    let uuid = body["uuid"].as_str().unwrap().to_string();
-
-    // The entry carries stat fields and mf_watch = false.
-    let entry = get_metarecord(&app, &repo, &uuid).await;
-    assert_eq!(field(&entry, "mfr_size").unwrap()["value"], 4);
-    assert_eq!(field(&entry, "mf_watch").unwrap()["value"], false);
-
-    // Tracking again is idempotent → 200 with the same uuid.
-    let (status, body) = request(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/track"),
-        Some(json!({"path": abs.to_str().unwrap()})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "re-track failed: {body}");
-    assert_eq!(body["uuid"].as_str().unwrap(), uuid, "re-track returns the same uuid");
-
-    // Outside the root → 400.
-    let (status, _) = request(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/track"),
-        Some(json!({"path": "/etc/hostname"})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[tokio::test]
@@ -177,11 +131,11 @@ async fn test_single_metarecord_reconcile_endpoint() {
     let (status, body) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/track"),
-        Some(json!({"path": root.join("music").to_str().unwrap()})),
+        &format!("/repos/{repo}/metarecords"),
+        Some(json!({"path": root.join("music").to_str().unwrap(), "fields": []})),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "track failed: {body}");
+    assert_eq!(status, StatusCode::OK, "create at path failed: {body}");
     let dir_uuid = body["uuid"].as_str().unwrap().to_string();
     request(
         &app,
@@ -255,11 +209,11 @@ async fn test_refresh_rereads_the_file_now() {
     let (status, body) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/track"),
-        Some(json!({"path": root.join("f.txt").to_str().unwrap()})),
+        &format!("/repos/{repo}/metarecords"),
+        Some(json!({"path": root.join("f.txt").to_str().unwrap(), "fields": []})),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "track failed: {body}");
+    assert_eq!(status, StatusCode::OK, "create at path failed: {body}");
     let uuid = body["uuid"].as_str().unwrap().to_string();
     // A hash the content change must invalidate.
     let (status, _) = request(

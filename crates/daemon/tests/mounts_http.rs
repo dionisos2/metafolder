@@ -58,11 +58,11 @@ async fn mounts_lists_declared_mount_points_with_their_state() {
     let (status, body) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/track"),
-        Some(json!({"path": abs.to_str().unwrap()})),
+        &format!("/repos/{repo}/metarecords"),
+        Some(json!({"path": abs.to_str().unwrap(), "fields": []})),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "track failed: {body}");
+    assert_eq!(status, StatusCode::OK, "create at path failed: {body}");
     let uuid = body["uuid"].as_str().unwrap().to_string();
 
     let (status, body) = request(

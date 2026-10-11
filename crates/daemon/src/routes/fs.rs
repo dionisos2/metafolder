@@ -700,11 +700,6 @@ pub(super) async fn orphans_relink(
 }
 
 #[derive(Deserialize)]
-pub(super) struct TrackBody {
-    path: PathBuf,
-}
-
-#[derive(Deserialize)]
 pub(super) struct EligibilityBody {
     paths: Vec<String>,
 }
@@ -825,42 +820,4 @@ pub(super) fn path_in_repo(
         return Err(ApiError::bad_request("the repository root always has its metarecord"));
     }
     Ok(rel)
-}
-
-/// Creates the metarecord for a single filesystem path without activating
-/// tracking (doc "Tracking a folder"). Parents are created
-/// with `mf_watch = false`; no eligibility check applies.
-pub(super) async fn track(
-    State(state): State<Arc<AppState>>,
-    Path(repo): Path<String>,
-    payload: Result<Json<TrackBody>, JsonRejection>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let Json(body) = payload?;
-    let repo_uuid = parse_uuid(&repo)?;
-    with_repo(&state, repo_uuid, move |repo_state| {
-        repo_state.ensure_writable()?;
-        let rel = path_in_repo(repo_state, &body.path)?;
-
-        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let cache = repo_state.tree();
-        // Idempotent: a path already tracked returns its existing metarecord
-        // uuid rather than an error, so callers can `track` without first
-        // checking (doc "Tracking a folder").
-        if let Some(existing) = cache.resolve_path(&conn, "mfr_path", &rel.display())? {
-            return Ok(Json(json!({"uuid": hex(existing)})));
-        }
-        let untracked = [Field::new("mf_watch", Value::Bool(false))];
-        let mut writer = repo_state.writer(&mut conn, None)?;
-        let uuid = crate::reconcile::create_record_for(
-            &mut writer,
-            &cache,
-            &repo_state.config.root,
-            &rel,
-            &untracked,
-            false,
-        )?;
-        slowlog::timed("commit", || writer.commit())?;
-        Ok(Json(json!({"uuid": hex(uuid)})))
-    })
-    .await
 }

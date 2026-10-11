@@ -134,7 +134,6 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/orphans/clear", post(orphans_clear))
         .route("/repos/:repo/orphans/mark", post(orphans_mark))
         .route("/repos/:repo/orphans/relink", post(orphans_relink))
-        .route("/repos/:repo/track", post(track))
         .route("/repos/:repo/slow", get(slow_log).delete(clear_slow_log))
         .route("/repos/:repo/eligibility", post(eligibility_explain))
         .route("/repos/:repo/ignore/effective", get(effective_ignore))

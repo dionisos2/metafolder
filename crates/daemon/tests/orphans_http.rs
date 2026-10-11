@@ -57,16 +57,16 @@ async fn scan_then_clear_over_http() {
     let (app, repo, root) = setup("scanclear").await;
     std::fs::write(root.join("gone.txt"), b"data").unwrap();
 
-    // Track the file so it gets an mfr_path metarecord.
+    // Record the file so it gets an mfr_path metarecord.
     let abs = root.join("gone.txt");
     let (status, body) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/track"),
-        Some(json!({"path": abs.to_str().unwrap()})),
+        &format!("/repos/{repo}/metarecords"),
+        Some(json!({"path": abs.to_str().unwrap(), "fields": []})),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "track failed: {body}");
+    assert_eq!(status, StatusCode::OK, "create at path failed: {body}");
     let uuid = body["uuid"].as_str().unwrap().to_string();
 
     // Delete it behind the daemon's back → stale mfr_path.
@@ -119,11 +119,11 @@ async fn mark_then_delete_by_query_over_http() {
         let (status, body) = request(
             &app,
             "POST",
-            &format!("/repos/{repo}/track"),
-            Some(json!({"path": abs.to_str().unwrap()})),
+            &format!("/repos/{repo}/metarecords"),
+            Some(json!({"path": abs.to_str().unwrap(), "fields": []})),
         )
         .await;
-        assert_eq!(status, StatusCode::OK, "track failed: {body}");
+        assert_eq!(status, StatusCode::OK, "create at path failed: {body}");
         uuids.push(body["uuid"].as_str().unwrap().to_string());
     }
     std::fs::remove_file(root.join("gone.txt")).unwrap();

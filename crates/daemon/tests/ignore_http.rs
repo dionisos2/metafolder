@@ -67,13 +67,13 @@ async fn setup() -> (Router, String, TempDir) {
     let (status, body) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/track"),
-        Some(json!({"path": root.join("work").to_str().unwrap()})),
+        &format!("/repos/{repo}/metarecords"),
+        Some(json!({"path": root.join("work").to_str().unwrap(), "fields": []})),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "track failed: {body}");
+    assert_eq!(status, StatusCode::OK, "create at path failed: {body}");
     let work = body["uuid"].as_str().unwrap().to_string();
-    // `track` writes `mf_watch = false`; drop it so /work inherits the root's
+    // A path's metarecord gets `mf_watch = false`; drop it so /work inherits the root's
     // watch and only contributes its own ignore set (the common shape).
     let (status, body) =
         request(&app, "DELETE", &format!("/repos/{repo}/metarecords/{work}/fields/mf_watch"), None)

@@ -73,11 +73,11 @@ async fn scan_returns_202_and_a_task_carrying_the_summary() {
         let (status, body) = request(
             &app,
             "POST",
-            &format!("/repos/{repo}/track"),
-            Some(json!({"path": abs.to_str().unwrap()})),
+            &format!("/repos/{repo}/metarecords"),
+            Some(json!({"path": abs.to_str().unwrap(), "fields": []})),
         )
         .await;
-        assert_eq!(status, StatusCode::OK, "track failed: {body}");
+        assert_eq!(status, StatusCode::OK, "create at path failed: {body}");
     }
 
     let (status, body) =
@@ -107,8 +107,8 @@ async fn the_groups_are_read_back_with_an_ordinary_query() {
         request(
             &app,
             "POST",
-            &format!("/repos/{repo}/track"),
-            Some(json!({"path": abs.to_str().unwrap()})),
+            &format!("/repos/{repo}/metarecords"),
+            Some(json!({"path": abs.to_str().unwrap(), "fields": []})),
         )
         .await;
     }

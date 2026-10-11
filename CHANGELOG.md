@@ -211,6 +211,10 @@ than breaking them.
   "Command names (non-exhaustive default set)", "User commands").
 
 ### Removed
+- **`POST /repos/:repo/track`** — `POST /repos/:repo/metarecords` with a `path`
+  replaces it, refusing what it accepted (an already recorded path, missing
+  parents without `parents`). `API_VERSION` 16. The bench's `api.track`
+  scenario is `api.metarecord.create_at_path` (doc "Recording a path").
 - **The SQLite backend** (**breaking**, `API_VERSION` 15). The key-value store
   (LMDB) is the only store a repository has: `mf repo convert`, `POST
   /repos/:repo/convert`, `mf repo init --storage`, `METAFOLDER_DEFAULT_STORAGE`

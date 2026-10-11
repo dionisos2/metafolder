@@ -128,7 +128,7 @@ pub const SCENARIOS: &[Scenario] = &[
     // folders (doc "Watch and ignore fields").
     whole("api.watch.exceeded_set", &[(P, "/repos/:repo/watch/exceeded")]),
     s("api.watch.activity_reset", &[(P, "/repos/:repo/watch/activity/reset")]),
-    s("api.track", &[(P, "/repos/:repo/track")]),
+    s("api.metarecord.create_at_path", &[(P, "/repos/:repo/metarecords")]),
     s("api.slow.clear", &[("DELETE", "/repos/:repo/slow")]),
     s("api.repo.rename", &[("PATCH", "/repos/:repo")]),
     s(
@@ -507,10 +507,10 @@ pub async fn run(id: &str, c: &Ctx) -> Result<()> {
         "api.watch.activity_reset" => {
             post(&format!("{base}/watch/activity/reset"), json!({})).await?;
         }
-        "api.track" => {
-            let file = c.dir.join("dir0").join(next_name("tracked-"));
-            std::fs::write(&file, b"tracked")?;
-            post(&format!("{base}/track"), json!({"path": file})).await?;
+        "api.metarecord.create_at_path" => {
+            let file = c.dir.join("dir0").join(next_name("recorded-"));
+            std::fs::write(&file, b"recorded")?;
+            post(&format!("{base}/metarecords"), json!({"path": file, "fields": []})).await?;
         }
         "api.slow.clear" => drop(send("DELETE", &format!("{base}/slow"), None).await?),
         "api.repo.rename" => {
