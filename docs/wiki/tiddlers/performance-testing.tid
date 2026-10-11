@@ -69,6 +69,18 @@ scripts/bench.sh
 It takes minutes, so it is run on purpose, before and after a change that could
 plausibly cost something.
 
+!! The session — what nobody listed
+
+Both layers measure what someone wrote down. [[The session scenario]] drives a
+real GUI through a day of use on a 50 000-file repository with the slow log at its
+floor, each step against a budget of its own, and reports every operation of the
+steps over it — the polling, the lock waited for, the request a panel should not
+send:
+
+```
+scripts/session.sh
+```
+
 !! What is deliberately not here
 
 * ''No gate on timings in `check.sh`.'' A machine-dependent measurement that fails a build teaches people to ignore failing builds.

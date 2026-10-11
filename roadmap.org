@@ -27,16 +27,28 @@ is left, each to measure before building:
 - a two-term =osm= path whose earlier term is common: the bench's finder,
   still ≈ 5 ms on L, nearly all of it each anchor's ancestry (≈ 2 µs a random
   read). No bitmap formulation found cheaper on that shape;
-- whatever the slow log shows next on a real repository: reads are logged per
-  phase, a read is logged from 100 ms or 100 000 keys, and =mf slow replay=
-  runs a logged query again for its phases now (doc "Slow log"). Read 9
-  October 2026 on =benchmarks/real/=: no query, only =GET /watch= at 2–2.6 s
-  from the GUI, which was waiting for the watch placement's lock (fixed).
-  Read again 11 October 2026: nothing logged since 27 September, so the fix
-  holds — but =benchmarks/real/= holds 16 metarecords, and no query on it can
-  ever cross a threshold. It cannot inform the planner: the next reading needs
-  a repository of real size in daily use (tens of thousands of files), loaded
-  long enough to log something.
+- whatever the next reading shows: the slow log of a repository in daily use
+  is replaced by doc "The session scenario" (=scripts/session.sh=, 11 October
+  2026), a scripted day of GUI use on 50 000 files with every operation
+  logged. Its first run shows no query over budget: every list, finder and
+  folder step stays under 1.2 s, the most keys a list step read being 19 000
+  for five pages. What it did find is below.
+
+** TODO what the first session run found (11 October 2026, 50 000 files)
+Not recorded (no neutral load yet); durations from a loaded machine, keys exact.
+- a reconcile with nothing to do takes 56.6 s, and holds the store the whole
+  time: every GUI read meanwhile (=tree/children=, =watch/check=) waited 56 s
+  on =wait:conn=. The wait itself is the decided "readers block on writes"
+  (doc "Storage open questions"); the cost to look at is the reconcile's.
+- the duplicate scan: 43.6 s, the GUI's change feed (=GET /log/since=) blocked
+  42 s behind it.
+- the first reconcile: 73.7 s.
+- none of the three is in the slow log: the background tasks (reconcile, the
+  duplicate and orphan scans, a load's warm-up) are not timed by it, only
+  requests and the watcher's flush. Logging them, with phases, is what would
+  say where their time goes.
+- creating 1 000 files reads 1.56 million keys in the watcher's flushes (≈ 1 560
+  a file); renaming a folder of 292 files, 2.1 million.
 
 * TODO watcher
 ** TODO keep hunting with the simulated kernel

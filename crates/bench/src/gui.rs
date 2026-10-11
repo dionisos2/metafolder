@@ -169,7 +169,7 @@ impl Drop for Proc {
 /// Refuses to launch against the placeholder frontend `build.rs` writes when
 /// the real bundle is missing — the panels would never mount and no measure
 /// would be recorded.
-fn ensure_frontend_built() -> Result<()> {
+pub(crate) fn ensure_frontend_built() -> Result<()> {
     let dist = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()

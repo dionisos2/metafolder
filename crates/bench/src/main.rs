@@ -22,6 +22,7 @@
 
 mod gui;
 mod regression;
+mod session;
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -142,6 +143,15 @@ impl Drop for Daemon {
         let _ = self._proc.wait();
     }
 }
+
+impl Daemon {
+    /// A daemon spawned by the caller (its own configuration, its own log).
+    pub(crate) fn from_child(child: Child, port: u16) -> Daemon {
+        Daemon { _proc: child, url: format!("http://127.0.0.1:{port}") }
+    }
+}
+
+pub(crate) use regression::repo_root;
 
 pub(crate) fn daemon_start(port: u16) -> Result<Daemon> {
     Ok(Daemon { _proc: spawn_isolated_daemon(port)?, url: format!("http://127.0.0.1:{port}") })
@@ -624,6 +634,7 @@ async fn main() -> Result<()> {
     let mut big = PathBuf::from(DEFAULT_BIG_DIR);
     let mut rest: Vec<String> = Vec::new();
     let mut opts = regression::Options::default();
+    let mut session_opts = session::Options::default();
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -643,6 +654,13 @@ async fn main() -> Result<()> {
                 opts.tolerance =
                     it.next().context("--tolerance needs a fraction")?.parse::<f64>()?
             }
+            // Session options (doc "The session scenario").
+            "--data" => session_opts.data = it.next().context("--data needs a path")?.into(),
+            "--unsandboxed" => session_opts.unsandboxed = true,
+            "--calibrate" => session_opts.calibrate = true,
+            "--record" => session_opts.record = true,
+            "--force" => session_opts.force = true,
+            "--keep" => session_opts.keep = true,
             s if mode.is_none() && !s.starts_with('-') => mode = Some(s.to_string()),
             _ => rest.push(a),
         }
@@ -660,7 +678,16 @@ async fn main() -> Result<()> {
             }
             Ok(())
         }
-        other => bail!("unknown mode '{other}' (expected: data | gui | attach | regression)"),
+        "session" => {
+            let code = session::run(&session_opts).await?;
+            if code != 0 {
+                std::process::exit(code);
+            }
+            Ok(())
+        }
+        other => {
+            bail!("unknown mode '{other}' (expected: data | gui | attach | regression | session)")
+        }
     }
 }
 

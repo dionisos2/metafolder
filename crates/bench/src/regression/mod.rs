@@ -849,11 +849,11 @@ async fn real_search(url: &str, repo: Uuid) -> Result<(String, Vec<String>)> {
 
 // ─── The machine, the build ───────────────────────────────────────────────────
 
-fn repo_root() -> PathBuf {
+pub(crate) fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap().to_path_buf()
 }
 
-fn machine_name() -> String {
+pub(crate) fn machine_name() -> String {
     std::env::var("METAFOLDER_BENCH_MACHINE")
         .ok()
         .or_else(|| std::fs::read_to_string("/etc/hostname").ok())
@@ -885,7 +885,7 @@ fn rustc_version() -> String {
 }
 
 /// `(short commit, dirty)`.
-fn git_state(root: &Path) -> (String, bool) {
+pub(crate) fn git_state(root: &Path) -> (String, bool) {
     let git = |args: &[&str]| {
         std::process::Command::new("git")
             .arg("-C")
@@ -904,7 +904,7 @@ fn git_state(root: &Path) -> (String, bool) {
 }
 
 /// ISO-8601 UTC to the second, through the project's own date helper.
-fn timestamp() -> String {
+pub(crate) fn timestamp() -> String {
     let ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)

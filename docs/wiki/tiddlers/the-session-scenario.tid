@@ -1,0 +1,84 @@
+title: The session scenario
+tags: Development
+kind: reference
+audience: dev
+aliases: session.sh session
+summary: scripts/session.sh drives a real GUI through a day's worth of use on a 50 000-file repository, each step against its own budget, with the slow log at its floor saying where the time and the keys went — a report, run on purpose.
+
+```
+scripts/session.sh --unsandboxed           # the whole session (a container: no WebKit sandbox)
+scripts/session.sh --data benchmarks/bench_data   # the 5 000-file folder, for a fast run
+scripts/session.sh --keep                  # keep target/bench-data/session: logs, report, repository
+scripts/session.sh --calibrate             # measure the machine's neutral load (30 s)
+scripts/session.sh --record                # append the run to benchmarks/session/<machine>.jsonl
+```
+
+[[The timed regression suite]] times a list of daemon calls someone wrote down. What
+it cannot find is what nobody wrote down: the request a panel sends that it should
+not, the read that waits two seconds for a lock while the user does something else,
+the polling between two actions. Those were found by reading the [[Slow log]] of a
+repository in daily use — and a slow log that has to wait for daily use is neither
+reproducible nor fast. The session is that use, scripted.
+
+!! What a run does
+
+`metafolder-bench session` builds a fresh repository on a hard-linked copy of
+`benchmarks/bench_data_big` (50 000 files) under `target/bench-data/session/`,
+starts a daemon of its own and a real GUI on it, and runs a fixed list of steps:
+the first reconcile, the metarecord list (open, five pages, the finder, a typed
+query), the detail panel following the list, the file manager down to the largest
+folder, the tree explorer, a bulk write on the list's query with its undo and redo,
+the log panel, the filesystem changing under the watcher (a folder renamed, a
+thousand files created then deleted), the duplicate scan, the orphan scan, a
+reconcile with nothing to do, ten seconds of nothing, and the repository unloaded and
+loaded again.
+
+The GUI steps go through the scripting API (`/gui/command`, `/gui/panels`), as
+[[Testing the GUI end to end]] does. A step is over when the user would stop
+waiting: when its command resolved and the panels stopped recording measures
+(`/gui/bench`) for 300 ms — the time of the last measure, not of the silence. A
+filesystem step is over when a query sees the change.
+
+Determinism comes from the inputs: the copy is rebuilt every run, the GUI reads a
+configuration built from the shipped defaults (`crates/*/default-config/`) and never
+the user's, the daemon one with no automatic backup. Only the durations vary with
+the machine.
+
+!! The report
+
+Each step has a ''budget'': what a user should wait for it on a repository of that
+size — a product judgment written next to the step in `crates/bench/src/session/mod.rs`,
+not what it takes today. Some have a ''key budget'' too, where a bound is part of the
+design (a page of the list, an idle panel); keys do not depend on the machine.
+
+The daemon and the GUI run with every slow-log threshold at its floor (1 ms, one
+key), so ''every'' operation is logged with its phases. An entry belongs to the
+step whose window holds its start; one that started between steps is listed on its
+own. The table gives each step's wall time, budget, the keys the daemon read, the
+operations and the slowest of them; every step that is not `ok` — `SLOW`, `READS`,
+`FAILED` — is followed by its three slowest operations, phase by phase. A step that
+failed stops the session: what would follow would measure another state.
+
+The exit status says whether every step ran, not whether they were fast: this is a
+report. The work directory goes at the end unless `--keep`.
+
+!! Recorded runs and the neutral load
+
+A duration measured on a busy machine says little. A run worth keeping is taken on a
+machine left ''neutral'' — its user running nothing heavy — and that state is
+measured once: `--calibrate` samples the CPU use of the whole machine for 30 s
+(`/proc/stat`, the host's even from a container) and the load average, into
+`benchmarks/session/<machine>.neutral.json`. `--record` samples it again for 10 s
+before the session and after, refuses to record (exit 2) when the machine is more
+than 5 points busier than neutral (`--force` records anyway), and appends the run —
+commit, loads, each step's time, keys and operations — to
+`benchmarks/session/<machine>.jsonl`.
+
+Claude does not start a recorded run, nor a calibration, without asking the user
+first: the user is the one who has to keep the machine quiet meanwhile.
+
+!! Limits
+
+* The background tasks — reconcile, the duplicate and orphan scans, a load's warm-up — are not in the slow log: only their step's wall time shows them.
+* It never writes into an existing file: a hard link shares its bytes with the original folder.
+* It needs a display and a built frontend, so it is not part of `scripts/check.sh`.
