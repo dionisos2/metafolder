@@ -239,6 +239,9 @@ than breaking them.
   mounting the remote repository over SSHFS is deferred (spec-sync).
 
 ### Fixed
+- **`mf metarecord -i` takes a UUID and nothing else.** Text that was not one
+  parsed as DSL further down: `-i '<query>' get` ran the query, `field set` and
+  `delete` wrote to its matches, `get --tsv` panicked. It is a usage error now.
 - **`metafolder-watchd`: a drive mounted under two repositories was heard by one
   only.** The broker resolves a file through one mount point of its
   filesystem; the repository under another mount point of the same drive got
