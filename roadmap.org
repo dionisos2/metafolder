@@ -30,25 +30,29 @@ is left, each to measure before building:
 - whatever the next reading shows: the slow log of a repository in daily use
   is replaced by doc "The session scenario" (=scripts/session.sh=, 11 October
   2026), a scripted day of GUI use on 50 000 files with every operation
-  logged. Its first run shows no query over budget: every list, finder and
-  folder step stays under 1.2 s, the most keys a list step read being 19 000
+  logged. Its runs show no query over budget: every list, finder and
+  folder step stays under 1 s on a neutral machine, the most keys a list step read being 19 000
   for five pages. What it did find is below.
 
-** TODO what the first session run found (11 October 2026, 50 000 files)
-Not recorded (no neutral load yet); durations from a loaded machine, keys exact.
-- a reconcile with nothing to do takes 56.6 s, and holds the store the whole
-  time: every GUI read meanwhile (=tree/children=, =watch/check=) waited 56 s
-  on =wait:conn=. The wait itself is the decided "readers block on writes"
-  (doc "Storage open questions"); the cost to look at is the reconcile's.
-- the duplicate scan: 43.6 s, the GUI's change feed (=GET /log/since=) blocked
-  42 s behind it.
-- the first reconcile: 73.7 s.
+** TODO what the first session runs found (11–12 October 2026, 50 000 files)
+The first run on a loaded machine; the first recorded one (12 October, neutral
+load 7.1 % CPU, =benchmarks/session/=) gives the durations below. Keys exact.
+- a reconcile with nothing to do takes 43.8 s (56.6 s loaded), and holds the
+  store the whole time: every GUI read meanwhile (=watch/check=,
+  =resolve-tree=) waited 43.6 s on =wait:conn=. The wait itself is the decided
+  "readers block on writes" (doc "Storage open questions"); the cost to look
+  at is the reconcile's.
+- the duplicate scan: 29.9 s (43.6 s loaded), the GUI's change feed (=GET
+  /log/since=) blocked 27.6 s behind it.
+- the first reconcile: 60.4 s (73.7 s loaded).
 - none of the three is in the slow log: the background tasks (reconcile, the
   duplicate and orphan scans, a load's warm-up) are not timed by it, only
   requests and the watcher's flush. Logging them, with phases, is what would
   say where their time goes.
-- creating 1 000 files reads 1.56 million keys in the watcher's flushes (≈ 1 560
-  a file); renaming a folder of 292 files, 2.1 million.
+- creating 1 000 files reads 1.57 million keys in the watcher's flushes (≈ 1 570
+  a file); renaming a folder of 292 files, 2.1 million; deleting the 1 000,
+  0.58 million. Undoing the bulk add of one field on 50 000 records reads 1.45
+  million (the add itself 0.41 million).
 
 * TODO watcher
 ** TODO keep hunting with the simulated kernel
