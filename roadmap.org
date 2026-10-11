@@ -94,9 +94,13 @@ What is worth a test, most first:
 - =cli/src/commands.rs=: done 10 October 2026 (=watch check=, =watch
   exceeded=, =orphan relink=, =orphan clear='s prompt, =field get -q=,
   =duplicate list --sort/--limit=; it found =-i= run as a query when not a
-  UUID, =a150685d=): 197 lines missed of 2 326, was 365. What is left is
-  thin: error branches, =slow=, =trash prune='s modes, =watch activity='s
-  path argument.
+  UUID, =a150685d=): 197 lines missed of 2 326, was 365. Then 11 October
+  2026: =slow='s filters, window, cut and refusals, =trash prune='s
+  =-s=/=-d=/=--dry-run= and conflicting selectors, =watch activity --reset=,
+  both repository selectors from the environment: 142 lines missed. What is
+  left is error branches, one or two lines each (=repo check='s problems,
+  =repo restore --from=, a failed or cancelled task, =duplicate clear='s
+  prompt, the =watch check= reasons only a mount or a budget reaches).
 The Tauri wrappers now count: =scripts/coverage.sh= (10 October 2026; doc
 "Measuring coverage") runs =scripts/gui-e2e.sh= on instrumented binaries and
 merges it with the tests. With the =repos=, =list=, =layout= and =script=

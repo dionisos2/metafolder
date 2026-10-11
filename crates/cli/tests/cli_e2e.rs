@@ -2105,6 +2105,59 @@ fn test_trash_prune_requires_a_selector() {
     let (repo, _root) = init_repo("trashsel");
     let out = mf(&["-u", &repo, "trash", "prune"]);
     assert_eq!(out.code, 2, "no -s/-d/--all is a usage error");
+
+    let out = mf(&["-u", &repo, "trash", "prune", "-s", "1k", "--all"]);
+    assert_eq!(out.code, 2, "two selectors are a usage error");
+    assert!(out.stderr.contains("mutually exclusive"), "stderr: {}", out.stderr);
+    let out = mf(&["-u", &repo, "trash", "prune", "-d", "soon"]);
+    assert_eq!(out.code, 2, "an unparsable duration is a usage error");
+}
+
+// `mf trash prune -s` drops the oldest entries until the trash fits, `-d` the
+// ones older than the duration, and `--dry-run` names what either would remove
+// without removing it.
+#[test]
+fn test_trash_prune_by_size_and_age_and_dry_run() {
+    let (repo, root) = init_repo("trashmodes");
+    let trash = repo_trash(&root);
+    for name in ["a.txt", "b.txt", "c.txt"] {
+        let path = root.join(name);
+        std::fs::write(&path, [b'x'; 100]).unwrap();
+        trash.trash_path(&path, Reason::Manual, None, None, None).unwrap();
+        // Distinct trashed_at, so "oldest first" has one answer.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let left = || -> Vec<String> {
+        trash.entries().unwrap().into_iter().map(|e| e.original_name).collect()
+    };
+
+    let out = mf(&["-u", &repo, "trash", "prune", "-s", "250", "--dry-run"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("would remove") && out.stdout.contains("a.txt"), "{}", out.stdout);
+    assert!(!out.stdout.contains("b.txt"), "only the oldest is over budget: {}", out.stdout);
+    assert!(out.stdout.contains("1 entrie(s)") && out.stdout.contains("dry-run"), "{}", out.stdout);
+    assert_eq!(left().len(), 3, "a dry run removes nothing");
+
+    let out = mf(&["-u", &repo, "trash", "prune", "-s", "250"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("removed 1 entrie(s)"), "{}", out.stdout);
+    let mut names = left();
+    names.sort();
+    assert_eq!(names, ["b.txt", "c.txt"], "the oldest went first");
+
+    let out = mf(&["-u", &repo, "trash", "prune", "-d", "1h"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("removed 0 entrie(s)"), "nothing is an hour old: {}", out.stdout);
+    assert_eq!(left().len(), 2);
+
+    let out = mf(&["-u", &repo, "trash", "prune", "-d", "0s"]);
+    assert_ok(&out);
+    assert!(
+        out.stdout.contains("removed 2 entrie(s)"),
+        "everything is older than now: {}",
+        out.stdout
+    );
+    assert!(left().is_empty());
 }
 
 // `mf trash -f <file>` trashes a tracked file, recording its metarecord; it
@@ -5345,6 +5398,49 @@ fn test_slow_replay_runs_a_logged_query_again_and_shows_where_it_goes() {
     assert_eq!(out.stdout.lines().count(), 2, "{}", out.stdout);
 }
 
+// What `mf slow` says when it shows less than the log holds: a filter that
+// matched nothing is not an empty log, a window is named, a cut is announced —
+// and replay and clear refuse or stop rather than guess.
+#[test]
+fn test_slow_names_what_it_left_out() {
+    use metafolder_core::slowlog::{self, Entry};
+
+    let (repo, root) = init_repo("slow-left-out");
+    let dir = slowlog::slow_dir(&root.join(".metafolder").join("internal"));
+    // Logged long ago, and not queries.
+    for at in [1_757_426_600_000, 1_757_426_602_000] {
+        slowlog::Sink::new(&dir, "daemon").append(&Entry::new("daemon", "GET /x", at, 4820));
+    }
+
+    let out = mf(&["-u", &repo, "slow", "list", "--op", "query"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("No slow operation matches 'query'"), "{}", out.stdout);
+
+    let out = mf(&["-u", &repo, "slow", "list", "-d", "1h"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("Nothing has been slow in that window"), "{}", out.stdout);
+    let out = mf(&["-u", &repo, "slow", "list", "-d", "soon"]);
+    assert_eq!(out.code, 2, "an unparsable window is a usage error");
+
+    let out = mf(&["-u", &repo, "slow", "list", "--limit", "1"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.matches("GET /x").count(), 1, "{}", out.stdout);
+    assert!(out.stdout.contains("(more entries beyond --limit 1)"), "{}", out.stdout);
+
+    let out = mf(&["-u", &repo, "slow", "replay"]);
+    assert_eq!(out.code, 1, "{}", out.stdout);
+    assert!(out.stderr.contains("no query in the slow-operation log"), "{}", out.stderr);
+    let out = mf(&["-u", &repo, "slow", "replay", "--at", "1757426600000"]);
+    assert_eq!(out.code, 1, "{}", out.stdout);
+    assert!(out.stderr.contains("no logged query started at 1757426600000"), "{}", out.stderr);
+
+    let out = mf_full(&["-u", &repo, "slow", "clear"], Some("n\n"), &[], true);
+    assert_ok(&out);
+    assert!(out.stdout.contains("Cancelled"), "{}", out.stdout);
+    let out = mf(&["-u", &repo, "slow", "list", "--json"]);
+    assert_eq!(out.stdout.lines().count(), 2, "a cancelled clear keeps the log: {}", out.stdout);
+}
+
 // ── `mf log revert` (doc "Reverting a revision") ──────────────────────────────
 
 #[tokio::test(flavor = "current_thread")]
@@ -5821,6 +5917,24 @@ fn test_watch_activity_ranks_the_busy_subtree() {
     let reset = mf(&["-u", &repo, "watch", "activity", "--reset", "--json"]);
     assert_ok(&reset);
     assert!(since(&reset) > before, "{}", reset.stdout);
+    let reset = mf(&["-u", &repo, "watch", "activity", "--reset"]);
+    assert_ok(&reset);
+    assert_eq!(reset.stdout.trim(), "watch activity reset");
+}
+
+// Both selectors from the environment are refused like both flags: the CLI
+// will not pick one of two repositories for the user.
+#[test]
+fn test_both_repo_selectors_from_the_environment_are_refused() {
+    let (repo, _root) = init_repo("both-selectors");
+    let out = mf_full(
+        &["metarecord", "get"],
+        None,
+        &[("METAFOLDER_REPO", &repo), ("METAFOLDER_REPO_NAME", "both-selectors")],
+        true,
+    );
+    assert_eq!(out.code, 2, "stdout: {} stderr: {}", out.stdout, out.stderr);
+    assert!(out.stderr.contains("not both"), "{}", out.stderr);
 }
 
 // ── Undo and redo of a trashing (doc "Trash, undo and redo") ───────
