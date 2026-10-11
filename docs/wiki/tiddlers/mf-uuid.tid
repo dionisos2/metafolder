@@ -1,0 +1,10 @@
+title: mf uuid
+tags: [[CLI command]] [[File tracking]]
+kind: reference
+summary: Print the UUID of the metarecord standing for each path (the inverse of `mf path`); exit 1 if one has none
+
+The metarecord at a path, found and never created: `mf path` answers the other way. A
+path is taken as `mf watch check` takes it — an existing one is canonicalised and made
+relative to the repository's root, one gone from disk is read as repo-root-relative
+when it starts with `/` (an orphan's stale `mfr_path`). To create a path's metarecord:
+`mf metarecord add --path` ([[Recording a path]]).

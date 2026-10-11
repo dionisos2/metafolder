@@ -382,14 +382,26 @@ fn get_one(ctx: &Ctx, uuid: Uuid, fields: Option<&[String]>) -> Result<i32, CliE
     Ok(0)
 }
 
-pub fn create(ctx: &Ctx, specs: &[String], force: bool) -> Result<i32, CliError> {
+/// `mf metarecord add`: a new metarecord from field specs — the metarecord of
+/// an existing path with `--path` (doc "Recording a path").
+pub fn create(
+    ctx: &Ctx,
+    specs: &[String],
+    force: bool,
+    path: Option<&Path>,
+    parents: bool,
+) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let mut fields = Vec::with_capacity(specs.len());
     for spec in specs {
         let (name, value) = parse_spec(spec)?;
         fields.push(json!({"name": name, "value": value}));
     }
-    let body = json!({"fields": fields, "force": force});
+    let mut body = json!({"fields": fields, "force": force});
+    if let Some(path) = path {
+        body["path"] = json!(absolutize(path)?);
+        body["parents"] = json!(parents);
+    }
     let resp = ctx.client.post(&format!("{base}/metarecords"), &body)?;
     println!("{}", resp["uuid"].as_str().unwrap_or_default());
     Ok(0)
@@ -1163,14 +1175,6 @@ pub fn field_by_id_delete(ctx: &Ctx, id: i64, force: bool) -> Result<i32, CliErr
 
 // ── File tracking (doc "File tracking") ────────────────────────────────────────
 
-pub fn track(ctx: &Ctx, path: &Path) -> Result<i32, CliError> {
-    let base = ctx.repo_base()?;
-    let body = json!({"path": absolutize(path)?});
-    let resp = ctx.client.post(&format!("{base}/track"), &body)?;
-    println!("{}", resp["uuid"].as_str().unwrap_or_default());
-    Ok(0)
-}
-
 // ── Field extraction from a metarecord's `fields` JSON array ─────────────────
 
 /// A bool field's value.
@@ -1192,16 +1196,14 @@ pub fn order(
     dry_run: bool,
 ) -> Result<i32, CliError> {
     let repo = repo_id(ctx)?;
-    // Resolve the folder to its metarecord through the daemon (track is
-    // idempotent; it creates the metarecord if needed and always prints the
-    // uuid), so symlinks and `.`/`..` are handled exactly as the daemon sees
-    // them.
-    let abs = absolutize(folder)?;
-    let tracked = ctx.client.post(&format!("/repos/{repo}/track"), &json!({ "path": abs }))?;
-    let folder_uuid = tracked["uuid"]
-        .as_str()
-        .ok_or_else(|| CliError::Op(format!("cannot track {abs} (is it inside the repo root?)")))?
-        .to_string();
+    // The folder must be recorded: its children are numbered only if they
+    // are, and it carries `order_numbered` itself.
+    let folder_uuid = uuid_at(ctx, &absolutize(folder)?)?.ok_or_else(|| {
+        CliError::Op(format!(
+            "{}: no metarecord (record it with `mf metarecord add --path`, or reconcile)",
+            folder.display()
+        ))
+    })?;
 
     let outcome = metafolder_core::order::run(
         &ctx.client,
@@ -1485,6 +1487,37 @@ pub fn tag_list(ctx: &Ctx) -> Result<i32, CliError> {
         println!("{name}\t{p}\t{e}");
     }
     Ok(0)
+}
+
+/// The metarecord standing for a path argument (see [`path_arg_rel`]), if any:
+/// the exact-node equality on `mfr_path` (doc "Field aspects").
+fn uuid_at(ctx: &Ctx, raw: &str) -> Result<Option<String>, CliError> {
+    let base = ctx.repo_base()?;
+    let info = ctx.repo_info()?;
+    let root = info["root"]
+        .as_str()
+        .ok_or_else(|| CliError::Op("daemon did not report the repo root".into()))?;
+    let rel = path_arg_rel(Path::new(root), raw)?;
+    let query =
+        json!({"type": "eq", "field": "mfr_path", "value": {"type": "string", "value": rel}});
+    let resp = ctx.client.post(&format!("{base}/query"), &json!({"query": query, "limit": 1}))?;
+    Ok(resp["results"].as_array().and_then(|a| a.first()).and_then(Json::as_str).map(String::from))
+}
+
+/// `mf uuid <path>…`: the inverse of `mf path` — one UUID per line, exit 1
+/// when a path has no metarecord (named on stderr).
+pub fn uuid_of(ctx: &Ctx, paths: &[String]) -> Result<i32, CliError> {
+    let mut missing = 0;
+    for raw in paths {
+        match uuid_at(ctx, raw)? {
+            Some(uuid) => println!("{uuid}"),
+            None => {
+                missing += 1;
+                eprintln!("{raw}: no metarecord");
+            }
+        }
+    }
+    Ok(if missing > 0 { 1 } else { 0 })
 }
 
 /// Resolves a metarecord to its filesystem path via the daemon's tree-resolve
@@ -2238,11 +2271,11 @@ pub fn watch_status(ctx: &Ctx, raw_json: bool) -> Result<i32, CliError> {
 // ── Watch check (doc "Checking whether a path is watched") ────────────────────────────
 
 /// Repo-root-relative form (leading slash, `""` is the root) of a CLI path
-/// argument: an existing path is canonicalised and made relative to the
+/// argument (`mf watch check`, `mf uuid`): an existing path is canonicalised and made relative to the
 /// repository root; a leading-slash path that is gone from disk is taken as
 /// already repo-root-relative (an orphan's stale path). Anything else is a
 /// usage error.
-fn watch_check_rel(root: &Path, raw: &str) -> Result<String, CliError> {
+fn path_arg_rel(root: &Path, raw: &str) -> Result<String, CliError> {
     if let Ok(abs) = std::fs::canonicalize(raw) {
         let rel = repo_rel(root, &abs)?;
         return Ok(if rel.is_empty() { String::new() } else { format!("/{rel}") });
@@ -2336,7 +2369,7 @@ pub fn watch_check(ctx: &Ctx, paths: &[String], raw_json: bool) -> Result<i32, C
         .ok_or_else(|| CliError::Op("daemon did not report the repo root".into()))?;
     let rels = paths
         .iter()
-        .map(|raw| watch_check_rel(Path::new(root), raw))
+        .map(|raw| path_arg_rel(Path::new(root), raw))
         .collect::<Result<Vec<_>, _>>()?;
     let resp = ctx.client.request(
         "POST",
@@ -2390,7 +2423,7 @@ pub fn watch_activity(
             let root = info["root"]
                 .as_str()
                 .ok_or_else(|| CliError::Op("daemon did not report the repo root".into()))?;
-            watch_check_rel(Path::new(root), raw)?
+            path_arg_rel(Path::new(root), raw)?
         }
         None => String::new(),
     };

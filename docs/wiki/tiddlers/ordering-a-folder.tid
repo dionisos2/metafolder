@@ -14,7 +14,8 @@ mf -n music metarecord -q 'mfr_path -> "/albums/kind-of-blue"' get --sort order_
 them sensibly — an album's tracks, a series' seasons. Files and directories are numbered
 separately, into `order_file` and `order_dir`, so each kind sorts on its own. A child
 that already has a position is ''never overwritten'': your corrections survive a re-run.
-It works on tracked children — reconcile the folder first if some are missing. Then the
+It works on recorded children, in a recorded folder — reconcile the folder first if
+some are missing; a folder with no metarecord is refused. Then the
 folder itself gets `order_numbered = true` (once), so `order_numbered = true` finds the
 folders done and `order_numbered IS UNKNOWN` those still to do.
 

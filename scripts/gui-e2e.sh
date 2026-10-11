@@ -200,8 +200,8 @@ show_panel() {
     die "the $type panel never answered $command"
 }
 
-# uuid_of <abs path> — the metarecord tracking a path.
-uuid_of() { df_mf track "$1"; }
+# record <abs path> — create the metarecord of a path (its parent recorded), print it.
+record() { df_mf metarecord add --path "$1"; }
 
 # ignore_count <uuid> — how many mf_ignore rows the metarecord has.
 ignore_count() { df_mf metarecord -i "$1" field get mf_ignore 2>/dev/null | grep -c .; }
@@ -264,7 +264,7 @@ scenario_duplicates() {
     printf 'same bytes\n' >"$REPO_DIR/a.txt"
     printf 'same bytes\n' >"$REPO_DIR/b.txt"
     printf 'other\n' >"$REPO_DIR/c.txt"
-    for f in a b c; do df_mf track "$REPO_DIR/$f.txt" >/dev/null; done
+    for f in a b c; do record "$REPO_DIR/$f.txt" >/dev/null; done
 
     run mf:duplicate scan
     command_ok "duplicate scan: the command resolves"
@@ -276,7 +276,7 @@ scenario_duplicates() {
 scenario_orphans() {
     new_repo orphan
     printf 'x\n' >"$REPO_DIR/gone.txt"
-    df_mf track "$REPO_DIR/gone.txt" >/dev/null
+    record "$REPO_DIR/gone.txt" >/dev/null
     # Nothing watches this repository (the fixture turns mf_watch off), so the
     # deletion goes unrecorded: exactly an orphan.
     rm "$REPO_DIR/gone.txt"
@@ -303,7 +303,7 @@ scenario_orphans() {
 scenario_trash() {
     new_repo trash
     printf 'x\n' >"$REPO_DIR/f.txt"
-    df_mf track "$REPO_DIR/f.txt" >/dev/null
+    record "$REPO_DIR/f.txt" >/dev/null
     select_path "$REPO_DIR/f.txt"
 
     answering no metarecord:trash
@@ -347,8 +347,8 @@ scenario_ignore() {
     mkdir -p "$REPO_DIR/kept" "$REPO_DIR/fresh"
     local root_count kept fresh
     root_count=$(ignore_count "$DF_ROOT")
-    kept=$(uuid_of "$REPO_DIR/kept")
-    fresh=$(uuid_of "$REPO_DIR/fresh")
+    kept=$(record "$REPO_DIR/kept")
+    fresh=$(record "$REPO_DIR/fresh")
 
     select_path "$REPO_DIR"
     run ignore:list
@@ -388,7 +388,7 @@ scenario_sync() {
     new_repo sync-a
     local a=$DF_REPO intents="$WORK/sync-intents.toml"
     printf 'world\n' >"$REPO_DIR/hello.txt"
-    df_mf track "$REPO_DIR/hello.txt" >/dev/null
+    record "$REPO_DIR/hello.txt" >/dev/null
     printf "[[intents]]\nrepo = '%s'\nquery = 'mfr_type = \"file\"'\n" "$a" >"$intents"
 
     # The pair is named, not left to the toolbar's defaults: B would be

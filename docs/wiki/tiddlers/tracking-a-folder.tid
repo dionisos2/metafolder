@@ -1,7 +1,7 @@
 title: Tracking a folder
 tags: [[File tracking]]
 kind: guide
-summary: Set mf_watch on a directory, run a reconcile for what is already there, and the watcher follows it from then on; mf track records a single path.
+summary: Set mf_watch on a directory, run a reconcile for what is already there, and the watcher follows it from then on; mf metarecord add --path records a path first, to set its ignores before watching.
 
 Tracking a folder is two steps: say it is watched, then bring in what it already holds.
 
@@ -21,18 +21,22 @@ hidden entries are left out ([[Ignore presets]]); check what a path would do wit
 In the GUI, select the directory and run `metarecord:reconcile watch`: it sets
 `mf_watch = true` and reconciles that subtree in one gesture ([[Scoped reconcile]]).
 
-!! Recording one path without watching
+!! Deciding the scope before watching
 
 ```
-mf -n music track ./albums/new.flac      # prints its uuid
+mf -n music metarecord add --path ./albums          # prints its uuid
+mf -n music ignore add node -d ./albums             # its mf_ignore, first
+mf -n music metarecord -i <uuid> field set mf_watch:bool=true
+mf -n music reconcile
 ```
 
-`mf track` creates the metarecord of a single file or directory — and those of its
-missing parent directories — with `mf_watch = false`, so it is recorded but not
-followed; it ignores eligibility, deciding the watch scope is left to you. It is
-idempotent: a path already tracked prints its existing uuid. A path outside the
-repository is refused (exit code 1). The [[file manager|file-manager panel]]'s ''Add to DB'' button
-(`file-manager:track`) does the same for the entry under its cursor.
+`mf metarecord add --path` records one file or directory with `mf_watch = false`:
+recorded, not followed, so its `mf_ignore` can be set before anything is watched
+([[Recording a path]]). It ignores eligibility — deciding the watch scope is left to
+you. It refuses a path that already has its metarecord (`mf uuid` finds it), and one
+whose parent directories have none unless `--parents` asks for them. A path outside the
+repository is refused (exit code 1). The [[file manager|file-manager panel]]'s ''Add to
+DB'' button (`file-manager:record`) does the same for the entry under its cursor.
 
 !! Stopping
 

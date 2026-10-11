@@ -17,7 +17,7 @@ the questions per file, and each file lands where it belongs.
 
 Assumptions: the metafolder GUI is running with a repository in the focused
 workspace, and SORT_DIR is inside that repository's root (so files can be
-tracked). Moving a file OUT of the repo makes the watcher blank its mfr_path;
+recorded). Moving a file OUT of the repo makes the watcher blank its mfr_path;
 the metarecord (and the tags you set) is kept — only the file becomes
 untracked at its new home. Adapt the paths/rules below to your own tree.
 

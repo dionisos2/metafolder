@@ -22,14 +22,14 @@
 #
 # The argument is optional: a missing one is asked in the GUI with completion
 # over the repository's tracked directories. A given one is a FILESYSTEM path
-# (tracked on the fly if the folder has no metarecord yet, so `mf_watch` has
+# (recorded on the fly if the folder has no metarecord yet, so `mf_watch` has
 # somewhere to live).
 #
 # WHY NOT A QUERY. The other shipped scripts take their scope as a query
 # (doc "A query is the scope"); this one deliberately does not. A query
 # matches metarecords that already exist, and the folder to stop watching is
 # very often one that has none yet — which is exactly why the argument is a
-# filesystem path this script tracks on the fly. `mf_watch` is also a
+# filesystem path this script records on the fly. `mf_watch` is also a
 # per-directory field inherited down the tree, so a folder, not a set, is the
 # shape of the thing being said.
 #
@@ -46,12 +46,15 @@ FOLDER=${1:-}
 
 mf_gui_bind_repo
 
-# Folder: a command-line argument is a filesystem path (tracked on the fly); a
+# Folder: a command-line argument is a filesystem path (recorded on the fly,
+# with its parent directories if they have no metarecord either); a
 # prompted value is an in-repo tree-path chosen from the folder completion.
 if [ -n "$FOLDER" ]; then
     FOLDER_ABS=$(readlink -f -- "$FOLDER") || mf_die "no such folder: $FOLDER"
     [ -d "$FOLDER_ABS" ] || mf_die "not a directory: $FOLDER_ABS"
-    FOLDER_UUID=$(mf track "$FOLDER_ABS") || mf_die "cannot track $FOLDER_ABS (inside the repo root?)"
+    FOLDER_UUID=$(mf uuid "$FOLDER_ABS" 2>/dev/null) \
+        || FOLDER_UUID=$(mf metarecord add --parents --path "$FOLDER_ABS") \
+        || mf_die "cannot record $FOLDER_ABS (inside the repo root?)"
 else
     FOLDER_TP=$(mf_gui_prompt_folder "Folder to stop watching: ") || mf_die "cancelled"
     [ -n "$FOLDER_TP" ] || mf_die "empty folder"

@@ -182,8 +182,15 @@ enum Command {
         #[arg(long = "poll-interval")]
         poll_interval: Option<u64>,
     },
-    /// Create the metarecord for a single path and print its UUID
-    Track { path: PathBuf },
+    /// Print the UUID of the metarecord standing for each path (the inverse
+    /// of `mf path`); exit 1 if one has none
+    Uuid {
+        /// Filesystem paths (an existing path is canonicalised and made
+        /// repo-root-relative; a leading-slash path gone from disk is taken as
+        /// repo-root-relative — an orphan's stale path)
+        #[arg(required = true)]
+        paths: Vec<String>,
+    },
     /// Print the filesystem path of a metarecord (walks the mfr_path chain)
     Path {
         uuid: String,
@@ -602,11 +609,21 @@ enum MetarecordVerb {
     /// Create a metarecord with the given fields and print its UUID (no selector)
     Add {
         /// Field spec name:type[=value]; repeatable
-        #[arg(required = true)]
+        #[arg(required_unless_present = "path")]
         specs: Vec<String>,
         /// Required to write mfr_* fields
         #[arg(long, short = 'f')]
         force: bool,
+        /// The metarecord of this existing file or directory: its mfr_* fields
+        /// are read from disk, and it gets mf_watch = false (recorded, not
+        /// followed) unless a spec sets mf_watch. Refused if the path already
+        /// has one (`mf uuid` finds it)
+        #[arg(long, value_name = "PATH")]
+        path: Option<PathBuf>,
+        /// With --path: also create the metarecords of the parent directories
+        /// that have none (refused otherwise, listing them)
+        #[arg(long, requires = "path")]
+        parents: bool,
     },
     /// Replace the ENTIRE field set of the selected metarecord (needs -i, force)
     Set {
@@ -1347,7 +1364,7 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
             no_wait,
             poll_interval.unwrap_or(ctx.reconcile_poll_interval_ms),
         ),
-        Command::Track { path } => commands::track(ctx, &path),
+        Command::Uuid { paths } => commands::uuid_of(ctx, &paths),
         Command::Path { uuid, relative } => commands::path(ctx, &uuid, relative),
         Command::Order { path, meta, max_gap, dry_run } => {
             commands::order(ctx, &path, &meta, max_gap, dry_run)
@@ -1453,13 +1470,13 @@ fn dispatch_metarecord(
                 resolve_tree.as_deref(),
             )
         }
-        MetarecordVerb::Add { specs, force } => {
+        MetarecordVerb::Add { specs, force, path, parents } => {
             if selector.is_some() {
                 return Err(Usage(
                     "mf metarecord add creates a new metarecord and takes no selector".into(),
                 ));
             }
-            commands::create(ctx, &specs, force)
+            commands::create(ctx, &specs, force, path.as_deref(), parents)
         }
         MetarecordVerb::Set { specs, force } => match selector {
             Some(uuid) if by_id => commands::metarecord_set(ctx, &uuid, &specs, force),

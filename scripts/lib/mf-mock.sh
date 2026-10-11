@@ -257,7 +257,9 @@ case "$sig" in
     "metarecord "*" set "*|"metarecord add "*|"metarecord "*" delete") exit 0 ;;
     # Reads a test did not stub: an empty result is a legitimate answer.
     "metarecord "*" get"*|"metarecord get"*|"field "*|"path "*) exit 0 ;;
-    "track "*|"order "*|"orphan "*|"reconcile"*) exit 0 ;;
+    "order "*|"orphan "*|"reconcile"*) exit 0 ;;
+    # A path nobody stubbed has no metarecord, as the real `mf uuid` says.
+    "uuid "*) exit 1 ;;
     # The GUI scripting API, whose output every caller discards.
     "gui message"*|"gui progress"*|"gui view "*|"gui layout "*) exit 0 ;;
     "gui workspace "*|"gui repo"*|"gui query"*|"gui selected"*|"gui status"*) exit 0 ;;

@@ -31,7 +31,7 @@ setup_common() {
     mock_respond 'gui layout left'   'saved-left'
     mock_respond 'gui layout right'  'saved-right'
     mock_respond 'gui workspace new*' 'ws-1'
-    mock_respond 'track *'           'rec-song'
+    mock_respond 'metarecord add --parents --path *' 'rec-song'
     # The nested gui-tag-classify.sh now takes a QUERY: a bare uuid is one
     # (doc "Query DSL grammar", the uuid-atom bullet), so the example's `classify <uuid>`
     # call still names exactly that record — through a query now.
@@ -53,7 +53,7 @@ printf 'x' >"$sort_dir/song.mp3"
 mock_input y y n n n
 out=$(DEST_ROOT="$dest_root" bash "$SCRIPT" "$sort_dir"); code=$?
 assert "jazz: exits 0" [ "$code" -eq 0 ]
-assert "jazz: tracks the file" [ "$(mock_count 'track *')" -ge 1 ]
+assert "jazz: records the file" [ "$(mock_count 'metarecord add --parents --path *')" -ge 1 ]
 assert "jazz: nested classify tagged the record" \
     [ "$(mock_count 'tag -i rec-song add musique/jazz')" -eq 1 ]
 assert "jazz: file left the sort dir" [ ! -e "$sort_dir/song.mp3" ]
@@ -95,7 +95,7 @@ err=$(DEST_ROOT="$work/x" bash "$SCRIPT" "$work/does-not-exist" 2>&1 >/dev/null)
 assert "missing-dir: non-zero exit" [ "$code" -ne 0 ]
 assert_contains "missing-dir: explains the error" "$err" 'not a directory'
 
-# ── Case 4: the .metafolder entry is skipped, not tracked/moved ──────────────
+# ── Case 4: the .metafolder entry is skipped, not recorded/moved ─────────────
 mock_reset
 setup_common
 sort_dir="$work/trier4"; dest_root="$work/dest4"
@@ -104,6 +104,7 @@ mock_input q n n n
 DEST_ROOT="$dest_root" bash "$SCRIPT" "$sort_dir" >/dev/null; code=$?
 assert "skip-mf: exits 0" [ "$code" -eq 0 ]
 assert "skip-mf: .metafolder untouched" [ -d "$sort_dir/.metafolder" ]
-assert "skip-mf: .metafolder never tracked" [ "$(mock_count 'track *')" -eq 0 ]
+assert "skip-mf: .metafolder never recorded" [ "$(mock_count 'metarecord add *')" -eq 0 ]
+assert "skip-mf: .metafolder never looked up" [ "$(mock_count 'uuid *')" -eq 0 ]
 
 assert_summary

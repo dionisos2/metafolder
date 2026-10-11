@@ -10,7 +10,7 @@
 #
 # Assumptions: the metafolder GUI is running with a repository in the focused
 # workspace, and SORT_DIR is inside that repository's root (so files can be
-# tracked). Moving a file OUT of the repo makes the watcher blank its mfr_path;
+# recorded). Moving a file OUT of the repo makes the watcher blank its mfr_path;
 # the metarecord (and the tags you set) is kept — only the file becomes
 # untracked at its new home. Adapt the paths/rules below to your own tree.
 #
@@ -35,9 +35,11 @@ mf_gui_bind_repo
 # nowhere else — the trap that posts it had never been installed.
 mf_gui_session_open metarecord-detail
 
-# The metarecord uuid of a path. `mf track` is idempotent: it creates the
-# metarecord if needed and always prints the uuid (existing or new).
-ensure_metarecord() { mf track "$1"; }
+# The metarecord uuid of a path: the existing one, or a new one (with the
+# metarecords of its parent directories, if they have none).
+ensure_metarecord() {
+    mf uuid "$1" 2>/dev/null || mf metarecord add --parents --path "$1"
+}
 
 # ask "<question>" -> prints y | n | q  ("escape" too, when the question could
 # not be answered at all: a timeout, a closed GUI). Anything but y/n stops.

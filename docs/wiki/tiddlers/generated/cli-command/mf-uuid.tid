@@ -1,0 +1,20 @@
+title: $:/mf/gen/CLI command/mf uuid
+catalog: CLI command
+target: mf uuid
+summary: Print the UUID of the metarecord standing for each path (the inverse of `mf path`); exit 1 if one has none
+
+!! Reference
+
+```
+Print the UUID of the metarecord standing for each path (the inverse of `mf path`); exit 1 if one has none
+
+Usage: mf uuid <PATHS>...
+
+Arguments:
+  <PATHS>...
+          Filesystem paths (an existing path is canonicalised and made repo-root-relative; a leading-slash path gone from disk is taken as repo-root-relative — an orphan's stale path)
+
+Options:
+  -h, --help
+          Print help
+```

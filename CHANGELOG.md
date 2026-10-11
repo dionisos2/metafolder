@@ -135,6 +135,15 @@ than breaking them.
     `mf_watch = true` no longer reads as unwatched.
 
 ### Changed
+- **`mf track` is gone: `mf metarecord add --path <path> [--parents]`** creates a
+  path's metarecord, with any field specs beside it
+  (`mf metarecord add --path ./x.flac rating:int=5`). It refuses a path that
+  already has one (`mf track` quietly answered the existing uuid) and parent
+  directories without one unless `--parents` (`mf track` created them with
+  `mf_watch = false`, cutting their subtree out of a watched area). The new
+  `mf uuid <path>…` is the lookup, `mf path`'s inverse. `mf order` refuses a
+  folder with no metarecord instead of creating it; the shipped scripts that
+  recorded a path on the fly look it up first (doc "Recording a path").
 - **GUI: commands open a panel type `here`, in the `other` slot or in a `new`
   workspace** (doc "Panel slots and layout"). `panel:open <target> <type>`
   replaces `panel:set type <type>` (now `panel:open here <type>`) and

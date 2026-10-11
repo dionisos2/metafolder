@@ -8,15 +8,21 @@ summary: Create a metarecord with the given fields and print its UUID (no select
 ```
 Create a metarecord with the given fields and print its UUID (no selector)
 
-Usage: mf metarecord add [OPTIONS] <SPECS>...
+Usage: mf metarecord add [OPTIONS] [SPECS]...
 
 Arguments:
-  <SPECS>...
+  [SPECS]...
           Field spec name:type[=value]; repeatable
 
 Options:
   -f, --force
           Required to write mfr_* fields
+
+      --path <PATH>
+          The metarecord of this existing file or directory: its mfr_* fields are read from disk, and it gets mf_watch = false (recorded, not followed) unless a spec sets mf_watch. Refused if the path already has one (`mf uuid` finds it)
+
+      --parents
+          With --path: also create the metarecords of the parent directories that have none (refused otherwise, listing them)
 
   -h, --help
           Print help

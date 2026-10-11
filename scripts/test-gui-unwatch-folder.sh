@@ -24,7 +24,7 @@ mkdir -p "$WORKDIR/top"
 # "$WORKDIR/top" → dir-top → tree path /top.
 setup_top() {
     mock_respond 'gui repo'                 'repo-1'
-    mock_respond "track $WORKDIR/top"       'dir-top'
+    mock_respond "uuid $WORKDIR/top"        'dir-top'
     mock_respond 'path --relative dir-top'  '/top'
 }
 
@@ -50,6 +50,20 @@ assert_contains "happy: reports the count" "$out" '3'
 order=$(mock_calls_matching 'metarecord *' | grep -n 'mf_watch:bool=false\|delete --force')
 assert_contains "happy: mf_watch is written before the delete" \
     "$(printf '%s' "$order" | head -1)" 'mf_watch:bool=false'
+
+# ── Case 1b: a folder with no metarecord yet is recorded first ───────────────
+mock_reset
+mock_respond 'gui repo'                                      'repo-1'
+mock_respond "metarecord add --parents --path $WORKDIR/top"  'dir-top'
+mock_respond 'path --relative dir-top'                       '/top'
+mock_respond 'metarecord -q mfr_path ->* "/top" get'         ''
+out=$(bash "$SCRIPT" "$WORKDIR/top"); code=$?
+assert "unrecorded: exits 0" [ "$code" -eq 0 ]
+assert "unrecorded: looked up first" [ "$(mock_count "uuid $WORKDIR/top")" -eq 1 ]
+assert "unrecorded: then recorded, parents included" \
+    [ "$(mock_count "metarecord add --parents --path $WORKDIR/top")" -eq 1 ]
+assert "unrecorded: mf_watch set to false on it" \
+    [ "$(mock_count 'metarecord -i dir-top field set mf_watch:bool=false')" -eq 1 ]
 
 # ── Case 2: the confirmation is declined — nothing is touched ────────────────
 mock_reset
@@ -102,8 +116,8 @@ bash "$SCRIPT" >/dev/null; code=$?
 assert "prompt: exits 0" [ "$code" -eq 0 ]
 assert "prompt: resolves the prompted path to its uuid" \
     [ "$(mock_count 'metarecord -q mfr_path = "/top" get')" -eq 1 ]
-assert "prompt: never tracks a path it did not get from the filesystem" \
-    [ "$(mock_count 'track *')" -eq 0 ]
+assert "prompt: never records a path it did not get from the filesystem" \
+    [ "$(mock_count 'metarecord add *')" -eq 0 ]
 assert "prompt: deletes the prompted subtree" \
     [ "$(mock_count 'metarecord -q mfr_path ->* "/top" delete --force')" -eq 1 ]
 

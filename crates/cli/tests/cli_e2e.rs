@@ -1218,29 +1218,101 @@ fn test_query_bad_sort_is_usage_error() {
 
 // ── File tracking ─────────────────────────────────────────────────────────────
 
+/// `metarecord add --path` records one path, beside the given fields, and
+/// refuses a path that already has its metarecord (doc "Recording a path").
 #[test]
-fn test_track_creates_entry_and_is_idempotent() {
-    let (repo, root) = init_repo("track");
-    std::fs::create_dir_all(root.join("sub")).unwrap();
-    std::fs::write(root.join("sub/file.txt"), b"hello").unwrap();
-    let path = root.join("sub/file.txt");
+fn test_metarecord_add_path_records_a_path_once() {
+    let (repo, root) = init_repo("addpath");
+    std::fs::write(root.join("file.txt"), b"hello").unwrap();
+    let path = root.join("file.txt");
+    let path = path.to_str().unwrap();
 
-    let out = mf(&["-u", &repo, "track", path.to_str().unwrap()]);
+    let out = mf(&["-u", &repo, "metarecord", "add", "--path", path, "rating:int=3"]);
     assert_ok(&out);
     let uuid = out.stdout.trim().to_string();
-    assert!(is_hex_uuid(&uuid));
+    assert!(is_hex_uuid(&uuid), "stdout: {}", out.stdout);
+    let field = |name: &str| {
+        let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "get", name]);
+        assert_ok(&out);
+        out.stdout.trim().to_string()
+    };
+    assert_eq!(field("rating"), "3");
+    assert_eq!(field("mf_watch"), "false", "recorded, not followed");
+    assert_eq!(field("mfr_size"), "5");
 
-    // Already tracked → idempotent: returns the existing uuid (POST /track is
-    // idempotent, doc "Tracking a folder").
-    let out = mf(&["-u", &repo, "track", path.to_str().unwrap()]);
-    assert_ok(&out);
-    assert_eq!(out.stdout.trim(), uuid, "re-track returns the existing uuid");
+    // Adding is not finding: a second add is refused and names the first.
+    let out = mf(&["-u", &repo, "metarecord", "add", "--path", path]);
+    assert_eq!(out.code, 1, "stdout: {}", out.stdout);
+    assert!(out.stderr.contains("already has a metarecord"), "stderr: {}", out.stderr);
+    assert!(out.stderr.contains(&uuid), "stderr: {}", out.stderr);
 
     // Outside the repository root → operation error.
-    let outside = temp_dir("track_outside");
+    let outside = temp_dir("addpath_outside");
     std::fs::write(outside.join("f.txt"), b"x").unwrap();
-    let out = mf(&["-u", &repo, "track", outside.join("f.txt").to_str().unwrap()]);
+    let f = outside.join("f.txt");
+    let out = mf(&["-u", &repo, "metarecord", "add", "--path", f.to_str().unwrap()]);
     assert_eq!(out.code, 1, "stderr: {}", out.stderr);
+
+    // --parents needs --path; without --path, specs are required.
+    assert_eq!(mf(&["-u", &repo, "metarecord", "add", "--parents", "a:int=1"]).code, 2);
+    assert_eq!(mf(&["-u", &repo, "metarecord", "add"]).code, 2);
+}
+
+/// A path whose parent directories have no metarecord is refused with their
+/// list, until `--parents` asks for them.
+#[test]
+fn test_metarecord_add_path_lists_missing_parents() {
+    let (repo, root) = init_repo("addpath_parents");
+    std::fs::create_dir_all(root.join("docs/notes")).unwrap();
+    std::fs::write(root.join("docs/notes/todo.txt"), b"todo").unwrap();
+    let path = root.join("docs/notes/todo.txt");
+    let path = path.to_str().unwrap();
+
+    let out = mf(&["-u", &repo, "metarecord", "add", "--path", path]);
+    assert_eq!(out.code, 1, "stdout: {}", out.stdout);
+    assert!(out.stderr.contains("/docs, /docs/notes"), "stderr: {}", out.stderr);
+    assert!(out.stderr.contains("--parents"), "stderr: {}", out.stderr);
+
+    let out = mf(&["-u", &repo, "metarecord", "add", "--parents", "--path", path]);
+    assert_ok(&out);
+    let uuid = out.stdout.trim();
+    let notes = query_one(&repo, r#"mfr_path = "/docs/notes""#);
+    let out = mf(&["-u", &repo, "metarecord", "-i", &notes, "field", "get", "mf_watch"]);
+    assert_eq!(out.stdout.trim(), "", "a created parent inherits mf_watch");
+    assert_eq!(query_one(&repo, r#"mfr_path = "/docs/notes/todo.txt""#), uuid);
+}
+
+/// `mf uuid <path>` is `mf path`'s inverse: the metarecord standing for a path.
+#[test]
+fn test_uuid_finds_the_metarecord_at_a_path() {
+    let (repo, root) = init_repo("uuidof");
+    std::fs::create_dir_all(root.join("dir")).unwrap();
+    std::fs::write(root.join("dir/a.txt"), b"a").unwrap();
+    let a = root.join("dir/a.txt");
+    let a = a.to_str().unwrap();
+
+    let out = mf(&["-u", &repo, "uuid", a]);
+    assert_eq!(out.code, 1, "an unrecorded path: stdout {}", out.stdout);
+    assert!(out.stderr.contains("no metarecord"), "stderr: {}", out.stderr);
+
+    let made = mf(&["-u", &repo, "metarecord", "add", "--parents", "--path", a]);
+    assert_ok(&made);
+    let out = mf(&["-u", &repo, "uuid", a]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), made.stdout.trim());
+
+    // The root is a path like any other; a path gone from disk is taken as
+    // repo-root-relative when it starts with '/' (a stale mfr_path).
+    let out = mf(&["-u", &repo, "uuid", root.to_str().unwrap()]);
+    assert_ok(&out);
+    let out = mf(&["-u", &repo, "path", "--relative", out.stdout.trim()]);
+    assert_eq!(out.stdout.trim(), "/", "the root's own metarecord: {}", out.stdout);
+    std::fs::remove_file(root.join("dir/a.txt")).unwrap();
+    let out = mf(&["-u", &repo, "uuid", "/dir/a.txt"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), made.stdout.trim());
+    let out = mf(&["-u", &repo, "uuid", "not/there"]);
+    assert_eq!(out.code, 2, "stderr: {}", out.stderr);
 }
 
 #[test]
@@ -1407,7 +1479,7 @@ fn test_reconcile_single_entry() {
     std::fs::create_dir_all(root.join("dir")).unwrap();
     std::fs::write(root.join("dir/inside.txt"), b"in").unwrap();
 
-    let out = mf(&["-u", &repo, "track", root.join("dir").to_str().unwrap()]);
+    let out = mf(&["-u", &repo, "metarecord", "add", "--path", root.join("dir").to_str().unwrap()]);
     assert_ok(&out);
     let dir_uuid = out.stdout.trim().to_string();
 
@@ -1561,7 +1633,15 @@ fn test_path_resolves_tracked_file() {
     std::fs::create_dir_all(root.join("sub")).unwrap();
     std::fs::write(root.join("sub/file.txt"), b"hello").unwrap();
 
-    let out = mf(&["-u", &repo, "track", root.join("sub/file.txt").to_str().unwrap()]);
+    let out = mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "add",
+        "--parents",
+        "--path",
+        root.join("sub/file.txt").to_str().unwrap(),
+    ]);
     assert_ok(&out);
     let uuid = out.stdout.trim().to_string();
 
@@ -2035,7 +2115,10 @@ fn test_trash_add_moves_a_tracked_file() {
     let (repo, root) = init_repo("trashadd");
     let file = root.join("doc.txt");
     std::fs::write(&file, b"data").unwrap();
-    let uuid = mf(&["-u", &repo, "track", file.to_str().unwrap()]).stdout.trim().to_string();
+    let uuid = mf(&["-u", &repo, "metarecord", "add", "--path", file.to_str().unwrap()])
+        .stdout
+        .trim()
+        .to_string();
     assert!(is_hex_uuid(&uuid));
 
     let out = mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]);
@@ -2077,7 +2160,10 @@ fn test_orphan_list_and_clear() {
     let (repo, root) = init_repo("orphan");
     let file = root.join("gone.txt");
     std::fs::write(&file, b"data").unwrap();
-    let uuid = mf(&["-u", &repo, "track", file.to_str().unwrap()]).stdout.trim().to_string();
+    let uuid = mf(&["-u", &repo, "metarecord", "add", "--path", file.to_str().unwrap()])
+        .stdout
+        .trim()
+        .to_string();
     assert!(is_hex_uuid(&uuid));
 
     // With the file present, nothing is orphaned.
@@ -2126,7 +2212,10 @@ fn test_orphan_detect_marks_and_unmarks() {
     let (repo, root) = init_repo("orphan-detect");
     let file = root.join("gone.txt");
     std::fs::write(&file, b"data").unwrap();
-    let uuid = mf(&["-u", &repo, "track", file.to_str().unwrap()]).stdout.trim().to_string();
+    let uuid = mf(&["-u", &repo, "metarecord", "add", "--path", file.to_str().unwrap()])
+        .stdout
+        .trim()
+        .to_string();
 
     // Nothing is gone yet: the marker is not written.
     let out = mf(&["-u", &repo, "orphan", "detect"]);
@@ -2176,7 +2265,10 @@ fn test_trash_add_moves_a_directory() {
     std::fs::create_dir_all(dir.join("nested")).unwrap();
     std::fs::write(dir.join("a.txt"), b"aaa").unwrap();
     std::fs::write(dir.join("nested/b.txt"), b"bb").unwrap();
-    let uuid = mf(&["-u", &repo, "track", dir.to_str().unwrap()]).stdout.trim().to_string();
+    let uuid = mf(&["-u", &repo, "metarecord", "add", "--path", dir.to_str().unwrap()])
+        .stdout
+        .trim()
+        .to_string();
     assert!(is_hex_uuid(&uuid));
 
     let out = mf(&["-u", &repo, "trash", "-f", dir.to_str().unwrap()]);
@@ -2208,11 +2300,19 @@ fn test_trash_restore_relinks_a_directory_subtree() {
     let dir = root.join("folder");
     std::fs::create_dir_all(dir.join("nested")).unwrap();
     std::fs::write(dir.join("nested/b.txt"), b"bb").unwrap();
-    // Track the whole subtree (folder, nested, b.txt): track ensures parents.
-    let b_uuid = mf(&["-u", &repo, "track", dir.join("nested/b.txt").to_str().unwrap()])
-        .stdout
-        .trim()
-        .to_string();
+    // Record the whole subtree (folder, nested, b.txt): --parents creates them.
+    let b_uuid = mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "add",
+        "--parents",
+        "--path",
+        dir.join("nested/b.txt").to_str().unwrap(),
+    ])
+    .stdout
+    .trim()
+    .to_string();
     assert!(is_hex_uuid(&b_uuid));
 
     // Trash the directory (captures the subtree), then orphan every subtree
@@ -2267,7 +2367,10 @@ fn test_trash_restore_skips_a_taken_tree_position() {
     let (repo, root) = init_repo("trashtaken");
     let file = root.join("A.txt");
     std::fs::write(&file, b"data").unwrap();
-    let m1 = mf(&["-u", &repo, "track", file.to_str().unwrap()]).stdout.trim().to_string();
+    let m1 = mf(&["-u", &repo, "metarecord", "add", "--path", file.to_str().unwrap()])
+        .stdout
+        .trim()
+        .to_string();
     assert_ok(&mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]));
 
     // The original's metarecord went with the bytes. Let a *different* one
@@ -2429,8 +2532,18 @@ fn test_trash_restore_tolerates_an_unavailable_ancestor() {
     let dir = root.join("A");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("B.txt"), b"b").unwrap();
-    let b =
-        mf(&["-u", &repo, "track", dir.join("B.txt").to_str().unwrap()]).stdout.trim().to_string();
+    let b = mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "add",
+        "--parents",
+        "--path",
+        dir.join("B.txt").to_str().unwrap(),
+    ])
+    .stdout
+    .trim()
+    .to_string();
     let a = mf(&["-u", &repo, "metarecord", "-q", "mfr_path:value = \"A\"", "get"])
         .stdout
         .trim()
@@ -2461,14 +2574,30 @@ fn test_trash_and_restore_a_directory_round_trips_the_whole_subtree() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("one.txt"), b"1").unwrap();
     std::fs::write(dir.join("two.txt"), b"2").unwrap();
-    let one = mf(&["-u", &repo, "track", dir.join("one.txt").to_str().unwrap()])
-        .stdout
-        .trim()
-        .to_string();
-    let two = mf(&["-u", &repo, "track", dir.join("two.txt").to_str().unwrap()])
-        .stdout
-        .trim()
-        .to_string();
+    let one = mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "add",
+        "--parents",
+        "--path",
+        dir.join("one.txt").to_str().unwrap(),
+    ])
+    .stdout
+    .trim()
+    .to_string();
+    let two = mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "add",
+        "--parents",
+        "--path",
+        dir.join("two.txt").to_str().unwrap(),
+    ])
+    .stdout
+    .trim()
+    .to_string();
     let d = mf(&["-u", &repo, "metarecord", "-q", "mfr_path:value = \"D\"", "get"])
         .stdout
         .trim()
@@ -2504,7 +2633,10 @@ fn test_revert_of_a_trashing_brings_the_file_back() {
     let (repo, root) = init_repo("trashrevert");
     let file = root.join("r.txt");
     std::fs::write(&file, b"data").unwrap();
-    let uuid = mf(&["-u", &repo, "track", file.to_str().unwrap()]).stdout.trim().to_string();
+    let uuid = mf(&["-u", &repo, "metarecord", "add", "--path", file.to_str().unwrap()])
+        .stdout
+        .trim()
+        .to_string();
     assert!(is_hex_uuid(&uuid));
 
     assert_ok(&mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]));
@@ -2528,9 +2660,19 @@ fn test_trash_restore_relinks_ancestors_of_a_nested_file() {
     let dir = root.join("A");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("B.txt"), b"b").unwrap();
-    // Track B (ensures the A and B metarecords).
-    let b_uuid =
-        mf(&["-u", &repo, "track", dir.join("B.txt").to_str().unwrap()]).stdout.trim().to_string();
+    // Record B (--parents creates the A metarecord).
+    let b_uuid = mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "add",
+        "--parents",
+        "--path",
+        dir.join("B.txt").to_str().unwrap(),
+    ])
+    .stdout
+    .trim()
+    .to_string();
     let a_uuid = mf(&["-u", &repo, "metarecord", "-q", "mfr_path:value = \"A\"", "get"])
         .stdout
         .trim()
@@ -2569,7 +2711,15 @@ fn test_trash_restore_merges_a_directory_into_an_existing_one() {
     let dir = root.join("A");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("c.txt"), b"c").unwrap();
-    assert_ok(&mf(&["-u", &repo, "track", dir.join("c.txt").to_str().unwrap()]));
+    assert_ok(&mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "add",
+        "--parents",
+        "--path",
+        dir.join("c.txt").to_str().unwrap(),
+    ]));
 
     assert_ok(&mf(&["-u", &repo, "trash", "-f", dir.to_str().unwrap()]));
     assert!(!dir.exists(), "the directory moved into the trash");
@@ -2593,7 +2743,11 @@ fn test_trash_restore_relinks_the_metarecord() {
     std::fs::create_dir_all(root.join("sub")).unwrap();
     let file = root.join("sub/file.txt");
     std::fs::write(&file, b"data").unwrap();
-    let uuid = mf(&["-u", &repo, "track", file.to_str().unwrap()]).stdout.trim().to_string();
+    let uuid =
+        mf(&["-u", &repo, "metarecord", "add", "--parents", "--path", file.to_str().unwrap()])
+            .stdout
+            .trim()
+            .to_string();
     assert!(is_hex_uuid(&uuid));
 
     assert_ok(&mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]));
@@ -2624,7 +2778,10 @@ fn test_trash_restore_relinks_a_top_level_file() {
     let (repo, root) = init_repo("trashrelinktop");
     let file = root.join("top.txt");
     std::fs::write(&file, b"data").unwrap();
-    let uuid = mf(&["-u", &repo, "track", file.to_str().unwrap()]).stdout.trim().to_string();
+    let uuid = mf(&["-u", &repo, "metarecord", "add", "--path", file.to_str().unwrap()])
+        .stdout
+        .trim()
+        .to_string();
     assert!(is_hex_uuid(&uuid));
 
     // The filesystem root metarecord (the only directory) is the expected parent.
@@ -2678,7 +2835,10 @@ fn test_trash_add_records_the_metarecord_version() {
     let (repo, root) = init_repo("trashver");
     let file = root.join("doc.txt");
     std::fs::write(&file, b"data").unwrap();
-    let uuid = mf(&["-u", &repo, "track", file.to_str().unwrap()]).stdout.trim().to_string();
+    let uuid = mf(&["-u", &repo, "metarecord", "add", "--path", file.to_str().unwrap()])
+        .stdout
+        .trim()
+        .to_string();
 
     // The metarecord's version, straight from the daemon.
     let rec = mf(&["-u", &repo, "metarecord", "-i", &uuid, "get"]);
@@ -4480,9 +4640,9 @@ fn test_order_numbers_folder_children() {
     for f in ["song0.avi", "song1.avi", "song3.avi", "README.md"] {
         std::fs::write(album.join(f), b"x").unwrap();
     }
-    // Track each child (creates the metarecord + ancestor chain, with mfr_type).
+    // Record each child (the metarecord, with its mfr_type).
     let track = |p: std::path::PathBuf| {
-        let out = mf(&["-u", &repo, "track", p.to_str().unwrap()]);
+        let out = mf(&["-u", &repo, "metarecord", "add", "--path", p.to_str().unwrap()]);
         assert_ok(&out);
         out.stdout.trim().to_string()
     };
@@ -4592,9 +4752,17 @@ fn test_metarecord_get_resolve_tree_lists_paths() {
     std::fs::create_dir_all(root.join("a/b")).unwrap();
     std::fs::write(root.join("a/f.txt"), b"x").unwrap();
     // Track the two directories and one file (track builds the parent chain).
-    assert_ok(&mf(&["-u", &repo, "track", root.join("a").to_str().unwrap()]));
-    assert_ok(&mf(&["-u", &repo, "track", root.join("a/b").to_str().unwrap()]));
-    let f = mf(&["-u", &repo, "track", root.join("a/f.txt").to_str().unwrap()]);
+    assert_ok(&mf(&["-u", &repo, "metarecord", "add", "--path", root.join("a").to_str().unwrap()]));
+    assert_ok(&mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "add",
+        "--path",
+        root.join("a/b").to_str().unwrap(),
+    ]));
+    let f =
+        mf(&["-u", &repo, "metarecord", "add", "--path", root.join("a/f.txt").to_str().unwrap()]);
     assert_ok(&f);
     let f_uuid = f.stdout.trim().to_string();
 
@@ -4635,8 +4803,8 @@ fn test_metarecord_get_resolve_tree_lists_paths() {
 fn test_metarecord_get_resolve_tree_tsv_keeps_the_uuid() {
     let (repo, root) = init_repo("resolve_tree_tsv");
     std::fs::create_dir_all(root.join("a/b")).unwrap();
-    assert_ok(&mf(&["-u", &repo, "track", root.join("a").to_str().unwrap()]));
-    let b = mf(&["-u", &repo, "track", root.join("a/b").to_str().unwrap()]);
+    assert_ok(&mf(&["-u", &repo, "metarecord", "add", "--path", root.join("a").to_str().unwrap()]));
+    let b = mf(&["-u", &repo, "metarecord", "add", "--path", root.join("a/b").to_str().unwrap()]);
     assert_ok(&b);
     let b_uuid = b.stdout.trim().to_string();
 
@@ -5035,7 +5203,10 @@ fn test_mount_list_and_forget() {
     let (repo, root) = init_repo("mount");
     let dir = root.join("photos");
     std::fs::create_dir(&dir).unwrap();
-    let uuid = mf(&["-u", &repo, "track", dir.to_str().unwrap()]).stdout.trim().to_string();
+    let uuid = mf(&["-u", &repo, "metarecord", "add", "--path", dir.to_str().unwrap()])
+        .stdout
+        .trim()
+        .to_string();
     assert!(is_hex_uuid(&uuid));
 
     // A repository with no removable volume declares no mount point.
@@ -5946,7 +6117,10 @@ fn test_orphan_clear_asks_before_clearing() {
     let (repo, root) = init_repo("orphanask");
     let file = root.join("gone.txt");
     std::fs::write(&file, b"data").unwrap();
-    let uuid = mf(&["-u", &repo, "track", file.to_str().unwrap()]).stdout.trim().to_string();
+    let uuid = mf(&["-u", &repo, "metarecord", "add", "--path", file.to_str().unwrap()])
+        .stdout
+        .trim()
+        .to_string();
 
     let out = mf(&["-u", &repo, "orphan", "clear"]);
     assert_ok(&out);

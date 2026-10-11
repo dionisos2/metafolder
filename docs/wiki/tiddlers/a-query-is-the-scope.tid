@@ -36,6 +36,7 @@ the walk ([[The query is the walk state]]).
 
 [[gui-unwatch-folder.sh]] takes a ''folder'', as a path on disk. A query matches
 metarecords that exist, and the folder to stop watching often has none yet — the
-script tracks it on the spot so that `mf_watch` has somewhere to live. And `mf_watch`
+script records it on the spot (`mf metarecord add --parents --path`, [[Recording a path]])
+so that `mf_watch` has somewhere to live. And `mf_watch`
 is a field of a directory, inherited down the tree: a folder, not a set, is the shape
 of what is being said ([[Tracking a folder]]).
