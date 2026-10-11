@@ -470,3 +470,35 @@ fn the_schema_candidates_read_their_answers_not_the_fields() {
     let (s, l) = (schema_candidate_reads(&small), schema_candidate_reads(&large));
     assert!(l <= s + s / 2 + 20, "8x the repository, {l} keys read instead of {s}");
 }
+
+/// The keys resolving one path reads, on a folder of `n` files.
+fn resolve_reads(n: usize, case_insensitive: bool, path: &str) -> (Option<Uuid>, u64) {
+    use metafolder_daemon::relpath::RelPath;
+    let (kv, _dir) = repository_in(n, n);
+    let before = kv.reads();
+    let found =
+        TreeCache::new(case_insensitive).resolve_rel(&kv, "loc", &RelPath::from(path)).unwrap();
+    (found, kv.reads() - before)
+}
+
+#[test]
+fn resolving_a_path_reads_its_components_not_their_siblings() {
+    // Every reconcile resolves each file it finds on disk — four times over
+    // with its optional passes. Comparing each component's text with all of
+    // its siblings' made a reconcile with nothing to do read 1 200 keys a
+    // file (doc "Case sensitivity": the exact bytes first).
+    for nocase in [false, true] {
+        let (small, s) = resolve_reads(200, nocase, "/d0/file000123.txt");
+        let (large, l) = resolve_reads(1_600, nocase, "/d0/file000123.txt");
+        assert!(small.is_some() && large.is_some());
+        assert_eq!(s, l, "case-insensitive {nocase}: {s} keys on 200 siblings, {l} on 1 600");
+    }
+}
+
+#[test]
+fn a_case_insensitive_repository_still_resolves_another_case() {
+    let (found, _) = resolve_reads(200, true, "/D0/FILE000123.TXT");
+    assert!(found.is_some(), "the fallback compares the folded names");
+    let (found, _) = resolve_reads(200, false, "/D0/FILE000123.TXT");
+    assert!(found.is_none(), "a case-sensitive one does not");
+}

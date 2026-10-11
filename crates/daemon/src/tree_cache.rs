@@ -421,11 +421,19 @@ impl TreeCache {
             return Ok(None);
         };
         for name in rel.components() {
-            let found = if name.is_exact() {
-                store.child_by_text(field, Some(cur), &name.display(), self.case_insensitive)?
-            } else {
-                store.child_by_bytes(field, Some(cur), name.as_bytes())?
-            };
+            // The exact bytes first: one key. The text compare reads every
+            // sibling, so it is only the fallback a case-insensitive
+            // filesystem needs for its folding (doc "Case sensitivity"), and
+            // only for a name that is text.
+            let mut found = store.child_by_bytes(field, Some(cur), name.as_bytes())?;
+            if found.is_none() && self.case_insensitive && name.is_exact() {
+                found = store.child_by_text(
+                    field,
+                    Some(cur),
+                    &name.display(),
+                    self.case_insensitive,
+                )?;
+            }
             match found {
                 Some(uuid) => cur = uuid,
                 None => return Ok(None),

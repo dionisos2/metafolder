@@ -245,6 +245,12 @@ than breaking them.
   mounting the remote repository over SSHFS is deferred (spec-sync).
 
 ### Fixed
+- **Resolving a path read every sibling of each of its components.** A name
+  that is text was compared with the text of all the entries of its folder
+  instead of being looked up by its bytes, which the note on case sensitivity
+  had always said comes first. A reconcile resolves every file it finds on disk
+  (four times with its optional passes): on 50 000 files, one with nothing to do
+  read 242 million keys and took 43 s.
 - **`mf metarecord -i` takes a UUID and nothing else.** Text that was not one
   parsed as DSL further down: `-i '<query>' get` ran the query, `field set` and
   `delete` wrote to its matches, `get --tsv` panicked. It is a usage error now.
