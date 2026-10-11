@@ -353,3 +353,139 @@ async fn test_refresh_fills_a_bare_record() {
     #[cfg(unix)]
     assert!(field(&after, "mfr_permissions").is_some());
 }
+
+// ── POST /metarecords with a path (doc "Recording a path") ────────────────────
+
+async fn create_at(app: &Router, repo: &str, body: Value) -> (StatusCode, Value) {
+    request(app, "POST", &format!("/repos/{repo}/metarecords"), Some(body)).await
+}
+
+/// The metarecord at a repo-root-relative path, if any.
+async fn uuid_at(app: &Router, repo: &str, rel: &str) -> Option<String> {
+    let query =
+        json!({"type": "eq", "field": "mfr_path", "value": {"type": "string", "value": rel}});
+    let (status, body) = request(
+        app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": query, "limit": 10})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "query failed: {body}");
+    body["results"].as_array().unwrap().first().map(|r| r.as_str().unwrap().to_string())
+}
+
+/// A path whose parent is recorded becomes a metarecord with its stat fields,
+/// `mf_watch = false` and the caller's own fields, in one revision.
+#[tokio::test]
+async fn test_create_at_path_records_the_path_not_watched() {
+    let (app, repo, root) = setup("atpath").await;
+    std::fs::write(root.join("song.flac"), b"music").unwrap();
+    let abs = root.join("song.flac");
+
+    let (status, body) = create_at(
+        &app,
+        &repo,
+        json!({"path": abs, "fields": [{"name": "rating", "value": {"type": "int", "value": 4}}]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "create failed: {body}");
+    let uuid = body["uuid"].as_str().unwrap().to_string();
+    let entry = get_metarecord(&app, &repo, &uuid).await;
+    assert_eq!(field(&entry, "mfr_size").unwrap()["value"], 5);
+    assert_eq!(field(&entry, "mf_watch").unwrap()["value"], false);
+    assert_eq!(field(&entry, "rating").unwrap()["value"], 4);
+    assert_eq!(uuid_at(&app, &repo, "/song.flac").await.as_deref(), Some(uuid.as_str()));
+}
+
+/// A path that already has its metarecord is refused, naming it: `add` does not
+/// quietly hand back what was there.
+#[tokio::test]
+async fn test_create_at_path_refuses_a_recorded_path() {
+    let (app, repo, root) = setup("atpath-twice").await;
+    std::fs::write(root.join("a.txt"), b"a").unwrap();
+    let abs = root.join("a.txt");
+    let (status, first) = create_at(&app, &repo, json!({"path": abs, "fields": []})).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+
+    let (status, body) = create_at(&app, &repo, json!({"path": abs, "fields": []})).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["uuid"], first["uuid"], "the conflict names the existing metarecord");
+    assert!(body["error"].as_str().unwrap().contains("/a.txt"), "{body}");
+}
+
+/// Missing parent directories are refused and listed, root first, unless the
+/// caller asks for them; then they are created as plain scaffolding — no
+/// `mf_watch` of their own, so a watched ancestor still covers them.
+#[tokio::test]
+async fn test_create_at_path_needs_parents_to_create_them() {
+    let (app, repo, root) = setup("atpath-parents").await;
+    std::fs::create_dir_all(root.join("docs/notes")).unwrap();
+    std::fs::write(root.join("docs/notes/todo.txt"), b"todo").unwrap();
+    let abs = root.join("docs/notes/todo.txt");
+
+    let (status, body) = create_at(&app, &repo, json!({"path": abs, "fields": []})).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["missing_parents"], json!(["/docs", "/docs/notes"]), "{body}");
+    assert_eq!(uuid_at(&app, &repo, "/docs").await, None, "a refusal creates nothing");
+
+    let (status, body) =
+        create_at(&app, &repo, json!({"path": abs, "fields": [], "parents": true})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(field(&body, "mf_watch").unwrap()["value"], false, "the target is not watched");
+    for dir in ["/docs", "/docs/notes"] {
+        let uuid = uuid_at(&app, &repo, dir).await.expect("parent created");
+        let parent = get_metarecord(&app, &repo, &uuid).await;
+        assert_eq!(field(&parent, "mfr_type").unwrap()["value"], "dir");
+        assert!(field(&parent, "mf_watch").is_none(), "{dir} inherits: {parent}");
+    }
+}
+
+/// A caller's own `mf_watch` replaces the default: recording and watching a
+/// directory is one request.
+#[tokio::test]
+async fn test_create_at_path_takes_the_callers_mf_watch() {
+    let (app, repo, root) = setup("atpath-watch").await;
+    std::fs::create_dir_all(root.join("music")).unwrap();
+    let (status, body) = create_at(
+        &app,
+        &repo,
+        json!({"path": root.join("music"),
+               "fields": [{"name": "mf_watch", "value": {"type": "bool", "value": true}}]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let watch: Vec<&Value> =
+        body["fields"].as_array().unwrap().iter().filter(|f| f["name"] == "mf_watch").collect();
+    assert_eq!(watch.len(), 1, "one mf_watch row: {body}");
+    assert_eq!(watch[0]["value"]["value"], true);
+}
+
+/// What cannot be a path's metarecord is a 400: outside the root, the root
+/// itself, a missing file, a caller-chosen uuid, an `mfr_path` of the caller's.
+#[tokio::test]
+async fn test_create_at_path_rejections() {
+    let (app, repo, root) = setup("atpath-bad").await;
+    std::fs::write(root.join("f"), b"f").unwrap();
+    let f = root.join("f");
+    for body in [
+        json!({"path": "/etc/hostname", "fields": []}),
+        json!({"path": root.to_str().unwrap(), "fields": []}),
+        json!({"path": root.join("absent"), "fields": []}),
+        json!({"path": f, "fields": [], "uuid": "0123456789abcdef0123456789abcdef"}),
+        json!({"path": f, "force": true,
+               "fields": [{"name": "mfr_path", "value": {"type": "string", "value": "x"}}]}),
+    ] {
+        let (status, resp) = create_at(&app, &repo, body.clone()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body} → {resp}");
+    }
+    // A reserved field still needs force, as on any create.
+    let (status, resp) = create_at(
+        &app,
+        &repo,
+        json!({"path": f, "fields": [{"name": "mfr_size", "value": {"type": "int", "value": 1}}]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{resp}");
+    assert_eq!(uuid_at(&app, &repo, "/f").await, None, "nothing was created");
+}

@@ -962,13 +962,8 @@ fn write_watch_frontier(
             None => {
                 // Not tracked yet — a directory the placement met before
                 // reconcile did. It gets the metarecord its exclusion hangs on.
-                let parent = crate::executor::ensure_parent_metarecords(
-                    &mut writer,
-                    cache,
-                    root,
-                    &path,
-                    &[],
-                )?;
+                let parent =
+                    crate::executor::ensure_parent_metarecords(&mut writer, cache, root, &path)?;
                 let name = path.name().cloned().unwrap_or_default();
                 let created = writer.create_metarecord(vec![
                     metafolder_core::metarecord::Field::new(

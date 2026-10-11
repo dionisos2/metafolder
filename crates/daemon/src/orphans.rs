@@ -362,7 +362,7 @@ fn adopt(
     // position, so the orphan cannot take it while the holder is still there.
     writer.delete_metarecord(holder)?;
     let path = crate::relpath::RelPath::from_display(rel);
-    let parent = crate::executor::ensure_parent_metarecords(&mut writer, cache, root, &path, &[])?;
+    let parent = crate::executor::ensure_parent_metarecords(&mut writer, cache, root, &path)?;
     let name = path.name().cloned().unwrap_or_default();
     writer.set_field_as(
         OpType::FileMoved,

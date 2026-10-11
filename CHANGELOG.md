@@ -14,6 +14,14 @@ than breaking them.
 ## [Unreleased]
 
 ### Added
+- **`POST /repos/:repo/metarecords` creates a path's metarecord** with
+  `{"path", "fields", "parents"?}`: its `mfr_*` fields read from disk, the
+  caller's fields beside them, and `mf_watch = false` unless the fields set
+  `mf_watch` — in one revision, schema-checked. A path that already has its
+  metarecord is a `409` naming it (`uuid`), and so is a parent directory
+  without one (`missing_parents`, root first) unless `parents` asks for them;
+  parents created that way carry no `mf_watch` of their own (doc "Recording a
+  path").
 - **Second mounts: a drive mounted twice in a repository is tracked once.** A
   mount point under a root showing what the repository reaches already — the
   same drive mounted again, a directory of it, or a directory of the root's own

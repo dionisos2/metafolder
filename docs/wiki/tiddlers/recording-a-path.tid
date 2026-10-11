@@ -1,0 +1,33 @@
+title: Recording a path
+tags: [[File tracking]]
+kind: reference
+summary: A path's metarecord is created on request — refused when it exists or when a parent directory has none, unless the parents are asked for — with mf_watch = false, so the path is recorded but not followed.
+
+`POST /repos/:repo/metarecords` with a `path` creates the metarecord of that file or
+directory without the watcher or a reconcile: its `mfr_path` and stat fields are read
+from disk, in one revision, beside whatever `fields` the request carries
+([[Metarecord endpoints]]).
+
+!! Recorded, not followed
+
+The new metarecord gets `mf_watch = false` unless `fields` sets `mf_watch` itself. That
+is what makes it worth having before anything is watched: a directory's `mf_ignore`
+can be set on it first, and only then `mf_watch = true` and a reconcile
+([[Tracking a folder]]). Inside a watched area the `false` is an explicit exclusion —
+it holds the watcher off until the scope is decided. No eligibility rule is consulted:
+deciding the watch scope is the caller's.
+
+!! What is refused
+
+* ''A path that already has its metarecord'': `409`, the existing uuid in the body's `uuid`. Creating is not finding — a client looking for the metarecord at a path asks a query (`mfr_path = "/a/b"`).
+* ''A parent directory without one'': `409`, the body's `missing_parents` listing them root first (`["/docs", "/docs/notes"]`), and nothing written. With `"parents": true` they are created too.
+* `400`: a path that does not exist, lies outside the repository's root, or is the root itself ([[Path representation]]); a `uuid` or an `mfr_path` in the same request (the path gives both).
+
+!! Why the parents are asked for
+
+Every recorded path hangs in the `mfr_path` forest, so a metarecord three levels down
+needs the two directories above it. Creating them silently made a single request
+write several metarecords nobody named — and, when they carried the target's
+`mf_watch = false`, cut a whole subtree out of a watched area. They are now created
+only on request, and as scaffolding: their stat fields and nothing else, so they
+inherit `mf_watch` from above like any directory reconcile would have recorded.

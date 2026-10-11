@@ -12,6 +12,15 @@ pub(super) struct CreateBody {
     /// Rejected with 409 if a metarecord already has it.
     #[serde(default)]
     uuid: Option<String>,
+    /// An existing filesystem path the new metarecord stands for (doc
+    /// "Recording a path"): its `mfr_*` fields are read from disk, and it gets
+    /// `mf_watch = false` unless `fields` sets `mf_watch`.
+    #[serde(default)]
+    path: Option<std::path::PathBuf>,
+    /// With `path`: also create the metarecords of the parent directories that
+    /// have none. Without it, missing parents are a `409` listing them.
+    #[serde(default)]
+    parents: bool,
 }
 
 #[derive(Deserialize)]
@@ -262,6 +271,16 @@ pub(super) async fn create_record_endpoint(
         }
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let touched: Vec<String> = body.fields.iter().map(|f| f.name.clone()).collect();
+        if let Some(path) = &body.path {
+            if supplied.is_some() {
+                return Err(ApiError::bad_request(
+                    "a metarecord created at a path gets its own uuid",
+                ));
+            }
+            let rel = super::fs::path_in_repo(repo_state, path)?;
+            let uuid = create_at_path(repo_state, &mut conn, &rel, body.parents, body.fields)?;
+            return Ok(Json(metarecord_response(&*conn, uuid)?));
+        }
         let mut writer = repo_state.writer(&mut conn, None)?;
         let created = match supplied {
             Some(uuid) => {
@@ -279,6 +298,72 @@ pub(super) async fn create_record_endpoint(
         Ok(Json(created))
     })
     .await
+}
+
+/// The metarecord of the filesystem path `rel` (doc "Recording a path"), with
+/// the caller's `fields`. Refused when `rel` already has one (`409` naming it)
+/// and, unless `parents`, when a parent directory has none (`409` listing them,
+/// root first). Created parents carry no `mf_watch`: they inherit, so a watched
+/// ancestor keeps covering them.
+fn create_at_path(
+    repo_state: &RepoState,
+    conn: &mut crate::store::Handle,
+    rel: &crate::relpath::RelPath,
+    parents: bool,
+    fields: Vec<Field>,
+) -> Result<Uuid, ApiError> {
+    if fields.iter().any(|f| f.name == "mfr_path") {
+        return Err(ApiError::bad_request(
+            "a metarecord created at a path takes its mfr_path from it",
+        ));
+    }
+    let cache = repo_state.tree();
+    if let Some(existing) = cache.resolve_rel(&**conn, "mfr_path", rel)? {
+        return Err(ApiError::conflict(format!(
+            "{} already has a metarecord: {}",
+            rel.display(),
+            hex(existing)
+        ))
+        .with_field("uuid", json!(hex(existing))));
+    }
+    let mut missing = Vec::new();
+    let mut prefix = crate::relpath::RelPath::root();
+    for comp in rel.parent().components() {
+        prefix = prefix.child(comp.clone());
+        if missing.is_empty() && cache.resolve_rel(&**conn, "mfr_path", &prefix)?.is_some() {
+            continue;
+        }
+        missing.push(prefix.display());
+    }
+    if !missing.is_empty() && !parents {
+        return Err(ApiError::conflict(format!(
+            "no metarecord for the parent {} {} (`--parents` creates {})",
+            if missing.len() == 1 { "directory" } else { "directories" },
+            missing.join(", "),
+            if missing.len() == 1 { "it" } else { "them" },
+        ))
+        .with_field("missing_parents", json!(missing)));
+    }
+    let touched: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
+    let mut extra = fields;
+    // Recorded, not followed, until the caller says otherwise.
+    if !extra.iter().any(|f| f.name == "mf_watch") {
+        extra.insert(0, Field::new("mf_watch", Value::Bool(false)));
+    }
+    let mut writer = repo_state.writer(conn, None)?;
+    let uuid = crate::reconcile::create_record_for(
+        &mut writer,
+        &cache,
+        &repo_state.config.root,
+        rel,
+        &extra,
+        false,
+    )?;
+    validate_schema(repo_state, writer.store(), uuid, &touched)?;
+    let effects = writer.effects();
+    slowlog::timed("commit", || writer.commit())?;
+    repo_state.settle(&**conn, &effects)?;
+    Ok(uuid)
 }
 
 pub(super) async fn get_record_endpoint(

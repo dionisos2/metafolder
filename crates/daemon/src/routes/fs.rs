@@ -794,6 +794,39 @@ pub(super) async fn effective_ignore(
     .await
 }
 
+/// The repo-root-relative form of an existing filesystem path, for the
+/// endpoints that take one to create its metarecord: canonicalised, inside the
+/// root, and not the root itself (whose metarecord the repository always has).
+pub(super) fn path_in_repo(
+    repo_state: &RepoState,
+    path: &std::path::Path,
+) -> Result<crate::relpath::RelPath, ApiError> {
+    let abs = path
+        .canonicalize()
+        .map_err(|_| ApiError::bad_request(format!("path does not exist: {path:?}")))?;
+    let rel_path = abs.strip_prefix(&repo_state.config.root).map_err(|_| {
+        ApiError::bad_request(format!(
+            "path {abs:?} is outside the repository root {:?}",
+            repo_state.config.root
+        ))
+    })?;
+    // Each component keeps its exact bytes: a POSIX name need not be UTF-8,
+    // and such a file is recorded like any other (doc "Tree names").
+    let mut rel = crate::relpath::RelPath::root();
+    for comp in rel_path.components() {
+        let std::path::Component::Normal(name) = comp else {
+            return Err(ApiError::bad_request(format!("unsupported path component in {abs:?}")));
+        };
+        rel = rel.child(metafolder_core::metarecord::TreeName::from_bytes(
+            crate::relpath::file_name_bytes(name),
+        ));
+    }
+    if rel.is_root() {
+        return Err(ApiError::bad_request("the repository root always has its metarecord"));
+    }
+    Ok(rel)
+}
+
 /// Creates the metarecord for a single filesystem path without activating
 /// tracking (doc "Tracking a folder"). Parents are created
 /// with `mf_watch = false`; no eligibility check applies.
@@ -806,32 +839,7 @@ pub(super) async fn track(
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
-        let abs = body
-            .path
-            .canonicalize()
-            .map_err(|_| ApiError::bad_request(format!("path does not exist: {:?}", body.path)))?;
-        let rel_path = abs.strip_prefix(&repo_state.config.root).map_err(|_| {
-            ApiError::bad_request(format!(
-                "path {abs:?} is outside the repository root {:?}",
-                repo_state.config.root
-            ))
-        })?;
-        // Each component keeps its exact bytes: a POSIX name need not be UTF-8,
-        // and such a file is tracked like any other (doc "Tree names").
-        let mut rel = crate::relpath::RelPath::root();
-        for comp in rel_path.components() {
-            let std::path::Component::Normal(name) = comp else {
-                return Err(ApiError::bad_request(format!(
-                    "unsupported path component in {abs:?}"
-                )));
-            };
-            rel = rel.child(metafolder_core::metarecord::TreeName::from_bytes(
-                crate::relpath::file_name_bytes(name),
-            ));
-        }
-        if rel.is_root() {
-            return Err(ApiError::bad_request("cannot track the repository root itself"));
-        }
+        let rel = path_in_repo(repo_state, &body.path)?;
 
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let cache = repo_state.tree();

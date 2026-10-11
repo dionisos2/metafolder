@@ -723,8 +723,8 @@ fn stat_paths(root: &Path, paths: &[RelPath], reporter: &Reporter) -> Vec<(RelPa
     out
 }
 
-/// Creates the metarecord for a new filesystem path (parents included).
-/// When `compute_mime` is set, a detectable file gets its `mfr_mime` as part of
+/// Creates the metarecord for a new filesystem path (parents included), with
+/// `extra_fields` on it alone: a created parent gets its stat fields only. When `compute_mime` is set, a detectable file gets its `mfr_mime` as part of
 /// the create operation (folded in, so no separate field write / version bump);
 /// directories and undetectable files get none (doc "File metadata fields").
 pub(crate) fn create_record_for(
@@ -735,7 +735,7 @@ pub(crate) fn create_record_for(
     extra_fields: &[Field],
     compute_mime: bool,
 ) -> Result<Uuid> {
-    let parent = ensure_parent_metarecords(writer, cache, root, rel, extra_fields)?;
+    let parent = ensure_parent_metarecords(writer, cache, root, rel)?;
     let name = rel.name().cloned().unwrap_or_default();
     let abs = rel.to_abs(root);
     let mut fields =
@@ -760,7 +760,7 @@ fn apply_move(
     uuid: Uuid,
     rel: &RelPath,
 ) -> Result<()> {
-    let parent = ensure_parent_metarecords(writer, cache, root, rel, &[])?;
+    let parent = ensure_parent_metarecords(writer, cache, root, rel)?;
     let name = rel.name().cloned().unwrap_or_default();
     writer.set_field_as(
         OpType::FileMoved,

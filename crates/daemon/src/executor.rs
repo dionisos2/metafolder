@@ -888,7 +888,7 @@ impl Apply<'_, '_> {
     /// intermediate directory metarecords (with their stat fields).
     fn ensure_parents(&mut self, rel: &RelPath) -> Result<Uuid> {
         self.step("ensure parent directories");
-        ensure_parent_metarecords(&mut self.writer, self.cache, self.root, rel, &[])
+        ensure_parent_metarecords(&mut self.writer, self.cache, self.root, rel)
     }
 
     fn apply_create(&mut self, rel: &RelPath) -> Result<()> {
@@ -1514,15 +1514,14 @@ pub(crate) fn clear_absent_conditional_stat_fields(
 }
 
 /// Resolves the parent directory entry of `rel`, creating any missing
-/// intermediate directory metarecords along the way (with their stat fields and
-/// `extra_fields` — e.g. `mf_watch = false` for track). Shared between the
-/// executor, reconcile, and the track endpoint.
+/// intermediate directory metarecords along the way, with their stat fields.
+/// Shared between the executor, reconcile, relink and the creation of a
+/// path's metarecord.
 pub(crate) fn ensure_parent_metarecords(
     writer: &mut Writer,
     cache: &TreeCache,
     root: &Path,
     rel: &RelPath,
-    extra_fields: &[Field],
 ) -> Result<Uuid> {
     let mut parent = cache
         .resolve_path(writer.store(), "mfr_path", "")?
@@ -1546,7 +1545,6 @@ pub(crate) fn ensure_parent_metarecords(
             // Directory already gone: minimal metarecord, reconcile fixes it.
             Err(_) => fields.push(Field::new("mfr_type", Value::String("dir".into()))),
         }
-        fields.extend(extra_fields.iter().cloned());
         let created = writer.create_metarecord(fields)?;
         parent = created.uuid;
     }

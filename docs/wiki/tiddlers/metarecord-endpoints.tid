@@ -10,7 +10,7 @@ query ([[Query endpoints]]). They overlap only on one metarecord (its URL, or a 
 ''several'' metarecords is a query: there is no list or batch-read route.
 
 |!Route |!Does |
-|<<cmd "POST /repos/:repo/metarecords">> |creates one: `{"fields": […], "force"?}` → the full metarecord, `id` on each field |
+|<<cmd "POST /repos/:repo/metarecords">> |creates one: `{"fields": […], "force"?}` → the full metarecord, `id` on each field; with `"path"` (and `"parents"?`), the metarecord of that file ([[Recording a path]]) |
 |<<cmd "POST /repos/:repo/metarecords/bulk">> |creates many in one revision (below) |
 |<<cmd "GET /repos/:repo/metarecords/:uuid">> |reads one, each field with its row `id` |
 |<<cmd "PUT /repos/:repo/metarecords/:uuid">> |replaces its whole field set, keeping the uuid: `{"fields": […], "force"?}` → the metarecord |
