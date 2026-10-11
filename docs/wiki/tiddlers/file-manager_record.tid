@@ -1,0 +1,6 @@
+title: file-manager:record
+tags: [[GUI command]] [[File tracking]] [[file-manager panel]]
+kind: reference
+summary: File manager: record the selected path — its metarecord, mf_watch = false
+
+The ''Add to DB'' of the [[file-manager panel]]: creates the metarecord of the entry under the cursor with `mf_watch = false` — recorded, not yet watched ([[Recording a path]]). When parent directories have no metarecord, a confirmation names them, and they are created only if it is accepted. An entry already recorded is refused in the status bar, as is one outside the repository root, or no repository at all.

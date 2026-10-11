@@ -4,7 +4,7 @@
 // with thousands of tracked files costs neither a query nor a per-record fetch.
 
 import { describe, expect, test, vi } from 'vitest';
-import { relPath, parentDir, isWithin, loadTrackedChildren, loadDirMetarecord, entriesFooter, filterHidden, syntheticRows } from '../../default-config/panel-types/file-manager/tracked.js';
+import { relPath, parentDir, isWithin, loadTrackedChildren, loadDirMetarecord, entriesFooter, filterHidden, syntheticRows, recordPath } from '../../default-config/panel-types/file-manager/tracked.js';
 
 describe('relPath', () => {
   test('the root itself maps to the empty path', () => {
@@ -226,5 +226,54 @@ describe('loadTrackedChildren', () => {
     const daemon = { call: vi.fn(async () => null) };
     const map = await loadTrackedChildren(daemon, 'r1', '/data/repo', '/data/repo', 'dddd');
     expect(map.size).toBe(0);
+  });
+});
+
+describe('recordPath', () => {
+  // `daemon.request` answers `{status, body}` without throwing, so the refusal
+  // bodies (`missing_parents`, `uuid`) stay readable.
+  const daemonAnswering = (...answers: Array<{ status: number; body: unknown }>) => ({
+    request: vi.fn(async (..._args: any[]) => answers.shift()!),
+  });
+
+  test('a path whose parent is recorded: one request, the new uuid', async () => {
+    const daemon = daemonAnswering({ status: 200, body: { uuid: 'new1' } });
+    const confirm = vi.fn(() => true);
+    const outcome = await recordPath(daemon, 'r1', '/data/repo/a.txt', confirm);
+    expect(outcome).toEqual({ uuid: 'new1' });
+    expect(daemon.request).toHaveBeenCalledWith('POST', '/repos/r1/metarecords', {
+      path: '/data/repo/a.txt',
+      fields: [],
+    });
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  test('missing parents are named and created once confirmed', async () => {
+    const daemon = daemonAnswering(
+      { status: 409, body: { error: 'no metarecord…', missing_parents: ['/docs', '/docs/notes'] } },
+      { status: 200, body: { uuid: 'new2' } },
+    );
+    const confirm = vi.fn((_question: string) => true);
+    const outcome = await recordPath(daemon, 'r1', '/data/repo/docs/notes/t.txt', confirm);
+    expect(confirm.mock.calls[0][0]).toContain('/docs\n/docs/notes');
+    expect(daemon.request).toHaveBeenLastCalledWith('POST', '/repos/r1/metarecords', {
+      path: '/data/repo/docs/notes/t.txt',
+      fields: [],
+      parents: true,
+    });
+    expect(outcome).toEqual({ uuid: 'new2' });
+  });
+
+  test('declining the parents writes nothing', async () => {
+    const daemon = daemonAnswering({ status: 409, body: { error: 'x', missing_parents: ['/docs'] } });
+    const outcome = await recordPath(daemon, 'r1', '/data/repo/docs/t.txt', () => false);
+    expect(outcome).toEqual({ cancelled: true });
+    expect(daemon.request).toHaveBeenCalledTimes(1);
+  });
+
+  test('any other refusal is the daemon\'s message', async () => {
+    const daemon = daemonAnswering({ status: 409, body: { error: '/a.txt already has a metarecord: u1', uuid: 'u1' } });
+    const outcome = await recordPath(daemon, 'r1', '/data/repo/a.txt', () => true);
+    expect(outcome).toEqual({ error: '/a.txt already has a metarecord: u1' });
   });
 });

@@ -45,7 +45,7 @@ Grouped by what they touch, which is what a name must make obvious:
 |the cursor or the selection |`next`, `prev`, `first`, `last`, `page <which>`, `find [text]`, `select <toggle/all/none>`, and the `row-X` family (the row under the cursor) |
 |a view setting |`set <setting> [value]` |
 |the media player |`play-pause`, `restart`, `mute`, `seek <±s>`, `speed <up/down/reset>`, `volume <up/down>`, `zoom <in/out/fit/reset>` |
-|the repository |`<noun> <op>` with `op` among `set`, `add`, `remove`, `unset`, `delete`, and the plain verbs `create`, `delete`, `rename`, `track`, `trash`, `restore`, `prune`, `reconcile`, `rollback`, `undo`, `redo`, `revert [what]`, `mark`, `run`, `load`, `unload`, `stop` |
+|the repository |`<noun> <op>` with `op` among `set`, `add`, `remove`, `unset`, `delete`, and the plain verbs `create`, `delete`, `rename`, `record`, `trash`, `restore`, `prune`, `reconcile`, `rollback`, `undo`, `redo`, `revert [what]`, `mark`, `run`, `load`, `unload`, `stop` |
 
 ''A command that writes to the repository carries either `<noun> <op>` or a plain
 verb of the last row; everything else only moves the view.'' Nothing that writes can

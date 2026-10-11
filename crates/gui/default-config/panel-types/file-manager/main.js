@@ -18,6 +18,7 @@ import {
   entriesFooter,
   filterHidden,
   syntheticRows,
+  recordPath,
 } from './tracked.js';
 import { loadEligibility, scopedPath } from './ignored.js';
 import { ignoreTarget, patternForExtension, patternForPath } from '/__ignore.js';
@@ -537,7 +538,7 @@ export async function mount(root, metafolder) {
   // ── The checked multi-selection (doc "Cross-panel selection") ─────────
   // The same workspace-wide set the metarecord list gathers (and the bulk
   // operations act on), checked here by metarecord uuid. Only a row that HAS a
-  // metarecord can join it: an untracked entry has none to check, and tracking
+  // metarecord can join it: an untracked entry has none to check, and recording
   // it first is the way (its row then offers the Metarecord actions too).
 
   async function toggleChecked() {
@@ -545,7 +546,7 @@ export async function mount(root, metafolder) {
     if (!item) return;
     const uuid = trackedPaths.get(item.path);
     if (!uuid) {
-      void statusBar.message('no metarecord for this entry — track it first', statusMessageMs);
+      void statusBar.message('no metarecord for this entry — record it first', statusMessageMs);
       return;
     }
     await selection.toggle(uuid);
@@ -627,13 +628,13 @@ export async function mount(root, metafolder) {
         }),
       );
     }
-    // Tracking a row creates its metarecord, so it joins that category — the
+    // Recording a row creates its metarecord, so it joins that category — the
     // repeated header is how an untracked row opens it (same-named categories
     // merge).
     items.push(
       { header: 'Metarecord' },
       {
-        label: 'Track (mf_watch = false)',
+        label: 'Record (mf_watch = false)',
         disabled: !repo || trackedPaths.has(item.path) || !trackable(item.path),
         action: () => void addSelected(),
       },
@@ -702,13 +703,19 @@ export async function mount(root, metafolder) {
       return;
     }
     if (!item) return;
+    let outcome;
     try {
-      await daemon.call('POST', `/repos/${repo}/track`, { path: item.path });
+      outcome = await recordPath(daemon, repo, item.path, (question) => window.confirm(question));
     } catch (error) {
       await statusBar.error(error, 6000);
       return;
     }
-    void statusBar.message(`Tracked: ${item.name} (mf_watch = false)`, statusMessageMs);
+    if ('cancelled' in outcome) return;
+    if ('error' in outcome) {
+      await statusBar.error(outcome.error, 6000);
+      return;
+    }
+    void statusBar.message(`Recorded: ${item.name} (mf_watch = false)`, statusMessageMs);
     await reenrichVisible();
     render();
     await select(cursorIndex);
@@ -1123,8 +1130,8 @@ export async function mount(root, metafolder) {
   byId(root, 'refresh').addEventListener('click', () => void refresh());
   addButton.addEventListener('click', () => void addSelected());
 
-  void commands.register('file-manager:track', {
-    label: 'File manager: track the selected path (mf_watch = false)',
+  void commands.register('file-manager:record', {
+    label: 'File manager: record the selected path — its metarecord, mf_watch = false',
     handler: addSelected,
   });
   void commands.register('file-manager:root', {

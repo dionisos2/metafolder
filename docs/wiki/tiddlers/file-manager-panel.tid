@@ -71,11 +71,12 @@ when it has one. The panels beside it follow — a [[file panel]] previews the f
 the one [[metarecord-list panel]] gathers and the bulk operations act on. An untracked
 entry has no metarecord to check, and the status bar says so.
 
-!! Tracking
+!! Recording
 
-''Add to DB'' (`file-manager:track`) creates the metarecord of the entry under the
-cursor, and those of its parent directories, with `mf_watch = false`: recorded, not
-watched ([[Tracking a folder]]). The button is disabled on an entry that is already
+''Add to DB'' (`file-manager:record`) creates the metarecord of the entry under the
+cursor with `mf_watch = false`: recorded, not watched ([[Recording a path]]). Parent
+directories with no metarecord are named in a confirmation and created only if it is
+accepted. The button is disabled on an entry that is already
 tracked, outside the repository root or inside `internal/`.
 
 !! File operations

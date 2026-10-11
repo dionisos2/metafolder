@@ -135,6 +135,11 @@ than breaking them.
     `mf_watch = true` no longer reads as unwatched.
 
 ### Changed
+- **The file manager's ''Add to DB'' is `file-manager:record`** (was
+  `file-manager:track`, "Track" in the context menu): it creates the entry's
+  metarecord through `POST /metarecords`, names the parent directories that have
+  none in a confirmation and creates them only if it is accepted, and refuses an
+  entry already recorded.
 - **`mf track` is gone: `mf metarecord add --path <path> [--parents]`** creates a
   path's metarecord, with any field specs beside it
   (`mf metarecord add --path ./x.flac rating:int=5`). It refuses a path that
