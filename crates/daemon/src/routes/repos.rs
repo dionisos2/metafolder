@@ -417,8 +417,11 @@ fn spawn_load_warmup(state: Arc<AppState>, repo_uuid: Uuid) -> Option<Uuid> {
     };
     tokio::task::spawn_blocking(move || {
         repo_state.tasks.mark_running(task_id);
-        let outcome = repo_state.warm(&|phase, done, total| {
-            repo_state.tasks.set_progress(task_id, phase, done, total);
+        let outcome = crate::tasks::logged(&repo_state.slowlog, TaskKind::Load, task_id, || {
+            repo_state.warm(&|phase, done, total| {
+                crate::tasks::log_step(phase);
+                repo_state.tasks.set_progress(task_id, phase, done, total);
+            })
         });
         match outcome {
             Ok(()) => repo_state.tasks.finish(task_id, None),

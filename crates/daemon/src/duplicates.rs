@@ -105,7 +105,7 @@ pub fn scan_reported(
     opts: &ScanOptions,
     reporter: &Reporter,
 ) -> Result<ScanResult, ApiError> {
-    let mut conn = repo.conn.lock_recover();
+    let mut conn = metafolder_core::slowlog::timed("wait:conn", || repo.conn.lock_recover());
     let cache = repo.tree();
     let root = repo.config.root.clone();
     let mut result = ScanResult::default();
@@ -380,7 +380,7 @@ fn flush(
             .set_field_as(OpType::FileModified, uuid, &field.name, field.value)
             .map_err(ApiError::from)?;
     }
-    writer.commit().map_err(ApiError::from)?;
+    metafolder_core::slowlog::timed("commit", || writer.commit()).map_err(ApiError::from)?;
     Ok(())
 }
 
@@ -605,7 +605,7 @@ fn write_class_groups(
         result.files += count as usize;
         result.reclaimable += reclaimable;
     }
-    writer.commit().map_err(ApiError::from)?;
+    metafolder_core::slowlog::timed("commit", || writer.commit()).map_err(ApiError::from)?;
     Ok(())
 }
 
@@ -668,7 +668,7 @@ fn prune(
         }
         writer.delete_metarecord(group.uuid).map_err(ApiError::from)?;
     }
-    writer.commit().map_err(ApiError::from)?;
+    metafolder_core::slowlog::timed("commit", || writer.commit()).map_err(ApiError::from)?;
     Ok(())
 }
 

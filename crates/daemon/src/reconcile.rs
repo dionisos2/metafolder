@@ -121,7 +121,7 @@ pub fn reconcile_full_reported(
     refresh: bool,
     reporter: &Reporter,
 ) -> Result<ReconcileResult, ApiError> {
-    let mut conn = repo.conn.lock_recover();
+    let mut conn = metafolder_core::slowlog::timed("wait:conn", || repo.conn.lock_recover());
     let cache = repo.tree();
     let root = repo.config.root.clone();
     let mut writer = repo.writer(&mut conn, None)?;
@@ -432,7 +432,7 @@ pub fn reconcile_full_reported(
         }
     }
 
-    writer.commit()?;
+    metafolder_core::slowlog::timed("commit", || writer.commit())?;
     Ok(result)
 }
 
@@ -468,7 +468,7 @@ pub fn reconcile_metarecord_reported(
     refresh: bool,
     reporter: &Reporter,
 ) -> Result<ReconcileResult, ApiError> {
-    let mut conn = repo.conn.lock_recover();
+    let mut conn = metafolder_core::slowlog::timed("wait:conn", || repo.conn.lock_recover());
     let cache = repo.tree();
     let root = repo.config.root.clone();
 
@@ -578,7 +578,7 @@ pub fn reconcile_metarecord_reported(
         }
     }
 
-    writer.commit()?;
+    metafolder_core::slowlog::timed("commit", || writer.commit())?;
     Ok(result)
 }
 

@@ -14,6 +14,12 @@ than breaking them.
 ## [Unreleased]
 
 ### Added
+- **The background tasks are in the slow log.** A reconcile, a duplicate scan,
+  a relink and a load's warm-up are logged as `task <kind>` (the task's id in
+  the context), their progress phases as the entry's phases, with `wait:conn`
+  and `commit` like a request's — so a reader that waited on `wait:conn` can be
+  matched with what held the repository, and how long each step of it took
+  (doc "What the slow log records").
 - **`POST /repos/:repo/metarecords` creates a path's metarecord** with
   `{"path", "fields", "parents"?}`: its `mfr_*` fields read from disk, the
   caller's fields beside them, and `mf_watch = false` unless the fields set

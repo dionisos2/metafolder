@@ -107,7 +107,7 @@ pub fn clear_orphans(repo: &RepoState, uuids: &[Uuid]) -> Result<usize, ApiError
         cleared += 1;
     }
 
-    writer.commit()?;
+    metafolder_core::slowlog::timed("commit", || writer.commit())?;
     Ok(cleared)
 }
 
@@ -220,7 +220,7 @@ pub fn mark_orphans(repo: &RepoState) -> Result<MarkResult, ApiError> {
         writer.delete_fields_named(uuid, ORPHAN_FIELD)?;
         result.unmarked += 1;
     }
-    writer.commit()?;
+    metafolder_core::slowlog::timed("commit", || writer.commit())?;
     Ok(result)
 }
 
@@ -265,7 +265,7 @@ pub fn relink_reported(
     repo: &RepoState,
     reporter: &crate::tasks::Reporter,
 ) -> Result<RelinkResult, ApiError> {
-    let mut conn = repo.conn.lock_recover();
+    let mut conn = metafolder_core::slowlog::timed("wait:conn", || repo.conn.lock_recover());
     let root = repo.config.root.clone();
     let mut result = RelinkResult::default();
 
@@ -370,6 +370,6 @@ fn adopt(
         "mfr_path",
         Value::TreeRef { parent: Some(parent), name: name.clone() },
     )?;
-    writer.commit()?;
+    metafolder_core::slowlog::timed("commit", || writer.commit())?;
     Ok(())
 }

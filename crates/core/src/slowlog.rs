@@ -211,6 +211,12 @@ impl Timeline {
         }
     }
 
+    /// Whether the occurrence `token` opened is still open as the phase at
+    /// `index` — a token is a depth, reused once that occurrence has closed.
+    fn is_open(&self, token: usize, index: usize) -> bool {
+        self.open.get(token).is_some_and(|(open, _, _)| *open == index)
+    }
+
     /// The report, in first-appearance order. Phases still open are closed at
     /// `at` — the operation is over, so nothing may be left running.
     pub fn finish_at(self, at: Instant) -> Vec<Phase> {
@@ -427,6 +433,8 @@ struct Op {
     wrote: bool,
     /// Set by [`discard`]: the operation is not recorded, whatever it cost.
     discarded: bool,
+    /// The phase [`step`] opened last: its name, its token, its index.
+    step: Option<(String, usize, usize)>,
 }
 
 thread_local! {
@@ -519,6 +527,29 @@ pub fn phase(name: &'static str) -> PhaseGuard {
     PhaseGuard { token }
 }
 
+/// Moves the running operation on to the phase `name`, ending the one the
+/// previous call started — the form of a background task, which says where it
+/// is (its progress) rather than opening and closing spans. Calling it again
+/// with the same name continues that phase; the last one ends with whatever
+/// encloses it, or with the operation.
+pub fn step(name: &str) {
+    with_op(|op| {
+        let reads = reads_so_far().wrapping_sub(op.reads_at_start);
+        let now = Instant::now();
+        if let Some((current, token, index)) = &op.step {
+            if op.timeline.is_open(*token, *index) {
+                if current == name {
+                    return;
+                }
+                op.timeline.end_counted(*token, now, reads);
+            }
+        }
+        let token = op.timeline.begin_counted(name, now, reads);
+        let index = op.timeline.open[token].0;
+        op.step = Some((name.to_string(), token, index));
+    });
+}
+
 /// Runs `f` inside a named phase — the expression form of [`phase`].
 pub fn timed<T>(name: &'static str, f: impl FnOnce() -> T) -> T {
     let _phase = phase(name);
@@ -553,6 +584,7 @@ impl Op {
             reads_at_start: reads_so_far(),
             wrote: false,
             discarded: false,
+            step: None,
         }
     }
 
@@ -636,6 +668,70 @@ mod tests {
             note("results", "3");
         }
         assert_eq!(read(&dir, 10, None).0.len(), 0);
+    }
+
+    #[test]
+    fn test_steps_are_sequential_phases_named_by_progress() {
+        // A background task reports its progress as a sequence of named
+        // phases, the same name many times over: each name is one phase, ended
+        // by the next, and the last is closed with the operation.
+        let dir = tmp();
+        {
+            let _op = begin(recorder(&dir, 1), "task reconcile");
+            {
+                let _p = phase("wait:conn");
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            step("scan");
+            count_reads(4);
+            step("scan");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            step("create");
+            {
+                let _inner = phase("commit");
+                count_reads(3);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let (entries, _) = read(&dir, 10, None);
+        let e = &entries[0];
+        let names: Vec<(&str, u16, u32)> =
+            e.phases.iter().map(|p| (p.name.as_str(), p.depth, p.count)).collect();
+        assert_eq!(
+            names,
+            vec![("wait:conn", 0, 1), ("scan", 0, 1), ("create", 0, 1), ("commit", 1, 1)],
+            "{e:?}"
+        );
+        let p = |name: &str| e.phases.iter().find(|p| p.name == name).unwrap();
+        assert_eq!(p("scan").reads, 4);
+        assert_eq!(p("create").reads, 3, "a phase inside a step is inside it");
+        assert!(p("create").ms >= 2, "the last step is closed with the operation");
+    }
+
+    #[test]
+    fn test_a_step_opened_inside_a_phase_ends_with_it() {
+        // A step started under a phase is closed when that phase is: the next
+        // step must not end a phase it does not own.
+        let dir = tmp();
+        {
+            let _op = begin(recorder(&dir, 1), "task load");
+            {
+                let _p = phase("flush");
+                step("apply");
+            }
+            let _after = phase("watcher");
+            step("next");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let (entries, _) = read(&dir, 10, None);
+        let names: Vec<(&str, u16)> =
+            entries[0].phases.iter().map(|p| (p.name.as_str(), p.depth)).collect();
+        assert_eq!(names, vec![("flush", 0), ("apply", 1), ("watcher", 0), ("next", 1)]);
+    }
+
+    #[test]
+    fn test_a_step_outside_an_operation_is_a_no_op() {
+        step("scan");
     }
 
     #[test]

@@ -533,3 +533,98 @@ async fn test_a_rollback_recomputes_the_watched_folders_only_when_it_moves_a_rul
     assert!(phase(rollbacks[0], "settle.watches").is_some(), "a rule moved: {:?}", rollbacks[0]);
     assert!(phase(rollbacks[1], "settle.watches").is_none(), "no rule moved: {:?}", rollbacks[1]);
 }
+
+impl Fixture {
+    /// Starts a background task while another thread holds the repository's
+    /// connection, waits for it to end, and returns the task.
+    async fn task_while_busy(&self, uri: &str, body: Option<Value>) -> Value {
+        let (status, started) = self.while_busy("POST", uri, body, &[]).await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{started}");
+        let task_id = started["task_id"].as_str().unwrap().to_string();
+        self.await_task(&task_id).await
+    }
+
+    async fn await_task(&self, task_id: &str) -> Value {
+        for _ in 0..500 {
+            let (_, task) = request(
+                &self.app,
+                "GET",
+                &format!("/repos/{}/tasks/{task_id}", self.repo),
+                None,
+                &[],
+            )
+            .await;
+            if matches!(task["status"].as_str(), Some("done" | "failed" | "cancelled")) {
+                return task;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("the task never ended");
+    }
+
+    fn entry(&self, op: &str) -> slowlog::Entry {
+        let entries = self.entries();
+        entries
+            .iter()
+            .find(|e| e.op == op)
+            .cloned()
+            .unwrap_or_else(|| panic!("no {op} entry: {entries:?}"))
+    }
+}
+
+/// A background task is not a request, so it names itself — and a reconcile is
+/// what holds the repository the longest; the readers waiting behind it say
+/// `wait:conn`, and only its own entry says where *its* time went.
+#[tokio::test]
+async fn test_a_reconcile_task_is_logged_with_its_progress_as_phases() {
+    let f = fixture("task_reconcile", 1).await;
+    std::fs::write(f._root.join("a.txt"), b"hello").unwrap();
+    let task = f.task_while_busy(&format!("/repos/{}/reconcile", f.repo), None).await;
+    assert_eq!(task["status"], "done", "{task}");
+    let entry = f.entry("task reconcile");
+    assert!(phase(&entry, "wait:conn").is_some_and(|p| p.ms >= 100), "{entry:?}");
+    for name in ["walk", "stat", "scan", "create"] {
+        let p = phase(&entry, name).unwrap_or_else(|| panic!("no {name}: {entry:?}"));
+        assert_eq!((p.depth, p.count), (0, 1), "one phase per step: {p:?}");
+    }
+    assert_eq!(context(&entry, "task"), task["id"].as_str(), "{entry:?}");
+}
+
+#[tokio::test]
+async fn test_a_duplicate_scan_task_is_logged_with_its_progress_as_phases() {
+    let f = fixture("task_duplicates", 1).await;
+    std::fs::write(f._root.join("a.txt"), b"same").unwrap();
+    std::fs::write(f._root.join("b.txt"), b"same").unwrap();
+    f.task_while_busy(&format!("/repos/{}/reconcile", f.repo), None).await;
+    let task = f.task_while_busy(&format!("/repos/{}/duplicates/scan", f.repo), None).await;
+    assert_eq!(task["status"], "done", "{task}");
+    let entry = f.entry("task duplicates");
+    assert!(phase(&entry, "wait:conn").is_some_and(|p| p.ms >= 100), "{entry:?}");
+    assert!(phase(&entry, "size").is_some(), "{entry:?}");
+}
+
+/// A load's warm-up runs before the repository answers anything: a slow one is
+/// the "503 for a minute" nobody can otherwise explain.
+#[tokio::test]
+async fn test_a_load_warmup_is_logged() {
+    let settings = DaemonSettings {
+        slow_operation_threshold_ms: 1,
+        slow_operation_reads_threshold: 1,
+        slow_read_threshold_ms: 0,
+        ..Default::default()
+    };
+    let f = fixture_with("task_load", settings).await;
+    let root = f._root.to_str().unwrap().to_string();
+    let (status, body) =
+        request(&f.app, "POST", &format!("/repos/{}/unload", f.repo), None, &[]).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) =
+        request(&f.app, "POST", "/repos/load", Some(json!({"root": root})), &[]).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    // The task's end, not the repository's readiness: the repository is ready
+    // before its warm-up has returned, and the entry is written when it has.
+    let task_id = body["task_id"].as_str().expect("a cold load has a task").to_string();
+    f.await_task(&task_id).await;
+    let entry = f.entry("task load");
+    assert!(phase(&entry, "mounts").is_some(), "{entry:?}");
+}

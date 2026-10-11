@@ -79,6 +79,5 @@ first: the user is the one who has to keep the machine quiet meanwhile.
 
 !! Limits
 
-* The background tasks — reconcile, the duplicate and orphan scans, a load's warm-up — are not in the slow log: only their step's wall time shows them.
 * It never writes into an existing file: a hard link shares its bytes with the original folder.
 * It needs a display and a built frontend, so it is not part of `scripts/check.sh`.

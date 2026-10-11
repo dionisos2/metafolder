@@ -63,7 +63,25 @@ synonym:
 A `wait:*` phase is the one that distinguishes "this is expensive" from "this was
 fine and something else held the repository".
 
+!! Background tasks
+
+A background [[task|Tasks]] — a reconcile, a duplicate scan, a relink, a load's
+warm-up — is not a request, so it names itself: `task reconcile`, `task
+duplicates`, `task relink`, `task load`, with the task's id under `task` in its
+context. Its phases are its progress: each phase the task reports (`walk`,
+`stat`, `scan`, `fingerprint`, `create`, `refresh`, `mime`, `metadata` for a
+reconcile; `size`, `partial`, `full`, `prune` for a duplicate scan; `mounts` for a
+load, whose replay of the buffered events adds a flush's own phases) is one
+top-level phase, lasting until the next one starts,
+the counts a label carries in parentheses left out. Its `wait:conn` and `commit`
+are the same phases as a request's.
+
+A task is logged because the task list cannot say the same thing: it forgets a
+task ten seconds after it ends, and it says how far the task went, not where its
+time went. And a long task is usually the other half of a slow entry — the
+reconcile that every reader's `wait:conn` was waiting for.
+
 !! What is left out
 
-* Operations whose slowness is expected and already reported, as observable [[tasks|Tasks]]: loading a repository, a full reconcile, the duplicate scan, the similarity phase.
+* The `query` task, which is a request already logged under its route, and the watcher's flush, logged as `watcher.flush`.
 * Operations that name no repository (`GET /health`, `POST /repos/load`): the log lives in a repository, and these have none.

@@ -59,6 +59,29 @@ impl<'a> Reporter<'a> {
     }
 }
 
+/// Runs a background task's work as one slow-log operation, `task <kind>`
+/// (doc "Slow log"). A task is not a request, so nothing else would time it —
+/// and the longest of them (a reconcile) is what the readers waiting on
+/// `wait:conn` are waiting for. The entry is written when `f` returns, before
+/// the caller marks the task ended, so a client that saw it end can read it.
+pub fn logged<T>(
+    recorder: &std::sync::Arc<metafolder_core::slowlog::Recorder>,
+    kind: TaskKind,
+    id: Uuid,
+    f: impl FnOnce() -> T,
+) -> T {
+    let _timed = metafolder_core::slowlog::begin(recorder.clone(), format!("task {}", kind.name()));
+    metafolder_core::slowlog::note("task", id.as_simple().to_string());
+    f()
+}
+
+/// Makes a task's progress report its slow-log phase: the phase the report
+/// names, without the counts some labels carry in parentheses (`walk (depth
+/// 3, …)`), so that a phase is one entry however often it reports.
+pub fn log_step(phase: &str) {
+    metafolder_core::slowlog::step(phase.split(" (").next().unwrap_or(phase));
+}
+
 /// How long a terminal (`done`/`failed`) task is retained before eviction.
 pub const RETENTION: Duration = Duration::from_secs(10);
 
@@ -94,6 +117,20 @@ pub enum TaskKind {
 }
 
 impl TaskKind {
+    /// The kind's wire name, as `GET …/tasks` spells it.
+    pub fn name(self) -> &'static str {
+        match self {
+            TaskKind::Reconcile => "reconcile",
+            TaskKind::Duplicates => "duplicates",
+            TaskKind::Query => "query",
+            TaskKind::Flush => "flush",
+            TaskKind::Load => "load",
+            TaskKind::Relink => "relink",
+            TaskKind::Prune => "prune",
+            TaskKind::Rollback => "rollback",
+        }
+    }
+
     /// Whether a task of this kind can be cancelled (doc "Cancelling a task").
     /// `flush` is internal, but its size is the user's doing — a single batch
     /// can carry a whole directory tree — so it *is* stoppable, and stopping it

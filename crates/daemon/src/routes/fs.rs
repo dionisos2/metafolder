@@ -457,30 +457,36 @@ pub(super) async fn full_reconcile(
     tokio::task::spawn_blocking(move || {
         repo_state.tasks.mark_running(task_id);
         let progress = |phase: &str, done: Option<u64>, total: Option<u64>| {
+            crate::tasks::log_step(phase);
             repo_state.tasks.set_progress(task_id, phase, done, total);
         };
         // Cooperative cancellation (doc "Tasks"): the reconcile polls this at its
         // progress checkpoints and bails (rolling its transaction back) when a
         // `POST …/tasks/:id/cancel` has flipped the flag.
         let cancel = || repo_state.tasks.is_cancel_requested(task_id);
-        let outcome = match scope {
-            Some(uuid) => crate::reconcile::reconcile_metarecord_reported(
-                &repo_state,
-                uuid,
-                body.mime,
-                body.metadata,
-                body.refresh,
-                &crate::reconcile::Reporter::new(&progress, &cancel),
-            ),
-            None => crate::reconcile::reconcile_full_reported(
-                &repo_state,
-                body.threshold,
-                body.mime,
-                body.metadata,
-                body.refresh,
-                &crate::reconcile::Reporter::new(&progress, &cancel),
-            ),
-        };
+        let outcome = crate::tasks::logged(
+            &repo_state.slowlog,
+            TaskKind::Reconcile,
+            task_id,
+            || match scope {
+                Some(uuid) => crate::reconcile::reconcile_metarecord_reported(
+                    &repo_state,
+                    uuid,
+                    body.mime,
+                    body.metadata,
+                    body.refresh,
+                    &crate::reconcile::Reporter::new(&progress, &cancel),
+                ),
+                None => crate::reconcile::reconcile_full_reported(
+                    &repo_state,
+                    body.threshold,
+                    body.mime,
+                    body.metadata,
+                    body.refresh,
+                    &crate::reconcile::Reporter::new(&progress, &cancel),
+                ),
+            },
+        );
         match outcome {
             Ok(result) => {
                 let value = serde_json::to_value(result).expect("reconcile result serialization");
@@ -549,14 +555,18 @@ pub(super) async fn duplicates_scan(
     tokio::task::spawn_blocking(move || {
         repo_state.tasks.mark_running(task_id);
         let progress = |phase: &str, done: Option<u64>, total: Option<u64>| {
+            crate::tasks::log_step(phase);
             repo_state.tasks.set_progress(task_id, phase, done, total);
         };
         let cancel = || repo_state.tasks.is_cancel_requested(task_id);
-        let outcome = crate::duplicates::scan_reported(
-            &repo_state,
-            &opts,
-            &crate::tasks::Reporter::new(&progress, &cancel),
-        );
+        let outcome =
+            crate::tasks::logged(&repo_state.slowlog, TaskKind::Duplicates, task_id, || {
+                crate::duplicates::scan_reported(
+                    &repo_state,
+                    &opts,
+                    &crate::tasks::Reporter::new(&progress, &cancel),
+                )
+            });
         match outcome {
             Ok(result) => {
                 let value = serde_json::to_value(result).expect("scan result serialization");
@@ -681,11 +691,13 @@ pub(super) async fn orphans_relink(
     tokio::task::spawn_blocking(move || {
         repo_state.tasks.mark_running(task_id);
         let progress = |phase: &str, done: Option<u64>, total: Option<u64>| {
+            crate::tasks::log_step(phase);
             repo_state.tasks.set_progress(task_id, phase, done, total);
         };
         let cancel = || repo_state.tasks.is_cancel_requested(task_id);
-        let outcome =
-            orphans::relink_reported(&repo_state, &crate::tasks::Reporter::new(&progress, &cancel));
+        let outcome = crate::tasks::logged(&repo_state.slowlog, TaskKind::Relink, task_id, || {
+            orphans::relink_reported(&repo_state, &crate::tasks::Reporter::new(&progress, &cancel))
+        });
         match outcome {
             Ok(result) => {
                 let value = serde_json::to_value(result).expect("relink result serialization");

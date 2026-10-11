@@ -631,7 +631,7 @@ impl RepoState {
     /// is still reported through `progress` `(phase, done, total)`, a no-op
     /// for the synchronous callers (startup auto-load, `init`).
     pub fn warmup(&self, progress: ProgressFn) -> Result<(), ApiError> {
-        let conn = self.conn.lock_recover();
+        let conn = metafolder_core::slowlog::timed("wait:conn", || self.conn.lock_recover());
         progress("mounts", None, None);
         // The declared mount points, read once here so they are resident from
         // the start: a repository is very often opened *while* something writes
