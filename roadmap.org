@@ -31,28 +31,25 @@ is left, each to measure before building:
   is replaced by doc "The session scenario" (=scripts/session.sh=, 11 October
   2026), a scripted day of GUI use on 50 000 files with every operation
   logged. Its runs show no query over budget: every list, finder and
-  folder step stays under 1 s on a neutral machine, the most keys a list step read being 19 000
-  for five pages. What it did find is below.
+  folder step stays under 1 s on a neutral machine, the most keys a list step
+  read being 19 000 for five pages. What it did find is below.
 
-** TODO what the first session runs found (11–12 October 2026, 50 000 files)
-The first run on a loaded machine; the first recorded one (12 October, neutral
-load 7.1 % CPU, =benchmarks/session/=) gives the durations below. Keys exact.
-- a reconcile with nothing to do takes 43.8 s (56.6 s loaded), and holds the
-  store the whole time: every GUI read meanwhile (=watch/check=,
-  =resolve-tree=) waited 43.6 s on =wait:conn=. The wait itself is the decided
-  "readers block on writes" (doc "Storage open questions"); the cost to look
-  at is the reconcile's.
-- the duplicate scan: 29.9 s (43.6 s loaded), the GUI's change feed (=GET
-  /log/since=) blocked 27.6 s behind it.
-- the first reconcile: 60.4 s (73.7 s loaded).
-- none of the three is in the slow log: the background tasks (reconcile, the
-  duplicate and orphan scans, a load's warm-up) are not timed by it, only
-  requests and the watcher's flush. Logging them, with phases, is what would
-  say where their time goes.
-- creating 1 000 files reads 1.57 million keys in the watcher's flushes (≈ 1 570
-  a file); renaming a folder of 292 files, 2.1 million; deleting the 1 000,
-  0.58 million. Undoing the bulk add of one field on 50 000 records reads 1.45
-  million (the add itself 0.41 million).
+** TODO what the session runs found (11–12 October 2026, 50 000 files)
+Recorded on a neutral machine (=benchmarks/session/=). The background tasks
+are in the slow log since =e7d7ffff=, which showed the biggest cost at once: a
+path's resolution compared each name with all its siblings (=e7882221=). A
+reconcile with nothing to do went from 43.8 s and 242 million keys to 9.7 s and
+3.8 million; the first one from 60 s to 25 s; the watcher's flushes from 2.1
+million keys (a folder of 292 files renamed) to 20 000, and from 1.56 million
+(1 000 files created) to 53 000. Every step is within its budget. Left:
+- the duplicate scan: 29.5 s, 6.8 million keys, and the GUI's change feed
+  (=GET /log/since=) blocked behind it the whole time. Its phases are in the
+  log now: read them first.
+- a reconcile with nothing to do still reads 3.8 million keys, ≈ 75 a file.
+- once in three runs, =GET /log= after the bulk write (one revision of 50 000
+  operations) read 401 000 keys for one window, in =log.redo= and =log.open=;
+  2 000 in the others. Bounded reads are pinned by =tests/log_cost.rs=, so
+  what differs is the window asked for — to reproduce before reading it.
 
 * TODO watcher
 ** TODO keep hunting with the simulated kernel

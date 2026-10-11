@@ -38,12 +38,14 @@ pub struct Outcome {
 }
 
 /// The slow-log entries of each step, in step order, and those that started
-/// between steps.
+/// between steps. A window is half-open, `[start, end)`: the millisecond one
+/// step ends is often the one the next begins, and what starts then was
+/// started by the next.
 pub fn attribute(entries: Vec<Entry>, outcomes: &[Outcome]) -> (Vec<Vec<Entry>>, Vec<Entry>) {
     let mut per_step: Vec<Vec<Entry>> = vec![Vec::new(); outcomes.len()];
     let mut between = Vec::new();
     for entry in entries {
-        match outcomes.iter().position(|o| o.start_ms <= entry.at_ms && entry.at_ms <= o.end_ms) {
+        match outcomes.iter().position(|o| o.start_ms <= entry.at_ms && entry.at_ms < o.end_ms) {
             Some(i) => per_step[i].push(entry),
             None => between.push(entry),
         }
@@ -232,10 +234,17 @@ mod tests {
 
     #[test]
     fn an_entry_goes_to_the_step_whose_window_holds_its_start() {
-        let outcomes = [outcome("a", 100, 200, 100.0), outcome("b", 300, 400, 100.0)];
+        let outcomes = [
+            outcome("a", 100, 200, 100.0),
+            outcome("b", 300, 400, 100.0),
+            outcome("c", 400, 500, 100.0),
+        ];
         let entries = vec![
             entry("daemon", "in-a", 100, 1, 0),
-            entry("daemon", "in-b", 400, 1, 0),
+            entry("daemon", "in-b", 399, 1, 0),
+            // The millisecond one step ends and the next begins: what starts
+            // then was started by the next one.
+            entry("daemon", "in-c", 400, 1, 0),
             entry("daemon", "between", 250, 1, 0),
             entry("gui", "before", 50, 1, 0),
         ];
@@ -243,6 +252,7 @@ mod tests {
         let ops = |v: &[Entry]| v.iter().map(|e| e.op.clone()).collect::<Vec<_>>();
         assert_eq!(ops(&per_step[0]), ["in-a"]);
         assert_eq!(ops(&per_step[1]), ["in-b"]);
+        assert_eq!(ops(&per_step[2]), ["in-c"]);
         assert_eq!(ops(&between), ["between", "before"]);
     }
 
