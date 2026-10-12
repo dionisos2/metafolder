@@ -479,3 +479,25 @@ fn losing_one_of_two_hard_linked_names_frees_nothing_more() {
     assert_eq!(field_value(&repo, group, "mfr_duplicate_count"), Some(Value::Int(2)));
     assert_eq!(field_value(&repo, group, "mfr_duplicate_reclaimable"), Some(Value::Int(16)));
 }
+
+// ── Revisions ────────────────────────────────────────────────────────────────
+
+#[test]
+fn a_quick_scan_writes_one_revision_whatever_its_classes() {
+    // Every commit is an fsync: a scan that committed each batch of hashes and
+    // each size class's groups spent 17 of its 31 s committing on 50 000 files
+    // (503 revisions). Its writes are committed by time instead, so a scan
+    // quicker than the window is one revision however many classes it found.
+    let (repo, root) = setup("one_revision");
+    for class in 0..40 {
+        let content = vec![b'x'; 10 + class];
+        for copy in 0..30 {
+            write_file(&root, &format!("c{class}/f{copy}.bin"), &content);
+        }
+    }
+    reconcile::reconcile(&repo).unwrap();
+    let before = revisions(&repo);
+    let result = duplicates::scan(&repo, &ScanOptions::default()).unwrap();
+    assert_eq!(result.groups, 40);
+    assert_eq!(revisions(&repo) - before, 1, "one window, one revision");
+}

@@ -245,6 +245,10 @@ than breaking them.
   mounting the remote repository over SSHFS is deferred (spec-sync).
 
 ### Fixed
+- **The duplicate scan spent half its time committing.** Its hash cache went
+  out in batches of 500 *fields* (167 files) and its groups one revision per
+  size class: 503 revisions, 17 of 31 s, on 50 000 files. All its writes now
+  go into one revision committed every two seconds (doc "The duplicate scan").
 - **Resolving a path read every sibling of each of its components.** A name
   that is text was compared with the text of all the entries of its folder
   instead of being looked up by its bytes, which the note on case sensitivity

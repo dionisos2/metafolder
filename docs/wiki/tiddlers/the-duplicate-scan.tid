@@ -24,8 +24,7 @@ answered against maps loaded up front.
 
 !! What it writes
 
-* ''The hash cache'' (`mfr_partial_hash`, `mfr_full_hash`, `mfr_hash_mtime`, `mfr_hash_size`) is committed in batches of 500 records, one revision each: one transaction per file would cost an `fsync` each, and one for the whole scan would throw every computed hash away on a cancel — and the hash cache is precisely the work worth keeping.
-* ''The groups'' are committed per size class; the prune is one final revision.
+* ''The hash cache'' (`mfr_partial_hash`, `mfr_full_hash`, `mfr_hash_mtime`, `mfr_hash_size`), ''the groups'' (written as each size class completes) and ''the prune'' all go into one open revision, committed every two seconds and at the end. One transaction per file would cost an `fsync` each, and one for the whole scan would throw every computed hash away on a cancel — and the hash cache is precisely the work worth keeping. A window in ''time'' bounds both what a cancel can lose and how many commits a scan makes: committing per 500 records and per size class instead made 503 revisions of a scan of 50 000 files, 17 of its 31 s.
 
 A field is written only when it is absent or changed, so a re-scan of an
 unchanged repository writes nothing.

@@ -10,6 +10,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::time::Instant;
 
 use serde::Serialize;
 use uuid::Uuid;
@@ -32,11 +33,14 @@ pub const GROUP_SCHEMA: &str = "duplicate_group";
 /// group is never a bare field clear: see [`leave_group`].
 pub const GROUP_FIELD: &str = "mfr_duplicate_group";
 
-/// Records per revision when writing the hash cache. A transaction per file
-/// would cost one `fsync` each (doc "Writes and atomicity"); one transaction for the whole
-/// scan would throw away every hash computed so far when the scan is cancelled
-/// — and the hash cache is precisely the work worth keeping.
-const BATCH_RECORDS: usize = 500;
+/// How long the scan's writes accumulate in one revision before it commits.
+/// Every commit is an `fsync` (doc "Writes and atomicity"): committing per
+/// batch of files and per size class spent 17 of 31 s committing on 50 000
+/// files. One transaction for the whole scan would throw every hash computed
+/// so far away on a cancel — and the hash cache is precisely the work worth
+/// keeping. A window in time bounds both: what a cancel or an error can lose,
+/// and how many commits a scan makes, whatever the size of the repository.
+const COMMIT_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Progress is reported every this many items inside the scan loops.
 const PROGRESS_STEP: usize = 64;
@@ -194,16 +198,34 @@ pub fn scan_reported(
 
     // ── Phase 2: partial hashes ─────────────────────────────────────────────
     let stored = crate::store::Questions::hash_cache(&conn)?;
+    let mut existing = crate::store::Questions::duplicate_groups(&conn)?;
+    // From here on, every write goes through the open window, committed every
+    // `COMMIT_EVERY` (the reads above are all the scan needs from the store).
+    let retention = repo.log_retention();
+    let mut window = Writer::begin_with_retention(&mut *conn, None, retention)?;
+    let mut opened = Instant::now();
+    // Commits the window and opens the next one, when it is due (or `now`).
+    macro_rules! commit_window {
+        (now) => {{
+            commit(window)?;
+            window = Writer::begin_with_retention(&mut *conn, None, retention)?;
+            opened = Instant::now();
+        }};
+        () => {
+            if opened.elapsed() >= COMMIT_EVERY {
+                commit_window!(now);
+            }
+        };
+    }
     let total = classes.iter().map(|(_, m)| m.len()).sum::<usize>() as u64;
     reporter.progress("partial", Some(0), Some(total));
-    let mut pending: Vec<(Uuid, Field)> = Vec::new();
     let mut done = 0u64;
     for (_, members) in classes.iter_mut() {
         for member in members.iter_mut() {
             if done.is_multiple_of(PROGRESS_STEP as u64) {
                 reporter.progress("partial", Some(done), Some(total));
                 if reporter.is_cancelled() {
-                    flush(repo.log_retention(), &mut conn, &mut pending)?;
+                    commit(window)?;
                     return Err(cancelled());
                 }
             }
@@ -212,20 +234,17 @@ pub fn scan_reported(
                 Ok(Step::Reused(hash)) => member.partial = Some(hash),
                 Ok(Step::Computed(hash, stamp)) => {
                     result.hashed_partial += 1;
-                    push_hash(&mut pending, member.uuid, "mfr_partial_hash", &hash, stamp);
+                    write_hash(&mut window, member.uuid, "mfr_partial_hash", &hash, stamp)?;
                     member.partial = Some(hash);
                 }
                 Err(_) => result.skipped += 1,
             }
-            if pending.len() >= BATCH_RECORDS {
-                flush(repo.log_retention(), &mut conn, &mut pending)?;
-            }
+            commit_window!();
         }
         // Within a size class, a partial hash occurring once eliminates its
         // file: nothing else can be identical to it.
         retain_shared(members, |m| m.partial.clone());
     }
-    flush(repo.log_retention(), &mut conn, &mut pending)?;
     classes.retain(|(_, members)| members.len() > 1);
 
     // ── Phase 3: full hashes, and the groups ────────────────────────────────
@@ -234,7 +253,6 @@ pub fn scan_reported(
     let total_bytes: i64 = classes.iter().map(|(size, m)| size * m.len() as i64).sum();
     reporter.progress("full", Some(0), Some(total_bytes.max(0) as u64));
     let mut hashed_bytes = 0i64;
-    let mut existing = crate::store::Questions::duplicate_groups(&conn)?;
     let mut grouped: HashSet<Uuid> = HashSet::new();
     let mut touched: HashSet<Uuid> = HashSet::new();
 
@@ -246,7 +264,7 @@ pub fn scan_reported(
                 Some(total_bytes.max(0) as u64),
             );
             if reporter.is_cancelled() {
-                flush(repo.log_retention(), &mut conn, &mut pending)?;
+                commit(window)?;
                 return Err(cancelled());
             }
             match hash_step(&root, member, &stored, opts, Fingerprint::Full) {
@@ -254,22 +272,19 @@ pub fn scan_reported(
                 Ok(Step::Computed(hash, stamp)) => {
                     result.hashed_full += 1;
                     hashed_bytes += *size;
-                    push_hash(&mut pending, member.uuid, "mfr_full_hash", &hash, stamp);
+                    write_hash(&mut window, member.uuid, "mfr_full_hash", &hash, stamp)?;
                     member.full = Some(hash);
                 }
                 Err(_) => result.skipped += 1,
             }
-            if pending.len() >= BATCH_RECORDS {
-                flush(repo.log_retention(), &mut conn, &mut pending)?;
-            }
+            commit_window!();
         }
-        flush(repo.log_retention(), &mut conn, &mut pending)?;
         retain_shared(members, |m| m.full.clone());
 
-        // This class's groups are written as it completes, not at the end.
+        // This class's groups are written as it completes, not at the end:
+        // they go out with the window that holds them.
         write_class_groups(
-            repo.log_retention(),
-            &mut conn,
+            &mut window,
             *size,
             members,
             &mut existing,
@@ -278,21 +293,14 @@ pub fn scan_reported(
             &mut touched,
             &mut result,
         )?;
+        commit_window!();
     }
 
     // ── Phase 4: prune what no longer holds ─────────────────────────────────
     // Only reached when the phases above completed: a cancelled scan leaves
     // stale groups for the next complete run rather than a half-pruned state.
-    prune(
-        repo.log_retention(),
-        &mut conn,
-        &existing,
-        &mut links,
-        &grouped,
-        &touched,
-        scope.as_ref(),
-        reporter,
-    )?;
+    prune(&mut window, &existing, &mut links, &grouped, &touched, scope.as_ref(), reporter)?;
+    commit(window)?;
 
     Ok(result)
 }
@@ -351,37 +359,29 @@ fn hash_step(
     Ok(Step::Computed(hash, live))
 }
 
-/// Queues a computed hash and the stamp it was computed under. They are written
-/// together so a stamp can never describe a hash that is not there.
-fn push_hash(
-    pending: &mut Vec<(Uuid, Field)>,
+/// Writes a computed hash and the stamp it was computed under, together, so a
+/// stamp can never describe a hash that is not there.
+fn write_hash(
+    writer: &mut Writer,
     uuid: Uuid,
     name: &str,
     hash: &str,
     (mtime, size): (i64, i64),
-) {
-    pending.push((uuid, Field::new(name, Value::String(hash.to_string()))));
-    pending.push((uuid, Field::new("mfr_hash_mtime", Value::DateTime(mtime))));
-    pending.push((uuid, Field::new("mfr_hash_size", Value::Int(size))));
+) -> Result<(), ApiError> {
+    for (field, value) in [
+        (name, Value::String(hash.to_string())),
+        ("mfr_hash_mtime", Value::DateTime(mtime)),
+        ("mfr_hash_size", Value::Int(size)),
+    ] {
+        writer.set_field_as(OpType::FileModified, uuid, field, value).map_err(ApiError::from)?;
+    }
+    Ok(())
 }
 
-/// Commits one batch of field writes as a single revision.
-fn flush(
-    retention: crate::log::Retention,
-    conn: &mut dyn crate::store::Database,
-    pending: &mut Vec<(Uuid, Field)>,
-) -> Result<(), ApiError> {
-    if pending.is_empty() {
-        return Ok(());
-    }
-    let mut writer = Writer::begin_with_retention(conn, None, retention).map_err(ApiError::from)?;
-    for (uuid, field) in pending.drain(..) {
-        writer
-            .set_field_as(OpType::FileModified, uuid, &field.name, field.value)
-            .map_err(ApiError::from)?;
-    }
-    metafolder_core::slowlog::timed("commit", || writer.commit()).map_err(ApiError::from)?;
-    Ok(())
+/// Commits one window of the scan's writes as a revision; an empty one writes
+/// nothing (`Writer::commit` drops it).
+fn commit(writer: Writer) -> Result<(), ApiError> {
+    metafolder_core::slowlog::timed("commit", || writer.commit()).map_err(ApiError::from)
 }
 
 /// Keeps only the members whose key is shared with at least one other member,
@@ -503,13 +503,12 @@ fn int_field(
     }))
 }
 
-/// Writes one size class's groups, in one revision: find-or-create each group
-/// by its `(size, hash)` identity, refresh its counters, and point every member
-/// at it.
+/// Writes one size class's groups into the scan's open revision:
+/// find-or-create each group by its `(size, hash)` identity, refresh its
+/// counters, and point every member at it.
 #[allow(clippy::too_many_arguments)]
 fn write_class_groups(
-    retention: crate::log::Retention,
-    conn: &mut dyn crate::store::Database,
+    writer: &mut Writer,
     size: i64,
     members: &[Candidate],
     existing: &mut HashMap<(i64, String), rows::DuplicateGroup>,
@@ -529,7 +528,6 @@ fn write_class_groups(
         return Ok(());
     }
 
-    let mut writer = Writer::begin_with_retention(conn, None, retention).map_err(ApiError::from)?;
     for (hash, group_members) in by_hash {
         let owned: Vec<Candidate> = group_members
             .iter()
@@ -605,7 +603,6 @@ fn write_class_groups(
         result.files += count as usize;
         result.reclaimable += reclaimable;
     }
-    metafolder_core::slowlog::timed("commit", || writer.commit()).map_err(ApiError::from)?;
     Ok(())
 }
 
@@ -613,8 +610,7 @@ fn write_class_groups(
 /// place in a group, and every group left with fewer than two members.
 #[allow(clippy::too_many_arguments)]
 fn prune(
-    retention: crate::log::Retention,
-    conn: &mut dyn crate::store::Database,
+    writer: &mut Writer,
     existing: &HashMap<(i64, String), rows::DuplicateGroup>,
     links: &mut HashMap<Uuid, Uuid>,
     grouped: &HashSet<Uuid>,
@@ -624,7 +620,6 @@ fn prune(
 ) -> Result<(), ApiError> {
     let total = existing.len() as u64;
     reporter.progress("prune", Some(0), Some(total));
-    let mut writer = Writer::begin_with_retention(conn, None, retention).map_err(ApiError::from)?;
 
     // Driven by the records that *currently carry a link* — the map loaded at
     // the start and kept current by the writes above, so this asks the database
@@ -668,7 +663,6 @@ fn prune(
         }
         writer.delete_metarecord(group.uuid).map_err(ApiError::from)?;
     }
-    metafolder_core::slowlog::timed("commit", || writer.commit()).map_err(ApiError::from)?;
     Ok(())
 }
 
