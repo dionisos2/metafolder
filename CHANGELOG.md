@@ -245,6 +245,11 @@ than breaking them.
   mounting the remote repository over SSHFS is deferred (spec-sync).
 
 ### Fixed
+- **Reading the log right after an undo read the whole log.** With a
+  continuation below HEAD, `GET /log?mode=active` rebuilt it from every
+  operation of the table and HEAD's whole ancestry (351 000 keys for the
+  redo's window, on a session's log); it now reads HEAD's subtree alone (doc
+  "Reading the log costs the window").
 - **The duplicate scan spent half its time committing.** Its hash cache went
   out in batches of 500 *fields* (167 files) and its groups one revision per
   size class: 503 revisions, 17 of 31 s, on 50 000 files. All its writes now

@@ -158,19 +158,22 @@ fn select_ops(log: &dyn Log, q: &LogQuery, head: Option<i64>) -> Result<Vec<OpRo
         return Ok(ops);
     };
 
+    // `active` past HEAD: the branch continuing below it, read once — its cost
+    // is HEAD's subtree, whatever the length of the log behind HEAD.
+    let forward = match q.mode {
+        Mode::Active if log.has_children(head)? => log.forward_line(head)?,
+        _ => Vec::new(),
+    };
     let mut budget = initial;
     loop {
-        // `active` with a forward continuation below HEAD has no bounded form:
-        // rebuilding the branch reads every operation either way.
-        let bounded_walk =
-            q.mode != Mode::Tree && !(q.mode == Mode::Active && log.has_children(head)?);
-        let (mut ops, exhausted) = if bounded_walk {
+        let (mut ops, exhausted) = if q.mode == Mode::Tree {
+            (whole_line(log, q.mode, head)?, true)
+        } else {
             let mut chain = log.ancestry_ops(head, Some(budget))?;
             let exhausted = chain.len() < budget;
             chain.reverse(); // root → HEAD, oldest first
+            chain.extend(forward.iter().cloned());
             (chain, exhausted)
-        } else {
-            (whole_line(log, q.mode, head)?, true)
         };
         filter_ops(log, q, &mut ops)?;
         if exhausted || satisfied(q, &ops) {
@@ -185,12 +188,14 @@ fn select_ops(log: &dyn Log, q: &LogQuery, head: Option<i64>) -> Result<Vec<OpRo
 fn whole_line(log: &dyn Log, mode: Mode, head: i64) -> Result<Vec<OpRow>> {
     Ok(match mode {
         Mode::Tree => log.all_ops()?,
-        Mode::Linear => {
+        Mode::Linear | Mode::Active => {
             let mut chain = log.ancestry_ops(head, None)?;
             chain.reverse();
+            if mode == Mode::Active {
+                chain.extend(log.forward_line(head)?);
+            }
             chain
         }
-        Mode::Active => log.active_line(head)?,
     })
 }
 

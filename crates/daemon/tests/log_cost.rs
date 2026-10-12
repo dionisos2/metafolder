@@ -273,3 +273,44 @@ fn a_navigation_step_costs_the_same_however_far_the_target_is() {
          operations cost N²"
     );
 }
+
+/// [`repo_with_log`], then HEAD taken back over its last `undone` operations —
+/// what an undo by rollback leaves: a forward continuation below HEAD.
+fn repo_after_undo(revisions: usize, undone: usize) -> (KvStore, TempDir) {
+    let (mut kv, dir) = repo_with_log(revisions);
+    let target = steps_back(&kv, undone);
+    log::navigate(&mut kv, target).unwrap();
+    assert!(kv.has_children(kv.head().unwrap().unwrap()).unwrap());
+    (kv, dir)
+}
+
+#[test]
+fn an_active_window_after_an_undo_costs_the_same_on_a_longer_log() {
+    // A redo reads the active line right after an undo. Its continuation below
+    // HEAD was rebuilt from the whole log — every operation of the table and
+    // HEAD's whole ancestry: 351 000 keys on a session's log, for one window.
+    let q = bounded(Mode::Active);
+    let (mut small, _s) = repo_after_undo(SHORT_LOG, 3);
+    let (mut big, _b) = repo_after_undo(LONG_LOG, 3);
+    let (small_cost, big_cost) = (cost_of(&mut small, &q), cost_of(&mut big, &q));
+    assert_eq!(small_cost, big_cost, "the keys read grew with the log behind HEAD");
+}
+
+#[test]
+fn an_active_window_after_an_undo_shows_the_continuation_newest_last() {
+    let (kv, _d) = repo_after_undo(SHORT_LOG, 3);
+    let head = kv.head().unwrap().unwrap();
+    let body = listing(&kv, &bounded(Mode::Active)).unwrap();
+    let ops = body["operations"].as_array().unwrap();
+    assert_eq!(ops.len(), 50);
+    let ids: Vec<i64> = ops.iter().map(|o| o["id"].as_i64().unwrap()).collect();
+    let whole = {
+        let mut line = kv.ancestry(head).unwrap();
+        line.reverse();
+        line.extend(
+            kv.ancestry(kv.ancestry(head).unwrap()[0] + 3).unwrap().into_iter().take(3).rev(),
+        );
+        line
+    };
+    assert_eq!(ids, whole[whole.len() - 50..], "the newest 50 of ancestry + continuation");
+}

@@ -21,6 +21,12 @@ at whichever it reaches first, and the one revision it may cut, the oldest, says
 reaches the root: `--limit 10` on one old metarecord used to return nothing, because
 none of the repository's last ten operations happened to be its.
 
+Then an undo (October 2026, the session scenario): right after one, HEAD has a forward
+continuation, and `mode=active` rebuilt it from ''every'' operation of the table plus
+HEAD's whole ancestry — 351 000 keys for the redo's window of 500. The continuation is
+now read from HEAD's subtree alone, through the children index: a window after an undo
+costs the window plus what was undone, never the log behind HEAD.
+
 What stays proportional to the log, by construction: `mode=tree` (a graph needs every
 branch). The totals are B-tree statistics now, not counts. The read side was moved out
 of the routes into `log_view.rs` so its cost could be tested on its own:

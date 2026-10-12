@@ -1126,8 +1126,24 @@ macro_rules! kv_reads {
                     $read.ops_with_origins(ids.into_iter())
                 })
             }
-            fn active_line(&self, head: i64) -> Result<Vec<OpRow>> {
-                Ok(log::active_line_of(self.ancestry_ops(head, None)?, self.all_ops()?, head))
+            fn forward_line(&self, head: i64) -> Result<Vec<OpRow>> {
+                let $me = self;
+                $with(&mut |$read: &Read| {
+                    // `head`'s subtree, through the children index: what is
+                    // behind `head` is never read.
+                    let mut children: HashMap<i64, Vec<i64>> = HashMap::new();
+                    let mut frontier = vec![head];
+                    while let Some(op) = frontier.pop() {
+                        let mut kids = Vec::new();
+                        for e in $read.t.op_children.prefix_iter($read.r, &be(op))? {
+                            kids.push(from_be(&e?.0[8..]));
+                        }
+                        $read.count(kids.len() as u64 + 1)?;
+                        frontier.extend(&kids);
+                        children.insert(op, kids);
+                    }
+                    $read.ops_with_origins(log::forward_path(&children, head).into_iter())
+                })
             }
             fn has_children(&self, op: i64) -> Result<bool> {
                 let $me = self;

@@ -308,7 +308,9 @@ fn the_log_lists_its_lines_and_revisions() {
     assert_eq!(store.ancestry_ops(head, Some(2)).unwrap().len(), 2, "bounded walk");
     let all = store.all_ops().unwrap();
     assert_eq!(all.iter().map(|o| o.id).rev().collect::<Vec<_>>(), store.ancestry(head).unwrap());
-    assert_eq!(store.active_line(head).unwrap().len(), 3);
+    assert!(store.forward_line(head).unwrap().is_empty(), "nothing continues below HEAD");
+    let below: Vec<i64> = store.forward_line(chain[2].id).unwrap().iter().map(|o| o.id).collect();
+    assert_eq!(below, [chain[1].id, chain[0].id], "the branch below, oldest first");
     assert!(!store.has_children(head).unwrap());
     assert!(store.has_children(chain[1].id).unwrap());
 

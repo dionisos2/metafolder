@@ -159,9 +159,9 @@ macro_rules! forward_to_store {
                 let $me = self;
                 Log::all_ops($conn)
             }
-            fn active_line(&self, head: i64) -> Result<Vec<OpRow>> {
+            fn forward_line(&self, head: i64) -> Result<Vec<OpRow>> {
                 let $me = self;
-                Log::active_line($conn, head)
+                Log::forward_line($conn, head)
             }
             fn has_children(&self, op: i64) -> Result<bool> {
                 let $me = self;
@@ -450,9 +450,10 @@ pub trait Log {
     fn ancestry_ops(&self, from: i64, max: Option<usize>) -> Result<Vec<OpRow>>;
     /// Every operation, whatever branch it is on, oldest first.
     fn all_ops(&self) -> Result<Vec<OpRow>>;
-    /// The active line through `head`: its ancestors, then the branch that
-    /// continues below it (doc "Log endpoints"), oldest first.
-    fn active_line(&self, head: i64) -> Result<Vec<OpRow>>;
+    /// The branch that continues below `head` (doc "Log endpoints"), oldest
+    /// first, `head` excluded — the part of the active line past HEAD. It reads
+    /// `head`'s subtree, never the log behind it.
+    fn forward_line(&self, head: i64) -> Result<Vec<OpRow>>;
     /// Whether an operation has a child (a continuation below it).
     fn has_children(&self, op: i64) -> Result<bool>;
     /// The given revisions' metadata; ids that name none are left out.

@@ -144,50 +144,36 @@ pub enum Delta {
     Unrelated,
 }
 
-/// The active line through `head` from its ancestry (HEAD-first) and every
-/// operation: the ancestors root-first, then the branch below `head` that
-/// leads to the newest operation (doc "Log endpoints"). Pure, so
+/// The branch continuing below `head` (doc "Log endpoints"): from `head`, the
+/// child leading to the newest operation of its subtree, then that child's, and
+/// so on — oldest first, `head` excluded. `children` maps each operation of
+/// `head`'s subtree to its children; nothing outside the subtree is needed,
+/// which is what keeps the walk from reading the log behind `head`. Pure, so
 /// every storage backend walks it the same way.
-pub(crate) fn active_line_of(ancestry: Vec<OpRow>, all: Vec<OpRow>, head: i64) -> Vec<OpRow> {
-    // Ancestry is HEAD→root; reverse to root→HEAD.
-    let mut line = ancestry;
-    line.reverse();
-
-    // Build the child map from every operation to walk forward from HEAD.
-    let mut children: HashMap<i64, Vec<i64>> = HashMap::new();
-    for op in &all {
-        if let Some(parent) = op.parent_id {
-            children.entry(parent).or_default().push(op.id);
-        }
-    }
+pub(crate) fn forward_path(children: &HashMap<i64, Vec<i64>>, head: i64) -> Vec<i64> {
     // Subtree-max id per node. A child is always created after its parent
     // (parent_id < id), so processing ids in descending order visits children
     // before parents — one bottom-up pass, no recursion.
-    let mut subtree_max: HashMap<i64, i64> = HashMap::new();
-    let mut ids: Vec<i64> = all.iter().map(|o| o.id).collect();
+    let mut ids: Vec<i64> = children.values().flatten().copied().collect();
     ids.sort_unstable_by(|a, b| b.cmp(a));
+    let mut subtree_max: HashMap<i64, i64> = HashMap::new();
     for id in ids {
         let mut m = id;
-        if let Some(kids) = children.get(&id) {
-            for &c in kids {
-                m = m.max(*subtree_max.get(&c).unwrap_or(&c));
-            }
+        for &c in children.get(&id).into_iter().flatten() {
+            m = m.max(*subtree_max.get(&c).unwrap_or(&c));
         }
         subtree_max.insert(id, m);
     }
-
-    // Walk forward from HEAD, always descending toward the largest reachable id.
-    let by_id: HashMap<i64, &OpRow> = all.iter().map(|o| (o.id, o)).collect();
+    let mut path = Vec::new();
     let mut cur = head;
-    while let Some(kids) = children.get(&cur) {
-        let Some(&next) = kids.iter().max_by_key(|&&c| subtree_max.get(&c).copied().unwrap_or(c))
-        else {
-            break;
-        };
-        line.push((*by_id.get(&next).expect("child op present")).clone());
+    while let Some(&next) = children
+        .get(&cur)
+        .and_then(|kids| kids.iter().max_by_key(|&&c| subtree_max.get(&c).copied().unwrap_or(c)))
+    {
+        path.push(next);
         cur = next;
     }
-    line
+    path
 }
 
 // ── Navigation (doc "Navigation") ──────────────────────────────────
