@@ -17,34 +17,9 @@ use crate::log::OpRow;
 use crate::rows;
 use crate::store::{Log, RevisionMeta};
 
-/// Which line through the log to read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Mode {
-    /// The ancestry of HEAD, oldest first.
-    Linear,
-    /// The ancestry plus HEAD's forward continuation (the redo future stays
-    /// visible), oldest first.
-    Active,
-    /// Every operation, including divergent branches, in creation order.
-    Tree,
-}
-
-impl Mode {
-    /// The query-parameter spelling, or `None` for an unknown one (a 400).
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "linear" => Some(Mode::Linear),
-            "active" => Some(Mode::Active),
-            "tree" => Some(Mode::Tree),
-            _ => None,
-        }
-    }
-}
-
 /// One log listing request.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct LogQuery {
-    pub mode: Mode,
     /// Cap on the number of *operations* returned (the most recent ones).
     pub limit: Option<usize>,
     /// Cap on the number of *revisions* returned — whole ones, unless `limit`
@@ -54,20 +29,6 @@ pub struct LogQuery {
     pub since: Option<i64>,
     pub until: Option<i64>,
     pub include_snapshots: bool,
-}
-
-impl Default for LogQuery {
-    fn default() -> Self {
-        Self {
-            mode: Mode::Linear,
-            limit: None,
-            revisions: None,
-            entity: None,
-            since: None,
-            until: None,
-            include_snapshots: false,
-        }
-    }
 }
 
 /// The body of `GET /repos/:repo/log`.
@@ -114,11 +75,14 @@ pub fn listing(log: &dyn Log, q: &LogQuery) -> Result<serde_json::Value> {
     // Repository-wide totals, so a client showing a bounded window (the GUI log
     // panel fetches only the most recent `limit` operations) can still report
     // how much log there is. Two counts off the primary keys — not the size of
-    // the returned window, and unaffected by `limit`/`mode`.
+    // the returned window, and unaffected by `limit`.
     let (total_operations, total_revisions) = log.counts()?;
 
     Ok(json!({
         "head": head,
+        // Where undo stops: the root metarecord written at init, or the oldest
+        // operation a prune left (doc "The undo selection").
+        "first": log.first_op()?,
         "operations": op_values,
         "revisions": revisions,
         "total_operations": total_operations,
@@ -126,55 +90,28 @@ pub fn listing(log: &dyn Log, q: &LogQuery) -> Result<serde_json::Value> {
     }))
 }
 
-/// The operations the request selects: the mode's line through the log,
-/// filtered, and bounded to what the caller asked for — oldest first.
+/// The operations the request selects: the log, filtered, and bounded to what
+/// the caller asked for — oldest first.
 ///
 /// A bound is a bound on what is *returned*, not a promise to stop looking: a
-/// request filtered on one metarecord walks further back until it has what it
-/// asked for, or reaches the root. The walk grows geometrically, so finding
-/// nothing costs one full walk and finding it quickly costs almost nothing —
-/// the common case, a window of the most recent operations, is one bounded
-/// walk (doc "Log endpoints").
+/// request filtered on one metarecord reads further back until it has what it
+/// asked for, or reaches the oldest operation. The read grows geometrically, so
+/// finding nothing costs one full read and finding it quickly costs almost
+/// nothing — the common case, a window of the most recent operations, is one
+/// bounded read (doc "Log endpoints").
 fn select_ops(log: &dyn Log, q: &LogQuery, head: Option<i64>) -> Result<Vec<OpRow>> {
-    let Some(head) = head else {
-        return Ok(match q.mode {
-            // An empty log has no HEAD; `tree` still answers from the table,
-            // which is how a pruned-to-nothing log reads back as empty rather
-            // than as an error.
-            Mode::Tree => {
-                let mut ops = log.all_ops()?;
-                filter_ops(log, q, &mut ops)?;
-                bound_ops(q, &mut ops);
-                ops
-            }
-            _ => vec![],
-        });
-    };
-
+    let Some(head) = head else { return Ok(vec![]) };
     let Some(initial) = walk_budget(q) else {
-        // Unbounded: read the whole line, filter it, and answer.
-        let mut ops = whole_line(log, q.mode, head)?;
+        // Unbounded: read the whole log, filter it, and answer.
+        let mut ops = log.all_ops()?;
         filter_ops(log, q, &mut ops)?;
         return Ok(ops);
     };
-
-    // `active` past HEAD: the branch continuing below it, read once — its cost
-    // is HEAD's subtree, whatever the length of the log behind HEAD.
-    let forward = match q.mode {
-        Mode::Active if log.has_children(head)? => log.forward_line(head)?,
-        _ => Vec::new(),
-    };
     let mut budget = initial;
     loop {
-        let (mut ops, exhausted) = if q.mode == Mode::Tree {
-            (whole_line(log, q.mode, head)?, true)
-        } else {
-            let mut chain = log.ancestry_ops(head, Some(budget))?;
-            let exhausted = chain.len() < budget;
-            chain.reverse(); // root → HEAD, oldest first
-            chain.extend(forward.iter().cloned());
-            (chain, exhausted)
-        };
+        let mut ops = log.ops_back(head, Some(budget))?;
+        let exhausted = ops.len() < budget;
+        ops.reverse(); // oldest first
         filter_ops(log, q, &mut ops)?;
         if exhausted || satisfied(q, &ops) {
             bound_ops(q, &mut ops);
@@ -182,21 +119,6 @@ fn select_ops(log: &dyn Log, q: &LogQuery, head: Option<i64>) -> Result<Vec<OpRo
         }
         budget = budget.saturating_mul(GROWTH);
     }
-}
-
-/// The mode's whole line through the log, oldest first.
-fn whole_line(log: &dyn Log, mode: Mode, head: i64) -> Result<Vec<OpRow>> {
-    Ok(match mode {
-        Mode::Tree => log.all_ops()?,
-        Mode::Linear | Mode::Active => {
-            let mut chain = log.ancestry_ops(head, None)?;
-            chain.reverse();
-            if mode == Mode::Active {
-                chain.extend(log.forward_line(head)?);
-            }
-            chain
-        }
-    })
 }
 
 /// Drops the operations the request does not select: another metarecord's, or
@@ -262,7 +184,7 @@ fn newest_revisions(ops: &[OpRow], max: usize) -> HashSet<i64> {
     kept
 }
 
-/// How much the ancestry walk may read on its first attempt, or `None` when the
+/// How much the backward read may take on its first attempt, or `None` when the
 /// request is unbounded.
 fn walk_budget(q: &LogQuery) -> Option<usize> {
     match (q.limit, q.revisions) {
@@ -299,7 +221,6 @@ fn revision_meta(
 pub fn op_json(log: &dyn Log, op: &OpRow, include_snapshots: bool) -> Result<serde_json::Value> {
     let mut value = json!({
         "id": op.id,
-        "parent_id": op.parent_id,
         "rev_id": op.rev_id,
         "seq": op.seq,
         "op_type": op.op_type,

@@ -5,7 +5,7 @@
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_daemon::kvstore::KvStore;
 use metafolder_daemon::log::{Retention, Writer};
-use metafolder_daemon::store::{Begin, Log};
+use metafolder_daemon::store::Log;
 
 mod common;
 
@@ -24,29 +24,11 @@ fn revisions(conn: &KvStore) -> i64 {
     conn.counts().unwrap().1
 }
 
-fn operations(conn: &KvStore) -> i64 {
-    conn.counts().unwrap().0
-}
-
-/// Operations whose parent no longer exists — the log must never contain one.
-fn orphan_ops(conn: &KvStore) -> usize {
-    let ops = conn.all_ops().unwrap();
-    let ids: std::collections::HashSet<i64> = ops.iter().map(|o| o.id).collect();
-    ops.iter().filter(|o| o.parent_id.is_some_and(|p| !ids.contains(&p))).count()
-}
-
-/// The id of the `n`-th operation still in the log, oldest first.
-fn nth_op(conn: &KvStore, n: usize) -> i64 {
-    let mut ids: Vec<i64> = conn.all_ops().unwrap().iter().map(|o| o.id).collect();
-    ids.sort();
-    ids[n]
-}
-
-/// Moves HEAD without writing anything, as a navigation leaves it.
-fn set_head(conn: &mut KvStore, op: i64) {
-    let txn = conn.begin_write().unwrap();
-    txn.set_head(Some(op)).unwrap();
-    txn.commit().unwrap();
+/// Whether what survives is the newest stretch of the log: consecutive ids
+/// ending at HEAD — a trim only ever cuts the oldest end.
+fn newest_stretch(conn: &KvStore) -> bool {
+    let ids: Vec<i64> = conn.all_ops().unwrap().iter().map(|o| o.id).collect();
+    ids.windows(2).all(|w| w[1] == w[0] + 1) && ids.last().copied() == conn.head().unwrap()
 }
 
 /// How many revisions still in the log carry a label.
@@ -57,7 +39,7 @@ fn labelled(conn: &KvStore) -> usize {
 
 #[test]
 fn test_unlimited_retention_keeps_every_revision() {
-    // The default: nothing is ever dropped (doc "History tree and HEAD").
+    // The default: nothing is ever dropped (doc "Automatic retention").
     let (mut conn, _dir) = test_conn();
     for _ in 0..50 {
         write_revision(&mut conn, Retention::UNLIMITED, None);
@@ -79,24 +61,18 @@ fn test_retention_trims_the_oldest_revisions() {
         (10..=10 + Retention::slack(10) as i64).contains(&kept),
         "expected the log bounded around 10 revisions, kept {kept}"
     );
-    assert_eq!(orphan_ops(&conn), 0);
+    assert!(newest_stretch(&conn));
 }
 
 #[test]
-fn test_trimmed_log_keeps_head_and_a_walkable_ancestry() {
-    // What survives is the *newest* history: HEAD, its whole ancestry, and a
-    // root whose parent is NULL (the weak root of a prune-before).
+fn test_trimmed_log_keeps_the_newest_operations() {
+    // What survives is the *newest* history: a stretch ending at HEAD.
     let (mut conn, _dir) = test_conn();
     let retention = Retention { revisions: 5, keep_labels: false };
     for _ in 0..40 {
         write_revision(&mut conn, retention, None);
     }
-    let head = conn.head().unwrap().expect("a HEAD");
-    let chain = conn.ancestry(head).unwrap();
-    assert_eq!(chain.len() as i64, operations(&conn), "every surviving op is an ancestor of HEAD");
-    let root = *chain.last().unwrap();
-    let parent = conn.op(root).unwrap().expect("the root is in the log").parent_id;
-    assert_eq!(parent, None, "the oldest surviving operation is the new root");
+    assert!(newest_stretch(&conn));
 }
 
 #[test]
@@ -118,30 +94,6 @@ fn test_trim_drops_the_snapshots_of_pruned_operations() {
             assert!(conn.snapshots(op, after).unwrap().is_empty(), "op {op} left snapshots");
         }
     }
-}
-
-#[test]
-fn test_trim_takes_the_branches_hanging_below_the_cutoff() {
-    // A branch rooted before the cutoff cannot survive it: its ancestry is
-    // gone. It must go with it, not become an orphan.
-    let (mut conn, _dir) = test_conn();
-    for _ in 0..10 {
-        write_revision(&mut conn, Retention::UNLIMITED, None);
-    }
-    // A second operation parented on the third one: a divergent branch.
-    let third = nth_op(&conn, 2);
-    let head = conn.head().unwrap().unwrap();
-    set_head(&mut conn, third);
-    write_revision(&mut conn, Retention::UNLIMITED, None);
-    let branch = conn.head().unwrap().unwrap();
-    set_head(&mut conn, head);
-
-    let retention = Retention { revisions: 3, keep_labels: false };
-    for _ in 0..10 {
-        write_revision(&mut conn, retention, None);
-    }
-    assert!(conn.op(branch).unwrap().is_none(), "the branch below the cutoff is gone");
-    assert_eq!(orphan_ops(&conn), 0);
 }
 
 #[test]
@@ -167,23 +119,6 @@ fn test_trim_stops_at_the_oldest_label_when_asked() {
     }
     assert_eq!(labelled(&conn), 1, "the checkpoint survives");
     assert_eq!(revisions(&conn), 41, "and so does everything after it");
-}
-
-#[test]
-fn test_trim_is_skipped_when_the_cutoff_is_not_an_ancestor_of_head() {
-    // After a rollback, the newest revisions by id sit on the abandoned branch.
-    // Cutting there would delete HEAD's own ancestry: the trim must decline.
-    let (mut conn, _dir) = test_conn();
-    for _ in 0..30 {
-        write_revision(&mut conn, Retention::UNLIMITED, None);
-    }
-    let fifth = nth_op(&conn, 4);
-    set_head(&mut conn, fifth);
-
-    let before = operations(&conn);
-    write_revision(&mut conn, Retention { revisions: 10, keep_labels: false }, None);
-    assert_eq!(operations(&conn), before + 1, "nothing was pruned");
-    assert_eq!(conn.ancestry(conn.head().unwrap().unwrap()).unwrap().len(), 6);
 }
 
 // ── Configuration ─────────────────────────────────────────────────────────────

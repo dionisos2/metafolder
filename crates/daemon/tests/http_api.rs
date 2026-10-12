@@ -1716,7 +1716,7 @@ async fn newest_revision_origin(app: &Router, repo: &str) -> Value {
 #[tokio::test]
 async fn test_trash_delete_writes_one_revision_stamped_trash() {
     // A trashing is one revision — one thing to undo — and it says who asked
-    // for it, so a rollback later knows the bytes are in the trash-bin.
+    // for it, so a revert later knows the bytes are in the trash-bin.
     let (app, repo, root) = app_with_repo("trash_stamp").await;
     let uuids: Vec<String> = {
         let mut v = Vec::new();

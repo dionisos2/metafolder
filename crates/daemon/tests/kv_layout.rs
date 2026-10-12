@@ -142,3 +142,50 @@ fn a_store_of_the_first_layout_migrates_when_it_opens() {
     drop(kv);
     assert!(layout(dir.path()).is_some());
 }
+
+/// A store of the history tree's layout (2: operations chained to a parent,
+/// `op_children`, `restorations`) has its log **emptied** when it opens — not
+/// converted, the user's decision (doc "The operation log") — and keeps every
+/// metarecord. It takes writes, and its operation ids go on from where they
+/// were: none is handed out twice.
+#[test]
+fn a_store_of_the_tree_layout_opens_with_an_empty_log() {
+    use metafolder_daemon::store::Log;
+    let (dir, uuids) = store();
+    let (before, last_op) = {
+        let kv = KvStore::open(dir.path()).unwrap();
+        assert!(kv.counts().unwrap().0 > 0, "the fixture wrote a log");
+        let records: Vec<_> = uuids.iter().map(|&u| kv.metarecord(u).unwrap().unwrap()).collect();
+        (records, kv.head().unwrap().unwrap())
+    };
+    {
+        let env = raw_env(dir.path());
+        let mut w = env.write_txn().unwrap();
+        let meta: Raw = env.open_database(&w, Some("meta")).unwrap().unwrap();
+        meta.put(&mut w, b"layout", &2i64.to_be_bytes()).unwrap();
+        let children: Raw = env.create_database(&mut w, Some("op_children")).unwrap();
+        children.put(&mut w, &[1, 2, 3], &[]).unwrap();
+        let restorations: Raw = env.create_database(&mut w, Some("restorations")).unwrap();
+        restorations.put(&mut w, &1i64.to_be_bytes(), &[0]).unwrap();
+        w.commit().unwrap();
+    }
+
+    let mut kv = KvStore::open(dir.path()).unwrap();
+    assert_eq!(kv.counts().unwrap(), (0, 0), "the log is emptied");
+    assert_eq!(kv.head().unwrap(), None);
+    for (u, record) in uuids.iter().zip(&before) {
+        assert_eq!(&kv.metarecord(*u).unwrap().unwrap(), record, "the metarecords stay");
+    }
+    assert_eq!(kv.check().unwrap(), Vec::<String>::new());
+    let mut w = Writer::begin(&mut kv, None).unwrap();
+    w.create_metarecord(vec![Field::new("a", Value::String("after".into()))]).unwrap();
+    w.commit().unwrap();
+    assert!(kv.head().unwrap().unwrap() > last_op, "operation ids are not reused");
+    drop(kv);
+    let env = raw_env(dir.path());
+    let r = env.read_txn().unwrap();
+    for name in ["op_children", "restorations"] {
+        let db: Raw = env.open_database(&r, Some(name)).unwrap().unwrap();
+        assert!(db.is_empty(&r).unwrap(), "{name} is cleared");
+    }
+}

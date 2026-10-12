@@ -666,7 +666,7 @@ async fn test_delete_by_query() {
     .await;
     assert_eq!(left.as_array().unwrap().len(), 1);
 
-    // The whole delete is a single revision (atomic, rollback-able as a unit).
+    // The whole delete is a single revision (atomic, revertable as a unit).
     let (_, after) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;
     assert_eq!(revisions(&after) - revs_before, 1, "bulk delete must be one revision");
 }

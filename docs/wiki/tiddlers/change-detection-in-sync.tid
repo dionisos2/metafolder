@@ -7,7 +7,7 @@ summary: Each link's two versions say whether anything changed since its last sy
 
 A committed link records the two records' versions at its last sync. A version is
 a hash of the record's content ([[Metarecord version]]), so ''equal means
-unchanged'' — whatever happened in between, a rollback included. `GET …/status`
+unchanged'' — whatever happened in between, an undo included. `GET …/status`
 and `mf sync status` give each link's state, by precedence:
 
 |!State |!Means |

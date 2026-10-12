@@ -77,7 +77,7 @@ pub fn row(name: &str, value: &Value) -> u64 {
     feed(&mut h, e.value_type.as_bytes());
     feed_opt(&mut h, e.text.as_deref().map(str::as_bytes));
     feed_opt(&mut h, e.int.map(i64::to_le_bytes).as_ref().map(<[u8; 8]>::as_slice));
-    // By its bits, not its value: what a rollback restores is what was stored,
+    // By its bits, not its value: what a revert puts back is what was stored,
     // and 0.0 and -0.0 are not the same stored bytes.
     feed_opt(&mut h, e.real.map(|f| f.to_bits().to_le_bytes()).as_ref().map(<[u8; 8]>::as_slice));
     feed_opt(&mut h, e.uuid.as_deref());
@@ -93,8 +93,7 @@ pub fn rows_sum(rows: &[FieldRow]) -> u64 {
 }
 
 /// The full version of a metarecord holding exactly `rows`. Used where the
-/// whole state is at hand — the migration, and navigation once it has restored
-/// a metarecord's rows.
+/// whole state is at hand — the migration, and the checks.
 pub fn of_rows(uuid: Uuid, rows: &[FieldRow]) -> u64 {
     apply(base(uuid), rows_sum(rows), 0)
 }
@@ -152,8 +151,8 @@ mod tests {
 
     #[test]
     fn the_row_id_is_not_content() {
-        // Navigation restores row ids exactly; the version must not depend on
-        // them, or it would be coupled to storage identity.
+        // A revert gives the rows it puts back fresh ids; the version must not
+        // depend on them, or it would be coupled to storage identity.
         let a = [field_row(1, "tag", Value::String("jazz".into()))];
         let b = [field_row(9999, "tag", Value::String("jazz".into()))];
         assert_eq!(of_rows(uuid(1), &a), of_rows(uuid(1), &b));
@@ -213,7 +212,7 @@ mod tests {
     #[test]
     fn floats_are_hashed_by_their_bits() {
         // Two floats that compare equal but are stored differently are stored
-        // differently, and a rollback restores what was stored.
+        // differently, and a revert puts back what was stored.
         assert_ne!(row("f", &Value::Float(0.0)), row("f", &Value::Float(-0.0)));
     }
 }

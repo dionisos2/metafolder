@@ -49,7 +49,7 @@ against a group that holds one invites a deletion that frees nothing and loses t
 last copy.
 
 A member leaves through the watcher (the file removed, or its content changed),
-a trashing ([[What trashing does]]), `mf orphan clear`, and a rollback that
+a trashing ([[What trashing does]]), `mf orphan clear`, and a revert that
 clears a path.
 
 What still needs a scan is the other direction: a file that ''becomes'' a

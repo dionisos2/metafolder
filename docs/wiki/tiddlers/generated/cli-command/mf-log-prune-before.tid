@@ -1,12 +1,12 @@
 title: $:/mf/gen/CLI command/mf log prune before
 catalog: CLI command
 target: mf log prune before
-summary: Make <target> the new root, deleting all older operations
+summary: Delete every operation older than <target> (kept)
 
 !! Reference
 
 ```
-Make <target> the new root, deleting all older operations
+Delete every operation older than <target> (kept)
 
 Usage: mf log prune before [OPTIONS] [TARGET]
 

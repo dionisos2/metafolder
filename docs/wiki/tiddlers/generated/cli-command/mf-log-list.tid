@@ -11,12 +11,6 @@ Display the revision/operation history
 Usage: mf log list [OPTIONS]
 
 Options:
-      --tree
-          Show all branches as a flat list, not just the active line
-
-      --graph
-          Draw every branch as an ASCII graph
-
       --ops
           Expand each revision to show its individual operations
 

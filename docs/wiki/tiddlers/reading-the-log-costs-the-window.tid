@@ -17,18 +17,17 @@ at whichever it reaches first, and the one revision it may cut, the oldest, says
 (`partial`, `op_count`).
 
 ''A bound bounds what is returned, not the search.'' With a filter (`metarecord_uuid`,
-`since`, `until`), the walk widens geometrically until it has what was asked for or
-reaches the root: `--limit 10` on one old metarecord used to return nothing, because
+`since`, `until`), the read widens geometrically until it has what was asked for or
+reaches the oldest operation: `--limit 10` on one old metarecord used to return nothing, because
 none of the repository's last ten operations happened to be its.
 
-Then an undo (October 2026, the session scenario): right after one, HEAD has a forward
+Then an undo (October 2026, the session scenario): right after one, HEAD had a forward
 continuation, and `mode=active` rebuilt it from ''every'' operation of the table plus
-HEAD's whole ancestry — 351 000 keys for the redo's window of 500. The continuation is
-now read from HEAD's subtree alone, through the children index: a window after an undo
-costs the window plus what was undone, never the log behind HEAD.
+HEAD's whole ancestry — 351 000 keys for the redo's window of 500. It was read from HEAD's
+subtree alone for a while; since the log stopped being a tree there is no continuation to
+read: a window is a backward range of the newest operations ([[Why the log stops being a tree]]).
 
-What stays proportional to the log, by construction: `mode=tree` (a graph needs every
-branch). The totals are B-tree statistics now, not counts. The read side was moved out
+What stays proportional to the log, by construction: an unbounded read (`--all`). The totals are B-tree statistics now, not counts. The read side was moved out
 of the routes into `log_view.rs` so its cost could be tested on its own:
 `tests/log_cost.rs` holds a fifty-operation window to the same number of keys on a log of
 five thousand and of five hundred thousand ([[Storage]]).

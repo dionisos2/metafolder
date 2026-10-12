@@ -5,7 +5,6 @@
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_daemon::kvstore::KvStore;
-use metafolder_daemon::log::Delta;
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::store::Handle;
 use metafolder_daemon::store::Store;
@@ -115,22 +114,20 @@ fn the_log_walks_back_from_head() {
     assert_eq!(after.iter().map(|r| r.value.clone()).collect::<Vec<_>>(), [Value::Int(3)]);
     assert!(store.snapshots(head, false).unwrap().is_empty(), "no rating before");
 
-    // The walk back from HEAD to the first operation: the two between.
-    let first = store.op(last.parent_id.unwrap()).unwrap().unwrap().parent_id.unwrap();
-    let Delta::Found(delta) = store.ops_until(head, first, 10).unwrap() else {
-        panic!("first is an ancestor of head");
-    };
-    assert_eq!(delta.len(), 2);
-    assert_eq!(delta[0].id, head, "newest first");
-    assert!(matches!(store.ops_until(head, first, 1).unwrap(), Delta::Budget));
-    assert!(matches!(store.ops_until(first, head, 10).unwrap(), Delta::Unrelated));
-    assert_eq!(store.ancestry(head).unwrap(), [head, delta[1].id, first]);
+    // The read back from HEAD: newest first, bounded or whole.
+    let back = store.ops_back(head, None).unwrap();
+    assert_eq!(back.len(), 3);
+    assert_eq!(back[0].id, head, "newest first");
+    assert!(back.windows(2).all(|w| w[0].id > w[1].id));
+    assert_eq!(store.ops_back(head, Some(2)).unwrap().len(), 2, "bounded");
+    assert_eq!(store.ops_back(back[1].id, None).unwrap().len(), 2, "from an older operation");
+    assert_eq!(store.first_op().unwrap(), Some(back[2].id), "the oldest operation");
 }
 
 // ── Writing ───────────────────────────────────────────────────────────────────
 
 use metafolder_daemon::log::{OpType, Retention};
-use metafolder_daemon::store::{Begin, NewOp, Restoration};
+use metafolder_daemon::store::{Begin, NewOp};
 
 fn empty() -> (Handle, TempDir) {
     open()
@@ -231,7 +228,7 @@ fn appended_operations_chain_from_head() {
     let first = {
         let tx = conn.begin_write().unwrap();
         let rev = tx.begin_revision(Some("one"), 1_000).unwrap();
-        let last = tx.append_ops(rev, None, 1, &[op("a"), op("b")]).unwrap();
+        let last = tx.append_ops(rev, 1, &[op("a"), op("b")]).unwrap();
         tx.set_head(Some(last)).unwrap();
         tx.commit().unwrap();
         last
@@ -239,14 +236,14 @@ fn appended_operations_chain_from_head() {
     let tx = conn.begin_write().unwrap();
     assert_eq!(tx.head().unwrap(), Some(first));
     let rev = tx.begin_revision(None, 2_000).unwrap();
-    let last = tx.append_ops(rev, Some(first), 1, &[op("c")]).unwrap();
+    let last = tx.append_ops(rev, 1, &[op("c")]).unwrap();
     tx.set_head(Some(last)).unwrap();
     let c = tx.op(last).unwrap().unwrap();
-    assert_eq!((c.parent_id, c.rev_id, c.field_name.as_deref()), (Some(first), rev, Some("c")));
+    assert_eq!((c.id, c.rev_id, c.field_name.as_deref()), (first + 1, rev, Some("c")));
     assert_eq!(tx.snapshots(last, true).unwrap()[0].value, Value::Int(3));
     let b = tx.op(first).unwrap().unwrap();
     assert_eq!(b.field_name.as_deref(), Some("b"));
-    assert_eq!(tx.op(b.parent_id.unwrap()).unwrap().unwrap().field_name.as_deref(), Some("a"));
+    assert_eq!(tx.op(first - 1).unwrap().unwrap().field_name.as_deref(), Some("a"));
     assert_eq!(tx.trim(Retention::UNLIMITED, last).unwrap(), 0);
     tx.commit().unwrap();
 }
@@ -266,29 +263,6 @@ fn an_uncommitted_transaction_leaves_nothing() {
 }
 
 #[test]
-fn restorations_queue_in_order_and_leave_when_dropped() {
-    let (mut conn, _dir) = empty();
-    let (a, b, p) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
-    let queued = [
-        Restoration::SetPath { entity: a, parent: Some(p), name: "n".into() },
-        Restoration::SetPath { entity: b, parent: None, name: "".into() },
-        Restoration::ClearPath { entity: a },
-        Restoration::ClearHashes { entity: b },
-    ];
-    let tx = conn.begin_write().unwrap();
-    for r in &queued {
-        tx.queue_restoration(r).unwrap();
-    }
-    let got = tx.restorations().unwrap();
-    assert_eq!(got.iter().map(|(_, r)| r.clone()).collect::<Vec<_>>(), queued);
-    assert!(got.windows(2).all(|w| w[0].0 < w[1].0), "queue order");
-    tx.drop_restorations(got[1].0).unwrap();
-    let left: Vec<Restoration> = tx.restorations().unwrap().into_iter().map(|(_, r)| r).collect();
-    assert_eq!(left, &queued[2..]);
-    tx.commit().unwrap();
-}
-
-#[test]
 fn clearing_takes_every_metarecord() {
     let (mut conn, _dir, _, _) = fixture();
     let tx = conn.begin_write().unwrap();
@@ -302,17 +276,13 @@ fn the_log_lists_its_lines_and_revisions() {
     let (conn, _dir, _, _) = fixture();
     let store: &dyn Store = &conn;
     let head = store.head().unwrap().unwrap();
-    let chain = store.ancestry_ops(head, None).unwrap();
-    assert_eq!(chain.iter().map(|o| o.id).collect::<Vec<_>>(), store.ancestry(head).unwrap());
-    assert_eq!(chain.len(), 3);
-    assert_eq!(store.ancestry_ops(head, Some(2)).unwrap().len(), 2, "bounded walk");
+    let back = store.ops_back(head, None).unwrap();
+    assert_eq!(back.len(), 3);
     let all = store.all_ops().unwrap();
-    assert_eq!(all.iter().map(|o| o.id).rev().collect::<Vec<_>>(), store.ancestry(head).unwrap());
-    assert!(store.forward_line(head).unwrap().is_empty(), "nothing continues below HEAD");
-    let below: Vec<i64> = store.forward_line(chain[2].id).unwrap().iter().map(|o| o.id).collect();
-    assert_eq!(below, [chain[1].id, chain[0].id], "the branch below, oldest first");
-    assert!(!store.has_children(head).unwrap());
-    assert!(store.has_children(chain[1].id).unwrap());
+    assert_eq!(
+        all.iter().map(|o| o.id).rev().collect::<Vec<_>>(),
+        back.iter().map(|o| o.id).collect::<Vec<_>>()
+    );
 
     let revs: Vec<i64> = {
         let mut r: Vec<i64> = all.iter().map(|o| o.rev_id).collect();
@@ -380,7 +350,7 @@ fn a_child_is_found_by_its_bytes_or_its_text() {
 }
 
 #[test]
-fn targets_are_found_along_the_ancestry() {
+fn targets_are_found_in_the_log() {
     let (mut conn, _dir, _, _) = fixture();
     let store: &dyn Store = &conn;
     let all = store.all_ops().unwrap();
@@ -389,21 +359,18 @@ fn targets_are_found_along_the_ancestry() {
     assert_eq!(store.ops_after_count(all[0].id, 10).unwrap(), 2);
     assert_eq!(store.ops_after_count(head, 10).unwrap(), 0);
     assert_eq!(store.ops_after_count(all[0].id, 1).unwrap(), 1, "counted up to the cap");
-    // Before the second revision: the last operation of the first.
-    assert_eq!(store.before_revision_of(head).unwrap(), Some(all[1].id));
-    assert_eq!(store.before_revision_of(all[1].id).unwrap(), None, "before the first: empty");
     let meta = store.revisions(&[all[0].rev_id, all[2].rev_id]).unwrap();
     let first_ts = meta[&all[0].rev_id].timestamp;
-    assert_eq!(store.ancestor_at_or_before(head, i64::MAX).unwrap(), Some(head));
-    assert_eq!(store.ancestor_at_or_before(head, first_ts - 1).unwrap(), None);
-    assert!(store.ancestor_at_or_before(head, first_ts).unwrap().is_some());
+    assert_eq!(store.last_op_at_or_before(i64::MAX).unwrap(), Some(head));
+    assert_eq!(store.last_op_at_or_before(first_ts - 1).unwrap(), None);
+    assert!(store.last_op_at_or_before(first_ts).unwrap().is_some());
 
     let tx = conn.begin_write().unwrap();
     tx.set_revision_label(all[0].rev_id, Some("start")).unwrap();
     tx.commit().unwrap();
     let store: &dyn Store = &conn;
-    assert_eq!(store.ancestor_labelled(head, "start").unwrap(), Some(all[1].id), "its last op");
-    assert_eq!(store.ancestor_labelled(head, "none").unwrap(), None);
+    assert_eq!(store.last_op_labelled("start").unwrap(), Some(all[1].id), "its last op");
+    assert_eq!(store.last_op_labelled("none").unwrap(), None);
 }
 
 #[test]
@@ -411,13 +378,12 @@ fn pruning_removes_operations_and_their_empty_revisions() {
     let (mut conn, _dir, _, _) = fixture();
     let all = (&conn as &dyn Store).all_ops().unwrap();
     let tx = conn.begin_write().unwrap();
-    tx.detach_op(all[2].id).unwrap();
     tx.delete_ops(&[all[1].id, all[0].id]).unwrap();
     tx.drop_empty_revisions().unwrap();
     tx.commit().unwrap();
     let store: &dyn Store = &conn;
     assert_eq!(store.counts().unwrap(), (1, 1));
-    assert_eq!(store.op(all[2].id).unwrap().unwrap().parent_id, None);
+    assert!(store.op(all[2].id).unwrap().is_some());
     assert!(store.snapshots(all[0].id, true).unwrap().is_empty(), "snapshots go too");
 }
 

@@ -419,11 +419,8 @@
 "shift+o" = { command = "log:revert op", when = "log" }
 "shift+v" = { command = "log:revert revision", when = "log" }
 "shift+l" = { command = "log:mark", when = "log" }
-"shift+g" = [
-  { command = "log:toggle graph", when = "log" },
-  # metarecord-list: the table ⇄ the grid of thumbnails (g = grid).
-  { command = "metarecord-list:toggle mode", when = "metarecord-list" },
-]
+# metarecord-list: the table ⇄ the grid of thumbnails (g = grid).
+"shift+g" = { command = "metarecord-list:toggle mode", when = "metarecord-list" }
 "shift+w" = { command = "log:toggle watcher", when = "log" }
 
 # file-manager: filesystem operations (clipboard, rename, duplicate, create).

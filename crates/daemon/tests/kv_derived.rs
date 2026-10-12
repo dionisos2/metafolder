@@ -6,7 +6,7 @@
 
 use metafolder_core::metarecord::{Field, TreeName, Value};
 use metafolder_daemon::kvstore::KvStore;
-use metafolder_daemon::log::{self, Writer};
+use metafolder_daemon::log::Writer;
 use metafolder_daemon::store::{Log, Rows};
 use uuid::Uuid;
 
@@ -85,7 +85,7 @@ fn edits_and_deletions_keep_the_derived_data_exact() {
 }
 
 #[test]
-fn navigating_the_log_keeps_the_derived_data_exact() {
+fn reverting_keeps_the_derived_data_exact() {
     let (mut store, _dir) = open();
     let start = store.head().unwrap();
     let (_, _, file) = populate(&mut store);
@@ -96,14 +96,13 @@ fn navigating_the_log_keeps_the_derived_data_exact() {
     w.commit().unwrap();
     check(&store);
 
-    // Back to the populated state, then before it, then forward again.
-    log::navigate(&mut store, populated).unwrap();
+    // Back to the populated state, then before it, then that undone in turn.
+    common::kv::revert_since(&mut store, populated);
     check(&store);
-    log::navigate(&mut store, start).unwrap();
+    let undone_all = store.head().unwrap();
+    common::kv::revert_since(&mut store, start);
     check(&store);
-    let head = store.head().unwrap();
-    assert_eq!(head, start);
-    log::navigate(&mut store, populated).unwrap();
+    common::kv::revert_since(&mut store, undone_all);
     check(&store);
 }
 
@@ -187,16 +186,16 @@ fn check_finds_damaged_derived_data_and_reindex_repairs_it() {
 }
 
 /// A forest's descendant bitmaps follow every change: a subtree moved under
-/// another folder, a node deleted, the log navigated back and forth — the
-/// file tree's, and any other `tree_ref` field's (a tag tree).
+/// another folder, a node deleted, those reverted — the file tree's, and any
+/// other `tree_ref` field's (a tag tree).
 #[test]
-fn descendants_follow_moves_deletions_and_navigation() {
+fn descendants_follow_moves_deletions_and_reverts() {
     for field in ["mfr_path", "path"] {
-        descendants_follow_moves_deletions_and_navigation_in(field);
+        descendants_follow_moves_deletions_and_reverts_in(field);
     }
 }
 
-fn descendants_follow_moves_deletions_and_navigation_in(field: &str) {
+fn descendants_follow_moves_deletions_and_reverts_in(field: &str) {
     let (mut store, _dir) = open();
     let path = |parent: Option<Uuid>, name: &str| {
         Field::new(field, Value::TreeRef { parent, name: TreeName::from(name) })
@@ -223,9 +222,7 @@ fn descendants_follow_moves_deletions_and_navigation_in(field: &str) {
     w.commit().unwrap();
     check(&store);
 
-    log::navigate(&mut store, before_move).unwrap();
-    check(&store);
-    log::navigate(&mut store, None).unwrap();
+    common::kv::revert_since(&mut store, before_move);
     check(&store);
     store.reindex().unwrap();
     check(&store);

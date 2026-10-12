@@ -1,28 +1,22 @@
 //! `log:undo` / `log:redo` (doc "Revision commands in the GUI"): undo the last change the
-//! *user* made to the active repository, and re-apply what a rollback undid.
+//! *user* made to the active repository, and take the newest undo back.
 //!
-//! Undo is not "step HEAD back one revision": the watcher writes revisions of
-//! its own, and rewinding HEAD past them would unrecord what the filesystem
-//! really did. The choice — roll HEAD back, or write the inverse at HEAD — is
-//! [`metafolder_core::undo`]'s, shared with `mf log undo`; this module only
-//! carries it out and reports it.
+//! Both are reverts (doc "The undo selection"): undo reverts the user's newest
+//! change still standing, redo the newest undo still standing — the watcher's
+//! revisions are left where they are. The choice is [`metafolder_core::undo`]'s,
+//! shared with `mf log undo`/`redo`; this module only carries it out and
+//! reports it.
 //!
-//! Both carry the files with them: a navigation that moves a file, or brings
-//! one back from the trash-bin, or sends one back there, is performed by the
-//! shared coordinated navigation ([`metafolder_core::navigation`]), with the
-//! GUI's no-question policies ([`GUI_POLICIES`]).
-//!
-//! Redo is its mirror: it takes back the newest *undo*, by moving HEAD forward
-//! onto what a rollback unapplied, by rolling back over the revert an undo
-//! wrote, or — when the watcher has written since — by reverting that revert.
-//! The choice is [`metafolder_core::undo::plan_redo`]'s, shared with
-//! `mf log redo`; this module only carries it out and reports it.
+//! Both carry the files with them: a revert that moves a file, or brings one
+//! back from the trash-bin, or sends one back there, is performed by the shared
+//! coordinated revert ([`metafolder_core::navigation`]), with the GUI's
+//! no-question policies ([`GUI_POLICIES`]).
 
 use crate::blocking_client::BlockingClient;
 use crate::daemon_proxy::DaemonProxy;
 use crate::state::GuiState;
 use metafolder_core::navigation::{
-    self, MovePolicies, NavError, Navigated, NavigationUi, Policy, Repo, RevertRequest,
+    self, MovePolicies, NavError, NavigationUi, Policy, Repo, RevertRequest,
 };
 use metafolder_core::undo::{self, RedoPlan, UndoPlan};
 use serde_json::{json, Value};
@@ -32,7 +26,7 @@ use std::sync::Arc;
 /// rather than one unbounded one (doc "Undo and redo").
 async fn undo_plan(daemon: &DaemonProxy, repo: &str) -> Result<UndoPlan, String> {
     for limit in [undo::WINDOW, undo::WIDE_WINDOW] {
-        let log = read_log(daemon, repo, "linear", limit).await?;
+        let log = read_log(daemon, repo, limit).await?;
         let plan = undo::plan_from_log(&log);
         if plan != UndoPlan::Nothing || !undo::window_exhausted(&log, limit) {
             return Ok(plan);
@@ -41,11 +35,10 @@ async fn undo_plan(daemon: &DaemonProxy, repo: &str) -> Result<UndoPlan, String>
     Ok(UndoPlan::Nothing)
 }
 
-/// The same for redo, over the *active* line: it carries HEAD's forward
-/// continuation, which is what a redo re-applies when a rollback left one.
+/// The same for redo.
 async fn redo_plan(daemon: &DaemonProxy, repo: &str) -> Result<RedoPlan, String> {
     for limit in [undo::WINDOW, undo::WIDE_WINDOW] {
-        let log = read_log(daemon, repo, "active", limit).await?;
+        let log = read_log(daemon, repo, limit).await?;
         let plan = undo::plan_redo_from_log(&log);
         if plan != RedoPlan::Nothing || !undo::window_exhausted(&log, limit) {
             return Ok(plan);
@@ -54,13 +47,8 @@ async fn redo_plan(daemon: &DaemonProxy, repo: &str) -> Result<RedoPlan, String>
     Ok(RedoPlan::Nothing)
 }
 
-async fn read_log(
-    daemon: &DaemonProxy,
-    repo: &str,
-    mode: &str,
-    limit: usize,
-) -> Result<Value, String> {
-    let path = format!("/repos/{repo}/log?mode={mode}&limit={limit}");
+async fn read_log(daemon: &DaemonProxy, repo: &str, limit: usize) -> Result<Value, String> {
+    let path = format!("/repos/{repo}/log?limit={limit}");
     Ok(daemon.request("GET", &path, None).await?.body)
 }
 
@@ -82,32 +70,13 @@ pub async fn navigate(
             gui.post_status(&ws_id, "Nothing to redo.", "info", Some(timeouts.message_ms))?;
             Ok(())
         }
-        RedoPlan::Forward { op_id, rev_id } => {
-            let (done, notes) =
-                rollback(&gui, &daemon, &ws_id, &repo, json!({ "id": op_id }), &timeouts).await?;
-            let summary =
-                format!("Redo: revision {rev_id} re-applied ({} operations).", done.processed);
-            finish(&gui, &ws_id, &with_notes(summary, &notes), &timeouts)
-        }
-        RedoPlan::Rollback { rev_id } => {
-            let (done, notes) =
-                rollback(&gui, &daemon, &ws_id, &repo, json!({"prev_revision": true}), &timeouts)
-                    .await?;
-            let summary = format!(
-                "Redo: the undo in revision {rev_id} rolled back ({} operations).",
-                done.processed
-            );
-            finish(&gui, &ws_id, &with_notes(summary, &notes), &timeouts)
-        }
-        // The watcher has written since the undo, so HEAD cannot be rewound
-        // over it: the undo is undone in place, exactly as undo itself does.
         RedoPlan::Revert { rev_id, ops } => {
             revert(&gui, &daemon, &ws_id, &repo, rev_id, ops, &timeouts).await
         }
     }
 }
 
-/// Undo: whichever of the two mechanisms the selection picked.
+/// Undo: the revert the selection picked.
 async fn undo(
     gui: Arc<GuiState>,
     daemon: Arc<DaemonProxy>,
@@ -120,14 +89,6 @@ async fn undo(
             gui.post_status(&ws_id, "Nothing to undo.", "info", Some(timeouts.message_ms))?;
             Ok(())
         }
-        UndoPlan::Rollback { rev_id } => {
-            let (done, notes) =
-                rollback(&gui, &daemon, &ws_id, &repo, json!({"prev_revision": true}), &timeouts)
-                    .await?;
-            let summary =
-                format!("Undo: revision {rev_id} rolled back ({} operations).", done.processed);
-            finish(&gui, &ws_id, &with_notes(summary, &notes), &timeouts)
-        }
         UndoPlan::Revert { rev_id, ops } => {
             revert(&gui, &daemon, &ws_id, &repo, rev_id, ops, &timeouts).await
         }
@@ -137,7 +98,7 @@ async fn undo(
 /// The GUI's move policies. It asks nothing while the lock is held — a window
 /// left open would freeze the repository's writes — so a move applies whether
 /// or not the file is where the log says: when it is not, the metadata follows
-/// the navigation and keeps the recorded path (doc "Rolling back", the CLI's own default when the
+/// the navigation and keeps the recorded path (doc "Reverting a revision", the CLI's own default when the
 /// file is there).
 pub const GUI_POLICIES: MovePolicies =
     MovePolicies { on_available: Policy::Apply, on_unavailable: Policy::Apply };
@@ -186,26 +147,6 @@ fn with_notes(summary: String, notes: &[String]) -> String {
     } else {
         format!("{summary} {}", notes.join(" · "))
     }
-}
-
-/// Navigates HEAD to `target`, files included (`core::navigation::rollback`),
-/// reporting a failure on the status bar.
-async fn rollback(
-    gui: &Arc<GuiState>,
-    daemon: &Arc<DaemonProxy>,
-    ws_id: &str,
-    repo: &str,
-    target: Value,
-    timeouts: &crate::commands::StatusTimeouts,
-) -> Result<(Navigated, Vec<String>), String> {
-    let result = blocking(daemon, repo, move |repo, ui| {
-        navigation::rollback(repo, &target, &GUI_POLICIES, ui)
-    })
-    .await;
-    if let Err(message) = &result {
-        gui.post_status(ws_id, message, "error", Some(timeouts.error_ms))?;
-    }
-    result
 }
 
 /// The revert half of an undo: write the inverse at HEAD onto the current
@@ -276,31 +217,6 @@ pub async fn log_navigate(
     redo: bool,
 ) -> Result<(), String> {
     navigate(app.gui.clone(), app.daemon.clone(), ws_id, redo, app.status_timeouts()).await
-}
-
-/// What `log_rollback` answers the log panel.
-#[derive(serde::Serialize)]
-pub struct RollbackResult {
-    pub total: usize,
-    pub processed: usize,
-    /// What the file actions had to say (a file moved, one brought back…).
-    pub notes: Vec<String>,
-}
-
-/// The log panel's `log:rollback`: navigates HEAD to `target`, files included
-/// (`core::navigation::rollback`). The panel confirms first, so no dialog is
-/// open while the lock is held.
-#[tauri::command]
-pub async fn log_rollback(
-    app: tauri::State<'_, Arc<crate::commands::App>>,
-    repo: String,
-    target: Value,
-) -> Result<RollbackResult, String> {
-    let (done, notes) = blocking(&app.daemon, &repo, move |repo, ui| {
-        navigation::rollback(repo, &target, &GUI_POLICIES, ui)
-    })
-    .await?;
-    Ok(RollbackResult { total: done.total, processed: done.processed, notes })
 }
 
 /// The log panel's `log:revert`: writes the inverse of `target` at HEAD, files

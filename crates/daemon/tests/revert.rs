@@ -1,10 +1,9 @@
 //! Library-level tests for reverting (doc "Revert"), where a
 //! revision's exact shape can be built on purpose.
 //!
-//! The delicate cases all come from one place: a rollback's inverse restores
-//! `field.id` exactly, which is what lets it compose inverses blindly, and a
-//! revert cannot — it is a new write, so its inserts take fresh ids. Every test
-//! here pins a shape where that difference could show.
+//! The delicate cases all come from one place: a revert is a new write, so
+//! its inserts take fresh ids, and nothing may address a row by the id a
+//! snapshot recorded. Every test here pins a shape where that could show.
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_daemon::log::{self, OpType, Writer};
@@ -210,44 +209,6 @@ fn test_a_revert_still_refuses_a_real_type_conflict() {
     assert_eq!(state(&conn), before, "a refused revert writes nothing");
 }
 
-/// The contrast that explains the refusal above: a *rollback* across the same
-/// retype works. Navigation does not go through the `Writer` at all — its
-/// inverse writes rows with `db::insert_field_row` directly — so
-/// `validate_value_type` never runs, and the intermediate states it would have
-/// objected to are never examined by anything.
-#[test]
-fn test_rollback_across_a_retype_works_where_a_revert_cannot() {
-    let (mut conn, _dir) = test_conn();
-    let uuid = {
-        let mut w = Writer::begin(&mut conn, None).unwrap();
-        let m = w
-            .create_metarecord(vec![
-                Field::new("rating", Value::Int(3)),
-                Field::new("rating", Value::Int(5)),
-            ])
-            .unwrap();
-        w.commit().unwrap();
-        m.uuid
-    };
-    let before = state(&conn);
-    let checkpoint = conn.head().unwrap();
-
-    {
-        let mut w = Writer::begin(&mut conn, None).unwrap();
-        w.retype_field("rating", metafolder_core::metarecord::FieldType::String).unwrap();
-        w.commit().unwrap();
-    }
-    assert_ne!(state(&conn), before, "the retype converted the rows");
-
-    log::navigate(&mut conn, checkpoint).unwrap();
-
-    let mut values = field_values(&conn, uuid, "rating");
-    values.sort_by_key(|v| format!("{v:?}"));
-    assert_eq!(values, vec![Value::Int(3), Value::Int(5)], "both rows are ints again");
-    // And a rollback restores the row ids exactly, so the whole state matches.
-    assert_eq!(state(&conn), before);
-}
-
 // ── Reverting a whole-record write ────────────────────────────────────────────
 
 #[test]
@@ -303,13 +264,84 @@ fn test_revert_of_a_delete_record_recreates_it_with_the_same_uuid() {
     assert_eq!(state(&conn), before, "the record returns under its own uuid");
 }
 
-// ── Oracle: revert of a suffix ≡ rollback across it ───────────────────────────
+/// A folder and its file deleted in one revision, the folder first — what a
+/// trashing's cascade writes. The revert recreates them newest first, so the
+/// file before its folder: its position names a parent not there *yet*. The
+/// forest is checked on the state the revert lands on, not on each step.
+#[test]
+fn test_revert_of_a_subtree_deleted_parent_first_recreates_it() {
+    use metafolder_core::metarecord::TreeName;
+    let (mut conn, _dir) = test_conn();
+    let path = |parent: Option<Uuid>, name: &str| {
+        Field::new("mfr_path", Value::TreeRef { parent, name: TreeName::from(name) })
+    };
+    let (dir, file) = {
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        let root = w.create_metarecord(vec![path(None, "")]).unwrap().uuid;
+        let dir = w.create_metarecord(vec![path(Some(root), "A")]).unwrap().uuid;
+        let file = w.create_metarecord(vec![path(Some(dir), "B.txt")]).unwrap().uuid;
+        w.commit().unwrap();
+        (dir, file)
+    };
+    let before = state(&conn);
+
+    let rev = {
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        w.delete_metarecord(dir).unwrap();
+        w.delete_metarecord(file).unwrap();
+        let rev = w.rev_id();
+        w.commit().unwrap();
+        rev
+    };
+    let ops = ops_of_revision(&conn, rev);
+    revert_ops(&mut conn, &ops);
+    assert_eq!(state(&conn), before, "the folder and its file are back");
+}
+
+/// Deferring the forest check is not skipping it: a position whose parent is
+/// still missing once the revert is done is refused, at commit.
+#[test]
+fn test_a_revert_still_refuses_a_position_whose_parent_is_gone() {
+    use metafolder_core::metarecord::TreeName;
+    let (mut conn, _dir) = test_conn();
+    let path = |parent: Option<Uuid>, name: &str| {
+        Field::new("mfr_path", Value::TreeRef { parent, name: TreeName::from(name) })
+    };
+    let (dir, file) = {
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        let root = w.create_metarecord(vec![path(None, "")]).unwrap().uuid;
+        let dir = w.create_metarecord(vec![path(Some(root), "A")]).unwrap().uuid;
+        let file = w.create_metarecord(vec![path(Some(dir), "B.txt")]).unwrap().uuid;
+        w.commit().unwrap();
+        (dir, file)
+    };
+    // The file goes, then the folder: reverting only the file's deletion
+    // would place it under a folder that is no longer there.
+    let file_rev = {
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        w.delete_metarecord(file).unwrap();
+        let rev = w.rev_id();
+        w.commit().unwrap();
+        rev
+    };
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.delete_metarecord(dir).unwrap();
+    w.commit().unwrap();
+
+    let ops = ops_of_revision(&conn, file_rev);
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    revert::apply(&mut w, &ops).unwrap();
+    let err = w.commit().expect_err("a position under a missing parent must be refused");
+    assert!(format!("{err}").contains("TreeRef parent"), "unexpected error: {err}");
+}
+
+// ── Oracle: revert of a suffix ≡ the state before it ──────────────────────────
 
 /// When the reverted set is everything since a point, a revert must land on the
-/// state a rollback to that point would produce. Values only: a rollback
-/// restores row ids exactly and a revert deliberately does not.
+/// state the repository had at that point. Values only: a revert gives the rows
+/// it puts back fresh ids.
 #[test]
-fn test_revert_of_the_last_revisions_matches_a_rollback() {
+fn test_revert_of_the_last_revisions_returns_to_the_state_before_them() {
     let (mut conn, _dir) = test_conn();
     let uuid = {
         let mut w = Writer::begin(&mut conn, None).unwrap();
@@ -318,7 +350,6 @@ fn test_revert_of_the_last_revisions_matches_a_rollback() {
         m.uuid
     };
 
-    let checkpoint = conn.head().unwrap();
     let expected = state(&conn);
 
     // Three revisions of assorted shapes.
@@ -340,30 +371,13 @@ fn test_revert_of_the_last_revisions_matches_a_rollback() {
     let after_writes = state(&conn);
     assert_ne!(after_writes, expected);
 
-    // The rollback answer.
-    log::navigate(&mut conn, checkpoint).unwrap();
-    let by_rollback = state(&conn);
-    assert_eq!(by_rollback, expected);
-
-    // Redo, then get there by reverting instead.
-    let tip = {
-        let ops = conn.all_ops().unwrap();
-        ops.last().unwrap().id
-    };
-    log::navigate(&mut conn, Some(tip)).unwrap();
-    assert_eq!(state(&conn), after_writes, "back at the tip");
-
     let mut ops: Vec<log::OpRow> = vec![];
     for rev in &revs {
         ops.extend(ops_of_revision(&conn, *rev));
     }
     ops.sort_by_key(|o| o.id);
     revert_ops(&mut conn, &ops);
-    assert_eq!(
-        state(&conn),
-        by_rollback,
-        "a revert of the whole suffix lands where a rollback does"
-    );
+    assert_eq!(state(&conn), expected, "a revert of the whole suffix lands where it started");
 }
 
 // ── The written op type ───────────────────────────────────────────────────────

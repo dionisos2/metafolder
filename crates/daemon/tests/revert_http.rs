@@ -786,15 +786,4 @@ async fn test_a_revert_of_a_trashing_revert_trashes_the_bytes_again() {
     let (_, second) = plan(&app, &repo, &format!("target_rev_id={undo}")).await;
     assert_eq!(second["requires_lock"], true, "{second}");
     assert_eq!(second["operations"][0]["filesystem"]["action"], "trash_content", "{second}");
-
-    // Rolling back over that revert deletes the metarecord just the same.
-    let (status, nav) = request(
-        &app,
-        "GET",
-        &format!("/repos/{repo}/rollback/plan?target_prev_revision=true"),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{nav}");
-    assert_eq!(nav["operations"][0]["filesystem"]["action"], "trash_content", "{nav}");
 }

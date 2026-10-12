@@ -14,7 +14,7 @@ the bytes are in the trash ([[Trash]]). For an external tool's content
 
 There is no confirmation. A sync's deletions are as recoverable as any other of its
 writes, and `mf sync show --files` lists them before the run. A deletion the user
-did not mean is carried over too — a rollback that undoes a record's creation looks
+did not mean is carried over too — an undo that takes back a record's creation looks
 exactly like one: restore the file from the trash and undo the revision.
 
 The order is normative: a crash between the two writes leaves the link with one

@@ -500,7 +500,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
 
     // The daemon change feed (GET /log/since): what changed that this panel
     // did not write itself — a watcher-recorded rename, another panel, the CLI,
-    // a rollback. `sync` polls it now (a deliberate freshness point: a refresh,
+    // a revert. `sync` polls it now (a deliberate freshness point: a refresh,
     // a catch-up after a disk change), on top of the background timer;
     // `subscribe` runs the callback with the touched uuids (`null` = the whole
     // repository) and returns the unsubscribe fn for the panel's cleanup.
@@ -661,8 +661,6 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     /** Coordinated navigation of the event log, files included — the shared
      *  `core::navigation` behind `mf log`, through the log Tauri commands. */
     log: {
-      rollback: (repo: string, target: Record<string, unknown>) =>
-        invoke('log_rollback', { repo, target }) as Promise<Metafolder.Navigated>,
       revert: (repo: string, target: Record<string, unknown>) =>
         invoke('log_revert', { repo, target }) as Promise<Metafolder.Reverted>,
     },

@@ -60,7 +60,7 @@ describe('change feed', () => {
     expect(feed._lastHead('r')).toBe(9000);
   });
 
-  test('a head that moved with no delta (rollback, empty→filled) is a whole-repo change', async () => {
+  test('a head that moved with no delta (empty→filled) is a whole-repo change', async () => {
     const feed = createChangeFeed();
     const state = { head: null as number | null, operations: [] as Op[] };
     const raw = feedOn(state);
@@ -69,12 +69,7 @@ describe('change feed', () => {
     await feed.sync('r', raw); // baseline: empty repository
     state.head = 3;
     await feed.sync('r', raw);
-    state.head = 1; // rollback
-    await feed.sync('r', raw);
-    expect(events).toEqual([
-      { repo: 'r', uuids: null },
-      { repo: 'r', uuids: null },
-    ]);
+    expect(events).toEqual([{ repo: 'r', uuids: null }]);
   });
 
   test('an unchanged head or a failed poll fires nothing', async () => {

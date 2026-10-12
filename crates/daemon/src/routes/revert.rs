@@ -30,9 +30,7 @@ pub(super) struct RevertPlanParams {
     target_op_ids: Option<String>,
 }
 
-/// Resolves a revert target to its operations, oldest first. All of them must
-/// lie on HEAD's ancestry: an operation on a branch a past rollback abandoned
-/// is not part of the current history, so there is nothing there to undo.
+/// Resolves a revert target to its operations, oldest first.
 fn resolve_revert_target(
     conn: &dyn crate::store::Store,
     head: Option<i64>,
@@ -77,16 +75,6 @@ fn resolve_revert_target(
         }
         _ => return Err(ApiError::bad_request("the target needs exactly one of rev_id or op_ids")),
     };
-    if let Some(head) = head {
-        let ancestry: std::collections::HashSet<i64> = conn.ancestry(head)?.into_iter().collect();
-        if let Some(off) = ops.iter().find(|o| !ancestry.contains(&o.id)) {
-            return Err(ApiError::bad_request(format!(
-                "operation {} is not on HEAD's ancestry: it sits on a branch a past rollback \
-                 abandoned, so there is nothing there to undo",
-                off.id
-            )));
-        }
-    }
     Ok(ops)
 }
 
@@ -156,8 +144,8 @@ fn revert_plan_json(
             "changed_since": changed_since,
         });
         if matches!(action, Some(crate::revert::FsAction::RestoreContent)) {
-            // The trash correlation key, as on a rollback step: the version the
-            // record held before the whole revision, which is the only one
+            // The trash correlation key: the version the record held before
+            // the whole revision, which is the only one
             // anything outside it observed (doc "Trash, undo and redo").
             if let Some(v) = op.entity_version_before {
                 entry["entity_version_before"] = json!(v);
@@ -310,8 +298,8 @@ pub(super) async fn revert_start(
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        if repo_state.is_rollback_locked() {
-            return Err(ApiError::conflict("a coordinated operation is already in progress"));
+        if repo_state.is_revert_locked() {
+            return Err(ApiError::conflict("a coordinated revert is already in progress"));
         }
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let head = crate::store::Log::head(&*conn)?;
@@ -321,8 +309,8 @@ pub(super) async fn revert_start(
             revert_plan_json(&conn, &effective, Some((&cache, &repo_state.config.root)))?
         };
         drop(conn);
-        *repo_state.rollback_lock.lock_recover() =
-            Some(RollbackLock::Revert { ops: effective.iter().map(|o| o.id).collect() });
+        *repo_state.revert_lock.lock_recover() =
+            Some(RevertLock { ops: effective.iter().map(|o| o.id).collect() });
         Ok(Json(plan))
     })
     .await
@@ -346,13 +334,8 @@ pub(super) async fn revert_commit(
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let locked: Vec<i64> = match repo_state.rollback_lock.lock_recover().as_ref() {
-            Some(RollbackLock::Revert { ops }) => ops.clone(),
-            Some(RollbackLock::Navigate { .. }) => {
-                return Err(ApiError::conflict(
-                    "a rollback navigation is in progress, not a revert",
-                ))
-            }
+        let locked: Vec<i64> = match repo_state.revert_lock.lock_recover().as_ref() {
+            Some(RevertLock { ops }) => ops.clone(),
             None => {
                 return Err(ApiError::conflict("no revert in progress; call revert/start first"))
             }
@@ -395,9 +378,9 @@ pub(super) async fn revert_commit(
         // The lock is released by a *successful* commit only. A refused one
         // leaves it standing: the client may have moved files already, and it
         // is the one that knows whether to retry with a corrected `apply` list
-        // or to abort — exactly as a rollback step leaves the lock to `abort`.
+        // or to abort.
         let value = result?;
-        *repo_state.rollback_lock.lock_recover() = None;
+        *repo_state.revert_lock.lock_recover() = None;
         crate::executor::flush_pending(repo_state)?;
         Ok(Json(value))
     })
@@ -413,141 +396,14 @@ pub(super) async fn revert_abort(
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         {
-            let mut guard = repo_state.rollback_lock.lock_recover();
-            match guard.as_ref() {
-                Some(RollbackLock::Revert { .. }) => {}
-                Some(RollbackLock::Navigate { .. }) => {
-                    return Err(ApiError::conflict(
-                        "a rollback navigation is in progress; use rollback/abort",
-                    ))
-                }
-                None => return Err(ApiError::conflict("no revert in progress")),
+            let mut guard = repo_state.revert_lock.lock_recover();
+            if guard.is_none() {
+                return Err(ApiError::conflict("no revert in progress"));
             }
             *guard = None;
         }
         crate::executor::flush_pending(repo_state)?;
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let head = crate::store::Log::head(&*conn)?;
-        Ok(Json(json!({"head": head})))
-    })
-    .await
-}
-
-#[derive(Deserialize, Default)]
-pub(super) struct StepBody {
-    #[serde(default)]
-    skip: bool,
-}
-
-pub(super) async fn rollback_step(
-    State(state): State<Arc<AppState>>,
-    Path(repo): Path<String>,
-    payload: Result<Json<StepBody>, JsonRejection>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    // The body is optional: `{}` and an empty body both mean "apply inverse".
-    let skip = payload.map(|Json(b)| b.skip).unwrap_or(false);
-    let repo_uuid = parse_uuid(&repo)?;
-    with_repo(&state, repo_uuid, move |repo_state| {
-        // The plan is taken out for the step and put back after it, so the
-        // rollback lock is not held across the connection's. The lock stays
-        // entered meanwhile, with an empty plan: a navigation's plan is empty
-        // only while one of its steps runs (a finished one leaves the lock).
-        let mut plan = {
-            let mut guard = repo_state.rollback_lock.lock_recover();
-            match guard.as_mut() {
-                Some(RollbackLock::Navigate { plan }) if plan.is_empty() => {
-                    return Err(ApiError::conflict("a rollback step is already running"))
-                }
-                Some(RollbackLock::Navigate { plan }) => std::mem::take(plan),
-                Some(RollbackLock::Revert { .. }) => {
-                    return Err(ApiError::conflict(
-                        "a coordinated revert is in progress; finish it with revert/commit \
-                         or revert/abort",
-                    ))
-                }
-                None => {
-                    return Err(ApiError::conflict(
-                        "no rollback navigation in progress; call start first",
-                    ))
-                }
-            }
-        };
-
-        // An error leaves the plan where it was — a failed step applied
-        // nothing, and a failed description after it applied its operation and
-        // took it off the plan — so the client may retry or abort.
-        let put_back = |plan: crate::log::NavPlan| {
-            *repo_state.rollback_lock.lock_recover() = Some(RollbackLock::Navigate { plan });
-        };
-        let done = {
-            let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-            if let Err(e) = plan.step(&mut *conn, skip) {
-                put_back(plan);
-                return Err(e.into());
-            }
-            if let Some((id, dir)) = plan.next() {
-                let described = crate::store::Log::op(&*conn, id)
-                    .map_err(ApiError::from)
-                    .and_then(|op| {
-                        op.ok_or_else(|| ApiError::internal("operation vanished during navigation"))
-                    })
-                    .and_then(|op| {
-                        let cache = repo_state.tree();
-                        action_op_json(&conn, &cache, &repo_state.config.root, &op, dir)
-                    });
-                let remaining = plan.len() - 1;
-                put_back(plan);
-                return Ok(Json(json!({"op": described?, "remaining": remaining})));
-            }
-            true
-        };
-
-        if done {
-            // HEAD reached the target: release the lock, replay the buffer.
-            *repo_state.rollback_lock.lock_recover() = None;
-            crate::executor::flush_pending(repo_state)?;
-            // The navigation restored (or took away) `mf_watch`/`mf_ignore`
-            // rows; the watch set follows the state it landed on, exactly as
-            // after a write that touched those fields (doc "Navigation"). Not per step: the states
-            // in between need
-            // not be consistent even when the final one is.
-            if plan.touches_watch() {
-                let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-                let _phase = slowlog::phase("settle.watches");
-                repo_state.refresh_watches(&conn);
-            }
-        }
-        Ok(Json(json!({"op": null, "remaining": 0})))
-    })
-    .await
-}
-
-pub(super) async fn rollback_abort(
-    State(state): State<Arc<AppState>>,
-    Path(repo): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let repo_uuid = parse_uuid(&repo)?;
-    with_repo(&state, repo_uuid, move |repo_state| {
-        let touches_watch = {
-            let mut guard = repo_state.rollback_lock.lock_recover();
-            let touches_watch = match guard.as_ref() {
-                None => return Err(ApiError::conflict("no rollback navigation in progress")),
-                // A plan taken out by a step still running says nothing yet:
-                // that step may move a rule.
-                Some(RollbackLock::Navigate { plan }) => plan.is_empty() || plan.touches_watch(),
-                Some(RollbackLock::Revert { .. }) => true,
-            };
-            *guard = None;
-            touches_watch
-        };
-        crate::executor::flush_pending(repo_state)?;
-        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        // An abort keeps the state it stopped at, mid-navigation: the watch set
-        // follows that state too (doc "Navigation"), when a step moved a rule.
-        if touches_watch {
-            let _phase = slowlog::phase("settle.watches");
-            repo_state.refresh_watches(&conn);
-        }
         let head = crate::store::Log::head(&*conn)?;
         Ok(Json(json!({"head": head})))
     })

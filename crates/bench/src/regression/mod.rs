@@ -77,7 +77,7 @@ const SCENARIOS: &[&str] = &[
     "log.window_revisions",
     "log.undo_window",
     "log.change_feed",
-    "log.whole_tree",
+    "log.whole",
     // Queries, the operation everything else is built on.
     "query.count",
     "query.page",
@@ -140,22 +140,22 @@ async fn run_scenario(id: &str, ctx: &Ctx) -> Result<()> {
     let repo = ctx.repo;
     match id {
         "log.window_ops" => {
-            get(&format!("{url}/repos/{repo}/log?mode=active&limit=50")).await?;
+            get(&format!("{url}/repos/{repo}/log?limit=50")).await?;
         }
         "log.window_revisions" => {
             // What `mf log list` asks for: twenty revisions, at most 500
             // operations (a reconcile's revision holds tens of thousands).
-            get(&format!("{url}/repos/{repo}/log?mode=active&revisions=20&limit=500")).await?;
+            get(&format!("{url}/repos/{repo}/log?revisions=20&limit=500")).await?;
         }
         "log.undo_window" => {
-            get(&format!("{url}/repos/{repo}/log?mode=linear&limit=500")).await?;
+            get(&format!("{url}/repos/{repo}/log?limit=500")).await?;
         }
         "log.change_feed" => {
             let since = (ctx.head - 20).max(0);
             get(&format!("{url}/repos/{repo}/log/since?op={since}")).await?;
         }
-        "log.whole_tree" => {
-            get(&format!("{url}/repos/{repo}/log?mode=tree")).await?;
+        "log.whole" => {
+            get(&format!("{url}/repos/{repo}/log")).await?;
         }
         "query.count" => {
             post(
@@ -613,7 +613,7 @@ fn print_table(
 /// Scenarios whose cost follows the repository's size by nature: the others
 /// should cost about the same on every size.
 fn grows(scenario: &str) -> bool {
-    scenario == "log.whole_tree" || api::SCENARIOS.iter().any(|s| s.grows && s.id == scenario)
+    scenario == "log.whole" || api::SCENARIOS.iter().any(|s| s.grows && s.id == scenario)
 }
 
 /// How much more a scenario costs on the larger size than on `S`, flagged when
@@ -779,7 +779,7 @@ async fn context_for(daemon: &Daemon, repo: Uuid, dir: &Path, real: bool) -> Res
         .collect();
     let sample = page.first().cloned().context("the repository has no metarecord to read")?;
     let log: serde_json::Value = client()
-        .get(format!("{url}/repos/{repo}/log?mode=active&limit=1"))
+        .get(format!("{url}/repos/{repo}/log?limit=1"))
         .send()
         .await?
         .error_for_status()?

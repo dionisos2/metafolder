@@ -1,7 +1,0 @@
-title: GET /repos/:repo/rollback/plan
-tags: [[HTTP endpoint]] [[Rollback endpoints]]
-kind: reference
-audience: dev
-summary: The ordered steps of a rollback, without the lock.
-
-Bodies, answers and errors: [[Rollback endpoints]].

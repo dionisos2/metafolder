@@ -33,7 +33,7 @@ An entry holds:
 |`trashed_at` |unix milliseconds |
 |`size` |bytes; for a directory, the recursive total of its regular files |
 |`is_dir` |the blob is a whole subtree |
-|`reason` |`manual`, `rollback` (a file a move would have overwritten) or `sync` |
+|`reason` |`manual`, `revert` (a file a move would have overwritten — `rollback` before October 2026, read as `revert`) or `sync` |
 |`revision` |the operation that trashed it, when there is one |
 |`metarecord` |the metarecord it belonged to — how an undo finds the entry |
 |`version` |that metarecord's version when trashed |
@@ -48,7 +48,7 @@ blob; a failure in between leaks an unindexed blob, which `mf trash prune --all`
 sweeps.
 
 `reason`, `revision` and `version` are provenance. `metarecord` is what a
-rollback or revert looks an entry up by; `version` also matches an entry written
+revert looks an entry up by; `version` also matches an entry written
 before the metarecords were captured, whose deletion the log recorded as the
 watcher's `file_deleted`.
 

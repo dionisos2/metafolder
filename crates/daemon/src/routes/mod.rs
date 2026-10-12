@@ -28,7 +28,7 @@ use crate::pagination::Page;
 use crate::query_result::SortKey;
 use crate::repo::RepoLocator;
 use crate::reserved;
-use crate::state::{AppState, RepoState, RollbackLock};
+use crate::state::{AppState, RepoState, RevertLock};
 use crate::store::Rows;
 use crate::tasks::TaskKind;
 
@@ -103,12 +103,6 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/log/since", get(get_log_since))
         .route("/repos/:repo/log/revisions/:rev_id", get(get_revision).patch(patch_revision))
         .route("/repos/:repo/log/prune", post(prune_log))
-        .route("/repos/:repo/rollback", post(rollback))
-        .route("/repos/:repo/rollback/plan", get(rollback_plan))
-        .route("/repos/:repo/rollback/plan/summary", get(rollback_plan_summary))
-        .route("/repos/:repo/rollback/start", post(rollback_start))
-        .route("/repos/:repo/rollback/step", post(rollback_step))
-        .route("/repos/:repo/rollback/abort", post(rollback_abort))
         .route("/repos/:repo/revert", post(revert))
         .route("/repos/:repo/revert/plan", get(revert_plan))
         .route("/repos/:repo/revert/start", post(revert_start))

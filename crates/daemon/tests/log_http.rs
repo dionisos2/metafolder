@@ -1,5 +1,5 @@
-//! HTTP-level tests for the event log endpoints and the atomic rollback
-//! (doc "Event log"): history reading, labels, navigation, pruning.
+//! HTTP-level tests for the event log endpoints (doc "Event log"): history
+//! reading, labels, pruning, the change feed.
 
 use std::sync::Arc;
 
@@ -80,24 +80,10 @@ async fn get_log(app: &Router, repo: &str, params: &str) -> Value {
     body
 }
 
-async fn field_of(app: &Router, repo: &str, uuid: &str, name: &str) -> Option<Value> {
-    let (status, body) =
-        request(app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
-    if status != StatusCode::OK {
-        return None;
-    }
-    body["fields"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|f| f["name"] == name)
-        .map(|f| f["value"].clone())
-}
-
 // ── Reading the log ───────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_log_linear_and_filters() {
+async fn test_log_and_filters() {
     let (app, repo, root) = setup("read").await;
     let entry =
         create(&app, &repo, json!([{"name": "a", "value": {"type": "int", "value": 1}}])).await;
@@ -110,7 +96,12 @@ async fn test_log_linear_and_filters() {
     // Root entry creation + our create + our set_field.
     assert_eq!(ops.len(), 3);
     assert_eq!(ops.last().unwrap()["id"].as_i64().unwrap(), head);
-    assert_eq!(ops[0]["parent_id"], Value::Null);
+    assert!(ops.windows(2).all(|w| w[0]["id"].as_i64() < w[1]["id"].as_i64()), "oldest first");
+    assert!(ops[0].get("parent_id").is_none(), "the log is a sequence: no parent");
+    // The log's first operation, where undo stops (doc "The undo selection").
+    assert_eq!(log["first"], ops[0]["id"]);
+    let limited = get_log(&app, &repo, "?limit=1").await;
+    assert_eq!(limited["first"], ops[0]["id"], "whatever the window");
     assert_eq!(ops[2]["op_type"], "set_field");
     assert_eq!(ops[2]["field_name"], "a");
     assert!(!log["revisions"].as_array().unwrap().is_empty());
@@ -138,7 +129,7 @@ async fn test_log_linear_and_filters() {
 /// The log response carries the repository-wide totals, so a client showing a
 /// bounded window (the GUI log panel fetches the most recent `limit`
 /// operations) can still say how much log there is. The totals count the whole
-/// log, not the returned window, and are unaffected by `limit`/`mode`.
+/// log, not the returned window, and are unaffected by `limit`.
 #[tokio::test]
 async fn test_log_reports_repository_wide_totals() {
     let (app, repo, root) = setup("totals").await;
@@ -156,113 +147,10 @@ async fn test_log_reports_repository_wide_totals() {
     assert_eq!(full["total_revisions"], revisions);
 
     // A bounded window still reports the whole log's size.
-    let limited = get_log(&app, &repo, "?mode=active&limit=2").await;
+    let limited = get_log(&app, &repo, "?limit=2").await;
     assert_eq!(limited["operations"].as_array().unwrap().len(), 2);
     assert_eq!(limited["total_operations"], operations);
     assert_eq!(limited["total_revisions"], revisions);
-
-    std::fs::remove_dir_all(root).unwrap();
-}
-
-#[tokio::test]
-async fn test_log_active_line_through_head() {
-    let (app, repo, root) = setup("active").await;
-    let entry =
-        create(&app, &repo, json!([{"name": "s", "value": {"type": "int", "value": 1}}])).await;
-    let uuid = entry["uuid"].as_str().unwrap().to_string();
-    patch(&app, &repo, &uuid, "s", json!({"type": "int", "value": 2})).await;
-    patch(&app, &repo, &uuid, "s", json!({"type": "int", "value": 3})).await;
-
-    // Helpers reading op ids out of a `/log` body.
-    let ids = |log: &Value| -> Vec<i64> {
-        log["operations"].as_array().unwrap().iter().map(|o| o["id"].as_i64().unwrap()).collect()
-    };
-
-    // op_b is the most recent write (s=3); op_a is its parent (s=2).
-    let tree = get_log(&app, &repo, "?mode=tree").await;
-    let op_b = *ids(&tree).iter().max().unwrap();
-    let op_a = tree["operations"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|o| o["id"].as_i64() == Some(op_b))
-        .unwrap()["parent_id"]
-        .as_i64()
-        .unwrap();
-
-    // Rollback to op_a: op_b becomes the redo "future", a descendant of HEAD.
-    let (status, body) = request(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/rollback"),
-        Some(json!({"target": {"id": op_a}})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "rollback failed: {body}");
-
-    // active keeps the forward continuation; linear (ancestry only) drops it.
-    let active = get_log(&app, &repo, "?mode=active").await;
-    let linear = get_log(&app, &repo, "").await;
-    assert!(ids(&active).contains(&op_b), "active keeps the redo future: {active}");
-    assert!(!ids(&linear).contains(&op_b), "linear ancestry excludes the future");
-
-    // A new write from HEAD=op_a creates a divergent branch (op_c); HEAD=op_c.
-    patch(&app, &repo, &uuid, "s", json!({"type": "int", "value": 99})).await;
-    let tree2 = get_log(&app, &repo, "?mode=tree").await;
-    let op_c = *ids(&tree2).iter().max().unwrap();
-    let active2 = get_log(&app, &repo, "?mode=active").await;
-    assert!(ids(&active2).contains(&op_c), "active follows the branch to HEAD's leaf");
-    assert!(!ids(&active2).contains(&op_b), "active hides the divergent branch: {active2}");
-    assert!(ids(&tree2).contains(&op_b), "tree still shows every branch");
-
-    std::fs::remove_dir_all(root).unwrap();
-}
-
-#[tokio::test]
-async fn test_log_active_limit_is_bounded_and_keeps_redo() {
-    let (app, repo, root) = setup("active_limit").await;
-    let entry =
-        create(&app, &repo, json!([{"name": "s", "value": {"type": "int", "value": 0}}])).await;
-    let uuid = entry["uuid"].as_str().unwrap().to_string();
-    for i in 1..=5 {
-        patch(&app, &repo, &uuid, "s", json!({"type": "int", "value": i})).await;
-    }
-    let ids = |log: &Value| -> Vec<i64> {
-        log["operations"].as_array().unwrap().iter().map(|o| o["id"].as_i64().unwrap()).collect()
-    };
-
-    // No redo future below HEAD: `active&limit` takes the bounded path and
-    // returns exactly the most-recent tail of the unlimited active line,
-    // oldest-first.
-    let full = get_log(&app, &repo, "?mode=active").await;
-    let full_ids = ids(&full);
-    let head = full["head"].as_i64().unwrap();
-    let limited = get_log(&app, &repo, "?mode=active&limit=2").await;
-    let limited_ids = ids(&limited);
-    assert_eq!(limited_ids.len(), 2);
-    assert_eq!(*limited_ids.last().unwrap(), head, "most recent op is HEAD");
-    assert_eq!(limited_ids, full_ids[full_ids.len() - 2..].to_vec());
-
-    // After a rollback, HEAD has a forward child: `active&limit` must fall back
-    // to the full active line and still surface the redo future.
-    let parent_of_head = full["operations"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|o| o["id"].as_i64() == Some(head))
-        .unwrap()["parent_id"]
-        .as_i64()
-        .unwrap();
-    let (status, body) = request(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/rollback"),
-        Some(json!({"target": {"id": parent_of_head}})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "rollback failed: {body}");
-    let redo = get_log(&app, &repo, "?mode=active&limit=50").await;
-    assert!(ids(&redo).contains(&head), "active+limit keeps the redo future: {redo}");
 
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -361,149 +249,10 @@ async fn test_revision_detail_pages_its_operations() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
-// ── Rollback ──────────────────────────────────────────────────────────────────
+// ── Whole-record writes ───────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_rollback_by_id_and_redo() {
-    let (app, repo, root) = setup("roll").await;
-    let entry =
-        create(&app, &repo, json!([{"name": "n", "value": {"type": "int", "value": 1}}])).await;
-    let uuid = entry["uuid"].as_str().unwrap().to_string();
-    let v1 = patch(&app, &repo, &uuid, "n", json!({"type": "int", "value": 2})).await;
-    assert_ne!(v1["version"], entry["version"], "the write moves the version");
-
-    let log = get_log(&app, &repo, "").await;
-    let head_before = log["head"].as_i64().unwrap();
-    let create_op = log["operations"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|o| o["op_type"] == "create_metarecord" && o["entity_uuid"] == json!(uuid))
-        .unwrap()["id"]
-        .as_i64()
-        .unwrap();
-
-    // Undo the set_field by navigating to the create operation.
-    let (status, body) = request(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/rollback"),
-        Some(json!({"target": {"id": create_op}})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "rollback failed: {body}");
-    assert_eq!(body["previous_head"].as_i64().unwrap(), head_before);
-    assert_eq!(body["new_head"].as_i64().unwrap(), create_op);
-    assert_eq!(body["operations_unapplied"], 1);
-    assert_eq!(body["operations_applied"], 0);
-
-    let (_, after) = request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
-    assert_eq!(after["fields"][0]["value"]["value"], 1, "old value restored");
-    assert_eq!(after["version"], entry["version"], "and the version with it");
-
-    // Redo: navigate forward to the previous head.
-    let (status, body) = request(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/rollback"),
-        Some(json!({"target": {"id": head_before}})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "redo failed: {body}");
-    assert_eq!(body["operations_applied"], 1);
-    let (_, redone) =
-        request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
-    assert_eq!(redone["fields"][0]["value"]["value"], 2);
-    assert_eq!(redone["version"], v1["version"]);
-
-    std::fs::remove_dir_all(root).unwrap();
-}
-
-#[tokio::test]
-async fn test_rollback_prev_revision_undoes_batch() {
-    let (app, repo, root) = setup("batch").await;
-    for v in [1, 2] {
-        create(&app, &repo, json!([{"name": "g", "value": {"type": "int", "value": v}}])).await;
-    }
-    // One batch revision touching both entries.
-    let (status, _) = request(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/query/fields/set"),
-        Some(json!({
-            "query": {"type": "is_present", "field": "g"},
-            "name": "seen",
-            "value": {"type": "bool", "value": true}
-        })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-
-    let (status, body) = request(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/rollback"),
-        Some(json!({"target": {"prev_revision": true}})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "rollback failed: {body}");
-    assert_eq!(body["operations_unapplied"], 2, "the whole batch revision is undone");
-
-    let (_, seen) = request(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/query"),
-        Some(json!({"query": {"type": "is_present", "field": "seen"}})),
-    )
-    .await;
-    assert_eq!(seen.as_array().unwrap().len(), 0);
-
-    std::fs::remove_dir_all(root).unwrap();
-}
-
-#[tokio::test]
-async fn test_rollback_restores_deleted_record_with_field_ids() {
-    let (app, repo, root) = setup("undelete").await;
-    let entry = create(
-        &app,
-        &repo,
-        json!([
-            {"name": "a", "value": {"type": "int", "value": 1}},
-            {"name": "b", "value": {"type": "string", "value": "keep"}}
-        ]),
-    )
-    .await;
-    let uuid = entry["uuid"].as_str().unwrap().to_string();
-    let original_ids: Vec<i64> =
-        entry["fields"].as_array().unwrap().iter().map(|f| f["id"].as_i64().unwrap()).collect();
-    let version_before = entry["version"].as_u64().unwrap();
-
-    let (status, _) =
-        request(&app, "DELETE", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
-
-    let (status, body) = request(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/rollback"),
-        Some(json!({"target": {"prev_revision": true}})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "rollback failed: {body}");
-
-    let (status, restored) =
-        request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
-    assert_eq!(status, StatusCode::OK, "entry must be restored");
-    let restored_ids: Vec<i64> =
-        restored["fields"].as_array().unwrap().iter().map(|f| f["id"].as_i64().unwrap()).collect();
-    assert_eq!(restored_ids, original_ids, "field ids restored exactly");
-    assert_eq!(restored["version"].as_u64().unwrap(), version_before);
-
-    std::fs::remove_dir_all(root).unwrap();
-}
-
-#[tokio::test]
-async fn test_set_record_is_one_op_and_rolls_back_exactly() {
+async fn test_set_record_is_one_op_and_reverts_exactly() {
     let (app, repo, root) = setup("setrecord").await;
     let entry = create(
         &app,
@@ -515,8 +264,6 @@ async fn test_set_record_is_one_op_and_rolls_back_exactly() {
     )
     .await;
     let uuid = entry["uuid"].as_str().unwrap().to_string();
-    let original_ids: Vec<i64> =
-        entry["fields"].as_array().unwrap().iter().map(|f| f["id"].as_i64().unwrap()).collect();
     let version_before = entry["version"].as_u64().unwrap();
 
     let revisions = |body: &Value| body["revisions"].as_array().unwrap().len();
@@ -543,20 +290,18 @@ async fn test_set_record_is_one_op_and_rolls_back_exactly() {
     let ops = log_after["operations"].as_array().unwrap();
     assert_eq!(ops.last().unwrap()["op_type"].as_str().unwrap(), "set_metarecord");
 
-    // Rollback restores the prior field set, with the original ids and version.
+    // Reverting it restores the prior field set — and its version, which is
+    // the content's (doc "Metarecord version").
     let (status, body) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/rollback"),
-        Some(json!({"target": {"prev_revision": true}})),
+        &format!("/repos/{repo}/revert"),
+        Some(json!({"target": {"rev_id": "head"}})),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "rollback failed: {body}");
+    assert_eq!(status, StatusCode::OK, "revert failed: {body}");
     let (_, restored) =
         request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
-    let restored_ids: Vec<i64> =
-        restored["fields"].as_array().unwrap().iter().map(|f| f["id"].as_i64().unwrap()).collect();
-    assert_eq!(restored_ids, original_ids, "field ids restored exactly");
     assert_eq!(restored["version"].as_u64().unwrap(), version_before);
     let names: Vec<&str> = restored["fields"]
         .as_array()
@@ -569,105 +314,10 @@ async fn test_set_record_is_one_op_and_rolls_back_exactly() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-#[tokio::test]
-async fn test_rollback_by_label_and_branching() {
-    let (app, repo, root) = setup("label").await;
-    let entry =
-        create(&app, &repo, json!([{"name": "s", "value": {"type": "int", "value": 1}}])).await;
-    let uuid = entry["uuid"].as_str().unwrap().to_string();
-
-    // Label the current revision, then keep writing.
-    let (_, detail) =
-        request(&app, "GET", &format!("/repos/{repo}/log/revisions/head"), None).await;
-    let rev = detail["revision"]["id"].as_i64().unwrap();
-    request(
-        &app,
-        "PATCH",
-        &format!("/repos/{repo}/log/revisions/{rev}"),
-        Some(json!({"label": "checkpoint"})),
-    )
-    .await;
-    patch(&app, &repo, &uuid, "s", json!({"type": "int", "value": 2})).await;
-    patch(&app, &repo, &uuid, "s", json!({"type": "int", "value": 3})).await;
-
-    let (status, body) = request(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/rollback"),
-        Some(json!({"target": {"label": "checkpoint"}})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "rollback failed: {body}");
-    assert_eq!(field_of(&app, &repo, &uuid, "s").await.unwrap()["value"], 1);
-
-    // A new write creates a branch; tree mode still shows the old ops.
-    patch(&app, &repo, &uuid, "s", json!({"type": "int", "value": 99})).await;
-    let tree = get_log(&app, &repo, "?mode=tree").await;
-    let linear = get_log(&app, &repo, "").await;
-    assert!(
-        tree["operations"].as_array().unwrap().len()
-            > linear["operations"].as_array().unwrap().len(),
-        "tree mode includes the abandoned branch"
-    );
-
-    std::fs::remove_dir_all(root).unwrap();
-}
-
-#[tokio::test]
-async fn test_rollback_to_empty_state() {
-    let (app, repo, root) = setup("empty").await;
-    // Navigate before the very first operation (the root entry creation).
-    let log = get_log(&app, &repo, "").await;
-    let first = log["operations"].as_array().unwrap()[0]["id"].as_i64().unwrap();
-    let (status, body) = request(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/rollback"),
-        Some(json!({"target": {"id": first}})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "got {body}");
-    // Now undo that single create too.
-    let (status, body) = request(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/rollback"),
-        Some(json!({"target": {"prev_revision": true}})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "got {body}");
-    assert_eq!(body["new_head"], Value::Null);
-
-    let (_, all) = request(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/query"),
-        Some(json!({"query": {"type": "is_unknown", "field": "__never__"}})),
-    )
-    .await;
-    assert_eq!(all.as_array().unwrap().len(), 0, "empty state");
-
-    std::fs::remove_dir_all(root).unwrap();
-}
-
-#[tokio::test]
-async fn test_rollback_unknown_target_is_404() {
-    let (app, repo, root) = setup("badtarget").await;
-    let (status, _) = request(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/rollback"),
-        Some(json!({"target": {"id": 424242}})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    std::fs::remove_dir_all(root).unwrap();
-}
-
 // ── Pruning ───────────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_prune_before_makes_weak_root() {
+async fn test_prune_before_drops_the_older_operations() {
     let (app, repo, root) = setup("prune").await;
     let entry =
         create(&app, &repo, json!([{"name": "p", "value": {"type": "int", "value": 1}}])).await;
@@ -683,7 +333,7 @@ async fn test_prune_before_makes_weak_root() {
         &app,
         "POST",
         &format!("/repos/{repo}/log/prune"),
-        Some(json!({"mode": "before", "target": {"id": target}})),
+        Some(json!({"target": {"id": target}})),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "prune failed: {body}");
@@ -692,55 +342,22 @@ async fn test_prune_before_makes_weak_root() {
     let log = get_log(&app, &repo, "").await;
     let ops = log["operations"].as_array().unwrap();
     assert_eq!(ops.len(), 2);
-    assert_eq!(ops[0]["id"].as_i64().unwrap(), target);
-    assert_eq!(ops[0]["parent_id"], Value::Null, "the target became the (weak) root");
+    assert_eq!(ops[0]["id"].as_i64().unwrap(), target, "the target is kept");
 
     std::fs::remove_dir_all(root).unwrap();
 }
 
 #[tokio::test]
-async fn test_prune_linearize_removes_branches() {
-    let (app, repo, root) = setup("linearize").await;
-    let entry =
-        create(&app, &repo, json!([{"name": "q", "value": {"type": "int", "value": 1}}])).await;
-    let uuid = entry["uuid"].as_str().unwrap().to_string();
-    patch(&app, &repo, &uuid, "q", json!({"type": "int", "value": 2})).await;
-    // Create a branch: roll back then write something else.
-    request(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/rollback"),
-        Some(json!({"target": {"prev_revision": true}})),
-    )
-    .await;
-    patch(&app, &repo, &uuid, "q", json!({"type": "int", "value": 3})).await;
-
-    let tree_before = get_log(&app, &repo, "?mode=tree").await;
-    let n_before = tree_before["operations"].as_array().unwrap().len();
-    let head = tree_before["head"].as_i64().unwrap();
-
-    let (status, body) = request(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/log/prune"),
-        Some(json!({"mode": "linearize", "target": {"id": head}})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "linearize failed: {body}");
-    assert_eq!(body["pruned_operations"], 1, "the abandoned set_field branch is pruned");
-
-    let tree_after = get_log(&app, &repo, "?mode=tree").await;
-    assert_eq!(tree_after["operations"].as_array().unwrap().len(), n_before - 1);
-
-    // Pruning with a non-ancestor target is rejected.
+async fn test_prune_to_an_unknown_target_is_refused() {
+    let (app, repo, root) = setup("prune_unknown").await;
     let (status, _) = request(
         &app,
         "POST",
         &format!("/repos/{repo}/log/prune"),
-        Some(json!({"mode": "before", "target": {"id": 424242}})),
+        Some(json!({"target": {"id": 424242}})),
     )
     .await;
-    assert_ne!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::NOT_FOUND);
 
     std::fs::remove_dir_all(root).unwrap();
 }

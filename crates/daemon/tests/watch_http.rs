@@ -138,9 +138,9 @@ async fn put_field(app: &Router, repo: &str, uuid: &str, name: &str, value: Valu
 // door. Without the refresh the repository that just came back watches
 // nothing until something else touches those fields.
 #[tokio::test]
-async fn a_rollback_that_restores_tracking_watches_again() {
+async fn a_revert_that_restores_tracking_watches_again() {
     let app = routes::build(std::sync::Arc::new(AppState::new()));
-    let root = TempDir::new("watch_rollback");
+    let root = TempDir::new("watch_revert");
     std::fs::create_dir_all(root.join("docs/notes")).unwrap();
     std::fs::write(root.join("docs/notes/todo.txt"), b"todo").unwrap();
     let repo = init_repo(&app, &root).await;
@@ -181,17 +181,17 @@ async fn a_rollback_that_restores_tracking_watches_again() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(result_for(&body, "/docs")["watched"], json!(false));
 
-    // Roll the deletion back: the record returns with its `mf_watch = true`.
+    // Revert the deletion: the record returns with its `mf_watch = true`.
     let (status, body) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/rollback"),
-        Some(json!({"target": {"prev_revision": true}})),
+        &format!("/repos/{repo}/revert"),
+        Some(json!({"target": {"rev_id": "head"}})),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "rollback failed: {body}");
+    assert_eq!(status, StatusCode::OK, "revert failed: {body}");
 
-    // The watch set follows the state the navigation landed on.
+    // The watch set follows the state the revert wrote.
     let (status, body) = check_paths(&app, &repo, paths).await;
     assert_eq!(status, StatusCode::OK);
     for path in ["/docs", "/docs/notes/todo.txt"] {
@@ -199,7 +199,7 @@ async fn a_rollback_that_restores_tracking_watches_again() {
         assert_eq!(
             r["watched"],
             json!(true),
-            "a rollback that restores tracking watches again ({path}): {r}"
+            "a revert that restores tracking watches again ({path}): {r}"
         );
     }
 }

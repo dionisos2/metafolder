@@ -325,7 +325,7 @@ export async function mount(root, metafolder) {
     metafolder.whenVisible(() => void load());
   }
   workspace.onChange('selected_log_entry', follow);
-  // A rollback moves HEAD and a label may change: reread what is shown.
+  // A revert writes and a label may change: reread what is shown.
   workspace.onChange('metarecords:dirty', () => metafolder.whenVisible(() => void load()));
 
   follow(await workspace.get('selected_log_entry'));

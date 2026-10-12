@@ -25,7 +25,7 @@
 //!
 //! Every row change goes through [`KvTxn::derive_row`], every metarecord
 //! creation and removal through [`KvTxn::derive_created`] /
-//! [`KvTxn::derive_removed`] — the log's navigation included, which writes by
+//! [`KvTxn::derive_removed`] — a revert included, which writes by
 //! the same primitives. [`KvStore::check_derived`] holds all of it to a
 //! rebuild.
 
@@ -543,8 +543,8 @@ impl KvTxn<'_> {
     }
 
     /// A metarecord was created: it gets the next dense id, in the universe,
-    /// and in `parents` wherever rows already hang below it (a restoration
-    /// may put a child back before its parent).
+    /// and in `parents` wherever rows already hang below it (a revert may put
+    /// a child back before its parent).
     pub(super) fn derive_created(&self, uuid: Uuid) -> Result<()> {
         let id = u32::try_from(self.next("next_id")?).context("dense ids exhausted")?;
         {

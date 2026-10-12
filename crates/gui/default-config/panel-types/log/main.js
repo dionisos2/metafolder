@@ -1,10 +1,9 @@
 // log panel: revisions in reverse chronological order, expandable into
-// operations; rollback and prune (doc "log panel").
+// operations; revert and prune (doc "log panel").
 
 import { byId, el, qs } from '/__ui.js';
 import { registerFind } from '/__find-entry.js';
 import { moveSelection, edgeSelection } from './selection.js';
-import { collapseParents, graphLayout, revisionParents } from './graph.js';
 import { annotate, revertTarget, shownRevisions } from './annotate.js';
 
 /**
@@ -14,7 +13,7 @@ import { annotate, revertTarget, shownRevisions } from './annotate.js';
  *            opCount: number, isHead: boolean}} Revision
  *
  * One operation row of `GET /log`.
- * @typedef {{id: number, rev_id: number, parent_id?: number|null, op_type: string,
+ * @typedef {{id: number, rev_id: number, op_type: string,
  *            field_name?: string|null, entity_uuid?: string|null,
  *            reverts_op_id?: number|null}} Operation
  *
@@ -44,15 +43,13 @@ export async function mount(root, metafolder) {
   /** What each revision is: the daemon's or the user's, an undo, undone
    *  (see annotate.js). @type {Map<number, any>} */
   let marks = new Map();
-  let graphMode = false; // false: active line (list); true: full branch graph
   // The watcher writes a revision per batch of filesystem events, which can
   // bury the user's own changes; hiding them keeps only what the user wrote
   // (and HEAD). A display filter: the fetch is the same either way.
   let showWatcher = true;
   // The list view fetches a bounded window of the most recent operations so a
   // repository with millions of them (a large initial reconcile) still loads;
-  // "Show more" grows the window. The graph view is unbounded (it needs every
-  // branch), so it is only offered explicitly.
+  // "Show more" grows the window.
   const LOG_PAGE = 1000;
   let limit = LOG_PAGE;
 
@@ -61,11 +58,9 @@ export async function mount(root, metafolder) {
   const placeholderElement = byId(root, 'placeholder');
   const moreBox = byId(root, 'more');
   const showMoreButton = byId(root, 'show-more', HTMLButtonElement);
-  const rollbackButton = byId(root, 'rollback', HTMLButtonElement);
   const revertButton = byId(root, 'revert', HTMLButtonElement);
   const pruneButton = byId(root, 'prune', HTMLButtonElement);
   const checkpointButton = byId(root, 'checkpoint', HTMLButtonElement);
-  const graphCheckbox = byId(root, 'graph', HTMLInputElement);
   const watcherCheckbox = byId(root, 'show-watcher', HTMLInputElement);
   const statusLine = byId(root, 'status-line');
   /** Repository-wide log size (`GET /log` totals), independent of the window
@@ -78,12 +73,8 @@ export async function mount(root, metafolder) {
       return;
     }
     try {
-      // `active` shows only the line through HEAD (ancestry + the most-recent
-      // forward continuation, so a rolled-back future stays available for
-      // redo). `tree` adds every divergent branch, drawn as a graph.
-      // The graph needs every branch (unbounded); the list fetches only the
-      // most recent `limit` operations so a huge log loads quickly.
-      const query = graphMode ? '?mode=tree' : `?mode=active&limit=${limit}`;
+      // Only the most recent `limit` operations, so a huge log loads quickly.
+      const query = `?limit=${limit}`;
       const log = /** @type {{operations?: Operation[], head?: number,
        *                      revisions?: {id: number, timestamp: number,
        *                                  label: string|null,
@@ -118,8 +109,8 @@ export async function mount(root, metafolder) {
       marks = annotate(revisions, operations);
       render();
       // Offer "Show more" while the list fills the requested window: older
-      // operations may lie beyond it. The graph view is always complete.
-      moreBox.hidden = graphMode || operations.length < limit;
+      // operations may lie beyond it.
+      moreBox.hidden = operations.length < limit;
     } catch (error) {
       moreBox.hidden = true;
       totals = null;
@@ -182,7 +173,6 @@ export async function mount(root, metafolder) {
   /** Every row the cursor can land on, in display order, keyed by kind so a
    *  revision and an operation sharing a number stay distinct. */
   function cursorRows() {
-    if (graphMode) return visible().map((rev) => ({ id: `rev:${rev.id}` }));
     return visible().flatMap((rev) =>
       expandedRev === rev.id
         ? [
@@ -308,47 +298,6 @@ export async function mount(root, metafolder) {
     );
   }
 
-  // Graph mode: a leading monospace gutter cell drawing the branch structure,
-  // with connector rows between nodes. Nodes stay selectable like list rows.
-  function graphRows() {
-    const shown = visible();
-    const revById = new Map(shown.map((rev) => [rev.id, rev]));
-    // Hidden revisions are skipped over: each shown one hangs from its nearest
-    // shown ancestor, so the lines still join up.
-    const parents = collapseParents(revisionParents(operations), new Set(revById.keys()));
-    const revs = shown.map((rev) => ({ id: rev.id, parent: parents.get(rev.id) ?? null }));
-    return graphLayout(revs).flatMap((line) => {
-      if (line.type === 'connector') {
-        return el('tr', { class: 'connector' }, el('td', { colSpan: 4, class: 'gutter' }, line.gutter));
-      }
-      const rev = revById.get(line.revId);
-      if (!rev) return []; // a laid-out node the revision list does not carry
-      return el(
-        'tr',
-        {
-          class: [
-            'rev',
-            selection?.kind === 'rev' && rev.id === selection.id && 'selected',
-            marks.get(rev.id)?.watcher && 'watcher-row',
-            marks.get(rev.id)?.fullyUndone && 'undone-row',
-          ],
-          onclick: () => selectRevision(rev.id),
-          ondblclick: () => selectRevision(rev.id, { toggleOps: true }),
-        },
-        el(
-          'td',
-          {},
-          el('span', { class: 'gutter' }, `${line.gutter} `),
-          `#${rev.id}`,
-          rev.label && [' ', el('span', { class: 'label' }, rev.label)],
-        ),
-        el('td', {}, new Date(rev.timestamp).toLocaleString()),
-        el('td', {}, String(rev.opCount)),
-        el('td', {}, statusBadges(rev)),
-      );
-    });
-  }
-
   /** What was last published as `selected_log_entry`, to publish changes only. */
   let publishedKey = 'null';
 
@@ -372,7 +321,6 @@ export async function mount(root, metafolder) {
     if (revisions.length === 0) placeholderElement.textContent = 'Empty log.';
     table.hidden = revisions.length === 0;
     const nothing = selection === null;
-    rollbackButton.disabled = nothing;
     revertButton.disabled = nothing;
     pruneButton.disabled = nothing;
     checkpointButton.disabled = nothing;
@@ -381,46 +329,22 @@ export async function mount(root, metafolder) {
       selection?.kind === 'op'
         ? `Revert op ${selection.id} (log:revert)`
         : 'Revert selected (log:revert)';
-    graphCheckbox.checked = graphMode;
     watcherCheckbox.checked = showWatcher;
 
     rows.replaceChildren(
-      ...(graphMode
-        ? graphRows()
-        : visible().flatMap((rev) =>
-            expandedRev === rev.id
-              ? [revisionRow(rev), ...operationsOf(rev.id).map(operationRow)]
-              : [revisionRow(rev)],
-          )),
+      ...visible().flatMap((rev) =>
+        expandedRev === rev.id
+          ? [revisionRow(rev), ...operationsOf(rev.id).map(operationRow)]
+          : [revisionRow(rev)],
+      ),
     );
     renderStatusLine();
   }
 
-  // Navigation restores the state as of the END of the selected revision.
-  /** @param {number} revId */
-  function lastOpOf(revId) {
-    return Math.max(...operations.filter((o) => o.rev_id === revId).map((o) => o.id));
-  }
-
-  async function rollback() {
-    const rev = selectedRev();
-    if (rev === null) return;
-    if (repo === null) return;
-    if (!confirm(`Go to revision #${rev} (rollback or redo)?`)) return;
-    try {
-      // Files included: a step that moves a file, or brings one back from the
-      // trash-bin, does it (doc "Revision commands in the GUI"). Confirmed above, so
-      // no dialog is open while the repository is locked.
-      const result = await metafolder.log.rollback(repo, { id: lastOpOf(rev) });
-      void statusBar.message(
-        [`Navigation done: ${result.processed} operation(s).`, ...result.notes].join(' · '),
-        statusErrorMs,
-      );
-      await workspace.set('metarecords:dirty', Date.now()); // refresh metarecord-list
-      await refresh();
-    } catch (error) {
-      await statusBar.error(error);
-    }
+  /** The oldest operation of a revision: what a prune keeps from.
+   *  @param {number} revId */
+  function firstOpOf(revId) {
+    return Math.min(...operations.filter((o) => o.rev_id === revId).map((o) => o.id));
   }
 
   async function prune() {
@@ -430,8 +354,7 @@ export async function mount(root, metafolder) {
     try {
       const result = /** @type {{pruned_operations: number, pruned_revisions: number}} */ (
         await daemon.call('POST', `/repos/${repo}/log/prune`, {
-          mode: 'before',
-          target: { id: lastOpOf(rev) },
+          target: { id: firstOpOf(rev) },
         })
       );
       void statusBar.message(
@@ -447,7 +370,7 @@ export async function mount(root, metafolder) {
   }
 
   // Undoes the selected revision in place, by writing its inverse at HEAD
-  // (doc "Revert"). Unlike a rollback it does not move HEAD, so the
+  // (doc "Revert"). It does not move anything back, so the
   // watcher flushes that landed since are left exactly where they are.
   /** What `GET /revert/plan` answers (doc "Revert"). An operation whose cell
    *  was written since carries `changed_since` (doc "Reverting onto the
@@ -590,14 +513,6 @@ export async function mount(root, metafolder) {
     }
   }
 
-  // Toggling list/graph changes the requested mode, so it refetches.
-  /** @param {boolean} [on] */
-  async function toggleGraph(on) {
-    graphMode = on ?? !graphMode;
-    await refresh();
-  }
-  graphCheckbox.addEventListener('change', () => void toggleGraph(graphCheckbox.checked));
-
   // Showing/hiding the watcher's revisions is a display filter: no refetch. A
   // selection inside a revision that disappears is dropped rather than left
   // pointing at a row nobody can see.
@@ -621,16 +536,10 @@ export async function mount(root, metafolder) {
   // Shell builtins (they work on the active repo, no selection needed).
   byId(root, 'undo').addEventListener('click', () => void commands.invoke('log:undo'));
   byId(root, 'redo').addEventListener('click', () => void commands.invoke('log:redo'));
-  rollbackButton.addEventListener('click', () => void rollback());
   revertButton.addEventListener('click', () => void revert());
   pruneButton.addEventListener('click', () => void prune());
   checkpointButton.addEventListener('click', () => void markCheckpoint());
 
-  void commands.register('log:rollback', {
-    label: 'Log: rollback to the selected revision',
-    reveal: true,
-    handler: rollback,
-  });
   // Reverting: what is selected by default, or a named widening of it. The
   // scope is an argument rather than sibling command names, so a keybinding
   // reads as what it does (`log:revert revision`).
@@ -669,7 +578,6 @@ export async function mount(root, metafolder) {
 
   /** @type {Record<string, () => unknown>} */
   const LOG_FLAGS = {
-    graph: () => toggleGraph(),
     watcher: () => toggleWatcher(),
     ops: () => {
       const rev = selectedRev();
@@ -678,7 +586,7 @@ export async function mount(root, metafolder) {
   };
 
   void commands.register('log:toggle', {
-    label: 'Log: toggle a view flag (branch graph / the watcher’s revisions / the selected revision’s operations)',
+    label: 'Log: toggle a view flag (the watcher’s revisions / the selected revision’s operations)',
     args: [
       {
         name: 'flag',
@@ -730,7 +638,7 @@ export async function mount(root, metafolder) {
 
   // Keybindings for this panel live in keybindings.toml (when = "log").
 
-  // The log fetch (the whole tree) waits for the first actual display.
+  // The log fetch waits for the first actual display.
   const deferredRefresh = () => void refresh();
   workspace.onChange('metarecords:dirty', () => metafolder.whenVisible(deferredRefresh));
   workspace.onChange('active_repo', (value) => {

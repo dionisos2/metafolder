@@ -9,7 +9,7 @@ use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, Query};
 use metafolder_daemon::index::{PageStrategy, QueryRoots, SortBy};
 use metafolder_daemon::kvstore::KvStore;
-use metafolder_daemon::log::{self, Writer};
+use metafolder_daemon::log::Writer;
 use metafolder_daemon::query_result::{SortKey, SortOrder};
 use metafolder_daemon::store::Log;
 use metafolder_query_oracle as query_exec;
@@ -179,7 +179,7 @@ fn holders(store: &KvStore, value: &str) -> (usize, u64) {
 }
 
 #[test]
-fn a_posting_follows_writes_and_navigation() {
+fn a_posting_follows_writes_and_reverts() {
     let (mut store, _dir) = open();
     let start = store.head().unwrap();
     let mut w = Writer::begin(&mut store, None).unwrap();
@@ -210,14 +210,15 @@ fn a_posting_follows_writes_and_navigation() {
     check(&store);
     assert_eq!(holders(&store, "a").0, 0);
 
-    // The log's navigation writes by the same primitives.
-    log::navigate(&mut store, full).unwrap();
+    // A revert writes by the same primitives.
+    common::kv::revert_since(&mut store, full);
     check(&store);
     assert_eq!(holders(&store, "a").0, 200);
-    log::navigate(&mut store, start).unwrap();
+    let back = store.head().unwrap();
+    common::kv::revert_since(&mut store, start);
     check(&store);
     assert_eq!(holders(&store, "a").0, 0);
-    log::navigate(&mut store, full).unwrap();
+    common::kv::revert_since(&mut store, back);
     store.reindex().unwrap();
     check(&store);
     assert_eq!(holders(&store, "a").0, 200);

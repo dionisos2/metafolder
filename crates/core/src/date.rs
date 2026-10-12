@@ -1,5 +1,5 @@
 //! Dependency-free UTC calendar helpers, shared by the daemon (file
-//! timestamps) and the CLI (log/rollback timestamp targets and display).
+//! timestamps) and the CLI (log timestamp targets and display).
 //!
 //! The calendar conversions are Howard Hinnant's `civil_from_days` /
 //! `days_from_civil` algorithms (proleptic Gregorian). Everything here is

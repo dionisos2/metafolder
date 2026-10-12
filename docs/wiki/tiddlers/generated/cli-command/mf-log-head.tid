@@ -1,12 +1,12 @@
 title: $:/mf/gen/CLI command/mf log head
 catalog: CLI command
 target: mf log head
-summary: Print the id of the operation the history is on (what --id targets)
+summary: Print the id of the newest operation (what `undo --after` takes)
 
 !! Reference
 
 ```
-Print the id of the operation the history is on (what --id targets)
+Print the id of the newest operation (what `undo --after` takes)
 
 Usage: mf log head
 

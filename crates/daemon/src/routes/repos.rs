@@ -169,7 +169,7 @@ pub(super) async fn get_task(
 /// its transaction back); a running `query` stops inside its loops
 /// (`crate::interrupt`); a `flush` stops and pauses ingestion. The task
 /// transitions to `cancelled` once its worker unwinds; this returns the task's
-/// current view. `load`, `prune` and `rollback` are not cancellable (400); a
+/// current view. `load` and `prune` are not cancellable (400); a
 /// terminal task is a 409; an unknown id a 404.
 pub(super) async fn cancel_task(
     State(state): State<Arc<AppState>>,
@@ -435,7 +435,7 @@ fn spawn_load_warmup(state: Arc<AppState>, repo_uuid: Uuid) -> Option<Uuid> {
 
 /// `POST /repos/:repo/unload`: stops the repository's watcher/executor and
 /// releases its database lock, removing it from the loaded set (doc
-/// "Repository endpoints"). 404 if not loaded; 409 if a rollback navigation is
+/// "Repository endpoints"). 404 if not loaded; 409 if a coordinated revert is
 /// in progress. Runs on a blocking thread because dropping the state joins the
 /// executor thread.
 pub(super) async fn unload_repo(

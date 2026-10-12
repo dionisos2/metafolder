@@ -109,8 +109,9 @@ mf tag -i "$uuid" add "$TAG"
 mf_log_back_to "$head"       # on u
 ```
 
-`mf_log_head` is [[mf log head]], and `mf_log_back_to` a [[rollback|Rollback]] to it —
-the very field rows and versions come back, which no hand-written ''untag'' would do.
+`mf_log_head` is [[mf log head]], and `mf_log_back_to` an `mf log undo --after` it — every
+change of yours since reverted, what each one replaced coming back, which no hand-written
+''untag'' would do; the watcher's writes meanwhile are left alone ([[Undo and redo]]).
 Keep a stack of what each answer changed in the script too: the position, the
 counters ''as they were before the entry was counted'', whatever the answer had
 settled. Restoring counters saved after the entry was counted subtracts twice.

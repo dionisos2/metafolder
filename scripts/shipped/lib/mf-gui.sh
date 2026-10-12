@@ -307,21 +307,23 @@ mf_gui_scope_into() { # <outfile> <get args...>
 # it goes the answer is always the same: return the repository to where it was
 # before the answer, and ask again. These two helpers are that.
 
-# The operation id the history is on. Note it BEFORE writing, so the write can
-# be undone exactly — the event log restores field ids and versions, which no
+# The newest operation of the log. Note it BEFORE writing, so the write can be
+# undone exactly — the event log records what each write replaced, which no
 # hand-written "untag" could.
 mf_log_head() {
     mf log head 2>/dev/null || printf '0\n'
 }
 
-# Return the repository to the operation `mf_log_head` reported. A no-op when
-# nothing was written since (an idempotent `mf tag` often writes nothing at
-# all), which is why the head is compared rather than counted.
+# Undo what was written since the operation `mf_log_head` reported: every
+# change of the user's newer than it that still stands, reverted — the
+# watcher's own writes meanwhile are left alone (doc "The undo selection"). A
+# no-op when nothing was written since (an idempotent `mf tag` often writes
+# nothing at all), which is why the head is compared rather than counted.
 mf_log_back_to() { # <op-id>
     [ -n "${1:-}" ] || return 0
     [ "$(mf_log_head)" = "$1" ] && return 0
-    mf log rollback --id "$1" --silent >/dev/null 2>&1 \
-        || mf_gui_report "could not undo the last answer (history moved on?)"
+    mf log undo --after "$1" --force --silent >/dev/null 2>&1 \
+        || mf_gui_report "could not undo the last answer"
 }
 
 # Narrow a predicate to $SCOPE. An empty scope is every metarecord, so it is

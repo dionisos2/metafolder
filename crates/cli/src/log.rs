@@ -1,8 +1,7 @@
 //! Event-log CLI commands (doc "Reading the log"): `mf log`, `mf log show`,
-//! `mf prune`, and the coordinated-navigation `mf rollback`. All are thin
-//! formatters over the daemon's `/log`, `/rollback`, and `/log/prune`
-//! endpoints. Target resolution (`--id`, `--timestamp`, `<label>`, or the
-//! implicit previous revision) is shared by rollback and prune.
+//! `mf log undo`/`redo`/`revert` and `mf log prune`. All are thin formatters
+//! over the daemon's `/log`, `/revert` and `/log/prune` endpoints. The log is a
+//! sequence: nothing navigates over it (doc "The operation log").
 
 use std::io::Write as _;
 
@@ -14,16 +13,16 @@ use metafolder_core::{date, undo};
 use crate::client::CliError;
 use crate::commands::Ctx;
 
-/// The coordinated navigation itself is shared with the GUI
+/// The coordinated revert itself is shared with the GUI
 /// (`metafolder_core::navigation`); these are its move policies.
 pub use metafolder_core::navigation::{MovePolicies as RollbackPolicies, Policy};
 
 // ── Target resolution ─────────────────────────────────────────────────────────
 
-/// A rollback/prune target as the four daemon body forms.
+/// A prune target as the three daemon body forms.
 #[derive(Clone)]
 pub struct TargetArgs {
-    /// Positional label (`mf rollback <label>`).
+    /// Positional label (`mf log prune before <label>`).
     pub label: Option<String>,
     pub id: Option<i64>,
     /// `--timestamp` accepts ISO-8601 (bare), or `@<unix-ms>` for raw ms.
@@ -31,71 +30,56 @@ pub struct TargetArgs {
 }
 
 impl TargetArgs {
-    /// Builds the daemon `{"target": ...}` body. When nothing is specified the
-    /// target is the previous revision (`{"prev_revision": true}`).
+    /// Builds the daemon `{"target": ...}` body: exactly one form.
     fn into_body(self) -> Result<Json, CliError> {
-        let set = [self.id.is_some(), self.timestamp.is_some(), self.label.is_some()]
-            .iter()
-            .filter(|x| **x)
-            .count();
-        if set > 1 {
-            return Err(CliError::Usage(
-                "give at most one of <label>, --id, or --timestamp".into(),
-            ));
-        }
-        let target = if let Some(id) = self.id {
-            json!({"id": id})
-        } else if let Some(ts) = self.timestamp {
-            json!({"timestamp": parse_timestamp(&ts)?})
-        } else if let Some(label) = self.label {
-            json!({"label": label})
-        } else {
-            json!({"prev_revision": true})
+        let target = match (self.id, self.timestamp, self.label) {
+            (Some(id), None, None) => json!({"id": id}),
+            (None, Some(ts), None) => json!({"timestamp": parse_timestamp(&ts)?}),
+            (None, None, Some(label)) => json!({"label": label}),
+            _ => {
+                return Err(CliError::Usage(
+                    "give exactly one of <label>, --id, or --timestamp".into(),
+                ))
+            }
         };
         Ok(json!({"target": target}))
-    }
-
-    /// Query-parameter form for `GET /rollback/plan` and `plan/summary`.
-    fn into_query(self) -> Result<Vec<(&'static str, String)>, CliError> {
-        let body = self.into_body()?;
-        let target = &body["target"];
-        let mut q = Vec::new();
-        if let Some(id) = target["id"].as_i64() {
-            q.push(("target_id", id.to_string()));
-        } else if let Some(ts) = target["timestamp"].as_i64() {
-            q.push(("target_timestamp", ts.to_string()));
-        } else if let Some(label) = target["label"].as_str() {
-            q.push(("target_label", label.to_string()));
-        } else {
-            q.push(("target_prev_revision", "true".into()));
-        }
-        Ok(q)
     }
 }
 
 // ── mf log undo (doc "Undo and redo") ───────────────────────────────
 
-/// Reads enough of the log to decide what undo should undo. Two bounded reads
-/// rather than one unbounded one: a repository whose last manual change is
-/// older than [`undo::WINDOW`] operations — a large reconcile sits in between —
-/// asks again with [`undo::WIDE_WINDOW`] (doc "Undo and redo").
-fn undo_plan(ctx: &Ctx, base: &str) -> Result<undo::UndoPlan, CliError> {
+/// Reads enough of the log to decide what undo should undo, and the window it
+/// decided on. Two bounded reads rather than one unbounded one: a repository
+/// whose last manual change is older than [`undo::WINDOW`] operations — a large
+/// reconcile sits in between — asks again with [`undo::WIDE_WINDOW`] (doc
+/// "Undo and redo").
+fn undo_plan(ctx: &Ctx, base: &str) -> Result<(undo::UndoPlan, Json), CliError> {
+    let mut last = Json::Null;
     for limit in [undo::WINDOW, undo::WIDE_WINDOW] {
-        let log = ctx.client.get(
-            &format!("{base}/log"),
-            &[("mode", "linear".to_string()), ("limit", limit.to_string())],
-        )?;
+        let log = ctx.client.get(&format!("{base}/log"), &[("limit", limit.to_string())])?;
         let plan = undo::plan_from_log(&log);
         if plan != undo::UndoPlan::Nothing || !undo::window_exhausted(&log, limit) {
-            return Ok(plan);
+            return Ok((plan, log));
         }
+        last = log;
     }
-    Ok(undo::UndoPlan::Nothing)
+    Ok((undo::UndoPlan::Nothing, last))
 }
 
-/// `mf log undo [plan]`: undoes the newest change the *user* wrote, whichever
-/// mechanism that takes — a rollback when it is the last thing in the log, a
-/// revert when the watcher (or another revision) has written since.
+/// The oldest operation of revision `rev` in a log window.
+fn first_op_of(log: &Json, rev: i64) -> Option<i64> {
+    log["operations"]
+        .as_array()?
+        .iter()
+        .filter(|op| op["rev_id"].as_i64() == Some(rev))
+        .filter_map(|op| op["id"].as_i64())
+        .min()
+}
+
+/// `mf log undo [plan] [--after <op>]`: reverts the newest change the *user*
+/// wrote that still stands (doc "The undo selection"). With `--after`, undoes
+/// again and again while that change is newer than the operation given — a
+/// script's going back to where it was (doc "Script sessions").
 pub fn undo_run(
     ctx: &Ctx,
     plan_only: bool,
@@ -103,54 +87,52 @@ pub fn undo_run(
     opts: UndoOpts,
 ) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
-    let plan = undo_plan(ctx, &base)?;
-    if plan_only {
-        println!("{}", plan.describe());
-        return Ok(0);
-    }
-    match plan {
-        undo::UndoPlan::Nothing => {
-            println!("Nothing to undo.");
-            Ok(0)
-        }
-        undo::UndoPlan::Rollback { rev_id } => {
-            if !opts.silent {
-                println!("Undoing revision {rev_id} (rollback).");
+    let mut undone = 0usize;
+    loop {
+        let (plan, log) = undo_plan(ctx, &base)?;
+        let undo::UndoPlan::Revert { rev_id, ops } = plan.clone() else {
+            if plan_only || undone == 0 {
+                println!("Nothing to undo.");
             }
-            rollback_run(
-                ctx,
-                TargetArgs { label: None, id: None, timestamp: None },
-                policies,
-                opts.silent,
-            )
-        }
-        undo::UndoPlan::Revert { rev_id, ops } => {
-            if !opts.silent {
-                println!("Undoing revision {rev_id} (revert: later work sits on top of it).");
+            return Ok(0);
+        };
+        if let Some(after) = opts.after {
+            if first_op_of(&log, rev_id).is_none_or(|first| first <= after) {
+                if undone == 0 && !opts.silent {
+                    println!("Nothing to undo after operation {after}.");
+                }
+                return Ok(0);
             }
-            let target = RevertTarget {
-                rev_id: ops.is_none().then_some(rev_id),
-                op_ids: ops.unwrap_or_default(),
-            };
-            revert_run(
-                ctx,
-                target,
-                &RevertOpts {
-                    metadata_only: opts.metadata_only,
-                    label: None,
-                    force: opts.force,
-                    silent: opts.silent,
-                    policies,
-                },
-            )
         }
+        if plan_only {
+            println!("{}", plan.describe());
+            return Ok(0);
+        }
+        if !opts.silent {
+            println!("Undoing revision {rev_id}.");
+        }
+        let target = RevertTarget {
+            rev_id: ops.is_none().then_some(rev_id),
+            op_ids: ops.unwrap_or_default(),
+        };
+        let opts_revert = RevertOpts {
+            metadata_only: opts.metadata_only,
+            label: None,
+            force: opts.force,
+            confirm_moves: false,
+            silent: opts.silent,
+            policies,
+        };
+        let code = revert_run(ctx, target, &opts_revert)?;
+        if code != 0 || opts.after.is_none() {
+            return Ok(code);
+        }
+        undone += 1;
     }
 }
 
-/// `mf log redo [plan]`: takes the newest undo back, whichever mechanism that
-/// takes — HEAD forward onto what a rollback unapplied, a rollback over the
-/// revert an undo wrote, or a revert of that revert when the watcher has
-/// written since (doc "The undo selection").
+/// `mf log redo [plan]`: reverts the newest undo that still stands — the
+/// change it took back comes back (doc "The undo selection").
 pub fn redo_run(
     ctx: &Ctx,
     plan_only: bool,
@@ -158,14 +140,9 @@ pub fn redo_run(
     opts: UndoOpts,
 ) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
-    // The *active* line, not the ancestry: it carries HEAD's forward
-    // continuation, which is what a redo re-applies when a rollback left one.
     let mut plan = undo::RedoPlan::Nothing;
     for limit in [undo::WINDOW, undo::WIDE_WINDOW] {
-        let log = ctx.client.get(
-            &format!("{base}/log"),
-            &[("mode", "active".to_string()), ("limit", limit.to_string())],
-        )?;
+        let log = ctx.client.get(&format!("{base}/log"), &[("limit", limit.to_string())])?;
         plan = undo::plan_redo_from_log(&log);
         if plan != undo::RedoPlan::Nothing || !undo::window_exhausted(&log, limit) {
             break;
@@ -175,70 +152,42 @@ pub fn redo_run(
         println!("{}", plan.describe());
         return Ok(0);
     }
-    match plan {
-        undo::RedoPlan::Nothing => {
-            println!("Nothing to redo.");
-            Ok(0)
-        }
-        undo::RedoPlan::Forward { op_id, rev_id } => {
-            if !opts.silent {
-                println!("Redoing revision {rev_id} (HEAD moves forward onto it).");
-            }
-            rollback_run(
-                ctx,
-                TargetArgs { label: None, id: Some(op_id), timestamp: None },
-                policies,
-                opts.silent,
-            )
-        }
-        undo::RedoPlan::Rollback { rev_id } => {
-            if !opts.silent {
-                println!("Taking the undo in revision {rev_id} back (rollback).");
-            }
-            rollback_run(
-                ctx,
-                TargetArgs { label: None, id: None, timestamp: None },
-                policies,
-                opts.silent,
-            )
-        }
-        undo::RedoPlan::Revert { rev_id, ops } => {
-            if !opts.silent {
-                println!(
-                    "Taking the undo in revision {rev_id} back \
-                     (revert: later work sits on top of it)."
-                );
-            }
-            let target = RevertTarget {
-                rev_id: ops.is_none().then_some(rev_id),
-                op_ids: ops.unwrap_or_default(),
-            };
-            revert_run(
-                ctx,
-                target,
-                &RevertOpts {
-                    metadata_only: opts.metadata_only,
-                    label: None,
-                    force: opts.force,
-                    silent: opts.silent,
-                    policies,
-                },
-            )
-        }
+    let undo::RedoPlan::Revert { rev_id, ops } = plan else {
+        println!("Nothing to redo.");
+        return Ok(0);
+    };
+    if !opts.silent {
+        println!("Taking the undo in revision {rev_id} back.");
     }
+    let target =
+        RevertTarget { rev_id: ops.is_none().then_some(rev_id), op_ids: ops.unwrap_or_default() };
+    revert_run(
+        ctx,
+        target,
+        &RevertOpts {
+            metadata_only: opts.metadata_only,
+            label: None,
+            force: opts.force,
+            confirm_moves: false,
+            silent: opts.silent,
+            policies,
+        },
+    )
 }
 
-/// The options `mf log undo` passes on to whichever mechanism it picks.
+/// The options `mf log undo`/`redo` pass on to the revert.
 pub struct UndoOpts {
+    /// Undo repeatedly, down to this operation (`mf log undo --after`).
+    pub after: Option<i64>,
     pub metadata_only: bool,
     pub force: bool,
     pub silent: bool,
 }
 
-// ── mf rollback (coordinated navigation) ────────────────────────────────────────
+// ── Move policies ─────────────────────────────────────────────────────────────
 
 /// Parses a `--on-move-available`/`--on-move-unavailable` value
-/// (doc "Rolling back").
+/// (doc "Reverting a revision").
 pub fn parse_policy(s: &str) -> Result<Policy, CliError> {
     match s {
         "apply" => Ok(Policy::Apply),
@@ -251,8 +200,9 @@ pub fn parse_policy(s: &str) -> Result<Policy, CliError> {
     }
 }
 
-/// The CLI's side of a navigation: the `ask` policy on the terminal, and the
-/// notes on stderr unless `--silent` (the questions are asked regardless).
+/// The CLI's side of a coordinated revert: the `ask` policy on the terminal,
+/// and the notes on stderr unless `--silent` (the questions are asked
+/// regardless).
 struct CliUi {
     silent: bool,
 }
@@ -266,65 +216,16 @@ impl NavigationUi for CliUi {
             eprintln!("{message}");
         }
     }
-    fn navigating(&self, total: usize) {
-        self.note(&format!("Navigating {total} operations."));
-    }
 }
 
 fn nav_err(e: NavError) -> CliError {
     CliError::Op(e.0)
 }
 
-/// The repository as the shared navigation needs it (its trash-bin located).
+/// The repository as the shared revert needs it (its trash-bin located).
 fn open_repo(ctx: &Ctx) -> Result<Repo<'_>, CliError> {
     let base = ctx.repo_base()?;
     Repo::open(&ctx.client, base.trim_start_matches("/repos/")).map_err(nav_err)
-}
-
-/// `mf rollback plan [<target>]`: previews the operations without executing.
-pub fn rollback_plan(ctx: &Ctx, target: TargetArgs) -> Result<i32, CliError> {
-    let base = ctx.repo_base()?;
-    let resp = ctx.client.get(&format!("{base}/rollback/plan"), &target.into_query()?)?;
-    let ops = resp["operations"].as_array().cloned().unwrap_or_default();
-    if ops.is_empty() {
-        println!("(nothing to do — already at the target)");
-        return Ok(0);
-    }
-    for op in &ops {
-        let id = op["id"].as_i64().unwrap_or(0);
-        let op_type = op["op_type"].as_str().unwrap_or("?");
-        let entity = op["entity_uuid"].as_str().unwrap_or("?");
-        println!("op {id}  {op_type}  on {entity}");
-        if let (Some(from), Some(to)) = (op["from"].as_str(), op["to"].as_str()) {
-            println!("    mv {from} -> {to}");
-        }
-    }
-    println!("{} operations.", resp["total"].as_i64().unwrap_or(ops.len() as i64));
-    Ok(0)
-}
-
-/// `mf rollback [<target>]`: drives the coordinated navigation, executing the
-/// `mv` for each `move_file` step per the configured policies — in one atomic
-/// call when nothing on the way touches a file (`core::navigation`).
-pub fn rollback_run(
-    ctx: &Ctx,
-    target: TargetArgs,
-    policies: RollbackPolicies,
-    silent: bool,
-) -> Result<i32, CliError> {
-    let body = target.into_body()?;
-    let repo = open_repo(ctx)?;
-    let done = navigation::rollback(&repo, &body["target"], &policies, &CliUi { silent })
-        .map_err(nav_err)?;
-    if silent {
-        return Ok(0);
-    }
-    if done.total == 0 {
-        println!("Nothing to do — already at the target.");
-    } else {
-        println!("Rollback complete: {} operations processed.", done.processed);
-    }
-    Ok(0)
 }
 
 /// Interactive `ask` policy for a `move_file` step.
@@ -347,8 +248,6 @@ fn ask_move(from: &str, to: &str, available: bool) -> Result<Policy, CliError> {
 
 #[derive(Default)]
 pub struct LogArgs {
-    pub tree: bool,
-    pub graph: bool,
     pub ops: bool,
     pub metarecord: Option<String>,
     pub limit: Option<usize>,
@@ -370,14 +269,10 @@ const LOG_OP_CAP: usize = 500;
 ///
 /// The bound matters: the listing displays a window, and asking the daemon for
 /// the whole log to show twenty revisions of it makes every listing cost the
-/// size of the log (doc "Reading the log costs the window"). `--all` and the graph are the deliberate
-/// exceptions — the graph cannot be drawn without every branch.
+/// size of the log (doc "Reading the log costs the window"). `--all` is the
+/// deliberate exception.
 fn log_query(args: &LogArgs) -> Result<Vec<(&'static str, String)>, CliError> {
     let mut query: Vec<(&'static str, String)> = Vec::new();
-    // `--graph` and `--tree` need every branch; the default shows the active
-    // line through HEAD (ancestry + the most-recent forward continuation).
-    let mode = if args.graph || args.tree { "tree" } else { "active" };
-    query.push(("mode", mode.into()));
     if let Some(uuid) = &args.metarecord {
         query.push(("metarecord_uuid", uuid.clone()));
     }
@@ -387,7 +282,7 @@ fn log_query(args: &LogArgs) -> Result<Vec<(&'static str, String)>, CliError> {
     if let Some(until) = &args.until {
         query.push(("until", parse_timestamp(until)?.to_string()));
     }
-    if !args.all && !args.graph && !args.tree {
+    if !args.all {
         let window = args.limit.unwrap_or(DEFAULT_LOG_WINDOW);
         // `--ops` counts operations, the default counts revisions — each asks
         // for exactly what it displays.
@@ -424,9 +319,8 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
         }
     }
 
-    // Group operations by revision, most recent first. Operations of one
-    // revision are contiguous in the chain; we order revisions by their
-    // highest operation id.
+    // Group operations by revision, most recent first, ordering revisions by
+    // their highest operation id.
     let mut groups: Vec<(i64, Vec<&Json>)> = Vec::new();
     for op in &ops {
         let rev_id = op["rev_id"].as_i64().unwrap_or(0);
@@ -444,19 +338,11 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
         .and_then(|h| ops.iter().find(|o| o["id"].as_i64() == Some(h)))
         .and_then(|o| o["rev_id"].as_i64());
 
-    // The set of operation ids on the HEAD ancestry path (for branch marking
-    // in tree mode), reconstructed from parent_id.
-    let on_head_path = head_path(&ops, head);
-
     let limit = if args.all { None } else { Some(args.limit.unwrap_or(DEFAULT_LOG_WINDOW)) };
 
     if groups.is_empty() {
         println!("(empty history)");
         return Ok(0);
-    }
-
-    if args.graph {
-        return render_graph(&groups, &ops, head_rev, &rev_meta, limit);
     }
 
     let mut shown_ops = 0usize;
@@ -469,16 +355,6 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
         let is_head = Some(*rev_id) == head_rev;
         let (ts, label) = rev_meta.get(rev_id).cloned().unwrap_or((0, None));
         let marker = if is_head { ">" } else { " " };
-        let branch = if args.tree
-            && !on_head_path.is_empty()
-            && !ops_sorted
-                .iter()
-                .any(|o| o["id"].as_i64().is_some_and(|id| on_head_path.contains(&id)))
-        {
-            "  (branch)"
-        } else {
-            ""
-        };
         let mut line = format!("{marker} rev {rev_id}  {}", fmt_minute(ts));
         if let Some(label) = &label {
             line.push_str(&format!("  \"{label}\""));
@@ -491,7 +367,6 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
         if is_head {
             line.push_str("   \u{2190} HEAD");
         }
-        line.push_str(branch);
         println!("{line}");
         shown_revs += 1;
 
@@ -542,206 +417,13 @@ fn op_breakdown(ops: &[&Json]) -> String {
     format!("{} ops: {}", ops.len(), parts.join(", "))
 }
 
-/// Operation ids on the HEAD ancestry path, walked from `head` via parent_id.
-fn head_path(ops: &[&Json], head: Option<i64>) -> std::collections::HashSet<i64> {
-    let mut set = std::collections::HashSet::new();
-    let by_id: std::collections::HashMap<i64, &Json> =
-        ops.iter().filter_map(|o| o["id"].as_i64().map(|id| (id, *o))).collect();
-    let mut cur = head;
-    while let Some(id) = cur {
-        if !set.insert(id) {
-            break;
-        }
-        cur = by_id.get(&id).and_then(|o| o["parent_id"].as_i64());
-    }
-    set
-}
-
-// ── mf log --graph ──────────────────────────────────────────────────────────────
-
-/// One rendered line of the history graph: a revision node or a connector row.
-enum GraphLine {
-    Node { gutter: String, rev_id: i64 },
-    Connector(String),
-}
-
-/// Lays out a history forest as an ASCII graph, newest first. `revs` lists the
-/// revisions most-recent first as `(rev_id, parent_rev)` (parent_rev `None` for
-/// a root or when the parent falls outside the shown window). The active line
-/// stays in the leftmost column; divergent branches open a column to the right
-/// and converge back with a `/` connector at their common parent.
-fn graph_layout(revs: &[(i64, Option<i64>)]) -> Vec<GraphLine> {
-    // Each lane holds the rev_id it is currently waiting to draw (going down).
-    let mut lanes: Vec<Option<i64>> = Vec::new();
-    let mut out: Vec<GraphLine> = Vec::new();
-    for &(rev, parent) in revs {
-        let hits: Vec<usize> =
-            lanes.iter().enumerate().filter_map(|(i, l)| (*l == Some(rev)).then_some(i)).collect();
-        let col = match hits.first() {
-            Some(&c) => c,
-            // A tip with no waiting lane: reuse the leftmost free column.
-            None => match lanes.iter().position(|l| l.is_none()) {
-                Some(i) => {
-                    lanes[i] = Some(rev);
-                    i
-                }
-                None => {
-                    lanes.push(Some(rev));
-                    lanes.len() - 1
-                }
-            },
-        };
-        let extra: Vec<usize> = hits.iter().copied().filter(|&i| i != col).collect();
-
-        // Connector row above the node: extra child lanes slope into `col`.
-        if !extra.is_empty() {
-            let mut conn = vec![' '; lanes.len() * 2];
-            for (i, l) in lanes.iter().enumerate() {
-                if l.is_some() && !extra.contains(&i) {
-                    conn[2 * i] = '|';
-                }
-            }
-            for &e in &extra {
-                if e > col {
-                    conn[2 * e - 1] = '/';
-                } else {
-                    conn[2 * e + 1] = '\\';
-                }
-            }
-            out.push(GraphLine::Connector(trim_gutter(&conn)));
-            for &e in &extra {
-                lanes[e] = None;
-            }
-        }
-
-        // Node row.
-        let mut row = vec![' '; lanes.len() * 2];
-        for (i, l) in lanes.iter().enumerate() {
-            if i == col {
-                row[2 * i] = '*';
-            } else if l.is_some() {
-                row[2 * i] = '|';
-            }
-        }
-        out.push(GraphLine::Node { gutter: trim_gutter(&row), rev_id: rev });
-
-        lanes[col] = parent;
-    }
-    out
-}
-
-fn trim_gutter(chars: &[char]) -> String {
-    chars.iter().collect::<String>().trim_end().to_string()
-}
-
-/// Renders `mf log --graph`: the revision forest as an ASCII graph.
-fn render_graph(
-    groups: &[(i64, Vec<&Json>)],
-    ops: &[&Json],
-    head_rev: Option<i64>,
-    rev_meta: &std::collections::HashMap<i64, (i64, Option<String>)>,
-    limit: Option<usize>,
-) -> Result<i32, CliError> {
-    // Operation id → its revision, to resolve each revision's parent revision.
-    let op_rev: std::collections::HashMap<i64, i64> =
-        ops.iter().filter_map(|o| Some((o["id"].as_i64()?, o["rev_id"].as_i64()?))).collect();
-
-    let shown: Vec<i64> =
-        groups.iter().map(|(r, _)| *r).take(limit.unwrap_or(usize::MAX)).collect();
-    let shown_set: std::collections::HashSet<i64> = shown.iter().copied().collect();
-
-    // Parent revision of each shown revision: the rev of the parent of the
-    // revision's root op (the one op parented in another revision, or none).
-    let revs: Vec<(i64, Option<i64>)> = shown
-        .iter()
-        .map(|&rev| {
-            let list = &groups.iter().find(|(r, _)| *r == rev).unwrap().1;
-            let mut parent_rev = None;
-            for o in list {
-                match o["parent_id"].as_i64() {
-                    None => break, // root revision
-                    Some(p) => {
-                        let pr = op_rev.get(&p).copied();
-                        if pr != Some(rev) {
-                            parent_rev = pr;
-                            break;
-                        }
-                    }
-                }
-            }
-            (rev, parent_rev.filter(|pr| shown_set.contains(pr)))
-        })
-        .collect();
-
-    let lines = graph_layout(&revs);
-    let width = lines
-        .iter()
-        .map(|l| match l {
-            GraphLine::Node { gutter, .. } => gutter.len(),
-            GraphLine::Connector(g) => g.len(),
-        })
-        .max()
-        .unwrap_or(0);
-
-    for line in &lines {
-        match line {
-            GraphLine::Connector(g) => println!("{g}"),
-            GraphLine::Node { gutter, rev_id } => {
-                let (ts, label) = rev_meta.get(rev_id).cloned().unwrap_or((0, None));
-                let is_head = Some(*rev_id) == head_rev;
-                let list = &groups.iter().find(|(r, _)| r == rev_id).unwrap().1;
-                let mut text = format!("rev {rev_id}  {}", fmt_minute(ts));
-                if let Some(label) = &label {
-                    text.push_str(&format!("  \"{label}\""));
-                } else if list.len() > 1 {
-                    text.push_str(&format!("  ({})", op_breakdown(list)));
-                }
-                if is_head {
-                    text.push_str("   \u{2190} HEAD");
-                }
-                println!("{gutter:<width$}  {text}");
-            }
-        }
-    }
-    Ok(0)
-}
-
-#[cfg(test)]
-mod graph_tests {
-    use super::*;
-
-    fn gutters(revs: &[(i64, Option<i64>)]) -> Vec<String> {
-        graph_layout(revs)
-            .into_iter()
-            .map(|l| match l {
-                GraphLine::Node { gutter, .. } => gutter,
-                GraphLine::Connector(g) => g,
-            })
-            .collect()
-    }
-
-    #[test]
-    fn linear_history_is_a_single_column() {
-        let revs = [(3, Some(2)), (2, Some(1)), (1, None)];
-        assert_eq!(gutters(&revs), vec!["*", "*", "*"]);
-    }
-
-    #[test]
-    fn a_branch_opens_a_column_and_converges_with_a_slash() {
-        // rev3 (the active line) and rev2 are both children of rev1.
-        let revs = [(3, Some(1)), (2, Some(1)), (1, None)];
-        assert_eq!(gutters(&revs), vec!["*", "| *", "|/", "*"]);
-    }
-}
-
 // ── mf log show ───────────────────────────────────────────────────────────────
 
-/// `mf log head` — the id of the operation HEAD is on, one line.
+/// `mf log head` — the id of the newest operation, one line.
 ///
-/// The primitive for going back to a known point: it is exactly what
-/// `mf log rollback --id` takes, so a script can note where it was, write, and
-/// return there. Reading it used to mean scraping `mf log show HEAD`. `0` on an
-/// empty history, which `rollback --id 0` reads as "before everything".
+/// The primitive for going back to a known point: it is what `mf log undo
+/// --after` takes, so a script can note where it was, write, and return there.
+/// `0` on an empty history.
 pub fn log_head(ctx: &Ctx) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let resp = ctx.client.get(&format!("{base}/log/since"), &[])?;
@@ -825,22 +507,14 @@ fn fmt_snapshot_value(row: &Json) -> String {
 
 // ── mf prune ──────────────────────────────────────────────────────────────────
 
-pub fn prune(
-    ctx: &Ctx,
-    mode: &str,
-    target: TargetArgs,
-    force: bool,
-    silent: bool,
-) -> Result<i32, CliError> {
+pub fn prune(ctx: &Ctx, target: TargetArgs, force: bool, silent: bool) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
-    let mut body = target.into_body()?;
-    body["mode"] = json!(mode);
+    let body = target.into_body()?;
 
     if !force {
-        let prompt = format!(
-            "Prune ({mode}) is irreversible — deleted operations cannot be recovered. Proceed? [y/N] "
-        );
-        if !confirm(&prompt)? {
+        let prompt =
+            "Prune is irreversible — deleted operations cannot be recovered. Proceed? [y/N] ";
+        if !confirm(prompt)? {
             eprintln!("aborted");
             return Ok(1);
         }
@@ -849,11 +523,7 @@ pub fn prune(
     if !silent {
         let ops = resp["pruned_operations"].as_i64().unwrap_or(0);
         let revs = resp["pruned_revisions"].as_i64().unwrap_or(0);
-        let tail = match mode {
-            "linearize" => " History linearized.".to_string(),
-            _ => String::new(),
-        };
-        println!("Pruned {ops} operations across {revs} revisions.{tail}");
+        println!("Pruned {ops} operations across {revs} revisions.");
     }
     Ok(0)
 }
@@ -927,7 +597,6 @@ mod tests {
             q.contains(&("limit", LOG_OP_CAP.to_string())),
             "the default listing must bound the read by operations too: {q:?}"
         );
-        assert!(q.contains(&("mode", "active".to_string())));
 
         // `--ops` counts operations, so it bounds operations.
         let q = log_query(&LogArgs { ops: true, limit: Some(5), ..LogArgs::default() }).unwrap();
@@ -936,11 +605,6 @@ mod tests {
 
         // `--all` asks for everything, on purpose.
         let q = log_query(&LogArgs { all: true, ..LogArgs::default() }).unwrap();
-        assert!(!q.iter().any(|(k, _)| *k == "limit" || *k == "revisions"), "{q:?}");
-
-        // The graph needs every branch: no bound, and the tree mode.
-        let q = log_query(&LogArgs { graph: true, ..LogArgs::default() }).unwrap();
-        assert!(q.contains(&("mode", "tree".to_string())));
         assert!(!q.iter().any(|(k, _)| *k == "limit" || *k == "revisions"), "{q:?}");
     }
 
@@ -1006,8 +670,12 @@ pub struct RevertOpts {
     pub metadata_only: bool,
     pub label: Option<String>,
     pub force: bool,
+    /// Ask before moving files. `mf log revert` does; undo and redo do not —
+    /// what they move is what the change they take back moved, and the move
+    /// policies still decide each file (doc "Undo and redo").
+    pub confirm_moves: bool,
     pub silent: bool,
-    /// Policies for the `move` actions, as for a rollback.
+    /// Policies for the `move` actions.
     pub policies: RollbackPolicies,
 }
 
@@ -1096,7 +764,7 @@ pub fn revert_run(ctx: &Ctx, target: RevertTarget, opts: &RevertOpts) -> Result<
     }
 
     // A revert that moves files says how many before it takes the lock.
-    if needs_fs && !opts.force {
+    if needs_fs && opts.confirm_moves && !opts.force {
         for op in &ops {
             eprintln!("  {}", op_line(op));
         }

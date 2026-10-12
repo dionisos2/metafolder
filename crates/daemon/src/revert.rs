@@ -153,44 +153,32 @@ pub fn trash_coupled<L: Log + ?Sized>(log: &L, op: &OpRow) -> Result<bool> {
     Ok(false)
 }
 
-/// The file action crossing `op` in direction `dir` requires, `coupled` being
+/// The file action *reverting* `op` requires, `coupled` being
 /// [`trash_coupled`]'s answer. Pure, so the table is tested on its own.
-fn action_for(op: &OpRow, coupled: bool, dir: crate::log::NavDir) -> Option<FsAction> {
+fn action_for(op: &OpRow, coupled: bool) -> Option<FsAction> {
     match op.op_type.as_str() {
         "file_moved" => Some(FsAction::Move),
         "file_deleted" | "file_modified" => Some(FsAction::RestoreContent),
         // The bytes follow the metarecord: they come back when it does, and go
-        // back to the trash when it goes. A deletion re-applied, or a creation
-        // undone, is the metarecord going.
-        "delete_metarecord" | "create_metarecord" if coupled => {
-            let goes =
-                (op.op_type == "delete_metarecord") == matches!(dir, crate::log::NavDir::Forward);
-            Some(if goes { FsAction::TrashContent } else { FsAction::RestoreContent })
-        }
+        // back to the trash when it goes. Undoing a creation is the metarecord
+        // going; undoing a deletion, it coming back.
+        "delete_metarecord" => coupled.then_some(FsAction::RestoreContent),
+        "create_metarecord" => coupled.then_some(FsAction::TrashContent),
         _ => None,
     }
 }
 
-/// The file action a navigation step over `op` in direction `dir` requires.
-pub fn nav_fs_action<L: Log + ?Sized>(
-    log: &L,
-    op: &OpRow,
-    dir: crate::log::NavDir,
-) -> Result<Option<FsAction>> {
-    let coupled = matches!(op.op_type.as_str(), "delete_metarecord" | "create_metarecord")
-        && trash_coupled(log, op)?;
-    Ok(action_for(op, coupled, dir))
-}
-
 /// The file action *reverting* `op` requires: a revert applies its inverse.
 pub fn fs_action<L: Log + ?Sized>(log: &L, op: &OpRow) -> Result<Option<FsAction>> {
-    nav_fs_action(log, op, crate::log::NavDir::Inverse)
+    let coupled = matches!(op.op_type.as_str(), "delete_metarecord" | "create_metarecord")
+        && trash_coupled(log, op)?;
+    Ok(action_for(op, coupled))
 }
 
 /// The op type a revert of `op` writes: the type of the change it actually
 /// makes, filesystem included (doc "What a revert writes"). It is what
-/// tells a later navigation that crossing this operation needs a file action,
-/// so a revert that moved a file must record `file_moved` and not `set_field`.
+/// tells a later revert of *this* operation that it needs a file action, so a
+/// revert that moved a file must record `file_moved` and not `set_field`.
 pub fn written_as(op: &OpRow) -> OpType {
     match op.op_type.as_str() {
         "create_metarecord" => OpType::DeleteRecord,
@@ -305,7 +293,6 @@ mod tests {
     fn op(op_type: &str, origin: Option<&str>) -> OpRow {
         OpRow {
             id: 1,
-            parent_id: None,
             rev_id: 1,
             seq: 0,
             op_type: op_type.into(),
@@ -318,8 +305,6 @@ mod tests {
         }
     }
 
-    use crate::log::NavDir::{Forward, Inverse};
-
     // A trashing deletes the metarecord outright, so undoing it has to bring
     // the *bytes* back too — they are sitting in the trash-bin, and only the
     // client can move them — and redoing it has to send them back. Nothing in
@@ -328,19 +313,15 @@ mod tests {
     #[test]
     fn a_trashing_s_deletion_moves_the_bytes_with_the_metarecord() {
         let deletion = op("delete_metarecord", Some("trash"));
-        assert_eq!(action_for(&deletion, true, Inverse), Some(FsAction::RestoreContent));
-        assert_eq!(action_for(&deletion, true, Forward), Some(FsAction::TrashContent));
+        assert_eq!(action_for(&deletion, true), Some(FsAction::RestoreContent));
         // The undo a revert wrote is a creation: undoing *it* is the redo.
         let recreation = op("create_metarecord", None);
-        assert_eq!(action_for(&recreation, true, Inverse), Some(FsAction::TrashContent));
-        assert_eq!(action_for(&recreation, true, Forward), Some(FsAction::RestoreContent));
+        assert_eq!(action_for(&recreation, true), Some(FsAction::TrashContent));
     }
 
     #[test]
     fn an_ordinary_metarecord_deletion_touches_no_file() {
-        for dir in [Inverse, Forward] {
-            assert!(action_for(&op("delete_metarecord", None), false, dir).is_none());
-            assert!(action_for(&op("create_metarecord", None), false, dir).is_none());
-        }
+        assert!(action_for(&op("delete_metarecord", None), false).is_none());
+        assert!(action_for(&op("create_metarecord", None), false).is_none());
     }
 }

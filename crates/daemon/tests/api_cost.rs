@@ -136,7 +136,7 @@ impl Repo {
     }
 
     async fn head(&self) -> i64 {
-        let (_, log) = self.cost("GET", "/log?mode=active&limit=1", None).await;
+        let (_, log) = self.cost("GET", "/log?limit=1", None).await;
         log["head"].as_i64().unwrap()
     }
 
@@ -174,12 +174,6 @@ macro_rules! steady {
 #[tokio::test]
 async fn undoing_one_write_costs_the_same_in_a_larger_repository() {
     let (small, large) = pair().await;
-    async fn rollback(r: &Repo) -> u64 {
-        let sample = r.sample().await;
-        let before = r.head().await;
-        r.touch(&sample, 1).await;
-        r.cost("POST", "/rollback", Some(json!({"target": {"id": before}}))).await.0
-    }
     async fn revert(r: &Repo) -> u64 {
         let sample = r.sample().await;
         r.touch(&sample, 2).await;
@@ -188,11 +182,8 @@ async fn undoing_one_write_costs_the_same_in_a_larger_repository() {
     }
     async fn plans(r: &Repo) -> u64 {
         let older = r.head().await - 20;
-        let a = r.cost("GET", &format!("/rollback/plan?target_id={older}"), None).await.0;
-        let b = r.cost("GET", &format!("/revert/plan?target_op_ids={older}"), None).await.0;
-        a + b
+        r.cost("GET", &format!("/revert/plan?target_op_ids={older}"), None).await.0
     }
-    bounded("rollback one write", steady!(&small, rollback), steady!(&large, rollback));
     bounded("revert one write", steady!(&small, revert), steady!(&large, revert));
     bounded("plans twenty back", steady!(&small, plans), steady!(&large, plans));
 }
@@ -210,7 +201,7 @@ async fn watch_rules_and_a_bounded_prune_cost_the_same_in_a_larger_repository() 
     }
     async fn prune_nothing(r: &Repo) -> u64 {
         let older = r.head().await - 20;
-        let body = json!({"mode": "before", "target": {"id": older}});
+        let body = json!({"target": {"id": older}});
         r.cost("POST", "/log/prune", Some(body.clone())).await;
         r.cost("POST", "/log/prune", Some(body)).await.0
     }

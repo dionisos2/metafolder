@@ -37,4 +37,4 @@ pub mod undo;
 /// changes do not require a bump. It is a single monotonic integer on purpose:
 /// same number ⇒ compatible, different number ⇒ refuse/ warn — no range
 /// negotiation.
-pub const API_VERSION: u32 = 17;
+pub const API_VERSION: u32 = 18;

@@ -20,7 +20,7 @@ nothing: tracking is opt-in ([[Tracking a folder]]).
 repository already has the same name, keeping `-n <name>` unambiguous, or when
 another daemon holds its lock. The daemon answers at once and does the rest in
 the background as a `load` task ([[Tasks]]): reading the declared mount points ([[Mount points]]),
-applying the restorations a skipped rollback step left, starting the watcher
+starting the watcher
 ([[Watcher]]).
 `mf repo load` waits for it, drawing its progress (`--no-wait` returns at once).
 Until the load is done the repository describes itself (it is in `GET /repos`, its
@@ -38,6 +38,6 @@ The daemon also loads, at startup, the repositories its configuration lists
 
 ''Unload'' stops the repository's watcher, drops it from the daemon and releases
 its lock; the data on disk is untouched. It is refused (`409`) while its load is
-still running, while a coordinated rollback is in progress (finish or abort it),
+still running, while a coordinated revert is in progress (commit or abort it),
 or while a reconcile, a query, a duplicate scan or a relink runs — stop it first
 ([[Cancelling a task]]). A watcher flush does not block it.

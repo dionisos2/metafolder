@@ -41,7 +41,7 @@ the daemon `GET /repos/:repo/log/since?op=<head>` ([[Log endpoints]]):
 * on demand, with `metafolder.changes.sync(repo)` — after the GUI changed the disk itself, once the watcher's quiet period has passed (`createCatchup`, [[Event batching]]).
 
 Subscribers receive `{repo, uuids}`: the metarecords touched, or `null` for the
-whole repository — a rollback, a list the daemon truncated, a repository that was
+whole repository — a list the daemon truncated, a repository that was
 empty at the previous poll. The feed reports every change, a panel's own writes
 included; it is the only way a panel hears of the others: the watcher recording a
 rename, another panel, `mf`.

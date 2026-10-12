@@ -6,7 +6,7 @@ summary: The inverse of each operation, newest first, written through log::Write
 
 A revert applies the inverse of each member of its set, ''newest to oldest'', to the
 current state ([[Reverting onto the current state]]). The inverses are ''written''
-through `log::Writer` as new operations (logged, HEAD moving forward).
+through `log::Writer` as new operations, appended to the log like any write.
 
 |!Reverted |!Written as |
 |`create_metarecord` |`delete_metarecord` — nothing, when the metarecord is already gone |
@@ -19,9 +19,9 @@ through `log::Writer` as new operations (logged, HEAD moving forward).
 |`file_modified` |`file_modified` |
 |`unknown` |not revertable: nothing recorded to invert |
 
-* ''It records the type of the change it makes, file included.'' A later navigation reads `op_type` to know that crossing the operation needs a file action: a revert that moved a file records `file_moved`, or a rollback across it would rewrite `mfr_path` and leave the file where the revert put it. `file_moved` covers both directions — it is already what relinking an orphan writes.
+* ''It records the type of the change it makes, file included.'' A later revert reads `op_type` to know that undoing the operation needs a file action: a revert that moved a file records `file_moved`, or reverting it in turn would rewrite `mfr_path` and leave the file where the first revert put it. `file_moved` covers both directions — it is already what relinking an orphan writes.
 * ''An empty cell is not `nothing`.'' When the reverted operation's before snapshot has no rows, the field did not exist, and the revert removes the cell rather than write the explicit absence ([[Nothing versus unknown]]).
-* ''Fresh row ids.'' A revert's inserts get new ids, unlike a rollback's — the old id may have been handed out since. Nothing addresses a row by the id a snapshot recorded: an append is undone by value, so undo, redo, undo finds the value in the row the redo created. Two rows of one name and value are interchangeable ([[No duplicate rows]]). Versions need no rule: they follow the content — a revert that happens to restore a state the metarecord once held gets that state's version back, correctly.
+* ''Fresh row ids.'' A revert's inserts get new ids — the old id may have been handed out since. Nothing addresses a row by the id a snapshot recorded: an append is undone by value, so undo, redo, undo finds the value in the row the redo created. Two rows of one name and value are interchangeable ([[No duplicate rows]]). Versions need no rule: they follow the content — a revert that happens to restore a state the metarecord once held gets that state's version back, correctly.
 * A revision of four operations is reverted by a revision of four (more, for a multi-row `delete_field`), its mirror image in `mf log list --ops`. Forest integrity is checked once at commit, so reverting a whole subtree's positions passes as long as the end state is consistent.
 * An operation pruned or trimmed away took its snapshots with it: `404`, naming retention as the likely reason.
 
@@ -29,7 +29,7 @@ through `log::Writer` as new operations (logged, HEAD moving forward).
 
 * ''The watch set and the rest follow on their own'': reverting an `mf_watch` write is an `mf_watch` write — the effects are read off the writer before commit and settled after, as every write route does.
 * ''Reserved names stay writable'': the `force` check lives in the routes, and a revert restores values the daemon recorded (`mfr_path` among them) — refusing them would refuse every revert of a `file_*` operation.
-* ''Type validation moves to commit'': the reverse walk passes through intermediate states that need not be type-consistent (undoing a retype, row by row), so type checks are deferred and enforced once on the state produced. Deferred is not skipped: a retype the revert is ''not'' undoing may have given the name another type, and restoring the old value then fails with `400` — one of the reasons a revert can be refused, with an impossible file action and a uuid that exists again. A rollback writes rows directly and validates nothing: it restores a state the log recorded as valid, which a revert — producing a state never held before — cannot claim.
+* ''Type and forest validation move to commit'': the reverse walk passes through intermediate states that need not be consistent — undoing a retype row by row, or recreating a folder's file before the folder when a trashing deleted the folder first — so those checks are deferred and enforced once on the state produced. Deferred is not skipped: a retype the revert is ''not'' undoing may have given the name another type, or a position may name a parent that is gone, and the revert then fails with `400` — one of the reasons a revert can be refused, with an impossible file action and a uuid that exists again.
 
 !! File actions
 
@@ -40,20 +40,18 @@ through `log::Writer` as new operations (logged, HEAD moving forward).
 |the revert of an undone trashing |send the bytes back to the trash (`trash_content`) |
 
 The daemon neither touches files nor judges whether an action is possible: the client
-does, then says what it managed, under the navigation lock (`revert/start` → actions →
+does, then says what it managed, under the coordinated-revert lock (`revert/start` → actions →
 `revert/commit`). The lock matters here: the watcher keeps observing but executes nothing,
 so the `mv` the client just made cannot be ingested as a genuine rename before the metadata
 explaining it is written — without it, the arrival would read as a new file and leave a
-duplicate. It also freezes HEAD, so the plan taken at `start` holds at `commit`.
+duplicate. It also holds every other write back, so the plan taken at `start` holds at `commit`.
 
 ''Skipping is free.'' An operation whose action the client could not carry out is left out
-of the commit, and not reverted — nothing else is needed. A rollback, which must reach its
-target, has to apply a skipped step's metadata anyway and correct it afterwards with a
-restoration; a revert moves HEAD by exactly what it wrote, so "not this one" is directly
+of the commit, and not reverted — nothing else is needed: "not this one" is directly
 expressible, and what lands is true when it is written. The execution of the actions is
 `core::navigation`'s, shared by the CLI and the GUI ([[Trash, undo and redo]]).
 
 A revert of a `file_deleted` the trash satisfied writes a `file_moved` whose before side is
-`nothing`: navigating back across it would have to make the file vanish, which a move
-cannot express. The daemon omits `from`/`to` for such a step, and the client reads it as
+`nothing`: reverting it in turn would have to make the file vanish, which a move cannot
+express. The daemon omits `from`/`to` for such an operation, and the client reads it as
 "file unavailable", resolved by policy — the pre-existing shape of a relinked orphan.

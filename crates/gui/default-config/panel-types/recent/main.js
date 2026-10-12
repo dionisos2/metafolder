@@ -212,7 +212,7 @@ export function mount(root, metafolder) {
   const deferredStart = () => void start();
   workspace.onChange('active_repo', () => metafolder.whenVisible(deferredStart));
   // A view (touch) never sets metarecords:dirty, so the snapshot is stable while
-  // navigating; a real metarecord change (rename, delete, rollback) does, and
+  // navigating; a real metarecord change (rename, delete, revert) does, and
   // refreshes the display fields.
   workspace.onChange('metarecords:dirty', () => {
     if (repo !== null) void load();

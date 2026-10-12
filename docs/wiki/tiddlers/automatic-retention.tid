@@ -20,20 +20,12 @@ wants `log-retention-revisions = 0`, or a label, ''before'' it is written again.
 !! What a trim does
 
 A trim is a `prune before` whose target is the first operation of the oldest revision to
-keep — same rules, same ''weak root'' afterwards ([[Pruning the log]]). It runs ''inside
-the transaction of the write that triggered it'', after HEAD moved: a range deletion of the
+keep ([[Pruning the log]]). It runs ''inside the transaction of the write that triggered
+it'': a range deletion of the
 oldest operations and their snapshots, cheaper than the append that triggered it, riding a
 commit that was being paid for anyway. It does not run at every write: the log may drift a
 tenth of the limit past it (at least one revision) first — so the oldest, coldest pages are
 dirtied once per slack, not at every commit.
-
-!! When a trim declines
-
-The cut must be an ancestor of HEAD, as for an explicit prune. After a rollback it may not
-be — the newest revisions by id sit on the abandoned branch, and cutting there would delete
-the history HEAD stands on. The trim then does nothing and the log grows past the limit,
-temporarily: as the current line becomes the newest again, the cut lands on it, and the
-abandoned branch goes with everything below it.
 
 A trim happens only on a write: a repository nobody writes to keeps what it has. The
 repository's creation (its root metarecord) is never trimmed — there is nothing before it.

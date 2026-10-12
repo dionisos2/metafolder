@@ -1768,35 +1768,6 @@ fn test_log_lists_revisions_most_recent_first() {
 }
 
 #[test]
-fn test_log_graph_renders_branches_default_hides_them() {
-    let (repo, _root) = init_repo("log_graph");
-    let uuid = create_metarecord(&repo, &["rating:int=1"]);
-    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=2"]));
-    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=3"]));
-    // Roll back the last write, then write again: this forks a new branch,
-    // leaving the rating=3 revision on a divergent branch.
-    assert_ok(&mf(&["-u", &repo, "log", "rollback", "--silent"]));
-    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=9"]));
-
-    // The graph draws every branch: a divergent column and its convergence.
-    let graph = mf(&["-u", &repo, "log", "list", "--graph"]);
-    assert_ok(&graph);
-    assert!(graph.stdout.contains("\u{2190} HEAD"), "stdout: {}", graph.stdout);
-    assert!(graph.stdout.contains("|/"), "expected a convergence: {}", graph.stdout);
-
-    // The default (active line) hides the divergent branch: fewer revisions.
-    let active = mf(&["-u", &repo, "log", "list"]);
-    assert_ok(&active);
-    let count = |s: &str| s.matches("rev ").count();
-    assert!(
-        count(&active.stdout) < count(&graph.stdout),
-        "active {} should show fewer revisions than graph {}",
-        active.stdout,
-        graph.stdout
-    );
-}
-
-#[test]
 fn test_log_ops_expands_operations() {
     let (repo, _root) = init_repo("log_ops");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
@@ -1836,21 +1807,6 @@ fn test_log_show_rejects_bad_target() {
 }
 
 #[test]
-fn test_prune_linearize_with_no_branches_removes_nothing() {
-    let (repo, _root) = init_repo("prune_lin");
-    let uuid = create_metarecord(&repo, &["rating:int=3"]);
-    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
-
-    // A far-future timestamp resolves to HEAD; with no side branches,
-    // linearize removes nothing.
-    let out =
-        mf(&["-u", &repo, "log", "prune", "linearize", "--timestamp", "@9999999999999", "--force"]);
-    assert_ok(&out);
-    assert!(out.stdout.contains("Pruned 0 operations"), "stdout: {}", out.stdout);
-    assert!(out.stdout.contains("linearized"), "stdout: {}", out.stdout);
-}
-
-#[test]
 fn test_prune_before_makes_target_the_root() {
     let (repo, _root) = init_repo("prune_before");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
@@ -1874,41 +1830,11 @@ fn test_prune_requires_a_target() {
 }
 
 #[test]
-fn test_rollback_plan_previews_operations() {
-    let (repo, _root) = init_repo("rbk_plan");
+fn test_revert_bad_move_policy_is_usage_error() {
+    let (repo, _root) = init_repo("revert_policy");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
-    let out = mf(&["-u", &repo, "log", "rollback", "plan"]);
-    assert_ok(&out);
-    assert!(out.stdout.contains("set_field"), "stdout: {}", out.stdout);
-    assert!(out.stdout.contains("operations."), "stdout: {}", out.stdout);
-}
-
-#[test]
-fn test_rollback_undoes_last_revision_and_releases_lock() {
-    let (repo, _root) = init_repo("rbk_run");
-    let uuid = create_metarecord(&repo, &["rating:int=3"]);
-    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
-
-    let out = mf(&["-u", &repo, "log", "rollback", "--silent"]);
-    assert_ok(&out);
-
-    // The last set was undone.
-    let entries = get_entries(&repo, &uuid);
-    let rating =
-        entries[0]["fields"].as_array().unwrap().iter().find(|f| f["name"] == "rating").unwrap();
-    assert_eq!(rating["value"]["value"], 3, "rating should revert to 3");
-
-    // The lock was released: a subsequent write succeeds.
-    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=9"]));
-}
-
-#[test]
-fn test_rollback_bad_move_policy_is_usage_error() {
-    let (repo, _root) = init_repo("rbk_policy");
-    let uuid = create_metarecord(&repo, &["rating:int=3"]);
-    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
-    let out = mf(&["-u", &repo, "log", "rollback", "--on-move-available", "bogus"]);
+    let out = mf(&["-u", &repo, "log", "revert", "--on-move-available", "bogus"]);
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);
 }
 
@@ -2044,10 +1970,10 @@ fn test_trash_list_restore_and_prune() {
     let (repo, root) = init_repo("trash");
     let trash = repo_trash(&root);
 
-    // Seed the trash as a rollback overwrite would.
+    // Seed the trash as a revert's overwrite would.
     let victim = root.join("victim.txt");
     std::fs::write(&victim, b"precious").unwrap();
-    let e1 = trash.trash_path(&victim, Reason::Rollback, Some(7), None, None).unwrap();
+    let e1 = trash.trash_path(&victim, Reason::Revert, Some(7), None, None).unwrap();
     let other = root.join("other.txt");
     std::fs::write(&other, b"stuff").unwrap();
     trash.trash_path(&other, Reason::Manual, None, None, None).unwrap();
@@ -2908,10 +2834,10 @@ fn test_trash_add_records_the_metarecord_version() {
 }
 
 // End to end: in a watched repo, `mf trash -f` deletes the metarecord in a
-// revision stamped `trash`; a rollback then brings the file back from the trash
+// revision stamped `trash`; undoing it brings the file back from the trash
 // with it (doc "Trash, undo and redo").
 #[test]
-fn test_rollback_auto_restores_from_trash() {
+fn test_undo_auto_restores_from_trash() {
     let (repo, root) = init_repo("rbrestore");
     // Enable watching on the filesystem root.
     let root_uuid = mf(&["-u", &repo, "metarecord", "get"]).stdout.trim().to_string();
@@ -2941,8 +2867,8 @@ fn test_rollback_auto_restores_from_trash() {
     });
     assert!(!file.exists(), "the file is in the trash");
 
-    // Roll back the deletion → the file is auto-restored from the trash.
-    let out = mf(&["-u", &repo, "log", "rollback"]);
+    // Undo the deletion → the file is auto-restored from the trash.
+    let out = mf(&["-u", &repo, "log", "undo", "--force"]);
     assert_ok(&out);
     assert_eq!(std::fs::read(&file).unwrap(), b"precious", "the file is back");
     // The metadata is restored too: the metarecord is at doc.txt again.
@@ -2955,12 +2881,12 @@ fn test_rollback_auto_restores_from_trash() {
     assert!(repo_trash(&root).entries().unwrap().is_empty(), "the entry is consumed");
 }
 
-// Rolling back a trashed *directory* must restore the whole subtree's
-// metarecords, not just the top one. The bytes come back via the trash, and the
-// metarecords are restored by the rollback itself (navigation — no new
-// revision); a descendant left orphaned would be re-tracked as a duplicate.
+// Undoing the trashing of a *directory* must restore the whole subtree's
+// metarecords, not just the top one. The bytes come back via the trash, and
+// the metarecords are recreated by the revert under their own uuids; a
+// descendant left orphaned would be re-tracked as a duplicate.
 #[test]
-fn test_rollback_restores_a_trashed_directory_subtree() {
+fn test_undo_restores_a_trashed_directory_subtree() {
     let (repo, root) = init_repo("rbdir");
     let root_uuid = mf(&["-u", &repo, "metarecord", "get"]).stdout.trim().to_string();
     assert_ok(&mf(&[
@@ -2992,8 +2918,8 @@ fn test_rollback_restores_a_trashed_directory_subtree() {
     });
     assert!(!dir.exists(), "the directory is in the trash");
 
-    // Roll back the deletion.
-    assert_ok(&mf(&["-u", &repo, "log", "rollback"]));
+    // Undo the deletion.
+    assert_ok(&mf(&["-u", &repo, "log", "undo", "--force"]));
     assert_eq!(std::fs::read(dir.join("B.txt")).unwrap(), b"bee", "the nested file is back");
 
     // The top directory *and* the nested file are restored to the SAME original
@@ -5624,9 +5550,8 @@ fn metarecord_get_without_a_selector_honours_sort_and_select() {
 
 #[test]
 fn log_head_prints_the_head_operation_id() {
-    // The primitive a script needs to go back: the operation the history is on
-    // right now, in the form `mf log rollback --id` takes. Without it a script
-    // wanting to undo its own last write had to scrape `mf log show HEAD`.
+    // The primitive a script needs to go back: the newest operation right now,
+    // in the form `mf log undo --after` takes.
     let (repo, _root) = init_repo("loghead");
 
     let before = mf(&["-u", &repo, "log", "head"]);
@@ -5640,27 +5565,27 @@ fn log_head_prints_the_head_operation_id() {
     let after_id: i64 = after.stdout.trim().parse().expect("an operation id");
     assert!(after_id > before_id, "a write moves HEAD forward: {before_id} -> {after_id}");
 
-    // And it is the id `rollback --id` navigates to: going back to it undoes
-    // the write.
-    let back = mf(&["-u", &repo, "log", "rollback", "--id", &before_id.to_string(), "--silent"]);
+    // And it is the id `undo --after` takes: undoing back to it undoes the
+    // write, as new revisions on top.
+    let back = mf(&["-u", &repo, "log", "undo", "--after", &before_id.to_string(), "--silent"]);
     assert_ok(&back);
-    let now = mf(&["-u", &repo, "log", "head"]);
-    assert_eq!(now.stdout.trim(), before_id.to_string(), "HEAD is back where it was");
+    let out = mf(&["-u", &repo, "metarecord", "-q", "label = \"x\"", "get"]);
+    assert_ok(&out);
+    assert!(out.stdout.trim().is_empty(), "the write is undone: {}", out.stdout);
 }
 
 // ── `mf log undo` (doc "Undo and redo") ──────────────────────────────
 
-/// With nothing but the user's own writes in the log, undo is a rollback: HEAD
-/// moves back over the last revision and the log keeps no correction.
+/// Undo reverts the user's last revision: the log keeps it, and the correction.
 #[test]
-fn test_log_undo_rolls_back_the_last_manual_revision() {
-    let (repo, _root) = init_repo("log_undo_rollback");
+fn test_log_undo_reverts_the_last_manual_revision() {
+    let (repo, _root) = init_repo("log_undo_last");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
 
     let plan = mf(&["-u", &repo, "log", "undo", "plan"]);
     assert_ok(&plan);
-    assert!(plan.stdout.contains("rollback"), "stdout: {}", plan.stdout);
+    assert!(plan.stdout.contains("revert"), "stdout: {}", plan.stdout);
     // A plan writes nothing.
     let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "get", "rating"]);
     assert!(out.stdout.contains('5'), "plan should not have written: {}", out.stdout);
@@ -5714,9 +5639,8 @@ fn test_log_undo_stops_at_the_root_of_the_history() {
 }
 
 /// The case undo exists for: the user changes a field, then the watcher records
-/// something of its own. Undo must not rewind HEAD over the watcher's revision
-/// — that would unrecord a file that is really there — so it reverts the user's
-/// change in place and leaves the watcher's work standing.
+/// something of its own. Undo reverts the user's change and leaves the
+/// watcher's work standing.
 #[test]
 fn test_log_undo_reverts_when_the_watcher_has_written_since() {
     let (repo, root) = init_repo("log_undo_watcher");
@@ -5742,7 +5666,7 @@ fn test_log_undo_reverts_when_the_watcher_has_written_since() {
 
     let out = mf(&["-u", &repo, "log", "undo"]);
     assert_ok(&out);
-    assert!(out.stdout.contains("revert"), "undo should revert, not roll back: {}", out.stdout);
+    assert!(out.stdout.contains("Reverted"), "undo reverts: {}", out.stdout);
 
     // The user's field is gone, and the watcher's metarecord is still there.
     let record = mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "get"]);
@@ -5750,10 +5674,9 @@ fn test_log_undo_reverts_when_the_watcher_has_written_since() {
     assert_eq!(uuids_at(&repo, "later.txt").len(), 1, "the tracked file must survive the undo");
 }
 
-/// Redo takes an undo back. With nothing written since, HEAD simply steps
-/// forward again onto what the undo's rollback unapplied.
+/// Redo takes an undo back, by reverting it.
 #[test]
-fn test_log_redo_reapplies_what_undo_rolled_back() {
+fn test_log_redo_reapplies_what_undo_took_back() {
     let (repo, _root) = init_repo("log_redo_forward");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
@@ -5763,17 +5686,17 @@ fn test_log_redo_reapplies_what_undo_rolled_back() {
 
     let plan = mf(&["-u", &repo, "log", "redo", "plan"]);
     assert_ok(&plan);
-    assert!(plan.stdout.contains("forward"), "stdout: {}", plan.stdout);
+    assert!(plan.stdout.contains("undo"), "stdout: {}", plan.stdout);
 
     assert_ok(&mf(&["-u", &repo, "log", "redo"]));
     let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "get", "rating"]);
     assert!(out.stdout.contains('5'), "redo should have put it back: {}", out.stdout);
 }
 
-/// The case redo exists for: the undo had to revert (the watcher had written),
-/// so redo undoes that revert instead of rewinding past the watcher's work.
+/// The case the history tree lost (doc "Why the log stops being a tree"): the
+/// watcher writes between the undo and the redo, and redo still works.
 #[test]
-fn test_log_redo_takes_back_an_undo_the_watcher_forced_into_a_revert() {
+fn test_log_redo_survives_the_watcher_writing_after_the_undo() {
     let (repo, root) = init_repo("log_redo_revert");
     let root_uuid = mf(&["-u", &repo, "metarecord", "-q", "mfr_type = \"dir\"", "get"])
         .stdout
@@ -5791,15 +5714,14 @@ fn test_log_redo_takes_back_an_undo_the_watcher_forced_into_a_revert() {
     ]));
 
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "field", "set", "note:string=a"]));
-    std::fs::write(root.join("between.txt"), b"hi").unwrap();
-    assert!(poll(40, || uuids_at(&repo, "between.txt").len() == 1), "watcher should track it");
-
-    // Undo reverts (it cannot rewind past the watcher's revision).
     let undo = mf(&["-u", &repo, "log", "undo"]);
     assert_ok(&undo);
-    assert!(undo.stdout.contains("revert"), "stdout: {}", undo.stdout);
     let record = mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "get"]);
     assert!(!record.stdout.contains("\"note\""), "the note should be gone: {}", record.stdout);
+
+    // The watcher writes between the undo and the redo.
+    std::fs::write(root.join("between.txt"), b"hi").unwrap();
+    assert!(poll(40, || uuids_at(&repo, "between.txt").len() == 1), "watcher should track it");
 
     // Redo puts the change back, and the watcher's metarecord survives it.
     let redo = mf(&["-u", &repo, "log", "redo"]);
@@ -6036,7 +5958,7 @@ fn test_undo_and_redo_of_a_trashing_across_watcher_writes() {
     // `--force`: a revert that touches files asks first, and nobody is here.
     let undo = mf(&["-u", &repo, "log", "undo", "--force"]);
     assert_ok(&undo);
-    assert!(undo.stdout.contains("revert"), "the undo had to revert: {}", undo.stdout);
+    assert!(undo.stdout.contains("Reverted"), "the undo reverts: {}", undo.stdout);
     assert!(file.exists(), "the revert brings the file back: {}{}", undo.stdout, undo.stderr);
     assert_eq!(std::fs::read(&file).unwrap(), b"precious");
     assert_eq!(uuids_at(&repo, "doc.txt"), vec![uuid.clone()]);

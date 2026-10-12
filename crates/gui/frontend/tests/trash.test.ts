@@ -44,7 +44,7 @@ const ENTRIES = [
     trashed_at: Date.now() - 2 * 86_400_000,
     size: 100,
     is_dir: true,
-    reason: 'rollback' as const,
+    reason: 'revert' as const,
   },
 ];
 

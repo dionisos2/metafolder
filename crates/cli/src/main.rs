@@ -409,12 +409,6 @@ enum TaskCommand {
 enum LogCommand {
     /// Display the revision/operation history
     List {
-        /// Show all branches as a flat list, not just the active line
-        #[arg(long)]
-        tree: bool,
-        /// Draw every branch as an ASCII graph
-        #[arg(long)]
-        graph: bool,
         /// Expand each revision to show its individual operations
         #[arg(long)]
         ops: bool,
@@ -434,7 +428,7 @@ enum LogCommand {
         #[arg(long)]
         all: bool,
     },
-    /// Print the id of the operation the history is on (what --id targets)
+    /// Print the id of the newest operation (what `undo --after` takes)
     Head,
     /// Show full details of one revision (a revision id, or HEAD)
     Show {
@@ -443,32 +437,14 @@ enum LogCommand {
         #[arg(long)]
         raw: bool,
     },
-    /// Navigate the history with coordinated filesystem moves
-    Rollback {
-        /// "plan" to preview, optionally a target label; or a target label.
-        #[arg(num_args = 0..=2)]
-        args: Vec<String>,
-        /// Target operation by id
-        #[arg(long)]
-        id: Option<i64>,
-        /// Target by revision timestamp (ISO-8601, or @<unix-ms>)
-        #[arg(long)]
-        timestamp: Option<String>,
-        /// Policy when the file is present: apply|skip|abort|ask (default apply)
-        #[arg(long = "on-move-available")]
-        on_move_available: Option<String>,
-        /// Policy when the file is missing: apply|skip|abort|ask (default ask)
-        #[arg(long = "on-move-unavailable")]
-        on_move_unavailable: Option<String>,
-        /// Suppress informational output (still prompts for ask)
-        #[arg(long)]
-        silent: bool,
-    },
-    /// Undo the newest change you made, whichever mechanism that takes
+    /// Undo the newest change you made that still stands, by reverting it
     Undo {
         /// "plan" to print what undo would do, without writing anything
         #[arg(num_args = 0..=1)]
         args: Vec<String>,
+        /// Undo again and again, while the change is newer than this operation
+        #[arg(long)]
+        after: Option<i64>,
         /// Leave out the operations needing a filesystem action
         #[arg(long = "metadata-only")]
         metadata_only: bool,
@@ -485,7 +461,7 @@ enum LogCommand {
         #[arg(long)]
         silent: bool,
     },
-    /// Take the newest undo back, whichever mechanism that takes
+    /// Take the newest undo that still stands back, by reverting it
     Redo {
         /// "plan" to print what redo would do, without writing anything
         #[arg(num_args = 0..=1)]
@@ -1184,7 +1160,7 @@ impl TargetOpts {
 
 #[derive(Subcommand)]
 enum PruneCommand {
-    /// Make <target> the new root, deleting all older operations
+    /// Delete every operation older than <target> (kept)
     Before {
         #[command(flatten)]
         target: TargetOpts,
@@ -1192,15 +1168,6 @@ enum PruneCommand {
         #[arg(long)]
         force: bool,
         /// Suppress informational output
-        #[arg(long)]
-        silent: bool,
-    },
-    /// Delete branch operations diverging from the HEAD path up to <target>
-    Linearize {
-        #[command(flatten)]
-        target: TargetOpts,
-        #[arg(long)]
-        force: bool,
         #[arg(long)]
         silent: bool,
     },
@@ -1561,50 +1528,14 @@ fn move_policies(
 fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
     match command {
         None => log::log(ctx, &log::LogArgs::default()),
-        Some(LogCommand::List { tree, graph, ops, metarecord, limit, since, until, all }) => {
-            log::log(ctx, &log::LogArgs { tree, graph, ops, metarecord, limit, since, until, all })
+        Some(LogCommand::List { ops, metarecord, limit, since, until, all }) => {
+            log::log(ctx, &log::LogArgs { ops, metarecord, limit, since, until, all })
         }
         Some(LogCommand::Head) => log::log_head(ctx),
         Some(LogCommand::Show { target, raw }) => log::log_show(ctx, &target, raw),
-        Some(LogCommand::Rollback {
-            args,
-            id,
-            timestamp,
-            on_move_available,
-            on_move_unavailable,
-            silent,
-        }) => {
-            let (is_plan, label) = match args.split_first() {
-                Some((first, rest)) if first == "plan" => (true, rest.first().cloned()),
-                Some((first, _)) => (false, Some(first.clone())),
-                None => (false, None),
-            };
-            let target = log::TargetArgs { label, id, timestamp };
-            if is_plan {
-                log::rollback_plan(ctx, target)
-            } else {
-                let policies = (|| {
-                    Ok::<_, metafolder_cli::client::CliError>(log::RollbackPolicies {
-                        on_available: on_move_available
-                            .as_deref()
-                            .map(log::parse_policy)
-                            .transpose()?
-                            .unwrap_or(log::Policy::Apply),
-                        on_unavailable: on_move_unavailable
-                            .as_deref()
-                            .map(log::parse_policy)
-                            .transpose()?
-                            .unwrap_or(log::Policy::Ask),
-                    })
-                })();
-                match policies {
-                    Ok(policies) => log::rollback_run(ctx, target, policies, silent),
-                    Err(e) => Err(e),
-                }
-            }
-        }
         Some(LogCommand::Undo {
             args,
+            after,
             metadata_only,
             on_move_available,
             on_move_unavailable,
@@ -1613,7 +1544,12 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
         }) => {
             let plan_only = plan_argument(&args, "undo")?;
             let policies = move_policies(on_move_available, on_move_unavailable)?;
-            log::undo_run(ctx, plan_only, policies, log::UndoOpts { metadata_only, force, silent })
+            log::undo_run(
+                ctx,
+                plan_only,
+                policies,
+                log::UndoOpts { after, metadata_only, force, silent },
+            )
         }
         Some(LogCommand::Redo {
             args,
@@ -1625,7 +1561,12 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
         }) => {
             let plan_only = plan_argument(&args, "redo")?;
             let policies = move_policies(on_move_available, on_move_unavailable)?;
-            log::redo_run(ctx, plan_only, policies, log::UndoOpts { metadata_only, force, silent })
+            log::redo_run(
+                ctx,
+                plan_only,
+                policies,
+                log::UndoOpts { after: None, metadata_only, force, silent },
+            )
         }
         Some(LogCommand::Revert {
             args,
@@ -1668,7 +1609,14 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
                     .transpose()?
                     .unwrap_or(log::Policy::Ask),
             };
-            let opts = log::RevertOpts { metadata_only, label, force, silent, policies };
+            let opts = log::RevertOpts {
+                metadata_only,
+                label,
+                force,
+                confirm_moves: true,
+                silent,
+                policies,
+            };
             if is_plan {
                 log::revert_plan(ctx, target)
             } else {
@@ -1683,17 +1631,7 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
                             .into(),
                     ))
                 } else {
-                    log::prune(ctx, "before", target.into_args(), force, silent)
-                }
-            }
-            PruneCommand::Linearize { target, force, silent } => {
-                if target.is_empty() {
-                    Err(metafolder_cli::client::CliError::Usage(
-                        "mf log prune linearize requires a target (<label>, --id, or --timestamp)"
-                            .into(),
-                    ))
-                } else {
-                    log::prune(ctx, "linearize", target.into_args(), force, silent)
+                    log::prune(ctx, target.into_args(), force, silent)
                 }
             }
         },

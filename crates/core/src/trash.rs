@@ -1,7 +1,7 @@
 //! The repository trash-bin (doc "Trash"): the layer the CLI and the GUI share.
 //!
 //! A single per-repository trash, shared by every metafolder file operation
-//! that would overwrite or delete a file (a manual trashing, a rollback's
+//! that would overwrite or delete a file (a manual trashing, a revert's
 //! overwrite, sync). It guarantees no byte is ever lost: the displaced content
 //! is set aside under `internal/trash/` and the user decides later whether to
 //! restore or discard it. A trashing takes the metarecords with the bytes
@@ -45,7 +45,10 @@ impl std::error::Error for TrashError {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Reason {
-    Rollback,
+    /// A file a revert's move would have overwritten. Entries written before
+    /// the log stopped being a tree say `rollback` (doc "The operation log").
+    #[serde(alias = "rollback")]
+    Revert,
     Sync,
     Manual,
 }
@@ -53,7 +56,7 @@ pub enum Reason {
 impl Reason {
     pub fn as_str(self) -> &'static str {
         match self {
-            Reason::Rollback => "rollback",
+            Reason::Revert => "revert",
             Reason::Sync => "sync",
             Reason::Manual => "manual",
         }
@@ -79,7 +82,7 @@ pub struct TrashEntry {
     pub is_dir: bool,
     /// The operation that displaced it.
     pub reason: Reason,
-    /// Op id that trashed it (rollback), if any.
+    /// Op id that trashed it (revert), if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revision: Option<i64>,
     /// UUID of the metarecord it belonged to, if known.
@@ -88,14 +91,14 @@ pub struct TrashEntry {
     /// The metarecord's `version` when it was trashed. Provenance, and what
     /// matches an entry written before the metarecords were captured — whose
     /// deletion the log recorded as the watcher's `file_deleted` — to the exact
-    /// rollback step that undoes it (its `entity_version_before_revision`).
+    /// revert that undoes it (its `entity_version_before_revision`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<u64>,
     /// The metarecords this trashing displaced, each with its original
     /// `mfr_path` TreeRef, so a restore re-links the whole subtree (the trashed
     /// directory and everything under it), not only the top metarecord. Empty
     /// for entries written before this field existed, or for an untracked blob
-    /// (a rollback/sync overwrite): the restore then falls back to the single
+    /// (a revert/sync overwrite): the restore then falls back to the single
     /// `metarecord`. Populated by the clients via [`TrashDir::attach_subtree`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subtree: Vec<TrashedNode>,
@@ -1095,6 +1098,15 @@ mod tests {
     use super::*;
     use std::fs;
 
+    /// An entry written while the log was a tree says why with `rollback`:
+    /// it reads back as the revert that replaced it (doc "The operation log").
+    #[test]
+    fn an_entry_trashed_by_a_rollback_reads_back_as_a_revert() {
+        let reason: Reason = serde_json::from_str("\"rollback\"").unwrap();
+        assert_eq!(reason, Reason::Revert);
+        assert_eq!(serde_json::to_string(&Reason::Revert).unwrap(), "\"revert\"");
+    }
+
     /// A `DaemonClient` returning canned responses by the first matching
     /// `"METHOD /path"` substring rule.
     struct Mock {
@@ -1641,7 +1653,7 @@ mod tests {
         fs::write(&file, b"content").unwrap();
 
         let entry = trash
-            .trash_path(&file, Reason::Rollback, Some(101), Some("abc".into()), Some(7))
+            .trash_path(&file, Reason::Revert, Some(101), Some("abc".into()), Some(7))
             .unwrap();
 
         assert!(!file.exists(), "the original file should be gone");
@@ -1649,7 +1661,7 @@ mod tests {
         assert_eq!(entry.original_path, file.to_string_lossy());
         assert_eq!(entry.original_name, "doc.txt");
         assert_eq!(entry.size, 7);
-        assert_eq!(entry.reason, Reason::Rollback);
+        assert_eq!(entry.reason, Reason::Revert);
         assert_eq!(entry.revision, Some(101));
         // The entry round-trips through the index.
         let loaded = trash.entry(&entry.id).unwrap();

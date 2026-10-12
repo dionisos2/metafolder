@@ -582,8 +582,8 @@ mock_prompt '/top'
 mock_input n y u n y
 bash "$SCRIPT" music >/dev/null; code=$?
 assert "back: exits 0" [ "$code" -eq 0 ]
-assert "back: the undone answer was rolled back through the log" \
-    [ "$(mock_count 'log rollback --id * --silent')" -eq 1 ]
+assert "back: the undone answer was undone through the log" \
+    [ "$(mock_count 'log undo --after * --force --silent')" -eq 1 ]
 assert "back: the previous entry is asked again" [ "$(asked /top/a.txt)" -eq 2 ]
 assert "back: and the second answer is the one that stands" \
     [ "$(mock_count 'tag -i file-a deny music')" -eq 1 ]
@@ -609,8 +609,8 @@ mock_prompt '/top'
 mock_input n s u m n
 out=$(bash "$SCRIPT" music); code=$?
 assert "back skip: exits 0" [ "$code" -eq 0 ]
-assert "back skip: the marker write was rolled back" \
-    [ "$(mock_count 'log rollback --id * --silent')" -eq 1 ]
+assert "back skip: the marker write was undone" \
+    [ "$(mock_count 'log undo --after * --force --silent')" -eq 1 ]
 assert "back skip: the folder is asked again" [ "$(asked /sub)" -eq 2 ]
 assert "back skip: its subtree is no longer excluded once the skip is undone" \
     [ "$(mock_calls_matching 'metarecord -q * get --count' | tail -1 | grep -c 'NOT mfr_path' || true)" -eq 0 ]
@@ -629,7 +629,7 @@ mock_input n u y
 out=$(bash "$SCRIPT" music 2>&1); code=$?
 assert "back at the start: exits 0" [ "$code" -eq 0 ]
 assert_contains "back at the start: says there is nothing to go back to" "$out" "nothing to go back to"
-assert "back at the start: nothing was rolled back" [ "$(mock_count 'log rollback*')" -eq 0 ]
+assert "back at the start: nothing was undone" [ "$(mock_count 'log undo*')" -eq 0 ]
 assert "back at the start: the first entry is asked twice" [ "$(asked /top)" -eq 2 ]
 
 # ── Case 21: a failing `mf tag` is reported, not a silent "stopped" ─────────

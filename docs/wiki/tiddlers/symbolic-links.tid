@@ -20,7 +20,7 @@ A broken link — its target gone — is still on disk, and is tracked like any 
 
 * ''Reading the target.'' No fingerprint, MIME type or embedded metadata: those are for regular files only. So a link is never a duplicate of anything ([[What counts as a duplicate]]).
 * ''Descending.'' A link to a directory is a leaf: the reconcile walk does not enter it and the watcher places no watch there ([[Watch sources and regimes]]), so a link cannot make the daemon read, or watch, a tree outside the root.
-* ''Moving the target.'' Trashing a link trashes the link ([[What trashing does]]), and a rollback moves the link itself.
+* ''Moving the target.'' Trashing a link trashes the link ([[What trashing does]]), and a revert moves the link itself.
 
 One exception, a known gap: a sync that copies a link to the other repository reads through it and writes the target's content there as a regular file.
 

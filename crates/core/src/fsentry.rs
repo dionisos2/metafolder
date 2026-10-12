@@ -8,7 +8,7 @@
 //! (target and all), the watcher sees it, the user can move it and lose it.
 //! Asking `exists()` made a file that is right there read as absent — which
 //! variously reported it as an orphan, skipped its re-stat, left it behind on a
-//! rollback, and let a rename destroy it instead of trashing it first.
+//! revert, and let a rename destroy it instead of trashing it first.
 //!
 //! These two functions are the vocabulary for that question, so the mistake has
 //! one obvious thing to be replaced with.

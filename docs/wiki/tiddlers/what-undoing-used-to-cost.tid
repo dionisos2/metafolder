@@ -1,5 +1,5 @@
 title: What undoing used to cost
-tags: [[Rollback]]
+tags: [[Event log]]
 kind: rationale
 audience: dev
 status: record
@@ -22,3 +22,6 @@ flush tracked it a second time.
 ''How to apply'': in front of "X is slow", compare X with the cost of what X undoes or
 redoes (here: 420 times). And for any protocol ''by steps'', ask what each step re-reads: a
 plan recomputed per iteration is quadratic, a rebuild per step is repository × steps.
+
+The rollback and its step-by-step navigation are gone since October 2026: undo is a
+revert, one transaction whatever it undoes ([[Why the log stops being a tree]]).

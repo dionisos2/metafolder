@@ -1,8 +1,8 @@
 //! The storage boundary (doc "The storage boundary"):
 //! what the daemon asks of a repository's database, as the traits a storage
 //! backend implements. `Rows` is the data model's primary state — metarecords
-//! and their field rows, whose ids are part of the model (`Field.id`, restored
-//! by navigation); `Log` is the event log. The questions a query answers are
+//! and their field rows, whose ids are part of the model (`Field.id`); `Log`
+//! is the event log. The questions a query answers are
 //! not here: they belong to the index.
 //!
 //! The key-value store (`crate::kvstore`, LMDB) is the one backend; the traits
@@ -11,10 +11,10 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use metafolder_core::metarecord::{Field, MetaRecord, TreeName, Value};
+use metafolder_core::metarecord::{Field, MetaRecord, Value};
 use uuid::Uuid;
 
-use crate::log::{Delta, OpRow, OpType, Retention};
+use crate::log::{OpRow, OpType, Retention};
 use crate::rows::{DuplicateGroup, FieldRow, OrphanCandidate, StoredHashes, TreeRow};
 
 /// Implements `Rows`, `Log` and `Questions` for a type holding a store, by
@@ -139,33 +139,17 @@ macro_rules! forward_to_store {
                 let $me = self;
                 Log::snapshots($conn, op_id, after)
             }
-            fn ops_until(&self, from: i64, until: i64, max: usize) -> Result<Delta> {
+            fn first_op(&self) -> Result<Option<i64>> {
                 let $me = self;
-                Log::ops_until($conn, from, until, max)
+                Log::first_op($conn)
             }
-            fn ancestry(&self, from: i64) -> Result<Vec<i64>> {
+            fn ops_back(&self, from: i64, max: Option<usize>) -> Result<Vec<OpRow>> {
                 let $me = self;
-                Log::ancestry($conn, from)
-            }
-            fn restorations(&self) -> Result<Vec<(i64, Restoration)>> {
-                let $me = self;
-                Log::restorations($conn)
-            }
-            fn ancestry_ops(&self, from: i64, max: Option<usize>) -> Result<Vec<OpRow>> {
-                let $me = self;
-                Log::ancestry_ops($conn, from, max)
+                Log::ops_back($conn, from, max)
             }
             fn all_ops(&self) -> Result<Vec<OpRow>> {
                 let $me = self;
                 Log::all_ops($conn)
-            }
-            fn forward_line(&self, head: i64) -> Result<Vec<OpRow>> {
-                let $me = self;
-                Log::forward_line($conn, head)
-            }
-            fn has_children(&self, op: i64) -> Result<bool> {
-                let $me = self;
-                Log::has_children($conn, op)
             }
             fn revisions(&self, ids: &[i64]) -> Result<HashMap<i64, RevisionMeta>> {
                 let $me = self;
@@ -199,17 +183,13 @@ macro_rules! forward_to_store {
                 let $me = self;
                 Log::ops_after_count($conn, op, cap)
             }
-            fn ancestor_at_or_before(&self, head: i64, timestamp_ms: i64) -> Result<Option<i64>> {
+            fn last_op_at_or_before(&self, timestamp_ms: i64) -> Result<Option<i64>> {
                 let $me = self;
-                Log::ancestor_at_or_before($conn, head, timestamp_ms)
+                Log::last_op_at_or_before($conn, timestamp_ms)
             }
-            fn ancestor_labelled(&self, head: i64, label: &str) -> Result<Option<i64>> {
+            fn last_op_labelled(&self, label: &str) -> Result<Option<i64>> {
                 let $me = self;
-                Log::ancestor_labelled($conn, head, label)
-            }
-            fn before_revision_of(&self, op: i64) -> Result<Option<i64>> {
-                let $me = self;
-                Log::before_revision_of($conn, op)
+                Log::last_op_labelled($conn, label)
             }
         }
     };
@@ -428,34 +408,23 @@ pub trait Rows {
     }
 }
 
-/// The event log.
+/// The event log (doc "The operation log"): a sequence of operations, in
+/// the order they were written. There is no history tree — nothing moves back,
+/// so "the log up to here" is simply every operation with a smaller id.
 pub trait Log {
-    /// The operation HEAD names, `None` on an empty log.
+    /// The newest operation, `None` on an empty log.
     fn head(&self) -> Result<Option<i64>>;
     /// One operation.
     fn op(&self, id: i64) -> Result<Option<OpRow>>;
     /// An operation's snapshot rows: the state after it (`after`) or before.
     fn snapshots(&self, op_id: i64, after: bool) -> Result<Vec<FieldRow>>;
-    /// The operations from `from` back to — not including — `until`, newest
-    /// first: [`Delta::Found`]; or `until` not met within `max` steps
-    /// ([`Delta::Budget`]), or not an ancestor at all ([`Delta::Unrelated`]).
-    fn ops_until(&self, from: i64, until: i64, max: usize) -> Result<Delta>;
-    /// The whole ancestor chain from `from` (inclusive) to the root.
-    fn ancestry(&self, from: i64) -> Result<Vec<i64>>;
-    /// The restorations skipped navigation steps queued, oldest first, with
-    /// the position each holds in the queue.
-    fn restorations(&self) -> Result<Vec<(i64, Restoration)>>;
-    /// The ancestor chain from `from` (inclusive), newest first — whole, or
-    /// its first `max` operations.
-    fn ancestry_ops(&self, from: i64, max: Option<usize>) -> Result<Vec<OpRow>>;
-    /// Every operation, whatever branch it is on, oldest first.
+    /// The oldest operation still in the log, `None` on an empty log.
+    fn first_op(&self) -> Result<Option<i64>>;
+    /// The operations at or before `from`, newest first — all of them, or the
+    /// first `max`.
+    fn ops_back(&self, from: i64, max: Option<usize>) -> Result<Vec<OpRow>>;
+    /// Every operation, oldest first.
     fn all_ops(&self) -> Result<Vec<OpRow>>;
-    /// The branch that continues below `head` (doc "Log endpoints"), oldest
-    /// first, `head` excluded — the part of the active line past HEAD. It reads
-    /// `head`'s subtree, never the log behind it.
-    fn forward_line(&self, head: i64) -> Result<Vec<OpRow>>;
-    /// Whether an operation has a child (a continuation below it).
-    fn has_children(&self, op: i64) -> Result<bool>;
     /// The given revisions' metadata; ids that name none are left out.
     fn revisions(&self, ids: &[i64]) -> Result<HashMap<i64, RevisionMeta>>;
     /// How many operations and revisions the log holds.
@@ -464,12 +433,11 @@ pub trait Log {
     fn counters(&self) -> Result<Counters>;
     /// A revision's operations, oldest first.
     fn revision_ops(&self, rev: i64) -> Result<Vec<OpRow>>;
-    /// An entity's operations newer than `after`, whatever branch they are on,
-    /// oldest first.
+    /// An entity's operations newer than `after`, oldest first.
     fn entity_ops_after(&self, entity: Uuid, after: i64) -> Result<Vec<OpRow>>;
     /// The version `entity` had when revision `rev` began — its first
     /// operation there's `entity_version_before` (a trash entry records the
-    /// version from outside the revision, so a rollback matches on this one).
+    /// version from outside the revision, so a revert matches on this one).
     fn version_before_revision(&self, rev: i64, entity: Uuid) -> Result<Option<u64>>;
     /// The operations newer than `op`, oldest first (the change feed).
     fn ops_after(&self, op: i64) -> Result<Vec<OpRow>>;
@@ -477,15 +445,10 @@ pub trait Log {
     /// `cap`: a client far behind asks whether the gap passes a limit, and
     /// counting the whole of it would read the log since.
     fn ops_after_count(&self, op: i64, cap: i64) -> Result<i64>;
-    /// Walking back from `head`, the first operation whose revision is at or
-    /// before `timestamp_ms`.
-    fn ancestor_at_or_before(&self, head: i64, timestamp_ms: i64) -> Result<Option<i64>>;
-    /// Walking back from `head`, the first operation of a revision labelled
-    /// `label` (the last operation of the most recent such revision).
-    fn ancestor_labelled(&self, head: i64, label: &str) -> Result<Option<i64>>;
-    /// The parent of the first operation of `op`'s revision: the state just
-    /// before that whole revision (`None` = the empty state).
-    fn before_revision_of(&self, op: i64) -> Result<Option<i64>>;
+    /// The newest operation whose revision is at or before `timestamp_ms`.
+    fn last_op_at_or_before(&self, timestamp_ms: i64) -> Result<Option<i64>>;
+    /// The newest operation of a revision labelled `label`.
+    fn last_op_labelled(&self, label: &str) -> Result<Option<i64>>;
 }
 
 /// A revision's metadata.
@@ -496,18 +459,6 @@ pub struct RevisionMeta {
     pub label: Option<String>,
     /// Who wrote it: `watcher` for the daemon's own, `None` for a client's.
     pub origin: Option<String>,
-}
-
-/// A filesystem fact a skipped step of a coordinated navigation leaves to be
-/// re-recorded once the navigation lock is released (doc "Filesystem coordination").
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Restoration {
-    /// The file is where this position says.
-    SetPath { entity: Uuid, parent: Option<Uuid>, name: TreeName },
-    /// The file is gone.
-    ClearPath { entity: Uuid },
-    /// The file's content changed: its hashes no longer hold.
-    ClearHashes { entity: Uuid },
 }
 
 /// A repository's database: its rows, its log, and the questions asked of
@@ -839,7 +790,7 @@ pub trait WriteTxn: Store {
     fn remove_metarecord(&self, uuid: Uuid) -> Result<()>;
     fn set_version(&self, uuid: Uuid, version: u64) -> Result<()>;
     /// Inserts a row and returns its id: a fresh one, never reused, or `id`
-    /// when given (navigation puts rows back under their own). Refuses a
+    /// when given (a store copy puts rows back under their own). Refuses a
     /// second row at one position of a forest, and a second `mfr_path`.
     fn insert_row(&self, uuid: Uuid, name: &str, value: &Value, id: Option<i64>) -> Result<i64>;
     fn delete_row(&self, id: i64) -> Result<()>;
@@ -854,35 +805,25 @@ pub trait WriteTxn: Store {
     fn set_revision_label(&self, rev: i64, label: Option<&str>) -> Result<bool>;
     /// Drops a revision no operation was recorded in.
     fn drop_revision(&self, rev: i64) -> Result<()>;
-    /// Appends `ops` to revision `rev`, chained from `parent`, numbered from
-    /// `first_seq`; returns the id the last one got. Ids are never reused.
-    fn append_ops(
-        &self,
-        rev: i64,
-        parent: Option<i64>,
-        first_seq: i64,
-        ops: &[NewOp],
-    ) -> Result<i64>;
+    /// Appends `ops` to revision `rev`, numbered from `first_seq`; returns the
+    /// id the last one got. Ids are never reused.
+    fn append_ops(&self, rev: i64, first_seq: i64, ops: &[NewOp]) -> Result<i64>;
+    /// Records the newest operation (the change feed's cursor).
     fn set_head(&self, op: Option<i64>) -> Result<()>;
     /// Drops the history `retention` no longer keeps behind `head`.
     fn trim(&self, retention: Retention, head: i64) -> Result<usize>;
-    /// Removes every metarecord (a navigation to the empty state).
+    /// Removes every metarecord.
     fn clear_metarecords(&self) -> Result<()>;
-    /// Makes `op` a root of the history (its parent is pruned away).
-    fn detach_op(&self, op: i64) -> Result<()>;
-    /// Deletes operations and their snapshots, children before parents.
+    /// Deletes operations and their snapshots.
     fn delete_ops(&self, ids: &[i64]) -> Result<()>;
     /// Deletes the revisions no operation belongs to any more.
     fn drop_empty_revisions(&self) -> Result<()>;
-    fn queue_restoration(&self, restoration: &Restoration) -> Result<()>;
-    /// Drops the queued restorations up to position `up_to`, included.
-    fn drop_restorations(&self, up_to: i64) -> Result<()>;
 
     /// Puts a revision under its own id — a conversion copying a history
     /// (doc "How the storage backend was built").
     fn import_revision(&self, id: i64, meta: &RevisionMeta) -> Result<()>;
     /// Puts an operation and its snapshots under their own ids (a
-    /// conversion); its parent and its revision are already there.
+    /// conversion); its revision is already there.
     fn import_op(&self, op: &OpRow, before: &[FieldRow], after: &[FieldRow]) -> Result<()>;
     /// Moves the counters to at least `counters`, so no id below them is
     /// handed out again.

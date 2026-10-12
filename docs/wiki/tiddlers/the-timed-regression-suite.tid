@@ -33,11 +33,11 @@ measurement to the ones taken before. Renaming one starts a new history — on
 purpose, rather than comparing two different things silently.
 
 |!Scenario |!Measures |
-|`log.window_ops` |`GET /log?mode=active&limit=50` — the window of the GUI's log panel |
-|`log.window_revisions` |`GET /log?mode=active&revisions=20&limit=500` — what `mf log list` asks for |
-|`log.undo_window` |`GET /log?mode=linear&limit=500` — the window `mf log undo` reads |
+|`log.window_ops` |`GET /log?limit=50` — the window of the GUI's log panel |
+|`log.window_revisions` |`GET /log?revisions=20&limit=500` — what `mf log list` asks for |
+|`log.undo_window` |`GET /log?limit=500` — the window `mf log undo` reads |
 |`log.change_feed` |`GET /log/since` — the delta every client polls |
-|`log.whole_tree` |`GET /log?mode=tree` — the unbounded read a graph needs |
+|`log.whole` |`GET /log` — the unbounded read (`mf log list --all`); `log.whole_tree` (`?mode=tree`) until the log stopped being a tree |
 |`query.count` |a count over every file's metarecord |
 |`query.page` |the first hundred results of a broad query |
 |`query.sorted_page` |a hundred results sorted by `mfr_size` |
@@ -55,7 +55,7 @@ purpose, rather than comparing two different things silently.
 |`tree.write` |one write that ''moves a position'', the forest's upkeep included |
 |`repo.load` |unloading the repository and loading it again, until it serves |
 
-* `log.whole_tree` is ''expected'' to grow with the log — a graph cannot be drawn without every branch. It is measured so that the day it grows faster than the log, the number says so.
+* `log.whole` is ''expected'' to grow with the log — it reads all of it. It is measured so that the day it grows faster than the log, the number says so.
 * The `query.` scenarios after `query.folder` combine operands of different types, which is what the bitmaps are for: a combination should cost about its narrowest operand. They were added when a search no single-operand scenario exercised took twenty seconds on a real repository; their counterparts without a clock are in `kv_cost.rs`.
 * `query.size_range_in_folder` measures a known gap: a range over a number of many distinct values reads its matches one by one ([[Sorting and postings]]).
 * `tree.write` moves a position in a forest of its own, so it measures the ''upkeep'' and not the size of the tree: updating one position costs the position, anything whole-forest costs the repository, and the two differ on the larger sizes while looking alike on the small one ([[The forest in the store]]). Each run writes a different name — rewriting the same one would move nothing.
@@ -84,7 +84,7 @@ reconcile, a prune, a clear) measures the steady state after the warm-up.
 After the table, the suite prints the scenarios that cost more than three times as
 much on `M` (or `L`) as on `S` — the sizes are ten times apart, so a cost that
 follows the repository shows up near ten — leaving out those that grow by nature
-(`log.whole_tree`, and the sweep's whole-repository scenarios: a reconcile, a check, a
+(`log.whole`, and the sweep's whole-repository scenarios: a reconcile, a check, a
 reindex, a backup, an orphan scan…) and anything under 2 ms on the larger size, where
 a ratio is noise. It needs no history: it is how a route that became linear is seen on
 the first run.

@@ -13,8 +13,8 @@
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_daemon::kvstore::KvStore;
-use metafolder_daemon::log::{self, Retention, Writer};
-use metafolder_daemon::log_view::{listing, LogQuery, Mode};
+use metafolder_daemon::log::{Retention, Writer};
+use metafolder_daemon::log_view::{listing, LogQuery};
 use metafolder_daemon::store::{Log, Rows};
 
 mod common;
@@ -51,8 +51,8 @@ fn reads_of<R>(kv: &mut KvStore, f: impl FnOnce(&mut KvStore) -> R) -> (R, u64) 
 const SHORT_LOG: usize = 200;
 const LONG_LOG: usize = 16 * SHORT_LOG;
 
-fn bounded(mode: Mode) -> LogQuery {
-    LogQuery { mode, limit: Some(50), ..LogQuery::default() }
+fn bounded() -> LogQuery {
+    LogQuery { limit: Some(50), ..LogQuery::default() }
 }
 
 /// The keys one listing reads.
@@ -64,18 +64,16 @@ fn cost_of(kv: &mut KvStore, q: &LogQuery) -> u64 {
 
 #[test]
 fn bounded_log_read_costs_the_same_on_a_log_sixteen_times_longer() {
-    for mode in [Mode::Linear, Mode::Active] {
-        let q = bounded(mode);
-        let (mut small, _s) = repo_with_log(SHORT_LOG);
-        let (mut big, _b) = repo_with_log(LONG_LOG);
-        let (small_cost, big_cost) = (cost_of(&mut small, &q), cost_of(&mut big, &q));
-        assert_eq!(small_cost, big_cost, "the keys read grew with the log ({mode:?})");
-    }
+    let q = bounded();
+    let (mut small, _s) = repo_with_log(SHORT_LOG);
+    let (mut big, _b) = repo_with_log(LONG_LOG);
+    let (small_cost, big_cost) = (cost_of(&mut small, &q), cost_of(&mut big, &q));
+    assert_eq!(small_cost, big_cost, "the keys read grew with the log");
 }
 
 #[test]
 fn a_log_read_bounded_by_revisions_costs_the_same_on_a_longer_log() {
-    let q = LogQuery { mode: Mode::Active, revisions: Some(20), ..LogQuery::default() };
+    let q = LogQuery { revisions: Some(20), ..LogQuery::default() };
     let (mut small, _s) = repo_with_log(SHORT_LOG);
     let (mut big, _b) = repo_with_log(LONG_LOG);
     let (small_cost, big_cost) = (cost_of(&mut small, &q), cost_of(&mut big, &q));
@@ -85,7 +83,7 @@ fn a_log_read_bounded_by_revisions_costs_the_same_on_a_longer_log() {
 #[test]
 fn a_revision_bound_returns_whole_revisions_newest_first() {
     let (kv, _dir) = repo_with_log(40);
-    let q = LogQuery { mode: Mode::Active, revisions: Some(5), ..LogQuery::default() };
+    let q = LogQuery { revisions: Some(5), ..LogQuery::default() };
     let body = listing(&kv, &q).unwrap();
     let revisions = body["revisions"].as_array().unwrap();
     assert_eq!(revisions.len(), 5, "asked for 5 revisions, got {}", revisions.len());
@@ -119,12 +117,7 @@ fn repo_after_reconcile(big: usize, small: usize) -> (KvStore, TempDir) {
 /// reconcile's revision holds tens of thousands, and reading it whole to show
 /// its line cost 0.7 s and 400 MB on a 50 000-file repository.
 fn revisions_and_ops(revisions: usize, limit: usize) -> LogQuery {
-    LogQuery {
-        mode: Mode::Active,
-        revisions: Some(revisions),
-        limit: Some(limit),
-        ..LogQuery::default()
-    }
+    LogQuery { revisions: Some(revisions), limit: Some(limit), ..LogQuery::default() }
 }
 
 #[test]
@@ -192,12 +185,7 @@ fn a_filtered_bounded_read_looks_past_the_window_for_matches() {
         w.commit().unwrap();
     }
 
-    let q = LogQuery {
-        mode: Mode::Active,
-        limit: Some(10),
-        entity: Some(target.uuid),
-        ..LogQuery::default()
-    };
+    let q = LogQuery { limit: Some(10), entity: Some(target.uuid), ..LogQuery::default() };
     let body = listing(&kv, &q).unwrap();
     let ops = body["operations"].as_array().unwrap();
     assert!(!ops.is_empty(), "the metarecord's own operations were missed by the window");
@@ -233,84 +221,4 @@ fn trim_cost(big: usize) -> u64 {
 #[test]
 fn trimming_the_log_does_not_read_the_operations_it_keeps() {
     assert_eq!(trim_cost(1), trim_cost(2_000), "the trim read the operations it keeps");
-}
-
-// ── Going back (doc "Script sessions") ────────────────────────────────────
-// A walk that writes as it goes takes an answer back by navigating the history
-// to where it stood before it (`mf log rollback --id`), one coordinated step
-// per operation written. Both assertions below are about *one* such step: what
-// it costs must depend on the operation it applies, and on nothing else — not
-// on the history behind it, and not on how much of the navigation is left.
-
-/// The operation `n` steps below HEAD, as a navigation target.
-fn steps_back(kv: &KvStore, n: usize) -> Option<i64> {
-    let head = kv.head().unwrap().expect("a non-empty log");
-    Some(kv.ancestry(head).unwrap()[n])
-}
-
-/// The keys one step of a navigation towards `n` operations back reads, on a
-/// log of `log` revisions. The navigation is planned once, when it starts —
-/// what a step costs is the step alone.
-fn step_cost(log: usize, n: usize) -> u64 {
-    let (mut kv, _dir) = repo_with_log(log);
-    let target = steps_back(&kv, n);
-    let mut plan = log::NavPlan::new(&kv, target).unwrap();
-    reads_of(&mut kv, |kv| plan.step(kv, false).unwrap()).1
-}
-
-#[test]
-fn one_navigation_step_costs_the_same_on_a_log_sixteen_times_longer() {
-    assert_eq!(step_cost(40, 1), step_cost(640, 1), "undoing one operation read the whole log");
-}
-
-#[test]
-fn a_navigation_step_costs_the_same_however_far_the_target_is() {
-    assert_eq!(
-        step_cost(400, 5),
-        step_cost(400, 80),
-        "one step cost more when the target was further away — the path behind \
-         it is being read at every step, which makes a navigation of N \
-         operations cost N²"
-    );
-}
-
-/// [`repo_with_log`], then HEAD taken back over its last `undone` operations —
-/// what an undo by rollback leaves: a forward continuation below HEAD.
-fn repo_after_undo(revisions: usize, undone: usize) -> (KvStore, TempDir) {
-    let (mut kv, dir) = repo_with_log(revisions);
-    let target = steps_back(&kv, undone);
-    log::navigate(&mut kv, target).unwrap();
-    assert!(kv.has_children(kv.head().unwrap().unwrap()).unwrap());
-    (kv, dir)
-}
-
-#[test]
-fn an_active_window_after_an_undo_costs_the_same_on_a_longer_log() {
-    // A redo reads the active line right after an undo. Its continuation below
-    // HEAD was rebuilt from the whole log — every operation of the table and
-    // HEAD's whole ancestry: 351 000 keys on a session's log, for one window.
-    let q = bounded(Mode::Active);
-    let (mut small, _s) = repo_after_undo(SHORT_LOG, 3);
-    let (mut big, _b) = repo_after_undo(LONG_LOG, 3);
-    let (small_cost, big_cost) = (cost_of(&mut small, &q), cost_of(&mut big, &q));
-    assert_eq!(small_cost, big_cost, "the keys read grew with the log behind HEAD");
-}
-
-#[test]
-fn an_active_window_after_an_undo_shows_the_continuation_newest_last() {
-    let (kv, _d) = repo_after_undo(SHORT_LOG, 3);
-    let head = kv.head().unwrap().unwrap();
-    let body = listing(&kv, &bounded(Mode::Active)).unwrap();
-    let ops = body["operations"].as_array().unwrap();
-    assert_eq!(ops.len(), 50);
-    let ids: Vec<i64> = ops.iter().map(|o| o["id"].as_i64().unwrap()).collect();
-    let whole = {
-        let mut line = kv.ancestry(head).unwrap();
-        line.reverse();
-        line.extend(
-            kv.ancestry(kv.ancestry(head).unwrap()[0] + 3).unwrap().into_iter().take(3).rev(),
-        );
-        line
-    };
-    assert_eq!(ids, whole[whole.len() - 50..], "the newest 50 of ancestry + continuation");
 }

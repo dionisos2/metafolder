@@ -161,7 +161,7 @@ literally, so creating `new%file.txt` creates exactly that. `readDir` marks with
 |`history.read(repo, zone)`, `history.append(repo, zone, entry)` |the store behind `attachHistory` of `/__history.js` ([[Input history]]) |
 |`recent.list(repo, limit?)`, `recent.touch(repo, uuid)` |the recently viewed metarecords |
 |`trash.list`, `restore`, `remove`, `empty`, `trashPath` |the repository's trash ([[Trash]]) |
-|`log.rollback(repo, target)`, `log.revert(repo, target, withDependents)` |navigation of the event log, files included ([[Filesystem coordination]]) |
+|`log.revert(repo, target)` |a revert, files included ([[Filesystem coordination]]) |
 |`orphans.detect()`, `count()`, `delete()` |the orphaned metarecords of the workspace's repository ([[Orphans in the GUI]]) |
 |`ignore.presets()`, `current`, `apply`, `write` |ignore presets ([[Setting ignore patterns]]) |
 |`sync.status`, `link`, `unlink`, `plan`, `run`, `show` |synchronisation between two repositories |

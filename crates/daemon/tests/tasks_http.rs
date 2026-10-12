@@ -205,41 +205,14 @@ async fn prune_registers_an_observable_task() {
     assert!(task["total"].is_null());
 }
 
-#[tokio::test]
-async fn rollback_registers_an_observable_task() {
-    let (app, _state, repo, _root) = app_with_repo("rollbackobs");
-    seed_history(&app, &repo).await;
-
-    let (status, body) = post(
-        &app,
-        &format!("/repos/{repo}/rollback"),
-        serde_json::json!({"target": {"prev_revision": true}}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "rollback failed: {body}");
-
-    let (status, body) = request(&app, "GET", &format!("/repos/{repo}/tasks")).await;
-    assert_eq!(status, StatusCode::OK);
-    let task = body
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|t| t["kind"] == "rollback")
-        .expect("a rollback task is recorded");
-    assert_eq!(task["status"], "done");
-    assert!(task["result"].is_null());
-    assert!(task["done"].is_null());
-    assert!(task["total"].is_null());
-}
-
-/// Prune and rollback are single atomic transactions with no cooperative
-/// cancellation point, so their observation tasks are non-cancellable (400),
+/// Prune is a single atomic transaction with no cooperative
+/// cancellation point, so its observation task is non-cancellable (400),
 /// like `flush`/`load` and unlike `query`.
 #[tokio::test]
-async fn cancel_prune_or_rollback_task_is_400() {
+async fn cancel_prune_task_is_400() {
     let (app, state, repo, _root) = app_with_repo("cancelnav");
     let repo_uuid = Uuid::parse_str(&repo).unwrap();
-    for kind in [TaskKind::Prune, TaskKind::Rollback] {
+    for kind in [TaskKind::Prune] {
         let id = state.repo(repo_uuid).unwrap().tasks.start(kind);
         state.repo(repo_uuid).unwrap().tasks.mark_running(id);
         let hex = id.as_simple().to_string();
@@ -273,7 +246,7 @@ async fn concurrent_duplicate_scan_is_rejected_with_409() {
 
 #[tokio::test]
 async fn a_duplicate_scan_task_is_cancellable() {
-    // Unlike prune/rollback: hashes are committed in batches, so stopping keeps
+    // Unlike prune: hashes are committed in batches, so stopping keeps
     // the expensive work already done.
     let (app, state, repo, _root) = app_with_repo("dupcancel");
     let repo_uuid = Uuid::parse_str(&repo).unwrap();

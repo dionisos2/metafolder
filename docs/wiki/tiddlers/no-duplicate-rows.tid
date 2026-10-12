@@ -19,5 +19,4 @@ rather than silently deleting the row the client addressed.
 
 `nothing` is a value like any other here: a field holds at most one `nothing` row.
 
-Log navigation is exempt: a rollback or a revert restores the exact rows a snapshot
-recorded, ids included — a duplicate written before the rule comes back with it.
+A revert writes through the same rule: what it puts back is collapsed like any write.

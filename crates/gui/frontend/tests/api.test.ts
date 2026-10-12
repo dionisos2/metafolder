@@ -466,10 +466,8 @@ describe('panel api — misc surface', () => {
     });
   });
 
-  test('log navigation routes to the coordinated navigation commands', async () => {
+  test('a log revert routes to the coordinated revert command', async () => {
     const { api, invoke } = setup();
-    await api.log.rollback('r1', { id: 4 });
-    expect(invoke).toHaveBeenCalledWith('log_rollback', { repo: 'r1', target: { id: 4 } });
     await api.log.revert('r1', { rev_id: 3 });
     expect(invoke).toHaveBeenCalledWith('log_revert', { repo: 'r1', target: { rev_id: 3 } });
   });

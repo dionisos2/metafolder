@@ -1,25 +1,21 @@
 title: Event log
 kind: overview
 aliases: log history event-log
-summary: Every write is a revision in a tree of operations kept beside the data — so any change can be audited, undone, reverted in place, or navigated back to.
+summary: Every write is a revision in a sequence of operations kept beside the data — so any change can be audited, undone, or reverted onto the current state.
 
 Every change to a repository's metadata is recorded in its ''event log'', in the same
-store and the same transaction as the change itself. The log is a ''tree'' of
-operations, which is what makes it more than an audit trail:
+store and the same transaction as the change itself. The log is a ''sequence'' of
+operations, each recording what it replaced, which is what makes it more than an audit
+trail:
 
 * ''auditing'' — the full history of any metarecord ([[Reading the log]]);
 * ''undo'' and ''redo'' — take back the newest change ''you'' made, and take that back in turn;
-* ''revert'' — undo one past revision or operation ''in place'', by writing what it replaced as a new revision;
-* ''rollback'' — move the current state to any point of the tree, past or future;
-* ''non-destructive branching'' — after moving back, a new write starts a new branch; the "future" left behind is not lost.
+* ''revert'' — undo one past revision or operation by writing what it replaced, onto the current state, as a new revision.
 
-The data always reflects exactly the operation ''HEAD'' points at: replaying the
-operations from the root to HEAD reproduces it ([[History tree and HEAD]]). History is
-lost only by an explicit prune, or by the retention limit (the last 200 revisions by
-default).
-
-A redesign replacing the tree by an ordered set of operations grouped by labels is
-proposed: [[The operation log]].
+Nothing moves back over the log: it only grows, and loses history only by an explicit
+prune, or by the retention limit (the last 200 revisions by default). It stopped being a
+tree with a movable HEAD in October 2026 ([[Why the log stops being a tree]]); the rest of
+that redesign — labels instead of revisions — is [[The operation log]].
 
 !! Use it
 

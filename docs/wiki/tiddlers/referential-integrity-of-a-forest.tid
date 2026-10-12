@@ -19,7 +19,7 @@ nothing, and recreating it is no repair — a new metarecord has a new uuid, whi
 whole forest names the old one. Deleting it — `DELETE …/metarecords/:uuid`,
 `POST …/query/delete`, or trashing it ([[POST /repos/:repo/metarecords/trash]]) — is
 refused, children or not. A root deleted before the check existed comes back by a
-rollback or a revert of its deletion, which restores it at its own uuid.
+revert of its deletion, which restores it at its own uuid.
 
 ''Neither cascade nor silence.'' Removing everything under a vanished directory is
 what the ''watcher'' does for `mfr_path`, where the filesystem is authoritative and

@@ -61,10 +61,10 @@ pub struct RepoState {
     /// the baked-in default so a `RepoState` built without `activate` (unit
     /// tests) still extracts with sensible defaults.
     pub metadata_map: Mutex<crate::metadata_map::MetadataMap>,
-    /// Coordinated-rollback lock (doc "Filesystem coordination"): `Some` while a rollback
-    /// navigation is in progress, carrying its resolved target. Never
-    /// persisted — a crash restarts unlocked.
-    pub rollback_lock: Mutex<Option<RollbackLock>>,
+    /// Coordinated-revert lock (doc "Filesystem coordination"): `Some` while a
+    /// coordinated revert is in progress, carrying the operations `start`
+    /// fixed. Never persisted — a crash restarts unlocked.
+    pub revert_lock: Mutex<Option<RevertLock>>,
     /// Observable background tasks for this repository (doc "Tasks"). In memory,
     /// separate from `conn` so progress reads never block behind a running
     /// reconcile.
@@ -153,17 +153,14 @@ pub struct RepoState {
     on_root_lost: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>>,
 }
 
-/// State of an in-progress coordinated operation. Both kinds suspend the
-/// watcher's execution and refuse writes for the same reason: a client is about
-/// to move files, and the metadata explaining those moves is not written yet
-/// (doc "Filesystem coordination").
-pub enum RollbackLock {
-    /// A coordinated rollback navigation: the steps left to its target,
-    /// planned once at `start` (nothing else writes while it runs).
-    Navigate { plan: crate::log::NavPlan },
-    /// A coordinated revert: the operations `start` fixed. `commit` may only
-    /// narrow this set, never widen it.
-    Revert { ops: Vec<i64> },
+/// State of an in-progress coordinated revert. It suspends the watcher's
+/// execution and refuses writes: a client is about to move files, and the
+/// metadata explaining those moves is not written yet (doc "Filesystem
+/// coordination").
+pub struct RevertLock {
+    /// The operations `start` fixed. `commit` may only narrow this set, never
+    /// widen it.
+    pub ops: Vec<i64>,
 }
 
 impl RepoState {
@@ -211,7 +208,7 @@ impl RepoState {
                 crate::metadata_map::MetadataMap::parse(crate::metadata_map::DEFAULT)
                     .expect("baked default metadata map is valid"),
             ),
-            rollback_lock: Mutex::new(None),
+            revert_lock: Mutex::new(None),
             tasks: crate::tasks::TaskRegistry::new(repo_uuid),
             declared_mounts: Mutex::new(Arc::new(Vec::new())),
             ready: std::sync::atomic::AtomicBool::new(false),
@@ -445,9 +442,9 @@ impl RepoState {
         *self.declared_mounts.lock_recover() = mounts;
     }
 
-    /// True while a coordinated rollback navigation holds the lock.
-    pub fn is_rollback_locked(&self) -> bool {
-        self.rollback_lock.lock_recover().is_some()
+    /// True while a coordinated revert holds the lock.
+    pub fn is_revert_locked(&self) -> bool {
+        self.revert_lock.lock_recover().is_some()
     }
 
     /// True while filesystem-event ingestion is paused for this repository.
@@ -502,9 +499,9 @@ impl RepoState {
     /// or a repository being torn down). `conn` is the already-locked
     /// connection.
     pub fn refresh_watches(&self, conn: &dyn crate::store::Store) -> usize {
-        // The ingest filter reads the published rules: a navigation that
-        // restored or took away a rule without settling must not leave it
-        // filtering against the old ones.
+        // The ingest filter reads the published rules: a write that restored
+        // or took away a rule without settling must not leave it filtering
+        // against the old ones.
         if let Err(err) = self.watch_rules(conn) {
             crate::diagnostics::warn_for(
                 "watcher",
@@ -908,13 +905,11 @@ impl RepoState {
         self.ready.load(std::sync::atomic::Ordering::Acquire)
     }
 
-    /// Rejects a metadata write with `423 Locked` while a rollback navigation
+    /// Rejects a metadata write with `423 Locked` while a coordinated revert
     /// is in progress (doc "Filesystem coordination").
     pub fn ensure_writable(&self) -> Result<(), ApiError> {
-        if self.is_rollback_locked() {
-            Err(ApiError::locked(
-                "repository is in rollback lock; complete or abort the navigation first",
-            ))
+        if self.is_revert_locked() {
+            Err(ApiError::locked("repository is in a coordinated revert; commit or abort it first"))
         } else {
             Ok(())
         }
@@ -923,7 +918,7 @@ impl RepoState {
 
 /// Unloads a repository whose root went away, whatever it was doing: nothing
 /// it runs can succeed without its files (doc "When the root moves"). Its
-/// tasks are asked to stop and a rollback lock is dropped, then the watcher
+/// tasks are asked to stop and a revert lock is dropped, then the watcher
 /// and executor are stopped *here* — joined from this thread, never the
 /// executor's own — so the last reference, wherever it ends, releases the
 /// store and nothing else.
@@ -933,7 +928,7 @@ fn let_go(repo: Arc<RepoState>) {
             let _ = repo.tasks.request_cancel(task.id);
         }
     }
-    *repo.rollback_lock.lock_recover() = None;
+    *repo.revert_lock.lock_recover() = None;
     let handles = repo.handles.lock_recover().take();
     drop(handles);
 }
@@ -1293,8 +1288,8 @@ impl AppState {
     ///
     /// An unknown repository is a 404 (no idempotency claimed). The unload is
     /// refused with 409 if:
-    /// - a coordinated-rollback navigation is in progress (its lock must not be
-    ///   silently dropped — complete or abort it first), or
+    /// - a coordinated revert is in progress (its lock must not be silently
+    ///   dropped — commit or abort it first), or
     /// - a cancellable task (reconcile/query) is in flight: the caller is asked
     ///   to stop it first (`POST …/tasks/:id/cancel`), so the repository is
     ///   never pulled out from under running work. Transient `flush` tasks do
@@ -1311,9 +1306,9 @@ impl AppState {
             let Some(repo_state) = repos.get(&repo_uuid) else {
                 return Err(ApiError::not_found(format!("Repository not found: {repo_uuid}")));
             };
-            if repo_state.is_rollback_locked() {
+            if repo_state.is_revert_locked() {
                 return Err(ApiError::conflict(
-                    "repository is in rollback lock; complete or abort the navigation first",
+                    "repository is in a coordinated revert; commit or abort it first",
                 ));
             }
             if repo_state.tasks.has_active_cancellable() {

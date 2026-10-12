@@ -2243,7 +2243,7 @@ export async function mount(root, metafolder) {
     void load();
   });
 
-  // Another panel changed metarecords (log rollback, file-manager track, …):
+  // Another panel changed metarecords (log revert, file-manager track, …):
   // reload — unless an edit is in progress.
   function onMetarecordsDirty() {
     forgetTreePaths();

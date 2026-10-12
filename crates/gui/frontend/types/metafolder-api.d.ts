@@ -366,7 +366,7 @@ declare namespace Metafolder {
     trashed_at: number;
     size: number;
     is_dir: boolean;
-    reason: 'rollback' | 'sync' | 'manual';
+    reason: 'revert' | 'sync' | 'manual';
     revision?: number | null;
     metarecord?: string | null;
     version?: number | null;
@@ -408,14 +408,6 @@ declare namespace Metafolder {
     failed: string[];
   }
 
-  /** What `log.rollback` did. */
-  interface Navigated {
-    total: number;
-    processed: number;
-    /** What the file actions had to say (a file moved, one brought back…). */
-    notes: string[];
-  }
-
   /** What `log.revert` wrote: the daemon's revert answer, with the notes. */
   interface Reverted {
     revision: number | null;
@@ -424,15 +416,12 @@ declare namespace Metafolder {
     notes: string[];
   }
 
-  /** Coordinated navigation of the event log (doc "Filesystem coordination"), files included: a
-   * navigation that moves a file, brings one
-   *  back from the trash-bin or sends one back there does it, with no question
-   *  asked while the repository is locked. Shared with `mf log` through
+  /** The coordinated revert of the event log (doc "Filesystem coordination"),
+   *  files included: a revert that moves a file, brings one back from the
+   *  trash-bin or sends one back there does it, with no question asked while
+   *  the repository is locked. Shared with `mf log` through
    *  `core::navigation`. Confirm *before* calling. */
   interface Log {
-    /** Moves HEAD to `target` (`{id}`, `{timestamp}`, `{label}` or
-     *  `{prev_revision: true}`). */
-    rollback(repo: string, target: Record<string, unknown>): Promise<Navigated>;
     /** Writes the inverse of `target` (`{rev_id}` or `{op_ids}`) at HEAD,
      *  onto the current state (doc "Reverting onto the current state"). */
     revert(repo: string, target: Record<string, unknown>): Promise<Reverted>;

@@ -425,7 +425,7 @@ fn reclaimable_from_inodes<'a>(size: i64, inodes: impl Iterator<Item = Option<&'
 /// group's stored counters true (doc "Duplicate groups").
 ///
 /// Every way of ceasing to be a live duplicate goes through here — the watcher's
-/// removals and content changes, `mf orphan clear`, a rollback's path clearing —
+/// removals and content changes, `mf orphan clear`, a revert's path clearing —
 /// so a group never outlives its members' departure by a whole scan. Writing
 /// only the link and letting the numbers rot was the old rule; a count the
 /// interfaces display is not an internal detail, and "stale but harmless" is

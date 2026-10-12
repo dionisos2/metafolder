@@ -21,7 +21,7 @@ the watcher and its buffered events, the executor. Where text is meant, text is 
 `mf_ignore` patterns are regexes over displayed paths, and responses report the
 displayed form. Two gaps remain ([[Path representation]]): a path ''argument''
 (`mf metarecord add --path`, `mf uuid`) crosses the JSON API as a string, so it must be valid
-UTF-8; and the clients that move files (rollback, sync) join the displayed path onto
+UTF-8; and the clients that move files (revert, sync) join the displayed path onto
 the root, which misses such a file.
 
 !! Looking a name up

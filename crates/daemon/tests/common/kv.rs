@@ -19,8 +19,18 @@ pub fn store() -> (KvStore, TempDir) {
     (kv, dir)
 }
 
+/// Reverts every operation newer than `after` (all of them for `None`), as
+/// one revision — the log's only way back (doc "The operation log").
+pub fn revert_since(kv: &mut KvStore, after: Option<i64>) {
+    use metafolder_daemon::store::Log;
+    let ops = kv.ops_after(after.unwrap_or(0)).unwrap();
+    let mut w = metafolder_daemon::log::Writer::begin(kv, None).unwrap();
+    metafolder_daemon::revert::apply(&mut w, &ops).unwrap();
+    w.commit().unwrap();
+}
+
 /// Deletes `uuid`'s rows of `field` directly, behind the `Writer`'s back —
-/// the state a rollback or an older daemon can leave, which no write makes.
+/// the state an older daemon can leave, which no write makes.
 pub fn delete_rows(kv: &mut KvStore, uuid: Uuid, field: &str) {
     let txn = kv.begin_write().unwrap();
     txn.delete_rows(uuid, Some(field)).unwrap();

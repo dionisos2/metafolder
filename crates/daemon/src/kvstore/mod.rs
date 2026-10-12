@@ -19,11 +19,9 @@
 //! | forest        | field · parent · name bytes      | uuid · row id             |
 //! | ops           | op id                            | the operation             |
 //! | snaps         | op id · after? · index           | a snapshot row            |
-//! | op_children   | parent op · child op             | —                         |
 //! | ops_by_rev    | revision · seq · op id           | —                         |
 //! | ops_by_entity | uuid · op id                     | —                         |
 //! | revisions     | revision id                      | timestamp · label · origin|
-//! | restorations  | position                         | a restoration             |
 //!
 //! A record's rows of one field are one prefix of `field_cells`: checking a
 //! candidate on the field searched reads those rows, not all of its record's
@@ -31,6 +29,9 @@
 //! row is still addressed by its id alone. The first layout kept the rows in
 //! `cells` keyed `uuid · row id`; [`KvStore::open`] migrates it
 //! ([`LAYOUT`]).
+//!
+//! The log is a sequence (doc "The operation log"): an operation names no
+//! parent, and "the log up to here" is a range of `ops`.
 //!
 //! Row ids, operation ids and revision ids are allocated from counters in
 //! `meta` and never reused; a row put back under its own id moves the counter
@@ -49,11 +50,9 @@ use metafolder_core::metarecord::{TreeName, Value};
 use uuid::Uuid;
 
 use crate::error::DomainError;
-use crate::log::{self, Delta, OpRow, Retention};
+use crate::log::{OpRow, Retention};
 use crate::rows::{self, FieldRow, RawValue, TreeRow};
-use crate::store::{
-    Begin, Counters, Log, NewOp, Questions, Restoration, RevisionMeta, Rows, WriteTxn,
-};
+use crate::store::{Begin, Counters, Log, NewOp, Questions, RevisionMeta, Rows, WriteTxn};
 
 mod derived;
 mod source;
@@ -76,11 +75,9 @@ struct Tables {
     forest: Db,
     ops: Db,
     snaps: Db,
-    op_children: Db,
     ops_by_rev: Db,
     ops_by_entity: Db,
     revisions: Db,
-    restorations: Db,
     // Derived (see `derived`).
     ids: Db,
     uuids: Db,
@@ -150,8 +147,9 @@ fn cell_prefix(uuid: &[u8], field: &str) -> Vec<u8> {
 }
 
 /// The version of the primary layout this code writes, `layout` in `meta`
-/// (absent: the first one, rows keyed `uuid · row id` in `cells`).
-const LAYOUT: i64 = 2;
+/// (absent: the first one, rows keyed `uuid · row id` in `cells`; 2: the
+/// history tree, operations chained to a parent).
+const LAYOUT: i64 = 3;
 
 /// A name inside a composite key: escaped, then terminated.
 fn name_key(name: &str) -> Vec<u8> {
@@ -298,10 +296,9 @@ fn dec_row(b: &[u8]) -> Result<FieldRow> {
     Ok(FieldRow { id: r.int()?, name: r.string()?, value: get_value(&mut r)? })
 }
 
-fn enc_op(op: &NewOp, parent: Option<i64>, rev: i64, seq: i64) -> Vec<u8> {
+fn enc_op(op: &NewOp, rev: i64, seq: i64) -> Vec<u8> {
     let mut out = Out::default();
-    out.opt_int(parent)
-        .int(rev)
+    out.int(rev)
         .int(seq)
         .bytes(op.op_type.as_str().as_bytes())
         .bytes(op.entity.as_bytes())
@@ -315,8 +312,7 @@ fn enc_op(op: &NewOp, parent: Option<i64>, rev: i64, seq: i64) -> Vec<u8> {
 /// [`enc_op`] for an operation read back whole — the same bytes.
 fn enc_op_row(op: &OpRow) -> Vec<u8> {
     let mut out = Out::default();
-    out.opt_int(op.parent_id)
-        .int(op.rev_id)
+    out.int(op.rev_id)
         .int(op.seq)
         .bytes(op.op_type.as_bytes())
         .bytes(op.entity_uuid.as_bytes())
@@ -332,7 +328,6 @@ fn dec_op(id: i64, b: &[u8]) -> Result<OpRow> {
     let mut r = In(b);
     Ok(OpRow {
         id,
-        parent_id: r.opt_int()?,
         rev_id: r.int()?,
         seq: r.int()?,
         op_type: r.string()?,
@@ -356,42 +351,6 @@ fn enc_revision(m: &RevisionMeta) -> Vec<u8> {
 fn dec_revision(b: &[u8]) -> Result<RevisionMeta> {
     let mut r = In(b);
     Ok(RevisionMeta { timestamp: r.int()?, label: r.opt_string()?, origin: r.opt_string()? })
-}
-
-fn enc_restoration(x: &Restoration) -> Vec<u8> {
-    let mut out = Out::default();
-    match x {
-        Restoration::SetPath { entity, parent, name } => {
-            out.0.push(0);
-            out.bytes(entity.as_bytes())
-                .opt_bytes(parent.as_ref().map(|p| p.as_bytes().as_slice()))
-                .bytes(name.as_bytes());
-        }
-        Restoration::ClearPath { entity } => {
-            out.0.push(1);
-            out.bytes(entity.as_bytes());
-        }
-        Restoration::ClearHashes { entity } => {
-            out.0.push(2);
-            out.bytes(entity.as_bytes());
-        }
-    }
-    out.0
-}
-
-fn dec_restoration(b: &[u8]) -> Result<Restoration> {
-    let mut r = In(b);
-    let tag = r.take(1)?[0];
-    let entity = uuid_of(r.bytes()?);
-    Ok(match tag {
-        0 => Restoration::SetPath {
-            entity,
-            parent: r.opt_bytes()?.map(uuid_of),
-            name: TreeName::from_bytes(r.bytes()?.to_vec()),
-        },
-        1 => Restoration::ClearPath { entity },
-        _ => Restoration::ClearHashes { entity },
-    })
 }
 
 /// The map a store opens on at the least: an address-space reservation, not
@@ -518,11 +477,9 @@ impl KvStore {
             forest: db("forest")?,
             ops: db("ops")?,
             snaps: db("snaps")?,
-            op_children: db("op_children")?,
             ops_by_rev: db("ops_by_rev")?,
             ops_by_entity: db("ops_by_entity")?,
             revisions: db("revisions")?,
-            restorations: db("restorations")?,
             ids: db("ids")?,
             uuids: db("uuids")?,
             sets: db("sets")?,
@@ -739,30 +696,21 @@ impl Read<'_> {
         Ok(out)
     }
 
-    /// The parent of `op`, refused when it is not older: children always have
-    /// larger ids than their parents, so a parent that does not is a cycle (or
-    /// a corruption heading into one), and a walk down would never end.
-    fn older_parent(op: &OpRow) -> Result<Option<i64>> {
-        match op.parent_id {
-            Some(p) if p >= op.id => bail!("operation history contains a cycle at op {}", op.id),
-            p => Ok(p),
-        }
-    }
-
-    /// The ancestor chain from `from`, at most `max` operations, HEAD-first.
-    fn chain(&self, from: i64, max: usize) -> Result<Vec<OpRow>> {
+    /// The operations at or before `from`, at most `max`, newest first: a
+    /// backward range of `ops`.
+    fn back(&self, from: i64, max: usize) -> Result<Vec<OpRow>> {
         let mut out = Vec::new();
-        let mut cur = Some(from);
         let mut cache = HashMap::new();
-        while let Some(id) = cur {
+        let end = be(from);
+        let range = (std::ops::Bound::Unbounded, std::ops::Bound::Included(&end[..]));
+        for e in self.t.ops.rev_range(self.r, &range)? {
             if out.len() >= max {
                 break;
             }
             self.count(1)?;
-            let Some(b) = self.t.ops.get(self.r, &be(id))? else { break };
-            let mut op = dec_op(id, b)?;
+            let (k, v) = e?;
+            let mut op = dec_op(from_be(k), v)?;
             op.origin = self.origin(op.rev_id, &mut cache)?;
-            cur = Read::older_parent(&op)?;
             out.push(op);
         }
         Ok(out)
@@ -787,33 +735,23 @@ impl Read<'_> {
         Ok(out)
     }
 
-    fn ancestor_where(
-        &self,
-        head: i64,
-        keep: &dyn Fn(&RevisionMeta) -> bool,
-    ) -> Result<Option<i64>> {
-        let mut seen: HashMap<i64, bool> = HashMap::new();
-        let mut cur = Some(head);
-        while let Some(id) = cur {
+    /// The newest operation whose revision `keep` accepts, walking back from
+    /// the newest one a revision at a time.
+    fn last_op_where(&self, keep: &dyn Fn(&RevisionMeta) -> bool) -> Result<Option<i64>> {
+        for e in self.t.revisions.rev_iter(self.r)? {
             self.count(1)?;
-            let Some(b) = self.t.ops.get(self.r, &be(id))? else { return Ok(None) };
-            let op = dec_op(id, b)?;
-            let ok = match seen.get(&op.rev_id) {
-                Some(ok) => *ok,
-                None => {
+            let (k, v) = e?;
+            if keep(&dec_revision(v)?) {
+                let rev = from_be(k);
+                let mut last = None;
+                for e in self.t.ops_by_rev.prefix_iter(self.r, &be(rev))? {
                     self.count(1)?;
-                    let ok = match self.t.revisions.get(self.r, &be(op.rev_id))? {
-                        Some(b) => keep(&dec_revision(b)?),
-                        None => false,
-                    };
-                    seen.insert(op.rev_id, ok);
-                    ok
+                    last = Some(from_be(&e?.0[16..]));
                 }
-            };
-            if ok {
-                return Ok(Some(id));
+                if last.is_some() {
+                    return Ok(last);
+                }
             }
-            cur = Read::older_parent(&op)?;
         }
         Ok(None)
     }
@@ -1068,88 +1006,22 @@ macro_rules! kv_reads {
                     Ok(out)
                 })
             }
-            fn ops_until(&self, from: i64, until: i64, max: usize) -> Result<Delta> {
-                if from == until {
-                    return Ok(Delta::Found(Vec::new()));
-                }
-                let $me = self;
-                // Up to `max + 1` operations, the anchor closing the walk when
-                // met.
-                $with(&mut |$read: &Read| {
-                    let mut rows = Vec::new();
-                    let mut cur = Some(from);
-                    let mut cache = HashMap::new();
-                    while let Some(id) = cur {
-                        if rows.len() == max + 1 {
-                            break;
-                        }
-                        $read.count(1)?;
-                        let Some(b) = $read.t.ops.get($read.r, &be(id))? else { break };
-                        let mut op = dec_op(id, b)?;
-                        op.origin = $read.origin(op.rev_id, &mut cache)?;
-                        cur = if id == until { None } else { Read::older_parent(&op)? };
-                        rows.push(op);
-                    }
-                    Ok(match rows.last() {
-                        Some(last) if last.id == until => {
-                            rows.pop();
-                            Delta::Found(rows)
-                        }
-                        _ if rows.len() > max => Delta::Budget,
-                        _ => Delta::Unrelated,
-                    })
-                })
-            }
-            fn ancestry(&self, from: i64) -> Result<Vec<i64>> {
-                Ok(self.ancestry_ops(from, None)?.into_iter().map(|o| o.id).collect())
-            }
-            fn restorations(&self) -> Result<Vec<(i64, Restoration)>> {
+            fn first_op(&self) -> Result<Option<i64>> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
-                    let mut out = Vec::new();
-                    for e in $read.t.restorations.iter($read.r)? {
-                        let (k, v) = e?;
-                        out.push((from_be(k), dec_restoration(v)?));
-                    }
-                    $read.count(out.len() as u64 + 1)?;
-                    Ok(out)
+                    $read.count(1)?;
+                    Ok($read.t.ops.first($read.r)?.map(|(k, _)| from_be(k)))
                 })
             }
-            fn ancestry_ops(&self, from: i64, max: Option<usize>) -> Result<Vec<OpRow>> {
+            fn ops_back(&self, from: i64, max: Option<usize>) -> Result<Vec<OpRow>> {
                 let $me = self;
-                $with(&mut |$read: &Read| $read.chain(from, max.unwrap_or(usize::MAX)))
+                $with(&mut |$read: &Read| $read.back(from, max.unwrap_or(usize::MAX)))
             }
             fn all_ops(&self) -> Result<Vec<OpRow>> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
                     let ids = $read.all_op_ids()?;
                     $read.ops_with_origins(ids.into_iter())
-                })
-            }
-            fn forward_line(&self, head: i64) -> Result<Vec<OpRow>> {
-                let $me = self;
-                $with(&mut |$read: &Read| {
-                    // `head`'s subtree, through the children index: what is
-                    // behind `head` is never read.
-                    let mut children: HashMap<i64, Vec<i64>> = HashMap::new();
-                    let mut frontier = vec![head];
-                    while let Some(op) = frontier.pop() {
-                        let mut kids = Vec::new();
-                        for e in $read.t.op_children.prefix_iter($read.r, &be(op))? {
-                            kids.push(from_be(&e?.0[8..]));
-                        }
-                        $read.count(kids.len() as u64 + 1)?;
-                        frontier.extend(&kids);
-                        children.insert(op, kids);
-                    }
-                    $read.ops_with_origins(log::forward_path(&children, head).into_iter())
-                })
-            }
-            fn has_children(&self, op: i64) -> Result<bool> {
-                let $me = self;
-                $with(&mut |$read: &Read| {
-                    $read.count(1)?;
-                    Ok($read.t.op_children.prefix_iter($read.r, &be(op))?.next().is_some())
                 })
             }
             fn revisions(&self, ids: &[i64]) -> Result<HashMap<i64, RevisionMeta>> {
@@ -1235,23 +1107,17 @@ macro_rules! kv_reads {
                     Ok(n as i64)
                 })
             }
-            fn ancestor_at_or_before(&self, head: i64, timestamp_ms: i64) -> Result<Option<i64>> {
+            fn last_op_at_or_before(&self, timestamp_ms: i64) -> Result<Option<i64>> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
-                    $read.ancestor_where(head, &|m: &RevisionMeta| m.timestamp <= timestamp_ms)
+                    $read.last_op_where(&|m: &RevisionMeta| m.timestamp <= timestamp_ms)
                 })
             }
-            fn ancestor_labelled(&self, head: i64, label: &str) -> Result<Option<i64>> {
+            fn last_op_labelled(&self, label: &str) -> Result<Option<i64>> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
-                    $read
-                        .ancestor_where(head, &|m: &RevisionMeta| m.label.as_deref() == Some(label))
+                    $read.last_op_where(&|m: &RevisionMeta| m.label.as_deref() == Some(label))
                 })
-            }
-            fn before_revision_of(&self, op: i64) -> Result<Option<i64>> {
-                let head = self.op(op)?.with_context(|| format!("operation {op} not found"))?;
-                let first = self.revision_ops(head.rev_id)?.into_iter().next();
-                Ok(first.context("a revision without operations")?.parent_id)
             }
         }
     };
@@ -1316,7 +1182,7 @@ pub struct KvTxn<'e> {
     /// holds: a bitmap is read back whole without scanning the cache.
     cached_chunks: RefCell<HashMap<Vec<u8>, std::collections::BTreeSet<u16>>>,
     /// The store's read counter: a write's reads count as much as a query's
-    /// (`tests/log_cost.rs` holds the trim and the navigation to it).
+    /// (`tests/log_cost.rs` holds the trim to it).
     reads: &'e std::sync::atomic::AtomicU64,
 }
 
@@ -1368,11 +1234,17 @@ impl KvStore {
 }
 
 impl KvStore {
-    /// Moves the rows of a store of the first layout (`cells`, keyed
-    /// `uuid · row id`) into `field_cells`, keyed by field, and points
-    /// `row_owner` at their new prefixes — in one transaction, a batch of
-    /// rows in memory at a time. A new store has nothing to move and only
-    /// records the layout.
+    /// Brings a store of an older layout to [`LAYOUT`], in one transaction:
+    ///
+    /// * the first layout's rows (`cells`, keyed `uuid · row id`) move into
+    ///   `field_cells`, keyed by field, and `row_owner` points at their new
+    ///   prefixes — a batch of rows in memory at a time;
+    /// * the history tree (layouts 1 and 2: operations chained to a parent,
+    ///   `op_children`, `restorations`) is **dropped, not converted** — the
+    ///   log is emptied, the metarecords kept (user decision, October 2026;
+    ///   doc "The operation log").
+    ///
+    /// A new store has nothing to move and only records the layout.
     fn migrate_layout(&mut self) -> Result<()> {
         const BATCH: usize = 10_000;
         let env = self.env.clone();
@@ -1405,6 +1277,15 @@ impl KvStore {
                 }
                 old.clear(&mut w)?;
             }
+            for name in ["op_children", "restorations"] {
+                if let Some(old) = env.open_database::<Bytes, Bytes>(&w, Some(name))? {
+                    old.clear(&mut w)?;
+                }
+            }
+            for db in [t.ops, t.snaps, t.ops_by_rev, t.ops_by_entity, t.revisions] {
+                db.clear(&mut w)?;
+            }
+            t.meta.delete(&mut w, b"head")?;
         }
         txn.meta_put("layout", LAYOUT)?;
         txn.finish()
@@ -1491,31 +1372,6 @@ impl KvTxn<'_> {
         })
     }
 
-    /// Whether `op` is on HEAD's line. A revision's operations are one chain,
-    /// so the walk down from `head` goes a revision at a time — its first
-    /// operation, then that one's parent — reading three keys per revision
-    /// whatever they hold. Ids only decrease going down, so it stops at the
-    /// first one not above `op`.
-    fn on_line(&self, head: i64, op: i64) -> Result<bool> {
-        let target_rev = Log::op(self, op)?.context("the cutoff operation")?.rev_id;
-        let mut cur = Some(head);
-        while let Some(id) = cur {
-            if id <= op {
-                return Ok(id == op);
-            }
-            let rev = Log::op(self, id)?.context("an operation on HEAD's line")?.rev_id;
-            if rev == target_rev {
-                // Within one revision's chain, which starts at `op` itself
-                // when `op` is the revision's first.
-                return Ok(self.first_op_of(rev)? == Some(op));
-            }
-            let first = self.first_op_of(rev)?.context("a revision without operations")?;
-            let first = Log::op(self, first)?.context("a revision's first operation")?;
-            cur = Read::older_parent(&first)?;
-        }
-        Ok(false)
-    }
-
     fn remove_op(&self, id: i64) -> Result<()> {
         let Some(op) = Log::op(self, id)? else { return Ok(()) };
         let mut w = self.txn.borrow_mut();
@@ -1529,9 +1385,6 @@ impl KvTxn<'_> {
             .collect::<std::result::Result<_, _>>()?;
         for k in snaps {
             t.snaps.delete(&mut w, &k)?;
-        }
-        if let Some(p) = op.parent_id {
-            t.op_children.delete(&mut w, &key(&[&be(p), &be(id)]))?;
         }
         t.ops_by_rev.delete(&mut w, &key(&[&be(op.rev_id), &be(op.seq), &be(id)]))?;
         t.ops_by_entity.delete(&mut w, &key(&[op.entity_uuid.as_bytes(), &be(id)]))?;
@@ -1679,13 +1532,7 @@ impl WriteTxn for KvTxn<'_> {
         Ok(())
     }
 
-    fn append_ops(
-        &self,
-        rev: i64,
-        parent: Option<i64>,
-        first_seq: i64,
-        ops: &[NewOp],
-    ) -> Result<i64> {
+    fn append_ops(&self, rev: i64, first_seq: i64, ops: &[NewOp]) -> Result<i64> {
         let base = {
             let w = self.txn.borrow();
             self.t.meta.get(&w, b"next_op")?.map_or(1, from_be)
@@ -1694,17 +1541,13 @@ impl WriteTxn for KvTxn<'_> {
         let t = self.t;
         for (i, op) in ops.iter().enumerate() {
             let id = base + i as i64;
-            let parent = if i == 0 { parent } else { Some(id - 1) };
             let seq = first_seq + i as i64;
-            t.ops.put(&mut w, &be(id), &enc_op(op, parent, rev, seq))?;
+            t.ops.put(&mut w, &be(id), &enc_op(op, rev, seq))?;
             for (after, rows) in [(0u8, &op.before), (1u8, &op.after)] {
                 for (n, row) in rows.iter().enumerate() {
                     let k = key(&[&be(id), &[after], &(n as u32).to_be_bytes()]);
                     t.snaps.put(&mut w, &k, &enc_row(row))?;
                 }
-            }
-            if let Some(p) = parent {
-                t.op_children.put(&mut w, &key(&[&be(p), &be(id)]), &[])?;
             }
             t.ops_by_rev.put(&mut w, &key(&[&be(rev), &be(seq), &be(id)]), &[])?;
             t.ops_by_entity.put(&mut w, &key(&[op.entity.as_bytes(), &be(id)]), &[])?;
@@ -1727,12 +1570,11 @@ impl WriteTxn for KvTxn<'_> {
 
     /// The log trim (`log::trim`), over these tables: keep the `revisions` newest
     /// (and, when asked, everything from the oldest labelled one), cutting at
-    /// the first operation of the oldest kept revision — only when that cut is
-    /// on HEAD's line of history.
-    /// Reads what it deletes, and one key or three per revision it keeps —
-    /// never the operations those hold (`tests/log_cost.rs`): it runs once
-    /// every `slack` writes, and the kept revisions may be a reconcile's.
-    fn trim(&self, retention: Retention, head: i64) -> Result<usize> {
+    /// the first operation of the oldest kept revision. Reads what it deletes,
+    /// and one key per revision it keeps — never the operations those hold
+    /// (`tests/log_cost.rs`): it runs once every `slack` writes, and the kept
+    /// revisions may be a reconcile's.
+    fn trim(&self, retention: Retention, _head: i64) -> Result<usize> {
         if !retention.enabled() {
             return Ok(0);
         }
@@ -1765,20 +1607,7 @@ impl WriteTxn for KvTxn<'_> {
             }
         }
         let Some(cutoff) = self.first_op_of(keep_from)? else { return Ok(0) };
-        let first_op = self.t.ops.first(&self.txn.borrow())?.map(|(k, _)| from_be(k));
-        count(1);
-        if first_op == Some(cutoff) {
-            return Ok(0);
-        }
-        if !self.on_line(head, cutoff)? {
-            // Not on HEAD's line: the newest revisions sit on a branch a
-            // rollback abandoned; cutting would delete what HEAD stands on.
-            return Ok(0);
-        }
-        self.detach_op(cutoff)?;
-        // Everything older than the cutoff, and every branch hanging below it
-        // (a branch rooted before the cutoff cannot survive it): found through
-        // the children index, so the operations kept are never listed.
+        // Everything older than the cutoff.
         let mut doomed: Vec<i64> = {
             let txn = self.txn.borrow();
             let end = be(cutoff);
@@ -1790,30 +1619,10 @@ impl WriteTxn for KvTxn<'_> {
             out
         };
         count(doomed.len() + 1);
-        let mut seen: HashSet<i64> = doomed.iter().copied().collect();
-        let mut frontier = doomed.clone();
-        while let Some(op) = frontier.pop() {
-            let children: Vec<i64> = {
-                let txn = self.txn.borrow();
-                let mut out = Vec::new();
-                for e in self.t.op_children.prefix_iter(&txn, &be(op))? {
-                    out.push(from_be(&e?.0[8..]));
-                }
-                out
-            };
-            count(children.len() + 1);
-            for child in children {
-                if seen.insert(child) {
-                    doomed.push(child);
-                    frontier.push(child);
-                }
-            }
-        }
         let mut revs_hit: HashSet<i64> = HashSet::new();
         for &id in &doomed {
             revs_hit.insert(Log::op(self, id)?.context("an operation listed a moment ago")?.rev_id);
         }
-        // Children before parents: every child has a larger id.
         doomed.sort_unstable_by(|a, b| b.cmp(a));
         self.delete_ops(&doomed)?;
         for rev in revs_hit {
@@ -1832,20 +1641,6 @@ impl WriteTxn for KvTxn<'_> {
         }
         drop(w);
         self.clear_derived()
-    }
-
-    fn detach_op(&self, op: i64) -> Result<()> {
-        let Some(row) = Log::op(self, op)? else { return Ok(()) };
-        let Some(parent) = row.parent_id else { return Ok(()) };
-        let b = self.t.ops.get(&self.txn.borrow(), &be(op))?.context("the operation")?.to_vec();
-        // The parent is the encoding's first field: rewrite it as `None`.
-        let rest = &b[9..];
-        let mut out = vec![0u8];
-        out.extend_from_slice(rest);
-        let mut w = self.txn.borrow_mut();
-        self.t.ops.put(&mut w, &be(op), &out)?;
-        self.t.op_children.delete(&mut w, &key(&[&be(parent), &be(op)]))?;
-        Ok(())
     }
 
     fn delete_ops(&self, ids: &[i64]) -> Result<()> {
@@ -1880,26 +1675,6 @@ impl WriteTxn for KvTxn<'_> {
         Ok(())
     }
 
-    fn queue_restoration(&self, restoration: &Restoration) -> Result<()> {
-        let n = self.next("next_restoration")?;
-        self.t.restorations.put(
-            &mut self.txn.borrow_mut(),
-            &be(n),
-            &enc_restoration(restoration),
-        )?;
-        Ok(())
-    }
-
-    fn drop_restorations(&self, up_to: i64) -> Result<()> {
-        let keys: Vec<i64> =
-            Log::restorations(self)?.into_iter().map(|(k, _)| k).filter(|k| *k <= up_to).collect();
-        let mut w = self.txn.borrow_mut();
-        for k in keys {
-            self.t.restorations.delete(&mut w, &be(k))?;
-        }
-        Ok(())
-    }
-
     fn import_revision(&self, id: i64, meta: &RevisionMeta) -> Result<()> {
         self.t.revisions.put(&mut self.txn.borrow_mut(), &be(id), &enc_revision(meta))?;
         self.bump_past("next_rev", id)
@@ -1916,9 +1691,6 @@ impl WriteTxn for KvTxn<'_> {
                     let k = key(&[&be(id), &[flag], &(n as u32).to_be_bytes()]);
                     t.snaps.put(&mut w, &k, &enc_row(row))?;
                 }
-            }
-            if let Some(p) = op.parent_id {
-                t.op_children.put(&mut w, &key(&[&be(p), &be(id)]), &[])?;
             }
             t.ops_by_rev.put(&mut w, &key(&[&be(op.rev_id), &be(op.seq), &be(id)]), &[])?;
             t.ops_by_entity.put(&mut w, &key(&[op.entity_uuid.as_bytes(), &be(id)]), &[])?;

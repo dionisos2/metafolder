@@ -239,25 +239,24 @@ fn test_unload_refused_while_a_task_is_in_flight() {
 }
 
 #[test]
-fn test_unload_refused_during_rollback_navigation() {
-    use metafolder_daemon::state::{AppState, RollbackLock};
+fn test_unload_refused_during_a_coordinated_revert() {
+    use metafolder_daemon::state::{AppState, RevertLock};
 
-    let root = temp_dir("unload_rb");
+    let root = temp_dir("unload_revert");
     let state = AppState::new();
     let uuid = state.init_repo(&root, None, None, false).unwrap();
 
-    // Simulate an in-progress coordinated rollback navigation.
-    *state.repo(uuid).unwrap().rollback_lock.lock().unwrap() =
-        Some(RollbackLock::Navigate { plan: Default::default() });
+    // Simulate an in-progress coordinated revert.
+    *state.repo(uuid).unwrap().revert_lock.lock().unwrap() = Some(RevertLock { ops: vec![] });
 
-    // Unload is refused with a 409 while the navigation holds the lock.
+    // Unload is refused with a 409 while the revert holds the lock.
     let err = state.unload_repo(uuid).unwrap_err();
     assert_eq!(err.status, axum::http::StatusCode::CONFLICT);
     // Still loaded.
     assert!(state.repo(uuid).is_ok());
 
-    // Once the navigation is cleared, unload succeeds.
-    *state.repo(uuid).unwrap().rollback_lock.lock().unwrap() = None;
+    // Once the revert is over, unload succeeds.
+    *state.repo(uuid).unwrap().revert_lock.lock().unwrap() = None;
     state.unload_repo(uuid).unwrap();
     assert!(state.repo(uuid).is_err());
 

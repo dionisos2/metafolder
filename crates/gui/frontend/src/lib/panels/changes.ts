@@ -1,15 +1,14 @@
 // The daemon change feed, one per realm. It polls GET /log/since and tells its
 // subscribers what changed, so a panel showing daemon data re-reads it after a
 // write it did not make itself (the watcher recording a rename, another panel,
-// the CLI, a rollback). It holds no daemon data — only the last head seen per
+// the CLI, a revert). It holds no daemon data — only the last head seen per
 // repository — so nothing here can go stale: the re-read is a daemon
 // round-trip like any other.
 
 import type { DaemonResponse, RawFetcher } from './reads';
 
 /** What changed: the touched metarecords, or `null` for the whole repository
- *  (a rollback, a delta too large for the daemon to list, the empty→filled
- *  transition). */
+ *  (a delta too large for the daemon to list, the empty→filled transition). */
 export interface ChangeEvent {
   repo: string;
   uuids: string[] | null;
@@ -62,8 +61,9 @@ export function createChangeFeed() {
     lastHead.set(repo, head);
     if (since === undefined || head === since) return;
     if (truncated || operations.length === 0) {
-      // Truncated: too many to list. Empty with a moved head: a rollback, or
-      // a repository that was empty at the baseline (no ?op=, so no list).
+      // Truncated: too many to list. Empty with a moved head: a repository
+      // that was empty at the baseline (no ?op=, so no list). The log only
+      // grows, so a head never moves back (doc "The operation log").
       emit({ repo, uuids: null });
       return;
     }

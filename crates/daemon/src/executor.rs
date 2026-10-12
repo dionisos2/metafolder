@@ -9,9 +9,7 @@
 //! and closing that gap needs a reconcile, which closes this one too. Paid for,
 //! the persistence cost a transaction on the watcher's hot path and let a batch
 //! the executor could not apply survive a restart, wedging tracking for good;
-//! it needed a failure budget of its own to be survivable. The `restore_*` rows
-//! of `pending_operation` are a different population — they belong to the log
-//! (rollback skips) and stay persistent.
+//! it needed a failure budget of its own to be survivable.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -30,7 +28,7 @@ use crate::fs_meta;
 use crate::log::{self, OpType, Writer};
 use crate::relpath::RelPath;
 use crate::state::RepoState;
-use crate::store::{Database, Restoration, Rows};
+use crate::store::Rows;
 use crate::tree_cache::TreeCache;
 
 /// A raw filesystem event, as enqueued by the watcher. Paths are
@@ -412,10 +410,10 @@ fn flush_summary(
 }
 
 fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStats> {
-    // While a coordinated rollback holds the lock, pending operations (watcher
-    // events and restoration ops) accumulate but are not committed; they are
-    // replayed once the lock is released (doc "Filesystem coordination").
-    if repo.is_rollback_locked() {
+    // While a coordinated revert holds the lock, watcher events accumulate but
+    // are not committed; they are replayed once the lock is released (doc
+    // "Filesystem coordination").
+    if repo.is_revert_locked() {
         return Ok(FlushStats::default());
     }
     // Ingestion paused (doc "Pausing the watcher"): the watcher
@@ -441,11 +439,6 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
     let mut conn = metafolder_core::slowlog::timed("wait:conn", || repo.conn.lock_recover());
     let cache = repo.tree();
 
-    // Restoration ops from skipped rollback steps are replayed first, as their
-    // own revision, before the watcher events recorded during the lock.
-    let mut revisions_from_restore = 0;
-    revisions_from_restore += flush_restorations(&mut conn, repo.log_retention())?;
-
     // Taken whole: whatever the watcher buffers while this flush runs lands in
     // the now-empty buffer and is picked up by the next round. On any path that
     // does not apply the batch, it goes back (`return_pending`).
@@ -454,7 +447,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
     let touch_mark = repo.rules_touch_mark();
     let taken = take_pending(repo);
     if taken.is_empty() {
-        return Ok(FlushStats { events: 0, revisions: revisions_from_restore, cancelled: false });
+        return Ok(FlushStats { events: 0, revisions: 0, cancelled: false });
     }
     report(FlushProgress::Buffered(taken.len()));
     metafolder_core::slowlog::note("buffered", taken.len().to_string());
@@ -651,11 +644,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
                 ),
                 repo.uuid(),
             );
-            Ok(FlushStats {
-                events: n_events,
-                revisions: revisions + revisions_from_restore,
-                cancelled: false,
-            })
+            Ok(FlushStats { events: n_events, revisions, cancelled: false })
         }
         // Stopped by the user: the group in progress rolled back with its
         // writer, the batch goes back into the buffer, and ingestion stays
@@ -673,7 +662,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
                 ),
                 repo.uuid(),
             );
-            Ok(FlushStats { events: n_events, revisions: revisions_from_restore, cancelled: true })
+            Ok(FlushStats { events: n_events, revisions: 0, cancelled: true })
         }
         Err(e) => {
             // Retried on the next flush. Unlike the persistent buffer this
@@ -684,52 +673,6 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
             Err(e)
         }
     }
-}
-
-/// Replays restoration ops left by skipped coordinated-rollback steps as a
-/// single revision (doc "Filesystem coordination"), then deletes them.
-fn flush_restorations(conn: &mut dyn Database, retention: crate::log::Retention) -> Result<usize> {
-    let rows = conn.restorations()?;
-    if rows.is_empty() {
-        return Ok(0);
-    }
-    let max_id = rows.iter().map(|r| r.0).max().unwrap_or(0);
-
-    let mut writer = Writer::begin_with_retention(conn, None, retention)?;
-    // Re-recording the filesystem truth a skipped navigation step left behind:
-    // the daemon's doing, like the watcher's own flush.
-    writer.set_origin(log::ORIGIN_WATCHER)?;
-    for (_, restoration) in &rows {
-        match restoration {
-            Restoration::SetPath { entity, parent, name } => {
-                writer.set_field_as(
-                    OpType::FileMoved,
-                    *entity,
-                    "mfr_path",
-                    Value::TreeRef { parent: *parent, name: name.clone() },
-                )?;
-            }
-            Restoration::ClearPath { entity } => {
-                writer.set_field_as(OpType::FileDeleted, *entity, "mfr_path", Value::Nothing)?;
-                crate::duplicates::leave_group(&mut writer, OpType::FileDeleted, *entity)?;
-            }
-            Restoration::ClearHashes { entity } => {
-                for name in crate::fingerprint::CONTENT_DERIVED_FIELDS {
-                    if *name == crate::duplicates::GROUP_FIELD {
-                        continue;
-                    }
-                    writer.clear_field_as(OpType::FileModified, *entity, name)?;
-                }
-                crate::duplicates::leave_group(&mut writer, OpType::FileModified, *entity)?;
-            }
-        }
-    }
-    // Dequeued in the revision that re-records them: a crash leaves both or
-    // neither, never a replay of what was already written.
-    writer.drop_restorations(max_id)?;
-    let wrote = writer.op_count() > 0;
-    writer.commit()?;
-    Ok(if wrote { 1 } else { 0 })
 }
 
 /// Application context for one revision (one group of events).

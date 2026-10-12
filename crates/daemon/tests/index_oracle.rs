@@ -1367,9 +1367,8 @@ fn tree_ref_sort_without_sort_keys_is_unsupported() {
 fn tree_ref_sort_with_a_detached_node() {
     // A node whose parent lost its own TreeRef row. A manual write can no longer
     // produce this (doc "Referential integrity of a forest"), but a
-    // rollback restores field rows straight into the table without going through
-    // that check, and a repository written before it exists may hold one — so
-    // the state is still reachable, and the two engines must still agree about
+    // repository written before the check existed may hold one — so the state
+    // is still reachable, and the two engines must still agree about
     // it. Built here the way those do: by touching the rows directly. The store
     // leaves such a node detached — treated as a root — and the oracle's path
     // walk must stop there too.

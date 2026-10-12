@@ -3,4 +3,4 @@ tags: [[CLI command]] [[Event log]]
 kind: reference
 summary: Print the id of the operation the history is on (what --id targets)
 
-The id of the operation HEAD is on ([[History tree and HEAD]]).
+The id of the newest operation of the log — what `mf log undo --after` takes ([[Undo and redo]]). `0` on an empty log.

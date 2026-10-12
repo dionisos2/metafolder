@@ -154,6 +154,18 @@ than breaking them.
     `mf_watch = true` no longer reads as unwatched.
 
 ### Changed
+- **The event log is a sequence, not a tree: undo and redo are reverts only.**
+  An operation names no parent; HEAD is the newest operation and only moves
+  forward. Undo reverts your newest change still standing, redo the newest undo
+  still standing — so a redo survives the watcher writing between it and its
+  undo (it was lost: the undo had been a rollback, and the watcher's write
+  started a branch), and two redos in a row both work (the second answered
+  "Nothing to redo."). `mf log undo --after <op>` undoes back to a point; the
+  tagging scripts' going back uses it instead of a rollback that unrecorded
+  the watcher's writes meanwhile. A revert recreating a folder's file before
+  the folder checks the forest at commit. `GET /log` gains `first` (where undo
+  stops) and loses `mode` and `parent_id`. `API_VERSION` 18 (doc "Why the log
+  stops being a tree", doc "The undo selection").
 - **A revert is applied onto the current state; nothing blocks it any more.**
   It goes back to what each operation replaced, whatever was written on the
   same field since — the plan names that later write (`changed_since`) and
@@ -240,6 +252,14 @@ than breaking them.
   "Command names (non-exhaustive default set)", "User commands").
 
 ### Removed
+- **Rollback and the history tree.** `mf log rollback`, `log:rollback`,
+  `POST /rollback` and its plan, summary and coordinated `start`/`step`/`abort`,
+  the restorations a skipped step left, the `rollback` task, `mf log list
+  --tree`/`--graph` and the log panel's graph, `mf log prune linearize`. A
+  repository opened by this version has its log **emptied, not converted**
+  (layout 3; the metarecords are kept) — an exception to the conversion rule,
+  decided by the user. The trash's `rollback` reason is now `revert` (old
+  entries read as such).
 - **`POST /repos/:repo/track`** — `POST /repos/:repo/metarecords` with a `path`
   replaces it, refusing what it accepted (an already recorded path, missing
   parents without `parents`). `API_VERSION` 16. The bench's `api.track`

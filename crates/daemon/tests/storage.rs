@@ -5,7 +5,7 @@ use metafolder_core::metarecord::{Field, TreeName, Value};
 use metafolder_daemon::kvstore::KvStore;
 use metafolder_daemon::log::{OpRow, OpType, Writer};
 use metafolder_daemon::reserved;
-use metafolder_daemon::store::{Begin, Log, Rows};
+use metafolder_daemon::store::{Log, Rows};
 use uuid::Uuid;
 
 fn test_conn() -> (KvStore, common::TempDir) {
@@ -20,13 +20,14 @@ fn create(conn: &mut KvStore, fields: Vec<Field>) -> metafolder_core::metarecord
     m
 }
 
-/// The operations from `from` back to `until` (excluded), `None` when
-/// `until` is not an ancestor within `max` steps.
-fn ops_until(conn: &KvStore, from: i64, until: i64, max: usize) -> Option<Vec<OpRow>> {
-    match conn.ops_until(from, until, max).unwrap() {
-        metafolder_daemon::log::Delta::Found(ops) => Some(ops),
-        _ => None,
-    }
+/// Reverts the revision the newest operation belongs to, as one new revision.
+fn revert_last_revision(conn: &mut KvStore) {
+    let head = conn.head().unwrap().unwrap();
+    let rev = conn.op(head).unwrap().unwrap().rev_id;
+    let ops = conn.revision_ops(rev).unwrap();
+    let mut w = Writer::begin(conn, None).unwrap();
+    metafolder_daemon::revert::apply(&mut w, &ops).unwrap();
+    w.commit().unwrap();
 }
 
 /// The operations of one type, in id order.
@@ -126,8 +127,6 @@ fn test_retype_field_converts_rolls_back_and_relocks() {
         vec![Field::new("rating", Value::Int(5)), Field::new("rating", Value::Nothing)],
     );
 
-    let head_before = conn.head().unwrap();
-
     let mut w = Writer::begin(&mut conn, None).unwrap();
     let summary = w.retype_field("rating", FieldType::String).unwrap();
     w.commit().unwrap();
@@ -145,8 +144,8 @@ fn test_retype_field_converts_rolls_back_and_relocks() {
     assert!(w.set_field(m1.uuid, "rating", Value::Int(9)).is_err());
     drop(w);
 
-    // Rollback to before the retype restores the original Int values exactly.
-    metafolder_daemon::log::navigate(&mut conn, head_before).unwrap();
+    // Reverting the retype restores the original Int values.
+    revert_last_revision(&mut conn);
     let g1 = conn.metarecord(m1.uuid).unwrap().unwrap();
     assert_eq!(g1.get("rating"), Some(&Value::Int(3)));
 }
@@ -376,7 +375,6 @@ fn test_create_record_writes_log() {
     let op = &ops[0];
     assert_eq!(op.op_type, "create_metarecord");
     assert_eq!(op.entity_uuid, m.uuid);
-    assert_eq!(op.parent_id, None, "first operation has no parent");
     assert_eq!(op.seq, 1);
 
     // After-snapshot contains the created field rows; no before rows.
@@ -529,14 +527,14 @@ fn test_multiple_ops_in_one_revision_chain() {
     w.set_field(m.uuid, "c", Value::Int(3)).unwrap();
     w.commit().unwrap();
 
-    // The three operations share one revision, with seq 1..3 and a parent chain.
+    // The three operations share one revision, with seq 1..3 and consecutive ids.
     let ops = ops_of_type(&conn, "set_field");
     assert_eq!(ops.len(), 3);
     let rev = ops[0].rev_id;
     assert!(ops.iter().all(|o| o.rev_id == rev));
     assert_eq!(ops.iter().map(|o| o.seq).collect::<Vec<_>>(), vec![1, 2, 3]);
-    assert_eq!(ops[1].parent_id, Some(ops[0].id));
-    assert_eq!(ops[2].parent_id, Some(ops[1].id));
+    assert_eq!(ops[1].id, ops[0].id + 1);
+    assert_eq!(ops[2].id, ops[1].id + 1);
 
     let label = conn.revisions(&[rev]).unwrap().remove(&rev).and_then(|m| m.label);
     assert_eq!(label.as_deref(), Some("batch"));
@@ -551,8 +549,8 @@ fn test_multiple_ops_in_one_revision_chain() {
 
 #[test]
 fn test_large_revision_chain_across_bulk_chunks() {
-    // More operations than the incremental flush threshold (4096): the parent
-    // chain, seq numbering, snapshots and HEAD must stay correct across it.
+    // More operations than the incremental flush threshold (4096): the id
+    // sequence, seq numbering, snapshots and HEAD must stay correct across it.
     const N: i64 = 5000;
     let (mut conn, _dir) = test_conn();
     let m = create(&mut conn, vec![]);
@@ -566,40 +564,15 @@ fn test_large_revision_chain_across_bulk_chunks() {
     let ops = ops_of_type(&conn, "set_field");
     assert_eq!(ops.len(), N as usize);
     let create_op = ops_of_type(&conn, "create_metarecord")[0].id;
-    assert_eq!(ops[0].parent_id, Some(create_op), "first op chains to the previous HEAD");
+    assert_eq!(ops[0].id, create_op + 1, "first op follows the previous HEAD");
     for (i, op) in ops.iter().enumerate() {
         assert_eq!(op.seq, i as i64 + 1, "seq numbering");
         if i > 0 {
-            assert_eq!(op.parent_id, Some(ops[i - 1].id), "parent chain at op {i}");
+            assert_eq!(op.id, ops[i - 1].id + 1, "id sequence at op {i}");
         }
         assert_eq!(conn.snapshots(op.id, true).unwrap().len(), 1, "after-snapshot of op {i}");
     }
     assert_eq!(conn.head().unwrap(), Some(ops.last().unwrap().id));
-}
-
-#[test]
-fn test_ancestry_detects_cycle() {
-    let (mut conn, _dir) = test_conn();
-    let m = create(&mut conn, vec![]);
-    let mut w = Writer::begin(&mut conn, None).unwrap();
-    w.set_field(m.uuid, "a", Value::Int(1)).unwrap();
-    w.set_field(m.uuid, "b", Value::Int(2)).unwrap();
-    w.commit().unwrap();
-
-    // Corrupt the log: point the oldest operation at the newest one.
-    let ops = conn.all_ops().unwrap();
-    let (oldest, newest) = (ops.iter().min_by_key(|o| o.id), ops.iter().max_by_key(|o| o.id));
-    let mut corrupt = oldest.unwrap().clone();
-    corrupt.parent_id = Some(newest.unwrap().id);
-    let (before, after) =
-        (conn.snapshots(corrupt.id, false).unwrap(), conn.snapshots(corrupt.id, true).unwrap());
-    let txn = conn.begin_write().unwrap();
-    txn.import_op(&corrupt, &before, &after).unwrap();
-    txn.commit().unwrap();
-
-    let head = conn.head().unwrap().unwrap();
-    let err = conn.ancestry(head).unwrap_err();
-    assert!(err.to_string().contains("cycle"), "unexpected error: {err}");
 }
 
 #[test]
@@ -861,7 +834,6 @@ fn test_op_type_string_roundtrip() {
 
 // ── The version is a content hash (doc "Metarecord version") ───────────────
 
-use metafolder_daemon::log;
 use metafolder_daemon::version;
 
 mod common;
@@ -922,50 +894,6 @@ fn test_a_value_put_back_restores_the_version() {
 }
 
 #[test]
-fn test_rollback_and_redo_land_on_the_version_the_content_dictates() {
-    // Navigation restores the rows; the version follows them. Nothing is
-    // replayed from the log, so a rewind cannot leave a metarecord carrying a
-    // version that describes some other state.
-    let (mut conn, _dir) = test_conn();
-    let m = create(&mut conn, vec![]);
-
-    set_field(&mut conn, m.uuid, "a", Value::Int(1));
-    let head_v1 = conn.head().unwrap();
-    let at_one = conn.version(m.uuid).unwrap();
-
-    set_field(&mut conn, m.uuid, "a", Value::Int(2));
-    let head_v2 = conn.head().unwrap();
-    let at_two = conn.version(m.uuid).unwrap();
-
-    log::navigate(&mut conn, head_v1).unwrap();
-    assert_eq!(conn.version(m.uuid).unwrap(), at_one);
-    assert_eq!(conn.version(m.uuid).unwrap(), Some(version_of_content(&conn, m.uuid)));
-
-    log::navigate(&mut conn, head_v2).unwrap();
-    assert_eq!(conn.version(m.uuid).unwrap(), at_two);
-    assert_eq!(conn.version(m.uuid).unwrap(), Some(version_of_content(&conn, m.uuid)));
-}
-
-#[test]
-fn test_a_write_after_a_rollback_reuses_the_version_of_the_state_it_recreates() {
-    // The opposite of what the allocator guaranteed, and the point of the
-    // change: a version names a *state*, not a write. Rolling back and writing
-    // the value the rolled-back write had put there returns to that state, so
-    // it returns to its version.
-    let (mut conn, _dir) = test_conn();
-    let m = create(&mut conn, vec![]);
-
-    set_field(&mut conn, m.uuid, "a", Value::Int(1));
-    let head_v1 = conn.head().unwrap();
-    set_field(&mut conn, m.uuid, "a", Value::Int(2));
-    let at_two = conn.version(m.uuid).unwrap();
-
-    log::navigate(&mut conn, head_v1).unwrap();
-    set_field(&mut conn, m.uuid, "a", Value::Int(2));
-    assert_eq!(conn.version(m.uuid).unwrap(), at_two);
-}
-
-#[test]
 fn test_entity_version_columns_name_the_states_around_the_operation() {
     // `entity_version_before`/`after` are provenance, not authority: nothing
     // reads them to decide what to write. They must still agree with the states
@@ -985,14 +913,13 @@ fn test_entity_version_columns_name_the_states_around_the_operation() {
 
 #[test]
 fn test_recreating_a_metarecord_restores_its_content_version() {
-    // Navigating across a delete recreates the record. There is no allocator to
+    // Reverting a delete recreates the record. There is no allocator to
     // rebuild and no stored number to replay: the restored rows say what the
     // version is.
     let (mut conn, _dir) = test_conn();
     let m = create(&mut conn, vec![]);
     set_field(&mut conn, m.uuid, "a", Value::Int(1));
     set_field(&mut conn, m.uuid, "a", Value::Int(2));
-    let head_v2 = conn.head().unwrap();
     let at_two = conn.version(m.uuid).unwrap();
 
     {
@@ -1002,7 +929,7 @@ fn test_recreating_a_metarecord_restores_its_content_version() {
     }
     assert_eq!(conn.version(m.uuid).unwrap(), None);
 
-    log::navigate(&mut conn, head_v2).unwrap();
+    revert_last_revision(&mut conn);
     assert_eq!(conn.version(m.uuid).unwrap(), at_two);
     assert_eq!(conn.version(m.uuid).unwrap(), Some(version_of_content(&conn, m.uuid)));
 }
@@ -1010,63 +937,30 @@ fn test_recreating_a_metarecord_restores_its_content_version() {
 // ── Bounded log reading (efficient log listing for huge repos) ──────────────────
 
 #[test]
-fn test_ancestry_ops_limited_returns_the_most_recent() {
-    // A linear chain of writes: create + four set_fields on one metarecord.
+fn test_ops_back_limited_returns_the_most_recent() {
+    // Create + four set_fields on one metarecord.
     let (mut conn, _dir) = test_conn();
     let m = create(&mut conn, vec![Field::new("s", Value::Int(0))]);
     for i in 1..=4 {
         set_field(&mut conn, m.uuid, "s", Value::Int(i));
     }
     let head = conn.head().unwrap().unwrap();
-    // `ancestry_ops` is HEAD-first (depth 0 = HEAD) up to the root.
-    let full = conn.ancestry_ops(head, None).unwrap();
+    // Newest first, from HEAD.
+    let full = conn.ops_back(head, None).unwrap();
     assert_eq!(full.len(), 5, "create + four sets");
+    assert_eq!(full[0].id, head);
 
-    // Bounded to 2: exactly the two most recent (HEAD and its parent), HEAD-first
-    // — the prefix of the full ancestry, walked without scanning the whole log.
-    let limited = conn.ancestry_ops(head, Some(2)).unwrap();
+    // Bounded to 2: exactly the two most recent — a prefix of the full read.
+    let limited = conn.ops_back(head, Some(2)).unwrap();
     assert_eq!(
         limited.iter().map(|o| o.id).collect::<Vec<_>>(),
         full.iter().take(2).map(|o| o.id).collect::<Vec<_>>(),
     );
-    // A cap larger than the chain returns the whole ancestry.
-    let big = conn.ancestry_ops(head, Some(999)).unwrap();
-    assert_eq!(
-        big.iter().map(|o| o.id).collect::<Vec<_>>(),
-        full.iter().map(|o| o.id).collect::<Vec<_>>()
-    );
-}
-
-#[test]
-fn test_ancestry_ops_until_stops_at_the_anchor() {
-    // The index's forward delta: the operations a write appended on top of a
-    // known anchor. Reading them must cost the delta, not the whole log — so the
-    // walk stops at the anchor instead of running to the root.
-    let (mut conn, _dir) = test_conn();
-    let m = create(&mut conn, vec![Field::new("s", Value::Int(0))]);
-    for i in 1..=4 {
-        set_field(&mut conn, m.uuid, "s", Value::Int(i));
-    }
-    let head = conn.head().unwrap().unwrap();
-    let full = conn.ancestry_ops(head, None).unwrap();
-    assert_eq!(full.len(), 5, "create + four sets");
-    let anchor = full[2].id; // two operations behind HEAD
-
-    // HEAD-first, anchor excluded: exactly the two operations on top of it.
-    let delta = ops_until(&conn, head, anchor, 100).unwrap();
-    assert_eq!(
-        delta.iter().map(|o| o.id).collect::<Vec<_>>(),
-        full.iter().take(2).map(|o| o.id).collect::<Vec<_>>(),
-    );
-    // An anchor that *is* HEAD is an empty delta, not a miss.
-    assert!(ops_until(&conn, head, head, 100).unwrap().is_empty());
-    // Too far for the budget → None (the caller rebuilds instead).
-    assert!(ops_until(&conn, head, anchor, 1).is_none());
-    // An id that is not on the chain at all → None, whatever the budget.
-    assert!(ops_until(&conn, head, 999_999, 100).is_none());
-    // The root has no parent: walking past it must not loop or error.
-    let root = full.last().unwrap().id;
-    assert_eq!(ops_until(&conn, head, root, 100).unwrap().len(), full.len() - 1,);
+    // A cap larger than the log returns all of it.
+    let big = conn.ops_back(head, Some(999)).unwrap();
+    assert_eq!(big.len(), full.len());
+    // From an older operation: what is at or before it.
+    assert_eq!(conn.ops_back(full[2].id, None).unwrap().len(), 3);
 }
 
 #[test]
@@ -1082,19 +976,6 @@ fn test_assemble_selected_is_cancellable() {
     );
     let objects = query_exec::assemble_selected(&conn, &[m.uuid], None, &|| false).unwrap();
     assert_eq!(objects.len(), 1);
-}
-
-#[test]
-fn test_has_children_reflects_forward_ops() {
-    let (mut conn, _dir) = test_conn();
-    let m = create(&mut conn, vec![Field::new("s", Value::Int(0))]);
-    set_field(&mut conn, m.uuid, "s", Value::Int(1));
-    let head = conn.head().unwrap().unwrap();
-    // HEAD is the tip of the chain: nothing points at it as a parent.
-    assert!(!conn.has_children(head).unwrap());
-    // Its parent does have a forward child (HEAD).
-    let parent = conn.op(head).unwrap().unwrap().parent_id.unwrap();
-    assert!(conn.has_children(parent).unwrap());
 }
 
 // ── One daemon per repository ─────────────────────────────────────────────────

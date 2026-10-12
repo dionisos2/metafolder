@@ -70,8 +70,6 @@ pub const SCENARIOS: &[Scenario] = &[
     s("api.log.window", &[(G, "/repos/:repo/log")]),
     s("api.log.since", &[(G, "/repos/:repo/log/since")]),
     s("api.log.revision", &[(G, "/repos/:repo/log/revisions/:rev_id")]),
-    s("api.rollback.plan", &[(G, "/repos/:repo/rollback/plan")]),
-    s("api.rollback.plan_summary", &[(G, "/repos/:repo/rollback/plan/summary")]),
     s("api.revert.plan", &[(G, "/repos/:repo/revert/plan")]),
     s("api.schema.get", &[(G, "/repos/:repo/schema")]),
     s("api.schema.check", &[(P, "/repos/:repo/schema/check")]),
@@ -110,15 +108,6 @@ pub const SCENARIOS: &[Scenario] = &[
     s("api.revert", &[(P, "/repos/:repo/revert")]),
     s("api.revert.session", &[(P, "/repos/:repo/revert/start"), (P, "/repos/:repo/revert/commit")]),
     s("api.revert.abort", &[(P, "/repos/:repo/revert/abort")]),
-    s("api.rollback", &[(P, "/repos/:repo/rollback")]),
-    s(
-        "api.rollback.session",
-        &[
-            (P, "/repos/:repo/rollback/start"),
-            (P, "/repos/:repo/rollback/step"),
-            (P, "/repos/:repo/rollback/abort"),
-        ],
-    ),
     s("api.schema.reload", &[(P, "/repos/:repo/schema/reload")]),
     s(
         "api.watch.pause_resume",
@@ -245,7 +234,7 @@ async fn scratch(base: &str) -> Result<String> {
 
 /// HEAD's operation id.
 async fn head(base: &str) -> Result<i64> {
-    let v = get(&format!("{base}/log?mode=active&limit=1")).await?;
+    let v = get(&format!("{base}/log?limit=1")).await?;
     v["head"].as_i64().context("the log has a head")
 }
 
@@ -319,19 +308,13 @@ pub async fn run(id: &str, c: &Ctx) -> Result<()> {
             )
             .await?;
         }
-        "api.log.window" => drop(get(&format!("{base}/log?mode=active&limit=50")).await?),
+        "api.log.window" => drop(get(&format!("{base}/log?limit=50")).await?),
         "api.log.since" => {
             let since = head(base).await? - 20;
             get(&format!("{base}/log/since?op={since}")).await?;
         }
         "api.log.revision" => {
             get(&format!("{base}/log/revisions/{}?limit=50", c.rev_id)).await?;
-        }
-        "api.rollback.plan" => {
-            get(&format!("{base}/rollback/plan?target_id={}", c.older_op)).await?;
-        }
-        "api.rollback.plan_summary" => {
-            get(&format!("{base}/rollback/plan/summary?target_id={}", c.older_op)).await?;
         }
         "api.revert.plan" => {
             get(&format!("{base}/revert/plan?target_op_ids={}", c.older_op)).await?;
@@ -478,19 +461,6 @@ pub async fn run(id: &str, c: &Ctx) -> Result<()> {
             post(&format!("{base}/revert/start"), json!({"target": {"op_ids": [op]}})).await?;
             post(&format!("{base}/revert/abort"), json!({})).await?;
         }
-        "api.rollback" => {
-            let before = head(base).await?;
-            set_touch(base, sample).await?;
-            post(&format!("{base}/rollback"), json!({"target": {"id": before}})).await?;
-        }
-        "api.rollback.session" => {
-            let before = head(base).await?;
-            set_touch(base, sample).await?;
-            set_touch(base, sample).await?;
-            post(&format!("{base}/rollback/start"), json!({"target": {"id": before}})).await?;
-            post(&format!("{base}/rollback/step"), json!({})).await?;
-            post(&format!("{base}/rollback/abort"), json!({})).await?;
-        }
         "api.schema.reload" => drop(post(&format!("{base}/schema/reload"), json!({})).await?),
         "api.watch.pause_resume" => {
             post(&format!("{base}/watch/pause"), json!({})).await?;
@@ -585,11 +555,7 @@ pub async fn run(id: &str, c: &Ctx) -> Result<()> {
             std::fs::remove_dir_all(&dir)?;
         }
         "api.log.prune" => {
-            post(
-                &format!("{base}/log/prune"),
-                json!({"mode": "before", "target": {"id": c.older_op}}),
-            )
-            .await?;
+            post(&format!("{base}/log/prune"), json!({"target": {"id": c.older_op}})).await?;
         }
         other => anyhow::bail!("unknown scenario '{other}'"),
     }
@@ -610,7 +576,7 @@ fn next_seq() -> i64 {
 }
 
 /// One field write on `uuid`, a different value each time: the change a
-/// revert or a rollback then takes back.
+/// revert then takes back.
 async fn set_touch(base: &str, uuid: &str) -> Result<()> {
     send(
         "PUT",
@@ -699,7 +665,7 @@ pub async fn prepare(url: &str, dir: &Path, peer_dir: &Path) -> Result<Ctx> {
         Some(&json!({"value": int(1)})),
     )
     .await?;
-    let log = get(&format!("{base}/log?mode=active&limit=21")).await?;
+    let log = get(&format!("{base}/log?limit=21")).await?;
     let ops = log["operations"].as_array().context("log operations")?;
     let rev_id = ops.first().and_then(|o| o["rev_id"].as_i64()).context("a revision")?;
     let older_op = ops.last().and_then(|o| o["id"].as_i64()).context("an older operation")?;

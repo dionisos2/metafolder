@@ -8,7 +8,7 @@ the GUI's only `/gui/*` and the routes that serve file contents ([[Session token
 UUIDs are 32-character lowercase hex, and an error is `{"error": "…"}` with its status.
 Each note is tagged with the group that describes its bodies and answers in context:
 
-* the daemon — [[Repository endpoints]], [[Metarecord endpoints]], [[Query endpoints]], [[Tree endpoints]], [[Log endpoints]], [[Rollback endpoints]], [[Revert endpoints]], [[Schema endpoints]], [[Task endpoints]], [[Watcher endpoints]], [[Health and diagnostics]];
+* the daemon — [[Repository endpoints]], [[Metarecord endpoints]], [[Query endpoints]], [[Tree endpoints]], [[Log endpoints]], [[Revert endpoints]], [[Schema endpoints]], [[Task endpoints]], [[Watcher endpoints]], [[Health and diagnostics]];
 * the GUI — [[GUI scripting endpoints]], [[GUI file endpoints]], [[GUI asset endpoints]].
 
 <<catalog "HTTP endpoint">>

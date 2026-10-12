@@ -1,12 +1,12 @@
 title: $:/mf/gen/CLI command/mf log undo
 catalog: CLI command
 target: mf log undo
-summary: Undo the newest change you made, whichever mechanism that takes
+summary: Undo the newest change you made that still stands, by reverting it
 
 !! Reference
 
 ```
-Undo the newest change you made, whichever mechanism that takes
+Undo the newest change you made that still stands, by reverting it
 
 Usage: mf log undo [OPTIONS] [ARGS]...
 
@@ -15,6 +15,9 @@ Arguments:
           "plan" to print what undo would do, without writing anything
 
 Options:
+      --after <AFTER>
+          Undo again and again, while the change is newer than this operation
+
       --metadata-only
           Leave out the operations needing a filesystem action
 

@@ -28,7 +28,7 @@ reaches its next checkpoint.
 |!Situation |!Status |
 |a cancel of an active task |`200` |
 |a cancel of a finished task — nothing to stop |`409` |
-|a cancel of a `load`, `prune` or `rollback` task |`400` |
+|a cancel of a `load` or `prune` task |`400` |
 |an unknown or evicted task |`404` |
 |a reconcile or duplicate scan asked while one is active |`409` (the active one is in the list) |
 

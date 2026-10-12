@@ -52,7 +52,7 @@ impl ApiError {
     }
 
     /// `423 Locked`: a metadata write was attempted while the repository is in
-    /// coordinated-rollback lock mode (doc "Filesystem coordination").
+    /// lock of a coordinated revert (doc "Filesystem coordination").
     pub fn locked(message: impl Into<String>) -> Self {
         Self::new(StatusCode::LOCKED, message)
     }

@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_daemon::executor::{self, FsEvent};
-use metafolder_daemon::log::{self, Writer};
+use metafolder_daemon::log::Writer;
 use metafolder_daemon::repo;
 use metafolder_daemon::state::RepoState;
 use metafolder_daemon::tasks::{TaskKind, TaskStatus};
@@ -1096,78 +1096,6 @@ fn test_groups_become_separate_revisions() {
             .len()
     };
     assert!(create_revs >= 1);
-
-    std::fs::remove_dir_all(root).unwrap();
-}
-
-// ── Coordinated-rollback skip restoration (doc "Filesystem coordination") ───────────────
-
-/// The head op id's parent — the navigation target that undoes exactly the
-/// last operation.
-fn undo_last_target(repo: &RepoState) -> Option<i64> {
-    let conn = repo.conn.lock().unwrap();
-    let head = metafolder_daemon::store::Log::head(&*conn).unwrap().unwrap();
-    metafolder_daemon::store::Log::op(&*conn, head).unwrap().unwrap().parent_id
-}
-
-#[test]
-fn test_skip_move_restores_actual_location_on_replay() {
-    let (repo, root, _root_uuid) = setup("skip_move");
-    write_file(&root, "/a.txt", b"hello");
-    enqueue(&repo, &[FsEvent::Create("/a.txt".into())]);
-    executor::flush_pending(&repo).unwrap();
-    let uuid = resolve(&repo, "/a.txt").expect("tracked");
-
-    std::fs::rename(root.join("a.txt"), root.join("b.txt")).unwrap();
-    enqueue(&repo, &[FsEvent::Rename("/a.txt".into(), "/b.txt".into())]);
-    executor::flush_pending(&repo).unwrap();
-    assert_eq!(resolve(&repo, "/b.txt"), Some(uuid));
-
-    // Roll back the move WITH skip: the metadata reverts to /a.txt and a
-    // restoration op is queued (the file is really at /b.txt).
-    let target = undo_last_target(&repo);
-    {
-        let mut conn = repo.conn.lock().unwrap();
-        log::coordinated_step(&mut *conn, target, true).unwrap();
-    }
-    assert_eq!(resolve(&repo, "/a.txt"), Some(uuid), "metadata reverted to old location");
-
-    // Replaying the buffer applies the restoration → back to /b.txt.
-    executor::flush_pending(&repo).unwrap();
-    assert_eq!(resolve(&repo, "/b.txt"), Some(uuid), "restoration re-recorded the real location");
-    assert_eq!(resolve(&repo, "/a.txt"), None);
-
-    std::fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn test_skip_delete_rerecords_deletion_on_replay() {
-    let (repo, root, _root_uuid) = setup("skip_delete");
-    write_file(&root, "/a.txt", b"hello");
-    enqueue(&repo, &[FsEvent::Create("/a.txt".into())]);
-    executor::flush_pending(&repo).unwrap();
-    let uuid = resolve(&repo, "/a.txt").expect("tracked");
-
-    std::fs::remove_file(root.join("a.txt")).unwrap();
-    enqueue(&repo, &[FsEvent::Remove("/a.txt".into())]);
-    executor::flush_pending(&repo).unwrap();
-    assert_eq!(field_value(&repo, uuid, "mfr_path"), Some(Value::Nothing));
-
-    // Roll back the delete WITH skip: the metadata is restored, but the file
-    // is still gone — the restoration re-records the deletion.
-    let target = undo_last_target(&repo);
-    {
-        let mut conn = repo.conn.lock().unwrap();
-        log::coordinated_step(&mut *conn, target, true).unwrap();
-    }
-    assert_eq!(resolve(&repo, "/a.txt"), Some(uuid), "metadata restored");
-
-    executor::flush_pending(&repo).unwrap();
-    assert_eq!(
-        field_value(&repo, uuid, "mfr_path"),
-        Some(Value::Nothing),
-        "restoration re-recorded the deletion"
-    );
 
     std::fs::remove_dir_all(root).unwrap();
 }

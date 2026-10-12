@@ -11,9 +11,8 @@ both directions:
 * equal versions ⇒ identical fields — a copy read earlier is still valid;
 * identical fields ⇒ equal versions — a value changed and changed back reads as unchanged.
 
-Both hold by construction, across the whole history and every branch of the log,
-with nothing to maintain and nothing to restore: navigation puts the rows back and
-the version follows. Sync's change detection and conditional writes
+Both hold by construction, across the whole history of the log, with nothing to
+maintain and nothing to restore: a revert puts the rows back and the version follows. Sync's change detection and conditional writes
 ([[Conditional writes]]) rest on it.
 
 What the hash covers:

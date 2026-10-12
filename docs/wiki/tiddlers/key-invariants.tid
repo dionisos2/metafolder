@@ -27,13 +27,13 @@ change of design, to be decided as such, with its note rewritten.
 
 * The `tree_ref` values of one field name form a forest: no cycle, at most 1000 deep; a write that would break it is refused with `400` ([[TreeRef forest]]).
 * A metarecord holds at most one position per forest ([[One position per forest]]; `crates/daemon/tests/one_position.rs`).
-* A forest is referentially closed: a parent must have a position of its own, and a position with children cannot be taken away. The watcher and log navigation are exempt ([[Referential integrity of a forest]]).
+* A forest is referentially closed: a parent must have a position of its own, and a position with children cannot be taken away. The watcher is exempt, and a revert is checked once, at commit ([[Referential integrity of a forest]]).
 
 !! Writes and the log
 
 * Every write goes through `log::Writer`: one revision is one transaction covering the rows, the log, HEAD and the derived key spaces, so HEAD and the data never disagree ([[Writes and atomicity]], [[Revisions and operations]]; semgrep `mf-write-outside-writer`).
 * A write on a loaded repository goes through the repository's own writer, so that its configured retention applies ([[Automatic retention]]; semgrep `mf-writer-bypasses-retention`).
-* Log navigation restores what the snapshots recorded — rows with their original ids — and is exempt from the rules a manual write must meet ([[Log storage]]).
+* The log is a sequence: an operation names no parent, nothing moves back over it, and a revert is a write like any other ([[The operation log]]).
 
 !! File tracking
 

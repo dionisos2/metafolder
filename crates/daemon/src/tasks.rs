@@ -110,10 +110,6 @@ pub enum TaskKind {
     /// connection lock synchronously (potentially long on a large log), so other
     /// clients can see why their work is queued.
     Prune,
-    /// A one-shot atomic rollback (`POST /rollback`). Observation-only for the
-    /// same reason as `prune`: it rewrites arbitrary state under the connection
-    /// lock.
-    Rollback,
 }
 
 impl TaskKind {
@@ -127,7 +123,6 @@ impl TaskKind {
             TaskKind::Load => "load",
             TaskKind::Relink => "relink",
             TaskKind::Prune => "prune",
-            TaskKind::Rollback => "rollback",
         }
     }
 
@@ -135,11 +130,11 @@ impl TaskKind {
     /// `flush` is internal, but its size is the user's doing — a single batch
     /// can carry a whole directory tree — so it *is* stoppable, and stopping it
     /// pauses ingestion (doc "Pausing the watcher"). `load` is a
-    /// harmless warmup; `prune` and `rollback` are single atomic transactions
-    /// with no cooperative cancellation point (interrupting one would only roll
+    /// harmless warmup; `prune` is a single atomic transaction
+    /// with no cooperative cancellation point (interrupting it would only roll
     /// it back).
     pub fn is_cancellable(self) -> bool {
-        !matches!(self, TaskKind::Load | TaskKind::Prune | TaskKind::Rollback)
+        !matches!(self, TaskKind::Load | TaskKind::Prune)
     }
 }
 

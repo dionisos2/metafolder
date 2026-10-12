@@ -1,9 +1,10 @@
-//! Coordinated navigation of the event log (doc "Filesystem coordination",
-//! doc "Revert"), shared by the CLI (`mf log rollback`/`revert`/`undo`/`redo`)
-//! and the GUI (`log:undo`, `log:redo`, the log panel).
+//! The coordinated revert (doc "Filesystem coordination", doc "Revert"),
+//! shared by the CLI (`mf log revert`/`undo`/`redo`) and the GUI (`log:undo`,
+//! `log:redo`, the log panel). The module keeps the name it had when the log
+//! could be navigated (doc "Why the log stops being a tree").
 //!
 //! The daemon owns the metadata and never touches a file; it says, operation by
-//! operation, what crossing it requires on disk (`filesystem.action`: move a
+//! operation, what undoing it requires on disk (`filesystem.action`: move a
 //! file, bring content back from the trash-bin, send it back there). This module
 //! is the client half: it performs those actions and tells the daemon what it
 //! managed, over [`DaemonClient`] and [`crate::trash`]. Written once here, so the
@@ -19,7 +20,7 @@ use serde_json::{json, Value as Json};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-/// A navigation that failed, as the message to show.
+/// A revert that failed, as the message to show.
 #[derive(Debug, Clone)]
 pub struct NavError(pub String);
 
@@ -43,7 +44,7 @@ impl From<TrashError> for NavError {
     }
 }
 
-/// What to do with a `move` step (doc "Rolling back").
+/// What to do with a `move` step (doc "Reverting a revision").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Policy {
     Apply,
@@ -61,7 +62,7 @@ pub struct MovePolicies {
     pub on_unavailable: Policy,
 }
 
-/// What a navigation needs from the front end driving it.
+/// What a coordinated revert needs from the front end driving it.
 pub trait NavigationUi {
     /// Decides a move the policies left to the user ([`Policy::Ask`]). Never
     /// answers `Ask`.
@@ -69,11 +70,9 @@ pub trait NavigationUi {
     /// Something the user should hear about: a file moved or left, content
     /// brought back or not.
     fn note(&self, message: &str);
-    /// A navigation of `total` operations is starting (the CLI announces it).
-    fn navigating(&self, _total: usize) {}
 }
 
-/// A repository, as a navigation needs it: the daemon, and the trash-bin the
+/// A repository, as a revert needs it: the daemon, and the trash-bin the
 /// daemon reports (`internal_dir`, doc "Trash").
 pub struct Repo<'a> {
     pub client: &'a dyn DaemonClient,
@@ -107,143 +106,7 @@ impl<'a> Repo<'a> {
     }
 }
 
-// ── Rollback ─────────────────────────────────────────────────────────────────
-
-/// The query-parameter form of a navigation target (`{"id": N}`,
-/// `{"timestamp": T}`, `{"label": L}` or `{"prev_revision": true}`), for `GET
-/// /rollback/plan` and `plan/summary`.
-pub fn target_query(target: &Json) -> Vec<(&'static str, String)> {
-    if let Some(id) = target["id"].as_i64() {
-        vec![("target_id", id.to_string())]
-    } else if let Some(ts) = target["timestamp"].as_i64() {
-        vec![("target_timestamp", ts.to_string())]
-    } else if let Some(label) = target["label"].as_str() {
-        vec![("target_label", label.to_string())]
-    } else {
-        vec![("target_prev_revision", "true".into())]
-    }
-}
-
-/// The stored op types whose navigation may need a decision about the
-/// filesystem — the reading of a summary from a daemon that does not count
-/// `filesystem_steps` itself. `delete_metarecord` is in the list although only
-/// the ones a *trashing* wrote carry a file: types cannot say which revision
-/// wrote them, so the whole type takes the careful road.
-const FILESYSTEM_OPS: &[&str] =
-    &["file_moved", "file_deleted", "file_modified", "delete_metarecord"];
-
-/// Whether a plan summary's operations all rewind inside the database, with
-/// nothing on disk to decide. Those can be navigated in one atomic call
-/// (`POST /rollback`) instead of one round-trip — and one transaction — per
-/// operation.
-///
-/// This is what "back" costs in a classification walk (doc "Script sessions"): a "yes" on a folder
-/// writes one operation per file under it, so
-/// taking it back stepped a thousand times over the network to undo a single
-/// keypress. The daemon counts the steps with a file action
-/// (`filesystem_steps`); failing that the op types are read, and an unreadable
-/// summary is *not* metadata-only: the careful road is the one that is always
-/// correct.
-pub fn rewinds_in_the_database_alone(summary: &Json) -> bool {
-    if let Some(steps) = summary["filesystem_steps"].as_u64() {
-        return steps == 0;
-    }
-    summary["by_type"]
-        .as_object()
-        .is_some_and(|by_type| !by_type.keys().any(|t| FILESYSTEM_OPS.contains(&t.as_str())))
-}
-
-/// What a rollback did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Navigated {
-    /// Operations on the way to the target.
-    pub total: usize,
-    /// Operations actually navigated.
-    pub processed: usize,
-}
-
-/// Navigates HEAD to `target` (a `{"id"|"timestamp"|"label"|"prev_revision"}`
-/// object): in one atomic call when nothing on the way touches a file,
-/// otherwise through the coordinated protocol, performing each step's file
-/// action — and always releasing the lock (`abort`) on an error.
-pub fn rollback(
-    repo: &Repo<'_>,
-    target: &Json,
-    policies: &MovePolicies,
-    ui: &dyn NavigationUi,
-) -> Result<Navigated, NavError> {
-    let base = repo.base();
-    let client = repo.client;
-    let summary =
-        client.get(&with_query(&format!("{base}/rollback/plan/summary"), &target_query(target)))?;
-    let total = summary["total_operations"].as_u64().unwrap_or(0) as usize;
-    if total == 0 {
-        return Ok(Navigated { total: 0, processed: 0 });
-    }
-    ui.navigating(total);
-    let body = json!({"target": target});
-
-    if rewinds_in_the_database_alone(&summary) {
-        let result = client.post(&format!("{base}/rollback"), &body)?;
-        let processed = result["operations_unapplied"].as_u64().unwrap_or(0)
-            + result["operations_applied"].as_u64().unwrap_or(0);
-        return Ok(Navigated { total, processed: processed as usize });
-    }
-
-    // The trash-bin catches any file a `move` step would overwrite, so no byte
-    // is ever lost by rollback (doc "Trash"). Its entries also let us point out
-    // content that a deletion step "lost" but that is in fact recoverable.
-    let mut entries = repo.trash.entries().unwrap_or_default();
-    // Metarecords whose content a directory blob has already brought back this
-    // navigation, so their own steps apply the inverse, not skip.
-    let mut restored: HashSet<String> = HashSet::new();
-    // Metarecords a trashing redone has already sent back, with their subtree.
-    let mut retrashed: HashSet<String> = HashSet::new();
-
-    let start = client.post(&format!("{base}/rollback/start"), &body)?;
-    let mut op = start["op"].clone();
-    let mut processed = 0usize;
-    let outcome = (|| -> Result<(), NavError> {
-        while !op.is_null() {
-            let skip = match op["filesystem"]["action"].as_str() {
-                Some("move") => decide_move(&op, policies, &repo.trash, ui)?,
-                // The content comes back from the trash: a file the watcher saw
-                // go (matched by metarecord and version), or a metarecord a
-                // trashing took (matched by the metarecord alone — an undo
-                // consumes the entry and a redo makes a new one, so no id
-                // recorded at trash time would still name it).
-                Some("restore_content") => decide_deleted(
-                    &op,
-                    &repo.trash,
-                    &mut entries,
-                    &mut restored,
-                    ui,
-                    takes_a_whole_metarecord(&op),
-                )?,
-                // Before the step, while the metarecord is still there to read.
-                Some("trash_content") => {
-                    retrash(repo, &op, &mut retrashed, ui)?;
-                    false
-                }
-                _ => false,
-            };
-            let step_body = if skip { json!({"skip": true}) } else { json!({}) };
-            let resp = client.post(&format!("{base}/rollback/step"), &step_body)?;
-            processed += 1;
-            op = resp["op"].clone();
-        }
-        Ok(())
-    })();
-    match outcome {
-        Ok(()) => Ok(Navigated { total, processed }),
-        Err(err) => {
-            // Release the lock; the moves already executed stay (the caller
-            // hears what happened through the notes).
-            let _ = client.post(&format!("{base}/rollback/abort"), &json!({}));
-            Err(err)
-        }
-    }
-}
+// ── File actions ─────────────────────────────────────────────────────────────
 
 /// Whether the operation creates or deletes a whole metarecord — a trashing's
 /// kind of file action, as opposed to a file the watcher saw deleted or
@@ -270,19 +133,19 @@ pub fn decide_move(
         policy = ui.ask_move(from, to, available)?;
     }
     match policy {
-        // Apply: the metadata follows the navigation to `to` (via `step {}`).
+        // Apply: the metadata follows the revert to `to`.
         // Move the file there when it is present; when it is gone there is
-        // nothing to move — the metadata still follows the rollback, keeping
+        // nothing to move — the metadata still follows the revert, keeping
         // the recorded path rather than rewinding to a location the file is
-        // not at (doc "Rolling back"; review #6).
+        // not at (doc "Reverting a revision").
         Policy::Apply => {
             if available {
                 let dest = Path::new(to);
                 // A directory at `to` can be neither overwritten by an `mv`
                 // (rename would fail) nor trashed in its place without taking a
                 // whole subtree the log says nothing about. Rather than abort
-                // the whole navigation, skip just this step (the metadata
-                // rewinds, the file stays put) and say so.
+                // the whole revert, leave just this operation out (the file
+                // stays put) and say so.
                 if crate::fsentry::is_real_dir(dest) {
                     ui.note(&format!(
                         "skipped move {from} -> {to}: a directory occupies the destination"
@@ -298,10 +161,10 @@ pub fn decide_move(
                 // Note: trash-then-rename is not atomic. If the rename fails
                 // after trashing (e.g. `from` vanished, or a cross-device
                 // from→to), `to` is left empty with its content recoverable in
-                // the trash, and the navigation aborts mid-way.
+                // the trash, and the revert aborts mid-way.
                 if crate::fsentry::path_present(dest) {
                     let entry =
-                        trash.trash_path(dest, Reason::Rollback, op["id"].as_i64(), None, None)?;
+                        trash.trash_path(dest, Reason::Revert, op["id"].as_i64(), None, None)?;
                     ui.note(&format!("trashed {to} (id {}) before overwrite", entry.id));
                 }
                 std::fs::rename(from, to)
@@ -316,7 +179,7 @@ pub fn decide_move(
             ui.note(&format!("skipped move {from} -> {to}"));
             Ok(true)
         }
-        Policy::Abort => Err(NavError("rollback aborted by move policy".into())),
+        Policy::Abort => Err(NavError("revert aborted by move policy".into())),
         Policy::Ask => Err(NavError("the move policy was left undecided".into())),
     }
 }
@@ -347,7 +210,7 @@ pub fn decide_deleted(
     let entity = op["entity_uuid"].as_str().unwrap_or_default();
 
     // Content already brought back by a directory blob restored earlier in this
-    // navigation: the file is on disk, so apply the real inverse — don't skip.
+    // revert: the file is on disk, so apply the real inverse — don't leave it out.
     if restored.contains(entity) {
         return Ok(false);
     }
@@ -379,8 +242,8 @@ pub fn decide_deleted(
                 restored.extend(covered);
                 restored.insert(entity.to_string());
                 ui.note(&format!("restored {} from the trash", path.display()));
-                // Apply the real inverse (`step {}`): the daemon restores the
-                // metadata to match the file now in place.
+                // Apply the real inverse: the daemon restores the metadata to
+                // match the file now in place.
                 return Ok(false);
             }
             // The file is not restorable (e.g. the path is occupied); fall back
@@ -417,7 +280,7 @@ fn path_of(repo: &Repo<'_>, uuid: &str) -> Result<Option<String>, NavError> {
 /// fields, doc "What trashing does"), into a *new* entry, the
 /// undo having consumed the old one. Runs before the daemon deletes the
 /// metarecord, while there is still something to read; the watcher is held
-/// for the whole navigation, so the file's disappearance orphans nothing.
+/// for the whole revert, so the file's disappearance orphans nothing.
 ///
 /// A metarecord already covered by an earlier step's capture (a file inside a
 /// directory sent back whole) needs nothing more. One whose file is not on disk
@@ -572,8 +435,7 @@ pub fn revert(
         for op in started["operations"].as_array().into_iter().flatten() {
             let Some(id) = op["id"].as_i64() else { continue };
             // `decide_move`/`decide_deleted` answer "skip?" — which for a revert
-            // means "leave this operation out", the whole thing a rollback needs
-            // a restoration operation for.
+            // means "leave this operation out".
             let leave_out = match op["filesystem"]["action"].as_str() {
                 Some("move") => {
                     let step =
@@ -653,37 +515,8 @@ mod tests {
         MovePolicies { on_available, on_unavailable }
     }
 
-    /// "Back" in a classification walk (doc "Script sessions") undoes a
-    /// whole subtree of tag writes. Nothing in that touches a file, so the
-    /// navigation goes in one atomic call — one round-trip per record is what
-    /// made going back take minutes.
-    #[test]
-    fn a_plan_with_no_file_operation_is_navigated_in_one_call() {
-        // The daemon's own count, when it gives one.
-        assert!(rewinds_in_the_database_alone(&json!({"filesystem_steps": 0,
-            "by_type": {"delete_metarecord": 3}})));
-        assert!(!rewinds_in_the_database_alone(&json!({"filesystem_steps": 1,
-            "by_type": {"set_field": 3}})));
-
-        // Otherwise the op types.
-        let plan = |by_type| json!({"total_operations": 3, "by_type": by_type});
-        assert!(rewinds_in_the_database_alone(&plan(json!({"set_field": 2, "append_field": 1}))));
-        assert!(rewinds_in_the_database_alone(&plan(json!({"create_metarecord": 3}))));
-        for op_type in ["file_moved", "file_deleted", "file_modified", "delete_metarecord"] {
-            let by_type = json!({"set_field": 1, op_type: 1});
-            assert!(!rewinds_in_the_database_alone(&plan(by_type)), "{op_type}");
-        }
-        // Nothing to read: the careful road, never the fast one.
-        assert!(!rewinds_in_the_database_alone(&json!({})));
-    }
-
     #[test]
     fn targets_have_their_query_forms() {
-        assert_eq!(target_query(&json!({"id": 4})), vec![("target_id", "4".to_string())]);
-        assert_eq!(
-            target_query(&json!({"prev_revision": true})),
-            vec![("target_prev_revision", "true".to_string())]
-        );
         assert_eq!(
             revert_query(&json!({"op_ids": [3, 5]})),
             vec![("target_op_ids", "3,5".to_string())]
@@ -696,8 +529,8 @@ mod tests {
     }
 
     // `apply` on a gone file: no `mv` is attempted (nothing to move) and the
-    // step is a plain `step {}` — the metadata follows the rollback instead of
-    // erroring or rewinding to a location the file is not at (review #6).
+    // operation is applied — the metadata follows the revert instead of
+    // erroring or rewinding to a location the file is not at.
     #[test]
     fn apply_on_a_gone_file_keeps_the_rolled_back_path_without_moving() {
         let tmp = scratch("gone");
@@ -750,7 +583,7 @@ mod tests {
         std::fs::remove_dir_all(&tmp).ok();
     }
 
-    // `apply` on a present file performs the `mv` and produces `step {}`.
+    // `apply` on a present file performs the `mv` and applies the operation.
     #[test]
     fn apply_on_a_present_file_moves_it() {
         let tmp = scratch("present");
@@ -790,7 +623,7 @@ mod tests {
         // The victim's bytes are preserved in the trash, not destroyed.
         let entries = trash.entries().unwrap();
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].reason, Reason::Rollback);
+        assert_eq!(entries[0].reason, Reason::Revert);
         // The entry records the causing revision, but no metarecord — the op's
         // entity_uuid names the moved record, not this displaced occupant.
         assert_eq!(entries[0].metarecord, None);
@@ -802,7 +635,7 @@ mod tests {
 
     // A directory at the destination cannot be trashed or overwritten: the step
     // is skipped (metadata rewinds, file stays) rather than aborting the whole
-    // rollback.
+    // revert.
     #[test]
     fn apply_skips_when_a_directory_occupies_the_destination() {
         let tmp = scratch("dirdest");
@@ -827,7 +660,7 @@ mod tests {
     // be overwritten. `Path::exists()` follows the link, so it read the source
     // as gone (no `mv` — the link stayed behind) and the destination as free
     // (no trashing — the `mv` destroyed the link, against the trash's promise
-    // that a rollback loses no byte).
+    // that a revert loses no byte).
     #[cfg(unix)]
     #[test]
     fn apply_moves_a_broken_symlink_and_trashes_a_broken_symlink_it_overwrites() {

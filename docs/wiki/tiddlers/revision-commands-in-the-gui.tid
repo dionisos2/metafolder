@@ -1,17 +1,16 @@
 title: Revision commands in the GUI
 tags: [[Event log]]
 kind: guide
-summary: Undo, redo, revert, rollback, label and prune from the GUI — confirmations before, files carried along, no questions while the repository is locked.
+summary: Undo, redo, revert, label and prune from the GUI — confirmations before, files carried along, no questions while the repository is locked.
 
 * <<key "log:undo" Ctrl+z>> / <<key "log:redo" Ctrl+Shift+z>> — from anywhere: the same selection as `mf log undo`/`redo` ([[Undo and redo]]). Neither asks — the result is itself undoable.
 * <<key "log:revert" Shift+r>> — reverts what the log panel has selected: the revision, or the single operation under the cursor ("undo just this one field" in one key). A confirmation names how many operations it undoes, says when files will move and how many of them overwrite a later change ([[Reverting onto the current state]]), and warns when the target was already undone. <<key "log:revert op" Shift+o>> narrows from a revision row (asking which operation when there are several), <<key "log:revert revision" Shift+v>> widens back.
-* `log:rollback` — after a confirmation, moves HEAD to the last operation of the selected revision: back, or forward and onto another branch — which is also how a rollback is undone ([[Rollback]]).
 * <<key "log:mark" Shift+l>> — sets or clears the selected revision's label.
-* `log:prune` — after a confirmation, prunes everything before the selected revision, for good ([[Pruning the log]]). Keeping the last N revisions, or linearizing, is `mf log prune`.
+* `log:prune` — after a confirmation, prunes everything before the selected revision, for good ([[Pruning the log]]).
 
-''Files are carried with the metadata.'' Every navigation and revert the GUI writes goes
-through the same code as the CLI (`core::navigation`): one atomic request when no step
-touches a file, otherwise the coordinated form — moving a file back, bringing content back
+''Files are carried with the metadata.'' Every revert the GUI writes — undo and redo
+included — goes through the same code as the CLI (`core::navigation`): one atomic request
+when no operation touches a file, otherwise the coordinated form — moving a file back, bringing content back
 from the trash, sending it back there ([[Filesystem coordination]]). Every confirmation
 comes ''before'' the repository is locked, and nothing asks while it is: a move is applied
 whether or not the file is where the log says (when it is not, the metadata keeps the
