@@ -53,9 +53,6 @@ million keys (a folder of 292 files renamed) to 20 000, and from 1.56 million
   do": in the session it is the first one computing MIME types, so it writes
   =mfr_mime= on every file. What a truly idle one costs is the refresh's
   comparison of ≈ 7 stat fields (≈ 16 keys a file) and one resolution.
-- the MIME pass opens again, at every reconcile, each file =infer= recognises
-  no type for (plain text): nothing is written, so nothing says it was tried.
-  Disk, not keys — invisible to the cost assertions.
 - reading the log right after an undo read the whole log (=42287c53=): the
   redo's two reads went from 702 000 keys to 171 000, which is what was undone
   (a revision of 50 000 operations) — the cost now follows the continuation, not
