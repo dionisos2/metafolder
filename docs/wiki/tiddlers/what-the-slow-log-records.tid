@@ -59,6 +59,8 @@ synonym:
 |`settle.watches` |recomputing the watched directories |
 |`watcher.compact` |compacting a batch of buffered events |
 |`watcher.apply` |applying one group of compacted events |
+|`resolve` |a reconcile resolving a path found on disk to its metarecord (one per path) |
+|`path_of` |a reconcile reading back the path of a tracked metarecord the walk did not find |
 
 A `wait:*` phase is the one that distinguishes "this is expensive" from "this was
 fine and something else held the repository".

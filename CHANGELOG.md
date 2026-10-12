@@ -245,6 +245,11 @@ than breaking them.
   mounting the remote repository over SSHFS is deferred (spec-sync).
 
 ### Fixed
+- **A reconcile resolved every path four times.** Its refresh, MIME and
+  metadata passes each resolved again the paths its index pass had just
+  resolved, and its orphan scan read back the path of every file the walk had
+  just found on disk. Each path is resolved once now, and a file the walk
+  found is not checked again.
 - **Reading the log right after an undo read the whole log.** With a
   continuation below HEAD, `GET /log?mode=active` rebuilt it from every
   operation of the table and HEAD's whole ancestry (351 000 keys for the

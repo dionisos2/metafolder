@@ -788,3 +788,42 @@ fn targeted_reconcile_refreshes_a_broken_symlink() {
         "the targeted reconcile must re-stat a link that is present on disk"
     );
 }
+
+/// A reconcile with every optional pass, its slow-log entry captured whatever
+/// its duration: its phases count what it did.
+fn captured_reconcile(repo: &RepoState) -> metafolder_core::slowlog::Entry {
+    let (outcome, entry) = metafolder_core::slowlog::capture("task reconcile", || {
+        reconcile::reconcile_full_reported(
+            repo,
+            None,
+            true,
+            true,
+            true,
+            &reconcile::Reporter::silent(),
+        )
+    });
+    outcome.unwrap();
+    entry
+}
+
+#[test]
+fn a_reconcile_with_nothing_to_do_resolves_each_path_once_and_rereads_none() {
+    // On 50 000 files, a reconcile with nothing to do read ≈ 75 keys a file:
+    // its index, refresh, MIME and metadata passes each resolved every path
+    // again, and its orphan scan read back the path of every file the walk had
+    // just found on disk.
+    let (repo, root) = setup("nothing_to_do");
+    for d in 0..4 {
+        for f in 0..10 {
+            write_file(&root, &format!("d{d}/f{f}.txt"), b"content");
+        }
+    }
+    let on_disk = 4 + 40;
+    captured_reconcile(&repo);
+    let entry = captured_reconcile(&repo);
+    let count = |name: &str| entry.phases.iter().find(|p| p.name == name).map_or(0, |p| p.count);
+    assert_eq!(count("resolve"), on_disk, "one resolution per path on disk: {entry:?}");
+    // The root alone, which the walk does not list: a path found on disk is
+    // not read back to learn whether it is on disk.
+    assert_eq!(count("path_of"), 1, "a path found by the walk is present: {entry:?}");
+}

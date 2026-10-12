@@ -152,7 +152,13 @@ pub fn reconcile_full_reported(
     let index_total = fs_paths.len() as u64;
     reporter.progress("index", Some(0), Some(index_total));
     let mut new_files: Vec<(RelPath, Metadata)> = Vec::new();
-    let mut disk_files: Vec<RelPath> = Vec::new();
+    // Indices into `fs_paths` of the regular files.
+    let mut disk_files: Vec<usize> = Vec::new();
+    // Each path's metarecord as this pass finds it: resolved once here and
+    // reused by every later pass, rather than resolved again by each of them
+    // (≈ 22 keys a file). A path that had none is resolved again later: the
+    // create and move passes put one there.
+    let mut placed: Vec<Option<Uuid>> = Vec::with_capacity(fs_paths.len());
     for (i, (rel, meta)) in fs_paths.iter().enumerate() {
         if i % PROGRESS_STEP == 0 {
             reporter.progress("index", Some(i as u64), Some(index_total));
@@ -161,11 +167,29 @@ pub fn reconcile_full_reported(
             }
         }
         if meta.is_file() {
-            disk_files.push(rel.clone());
+            disk_files.push(i);
         }
-        if cache.resolve_rel(writer.store(), "mfr_path", rel)?.is_none() {
+        let uuid = metafolder_core::slowlog::timed("resolve", || {
+            cache.resolve_rel(writer.store(), "mfr_path", rel)
+        })?;
+        if uuid.is_none() {
             new_files.push((rel.clone(), meta.clone()));
         }
+        placed.push(uuid);
+    }
+    // The metarecords the walk has just found on disk: present by construction.
+    let found: HashSet<Uuid> = placed.iter().flatten().copied().collect();
+    // The metarecord at `fs_paths[i]`: as the index pass found it, or, for a
+    // path that had none then, where the create and move passes put one.
+    macro_rules! placed_at {
+        ($i:expr) => {
+            match placed[$i] {
+                Some(uuid) => Some(uuid),
+                None => metafolder_core::slowlog::timed("resolve", || {
+                    cache.resolve_rel(writer.store(), "mfr_path", &fs_paths[$i].0)
+                })?,
+            }
+        };
     }
 
     // Step 1 — orphaned metarecords: tree position no longer present on disk.
@@ -182,7 +206,13 @@ pub fn reconcile_full_reported(
                 return Err(cancelled());
             }
         }
-        let Some(path) = cache.path_of(writer.store(), "mfr_path", uuid)? else {
+        if found.contains(&uuid) {
+            continue; // Found on disk by the walk: not an orphan.
+        }
+        let path = metafolder_core::slowlog::timed("path_of", || {
+            cache.path_of(writer.store(), "mfr_path", uuid)
+        })?;
+        let Some(path) = path else {
             continue;
         };
         if path.is_empty() {
@@ -366,7 +396,11 @@ pub fn reconcile_full_reported(
         if claimed.contains(rel) {
             continue;
         }
-        if cache.resolve_rel(writer.store(), "mfr_path", rel)?.is_some() {
+        if metafolder_core::slowlog::timed("resolve", || {
+            cache.resolve_rel(writer.store(), "mfr_path", rel)
+        })?
+        .is_some()
+        {
             continue; // Already created as a parent of an earlier path.
         }
         create_record_for(&mut writer, &cache, &root, rel, &[], compute_mime)?;
@@ -389,7 +423,7 @@ pub fn reconcile_full_reported(
                     return Err(cancelled());
                 }
             }
-            if let Some(uuid) = cache.resolve_rel(writer.store(), "mfr_path", rel)? {
+            if let Some(uuid) = placed_at!(i) {
                 refresh_stat_fields(&mut writer, &root, uuid, rel)?;
             }
         }
@@ -400,14 +434,15 @@ pub fn reconcile_full_reported(
     if compute_mime {
         let mime_total = disk_files.len() as u64;
         reporter.progress("mime", Some(0), Some(mime_total));
-        for (i, rel) in disk_files.iter().enumerate() {
+        for (i, &k) in disk_files.iter().enumerate() {
             if i % PROGRESS_STEP == 0 {
                 reporter.progress("mime", Some(i as u64), Some(mime_total));
                 if reporter.is_cancelled() {
                     return Err(cancelled());
                 }
             }
-            if let Some(uuid) = cache.resolve_rel(writer.store(), "mfr_path", rel)? {
+            let rel = &fs_paths[k].0;
+            if let Some(uuid) = placed_at!(k) {
                 maybe_compute_mime(&mut writer, &root, uuid, rel)?;
             }
         }
@@ -419,14 +454,15 @@ pub fn reconcile_full_reported(
         let map = repo.metadata_map.lock_recover().clone();
         let meta_total = disk_files.len() as u64;
         reporter.progress("metadata", Some(0), Some(meta_total));
-        for (i, rel) in disk_files.iter().enumerate() {
+        for (i, &k) in disk_files.iter().enumerate() {
             if i % PROGRESS_STEP == 0 {
                 reporter.progress("metadata", Some(i as u64), Some(meta_total));
                 if reporter.is_cancelled() {
                     return Err(cancelled());
                 }
             }
-            if let Some(uuid) = cache.resolve_rel(writer.store(), "mfr_path", rel)? {
+            let rel = &fs_paths[k].0;
+            if let Some(uuid) = placed_at!(k) {
                 maybe_extract_metadata(&mut writer, &root, uuid, rel, &map)?;
             }
         }
@@ -526,7 +562,9 @@ pub fn reconcile_metarecord_reported(
         }
         // The subtree root itself was made eligible by the caller setting
         // mf_watch directly; descendants were eligibility-checked by walk().
-        match cache.resolve_rel(writer.store(), "mfr_path", rel)? {
+        match metafolder_core::slowlog::timed("resolve", || {
+            cache.resolve_rel(writer.store(), "mfr_path", rel)
+        })? {
             Some(existing) => {
                 if refresh {
                     refresh_stat_fields(&mut writer, &root, existing, rel)?;
@@ -552,7 +590,9 @@ pub fn reconcile_metarecord_reported(
             if !meta.is_file() {
                 continue;
             }
-            if let Some(uuid) = cache.resolve_rel(writer.store(), "mfr_path", rel)? {
+            if let Some(uuid) = metafolder_core::slowlog::timed("resolve", || {
+                cache.resolve_rel(writer.store(), "mfr_path", rel)
+            })? {
                 maybe_compute_mime(&mut writer, &root, uuid, rel)?;
             }
         }
@@ -572,7 +612,9 @@ pub fn reconcile_metarecord_reported(
             if !meta.is_file() {
                 continue;
             }
-            if let Some(uuid) = cache.resolve_rel(writer.store(), "mfr_path", rel)? {
+            if let Some(uuid) = metafolder_core::slowlog::timed("resolve", || {
+                cache.resolve_rel(writer.store(), "mfr_path", rel)
+            })? {
                 maybe_extract_metadata(&mut writer, &root, uuid, rel, &map)?;
             }
         }
