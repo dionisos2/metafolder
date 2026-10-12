@@ -42,14 +42,17 @@ reconcile with nothing to do went from 43.8 s and 242 million keys to 9.7 s and
 3.8 million; the first one from 60 s to 25 s; the watcher's flushes from 2.1
 million keys (a folder of 292 files renamed) to 20 000, and from 1.56 million
 (1 000 files created) to 53 000. Every step is within its budget. Left:
-- the duplicate scan: 29.5 s, 6.8 million keys, and the GUI's change feed
-  (=GET /log/since=) blocked behind it the whole time. Its phases are in the
-  log now: read them first.
+- the duplicate scan: 29.5 s, then 15 s once its writes were committed every
+  two seconds instead of 503 times (=9212c562=). It still holds the store for
+  the whole scan, so the GUI's change feed waits as long: releasing it between
+  windows would let another write change the records under the scan's maps —
+  the "operations stay sequential" decision (doc "Storage open questions").
 - a reconcile with nothing to do still reads 3.8 million keys, ≈ 75 a file.
-- once in three runs, =GET /log= after the bulk write (one revision of 50 000
-  operations) read 401 000 keys for one window, in =log.redo= and =log.open=;
-  2 000 in the others. Bounded reads are pinned by =tests/log_cost.rs=, so
-  what differs is the window asked for — to reproduce before reading it.
+- reading the log right after an undo read the whole log (=42287c53=): the
+  redo's two reads went from 702 000 keys to 171 000, which is what was undone
+  (a revision of 50 000 operations) — the cost now follows the continuation, not
+  the log. Why one run in three read only 20 000 keys is not verified: likely a
+  watcher write after the undo, which leaves HEAD with no continuation.
 
 * TODO watcher
 ** TODO keep hunting with the simulated kernel
