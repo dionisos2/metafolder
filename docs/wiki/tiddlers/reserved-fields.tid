@@ -30,6 +30,7 @@ misdetected MIME type, settling an `mfr_path` conflict the watcher cannot.
 |<<cmd "mfr_uid">>, <<cmd "mfr_gid">> |`int` |the owner's user and group ids; Unix only |
 |<<cmd "mfr_inode">> |`string` |`<dev>:<ino>`, only on a file with more than one hard link — its presence marks a hard link ([[What counts as a duplicate]]); Unix only |
 |<<cmd "mfr_mime">> |`string` |the MIME type from the content, computed by reconcile ([[Moves and candidates]]); absent when undetectable or not yet computed |
+|<<cmd "mfr_mime_undetected">> |`bool` |that reconcile read the content and found no MIME type, so it does not read it again ([[File metadata fields]]) |
 |<<cmd "mfr_partial_hash">> |`string` |xxHash3 of the first and last 4 KiB, hex; absent until computed, cleared by a modification |
 |<<cmd "mfr_full_hash">> |`string` |xxHash3 of the whole content, hex |
 |<<cmd "mfr_hash_mtime">>, <<cmd "mfr_hash_size">> |`datetime`, `int` |the file's mtime and size when its hashes were computed, written and cleared with them ([[The duplicate hash cache]]) |

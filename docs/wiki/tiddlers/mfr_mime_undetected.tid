@@ -1,0 +1,8 @@
+title: mfr_mime_undetected
+tags: [[Reserved field]] [[File metadata fields]]
+kind: reference
+summary: That reconcile read the file's content and found no MIME type in it.
+
+Set in place of [[mfr_mime]] when the content says nothing `infer` recognises (plain
+text, for one), so that reconcile does not open the file again each time. Clear it to
+have the type looked for again ([[File metadata fields]]).

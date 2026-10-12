@@ -14,6 +14,14 @@ than breaking them.
 ## [Unreleased]
 
 ### Added
+- **`mfr_mime_undetected`: a file reconcile found no MIME type in is not read
+  again.** The MIME pass opened, at every reconcile, every regular file
+  `infer` recognises nothing in (plain text, for one), since nothing said it
+  had been tried. Such a file now gets `mfr_mime_undetected = true`; clear it to
+  ask again. A file whose type was found carries no marker, so clearing
+  `mfr_mime` still recomputes it. A symlink no longer receives its target's
+  type at creation, as the MIME pass never gave it one (doc "File metadata
+  fields").
 - **The background tasks are in the slow log.** A reconcile, a duplicate scan,
   a relink and a load's warm-up are logged as `task <kind>` (the task's id in
   the context), their progress phases as the entry's phases, with `wait:conn`

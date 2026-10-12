@@ -47,6 +47,7 @@ pub const RESERVED_FIELDS: &[ReservedField] = &[
     field("mfr_gid", "int", "The id of the file's group."),
     field("mfr_inode", "string", "The device and inode of a file with more than one hard link."),
     field("mfr_mime", "string", "The MIME type, from the content."),
+    field("mfr_mime_undetected", "bool", "That the content was read and no MIME type found."),
     field("mfr_partial_hash", "string", "The hash of a file's first and last 4 KiB."),
     field("mfr_full_hash", "string", "The hash of a file's whole content."),
     field("mfr_hash_mtime", "datetime", "The file's mtime when its hashes were computed."),

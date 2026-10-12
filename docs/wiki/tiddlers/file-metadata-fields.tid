@@ -23,8 +23,11 @@ directory ([[Reserved fields]] has the full list). Their availability varies:
 
 `mfr_mime` is detected from content by the pure-Rust `infer` crate (magic bytes) on every
 platform — no system `libmagic`. The value is always a standard MIME string; what `infer`
-cannot classify from magic bytes (plain text, for one) leaves the field absent.
+cannot classify from magic bytes (plain text, for one) leaves the field absent, and sets
+`mfr_mime_undetected = true` instead.
 
-It is filled by reconcile — full and scoped — for files that lack it (on by default;
-`mime: false`, `mf reconcile --no-mime`). It is never recomputed: a content change is
-not reflected until the field is cleared.
+It is filled by reconcile — full and scoped — for the regular files that have neither
+field (on by default; `mime: false`, `mf reconcile --no-mime`). It is never recomputed: a
+content change is not reflected until the field is cleared. The marker is what keeps a
+file nothing was found in from being opened again at every reconcile — read on 50 000
+files, those were most of what a second MIME pass did; clear it to ask again.

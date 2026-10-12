@@ -784,9 +784,7 @@ pub(crate) fn create_record_for(
         vec![Field::new("mfr_path", Value::TreeRef { parent: Some(parent), name: name.clone() })];
     fields.extend(fs_meta::stat_fields_in(root, &abs)?);
     if compute_mime {
-        if let Some(mime) = detect_mime(&abs) {
-            fields.push(Field::new("mfr_mime", Value::String(mime)));
-        }
+        fields.extend(mime_fields(&abs));
     }
     fields.extend(extra_fields.iter().cloned());
     let created = writer.create_metarecord(fields)?;
@@ -848,16 +846,36 @@ fn detect_mime(abs: &Path) -> Option<String> {
     infer::get_from_path(abs).ok().flatten().map(|t| t.mime_type().to_string())
 }
 
-/// Sets `mfr_mime` on a file record that does not have one yet. Idempotent: an
-/// existing `mfr_mime` is never recomputed (so re-running reconcile does not
-/// grow the log; content changes are out of scope, like the hashes).
-fn maybe_compute_mime(writer: &mut Writer, root: &Path, uuid: Uuid, rel: &RelPath) -> Result<()> {
-    if !Rows::rows_named(writer.store(), uuid, "mfr_mime")?.is_empty() {
-        return Ok(());
+/// The field a regular file's content says about its MIME type: `mfr_mime`
+/// when `infer` recognises it, else `mfr_mime_undetected` — so that a file
+/// nothing was found in is not opened again at every reconcile (doc "File
+/// metadata fields"). Nothing for what is not a regular file.
+fn mime_fields(abs: &Path) -> Vec<Field> {
+    if !std::fs::symlink_metadata(abs).is_ok_and(|m| m.is_file()) {
+        return Vec::new();
     }
-    let abs = rel.to_abs(root);
-    if let Some(mime) = detect_mime(&abs) {
-        writer.set_field_as(OpType::FileModified, uuid, "mfr_mime", Value::String(mime))?;
+    vec![match detect_mime(abs) {
+        Some(mime) => Field::new("mfr_mime", Value::String(mime)),
+        None => Field::new(MIME_UNDETECTED, Value::Bool(true)),
+    }]
+}
+
+/// Marks a regular file whose content `infer` recognised no type in.
+const MIME_UNDETECTED: &str = "mfr_mime_undetected";
+
+/// Sets `mfr_mime` on a file record that has neither it nor the
+/// `mfr_mime_undetected` marker. Idempotent: an existing `mfr_mime` is never
+/// recomputed, and a file marked undetected is not opened again (so re-running
+/// reconcile neither grows the log nor re-reads files; content changes are out
+/// of scope, like the hashes). Clearing either field asks again.
+fn maybe_compute_mime(writer: &mut Writer, root: &Path, uuid: Uuid, rel: &RelPath) -> Result<()> {
+    for name in ["mfr_mime", MIME_UNDETECTED] {
+        if !Rows::rows_named(writer.store(), uuid, name)?.is_empty() {
+            return Ok(());
+        }
+    }
+    for field in mime_fields(&rel.to_abs(root)) {
+        writer.set_field_as(OpType::FileModified, uuid, &field.name, field.value)?;
     }
     Ok(())
 }

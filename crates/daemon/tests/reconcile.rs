@@ -511,6 +511,58 @@ fn test_reconcile_folds_mime_into_creation() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// A file is opened for its MIME type once: one whose content `infer`
+/// recognises nothing in gets `mfr_mime_undetected`, and no reconcile opens it
+/// again. Seen by giving the file a recognisable content afterwards: a pass
+/// that opened it again would now find a type.
+fn assert_undetected_is_not_reopened(first_with_mime: bool) {
+    let (repo, root) = setup(if first_with_mime { "mime_undet_create" } else { "mime_undet_pass" });
+    write_file(&root, "notes.txt", b"hello");
+    reconcile::reconcile_full(&repo, None, first_with_mime, false, false).unwrap();
+    if !first_with_mime {
+        reconcile::reconcile_full(&repo, None, true, false, false).unwrap();
+    }
+    let notes = resolve(&repo, "/notes.txt").unwrap();
+    assert_eq!(field_value(&repo, notes, "mfr_mime"), None);
+    assert_eq!(field_value(&repo, notes, "mfr_mime_undetected"), Some(Value::Bool(true)));
+
+    write_file(&root, "notes.txt", PNG_MAGIC);
+    reconcile::reconcile_full(&repo, None, true, false, false).unwrap();
+    assert_eq!(field_value(&repo, notes, "mfr_mime"), None, "the marked file was opened again");
+
+    // Clearing the marker asks for it again.
+    {
+        let mut conn = repo.conn.lock().unwrap();
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        w.delete_fields_named(notes, "mfr_mime_undetected").unwrap();
+        w.commit().unwrap();
+    }
+    reconcile::reconcile_full(&repo, None, true, false, false).unwrap();
+    assert_eq!(field_value(&repo, notes, "mfr_mime"), Some(Value::String("image/png".into())));
+    assert_eq!(field_value(&repo, notes, "mfr_mime_undetected"), None);
+}
+
+#[test]
+fn test_an_undetected_mime_is_marked_at_creation_and_not_tried_again() {
+    assert_undetected_is_not_reopened(true);
+}
+
+#[test]
+fn test_an_undetected_mime_is_marked_by_the_mime_pass_and_not_tried_again() {
+    assert_undetected_is_not_reopened(false);
+}
+
+#[test]
+fn test_a_detected_mime_carries_no_marker() {
+    // The marker says "nothing found": a recognised file keeps the contract it
+    // had — clear `mfr_mime` and the next reconcile computes it again.
+    let (repo, root) = setup("mime_detected_no_marker");
+    write_file(&root, "pic.png", PNG_MAGIC);
+    reconcile::reconcile_full(&repo, None, true, false, false).unwrap();
+    let pic = resolve(&repo, "/pic.png").unwrap();
+    assert_eq!(field_value(&repo, pic, "mfr_mime_undetected"), None);
+}
+
 #[test]
 fn test_similarity_phase_proposes_renamed_modified_file() {
     let (repo, root) = setup("similarity");
