@@ -1,0 +1,41 @@
+title: Labels and contexts
+tags: [[The operation log]]
+kind: reference
+audience: dev
+status: proposed
+summary: Operations are grouped by nested labels (name, description, parent) opened as contexts by scripts, commands and the GUI — passed along as an id, so leaving a context is just not passing it on.
+
+A ''label'' is `{id, name, description, parent, created}`. Each operation carries its
+''innermost'' label; the others are its ancestors, found by following the parents. Same
+information as every label on every operation while contexts nest, without copying three
+ids onto each of a bulk write's 50 000 operations.
+
+!! Contexts
+
+A context is a label that the writes made inside it carry. It is ''not daemon state'':
+
+* `mf label begin "name" "description"` creates a label, child of the current context, and prints its id;
+* the caller exports it (`METAFOLDER_LABEL=<id>`), and every `mf` started meanwhile sends it with its requests;
+* leaving the context is ceasing to export it — the end of a subshell or a function's `local`. A script that crashes leaves nothing open behind it.
+
+Every command opens its own label, a child of the context: `mf metarecord -q '…' field
+set …` is a label whose description is the command line and its query, so the log shows
+what was asked, not only what was written.
+
+!! Who opens which
+
+* A shipped tagging script: one label for the run, one per answer (its going back is reverting the last answer's label — no head noted by hand, no rollback), one per command inside.
+* The GUI: one label per command. A script launched from the GUI inherits the context of the command that launched it.
+* The GUI's ''work context'': a command opens a context that every later user operation carries until it is closed — naming the work under way, so it can be looked at or reverted whole. The watcher's operations do not carry it.
+* The watcher: one label per flush, under a ''watcher root'' that only the daemon can write under. The root a label descends from is its ''origin'' — what `revision.origin` said, and what undo and retention read. As today, a client cannot pass its writes off as the daemon's.
+
+!! The log panel
+
+Operations grouped by their outermost label (name and description); a group opens onto
+its child labels, down to single operations. Consecutive watcher labels are folded into
+one line, or they would drown the rest.
+
+!! Open
+
+* Whether the GUI's work context belongs to a workspace or to the whole GUI, and whether it survives a restart.
+* Whether a label can be renamed or described after the fact.

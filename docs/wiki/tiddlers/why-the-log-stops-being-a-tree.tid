@@ -1,0 +1,35 @@
+title: Why the log stops being a tree
+tags: [[The operation log]]
+kind: rationale
+audience: dev
+status: proposed
+summary: The tree rested on three assumptions the watcher broke — few revisions, undo only of the last one, rollback to a state that existed — and its two mechanisms produced undo/redo bugs no rule could close.
+
+The history tree was chosen on three assumptions (user, 12 October 2026). Each turned out
+false:
+
+* ''There would be few revisions'', so keeping months of them was reasonable. The watcher writes a revision per batch of filesystem events, and retention keeps only the last 200 (doc "Automatic retention"): the history is short, and a labelled state far back is not manageable.
+* ''Undoing anything but the last operation would be rare.'' The watcher writes between any two things a user does, so "the change I want back" is almost never the last one.
+* ''A rollback returns to a global state that existed.'' With the watcher's revisions interleaved, rewinding over them unrecords facts still true on disk (doc "Why undo does not step HEAD back"): the state reached is one the filesystem is not in.
+
+!! What it cost in undo and redo
+
+Undo chose between the two mechanisms: a rollback when the change was still the last
+thing in the log, a revert otherwise. The choice depended on whether the watcher had
+written yet — a timing nobody controls — and redo then had to guess which mechanism undo
+had used and whether the world had moved since. Found while verifying the session runs
+(doc "The session scenario", 12 October 2026):
+
+* ''Redo lost after a rollback and a watcher write.'' Undo rolls back; the watcher's next flush (in the session: the GUI's input history file, written by the list's search) lands as a new child of HEAD; redo finds no continuation, steps over the watcher's revision and answers "Nothing to redo." The change is left on an abandoned branch, reachable only by a rollback that would unrecord the watcher's write. That was the run whose redo read 20 000 keys instead of 700 000.
+* ''Redo stops at the first undo it already redid'' (`core::undo::plan_redo`, `rev.left.is_empty()` returns `Nothing` instead of stepping over it): two undos forced into reverts, then two redos — the second answers "Nothing to redo."
+* ''The tagging scripts' going back'' (`mf_log_back_to` in `scripts/shipped/lib/mf-gui.sh`) rolls back to the head noted before an answer — over any watcher revision written meanwhile, which it unrecords.
+
+Each could be patched — a fourth redo case re-applying an abandoned branch at HEAD, a
+mechanism the daemon refuses on purpose. The rules were growing faster than the cases.
+With one mechanism that never moves anything back, none of these cases exists.
+
+!! Why revert can stand alone
+
+The revert already covered the rollback: "a dependent-including revert ''is'' a rollback
+to the target's parent, written forward" (doc "Operation dependencies"). What only the
+tree gave was a global state that once existed — not needed, per the third point above.

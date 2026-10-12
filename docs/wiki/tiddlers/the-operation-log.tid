@@ -1,0 +1,48 @@
+title: The operation log
+tags: [[Event log]]
+kind: overview
+audience: dev
+status: proposed
+summary: A proposed redesign of the event log: an ordered set of reversible operations grouped by nested labels, with one mechanism (revert onto the current state) instead of a history tree, HEAD navigation and rollback.
+
+''Proposed, 12 October 2026 — nothing here is built.'' The event log today is a tree of
+operations with a movable HEAD, two mechanisms (rollback and revert) and revisions
+([[Event log]]). This proposal replaces it with an ''ordered set of operations'': why, in
+[[Why the log stops being a tree]].
+
+!! The model
+
+* The log is a sequence of operations, numbered in the order they were written. There is no parent, no HEAD to move, no branch: the log only grows, and shrinks only by retention.
+* Each operation keeps what it found and what it wrote (the before/after snapshots of today). What it wrote is ''descriptive'': it says what the operation did, it is never a condition for undoing it.
+* There is ''one mechanism'': reverting a set of operations, which applies each one's inverse to the ''current'' state ([[Reverting onto the current state]]). Undo, redo, "back to this morning", a script's going back: each is a choice of set, nothing more. The name "rollback" may be reused for "revert everything since T".
+* Operations are grouped by ''labels'' — named, described, nested — instead of revisions ([[Labels and contexts]]). A transaction stays one request; a label groups what belongs together, across as many requests as it takes.
+* Undo and redo target a label of the newest operation, chosen by the user when there are several ([[Undo and redo by label]]).
+
+!! Retention
+
+With no dependency analysis left, any operation can go at any time without making another
+one impossible to revert. Retention becomes a policy per origin: keep X operations of the
+watcher, Y of everything else — so a user keeps a long history of their own changes while
+the watcher's churn is trimmed. A label with no operation left goes with its last one.
+
+The old "labelled revision is a retention floor" rule (doc "Automatic retention") is
+dropped: naming a stretch of work is a context in the GUI ([[Labels and contexts]]), not
+a promise to keep a global state that the log no longer knows how to rebuild.
+
+!! What goes
+
+* HEAD, its navigation, the history tree and its branches; LCA and navigation paths; `mode=active`/`mode=tree` on `GET /log`; `prune --linearize`.
+* The coordinated step-by-step navigation and its lock (`/rollback/start|step|abort`); the file side of a revert, which already exists, stays.
+* The dependency analysis: doc "Operation dependencies", `with_dependents`, "blocked by".
+* Revisions as a grouping, `revision.origin` (replaced by the label root), labels on revisions.
+* Restoring a past ''global'' state. Nothing in daily use needs it; the watcher's revisions make it a state that never really existed on disk anyway.
+
+!! What it costs
+
+* A persisted-format change, so a conversion ships with it (doc "Persisted format changes"): HEAD's ancestry is kept, abandoned branches dropped, each revision becomes a label (under the watcher's root when its origin was `watcher`), `reverts_op_id` kept.
+* A wire break: `/rollback/*`, `rev_id`, `head`/`mode` on `/log` change or go — `API_VERSION` is bumped.
+* The daemon's log, `core::undo`, `core::navigation`, the CLI's `mf log`, the GUI's undo/redo and log panel, the change feed (simpler: the log never moves back) and the shipped tagging scripts' going back.
+
+<<list-kind rationale>>
+
+<<list-kind reference>>

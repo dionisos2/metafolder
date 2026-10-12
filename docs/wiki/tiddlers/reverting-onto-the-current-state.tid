@@ -1,0 +1,61 @@
+title: Reverting onto the current state
+tags: [[The operation log]]
+kind: reference
+audience: dev
+status: proposed
+summary: A revert applies each operation's inverse to the state as it is now — whatever was written since — so it needs no dependency check and no complete log, and its own record composes exactly.
+
+A revert of a set of operations applies, newest first, each one's ''inverse to the current
+state''. What the operation wrote is not checked against what is there now: for a field set
+A → B and now holding C, the revert writes A. A revert means "go back to what this
+changed", not "undo this if nothing touched it since".
+
+!! The inverse of each operation
+
+|!Operation |!Its inverse, applied now |
+|`set_field` (and the watcher's `file_*`, set-field-shaped) |set the field back to the rows it replaced |
+|`append_field` |remove ''that'' row — not the whole field, which would erase what was appended since |
+|`delete_field` |put the removed rows back |
+|`create_metarecord` |delete the metarecord, whatever it holds now |
+|`delete_metarecord` |recreate it with the fields it had |
+|`set_metarecord` |set the whole field set back |
+
+So "back to A" holds for a set; for a multi-map it is the delta that is undone, not the
+cell that is restored.
+
+!! What it removes
+
+No dependency analysis (doc "Operation dependencies"): nothing is "blocked by" a later
+operation, so nothing needs the operations between a target and now to be in the log. That
+is what lets retention trim anything ([[The operation log]]).
+
+!! What can still fail
+
+Ordinary write validation, not a structural rule: recreating a metarecord whose uuid
+exists again, a `TreeRef` that would make a cycle, a schema violation. The revert fails as
+the equivalent write would, and says why.
+
+!! The one real risk, and its warning
+
+Reverting an old operation silently overwrites a newer one on the same field: rating 3 →
+5, then 5 → 4, then reverting the first gives 3 and the 4 is gone. For an explicit revert
+this is what was asked. What the operation wrote is kept to ''warn'': the plan says "this
+field holds C, not B, since operation N". Undo, which takes the newest change, almost never
+meets the case.
+
+!! Composition
+
+A revert records what it really found — C, not B — as its own "before". Reverting the
+revert puts C back: undo then redo returns exactly to the state between them, whatever
+was written in between.
+
+!! Files
+
+Reverting a move A → B whose file is now at C moves it from C to A; the file side of a
+revert (doc "Filesystem coordination") already does that, and the plan shows it. A content
+the trash does not hold cannot come back: the metadata is reverted, the truth written
+again by the watcher.
+
+!! Open
+
+* Field row ids: a navigation restored the original `field.id`s. Whether a revert must, for the clients that hold row ids, is to be checked.

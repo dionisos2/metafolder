@@ -1,0 +1,46 @@
+title: Undo and redo by label
+tags: [[The operation log]]
+kind: reference
+audience: dev
+status: proposed
+summary: Undo offers the labels of the newest operation still standing, and reverts the one chosen; redo does the same over the newest undo; the command line names the label.
+
+!! Undo
+
+Undo looks at the ''newest operation'' that is the user's (not under the watcher's root),
+not part of an undo or a redo, and not already undone. The labels it carries — innermost
+to outermost — are the candidates:
+
+* one candidate: it is undone at once;
+* several: the GUI offers them in the command input's completion, innermost first (the answer, the script run, the work context…), and reverts the one chosen.
+
+Undoing a label reverts every operation under it still standing, newest first
+([[Reverting onto the current state]]). On the command line the label is named:
+`mf log undo <label-id>`; without one, the candidates are listed. Slower than a single key
+for the common case, but it never takes back more or less than meant; shortcuts can be
+added where it proves impractical.
+
+The undo is itself a label, "undo of L", linked to L — what `reverts_op_id` says today, at
+the label's level.
+
+!! Redo
+
+Redo is the same over the ''newest undo still standing'': its labels are the candidates,
+and redoing reverts the undo. Two rules carried over from today (doc "Why undo and redo do
+not oscillate"):
+
+* an undo of an undo is a redo — undo never offers an undo, redo never offers a redo;
+* an operation is undone only while the revert that undid it still stands, resolved along the whole chain.
+
+Redo steps over undos already redone (today's `plan_redo` stops at the first one — doc
+"Why the log stops being a tree"), and offers nothing once the newest user operation is
+an ordinary change: a new change clears what could be redone, as in any editor. What it
+cleared is still in the log, and an explicit revert of the undo reaches it.
+
+!! Two clients at once — a confusing case
+
+"Newest" is the newest ''operation'', not the newest label. With two clients writing
+concurrently — a script running while the user edits by hand —, the newest operation may
+be the script's, and undo then offers the script's labels and not what the user just did.
+The user documentation must say so; the candidates' names make it visible before anything
+is undone.

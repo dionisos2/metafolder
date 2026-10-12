@@ -18,6 +18,9 @@ operations from the root to HEAD reproduces it ([[History tree and HEAD]]). Hist
 lost only by an explicit prune, or by the retention limit (the last 200 revisions by
 default).
 
+A redesign replacing the tree by an ordered set of operations grouped by labels is
+proposed: [[The operation log]].
+
 !! Use it
 
 <<list-kind guide>>
