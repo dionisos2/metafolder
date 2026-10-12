@@ -154,6 +154,16 @@ than breaking them.
     `mf_watch = true` no longer reads as unwatched.
 
 ### Changed
+- **A revert is applied onto the current state; nothing blocks it any more.**
+  It goes back to what each operation replaced, whatever was written on the
+  same field since — the plan names that later write (`changed_since`) and
+  the clients confirm before overwriting it. The dependency check,
+  `with_dependents` (`--with-dependents`, `log:revert with-dependents`) and the
+  plan's `blocked`/`dependents`/`revertable` are gone. An append is undone by
+  value, so undo, redo, undo finds the value again; undoing the creation of a
+  metarecord already gone writes nothing; recreating one whose uuid exists
+  again is a `409`. `API_VERSION` 17 (doc "Reverting onto the current
+  state"; first step of doc "The operation log").
 - **The file manager's ''Add to DB'' is `file-manager:record`** (was
   `file-manager:track`, "Track" in the context menu): it creates the entry's
   metarecord through `POST /metarecords`, names the parent directories that have

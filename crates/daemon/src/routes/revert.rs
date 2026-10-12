@@ -19,8 +19,6 @@ pub(super) struct RevertBody {
     #[serde(default)]
     label: Option<String>,
     #[serde(default)]
-    with_dependents: bool,
-    #[serde(default)]
     skip_filesystem: bool,
 }
 
@@ -30,8 +28,6 @@ pub(super) struct RevertPlanParams {
     target_rev_id: Option<String>,
     #[serde(default)]
     target_op_ids: Option<String>,
-    #[serde(default)]
-    with_dependents: bool,
 }
 
 /// Resolves a revert target to its operations, oldest first. All of them must
@@ -109,29 +105,27 @@ fn op_brief(op: &crate::log::OpRow) -> serde_json::Value {
 /// operation and is useless to a caller that will not touch the filesystem.
 fn revert_plan_json(
     conn: &dyn crate::store::Store,
-    analysis: &crate::revert::Analysis,
-    with_dependents: bool,
+    ops: &[crate::log::OpRow],
     mut fs: Option<(&crate::tree_cache::TreeCache, &std::path::Path)>,
 ) -> Result<serde_json::Value, ApiError> {
-    let effective = analysis.effective(with_dependents);
-    let requested: std::collections::HashSet<i64> =
-        analysis.requested.iter().map(|o| o.id).collect();
-    let mut operations = Vec::with_capacity(effective.len());
+    let mut operations = Vec::with_capacity(ops.len());
     let mut requires_lock = false;
-    for op in &effective {
+    for op in ops {
         let action = crate::revert::fs_action(conn, op)?;
         requires_lock |= action.is_some();
         let restores = snapshots_json(conn, op.id, 0)?;
-        let blocked_by = analysis
-            .blocked
-            .iter()
-            .find(|b| crate::revert::Cell::of(&b.op).intersects(&crate::revert::Cell::of(op)))
-            .filter(|_| !with_dependents && requested.contains(&op.id))
-            .map(|b| {
-                let mut v = op_brief(&b.op);
-                v["timestamp"] = json!(b.timestamp);
+        // A warning, never a refusal (doc "Reverting onto the current state").
+        let changed_since = match crate::revert::changed_since(conn, op)? {
+            crate::revert::Changed::No => serde_json::Value::Null,
+            crate::revert::Changed::By(by) => {
+                let mut v = op_brief(&by);
+                if let Some(meta) = conn.revisions(&[by.rev_id])?.get(&by.rev_id) {
+                    v["timestamp"] = json!(meta.timestamp);
+                }
                 v
-            });
+            }
+            crate::revert::Changed::Unlogged => json!({}),
+        };
         let filesystem = match &action {
             None => serde_json::Value::Null,
             Some(crate::revert::FsAction::Move) => {
@@ -156,11 +150,10 @@ fn revert_plan_json(
             "op_type": op.op_type,
             "entity_uuid": hex(op.entity_uuid),
             "field_name": op.field_name,
-            "origin": if requested.contains(&op.id) { "requested" } else { "dependent" },
             "writes": crate::revert::written_as(op).as_str(),
             "restores": restores,
             "filesystem": filesystem,
-            "blocked_by": blocked_by,
+            "changed_since": changed_since,
         });
         if matches!(action, Some(crate::revert::FsAction::RestoreContent)) {
             // The trash correlation key, as on a rollback step: the version the
@@ -175,25 +168,9 @@ fn revert_plan_json(
         }
         operations.push(entry);
     }
-    let blocked: Vec<serde_json::Value> = if with_dependents {
-        vec![]
-    } else {
-        analysis
-            .blocked
-            .iter()
-            .map(|b| {
-                let mut v = op_brief(&b.op);
-                v["timestamp"] = json!(b.timestamp);
-                v
-            })
-            .collect()
-    };
     Ok(json!({
-        "revertable": with_dependents || analysis.revertable(),
         "requires_lock": requires_lock,
         "operations": operations,
-        "blocked": blocked,
-        "dependents": analysis.dependents.iter().map(op_brief).collect::<Vec<_>>(),
     }))
 }
 
@@ -215,13 +192,11 @@ pub(super) async fn revert_plan(
             .as_ref()
             .map(|s| s.split(',').filter_map(|p| p.trim().parse::<i64>().ok()).collect::<Vec<_>>()),
     };
-    let with_dependents = params.with_dependents;
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let head = crate::store::Log::head(&*conn)?;
         let ops = resolve_revert_target(&conn, head, &target)?;
-        let analysis = crate::revert::analyse(&*conn, head, ops)?;
-        Ok(Json(revert_plan_json(&conn, &analysis, with_dependents, None)?))
+        Ok(Json(revert_plan_json(&conn, &ops, None)?))
     })
     .await
 }
@@ -237,21 +212,7 @@ pub(super) async fn revert(
         repo_state.ensure_writable()?;
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let head = crate::store::Log::head(&*conn)?;
-        let ops = resolve_revert_target(&conn, head, &body.target)?;
-        // The check runs here, inside the transaction that writes the revert,
-        // so what is written was checked against the state it is written into.
-        let analysis = crate::revert::analyse(&*conn, head, ops)?;
-        if !body.with_dependents && !analysis.revertable() {
-            let plan = revert_plan_json(&conn, &analysis, false, None)?;
-            return Err(ApiError::conflict(format!(
-                "the revert is blocked by {} later operation(s) on the same cells; \
-                 pass with_dependents to revert those too",
-                analysis.blocked.len()
-            ))
-            .with_field("blocked", plan["blocked"].clone()));
-        }
-
-        let mut effective = analysis.effective(body.with_dependents);
+        let mut effective = resolve_revert_target(&conn, head, &body.target)?;
         let mut skipped = Vec::new();
         // Which operations need a file action: asked of the log once, since a
         // trashing's is read through its `reverts_op_id` chain.
@@ -337,13 +298,10 @@ fn narrow_to_applied(
 #[derive(Deserialize)]
 pub(super) struct RevertStartBody {
     target: RevertTarget,
-    #[serde(default)]
-    with_dependents: bool,
 }
 
 /// `POST /revert/start`: enters the lock and returns the plan, with the paths
-/// each `move` action needs. A blocked target is refused and the lock is *not*
-/// entered.
+/// each `move` action needs.
 pub(super) async fn revert_start(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
@@ -357,26 +315,10 @@ pub(super) async fn revert_start(
         }
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let head = crate::store::Log::head(&*conn)?;
-        let ops = resolve_revert_target(&conn, head, &body.target)?;
-        let analysis = crate::revert::analyse(&*conn, head, ops)?;
-        if !body.with_dependents && !analysis.revertable() {
-            let plan = revert_plan_json(&conn, &analysis, false, None)?;
-            return Err(ApiError::conflict(format!(
-                "the revert is blocked by {} later operation(s) on the same cells; \
-                 pass with_dependents to revert those too",
-                analysis.blocked.len()
-            ))
-            .with_field("blocked", plan["blocked"].clone()));
-        }
-        let effective = analysis.effective(body.with_dependents);
+        let effective = resolve_revert_target(&conn, head, &body.target)?;
         let plan = {
             let cache = repo_state.tree();
-            revert_plan_json(
-                &conn,
-                &analysis,
-                body.with_dependents,
-                Some((&cache, &repo_state.config.root)),
-            )?
+            revert_plan_json(&conn, &effective, Some((&cache, &repo_state.config.root)))?
         };
         drop(conn);
         *repo_state.rollback_lock.lock_recover() =
@@ -424,15 +366,6 @@ pub(super) async fn revert_commit(
                 effective.push(crate::store::Log::op(&*conn, *id)?.ok_or_else(|| {
                     ApiError::not_found(format!("operation {id} vanished during the revert"))
                 })?);
-            }
-            // Re-run the check inside the writing transaction: under the lock it
-            // cannot have changed — HEAD stands still — but the guarantee is the
-            // daemon's, not a client convention.
-            let analysis = crate::revert::analyse(&conn, head, effective.clone())?;
-            if !analysis.revertable() {
-                let plan = revert_plan_json(&conn, &analysis, false, None)?;
-                return Err(ApiError::conflict("the revert became blocked")
-                    .with_field("blocked", plan["blocked"].clone()));
             }
             let (kept, skipped) = narrow_to_applied(effective, &body.apply)?;
             if kept.is_empty() {

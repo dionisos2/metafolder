@@ -47,9 +47,8 @@ async fn spawn_stub_with(log: Value, filesystem_steps: u64) -> (String, Stub) {
         reverts: Arc::new(Mutex::new(Vec::new())),
         filesystem_steps,
         starts: Arc::new(Mutex::new(Vec::new())),
-        revert_plan: Arc::new(Mutex::new(json!({"revertable": true, "requires_lock": false,
-                                                "operations": [{"id": 9}], "blocked": [],
-                                                "dependents": []}))),
+        revert_plan: Arc::new(Mutex::new(json!({"requires_lock": false,
+                                                "operations": [{"id": 9}]}))),
         rollback_refused: Arc::new(Mutex::new(false)),
     };
     let router = axum::Router::new()
@@ -269,10 +268,7 @@ async fn test_redo_reverts_the_undo_when_the_watcher_has_written_since() {
     undo::navigate(gui.clone(), daemon, ws.clone(), true, Default::default()).await.unwrap();
 
     assert!(stub.rollbacks.lock().unwrap().is_empty(), "HEAD must not move");
-    assert_eq!(
-        stub.reverts.lock().unwrap().as_slice(),
-        [json!({"target": {"rev_id": 3}, "with_dependents": false})]
-    );
+    assert_eq!(stub.reverts.lock().unwrap().as_slice(), [json!({"target": {"rev_id": 3}})]);
     assert_ne!(gui.get_var(&ws, "metarecords:dirty").unwrap(), Value::Null);
 }
 
@@ -420,30 +416,18 @@ async fn test_undo_under_the_watcher_reverts_and_reports_the_new_revision() {
     );
 }
 
-/// A later change overwrote what the undone revision wrote: the GUI does not
-/// pull that change in behind the user's back. It says what blocks and where
-/// the way through is, and the command itself does not fail.
+/// A later change wrote the same cell: nothing blocks the undo any more (doc
+/// "Reverting onto the current state") — it reverts onto the current state.
 #[tokio::test]
-async fn test_a_blocked_undo_names_the_blocker_and_the_way_through() {
+async fn test_an_undo_over_a_cell_changed_since_still_reverts() {
     let (url, stub) = spawn_stub(log_with_the_watcher_on_top()).await;
     *stub.revert_plan.lock().unwrap() = json!({
-        "revertable": false, "requires_lock": false, "operations": [{"id": 2}],
-        "blocked": [{"op_id": 2, "rev_id": 7}], "dependents": [],
+        "requires_lock": false,
+        "operations": [{"id": 2, "changed_since": {"op_id": 3, "rev_id": 7}}],
     });
-    let (gui, daemon, ws, notifier) = setup_watched(&url);
+    let (gui, daemon, ws, _notifier) = setup_watched(&url);
 
-    undo::navigate(gui.clone(), daemon, ws.clone(), false, timeouts()).await.unwrap();
+    undo::navigate(gui, daemon, ws, false, timeouts()).await.unwrap();
 
-    assert!(stub.reverts.lock().unwrap().is_empty(), "nothing is forced");
-    assert_eq!(
-        last_status(&notifier),
-        (
-            "Cannot take revision 2 back: a later change by revision 7 overwrote what it wrote. \
-             Open the log panel and use log:revert with-dependents to undo both."
-                .into(),
-            "error".into(),
-            json!(111)
-        )
-    );
-    assert_eq!(gui.get_var(&ws, "metarecords:dirty").unwrap(), Value::Null);
+    assert_eq!(stub.reverts.lock().unwrap().len(), 1);
 }

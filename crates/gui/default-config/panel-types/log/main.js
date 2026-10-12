@@ -449,21 +449,19 @@ export async function mount(root, metafolder) {
   // Undoes the selected revision in place, by writing its inverse at HEAD
   // (doc "Revert"). Unlike a rollback it does not move HEAD, so the
   // watcher flushes that landed since are left exactly where they are.
-  /** What `GET /revert/plan` answers (doc "Revert").
-   *  A blocker names the operation that stands in the way and the revision it
-   *  belongs to.
-   *  @typedef {{revertable?: boolean, blocked?: {rev_id: number, op_id: number}[],
-   *             dependents?: {rev_id: number}[], operations?: unknown[]}} RevertPlan */
+  /** What `GET /revert/plan` answers (doc "Revert"). An operation whose cell
+   *  was written since carries `changed_since` (doc "Reverting onto the
+   *  current state"): the revert overwrites that write.
+   *  @typedef {{requires_lock?: boolean,
+   *             operations?: {changed_since?: {rev_id?: number} | null}[]}} RevertPlan */
 
 
   /** The query string for a revert plan of `target`.
-   *  @param {{rev_id: number}|{op_ids: number[]}} target @param {boolean} deps */
-  function planQuery(target, deps) {
-    const base =
-      'op_ids' in target
-        ? `target_op_ids=${target.op_ids.join(',')}`
-        : `target_rev_id=${target.rev_id}`;
-    return deps ? `${base}&with_dependents=true` : base;
+   *  @param {{rev_id: number}|{op_ids: number[]}} target */
+  function planQuery(target) {
+    return 'op_ids' in target
+      ? `target_op_ids=${target.op_ids.join(',')}`
+      : `target_rev_id=${target.rev_id}`;
   }
 
   /** How the confirmation and the messages name what is being reverted.
@@ -483,35 +481,13 @@ export async function mount(root, metafolder) {
     let plan;
     try {
       plan = /** @type {RevertPlan} */ (
-        await daemon.call('GET', `/repos/${repo}/revert/plan?${planQuery(target, false)}`)
+        await daemon.call('GET', `/repos/${repo}/revert/plan?${planQuery(target)}`)
       );
     } catch (error) {
       await statusBar.error(error);
       return;
     }
-
-    // A blocked plan does not open the dialog: the useful next move is to look
-    // at what stands in the way, so select it and say so.
-    if (plan.revertable === false) {
-      const blocker = plan.blocked?.[0];
-      const extra = plan.dependents?.length ?? 0;
-      if (blocker) {
-        selection = { kind: 'rev', id: blocker.rev_id, revId: blocker.rev_id };
-        expandedRev = blocker.rev_id;
-        // The blocker is often the watcher's: bring those back so the row the
-        // message points at is on screen.
-        if (!visible().some((rev) => rev.id === blocker.rev_id)) showWatcher = true;
-        render();
-        const also = extra > 1 ? ` (and ${extra - 1} more)` : '';
-        void statusBar.message(
-          `${describeTarget(target)} is blocked by op ${blocker.op_id} in revision #${blocker.rev_id}${also}. ` +
-            `Revert that one first, or run log:revert with-dependents to undo ${extra} more operation(s) along with it.`,
-          statusErrorMs,
-        );
-      }
-      return;
-    }
-    await runRevert(target, plan, false);
+    await runRevert(target, plan);
   }
 
   /** Reverts one operation even when a whole revision is selected: expands it
@@ -545,38 +521,21 @@ export async function mount(root, metafolder) {
     return revert();
   }
 
-  // The other exit from a blocked plan: revert the target together with
-  // everything that blocks it (the dependency closure).
-  async function revertWithDependents() {
-    const target = revertTarget(selection);
-    if (target === null) return;
-    try {
-      const plan = await daemon.call(
-        'GET',
-        `/repos/${repo}/revert/plan?${planQuery(target, true)}`,
-      );
-      await runRevert(target, plan, true);
-    } catch (error) {
-      await statusBar.error(error);
-    }
-  }
-
   /**
    * @param {{rev_id: number}|{op_ids: number[]}} target
-   * @param {any} plan
-   * @param {boolean} withDependents
+   * @param {RevertPlan} plan
    */
-  async function runRevert(target, plan, withDependents) {
+  async function runRevert(target, plan) {
     if (repo === null) return;
     const ops = plan.operations ?? [];
     if (ops.length === 0) {
       void statusBar.message('Nothing to revert.', statusMessageMs);
       return;
     }
-    // How much history a closure pulls in is exactly what the user cannot
-    // predict from the target, so it is named before the confirmation.
-    const pulled = withDependents ? plan.dependents?.length ?? 0 : 0;
-    const also = pulled > 0 ? `, ${pulled} of them pulled in as dependents` : '';
+    // A cell written since is overwritten by the revert: what the user cannot
+    // see from the target, so it is named before the confirmation.
+    const changed = ops.filter((op) => op.changed_since != null).length;
+    const also = changed > 0 ? `, ${changed} of them overwriting a later change` : '';
     // A plan with file actions is carried out here too: the files move with
     // the metadata once the user has confirmed, never behind an open dialog.
     const files = plan.requires_lock ? ', moving files on disk' : '';
@@ -594,7 +553,7 @@ export async function mount(root, metafolder) {
       return;
     }
     try {
-      const result = await metafolder.log.revert(repo, target, withDependents);
+      const result = await metafolder.log.revert(repo, target);
       const count = result.reverted_operations?.length ?? 0;
       const summary =
         result.revision === null
@@ -673,13 +632,12 @@ export async function mount(root, metafolder) {
     handler: rollback,
   });
   // Reverting: what is selected by default, or a named widening of it. The
-  // scope is an argument rather than three sibling command names, so a
-  // keybinding reads as what it does (`log:revert with-dependents`).
+  // scope is an argument rather than sibling command names, so a keybinding
+  // reads as what it does (`log:revert revision`).
   /** @type {Record<string, () => unknown>} */
   const REVERTS = {
     op: () => revertOperation(),
     revision: () => revertRevision(),
-    'with-dependents': () => revertWithDependents(),
   };
 
   void commands.register('log:revert', {

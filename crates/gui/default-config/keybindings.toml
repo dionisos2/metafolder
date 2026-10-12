@@ -416,7 +416,6 @@
 # is on (a revision, or one operation of an expanded one), which is the whole
 # point of being able to select an operation.
 "shift+r" = { command = "log:revert", when = "log" }
-"shift+d" = { command = "log:revert with-dependents", when = "log" }
 "shift+o" = { command = "log:revert op", when = "log" }
 "shift+v" = { command = "log:revert revision", when = "log" }
 "shift+l" = { command = "log:mark", when = "log" }

@@ -1,5 +1,5 @@
 //! HTTP-level tests for the revert endpoints (doc "Revert"):
-//! the dependency check, its closure, and what a revert writes.
+//! reverting onto the current state, and what a revert writes.
 
 use std::sync::Arc;
 
@@ -209,33 +209,56 @@ async fn test_the_plan_names_what_a_revert_writes() {
     assert_eq!(writes, ["delete_metarecord"], "a creation is undone by a deletion");
 }
 
-// ── The dependency check ──────────────────────────────────────────────────────
+// ── Onto the current state ────────────────────────────────────────────────────
+// (doc "Reverting onto the current state"): a revert applies each operation's
+// inverse to the state as it is now. A later write on the same cell does not
+// block it; the plan only warns.
 
 #[tokio::test]
-async fn test_a_later_write_on_the_same_cell_blocks_the_revert() {
-    let (app, repo, _root) = setup("blocked").await;
+async fn test_a_later_write_on_the_same_cell_does_not_block_the_revert() {
+    let (app, repo, _root) = setup("later_write").await;
     let uuid =
         create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}]))
             .await;
     set_field(&app, &repo, &uuid, "rating", json!({"type": "int", "value": 5})).await;
     let rev = last_revision(&app, &repo).await;
     set_field(&app, &repo, &uuid, "rating", json!({"type": "int", "value": 7})).await;
-    let blocker_rev = last_revision(&app, &repo).await;
+    let later_rev = last_revision(&app, &repo).await;
 
+    // The plan says the field changed since, and by what.
+    let (status, body) = plan(&app, &repo, &format!("target_rev_id={rev}")).await;
+    assert_eq!(status, StatusCode::OK, "plan failed: {body}");
+    let changed = &body["operations"][0]["changed_since"];
+    assert_eq!(changed["rev_id"].as_i64(), Some(later_rev), "{body}");
+    assert!(body.get("blocked").is_none() && body.get("dependents").is_none(), "{body}");
+
+    // And the revert goes back to what the operation replaced: 7 → 3.
     let (status, body) = revert(&app, &repo, json!({"target": {"rev_id": rev}})).await;
-    assert_eq!(status, StatusCode::CONFLICT, "expected a blocked revert: {body}");
-    let blocked = body["blocked"].as_array().expect("the body names the blockers");
-    assert_eq!(blocked.len(), 1);
-    assert_eq!(blocked[0]["rev_id"].as_i64().unwrap(), blocker_rev);
-    // Nothing was written.
+    assert_eq!(status, StatusCode::OK, "revert failed: {body}");
     assert_eq!(
         field_of(&app, &repo, &uuid, "rating").await,
-        Some(json!({"type": "int", "value": 7}))
+        Some(json!({"type": "int", "value": 3}))
     );
 }
 
 #[tokio::test]
-async fn test_a_write_on_another_cell_does_not_block() {
+async fn test_an_unchanged_cell_carries_no_warning() {
+    let (app, repo, _root) = setup("unchanged").await;
+    let uuid =
+        create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}]))
+            .await;
+    set_field(&app, &repo, &uuid, "rating", json!({"type": "int", "value": 5})).await;
+    let rev = last_revision(&app, &repo).await;
+    // Another cell: no warning on `rating`.
+    set_field(&app, &repo, &uuid, "genre", json!({"type": "string", "value": "jazz"})).await;
+
+    let (status, body) = plan(&app, &repo, &format!("target_rev_id={rev}")).await;
+    assert_eq!(status, StatusCode::OK, "plan failed: {body}");
+    assert_eq!(body["operations"][0]["changed_since"], Value::Null, "{body}");
+}
+
+#[tokio::test]
+async fn test_a_write_on_another_cell_survives_the_revert() {
     let (app, repo, _root) = setup("independent").await;
     let uuid =
         create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}]))
@@ -246,12 +269,11 @@ async fn test_a_write_on_another_cell_does_not_block() {
     set_field(&app, &repo, &uuid, "genre", json!({"type": "string", "value": "jazz"})).await;
 
     let (status, body) = revert(&app, &repo, json!({"target": {"rev_id": rev}})).await;
-    assert_eq!(status, StatusCode::OK, "an independent write must not block: {body}");
+    assert_eq!(status, StatusCode::OK, "revert failed: {body}");
     assert_eq!(
         field_of(&app, &repo, &uuid, "rating").await,
         Some(json!({"type": "int", "value": 3}))
     );
-    // The independent write survives untouched.
     assert_eq!(
         field_of(&app, &repo, &uuid, "genre").await,
         Some(json!({"type": "string", "value": "jazz"}))
@@ -259,14 +281,13 @@ async fn test_a_write_on_another_cell_does_not_block() {
 }
 
 #[tokio::test]
-async fn test_an_entity_scoped_operation_blocks_every_cell_of_that_entity() {
+async fn test_a_later_whole_record_write_does_not_block_either() {
     let (app, repo, _root) = setup("entity_scope").await;
     let uuid =
         create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}]))
             .await;
     set_field(&app, &repo, &uuid, "rating", json!({"type": "int", "value": 5})).await;
     let rev = last_revision(&app, &repo).await;
-    // A whole-record overwrite carries no field name: it writes (entity, *).
     let (status, body) = request(
         &app,
         "PUT",
@@ -277,74 +298,96 @@ async fn test_an_entity_scoped_operation_blocks_every_cell_of_that_entity() {
     assert_eq!(status, StatusCode::OK, "set record failed: {body}");
 
     let (status, body) = revert(&app, &repo, json!({"target": {"rev_id": rev}})).await;
-    assert_eq!(status, StatusCode::CONFLICT, "a whole-entity write must block: {body}");
-}
-
-// ── The closure ───────────────────────────────────────────────────────────────
-
-#[tokio::test]
-async fn test_with_dependents_reverts_the_blockers_too() {
-    let (app, repo, _root) = setup("closure").await;
-    let uuid =
-        create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}]))
-            .await;
-    set_field(&app, &repo, &uuid, "rating", json!({"type": "int", "value": 5})).await;
-    let rev = last_revision(&app, &repo).await;
-    set_field(&app, &repo, &uuid, "rating", json!({"type": "int", "value": 7})).await;
-
-    // The plan reports the closure even when the flag was not passed, so a
-    // client can offer "revert these as well" without a second round-trip.
-    let (status, body) = plan(&app, &repo, &format!("target_rev_id={rev}")).await;
-    assert_eq!(status, StatusCode::OK, "plan failed: {body}");
-    assert_eq!(body["revertable"], json!(false));
-    assert_eq!(body["dependents"].as_array().unwrap().len(), 1);
-
-    let (status, body) =
-        revert(&app, &repo, json!({"target": {"rev_id": rev}, "with_dependents": true})).await;
-    assert_eq!(status, StatusCode::OK, "forced revert failed: {body}");
-    assert_eq!(body["reverted_operations"].as_array().unwrap().len(), 2);
+    assert_eq!(status, StatusCode::OK, "revert failed: {body}");
     assert_eq!(
         field_of(&app, &repo, &uuid, "rating").await,
         Some(json!({"type": "int", "value": 3}))
     );
 }
 
+/// The values of every row of `name`, in row order.
+async fn values_of(app: &Router, repo: &str, uuid: &str, name: &str) -> Vec<Value> {
+    let (status, body) =
+        request(app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
+    assert_eq!(status, StatusCode::OK, "get record failed: {body}");
+    body["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["name"] == name)
+        .map(|f| f["value"].clone())
+        .collect()
+}
+
+/// Undo, redo, undo of an append: the redo put the value back in a row with
+/// another id, so the second undo has to find it by value.
 #[tokio::test]
-async fn test_the_closure_iterates_through_an_entity_scoped_blocker() {
-    let (app, repo, _root) = setup("fixpoint").await;
+async fn test_an_append_is_undone_by_value_after_a_redo() {
+    let (app, repo, _root) = setup("append_by_value").await;
     let uuid =
-        create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}]))
+        create(&app, &repo, json!([{"name": "tag", "value": {"type": "string", "value": "a"}}]))
             .await;
-    set_field(&app, &repo, &uuid, "rating", json!({"type": "int", "value": 5})).await;
-    let rev = last_revision(&app, &repo).await;
-    // Blocks on `rating`, and widens the set's cells to the whole entity...
-    let (status, _) = request(
+    let (status, body) = request(
         &app,
-        "PUT",
-        &format!("/repos/{repo}/metarecords/{uuid}"),
-        Some(json!({"fields": [{"name": "rating", "value": {"type": "int", "value": 9}}]})),
+        "POST",
+        &format!("/repos/{repo}/metarecords/{uuid}/fields"),
+        Some(json!({"name": "tag", "value": {"type": "string", "value": "b"}})),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-    // ...so this one, on a different cell, only becomes a blocker on the
-    // second round of the fixpoint.
-    set_field(&app, &repo, &uuid, "genre", json!({"type": "string", "value": "jazz"})).await;
+    assert_eq!(status, StatusCode::OK, "append failed: {body}");
+    let append = last_revision(&app, &repo).await;
 
-    let (status, body) =
-        plan(&app, &repo, &format!("target_rev_id={rev}&with_dependents=true")).await;
-    assert_eq!(status, StatusCode::OK, "plan failed: {body}");
-    let ops = body["operations"].as_array().unwrap();
-    assert_eq!(ops.len(), 3, "the closure must reach the second-round blocker: {body}");
-    assert_eq!(ops.iter().filter(|o| o["origin"] == "requested").count(), 1);
+    let (status, body) = revert(&app, &repo, json!({"target": {"rev_id": append}})).await;
+    assert_eq!(status, StatusCode::OK, "undo failed: {body}");
+    let undo = body["revision"].as_i64().unwrap();
+    let (status, body) = revert(&app, &repo, json!({"target": {"rev_id": undo}})).await;
+    assert_eq!(status, StatusCode::OK, "redo failed: {body}");
+    assert_eq!(values_of(&app, &repo, &uuid, "tag").await.len(), 2);
 
-    let (status, body) =
-        revert(&app, &repo, json!({"target": {"rev_id": rev}, "with_dependents": true})).await;
-    assert_eq!(status, StatusCode::OK, "forced revert failed: {body}");
+    let (status, body) = revert(&app, &repo, json!({"target": {"rev_id": append}})).await;
+    assert_eq!(status, StatusCode::OK, "second undo failed: {body}");
     assert_eq!(
-        field_of(&app, &repo, &uuid, "rating").await,
-        Some(json!({"type": "int", "value": 3}))
+        values_of(&app, &repo, &uuid, "tag").await,
+        vec![json!({"type": "string", "value": "a"})]
     );
-    assert_eq!(field_of(&app, &repo, &uuid, "genre").await, None, "the genre write is undone too");
+}
+
+#[tokio::test]
+async fn test_reverting_a_create_of_a_record_already_gone_writes_nothing() {
+    let (app, repo, _root) = setup("create_gone").await;
+    let uuid =
+        create(&app, &repo, json!([{"name": "a", "value": {"type": "int", "value": 1}}])).await;
+    let created = last_revision(&app, &repo).await;
+    let (status, body) =
+        request(&app, "DELETE", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "delete failed: {body}");
+
+    let (status, body) = revert(&app, &repo, json!({"target": {"rev_id": created}})).await;
+    assert_eq!(status, StatusCode::OK, "revert failed: {body}");
+    let (status, _) =
+        request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// Recreating a deleted metarecord restores its uuid — and a uuid that exists
+/// again cannot be recreated: an ordinary write error, named.
+#[tokio::test]
+async fn test_recreating_a_metarecord_whose_uuid_exists_is_a_conflict() {
+    let (app, repo, _root) = setup("recreate_twice").await;
+    let uuid =
+        create(&app, &repo, json!([{"name": "a", "value": {"type": "int", "value": 1}}])).await;
+    let (status, body) =
+        request(&app, "DELETE", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "delete failed: {body}");
+    let deleted = last_revision(&app, &repo).await;
+
+    let (status, body) = revert(&app, &repo, json!({"target": {"rev_id": deleted}})).await;
+    assert_eq!(status, StatusCode::OK, "first revert failed: {body}");
+    assert_eq!(field_of(&app, &repo, &uuid, "a").await, Some(json!({"type": "int", "value": 1})));
+
+    let (status, body) = revert(&app, &repo, json!({"target": {"rev_id": deleted}})).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(body["error"].as_str().unwrap().contains(&uuid), "{body}");
 }
 
 // ── Targets ───────────────────────────────────────────────────────────────────

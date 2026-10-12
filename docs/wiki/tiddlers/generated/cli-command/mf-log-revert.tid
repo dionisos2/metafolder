@@ -18,9 +18,6 @@ Options:
       --op <OP>
           Revert this operation only (repeatable)
 
-      --with-dependents
-          Also revert whatever blocks the target (its dependency closure)
-
       --metadata-only
           Leave out the operations needing a filesystem action
 

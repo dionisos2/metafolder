@@ -1,16 +1,11 @@
 //! Reverting operations (doc "Revert").
 //!
 //! A revert undoes a set of past operations *without moving HEAD*: it applies
-//! the inverse of each member, newest to oldest, and writes those inverses
-//! through [`log::Writer`] as a new revision. Rollback undoes everything back
-//! to a point in time; a revert undoes one thing and leaves the rest standing.
-//!
-//! Whether that is meaningful is decided by the *dependency check*: a later
-//! operation may have overwritten what the reverted one wrote, in which case
-//! there is no "before" left to restore. The check is structural — it reads the
-//! `operation` table and nothing else.
-
-use std::collections::{BTreeSet, HashMap, HashSet};
+//! the inverse of each member, newest to oldest, to the state as it is now,
+//! and writes those inverses through [`log::Writer`] as a new revision
+//! (doc "Reverting onto the current state"). What an operation wrote is never
+//! a condition for undoing it — a later write on the same cell does not block
+//! the revert, it only earns a warning in the plan ([`changed_since`]).
 
 use anyhow::Result;
 use metafolder_core::metarecord::Field;
@@ -21,7 +16,8 @@ use crate::rows::FieldRow;
 use crate::store::Log;
 
 /// The cell an operation writes: one field of an entity, or the whole entity
-/// when the operation carries no field name (doc "Operation dependencies").
+/// when the operation carries no field name — what a later write must touch
+/// for [`changed_since`] to name it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cell {
     pub entity: Uuid,
@@ -44,104 +40,74 @@ impl Cell {
     }
 }
 
-/// An operation standing in the way of a revert.
-#[derive(Debug, Clone)]
-pub struct Blocker {
-    pub op: OpRow,
-    pub timestamp: i64,
-}
-
-/// What a revert of a given target would do.
-pub struct Analysis {
-    /// The operations asked for, oldest first.
-    pub requested: Vec<OpRow>,
-    /// The dependency closure minus `requested`, oldest first: what
-    /// `with_dependents` would add.
-    pub dependents: Vec<OpRow>,
-    /// The operations directly blocking `requested`. Empty exactly when
-    /// `dependents` is.
-    pub blocked: Vec<Blocker>,
-}
-
-impl Analysis {
-    pub fn revertable(&self) -> bool {
-        self.blocked.is_empty()
-    }
-
-    /// The operations a revert would actually undo, oldest first.
-    pub fn effective(&self, with_dependents: bool) -> Vec<OpRow> {
-        let mut ops = self.requested.clone();
-        if with_dependents {
-            ops.extend(self.dependents.iter().cloned());
-            ops.sort_by_key(|o| o.id);
-        }
-        ops
-    }
-}
-
 /// Resolves the operations of a revision, oldest first.
 pub fn revision_ops(log: &dyn Log, rev_id: i64) -> Result<Vec<OpRow>> {
     log.revision_ops(rev_id)
 }
 
-/// Analyses a revert of `requested`: its blockers, and the closure that taking
-/// them along would produce.
-///
-/// The closure is a fixpoint, not one pass: an entity-scoped blocker widens the
-/// cells the set writes, so operations that were independent a round earlier
-/// become blockers in turn. It terminates because a blocker is always younger
-/// than the set's oldest member, so the iteration never leaves the window
-/// between that operation and HEAD.
-pub fn analyse(log: &dyn Log, head: Option<i64>, requested: Vec<OpRow>) -> Result<Analysis> {
-    let Some(head) = head else {
-        return Ok(Analysis { requested, dependents: vec![], blocked: vec![] });
+/// What the plan says of a cell that changed since `op` wrote it.
+#[derive(Debug, Clone)]
+pub enum Changed {
+    /// The cell holds what `op` left there.
+    No,
+    /// It holds something else, written last by this logged operation.
+    By(OpRow),
+    /// It holds something else, and what wrote it is no longer in the log.
+    Unlogged,
+}
+
+/// Whether the cell `op` wrote still holds what it left there — a warning
+/// for the plan, never a refusal: the revert goes back to what `op` replaced
+/// whatever was written since (doc "Reverting onto the current state").
+pub fn changed_since<S: crate::store::Store + ?Sized>(store: &S, op: &OpRow) -> Result<Changed> {
+    let after = store.snapshots(op.id, true)?;
+    let entity = op.entity_uuid;
+    let unchanged = match op.op_type.as_str() {
+        "create_metarecord" | "set_metarecord" => {
+            store.version(entity)?.is_some() && same_rows(&store.rows(entity)?, &after)
+        }
+        "delete_metarecord" => store.version(entity)?.is_none(),
+        "append_field" => {
+            let Some(name) = op.field_name.as_deref() else { return Ok(Changed::No) };
+            let now = store.rows_named(entity, name)?;
+            after.iter().all(|a| now.iter().any(|r| r.value == a.value))
+        }
+        "delete_field" => {
+            let Some(name) = op.field_name.as_deref() else { return Ok(Changed::No) };
+            let before = store.snapshots(op.id, false)?;
+            let now = store.rows_named(entity, name)?;
+            !before.iter().any(|b| now.iter().any(|r| r.value == b.value))
+        }
+        _ => {
+            let Some(name) = op.field_name.as_deref() else { return Ok(Changed::No) };
+            same_rows(&store.rows_named(entity, name)?, &after)
+        }
     };
-    let ancestry: HashSet<i64> = log.ancestry(head)?.into_iter().collect();
-    let oldest = requested.iter().map(|o| o.id).min().unwrap_or(head);
-
-    let mut set: BTreeSet<i64> = requested.iter().map(|o| o.id).collect();
-    let mut cells: Vec<Cell> = requested.iter().map(Cell::of).collect();
-    let mut dependents: Vec<OpRow> = vec![];
-    let mut blocked: Vec<Blocker> = vec![];
-
-    loop {
-        let entities: BTreeSet<Uuid> = cells.iter().map(|c| c.entity).collect();
-        let mut found: Vec<OpRow> = vec![];
-        for entity in entities {
-            for op in log.entity_ops_after(entity, oldest)? {
-                if set.contains(&op.id) || !ancestry.contains(&op.id) {
-                    continue;
-                }
-                let cell = Cell::of(&op);
-                if cells.iter().any(|c| c.intersects(&cell)) {
-                    found.push(op);
-                }
-            }
-        }
-        if found.is_empty() {
-            break;
-        }
-        if blocked.is_empty() {
-            // The first round is what blocks the operations actually asked for.
-            for op in &found {
-                blocked.push(Blocker {
-                    timestamp: log
-                        .revisions(&[op.rev_id])?
-                        .get(&op.rev_id)
-                        .map(|m| m.timestamp)
-                        .ok_or_else(|| anyhow::anyhow!("revision {} not found", op.rev_id))?,
-                    op: op.clone(),
-                });
-            }
-        }
-        for op in found {
-            set.insert(op.id);
-            cells.push(Cell::of(&op));
-            dependents.push(op);
-        }
+    if unchanged {
+        return Ok(Changed::No);
     }
-    dependents.sort_by_key(|o| o.id);
-    Ok(Analysis { requested, dependents, blocked })
+    let cell = Cell::of(op);
+    let last = store
+        .entity_ops_after(entity, op.id)?
+        .into_iter()
+        .rev()
+        .find(|o| cell.intersects(&Cell::of(o)));
+    Ok(last.map(Changed::By).unwrap_or(Changed::Unlogged))
+}
+
+/// The same `(name, value)` multiset, row ids aside.
+fn same_rows(a: &[FieldRow], b: &[FieldRow]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut left: Vec<&FieldRow> = b.iter().collect();
+    a.iter().all(|row| match left.iter().position(|r| r.name == row.name && r.value == row.value) {
+        Some(i) => {
+            left.swap_remove(i);
+            true
+        }
+        None => false,
+    })
 }
 
 /// The filesystem action crossing an operation requires, if any — what the
@@ -240,19 +206,19 @@ pub fn written_as(op: &OpRow) -> OpType {
     }
 }
 
-/// Applies the inverse of `ops` (oldest first on input) as new writes, newest
-/// to oldest. Returns the number of operations actually undone.
+/// Applies the inverse of `ops` (oldest first on input) to the current state,
+/// as new writes, newest to oldest. Returns the number of operations actually
+/// undone.
 ///
-/// Row ids are *not* restored: a revert is a new write, so its inserts take
-/// fresh ids. That is what makes the `remap` necessary — a rollback composes
-/// inverses blindly precisely because it restores `field.id` exactly, and a
-/// revert cannot. Every row a step re-creates is recorded here under the id it
-/// used to have, so a later (older) row-scoped inverse finds it again.
+/// Row ids are *not* restored — a row put back gets a fresh id, since the old
+/// one may have been handed out since — so nothing here addresses a row by the
+/// id a snapshot recorded: an append is undone *by value* (two rows of one name
+/// and value are interchangeable, doc "No duplicate rows"). A metarecord does
+/// keep its uuid, unique by construction.
 pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
     // The reverse walk passes through states that need not be type-consistent
     // even when the one it lands on is; the check moves to commit.
     writer.defer_type_checks();
-    let mut remap: HashMap<i64, i64> = HashMap::new();
     let mut done = 0usize;
     for op in ops.iter().rev() {
         // Everything written for this op names it, so a later reader can tell a
@@ -263,29 +229,38 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
         let before = writer.store().snapshots(op.id, false)?;
         let after = writer.store().snapshots(op.id, true)?;
         match op.op_type.as_str() {
-            "create_metarecord" => writer.delete_metarecord(op.entity_uuid)?,
+            "create_metarecord" => {
+                // Already gone: there is nothing left to take back.
+                if writer.store().version(op.entity_uuid)?.is_none() {
+                    continue;
+                }
+                writer.delete_metarecord(op.entity_uuid)?
+            }
             "delete_metarecord" => {
-                let record =
-                    writer.create_metarecord_with_uuid(op.entity_uuid, rows_to_fields(&before))?;
-                remember_fields(&mut remap, &before, &record.fields);
+                if writer.store().version(op.entity_uuid)?.is_some() {
+                    return Err(crate::error::DomainError::Conflict(format!(
+                        "metarecord {} exists again: undoing its deletion (operation {}) \
+                         cannot recreate it",
+                        op.entity_uuid.simple(),
+                        op.id
+                    ))
+                    .into());
+                }
+                writer.create_metarecord_with_uuid(op.entity_uuid, rows_to_fields(&before))?;
             }
             "set_metarecord" => {
-                let record = writer.set_record(op.entity_uuid, rows_to_fields(&before))?;
-                remember_fields(&mut remap, &before, &record.fields);
+                writer.set_record(op.entity_uuid, rows_to_fields(&before))?;
             }
             "append_field" => {
-                // The row this operation added — under whatever id it carries now.
-                let Some(row) = after.first() else { continue };
-                let id = remap.get(&row.id).copied().unwrap_or(row.id);
-                writer.delete_field(op.entity_uuid, id)?;
+                for row in &after {
+                    writer.delete_fields_valued(op.entity_uuid, &row.name, &row.value)?;
+                }
             }
             "delete_field" => {
                 // One `delete_field` may carry every row of a name (an unset, a
                 // removal by value): each comes back.
                 for row in &before {
-                    let new_id =
-                        writer.append_field(op.entity_uuid, &row.name, row.value.clone())?.id();
-                    remap.insert(row.id, new_id);
+                    writer.append_field(op.entity_uuid, &row.name, row.value.clone())?;
                 }
             }
             "unknown" => {
@@ -304,13 +279,12 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
                     // than write the explicit-absence sentinel.
                     writer.clear_field_as(op_type, op.entity_uuid, &name)?;
                 } else {
-                    let ids = writer.set_field_multi_as(
+                    writer.set_field_multi_as(
                         op_type,
                         op.entity_uuid,
                         &name,
                         before.iter().map(|r| r.value.clone()).collect(),
                     )?;
-                    remember(&mut remap, &before, ids.into_iter());
                 }
             }
         }
@@ -322,28 +296,6 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
 
 fn rows_to_fields(rows: &[FieldRow]) -> Vec<Field> {
     rows.iter().map(|r| Field::new(r.name.clone(), r.value.clone())).collect()
-}
-
-/// Records `old row id → the id the revert's own write gave it`, pairing
-/// positionally: both sequences are in the order the rows were written.
-fn remember(remap: &mut HashMap<i64, i64>, old: &[FieldRow], new: impl Iterator<Item = i64>) {
-    for (row, id) in old.iter().zip(new) {
-        remap.insert(row.id, id);
-    }
-}
-
-/// The whole-record form of [`remember`]: pairs each snapshot row with the
-/// written field carrying the same `(name, value)` rather than by position,
-/// because a whole-record write collapses repeated pairs (doc "No duplicate rows") — two rows a
-/// pre-rule revision recorded as duplicates then
-/// map onto the single row that stands for both.
-fn remember_fields(remap: &mut HashMap<i64, i64>, old: &[FieldRow], new: &[Field]) {
-    for row in old {
-        let written = new.iter().find(|f| f.name == row.name && f.value == row.value);
-        if let Some(id) = written.and_then(|f| f.id) {
-            remap.insert(row.id, id);
-        }
-    }
 }
 
 #[cfg(test)]

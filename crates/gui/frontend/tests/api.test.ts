@@ -470,12 +470,8 @@ describe('panel api — misc surface', () => {
     const { api, invoke } = setup();
     await api.log.rollback('r1', { id: 4 });
     expect(invoke).toHaveBeenCalledWith('log_rollback', { repo: 'r1', target: { id: 4 } });
-    await api.log.revert('r1', { rev_id: 3 }, true);
-    expect(invoke).toHaveBeenCalledWith('log_revert', {
-      repo: 'r1',
-      target: { rev_id: 3 },
-      withDependents: true,
-    });
+    await api.log.revert('r1', { rev_id: 3 });
+    expect(invoke).toHaveBeenCalledWith('log_revert', { repo: 'r1', target: { rev_id: 3 } });
   });
 
   test('recent routes to the recent commands', async () => {

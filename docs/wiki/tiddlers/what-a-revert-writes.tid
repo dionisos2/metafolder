@@ -4,19 +4,16 @@ kind: reference
 audience: dev
 summary: The inverse of each operation, newest first, written through log::Writer — the file actions it needs, fresh row ids, and what it inherits from an ordinary write.
 
-A revert applies the inverse of each member of its set, ''newest to oldest'' — the same
-inverses a rollback computes, composed in the reverse of their order, which is what makes
-the result land where a rollback would have, with no reasoning about cells. Two things
-separate it from a rollback: the inverses are ''written'' through `log::Writer` as new
-operations (logged, HEAD moving forward), and the dependency check stands in for the
-ordering a rollback gets for free ([[Operation dependencies]]).
+A revert applies the inverse of each member of its set, ''newest to oldest'', to the
+current state ([[Reverting onto the current state]]). The inverses are ''written''
+through `log::Writer` as new operations (logged, HEAD moving forward).
 
 |!Reverted |!Written as |
-|`create_metarecord` |`delete_metarecord` |
-|`delete_metarecord` |`create_metarecord`, same uuid |
+|`create_metarecord` |`delete_metarecord` — nothing, when the metarecord is already gone |
+|`delete_metarecord` |`create_metarecord`, same uuid — `409` when that uuid exists again |
 |`set_metarecord` |`set_metarecord` |
 |`set_field` |`set_field` with the rows before — or the cell removed, when there were none |
-|`append_field` |`delete_field` |
+|`append_field` |`delete_field` of the rows of that name holding that value — by value, not by row id |
 |`delete_field` |`append_field`, one per row it removed |
 |`file_deleted`, `file_moved` |`file_moved` |
 |`file_modified` |`file_modified` |
@@ -24,7 +21,7 @@ ordering a rollback gets for free ([[Operation dependencies]]).
 
 * ''It records the type of the change it makes, file included.'' A later navigation reads `op_type` to know that crossing the operation needs a file action: a revert that moved a file records `file_moved`, or a rollback across it would rewrite `mfr_path` and leave the file where the revert put it. `file_moved` covers both directions — it is already what relinking an orphan writes.
 * ''An empty cell is not `nothing`.'' When the reverted operation's before snapshot has no rows, the field did not exist, and the revert removes the cell rather than write the explicit absence ([[Nothing versus unknown]]).
-* ''Fresh row ids.'' A revert's inserts get new ids, unlike a rollback's, so it carries a map from the reverted operations' row ids to the ids its own writes produced, and resolves each later row-scoped inverse through it (`append_field`, `delete_field`). Versions need no rule: they follow the content — a revert that happens to restore a state the metarecord once held gets that state's version back, correctly.
+* ''Fresh row ids.'' A revert's inserts get new ids, unlike a rollback's — the old id may have been handed out since. Nothing addresses a row by the id a snapshot recorded: an append is undone by value, so undo, redo, undo finds the value in the row the redo created. Two rows of one name and value are interchangeable ([[No duplicate rows]]). Versions need no rule: they follow the content — a revert that happens to restore a state the metarecord once held gets that state's version back, correctly.
 * A revision of four operations is reverted by a revision of four (more, for a multi-row `delete_field`), its mirror image in `mf log list --ops`. Forest integrity is checked once at commit, so reverting a whole subtree's positions passes as long as the end state is consistent.
 * An operation pruned or trimmed away took its snapshots with it: `404`, naming retention as the likely reason.
 
@@ -32,7 +29,7 @@ ordering a rollback gets for free ([[Operation dependencies]]).
 
 * ''The watch set and the rest follow on their own'': reverting an `mf_watch` write is an `mf_watch` write — the effects are read off the writer before commit and settled after, as every write route does.
 * ''Reserved names stay writable'': the `force` check lives in the routes, and a revert restores values the daemon recorded (`mfr_path` among them) — refusing them would refuse every revert of a `file_*` operation.
-* ''Type validation moves to commit'': the reverse walk passes through intermediate states that need not be type-consistent (undoing a retype, row by row), so type checks are deferred and enforced once on the state produced. Deferred is not skipped: a retype the revert is ''not'' undoing may have given the name another type, and restoring the old value then fails with `400` — the third reason a revert can be refused, after a blocker and an impossible file action. A rollback writes rows directly and validates nothing: it restores a state the log recorded as valid, which a revert — producing a state never held before — cannot claim.
+* ''Type validation moves to commit'': the reverse walk passes through intermediate states that need not be type-consistent (undoing a retype, row by row), so type checks are deferred and enforced once on the state produced. Deferred is not skipped: a retype the revert is ''not'' undoing may have given the name another type, and restoring the old value then fails with `400` — one of the reasons a revert can be refused, with an impossible file action and a uuid that exists again. A rollback writes rows directly and validates nothing: it restores a state the log recorded as valid, which a revert — producing a state never held before — cannot claim.
 
 !! File actions
 
@@ -47,7 +44,7 @@ does, then says what it managed, under the navigation lock (`revert/start` → a
 `revert/commit`). The lock matters here: the watcher keeps observing but executes nothing,
 so the `mv` the client just made cannot be ingested as a genuine rename before the metadata
 explaining it is written — without it, the arrival would read as a new file and leave a
-duplicate. It also freezes HEAD, so the check taken at `start` holds at `commit`.
+duplicate. It also freezes HEAD, so the plan taken at `start` holds at `commit`.
 
 ''Skipping is free.'' An operation whose action the client could not carry out is left out
 of the commit, and not reverted — nothing else is needed. A rollback, which must reach its

@@ -2,7 +2,6 @@ title: Reverting onto the current state
 tags: [[The operation log]]
 kind: reference
 audience: dev
-status: proposed
 summary: A revert applies each operation's inverse to the state as it is now — whatever was written since — so it needs no dependency check and no complete log, and its own record composes exactly.
 
 A revert of a set of operations applies, newest first, each one's ''inverse to the current
@@ -25,7 +24,7 @@ cell that is restored.
 
 !! What it removes
 
-No dependency analysis (doc "Operation dependencies"): nothing is "blocked by" a later
+No dependency analysis (it was removed in October 2026): nothing is "blocked by" a later
 operation, so nothing needs the operations between a target and now to be in the log. That
 is what lets retention trim anything ([[The operation log]]).
 

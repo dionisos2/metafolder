@@ -663,8 +663,8 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     log: {
       rollback: (repo: string, target: Record<string, unknown>) =>
         invoke('log_rollback', { repo, target }) as Promise<Metafolder.Navigated>,
-      revert: (repo: string, target: Record<string, unknown>, withDependents: boolean) =>
-        invoke('log_revert', { repo, target, withDependents }) as Promise<Metafolder.Reverted>,
+      revert: (repo: string, target: Record<string, unknown>) =>
+        invoke('log_revert', { repo, target }) as Promise<Metafolder.Reverted>,
     },
 
     /** Orphaned metarecords (doc "Orphans in the GUI"): the shared layer behind

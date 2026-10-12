@@ -3,4 +3,4 @@ tags: [[GUI command]] [[Event log]]
 kind: reference
 summary: Log: revert what is selected, or a wider scope
 
-Reverts the selected revision or operation; `op` narrows, `revision` widens, `with-dependents` takes the closure ([[Revision commands in the GUI]]).
+Reverts the selected revision or operation; `op` narrows, `revision` widens ([[Revision commands in the GUI]]).

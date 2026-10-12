@@ -484,7 +484,7 @@ pub fn trash_recovery_hint(entries: &[TrashEntry], metarecord: &str) -> Option<S
 
 /// The query-parameter form of a revert target (`{"rev_id": N|"head"}` or
 /// `{"op_ids": [...]}`), for `GET /revert/plan`.
-pub fn revert_query(target: &Json, with_dependents: bool) -> Vec<(&'static str, String)> {
+pub fn revert_query(target: &Json) -> Vec<(&'static str, String)> {
     let mut q = Vec::new();
     match target["op_ids"].as_array().filter(|ids| !ids.is_empty()) {
         Some(ids) => {
@@ -500,20 +500,12 @@ pub fn revert_query(target: &Json, with_dependents: bool) -> Vec<(&'static str, 
             q.push(("target_rev_id", rev));
         }
     }
-    if with_dependents {
-        q.push(("with_dependents", "true".into()));
-    }
     q
 }
 
 /// The revert plan for `target` (`GET /revert/plan`), writing nothing.
-pub fn revert_plan(
-    repo: &Repo<'_>,
-    target: &Json,
-    with_dependents: bool,
-) -> Result<Json, NavError> {
-    let path =
-        with_query(&format!("{}/revert/plan", repo.base()), &revert_query(target, with_dependents));
+pub fn revert_plan(repo: &Repo<'_>, target: &Json) -> Result<Json, NavError> {
+    let path = with_query(&format!("{}/revert/plan", repo.base()), &revert_query(target));
     Ok(repo.client.get(&path)?)
 }
 
@@ -521,7 +513,6 @@ pub fn revert_plan(
 pub struct RevertRequest<'r> {
     /// `{"rev_id": N|"head"}` or `{"op_ids": [...]}`.
     pub target: &'r Json,
-    pub with_dependents: bool,
     /// Leave out the operations needing a file action instead of performing it.
     pub metadata_only: bool,
     pub label: Option<&'r str>,
@@ -544,8 +535,7 @@ pub fn revert(
     let client = repo.client;
     let needs_fs = plan["requires_lock"] == json!(true) && !request.metadata_only;
     if !needs_fs {
-        let mut body =
-            json!({"target": request.target, "with_dependents": request.with_dependents});
+        let mut body = json!({"target": request.target});
         if request.metadata_only {
             body["skip_filesystem"] = json!(true);
         }
@@ -555,7 +545,7 @@ pub fn revert(
         return Ok(client.post(&format!("{base}/revert"), &body)?);
     }
 
-    let start_body = json!({"target": request.target, "with_dependents": request.with_dependents});
+    let start_body = json!({"target": request.target});
     let started = client.post(&format!("{base}/revert/start"), &start_body)?;
     let mut entries = repo.trash.entries().unwrap_or_default();
     let mut restored: HashSet<String> = HashSet::new();
@@ -695,17 +685,14 @@ mod tests {
             vec![("target_prev_revision", "true".to_string())]
         );
         assert_eq!(
-            revert_query(&json!({"op_ids": [3, 5]}), true),
-            vec![("target_op_ids", "3,5".to_string()), ("with_dependents", "true".to_string())]
+            revert_query(&json!({"op_ids": [3, 5]})),
+            vec![("target_op_ids", "3,5".to_string())]
         );
         assert_eq!(
-            revert_query(&json!({"rev_id": "head"}), false),
+            revert_query(&json!({"rev_id": "head"})),
             vec![("target_rev_id", "head".to_string())]
         );
-        assert_eq!(
-            revert_query(&json!({"rev_id": 7}), false),
-            vec![("target_rev_id", "7".to_string())]
-        );
+        assert_eq!(revert_query(&json!({"rev_id": 7})), vec![("target_rev_id", "7".to_string())]);
     }
 
     // `apply` on a gone file: no `mv` is attempted (nothing to move) and the

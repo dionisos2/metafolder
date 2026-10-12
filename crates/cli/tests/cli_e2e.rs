@@ -5463,28 +5463,31 @@ async fn test_log_revert_undoes_a_revision_and_reports_the_blocker() {
     assert!(out.stdout.lines().count() >= 3, "the log keeps the mistake and its correction");
 }
 
+/// A later write on the same cell does not block a revert (doc "Reverting
+/// onto the current state"): the plan names it, the revert asks before
+/// overwriting it, and goes back to what the operation replaced.
 #[tokio::test(flavor = "current_thread")]
-async fn test_log_revert_names_the_blocking_operation() {
-    let (repo, _root) = init_repo("revert_blocked");
+async fn test_log_revert_warns_about_a_cell_changed_since() {
+    let (repo, _root) = init_repo("revert_changed");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
-
-    // The revision to revert, then a later write on the same cell.
-    let log = mf(&["-u", &repo, "log"]);
-    assert_ok(&log);
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=7"]));
-
-    // Reverting the older revision is blocked by the newer write.
     let rev = oldest_revision_with_rating(&repo);
-    let out = mf(&["-u", &repo, "log", "revert", &rev, "--force"]);
-    assert_eq!(out.code, 1, "a blocked revert exits 1: {}{}", out.stdout, out.stderr);
-    assert!(out.stderr.contains("blocked by op"), "it names the blocker: {}", out.stderr);
-    assert!(out.stderr.contains("--with-dependents"), "and the way out: {}", out.stderr);
 
-    // Which --with-dependents takes.
-    let out = mf(&["-u", &repo, "log", "revert", &rev, "--with-dependents", "--force"]);
+    let out = mf(&["-u", &repo, "log", "revert", "plan", &rev]);
     assert_ok(&out);
-    assert_eq!(rating_of(&repo, &uuid), 3);
+    assert!(out.stdout.contains("changed since by op"), "the plan warns: {}", out.stdout);
+
+    // Without --force it asks; an empty answer is a no.
+    let out = mf(&["-u", &repo, "log", "revert", &rev]);
+    assert_ok(&out);
+    assert!(out.stderr.contains("changed since by op"), "it names the write: {}", out.stderr);
+    assert!(out.stdout.contains("Aborted"), "{}", out.stdout);
+    assert_eq!(rating_of(&repo, &uuid), 7);
+
+    let out = mf(&["-u", &repo, "log", "revert", &rev, "--force"]);
+    assert_ok(&out);
+    assert_eq!(rating_of(&repo, &uuid), 3, "back to what the operation replaced");
 }
 
 /// The record's single `rating` row, read back through `metarecord get`.

@@ -208,17 +208,10 @@ async fn rollback(
     result
 }
 
-/// What a revert came to: the daemon's answer, or the plan's refusal.
-enum Reverted {
-    Blocked(Value),
-    Done(Value),
-}
-
-/// The revert half of an undo: check the plan, then write the inverse at HEAD,
-/// files included (`core::navigation::revert`). A *blocked* revert is reported,
-/// not forced — the log panel's `log:revert with-dependents` is the way
-/// through, and pulling in someone else's changes is not something to do
-/// behind the user's back.
+/// The revert half of an undo: write the inverse at HEAD onto the current
+/// state, files included (`core::navigation::revert`). Nothing blocks it: a
+/// later write on the same cell is overwritten (doc "Reverting onto the
+/// current state"), which undo — taking the newest change — almost never meets.
 async fn revert(
     gui: &Arc<GuiState>,
     daemon: &Arc<DaemonProxy>,
@@ -233,53 +226,24 @@ async fn revert(
         None => json!({ "rev_id": rev_id }),
     };
     let result = blocking(daemon, repo, move |repo, ui| {
-        let plan = navigation::revert_plan(repo, &target, false)?;
-        if plan["revertable"] == json!(false) {
-            return Ok(Reverted::Blocked(plan));
-        }
-        let request = RevertRequest {
-            target: &target,
-            with_dependents: false,
-            metadata_only: false,
-            label: None,
-        };
-        navigation::revert(repo, &request, &plan, &GUI_POLICIES, ui).map(Reverted::Done)
+        let plan = navigation::revert_plan(repo, &target)?;
+        let request = RevertRequest { target: &target, metadata_only: false, label: None };
+        navigation::revert(repo, &request, &plan, &GUI_POLICIES, ui)
     })
     .await;
-    let (reverted, notes) = match result {
+    let (response, notes) = match result {
         Ok(done) => done,
         Err(message) => return report(gui, ws_id, &message, timeouts),
     };
-    match reverted {
-        Reverted::Blocked(plan) => {
-            let blocker = plan["blocked"].as_array().and_then(|b| b.first()).cloned();
-            let where_ = blocker
-                .as_ref()
-                .and_then(|b| b["rev_id"].as_i64())
-                .map(|r| format!(" by revision {r}"))
-                .unwrap_or_default();
-            report(
-                gui,
-                ws_id,
-                &format!(
-                    "Cannot take revision {rev_id} back: a later change{where_} overwrote what it \
-                     wrote. Open the log panel and use log:revert with-dependents to undo both."
-                ),
-                timeouts,
-            )
-        }
-        Reverted::Done(response) => {
-            let count = response["reverted_operations"].as_array().map(|a| a.len()).unwrap_or(0);
-            let summary = match response["revision"].as_i64() {
-                None => "Nothing was reverted.".to_string(),
-                Some(new_rev) => format!(
-                    "Revision {rev_id} reverted as revision {new_rev} ({count} operations) — \
-                     the daemon's own revisions were left in place."
-                ),
-            };
-            finish(gui, ws_id, &with_notes(summary, &notes), timeouts)
-        }
-    }
+    let count = response["reverted_operations"].as_array().map(|a| a.len()).unwrap_or(0);
+    let summary = match response["revision"].as_i64() {
+        None => "Nothing was reverted.".to_string(),
+        Some(new_rev) => format!(
+            "Revision {rev_id} reverted as revision {new_rev} ({count} operations) — \
+             the daemon's own revisions were left in place."
+        ),
+    };
+    finish(gui, ws_id, &with_notes(summary, &notes), timeouts)
 }
 
 /// Says why nothing happened, without failing the command: the user is being
@@ -342,24 +306,17 @@ pub async fn log_rollback(
 /// The log panel's `log:revert`: writes the inverse of `target` at HEAD, files
 /// included (`core::navigation::revert`). Answers the daemon's revert response
 /// (`revision`, `reverted_operations`, `skipped_operations`) with the `notes`
-/// the file actions left. A blocked plan is refused: the panel reads the plan
-/// and offers `with dependents` before it gets here.
+/// the file actions left. The panel reads the plan and confirms an overwrite
+/// of a cell changed since before it gets here.
 #[tauri::command]
 pub async fn log_revert(
     app: tauri::State<'_, Arc<crate::commands::App>>,
     repo: String,
     target: Value,
-    with_dependents: bool,
 ) -> Result<Value, String> {
     let (mut response, notes) = blocking(&app.daemon, &repo, move |repo, ui| {
-        let plan = navigation::revert_plan(repo, &target, with_dependents)?;
-        if plan["revertable"] == json!(false) {
-            return Err(NavError(
-                "the revert is blocked by later changes; revert with dependents".into(),
-            ));
-        }
-        let request =
-            RevertRequest { target: &target, with_dependents, metadata_only: false, label: None };
+        let plan = navigation::revert_plan(repo, &target)?;
+        let request = RevertRequest { target: &target, metadata_only: false, label: None };
         navigation::revert(repo, &request, &plan, &GUI_POLICIES, ui)
     })
     .await?;

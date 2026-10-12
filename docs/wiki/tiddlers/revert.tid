@@ -19,9 +19,9 @@ A revert is an ordinary write in every other respect: it can itself be reverted
 (restoring the original change), rolled back across, pruned and trimmed. What marks it is
 `reverts_op_id` on each of its operations, naming what it undid.
 
-Not every change can be reverted on its own: a later one may have overwritten what it
-wrote, leaving no meaningful "before" to restore ([[Operation dependencies]]). Undo reverts
-for you when the watcher has written since your change ([[Undo and redo]]).
+A revert goes back to what the change replaced, whatever was written since on the same
+field: a later write is overwritten, and the plan says so first ([[Reverting onto the current state]]). Undo reverts for you when the watcher has written since your change
+([[Undo and redo]]).
 
 !! Use it
 

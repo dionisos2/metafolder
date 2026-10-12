@@ -34,7 +34,6 @@ Files come along. Undoing a trashing brings the file back from the trash, redoin
 sends it there again; undoing a move made through metafolder moves the file back
 ([[Trash, undo and redo]]). On the command line the move policies apply
 (`--on-move-available`, default `apply`; `--on-move-unavailable`, default `ask`), with
-`--with-dependents`, `--metadata-only`, `--force`, `--silent` passed to the revert when
+`--metadata-only`, `--force`, `--silent` passed to the revert when
 undo picks one. The GUI asks nothing: a move is applied if the file is there, and applied
-to the metadata alone if it is not; a revert blocked by later changes is reported rather
-than forced.
+to the metadata alone if it is not.

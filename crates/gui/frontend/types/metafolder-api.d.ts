@@ -280,7 +280,7 @@ declare namespace Metafolder {
     views?(prior: string[]): CompletionView[] | Promise<CompletionView[]>;
     /** Whether the argument may be left out. Supplied inline it is used;
      *  omitted it is skipped rather than prompted, so the command falls back
-     *  to its default (`log:revert` vs `log:revert with-dependents`). */
+     *  to its default (`log:revert` vs `log:revert revision`). */
     optional?: boolean;
     /** Whether the argument applies at all, given the ones already collected.
      *  A generic command declares the union of its operations' arguments and
@@ -433,13 +433,9 @@ declare namespace Metafolder {
     /** Moves HEAD to `target` (`{id}`, `{timestamp}`, `{label}` or
      *  `{prev_revision: true}`). */
     rollback(repo: string, target: Record<string, unknown>): Promise<Navigated>;
-    /** Writes the inverse of `target` (`{rev_id}` or `{op_ids}`) at HEAD;
-     *  refused when the plan is blocked and `withDependents` is false. */
-    revert(
-      repo: string,
-      target: Record<string, unknown>,
-      withDependents: boolean,
-    ): Promise<Reverted>;
+    /** Writes the inverse of `target` (`{rev_id}` or `{op_ids}`) at HEAD,
+     *  onto the current state (doc "Reverting onto the current state"). */
+    revert(repo: string, target: Record<string, unknown>): Promise<Reverted>;
   }
 
   /** Orphaned metarecords (doc "Orphans in the GUI"): the shared `mf orphan` layer,

@@ -469,9 +469,6 @@ enum LogCommand {
         /// "plan" to print what undo would do, without writing anything
         #[arg(num_args = 0..=1)]
         args: Vec<String>,
-        /// Also revert whatever blocks the target (its dependency closure)
-        #[arg(long = "with-dependents")]
-        with_dependents: bool,
         /// Leave out the operations needing a filesystem action
         #[arg(long = "metadata-only")]
         metadata_only: bool,
@@ -493,9 +490,6 @@ enum LogCommand {
         /// "plan" to print what redo would do, without writing anything
         #[arg(num_args = 0..=1)]
         args: Vec<String>,
-        /// Also revert whatever blocks the target (its dependency closure)
-        #[arg(long = "with-dependents")]
-        with_dependents: bool,
         /// Leave out the operations needing a filesystem action
         #[arg(long = "metadata-only")]
         metadata_only: bool,
@@ -520,9 +514,6 @@ enum LogCommand {
         /// Revert this operation only (repeatable)
         #[arg(long = "op")]
         op: Vec<i64>,
-        /// Also revert whatever blocks the target (its dependency closure)
-        #[arg(long = "with-dependents")]
-        with_dependents: bool,
         /// Leave out the operations needing a filesystem action
         #[arg(long = "metadata-only")]
         metadata_only: bool,
@@ -1614,7 +1605,6 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
         }
         Some(LogCommand::Undo {
             args,
-            with_dependents,
             metadata_only,
             on_move_available,
             on_move_unavailable,
@@ -1623,16 +1613,10 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
         }) => {
             let plan_only = plan_argument(&args, "undo")?;
             let policies = move_policies(on_move_available, on_move_unavailable)?;
-            log::undo_run(
-                ctx,
-                plan_only,
-                policies,
-                log::UndoOpts { with_dependents, metadata_only, force, silent },
-            )
+            log::undo_run(ctx, plan_only, policies, log::UndoOpts { metadata_only, force, silent })
         }
         Some(LogCommand::Redo {
             args,
-            with_dependents,
             metadata_only,
             on_move_available,
             on_move_unavailable,
@@ -1641,17 +1625,11 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
         }) => {
             let plan_only = plan_argument(&args, "redo")?;
             let policies = move_policies(on_move_available, on_move_unavailable)?;
-            log::redo_run(
-                ctx,
-                plan_only,
-                policies,
-                log::UndoOpts { with_dependents, metadata_only, force, silent },
-            )
+            log::redo_run(ctx, plan_only, policies, log::UndoOpts { metadata_only, force, silent })
         }
         Some(LogCommand::Revert {
             args,
             op,
-            with_dependents,
             metadata_only,
             label,
             on_move_available,
@@ -1690,10 +1668,9 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
                     .transpose()?
                     .unwrap_or(log::Policy::Ask),
             };
-            let opts =
-                log::RevertOpts { with_dependents, metadata_only, label, force, silent, policies };
+            let opts = log::RevertOpts { metadata_only, label, force, silent, policies };
             if is_plan {
-                log::revert_plan(ctx, target, &opts)
+                log::revert_plan(ctx, target)
             } else {
                 log::revert_run(ctx, target, &opts)
             }

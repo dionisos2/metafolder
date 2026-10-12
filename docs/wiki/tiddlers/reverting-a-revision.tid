@@ -1,37 +1,28 @@
 title: Reverting a revision
 tags: [[Revert]]
 kind: guide
-summary: mf log revert <revision> (or --op) writes the inverse at HEAD; plan shows it first; a blocked revert names its blockers, --with-dependents takes them along.
+summary: mf log revert <revision> (or --op) writes the inverse at HEAD onto the current state; plan shows it first, naming any later write it would overwrite.
 
 ```
 mf -n music log revert plan 12          # what it would do — nothing written, no lock
 mf -n music log revert 12               # revert revision 12
 mf -n music log revert --op 23          # only one of its operations (repeatable)
 mf -n music log revert                  # the revision HEAD is in
-mf -n music log revert 12 --with-dependents
 mf -n music log revert 12 --metadata-only --label "undo the bulk rename"
 ```
 
 A metadata-only revert asks for nothing: it can itself be reverted, which is the point
 of preferring it to a rollback.
 
-''Blocked.'' When a later operation wrote the same cell ([[Operation dependencies]]), the
-revert is refused, naming what stands in the way:
+''Changed since.'' Nothing blocks a revert: it goes back to what the operation replaced,
+whatever was written there since ([[Reverting onto the current state]]). When a later
+operation wrote the same cell, the plan names it, and the revert asks before overwriting
+it (`--force` skips the question):
 
 ```
-Cannot revert revision 12: 1 of its 2 operations is blocked.
-
-  op 23  set_field(mfr_path)  on 5f2a1c88…
-    blocked by op 91  (rev 40, 2024-01-16 08:04, file_moved mfr_path)
-
-Revert rev 40 first, or pass --op 22 to revert only what is free,
-or --with-dependents to revert those 1 operation(s) along with it.
+Changed since — the revert overwrites what was written there:
+  op 23  set_field(rating)  on 5f2a1c88… — changed since by op 91 (rev 40, 2024-01-16 08:04)
 ```
-
-`--with-dependents` reverts the whole dependency closure — the target and everything
-blocking it, transitively. It always prints the closure's size and asks, because how
-much history it pulls in is exactly what the target alone does not tell you (`--force`
-skips the question, and does not imply `--with-dependents`).
 
 ''Files.'' When the plan needs file actions, the CLI shows it, asks (unless `--force`),
 and carries them out under the navigation lock: moving a file back (`--on-move-available`,

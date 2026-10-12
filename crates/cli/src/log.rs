@@ -136,7 +136,6 @@ pub fn undo_run(
                 ctx,
                 target,
                 &RevertOpts {
-                    with_dependents: opts.with_dependents,
                     metadata_only: opts.metadata_only,
                     label: None,
                     force: opts.force,
@@ -218,7 +217,6 @@ pub fn redo_run(
                 ctx,
                 target,
                 &RevertOpts {
-                    with_dependents: opts.with_dependents,
                     metadata_only: opts.metadata_only,
                     label: None,
                     force: opts.force,
@@ -232,7 +230,6 @@ pub fn redo_run(
 
 /// The options `mf log undo` passes on to whichever mechanism it picks.
 pub struct UndoOpts {
-    pub with_dependents: bool,
     pub metadata_only: bool,
     pub force: bool,
     pub silent: bool,
@@ -977,8 +974,8 @@ pub struct RevertTarget {
 }
 
 impl RevertTarget {
-    fn query(&self, with_dependents: bool) -> Vec<(&'static str, String)> {
-        navigation::revert_query(&self.body(), with_dependents)
+    fn query(&self) -> Vec<(&'static str, String)> {
+        navigation::revert_query(&self.body())
     }
 
     fn body(&self) -> Json {
@@ -1006,7 +1003,6 @@ impl RevertTarget {
 }
 
 pub struct RevertOpts {
-    pub with_dependents: bool,
     pub metadata_only: bool,
     pub label: Option<String>,
     pub force: bool,
@@ -1024,52 +1020,48 @@ fn op_line(op: &Json) -> String {
     format!("op {id}  {op_type}{field}  on {short}…")
 }
 
-/// Prints the blockers of a plan and the way out, then returns the exit code.
-fn report_blocked(target: &RevertTarget, plan: &Json) -> i32 {
-    let blocked = plan["blocked"].as_array().cloned().unwrap_or_default();
-    let dependents = plan["dependents"].as_array().map(|a| a.len()).unwrap_or(0);
-    let total = plan["operations"].as_array().map(|a| a.len()).unwrap_or(0);
-    eprintln!(
-        "Cannot revert {}: {} of its {total} operation(s) are blocked.\n",
-        target.describe(),
-        blocked.len()
-    );
-    for b in &blocked {
-        let id = b["op_id"].as_i64().unwrap_or(0);
-        let rev = b["rev_id"].as_i64().unwrap_or(0);
-        let op_type = b["op_type"].as_str().unwrap_or("?");
-        let field = b["field_name"].as_str().map(|f| format!(" {f}")).unwrap_or_default();
-        let when = b["timestamp"].as_i64().map(fmt_minute).unwrap_or_default();
-        eprintln!("  blocked by op {id}  (rev {rev}, {when}, {op_type}{field})");
+/// The plan's operations whose cell changed since they wrote it (doc
+/// "Reverting onto the current state"): the revert overwrites what was written
+/// there since. A warning line each.
+fn changed_lines(plan: &Json) -> Vec<String> {
+    let mut lines = Vec::new();
+    for op in plan["operations"].as_array().into_iter().flatten() {
+        let changed = &op["changed_since"];
+        if changed.is_null() {
+            continue;
+        }
+        let what = match changed["op_id"].as_i64() {
+            Some(id) => {
+                let rev = changed["rev_id"].as_i64().unwrap_or(0);
+                let when = changed["timestamp"].as_i64().map(fmt_minute).unwrap_or_default();
+                format!("changed since by op {id} (rev {rev}, {when})")
+            }
+            None => "changed since (by an operation no longer in the log)".into(),
+        };
+        lines.push(format!("{} — {what}", op_line(op)));
     }
-    eprintln!(
-        "\nRevert those revisions first, or pass --with-dependents to revert \
-         {dependents} more operation(s) along with it."
-    );
-    1
+    lines
 }
 
 /// `mf log revert plan [<target>]`: prints what a revert would do, writing
 /// nothing.
-pub fn revert_plan(ctx: &Ctx, target: RevertTarget, opts: &RevertOpts) -> Result<i32, CliError> {
+pub fn revert_plan(ctx: &Ctx, target: RevertTarget) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
-    let plan =
-        ctx.client.get(&format!("{base}/revert/plan"), &target.query(opts.with_dependents))?;
+    let plan = ctx.client.get(&format!("{base}/revert/plan"), &target.query())?;
     let ops = plan["operations"].as_array().cloned().unwrap_or_default();
     for op in &ops {
-        let origin = if op["origin"] == "dependent" { "  (dependent)" } else { "" };
-        println!("{}{origin}", op_line(op));
+        println!("{}", op_line(op));
         if let Some(action) = op["filesystem"]["action"].as_str() {
             println!("    filesystem: {action}");
         }
     }
     println!("{} operation(s).", ops.len());
-    let dependents = plan["dependents"].as_array().map(|a| a.len()).unwrap_or(0);
-    if plan["revertable"] == json!(false) {
-        return Ok(report_blocked(&target, &plan));
-    }
-    if dependents > 0 && !opts.with_dependents {
-        println!("--with-dependents would add {dependents} more.");
+    let changed = changed_lines(&plan);
+    if !changed.is_empty() {
+        println!("Changed since — the revert overwrites what was written there:");
+        for line in changed {
+            println!("  {line}");
+        }
     }
     Ok(0)
 }
@@ -1078,11 +1070,7 @@ pub fn revert_plan(ctx: &Ctx, target: RevertTarget, opts: &RevertOpts) -> Result
 /// the inverse as a new revision at HEAD.
 pub fn revert_run(ctx: &Ctx, target: RevertTarget, opts: &RevertOpts) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
-    let plan =
-        ctx.client.get(&format!("{base}/revert/plan"), &target.query(opts.with_dependents))?;
-    if plan["revertable"] == json!(false) {
-        return Ok(report_blocked(&target, &plan));
-    }
+    let plan = ctx.client.get(&format!("{base}/revert/plan"), &target.query())?;
     let ops = plan["operations"].as_array().cloned().unwrap_or_default();
     if ops.is_empty() {
         println!("(nothing to revert)");
@@ -1090,17 +1078,17 @@ pub fn revert_run(ctx: &Ctx, target: RevertTarget, opts: &RevertOpts) -> Result<
     }
     let needs_fs = plan["requires_lock"] == json!(true) && !opts.metadata_only;
 
-    // The size of the closure is what the user cannot predict from the target
-    // alone, so a revert that pulls dependents in always asks.
-    if opts.with_dependents && !opts.force {
-        let dependents = plan["dependents"].as_array().map(|a| a.len()).unwrap_or(0);
-        for op in &ops {
-            eprintln!("  {}", op_line(op));
+    // A cell written since is overwritten by the revert: what the user
+    // cannot see from the target alone, so it asks.
+    let changed = changed_lines(&plan);
+    if !changed.is_empty() && !opts.force {
+        for line in &changed {
+            eprintln!("  {line}");
         }
         if !confirm(&format!(
-            "Revert {} — {} operation(s), {dependents} of them pulled in as dependents?",
+            "Revert {} — {} operation(s) overwrite what was written since?",
             target.describe(),
-            ops.len()
+            changed.len()
         ))? {
             println!("Aborted.");
             return Ok(0);
@@ -1123,7 +1111,6 @@ pub fn revert_run(ctx: &Ctx, target: RevertTarget, opts: &RevertOpts) -> Result<
     let body = target.body();
     let request = RevertRequest {
         target: &body,
-        with_dependents: opts.with_dependents,
         metadata_only: opts.metadata_only,
         label: opts.label.as_deref(),
     };
