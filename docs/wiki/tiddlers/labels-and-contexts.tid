@@ -35,7 +35,8 @@ Operations grouped by their outermost label (name and description); a group open
 its child labels, down to single operations. Consecutive watcher labels are folded into
 one line, or they would drown the rest.
 
-!! Open
+!! Deferred
 
-* Whether the GUI's work context belongs to a workspace or to the whole GUI, and whether it survives a restart.
-* Whether a label can be renamed or described after the fact.
+The GUI's work context is secondary (user, 12 October 2026), and not part of the first
+build: whether it belongs to a workspace or to the whole GUI, and whether it survives a
+restart, is decided when it is built. So is renaming or describing a label after the fact.

@@ -14,10 +14,10 @@ changed", not "undo this if nothing touched it since".
 
 |!Operation |!Its inverse, applied now |
 |`set_field` (and the watcher's `file_*`, set-field-shaped) |set the field back to the rows it replaced |
-|`append_field` |remove ''that'' row — not the whole field, which would erase what was appended since |
+|`append_field` |remove one row of that name holding that value — not the whole field, which would erase what was appended since |
 |`delete_field` |put the removed rows back |
 |`create_metarecord` |delete the metarecord, whatever it holds now |
-|`delete_metarecord` |recreate it with the fields it had |
+|`delete_metarecord` |recreate it, under its own uuid, with the fields it had |
 |`set_metarecord` |set the whole field set back |
 
 So "back to A" holds for a set; for a multi-map it is the delta that is undone, not the
@@ -56,6 +56,8 @@ revert (doc "Filesystem coordination") already does that, and the plan shows it.
 the trash does not hold cannot come back: the metadata is reverted, the truth written
 again by the watcher.
 
-!! Open
+!! Identities
 
-* Field row ids: a navigation restored the original `field.id`s. Whether a revert must, for the clients that hold row ids, is to be checked.
+* ''A metarecord keeps its uuid'': recreating a deleted one restores it. A uuid is unique by construction, so it cannot collide.
+* ''A field row does not keep its id'': a row put back gets a new one. Restoring the old id (as a navigation did) could collide with rows created since — ids are allocated by the store, not unique by construction. Clients holding a row id re-read on the change anyway ([[Daemon data in panels]]).
+* Hence an `append_field` is undone ''by value'', not by row id: after undo, redo, undo, the value it appended sits in a row the redo created, under another id. Two rows of the same name and value are interchangeable — the metarecord's content, and its version, are the same whichever goes (doc "Metarecord version").

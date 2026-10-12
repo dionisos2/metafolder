@@ -14,9 +14,9 @@ opened as contexts; undo and redo by label; retention per origin. What
 motivates it is in doc "Why the log stops being a tree" — three undo/redo bugs
 left unfixed meanwhile: a redo lost when the watcher writes after an
 undo-by-rollback, a redo stopping at an undo it already redid, the tagging
-scripts' going back rolling over watcher writes. Open before building: field
-row ids on a revert, the GUI work context's scope. A wire break and a
-persisted-format change (conversion shipped).
+scripts' going back rolling over watcher writes. A wire break and a
+persisted-format change (conversion shipped). Deferred past the first build:
+the GUI's work context (its scope is undecided).
 
 * TODO performance
 The recurring defect of this project is a cost that grows with the repository
