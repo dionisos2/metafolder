@@ -879,3 +879,31 @@ fn a_reconcile_with_nothing_to_do_resolves_each_path_once_and_rereads_none() {
     // not read back to learn whether it is on disk.
     assert_eq!(count("path_of"), 1, "a path found by the walk is present: {entry:?}");
 }
+
+/// The keys an idle reconcile of `dirs` folders of `per` files reads per path
+/// on disk, and those its phases do not name.
+fn idle_reconcile_reads(dirs: usize, per: usize) -> (f64, u64) {
+    let (repo, root) = setup("idle_reads");
+    for d in 0..dirs {
+        for f in 0..per {
+            write_file(&root, &format!("d{d}/f{f}.txt"), b"content");
+        }
+    }
+    captured_reconcile(&repo);
+    let entry = captured_reconcile(&repo);
+    let named: u64 = entry.phases.iter().map(|p| p.reads).sum();
+    (entry.reads as f64 / (dirs * per + dirs) as f64, entry.reads - named)
+}
+
+#[test]
+fn an_idle_reconcile_reads_the_same_keys_per_path_and_names_them() {
+    // A reconcile must look at every file, so it is linear in them; what must
+    // not grow is the cost of each (a path's resolution once compared it with
+    // all its siblings: 1 200 keys a file on 50 000). And the slow log must say
+    // where the keys go: the refresh, MIME and metadata passes were unnamed.
+    let (small, small_unnamed) = idle_reconcile_reads(5, 40);
+    let (large, large_unnamed) = idle_reconcile_reads(5, 320);
+    assert!(large <= small * 1.05, "per path: {small:.1} keys, then {large:.1} on 8x the files");
+    assert!(small_unnamed <= 10, "{small_unnamed} keys read outside any phase");
+    assert!(large_unnamed <= 10, "{large_unnamed} keys read outside any phase on 8x the files");
+}

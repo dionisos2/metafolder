@@ -61,6 +61,10 @@ synonym:
 |`watcher.apply` |applying one group of compacted events |
 |`resolve` |a reconcile resolving a path found on disk to its metarecord (one per path) |
 |`path_of` |a reconcile reading back the path of a tracked metarecord the walk did not find |
+|`placed` |a reconcile listing the tracked metarecords, for its orphan scan (one key each) |
+|`refresh` |a reconcile comparing one path's stat fields with the disk, and writing what changed |
+|`mime` |a reconcile checking one file's MIME type, and detecting it when it has none |
+|`metadata` |a reconcile checking one file's embedded metadata, and extracting it when not yet done |
 
 A `wait:*` phase is the one that distinguishes "this is expensive" from "this was
 fine and something else held the repository".

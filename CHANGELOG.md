@@ -14,6 +14,11 @@ than breaking them.
 ## [Unreleased]
 
 ### Added
+- **The slow log names every pass of a reconcile.** `placed`, `refresh`,
+  `mime` and `metadata` join `resolve` and `path_of`: an idle reconcile's keys
+  are all attributed now (≈ 22 a path — 3 resolving it, 13 comparing its stat
+  fields, 3 and 2 checking its MIME type and metadata), and a test holds that
+  cost per path as the repository grows (doc "What the slow log records").
 - **`mfr_mime_undetected`: a file reconcile found no MIME type in is not read
   again.** The MIME pass opened, at every reconcile, every regular file
   `infer` recognises nothing in (plain text, for one), since nothing said it

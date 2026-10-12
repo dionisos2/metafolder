@@ -195,7 +195,7 @@ pub fn reconcile_full_reported(
     // Step 1 — orphaned metarecords: tree position no longer present on disk.
     // (Checked against the disk directly, so that files that merely became
     // ineligible are not mistaken for orphans.) Determinate "scan" phase.
-    let tracked = writer.store().placed("mfr_path")?;
+    let tracked = metafolder_core::slowlog::timed("placed", || writer.store().placed("mfr_path"))?;
     let scan_total = tracked.len() as u64;
     reporter.progress("scan", Some(0), Some(scan_total));
     let mut orphans: Vec<(Uuid, String)> = Vec::new();
@@ -424,7 +424,9 @@ pub fn reconcile_full_reported(
                 }
             }
             if let Some(uuid) = placed_at!(i) {
-                refresh_stat_fields(&mut writer, &root, uuid, rel)?;
+                metafolder_core::slowlog::timed("refresh", || {
+                    refresh_stat_fields(&mut writer, &root, uuid, rel)
+                })?;
             }
         }
     }
@@ -443,7 +445,9 @@ pub fn reconcile_full_reported(
             }
             let rel = &fs_paths[k].0;
             if let Some(uuid) = placed_at!(k) {
-                maybe_compute_mime(&mut writer, &root, uuid, rel)?;
+                metafolder_core::slowlog::timed("mime", || {
+                    maybe_compute_mime(&mut writer, &root, uuid, rel)
+                })?;
             }
         }
     }
@@ -463,7 +467,9 @@ pub fn reconcile_full_reported(
             }
             let rel = &fs_paths[k].0;
             if let Some(uuid) = placed_at!(k) {
-                maybe_extract_metadata(&mut writer, &root, uuid, rel, &map)?;
+                metafolder_core::slowlog::timed("metadata", || {
+                    maybe_extract_metadata(&mut writer, &root, uuid, rel, &map)
+                })?;
             }
         }
     }

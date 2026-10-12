@@ -51,8 +51,12 @@ million keys (a folder of 292 files renamed) to 20 000, and from 1.56 million
   four times, and every file's path read back by the orphan scan. Resolved
   once since =a46549ef=: 2.2 million keys, 7.3 s. Not all of it is "nothing to
   do": in the session it is the first one computing MIME types, so it writes
-  =mfr_mime= on every file. What a truly idle one costs is the refresh's
-  comparison of ≈ 7 stat fields (≈ 16 keys a file) and one resolution.
+  =mfr_mime= on every file. A truly idle one, measured 12 October 2026 (every
+  phase now named in the slow log): ≈ 22 keys a path, the same on 8× the files
+  — 3 resolving it, 13 comparing its stat fields (one prefix each), 3 and 2
+  checking its MIME type and metadata, 1 listing it for the orphan scan. One
+  read of the record's rows would answer the last three passes at once (≈ 1
+  key a row), a gain only on records with few user fields: not built.
 - reading the log right after an undo read the whole log (=42287c53=): the
   redo's two reads went from 702 000 keys to 171 000, which is what was undone
   (a revision of 50 000 operations) — the cost now follows the continuation, not
