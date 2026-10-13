@@ -12,14 +12,14 @@ Usage: mf log prune before [OPTIONS] [TARGET]
 
 Arguments:
   [TARGET]
-          Revision label (most recent on the HEAD ancestry path)
+          A label id: the label is kept whole, its children included
 
 Options:
       --id <ID>
           Target operation by id
 
       --timestamp <TIMESTAMP>
-          Most recent operation whose revision timestamp ≤ T (ISO-8601, or @<unix-ms>)
+          Most recent operation written at or before T (ISO-8601, or @<unix-ms>)
 
       --force
           Skip the confirmation prompt

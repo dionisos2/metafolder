@@ -130,7 +130,7 @@ pub(super) async fn trash_delete_endpoint(
             }
         }
 
-        let mut writer = repo_state.writer(&mut conn, None)?;
+        let mut writer = repo_state.writer(&mut conn, request_context())?;
         writer.set_origin(crate::log::ORIGIN_TRASH)?;
         let _phase = slowlog::phase("write.trash_delete");
         for uuid in &uuids {
@@ -217,7 +217,7 @@ pub(super) async fn bulk_create_endpoint(
             }
         }
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let mut writer = repo_state.writer(&mut conn, None)?;
+        let mut writer = repo_state.writer(&mut conn, request_context())?;
         let writing = slowlog::phase("write.bulk_create");
         let mut created = 0usize;
         let mut skipped = 0usize;
@@ -281,7 +281,7 @@ pub(super) async fn create_record_endpoint(
             let uuid = create_at_path(repo_state, &mut conn, &rel, body.parents, body.fields)?;
             return Ok(Json(metarecord_response(&*conn, uuid)?));
         }
-        let mut writer = repo_state.writer(&mut conn, None)?;
+        let mut writer = repo_state.writer(&mut conn, request_context())?;
         let created = match supplied {
             Some(uuid) => {
                 if Rows::version(writer.store(), uuid)?.is_some() {
@@ -350,7 +350,7 @@ fn create_at_path(
     if !extra.iter().any(|f| f.name == "mf_watch") {
         extra.insert(0, Field::new("mf_watch", Value::Bool(false)));
     }
-    let mut writer = repo_state.writer(conn, None)?;
+    let mut writer = repo_state.writer(conn, request_context())?;
     let uuid = crate::reconcile::create_record_for(
         &mut writer,
         &cache,
@@ -392,7 +392,7 @@ pub(super) async fn delete_record_endpoint(
         if Rows::version(&*conn, uuid)?.is_none() {
             return Err(ApiError::not_found(format!("Metarecord not found: {uuid}")));
         }
-        let mut writer = repo_state.writer(&mut conn, None)?;
+        let mut writer = repo_state.writer(&mut conn, request_context())?;
         ensure_version(writer.store(), uuid, ev.expected_version)?;
         writer.delete_metarecord(uuid)?;
         let effects = writer.effects();
@@ -626,7 +626,7 @@ pub(super) async fn patch_field_by_id(
         check_writable(&old.name, body.force)?;
         check_writable(&new_name, body.force)?;
 
-        let mut writer = repo_state.writer(&mut conn, None)?;
+        let mut writer = repo_state.writer(&mut conn, request_context())?;
         writer.rename_field(uuid, id, &new_name, new_value)?;
         validate_schema(repo_state, writer.store(), uuid, &[old.name.clone(), new_name.clone()])?;
         let effects = writer.effects();
@@ -652,7 +652,7 @@ pub(super) async fn delete_field_by_id(
         let row = Rows::row(&*conn, id)?
             .ok_or_else(|| ApiError::not_found(format!("Field {id} not found")))?;
         check_writable(&row.name, force)?;
-        let mut writer = repo_state.writer(&mut conn, None)?;
+        let mut writer = repo_state.writer(&mut conn, request_context())?;
         writer.delete_field(uuid, id)?;
         validate_schema(repo_state, writer.store(), uuid, std::slice::from_ref(&row.name))?;
         let effects = writer.effects();

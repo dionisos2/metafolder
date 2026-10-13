@@ -19,7 +19,7 @@ live.
 |`selected_metarecord` |`{uuid, repo}` or `null` |the highlighted metarecord; `null` for an untracked file |
 |`selected_paths` |list of absolute paths |the highlighted file — at most one entry, one position of the metarecord's `mfr_path` (a list, as scripts read it) |
 |`selected_metarecords` |list of uuids |the ''checked'' metarecords, for a bulk operation ([[Cross-panel selection]]) |
-|`selected_log_entry` |`{repo, rev_id, op_id}` or `null` |the revision under the log's cursor, with the operation when the cursor is on one; what [[log-detail panel]] shows |
+|`selected_log_entry` |`{repo, rev_id, op_id}` or `null` |the label under the log's cursor (`rev_id` is its id, a name kept until the label tree), with the operation when the cursor is on one; what [[log-detail panel]] shows |
 |`selected_treeref` |`{repo, field, uuid, path}` or `null` |the node selected in `treeref` |
 |`metarecords:dirty` |a time in ms |set whenever something the metarecord panels show may have changed (a write from the GUI, a reconcile…); they re-read on it |
 |`pick_request` |object or `null` |marks a workspace as a [[value picker|Value picker]], with who asked and what to restore |

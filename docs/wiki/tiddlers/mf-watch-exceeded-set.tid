@@ -1,5 +1,5 @@
 title: mf watch exceeded set
-tags: [[CLI command]] [[Watcher]]
+tags: [[CLI command]] Watcher
 kind: reference
 summary: Stop watching a subtree, returning its watches to the budget
 

@@ -1,5 +1,5 @@
 title: The watch budget
-tags: [[Watcher]]
+tags: Watcher
 kind: reference
 summary: inotify costs one kernel watch per directory from a per-user supply; the daemon caps its share, records the subtrees it could not afford as mfr_watch_exceeded, and reports a kernel refusal as a state.
 

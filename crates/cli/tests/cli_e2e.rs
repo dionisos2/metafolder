@@ -1753,7 +1753,7 @@ fn test_schema_reload_invalid_file_fails() {
 // ── Event log: mf log / mf log show / mf prune (doc "Event log") ─────────────────
 
 #[test]
-fn test_log_lists_revisions_most_recent_first() {
+fn test_log_lists_labels_most_recent_first() {
     let (repo, _root) = init_repo("log_list");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
@@ -1764,7 +1764,7 @@ fn test_log_lists_revisions_most_recent_first() {
     assert!(out.stdout.contains("\u{2190} HEAD"), "stdout: {}", out.stdout);
     let first = out.stdout.lines().next().unwrap();
     assert!(first.starts_with('>') && first.contains("\u{2190} HEAD"), "first line: {first}");
-    assert!(out.stdout.contains("rev "), "stdout: {}", out.stdout);
+    assert!(out.stdout.contains("label "), "stdout: {}", out.stdout);
 }
 
 #[test]
@@ -1787,16 +1787,16 @@ fn test_log_show_displays_before_and_after() {
 
     let out = mf(&["-u", &repo, "log", "show", "HEAD"]);
     assert_ok(&out);
-    assert!(out.stdout.starts_with("Revision "), "stdout: {}", out.stdout);
+    assert!(out.stdout.starts_with("Label "), "stdout: {}", out.stdout);
     assert!(out.stdout.contains("set_field(rating)"), "stdout: {}", out.stdout);
     assert!(out.stdout.contains("before:  3"), "stdout: {}", out.stdout);
     assert!(out.stdout.contains("after:   5"), "stdout: {}", out.stdout);
 
-    // --raw prints JSON with the revision object.
+    // --raw prints JSON with the label object.
     let raw = mf(&["-u", &repo, "log", "show", "HEAD", "--raw"]);
     assert_ok(&raw);
     let parsed: serde_json::Value = serde_json::from_str(&raw.stdout).unwrap();
-    assert!(parsed["revision"]["is_head"].as_bool().unwrap());
+    assert!(parsed["label"]["is_head"].as_bool().unwrap());
 }
 
 #[test]
@@ -5439,7 +5439,7 @@ fn oldest_revision_with_rating(repo: &str) -> String {
         .filter_map(|line| {
             let mut it = line.split_whitespace();
             while let Some(token) = it.next() {
-                if token == "rev" {
+                if token == "label" {
                     return it.next().map(str::to_string);
                 }
             }

@@ -91,7 +91,7 @@ pub struct TrashEntry {
     /// The metarecord's `version` when it was trashed. Provenance, and what
     /// matches an entry written before the metarecords were captured — whose
     /// deletion the log recorded as the watcher's `file_deleted` — to the exact
-    /// revert that undoes it (its `entity_version_before_revision`).
+    /// revert that undoes it (its `entity_version_before_label`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<u64>,
     /// The metarecords this trashing displaced, each with its original

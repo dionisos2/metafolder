@@ -1,5 +1,5 @@
 title: The fanotify broker
-tags: [[Watcher]]
+tags: Watcher
 kind: reference
 audience: dev
 aliases: watchd metafolder-watchd fanotify

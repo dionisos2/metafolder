@@ -154,6 +154,20 @@ than breaking them.
     `mf_watch = true` no longer reads as unwatched.
 
 ### Changed
+- **Labels replace revisions.** Each operation carries its innermost label
+  (name, description, parent), when it was written and its origin. A write
+  request names the label it writes in with `X-Metafolder-Label: <id>`;
+  without one it opens a label of its own, named after the route (a revert:
+  `revert of label N`). `POST /repos/:repo/labels` opens one, `GET
+  /repos/:repo/labels/:id` reads it with its ancestors and children. The
+  watcher writes one label per flush under its own, which no client may write
+  under. `GET /log` answers `label_id`, `timestamp` and `origin` per
+  operation and a `labels` list (ancestors included), and takes `labels=N`;
+  `/log/revisions/:id` becomes `/log/labels/:id`; a revert targets `label_id`
+  (its children included) and answers `label`; a prune targets a label id and
+  keeps it whole. `mf log` lists, shows, reverts and prunes by label. Layout 5;
+  the old log is emptied like the layouts before it. `API_VERSION` 19 (doc
+  "Labels and contexts", doc "Log endpoints").
 - **The log is kept by operations per origin.** `log-retention-watcher-ops`
   (default 50 000) and `log-retention-user-ops` (default 1 000 000) replace
   `log-retention-revisions` and `log-retention-keep-labels`, daemon-wide and
@@ -261,6 +275,10 @@ than breaking them.
   "Command names (non-exhaustive default set)", "User commands").
 
 ### Removed
+- **Labelling a revision after the fact**: `PATCH /log/revisions/:id`, the log
+  panel's `log:mark` (Shift+L) and `mf log revert --label`. Renaming or
+  describing a label once written is deferred; a context names the work while
+  it is done (doc "Labels and contexts").
 - **Rollback and the history tree.** `mf log rollback`, `log:rollback`,
   `POST /rollback` and its plan, summary and coordinated `start`/`step`/`abort`,
   the restorations a skipped step left, the `rollback` task, `mf log list

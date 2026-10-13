@@ -1,5 +1,5 @@
 title: File fingerprint
-tags: [[Reconcile]]
+tags: Reconcile
 kind: reference
 summary: Identity across moves is judged by content, in cascading steps — size, a partial xxHash3 of the first and last 4 KiB, the full xxHash3 — never by mtime.
 

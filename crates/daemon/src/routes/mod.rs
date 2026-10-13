@@ -101,7 +101,9 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/query/fields/resolve-tree", post(query_resolve_tree))
         .route("/repos/:repo/log", get(get_log))
         .route("/repos/:repo/log/since", get(get_log_since))
-        .route("/repos/:repo/log/revisions/:rev_id", get(get_revision).patch(patch_revision))
+        .route("/repos/:repo/log/labels/:id", get(get_label_detail))
+        .route("/repos/:repo/labels", post(create_label))
+        .route("/repos/:repo/labels/:id", get(get_label))
         .route("/repos/:repo/log/prune", post(prune_log))
         .route("/repos/:repo/revert", post(revert))
         .route("/repos/:repo/revert/plan", get(revert_plan))
@@ -162,6 +164,23 @@ struct RequestInfo {
     op_id: Option<String>,
     /// What the user asked for, in the client's own words.
     client: Option<String>,
+    /// The label the client writes in (`X-Metafolder-Label`, doc "Labels and
+    /// contexts").
+    label: Option<i64>,
+}
+
+/// Where the request being served writes — [`crate::log::current_context`],
+/// for a route.
+pub(crate) fn request_context() -> crate::log::WriteContext {
+    crate::log::current_context()
+}
+
+/// The context a task spawned off the request being served writes in,
+/// named `name` when the request names no label: entered on the task's own
+/// thread with [`crate::log::enter_context`].
+pub(crate) fn task_context(name: &str) -> crate::log::WriteContext {
+    let label = REQUEST.try_with(|info| info.label).ok().flatten();
+    crate::log::WriteContext::of_request(label, name)
 }
 
 tokio::task_local! {
@@ -189,10 +208,23 @@ async fn name_operation(
             .map(|p| p.as_str())
             .unwrap_or_else(|| request.uri().path())
             .to_string();
+        let label = match request.headers().get("x-metafolder-label") {
+            None => None,
+            Some(v) => match v.to_str().ok().and_then(|s| s.trim().parse::<i64>().ok()) {
+                Some(id) => Some(id),
+                None => {
+                    return ApiError::bad_request(
+                        "X-Metafolder-Label must be a label id (an integer)",
+                    )
+                    .into_response()
+                }
+            },
+        };
         RequestInfo {
             op: format!("{} {route}", request.method()),
             op_id: short_header(request.headers(), "x-metafolder-op-id"),
             client: short_header(request.headers(), "x-metafolder-context"),
+            label,
         }
     };
     REQUEST.scope(info, next.run(request)).await
@@ -248,6 +280,12 @@ where
     // ends on the one thread that runs it (doc "Slow log").
     let info = REQUEST.try_with(|info| info.clone()).ok();
     tokio::task::spawn_blocking(move || {
+        let _context = info.as_ref().map(|info| {
+            crate::log::enter_context(crate::log::WriteContext::of_request(
+                info.label,
+                info.op.clone(),
+            ))
+        });
         let _timed = info.map(|info| {
             let guard = slowlog::begin(repo.slowlog.clone(), info.op);
             if let Some(id) = info.op_id {
@@ -320,7 +358,7 @@ where
     with_repo(state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let mut writer = repo_state.writer(&mut conn, None)?;
+        let mut writer = repo_state.writer(&mut conn, request_context())?;
         ensure_version(writer.store(), uuid, expected_version)?;
         let touched = slowlog::timed("write.fields", || write(&mut writer))?;
         slowlog::timed("validate.schema", || {
@@ -366,7 +404,7 @@ where
         let cache = repo_state.tree();
         let uuids = resolve_query_uuids(&conn, &cache, &query)?;
 
-        let mut writer = repo_state.writer(&mut conn, None)?;
+        let mut writer = repo_state.writer(&mut conn, request_context())?;
         let writing = slowlog::phase("write.fields");
         let mut updated = 0usize;
         for uuid in &uuids {

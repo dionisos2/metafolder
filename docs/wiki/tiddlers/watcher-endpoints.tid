@@ -1,5 +1,5 @@
 title: Watcher endpoints
-tags: [[Watcher]]
+tags: Watcher
 kind: reference
 audience: dev
 summary: GET /watch and pause/resume, watch check, the activity counts, the exceeded subtrees — the watcher's HTTP surface.

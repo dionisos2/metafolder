@@ -1,6 +1,6 @@
 //! The logged write flow (doc "Log storage"). Every write to
-//! the data tables goes through a [`Writer`], which records a revision, one
-//! operation per atomic change with before/after snapshots, and keeps the
+//! the data tables goes through a [`Writer`], which records, under a label
+//! (doc "Labels and contexts"), one operation per atomic change with before/after snapshots, and keeps the
 //! `head` pointer (the newest operation) consistent with the data tables — all
 //! in one store transaction. The log is a sequence, not a tree: nothing moves
 //! back over it (doc "The operation log").
@@ -15,20 +15,20 @@ use metafolder_core::metarecord::{Field, FieldType, MetaRecord, Value};
 
 use crate::error::DomainError;
 use crate::rows::{self, FieldRow};
-use crate::store::{Begin, Database, Log, NewOp, Store, WriteTxn};
+use crate::store::{Begin, Database, LabelMeta, Log, NewOp, Store, WriteTxn};
 use crate::version;
 
-/// The `revision.origin` of a revision the daemon writes on the filesystem's
-/// behalf — the watcher's flush (doc "Revisions and operations").
-/// A client's own write leaves the column NULL.
+/// The `origin` of an operation the daemon writes on the filesystem's
+/// behalf — the watcher's flush (doc "Operations and their origin").
+/// A client's own write has none.
 pub const ORIGIN_WATCHER: &str = "watcher";
 
-/// `revision.origin` for the metarecord deletion a trashing writes
+/// The `origin` of the metarecord deletion a trashing writes
 /// (doc "POST /repos/:repo/metarecords/trash").
 ///
 /// Deliberately *not* `watcher`: a trashing is a write the user asked for and
-/// must stay undoable, and only `watcher` disqualifies a revision from being
-/// undone (doc "Revisions and operations"). It is a distinct value only so
+/// must stay undoable, and only `watcher` disqualifies an operation from being
+/// undone (doc "Operations and their origin"). It is a distinct value only so
 /// that a client reverting it knows the bytes of a deleted metarecord are
 /// in the trash-bin rather than gone.
 pub const ORIGIN_TRASH: &str = "trash";
@@ -36,7 +36,7 @@ pub const ORIGIN_TRASH: &str = "trash";
 /// Maximum depth of a TreeRef chain (doc "TreeRef forest").
 pub const MAX_TREE_DEPTH: usize = 1000;
 
-/// Operation types recorded in the log (doc "Revisions and operations").
+/// Operation types recorded in the log (doc "Operations and their origin").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpType {
     CreateRecord,
@@ -102,8 +102,10 @@ impl OpType {
 #[derive(Debug, Clone)]
 pub struct OpRow {
     pub id: i64,
-    pub rev_id: i64,
-    pub seq: i64,
+    /// Its innermost label (doc "Labels and contexts").
+    pub label_id: i64,
+    /// When it was written, Unix milliseconds.
+    pub timestamp: i64,
     pub op_type: String,
     pub entity_uuid: Uuid,
     pub entity_version_before: Option<u64>,
@@ -116,14 +118,118 @@ pub struct OpRow {
     /// database written before the column existed. Allowed to dangle: pruning
     /// may remove the operation it names.
     pub reverts_op_id: Option<i64>,
-    /// The `origin` of the revision this operation belongs to (doc "Revisions and operations"),
-    /// carried along so a reader never has to go back to
-    /// the revision for it. `None` for a revision nothing stamped.
+    /// Who wrote it (doc "Operations and their origin"): [`ORIGIN_WATCHER`],
+    /// [`ORIGIN_TRASH`], or `None` for a client's ordinary write.
     ///
     /// It is what separates two operations the op type alone cannot: an
     /// ordinary `delete_metarecord` touches no file, while the one a *trashing*
     /// wrote has its bytes waiting in the trash-bin.
     pub origin: Option<String>,
+}
+
+// ── Contexts (doc "Labels and contexts") ────────────────────────────────────
+
+/// Where a write's operations go.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WriteContext {
+    /// Under a label that exists already: the context a client passed.
+    In(i64),
+    /// Under a label the write opens — and drops again when it writes
+    /// nothing.
+    New(NewLabel),
+    /// Under a label opened for one flush of the watcher, inside the
+    /// watcher's own label. The operations' origin is [`ORIGIN_WATCHER`].
+    Watcher,
+}
+
+/// A label a write opens.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewLabel {
+    pub name: String,
+    pub description: Option<String>,
+    pub parent: Option<i64>,
+}
+
+impl WriteContext {
+    /// A new root label named `name`.
+    pub fn new(name: impl Into<String>) -> Self {
+        WriteContext::New(NewLabel { name: name.into(), description: None, parent: None })
+    }
+
+    /// The context of a request: inside the label the client named, or a
+    /// new root label named `name` when it named none.
+    pub fn of_request(label: Option<i64>, name: impl Into<String>) -> Self {
+        match label {
+            Some(id) => WriteContext::In(id),
+            None => WriteContext::new(name),
+        }
+    }
+
+    /// The same context, its new label (if it opens one) named `name`
+    /// instead.
+    pub fn named(self, name: impl Into<String>) -> Self {
+        match self {
+            WriteContext::New(label) => WriteContext::New(NewLabel { name: name.into(), ..label }),
+            other => other,
+        }
+    }
+}
+
+std::thread_local! {
+    static CONTEXT: std::cell::RefCell<Option<WriteContext>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The context the work running on this thread writes in: the request's
+/// (set by the routes for the length of its work, and by a task spawned off
+/// one), or a label named "daemon" outside of any.
+///
+/// A thread-local rather than an argument: it is a property of the request,
+/// and every write handler and task would otherwise take it only to hand it
+/// on to [`crate::state::RepoState::writer`].
+pub fn current_context() -> WriteContext {
+    CONTEXT.with(|c| c.borrow().clone()).unwrap_or_else(|| WriteContext::new("daemon"))
+}
+
+/// Makes `context` this thread's [`current_context`] until the guard drops.
+pub fn enter_context(context: WriteContext) -> ContextGuard {
+    let previous = CONTEXT.with(|c| c.borrow_mut().replace(context));
+    ContextGuard(previous)
+}
+
+/// Puts the thread's previous context back.
+pub struct ContextGuard(Option<WriteContext>);
+
+impl Drop for ContextGuard {
+    fn drop(&mut self) {
+        let previous = self.0.take();
+        CONTEXT.with(|c| *c.borrow_mut() = previous);
+    }
+}
+
+/// Refuses a label a client may not write under: one that does not exist,
+/// or the watcher's or one inside it.
+pub fn check_client_label(log: &dyn Log, id: i64) -> Result<()> {
+    let watcher = log.watcher_label()?;
+    let mut next = Some(id);
+    let mut depth = 0;
+    while let Some(label) = next {
+        if Some(label) == watcher {
+            return Err(DomainError::BadRequest(format!(
+                "label {id} is the watcher's: only the daemon writes under it"
+            ))
+            .into());
+        }
+        let Some(meta) = log.labels(&[label])?.remove(&label) else {
+            return Err(DomainError::BadRequest(format!("no label {label}")).into());
+        };
+        next = meta.parent;
+        depth += 1;
+        if depth > MAX_TREE_DEPTH {
+            return Err(DomainError::BadRequest(format!("label {id} is nested too deep")).into());
+        }
+    }
+    Ok(())
 }
 
 // ── Targets ──────────────────────────────────────────────────────────────────
@@ -133,7 +239,9 @@ pub struct OpRow {
 pub enum Target {
     Id(i64),
     Timestamp(i64),
-    Label(String),
+    /// A label: its oldest operation, its children's included — so a prune
+    /// to it keeps it whole.
+    Label(i64),
 }
 
 /// Resolves a target to an operation id.
@@ -147,10 +255,34 @@ pub fn resolve_target(log: &dyn Log, target: &Target) -> Result<i64> {
         Target::Timestamp(t) => log
             .last_op_at_or_before(*t)?
             .with_context(|| format!("no operation found at or before timestamp {t}")),
-        Target::Label(label) => log.last_op_labelled(label)?.ok_or_else(|| {
-            DomainError::NotFound(format!("label '{label}' not found in the log")).into()
+        Target::Label(label) => first_op_under(log, *label)?.ok_or_else(|| {
+            DomainError::NotFound(format!("label {label} holds no operation")).into()
         }),
     }
+}
+
+/// The oldest operation of `label` and its descendants.
+pub fn first_op_under(log: &dyn Log, label: i64) -> Result<Option<i64>> {
+    let mut first: Option<i64> = None;
+    let mut todo = vec![label];
+    while let Some(label) = todo.pop() {
+        if let Some(op) = log.label_first_op(label)? {
+            first = Some(first.map_or(op, |f| f.min(op)));
+        }
+        todo.extend(log.label_children(label)?);
+    }
+    Ok(first)
+}
+
+/// `label` and every label nested in it, `label` first.
+pub fn label_subtree(log: &dyn Log, label: i64) -> Result<Vec<i64>> {
+    let mut out = vec![label];
+    let mut i = 0;
+    while i < out.len() {
+        out.extend(log.label_children(out[i])?);
+        i += 1;
+    }
+    Ok(out)
 }
 
 /// The fields that decide which folders are watched: a write that moves one
@@ -168,19 +300,16 @@ pub struct RetypeSummary {
 // ── Pruning (doc "Pruning the log") ────────────────────────────────────
 
 /// Permanently removes every operation older than `target` — the target
-/// itself is kept. Returns (pruned operations, pruned revisions).
+/// itself is kept. Returns (pruned operations, labels left empty and dropped).
 pub fn prune(conn: &mut dyn Database, target: i64) -> Result<(usize, usize)> {
     conn.head()?.context("cannot prune an empty history")?;
     // What goes is read, and nothing else: the operations older than the
     // target, never the ones kept.
     let doomed: Vec<i64> = conn.ops_back(target - 1, None)?.into_iter().map(|o| o.id).collect();
-    let (_, revisions_before) = conn.counts()?;
     let tx = conn.begin_write()?;
-    tx.delete_ops(&doomed)?;
-    tx.drop_empty_revisions()?;
+    let labels = tx.delete_ops(&doomed)?;
     tx.commit()?;
-    let (_, revisions_after) = conn.counts()?;
-    Ok((doomed.len(), (revisions_before - revisions_after) as usize))
+    Ok((doomed.len(), labels))
 }
 
 /// Buffered operations are flushed to the database once this many accumulate,
@@ -306,7 +435,13 @@ impl Retention {
 /// in bulk, in batches of [`FLUSH_THRESHOLD`] operations.
 pub struct Writer<'c> {
     tx: Box<dyn WriteTxn + 'c>,
-    rev_id: i64,
+    /// The label its operations go under.
+    label_id: i64,
+    /// Whether this write opened that label, which then goes with it when
+    /// nothing was written.
+    opened_label: bool,
+    /// When this write began: every operation it records carries it.
+    timestamp: i64,
     /// The newest operation: HEAD as of `begin`, then the last one this
     /// revision flushed. What `commit` records as the log's head.
     chain_head: Option<i64>,
@@ -349,27 +484,86 @@ pub struct Writer<'c> {
 }
 
 impl<'c> Writer<'c> {
-    /// Opens a transaction and creates the revision row, keeping the whole
-    /// history. Every write of a *loaded* repository goes through
-    /// [`crate::state::RepoState::writer`] instead, which applies the
-    /// repository's configured retention.
+    /// Opens a transaction under a label of its own named `label` (or
+    /// "write"), keeping the whole history. Every write of a *loaded*
+    /// repository goes through [`crate::state::RepoState::writer`] instead,
+    /// which applies the repository's configured retention.
     pub fn begin(conn: &'c mut dyn Begin, label: Option<String>) -> Result<Self> {
         Self::begin_with_retention(conn, label, Retention::UNLIMITED)
     }
 
-    /// Opens a transaction and creates the revision row, dropping the history
-    /// that falls outside `retention` when the revision is committed.
+    /// [`Self::begin`], dropping the history that falls outside `retention`
+    /// when the write is committed.
     pub fn begin_with_retention(
         conn: &'c mut dyn Begin,
         label: Option<String>,
         retention: Retention,
     ) -> Result<Self> {
+        let name = label.unwrap_or_else(|| "write".to_string());
+        Self::begin_in(conn, WriteContext::new(name), retention)
+    }
+
+    /// Opens a transaction writing in `context` (doc "Labels and contexts").
+    /// A label named by a client must exist and lie outside the watcher's
+    /// (`400` otherwise): a client cannot pass its writes off as the
+    /// daemon's.
+    pub fn begin_in(
+        conn: &'c mut dyn Begin,
+        context: WriteContext,
+        retention: Retention,
+    ) -> Result<Self> {
         let tx = conn.begin_write()?;
         let head = tx.head()?;
-        let rev_id = tx.begin_revision(label.as_deref(), now_ms())?;
+        let timestamp = now_ms();
+        let mut origin = None;
+        let (label_id, opened_label) = match context {
+            WriteContext::In(id) => {
+                check_client_label(&*tx, id)?;
+                (id, false)
+            }
+            WriteContext::New(label) => {
+                if let Some(parent) = label.parent {
+                    check_client_label(&*tx, parent)?;
+                }
+                let meta = LabelMeta {
+                    name: label.name,
+                    description: label.description,
+                    parent: label.parent,
+                    created: timestamp,
+                };
+                (tx.create_label(&meta)?, true)
+            }
+            WriteContext::Watcher => {
+                origin = Some(ORIGIN_WATCHER.to_string());
+                let root = match tx.watcher_label()? {
+                    Some(root) if !tx.labels(&[root])?.is_empty() => root,
+                    _ => {
+                        let root = tx.create_label(&LabelMeta {
+                            name: "watcher".to_string(),
+                            description: Some(
+                                "What the daemon recorded for the filesystem".to_string(),
+                            ),
+                            parent: None,
+                            created: timestamp,
+                        })?;
+                        tx.set_watcher_label(root)?;
+                        root
+                    }
+                };
+                let meta = LabelMeta {
+                    name: "watcher flush".to_string(),
+                    description: None,
+                    parent: Some(root),
+                    created: timestamp,
+                };
+                (tx.create_label(&meta)?, true)
+            }
+        };
         Ok(Self {
             tx,
-            rev_id,
+            label_id,
+            opened_label,
+            timestamp,
             chain_head: head,
             flushed: 0,
             pending: Vec::new(),
@@ -381,25 +575,26 @@ impl<'c> Writer<'c> {
             tree_lost: Vec::new(),
             tree_lost_seen: HashMap::new(),
             reverting: None,
-            origin: None,
+            origin,
         })
     }
 
-    pub fn rev_id(&self) -> i64 {
-        self.rev_id
+    /// The label this write's operations go under.
+    pub fn label_id(&self) -> i64 {
+        self.label_id
     }
 
-    /// Marks this revision as written on the filesystem's behalf rather than at
-    /// a client's request (doc "Revisions and operations"). The watcher's
-    /// flush sets it; every other write leaves it
-    /// unset, which is what "a client asked for this" means.
+    /// Marks this write as made on someone's behalf rather than at a
+    /// client's plain request (doc "Operations and their origin"): a trashing.
+    /// The watcher's flush gets [`ORIGIN_WATCHER`] from its context
+    /// ([`WriteContext::Watcher`]).
     ///
-    /// It is the revision, not the operation types, that carries this: a file
-    /// arriving is recorded as a `create_metarecord`, indistinguishable by type
-    /// from a metarecord the user created.
+    /// It is the operation's origin, not its type, that says this: a file
+    /// arriving is recorded as a `create_metarecord`, indistinguishable by
+    /// type from a metarecord the user created.
     pub fn set_origin(&mut self, origin: &str) -> Result<()> {
         self.origin = Some(origin.to_string());
-        self.tx.set_revision_origin(self.rev_id, origin)
+        Ok(())
     }
 
     /// Read access to the transaction, for lookups that must observe the
@@ -978,8 +1173,10 @@ impl<'c> Writer<'c> {
         self.check_deferred_types()?;
         self.check_deferred_trees()?;
         if self.flushed == 0 && self.pending.is_empty() {
-            // Nothing was written: drop the empty revision, leave HEAD alone.
-            self.tx.drop_revision(self.rev_id)?;
+            // Nothing was written: drop the label it opened, leave HEAD alone.
+            if self.opened_label {
+                self.tx.drop_label(self.label_id)?;
+            }
         } else {
             self.flush_pending()?;
             self.tx.set_head(self.chain_head)?;
@@ -1064,7 +1261,7 @@ impl<'c> Writer<'c> {
             return Ok(());
         }
         let pending = std::mem::take(&mut self.pending);
-        let last = self.tx.append_ops(self.rev_id, self.flushed + 1, &pending)?;
+        let last = self.tx.append_ops(self.label_id, self.timestamp, &pending)?;
         self.flushed += pending.len() as i64;
         self.chain_head = Some(last);
         Ok(())

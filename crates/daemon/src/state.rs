@@ -278,9 +278,9 @@ impl RepoState {
     pub fn writer<'c>(
         &self,
         conn: &'c mut dyn crate::store::Database,
-        label: Option<String>,
+        context: crate::log::WriteContext,
     ) -> anyhow::Result<crate::log::Writer<'c>> {
-        crate::log::Writer::begin_with_retention(conn, label, self.log_retention)
+        crate::log::Writer::begin_in(conn, context, self.log_retention)
     }
 
     /// This repository's effective log retention.
@@ -949,7 +949,7 @@ fn write_watch_frontier(
     root: &Path,
     frontier: &[String],
 ) -> anyhow::Result<()> {
-    let mut writer = repo.writer(conn, None)?;
+    let mut writer = repo.writer(conn, crate::log::WriteContext::new("watch budget"))?;
     for rel in frontier {
         let path = crate::relpath::RelPath::from_display(rel);
         let uuid = match cache.resolve_path(writer.store(), "mfr_path", rel)? {

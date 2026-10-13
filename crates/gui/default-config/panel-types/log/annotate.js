@@ -89,11 +89,11 @@ export function annotate(revs, ops) {
  * selection is inside an expanded revision, the whole revision otherwise.
  *
  * @param {{kind: string, id: number, revId?: number}|null} selection
- * @returns {{rev_id: number}|{op_ids: number[]}|null}
+ * @returns {{label_id: number}|{op_ids: number[]}|null}
  */
 export function revertTarget(selection) {
   if (!selection) return null;
-  return selection.kind === 'op' ? { op_ids: [selection.id] } : { rev_id: selection.id };
+  return selection.kind === 'op' ? { op_ids: [selection.id] } : { label_id: selection.id };
 }
 
 /**

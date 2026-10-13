@@ -641,7 +641,7 @@ pub(super) async fn batch_writes(
             });
         }
 
-        let mut writer = repo_state.writer(&mut conn, None)?;
+        let mut writer = repo_state.writer(&mut conn, request_context())?;
         let writing = slowlog::phase("write.fields");
         // Every metarecord the batch changed, with the names it wrote there.
         let mut touched: std::collections::BTreeMap<Uuid, Vec<String>> = Default::default();
@@ -771,7 +771,7 @@ pub(super) async fn retype_field(
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let mut writer = repo_state.writer(&mut conn, None)?;
+        let mut writer = repo_state.writer(&mut conn, request_context())?;
         let summary = writer.retype_field(&name, to)?;
         let effects = writer.effects();
         slowlog::timed("commit", || writer.commit())?;
@@ -806,7 +806,7 @@ pub(super) async fn delete_by_query(
         let cache = repo_state.tree();
         let uuids = resolve_query_uuids(&conn, &cache, &body.query)?;
 
-        let mut writer = repo_state.writer(&mut conn, None)?;
+        let mut writer = repo_state.writer(&mut conn, request_context())?;
         let writing = slowlog::phase("write.fields");
         for uuid in &uuids {
             writer.delete_metarecord(*uuid)?;

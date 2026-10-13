@@ -11,4 +11,4 @@ summary: Log: revert what is selected, or a wider scope
 
 * ``shift+o`` → ``log:revert op`` (in the ``log`` panel)
 * ``shift+r`` → ``log:revert`` (in the ``log`` panel)
-* ``shift+v`` → ``log:revert revision`` (in the ``log`` panel)
+* ``shift+v`` → ``log:revert label`` (in the ``log`` panel)

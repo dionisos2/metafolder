@@ -202,13 +202,19 @@ pub fn scan_reported(
     // From here on, every write goes through the open window, committed every
     // `COMMIT_EVERY` (the reads above are all the scan needs from the store).
     let retention = repo.log_retention();
-    let mut window = Writer::begin_with_retention(&mut *conn, None, retention)?;
+    // One label for the whole scan, its windows being one piece of work: the
+    // first window that writes opens it, and the next ones write inside it.
+    let mut context = crate::log::current_context().named("duplicate scan");
+    let mut window = Writer::begin_in(&mut *conn, context.clone(), retention)?;
     let mut opened = Instant::now();
     // Commits the window and opens the next one, when it is due (or `now`).
     macro_rules! commit_window {
         (now) => {{
+            if window.op_count() > 0 {
+                context = crate::log::WriteContext::In(window.label_id());
+            }
             commit(window)?;
-            window = Writer::begin_with_retention(&mut *conn, None, retention)?;
+            window = Writer::begin_in(&mut *conn, context.clone(), retention)?;
             opened = Instant::now();
         }};
         () => {

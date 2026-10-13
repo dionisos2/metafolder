@@ -1,5 +1,5 @@
 title: Finding and clearing orphans
-tags: [[Orphans]]
+tags: Orphans
 kind: guide
 summary: mf orphan list scans, detect marks them orphan = true for queries, clear records the missing ones as deleted; in the GUI, orphan:detect and orphan:delete.
 

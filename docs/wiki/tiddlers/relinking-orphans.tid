@@ -1,5 +1,5 @@
 title: Relinking orphans
-tags: [[Orphans]]
+tags: Orphans
 kind: guide
 summary: mf orphan relink puts an orphan's metadata back onto a tracked file with the same content — the orphan's uuid survives, the stranger's metarecord goes.
 

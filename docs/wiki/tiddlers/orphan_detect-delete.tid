@@ -1,5 +1,5 @@
 title: orphan:detect-delete
-tags: [[GUI command]] [[Orphans]]
+tags: [[GUI command]] Orphans
 kind: reference
 summary: Mark the orphaned metarecords, then delete them (confirmed)
 

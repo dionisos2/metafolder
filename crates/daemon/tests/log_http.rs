@@ -104,7 +104,7 @@ async fn test_log_and_filters() {
     assert_eq!(limited["first"], ops[0]["id"], "whatever the window");
     assert_eq!(ops[2]["op_type"], "set_field");
     assert_eq!(ops[2]["field_name"], "a");
-    assert!(!log["revisions"].as_array().unwrap().is_empty());
+    assert!(!log["labels"].as_array().unwrap().is_empty());
     assert!(ops[0].get("snapshots_before").is_none(), "snapshots off by default");
 
     // Filter by entry.
@@ -142,52 +142,37 @@ async fn test_log_reports_repository_wide_totals() {
 
     let full = get_log(&app, &repo, "").await;
     let operations = full["operations"].as_array().unwrap().len() as i64;
-    let revisions = full["revisions"].as_array().unwrap().len() as i64;
+    let revisions = full["labels"].as_array().unwrap().len() as i64;
     assert_eq!(full["total_operations"], operations);
-    assert_eq!(full["total_revisions"], revisions);
+    assert_eq!(full["total_labels"], revisions);
 
     // A bounded window still reports the whole log's size.
     let limited = get_log(&app, &repo, "?limit=2").await;
     assert_eq!(limited["operations"].as_array().unwrap().len(), 2);
     assert_eq!(limited["total_operations"], operations);
-    assert_eq!(limited["total_revisions"], revisions);
+    assert_eq!(limited["total_labels"], revisions);
 
     std::fs::remove_dir_all(root).unwrap();
 }
 
 #[tokio::test]
-async fn test_revision_detail_and_label() {
+async fn test_label_detail() {
     let (app, repo, root) = setup("rev").await;
     let entry =
         create(&app, &repo, json!([{"name": "x", "value": {"type": "int", "value": 1}}])).await;
     let _ = entry;
 
-    // "head" targets the revision containing the current HEAD.
+    // "head" targets the label of the newest operation.
     let (status, detail) =
-        request(&app, "GET", &format!("/repos/{repo}/log/revisions/head"), None).await;
+        request(&app, "GET", &format!("/repos/{repo}/log/labels/head"), None).await;
     assert_eq!(status, StatusCode::OK, "got: {detail}");
-    assert_eq!(detail["revision"]["is_head"], true);
-    let rev_id = detail["revision"]["id"].as_i64().unwrap();
+    assert_eq!(detail["label"]["is_head"], true);
     let ops = detail["operations"].as_array().unwrap();
     assert_eq!(ops.len(), 1);
     assert!(ops[0]["snapshots_after"].is_array(), "snapshots always included here");
 
-    // Set and clear a label.
-    let (status, _) = request(
-        &app,
-        "PATCH",
-        &format!("/repos/{repo}/log/revisions/{rev_id}"),
-        Some(json!({"label": "before-cleanup"})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let (_, detail) =
-        request(&app, "GET", &format!("/repos/{repo}/log/revisions/{rev_id}"), None).await;
-    assert_eq!(detail["revision"]["label"], "before-cleanup");
-
-    // 404 on a missing revision.
-    let (status, _) =
-        request(&app, "GET", &format!("/repos/{repo}/log/revisions/99999"), None).await;
+    // 404 on a missing label.
+    let (status, _) = request(&app, "GET", &format!("/repos/{repo}/log/labels/99999"), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     std::fs::remove_dir_all(root).unwrap();
@@ -216,27 +201,26 @@ async fn test_revision_detail_pages_its_operations() {
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    let (_, whole) = request(&app, "GET", &format!("/repos/{repo}/log/revisions/head"), None).await;
+    let (_, whole) = request(&app, "GET", &format!("/repos/{repo}/log/labels/head"), None).await;
     let all: Vec<i64> =
         whole["operations"].as_array().unwrap().iter().map(|o| o["id"].as_i64().unwrap()).collect();
     assert_eq!(all.len(), 3);
-    assert_eq!(whole["revision"]["operation_count"], 3);
+    assert_eq!(whole["label"]["operation_count"], 3);
 
     // A window: offset + limit, the count still the whole revision's.
     let (status, page) =
-        request(&app, "GET", &format!("/repos/{repo}/log/revisions/head?offset=1&limit=1"), None)
+        request(&app, "GET", &format!("/repos/{repo}/log/labels/head?offset=1&limit=1"), None)
             .await;
     assert_eq!(status, StatusCode::OK, "got: {page}");
     let ids: Vec<i64> =
         page["operations"].as_array().unwrap().iter().map(|o| o["id"].as_i64().unwrap()).collect();
     assert_eq!(ids, vec![all[1]]);
-    assert_eq!(page["revision"]["operation_count"], 3);
-    assert_eq!(page["revision"]["is_head"], true, "HEAD is judged on the whole revision");
+    assert_eq!(page["label"]["operation_count"], 3);
+    assert_eq!(page["label"]["is_head"], true, "HEAD is judged on the whole revision");
 
     // One operation by id, with its snapshots.
     let (status, one) =
-        request(&app, "GET", &format!("/repos/{repo}/log/revisions/head?op={}", all[2]), None)
-            .await;
+        request(&app, "GET", &format!("/repos/{repo}/log/labels/head?op={}", all[2]), None).await;
     assert_eq!(status, StatusCode::OK, "got: {one}");
     let ops = one["operations"].as_array().unwrap();
     assert_eq!(ops.len(), 1);
@@ -245,7 +229,7 @@ async fn test_revision_detail_pages_its_operations() {
 
     // An operation of another revision is not this revision's.
     let (status, _) =
-        request(&app, "GET", &format!("/repos/{repo}/log/revisions/head?op=1"), None).await;
+        request(&app, "GET", &format!("/repos/{repo}/log/labels/head?op=1"), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
@@ -266,7 +250,7 @@ async fn test_set_record_is_one_op_and_reverts_exactly() {
     let uuid = entry["uuid"].as_str().unwrap().to_string();
     let version_before = entry["version"].as_u64().unwrap();
 
-    let revisions = |body: &Value| body["revisions"].as_array().unwrap().len();
+    let revisions = |body: &Value| body["labels"].as_array().unwrap().len();
     let (_, log_before) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;
     let revs_before = revisions(&log_before);
 
@@ -296,7 +280,7 @@ async fn test_set_record_is_one_op_and_reverts_exactly() {
         &app,
         "POST",
         &format!("/repos/{repo}/revert"),
-        Some(json!({"target": {"rev_id": "head"}})),
+        Some(json!({"target": {"label_id": "head"}})),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "revert failed: {body}");

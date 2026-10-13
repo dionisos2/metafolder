@@ -1,5 +1,5 @@
 title: Event batching
-tags: [[Watcher]]
+tags: Watcher
 kind: reference
 summary: Events wait in memory until the disk has been quiet for 2 s, then are filtered, re-paired, compacted and split by kind into revisions.
 

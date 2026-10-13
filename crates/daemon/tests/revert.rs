@@ -45,7 +45,7 @@ fn revert_ops(conn: &mut KvStore, ops: &[log::OpRow]) {
 }
 
 fn ops_of_revision(conn: &KvStore, rev_id: i64) -> Vec<log::OpRow> {
-    revert::revision_ops(conn, rev_id).unwrap()
+    revert::label_ops(conn, rev_id).unwrap()
 }
 
 fn field_values(conn: &KvStore, uuid: Uuid, name: &str) -> Vec<Value> {
@@ -73,7 +73,7 @@ fn test_revert_of_an_append_then_delete_of_the_same_row() {
         let mut w = Writer::begin(&mut conn, None).unwrap();
         let id = w.append_field(uuid, "tag", Value::String("doomed".into())).unwrap().id();
         w.delete_field(uuid, id).unwrap();
-        let rev = w.rev_id();
+        let rev = w.label_id();
         w.commit().unwrap();
         rev
     };
@@ -105,7 +105,7 @@ fn test_revert_of_an_append_then_set_on_the_same_cell() {
         let mut w = Writer::begin(&mut conn, None).unwrap();
         w.append_field(uuid, "tag", Value::String("b".into())).unwrap();
         w.set_field(uuid, "tag", Value::String("c".into())).unwrap();
-        let rev = w.rev_id();
+        let rev = w.label_id();
         w.commit().unwrap();
         rev
     };
@@ -149,7 +149,7 @@ fn test_revert_of_a_retype_shaped_revision_restores_both_rows() {
     let rev = {
         let mut w = Writer::begin(&mut conn, None).unwrap();
         w.retype_field("rating", metafolder_core::metarecord::FieldType::String).unwrap();
-        let rev = w.rev_id();
+        let rev = w.label_id();
         w.commit().unwrap();
         rev
     };
@@ -187,7 +187,7 @@ fn test_a_revert_still_refuses_a_real_type_conflict() {
     let rev = {
         let mut w = Writer::begin(&mut conn, None).unwrap();
         w.clear_field_as(OpType::SetField, uuid, "rating").unwrap();
-        let rev = w.rev_id();
+        let rev = w.label_id();
         w.commit().unwrap();
         rev
     };
@@ -230,7 +230,7 @@ fn test_revert_of_a_set_record_restores_every_field() {
     let rev = {
         let mut w = Writer::begin(&mut conn, None).unwrap();
         w.set_record(uuid, vec![Field::new("a", Value::Int(99))]).unwrap();
-        let rev = w.rev_id();
+        let rev = w.label_id();
         w.commit().unwrap();
         rev
     };
@@ -255,7 +255,7 @@ fn test_revert_of_a_delete_record_recreates_it_with_the_same_uuid() {
     let rev = {
         let mut w = Writer::begin(&mut conn, None).unwrap();
         w.delete_metarecord(uuid).unwrap();
-        let rev = w.rev_id();
+        let rev = w.label_id();
         w.commit().unwrap();
         rev
     };
@@ -289,7 +289,7 @@ fn test_revert_of_a_subtree_deleted_parent_first_recreates_it() {
         let mut w = Writer::begin(&mut conn, None).unwrap();
         w.delete_metarecord(dir).unwrap();
         w.delete_metarecord(file).unwrap();
-        let rev = w.rev_id();
+        let rev = w.label_id();
         w.commit().unwrap();
         rev
     };
@@ -320,7 +320,7 @@ fn test_a_revert_still_refuses_a_position_whose_parent_is_gone() {
     let file_rev = {
         let mut w = Writer::begin(&mut conn, None).unwrap();
         w.delete_metarecord(file).unwrap();
-        let rev = w.rev_id();
+        let rev = w.label_id();
         w.commit().unwrap();
         rev
     };
@@ -365,7 +365,7 @@ fn test_revert_of_the_last_revisions_returns_to_the_state_before_them() {
                 w.set_field_multi(uuid, "a", vec![Value::Int(7), Value::Int(8)]).unwrap();
             }
         }
-        revs.push(w.rev_id());
+        revs.push(w.label_id());
         w.commit().unwrap();
     }
     let after_writes = state(&conn);
@@ -396,7 +396,7 @@ fn test_reverting_a_file_event_records_a_file_op_type() {
     let rev = {
         let mut w = Writer::begin(&mut conn, None).unwrap();
         w.set_field_as(OpType::FileModified, uuid, "mfr_size", Value::Int(2)).unwrap();
-        let rev = w.rev_id();
+        let rev = w.label_id();
         w.commit().unwrap();
         rev
     };

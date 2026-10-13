@@ -1,5 +1,5 @@
 title: Orphans in the GUI
-tags: [[Orphans]]
+tags: Orphans
 kind: reference
 summary: An orphaned record's row is purple in the list and its detail says why — deleted or missing — whether or not detection ever ran.
 

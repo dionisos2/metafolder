@@ -127,7 +127,7 @@ fn the_log_walks_back_from_head() {
 // ── Writing ───────────────────────────────────────────────────────────────────
 
 use metafolder_daemon::log::{OpType, Retention};
-use metafolder_daemon::store::{Begin, NewOp};
+use metafolder_daemon::store::{Begin, LabelMeta, NewOp};
 
 fn empty() -> (Handle, TempDir) {
     open()
@@ -226,21 +226,28 @@ fn appended_operations_chain_from_head() {
         reverts_op_id: None,
         origin: None,
     };
+    let label = |name: &str| LabelMeta {
+        name: name.into(),
+        description: None,
+        parent: None,
+        created: 1_000,
+    };
     let first = {
         let tx = conn.begin_write().unwrap();
-        let rev = tx.begin_revision(Some("one"), 1_000).unwrap();
-        let last = tx.append_ops(rev, 1, &[op("a"), op("b")]).unwrap();
+        let rev = tx.create_label(&label("one")).unwrap();
+        let last = tx.append_ops(rev, 1_000, &[op("a"), op("b")]).unwrap();
         tx.set_head(Some(last)).unwrap();
         tx.commit().unwrap();
         last
     };
     let tx = conn.begin_write().unwrap();
     assert_eq!(tx.head().unwrap(), Some(first));
-    let rev = tx.begin_revision(None, 2_000).unwrap();
-    let last = tx.append_ops(rev, 1, &[op("c")]).unwrap();
+    let rev = tx.create_label(&label("two")).unwrap();
+    let last = tx.append_ops(rev, 2_000, &[op("c")]).unwrap();
     tx.set_head(Some(last)).unwrap();
     let c = tx.op(last).unwrap().unwrap();
-    assert_eq!((c.id, c.rev_id, c.field_name.as_deref()), (first + 1, rev, Some("c")));
+    assert_eq!((c.id, c.label_id, c.field_name.as_deref()), (first + 1, rev, Some("c")));
+    assert_eq!(c.timestamp, 2_000);
     assert_eq!(tx.snapshots(last, true).unwrap()[0].value, Value::Int(3));
     let b = tx.op(first).unwrap().unwrap();
     assert_eq!(b.field_name.as_deref(), Some("b"));
@@ -273,7 +280,7 @@ fn clearing_takes_every_metarecord() {
 }
 
 #[test]
-fn the_log_lists_its_lines_and_revisions() {
+fn the_log_lists_its_lines_and_labels() {
     let (conn, _dir, _, _) = fixture();
     let store: &dyn Store = &conn;
     let head = store.head().unwrap().unwrap();
@@ -285,39 +292,47 @@ fn the_log_lists_its_lines_and_revisions() {
         back.iter().map(|o| o.id).collect::<Vec<_>>()
     );
 
-    let revs: Vec<i64> = {
-        let mut r: Vec<i64> = all.iter().map(|o| o.rev_id).collect();
+    let labels: Vec<i64> = {
+        let mut r: Vec<i64> = all.iter().map(|o| o.label_id).collect();
         r.dedup();
         r
     };
-    assert_eq!(revs.len(), 2);
-    let meta = store.revisions(&[revs[0], revs[1], 999_999]).unwrap();
-    assert_eq!(meta.len(), 2, "an id naming no revision is left out");
-    assert!(meta[&revs[0]].timestamp <= meta[&revs[1]].timestamp);
-    assert_eq!(meta[&revs[0]].origin, None, "a client's write");
+    assert_eq!(labels.len(), 2);
+    let meta = store.labels(&[labels[0], labels[1], 999_999]).unwrap();
+    assert_eq!(meta.len(), 2, "an id naming no label is left out");
+    assert!(meta[&labels[0]].created <= meta[&labels[1]].created);
+    assert_eq!(all[0].origin, None, "a client's write");
+    assert!(all[0].timestamp <= all[2].timestamp);
     assert_eq!(store.counts().unwrap(), (3, 2));
 }
 
 #[test]
-fn a_revision_names_its_operations_and_takes_a_label() {
+fn a_label_names_its_operations_and_its_children() {
     let (mut conn, _dir, _, child) = fixture();
     let store: &dyn Store = &conn;
     let all = store.all_ops().unwrap();
-    let (first_rev, second_rev) = (all[0].rev_id, all[2].rev_id);
+    let (first, second) = (all[0].label_id, all[2].label_id);
     let ids =
         |ops: Vec<metafolder_daemon::log::OpRow>| ops.iter().map(|o| o.id).collect::<Vec<_>>();
-    assert_eq!(ids(store.revision_ops(first_rev).unwrap()), [all[0].id, all[1].id]);
-    assert_eq!(ids(store.revision_ops(second_rev).unwrap()), [all[2].id]);
-    assert!(store.revision_ops(999_999).unwrap().is_empty());
+    assert_eq!(ids(store.label_ops(first).unwrap()), [all[0].id, all[1].id]);
+    assert_eq!(ids(store.label_ops(second).unwrap()), [all[2].id]);
+    assert!(store.label_ops(999_999).unwrap().is_empty());
+    assert_eq!(store.label_first_op(first).unwrap(), Some(all[0].id));
+    assert_eq!(store.label_first_op(999_999).unwrap(), None);
     assert_eq!(ids(store.entity_ops_after(child, 0).unwrap()), [all[1].id, all[2].id]);
     assert_eq!(ids(store.entity_ops_after(child, all[1].id).unwrap()), [all[2].id]);
 
     let tx = conn.begin_write().unwrap();
-    assert!(tx.set_revision_label(first_rev, Some("before")).unwrap());
-    assert!(!tx.set_revision_label(999_999, Some("x")).unwrap(), "no such revision");
-    tx.commit().unwrap();
-    let store: &dyn Store = &conn;
-    assert_eq!(store.revisions(&[first_rev]).unwrap()[&first_rev].label.as_deref(), Some("before"));
+    let meta = |parent| LabelMeta { name: "x".into(), description: None, parent, created: 0 };
+    let run = tx.create_label(&meta(None)).unwrap();
+    let (a, b) =
+        (tx.create_label(&meta(Some(run))).unwrap(), tx.create_label(&meta(Some(run))).unwrap());
+    assert_eq!(tx.label_children(run).unwrap(), [a, b]);
+    tx.drop_label(a).unwrap();
+    assert_eq!(tx.label_children(run).unwrap(), [b]);
+    assert!(tx.labels(&[a]).unwrap().is_empty());
+    tx.set_watcher_label(run).unwrap();
+    assert_eq!(tx.watcher_label().unwrap(), Some(run));
 }
 
 #[test]
@@ -352,7 +367,7 @@ fn a_child_is_found_by_its_bytes_or_its_text() {
 
 #[test]
 fn targets_are_found_in_the_log() {
-    let (mut conn, _dir, _, _) = fixture();
+    let (conn, _dir, _, _) = fixture();
     let store: &dyn Store = &conn;
     let all = store.all_ops().unwrap();
     let head = store.head().unwrap().unwrap();
@@ -360,27 +375,18 @@ fn targets_are_found_in_the_log() {
     assert_eq!(store.ops_after_count(all[0].id, 10).unwrap(), 2);
     assert_eq!(store.ops_after_count(head, 10).unwrap(), 0);
     assert_eq!(store.ops_after_count(all[0].id, 1).unwrap(), 1, "counted up to the cap");
-    let meta = store.revisions(&[all[0].rev_id, all[2].rev_id]).unwrap();
-    let first_ts = meta[&all[0].rev_id].timestamp;
+    let first_ts = all[0].timestamp;
     assert_eq!(store.last_op_at_or_before(i64::MAX).unwrap(), Some(head));
     assert_eq!(store.last_op_at_or_before(first_ts - 1).unwrap(), None);
     assert!(store.last_op_at_or_before(first_ts).unwrap().is_some());
-
-    let tx = conn.begin_write().unwrap();
-    tx.set_revision_label(all[0].rev_id, Some("start")).unwrap();
-    tx.commit().unwrap();
-    let store: &dyn Store = &conn;
-    assert_eq!(store.last_op_labelled("start").unwrap(), Some(all[1].id), "its last op");
-    assert_eq!(store.last_op_labelled("none").unwrap(), None);
 }
 
 #[test]
-fn pruning_removes_operations_and_their_empty_revisions() {
+fn pruning_removes_operations_and_their_empty_labels() {
     let (mut conn, _dir, _, _) = fixture();
     let all = (&conn as &dyn Store).all_ops().unwrap();
     let tx = conn.begin_write().unwrap();
-    tx.delete_ops(&[all[1].id, all[0].id]).unwrap();
-    tx.drop_empty_revisions().unwrap();
+    assert_eq!(tx.delete_ops(&[all[1].id, all[0].id]).unwrap(), 1, "one label left empty");
     tx.commit().unwrap();
     let store: &dyn Store = &conn;
     assert_eq!(store.counts().unwrap(), (1, 1));

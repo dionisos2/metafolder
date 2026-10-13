@@ -5,8 +5,8 @@ audience: dev
 summary: What an operation records, its before and after snapshot rows, why versions are recomputed, and how one write lays it all down.
 
 The log lives in the repository's store, beside the data it describes — one transaction
-writes both ([[Store tables]]): a ''revision'' holds its timestamp, label and origin; an
-''operation'' the fields below; each operation its before and after ''snapshot'' rows;
+writes both ([[Store tables]]): a ''label'' holds its name, description, parent and
+creation time ([[Labels and contexts]]); an ''operation'' the fields below; each operation its before and after ''snapshot'' rows;
 HEAD — the newest operation, the change feed's cursor — is a record of its own. (Watcher
 events are not here: they are buffered in memory.) The log is a sequence: operations are
 numbered in the order they were written, and none names a parent ([[The operation log]],
@@ -15,16 +15,20 @@ numbered in the order they were written, and none names a parent ([[The operatio
 
 |!Operation field |!Holds |
 |`id` |never reused; its order is the log's |
-|`rev_id`, `seq` |its revision, and its place in it (from 1) |
-|`op_type` |[[Revisions and operations]] |
+|`label_id` |its innermost label |
+|`timestamp` |when it was written (Unix ms): one write's operations share it |
+|`origin` |who asked for it ([[Operations and their origin]]) |
+|`op_type` |[[Operations and their origin]] |
 |`entity_uuid` |the metarecord it changed |
 |`entity_version_before`, `…_after` |the metarecord's version on each side — provenance, not authority |
 |`field_name` |for a field operation |
 |`reverts_op_id` |for an operation a revert wrote: the one it undid |
 
-The store also keeps each revision's operations in order and each metarecord's
-operations, so a revision's listing and a metarecord's history are each a prefix read; the
-newest operations are a backward range.
+The store also keeps each label's operations in order, each label's children, each
+metarecord's operations and each origin's, so a label's listing, its nesting, a
+metarecord's history and the oldest operations of an origin are each a prefix read; the
+newest operations are a backward range, and the operation at a time a binary search over
+them (timestamps grow with the ids).
 
 `reverts_op_id` is read by displays and by the undo selection — which is why a revert
 records it rather than merely looking like one. Nothing on the write path branches on it,
@@ -45,7 +49,7 @@ row ([[The column form of a value]]), each keeping its original field id:
 |`file_moved` |the previous `mfr_path` row |the new one |
 |`file_modified` |`mfr_size`, `mfr_mtime` and the hash rows |the new `mfr_size`, `mfr_mtime` |
 
-A directory's `file_deleted` gives each descendant its own operation in the same revision.
+A directory's `file_deleted` gives each descendant its own operation in the same write.
 
 !! Versions recomputed
 
@@ -57,7 +61,7 @@ an operation with something observed outside; nothing reads them to decide what 
 !! One write
 
 Every request that changes metadata goes through one `log::Writer`, in one transaction:
-a revision is opened (with the request's label); for each change, the affected rows and
+its label is checked or opened ([[Labels and contexts]]); for each change, the affected rows and
 the version are read (the before snapshot), the change is applied (the version updated
 incrementally), the resulting rows read (the after snapshot), and an operation appended;
 finally HEAD is recorded and the transaction commits. Every writer — reconcile included — follows it, which is what

@@ -1,5 +1,5 @@
 title: What a revert writes
-tags: [[Revert]]
+tags: Revert
 kind: reference
 audience: dev
 summary: The inverse of each operation, newest first, written through log::Writer — the file actions it needs, fresh row ids, and what it inherits from an ordinary write.

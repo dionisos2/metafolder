@@ -17,12 +17,12 @@
 
 use serde_json::Value as Json;
 
-/// The `revision.origin` the daemon stamps on a revision it wrote on the
-/// filesystem's behalf (doc "Revisions and operations").
+/// The `origin` the daemon stamps on an operation it wrote on the
+/// filesystem's behalf (doc "Operations and their origin").
 pub const ORIGIN_WATCHER: &str = "watcher";
 
 /// Operation types the watcher records on the filesystem's behalf
-/// (doc "Revisions and operations"). Everything else is a client's write.
+/// (doc "Operations and their origin"). Everything else is a client's write.
 const WATCHER_OP_TYPES: [&str; 3] = ["file_deleted", "file_moved", "file_modified"];
 
 /// Whether an operation type is one the watcher writes for the filesystem,
@@ -40,51 +40,38 @@ pub const WINDOW: usize = 500;
 /// The second, wider window (see [`WINDOW`]).
 pub const WIDE_WINDOW: usize = 20_000;
 
-/// One revision, as the undo selection needs to see it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LogRevision {
-    pub id: i64,
-    /// `Some("watcher")` for a revision the daemon wrote on the filesystem's
-    /// behalf; `None` for a client's own write (doc "Revisions and
-    /// operations").
-    pub origin: Option<String>,
-}
-
-impl LogRevision {
-    fn from_json(value: &Json) -> Option<Self> {
-        Some(Self {
-            id: value["id"].as_i64()?,
-            origin: value["origin"].as_str().map(str::to_string),
-        })
-    }
-}
-
 /// One operation, as the undo selection needs to see it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogOp {
     pub id: i64,
-    pub rev_id: i64,
+    /// Its innermost label (doc "Labels and contexts").
+    pub label_id: i64,
     pub op_type: String,
     /// The operation this one undid, when a revert wrote it.
     pub reverts_op_id: Option<i64>,
+    /// `Some("watcher")` for an operation the daemon wrote on the
+    /// filesystem's behalf; `None` for a client's own write (doc "Revisions
+    /// and operations").
+    pub origin: Option<String>,
 }
 
 impl LogOp {
     fn from_json(value: &Json) -> Option<Self> {
         Some(Self {
             id: value["id"].as_i64()?,
-            rev_id: value["rev_id"].as_i64()?,
+            label_id: value["label_id"].as_i64()?,
             op_type: value["op_type"].as_str()?.to_string(),
             reverts_op_id: value["reverts_op_id"].as_i64(),
+            origin: value["origin"].as_str().map(str::to_string),
         })
     }
 
     fn is_watcher(&self) -> bool {
-        is_watcher_op(&self.op_type)
+        self.origin.as_deref() == Some(ORIGIN_WATCHER) || is_watcher_op(&self.op_type)
     }
 
     /// An unlogged write carries no snapshots, so a revert cannot undo it
-    /// (doc "Revisions and operations").
+    /// (doc "Operations and their origin").
     fn is_unknown(&self) -> bool {
         self.op_type == "unknown"
     }
@@ -97,16 +84,16 @@ pub enum UndoPlan {
     /// state (`POST /revert`). `ops` is `None` for the whole revision, and
     /// names what is left of it when some of its operations were reverted
     /// individually already.
-    Revert { rev_id: i64, ops: Option<Vec<i64>> },
+    Revert { label_id: i64, ops: Option<Vec<i64>> },
     /// Nothing of the user's is left to undo in the history that was read.
     Nothing,
 }
 
 impl UndoPlan {
     /// The revision the plan is about, if any.
-    pub fn rev_id(&self) -> Option<i64> {
+    pub fn label_id(&self) -> Option<i64> {
         match self {
-            UndoPlan::Revert { rev_id, .. } => Some(*rev_id),
+            UndoPlan::Revert { label_id, .. } => Some(*label_id),
             UndoPlan::Nothing => None,
         }
     }
@@ -114,40 +101,33 @@ impl UndoPlan {
     /// One line saying what undo is about to do.
     pub fn describe(&self) -> String {
         match self {
-            UndoPlan::Revert { rev_id, ops } => {
-                format!("revert: {} — your newest change still standing", what(*rev_id, ops))
+            UndoPlan::Revert { label_id, ops } => {
+                format!("revert: {} — your newest change still standing", what(*label_id, ops))
             }
             UndoPlan::Nothing => "nothing to undo".to_string(),
         }
     }
 }
 
-/// "revision 7", or "2 operation(s) of revision 7".
-fn what(rev_id: i64, ops: &Option<Vec<i64>>) -> String {
+/// "label 7", or "2 operation(s) of label 7".
+fn what(label_id: i64, ops: &Option<Vec<i64>>) -> String {
     match ops {
-        None => format!("revision {rev_id}"),
-        Some(ops) => format!("{} operation(s) of revision {rev_id}", ops.len()),
+        None => format!("label {label_id}"),
+        Some(ops) => format!("{} operation(s) of label {label_id}", ops.len()),
     }
 }
 
 /// Decides what to undo, from a `GET /log` body.
 pub fn plan_from_log(log: &Json) -> UndoPlan {
-    let (ops, revisions) = read_log(log);
-    plan(&ops, &revisions, log["first"].as_i64())
+    plan(&read_log(log), log["first"].as_i64())
 }
 
-/// The operations and revisions of a `GET /log` body, skipping anything
-/// malformed.
-fn read_log(log: &Json) -> (Vec<LogOp>, Vec<LogRevision>) {
-    let ops = log["operations"]
+/// The operations of a `GET /log` body, skipping anything malformed.
+fn read_log(log: &Json) -> Vec<LogOp> {
+    log["operations"]
         .as_array()
         .map(|a| a.iter().filter_map(LogOp::from_json).collect())
-        .unwrap_or_default();
-    let revisions = log["revisions"]
-        .as_array()
-        .map(|a| a.iter().filter_map(LogRevision::from_json).collect())
-        .unwrap_or_default();
-    (ops, revisions)
+        .unwrap_or_default()
 }
 
 /// Whether a `Nothing` may be an artefact of how much log was read rather than
@@ -190,14 +170,13 @@ impl Revision<'_> {
     }
 
     /// Whether the daemon wrote it for the filesystem rather than a client
-    /// asking for it — the revision says so (doc "Revisions and operations"),
+    /// asking for it — the revision says so (doc "Operations and their origin"),
     /// and the operation types are the fallback: sound (the watcher does write
     /// those types) without being exact (a file *arriving* is a
     /// `create_metarecord`). An unlogged write is lumped in here: it carries no
     /// snapshots, so a revert cannot reach it.
-    fn is_daemon_written(&self, watcher_written: &std::collections::HashSet<i64>) -> bool {
-        watcher_written.contains(&self.id)
-            || self.members.iter().all(|op| op.is_watcher() || op.is_unknown())
+    fn is_daemon_written(&self) -> bool {
+        self.members.iter().all(|op| op.is_watcher() || op.is_unknown())
     }
 
     /// Whether it holds the log's first operation: the root metarecord the
@@ -223,11 +202,10 @@ impl Revision<'_> {
 /// The window's revisions, newest first, each with what still stands of it.
 struct Window<'a> {
     revisions: Vec<Revision<'a>>,
-    watcher_written: std::collections::HashSet<i64>,
 }
 
 impl<'a> Window<'a> {
-    fn of(ops: &'a [LogOp], revisions: &[LogRevision]) -> Self {
+    fn of(ops: &'a [LogOp]) -> Self {
         let mut newest_first: Vec<&LogOp> = ops.iter().collect();
         newest_first.sort_unstable_by_key(|op| std::cmp::Reverse(op.id));
 
@@ -258,10 +236,10 @@ impl<'a> Window<'a> {
 
         let mut grouped: Vec<Revision<'a>> = Vec::new();
         for op in newest_first {
-            match grouped.iter_mut().find(|rev| rev.id == op.rev_id) {
+            match grouped.iter_mut().find(|rev| rev.id == op.label_id) {
                 Some(rev) => rev.members.push(op),
                 None => grouped.push(Revision {
-                    id: op.rev_id,
+                    id: op.label_id,
                     members: vec![op],
                     left: vec![],
                     undoes_a_change: false,
@@ -278,21 +256,14 @@ impl<'a> Window<'a> {
                 .any(|target| !reverts.contains(&target));
         }
 
-        Self {
-            revisions: grouped,
-            watcher_written: revisions
-                .iter()
-                .filter(|rev| rev.origin.as_deref() == Some(ORIGIN_WATCHER))
-                .map(|rev| rev.id)
-                .collect(),
-        }
+        Self { revisions: grouped }
     }
 }
 
 /// The undo decision, over the operations and revisions of a log window;
 /// `first` is the log's first operation, where undo stops.
-pub fn plan(ops: &[LogOp], revisions: &[LogRevision], first: Option<i64>) -> UndoPlan {
-    let window = Window::of(ops, revisions);
+pub fn plan(ops: &[LogOp], first: Option<i64>) -> UndoPlan {
+    let window = Window::of(ops);
     for rev in &window.revisions {
         // The foundation of the history is not a change within it.
         if rev.is_first(first) {
@@ -304,13 +275,13 @@ pub fn plan(ops: &[LogOp], revisions: &[LogRevision], first: Option<i64>) -> Und
         if rev.is_revert() {
             continue;
         }
-        if rev.is_daemon_written(&window.watcher_written) {
+        if rev.is_daemon_written() {
             continue;
         }
         if rev.left.is_empty() {
             continue; // already undone
         }
-        return UndoPlan::Revert { rev_id: rev.id, ops: rev.remaining() };
+        return UndoPlan::Revert { label_id: rev.id, ops: rev.remaining() };
     }
     UndoPlan::Nothing
 }
@@ -322,15 +293,15 @@ pub fn plan(ops: &[LogOp], revisions: &[LogRevision], first: Option<i64>) -> Und
 pub enum RedoPlan {
     /// Revert the newest undo that still stands — the change it took back
     /// comes back, onto the current state.
-    Revert { rev_id: i64, ops: Option<Vec<i64>> },
+    Revert { label_id: i64, ops: Option<Vec<i64>> },
     /// There is no undo to take back.
     Nothing,
 }
 
 impl RedoPlan {
-    pub fn rev_id(&self) -> Option<i64> {
+    pub fn label_id(&self) -> Option<i64> {
         match self {
-            RedoPlan::Revert { rev_id, .. } => Some(*rev_id),
+            RedoPlan::Revert { label_id, .. } => Some(*label_id),
             RedoPlan::Nothing => None,
         }
     }
@@ -338,8 +309,8 @@ impl RedoPlan {
     /// One line saying what redo is about to do.
     pub fn describe(&self) -> String {
         match self {
-            RedoPlan::Revert { rev_id, ops } => {
-                format!("revert: {} — the newest undo still standing", what(*rev_id, ops))
+            RedoPlan::Revert { label_id, ops } => {
+                format!("revert: {} — the newest undo still standing", what(*label_id, ops))
             }
             RedoPlan::Nothing => "nothing to redo".to_string(),
         }
@@ -348,8 +319,7 @@ impl RedoPlan {
 
 /// Decides what to redo, from a `GET /log` body.
 pub fn plan_redo_from_log(log: &Json) -> RedoPlan {
-    let (ops, revisions) = read_log(log);
-    plan_redo(&ops, &revisions)
+    plan_redo(&read_log(log))
 }
 
 /// The redo decision, the mirror of [`plan`]: where undo looks for the newest
@@ -361,8 +331,8 @@ pub fn plan_redo_from_log(log: &Json) -> RedoPlan {
 /// The newest *ordinary* change still standing ends the search: a new change
 /// clears what could be redone, as in any editor. What it cleared is still in
 /// the log, and an explicit revert of the undo reaches it.
-pub fn plan_redo(ops: &[LogOp], revisions: &[LogRevision]) -> RedoPlan {
-    let window = Window::of(ops, revisions);
+pub fn plan_redo(ops: &[LogOp]) -> RedoPlan {
+    let window = Window::of(ops);
     for rev in &window.revisions {
         if rev.is_revert() && !rev.is_undo() {
             continue; // a redo: stepping over it is what keeps redo from undoing
@@ -371,11 +341,11 @@ pub fn plan_redo(ops: &[LogOp], revisions: &[LogRevision]) -> RedoPlan {
             if rev.left.is_empty() {
                 continue; // an undo already redone
             }
-            return RedoPlan::Revert { rev_id: rev.id, ops: rev.remaining() };
+            return RedoPlan::Revert { label_id: rev.id, ops: rev.remaining() };
         }
         // The daemon's revisions are stepped over: a file that moved after the
         // undo is exactly the case redo has to survive.
-        if rev.is_daemon_written(&window.watcher_written) {
+        if rev.is_daemon_written() {
             continue;
         }
         if rev.left.is_empty() {
@@ -392,14 +362,15 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// `(id, rev_id, op_type)`.
+    /// `(id, label_id, op_type)`.
     fn ops(spec: &[(i64, i64, &str)]) -> Vec<LogOp> {
         spec.iter()
-            .map(|(id, rev_id, op_type)| LogOp {
+            .map(|(id, label_id, op_type)| LogOp {
                 id: *id,
-                rev_id: *rev_id,
+                label_id: *label_id,
                 op_type: op_type.to_string(),
                 reverts_op_id: None,
+                origin: None,
             })
             .collect()
     }
@@ -415,13 +386,13 @@ mod tests {
 
     #[test]
     fn an_empty_log_has_nothing_to_undo() {
-        assert_eq!(plan(&[], &[], None), UndoPlan::Nothing);
+        assert_eq!(plan(&[], None), UndoPlan::Nothing);
     }
 
     #[test]
     fn the_newest_manual_revision_is_reverted() {
         let log = ops(&[(1, 1, "create_metarecord"), (2, 2, "set_field")]);
-        assert_eq!(plan(&log, &[], BEFORE), UndoPlan::Revert { rev_id: 2, ops: None });
+        assert_eq!(plan(&log, BEFORE), UndoPlan::Revert { label_id: 2, ops: None });
     }
 
     #[test]
@@ -431,26 +402,26 @@ mod tests {
             (2, 2, "file_moved"), // the watcher, twice
             (3, 3, "file_deleted"),
         ]);
-        assert_eq!(plan(&log, &[], BEFORE), UndoPlan::Revert { rev_id: 1, ops: None });
+        assert_eq!(plan(&log, BEFORE), UndoPlan::Revert { label_id: 1, ops: None });
     }
 
     #[test]
     fn a_watcher_revision_is_never_itself_the_target() {
         let log = ops(&[(1, 1, "file_moved"), (2, 2, "file_deleted")]);
-        assert_eq!(plan(&log, &[], BEFORE), UndoPlan::Nothing);
+        assert_eq!(plan(&log, BEFORE), UndoPlan::Nothing);
     }
 
     #[test]
     fn a_revision_mixing_a_manual_write_in_is_the_users() {
         // The whole revision goes back, watcher-typed operations included.
         let log = ops(&[(1, 1, "file_moved"), (2, 1, "set_field"), (3, 2, "file_deleted")]);
-        assert_eq!(plan(&log, &[], BEFORE), UndoPlan::Revert { rev_id: 1, ops: None });
+        assert_eq!(plan(&log, BEFORE), UndoPlan::Revert { label_id: 1, ops: None });
     }
 
     #[test]
     fn an_unlogged_write_cannot_be_undone() {
         let log = ops(&[(1, 1, "set_field"), (2, 2, "unknown")]);
-        assert_eq!(plan(&log, &[], BEFORE), UndoPlan::Revert { rev_id: 1, ops: None });
+        assert_eq!(plan(&log, BEFORE), UndoPlan::Revert { label_id: 1, ops: None });
     }
 
     #[test]
@@ -464,7 +435,7 @@ mod tests {
             (4, 4, "set_field"),
         ]);
         log[3] = reverting(log[3].clone(), 2);
-        assert_eq!(plan(&log, &[], BEFORE), UndoPlan::Revert { rev_id: 1, ops: None });
+        assert_eq!(plan(&log, BEFORE), UndoPlan::Revert { label_id: 1, ops: None });
     }
 
     #[test]
@@ -472,7 +443,7 @@ mod tests {
         let mut log = ops(&[(1, 1, "set_field"), (2, 2, "set_field")]);
         log[1] = reverting(log[1].clone(), 1);
         // rev 2 is a revert (not a candidate) and rev 1 is already undone.
-        assert_eq!(plan(&log, &[], BEFORE), UndoPlan::Nothing);
+        assert_eq!(plan(&log, BEFORE), UndoPlan::Nothing);
     }
 
     #[test]
@@ -483,7 +454,7 @@ mod tests {
             (3, 2, "set_field"), // reverted op 2 alone
         ]);
         log[2] = reverting(log[2].clone(), 2);
-        assert_eq!(plan(&log, &[], BEFORE), UndoPlan::Revert { rev_id: 1, ops: Some(vec![1]) });
+        assert_eq!(plan(&log, BEFORE), UndoPlan::Revert { label_id: 1, ops: Some(vec![1]) });
     }
 
     #[test]
@@ -491,19 +462,16 @@ mod tests {
         // Op 1 is the log's first: the root metarecord written at init, or
         // what a prune left as the oldest revision.
         let log = ops(&[(1, 1, "create_metarecord")]);
-        assert_eq!(plan(&log, &[], Some(1)), UndoPlan::Nothing);
+        assert_eq!(plan(&log, Some(1)), UndoPlan::Nothing);
     }
 
     #[test]
     fn a_revision_the_daemon_wrote_is_not_the_users_whatever_it_holds() {
         // A file arriving: recorded as a creation, like a user's, and told
         // apart only by the revision's origin.
-        let log = ops(&[(1, 1, "set_field"), (2, 2, "create_metarecord")]);
-        let revisions = [
-            LogRevision { id: 1, origin: None },
-            LogRevision { id: 2, origin: Some(ORIGIN_WATCHER.into()) },
-        ];
-        assert_eq!(plan(&log, &revisions, BEFORE), UndoPlan::Revert { rev_id: 1, ops: None });
+        let mut log = ops(&[(1, 1, "set_field"), (2, 2, "create_metarecord")]);
+        log[1].origin = Some(ORIGIN_WATCHER.into());
+        assert_eq!(plan(&log, BEFORE), UndoPlan::Revert { label_id: 1, ops: None });
     }
 
     #[test]
@@ -512,15 +480,12 @@ mod tests {
             "head": 2,
             "first": 0,
             "operations": [
-                {"id": 1, "rev_id": 1, "op_type": "set_field", "reverts_op_id": null},
-                {"id": 2, "rev_id": 2, "op_type": "file_moved", "reverts_op_id": null},
-            ],
-            "revisions": [
-                {"id": 1, "timestamp": 0, "label": null, "origin": null},
-                {"id": 2, "timestamp": 0, "label": null, "origin": "watcher"},
+                {"id": 1, "label_id": 1, "op_type": "set_field", "reverts_op_id": null},
+                {"id": 2, "label_id": 2, "op_type": "create_metarecord", "reverts_op_id": null,
+                 "origin": "watcher"},
             ],
         });
-        assert_eq!(plan_from_log(&log), UndoPlan::Revert { rev_id: 1, ops: None });
+        assert_eq!(plan_from_log(&log), UndoPlan::Revert { label_id: 1, ops: None });
         assert!(window_exhausted(&log, 2));
         assert!(!window_exhausted(&log, 3));
     }
@@ -531,7 +496,7 @@ mod tests {
     fn redo_reverts_the_newest_undo() {
         let mut log = ops(&[(1, 1, "set_field"), (2, 2, "set_field")]);
         log[1] = reverting(log[1].clone(), 1);
-        assert_eq!(plan_redo(&log, &[]), RedoPlan::Revert { rev_id: 2, ops: None });
+        assert_eq!(plan_redo(&log), RedoPlan::Revert { label_id: 2, ops: None });
     }
 
     #[test]
@@ -540,12 +505,8 @@ mod tests {
         // tree"): an undo, then the watcher wrote. Its revision is stepped over.
         let mut log = ops(&[(1, 1, "set_field"), (2, 2, "set_field"), (3, 3, "file_moved")]);
         log[1] = reverting(log[1].clone(), 1);
-        let revisions = [
-            LogRevision { id: 1, origin: None },
-            LogRevision { id: 2, origin: None },
-            LogRevision { id: 3, origin: Some(ORIGIN_WATCHER.into()) },
-        ];
-        assert_eq!(plan_redo(&log, &revisions), RedoPlan::Revert { rev_id: 2, ops: None });
+        log[2].origin = Some(ORIGIN_WATCHER.into());
+        assert_eq!(plan_redo(&log), RedoPlan::Revert { label_id: 2, ops: None });
     }
 
     #[test]
@@ -554,19 +515,16 @@ mod tests {
         // is indistinguishable from the watcher's own revision.
         let mut log = ops(&[(1, 1, "file_moved"), (2, 2, "file_moved"), (3, 3, "file_moved")]);
         log[2] = reverting(log[2].clone(), 1);
-        let revisions = [
-            LogRevision { id: 1, origin: Some(ORIGIN_WATCHER.into()) },
-            LogRevision { id: 2, origin: Some(ORIGIN_WATCHER.into()) },
-            LogRevision { id: 3, origin: None },
-        ];
-        assert_eq!(plan_redo(&log, &revisions), RedoPlan::Revert { rev_id: 3, ops: None });
+        log[0].origin = Some(ORIGIN_WATCHER.into());
+        log[1].origin = Some(ORIGIN_WATCHER.into());
+        assert_eq!(plan_redo(&log), RedoPlan::Revert { label_id: 3, ops: None });
     }
 
     #[test]
     fn there_is_nothing_to_redo_when_your_newest_change_is_not_an_undo() {
         let log = ops(&[(1, 1, "set_field"), (2, 2, "set_field")]);
-        assert_eq!(plan_redo(&log, &[]), RedoPlan::Nothing);
-        assert_eq!(plan_redo(&[], &[]), RedoPlan::Nothing);
+        assert_eq!(plan_redo(&log), RedoPlan::Nothing);
+        assert_eq!(plan_redo(&[]), RedoPlan::Nothing);
     }
 
     #[test]
@@ -576,7 +534,7 @@ mod tests {
         let mut log = ops(&[(1, 1, "set_field"), (2, 2, "set_field"), (3, 3, "set_field")]);
         log[1] = reverting(log[1].clone(), 1);
         log[2] = reverting(log[2].clone(), 2);
-        assert_eq!(plan_redo(&log, &[]), RedoPlan::Nothing);
+        assert_eq!(plan_redo(&log), RedoPlan::Nothing);
     }
 
     #[test]
@@ -594,7 +552,7 @@ mod tests {
         log[2] = reverting(log[2].clone(), 2);
         log[3] = reverting(log[3].clone(), 1);
         log[4] = reverting(log[4].clone(), 4);
-        assert_eq!(plan_redo(&log, &[]), RedoPlan::Revert { rev_id: 3, ops: None });
+        assert_eq!(plan_redo(&log), RedoPlan::Revert { label_id: 3, ops: None });
     }
 
     #[test]
@@ -611,13 +569,13 @@ mod tests {
         log[2] = reverting(log[2].clone(), 2);
         log[4] = reverting(log[4].clone(), 4);
         log[5] = reverting(log[5].clone(), 1);
-        assert_eq!(plan(&log[..5], &[], BEFORE), UndoPlan::Revert { rev_id: 1, ops: None });
+        assert_eq!(plan(&log[..5], BEFORE), UndoPlan::Revert { label_id: 1, ops: None });
         // Redo: Z comes back (undo it), then M, then nothing — A was cleared by M.
-        assert_eq!(plan_redo(&log, &[]), RedoPlan::Revert { rev_id: 6, ops: None });
+        assert_eq!(plan_redo(&log), RedoPlan::Revert { label_id: 6, ops: None });
         log.push(reverting(ops(&[(7, 7, "set_field")])[0].clone(), 6));
-        assert_eq!(plan_redo(&log, &[]), RedoPlan::Revert { rev_id: 5, ops: None });
+        assert_eq!(plan_redo(&log), RedoPlan::Revert { label_id: 5, ops: None });
         log.push(reverting(ops(&[(8, 8, "set_field")])[0].clone(), 5));
-        assert_eq!(plan_redo(&log, &[]), RedoPlan::Nothing);
+        assert_eq!(plan_redo(&log), RedoPlan::Nothing);
     }
 
     #[test]
@@ -627,18 +585,18 @@ mod tests {
         let mut log = ops(&[(1, 1, "set_field"), (2, 2, "set_field"), (3, 3, "set_field")]);
         log[1] = reverting(log[1].clone(), 1);
         log[2] = reverting(log[2].clone(), 2);
-        assert_eq!(plan(&log, &[], BEFORE), UndoPlan::Revert { rev_id: 1, ops: None });
+        assert_eq!(plan(&log, BEFORE), UndoPlan::Revert { label_id: 1, ops: None });
     }
 
     #[test]
     fn each_plan_says_what_it_will_do() {
-        assert!(UndoPlan::Revert { rev_id: 7, ops: Some(vec![1, 2]) }
+        assert!(UndoPlan::Revert { label_id: 7, ops: Some(vec![1, 2]) }
             .describe()
             .contains("2 operation"));
-        assert!(UndoPlan::Revert { rev_id: 7, ops: None }.describe().contains("revision 7"));
-        assert_eq!(UndoPlan::Nothing.rev_id(), None);
-        assert!(RedoPlan::Revert { rev_id: 7, ops: None }.describe().contains("revision 7"));
-        assert_eq!(RedoPlan::Nothing.rev_id(), None);
+        assert!(UndoPlan::Revert { label_id: 7, ops: None }.describe().contains("label 7"));
+        assert_eq!(UndoPlan::Nothing.label_id(), None);
+        assert!(RedoPlan::Revert { label_id: 7, ops: None }.describe().contains("label 7"));
+        assert_eq!(RedoPlan::Nothing.label_id(), None);
     }
 
     #[test]
@@ -646,11 +604,10 @@ mod tests {
         let log = json!({
             "head": 2,
             "operations": [
-                {"id": 1, "rev_id": 1, "op_type": "set_field"},
-                {"id": 2, "rev_id": 2, "op_type": "set_field", "reverts_op_id": 1},
+                {"id": 1, "label_id": 1, "op_type": "set_field"},
+                {"id": 2, "label_id": 2, "op_type": "set_field", "reverts_op_id": 1},
             ],
-            "revisions": [{"id": 1, "origin": null}, {"id": 2, "origin": null}],
         });
-        assert_eq!(plan_redo_from_log(&log), RedoPlan::Revert { rev_id: 2, ops: None });
+        assert_eq!(plan_redo_from_log(&log), RedoPlan::Revert { label_id: 2, ops: None });
     }
 }

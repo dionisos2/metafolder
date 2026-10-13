@@ -1,0 +1,7 @@
+title: GET /repos/:repo/labels/:id
+tags: [[HTTP endpoint]] [[Log endpoints]]
+kind: reference
+audience: dev
+summary: One label, its ancestors and its children.
+
+Bodies, answers and errors: [[Log endpoints]]; what a label is: [[Labels and contexts]].

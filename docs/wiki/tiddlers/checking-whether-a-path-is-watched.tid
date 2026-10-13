@@ -1,5 +1,5 @@
 title: Checking whether a path is watched
-tags: [[Watcher]]
+tags: Watcher
 kind: guide
 summary: mf watch check asks the live coverage whether a change at a path would be recorded — one step past eligibility — and says why not.
 

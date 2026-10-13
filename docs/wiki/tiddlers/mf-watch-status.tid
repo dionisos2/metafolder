@@ -1,5 +1,5 @@
 title: mf watch status
-tags: [[CLI command]] [[Watcher]]
+tags: [[CLI command]] Watcher
 kind: reference
 summary: Show whether ingestion is running or paused — the default
 

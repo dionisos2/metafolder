@@ -70,7 +70,7 @@ pub fn clear_orphans(repo: &RepoState, uuids: &[Uuid]) -> Result<usize, ApiError
     let root = repo.config.root.clone();
     let mut dirs: HashMap<PathBuf, DirState> = HashMap::new();
     let offline = crate::mount::offline(&conn, &cache, &root)?;
-    let mut writer = repo.writer(&mut conn, None)?;
+    let mut writer = repo.writer(&mut conn, crate::log::current_context().named("orphan clear"))?;
     let mut cleared = 0;
 
     for &uuid in uuids {
@@ -211,7 +211,8 @@ pub fn mark_orphans(repo: &RepoState) -> Result<MarkResult, ApiError> {
     .collect();
 
     let mut result = MarkResult { orphans: orphans.len(), ..Default::default() };
-    let mut writer = repo.writer(&mut conn, None)?;
+    let mut writer =
+        repo.writer(&mut conn, crate::log::current_context().named("orphan detect"))?;
     for &uuid in orphans.difference(&marked) {
         writer.set_field(uuid, ORPHAN_FIELD, Value::Bool(true))?;
         result.marked += 1;
@@ -357,7 +358,8 @@ fn adopt(
     rel: &str,
     retention: crate::log::Retention,
 ) -> Result<(), ApiError> {
-    let mut writer = Writer::begin_with_retention(conn, None, retention)?;
+    let context = crate::log::current_context().named("orphan relink");
+    let mut writer = Writer::begin_in(conn, context, retention)?;
     // The holder leaves the position first: one metarecord holds a given tree
     // position, so the orphan cannot take it while the holder is still there.
     writer.delete_metarecord(holder)?;

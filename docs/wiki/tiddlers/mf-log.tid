@@ -1,6 +1,6 @@
 title: mf log
 tags: [[CLI command]] [[Event log]]
 kind: reference
-summary: Revision/operation history (default: list)
+summary: The history of operations, by label (default: list)
 
-The repository's history: listing it (the default), one revision, HEAD, and the ways back — undo, redo, revert, rollback — and pruning ([[Event log]]).
+The repository's history: listing it by label (the default), one label, HEAD, and the ways back — undo, redo, revert — and pruning ([[Event log]]).

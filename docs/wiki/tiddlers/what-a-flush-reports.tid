@@ -1,5 +1,5 @@
 title: What a flush reports
-tags: [[Watcher]]
+tags: Watcher
 kind: reference
 summary: Every flush that applied something writes one diagnostics line — events, time, revisions, ineligible paths turned away, and the first few events.
 

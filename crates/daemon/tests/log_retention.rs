@@ -135,7 +135,8 @@ fn test_a_repository_writes_with_its_configured_retention() {
 
     for _ in 0..30 {
         let mut conn = state.conn.lock().unwrap();
-        let mut w = state.writer(&mut conn, None).unwrap();
+        let mut w =
+            state.writer(&mut conn, metafolder_daemon::log::WriteContext::new("test")).unwrap();
         w.create_metarecord(vec![Field::new("n", Value::Int(1))]).unwrap();
         w.commit().unwrap();
     }

@@ -1,30 +1,30 @@
 title: $:/mf/gen/CLI command/mf log list
 catalog: CLI command
 target: mf log list
-summary: Display the revision/operation history
+summary: Display the history, by label
 
 !! Reference
 
 ```
-Display the revision/operation history
+Display the history, by label
 
 Usage: mf log list [OPTIONS]
 
 Options:
       --ops
-          Expand each revision to show its individual operations
+          Expand each label to show its individual operations
 
       --metarecord <METARECORD>
-          Only revisions/ops that affected this metarecord
+          Only operations that affected this metarecord
 
       --limit <LIMIT>
-          Show at most N revisions (or operations with --ops); default 20
+          Show at most N labels (or operations with --ops); default 20
 
       --since <SINCE>
-          Only revisions with timestamp ≥ T (ISO-8601, or @<unix-ms>)
+          Only operations written at or after T (ISO-8601, or @<unix-ms>)
 
       --until <UNTIL>
-          Only revisions with timestamp ≤ T (ISO-8601, or @<unix-ms>)
+          Only operations written at or before T (ISO-8601, or @<unix-ms>)
 
       --all
           Remove the default limit of 20

@@ -73,7 +73,7 @@ fn bounded_log_read_costs_the_same_on_a_log_sixteen_times_longer() {
 
 #[test]
 fn a_log_read_bounded_by_revisions_costs_the_same_on_a_longer_log() {
-    let q = LogQuery { revisions: Some(20), ..LogQuery::default() };
+    let q = LogQuery { labels: Some(20), ..LogQuery::default() };
     let (mut small, _s) = repo_with_log(SHORT_LOG);
     let (mut big, _b) = repo_with_log(LONG_LOG);
     let (small_cost, big_cost) = (cost_of(&mut small, &q), cost_of(&mut big, &q));
@@ -83,17 +83,17 @@ fn a_log_read_bounded_by_revisions_costs_the_same_on_a_longer_log() {
 #[test]
 fn a_revision_bound_returns_whole_revisions_newest_first() {
     let (kv, _dir) = repo_with_log(40);
-    let q = LogQuery { revisions: Some(5), ..LogQuery::default() };
+    let q = LogQuery { labels: Some(5), ..LogQuery::default() };
     let body = listing(&kv, &q).unwrap();
-    let revisions = body["revisions"].as_array().unwrap();
+    let revisions = body["labels"].as_array().unwrap();
     assert_eq!(revisions.len(), 5, "asked for 5 revisions, got {}", revisions.len());
     // The newest ones, and every operation shown belongs to one of them.
     let ids: Vec<i64> = revisions.iter().map(|r| r["id"].as_i64().unwrap()).collect();
     assert_eq!(ids, vec![36, 37, 38, 39, 40], "the last five revisions of forty");
     for op in body["operations"].as_array().unwrap() {
-        assert!(ids.contains(&op["rev_id"].as_i64().unwrap()));
+        assert!(ids.contains(&op["label_id"].as_i64().unwrap()));
     }
-    assert_eq!(body["total_revisions"], 40, "the totals still cover the whole log");
+    assert_eq!(body["total_labels"], 40, "the totals still cover the whole log");
 }
 
 /// A log whose first revision is a reconcile of `big` operations, followed by
@@ -117,7 +117,7 @@ fn repo_after_reconcile(big: usize, small: usize) -> (KvStore, TempDir) {
 /// reconcile's revision holds tens of thousands, and reading it whole to show
 /// its line cost 0.7 s and 400 MB on a 50 000-file repository.
 fn revisions_and_ops(revisions: usize, limit: usize) -> LogQuery {
-    LogQuery { revisions: Some(revisions), limit: Some(limit), ..LogQuery::default() }
+    LogQuery { labels: Some(revisions), limit: Some(limit), ..LogQuery::default() }
 }
 
 #[test]
@@ -126,14 +126,13 @@ fn a_revision_window_is_bounded_by_operations_too() {
     let body = listing(&kv, &revisions_and_ops(20, 100)).unwrap();
     let ops = body["operations"].as_array().unwrap();
     assert_eq!(ops.len(), 100, "at most the operations asked for");
-    let revisions = body["revisions"].as_array().unwrap();
+    let revisions = body["labels"].as_array().unwrap();
     assert_eq!(revisions.len(), 6, "the five edits, and the reconcile in part");
-    // The reconcile is the oldest revision shown, and the one cut: it says so,
-    // and how many operations it holds in all.
+    // The reconcile is the oldest label shown, and the one cut: it says so
+    // (counting what it holds in all would read it whole).
     let reconcile = &revisions[0];
     assert_eq!(reconcile["partial"], true, "{reconcile}");
-    assert_eq!(reconcile["op_count"], 800, "{reconcile}");
-    assert_eq!(ops.iter().filter(|o| o["rev_id"] == reconcile["id"]).count(), 95);
+    assert_eq!(ops.iter().filter(|o| o["label_id"] == reconcile["id"]).count(), 95);
     // The whole ones say nothing.
     for whole in &revisions[1..] {
         assert!(whole.get("partial").is_none(), "{whole}");
@@ -141,7 +140,7 @@ fn a_revision_window_is_bounded_by_operations_too() {
     // Twenty revisions of one operation each are still all there.
     let (kv, _dir) = repo_with_log(40);
     let body = listing(&kv, &revisions_and_ops(20, 100)).unwrap();
-    assert_eq!(body["revisions"].as_array().unwrap().len(), 20);
+    assert_eq!(body["labels"].as_array().unwrap().len(), 20);
     assert_eq!(body["operations"].as_array().unwrap().len(), 20);
 }
 

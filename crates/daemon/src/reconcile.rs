@@ -124,7 +124,7 @@ pub fn reconcile_full_reported(
     let mut conn = metafolder_core::slowlog::timed("wait:conn", || repo.conn.lock_recover());
     let cache = repo.tree();
     let root = repo.config.root.clone();
-    let mut writer = repo.writer(&mut conn, None)?;
+    let mut writer = repo.writer(&mut conn, crate::log::current_context().named("reconcile"))?;
     let mut result = ReconcileResult::default();
 
     // Step 2 — pure walk: collect eligible paths (no stat), BFS by depth.
@@ -534,7 +534,7 @@ pub fn reconcile_metarecord_reported(
         )));
     }
 
-    let mut writer = repo.writer(&mut conn, None)?;
+    let mut writer = repo.writer(&mut conn, crate::log::current_context().named("reconcile"))?;
     let mut result = ReconcileResult::default();
 
     // Pure walk of the subtree (BFS, no stat) then the determinate stat phase,

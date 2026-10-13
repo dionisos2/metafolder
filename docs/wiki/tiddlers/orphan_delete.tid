@@ -1,5 +1,5 @@
 title: orphan:delete
-tags: [[GUI command]] [[Orphans]]
+tags: [[GUI command]] Orphans
 kind: reference
 summary: Delete the metarecords marked orphan = true (confirmed)
 

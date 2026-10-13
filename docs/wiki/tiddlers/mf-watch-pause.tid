@@ -1,5 +1,5 @@
 title: mf watch pause
-tags: [[CLI command]] [[Watcher]]
+tags: [[CLI command]] Watcher
 kind: reference
 summary: Stop the flush in progress and pause ingestion (nothing is lost)
 

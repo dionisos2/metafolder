@@ -1,5 +1,4 @@
-//! The event log (doc "Event log"): reading it, labelling revisions and
-//! pruning. The log is a sequence: nothing navigates over it (doc "The
+//! The event log (doc "Event log"): reading it, its labels, and pruning. The log is a sequence: nothing navigates over it (doc "The
 //! operation log").
 
 use super::*;
@@ -21,20 +20,90 @@ pub(super) fn snapshots_json(
     Ok(crate::log_view::snapshots_json(conn, op_id, is_new != 0)?)
 }
 
-fn revision_json(log: &dyn crate::store::Log, rev_id: i64) -> Result<serde_json::Value, ApiError> {
-    let meta = log.revisions(&[rev_id])?;
-    let m = meta
-        .get(&rev_id)
-        .ok_or_else(|| ApiError::not_found(format!("revision {rev_id} not found")))?;
-    Ok(json!({"id": rev_id, "timestamp": m.timestamp, "label": m.label, "origin": m.origin}))
+/// A label with its ancestors, innermost first (`GET /labels/:id`).
+fn label_json(log: &dyn crate::store::Log, id: i64) -> Result<serde_json::Value, ApiError> {
+    let mut labels = log.labels(&[id])?;
+    let meta = labels.remove(&id).ok_or_else(|| ApiError::not_found(format!("no label {id}")))?;
+    let mut value = crate::log_view::label_json(id, &meta);
+    let mut ancestors = Vec::new();
+    let mut next = meta.parent;
+    while let Some(parent) = next {
+        let Some(m) = log.labels(&[parent])?.remove(&parent) else { break };
+        ancestors.push(crate::log_view::label_json(parent, &m));
+        next = m.parent;
+        if ancestors.len() > crate::log::MAX_TREE_DEPTH {
+            break;
+        }
+    }
+    value["ancestors"] = json!(ancestors);
+    value["children"] = json!(log.label_children(id)?);
+    Ok(value)
+}
+
+#[derive(Deserialize)]
+pub(super) struct NewLabelBody {
+    name: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    parent: Option<i64>,
+}
+
+/// `POST /repos/:repo/labels`: opens a label — a context the client's writes
+/// will name (doc "Labels and contexts"). Its parent defaults to the label the
+/// request is made in; one that does not exist, or the watcher's, is a `400`.
+pub(super) async fn create_label(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<NewLabelBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    if body.name.trim().is_empty() {
+        return Err(ApiError::bad_request("a label needs a name"));
+    }
+    with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
+        let parent = body.parent.or(match request_context() {
+            crate::log::WriteContext::In(id) => Some(id),
+            _ => None,
+        });
+        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let tx = crate::store::Begin::begin_write(&mut *conn)?;
+        if let Some(parent) = parent {
+            crate::log::check_client_label(&*tx, parent)?;
+        }
+        let id = tx.create_label(&crate::store::LabelMeta {
+            name: body.name,
+            description: body.description,
+            parent,
+            created: crate::log::now_ms(),
+        })?;
+        tx.commit()?;
+        Ok(Json(label_json(&*conn, id)?))
+    })
+    .await
+}
+
+/// `GET /repos/:repo/labels/:id`: a label, its ancestors and its children.
+pub(super) async fn get_label(
+    State(state): State<Arc<AppState>>,
+    Path((repo, id)): Path<(String, i64)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        Ok(Json(label_json(&*conn, id)?))
+    })
+    .await
 }
 
 #[derive(Deserialize)]
 pub(super) struct LogParams {
-    /// Cap on the number of *revisions* returned (whole ones), for a client
-    /// that displays a history by revision rather than by operation.
+    /// Cap on the number of *labels* returned (whole ones), for a client
+    /// that displays a history by label rather than by operation.
     #[serde(default)]
-    revisions: Option<usize>,
+    labels: Option<usize>,
     #[serde(default)]
     metarecord_uuid: Option<String>,
     #[serde(default)]
@@ -55,7 +124,7 @@ pub(super) async fn get_log(
     let repo_uuid = parse_uuid(&repo)?;
     let query = crate::log_view::LogQuery {
         limit: params.limit,
-        revisions: params.revisions,
+        labels: params.labels,
         entity: params.metarecord_uuid.as_deref().map(parse_uuid).transpose()?,
         since: params.since,
         until: params.until,
@@ -124,11 +193,11 @@ pub(super) async fn get_log_since(
     .await
 }
 
-/// Which operations of a revision `GET /log/revisions/:rev_id` details: a
-/// window (`offset`/`limit`) or one operation by id (`op`). A revision can hold
-/// every operation of a reconcile, and each carries its snapshots.
+/// Which operations of a label `GET /log/labels/:id` details: a window
+/// (`offset`/`limit`) or one operation by id (`op`). A label can hold every
+/// operation of a reconcile, and each carries its snapshots.
 #[derive(Deserialize)]
-pub(super) struct RevisionParams {
+pub(super) struct LabelParams {
     #[serde(default)]
     offset: Option<usize>,
     #[serde(default)]
@@ -137,36 +206,35 @@ pub(super) struct RevisionParams {
     op: Option<i64>,
 }
 
-pub(super) async fn get_revision(
+/// `GET /log/labels/:id` (or `head`, the label of the newest operation): a
+/// label and its own operations, with their snapshots.
+pub(super) async fn get_label_detail(
     State(state): State<Arc<AppState>>,
-    Path((repo, rev_id)): Path<(String, String)>,
-    Query(params): Query<RevisionParams>,
+    Path((repo, id)): Path<(String, String)>,
+    Query(params): Query<LabelParams>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let head = crate::store::Log::head(&*conn)?;
-        let rev_id: i64 = if rev_id == "head" {
-            let head =
-                head.ok_or_else(|| ApiError::not_found("the history is empty (no HEAD revision)"))?;
+        let id: i64 = if id == "head" {
+            let head = head.ok_or_else(|| ApiError::not_found("the log is empty"))?;
             crate::store::Log::op(&*conn, head)?
                 .ok_or_else(|| ApiError::internal("HEAD operation vanished"))?
-                .rev_id
+                .label_id
         } else {
-            rev_id
-                .parse()
-                .map_err(|_| ApiError::bad_request(format!("invalid revision id '{rev_id}'")))?
+            id.parse().map_err(|_| ApiError::bad_request(format!("invalid label id '{id}'")))?
         };
 
-        let mut revision = revision_json(&*conn, rev_id)?;
-        let all = crate::store::Log::revision_ops(&*conn, rev_id)?;
-        // HEAD and the count are the whole revision's, whatever the window.
-        revision["is_head"] = json!(all.iter().any(|op| Some(op.id) == head));
-        revision["operation_count"] = json!(all.len());
+        let mut label = label_json(&*conn, id)?;
+        let all = crate::store::Log::label_ops(&*conn, id)?;
+        // HEAD and the count are the whole label's, whatever the window.
+        label["is_head"] = json!(all.iter().any(|op| Some(op.id) == head));
+        label["operation_count"] = json!(all.len());
         let selected: Vec<&crate::log::OpRow> = match params.op {
-            Some(id) => {
-                let op = all.iter().find(|op| op.id == id).ok_or_else(|| {
-                    ApiError::not_found(format!("operation {id} is not in revision {rev_id}"))
+            Some(op_id) => {
+                let op = all.iter().find(|op| op.id == op_id).ok_or_else(|| {
+                    ApiError::not_found(format!("operation {op_id} is not in label {id}"))
                 })?;
                 vec![op]
             }
@@ -180,31 +248,7 @@ pub(super) async fn get_revision(
         for op in selected {
             ops.push(op_json(&conn, op, true)?);
         }
-        Ok(Json(json!({"revision": revision, "operations": ops})))
-    })
-    .await
-}
-
-#[derive(Deserialize)]
-pub(super) struct LabelBody {
-    label: Option<String>,
-}
-
-pub(super) async fn patch_revision(
-    State(state): State<Arc<AppState>>,
-    Path((repo, rev_id)): Path<(String, i64)>,
-    payload: Result<Json<LabelBody>, JsonRejection>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let Json(body) = payload?;
-    let repo_uuid = parse_uuid(&repo)?;
-    with_repo(&state, repo_uuid, move |repo_state| {
-        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let tx = crate::store::Begin::begin_write(&mut *conn)?;
-        if !tx.set_revision_label(rev_id, body.label.as_deref())? {
-            return Err(ApiError::not_found(format!("revision {rev_id} not found")));
-        }
-        tx.commit()?;
-        Ok(Json(revision_json(&*conn, rev_id)?))
+        Ok(Json(json!({"label": label, "operations": ops})))
     })
     .await
 }
@@ -217,7 +261,7 @@ pub(super) struct TargetBody {
     #[serde(default)]
     timestamp: Option<i64>,
     #[serde(default)]
-    label: Option<String>,
+    label: Option<i64>,
 }
 
 impl TargetBody {
@@ -278,9 +322,9 @@ pub(super) async fn prune_log(
             repo_state.ensure_writable()?;
             let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
             let resolved = crate::log::resolve_target(&*conn, &target)?;
-            let (ops, revisions) = crate::log::prune(&mut *conn, resolved)
+            let (ops, labels) = crate::log::prune(&mut *conn, resolved)
                 .map_err(|e| ApiError::bad_request(format!("{e:#}")))?;
-            Ok(Json(json!({"pruned_operations": ops, "pruned_revisions": revisions})))
+            Ok(Json(json!({"pruned_operations": ops, "pruned_labels": labels})))
         })
     })
     .await

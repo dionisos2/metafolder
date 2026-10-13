@@ -1,7 +1,0 @@
-title: GET /repos/:repo/log/revisions/:rev_id
-tags: [[HTTP endpoint]] [[Log endpoints]]
-kind: reference
-audience: dev
-summary: One revision with all its operations and their snapshots.
-
-Bodies, answers and errors: [[Log endpoints]].

@@ -1,5 +1,5 @@
 title: GET /repos/:repo/ignore/effective
-tags: [[HTTP endpoint]] [[Eligibility]]
+tags: [[HTTP endpoint]] Eligibility
 kind: reference
 audience: dev
 summary: Which mf_ignore set governs writes at a directory, and where it comes from.

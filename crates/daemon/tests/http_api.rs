@@ -1416,7 +1416,7 @@ async fn test_append_duplicate_is_a_no_op_and_by_id_duplicate_is_rejected() {
 async fn revision_count(app: &Router, repo: &str) -> usize {
     let (status, body) = request(app, "GET", &format!("/repos/{repo}/log"), None).await;
     assert_eq!(status, StatusCode::OK, "log failed: {body}");
-    body["revisions"].as_array().unwrap().len()
+    body["labels"].as_array().unwrap().len()
 }
 
 fn bulk_uri(repo: &str) -> String {
@@ -1705,12 +1705,12 @@ fn trash_uri(repo: &str) -> String {
     format!("/repos/{repo}/metarecords/trash")
 }
 
-/// The origin stamped on the newest revision of the log.
+/// The origin stamped on the newest operation of the log.
 async fn newest_revision_origin(app: &Router, repo: &str) -> Value {
     let (status, body) = request(app, "GET", &format!("/repos/{repo}/log"), None).await;
     assert_eq!(status, StatusCode::OK, "log failed: {body}");
-    let revisions = body["revisions"].as_array().unwrap();
-    revisions.last().expect("at least one revision")["origin"].clone()
+    let ops = body["operations"].as_array().unwrap();
+    ops.last().expect("at least one operation")["origin"].clone()
 }
 
 #[tokio::test]

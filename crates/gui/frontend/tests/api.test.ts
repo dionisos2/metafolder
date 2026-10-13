@@ -468,8 +468,8 @@ describe('panel api — misc surface', () => {
 
   test('a log revert routes to the coordinated revert command', async () => {
     const { api, invoke } = setup();
-    await api.log.revert('r1', { rev_id: 3 });
-    expect(invoke).toHaveBeenCalledWith('log_revert', { repo: 'r1', target: { rev_id: 3 } });
+    await api.log.revert('r1', { label_id: 3 });
+    expect(invoke).toHaveBeenCalledWith('log_revert', { repo: 'r1', target: { label_id: 3 } });
   });
 
   test('recent routes to the recent commands', async () => {

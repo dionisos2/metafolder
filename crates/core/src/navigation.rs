@@ -194,7 +194,7 @@ pub fn decide_move(
 /// restoring the directory blob brings back the whole subtree's content at
 /// once, whichever order the cascade's ops are navigated in. For a file the
 /// watcher saw go, the entry must also hold the version the record had before
-/// the revision being undone (`entity_version_before_revision`, present only on
+/// the watcher's flush being undone (`entity_version_before_label`, present only on
 /// inverse steps): the precise per-file correlation. `by_metarecord_only`
 /// drops that condition, for a metarecord a trashing deleted outright — the
 /// live entry holding it is unambiguous, since nothing can trash it again
@@ -215,15 +215,14 @@ pub fn decide_deleted(
         return Ok(false);
     }
 
-    // The version the record held before the *whole* revision: one event can
+    // The version the record held before the *whole* flush: one event can
     // write several fields (orphaning writes `mfr_path` and `mfr_path_old`), so
     // each op restores to its own intermediate version, while the trash entry
     // recorded the version at the moment the file was trashed — the
-    // pre-revision one. Every op of the revision therefore reaches the same
+    // pre-flush one. Every op of the flush therefore reaches the same
     // decision. Older daemons expose only the per-op version.
-    let version = op["entity_version_before_revision"]
-        .as_u64()
-        .or_else(|| op["entity_version_before"].as_u64());
+    let version =
+        op["entity_version_before_label"].as_u64().or_else(|| op["entity_version_before"].as_u64());
     let pos = entries.iter().position(|e| {
         let is_top = e.metarecord.as_deref() == Some(entity)
             && (by_metarecord_only || version.is_some_and(|v| e.version == Some(v)));
@@ -345,7 +344,7 @@ pub fn trash_recovery_hint(entries: &[TrashEntry], metarecord: &str) -> Option<S
 
 // ── Revert ───────────────────────────────────────────────────────────────────
 
-/// The query-parameter form of a revert target (`{"rev_id": N|"head"}` or
+/// The query-parameter form of a revert target (`{"label_id": N|"head"}` or
 /// `{"op_ids": [...]}`), for `GET /revert/plan`.
 pub fn revert_query(target: &Json) -> Vec<(&'static str, String)> {
     let mut q = Vec::new();
@@ -356,11 +355,11 @@ pub fn revert_query(target: &Json) -> Vec<(&'static str, String)> {
             q.push(("target_op_ids", ids.join(",")));
         }
         None => {
-            let rev = match &target["rev_id"] {
+            let label = match &target["label_id"] {
                 Json::Number(n) => n.to_string(),
                 _ => "head".into(),
             };
-            q.push(("target_rev_id", rev));
+            q.push(("target_label_id", label));
         }
     }
     q
@@ -374,11 +373,10 @@ pub fn revert_plan(repo: &Repo<'_>, target: &Json) -> Result<Json, NavError> {
 
 /// A revert to write.
 pub struct RevertRequest<'r> {
-    /// `{"rev_id": N|"head"}` or `{"op_ids": [...]}`.
+    /// `{"label_id": N|"head"}` or `{"op_ids": [...]}`.
     pub target: &'r Json,
     /// Leave out the operations needing a file action instead of performing it.
     pub metadata_only: bool,
-    pub label: Option<&'r str>,
 }
 
 /// Writes the revert `plan` (as [`revert_plan`] answered it) describes: in one
@@ -386,7 +384,7 @@ pub struct RevertRequest<'r> {
 /// otherwise through the coordinated protocol — `start` takes the lock, the
 /// file actions are performed, `commit` writes what they managed, and any error
 /// is an `abort` that leaves the log untouched. Returns the daemon's answer
-/// (`revision`, `reverted_operations`, `skipped_operations`).
+/// (`label`, `reverted_operations`, `skipped_operations`).
 pub fn revert(
     repo: &Repo<'_>,
     request: &RevertRequest<'_>,
@@ -401,9 +399,6 @@ pub fn revert(
         let mut body = json!({"target": request.target});
         if request.metadata_only {
             body["skip_filesystem"] = json!(true);
-        }
-        if let Some(label) = request.label {
-            body["label"] = json!(label);
         }
         return Ok(client.post(&format!("{base}/revert"), &body)?);
     }
@@ -466,10 +461,7 @@ pub fn revert(
             return Err(err);
         }
     };
-    let mut body = json!({"apply": apply});
-    if let Some(label) = request.label {
-        body["label"] = json!(label);
-    }
+    let body = json!({"apply": apply});
     match client.post(&format!("{base}/revert/commit"), &body) {
         Ok(resp) => Ok(resp),
         Err(err) => {
@@ -522,10 +514,13 @@ mod tests {
             vec![("target_op_ids", "3,5".to_string())]
         );
         assert_eq!(
-            revert_query(&json!({"rev_id": "head"})),
-            vec![("target_rev_id", "head".to_string())]
+            revert_query(&json!({"label_id": "head"})),
+            vec![("target_label_id", "head".to_string())]
         );
-        assert_eq!(revert_query(&json!({"rev_id": 7})), vec![("target_rev_id", "7".to_string())]);
+        assert_eq!(
+            revert_query(&json!({"label_id": 7})),
+            vec![("target_label_id", "7".to_string())]
+        );
     }
 
     // `apply` on a gone file: no `mv` is attempted (nothing to move) and the
@@ -856,14 +851,14 @@ mod tests {
         let ui = Quiet::default();
 
         let mut op = deleted_op("rec-1", Some(1));
-        op["entity_version_before_revision"] = json!(0);
+        op["entity_version_before_label"] = json!(0);
         let skip = decide_deleted(&op, &trash, &mut entries, &mut restored, &ui, false).unwrap();
         assert!(!skip, "the pre-revision version matches the trash entry: restore, don't skip");
         assert_eq!(std::fs::read(&file).unwrap(), b"content", "the file is back");
         assert!(entries.is_empty(), "the entry is consumed once");
 
         let mut op = deleted_op("rec-1", Some(0));
-        op["entity_version_before_revision"] = json!(0);
+        op["entity_version_before_label"] = json!(0);
         let skip = decide_deleted(&op, &trash, &mut entries, &mut restored, &ui, false).unwrap();
         assert!(!skip, "the record's content is restored: apply the inverse");
         std::fs::remove_dir_all(&base).ok();

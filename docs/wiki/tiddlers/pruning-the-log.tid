@@ -6,15 +6,17 @@ summary: mf log prune before deletes every operation older than a target. It is 
 
 ```
 mf -n music log list                           # look first: what would go
-mf -n music log prune before before-cleanup    # everything older than that label goes
+mf -n music log prune before 12                # everything older than label 12 goes
 mf -n music log prune before --id 55
 mf -n music log prune before --timestamp 2026-09-01T00:00:00Z
 ```
 
 ''Irreversible'': deleted operations cannot be reverted any more. It asks for confirmation
-(unless `--force`; `--silent` does not skip it). The target — a label, `--id` or
-`--timestamp` — is kept; every operation strictly older goes, with the revisions left
-empty. `Pruned 47 operations across 3 revisions.`
+(unless `--force`; `--silent` does not skip it). The target — a label id, `--id` or
+`--timestamp` — is kept; every operation strictly older goes, with the labels left empty
+(no operation, no child label left in them; never the watcher's). A label is kept
+''whole'': the cut is its oldest operation, its children's included. `Pruned 47
+operations; 3 label(s) left empty went with them.`
 
 Nothing else depends on what is pruned: a revert applies an operation's inverse onto the
 current state, so every operation left can still be reverted ([[Reverting onto the current state]]). Undo will not go past the oldest operation left. For disaster recovery, rely on a
@@ -24,4 +26,4 @@ The space pruning frees is reused by the store's next writes; a backup is a comp
 copy. The retention limit does the same automatically ([[Automatic retention]]).
 
 `POST /repos/:repo/log/prune` with `{"target": {"id": N} | {"timestamp": T} | {"label":
-"…"}}` answers `{"pruned_operations", "pruned_revisions"}`.
+N}}` answers `{"pruned_operations", "pruned_labels"}`.

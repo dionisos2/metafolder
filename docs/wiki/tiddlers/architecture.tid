@@ -48,7 +48,7 @@ do alike therefore lives in `core`, not in either of them.
 A request goes through the same few layers whatever it asks:
 
 * ''Routes'' (`routes/`) — authentication, validation, and the two API layers: resources addressed directly, and the set layer where every body carries a query ([[Metarecord endpoints]], [[Query endpoints]]).
-* ''The writer'' (`log.rs`) — every write is one revision, in one transaction, logged ([[Writes and atomicity]], [[Revisions and operations]]).
+* ''The writer'' (`log.rs`) — every write is one revision, in one transaction, logged ([[Writes and atomicity]], [[Operations and their origin]]).
 * ''The storage boundary'' (`store.rs`) — the traits everything above speaks; the key-value store is the one implementation ([[The storage boundary]], [[Why a key-value store]]).
 * ''The query engine'' (`index/`) — the only thing that serves a filter, reading the store's derived key spaces ([[Query engine]], [[No operand runs in SQL]]).
 * ''The file side'' — the watcher feeds an in-memory buffer that the executor flushes ([[Watcher]], [[Event batching]]); reconcile walks on demand ([[Reconcile]]); both decide what is tracked through the same rule index ([[The watch rule index]]).

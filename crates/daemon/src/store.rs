@@ -151,25 +151,37 @@ macro_rules! forward_to_store {
                 let $me = self;
                 Log::all_ops($conn)
             }
-            fn revisions(&self, ids: &[i64]) -> Result<HashMap<i64, RevisionMeta>> {
+            fn labels(&self, ids: &[i64]) -> Result<HashMap<i64, LabelMeta>> {
                 let $me = self;
-                Log::revisions($conn, ids)
+                Log::labels($conn, ids)
             }
             fn counts(&self) -> Result<(i64, i64)> {
                 let $me = self;
                 Log::counts($conn)
             }
-            fn revision_ops(&self, rev: i64) -> Result<Vec<OpRow>> {
+            fn label_ops(&self, label: i64) -> Result<Vec<OpRow>> {
                 let $me = self;
-                Log::revision_ops($conn, rev)
+                Log::label_ops($conn, label)
+            }
+            fn label_first_op(&self, label: i64) -> Result<Option<i64>> {
+                let $me = self;
+                Log::label_first_op($conn, label)
+            }
+            fn label_children(&self, label: i64) -> Result<Vec<i64>> {
+                let $me = self;
+                Log::label_children($conn, label)
+            }
+            fn watcher_label(&self) -> Result<Option<i64>> {
+                let $me = self;
+                Log::watcher_label($conn)
             }
             fn entity_ops_after(&self, entity: Uuid, after: i64) -> Result<Vec<OpRow>> {
                 let $me = self;
                 Log::entity_ops_after($conn, entity, after)
             }
-            fn version_before_revision(&self, rev: i64, entity: Uuid) -> Result<Option<u64>> {
+            fn version_before_label(&self, label: i64, entity: Uuid) -> Result<Option<u64>> {
                 let $me = self;
-                Log::version_before_revision($conn, rev, entity)
+                Log::version_before_label($conn, label, entity)
             }
             fn ops_after(&self, op: i64) -> Result<Vec<OpRow>> {
                 let $me = self;
@@ -182,10 +194,6 @@ macro_rules! forward_to_store {
             fn last_op_at_or_before(&self, timestamp_ms: i64) -> Result<Option<i64>> {
                 let $me = self;
                 Log::last_op_at_or_before($conn, timestamp_ms)
-            }
-            fn last_op_labelled(&self, label: &str) -> Result<Option<i64>> {
-                let $me = self;
-                Log::last_op_labelled($conn, label)
             }
         }
     };
@@ -421,38 +429,46 @@ pub trait Log {
     fn ops_back(&self, from: i64, max: Option<usize>) -> Result<Vec<OpRow>>;
     /// Every operation, oldest first.
     fn all_ops(&self) -> Result<Vec<OpRow>>;
-    /// The given revisions' metadata; ids that name none are left out.
-    fn revisions(&self, ids: &[i64]) -> Result<HashMap<i64, RevisionMeta>>;
-    /// How many operations and revisions the log holds.
+    /// The given labels; ids that name none are left out.
+    fn labels(&self, ids: &[i64]) -> Result<HashMap<i64, LabelMeta>>;
+    /// How many operations and labels the log holds.
     fn counts(&self) -> Result<(i64, i64)>;
-    /// A revision's operations, oldest first.
-    fn revision_ops(&self, rev: i64) -> Result<Vec<OpRow>>;
+    /// A label's own operations — not its children's — oldest first.
+    fn label_ops(&self, label: i64) -> Result<Vec<OpRow>>;
+    /// A label's oldest operation of its own, `None` when it has none.
+    fn label_first_op(&self, label: i64) -> Result<Option<i64>>;
+    /// A label's children, oldest first.
+    fn label_children(&self, label: i64) -> Result<Vec<i64>>;
+    /// The label the watcher's flushes are opened under, once there is one
+    /// (doc "Labels and contexts").
+    fn watcher_label(&self) -> Result<Option<i64>>;
     /// An entity's operations newer than `after`, oldest first.
     fn entity_ops_after(&self, entity: Uuid, after: i64) -> Result<Vec<OpRow>>;
-    /// The version `entity` had when revision `rev` began — its first
+    /// The version `entity` had when label `label` began — its first
     /// operation there's `entity_version_before` (a trash entry records the
-    /// version from outside the revision, so a revert matches on this one).
-    fn version_before_revision(&self, rev: i64, entity: Uuid) -> Result<Option<u64>>;
+    /// version from outside the watcher's flush, so a revert matches on this
+    /// one).
+    fn version_before_label(&self, label: i64, entity: Uuid) -> Result<Option<u64>>;
     /// The operations newer than `op`, oldest first (the change feed).
     fn ops_after(&self, op: i64) -> Result<Vec<OpRow>>;
     /// How many operations are newer than `op`, counted no further than
     /// `cap`: a client far behind asks whether the gap passes a limit, and
     /// counting the whole of it would read the log since.
     fn ops_after_count(&self, op: i64, cap: i64) -> Result<i64>;
-    /// The newest operation whose revision is at or before `timestamp_ms`.
+    /// The newest operation written at or before `timestamp_ms`.
     fn last_op_at_or_before(&self, timestamp_ms: i64) -> Result<Option<i64>>;
-    /// The newest operation of a revision labelled `label`.
-    fn last_op_labelled(&self, label: &str) -> Result<Option<i64>>;
 }
 
-/// A revision's metadata.
+/// A label (doc "Labels and contexts"): a name and a description for what
+/// the operations under it — and under its children — belong to.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RevisionMeta {
+pub struct LabelMeta {
+    pub name: String,
+    pub description: Option<String>,
+    /// The label this one is nested in, `None` for a root.
+    pub parent: Option<i64>,
     /// Unix milliseconds.
-    pub timestamp: i64,
-    pub label: Option<String>,
-    /// Who wrote it: `watcher` for the daemon's own, `None` for a client's.
-    pub origin: Option<String>,
+    pub created: i64,
 }
 
 /// A repository's database: its rows, its log, and the questions asked of
@@ -779,7 +795,7 @@ pub struct NewOp {
 }
 
 /// A write transaction: everything it writes commits together or not at all,
-/// and it reads its own writes. One `log::Writer` revision is one of these.
+/// and it reads its own writes. One `log::Writer` is one of these.
 pub trait WriteTxn: Store {
     /// A new metarecord, with no row yet.
     fn create_metarecord(&self, uuid: Uuid, version: u64) -> Result<()>;
@@ -794,27 +810,24 @@ pub trait WriteTxn: Store {
     /// Deletes a metarecord's rows — all of them, or those of one name.
     fn delete_rows(&self, uuid: Uuid, name: Option<&str>) -> Result<()>;
 
-    /// A new revision; its id.
-    fn begin_revision(&self, label: Option<&str>, timestamp_ms: i64) -> Result<i64>;
-    fn set_revision_origin(&self, rev: i64, origin: &str) -> Result<()>;
-    /// Sets or clears a revision's label; `false` when there is no such
-    /// revision.
-    fn set_revision_label(&self, rev: i64, label: Option<&str>) -> Result<bool>;
-    /// Drops a revision no operation was recorded in.
-    fn drop_revision(&self, rev: i64) -> Result<()>;
-    /// Appends `ops` to revision `rev`, numbered from `first_seq`; returns the
-    /// id the last one got. Ids are never reused.
-    fn append_ops(&self, rev: i64, first_seq: i64, ops: &[NewOp]) -> Result<i64>;
+    /// A new label; its id. Its parent, when it has one, is there.
+    fn create_label(&self, meta: &LabelMeta) -> Result<i64>;
+    /// Removes a label that holds nothing (no operation, no child).
+    fn drop_label(&self, id: i64) -> Result<()>;
+    /// Records the label the watcher's flushes are opened under.
+    fn set_watcher_label(&self, id: i64) -> Result<()>;
+    /// Appends `ops` under `label`, written at `timestamp`; returns the id
+    /// the last one got. Ids are never reused.
+    fn append_ops(&self, label: i64, timestamp: i64, ops: &[NewOp]) -> Result<i64>;
     /// Records the newest operation (the change feed's cursor).
     fn set_head(&self, op: Option<i64>) -> Result<()>;
     /// Drops the history `retention` no longer keeps behind `head`.
     fn trim(&self, retention: Retention, head: i64) -> Result<usize>;
     /// Removes every metarecord.
     fn clear_metarecords(&self) -> Result<()>;
-    /// Deletes operations and their snapshots.
-    fn delete_ops(&self, ids: &[i64]) -> Result<()>;
-    /// Deletes the revisions no operation belongs to any more.
-    fn drop_empty_revisions(&self) -> Result<()>;
+    /// Deletes operations and their snapshots, and the labels they leave
+    /// empty — no operation, no child — but the watcher's; how many labels.
+    fn delete_ops(&self, ids: &[i64]) -> Result<usize>;
 
     fn commit(self: Box<Self>) -> Result<()>;
 }

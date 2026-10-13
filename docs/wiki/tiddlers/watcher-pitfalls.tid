@@ -1,5 +1,5 @@
 title: Watcher pitfalls
-tags: [[Watcher]]
+tags: Watcher
 kind: reference
 audience: dev
 summary: Mistakes the watcher has made and must not make again — a blocking callback, literal readings that lose identity, echoes destroying derived data, client timers guessing the quiet period.

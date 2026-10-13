@@ -1,22 +1,22 @@
 title: $:/mf/gen/CLI command/mf log
 catalog: CLI command
 target: mf log
-summary: Revision/operation history (default: list)
+summary: The history of operations, by label (default: list)
 
 !! Reference
 
 ```
-Revision/operation history (default: list)
+The history of operations, by label (default: list)
 
 Usage: mf log [COMMAND]
 
 Commands:
-  list    Display the revision/operation history
+  list    Display the history, by label
   head    Print the id of the newest operation (what `undo --after` takes)
-  show    Show full details of one revision (a revision id, or HEAD)
+  show    Show full details of one label (a label id, or HEAD for the newest operation's)
   undo    Undo the newest change you made that still stands, by reverting it
   redo    Take the newest undo that still stands back, by reverting it
-  revert  Undo a revision (or an operation) by writing its inverse at HEAD
+  revert  Undo a label — what was written inside it — or an operation, by writing its inverse
   prune   Permanently remove operations from the history (irreversible)
   help    Print this message or the help of the given subcommand(s)
 

@@ -417,8 +417,7 @@
 # point of being able to select an operation.
 "shift+r" = { command = "log:revert", when = "log" }
 "shift+o" = { command = "log:revert op", when = "log" }
-"shift+v" = { command = "log:revert revision", when = "log" }
-"shift+l" = { command = "log:mark", when = "log" }
+"shift+v" = { command = "log:revert label", when = "log" }
 # metarecord-list: the table ⇄ the grid of thumbnails (g = grid).
 "shift+g" = { command = "metarecord-list:toggle mode", when = "metarecord-list" }
 "shift+w" = { command = "log:toggle watcher", when = "log" }

@@ -83,7 +83,7 @@ describe('revertTarget', () => {
   });
 
   test('a revision selection targets the whole revision', () => {
-    expect(revertTarget({ kind: 'rev', id: 3 })).toEqual({ rev_id: 3 });
+    expect(revertTarget({ kind: 'rev', id: 3 })).toEqual({ label_id: 3 });
   });
 
   test('nothing selected targets nothing', () => {

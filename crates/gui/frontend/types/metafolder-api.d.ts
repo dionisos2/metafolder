@@ -410,7 +410,8 @@ declare namespace Metafolder {
 
   /** What `log.revert` wrote: the daemon's revert answer, with the notes. */
   interface Reverted {
-    revision: number | null;
+    /** The label the revert wrote in; `null` when it wrote nothing. */
+    label: number | null;
     reverted_operations?: number[];
     skipped_operations?: { op_id: number; reason: string }[];
     notes: string[];
@@ -422,8 +423,8 @@ declare namespace Metafolder {
    *  the repository is locked. Shared with `mf log` through
    *  `core::navigation`. Confirm *before* calling. */
   interface Log {
-    /** Writes the inverse of `target` (`{rev_id}` or `{op_ids}`) at HEAD,
-     *  onto the current state (doc "Reverting onto the current state"). */
+    /** Writes the inverse of `target` (`{label_id}` or `{op_ids}`) onto the
+     *  current state (doc "Reverting onto the current state"). */
     revert(repo: string, target: Record<string, unknown>): Promise<Reverted>;
   }
 

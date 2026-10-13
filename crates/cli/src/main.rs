@@ -51,7 +51,7 @@ enum Command {
         #[command(subcommand)]
         command: Option<TaskCommand>,
     },
-    /// Revision/operation history (default: list)
+    /// The history of operations, by label (default: list)
     Log {
         #[command(subcommand)]
         command: Option<LogCommand>,
@@ -407,21 +407,21 @@ enum TaskCommand {
 
 #[derive(Subcommand)]
 enum LogCommand {
-    /// Display the revision/operation history
+    /// Display the history, by label
     List {
-        /// Expand each revision to show its individual operations
+        /// Expand each label to show its individual operations
         #[arg(long)]
         ops: bool,
-        /// Only revisions/ops that affected this metarecord
+        /// Only operations that affected this metarecord
         #[arg(long)]
         metarecord: Option<String>,
-        /// Show at most N revisions (or operations with --ops); default 20
+        /// Show at most N labels (or operations with --ops); default 20
         #[arg(long = "limit")]
         limit: Option<usize>,
-        /// Only revisions with timestamp ≥ T (ISO-8601, or @<unix-ms>)
+        /// Only operations written at or after T (ISO-8601, or @<unix-ms>)
         #[arg(long)]
         since: Option<String>,
-        /// Only revisions with timestamp ≤ T (ISO-8601, or @<unix-ms>)
+        /// Only operations written at or before T (ISO-8601, or @<unix-ms>)
         #[arg(long)]
         until: Option<String>,
         /// Remove the default limit of 20
@@ -430,7 +430,7 @@ enum LogCommand {
     },
     /// Print the id of the newest operation (what `undo --after` takes)
     Head,
-    /// Show full details of one revision (a revision id, or HEAD)
+    /// Show full details of one label (a label id, or HEAD for the newest operation's)
     Show {
         target: String,
         /// Print the raw JSON response body
@@ -482,9 +482,9 @@ enum LogCommand {
         #[arg(long)]
         silent: bool,
     },
-    /// Undo a revision (or an operation) by writing its inverse at HEAD
+    /// Undo a label — what was written inside it — or an operation, by writing its inverse
     Revert {
-        /// "plan" to preview, optionally a revision id; or a revision id.
+        /// "plan" to preview, optionally a label id; or a label id.
         #[arg(num_args = 0..=2)]
         args: Vec<String>,
         /// Revert this operation only (repeatable)
@@ -493,9 +493,6 @@ enum LogCommand {
         /// Leave out the operations needing a filesystem action
         #[arg(long = "metadata-only")]
         metadata_only: bool,
-        /// Label the revision the revert creates
-        #[arg(long)]
-        label: Option<String>,
         /// Policy when the file is present: apply|skip|abort|ask (default apply)
         #[arg(long = "on-move-available")]
         on_move_available: Option<String>,
@@ -1132,15 +1129,15 @@ enum GuiWorkspaceCommand {
     Rm { id: String },
 }
 
-/// A rollback/prune target: a revision label, --id, or --timestamp.
+/// A prune target: a label id, --id, or --timestamp.
 #[derive(clap::Args)]
 struct TargetOpts {
-    /// Revision label (most recent on the HEAD ancestry path)
-    target: Option<String>,
+    /// A label id: the label is kept whole, its children included
+    target: Option<i64>,
     /// Target operation by id
     #[arg(long)]
     id: Option<i64>,
-    /// Most recent operation whose revision timestamp ≤ T (ISO-8601, or @<unix-ms>)
+    /// Most recent operation written at or before T (ISO-8601, or @<unix-ms>)
     #[arg(long)]
     timestamp: Option<String>,
 }
@@ -1572,31 +1569,30 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
             args,
             op,
             metadata_only,
-            label,
             on_move_available,
             on_move_unavailable,
             force,
             silent,
         }) => {
-            let (is_plan, rev) = match args.split_first() {
+            let (is_plan, label) = match args.split_first() {
                 Some((first, rest)) if first == "plan" => (true, rest.first().cloned()),
                 Some((first, _)) => (false, Some(first.clone())),
                 None => (false, None),
             };
-            let rev_id = match rev {
-                Some(r) => Some(r.parse::<i64>().map_err(|_| {
+            let label_id = match label {
+                Some(l) => Some(l.parse::<i64>().map_err(|_| {
                     metafolder_cli::client::CliError::Usage(format!(
-                        "'{r}' is not a revision id; targets are a revision number, or --op <id>"
+                        "'{l}' is not a label id; targets are a label id, or --op <id>"
                     ))
                 })?),
                 None => None,
             };
-            if rev_id.is_some() && !op.is_empty() {
+            if label_id.is_some() && !op.is_empty() {
                 return Err(metafolder_cli::client::CliError::Usage(
-                    "give a revision id or --op, not both".into(),
+                    "give a label id or --op, not both".into(),
                 ));
             }
-            let target = log::RevertTarget { rev_id, op_ids: op };
+            let target = log::RevertTarget { label_id, op_ids: op };
             let policies = log::RollbackPolicies {
                 on_available: on_move_available
                     .as_deref()
@@ -1609,14 +1605,8 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
                     .transpose()?
                     .unwrap_or(log::Policy::Ask),
             };
-            let opts = log::RevertOpts {
-                metadata_only,
-                label,
-                force,
-                confirm_moves: true,
-                silent,
-                policies,
-            };
+            let opts =
+                log::RevertOpts { metadata_only, force, confirm_moves: true, silent, policies };
             if is_plan {
                 log::revert_plan(ctx, target)
             } else {

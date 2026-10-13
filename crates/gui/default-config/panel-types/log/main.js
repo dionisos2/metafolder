@@ -1,5 +1,6 @@
-// log panel: revisions in reverse chronological order, expandable into
-// operations; revert and prune (doc "log panel").
+// log panel: the operations grouped by their (innermost) label, newest first,
+// expandable into operations; revert and prune (doc "log panel"). Internally
+// a group is still called a revision: the label tree is the next step.
 
 import { byId, el, qs } from '/__ui.js';
 import { registerFind } from '/__find-entry.js';
@@ -7,13 +8,14 @@ import { moveSelection, edgeSelection } from './selection.js';
 import { annotate, revertTarget, shownRevisions } from './annotate.js';
 
 /**
- * A revision as this panel displays it (the daemon's rows, plus the operation
- * count and the HEAD marker computed here).
+ * A label as this panel displays it: its name, when its newest operation was
+ * written, and the operation count, origin and HEAD marker computed here.
  * @typedef {{id: number, timestamp: number, label: string|null, origin: string|null,
  *            opCount: number, isHead: boolean}} Revision
  *
- * One operation row of `GET /log`.
- * @typedef {{id: number, rev_id: number, op_type: string,
+ * One operation row of `GET /log`, with its label as `rev_id`.
+ * @typedef {{id: number, rev_id: number, label_id: number, timestamp?: number,
+ *            origin?: string|null, op_type: string,
  *            field_name?: string|null, entity_uuid?: string|null,
  *            reverts_op_id?: number|null}} Operation
  *
@@ -60,7 +62,6 @@ export async function mount(root, metafolder) {
   const showMoreButton = byId(root, 'show-more', HTMLButtonElement);
   const revertButton = byId(root, 'revert', HTMLButtonElement);
   const pruneButton = byId(root, 'prune', HTMLButtonElement);
-  const checkpointButton = byId(root, 'checkpoint', HTMLButtonElement);
   const watcherCheckbox = byId(root, 'show-watcher', HTMLInputElement);
   const statusLine = byId(root, 'status-line');
   /** Repository-wide log size (`GET /log` totals), independent of the window
@@ -76,36 +77,44 @@ export async function mount(root, metafolder) {
       // Only the most recent `limit` operations, so a huge log loads quickly.
       const query = `?limit=${limit}`;
       const log = /** @type {{operations?: Operation[], head?: number,
-       *                      revisions?: {id: number, timestamp: number,
-       *                                  label: string|null,
-       *                                  origin?: string|null}[],
-       *                      total_operations?: number, total_revisions?: number}} */ (
+       *                      labels?: {id: number, name: string, created: number}[],
+       *                      total_operations?: number, total_labels?: number}} */ (
         await daemon.call('GET', `/repos/${repo}/log${query}`)
       );
-      operations = log.operations ?? [];
+      operations = (log.operations ?? []).map((op) => ({ ...op, rev_id: op.label_id }));
       totals =
-        typeof log.total_operations === 'number' && typeof log.total_revisions === 'number'
-          ? { operations: log.total_operations, revisions: log.total_revisions }
+        typeof log.total_operations === 'number' && typeof log.total_labels === 'number'
+          ? { operations: log.total_operations, revisions: log.total_labels }
           : null;
       const head = log.head;
-      /** @type {Map<number, number>} */
-      const opCount = new Map();
+      /** @type {Map<number, Operation[]>} */
+      const members = new Map();
       /** @type {number|null} */
       let headRev = null;
       for (const op of operations) {
-        opCount.set(op.rev_id, (opCount.get(op.rev_id) ?? 0) + 1);
+        members.set(op.rev_id, [...(members.get(op.rev_id) ?? []), op]);
         if (op.id === head) headRev = op.rev_id;
       }
-      revisions = (log.revisions ?? [])
-        .map((rev) => ({
-          id: rev.id,
-          timestamp: rev.timestamp,
-          label: rev.label,
-          origin: rev.origin ?? null,
-          opCount: opCount.get(rev.id) ?? 0,
-          isHead: rev.id === headRev,
-        }))
-        .sort((a, b) => b.id - a.id); // reverse chronological
+      // The labels the operations are in; their ancestors, also listed, wait
+      // for the label tree.
+      revisions = (log.labels ?? [])
+        .filter((label) => members.has(label.id))
+        .map((label) => {
+          const ops = members.get(label.id) ?? [];
+          return {
+            id: label.id,
+            timestamp: Math.max(label.created, ...ops.map((op) => op.timestamp ?? 0)),
+            label: label.name,
+            origin: ops.every((op) => op.origin === 'watcher') ? 'watcher' : null,
+            opCount: ops.length,
+            isHead: label.id === headRev,
+          };
+        })
+        .sort(
+          (a, b) =>
+            Math.max(...(members.get(b.id) ?? []).map((o) => o.id)) -
+            Math.max(...(members.get(a.id) ?? []).map((o) => o.id)),
+        ); // newest first
       marks = annotate(revisions, operations);
       render();
       // Offer "Show more" while the list fills the requested window: older
@@ -129,7 +138,7 @@ export async function mount(root, metafolder) {
     const shownRevs = revisions.length;
     const shownOps = operations.length;
     const parts = [
-      `${shownRevs} revision${shownRevs === 1 ? '' : 's'}`,
+      `${shownRevs} label${shownRevs === 1 ? '' : 's'}`,
       `${shownOps} operation${shownOps === 1 ? '' : 's'}`,
     ];
     let line = parts.join(' · ');
@@ -137,7 +146,7 @@ export async function mount(root, metafolder) {
       line += ` — of ${totals.revisions} / ${totals.operations} in the repository`;
     }
     const hidden = shownRevs - visible().length;
-    if (hidden > 0) line += ` · ${hidden} watcher revision${hidden === 1 ? '' : 's'} hidden`;
+    if (hidden > 0) line += ` · ${hidden} watcher label${hidden === 1 ? '' : 's'} hidden`;
     statusLine.textContent = line;
   }
 
@@ -323,7 +332,6 @@ export async function mount(root, metafolder) {
     const nothing = selection === null;
     revertButton.disabled = nothing;
     pruneButton.disabled = nothing;
-    checkpointButton.disabled = nothing;
     // The revert acts on whatever is selected, so the button says which.
     revertButton.textContent =
       selection?.kind === 'op'
@@ -350,15 +358,15 @@ export async function mount(root, metafolder) {
   async function prune() {
     const rev = selectedRev();
     if (rev === null) return;
-    if (!confirm(`Prune all history before revision #${rev}? This cannot be undone.`)) return;
+    if (!confirm(`Prune all history before label #${rev}? This cannot be undone.`)) return;
     try {
-      const result = /** @type {{pruned_operations: number, pruned_revisions: number}} */ (
+      const result = /** @type {{pruned_operations: number, pruned_labels: number}} */ (
         await daemon.call('POST', `/repos/${repo}/log/prune`, {
           target: { id: firstOpOf(rev) },
         })
       );
       void statusBar.message(
-        `Pruned ${result.pruned_operations} operations (${result.pruned_revisions} revisions).`,
+        `Pruned ${result.pruned_operations} operations (${result.pruned_labels} labels left empty).`,
         statusErrorMs,
       );
       selection = null;
@@ -376,23 +384,23 @@ export async function mount(root, metafolder) {
    *  was written since carries `changed_since` (doc "Reverting onto the
    *  current state"): the revert overwrites that write.
    *  @typedef {{requires_lock?: boolean,
-   *             operations?: {changed_since?: {rev_id?: number} | null}[]}} RevertPlan */
+   *             operations?: {changed_since?: {label_id?: number} | null}[]}} RevertPlan */
 
 
   /** The query string for a revert plan of `target`.
-   *  @param {{rev_id: number}|{op_ids: number[]}} target */
+   *  @param {{label_id: number}|{op_ids: number[]}} target */
   function planQuery(target) {
     return 'op_ids' in target
       ? `target_op_ids=${target.op_ids.join(',')}`
-      : `target_rev_id=${target.rev_id}`;
+      : `target_label_id=${target.label_id}`;
   }
 
   /** How the confirmation and the messages name what is being reverted.
-   *  @param {{rev_id: number}|{op_ids: number[]}} target */
+   *  @param {{label_id: number}|{op_ids: number[]}} target */
   function describeTarget(target) {
     return 'op_ids' in target
       ? `operation${target.op_ids.length === 1 ? '' : 's'} ${target.op_ids.join(', ')}`
-      : `revision #${target.rev_id}`;
+      : `label #${target.label_id}`;
   }
 
   /** Reverts whatever is selected: one operation when the cursor is inside an
@@ -429,7 +437,7 @@ export async function mount(root, metafolder) {
     expandedRev = rev;
     selectOperation(members[0]);
     void statusBar.message(
-      `Revision #${rev} has ${members.length} operations: pick one and press revert again.`,
+      `Label #${rev} has ${members.length} operations: pick one and press revert again.`,
       statusMessageMs,
     );
   }
@@ -445,7 +453,7 @@ export async function mount(root, metafolder) {
   }
 
   /**
-   * @param {{rev_id: number}|{op_ids: number[]}} target
+   * @param {{label_id: number}|{op_ids: number[]}} target
    * @param {RevertPlan} plan
    */
   async function runRevert(target, plan) {
@@ -465,8 +473,8 @@ export async function mount(root, metafolder) {
     // Reverting something already undone writes a second inverse — almost never
     // what is meant, so it is said out loud rather than silently done.
     const undone =
-      'rev_id' in target && marks.get(target.rev_id)?.undoneBy != null
-        ? `\n\nNote: it was already undone by revision #${marks.get(target.rev_id).undoneBy}.`
+      'label_id' in target && marks.get(target.label_id)?.undoneBy != null
+        ? `\n\nNote: it was already undone by label #${marks.get(target.label_id).undoneBy}.`
         : '';
     if (
       !confirm(
@@ -479,35 +487,12 @@ export async function mount(root, metafolder) {
       const result = await metafolder.log.revert(repo, target);
       const count = result.reverted_operations?.length ?? 0;
       const summary =
-        result.revision === null
+        result.label === null
           ? 'Nothing was reverted.'
-          : `Reverted ${describeTarget(target)} as revision #${result.revision} (${count} operation(s)).`;
+          : `Reverted ${describeTarget(target)} in label #${result.label} (${count} operation(s)).`;
       void statusBar.message([summary, ...result.notes].join(' · '), statusMessageMs);
       await refresh();
       void commands.invoke('metarecords:dirty');
-    } catch (error) {
-      await statusBar.error(error);
-    }
-  }
-
-  // Sets or clears a revision's label, turning it into a named checkpoint.
-  async function markCheckpoint() {
-    const rev = selectedRev();
-    if (rev === null) return;
-    const current = revisions.find((r) => r.id === rev);
-    const label = prompt(`Checkpoint label for revision #${rev} (empty to clear):`, current?.label ?? '');
-    if (label === null) return; // cancelled
-    try {
-      await daemon.call('PATCH', `/repos/${repo}/log/revisions/${rev}`, {
-        label: label === '' ? null : label,
-      });
-      void statusBar.message(
-        label === ''
-          ? `Cleared the label on revision #${rev}.`
-          : `Marked revision #${rev} as "${label}".`,
-        statusMessageMs,
-      );
-      await refresh();
     } catch (error) {
       await statusBar.error(error);
     }
@@ -538,15 +523,14 @@ export async function mount(root, metafolder) {
   byId(root, 'redo').addEventListener('click', () => void commands.invoke('log:redo'));
   revertButton.addEventListener('click', () => void revert());
   pruneButton.addEventListener('click', () => void prune());
-  checkpointButton.addEventListener('click', () => void markCheckpoint());
 
   // Reverting: what is selected by default, or a named widening of it. The
   // scope is an argument rather than sibling command names, so a keybinding
-  // reads as what it does (`log:revert revision`).
+  // reads as what it does (`log:revert label`).
   /** @type {Record<string, () => unknown>} */
   const REVERTS = {
     op: () => revertOperation(),
-    revision: () => revertRevision(),
+    label: () => revertRevision(),
   };
 
   void commands.register('log:revert', {
@@ -570,12 +554,6 @@ export async function mount(root, metafolder) {
     },
   });
 
-  void commands.register('log:mark', {
-    label: 'Log: set or clear the selected revision label',
-    reveal: true,
-    handler: markCheckpoint,
-  });
-
   /** @type {Record<string, () => unknown>} */
   const LOG_FLAGS = {
     watcher: () => toggleWatcher(),
@@ -586,7 +564,7 @@ export async function mount(root, metafolder) {
   };
 
   void commands.register('log:toggle', {
-    label: 'Log: toggle a view flag (the watcher’s revisions / the selected revision’s operations)',
+    label: 'Log: toggle a view flag (the watcher’s labels / the selected label’s operations)',
     args: [
       {
         name: 'flag',

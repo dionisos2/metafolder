@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/:repo/labels
+catalog: HTTP endpoint
+target: POST /repos/:repo/labels
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``create_label`` |

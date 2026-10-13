@@ -1,19 +1,24 @@
 title: Revert endpoints
-tags: [[Revert]]
+tags: Revert
 kind: reference
 audience: dev
 summary: GET /revert/plan, the single-shot POST /revert, and the coordinated start/commit/abort — and the target they share.
 
 |!Route |!Does |
-|<<cmd "GET /repos/:repo/revert/plan">> `?target_rev_id=…` or `target_op_ids=…` |what a revert would do; writes nothing, takes no lock |
+|<<cmd "GET /repos/:repo/revert/plan">> `?target_label_id=…` or `target_op_ids=…` |what a revert would do; writes nothing, takes no lock |
 |<<cmd "POST /repos/:repo/revert">> |writes and commits in one transaction |
 |<<cmd "POST /repos/:repo/revert/start">> |the coordinated form: takes the lock, fixes the target, answers the plan |
-|<<cmd "POST /repos/:repo/revert/commit">> |`{"apply": [ids], "label"?}` — writes what the client managed, releases the lock |
+|<<cmd "POST /repos/:repo/revert/commit">> |`{"apply": [ids]}` — writes what the client managed, releases the lock |
 |<<cmd "POST /repos/:repo/revert/abort">> |releases the lock, writes nothing → `{"head"}` |
 
-''The target'', the same everywhere: `{"rev_id": N}`, `{"rev_id": "head"}`, or
-`{"op_ids": [22, 23]}`; every member on HEAD's ancestry (`400` otherwise). Nothing
-blocks a target: the revert is applied onto the current state ([[Reverting onto the current state]]).
+''The target'', the same everywhere: `{"label_id": N}` — the label's operations and
+those of every label nested in it ([[Labels and contexts]]) — `{"label_id": "head"}` —
+the label of the newest operation — or `{"op_ids": [22, 23]}`. Nothing blocks a target:
+the revert is applied onto the current state ([[Reverting onto the current state]]).
+
+The revert writes in the request's context like any write: the label named in
+`X-Metafolder-Label`, or one of its own named after the target (`revert of label 12`,
+`revert of operation 7`) — so the log says what an undo undid ([[Log endpoints]]).
 
 !! The plan
 
@@ -22,7 +27,7 @@ blocks a target: the revert is applied onto the current state ([[Reverting onto 
  "operations": [{"id": 23, "op_type": "file_moved", "entity_uuid": "…", "field_name": "mfr_path",
                  "writes": "file_moved", "restores": [{"field_name": "mfr_path", "value_type": "tree_ref", …}],
                  "filesystem": {"action": "move", "from": "/repo/music/new.mp3", "to": "/repo/music/old.mp3"},
-                 "changed_since": {"op_id": 91, "rev_id": 40, "timestamp": …, "op_type": "file_moved", …}}]}
+                 "changed_since": {"op_id": 91, "label_id": 40, "timestamp": …, "op_type": "file_moved", …}}]}
 ```
 
 * `writes` — the type the revert would record ([[What a revert writes]]); `restores` — the state it would write, in snapshot form (empty: the cell is removed).
@@ -31,15 +36,16 @@ blocks a target: the revert is applied onto the current state ([[Reverting onto 
 
 !! POST /revert
 
-`{"target", "label"?, "skip_filesystem"?}` → `{"revision", "head",
+`{"target", "skip_filesystem"?}` → `{"label", "head",
 "reverted_operations", "skipped_operations": [{"op_id", "reason"}]}`. `skip_filesystem`
 leaves out the operations needing a file action instead of refusing — it never means
 "write the metadata anyway": a revert never records a change it knows untrue of the
-disk. With nothing left to apply it writes nothing (`revision: null`).
+disk. With nothing left to apply it writes nothing (`label: null`). `label` is the label
+the revert wrote in.
 
 |!Status |!When |
-|`400` |target off HEAD's ancestry; an `unknown` operation; the revert would leave two types under one name |
-|`404` |no such revision or operation — pruned, trimmed, or never there |
+|`400` |an `unknown` operation; the revert would leave two types under one name; a context label that does not exist or is the watcher's |
+|`404` |no such label or operation — pruned, trimmed, or never there |
 |`409` |a file action needed without `skip_filesystem`; recreating a metarecord whose uuid exists again |
 |`423` |a navigation lock is held |
 

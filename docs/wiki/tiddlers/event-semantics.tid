@@ -1,5 +1,5 @@
 title: Event semantics
-tags: [[Watcher]]
+tags: Watcher
 kind: reference
 audience: dev
 summary: What the flush does for each kind of filesystem event — and the cases where a literal reading would lose a metarecord: undone deletions, moves into new or just-moved directories, echoes.

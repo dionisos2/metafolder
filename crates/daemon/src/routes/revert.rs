@@ -4,11 +4,12 @@
 use super::*;
 use std::collections::HashSet;
 
-/// The set of operations to revert: a revision's, or an explicit list.
+/// The set of operations to revert: a label's — its children's included —
+/// or an explicit list.
 #[derive(Deserialize)]
 pub(super) struct RevertTarget {
     #[serde(default)]
-    rev_id: Option<serde_json::Value>,
+    label_id: Option<serde_json::Value>,
     #[serde(default)]
     op_ids: Option<Vec<i64>>,
 }
@@ -17,15 +18,13 @@ pub(super) struct RevertTarget {
 pub(super) struct RevertBody {
     target: RevertTarget,
     #[serde(default)]
-    label: Option<String>,
-    #[serde(default)]
     skip_filesystem: bool,
 }
 
 #[derive(Deserialize)]
 pub(super) struct RevertPlanParams {
     #[serde(default)]
-    target_rev_id: Option<String>,
+    target_label_id: Option<String>,
     #[serde(default)]
     target_op_ids: Option<String>,
 }
@@ -36,24 +35,25 @@ fn resolve_revert_target(
     head: Option<i64>,
     target: &RevertTarget,
 ) -> Result<Vec<crate::log::OpRow>, ApiError> {
-    let ops = match (&target.rev_id, &target.op_ids) {
-        (Some(rev), None) => {
-            let rev_id = match rev {
+    let ops = match (&target.label_id, &target.op_ids) {
+        (Some(label), None) => {
+            let label_id = match label {
                 serde_json::Value::String(s) if s == "head" => {
                     let head = head.ok_or_else(|| ApiError::not_found("the log is empty"))?;
                     conn.op(head)?
                         .ok_or_else(|| ApiError::not_found("HEAD names no operation"))?
-                        .rev_id
+                        .label_id
                 }
-                serde_json::Value::Number(n) => {
-                    n.as_i64().ok_or_else(|| ApiError::bad_request("rev_id must be an integer"))?
-                }
-                _ => return Err(ApiError::bad_request("rev_id must be a number or \"head\"")),
+                serde_json::Value::Number(n) => n
+                    .as_i64()
+                    .ok_or_else(|| ApiError::bad_request("label_id must be an integer"))?,
+                _ => return Err(ApiError::bad_request("label_id must be a number or \"head\"")),
             };
-            let ops = crate::revert::revision_ops(conn, rev_id)?;
+            let ops = crate::revert::label_ops(conn, label_id)?;
             if ops.is_empty() {
                 return Err(ApiError::not_found(format!(
-                    "revision {rev_id} does not exist, or was pruned or trimmed away"
+                    "label {label_id} holds no operation: it does not exist, or what it held \
+                     was pruned or trimmed away"
                 )));
             }
             ops
@@ -73,15 +73,36 @@ fn resolve_revert_target(
             ops.sort_by_key(|o| o.id);
             ops
         }
-        _ => return Err(ApiError::bad_request("the target needs exactly one of rev_id or op_ids")),
+        _ => {
+            return Err(ApiError::bad_request("the target needs exactly one of label_id or op_ids"))
+        }
     };
     Ok(ops)
+}
+
+/// The name of the label a revert opens when the request names none.
+fn revert_name(target: &RevertTarget) -> String {
+    match (&target.label_id, &target.op_ids) {
+        (Some(label), _) => {
+            format!("revert of label {}", label.as_str().unwrap_or(&label.to_string()))
+        }
+        (_, Some(ids)) => revert_name_of(ids),
+        _ => "revert".to_string(),
+    }
+}
+
+/// "revert of operation 12", "revert of 3 operations".
+fn revert_name_of(ids: &[i64]) -> String {
+    match ids {
+        [one] => format!("revert of operation {one}"),
+        many => format!("revert of {} operations", many.len()),
+    }
 }
 
 fn op_brief(op: &crate::log::OpRow) -> serde_json::Value {
     json!({
         "op_id": op.id,
-        "rev_id": op.rev_id,
+        "label_id": op.label_id,
         "op_type": op.op_type,
         "entity_uuid": hex(op.entity_uuid),
         "field_name": op.field_name,
@@ -107,9 +128,7 @@ fn revert_plan_json(
             crate::revert::Changed::No => serde_json::Value::Null,
             crate::revert::Changed::By(by) => {
                 let mut v = op_brief(&by);
-                if let Some(meta) = conn.revisions(&[by.rev_id])?.get(&by.rev_id) {
-                    v["timestamp"] = json!(meta.timestamp);
-                }
+                v["timestamp"] = json!(by.timestamp);
                 v
             }
             crate::revert::Changed::Unlogged => json!({}),
@@ -145,13 +164,13 @@ fn revert_plan_json(
         });
         if matches!(action, Some(crate::revert::FsAction::RestoreContent)) {
             // The trash correlation key: the version the record held before
-            // the whole revision, which is the only one
-            // anything outside it observed (doc "Trash, undo and redo").
+            // the whole label — one flush of the watcher — which is the only
+            // one anything outside it observed (doc "Trash, undo and redo").
             if let Some(v) = op.entity_version_before {
                 entry["entity_version_before"] = json!(v);
             }
-            if let Some(v) = conn.version_before_revision(op.rev_id, op.entity_uuid)? {
-                entry["entity_version_before_revision"] = json!(v);
+            if let Some(v) = conn.version_before_label(op.label_id, op.entity_uuid)? {
+                entry["entity_version_before_label"] = json!(v);
             }
         }
         operations.push(entry);
@@ -169,9 +188,9 @@ pub(super) async fn revert_plan(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     let target = RevertTarget {
-        // `head` is a legal rev_id here as it is in the body, so a plan and the
-        // revert it describes take the same target spelling.
-        rev_id: params.target_rev_id.as_ref().map(|s| match s.parse::<i64>() {
+        // `head` is a legal label_id here as it is in the body, so a plan and
+        // the revert it describes take the same target spelling.
+        label_id: params.target_label_id.as_ref().map(|s| match s.parse::<i64>() {
             Ok(n) => serde_json::Value::from(n),
             Err(_) => serde_json::Value::String(s.clone()),
         }),
@@ -228,26 +247,26 @@ pub(super) async fn revert(
         }
 
         if effective.is_empty() {
-            // Nothing left to apply: an empty revision would be a log entry
-            // claiming a change that did not happen.
+            // Nothing left to apply: writing nothing records nothing.
             return Ok(Json(json!({
-                "revision": serde_json::Value::Null,
+                "label": serde_json::Value::Null,
                 "head": head,
                 "reverted_operations": [],
                 "skipped_operations": skipped,
             })));
         }
 
-        let mut writer = repo_state.writer(&mut conn, body.label.clone())?;
+        let context = request_context().named(revert_name(&body.target));
+        let mut writer = repo_state.writer(&mut conn, context)?;
         let applied: Vec<i64> = effective.iter().map(|o| o.id).collect();
         crate::revert::apply(&mut writer, &effective)?;
-        let rev_id = writer.rev_id();
+        let label_id = writer.label_id();
         let effects = writer.effects();
         slowlog::timed("commit", || writer.commit())?;
         repo_state.settle(&conn, &effects)?;
         let new_head = crate::store::Log::head(&*conn)?;
         Ok(Json(json!({
-            "revision": rev_id,
+            "label": label_id,
             "head": new_head,
             "reverted_operations": applied,
             "skipped_operations": skipped,
@@ -320,8 +339,6 @@ pub(super) async fn revert_start(
 pub(super) struct RevertCommitBody {
     #[serde(default)]
     apply: Vec<i64>,
-    #[serde(default)]
-    label: Option<String>,
 }
 
 /// `POST /revert/commit`: writes the revert as one revision, releases the lock
@@ -353,22 +370,23 @@ pub(super) async fn revert_commit(
             let (kept, skipped) = narrow_to_applied(effective, &body.apply)?;
             if kept.is_empty() {
                 return Ok(json!({
-                    "revision": serde_json::Value::Null,
+                    "label": serde_json::Value::Null,
                     "head": head,
                     "reverted_operations": [],
                     "skipped_operations": skipped,
                 }));
             }
             let applied: Vec<i64> = kept.iter().map(|o| o.id).collect();
-            let mut writer = repo_state.writer(&mut conn, body.label.clone())?;
+            let mut writer =
+                repo_state.writer(&mut conn, request_context().named(revert_name_of(&locked)))?;
             crate::revert::apply(&mut writer, &kept)?;
-            let rev_id = writer.rev_id();
+            let label_id = writer.label_id();
             let effects = writer.effects();
             slowlog::timed("commit", || writer.commit())?;
             repo_state.settle(&conn, &effects)?;
             let new_head = crate::store::Log::head(&*conn)?;
             Ok(json!({
-                "revision": rev_id,
+                "label": label_id,
                 "head": new_head,
                 "reverted_operations": applied,
                 "skipped_operations": skipped,

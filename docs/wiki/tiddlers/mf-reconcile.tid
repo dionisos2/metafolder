@@ -1,5 +1,5 @@
 title: mf reconcile
-tags: [[CLI command]] [[Reconcile]]
+tags: [[CLI command]] Reconcile
 kind: reference
 summary: Reconcile the database with the filesystem
 

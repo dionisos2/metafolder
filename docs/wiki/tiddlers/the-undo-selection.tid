@@ -12,7 +12,7 @@ nothing moves back over the log, so nothing written since — the watcher's work
 Undo walks the log newest first for the newest revision ''the user wrote'' that still
 stands, and reverts it. A revision is ''not'' a candidate when:
 
-* it is the daemon's — `origin = watcher` exactly, not any set origin ([[Revisions and operations]]); failing that, when all its operations are watcher types. A `trash` revision ''is'' a candidate: you asked for it;
+* it is the daemon's — `origin = watcher` exactly, not any set origin ([[Operations and their origin]]); failing that, when all its operations are watcher types. A `trash` revision ''is'' a candidate: you asked for it;
 * it is ''itself'' a revert — an undo or a redo; undoing it would be a redo, and treating it as a candidate would make undo a two-state oscillation;
 * every one of its operations has already been undone;
 * it holds only `unknown` operations, which carry nothing to invert;

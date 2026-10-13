@@ -1,5 +1,5 @@
 title: mf path
-tags: [[CLI command]] [[Reconcile]]
+tags: [[CLI command]] Reconcile
 kind: reference
 summary: Print the filesystem path of a metarecord (walks the mfr_path chain)
 

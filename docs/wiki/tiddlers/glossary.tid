@@ -59,7 +59,7 @@ summary: Every term of metafolder in one line, with the note that defines it.
 !! History
 
 * ''Event log'' — the history of every write to a repository ([[Event log]]).
-* ''Operation'' — one atomic change; ''revision'' — the operations of one request ([[Revisions and operations]]).
+* ''Operation'' — one atomic change; ''revision'' — the operations of one request ([[Operations and their origin]]).
 * ''HEAD'' — the newest operation of the log ([[The operation log]]).
 * ''Revert'' — undoing one past revision in place, as a new revision ([[Revert]]).
 * ''Undo'' and ''redo'' — taking back the newest change you made, and bringing it back ([[Undo and redo]]).

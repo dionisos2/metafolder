@@ -4,9 +4,8 @@ kind: guide
 summary: Undo, redo, revert, label and prune from the GUI — confirmations before, files carried along, no questions while the repository is locked.
 
 * <<key "log:undo" Ctrl+z>> / <<key "log:redo" Ctrl+Shift+z>> — from anywhere: the same selection as `mf log undo`/`redo` ([[Undo and redo]]). Neither asks — the result is itself undoable.
-* <<key "log:revert" Shift+r>> — reverts what the log panel has selected: the revision, or the single operation under the cursor ("undo just this one field" in one key). A confirmation names how many operations it undoes, says when files will move and how many of them overwrite a later change ([[Reverting onto the current state]]), and warns when the target was already undone. <<key "log:revert op" Shift+o>> narrows from a revision row (asking which operation when there are several), <<key "log:revert revision" Shift+v>> widens back.
-* <<key "log:mark" Shift+l>> — sets or clears the selected revision's label.
-* `log:prune` — after a confirmation, prunes everything before the selected revision, for good ([[Pruning the log]]).
+* <<key "log:revert" Shift+r>> — reverts what the log panel has selected: the label, or the single operation under the cursor ("undo just this one field" in one key). A confirmation names how many operations it undoes, says when files will move and how many of them overwrite a later change ([[Reverting onto the current state]]), and warns when the target was already undone. <<key "log:revert op" Shift+o>> narrows from a label row (asking which operation when there are several), <<key "log:revert label" Shift+v>> widens back.
+* `log:prune` — after a confirmation, prunes everything before the selected label, for good ([[Pruning the log]]).
 
 ''Files are carried with the metadata.'' Every revert the GUI writes — undo and redo
 included — goes through the same code as the CLI (`core::navigation`): one atomic request

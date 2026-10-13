@@ -41,7 +41,7 @@ fn assert_same(a: &dyn metafolder_daemon::store::Store, b: &dyn metafolder_daemo
         assert_eq!(a.rows(uuid).unwrap(), b.rows(uuid).unwrap(), "rows of {uuid}");
     }
     let ids = |s: &dyn metafolder_daemon::store::Store| {
-        s.all_ops().unwrap().iter().map(|o| (o.id, o.rev_id)).collect::<Vec<_>>()
+        s.all_ops().unwrap().iter().map(|o| (o.id, o.label_id)).collect::<Vec<_>>()
     };
     assert_eq!(ids(a), ids(b), "the same log");
     assert_eq!(a.head().unwrap(), b.head().unwrap(), "the same HEAD");

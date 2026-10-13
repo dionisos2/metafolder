@@ -1,12 +1,12 @@
 title: $:/mf/gen/CLI command/mf log show
 catalog: CLI command
 target: mf log show
-summary: Show full details of one revision (a revision id, or HEAD)
+summary: Show full details of one label (a label id, or HEAD for the newest operation's)
 
 !! Reference
 
 ```
-Show full details of one revision (a revision id, or HEAD)
+Show full details of one label (a label id, or HEAD for the newest operation's)
 
 Usage: mf log show [OPTIONS] <TARGET>
 

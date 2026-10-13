@@ -1,5 +1,5 @@
 title: metarecord:reconcile
-tags: [[GUI command]] [[Reconcile]]
+tags: [[GUI command]] Reconcile
 kind: reference
 summary: Reconcile the selected metarecord's subtree (`watch`: start tracking it first)
 

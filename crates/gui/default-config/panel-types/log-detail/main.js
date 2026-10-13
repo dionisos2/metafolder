@@ -26,13 +26,13 @@ const PAGE = 100;
  * What the log panel publishes.
  * @typedef {{repo: string, rev_id: number, op_id: number|null}} LogEntry
  *
- * One operation of `GET /log/revisions/:rev_id`.
+ * One operation of `GET /log/labels/:id`.
  * @typedef {{id: number, op_type: string, entity_uuid: string,
- *            field_name: string|null, reverts_op_id: number|null,
+ *            field_name: string|null, reverts_op_id: number|null, origin?: string|null,
  *            snapshots_before: import('./snapshots.js').Snapshot[],
  *            snapshots_after: import('./snapshots.js').Snapshot[]}} Operation
  *
- * The revision part of the same response.
+ * The label part of the same response, as this panel shows it.
  * @typedef {{id: number, timestamp: number, label: string|null,
  *            origin: string|null, is_head: boolean,
  *            operation_count: number}} Revision
@@ -68,7 +68,7 @@ export async function mount(root, metafolder) {
   /** @param {number} offset */
   function url(offset) {
     if (!entry) throw new Error('no log entry selected');
-    const base = `/repos/${entry.repo}/log/revisions/${entry.rev_id}`;
+    const base = `/repos/${entry.repo}/log/labels/${entry.rev_id}`;
     return singleOp() ? `${base}?op=${entry.op_id}` : `${base}?offset=${offset}&limit=${PAGE}`;
   }
 
@@ -81,12 +81,23 @@ export async function mount(root, metafolder) {
       return;
     }
     try {
-      const body = /** @type {{revision: Revision, operations: Operation[]}} */ (
+      const body = /** @type {{label: {id: number, name: string, created: number,
+       *                       is_head: boolean, operation_count: number},
+       *                       operations: Operation[]}} */ (
         await daemon.call('GET', url(0))
       );
       if (mine !== generation) return;
-      revision = body.revision;
       operations = body.operations ?? [];
+      revision = {
+        id: body.label.id,
+        timestamp: body.label.created,
+        label: body.label.name,
+        origin: operations.length > 0 && operations.every((op) => op.origin === 'watcher')
+          ? 'watcher'
+          : null,
+        is_head: body.label.is_head,
+        operation_count: body.label.operation_count,
+      };
     } catch (error) {
       if (mine !== generation) return;
       revision = null;
@@ -232,12 +243,12 @@ export async function mount(root, metafolder) {
 
   function render() {
     wholeButton.hidden = entry?.op_id == null;
-    wholeButton.textContent = whole ? 'Selected operation only' : 'Whole revision';
+    wholeButton.textContent = whole ? 'Selected operation only' : 'Whole label';
     unchangedCheckbox.checked = showUnchanged;
     const has = revision !== null;
     placeholder.hidden = has;
     detail.hidden = !has;
-    if (!entry) placeholder.textContent = 'Select a revision in the log panel.';
+    if (!entry) placeholder.textContent = 'Select a label in the log panel.';
     if (!revision) {
       detail.replaceChildren();
       moreBox.hidden = true;
@@ -249,7 +260,7 @@ export async function mount(root, metafolder) {
       el(
         'div',
         { class: 'revision-head' },
-        el('span', { class: 'title' }, `Revision #${rev.id}`),
+        el('span', { class: 'title' }, `Label #${rev.id}`),
         rev.label && [' ', el('span', { class: 'label' }, rev.label)],
         rev.is_head && el('span', { class: 'badge head' }, 'HEAD'),
         rev.origin === 'watcher' &&
@@ -270,7 +281,7 @@ export async function mount(root, metafolder) {
     );
     moreBox.hidden = singleOp() || operations.length >= rev.operation_count;
     statusLine.textContent = singleOp()
-      ? `operation ${entry?.op_id} of revision #${rev.id}`
+      ? `operation ${entry?.op_id} of label #${rev.id}`
       : `${operations.length} of ${rev.operation_count} operation${
           rev.operation_count === 1 ? '' : 's'
         } shown`;

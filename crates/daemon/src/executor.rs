@@ -548,11 +548,11 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
         for (kind, group) in
             groups.into_iter().map(|(k, g)| (Some(k), g)).chain(sweep.map(|g| (None, g)))
         {
-            let mut writer = repo.writer(&mut conn, None)?;
-            // The filesystem's doing, not a client's (doc "Revisions and operations"): an arrival
-            // is a `create_metarecord` like any other, so
-            // the revision has to say where it came from.
-            writer.set_origin(log::ORIGIN_WATCHER)?;
+            // The filesystem's doing, not a client's (doc "Revisions and
+            // operations"): an arrival is a `create_metarecord` like any other,
+            // so the operations have to say where they came from — the
+            // watcher's context gives them its origin, under its own label.
+            let writer = repo.writer(&mut conn, log::WriteContext::Watcher)?;
             let mut apply = Apply {
                 report,
                 writer,

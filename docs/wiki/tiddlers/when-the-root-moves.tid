@@ -1,5 +1,5 @@
 title: When the root moves
-tags: [[Watcher]] Platform
+tags: Watcher Platform
 kind: reference
 summary: A repository whose root moved, vanished or was replaced is unloaded and listed as lost until it is loaded again where it is — never followed, never orphaned.
 

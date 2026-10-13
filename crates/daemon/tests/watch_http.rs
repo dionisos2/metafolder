@@ -186,7 +186,7 @@ async fn a_revert_that_restores_tracking_watches_again() {
         &app,
         "POST",
         &format!("/repos/{repo}/revert"),
-        Some(json!({"target": {"rev_id": "head"}})),
+        Some(json!({"target": {"label_id": "head"}})),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "revert failed: {body}");

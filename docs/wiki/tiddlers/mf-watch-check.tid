@@ -1,5 +1,5 @@
 title: mf watch check
-tags: [[CLI command]] [[Watcher]]
+tags: [[CLI command]] Watcher
 kind: reference
 summary: Report whether the watcher records a change at each path
 

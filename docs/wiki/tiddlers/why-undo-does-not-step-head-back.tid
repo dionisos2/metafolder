@@ -18,4 +18,4 @@ log is no longer a tree ([[Why the log stops being a tree]]).
 
 The origin a revision carries is what makes the distinction possible: the operation
 types cannot say it, since a file arriving is a creation like any other
-([[Revisions and operations]]).
+([[Operations and their origin]]).

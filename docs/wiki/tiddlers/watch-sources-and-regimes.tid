@@ -1,5 +1,5 @@
 title: Watch sources and regimes
-tags: [[Watcher]]
+tags: Watcher
 kind: reference
 summary: The budget regime places one inotify watch per eligible directory; the coverage regime (fanotify) covers whole filesystems — the rest of the pipeline is the same.
 

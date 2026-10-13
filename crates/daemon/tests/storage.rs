@@ -23,8 +23,8 @@ fn create(conn: &mut KvStore, fields: Vec<Field>) -> metafolder_core::metarecord
 /// Reverts the revision the newest operation belongs to, as one new revision.
 fn revert_last_revision(conn: &mut KvStore) {
     let head = conn.head().unwrap().unwrap();
-    let rev = conn.op(head).unwrap().unwrap().rev_id;
-    let ops = conn.revision_ops(rev).unwrap();
+    let rev = conn.op(head).unwrap().unwrap().label_id;
+    let ops = conn.label_ops(rev).unwrap();
     let mut w = Writer::begin(conn, None).unwrap();
     metafolder_daemon::revert::apply(&mut w, &ops).unwrap();
     w.commit().unwrap();
@@ -375,7 +375,6 @@ fn test_create_record_writes_log() {
     let op = &ops[0];
     assert_eq!(op.op_type, "create_metarecord");
     assert_eq!(op.entity_uuid, m.uuid);
-    assert_eq!(op.seq, 1);
 
     // After-snapshot contains the created field rows; no before rows.
     assert_eq!(conn.snapshots(op.id, false).unwrap().len(), 0);
@@ -527,16 +526,15 @@ fn test_multiple_ops_in_one_revision_chain() {
     w.set_field(m.uuid, "c", Value::Int(3)).unwrap();
     w.commit().unwrap();
 
-    // The three operations share one revision, with seq 1..3 and consecutive ids.
+    // The three operations share one label, with consecutive ids.
     let ops = ops_of_type(&conn, "set_field");
     assert_eq!(ops.len(), 3);
-    let rev = ops[0].rev_id;
-    assert!(ops.iter().all(|o| o.rev_id == rev));
-    assert_eq!(ops.iter().map(|o| o.seq).collect::<Vec<_>>(), vec![1, 2, 3]);
+    let rev = ops[0].label_id;
+    assert!(ops.iter().all(|o| o.label_id == rev));
     assert_eq!(ops[1].id, ops[0].id + 1);
     assert_eq!(ops[2].id, ops[1].id + 1);
 
-    let label = conn.revisions(&[rev]).unwrap().remove(&rev).and_then(|m| m.label);
+    let label = conn.labels(&[rev]).unwrap().remove(&rev).map(|m| m.name);
     assert_eq!(label.as_deref(), Some("batch"));
     assert_eq!(conn.head().unwrap(), Some(ops[2].id));
 
@@ -550,7 +548,7 @@ fn test_multiple_ops_in_one_revision_chain() {
 #[test]
 fn test_large_revision_chain_across_bulk_chunks() {
     // More operations than the incremental flush threshold (4096): the id
-    // sequence, seq numbering, snapshots and HEAD must stay correct across it.
+    // sequence, snapshots and HEAD must stay correct across it.
     const N: i64 = 5000;
     let (mut conn, _dir) = test_conn();
     let m = create(&mut conn, vec![]);
@@ -566,7 +564,6 @@ fn test_large_revision_chain_across_bulk_chunks() {
     let create_op = ops_of_type(&conn, "create_metarecord")[0].id;
     assert_eq!(ops[0].id, create_op + 1, "first op follows the previous HEAD");
     for (i, op) in ops.iter().enumerate() {
-        assert_eq!(op.seq, i as i64 + 1, "seq numbering");
         if i > 0 {
             assert_eq!(op.id, ops[i - 1].id + 1, "id sequence at op {i}");
         }

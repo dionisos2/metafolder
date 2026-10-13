@@ -21,15 +21,16 @@ another.
 |`forest` |field · parent · name bytes |uuid · row id |
 |`ops` |op id |the operation |
 |`snaps` |op id · after? · index |a snapshot row |
-|`ops_by_rev` |revision · seq · op id |— |
+|`ops_by_label` |label · op id |— |
 |`ops_by_entity` |uuid · op id |— |
-|`revisions` |revision id |timestamp · label · origin |
+|`labels` |label id |name · description · parent · created ([[Labels and contexts]]) |
+|`label_kids` |parent label · child label |— |
 |`watcher_ops`, `user_ops` |op id |— (the operations of each retention class, [[Automatic retention]]) |
 
 A record's rows ''of one field'' are one prefix of `field_cells`, so checking a
 candidate on the field searched reads those rows, not all of its record's — a real
 file carries a dozen `mfr_*` and metadata fields besides. `row_owner` holds that
-prefix, so a row is still addressed by its id alone. Row, operation and revision ids
+prefix, so a row is still addressed by its id alone. Row, operation and label ids
 come from counters in `meta` and are never reused; a row put back under its own id
 moves the counter past it.
 

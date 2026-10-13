@@ -1,5 +1,5 @@
 title: mf orphan list
-tags: [[CLI command]] [[Orphans]]
+tags: [[CLI command]] Orphans
 kind: reference
 summary: List orphaned metarecords (uuid, stale path) — the default
 

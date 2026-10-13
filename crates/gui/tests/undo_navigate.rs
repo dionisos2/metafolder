@@ -63,7 +63,7 @@ async fn spawn_stub(log: Value) -> (String, Stub) {
                     let refusal = Json(json!({"error": "the repository is locked"}));
                     return (StatusCode::INTERNAL_SERVER_ERROR, refusal).into_response();
                 }
-                Json(json!({"revision": 42, "reverted_operations": [9]})).into_response()
+                Json(json!({"label": 42, "reverted_operations": [9]})).into_response()
             }),
         )
         .with_state(stub.clone());
@@ -75,20 +75,23 @@ async fn spawn_stub(log: Value) -> (String, Stub) {
     (format!("http://127.0.0.1:{port}"), stub)
 }
 
-fn op(id: i64, rev_id: i64) -> Value {
-    json!({"id": id, "rev_id": rev_id, "seq": 0, "op_type": "set_field",
-           "entity_uuid": "00", "field_name": "x"})
+fn op(id: i64, label_id: i64) -> Value {
+    json!({"id": id, "label_id": label_id, "timestamp": id, "op_type": "set_field",
+           "entity_uuid": "00", "field_name": "x", "origin": null})
 }
 
-/// The same, undoing `reverts`.
-fn revert_op(id: i64, rev_id: i64, reverts: i64) -> Value {
-    let mut value = op(id, rev_id);
-    value["reverts_op_id"] = json!(reverts);
+/// One of the watcher's.
+fn watcher_op(id: i64, label_id: i64) -> Value {
+    let mut value = op(id, label_id);
+    value["origin"] = json!("watcher");
     value
 }
 
-fn rev(id: i64, origin: Option<&str>) -> Value {
-    json!({"id": id, "timestamp": id, "label": null, "origin": origin})
+/// The same, undoing `reverts`.
+fn revert_op(id: i64, label_id: i64, reverts: i64) -> Value {
+    let mut value = op(id, label_id);
+    value["reverts_op_id"] = json!(reverts);
+    value
 }
 
 fn timeouts() -> StatusTimeouts {
@@ -112,14 +115,13 @@ fn last_status(notifier: &RecordingNotifier) -> (String, String, Value) {
     )
 }
 
-/// The root metarecord (rev 1, the log's first operation), then two of the
-/// user's revisions: rev 2 = ops 2-3, rev 3 = op 4.
+/// The root metarecord (label 1, the log's first operation), then two of the
+/// user's writes: label 2 = ops 2-3, label 3 = op 4.
 fn user_log() -> Value {
     json!({
         "head": 4,
         "first": 1,
         "operations": [op(1, 1), op(2, 2), op(3, 2), op(4, 3)],
-        "revisions": [rev(1, None), rev(2, None), rev(3, None)],
     })
 }
 
@@ -128,8 +130,7 @@ fn log_with_the_watcher_on_top() -> Value {
     json!({
         "head": 3,
         "first": 1,
-        "operations": [op(1, 1), op(2, 2), op(3, 3)],
-        "revisions": [rev(1, None), rev(2, None), rev(3, Some("watcher"))],
+        "operations": [op(1, 1), op(2, 2), watcher_op(3, 3)],
     })
 }
 
@@ -140,10 +141,10 @@ async fn test_undo_reverts_the_newest_change_and_marks_dirty() {
 
     undo::navigate(gui.clone(), daemon, ws.clone(), false, timeouts()).await.unwrap();
 
-    assert_eq!(stub.reverts.lock().unwrap().as_slice(), [json!({"target": {"rev_id": 3}})]);
+    assert_eq!(stub.reverts.lock().unwrap().as_slice(), [json!({"target": {"label_id": 3}})]);
     assert_ne!(gui.get_var(&ws, "metarecords:dirty").unwrap(), Value::Null);
     let (text, kind, _) = last_status(&notifier);
-    assert!(text.starts_with("Revision 3 reverted as revision 42"), "status: {text}");
+    assert!(text.starts_with("Label 3 reverted in label 42"), "status: {text}");
     assert_eq!(kind, "info");
 }
 
@@ -154,11 +155,11 @@ async fn test_undo_under_the_watcher_reverts_the_users_change() {
 
     undo::navigate(gui, daemon, ws, false, timeouts()).await.unwrap();
 
-    assert_eq!(stub.reverts.lock().unwrap().as_slice(), [json!({"target": {"rev_id": 2}})]);
+    assert_eq!(stub.reverts.lock().unwrap().as_slice(), [json!({"target": {"label_id": 2}})]);
     assert_eq!(
         last_status(&notifier),
         (
-            "Revision 2 reverted as revision 42 (1 operations) — the daemon's own revisions \
+            "Label 2 reverted in label 42 (1 operations) — the daemon's own operations \
              were left in place."
                 .into(),
             "info".into(),
@@ -174,7 +175,7 @@ async fn test_an_undo_over_a_cell_changed_since_still_reverts() {
     let (url, stub) = spawn_stub(log_with_the_watcher_on_top()).await;
     *stub.revert_plan.lock().unwrap() = json!({
         "requires_lock": false,
-        "operations": [{"id": 2, "changed_since": {"op_id": 3, "rev_id": 7}}],
+        "operations": [{"id": 2, "changed_since": {"op_id": 3, "label_id": 7}}],
     });
     let (gui, daemon, ws, _notifier) = setup(&url);
 
@@ -185,7 +186,7 @@ async fn test_an_undo_over_a_cell_changed_since_still_reverts() {
 
 #[tokio::test]
 async fn test_undo_with_nothing_to_undo_says_so() {
-    let log = json!({"head": 1, "first": 1, "operations": [op(1, 1)], "revisions": [rev(1, None)]});
+    let log = json!({"head": 1, "first": 1, "operations": [op(1, 1)]});
     let (url, stub) = spawn_stub(log).await;
     let (gui, daemon, ws, notifier) = setup(&url);
 
@@ -203,18 +204,17 @@ async fn test_redo_reverts_the_undo_across_the_watchers_work() {
     let log = json!({
         "head": 4,
         "first": 1,
-        "operations": [op(1, 1), op(2, 2), revert_op(3, 3, 2), op(4, 4)],
-        "revisions": [rev(1, None), rev(2, None), rev(3, None), rev(4, Some("watcher"))],
+        "operations": [op(1, 1), op(2, 2), revert_op(3, 3, 2), watcher_op(4, 4)],
     });
     let (url, stub) = spawn_stub(log).await;
     let (gui, daemon, ws, notifier) = setup(&url);
 
     undo::navigate(gui.clone(), daemon, ws.clone(), true, timeouts()).await.unwrap();
 
-    assert_eq!(stub.reverts.lock().unwrap().as_slice(), [json!({"target": {"rev_id": 3}})]);
+    assert_eq!(stub.reverts.lock().unwrap().as_slice(), [json!({"target": {"label_id": 3}})]);
     assert_ne!(gui.get_var(&ws, "metarecords:dirty").unwrap(), Value::Null);
     let text = last_status(&notifier).0;
-    assert!(text.starts_with("Revision 3 reverted as revision 42"), "status: {text}");
+    assert!(text.starts_with("Label 3 reverted in label 42"), "status: {text}");
 }
 
 #[tokio::test]

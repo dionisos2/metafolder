@@ -70,8 +70,8 @@ pub async fn navigate(
             gui.post_status(&ws_id, "Nothing to redo.", "info", Some(timeouts.message_ms))?;
             Ok(())
         }
-        RedoPlan::Revert { rev_id, ops } => {
-            revert(&gui, &daemon, &ws_id, &repo, rev_id, ops, &timeouts).await
+        RedoPlan::Revert { label_id, ops } => {
+            revert(&gui, &daemon, &ws_id, &repo, label_id, ops, &timeouts).await
         }
     }
 }
@@ -89,8 +89,8 @@ async fn undo(
             gui.post_status(&ws_id, "Nothing to undo.", "info", Some(timeouts.message_ms))?;
             Ok(())
         }
-        UndoPlan::Revert { rev_id, ops } => {
-            revert(&gui, &daemon, &ws_id, &repo, rev_id, ops, &timeouts).await
+        UndoPlan::Revert { label_id, ops } => {
+            revert(&gui, &daemon, &ws_id, &repo, label_id, ops, &timeouts).await
         }
     }
 }
@@ -158,17 +158,17 @@ async fn revert(
     daemon: &Arc<DaemonProxy>,
     ws_id: &str,
     repo: &str,
-    rev_id: i64,
+    label_id: i64,
     ops: Option<Vec<i64>>,
     timeouts: &crate::commands::StatusTimeouts,
 ) -> Result<(), String> {
     let target = match &ops {
         Some(ops) => json!({ "op_ids": ops }),
-        None => json!({ "rev_id": rev_id }),
+        None => json!({ "label_id": label_id }),
     };
     let result = blocking(daemon, repo, move |repo, ui| {
         let plan = navigation::revert_plan(repo, &target)?;
-        let request = RevertRequest { target: &target, metadata_only: false, label: None };
+        let request = RevertRequest { target: &target, metadata_only: false };
         navigation::revert(repo, &request, &plan, &GUI_POLICIES, ui)
     })
     .await;
@@ -177,11 +177,11 @@ async fn revert(
         Err(message) => return report(gui, ws_id, &message, timeouts),
     };
     let count = response["reverted_operations"].as_array().map(|a| a.len()).unwrap_or(0);
-    let summary = match response["revision"].as_i64() {
+    let summary = match response["label"].as_i64() {
         None => "Nothing was reverted.".to_string(),
-        Some(new_rev) => format!(
-            "Revision {rev_id} reverted as revision {new_rev} ({count} operations) — \
-             the daemon's own revisions were left in place."
+        Some(new_label) => format!(
+            "Label {label_id} reverted in label {new_label} ({count} operations) — \
+             the daemon's own operations were left in place."
         ),
     };
     finish(gui, ws_id, &with_notes(summary, &notes), timeouts)
@@ -221,7 +221,7 @@ pub async fn log_navigate(
 
 /// The log panel's `log:revert`: writes the inverse of `target` at HEAD, files
 /// included (`core::navigation::revert`). Answers the daemon's revert response
-/// (`revision`, `reverted_operations`, `skipped_operations`) with the `notes`
+/// (`label`, `reverted_operations`, `skipped_operations`) with the `notes`
 /// the file actions left. The panel reads the plan and confirms an overwrite
 /// of a cell changed since before it gets here.
 #[tauri::command]
@@ -232,7 +232,7 @@ pub async fn log_revert(
 ) -> Result<Value, String> {
     let (mut response, notes) = blocking(&app.daemon, &repo, move |repo, ui| {
         let plan = navigation::revert_plan(repo, &target)?;
-        let request = RevertRequest { target: &target, metadata_only: false, label: None };
+        let request = RevertRequest { target: &target, metadata_only: false };
         navigation::revert(repo, &request, &plan, &GUI_POLICIES, ui)
     })
     .await?;

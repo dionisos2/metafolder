@@ -1,17 +1,21 @@
-title: Revisions and operations
+title: Operations and their origin
 tags: [[Event log]]
 kind: reference
-aliases: revision operation op_type origin label
-summary: An operation is one atomic change; a revision groups the operations of one request, with its time, an optional label and who asked for it.
+aliases: revision operation op_type origin
+summary: An operation is one atomic change, with when it was written, who asked for it, and the label it was written in.
 
 An ''operation'' is one atomic change — setting one field on one metarecord. The log is
-the sequence of them, in the order they were written ([[The operation log]]).
+the sequence of them, in the order they were written ([[The operation log]]). Each one
+carries when it was written, its ''origin'' (below) and its innermost ''label'' — the
+name of the work it belongs to ([[Labels and contexts]]).
 
-A ''revision'' groups the operations of one request. Most hold one operation (a field
+One request writes its operations in one transaction, and in one label: the one the
+client named, or one the request opens for itself. Most hold one operation (a field
 edited); batch commands make large ones: a set over K matches is K operations, a
 reconcile creating M files M, a watcher `Remove` of a directory with N descendants N+1
-`file_deleted`. The revision is what undo takes back; a revert can take a whole revision
-or some of its operations ([[Revert]]).
+`file_deleted`. Until October 2026 a request's operations were a ''revision''; the
+labels replaced them, and the word survives in older notes and code as "what one write
+recorded". A revert takes a label — its children included — or some operations ([[Revert]]).
 
 !! Operation types
 
@@ -34,25 +38,20 @@ otherwise only the metadata comes back, and the truth is written again right aft
 
 !! Origin
 
-A revision records ''who asked for it'' — `origin`:
+An operation records ''who asked for it'' — `origin`:
 
-* `watcher` — written by the daemon on the filesystem's behalf: the watcher's flush;
+* `watcher` — written by the daemon on the filesystem's behalf: the watcher's flush, in a label of its own under the watcher's ([[Labels and contexts]]);
 * `trash` — the metarecord deletion a trashing writes ([[POST /repos/:repo/metarecords/trash]]);
 * none — every other write a client requested.
 
 The daemon sets it from ''which endpoint was called'', never from a value a client
 sends: a client able to name its origin could pass its writes off as the daemon's, out
-of undo's reach. It is the revision that carries it because the operation types cannot:
-a file ''arriving'' is a `create_metarecord` plus field writes, indistinguishable by type
-from a metarecord you created.
+of undo's reach — which is also why no client may write under the watcher's label. The
+operation carries it because its type cannot: a file ''arriving'' is a
+`create_metarecord` plus field writes, indistinguishable by type from a metarecord you
+created. Retention counts the operations of each origin apart ([[Automatic retention]]).
 
-Only `watcher` puts a revision out of undo's reach — not "any origin that is set":
+Only `watcher` puts an operation out of undo's reach — not "any origin that is set":
 `trash` exists so a client deciding whether to bring bytes back can tell a trashing from
-an ordinary deletion, while it stays an ordinary, undoable revision
-([[Trash, undo and redo]]). The GUI's [[log panel]] dims the watcher's revisions.
-
-!! Label
-
-A revision may carry a ''label'', a human name that serves as a prune target: the most
-recent revision carrying it (labels are not unique). Set it with the write, or later
-(`PATCH /log/revisions/:id`).
+an ordinary deletion, while it stays an ordinary, undoable write
+([[Trash, undo and redo]]). The GUI's [[log panel]] dims the watcher's operations.

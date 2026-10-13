@@ -1,0 +1,7 @@
+title: POST /repos/:repo/labels
+tags: [[HTTP endpoint]] [[Log endpoints]]
+kind: reference
+audience: dev
+summary: Opens a label, a context the client's writes then name in `X-Metafolder-Label`.
+
+Bodies, answers and errors: [[Log endpoints]]; what a label is: [[Labels and contexts]].

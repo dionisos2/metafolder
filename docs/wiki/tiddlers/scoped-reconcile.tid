@@ -1,5 +1,5 @@
 title: Scoped reconcile
-tags: [[Reconcile]]
+tags: Reconcile
 kind: reference
 summary: A reconcile of one metarecord's subtree creates and refreshes there, but does no fingerprint or similarity matching.
 

@@ -1,5 +1,5 @@
 title: Filesystem coordination
-tags: [[Revert]]
+tags: Revert
 kind: reference
 summary: The daemon says which file action each operation of a revert needs; the client carries it out — move, restore from the trash, send back to it — or leaves the operation out.
 
@@ -14,15 +14,15 @@ operation of a revert it says what undoing it would take — `filesystem.action`
 |`trash_content` |taking back the undo of a trashing (a redo) |sends the file back to the trash, in a new entry, before the revert deletes the metarecord |
 
 The op types cannot tell the trash cases apart: a trashing's `delete_metarecord` is known
-by its revision's `origin = trash`, but its undo is an ordinary-looking
+by its `origin = trash`, but its undo is an ordinary-looking
 `create_metarecord`, and the redo of that an ordinary deletion — the daemon follows their
 `reverts_op_id` chain back to the trashing. A trash entry is found by ''the metarecord it
 holds'', not by an id recorded on the operation: an undo consumes the entry and a redo
 makes a new one, so a recorded id would name something gone. Only one live entry can hold
 a metarecord. For `file_deleted`/`file_modified` the entry is matched by metarecord and
-''the version before the revision'' (`entity_version_before_revision` — the first
-operation's `entity_version_before` by `seq`, since versions are hashes and have no
-order).
+''the version before the watcher's flush'' (`entity_version_before_label` — the
+`entity_version_before` of the first operation on it in the flush's label, since
+versions are hashes and have no order).
 
 ''Leaving an operation out is free.'' An action the client could not carry out — no trash
 entry left, a file not where the move expects it under the `skip` policy — leaves that

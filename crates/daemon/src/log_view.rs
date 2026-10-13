@@ -15,16 +15,17 @@ use uuid::Uuid;
 
 use crate::log::OpRow;
 use crate::rows;
-use crate::store::{Log, RevisionMeta};
+use crate::store::{LabelMeta, Log};
 
 /// One log listing request.
 #[derive(Debug, Clone, Default)]
 pub struct LogQuery {
     /// Cap on the number of *operations* returned (the most recent ones).
     pub limit: Option<usize>,
-    /// Cap on the number of *revisions* returned — whole ones, unless `limit`
-    /// cuts the oldest (then marked `partial`).
-    pub revisions: Option<usize>,
+    /// Cap on the number of *labels* returned, counted by the operations'
+    /// innermost ones — whole ones, unless `limit` cuts the oldest (then
+    /// marked `partial`).
+    pub labels: Option<usize>,
     pub entity: Option<Uuid>,
     pub since: Option<i64>,
     pub until: Option<i64>,
@@ -36,47 +37,45 @@ pub fn listing(log: &dyn Log, q: &LogQuery) -> Result<serde_json::Value> {
     let head = log.head()?;
     let ops = select_ops(log, q, head)?;
 
-    // The revisions of the operations in hand — never the whole table. A
-    // window of fifty operations must not pay for the log behind it
-    // (doc "Performance testing").
-    let rev_meta = revision_meta(log, ops.iter().map(|op| op.rev_id))?;
+    // The labels of the operations in hand and their ancestors — never the
+    // whole table. A window of fifty operations must not pay for the log
+    // behind it (doc "Performance testing").
+    let labels = labels_with_ancestors(log, ops.iter().map(|op| op.label_id))?;
 
-    // A revision whose first operation is not in the window was cut by the
-    // operation bound (only the oldest can be: the window keeps the newest).
-    // Its operations are numbered `seq` 1.. in order, so the newest one shown
-    // says how many it holds in all. Not under a metarecord filter, which
-    // leaves out most of every revision on purpose.
-    let mut seqs: HashMap<i64, (i64, i64)> = HashMap::new();
+    // A label whose oldest operation of its own is not in the window was cut
+    // by the operation bound (only the oldest can be: the window keeps the
+    // newest). Not under a metarecord filter, which leaves out most of every
+    // label on purpose. One key per label.
+    let mut oldest_shown: HashMap<i64, i64> = HashMap::new();
     for op in ops.iter().filter(|_| q.entity.is_none()) {
-        let (lo, hi) = seqs.entry(op.rev_id).or_insert((op.seq, op.seq));
-        *lo = (*lo).min(op.seq);
-        *hi = (*hi).max(op.seq);
+        let first = oldest_shown.entry(op.label_id).or_insert(op.id);
+        *first = (*first).min(op.id);
+    }
+    let mut partial = HashSet::new();
+    for (&label, &shown) in &oldest_shown {
+        if log.label_first_op(label)?.is_some_and(|first| first < shown) {
+            partial.insert(label);
+        }
     }
 
     let mut op_values = Vec::with_capacity(ops.len());
-    let mut seen_revs = HashSet::new();
-    let mut revisions = Vec::new();
     for op in &ops {
         op_values.push(op_json(log, op, q.include_snapshots)?);
-        if seen_revs.insert(op.rev_id) {
-            if let Some(m) = rev_meta.get(&op.rev_id) {
-                let mut rev = json!({
-                    "id": op.rev_id, "timestamp": m.timestamp, "label": m.label, "origin": m.origin,
-                });
-                if let Some(&(_, hi)) = seqs.get(&op.rev_id).filter(|(lo, _)| *lo > 1) {
-                    rev["partial"] = json!(true);
-                    rev["op_count"] = json!(hi);
-                }
-                revisions.push(rev);
-            }
+    }
+    let mut label_values = Vec::with_capacity(labels.len());
+    for (id, meta) in &labels {
+        let mut value = label_json(*id, meta);
+        if partial.contains(id) {
+            value["partial"] = json!(true);
         }
+        label_values.push(value);
     }
 
     // Repository-wide totals, so a client showing a bounded window (the GUI log
     // panel fetches only the most recent `limit` operations) can still report
     // how much log there is. Two counts off the primary keys — not the size of
     // the returned window, and unaffected by `limit`.
-    let (total_operations, total_revisions) = log.counts()?;
+    let (total_operations, total_labels) = log.counts()?;
 
     Ok(json!({
         "head": head,
@@ -84,10 +83,42 @@ pub fn listing(log: &dyn Log, q: &LogQuery) -> Result<serde_json::Value> {
         // operation a prune left (doc "The undo selection").
         "first": log.first_op()?,
         "operations": op_values,
-        "revisions": revisions,
+        "labels": label_values,
         "total_operations": total_operations,
-        "total_revisions": total_revisions,
+        "total_labels": total_labels,
     }))
+}
+
+/// One label, in the shape every response uses (doc "Log endpoints").
+pub fn label_json(id: i64, meta: &LabelMeta) -> serde_json::Value {
+    json!({
+        "id": id,
+        "name": meta.name,
+        "description": meta.description,
+        "parent": meta.parent,
+        "created": meta.created,
+    })
+}
+
+/// The labels `ids` name and all their ancestors, by id — each read once.
+pub fn labels_with_ancestors(
+    log: &dyn Log,
+    ids: impl Iterator<Item = i64>,
+) -> Result<std::collections::BTreeMap<i64, LabelMeta>> {
+    let mut out = std::collections::BTreeMap::new();
+    let mut todo: Vec<i64> = ids.collect::<HashSet<_>>().into_iter().collect();
+    while !todo.is_empty() {
+        let wanted: Vec<i64> = todo.drain(..).filter(|id| !out.contains_key(id)).collect();
+        for (id, meta) in log.labels(&wanted)? {
+            if let Some(parent) = meta.parent {
+                if !out.contains_key(&parent) {
+                    todo.push(parent);
+                }
+            }
+            out.insert(id, meta);
+        }
+    }
+    Ok(out)
 }
 
 /// The operations the request selects: the log, filtered, and bounded to what
@@ -104,7 +135,7 @@ fn select_ops(log: &dyn Log, q: &LogQuery, head: Option<i64>) -> Result<Vec<OpRo
     let Some(initial) = walk_budget(q) else {
         // Unbounded: read the whole log, filter it, and answer.
         let mut ops = log.all_ops()?;
-        filter_ops(log, q, &mut ops)?;
+        filter_ops(q, &mut ops);
         return Ok(ops);
     };
     let mut budget = initial;
@@ -112,7 +143,7 @@ fn select_ops(log: &dyn Log, q: &LogQuery, head: Option<i64>) -> Result<Vec<OpRo
         let mut ops = log.ops_back(head, Some(budget))?;
         let exhausted = ops.len() < budget;
         ops.reverse(); // oldest first
-        filter_ops(log, q, &mut ops)?;
+        filter_ops(q, &mut ops);
         if exhausted || satisfied(q, &ops) {
             bound_ops(q, &mut ops);
             return Ok(ops);
@@ -122,63 +153,57 @@ fn select_ops(log: &dyn Log, q: &LogQuery, head: Option<i64>) -> Result<Vec<OpRo
 }
 
 /// Drops the operations the request does not select: another metarecord's, or
-/// one whose revision falls outside the time window.
-fn filter_ops(log: &dyn Log, q: &LogQuery, ops: &mut Vec<OpRow>) -> Result<()> {
+/// one written outside the time window.
+fn filter_ops(q: &LogQuery, ops: &mut Vec<OpRow>) {
     if let Some(filter) = q.entity {
         ops.retain(|op| op.entity_uuid == filter);
     }
-    if q.since.is_some() || q.until.is_some() {
-        let meta = revision_meta(log, ops.iter().map(|op| op.rev_id))?;
-        ops.retain(|op| {
-            let ts = meta.get(&op.rev_id).map(|m| m.timestamp).unwrap_or(0);
-            q.since.is_none_or(|s| ts >= s) && q.until.is_none_or(|u| ts <= u)
-        });
-    }
-    Ok(())
+    ops.retain(|op| {
+        q.since.is_none_or(|s| op.timestamp >= s) && q.until.is_none_or(|u| op.timestamp <= u)
+    });
 }
 
 /// Whether the walk so far already holds everything the request will return:
 /// either bound reached is enough, the answer being trimmed by both.
 ///
-/// A revision bound alone needs one revision more than it returns: the oldest
-/// one in the walk may be cut in half, and without an operation bound a
-/// revision is shown whole. With one, the operations are what is bounded —
-/// a reconcile's revision holds tens of thousands — and the revision it cuts
-/// is marked `partial`.
+/// A label bound alone needs one label more than it returns: the oldest one
+/// in the walk may be cut in half, and without an operation bound a label is
+/// shown whole. With one, the operations are what is bounded — a reconcile's
+/// label holds tens of thousands — and the label it cuts is marked `partial`.
 fn satisfied(q: &LogQuery, ops: &[OpRow]) -> bool {
     let by_limit = q.limit.is_some_and(|l| ops.len() >= l);
-    let by_revisions = q.revisions.is_some_and(|r| distinct_revisions(ops) > r);
-    by_limit || by_revisions
+    let by_labels = q.labels.is_some_and(|r| distinct_labels(ops) > r);
+    by_limit || by_labels
 }
 
-fn distinct_revisions(ops: &[OpRow]) -> usize {
-    ops.iter().map(|op| op.rev_id).collect::<HashSet<_>>().len()
+fn distinct_labels(ops: &[OpRow]) -> usize {
+    ops.iter().map(|op| op.label_id).collect::<HashSet<_>>().len()
 }
 
 /// Trims the selection to what was asked for: the most recent `limit`
-/// operations, then the most recent `revisions` revisions — whole ones, but
-/// for the oldest, which `limit` may have cut (and `listing` marks).
+/// operations, then the most recent `labels` labels — whole ones, but for
+/// the oldest, which `limit` may have cut (and `listing` marks).
 fn bound_ops(q: &LogQuery, ops: &mut Vec<OpRow>) {
     if let Some(limit) = q.limit {
         if ops.len() > limit {
             ops.drain(..ops.len() - limit);
         }
     }
-    if let Some(max) = q.revisions {
-        let kept = newest_revisions(ops, max);
-        ops.retain(|op| kept.contains(&op.rev_id));
+    if let Some(max) = q.labels {
+        let kept = newest_labels(ops, max);
+        ops.retain(|op| kept.contains(&op.label_id));
     }
 }
 
-/// The ids of the `max` most recent revisions present in `ops` (oldest first).
-fn newest_revisions(ops: &[OpRow], max: usize) -> HashSet<i64> {
+/// The ids of the `max` most recent labels present in `ops`.
+fn newest_labels(ops: &[OpRow], max: usize) -> HashSet<i64> {
     let mut kept = HashSet::new();
     for op in ops.iter().rev() {
-        if !kept.contains(&op.rev_id) {
+        if !kept.contains(&op.label_id) {
             if kept.len() == max {
                 break;
             }
-            kept.insert(op.rev_id);
+            kept.insert(op.label_id);
         }
     }
     kept
@@ -187,42 +212,29 @@ fn newest_revisions(ops: &[OpRow], max: usize) -> HashSet<i64> {
 /// How much the backward read may take on its first attempt, or `None` when the
 /// request is unbounded.
 fn walk_budget(q: &LogQuery) -> Option<usize> {
-    match (q.limit, q.revisions) {
+    match (q.limit, q.labels) {
         (None, None) => None,
         (Some(l), None) => Some(l.max(1)),
-        (None, Some(r)) => Some(r.saturating_mul(OPS_PER_REVISION).max(1)),
-        (Some(l), Some(r)) => Some(l.max(r.saturating_mul(OPS_PER_REVISION)).max(1)),
+        (None, Some(r)) => Some(r.saturating_mul(OPS_PER_LABEL).max(1)),
+        (Some(l), Some(r)) => Some(l.max(r.saturating_mul(OPS_PER_LABEL)).max(1)),
     }
 }
 
-/// Operations assumed per revision when a request is bounded by revisions. A
-/// revision that holds more (a reconcile writes thousands) simply costs another
-/// round of the walk.
-const OPS_PER_REVISION: usize = 8;
+/// Operations assumed per label when a request is bounded by labels. A label
+/// that holds more (a reconcile writes thousands) simply costs another round
+/// of the walk.
+const OPS_PER_LABEL: usize = 8;
 
 /// How much wider each round of the walk is than the one before.
 const GROWTH: usize = 8;
-
-/// What a listing needs of a revision: when it was written, its label, and who
-/// wrote it (`origin`).
-/// The metadata of the revisions `ids` name (each once).
-fn revision_meta(
-    log: &dyn Log,
-    ids: impl Iterator<Item = i64>,
-) -> Result<HashMap<i64, RevisionMeta>> {
-    let unique: Vec<i64> = {
-        let mut seen = HashSet::new();
-        ids.filter(|id| seen.insert(*id)).collect()
-    };
-    log.revisions(&unique)
-}
 
 /// One operation, in the shape every `/log` response uses (doc "Log endpoints").
 pub fn op_json(log: &dyn Log, op: &OpRow, include_snapshots: bool) -> Result<serde_json::Value> {
     let mut value = json!({
         "id": op.id,
-        "rev_id": op.rev_id,
-        "seq": op.seq,
+        "label_id": op.label_id,
+        "timestamp": op.timestamp,
+        "origin": op.origin,
         "op_type": op.op_type,
         "entity_uuid": op.entity_uuid.as_simple().to_string(),
         "field_name": op.field_name,

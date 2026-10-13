@@ -19,9 +19,10 @@
 //! | forest        | field · parent · name bytes      | uuid · row id             |
 //! | ops           | op id                            | the operation             |
 //! | snaps         | op id · after? · index           | a snapshot row            |
-//! | ops_by_rev    | revision · seq · op id           | —                         |
+//! | ops_by_label  | label · op id                    | —                         |
 //! | ops_by_entity | uuid · op id                     | —                         |
-//! | revisions     | revision id                      | timestamp · label · origin|
+//! | labels        | label id                         | name · description · parent · created |
+//! | label_kids    | parent label · child label       | —                         |
 //! | watcher_ops   | op id                            | —                         |
 //! | user_ops      | op id                            | —                         |
 //!
@@ -38,7 +39,11 @@
 //! "Automatic retention"): their sizes are B-tree statistics and their first
 //! keys the oldest operations of each.
 //!
-//! Row ids, operation ids and revision ids are allocated from counters in
+//! Operations are grouped by nested labels (doc "Labels and contexts"): each
+//! carries its innermost one, and `label_kids` holds the nesting. The label
+//! the watcher's flushes hang under is `watcher_label` in `meta`.
+//!
+//! Row ids, operation ids and label ids are allocated from counters in
 //! `meta` and never reused; a row put back under its own id moves the counter
 //! past it.
 
@@ -57,7 +62,7 @@ use uuid::Uuid;
 use crate::error::DomainError;
 use crate::log::{OpRow, Retention};
 use crate::rows::{self, FieldRow, RawValue, TreeRow};
-use crate::store::{Begin, Log, NewOp, Questions, RevisionMeta, Rows, WriteTxn};
+use crate::store::{Begin, LabelMeta, Log, NewOp, Questions, Rows, WriteTxn};
 
 mod derived;
 mod source;
@@ -80,9 +85,10 @@ struct Tables {
     forest: Db,
     ops: Db,
     snaps: Db,
-    ops_by_rev: Db,
+    ops_by_label: Db,
     ops_by_entity: Db,
-    revisions: Db,
+    labels: Db,
+    label_kids: Db,
     watcher_ops: Db,
     user_ops: Db,
     // Derived (see `derived`).
@@ -156,8 +162,8 @@ fn cell_prefix(uuid: &[u8], field: &str) -> Vec<u8> {
 /// The version of the primary layout this code writes, `layout` in `meta`
 /// (absent: the first one, rows keyed `uuid · row id` in `cells`; 2: the
 /// history tree, operations chained to a parent; 3: the sequence, before the
-/// operations were split by origin).
-const LAYOUT: i64 = 4;
+/// operations were split by origin; 4: operations grouped by revision).
+const LAYOUT: i64 = 5;
 
 /// A name inside a composite key: escaped, then terminated.
 fn name_key(name: &str) -> Vec<u8> {
@@ -304,10 +310,11 @@ fn dec_row(b: &[u8]) -> Result<FieldRow> {
     Ok(FieldRow { id: r.int()?, name: r.string()?, value: get_value(&mut r)? })
 }
 
-fn enc_op(op: &NewOp, rev: i64, seq: i64) -> Vec<u8> {
+fn enc_op(op: &NewOp, label: i64, timestamp: i64) -> Vec<u8> {
     let mut out = Out::default();
-    out.int(rev)
-        .int(seq)
+    out.int(label)
+        .int(timestamp)
+        .opt_bytes(op.origin.as_deref().map(str::as_bytes))
         .bytes(op.op_type.as_str().as_bytes())
         .bytes(op.entity.as_bytes())
         .opt_int(op.version_before.map(|v| v as i64))
@@ -317,34 +324,46 @@ fn enc_op(op: &NewOp, rev: i64, seq: i64) -> Vec<u8> {
     out.0
 }
 
-/// An operation, without its revision's origin (the caller adds it).
 fn dec_op(id: i64, b: &[u8]) -> Result<OpRow> {
     let mut r = In(b);
     Ok(OpRow {
         id,
-        rev_id: r.int()?,
-        seq: r.int()?,
+        label_id: r.int()?,
+        timestamp: r.int()?,
+        origin: r.opt_string()?,
         op_type: r.string()?,
         entity_uuid: uuid_of(r.bytes()?),
         entity_version_before: r.opt_int()?.map(|v| v as u64),
         entity_version_after: r.opt_int()?.map(|v| v as u64),
         field_name: r.opt_string()?,
         reverts_op_id: r.opt_int()?,
-        origin: None,
     })
 }
 
-fn enc_revision(m: &RevisionMeta) -> Vec<u8> {
+/// An operation's timestamp, from its stored form (the second field).
+fn op_timestamp(v: &[u8]) -> Result<i64> {
+    let mut r = In(v);
+    r.int()?;
+    r.int()
+}
+
+fn enc_label(m: &LabelMeta) -> Vec<u8> {
     let mut out = Out::default();
-    out.int(m.timestamp)
-        .opt_bytes(m.label.as_deref().map(str::as_bytes))
-        .opt_bytes(m.origin.as_deref().map(str::as_bytes));
+    out.bytes(m.name.as_bytes())
+        .opt_bytes(m.description.as_deref().map(str::as_bytes))
+        .opt_int(m.parent)
+        .int(m.created);
     out.0
 }
 
-fn dec_revision(b: &[u8]) -> Result<RevisionMeta> {
+fn dec_label(b: &[u8]) -> Result<LabelMeta> {
     let mut r = In(b);
-    Ok(RevisionMeta { timestamp: r.int()?, label: r.opt_string()?, origin: r.opt_string()? })
+    Ok(LabelMeta {
+        name: r.string()?,
+        description: r.opt_string()?,
+        parent: r.opt_int()?,
+        created: r.int()?,
+    })
 }
 
 /// The map a store opens on at the least: an address-space reservation, not
@@ -471,9 +490,10 @@ impl KvStore {
             forest: db("forest")?,
             ops: db("ops")?,
             snaps: db("snaps")?,
-            ops_by_rev: db("ops_by_rev")?,
+            ops_by_label: db("ops_by_label")?,
             ops_by_entity: db("ops_by_entity")?,
-            revisions: db("revisions")?,
+            labels: db("labels")?,
+            label_kids: db("label_kids")?,
             watcher_ops: db("watcher_ops")?,
             user_ops: db("user_ops")?,
             ids: db("ids")?,
@@ -654,29 +674,13 @@ impl Read<'_> {
         }
     }
 
-    fn origin(&self, rev: i64, cache: &mut HashMap<i64, Option<String>>) -> Result<Option<String>> {
-        if let Some(o) = cache.get(&rev) {
-            return Ok(o.clone());
-        }
-        self.count(1)?;
-        let o = match self.t.revisions.get(self.r, &be(rev))? {
-            Some(b) => dec_revision(b)?.origin,
-            None => None,
-        };
-        cache.insert(rev, o.clone());
-        Ok(o)
-    }
-
     fn op(&self, id: i64) -> Result<Option<OpRow>> {
         self.count(1)?;
         let Some(b) = self.t.ops.get(self.r, &be(id))? else { return Ok(None) };
-        let mut op = dec_op(id, b)?;
-        op.origin = self.origin(op.rev_id, &mut HashMap::new())?;
-        Ok(Some(op))
+        Ok(Some(dec_op(id, b)?))
     }
 
-    fn ops_with_origins(&self, ids: impl Iterator<Item = i64>) -> Result<Vec<OpRow>> {
-        let mut cache = HashMap::new();
+    fn ops_of(&self, ids: impl Iterator<Item = i64>) -> Result<Vec<OpRow>> {
         let mut out = Vec::new();
         for id in ids {
             self.count(1)?;
@@ -685,9 +689,7 @@ impl Read<'_> {
                 .ops
                 .get(self.r, &be(id))?
                 .with_context(|| format!("operation {id} vanished"))?;
-            let mut op = dec_op(id, b)?;
-            op.origin = self.origin(op.rev_id, &mut cache)?;
-            out.push(op);
+            out.push(dec_op(id, b)?);
         }
         Ok(out)
     }
@@ -696,7 +698,6 @@ impl Read<'_> {
     /// backward range of `ops`.
     fn back(&self, from: i64, max: usize) -> Result<Vec<OpRow>> {
         let mut out = Vec::new();
-        let mut cache = HashMap::new();
         let end = be(from);
         let range = (std::ops::Bound::Unbounded, std::ops::Bound::Included(&end[..]));
         for e in self.t.ops.rev_range(self.r, &range)? {
@@ -705,9 +706,7 @@ impl Read<'_> {
             }
             self.count(1)?;
             let (k, v) = e?;
-            let mut op = dec_op(from_be(k), v)?;
-            op.origin = self.origin(op.rev_id, &mut cache)?;
-            out.push(op);
+            out.push(dec_op(from_be(k), v)?);
         }
         Ok(out)
     }
@@ -721,35 +720,68 @@ impl Read<'_> {
         Ok(out)
     }
 
-    fn revision_op_ids(&self, rev: i64) -> Result<Vec<i64>> {
+    fn label_op_ids(&self, label: i64) -> Result<Vec<i64>> {
         let mut out = Vec::new();
-        for e in self.t.ops_by_rev.prefix_iter(self.r, &be(rev))? {
+        for e in self.t.ops_by_label.prefix_iter(self.r, &be(label))? {
             let (k, _) = e?;
-            out.push(from_be(&k[16..]));
+            out.push(from_be(&k[8..]));
         }
         self.count(out.len() as u64 + 1)?;
         Ok(out)
     }
 
-    /// The newest operation whose revision `keep` accepts, walking back from
-    /// the newest one a revision at a time.
-    fn last_op_where(&self, keep: &dyn Fn(&RevisionMeta) -> bool) -> Result<Option<i64>> {
-        for e in self.t.revisions.rev_iter(self.r)? {
+    /// A label's oldest operation of its own, `None` when it holds none: one
+    /// key.
+    fn label_first_op(&self, label: i64) -> Result<Option<i64>> {
+        self.count(1)?;
+        Ok(match self.t.ops_by_label.prefix_iter(self.r, &be(label))?.next() {
+            Some(e) => Some(from_be(&e?.0[8..])),
+            None => None,
+        })
+    }
+
+    fn label_children(&self, label: i64) -> Result<Vec<i64>> {
+        let mut out = Vec::new();
+        for e in self.t.label_kids.prefix_iter(self.r, &be(label))? {
+            out.push(from_be(&e?.0[8..]));
+        }
+        self.count(out.len() as u64 + 1)?;
+        Ok(out)
+    }
+
+    /// The newest operation written at or before `timestamp_ms`. Timestamps
+    /// grow with the ids (a write takes its time under the store's lock), so
+    /// this is a binary search over the ids — a few keys, whatever the log's
+    /// length. A clock set back makes it approximate, never wrong by more
+    /// than the jump.
+    fn last_op_at_or_before(&self, timestamp_ms: i64) -> Result<Option<i64>> {
+        self.count(2)?;
+        let Some((first, v)) = self.t.ops.first(self.r)? else { return Ok(None) };
+        if op_timestamp(v)? > timestamp_ms {
+            return Ok(None);
+        }
+        let mut lo = from_be(first);
+        let Some((last, v)) = self.t.ops.last(self.r)? else { return Ok(None) };
+        let mut hi = from_be(last);
+        if op_timestamp(v)? <= timestamp_ms {
+            return Ok(Some(hi));
+        }
+        // `lo` is an operation at or before the time; nothing above `hi` is.
+        while lo < hi {
+            let mid = lo + (hi - lo + 1) / 2;
+            let from = be(mid);
+            let range = (std::ops::Bound::Included(&from[..]), std::ops::Bound::Unbounded);
             self.count(1)?;
-            let (k, v) = e?;
-            if keep(&dec_revision(v)?) {
-                let rev = from_be(k);
-                let mut last = None;
-                for e in self.t.ops_by_rev.prefix_iter(self.r, &be(rev))? {
-                    self.count(1)?;
-                    last = Some(from_be(&e?.0[16..]));
-                }
-                if last.is_some() {
-                    return Ok(last);
-                }
+            let (k, v) =
+                self.t.ops.range(self.r, &range)?.next().context("an operation past mid")??;
+            let id = from_be(k);
+            if id <= hi && op_timestamp(v)? <= timestamp_ms {
+                lo = id;
+            } else {
+                hi = mid - 1;
             }
         }
-        Ok(None)
+        Ok(Some(lo))
     }
 }
 
@@ -1017,17 +1049,17 @@ macro_rules! kv_reads {
                 let $me = self;
                 $with(&mut |$read: &Read| {
                     let ids = $read.all_op_ids()?;
-                    $read.ops_with_origins(ids.into_iter())
+                    $read.ops_of(ids.into_iter())
                 })
             }
-            fn revisions(&self, ids: &[i64]) -> Result<HashMap<i64, RevisionMeta>> {
+            fn labels(&self, ids: &[i64]) -> Result<HashMap<i64, LabelMeta>> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
                     let mut out = HashMap::new();
                     $read.count(ids.len() as u64)?;
                     for &id in ids {
-                        if let Some(b) = $read.t.revisions.get($read.r, &be(id))? {
-                            out.insert(id, dec_revision(b)?);
+                        if let Some(b) = $read.t.labels.get($read.r, &be(id))? {
+                            out.insert(id, dec_label(b)?);
                         }
                     }
                     Ok(out)
@@ -1038,14 +1070,29 @@ macro_rules! kv_reads {
                 $with(&mut |$read: &Read| {
                     // Two B-tree statistics, not a walk.
                     $read.count(2)?;
-                    Ok(($read.t.ops.len($read.r)? as i64, $read.t.revisions.len($read.r)? as i64))
+                    Ok(($read.t.ops.len($read.r)? as i64, $read.t.labels.len($read.r)? as i64))
                 })
             }
-            fn revision_ops(&self, rev: i64) -> Result<Vec<OpRow>> {
+            fn label_ops(&self, label: i64) -> Result<Vec<OpRow>> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
-                    let ids = $read.revision_op_ids(rev)?;
-                    $read.ops_with_origins(ids.into_iter())
+                    let ids = $read.label_op_ids(label)?;
+                    $read.ops_of(ids.into_iter())
+                })
+            }
+            fn label_first_op(&self, label: i64) -> Result<Option<i64>> {
+                let $me = self;
+                $with(&mut |$read: &Read| $read.label_first_op(label))
+            }
+            fn label_children(&self, label: i64) -> Result<Vec<i64>> {
+                let $me = self;
+                $with(&mut |$read: &Read| $read.label_children(label))
+            }
+            fn watcher_label(&self) -> Result<Option<i64>> {
+                let $me = self;
+                $with(&mut |$read: &Read| {
+                    $read.count(1)?;
+                    $read.meta("watcher_label")
                 })
             }
             fn entity_ops_after(&self, entity: Uuid, after: i64) -> Result<Vec<OpRow>> {
@@ -1059,12 +1106,12 @@ macro_rules! kv_reads {
                             ids.push(id);
                         }
                     }
-                    $read.ops_with_origins(ids.into_iter())
+                    $read.ops_of(ids.into_iter())
                 })
             }
-            fn version_before_revision(&self, rev: i64, entity: Uuid) -> Result<Option<u64>> {
+            fn version_before_label(&self, label: i64, entity: Uuid) -> Result<Option<u64>> {
                 Ok(self
-                    .revision_ops(rev)?
+                    .label_ops(label)?
                     .into_iter()
                     .find(|o| o.entity_uuid == entity)
                     .and_then(|o| o.entity_version_before))
@@ -1079,7 +1126,7 @@ macro_rules! kv_reads {
                         ids.push(from_be(e?.0));
                     }
                     $read.count(ids.len() as u64 + 1)?;
-                    $read.ops_with_origins(ids.into_iter())
+                    $read.ops_of(ids.into_iter())
                 })
             }
             fn ops_after_count(&self, op: i64, cap: i64) -> Result<i64> {
@@ -1095,15 +1142,7 @@ macro_rules! kv_reads {
             }
             fn last_op_at_or_before(&self, timestamp_ms: i64) -> Result<Option<i64>> {
                 let $me = self;
-                $with(&mut |$read: &Read| {
-                    $read.last_op_where(&|m: &RevisionMeta| m.timestamp <= timestamp_ms)
-                })
-            }
-            fn last_op_labelled(&self, label: &str) -> Result<Option<i64>> {
-                let $me = self;
-                $with(&mut |$read: &Read| {
-                    $read.last_op_where(&|m: &RevisionMeta| m.label.as_deref() == Some(label))
-                })
+                $with(&mut |$read: &Read| $read.last_op_at_or_before(timestamp_ms))
             }
         }
     };
@@ -1228,7 +1267,7 @@ impl KvStore {
     /// * the log of an older layout is **dropped, not converted** — the
     ///   history tree (layouts 1 and 2: operations chained to a parent,
     ///   `op_children`, `restorations`), and the sequence before it was split
-    ///   by origin (3). The log is emptied, the metarecords kept (user
+    ///   by origin (3), and the one grouped by revisions (4). The log is emptied, the metarecords kept (user
     ///   decision, October 2026; doc "The operation log").
     ///
     /// A new store has nothing to move and only records the layout.
@@ -1264,7 +1303,7 @@ impl KvStore {
                 }
                 old.clear(&mut w)?;
             }
-            for name in ["op_children", "restorations"] {
+            for name in ["op_children", "restorations", "ops_by_rev", "revisions"] {
                 if let Some(old) = env.open_database::<Bytes, Bytes>(&w, Some(name))? {
                     old.clear(&mut w)?;
                 }
@@ -1272,15 +1311,17 @@ impl KvStore {
             for db in [
                 t.ops,
                 t.snaps,
-                t.ops_by_rev,
+                t.ops_by_label,
                 t.ops_by_entity,
-                t.revisions,
+                t.labels,
+                t.label_kids,
                 t.watcher_ops,
                 t.user_ops,
             ] {
                 db.clear(&mut w)?;
             }
             t.meta.delete(&mut w, b"head")?;
+            t.meta.delete(&mut w, b"watcher_label")?;
         }
         txn.meta_put("layout", LAYOUT)?;
         txn.finish()
@@ -1354,19 +1395,32 @@ impl KvTxn<'_> {
         Some(key(&[&name_key(name), &p, &node_key(node.as_bytes())]))
     }
 
-    /// A revision's first operation (the smallest id: its operations are
-    /// numbered in order), `None` when it holds none. One key.
-    fn first_op_of(&self, rev: i64) -> Result<Option<i64>> {
-        let txn = self.txn.borrow();
-        self.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        metafolder_core::slowlog::count_reads(1);
-        let first = self.t.ops_by_rev.prefix_iter(&txn, &be(rev))?.next();
-        Ok(match first {
-            Some(e) => Some(from_be(&e?.0[16..])),
-            None => None,
-        })
+    /// Drops `label` if nothing is left in it — no operation, no child label —
+    /// and then its parent on the same terms. The watcher's label stays: the
+    /// daemon writes under it.
+    fn drop_if_empty(&self, label: i64) -> Result<usize> {
+        let mut dropped = 0;
+        let mut next = Some(label);
+        while let Some(label) = next {
+            let (empty, parent) = {
+                let txn = self.txn.borrow();
+                let read = Read { t: &self.t, r: &txn, reads: Some(self.reads) };
+                let Some(meta) = self.t.labels.get(&txn, &be(label))? else { break };
+                let meta = dec_label(meta)?;
+                let empty = read.label_first_op(label)?.is_none()
+                    && read.label_children(label)?.is_empty()
+                    && read.meta("watcher_label")? != Some(label);
+                (empty, meta.parent)
+            };
+            if !empty {
+                break;
+            }
+            self.drop_label(label)?;
+            dropped += 1;
+            next = parent;
+        }
+        Ok(dropped)
     }
-
     fn remove_op(&self, id: i64) -> Result<()> {
         let Some(op) = Log::op(self, id)? else { return Ok(()) };
         let mut w = self.txn.borrow_mut();
@@ -1381,7 +1435,7 @@ impl KvTxn<'_> {
         for k in snaps {
             t.snaps.delete(&mut w, &k)?;
         }
-        t.ops_by_rev.delete(&mut w, &key(&[&be(op.rev_id), &be(op.seq), &be(id)]))?;
+        t.ops_by_label.delete(&mut w, &key(&[&be(op.label_id), &be(id)]))?;
         t.ops_by_entity.delete(&mut w, &key(&[op.entity_uuid.as_bytes(), &be(id)]))?;
         t.watcher_ops.delete(&mut w, &be(id))?;
         t.user_ops.delete(&mut w, &be(id))?;
@@ -1501,44 +1555,31 @@ impl WriteTxn for KvTxn<'_> {
         Ok(())
     }
 
-    fn begin_revision(&self, label: Option<&str>, timestamp_ms: i64) -> Result<i64> {
-        let rev = self.next("next_rev")?;
-        let meta = RevisionMeta {
-            timestamp: timestamp_ms,
-            label: label.map(str::to_string),
-            origin: None,
-        };
-        self.t.revisions.put(&mut self.txn.borrow_mut(), &be(rev), &enc_revision(&meta))?;
-        Ok(rev)
-    }
-
-    fn set_revision_origin(&self, rev: i64, origin: &str) -> Result<()> {
-        // Nothing to do for a revision that is not there.
-        let Some(mut meta) = Log::revisions(self, &[rev])?.remove(&rev) else { return Ok(()) };
-        meta.origin = Some(origin.to_string());
-        self.t.revisions.put(&mut self.txn.borrow_mut(), &be(rev), &enc_revision(&meta))?;
-        Ok(())
-    }
-
-    fn set_revision_label(&self, rev: i64, label: Option<&str>) -> Result<bool> {
-        let Some(mut meta) = Log::revisions(self, &[rev])?.remove(&rev) else { return Ok(false) };
-        meta.label = label.map(str::to_string);
-        self.t.revisions.put(&mut self.txn.borrow_mut(), &be(rev), &enc_revision(&meta))?;
-        Ok(true)
-    }
-
-    fn drop_revision(&self, rev: i64) -> Result<()> {
-        for id in {
-            let txn = self.txn.borrow();
-            Read { t: &self.t, r: &txn, reads: Some(self.reads) }.revision_op_ids(rev)?
-        } {
-            self.remove_op(id)?;
+    fn create_label(&self, meta: &LabelMeta) -> Result<i64> {
+        let id = self.next("next_label")?;
+        let mut w = self.txn.borrow_mut();
+        self.t.labels.put(&mut w, &be(id), &enc_label(meta))?;
+        if let Some(parent) = meta.parent {
+            self.t.label_kids.put(&mut w, &key(&[&be(parent), &be(id)]), &[])?;
         }
-        self.t.revisions.delete(&mut self.txn.borrow_mut(), &be(rev))?;
+        Ok(id)
+    }
+
+    fn drop_label(&self, id: i64) -> Result<()> {
+        let Some(meta) = Log::labels(self, &[id])?.remove(&id) else { return Ok(()) };
+        let mut w = self.txn.borrow_mut();
+        self.t.labels.delete(&mut w, &be(id))?;
+        if let Some(parent) = meta.parent {
+            self.t.label_kids.delete(&mut w, &key(&[&be(parent), &be(id)]))?;
+        }
         Ok(())
     }
 
-    fn append_ops(&self, rev: i64, first_seq: i64, ops: &[NewOp]) -> Result<i64> {
+    fn set_watcher_label(&self, id: i64) -> Result<()> {
+        self.meta_put("watcher_label", id)
+    }
+
+    fn append_ops(&self, label: i64, timestamp: i64, ops: &[NewOp]) -> Result<i64> {
         let base = {
             let w = self.txn.borrow();
             self.t.meta.get(&w, b"next_op")?.map_or(1, from_be)
@@ -1547,15 +1588,14 @@ impl WriteTxn for KvTxn<'_> {
         let t = self.t;
         for (i, op) in ops.iter().enumerate() {
             let id = base + i as i64;
-            let seq = first_seq + i as i64;
-            t.ops.put(&mut w, &be(id), &enc_op(op, rev, seq))?;
+            t.ops.put(&mut w, &be(id), &enc_op(op, label, timestamp))?;
             for (after, rows) in [(0u8, &op.before), (1u8, &op.after)] {
                 for (n, row) in rows.iter().enumerate() {
                     let k = key(&[&be(id), &[after], &(n as u32).to_be_bytes()]);
                     t.snaps.put(&mut w, &k, &enc_row(row))?;
                 }
             }
-            t.ops_by_rev.put(&mut w, &key(&[&be(rev), &be(seq), &be(id)]), &[])?;
+            t.ops_by_label.put(&mut w, &key(&[&be(label), &be(id)]), &[])?;
             t.ops_by_entity.put(&mut w, &key(&[op.entity.as_bytes(), &be(id)]), &[])?;
             self.class(op.origin.as_deref()).put(&mut w, &be(id), &[])?;
         }
@@ -1577,7 +1617,7 @@ impl WriteTxn for KvTxn<'_> {
 
     /// The log trim (`log::Retention`), over these tables: for each origin
     /// past its limit and slack, the oldest operations down to the limit — the
-    /// first keys of its table. Reads what it deletes and two statistics,
+    /// first keys of its table — and the labels left empty. Reads what it deletes and two statistics,
     /// never the operations it keeps (`tests/log_cost.rs`): it runs once every
     /// `slack` writes, and what is kept may be a reconcile's.
     fn trim(&self, retention: Retention, _head: i64) -> Result<usize> {
@@ -1610,16 +1650,7 @@ impl WriteTxn for KvTxn<'_> {
         if doomed.is_empty() {
             return Ok(0);
         }
-        let mut revs_hit: HashSet<i64> = HashSet::new();
-        for &id in &doomed {
-            revs_hit.insert(Log::op(self, id)?.context("an operation listed a moment ago")?.rev_id);
-        }
         self.delete_ops(&doomed)?;
-        for rev in revs_hit {
-            if self.first_op_of(rev)?.is_none() {
-                self.t.revisions.delete(&mut self.txn.borrow_mut(), &be(rev))?;
-            }
-        }
         Ok(doomed.len())
     }
 
@@ -1633,36 +1664,19 @@ impl WriteTxn for KvTxn<'_> {
         self.clear_derived()
     }
 
-    fn delete_ops(&self, ids: &[i64]) -> Result<()> {
+    fn delete_ops(&self, ids: &[i64]) -> Result<usize> {
+        let mut hit: HashSet<i64> = HashSet::new();
         for &id in ids {
-            self.remove_op(id)?;
-        }
-        Ok(())
-    }
-
-    fn drop_empty_revisions(&self) -> Result<()> {
-        let revs: Vec<i64> = {
-            let txn = self.txn.borrow();
-            let mut out = Vec::new();
-            let read = Read { t: &self.t, r: &txn, reads: Some(self.reads) };
-            for e in self.t.revisions.iter(&txn)? {
-                read.count(1)?;
-                out.push(from_be(e?.0));
-            }
-            out
-        };
-        for rev in revs {
-            let empty = {
-                let txn = self.txn.borrow();
-                Read { t: &self.t, r: &txn, reads: Some(self.reads) }
-                    .revision_op_ids(rev)?
-                    .is_empty()
-            };
-            if empty {
-                self.t.revisions.delete(&mut self.txn.borrow_mut(), &be(rev))?;
+            if let Some(op) = Log::op(self, id)? {
+                hit.insert(op.label_id);
+                self.remove_op(id)?;
             }
         }
-        Ok(())
+        let mut dropped = 0;
+        for label in hit {
+            dropped += self.drop_if_empty(label)?;
+        }
+        Ok(dropped)
     }
 
     fn commit(self: Box<Self>) -> Result<()> {

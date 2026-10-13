@@ -1,5 +1,5 @@
 title: Moves and candidates
-tags: [[Reconcile]]
+tags: Reconcile
 kind: reference
 summary: How reconcile decides a moved file — a definitive match is followed, a strong or weak one only offered — step by step.
 

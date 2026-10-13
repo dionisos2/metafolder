@@ -1,5 +1,5 @@
 title: mf watch activity
-tags: [[CLI command]] [[Watcher]]
+tags: [[CLI command]] Watcher
 kind: reference
 summary: How many watcher events arrived under a directory since the load, how many operations they wrote, and under which of its children — walk down from / to find the noise
 

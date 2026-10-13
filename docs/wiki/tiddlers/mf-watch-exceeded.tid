@@ -1,5 +1,5 @@
 title: mf watch exceeded
-tags: [[CLI command]] [[Watcher]]
+tags: [[CLI command]] Watcher
 kind: reference
 summary: Subtrees left unwatched for want of inotify watches (the budget)
 

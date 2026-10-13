@@ -1,5 +1,5 @@
 title: Testing the watcher
-tags: [[Watcher]]
+tags: Watcher
 kind: reference
 audience: dev
 summary: Watcher ≡ reconcile as an oracle, a simulated fanotify kernel held to the real one, user namespaces for the kernel side, and a live script for the privileged broker.

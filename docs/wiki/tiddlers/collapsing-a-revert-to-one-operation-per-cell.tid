@@ -1,5 +1,5 @@
 title: Collapsing a revert to one operation per cell
-tags: [[Revert]]
+tags: Revert
 kind: question
 audience: dev
 status: deferred

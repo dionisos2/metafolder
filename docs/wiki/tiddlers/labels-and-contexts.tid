@@ -5,6 +5,12 @@ audience: dev
 status: proposed
 summary: Operations are grouped by nested labels (name, description, parent) opened as contexts by scripts, commands and the GUI — passed along as an id, so leaving a context is just not passing it on.
 
+''Being built'' (October 2026): the daemon side is done — labels, the
+`X-Metafolder-Label` header, a label per request without one, the watcher's label
+([[Log endpoints]]). The clients do not open contexts yet (`mf label`, `METAFOLDER_LABEL`,
+the GUI's label per command, the scripts'), and undo still takes the innermost label of
+the newest change ([[The undo selection]]).
+
 A ''label'' is `{id, name, description, parent, created}`. Each operation carries its
 ''innermost'' label; the others are its ancestors, found by following the parents. Same
 information as every label on every operation while contexts nest, without copying three
@@ -27,7 +33,7 @@ what was asked, not only what was written.
 * A shipped tagging script: one label for the run, one per answer (its going back is reverting the last answer's label — no head noted by hand, no rollback), one per command inside.
 * The GUI: one label per command. A script launched from the GUI inherits the context of the command that launched it.
 * The GUI's ''work context'': a command opens a context that every later user operation carries until it is closed — naming the work under way, so it can be looked at or reverted whole. The watcher's operations do not carry it.
-* The watcher: one label per flush, under a ''watcher root'' that only the daemon can write under. The root a label descends from is its ''origin'' — what `revision.origin` said, and what undo and retention read. As today, a client cannot pass its writes off as the daemon's.
+* The watcher: one label per flush ("watcher flush"), under a ''watcher root'' ("watcher") that only the daemon can write under: a client naming it, or a label inside it, as its context or as a new label's parent is refused. The ''origin'' stays on each operation, set by the daemon ([[Operations and their origin]]) — not read off the root as first proposed: a trashing's `trash` origin must survive inside any context, and undo and retention read the operation.
 
 !! The log panel
 

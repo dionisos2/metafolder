@@ -40,9 +40,16 @@ impl Cell {
     }
 }
 
-/// Resolves the operations of a revision, oldest first.
-pub fn revision_ops(log: &dyn Log, rev_id: i64) -> Result<Vec<OpRow>> {
-    log.revision_ops(rev_id)
+/// The operations of a label and of every label nested in it, oldest first:
+/// reverting a run reverts what was written inside it (doc "Labels and
+/// contexts").
+pub fn label_ops(log: &dyn Log, label: i64) -> Result<Vec<OpRow>> {
+    let mut ops = Vec::new();
+    for label in crate::log::label_subtree(log, label)? {
+        ops.extend(log.label_ops(label)?);
+    }
+    ops.sort_by_key(|op| op.id);
+    Ok(ops)
 }
 
 /// What the plan says of a cell that changed since `op` wrote it.
@@ -293,8 +300,8 @@ mod tests {
     fn op(op_type: &str, origin: Option<&str>) -> OpRow {
         OpRow {
             id: 1,
-            rev_id: 1,
-            seq: 0,
+            label_id: 1,
+            timestamp: 0,
             op_type: op_type.into(),
             entity_uuid: uuid::Uuid::nil(),
             entity_version_before: None,

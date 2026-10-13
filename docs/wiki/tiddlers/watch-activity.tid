@@ -1,5 +1,5 @@
 title: Watch activity
-tags: [[Watcher]]
+tags: Watcher
 kind: guide
 summary: The daemon counts, per path and recursively, the watcher events received and the operations they wrote since the load — follow the largest counts down from the root to find where the noise comes from.
 

@@ -639,7 +639,7 @@ async fn test_delete_by_query() {
         .await;
     }
 
-    let revisions = |body: &serde_json::Value| body["revisions"].as_array().unwrap().len();
+    let revisions = |body: &serde_json::Value| body["labels"].as_array().unwrap().len();
     let (_, before) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;
     let revs_before = revisions(&before);
 
@@ -1050,7 +1050,7 @@ async fn test_batch_unset_removes_the_whole_field() {
         .await;
     }
 
-    let revisions = |body: &serde_json::Value| body["revisions"].as_array().unwrap().len();
+    let revisions = |body: &serde_json::Value| body["labels"].as_array().unwrap().len();
     let (_, before) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;
     let revs_before = revisions(&before);
 
@@ -1403,7 +1403,7 @@ async fn test_query_within_its_timeout_answers() {
 async fn revisions(app: &Router, repo: &str) -> u64 {
     let (status, body) = request(app, "GET", &format!("/repos/{repo}/log?limit=1"), None).await;
     assert_eq!(status, StatusCode::OK, "log failed: {body}");
-    body["total_revisions"].as_u64().unwrap()
+    body["total_labels"].as_u64().unwrap()
 }
 
 /// `POST /query/fields/batch` applies a list of writes — creations included —

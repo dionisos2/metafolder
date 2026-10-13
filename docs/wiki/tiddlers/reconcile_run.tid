@@ -1,5 +1,5 @@
 title: reconcile:run
-tags: [[GUI command]] [[Reconcile]]
+tags: [[GUI command]] Reconcile
 kind: reference
 summary: Reconcile the active repository with the filesystem
 

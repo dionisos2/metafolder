@@ -1,5 +1,5 @@
 title: Orphan scan
-tags: [[Orphans]]
+tags: Orphans
 kind: reference
 audience: dev
 summary: The scan reports a file missing only when a readable ancestor proves it absent and no offline mount point is above it; the endpoints, and the mass-orphan circuit breaker.

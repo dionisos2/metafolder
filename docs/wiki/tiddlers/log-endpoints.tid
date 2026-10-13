@@ -2,36 +2,48 @@ title: Log endpoints
 tags: [[Event log]]
 kind: reference
 audience: dev
-summary: GET /log (bounded two ways), the change feed GET /log/since, one revision in detail, and setting a label.
+summary: GET /log (bounded two ways), the change feed GET /log/since, one label in detail, and opening and reading labels.
 
 |!Route |!Does |
-|<<cmd "GET /repos/:repo/log">> |the history, as operations and revisions (below) |
+|<<cmd "GET /repos/:repo/log">> |the history, as operations and the labels they are in (below) |
 |<<cmd "GET /repos/:repo/log/since">> `?op=<id>` |the change feed: the newest operation, and every operation created after `op` |
-|<<cmd "GET /repos/:repo/log/revisions/:rev_id">> |one revision with all its operations and their snapshots; `head` for the newest |
-|<<cmd "PATCH /repos/:repo/log/revisions/:rev_id">> |`{"label": "…"}` or `{"label": null}` |
+|<<cmd "GET /repos/:repo/log/labels/:id">> |one label with its own operations and their snapshots; `head` for the newest operation's |
+|<<cmd "POST /repos/:repo/labels">> |opens a label (below) |
+|<<cmd "GET /repos/:repo/labels/:id">> |one label, its ancestors and its children |
+
+Every write request may name the label it writes in with the header
+`X-Metafolder-Label: <id>` ([[Labels and contexts]]); without one, the write opens a label
+of its own, named after the route (`PUT /repos/:repo/metarecords/:uuid/fields/:name`). A
+header that is not a number is a `400`; one naming a label that does not exist, or the
+watcher's or one inside it, is a `400` too, and nothing is written.
 
 !! GET /log
 
 |!Parameter |!Default |!Does |
 |`metarecord_uuid` |— |only the operations of that metarecord |
 |`limit` |— |at most this many operations, the newest |
-|`revisions` |— |at most this many revisions, the newest — whole unless `limit` cuts the oldest |
-|`since`, `until` |— |only operations in revisions timestamped within (Unix ms) |
+|`labels` |— |at most this many labels (each operation counted in its innermost one), the newest — whole unless `limit` cuts the oldest |
+|`since`, `until` |— |only operations written within (Unix ms) |
 |`include_snapshots` |`false` |each operation with `snapshots_before`/`snapshots_after` |
 
 ```
 {"head": 3, "first": 1,
- "operations": [{"id": 1, "rev_id": 1, "seq": 1, "op_type": "create_metarecord",
-                 "entity_uuid": "…", "field_name": null, "reverts_op_id": null}, …],
- "revisions": [{"id": 1, "timestamp": 1700000000000, "label": null, "origin": null}, …],
- "total_operations": 3, "total_revisions": 2}
+ "operations": [{"id": 1, "label_id": 1, "timestamp": 1700000000000, "origin": null,
+                 "op_type": "create_metarecord", "entity_uuid": "…", "field_name": null,
+                 "reverts_op_id": null}, …],
+ "labels": [{"id": 1, "name": "POST /repos/init", "description": null, "parent": null,
+             "created": 1700000000000}, …],
+ "total_operations": 3, "total_labels": 2}
 ```
 
 Operations run oldest first — the log is a sequence ([[The operation log]]). `head` is the
-newest operation, `first` the oldest still in the log — where undo stops ([[The undo selection]]). `revisions` lists only those the returned operations belong to; a revision
-cut by `limit` carries `"partial": true` and `op_count`. The totals describe the ''whole''
-log, whatever the window. Bounds limit the read itself, and a filter widens it until it
-finds what was asked ([[Reading the log costs the window]]).
+newest operation, `first` the oldest still in the log — where undo stops ([[The undo selection]]). `origin` is `"watcher"` for what the daemon recorded for the filesystem,
+`"trash"` for a trashing, `null` otherwise ([[Operations and their origin]]). `labels` lists
+the labels the returned operations are in ''and all their ancestors'', so a client can
+draw the nesting; a label whose own operations the `limit` cut carries `"partial": true`
+(how many it holds in all is not counted: that would read it whole). The totals describe
+the ''whole'' log, whatever the window. Bounds limit the read itself, and a filter widens it
+until it finds what was asked ([[Reading the log costs the window]]).
 
 !! GET /log/since
 
@@ -40,13 +52,27 @@ each naming its `entity_uuid`. Without `op`, just the head. The log only grows, 
 only moves forward. A delta larger than `limit` (default 500) comes back `truncated` and
 empty, and a client falls back to a full refresh. The GUI's change feed is built on it.
 
-!! One revision
+!! One label
 
-`GET /log/revisions/:rev_id` always includes snapshots (it is for the detail view):
-`{"revision": {"id", "timestamp", "label", "origin", "is_head", "operation_count"},
-"operations": [{"id", "seq", "op_type", "entity_uuid", "field_name", "snapshots_before",
-"snapshots_after"}, …]}`, a snapshot being a row in column form
-(`{"field_id": 43, "field_name": "rating", "value_type": "int", "value_int": 3}`). A
-revision may hold a whole reconcile, so `offset`/`limit` window its operations and `op`
-picks one (`404` if not in it); `is_head` and `operation_count` always describe the whole
-revision. `404` for an unknown revision.
+`GET /log/labels/:id` always includes snapshots (it is for the detail view):
+`{"label": {"id", "name", "description", "parent", "created", "ancestors", "children",
+"is_head", "operation_count"}, "operations": [{"id", "label_id", "timestamp", "origin",
+"op_type", "entity_uuid", "field_name", "snapshots_before", "snapshots_after"}, …]}`, a
+snapshot being a row in column form
+(`{"field_id": 43, "field_name": "rating", "value_type": "int", "value_int": 3}`). Only
+the label's ''own'' operations are listed — its children are labels of their own. A label
+may hold a whole reconcile, so `offset`/`limit` window its operations and `op` picks one
+(`404` if not in it); `is_head` and `operation_count` always describe the whole label.
+`404` for an unknown label.
+
+!! Opening a label
+
+`POST /repos/:repo/labels` with `{"name": "tag run", "description": "…", "parent": 12}`
+(description and parent optional) answers the label as `GET /labels/:id` does. Without
+`parent`, the label is a child of the one the request names in `X-Metafolder-Label`, or a
+root. An empty name, or a parent that does not exist or is the watcher's, is a `400`. A
+label opened this way and never written in stays, empty; one a write opened is dropped with
+it when the write records nothing.
+
+`GET /repos/:repo/labels/:id` answers `{"id", "name", "description", "parent", "created",
+"ancestors": [innermost first], "children": [ids]}`, `404` for an unknown label.

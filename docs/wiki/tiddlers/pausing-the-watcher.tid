@@ -1,5 +1,5 @@
 title: Pausing the watcher
-tags: [[Watcher]]
+tags: Watcher
 kind: guide
 summary: mf watch pause stops the flush in progress and keeps the next from starting; the events stay buffered until mf watch resume.
 

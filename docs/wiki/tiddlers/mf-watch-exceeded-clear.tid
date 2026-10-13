@@ -1,5 +1,5 @@
 title: mf watch exceeded clear
-tags: [[CLI command]] [[Watcher]]
+tags: [[CLI command]] Watcher
 kind: reference
 summary: Watch a subtree again (fails if the budget has no room)
 

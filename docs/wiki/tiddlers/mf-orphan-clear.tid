@@ -1,5 +1,5 @@
 title: mf orphan clear
-tags: [[CLI command]] [[Orphans]]
+tags: [[CLI command]] Orphans
 kind: reference
 summary: Orphan the scanned records: freeze mfr_path_old, set mfr_path = Nothing
 

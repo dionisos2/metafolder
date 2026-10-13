@@ -1,5 +1,5 @@
 title: Running a reconcile
-tags: [[Reconcile]]
+tags: Reconcile
 kind: guide
 summary: mf reconcile or reconcile:run — a task you can follow and stop; what it prints, and how to confirm a candidate.
 

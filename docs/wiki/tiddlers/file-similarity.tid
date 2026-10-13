@@ -1,5 +1,5 @@
 title: File similarity
-tags: [[Reconcile]]
+tags: Reconcile
 kind: reference
 summary: With --threshold, reconcile scores unmatched orphans against unmatched new paths on name, extension, size and directory — for files both moved and edited.
 

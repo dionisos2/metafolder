@@ -22,8 +22,9 @@ pub use metafolder_core::navigation::{MovePolicies as RollbackPolicies, Policy};
 /// A prune target as the three daemon body forms.
 #[derive(Clone)]
 pub struct TargetArgs {
-    /// Positional label (`mf log prune before <label>`).
-    pub label: Option<String>,
+    /// Positional label id (`mf log prune before <label>`): the label is
+    /// kept whole.
+    pub label: Option<i64>,
     pub id: Option<i64>,
     /// `--timestamp` accepts ISO-8601 (bare), or `@<unix-ms>` for raw ms.
     pub timestamp: Option<String>,
@@ -66,12 +67,12 @@ fn undo_plan(ctx: &Ctx, base: &str) -> Result<(undo::UndoPlan, Json), CliError> 
     Ok((undo::UndoPlan::Nothing, last))
 }
 
-/// The oldest operation of revision `rev` in a log window.
-fn first_op_of(log: &Json, rev: i64) -> Option<i64> {
+/// The oldest operation of label `label` in a log window.
+fn first_op_of(log: &Json, label: i64) -> Option<i64> {
     log["operations"]
         .as_array()?
         .iter()
-        .filter(|op| op["rev_id"].as_i64() == Some(rev))
+        .filter(|op| op["label_id"].as_i64() == Some(label))
         .filter_map(|op| op["id"].as_i64())
         .min()
 }
@@ -90,14 +91,14 @@ pub fn undo_run(
     let mut undone = 0usize;
     loop {
         let (plan, log) = undo_plan(ctx, &base)?;
-        let undo::UndoPlan::Revert { rev_id, ops } = plan.clone() else {
+        let undo::UndoPlan::Revert { label_id, ops } = plan.clone() else {
             if plan_only || undone == 0 {
                 println!("Nothing to undo.");
             }
             return Ok(0);
         };
         if let Some(after) = opts.after {
-            if first_op_of(&log, rev_id).is_none_or(|first| first <= after) {
+            if first_op_of(&log, label_id).is_none_or(|first| first <= after) {
                 if undone == 0 && !opts.silent {
                     println!("Nothing to undo after operation {after}.");
                 }
@@ -109,15 +110,14 @@ pub fn undo_run(
             return Ok(0);
         }
         if !opts.silent {
-            println!("Undoing revision {rev_id}.");
+            println!("Undoing label {label_id}.");
         }
         let target = RevertTarget {
-            rev_id: ops.is_none().then_some(rev_id),
+            label_id: ops.is_none().then_some(label_id),
             op_ids: ops.unwrap_or_default(),
         };
         let opts_revert = RevertOpts {
             metadata_only: opts.metadata_only,
-            label: None,
             force: opts.force,
             confirm_moves: false,
             silent: opts.silent,
@@ -152,21 +152,22 @@ pub fn redo_run(
         println!("{}", plan.describe());
         return Ok(0);
     }
-    let undo::RedoPlan::Revert { rev_id, ops } = plan else {
+    let undo::RedoPlan::Revert { label_id, ops } = plan else {
         println!("Nothing to redo.");
         return Ok(0);
     };
     if !opts.silent {
-        println!("Taking the undo in revision {rev_id} back.");
+        println!("Taking the undo in label {label_id} back.");
     }
-    let target =
-        RevertTarget { rev_id: ops.is_none().then_some(rev_id), op_ids: ops.unwrap_or_default() };
+    let target = RevertTarget {
+        label_id: ops.is_none().then_some(label_id),
+        op_ids: ops.unwrap_or_default(),
+    };
     revert_run(
         ctx,
         target,
         &RevertOpts {
             metadata_only: opts.metadata_only,
-            label: None,
             force: opts.force,
             confirm_moves: false,
             silent: opts.silent,
@@ -256,19 +257,19 @@ pub struct LogArgs {
     pub all: bool,
 }
 
-/// The number of revisions (or, with `--ops`, of operations) a listing shows
+/// The number of labels (or, with `--ops`, of operations) a listing shows
 /// when none was asked for.
 const DEFAULT_LOG_WINDOW: usize = 20;
 
-/// The operations a listing by revision reads at most. A revision holds
-/// anything from one operation to a whole reconcile's tens of thousands; the
-/// oldest revision the cap cuts is shown with how much of it is missing.
+/// The operations a listing by label reads at most. A label holds anything
+/// from one operation to a whole reconcile's tens of thousands; the oldest
+/// label the cap cuts is shown as such.
 const LOG_OP_CAP: usize = 500;
 
 /// The query string `mf log list` sends.
 ///
 /// The bound matters: the listing displays a window, and asking the daemon for
-/// the whole log to show twenty revisions of it makes every listing cost the
+/// the whole log to show twenty labels of it makes every listing cost the
 /// size of the log (doc "Reading the log costs the window"). `--all` is the
 /// deliberate exception.
 fn log_query(args: &LogArgs) -> Result<Vec<(&'static str, String)>, CliError> {
@@ -284,12 +285,12 @@ fn log_query(args: &LogArgs) -> Result<Vec<(&'static str, String)>, CliError> {
     }
     if !args.all {
         let window = args.limit.unwrap_or(DEFAULT_LOG_WINDOW);
-        // `--ops` counts operations, the default counts revisions — each asks
-        // for exactly what it displays.
+        // `--ops` counts operations, the default counts labels — each asks for
+        // exactly what it displays.
         if args.ops {
             query.push(("limit", window.to_string()));
         } else {
-            query.push(("revisions", window.to_string()));
+            query.push(("labels", window.to_string()));
             query.push(("limit", LOG_OP_CAP.max(window).to_string()));
         }
     }
@@ -304,39 +305,39 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
     let head = resp["head"].as_i64();
     let ops: Vec<&Json> =
         resp["operations"].as_array().map(|a| a.iter().collect()).unwrap_or_default();
-    let mut rev_meta: std::collections::HashMap<i64, (i64, Option<String>)> =
+    let mut label_meta: std::collections::HashMap<i64, (i64, String)> =
         std::collections::HashMap::new();
-    // The revisions the operation cap cut: how many operations each holds.
-    let mut partial: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
-    for rev in resp["revisions"].as_array().into_iter().flatten() {
-        if let Some(id) = rev["id"].as_i64() {
-            let ts = rev["timestamp"].as_i64().unwrap_or(0);
-            let label = rev["label"].as_str().map(str::to_string);
-            rev_meta.insert(id, (ts, label));
-            if rev["partial"].as_bool() == Some(true) {
-                partial.insert(id, rev["op_count"].as_i64().unwrap_or(0));
+    // The labels the operation cap cut.
+    let mut partial: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    for label in resp["labels"].as_array().into_iter().flatten() {
+        if let Some(id) = label["id"].as_i64() {
+            let created = label["created"].as_i64().unwrap_or(0);
+            let name = label["name"].as_str().unwrap_or("").to_string();
+            label_meta.insert(id, (created, name));
+            if label["partial"].as_bool() == Some(true) {
+                partial.insert(id);
             }
         }
     }
 
-    // Group operations by revision, most recent first, ordering revisions by
-    // their highest operation id.
+    // Group operations by their (innermost) label, most recent first, ordering
+    // labels by their highest operation id.
     let mut groups: Vec<(i64, Vec<&Json>)> = Vec::new();
     for op in &ops {
-        let rev_id = op["rev_id"].as_i64().unwrap_or(0);
-        match groups.iter_mut().find(|(r, _)| *r == rev_id) {
+        let label_id = op["label_id"].as_i64().unwrap_or(0);
+        match groups.iter_mut().find(|(l, _)| *l == label_id) {
             Some((_, list)) => list.push(op),
-            None => groups.push((rev_id, vec![op])),
+            None => groups.push((label_id, vec![op])),
         }
     }
     groups.sort_by_key(|(_, list)| {
         std::cmp::Reverse(list.iter().filter_map(|o| o["id"].as_i64()).max().unwrap_or(0))
     });
 
-    // The HEAD revision is the one containing the HEAD operation.
-    let head_rev = head
+    // The HEAD label is the one holding the HEAD operation.
+    let head_label = head
         .and_then(|h| ops.iter().find(|o| o["id"].as_i64() == Some(h)))
-        .and_then(|o| o["rev_id"].as_i64());
+        .and_then(|o| o["label_id"].as_i64());
 
     let limit = if args.all { None } else { Some(args.limit.unwrap_or(DEFAULT_LOG_WINDOW)) };
 
@@ -346,29 +347,33 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
     }
 
     let mut shown_ops = 0usize;
-    let mut shown_revs = 0usize;
-    for (rev_id, list) in &groups {
-        // Operations within a revision are displayed by descending seq.
+    let mut shown_labels = 0usize;
+    for (label_id, list) in &groups {
+        // Operations within a label are displayed newest first.
         let mut ops_sorted = list.clone();
-        ops_sorted.sort_by_key(|o| std::cmp::Reverse(o["seq"].as_i64().unwrap_or(0)));
+        ops_sorted.sort_by_key(|o| std::cmp::Reverse(o["id"].as_i64().unwrap_or(0)));
 
-        let is_head = Some(*rev_id) == head_rev;
-        let (ts, label) = rev_meta.get(rev_id).cloned().unwrap_or((0, None));
+        let is_head = Some(*label_id) == head_label;
+        // A label opened for one write is as old as its operations; a context
+        // is older than most of them, and the newest says when it was used.
+        let ts = ops_sorted
+            .first()
+            .and_then(|o| o["timestamp"].as_i64())
+            .unwrap_or_else(|| label_meta.get(label_id).map(|(created, _)| *created).unwrap_or(0));
+        let name = label_meta.get(label_id).map(|(_, n)| n.as_str()).unwrap_or("");
         let marker = if is_head { ">" } else { " " };
-        let mut line = format!("{marker} rev {rev_id}  {}", fmt_minute(ts));
-        if let Some(label) = &label {
-            line.push_str(&format!("  \"{label}\""));
-        } else if ops_sorted.len() > 1 {
+        let mut line = format!("{marker} label {label_id}  {}  {name}", fmt_minute(ts));
+        if ops_sorted.len() > 1 {
             line.push_str(&format!("  ({})", op_breakdown(&ops_sorted)));
         }
-        if let Some(total) = partial.get(rev_id) {
-            line.push_str(&format!("  [{} of {total} operations shown]", ops_sorted.len()));
+        if partial.contains(label_id) {
+            line.push_str(&format!("  [the newest {} operations shown]", ops_sorted.len()));
         }
         if is_head {
             line.push_str("   \u{2190} HEAD");
         }
         println!("{line}");
-        shown_revs += 1;
+        shown_labels += 1;
 
         if args.ops {
             for op in &ops_sorted {
@@ -381,7 +386,7 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
                 }
             }
         } else if let Some(n) = limit {
-            if shown_revs >= n {
+            if shown_labels >= n {
                 return Ok(0);
             }
         }
@@ -433,32 +438,35 @@ pub fn log_head(ctx: &Ctx) -> Result<i32, CliError> {
 
 pub fn log_show(ctx: &Ctx, target: &str, raw: bool) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
-    let rev = if target.eq_ignore_ascii_case("head") {
+    let id = if target.eq_ignore_ascii_case("head") {
         "head".to_string()
     } else {
         target.parse::<i64>().map(|n| n.to_string()).map_err(|_| {
-            CliError::Usage(format!(
-                "invalid revision target '{target}' (expected a number or HEAD)"
-            ))
+            CliError::Usage(format!("invalid label '{target}' (expected a label id or HEAD)"))
         })?
     };
-    let resp = ctx.client.get(&format!("{base}/log/revisions/{rev}"), &[])?;
+    let resp = ctx.client.get(&format!("{base}/log/labels/{id}"), &[])?;
     if raw {
         println!("{}", serde_json::to_string_pretty(&resp).expect("JSON"));
         return Ok(0);
     }
 
-    let revision = &resp["revision"];
-    let id = revision["id"].as_i64().unwrap_or(0);
-    let ts = revision["timestamp"].as_i64().unwrap_or(0);
-    let mut header = format!("Revision {id}  [{}]", fmt_second(ts));
-    if let Some(label) = revision["label"].as_str() {
-        header.push_str(&format!("  \"{label}\""));
-    }
-    if revision["is_head"].as_bool() == Some(true) {
+    let label = &resp["label"];
+    let id = label["id"].as_i64().unwrap_or(0);
+    let ts = label["created"].as_i64().unwrap_or(0);
+    let name = label["name"].as_str().unwrap_or("");
+    let mut header = format!("Label {id}  [{}]  {name}", fmt_second(ts));
+    if label["is_head"].as_bool() == Some(true) {
         header.push_str("  \u{2190} HEAD");
     }
     println!("{header}");
+    if let Some(description) = label["description"].as_str() {
+        println!("  {description}");
+    }
+    for ancestor in label["ancestors"].as_array().into_iter().flatten() {
+        let aid = ancestor["id"].as_i64().unwrap_or(0);
+        println!("  in label {aid}  {}", ancestor["name"].as_str().unwrap_or(""));
+    }
 
     for op in resp["operations"].as_array().into_iter().flatten() {
         println!();
@@ -522,8 +530,8 @@ pub fn prune(ctx: &Ctx, target: TargetArgs, force: bool, silent: bool) -> Result
     let resp = ctx.client.post(&format!("{base}/log/prune"), &body)?;
     if !silent {
         let ops = resp["pruned_operations"].as_i64().unwrap_or(0);
-        let revs = resp["pruned_revisions"].as_i64().unwrap_or(0);
-        println!("Pruned {ops} operations across {revs} revisions.");
+        let labels = resp["pruned_labels"].as_i64().unwrap_or(0);
+        println!("Pruned {ops} operations; {labels} label(s) left empty went with them.");
     }
     Ok(0)
 }
@@ -580,7 +588,7 @@ fn fmt_second(ms: i64) -> String {
 mod tests {
     use super::*;
 
-    /// `mf log list` shows the last twenty revisions; it must ask the daemon
+    /// `mf log list` shows the last twenty labels; it must ask the daemon
     /// for those, not for the whole log. Fetching everything and trimming it
     /// here made the listing cost grow with the log — seven seconds of daemon
     /// time and two minutes of formatting on a 200 000-operation repository
@@ -589,10 +597,10 @@ mod tests {
     fn log_list_bounds_what_it_asks_the_daemon_for() {
         let q = log_query(&LogArgs::default()).unwrap();
         assert!(
-            q.contains(&("revisions", "20".to_string())),
-            "the default listing must bound the read by revisions: {q:?}"
+            q.contains(&("labels", "20".to_string())),
+            "the default listing must bound the read by labels: {q:?}"
         );
-        // And by operations: one revision can hold a whole reconcile.
+        // And by operations: one label can hold a whole reconcile.
         assert!(
             q.contains(&("limit", LOG_OP_CAP.to_string())),
             "the default listing must bound the read by operations too: {q:?}"
@@ -601,11 +609,11 @@ mod tests {
         // `--ops` counts operations, so it bounds operations.
         let q = log_query(&LogArgs { ops: true, limit: Some(5), ..LogArgs::default() }).unwrap();
         assert!(q.contains(&("limit", "5".to_string())), "{q:?}");
-        assert!(!q.iter().any(|(k, _)| *k == "revisions"), "{q:?}");
+        assert!(!q.iter().any(|(k, _)| *k == "labels"), "{q:?}");
 
         // `--all` asks for everything, on purpose.
         let q = log_query(&LogArgs { all: true, ..LogArgs::default() }).unwrap();
-        assert!(!q.iter().any(|(k, _)| *k == "limit" || *k == "revisions"), "{q:?}");
+        assert!(!q.iter().any(|(k, _)| *k == "limit" || *k == "labels"), "{q:?}");
     }
 
     #[test]
@@ -629,11 +637,12 @@ mod tests {
 
 // ── `mf log revert` (doc "Reverting a revision") ──────────────────────────────
 
-/// What to revert: a revision, an explicit list of operations, or — omitted —
-/// the revision HEAD sits in.
+/// What to revert: a label — its children's operations included — an
+/// explicit list of operations, or, omitted, the label of the newest
+/// operation.
 #[derive(Clone, Default)]
 pub struct RevertTarget {
-    pub rev_id: Option<i64>,
+    pub label_id: Option<i64>,
     pub op_ids: Vec<i64>,
 }
 
@@ -646,9 +655,9 @@ impl RevertTarget {
         if !self.op_ids.is_empty() {
             json!({"op_ids": self.op_ids})
         } else {
-            match self.rev_id {
-                Some(r) => json!({"rev_id": r}),
-                None => json!({"rev_id": "head"}),
+            match self.label_id {
+                Some(l) => json!({"label_id": l}),
+                None => json!({"label_id": "head"}),
             }
         }
     }
@@ -658,9 +667,9 @@ impl RevertTarget {
             let ids: Vec<String> = self.op_ids.iter().map(|i| format!("op {i}")).collect();
             ids.join(", ")
         } else {
-            match self.rev_id {
-                Some(r) => format!("revision {r}"),
-                None => "the last revision".into(),
+            match self.label_id {
+                Some(l) => format!("label {l}"),
+                None => "the newest label".into(),
             }
         }
     }
@@ -668,7 +677,6 @@ impl RevertTarget {
 
 pub struct RevertOpts {
     pub metadata_only: bool,
-    pub label: Option<String>,
     pub force: bool,
     /// Ask before moving files. `mf log revert` does; undo and redo do not —
     /// what they move is what the change they take back moved, and the move
@@ -700,9 +708,9 @@ fn changed_lines(plan: &Json) -> Vec<String> {
         }
         let what = match changed["op_id"].as_i64() {
             Some(id) => {
-                let rev = changed["rev_id"].as_i64().unwrap_or(0);
+                let label = changed["label_id"].as_i64().unwrap_or(0);
                 let when = changed["timestamp"].as_i64().map(fmt_minute).unwrap_or_default();
-                format!("changed since by op {id} (rev {rev}, {when})")
+                format!("changed since by op {id} (label {label}, {when})")
             }
             None => "changed since (by an operation no longer in the log)".into(),
         };
@@ -734,8 +742,8 @@ pub fn revert_plan(ctx: &Ctx, target: RevertTarget) -> Result<i32, CliError> {
     Ok(0)
 }
 
-/// `mf log revert [<target>]`: undoes a revision (or an operation) by writing
-/// the inverse as a new revision at HEAD.
+/// `mf log revert [<target>]`: undoes a label (or an operation) by writing
+/// the inverse onto the current state.
 pub fn revert_run(ctx: &Ctx, target: RevertTarget, opts: &RevertOpts) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let plan = ctx.client.get(&format!("{base}/revert/plan"), &target.query())?;
@@ -777,11 +785,7 @@ pub fn revert_run(ctx: &Ctx, target: RevertTarget, opts: &RevertOpts) -> Result<
 
     let repo = open_repo(ctx)?;
     let body = target.body();
-    let request = RevertRequest {
-        target: &body,
-        metadata_only: opts.metadata_only,
-        label: opts.label.as_deref(),
-    };
+    let request = RevertRequest { target: &body, metadata_only: opts.metadata_only };
     let resp =
         navigation::revert(&repo, &request, &plan, &opts.policies, &CliUi { silent: opts.silent })
             .map_err(nav_err)?;
@@ -794,10 +798,10 @@ pub fn revert_run(ctx: &Ctx, target: RevertTarget, opts: &RevertOpts) -> Result<
 /// Prints what a revert wrote and what it left out.
 fn report_revert(target: &RevertTarget, plan: &Json, resp: &Json) {
     let reverted = resp["reverted_operations"].as_array().cloned().unwrap_or_default();
-    match resp["revision"].as_i64() {
+    match resp["label"].as_i64() {
         None => println!("Nothing was reverted."),
-        Some(rev) => println!(
-            "Reverted {} as revision {rev} ({} operation(s)).",
+        Some(label) => println!(
+            "Reverted {} in label {label} ({} operation(s)).",
             target.describe(),
             reverted.len()
         ),
