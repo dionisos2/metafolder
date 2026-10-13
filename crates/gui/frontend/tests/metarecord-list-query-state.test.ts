@@ -134,6 +134,7 @@ async function mountPanel(vars: Record<string, unknown>) {
   await new Promise((r) => setTimeout(r, 0)); // let the deferred start settle
   return {
     calls,
+    api,
     /** Publish a new value for `key`, as the shell's variable push does. */
     push: async (key: string, value: unknown) => {
       store.set(key, value);
@@ -223,6 +224,39 @@ describe('metarecord-list query variables', () => {
     p.queryInput.value = 'half typ'; // not applied
     await p.push('metarecord-list:normal-shown', true); // what it already is
     expect(p.queryInput.value).toBe('half typ');
+    expect(ranQueries(p.calls)).toEqual([]);
+  });
+
+  // The echo of the panel's own write starts a read of the variables; a query
+  // applied while that read is in flight must not be undone by it: the read
+  // predates the new query, so it holds the old one (the bug: the old query put
+  // back in the zone and run again).
+  test('a read predating its own write does not bring the old query back', async () => {
+    const p = await mountPanel({});
+    let release: () => void = () => {};
+    let gate: Promise<void> | null = null;
+    const get = p.api.workspace.get;
+    p.api.workspace.get = async (key: string) => {
+      const value = await get(key); // the value as it is now…
+      if (gate && key.startsWith('metarecord-list:')) await gate; // …answered later
+      return value;
+    };
+    const enter = async (text: string) => {
+      p.queryInput.value = text;
+      p.queryInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await settle();
+    };
+
+    await enter('rating > 3');
+    gate = new Promise((r) => (release = r));
+    await p.push('metarecord-list:query', 'rating > 3'); // the echo: its read held
+    await enter('rating > 4');
+    p.calls.length = 0;
+    gate = null;
+    release();
+    await settle();
+
+    expect(p.queryInput.value).toBe('rating > 4');
     expect(ranQueries(p.calls)).toEqual([]);
   });
 });

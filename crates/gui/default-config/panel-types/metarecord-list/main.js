@@ -974,9 +974,7 @@ export async function mount(root, metafolder) {
   }
 
   async function persistQueryState() {
-    appliedState = { ...appliedState, query: queryInput.value, normal: normalInput.value };
-    await workspace.set('metarecord-list:query', queryInput.value);
-    await workspace.set('metarecord-list:normal-query', normalInput.value);
+    await writeQueryState({ query: queryInput.value, normal: normalInput.value });
   }
 
   /** Empties all three search fields and re-runs (empty query = match all). */
@@ -1040,6 +1038,41 @@ export async function mount(root, metafolder) {
   /** @type {QueryState} the state last applied or written by this panel */
   let appliedState = { query: '', normal: '', frozen: false, shown: true };
 
+  // A read of the variables that overlaps the panel's own write is stale: begun
+  // before it, it finds the state the panel HAD (and applying it put the old
+  // query back and ran it); begun between two of its writes, half of each.
+  // Such a read is dropped, and the variables re-read once the writes are done.
+  let stateEpoch = 0;
+  let stateWrites = 0;
+  let followDropped = false;
+
+  /** @type {Record<keyof QueryState, string>} */
+  const STATE_VARIABLES = {
+    query: 'metarecord-list:query',
+    normal: 'metarecord-list:normal-query',
+    frozen: 'metarecord-list:normal-frozen',
+    shown: 'metarecord-list:normal-shown',
+  };
+
+  /** Makes `change` part of the panel's state, writing its variables.
+   *  @param {Partial<QueryState>} change */
+  async function writeQueryState(change) {
+    appliedState = { ...appliedState, ...change };
+    stateEpoch += 1;
+    stateWrites += 1;
+    try {
+      for (const [key, value] of Object.entries(change)) {
+        await workspace.set(STATE_VARIABLES[/** @type {keyof QueryState} */ (key)], value);
+      }
+    } finally {
+      stateWrites -= 1;
+    }
+    if (stateWrites === 0 && followDropped) {
+      followDropped = false;
+      scheduleFollowQueryVariables();
+    }
+  }
+
   /** @param {QueryState} a @param {QueryState} b */
   function sameQueryState(a, b) {
     return a.query === b.query && a.normal === b.normal && a.frozen === b.frozen && a.shown === b.shown;
@@ -1065,7 +1098,12 @@ export async function mount(root, metafolder) {
   /** Brings the zones to what the variables say, and runs it when it differs
    *  from what this panel last applied. */
   async function followQueryVariables() {
-    const next = await variableQueryState();
+    const epoch = stateEpoch;
+    const next = stateWrites === 0 ? await variableQueryState() : null;
+    if (next === null || epoch !== stateEpoch || stateWrites > 0) {
+      followDropped = true;
+      return;
+    }
     if (sameQueryState(next, appliedState)) return;
     queryInput.value = next.query;
     if (next.shown !== normalShown) await setNormalShown(next.shown);
@@ -1124,8 +1162,7 @@ export async function mount(root, metafolder) {
     normalEditor.hidden = !shown;
     normalToggle.textContent = shown ? 'Hide normal DSL' : 'Show normal DSL';
     if (shown && !normalFrozen) await refreshPreview();
-    appliedState = { ...appliedState, shown };
-    await workspace.set('metarecord-list:normal-shown', shown);
+    await writeQueryState({ shown });
   }
 
   /** @param {boolean} frozen */
@@ -1134,8 +1171,7 @@ export async function mount(root, metafolder) {
     normalFreeze.checked = frozen;
     normalInput.readOnly = !frozen;
     if (!frozen && normalShown) await refreshPreview();
-    appliedState = { ...appliedState, frozen };
-    await workspace.set('metarecord-list:normal-frozen', frozen);
+    await writeQueryState({ frozen });
   }
 
   // ── Columns ─────────────────────────────────────────────────────────────

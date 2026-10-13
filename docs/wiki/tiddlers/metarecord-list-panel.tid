@@ -130,7 +130,11 @@ The four query variables (`:query`, `:normal-query`, `:normal-shown`,
 panel, a command or a script, they are put in the zones and run — at once when the
 list is on screen, when it next is otherwise. A burst of writes runs once, on the final
 state; a write of what the list already shows, or of what it wrote itself, runs
-nothing, and a query being typed but not yet applied is left alone. A copy of the
+nothing, and a query being typed but not yet applied is left alone. Nor does a read of
+the variables that overlaps one of the list's own writes: begun before it, it holds the
+query the list ''had'' — following it put the previous query back and ran it — so it
+is dropped, and the variables re-read once the writes are done (as in the
+[[file-manager panel]]). A copy of the
 workspace's variables therefore shows the same list ([[Cross-panel selection]]).
 
 `metarecord-list:insert <zone> <text>` writes into one of the four fields (`finder`,
