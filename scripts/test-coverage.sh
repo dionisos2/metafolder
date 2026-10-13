@@ -46,6 +46,14 @@ cat >"$bin/git" <<STUB
 printf '%s\n' "$fake"
 STUB
 chmod +x "$bin"/* "$fake/scripts/gui-e2e.sh"
+# A PATH where Xvfb is not: the stubs, and only the real tools the script runs.
+nox="$tmp/nox"
+mkdir -p "$nox"
+cp "$bin"/* "$nox/"
+for tool in bash dirname; do ln -s "$(command -v "$tool")" "$nox/$tool"; done
+# And one where it is (gui-e2e.sh, a stub here, would start it).
+printf '#!/bin/sh\nexit 0\n' >"$bin/Xvfb"
+chmod +x "$bin/Xvfb"
 
 run() { # [env assignments…] -- [coverage.sh args…]
     : >"$tmp/log"
@@ -75,12 +83,17 @@ assert_eq "exits 0 with options" 0 "$rc"
 assert "--unsandboxed is passed to gui-e2e.sh" grep -q '^gui-e2e .* --unsandboxed$' "$tmp/log"
 assert "--html asks for the html report" grep -q '^cargo llvm-cov report --html ' "$tmp/log"
 
-# ── 3. no display: a loud SKIP, the report still written ─────────────────────
-out=$(run DISPLAY= WAYLAND_DISPLAY= --); rc=$?
+# ── 3. no display and no Xvfb: a loud SKIP, the report still written ─────────
+out=$(run DISPLAY= WAYLAND_DISPLAY= PATH="$nox" --); rc=$?
 assert_eq "no display is not a failure" 0 "$rc"
 assert_contains "no display is announced" "$out" "SKIP gui-e2e"
 assert_not "no e2e without a display" grep -q '^gui-e2e' "$tmp/log"
 assert "the report is still written" grep -q '^cargo llvm-cov report' "$tmp/log"
+
+# ── 3b. no display but Xvfb: gui-e2e.sh brings its own ───────────────────────
+out=$(run DISPLAY= WAYLAND_DISPLAY= --); rc=$?
+assert_eq "Xvfb without a display: not a failure" 0 "$rc"
+assert "Xvfb without a display: the e2e runs" grep -q '^gui-e2e' "$tmp/log"
 
 # ── 4. --no-gui: the same skip, asked for ────────────────────────────────────
 out=$(run DISPLAY=:9 -- --no-gui); rc=$?

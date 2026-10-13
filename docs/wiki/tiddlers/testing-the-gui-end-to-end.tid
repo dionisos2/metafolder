@@ -22,6 +22,35 @@ in a fresh focused workspace. A scenario types commands with [[mf gui command]] 
 reads back the outcome with [[mf gui status-bar]] (kind and text of the last status
 message) and [[mf gui messages]] (the message log).
 
+!! Its own display
+
+The GUI runs on a private X server, `Xvfb`, when one is installed: its window never
+shows on the user's desktop, and nothing the run does reaches the user's session. The
+GUI is told to use X there (`GDK_BACKEND=x11`), Wayland session or not. Without
+`Xvfb` it falls back on `$DISPLAY` or `$WAYLAND_DISPLAY`.
+
+!! Keys pressed
+
+Some of the GUI's wrappers are reached by no command, only by a key: the settings
+view's keybinding editor, the command input's history and its prompts. The keyboard
+scenarios (`prompt`, `history`, `keybindings`, `open-with`) press those keys with
+`xdotool`, in the GUI's window, and only on the private display. On a real one they
+would type into whatever the user is doing. Under a keymap such as bépo, `xdotool`
+also reaches some letters through the desktop's own shortcuts: an `e` opened the file
+manager through Super+E. `Xvfb`'s keymap is US. Without `Xvfb`
+or `xdotool`, these scenarios are a loud `SKIP`.
+
+A key changes nothing the scenario can read until the GUI has acted on it, and some of
+those moments leave no trace: a command-input prompt opening, `ctrl+p` loading the
+history. So a scenario arranges for a key pressed too early to do nothing:
+
+* `Escape` with no prompt open runs nothing. The `open-with` scenario presses it until its command ends: once it ends, the prompt was there.
+* A harmless command typed first: if the history's recall is late, `Return` runs `status:clear`. An empty line would run the first completion offered.
+
+A letter pressed with no text field focused is a binding (`n` switches workspace, `t h`
+opens the help). That is why a scenario never types text before a field is known to
+hold the focus.
+
 !! Its own configuration
 
 The GUI reads a private copy of the installed configuration (`XDG_CONFIG_HOME` under
@@ -48,8 +77,8 @@ message of the command before it.
 !! Running it
 
 It needs the binaries and the frontend built ([[Building]]), the configuration
-installed (the GUI reads its panels from it — [[Updating the configuration]]), and a
-display. `--unsandboxed` passes `--allow-unsandboxed-webview`, for a container that
+installed (the GUI reads its panels from it — [[Updating the configuration]]), and
+`Xvfb` or a display; the keyboard scenarios need `Xvfb` and `xdotool`. `--unsandboxed` passes `--allow-unsandboxed-webview`, for a container that
 forbids WebKit's sandbox ([[Sandboxing the media decoders]]). A run takes about ten
 seconds, most of it the GUI starting. It is not part of `scripts/check.sh`, which runs
 without a display. `METAFOLDER_BIN_DIR` (default `target/debug`) names the directory of
@@ -72,8 +101,10 @@ A `scenario_<name>` function: `new_repo <name>` for the repository and the works
 then `status_is <name> <kind> <glob>`, `command_ok`, or the `assert_*` of
 `scripts/lib/assert.sh`. `gui_status <python expression>` evaluates one over [[mf gui status]] (`ws_count`, `slot_ws <slot>` are built on it). `select_path <abs path>` makes a path's metarecord the
 selection (through the `file` panel); `show_panel <slot> <type> <command>` shows a
-panel and waits until one of its commands answers. Add the name to the default list
-at the top.
+panel and waits until one of its commands answers. A keyboard scenario starts with
+`needs_keyboard <name> || return 0`, then presses keys with `keys` (`xdotool` names:
+`colon`, `Return`, `ctrl+p`) and types text with `typed`. Add the name to the default
+list at the top.
 
 Name the target of a command that acts on the selection, even when the default would
 do: the workspaces show the `message` panel because the metarecord list selects a
@@ -81,6 +112,5 @@ record of its own once loaded, at a moment no scenario controls.
 
 !! Not covered
 
-The `sync` panel's conflict editor: a resolution is chosen in a row of the panel and
-saved with its button, which no command reaches. The `sync` scenario runs a plan
-without conflicts.
+* The `sync` panel's conflict editor: a resolution is chosen in a row of the panel and saved with its button, which no command reaches. The `sync` scenario runs a plan without conflicts.
+* What only a mouse reaches: a tab's close button, the value picker's button in a field editor (the `picker` scenario opens a picker through `repos:load`), the refusal to remove a key a panel suggested (its row has no fixed place in the list).

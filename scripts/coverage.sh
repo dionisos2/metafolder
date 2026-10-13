@@ -14,7 +14,8 @@
 #   --html         an HTML report under target/llvm-cov-target/llvm-cov/html
 #                  instead of the summary table
 #
-# With no display the end-to-end run is a loud SKIP, not a failure. A failing
+# gui-e2e.sh runs the GUI on a private Xvfb when there is one; with neither
+# Xvfb nor a display, the end-to-end run is a loud SKIP, not a failure. A failing
 # test or scenario fails the run, but the report is written anyway: the
 # coverage of a run with one red test is still worth reading.
 #
@@ -55,8 +56,8 @@ cargo test --workspace --no-fail-fast || status=1
 
 if ! $gui; then
     :
-elif [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
-    echo "SKIP gui-e2e: no display (\$DISPLAY / \$WAYLAND_DISPLAY) — the Tauri wrappers are not counted"
+elif ! command -v Xvfb >/dev/null && [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+    echo "SKIP gui-e2e: no Xvfb and no display (\$DISPLAY / \$WAYLAND_DISPLAY) — the Tauri wrappers are not counted"
 else
     if cargo build -p metafolder-daemon -p metafolder-cli -p metafolder-gui; then
         METAFOLDER_BIN_DIR="$CARGO_TARGET_DIR/debug" scripts/gui-e2e.sh "${e2e_args[@]}" \

@@ -25,8 +25,9 @@ share their build. Then, under that one instrumentation:
 # the daemon, `mf` and the GUI built instrumented, and `scripts/gui-e2e.sh` pointed at them through `METAFOLDER_BIN_DIR` (which `scripts/lib/daemon-fixture.sh` reads too);
 # one report, `cargo llvm-cov report --summary-only`, or `--html` under `target/llvm-cov-target/llvm-cov/html`.
 
-A failing test or scenario fails the run, and the report is still written. With no
-display the end-to-end half is a loud skip, and `--no-gui` asks for that skip.
+A failing test or scenario fails the run, and the report is still written. The
+end-to-end half brings its own display when `Xvfb` is installed; with neither `Xvfb`
+nor a display it is a loud skip, and `--no-gui` asks for that skip.
 
 !! A profile is written at exit
 

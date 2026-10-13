@@ -12,6 +12,13 @@
 # What it covers that `cargo test` cannot: the whole chain shell dispatcher →
 # Tauri `invoke` → `#[tauri::command]` → daemon → state.
 #
+# The GUI runs on a private X server (Xvfb) when there is one, so its window
+# never shows on the user's desktop. The keyboard scenarios (prompt history
+# keybindings open-with) need it and xdotool: they press keys where no command
+# reaches — the settings view, the command input — and on a real display they
+# would type into whatever the user is doing (or, under a keymap such as bépo,
+# into the desktop's own shortcuts). Without both they are a loud SKIP.
+#
 # Not part of check.sh: it needs a display, the WebView and a built frontend.
 #
 # Prerequisites:
@@ -20,7 +27,9 @@
 #     build) — scripts/complete-build.sh does all of it;
 #   - the user configuration installed (metafolder-sync-config): the GUI reads
 #     its panels and keybindings from ~/.config/metafolder/gui/;
-#   - a display ($DISPLAY or $WAYLAND_DISPLAY).
+#   - Xvfb (Arch: xorg-server-xvfb), else a display ($DISPLAY or
+#     $WAYLAND_DISPLAY) and no keyboard scenario;
+#   - xdotool, for the keyboard scenarios.
 #
 # METAFOLDER_BIN_DIR (default target/debug) names the directory of the three
 # binaries; scripts/coverage.sh points it at instrumented ones, which is why
@@ -29,7 +38,8 @@
 #
 # Usage:  scripts/gui-e2e.sh [--unsandboxed] [--keep-logs] [scenario...]
 #   with no scenario, runs them all: undo-redo duplicates orphans trash
-#   reconcile ignore sync repos list layout script errors.
+#   reconcile ignore sync repos list layout script errors picker refs prompt
+#   history keybindings open-with devtools.
 #   --unsandboxed  pass --allow-unsandboxed-webview to the GUI (a container
 #                  that forbids WebKit's sandbox; never on real data)
 #   --keep-logs    keep the work directory (daemon.log, gui.log) on exit
@@ -54,7 +64,8 @@ for arg in "$@"; do
     esac
 done
 [ ${#SCENARIOS[@]} -gt 0 ] \
-    || SCENARIOS=(undo-redo duplicates orphans trash reconcile ignore sync repos list layout script errors)
+    || SCENARIOS=(undo-redo duplicates orphans trash reconcile ignore sync repos list layout script
+        errors picker refs prompt history keybindings open-with devtools)
 
 # shellcheck source=lib/daemon-fixture.sh
 . scripts/lib/daemon-fixture.sh
@@ -65,7 +76,8 @@ die() { echo "error: $*" >&2; exit 2; }
 
 df_available && [ -x "$GUI_BIN" ] \
     || die "build first: cargo build -p metafolder-daemon -p metafolder-cli -p metafolder-gui"
-[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] || die "no display (\$DISPLAY / \$WAYLAND_DISPLAY)"
+command -v Xvfb >/dev/null || [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] \
+    || die "no Xvfb and no display (\$DISPLAY / \$WAYLAND_DISPLAY)"
 
 # The fixture moves XDG_RUNTIME_DIR to a private directory (its own auth
 # tokens); a relative Wayland socket name would then point into it.
@@ -78,9 +90,11 @@ df_start || die "the daemon did not start"
 WORK=$_DF_TMP
 GUI_PORT=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')
 GUI_PID=""
+XVFB_PID=""
 
 cleanup() {
     [ -n "$GUI_PID" ] && kill "$GUI_PID" 2>/dev/null && wait "$GUI_PID" 2>/dev/null
+    [ -n "$XVFB_PID" ] && kill "$XVFB_PID" 2>/dev/null && wait "$XVFB_PID" 2>/dev/null
     if $KEEP_LOGS; then
         [ -n "$_DF_DPID" ] && kill "$_DF_DPID" 2>/dev/null
         echo "logs kept in $WORK"
@@ -90,6 +104,24 @@ cleanup() {
     return 0
 }
 trap cleanup EXIT
+
+# The private X server: a free display number of its own choosing (-displayfd),
+# a US keymap, nothing else on it. The GUI is told to use X even under Wayland.
+KEYBOARD=false
+if command -v Xvfb >/dev/null; then
+    Xvfb -displayfd 1 -screen 0 1280x800x24 -nolisten tcp \
+        >"$WORK/xvfb.display" 2>"$WORK/xvfb.log" &
+    XVFB_PID=$!
+    for _ in $(seq 1 40); do
+        [ -s "$WORK/xvfb.display" ] && break
+        sleep 0.25
+    done
+    [ -s "$WORK/xvfb.display" ] || die "Xvfb did not start: $(tail -n 3 "$WORK/xvfb.log")"
+    DISPLAY=":$(head -n 1 "$WORK/xvfb.display")"
+    export DISPLAY GDK_BACKEND=x11
+    unset WAYLAND_DISPLAY
+    command -v xdotool >/dev/null && KEYBOARD=true
+fi
 
 mfg() { "$_DF_MF" gui --gui-url "http://127.0.0.1:$GUI_PORT" "$@"; }
 
@@ -115,6 +147,21 @@ else
     mf gui message "e2e-ask: no answer"
 fi
 SCRIPT
+# A panel for the `keybindings` scenario: it suggests a key for a command of
+# its own, the way a panel's `addKeybinding` does.
+mkdir -p "$CONFIG_HOME/metafolder/gui/panel-types/e2e-keys"
+cat >"$CONFIG_HOME/metafolder/gui/panel-types/e2e-keys/index.html" <<'PANEL'
+<p>e2e: a panel that suggests a key</p>
+PANEL
+cat >"$CONFIG_HOME/metafolder/gui/panel-types/e2e-keys/main.js" <<'PANEL'
+export function mount(_root, metafolder) {
+  void metafolder.commands.register('e2e-keys:ping', {
+    label: 'e2e: say pinged',
+    handler: () => metafolder.statusBar.message('e2e: pinged', 60000),
+  });
+  void metafolder.addKeybinding('e2e-keys:ping', 'ctrl+alt+y');
+}
+PANEL
 
 gui_args=(--gui-port "$GUI_PORT" --daemon-port "$DF_PORT")
 $UNSANDBOXED && gui_args+=(--allow-unsandboxed-webview)
@@ -140,6 +187,10 @@ if ! $ready; then
     tail -n 20 "$WORK/gui.log" >&2
     exit 2
 fi
+# The window the keyboard scenarios type into: the GUI's one visible window.
+GUI_WIN=""
+$KEYBOARD && GUI_WIN=$(xdotool search --onlyvisible --pid "$GUI_PID" 2>/dev/null | head -n 1)
+[ -n "$GUI_WIN" ] || KEYBOARD=false
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -241,6 +292,19 @@ status_is() {
 
 # command_ok <name> — the last `run` resolved without an error.
 command_ok() { assert_eq "$1" "0" "$LAST_RC"; }
+
+# needs_keyboard <scenario> — false, and a loud SKIP, when keys cannot be
+# pressed: no private X server or no xdotool (see the header).
+needs_keyboard() {
+    $KEYBOARD && return 0
+    printf 'SKIP %s: needs Xvfb and xdotool (keys are only pressed on a private display)\n' "$1"
+    return 1
+}
+
+# keys <key…> — presses keys (xdotool names: colon, Return, ctrl+p) in the
+# GUI's window. typed <text> — types text there.
+keys() { xdotool windowfocus --sync "$GUI_WIN" key --delay 30 "$@"; }
+typed() { xdotool windowfocus --sync "$GUI_WIN" type --delay 30 -- "$1"; }
 
 # ── scenarios ────────────────────────────────────────────────────────────────
 
@@ -612,6 +676,197 @@ scenario_errors() {
     run sync:pair errors nowhere
     assert_contains "sync pair: an unknown repository is refused" "$LAST_ERR" \
         'no loaded repository named "nowhere"'
+}
+
+# picking — a value picker is open (its workspace is named after the pick).
+picking() {
+    [ "$(gui_status "any(w['name'] == 'Pick a repository' for w in s['workspaces'])")" = True ]
+}
+
+# picker_slot — the slot showing the picker.
+picker_slot() {
+    gui_status "next(k for k in ('left', 'right') if s['layout'][k] and next(
+        w['name'] for w in s['workspaces'] if w['id'] == s['layout'][k]['workspace_id'])
+        == 'Pick a repository')"
+}
+
+scenario_picker() {
+    new_repo picker
+    local picked="$WORK/repos/picked" uuid runner
+    mkdir -p "$picked"
+    uuid=$(df_mf repo init --name picked "$picked" | head -n 1)
+    df_mf -u "$uuid" repo unload >/dev/null
+    show_panel left repos repos:refresh
+
+    # repos:load resolves once the pick does: it runs beside the scenario.
+    mfg command --timeout-ms 60000 repos:load >/dev/null 2>&1 &
+    runner=$!
+    assert "picker: repos load opens one" until_ok 10 picking
+    run pick:cancel
+    wait "$runner"
+    assert_not "pick cancel: the picker closes" picking
+    assert_eq "pick cancel: nothing is loaded" "" "$(repo_named picked)"
+
+    mfg command --timeout-ms 60000 repos:load >/dev/null 2>&1 &
+    runner=$!
+    assert "picker: opens again" until_ok 10 picking
+    # The picker's selection is what its panel shows: the folder, here.
+    mfg view "$(picker_slot)" file --path "$picked" >/dev/null || die "view file $picked"
+    run pick:confirm
+    wait "$runner"
+    assert_not "pick confirm: the picker closes" picking
+    assert_eq "pick confirm: the picked folder is loaded" "$uuid" "$(repo_named picked)"
+    # Unloaded once its load has finished (refused while it warms up).
+    until_ok 30 df_mf -u "$uuid" repo unload >/dev/null 2>&1
+}
+
+scenario_refs() {
+    new_repo refs
+    local file="$REPO_DIR/a.txt" a bob
+    echo a >"$file"
+    a=$(record "$file")
+    bob=$(df_mf metarecord add name:string=bob)
+    select_path "$file"
+    show_panel left metarecord-detail metarecord:cancel
+
+    run metarecord:field add friend ref "$bob"
+    assert_eq "ref: a uuid is taken as it is" "$bob" "$(df_mf metarecord -i "$a" field get friend)"
+    # The shipped '*' rule of [ref-seeds] names a target by its name too.
+    run metarecord:field add buddy ref bob
+    assert_eq "ref: a seed label is resolved to its uuid" "$bob" \
+        "$(df_mf metarecord -i "$a" field get buddy)"
+}
+
+scenario_prompt() {
+    needs_keyboard prompt || return 0
+    new_repo prompt
+    local runner
+
+    mfg prompt "e2e: name?" >"$WORK/prompt.out" 2>&1 &
+    runner=$!
+    assert "prompt: asks in the command input" until_ok 10 asking
+    typed "typed answer"
+    keys Return
+    wait "$runner"
+    assert_eq "prompt: enter confirms" 0 "$?"
+    assert_eq "prompt: the typed text is the answer" "typed answer" "$(cat "$WORK/prompt.out")"
+
+    mfg prompt "e2e: name?" >"$WORK/prompt.out" 2>&1 &
+    runner=$!
+    assert "prompt: asks again" until_ok 10 asking
+    typed "abandoned"
+    keys Escape
+    wait "$runner"
+    assert_eq "prompt: escape cancels" 1 "$?"
+    assert_contains "prompt: the script is told" "$(cat "$WORK/prompt.out")" "cancel"
+}
+
+# ws_name — the name of the scenario's workspace.
+ws_name() { gui_status "next(w['name'] for w in s['workspaces'] if w['id'] == '$WS')"; }
+named() { [ "$(ws_name)" = "$1" ]; }
+
+scenario_history() {
+    needs_keyboard history || return 0
+    new_repo history
+    local file="$REPO_DIR/.metafolder/gui/history/shell:command"
+
+    # Escape first: with no text field focused, ':' is the binding that
+    # focuses the command input, not a character typed somewhere.
+    keys Escape colon
+    typed "workspace:rename Typed name"
+    keys Return
+    assert "history: the typed command runs" until_ok 10 named "Typed name"
+    assert "history: and is kept for the repository" \
+        grep -qx "workspace:rename Typed name" "$file"
+
+    run workspace:rename Other
+    # ctrl+p reads the history before it recalls: return waits a second for
+    # it. Typed first, `status:clear` is what return runs if the recall is
+    # late — a failure that changes nothing, where an empty line would run
+    # whatever the completion list offers first.
+    keys Escape colon
+    typed "status:clear"
+    keys ctrl+p
+    sleep 1
+    keys Return
+    assert "history: ctrl+p recalls it" until_ok 10 named "Typed name"
+}
+
+# bound <combo> — keybindings.toml has an entry for the combo.
+bound() { grep -q "^\"$1\" =" "$CONFIG_HOME/metafolder/gui/keybindings.toml"; }
+unbound() { ! bound "$1"; }
+
+scenario_keybindings() {
+    needs_keyboard keybindings || return 0
+    new_repo keybindings
+    local file="$CONFIG_HOME/metafolder/gui/keybindings.toml"
+
+    run config:open
+    command_ok "settings: config open"
+    # The key field has the focus; tab walks the form — command, when, focus,
+    # text-input, Save — and runs no binding while the view is open.
+    typed "!"
+    keys Tab
+    typed "status:clear"
+    keys Tab Tab Tab Tab Return
+    assert "settings: Save writes the binding" \
+        until_ok 10 grep -qx '"!" = { command = "status:clear" }' "$file"
+    # The focus is back on the key field; Save, disabled while it is empty, is
+    # skipped: the next stops are the first row's Edit and Remove, and "!"
+    # sorts first.
+    keys Tab Tab Tab Tab Tab Tab Return
+    assert "settings: Remove unbinds it" until_ok 10 unbound "!"
+    keys Escape
+    status_is "settings: tab ran no binding behind the view" info "e2e: before config:open"
+
+    show_panel left e2e-keys e2e-keys:ping
+    mfg message --workspace "$WS" "e2e: before ctrl+alt+y" >/dev/null
+    keys ctrl+alt+y
+    assert "settings closed: a key a panel suggested runs its command" \
+        until_ok 10 says "e2e: pinged"
+}
+
+# running <pid> — the process has not exited.
+running() { kill -0 "$1" 2>/dev/null; }
+
+scenario_open_with() {
+    needs_keyboard open-with || return 0
+    new_repo open-with
+    local file="$REPO_DIR/a.txt" runner tries=0
+    echo a >"$file"
+    record "$file" >/dev/null
+    select_path "$file"
+
+    # Without a program, it is asked in the command input, completing over the
+    # configured `open-with` list. The prompt leaves no trace to wait on, so
+    # escape is pressed until the command ends: harmless before the prompt
+    # opens (no binding), it cancels the prompt once it is there.
+    mfg command --timeout-ms 60000 file:open-with >/dev/null 2>&1 &
+    runner=$!
+    while running "$runner" && [ "$tries" -lt 40 ]; do
+        keys Escape
+        sleep 0.25
+        tries=$((tries + 1))
+    done
+    assert_not "open with: escape cancels the program prompt" running "$runner"
+    wait "$runner"
+    assert_not "open with: a cancelled prompt runs nothing" test -e "$WORK/opened"
+
+    # With one, it runs on the selection.
+    # shellcheck disable=SC2016 # $1 is the script's own argument
+    printf '#!/bin/sh\necho "$1" >"%s"\n' "$WORK/opened" >"$WORK/e2e-open"
+    chmod +x "$WORK/e2e-open"
+    run file:open-with "$WORK/e2e-open"
+    command_ok "open with: a program given runs"
+    assert "open with: the program runs" until_ok 10 test -s "$WORK/opened"
+    assert_eq "open with: on the selected file" "$file" "$(cat "$WORK/opened" 2>/dev/null)"
+}
+
+# Last: the inspector docks into the window and may take the keyboard.
+scenario_devtools() {
+    new_repo devtools
+    run devtools:open
+    command_ok "devtools open"
 }
 
 for scenario in "${SCENARIOS[@]}"; do
