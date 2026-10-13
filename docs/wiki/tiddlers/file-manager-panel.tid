@@ -49,7 +49,8 @@ change. The ''entries'' are not watched — a file another program creates appea
 !! Moving around
 
 * <<key "file-manager:next" "↓ or j">> / <<key "file-manager:prev" "↑ or k">>, <<key "file-manager:first" Home>> / <<key "file-manager:last" End>> — move the cursor.
-* <<key "file-manager:activate" Enter>>, or a double click — enter the directory under the cursor. On a file it selects it, like a click.
+* <<key "file-manager:activate" Enter>> — enter the directory under the cursor. On a file it selects it, like a click.
+* The button at the start of a row ([[Opening a row]]) — `›` on a folder enters it; `↗` on a file, or on `.` (the folder shown), selects it and shows it in the other slot.
 * <<key "file-manager:parent" Backspace>>, or ''↑ up'' — the parent directory.
 * <<key "file-manager:root" "/">>, or the root button — the repository root; `/` when the workspace has no repository, and the button then reads ''root''.
 * <<key "file-manager:find" f>> — jump to an entry of this directory by name ([[Jumping to an entry]]).

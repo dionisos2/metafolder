@@ -411,6 +411,40 @@ export function valueEl(value, onOpen) {
   }
 }
 
+/** The icon of each kind of opening (doc "Opening a row"): going into the row
+ *  (a folder, a tree node, a label) is not showing it in another panel. */
+const OPEN_GLYPHS = { enter: '›', show: '↗' };
+
+/**
+ * A row's open button (doc "Opening a row"). Opening is one click on it; a click
+ * on the row itself only selects, so the row's text can be selected and the row
+ * clicked as often as wanted. The press keeps the focus where it was (the
+ * panel's keys keep working) and starts no text selection; the click is not
+ * also a click on the row, so `onOpen` does the selecting it needs.
+ *
+ * @param {'enter'|'show'} kind what opening does: go into the row, or show it elsewhere
+ * @param {string} title what opening does, for hover and screen readers
+ * @param {() => unknown} onOpen
+ */
+export function openButton(kind, title, onOpen) {
+  return el(
+    'button',
+    {
+      type: 'button',
+      class: ['mf-open', `mf-open-${kind}`],
+      title,
+      'aria-label': title,
+      tabIndex: -1,
+      onmousedown: (/** @type {MouseEvent} */ event) => event.preventDefault(),
+      onclick: (/** @type {MouseEvent} */ event) => {
+        event.stopPropagation();
+        void onOpen();
+      },
+    },
+    OPEN_GLYPHS[kind],
+  );
+}
+
 /** The first argument of a command that opens a panel type (doc "Panel slots
  *  and layout"): where — `here`, `other` (this workspace in the other slot) or
  *  `new` (a copy of it). The command's default is offered for editing; its

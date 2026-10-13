@@ -91,7 +91,7 @@ function stub(repo: string | null, vars: Record<string, unknown>, repoRoot = '/r
         if (opts.handler) handlers.set(name, opts.handler);
         return Promise.resolve(null);
       },
-      invoke: () => null,
+      invoke: vi.fn(async (_line: string) => null),
     },
     fs,
     statusBar,
@@ -125,6 +125,51 @@ async function push(s: ReturnType<typeof stub>, vars: Record<string, unknown>) {
   }
   await settle();
 }
+
+/** The row showing `name`. */
+function rowOf(root: ShadowRoot, name: string): HTMLLIElement {
+  return [...root.querySelectorAll('li')].find(
+    (li) => li.querySelector('.name')?.textContent === name,
+  )!;
+}
+
+// Opening is a button on the row (doc "Opening a row"): a click on the row
+// only selects it, so its text can be selected and it can be clicked at will.
+describe('file-manager open buttons', () => {
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = () => {};
+  });
+
+  test("a folder's button goes into it", async () => {
+    const s = stub('r', {});
+    await mount(s);
+    const button = rowOf(s.root, 'sub').querySelector<HTMLButtonElement>('button.mf-open')!;
+    expect(button.classList.contains('mf-open-enter')).toBe(true);
+    button.click();
+    await settle();
+    expect(s.root.getElementById('current-path')?.textContent).toBe('/repo/sub');
+  });
+
+  test("a file's button, a different one, selects it and shows it in the other slot", async () => {
+    const s = stub('r', {});
+    await mount(s);
+    const button = rowOf(s.root, 'top.txt').querySelector<HTMLButtonElement>('button.mf-open')!;
+    expect(button.classList.contains('mf-open-show')).toBe(true);
+    button.click();
+    await settle();
+    expect(s.setVar).toHaveBeenCalledWith('selected_paths', ['/repo/top.txt']);
+    expect(s.api.commands.invoke).toHaveBeenCalledWith('panel:open other file');
+    expect(cursorName(s.root)).toBe('top.txt');
+  });
+
+  test('a double click on a row opens nothing', async () => {
+    const s = stub('r', {});
+    await mount(s);
+    rowOf(s.root, 'sub').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    await settle();
+    expect(s.root.getElementById('current-path')?.textContent).toBe('/repo');
+  });
+});
 
 describe('file-manager location variables', () => {
   beforeEach(() => {
@@ -228,7 +273,7 @@ describe('file-manager location variables', () => {
     gate = new Promise((r) => (release = r));
     s.subscriptions.get('file-manager:cursor')?.('sub'); // the echo
     await new Promise((r) => setTimeout(r, 0)); // its read starts, held
-    row().dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    row().querySelector<HTMLButtonElement>('button.mf-open')!.click();
     await settle();
     gate = null;
     release();

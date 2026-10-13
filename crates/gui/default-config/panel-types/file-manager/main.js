@@ -2,7 +2,7 @@
 // daemon), distinguish tracked metarecords, add paths to the DB
 // (doc "file-manager panel").
 
-import { byId, el, fileTypeGlyph } from '/__ui.js';
+import { byId, el, fileTypeGlyph, openButton } from '/__ui.js';
 import { copyText } from '/__menu.js';
 import { createPagedList } from '/__paged-list.js';
 import { createMultiSelect } from '/__multi-select.js';
@@ -401,10 +401,12 @@ export async function mount(root, metafolder) {
               item.escaped && 'escaped-name',
             ],
             onclick: () => select(index),
-            ondblclick: () => activate(index),
             oncontextmenu: (/** @type {MouseEvent} */ event) => rowMenu(event, index),
             ...(title && { title }),
           },
+          entersOnOpen(item)
+            ? openButton('enter', 'Open this folder', () => openRow(index))
+            : openButton('show', 'Show in the other slot', () => openRow(index)),
           el('span', { class: 'icon' }, item.is_dir ? '📁' : fileTypeGlyph(item.name)),
           el('span', { class: 'name' }, item.name),
           // A name holding bytes no text can represent is shown escaped, so say
@@ -522,6 +524,26 @@ export async function mount(root, metafolder) {
     const cursor = listing[cursorIndex].name;
     await writeLocation({ ...appliedLocation, cursor }, ['cursor']);
     await propagateSelection();
+  }
+
+  // A row's open button (doc "Opening a row"): a folder is gone into; a file —
+  // or the folder shown, the "." row — is selected and shown in the other slot,
+  // where the file panel follows the selection.
+  /** @param {{name: string, is_dir: boolean}} item */
+  function entersOnOpen(item) {
+    return item.is_dir && item.name !== '.';
+  }
+
+  /** @param {number} index */
+  async function openRow(index) {
+    const item = listing[index];
+    if (!item) return;
+    if (entersOnOpen(item)) {
+      await open(item.path);
+      return;
+    }
+    await select(index);
+    await commands.invoke('panel:open other file');
   }
 
   /** @param {number} index */

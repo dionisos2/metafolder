@@ -127,6 +127,33 @@ option {
   opacity: 0.8;
 }
 
+/* A row's open button (/__ui.js openButton, doc "Opening a row"): a small
+ * icon, dim until its row is hovered or under the cursor. `.mf-open-enter`
+ * goes into the row, `.mf-open-show` shows it in another panel. */
+button.mf-open {
+  flex: none;
+  width: 1.5em;
+  padding: 0;
+  font: inherit;
+  line-height: 1.2;
+  text-align: center;
+  background: transparent;
+  color: var(--mf-fg-dim);
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+  opacity: 0.35;
+}
+:hover > button.mf-open,
+:hover > * > button.mf-open,
+.cursor button.mf-open {
+  opacity: 1;
+}
+button.mf-open:hover {
+  border-color: var(--mf-accent);
+  color: var(--mf-fg);
+}
+
 /* Entry references rendered as clickable links (/__ui.js valueEl). */
 a.ref-link {
   color: var(--mf-accent);

@@ -1,0 +1,33 @@
+title: Opening a row
+tags: GUI
+kind: reference
+aliases: open-button double-click
+summary: A click on a row selects it, and only that; opening is a small button at the start of the row — › goes into it, ↗ shows it in the other slot. No double click.
+
+A click on a row of a panel ''selects'' it, and does nothing else. ''Opening'' it is a
+small button at the start of the row, dim until the row is hovered or under the cursor:
+
+* `›` — go ''into'' the row: the listing then shows what it holds (a folder).
+* `↗` — ''show'' the row in the other slot (a file, in the [[file panel]]).
+
+The keyboard is unchanged: <<key "file-manager:activate" Enter>> and its kind still open
+the row under the cursor.
+
+!! Why not a double click
+
+The panels used to open a row on a double click. Two clicks on the same row is also how
+text is selected — the browser selects a word on a double click, and a drag between the
+two clicks selects some text or starts dragging the icon, and the second click is then
+a click again, not the end of a double click. So selecting a name risked opening the
+row, and a double click barely off the mark did nothing, which looked like a bug. A
+button opens with one click, and the row's text can be selected and the row clicked as
+often as wanted.
+
+The button is `openButton` in `/__ui.js`, styled `button.mf-open` in the shipped
+stylesheet; a panel's row only calls it with what opening does. Pressing it keeps the
+focus where it was (the panel's keys keep working).
+
+!! Where
+
+|!Panel |!Button |!Opening |
+|[[file-manager panel]] |`›` on a folder, `↗` on a file and on `.` |goes into the folder; selects the file (or the folder shown) and shows it in the other slot |
