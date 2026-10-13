@@ -43,10 +43,11 @@ reconcile with nothing to do went from 43.8 s and 242 million keys to 9.7 s and
 million keys (a folder of 292 files renamed) to 20 000, and from 1.56 million
 (1 000 files created) to 53 000. Every step is within its budget. Left:
 - the duplicate scan: 29.5 s, then 15 s once its writes were committed every
-  two seconds instead of 503 times (=9212c562=). It still holds the store for
-  the whole scan, so the GUI's change feed waits as long: releasing it between
-  windows would let another write change the records under the scan's maps —
-  the "operations stay sequential" decision (doc "Storage open questions").
+  two seconds instead of 503 times (=9212c562=). It held the store for the
+  whole scan, so the GUI's change feed waited as long. Since 13 October 2026
+  it hashes with the store free and takes it back every 20 s to write, the
+  groups and links read again and each member checked on disk (doc "The
+  duplicate scan"). To confirm on the next recorded run.
 - a second reconcile read 3.8 million keys, ≈ 75 a file: each path resolved
   four times, and every file's path read back by the orphan scan. Resolved
   once since =a46549ef=: 2.2 million keys, 7.3 s. Not all of it is "nothing to

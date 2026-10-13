@@ -406,6 +406,105 @@ fn a_cancelled_scan_keeps_the_hashes_it_computed() {
     assert_eq!(result.groups, 1);
 }
 
+// ── Working beside other writes ──────────────────────────────────────────────
+
+/// Calls `f` at every progress tick of the hashing phases, with the tick's
+/// rank in its phase (from 1, the phase's start).
+fn scan_ticking(repo: &RepoState, opts: &ScanOptions, f: impl Fn(&str, u64)) -> ScanResult {
+    let ticks = Mutex::new(std::collections::HashMap::<String, u64>::new());
+    let progress = |phase: &str, _: Option<u64>, _: Option<u64>| {
+        if phase == "partial" || phase == "full" {
+            let n = {
+                let mut ticks = ticks.lock().unwrap();
+                let n = ticks.entry(phase.to_string()).or_default();
+                *n += 1;
+                *n
+            };
+            f(phase, n);
+        }
+    };
+    let cancel = || false;
+    duplicates::scan_reported(repo, opts, &Reporter::new(&progress, &cancel)).unwrap()
+}
+
+#[test]
+fn the_store_is_free_while_the_scan_hashes() {
+    // Hashing reads files, not the store: holding the repository's lock through
+    // it made every request — the GUI's change feed first — wait for the whole
+    // scan (15 s on 50 000 files).
+    let (repo, root) = setup("free");
+    write_file(&root, "a.bin", &[1u8; 5000]);
+    write_file(&root, "b.bin", &[1u8; 5000]);
+    reconcile::reconcile(&repo).unwrap();
+    let held = Mutex::new(Vec::new());
+    scan_ticking(&repo, &ScanOptions::default(), |phase, _| {
+        if repo.conn.try_lock().is_err() {
+            held.lock().unwrap().push(phase.to_string());
+        }
+    });
+    let held = held.into_inner().unwrap();
+    assert!(held.is_empty(), "the store was held while hashing, at {held:?}");
+}
+
+#[test]
+fn a_file_changed_after_it_was_hashed_is_not_grouped() {
+    // Between hashing a file and writing its group, the store is free: a change
+    // flushed in between must not be overwritten by a group the file no longer
+    // belongs to. The size classes run largest first, so the fourth tick of the
+    // full phase (the first is its start) comes after both 9000-byte files were
+    // hashed.
+    let (repo, root) = setup("changed");
+    write_file(&root, "a.bin", &[1u8; 9000]);
+    write_file(&root, "b.bin", &[1u8; 9000]);
+    write_file(&root, "c.bin", &[2u8; 5000]);
+    write_file(&root, "d.bin", &[2u8; 5000]);
+    reconcile::reconcile(&repo).unwrap();
+    let result = scan_ticking(&repo, &ScanOptions::default(), |phase, n| {
+        if phase == "full" && n == 4 {
+            let path = root.join("b.bin");
+            std::fs::write(&path, [3u8; 9000]).unwrap();
+            let later = std::time::SystemTime::now() + std::time::Duration::from_secs(10);
+            std::fs::File::options().write(true).open(&path).unwrap().set_modified(later).unwrap();
+        }
+    });
+    let (a, b) = (resolve(&repo, "/a.bin"), resolve(&repo, "/b.bin"));
+    assert_eq!((group_of(&repo, a), group_of(&repo, b)), (None, None));
+    assert!(group_of(&repo, resolve(&repo, "/c.bin")).is_some());
+    assert_eq!(result.groups, 1);
+}
+
+#[test]
+fn a_group_deleted_during_the_scan_is_made_again() {
+    // The scan's maps of groups and links are re-read whenever it takes the
+    // store again: one loaded at the start would name a group someone deleted
+    // since, and the scan would fail writing to it.
+    let (repo, root) = setup("deleted");
+    write_file(&root, "a.txt", b"twins, twice");
+    write_file(&root, "b.txt", b"twins, twice");
+    populate_and_scan(&repo);
+    let a = resolve(&repo, "/a.txt");
+    let old = group_of(&repo, a).unwrap();
+    let deleted = Mutex::new(false);
+    let opts = ScanOptions { rehash: true, ..ScanOptions::default() };
+    scan_ticking(&repo, &opts, |_, _| {
+        let mut done = deleted.lock().unwrap();
+        if *done {
+            return;
+        }
+        if let Ok(mut conn) = repo.conn.try_lock() {
+            let mut w = Writer::begin(&mut conn, None).unwrap();
+            w.delete_metarecord(old).unwrap();
+            w.commit().unwrap();
+            *done = true;
+        }
+    });
+    assert!(deleted.into_inner().unwrap(), "the store was never free to delete the group");
+    let new = group_of(&repo, a).expect("regrouped");
+    assert_ne!(new, old);
+    assert_eq!(group_of(&repo, resolve(&repo, "/b.txt")), Some(new));
+    assert_eq!(field_value(&repo, new, "mfr_duplicate_count"), Some(Value::Int(2)));
+}
+
 // ── Leaving a group ──────────────────────────────────────────────────────────
 
 #[test]

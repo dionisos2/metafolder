@@ -33,14 +33,16 @@ pub const GROUP_SCHEMA: &str = "duplicate_group";
 /// group is never a bare field clear: see [`leave_group`].
 pub const GROUP_FIELD: &str = "mfr_duplicate_group";
 
-/// How long the scan's writes accumulate in one write before it commits.
-/// Every commit is an `fsync` (doc "Writes and atomicity"): committing per
-/// batch of files and per size class spent 17 of 31 s committing on 50 000
-/// files. One transaction for the whole scan would throw every hash computed
-/// so far away on a cancel — and the hash cache is precisely the work worth
-/// keeping. A window in time bounds both: what a cancel or an error can lose,
-/// and how many commits a scan makes, whatever the size of the repository.
-const COMMIT_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
+/// How long the scan's writes accumulate before it takes the store to write
+/// them. The hashing runs with the store free (doc "The duplicate scan"), so
+/// the window no longer decides how long others wait; it bounds how many
+/// commits a scan makes — every commit is an `fsync` (doc "Writes and
+/// atomicity"), and committing per batch of files and per size class spent 17
+/// of 31 s committing on 50 000 files — and what an error or a crash can lose.
+/// A cancel loses nothing: it writes what is pending first. One write for the
+/// whole scan would throw every hash computed so far away on an error, and the
+/// hash cache is precisely the work worth keeping.
+const COMMIT_EVERY: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// Progress is reported every this many items inside the scan loops.
 const PROGRESS_STEP: usize = 64;
@@ -92,6 +94,9 @@ struct Candidate {
     /// Filled by the partial phase, then the full phase.
     partial: Option<String>,
     full: Option<String>,
+    /// The `(mtime_ms, size)` the file had when its full hash was taken: what
+    /// it must still have for the hash to place it in a group.
+    stamp: Option<(i64, i64)>,
 }
 
 /// A scan with no progress reporting and no cancellation (tests, and any
@@ -109,7 +114,7 @@ pub fn scan_reported(
     opts: &ScanOptions,
     reporter: &Reporter,
 ) -> Result<ScanResult, ApiError> {
-    let mut conn = metafolder_core::slowlog::timed("wait:conn", || repo.conn.lock_recover());
+    let conn = metafolder_core::slowlog::timed("wait:conn", || repo.conn.lock_recover());
     let cache = repo.tree();
     let root = repo.config.root.clone();
     let mut result = ScanResult::default();
@@ -127,11 +132,6 @@ pub fn scan_reported(
     };
     let inodes: HashMap<Uuid, String> =
         crate::store::Questions::string_owners(&conn, "mfr_inode")?.into_iter().collect();
-    // The group links as they stand, loaded once. The write path then answers
-    // "does this record already point there?" in memory instead of spending a
-    // round trip per member, and the prune computes its work from the same map
-    // rather than re-asking per group.
-    let mut links = crate::store::Questions::ref_map(&conn, "mfr_duplicate_group")?;
     let files = crate::store::Questions::tracked_files_with_size(&conn)?;
 
     // Partition on `(uuid, size)` alone first. A size class of one cannot hold
@@ -181,6 +181,7 @@ pub fn scan_reported(
                 inode: inodes.get(&uuid).cloned(),
                 partial: None,
                 full: None,
+                stamp: None,
             });
         }
         // A class can fall below two members here — an unresolvable path, an
@@ -198,31 +199,21 @@ pub fn scan_reported(
 
     // ── Phase 2: partial hashes ─────────────────────────────────────────────
     let stored = crate::store::Questions::hash_cache(&conn)?;
-    let mut existing = crate::store::Questions::duplicate_groups(&conn)?;
-    // From here on, every write goes through the open window, committed every
-    // `COMMIT_EVERY` (the reads above are all the scan needs from the store).
-    let retention = repo.log_retention();
-    // One label for the whole scan, its windows being one piece of work: the
-    // first window that writes opens it, and the next ones write inside it.
-    let mut context = crate::log::current_context().named("duplicate scan");
-    let mut window = Writer::begin_in(&mut *conn, context.clone(), retention)?;
-    let mut opened = Instant::now();
-    // Commits the window and opens the next one, when it is due (or `now`).
-    macro_rules! commit_window {
-        (now) => {{
-            if window.op_count() > 0 {
-                context = crate::log::WriteContext::In(window.label_id());
-            }
-            commit(window)?;
-            window = Writer::begin_in(&mut *conn, context.clone(), retention)?;
-            opened = Instant::now();
-        }};
-        () => {
-            if opened.elapsed() >= COMMIT_EVERY {
-                commit_window!(now);
-            }
-        };
-    }
+    // The rest of the scan reads files, not the store: it runs with the store
+    // free, and takes it back only to write what it found (`flush`), every
+    // `COMMIT_EVERY` and at the end.
+    drop(conn);
+    let mut writes = Writes {
+        repo,
+        // One label for the whole scan, its writes being one piece of work: the
+        // first that writes opens it, and the next ones write inside it.
+        context: crate::log::current_context().named("duplicate scan"),
+        hashes: Vec::new(),
+        classes: Vec::new(),
+        grouped: HashSet::new(),
+        touched: HashSet::new(),
+        opened: Instant::now(),
+    };
     let total = classes.iter().map(|(_, m)| m.len()).sum::<usize>() as u64;
     reporter.progress("partial", Some(0), Some(total));
     let mut done = 0u64;
@@ -231,21 +222,21 @@ pub fn scan_reported(
             if done.is_multiple_of(PROGRESS_STEP as u64) {
                 reporter.progress("partial", Some(done), Some(total));
                 if reporter.is_cancelled() {
-                    commit(window)?;
+                    writes.flush(&mut result, None)?;
                     return Err(cancelled());
                 }
             }
             done += 1;
             match hash_step(&root, member, &stored, opts, Fingerprint::Partial) {
-                Ok(Step::Reused(hash)) => member.partial = Some(hash),
+                Ok(Step::Reused(hash, _)) => member.partial = Some(hash),
                 Ok(Step::Computed(hash, stamp)) => {
                     result.hashed_partial += 1;
-                    write_hash(&mut window, member.uuid, "mfr_partial_hash", &hash, stamp)?;
+                    writes.hashes.push((member.uuid, "mfr_partial_hash", hash.clone(), stamp));
                     member.partial = Some(hash);
                 }
                 Err(_) => result.skipped += 1,
             }
-            commit_window!();
+            writes.flush_when_due(&mut result)?;
         }
         // Within a size class, a partial hash occurring once eliminates its
         // file: nothing else can be identical to it.
@@ -259,10 +250,8 @@ pub fn scan_reported(
     let total_bytes: i64 = classes.iter().map(|(size, m)| size * m.len() as i64).sum();
     reporter.progress("full", Some(0), Some(total_bytes.max(0) as u64));
     let mut hashed_bytes = 0i64;
-    let mut grouped: HashSet<Uuid> = HashSet::new();
-    let mut touched: HashSet<Uuid> = HashSet::new();
 
-    for (size, members) in classes.iter_mut() {
+    for (size, mut members) in classes {
         for member in members.iter_mut() {
             reporter.progress(
                 "full",
@@ -270,45 +259,132 @@ pub fn scan_reported(
                 Some(total_bytes.max(0) as u64),
             );
             if reporter.is_cancelled() {
-                commit(window)?;
+                writes.flush(&mut result, None)?;
                 return Err(cancelled());
             }
             match hash_step(&root, member, &stored, opts, Fingerprint::Full) {
-                Ok(Step::Reused(hash)) => member.full = Some(hash),
+                Ok(Step::Reused(hash, stamp)) => {
+                    member.full = Some(hash);
+                    member.stamp = Some(stamp);
+                }
                 Ok(Step::Computed(hash, stamp)) => {
                     result.hashed_full += 1;
-                    hashed_bytes += *size;
-                    write_hash(&mut window, member.uuid, "mfr_full_hash", &hash, stamp)?;
+                    hashed_bytes += size;
+                    writes.hashes.push((member.uuid, "mfr_full_hash", hash.clone(), stamp));
                     member.full = Some(hash);
+                    member.stamp = Some(stamp);
                 }
                 Err(_) => result.skipped += 1,
             }
-            commit_window!();
+            writes.flush_when_due(&mut result)?;
         }
-        retain_shared(members, |m| m.full.clone());
-
-        // This class's groups are written as it completes, not at the end:
-        // they go out with the window that holds them.
-        write_class_groups(
-            &mut window,
-            *size,
-            members,
-            &mut existing,
-            &mut links,
-            &mut grouped,
-            &mut touched,
-            &mut result,
-        )?;
-        commit_window!();
+        retain_shared(&mut members, |m| m.full.clone());
+        // This class's groups go out with the next write, not at the end: a
+        // cancelled scan keeps the largest groups it found.
+        if !members.is_empty() {
+            writes.classes.push((size, members));
+        }
+        writes.flush_when_due(&mut result)?;
     }
 
     // ── Phase 4: prune what no longer holds ─────────────────────────────────
     // Only reached when the phases above completed: a cancelled scan leaves
     // stale groups for the next complete run rather than a half-pruned state.
-    prune(&mut window, &existing, &mut links, &grouped, &touched, scope.as_ref(), reporter)?;
-    commit(window)?;
+    writes.flush(&mut result, Some((scope.as_ref(), reporter)))?;
 
     Ok(result)
+}
+
+/// What the scan found and has not written yet, and what its writes so far
+/// decided. Written by [`Writes::flush`], the only place the scan takes the
+/// store after its first reads.
+struct Writes<'a> {
+    repo: &'a RepoState,
+    context: crate::log::WriteContext,
+    /// Computed hashes: `(record, field, hash, the stamp it was taken under)`.
+    hashes: Vec<(Uuid, &'static str, String, (i64, i64))>,
+    /// Completed size classes, their members sharing a full hash with another.
+    classes: Vec<(i64, Vec<Candidate>)>,
+    /// The records placed in a group, and the groups written, by every write
+    /// so far: what the prune keeps.
+    grouped: HashSet<Uuid>,
+    touched: HashSet<Uuid>,
+    opened: Instant,
+}
+
+impl Writes<'_> {
+    fn flush_when_due(&mut self, result: &mut ScanResult) -> Result<(), ApiError> {
+        if self.opened.elapsed() >= COMMIT_EVERY {
+            self.flush(result, None)?;
+        }
+        Ok(())
+    }
+
+    /// Takes the store and writes what is pending, then the prune when `prune`
+    /// is given (the scan's last write). The store was free since the last
+    /// write, so nothing loaded before it is trusted here: the groups and the
+    /// links are read again, a record gone since gets no hash, and a group
+    /// member is checked on disk — a file changed after it was hashed is left
+    /// out, and its change, flushed by the watcher after this write, finds it
+    /// in no group (doc "The duplicate scan").
+    fn flush(
+        &mut self,
+        result: &mut ScanResult,
+        prune: Option<(Option<&HashSet<Uuid>>, &Reporter)>,
+    ) -> Result<(), ApiError> {
+        let repo = self.repo;
+        let mut conn = metafolder_core::slowlog::timed("wait:conn", || repo.conn.lock_recover());
+        let mut existing = crate::store::Questions::duplicate_groups(&*conn)?;
+        let mut links = crate::store::Questions::ref_map(&*conn, GROUP_FIELD)?;
+        let mut writer = Writer::begin_in(&mut *conn, self.context.clone(), repo.log_retention())?;
+        for (uuid, field, hash, stamp) in self.hashes.drain(..) {
+            if crate::store::Rows::version(writer.store(), uuid)?.is_some() {
+                write_hash(&mut writer, uuid, field, &hash, stamp)?;
+            }
+        }
+        let root = &repo.config.root;
+        for (size, mut members) in self.classes.drain(..) {
+            let mut kept = Vec::with_capacity(members.len());
+            for member in members.drain(..) {
+                let abs = root.join(member.rel.trim_start_matches('/'));
+                let live = std::fs::symlink_metadata(&abs).ok().map(|meta| {
+                    (meta.modified().map(ms_from_systemtime).unwrap_or_default(), meta.len() as i64)
+                });
+                let exists = crate::store::Rows::version(writer.store(), member.uuid)?.is_some();
+                if exists && live.is_some() && live == member.stamp {
+                    kept.push(member);
+                }
+            }
+            retain_shared(&mut kept, |m| m.full.clone());
+            write_class_groups(
+                &mut writer,
+                size,
+                &kept,
+                &mut existing,
+                &mut links,
+                &mut self.grouped,
+                &mut self.touched,
+                result,
+            )?;
+        }
+        if let Some((scope, reporter)) = prune {
+            prune_groups(
+                &mut writer,
+                &existing,
+                &mut links,
+                &self.grouped,
+                &self.touched,
+                scope,
+                reporter,
+            )?;
+        }
+        if writer.op_count() > 0 {
+            self.context = crate::log::WriteContext::In(writer.label_id());
+        }
+        commit(writer)?;
+        self.opened = Instant::now();
+        Ok(())
+    }
 }
 
 /// Which fingerprint step a [`hash_step`] call performs.
@@ -320,8 +396,9 @@ enum Fingerprint {
 
 /// The outcome of one fingerprint step.
 enum Step {
-    /// The stored hash was still valid for the file on disk.
-    Reused(String),
+    /// The stored hash was still valid for the file on disk, whose
+    /// `(mtime_ms, size)` this is.
+    Reused(String, (i64, i64)),
     /// Computed afresh, with the `(mtime_ms, size)` it was computed under.
     Computed(String, (i64, i64)),
 }
@@ -354,7 +431,7 @@ fn hash_step(
                 Fingerprint::Full => entry.full.as_ref(),
             };
             if let (true, Some(hash)) = (fresh, hash) {
-                return Ok(Step::Reused(hash.clone()));
+                return Ok(Step::Reused(hash.clone(), live));
             }
         }
     }
@@ -544,6 +621,7 @@ fn write_class_groups(
                 inode: m.inode.clone(),
                 partial: None,
                 full: None,
+                stamp: None,
             })
             .collect();
         let reclaimable = reclaimable_of(size, &owned);
@@ -615,7 +693,7 @@ fn write_class_groups(
 /// Removes what the scan disproved: the group link of a record the scan did not
 /// place in a group, and every group left with fewer than two members.
 #[allow(clippy::too_many_arguments)]
-fn prune(
+fn prune_groups(
     writer: &mut Writer,
     existing: &HashMap<(i64, String), rows::DuplicateGroup>,
     links: &mut HashMap<Uuid, Uuid>,

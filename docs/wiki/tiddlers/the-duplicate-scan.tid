@@ -15,16 +15,35 @@ candidates before the next, more expensive one:
 
 !! What it reads
 
-Five whole-repository questions to the store, all before it writes anything, and
-nothing per record after that: the candidates with their sizes, the stored hashes
-and their stamps, the `mfr_inode` owners, the existing groups with their counters,
-and the existing member links. The last two keep the write path read-free: "does
-this record already point at this group?" and "has this counter changed?" are
-answered against maps loaded up front.
+Five whole-repository questions to the store, before it hashes anything: the
+candidates with their sizes and paths, the stored hashes and their stamps, the
+`mfr_inode` owners, and the declared mount points. Then it ''lets the store
+go'': hashing reads files, not the store, and holding the repository's lock
+through it made every other request — the GUI's change feed first — wait for
+the whole scan (15 s on 50 000 files, [[The session scenario]]).
 
 !! What it writes
 
-* ''The hash cache'' (`mfr_partial_hash`, `mfr_full_hash`, `mfr_hash_mtime`, `mfr_hash_size`), ''the groups'' (written as each size class completes) and ''the prune'' all go into one open write, committed every two seconds and at the end. One transaction per file would cost an `fsync` each, and one for the whole scan would throw every computed hash away on a cancel — and the hash cache is precisely the work worth keeping. A window in ''time'' bounds both what a cancel can lose and how many commits a scan makes: committing per 500 records and per size class instead made 503 writes of a scan of 50 000 files, 17 of its 31 s.
+The scan keeps what it found in memory — ''the hash cache'' (`mfr_partial_hash`,
+`mfr_full_hash`, `mfr_hash_mtime`, `mfr_hash_size`) and ''the groups'' of each size
+class as it completes — and takes the store back to write it every twenty
+seconds, and at the end with ''the prune''. All of it under one label.
+
+Since the store was free in between, a write trusts nothing loaded before it:
+
+* the existing groups with their counters and the member links are read again (two whole-repository questions per write, none per record) — a group deleted since is made again, a counter changed since is compared to its current value;
+* a record deleted since gets no hash;
+* each member of a group is checked on disk: a file whose `(mtime, size)` is no longer the one its full hash was taken under is left out of the group. Its change reaches the store after this write (the watcher's flush waits for the store too), and finds it in no group.
+
+A hash written for a file changed since is harmless: its stamp no longer matches,
+and the next scan computes it again ([[The duplicate hash cache]]).
+
+The window is in ''time'': it bounds how many commits a scan makes — each is an
+`fsync`; committing per 500 records and per size class made 503 writes of a scan of
+50 000 files, 17 of its 31 s — and what an error or a crash can lose. A cancel loses
+nothing, it writes what is pending first. Twenty seconds, not the watcher's two:
+losing a window here costs only hashes to compute again, never a store out of step
+with the files.
 
 A field is written only when it is absent or changed, so a re-scan of an
 unchanged repository writes nothing.
