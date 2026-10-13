@@ -1,7 +1,7 @@
 title: The undo selection
 tags: [[Event log]]
 kind: reference
-summary: What undo and redo choose — the newest change you made, or the newest undo, still standing — computed from the log alone, in core, by every client; both are reverts.
+summary: What undo and redo offer — the labels of the newest change you made, or of the newest undo, still standing — computed from the log alone, in core, by every client; both are reverts.
 
 Both are reverts, applied onto the current state ([[Reverting onto the current state]]):
 nothing moves back over the log, so nothing written since — the watcher's work above all
@@ -9,26 +9,31 @@ nothing moves back over the log, so nothing written since — the watcher's work
 
 !! Undo
 
-Undo walks the log newest first for the newest revision ''the user wrote'' that still
-stands, and reverts it. A revision is ''not'' a candidate when:
+Undo walks the log newest first for the newest operation ''the user wrote'' that still
+stands, and offers the labels it was written in, innermost first ([[Undo and redo by label]]).
+An operation is ''not'' the one when:
 
-* it is the daemon's — `origin = watcher` exactly, not any set origin ([[Operations and their origin]]); failing that, when all its operations are watcher types. A `trash` revision ''is'' a candidate: you asked for it;
+* it is the daemon's — `origin = watcher` exactly, not any set origin ([[Operations and their origin]]); failing an origin, a watcher op type. A `trash` operation ''is'' one: you asked for it;
 * it is ''itself'' a revert — an undo or a redo; undoing it would be a redo, and treating it as a candidate would make undo a two-state oscillation;
-* every one of its operations has already been undone;
-* it holds only `unknown` operations, which carry nothing to invert;
-* it holds the log's first operation — the root metarecord written at init, or the oldest operation a prune left (`first` in `GET /log`). Undo stops there; `mf log revert <id>` still reaches it.
+* it has already been undone — by a revert that still stands, resolved along the whole chain;
+* it is an `unknown` operation, which carries nothing to invert;
+* it is the log's first operation — the root metarecord written at init, or the oldest operation a prune left (`first` in `GET /log`). Undo stops there; `mf log revert <label>` still reaches it.
 
-A revision partly undone already — some operations reverted one by one — is undone by its
-remaining operations.
+Undoing the label chosen is a revert of `{"label_id": L, "only": "changes"}`: the daemon
+takes the operations of L and of every label nested in it, and keeps those that are not
+reverts, not the watcher's, and still standing ([[Revert endpoints]]). The daemon narrows,
+not the client: a label — a script's run — may start long before the window the client
+read.
 
 !! Redo
 
 Redo walks the log newest first for the newest ''undo'' that still stands — a revert of an
-ordinary change — and reverts it. On the way it steps over the daemon's revisions, the
-redos, and the undos already redone: pressing redo again goes on to the undo before. The
-newest ordinary change still standing ends the search: ''a new change clears what could
-be redone'', as in any editor. What it cleared is still in the log, and an explicit
-`mf log revert` of the undo reaches it.
+ordinary change — and offers its labels. On the way it steps over the daemon's
+operations, the redos, and the undos already redone: pressing redo again goes on to the
+undo before. The newest ordinary change still standing ends the search: ''a new change
+clears what could be redone'', as in any editor. What it cleared is still in the log, and
+an explicit `mf log revert` of the undo reaches it. Redoing label L is a revert of
+`{"label_id": L, "only": "undos"}`: its reverts of an ordinary change still standing.
 
 Undo, change, undo, undo — then redo, redo, redo: the first two redos bring back what the
 last two undos took, the third finds the change and answers "Nothing to redo."; the
@@ -41,5 +46,7 @@ undo`/`redo` and the GUI's `log:undo`/`log:redo`; the daemon has no undo endpoin
 offers the revert, the client picks. Both read the log in two bounded passes — 500
 operations, then 20 000 — rather than one unbounded one: after a large reconcile the log is
 millions of rows, and a repository whose last manual change is older than the second
-window is told so rather than scanned whole. The revert itself — including the files it
-moves — is run by `core::navigation`, the same for both clients.
+window is told so rather than scanned whole. Liveness inside the window is exact: a revert
+is always newer than what it reverts, so the window holds every revert of what it holds.
+The revert itself — including the files it moves — is run by `core::navigation`, the
+same for both clients.

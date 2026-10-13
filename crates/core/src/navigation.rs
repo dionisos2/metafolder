@@ -360,6 +360,9 @@ pub fn revert_query(target: &Json) -> Vec<(&'static str, String)> {
                 _ => "head".into(),
             };
             q.push(("target_label_id", label));
+            if let Some(only) = target["only"].as_str() {
+                q.push(("only", only.to_string()));
+            }
         }
     }
     q
@@ -520,6 +523,10 @@ mod tests {
         assert_eq!(
             revert_query(&json!({"label_id": 7})),
             vec![("target_label_id", "7".to_string())]
+        );
+        assert_eq!(
+            revert_query(&json!({"label_id": 7, "only": "changes"})),
+            vec![("target_label_id", "7".to_string()), ("only", "changes".to_string())]
         );
     }
 

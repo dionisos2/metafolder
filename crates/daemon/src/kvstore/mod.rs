@@ -24,6 +24,7 @@
 //! | labels        | label id                         | name · description · parent · created |
 //! | label_kids    | parent label · child label       | —                         |
 //! | label_keys    | command key                      | label id                  |
+//! | reverted_by   | op id · op id of a revert of it  | —                         |
 //! | watcher_ops   | op id                            | —                         |
 //! | user_ops      | op id                            | —                         |
 //!
@@ -91,6 +92,7 @@ struct Tables {
     labels: Db,
     label_kids: Db,
     label_keys: Db,
+    reverted_by: Db,
     watcher_ops: Db,
     user_ops: Db,
     // Derived (see `derived`).
@@ -164,8 +166,9 @@ fn cell_prefix(uuid: &[u8], field: &str) -> Vec<u8> {
 /// The version of the primary layout this code writes, `layout` in `meta`
 /// (absent: the first one, rows keyed `uuid · row id` in `cells`; 2: the
 /// history tree, operations chained to a parent; 3: the sequence, before the
-/// operations were split by origin; 4: operations grouped by revision).
-const LAYOUT: i64 = 5;
+/// operations were split by origin; 4: operations grouped by revision; 5:
+/// before the reverts of an operation were indexed).
+const LAYOUT: i64 = 6;
 
 /// A name inside a composite key: escaped, then terminated.
 fn name_key(name: &str) -> Vec<u8> {
@@ -510,6 +513,7 @@ impl KvStore {
             labels: db("labels")?,
             label_kids: db("label_kids")?,
             label_keys: db("label_keys")?,
+            reverted_by: db("reverted_by")?,
             watcher_ops: db("watcher_ops")?,
             user_ops: db("user_ops")?,
             ids: db("ids")?,
@@ -1104,6 +1108,17 @@ macro_rules! kv_reads {
                 let $me = self;
                 $with(&mut |$read: &Read| $read.label_children(label))
             }
+            fn reverters(&self, op: i64) -> Result<Vec<i64>> {
+                let $me = self;
+                $with(&mut |$read: &Read| {
+                    let mut out = Vec::new();
+                    for e in $read.t.reverted_by.prefix_iter($read.r, &be(op))? {
+                        out.push(from_be(&e?.0[8..]));
+                    }
+                    $read.count(out.len() as u64 + 1)?;
+                    Ok(out)
+                })
+            }
             fn label_of_command(&self, key: Uuid) -> Result<Option<i64>> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
@@ -1290,7 +1305,8 @@ impl KvStore {
     /// * the log of an older layout is **dropped, not converted** — the
     ///   history tree (layouts 1 and 2: operations chained to a parent,
     ///   `op_children`, `restorations`), and the sequence before it was split
-    ///   by origin (3), and the one grouped by revisions (4). The log is emptied, the metarecords kept (user
+    ///   by origin (3), the one grouped by revisions (4), and the one with no
+    ///   index of its reverts (5). The log is emptied, the metarecords kept (user
     ///   decision, October 2026; doc "The operation log").
     ///
     /// A new store has nothing to move and only records the layout.
@@ -1339,6 +1355,7 @@ impl KvStore {
                 t.labels,
                 t.label_kids,
                 t.label_keys,
+                t.reverted_by,
                 t.watcher_ops,
                 t.user_ops,
             ] {
@@ -1471,6 +1488,9 @@ impl KvTxn<'_> {
             t.snaps.delete(&mut w, &k)?;
         }
         t.ops_by_label.delete(&mut w, &key(&[&be(op.label_id), &be(id)]))?;
+        if let Some(target) = op.reverts_op_id {
+            t.reverted_by.delete(&mut w, &key(&[&be(target), &be(id)]))?;
+        }
         t.ops_by_entity.delete(&mut w, &key(&[op.entity_uuid.as_bytes(), &be(id)]))?;
         t.watcher_ops.delete(&mut w, &be(id))?;
         t.user_ops.delete(&mut w, &be(id))?;
@@ -1641,6 +1661,9 @@ impl WriteTxn for KvTxn<'_> {
                 }
             }
             t.ops_by_label.put(&mut w, &key(&[&be(label), &be(id)]), &[])?;
+            if let Some(target) = op.reverts_op_id {
+                t.reverted_by.put(&mut w, &key(&[&be(target), &be(id)]), &[])?;
+            }
             t.ops_by_entity.put(&mut w, &key(&[op.entity.as_bytes(), &be(id)]), &[])?;
             self.class(op.origin.as_deref()).put(&mut w, &be(id), &[])?;
         }

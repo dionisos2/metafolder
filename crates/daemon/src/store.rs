@@ -171,6 +171,10 @@ macro_rules! forward_to_store {
                 let $me = self;
                 Log::label_children($conn, label)
             }
+            fn reverters(&self, op: i64) -> Result<Vec<i64>> {
+                let $me = self;
+                Log::reverters($conn, op)
+            }
             fn label_of_command(&self, key: Uuid) -> Result<Option<i64>> {
                 let $me = self;
                 Log::label_of_command($conn, key)
@@ -443,6 +447,9 @@ pub trait Log {
     fn label_first_op(&self, label: i64) -> Result<Option<i64>>;
     /// A label's children, oldest first.
     fn label_children(&self, label: i64) -> Result<Vec<i64>>;
+    /// The operations that reverted `op` (their `reverts_op_id` is `op`),
+    /// oldest first.
+    fn reverters(&self, op: i64) -> Result<Vec<i64>>;
     /// The label the command `key` opened at its first write, if it did.
     fn label_of_command(&self, key: Uuid) -> Result<Option<i64>>;
     /// The label the watcher's flushes are opened under, once there is one

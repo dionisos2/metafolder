@@ -12,6 +12,10 @@ pub(super) struct RevertTarget {
     label_id: Option<serde_json::Value>,
     #[serde(default)]
     op_ids: Option<Vec<i64>>,
+    /// With `label_id`: only its standing `changes` (an undo) or its standing
+    /// `undos` (a redo) — doc "Undo and redo by label".
+    #[serde(default)]
+    only: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -27,6 +31,8 @@ pub(super) struct RevertPlanParams {
     target_label_id: Option<String>,
     #[serde(default)]
     target_op_ids: Option<String>,
+    #[serde(default)]
+    only: Option<String>,
 }
 
 /// Resolves a revert target to its operations, oldest first.
@@ -57,9 +63,23 @@ fn resolve_revert_target(
                      trimmed away"
                 )));
             }
-            crate::revert::label_ops(conn, label_id)?
+            let ops = crate::revert::label_ops(conn, label_id)?;
+            match target.only.as_deref() {
+                None => ops,
+                Some(only) => {
+                    let only = crate::revert::Only::parse(only).ok_or_else(|| {
+                        ApiError::bad_request(format!(
+                            "only must be \"changes\" or \"undos\", not \"{only}\""
+                        ))
+                    })?;
+                    crate::revert::narrow(conn, ops, only)?
+                }
+            }
         }
         (None, Some(ids)) => {
+            if target.only.is_some() {
+                return Err(ApiError::bad_request("only narrows a label_id target"));
+            }
             if ids.is_empty() {
                 return Err(ApiError::bad_request("op_ids must not be empty"));
             }
@@ -85,7 +105,12 @@ fn resolve_revert_target(
 fn revert_name(target: &RevertTarget) -> String {
     match (&target.label_id, &target.op_ids) {
         (Some(label), _) => {
-            format!("revert of label {}", label.as_str().unwrap_or(&label.to_string()))
+            let what = match target.only.as_deref() {
+                Some("changes") => "undo",
+                Some("undos") => "redo",
+                _ => "revert",
+            };
+            format!("{what} of label {}", label.as_str().unwrap_or(&label.to_string()))
         }
         (_, Some(ids)) => revert_name_of(ids),
         _ => "revert".to_string(),
@@ -199,6 +224,7 @@ pub(super) async fn revert_plan(
             .target_op_ids
             .as_ref()
             .map(|s| s.split(',').filter_map(|p| p.trim().parse::<i64>().ok()).collect::<Vec<_>>()),
+        only: params.only,
     };
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());

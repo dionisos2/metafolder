@@ -139,12 +139,15 @@ async fn test_undo_reverts_the_newest_change_and_marks_dirty() {
     let (url, stub) = spawn_stub(user_log()).await;
     let (gui, daemon, ws, notifier) = setup(&url);
 
-    undo::navigate(gui.clone(), daemon, ws.clone(), false, timeouts()).await.unwrap();
+    undo::navigate(gui.clone(), daemon, ws.clone(), false, None, timeouts()).await.unwrap();
 
-    assert_eq!(stub.reverts.lock().unwrap().as_slice(), [json!({"target": {"label_id": 3}})]);
+    assert_eq!(
+        stub.reverts.lock().unwrap().as_slice(),
+        [json!({"target": {"label_id": 3, "only": "changes"}})]
+    );
     assert_ne!(gui.get_var(&ws, "metarecords:dirty").unwrap(), Value::Null);
     let (text, kind, _) = last_status(&notifier);
-    assert!(text.starts_with("Label 3 reverted in label 42"), "status: {text}");
+    assert!(text.starts_with("Undid label 3"), "status: {text}");
     assert_eq!(kind, "info");
 }
 
@@ -153,15 +156,16 @@ async fn test_undo_under_the_watcher_reverts_the_users_change() {
     let (url, stub) = spawn_stub(log_with_the_watcher_on_top()).await;
     let (gui, daemon, ws, notifier) = setup(&url);
 
-    undo::navigate(gui, daemon, ws, false, timeouts()).await.unwrap();
+    undo::navigate(gui, daemon, ws, false, None, timeouts()).await.unwrap();
 
-    assert_eq!(stub.reverts.lock().unwrap().as_slice(), [json!({"target": {"label_id": 2}})]);
+    assert_eq!(
+        stub.reverts.lock().unwrap().as_slice(),
+        [json!({"target": {"label_id": 2, "only": "changes"}})]
+    );
     assert_eq!(
         last_status(&notifier),
         (
-            "Label 2 reverted in label 42 (1 operations) — the daemon's own operations \
-             were left in place."
-                .into(),
+            "Undid label 2 (1 operations) — the daemon's own operations were left in place.".into(),
             "info".into(),
             json!(222)
         )
@@ -179,7 +183,7 @@ async fn test_an_undo_over_a_cell_changed_since_still_reverts() {
     });
     let (gui, daemon, ws, _notifier) = setup(&url);
 
-    undo::navigate(gui, daemon, ws, false, timeouts()).await.unwrap();
+    undo::navigate(gui, daemon, ws, false, None, timeouts()).await.unwrap();
 
     assert_eq!(stub.reverts.lock().unwrap().len(), 1);
 }
@@ -190,7 +194,7 @@ async fn test_undo_with_nothing_to_undo_says_so() {
     let (url, stub) = spawn_stub(log).await;
     let (gui, daemon, ws, notifier) = setup(&url);
 
-    undo::navigate(gui, daemon, ws, false, timeouts()).await.unwrap();
+    undo::navigate(gui, daemon, ws, false, None, timeouts()).await.unwrap();
 
     assert!(stub.reverts.lock().unwrap().is_empty());
     assert_eq!(last_status(&notifier), ("Nothing to undo.".into(), "info".into(), json!(222)));
@@ -209,12 +213,15 @@ async fn test_redo_reverts_the_undo_across_the_watchers_work() {
     let (url, stub) = spawn_stub(log).await;
     let (gui, daemon, ws, notifier) = setup(&url);
 
-    undo::navigate(gui.clone(), daemon, ws.clone(), true, timeouts()).await.unwrap();
+    undo::navigate(gui.clone(), daemon, ws.clone(), true, None, timeouts()).await.unwrap();
 
-    assert_eq!(stub.reverts.lock().unwrap().as_slice(), [json!({"target": {"label_id": 3}})]);
+    assert_eq!(
+        stub.reverts.lock().unwrap().as_slice(),
+        [json!({"target": {"label_id": 3, "only": "undos"}})]
+    );
     assert_ne!(gui.get_var(&ws, "metarecords:dirty").unwrap(), Value::Null);
     let text = last_status(&notifier).0;
-    assert!(text.starts_with("Label 3 reverted in label 42"), "status: {text}");
+    assert!(text.starts_with("Redid label 3"), "status: {text}");
 }
 
 #[tokio::test]
@@ -222,7 +229,7 @@ async fn test_redo_does_nothing_when_your_newest_change_is_not_an_undo() {
     let (url, stub) = spawn_stub(user_log()).await;
     let (gui, daemon, ws, notifier) = setup(&url);
 
-    undo::navigate(gui.clone(), daemon, ws.clone(), true, timeouts()).await.unwrap();
+    undo::navigate(gui.clone(), daemon, ws.clone(), true, None, timeouts()).await.unwrap();
 
     assert!(stub.reverts.lock().unwrap().is_empty());
     assert_eq!(last_status(&notifier).0, "Nothing to redo.");
@@ -236,7 +243,7 @@ async fn test_a_refused_revert_is_reported() {
     *stub.revert_refused.lock().unwrap() = true;
     let (gui, daemon, ws, notifier) = setup(&url);
 
-    undo::navigate(gui.clone(), daemon, ws.clone(), false, timeouts()).await.unwrap();
+    undo::navigate(gui.clone(), daemon, ws.clone(), false, None, timeouts()).await.unwrap();
 
     let (text, kind, timeout) = last_status(&notifier);
     assert!(text.contains("the repository is locked"), "status: {text}");
@@ -251,5 +258,32 @@ async fn test_no_active_repo_is_an_error() {
     let ws = gui.create_workspace(None);
     let daemon = Arc::new(DaemonProxy::new(url));
 
-    assert!(undo::navigate(gui, daemon, ws, false, Default::default()).await.is_err());
+    assert!(undo::navigate(gui, daemon, ws, false, None, Default::default()).await.is_err());
+}
+
+/// A change written in several labels — a command inside a context — is not
+/// undone without saying which: the status names them (the shell asks first).
+#[tokio::test]
+async fn test_undo_of_a_change_in_several_labels_names_them() {
+    let log = json!({
+        "head": 2,
+        "first": 1,
+        "operations": [op(1, 1), op(2, 3)],
+        "labels": [{"id": 3, "name": "mf tag add x", "parent": 2},
+                   {"id": 2, "name": "tag run", "parent": null}],
+    });
+    let (url, stub) = spawn_stub(log).await;
+    let (gui, daemon, ws, notifier) = setup(&url);
+
+    undo::navigate(gui.clone(), daemon.clone(), ws.clone(), false, None, timeouts()).await.unwrap();
+    assert!(stub.reverts.lock().unwrap().is_empty());
+    let text = last_status(&notifier).0;
+    assert!(text.contains("3  mf tag add x") && text.contains("2  tag run"), "status: {text}");
+
+    // Named, it is undone.
+    undo::navigate(gui, daemon, ws, false, Some(2), timeouts()).await.unwrap();
+    assert_eq!(
+        stub.reverts.lock().unwrap().as_slice(),
+        [json!({"target": {"label_id": 2, "only": "changes"}})]
+    );
 }

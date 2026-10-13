@@ -165,6 +165,16 @@ than breaking them.
     `mf_watch = true` no longer reads as unwatched.
 
 ### Changed
+- **Undo and redo by label.** Undo offers the labels your newest change still
+  standing was written in, innermost first — the command, the script's answer,
+  its run —, and undoing one takes back its changes still standing, its own
+  undos and the watcher's operations left alone. `mf log undo` lists them and
+  `mf log undo <label>` undoes one; in the GUI a change in one label is undone
+  at once, one in several asks which. Redo is the same over the newest undo.
+  A revert target takes `only: "changes" | "undos"` (doc "Undo and redo by
+  label"). Removed: `mf log undo --after`, which the scripts no longer use.
+  Layout 6 (the reverts of an operation indexed) empties the old log.
+  `API_VERSION` 20: a daemon that ignored `only` would revert a whole label.
 - **Labels replace revisions.** Each operation carries its innermost label
   (name, description, parent), when it was written and its origin. A write
   request names the label it writes in with `X-Metafolder-Label: <id>`;

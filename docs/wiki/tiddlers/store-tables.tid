@@ -25,6 +25,8 @@ another.
 |`ops_by_entity` |uuid · op id |— |
 |`labels` |label id |name · description · parent · created ([[Labels and contexts]]) |
 |`label_kids` |parent label · child label |— |
+|`label_keys` |command key |label id (a command's label, found at its next writes) |
+|`reverted_by` |op id · op id of a revert of it |— (whether an operation still stands, [[The undo selection]]) |
 |`watcher_ops`, `user_ops` |op id |— (the operations of each retention class, [[Automatic retention]]) |
 
 A record's rows ''of one field'' are one prefix of `field_cells`, so checking a

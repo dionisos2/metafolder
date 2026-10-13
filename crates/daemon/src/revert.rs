@@ -52,6 +52,74 @@ pub fn label_ops(log: &dyn Log, label: i64) -> Result<Vec<OpRow>> {
     Ok(ops)
 }
 
+/// Which operations of a label an undo or a redo takes (doc "Undo and redo
+/// by label").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Only {
+    /// Its changes still standing — what an undo takes back: not a revert,
+    /// not the watcher's, not undone already.
+    Changes,
+    /// Its undos still standing — what a redo takes back: reverts of a
+    /// change, not redone already.
+    Undos,
+}
+
+impl Only {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "changes" => Some(Only::Changes),
+            "undos" => Some(Only::Undos),
+            _ => None,
+        }
+    }
+}
+
+/// `ops` narrowed to those `only` takes.
+pub fn narrow(log: &dyn Log, ops: Vec<OpRow>, only: Only) -> Result<Vec<OpRow>> {
+    let mut memo = std::collections::HashMap::new();
+    let mut out = Vec::new();
+    for op in ops {
+        let keep = match only {
+            Only::Changes => {
+                op.reverts_op_id.is_none()
+                    && op.origin.as_deref() != Some(crate::log::ORIGIN_WATCHER)
+            }
+            // A revert whose target is gone from the log counts as an undo:
+            // the conservative reading, as the undo selection's.
+            Only::Undos => match op.reverts_op_id {
+                Some(target) => log.op(target)?.is_none_or(|t| t.reverts_op_id.is_none()),
+                None => false,
+            },
+        };
+        if keep && standing(log, op.id, &mut memo)? {
+            out.push(op);
+        }
+    }
+    Ok(out)
+}
+
+/// Whether `op` still stands: no revert of it stands. Resolved along the whole
+/// chain — a revert that was itself reverted undoes nothing any more (doc
+/// "Why undo and redo do not oscillate").
+pub fn standing(
+    log: &dyn Log,
+    op: i64,
+    memo: &mut std::collections::HashMap<i64, bool>,
+) -> Result<bool> {
+    if let Some(&known) = memo.get(&op) {
+        return Ok(known);
+    }
+    let mut stands = true;
+    for reverter in log.reverters(op)? {
+        if standing(log, reverter, memo)? {
+            stands = false;
+            break;
+        }
+    }
+    memo.insert(op, stands);
+    Ok(stands)
+}
+
 /// What the plan says of a cell that changed since `op` wrote it.
 #[derive(Debug, Clone)]
 pub enum Changed {

@@ -47,122 +47,61 @@ impl TargetArgs {
     }
 }
 
-// ── mf log undo (doc "Undo and redo") ───────────────────────────────
+// ── mf log undo / redo (doc "Undo and redo") ─────────────────────────────────
 
-/// Reads enough of the log to decide what undo should undo, and the window it
-/// decided on. Two bounded reads rather than one unbounded one: a repository
-/// whose last manual change is older than [`undo::WINDOW`] operations — a large
-/// reconcile sits in between — asks again with [`undo::WIDE_WINDOW`] (doc
-/// "Undo and redo").
-fn undo_plan(ctx: &Ctx, base: &str) -> Result<(undo::UndoPlan, Json), CliError> {
-    let mut last = Json::Null;
+/// Reads enough of the log to decide what undo (or redo) offers. Two bounded
+/// reads rather than one unbounded one: a repository whose last manual change
+/// is older than [`undo::WINDOW`] operations — a large reconcile sits in
+/// between — asks again with [`undo::WIDE_WINDOW`] (doc "Undo and redo").
+fn selection(ctx: &Ctx, base: &str, redo: bool) -> Result<Option<undo::Selection>, CliError> {
     for limit in [undo::WINDOW, undo::WIDE_WINDOW] {
         let log = ctx.client.get(&format!("{base}/log"), &[("limit", limit.to_string())])?;
-        let plan = undo::plan_from_log(&log);
-        if plan != undo::UndoPlan::Nothing || !undo::window_exhausted(&log, limit) {
-            return Ok((plan, log));
+        let found = if redo { undo::redo_from_log(&log) } else { undo::undo_from_log(&log) };
+        if found.is_some() || !undo::window_exhausted(&log, limit) {
+            return Ok(found);
         }
-        last = log;
     }
-    Ok((undo::UndoPlan::Nothing, last))
+    Ok(None)
 }
 
-/// The oldest operation of label `label` in a log window.
-fn first_op_of(log: &Json, label: i64) -> Option<i64> {
-    log["operations"]
-        .as_array()?
-        .iter()
-        .filter(|op| op["label_id"].as_i64() == Some(label))
-        .filter_map(|op| op["id"].as_i64())
-        .min()
-}
-
-/// `mf log undo [plan] [--after <op>]`: reverts the newest change the *user*
-/// wrote that still stands (doc "The undo selection"). With `--after`, undoes
-/// again and again while that change is newer than the operation given — a
-/// script's going back to where it was (doc "Script sessions").
+/// `mf log undo [plan] [LABEL]` / `mf log redo …` (doc "Undo and redo by
+/// label"). Without a label, the labels the newest change still standing (the
+/// newest undo, for redo) was written in are listed, innermost first: undo
+/// takes back exactly the label named, never more or less than meant. With
+/// one, its changes still standing (its undos) are reverted.
 pub fn undo_run(
     ctx: &Ctx,
+    redo: bool,
     plan_only: bool,
+    label: Option<i64>,
     policies: RollbackPolicies,
     opts: UndoOpts,
 ) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
-    let mut undone = 0usize;
-    loop {
-        let (plan, log) = undo_plan(ctx, &base)?;
-        let undo::UndoPlan::Revert { label_id, ops } = plan.clone() else {
-            if plan_only || undone == 0 {
-                println!("Nothing to undo.");
-            }
-            return Ok(0);
-        };
-        if let Some(after) = opts.after {
-            if first_op_of(&log, label_id).is_none_or(|first| first <= after) {
-                if undone == 0 && !opts.silent {
-                    println!("Nothing to undo after operation {after}.");
+    let (verb, what) =
+        if redo { ("redo", "the newest undo") } else { ("undo", "your newest change") };
+    let Some(label) = label else {
+        match selection(ctx, &base, redo)? {
+            None => println!("Nothing to {verb}."),
+            Some(selection) => {
+                println!(
+                    "{what} still standing is in these labels — name one: mf log {verb} <label>"
+                );
+                for line in selection.describe() {
+                    println!("  {line}");
                 }
-                return Ok(0);
             }
         }
-        if plan_only {
-            println!("{}", plan.describe());
-            return Ok(0);
-        }
-        if !opts.silent {
-            println!("Undoing label {label_id}.");
-        }
-        let target = RevertTarget {
-            label_id: ops.is_none().then_some(label_id),
-            op_ids: ops.unwrap_or_default(),
-        };
-        let opts_revert = RevertOpts {
-            metadata_only: opts.metadata_only,
-            force: opts.force,
-            confirm_moves: false,
-            silent: opts.silent,
-            policies,
-        };
-        let code = revert_run(ctx, target, &opts_revert)?;
-        if code != 0 || opts.after.is_none() {
-            return Ok(code);
-        }
-        undone += 1;
-    }
-}
-
-/// `mf log redo [plan]`: reverts the newest undo that still stands — the
-/// change it took back comes back (doc "The undo selection").
-pub fn redo_run(
-    ctx: &Ctx,
-    plan_only: bool,
-    policies: RollbackPolicies,
-    opts: UndoOpts,
-) -> Result<i32, CliError> {
-    let base = ctx.repo_base()?;
-    let mut plan = undo::RedoPlan::Nothing;
-    for limit in [undo::WINDOW, undo::WIDE_WINDOW] {
-        let log = ctx.client.get(&format!("{base}/log"), &[("limit", limit.to_string())])?;
-        plan = undo::plan_redo_from_log(&log);
-        if plan != undo::RedoPlan::Nothing || !undo::window_exhausted(&log, limit) {
-            break;
-        }
-    }
-    if plan_only {
-        println!("{}", plan.describe());
-        return Ok(0);
-    }
-    let undo::RedoPlan::Revert { label_id, ops } = plan else {
-        println!("Nothing to redo.");
         return Ok(0);
     };
-    if !opts.silent {
-        println!("Taking the undo in label {label_id} back.");
-    }
     let target = RevertTarget {
-        label_id: ops.is_none().then_some(label_id),
-        op_ids: ops.unwrap_or_default(),
+        label_id: Some(label),
+        op_ids: Vec::new(),
+        only: Some(if redo { "undos" } else { "changes" }),
     };
+    if plan_only {
+        return revert_plan(ctx, target);
+    }
     revert_run(
         ctx,
         target,
@@ -178,8 +117,6 @@ pub fn redo_run(
 
 /// The options `mf log undo`/`redo` pass on to the revert.
 pub struct UndoOpts {
-    /// Undo repeatedly, down to this operation (`mf log undo --after`).
-    pub after: Option<i64>,
     pub metadata_only: bool,
     pub force: bool,
     pub silent: bool,
@@ -644,6 +581,8 @@ mod tests {
 pub struct RevertTarget {
     pub label_id: Option<i64>,
     pub op_ids: Vec<i64>,
+    /// With a label: only its standing `changes` (undo) or `undos` (redo).
+    pub only: Option<&'static str>,
 }
 
 impl RevertTarget {
@@ -655,10 +594,14 @@ impl RevertTarget {
         if !self.op_ids.is_empty() {
             json!({"op_ids": self.op_ids})
         } else {
-            match self.label_id {
+            let mut target = match self.label_id {
                 Some(l) => json!({"label_id": l}),
                 None => json!({"label_id": "head"}),
+            };
+            if let Some(only) = self.only {
+                target["only"] = json!(only);
             }
+            target
         }
     }
 
@@ -667,8 +610,13 @@ impl RevertTarget {
             let ids: Vec<String> = self.op_ids.iter().map(|i| format!("op {i}")).collect();
             ids.join(", ")
         } else {
+            let what = match self.only {
+                Some("changes") => "the changes of ",
+                Some("undos") => "the undos of ",
+                _ => "",
+            };
             match self.label_id {
-                Some(l) => format!("label {l}"),
+                Some(l) => format!("{what}label {l}"),
                 None => "the newest label".into(),
             }
         }

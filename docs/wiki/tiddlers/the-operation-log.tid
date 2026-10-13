@@ -5,7 +5,7 @@ audience: dev
 status: proposed
 summary: A proposed redesign of the event log: an ordered set of reversible operations grouped by nested labels, with one mechanism (revert onto the current state) instead of a history tree, HEAD navigation and rollback.
 
-''Proposed 12 October 2026, being built.'' Done: reverting onto the current state; the log as a sequence, undo and redo as reverts (the old log is emptied, not converted); retention per origin ([[Automatic retention]]); labels and contexts, in the daemon and the clients ([[Labels and contexts]]). Left: undo and redo by label, the log panel as a label tree. The event log today is a tree of
+''Proposed 12 October 2026, being built.'' Done: reverting onto the current state; the log as a sequence, undo and redo as reverts (the old log is emptied, not converted); retention per origin ([[Automatic retention]]); labels and contexts, in the daemon and the clients ([[Labels and contexts]]); undo and redo by label ([[Undo and redo by label]]). Left: the log panel as a label tree. The event log today is a tree of
 operations with a movable HEAD, two mechanisms (rollback and revert) and revisions
 ([[Event log]]). This proposal replaces it with an ''ordered set of operations'': why, in
 [[Why the log stops being a tree]].

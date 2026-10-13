@@ -13,7 +13,11 @@ summary: GET /revert/plan, the single-shot POST /revert, and the coordinated sta
 
 ''The target'', the same everywhere: `{"label_id": N}` — the label's operations and
 those of every label nested in it ([[Labels and contexts]]) — `{"label_id": "head"}` —
-the label of the newest operation — or `{"op_ids": [22, 23]}`. Nothing blocks a target:
+the label of the newest operation — or `{"op_ids": [22, 23]}`. A label target may be
+narrowed with `"only"` (`only=` on the plan): `"changes"` keeps the operations that are
+not reverts, not the watcher's and still standing — an undo; `"undos"` the reverts of an
+ordinary change still standing — a redo ([[Undo and redo by label]]). Anything else is a
+`400`, and so is `only` on an `op_ids` target. Nothing blocks a target:
 the revert is applied onto the current state ([[Reverting onto the current state]]).
 
 The revert writes in the request's context like any write: the label named in

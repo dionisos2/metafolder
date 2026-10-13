@@ -2869,7 +2869,7 @@ fn test_undo_auto_restores_from_trash() {
     assert!(!file.exists(), "the file is in the trash");
 
     // Undo the deletion → the file is auto-restored from the trash.
-    let out = mf(&["-u", &repo, "log", "undo", "--force"]);
+    let out = take_back(&repo, "undo", &["--force"]);
     assert_ok(&out);
     assert_eq!(std::fs::read(&file).unwrap(), b"precious", "the file is back");
     // The metadata is restored too: the metarecord is at doc.txt again.
@@ -2920,7 +2920,7 @@ fn test_undo_restores_a_trashed_directory_subtree() {
     assert!(!dir.exists(), "the directory is in the trash");
 
     // Undo the deletion.
-    assert_ok(&mf(&["-u", &repo, "log", "undo", "--force"]));
+    assert_ok(&take_back(&repo, "undo", &["--force"]));
     assert_eq!(std::fs::read(dir.join("B.txt")).unwrap(), b"bee", "the nested file is back");
 
     // The top directory *and* the nested file are restored to the SAME original
@@ -4665,7 +4665,7 @@ fn test_order_numbers_folder_children() {
 
     // The numbering was one revision: one undo takes back every position and
     // the marker (it used to take one undo per child).
-    assert_ok(&mf(&["-u", &repo, "log", "undo"]));
+    assert_ok(&take_back(&repo, "undo", &[]));
     for (uuid, field) in [
         (&song0, "order_file"),
         (&song1, "order_file"),
@@ -5104,7 +5104,7 @@ fn test_mf_tag_is_undone_in_one_step() {
     assert!(paths("mixed_tag").is_empty());
     assert_ne!(vocabulary(), vocabulary_before);
 
-    assert_ok(&mf(&["-u", &repo, "log", "undo"]));
+    assert_ok(&take_back(&repo, "undo", &[]));
     assert_eq!(paths("tag"), vec!["musique"]);
     assert_eq!(paths("mixed_tag"), vec!["musique/jazz"]);
     assert_eq!(paths("negative_tag"), vec!["cinema"]);
@@ -5565,14 +5565,6 @@ fn log_head_prints_the_head_operation_id() {
     assert_ok(&after);
     let after_id: i64 = after.stdout.trim().parse().expect("an operation id");
     assert!(after_id > before_id, "a write moves HEAD forward: {before_id} -> {after_id}");
-
-    // And it is the id `undo --after` takes: undoing back to it undoes the
-    // write, as new revisions on top.
-    let back = mf(&["-u", &repo, "log", "undo", "--after", &before_id.to_string(), "--silent"]);
-    assert_ok(&back);
-    let out = mf(&["-u", &repo, "metarecord", "-q", "label = \"x\"", "get"]);
-    assert_ok(&out);
-    assert!(out.stdout.trim().is_empty(), "the write is undone: {}", out.stdout);
 }
 
 // ── `mf log undo` (doc "Undo and redo") ──────────────────────────────
@@ -5584,14 +5576,20 @@ fn test_log_undo_reverts_the_last_manual_revision() {
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
 
-    let plan = mf(&["-u", &repo, "log", "undo", "plan"]);
+    // Without a label, undo names the labels it could take back: the
+    // command that wrote the change, innermost first.
+    let plan = mf(&["-u", &repo, "log", "undo"]);
     assert_ok(&plan);
-    assert!(plan.stdout.contains("revert"), "stdout: {}", plan.stdout);
+    assert!(plan.stdout.contains("field set rating:int=5"), "stdout: {}", plan.stdout);
+    let label = first_candidate(&plan.stdout).expect("a candidate");
+    let plan = mf(&["-u", &repo, "log", "undo", "plan", &label]);
+    assert_ok(&plan);
+    assert!(plan.stdout.contains("set_field(rating)"), "stdout: {}", plan.stdout);
     // A plan writes nothing.
     let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "get", "rating"]);
     assert!(out.stdout.contains('5'), "plan should not have written: {}", out.stdout);
 
-    let undo = mf(&["-u", &repo, "log", "undo"]);
+    let undo = take_back(&repo, "undo", &[]);
     assert_ok(&undo);
     let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "get", "rating"]);
     assert!(out.stdout.contains('3'), "stdout: {}", out.stdout);
@@ -5606,11 +5604,11 @@ fn test_log_undo_repeats_down_the_users_changes() {
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=2"]));
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "tag:string=x"]));
 
-    assert_ok(&mf(&["-u", &repo, "log", "undo"])); // undoes the tag
+    assert_ok(&take_back(&repo, "undo", &[])); // undoes the tag
     let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "get"]);
     assert!(!out.stdout.contains("\"tag\""), "the tag should be gone: {}", out.stdout);
 
-    assert_ok(&mf(&["-u", &repo, "log", "undo"])); // undoes rating=2
+    assert_ok(&take_back(&repo, "undo", &[])); // undoes rating=2
     let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "get", "rating"]);
     assert!(out.stdout.contains('1'), "stdout: {}", out.stdout);
 }
@@ -5625,7 +5623,7 @@ fn test_log_undo_stops_at_the_root_of_the_history() {
 
     let mut said_nothing = false;
     for _ in 0..6 {
-        let out = mf(&["-u", &repo, "log", "undo"]);
+        let out = take_back(&repo, "undo", &[]);
         assert_ok(&out);
         if out.stdout.to_lowercase().contains("nothing to undo") {
             said_nothing = true;
@@ -5665,7 +5663,7 @@ fn test_log_undo_reverts_when_the_watcher_has_written_since() {
     std::fs::write(root.join("later.txt"), b"hi").unwrap();
     assert!(poll(40, || uuids_at(&repo, "later.txt").len() == 1), "watcher should track the file");
 
-    let out = mf(&["-u", &repo, "log", "undo"]);
+    let out = take_back(&repo, "undo", &[]);
     assert_ok(&out);
     assert!(out.stdout.contains("Reverted"), "undo reverts: {}", out.stdout);
 
@@ -5681,15 +5679,15 @@ fn test_log_redo_reapplies_what_undo_took_back() {
     let (repo, _root) = init_repo("log_redo_forward");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
-    assert_ok(&mf(&["-u", &repo, "log", "undo"]));
+    assert_ok(&take_back(&repo, "undo", &[]));
     let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "get", "rating"]);
     assert!(out.stdout.contains('3'), "undo should have taken it back: {}", out.stdout);
 
-    let plan = mf(&["-u", &repo, "log", "redo", "plan"]);
+    let plan = mf(&["-u", &repo, "log", "redo"]);
     assert_ok(&plan);
-    assert!(plan.stdout.contains("undo"), "stdout: {}", plan.stdout);
+    assert!(plan.stdout.contains("log undo"), "the undo is offered: {}", plan.stdout);
 
-    assert_ok(&mf(&["-u", &repo, "log", "redo"]));
+    assert_ok(&take_back(&repo, "redo", &[]));
     let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "get", "rating"]);
     assert!(out.stdout.contains('5'), "redo should have put it back: {}", out.stdout);
 }
@@ -5715,7 +5713,7 @@ fn test_log_redo_survives_the_watcher_writing_after_the_undo() {
     ]));
 
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "field", "set", "note:string=a"]));
-    let undo = mf(&["-u", &repo, "log", "undo"]);
+    let undo = take_back(&repo, "undo", &[]);
     assert_ok(&undo);
     let record = mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "get"]);
     assert!(!record.stdout.contains("\"note\""), "the note should be gone: {}", record.stdout);
@@ -5725,14 +5723,14 @@ fn test_log_redo_survives_the_watcher_writing_after_the_undo() {
     assert!(poll(40, || uuids_at(&repo, "between.txt").len() == 1), "watcher should track it");
 
     // Redo puts the change back, and the watcher's metarecord survives it.
-    let redo = mf(&["-u", &repo, "log", "redo"]);
+    let redo = take_back(&repo, "redo", &[]);
     assert_ok(&redo);
     let record = mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "get"]);
     assert!(record.stdout.contains("\"note\""), "the note should be back: {}", record.stdout);
     assert_eq!(uuids_at(&repo, "between.txt").len(), 1, "the tracked file must survive the redo");
 
     // And undo takes it away again: the pair composes.
-    assert_ok(&mf(&["-u", &repo, "log", "undo"]));
+    assert_ok(&take_back(&repo, "undo", &[]));
     let record = mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "get"]);
     assert!(!record.stdout.contains("\"note\""), "undo again: {}", record.stdout);
 }
@@ -5742,7 +5740,7 @@ fn test_log_redo_survives_the_watcher_writing_after_the_undo() {
 fn test_log_redo_with_nothing_to_redo() {
     let (repo, _root) = init_repo("log_redo_empty");
     create_metarecord(&repo, &["rating:int=3"]);
-    let out = mf(&["-u", &repo, "log", "redo"]);
+    let out = take_back(&repo, "redo", &[]);
     assert_ok(&out);
     assert!(out.stdout.to_lowercase().contains("nothing to redo"), "stdout: {}", out.stdout);
 }
@@ -5897,11 +5895,11 @@ fn test_redo_of_a_trashing_trashes_the_file_again() {
     let uuid = uuids_at(&repo, "doc.txt")[0].clone();
     assert_ok(&mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]));
 
-    assert_ok(&mf(&["-u", &repo, "log", "undo"]));
+    assert_ok(&take_back(&repo, "undo", &[]));
     assert_eq!(std::fs::read(&file).unwrap(), b"precious", "undo brings the file back");
     assert_eq!(uuids_at(&repo, "doc.txt"), vec![uuid.clone()]);
 
-    let redo = mf(&["-u", &repo, "log", "redo"]);
+    let redo = take_back(&repo, "redo", &[]);
     assert_ok(&redo);
     assert!(!file.exists(), "redo sends it back to the trash: {}{}", redo.stdout, redo.stderr);
     let entries = repo_trash(&root).entries().unwrap();
@@ -5909,7 +5907,7 @@ fn test_redo_of_a_trashing_trashes_the_file_again() {
     assert_eq!(entries[0].metarecord.as_deref(), Some(uuid.as_str()));
     assert!(uuids_at(&repo, "doc.txt").is_empty(), "and its metarecord went with it");
 
-    assert_ok(&mf(&["-u", &repo, "log", "undo"]));
+    assert_ok(&take_back(&repo, "undo", &[]));
     assert_eq!(std::fs::read(&file).unwrap(), b"precious", "undo again");
     assert_eq!(uuids_at(&repo, "doc.txt"), vec![uuid]);
     assert!(repo_trash(&root).entries().unwrap().is_empty());
@@ -5927,17 +5925,17 @@ fn test_redo_of_a_directory_trashing_trashes_the_whole_directory() {
     let b = uuids_at(&repo, "B.txt")[0].clone();
     assert_ok(&mf(&["-u", &repo, "trash", "-f", dir.to_str().unwrap()]));
 
-    assert_ok(&mf(&["-u", &repo, "log", "undo"]));
+    assert_ok(&take_back(&repo, "undo", &[]));
     assert_eq!(std::fs::read(dir.join("B.txt")).unwrap(), b"bee");
 
-    assert_ok(&mf(&["-u", &repo, "log", "redo"]));
+    assert_ok(&take_back(&repo, "redo", &[]));
     assert!(!dir.exists(), "the directory is back in the trash");
     let entries = repo_trash(&root).entries().unwrap();
     assert_eq!(entries.len(), 1, "one entry for the directory and its file");
     assert!(entries[0].is_dir);
     assert!(entries[0].subtree.iter().any(|n| n.uuid == b), "the file's metarecord is captured");
 
-    assert_ok(&mf(&["-u", &repo, "log", "undo"]));
+    assert_ok(&take_back(&repo, "undo", &[]));
     assert_eq!(std::fs::read(dir.join("B.txt")).unwrap(), b"bee", "undo again");
     assert_eq!(uuids_at(&repo, "B.txt"), vec![b]);
 }
@@ -5957,7 +5955,7 @@ fn test_undo_and_redo_of_a_trashing_across_watcher_writes() {
     std::fs::write(root.join("between.txt"), b"x").unwrap();
     assert!(poll(40, || uuids_at(&repo, "between.txt").len() == 1));
     // `--force`: a revert that touches files asks first, and nobody is here.
-    let undo = mf(&["-u", &repo, "log", "undo", "--force"]);
+    let undo = take_back(&repo, "undo", &["--force"]);
     assert_ok(&undo);
     assert!(undo.stdout.contains("Reverted"), "the undo reverts: {}", undo.stdout);
     assert!(file.exists(), "the revert brings the file back: {}{}", undo.stdout, undo.stderr);
@@ -5966,7 +5964,7 @@ fn test_undo_and_redo_of_a_trashing_across_watcher_writes() {
 
     std::fs::write(root.join("again.txt"), b"y").unwrap();
     assert!(poll(40, || uuids_at(&repo, "again.txt").len() == 1));
-    let redo = mf(&["-u", &repo, "log", "redo", "--force"]);
+    let redo = take_back(&repo, "redo", &["--force"]);
     assert_ok(&redo);
     assert!(!file.exists(), "the redo trashes it again: {}{}", redo.stdout, redo.stderr);
     assert!(uuids_at(&repo, "doc.txt").is_empty());
@@ -6316,4 +6314,63 @@ fn test_a_context_is_not_sent_to_another_repository() {
     let out =
         mf_full(&["-u", &repo, "metarecord", "get"], None, &[("METAFOLDER_LABEL", "12")], true);
     assert_eq!(out.code, 2, "a malformed context is a usage error: {}", out.stderr);
+}
+
+/// The innermost label `mf log undo`/`redo` offers in `listing`.
+fn first_candidate(listing: &str) -> Option<String> {
+    listing.lines().skip(1).find_map(|l| l.split_whitespace().next()).map(str::to_string)
+}
+
+/// `mf log undo` (or `redo`) of the innermost label it offers — what a
+/// single-label change asks for. The listing when there is nothing to take
+/// back.
+fn take_back(repo: &str, verb: &str, extra: &[&str]) -> Out {
+    let listing = mf(&["-u", repo, "log", verb]);
+    assert_ok(&listing);
+    let Some(label) = first_candidate(&listing.stdout) else { return listing };
+    let mut args = vec!["-u", repo, "log", verb, label.as_str()];
+    args.extend_from_slice(extra);
+    mf(&args)
+}
+
+/// Undo offers every label the newest change is in, innermost first: the
+/// command, then the context it ran in. Undoing the context takes back every
+/// command of it (doc "Undo and redo by label").
+#[test]
+fn test_undo_offers_the_context_and_takes_it_back_whole() {
+    let (repo, _root) = init_repo("undo_context");
+    let uuid = create_metarecord(&repo, &["rating:int=1"]);
+    let out = mf(&["-u", &repo, "label", "begin", "two edits"]);
+    assert_ok(&out);
+    let context = out.stdout.trim().to_string();
+    let envs = [("METAFOLDER_LABEL", context.as_str())];
+    for spec in ["rating:int=2", "note:string=x"] {
+        let out = mf_full(
+            &["-u", &repo, "metarecord", "-i", &uuid, "field", "set", spec],
+            None,
+            &envs,
+            true,
+        );
+        assert_ok(&out);
+    }
+
+    let listing = mf(&["-u", &repo, "log", "undo"]);
+    assert_ok(&listing);
+    let lines: Vec<&str> = listing.stdout.lines().skip(1).collect();
+    assert_eq!(lines.len(), 2, "the command, then the context: {}", listing.stdout);
+    assert!(lines[0].contains("note:string=x"), "{}", listing.stdout);
+    assert!(lines[1].contains("two edits"), "{}", listing.stdout);
+
+    let run = context.split_once(':').unwrap().1;
+    assert_ok(&mf(&["-u", &repo, "log", "undo", run]));
+    let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "get"]);
+    assert!(!out.stdout.contains("\"note\""), "{}", out.stdout);
+    let rating = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "get", "rating"]);
+    assert!(rating.stdout.contains('1'), "both commands taken back: {}", rating.stdout);
+
+    // And redo puts the whole context back.
+    let redo = take_back(&repo, "redo", &[]);
+    assert_ok(&redo);
+    let rating = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "get", "rating"]);
+    assert!(rating.stdout.contains('2'), "{}", rating.stdout);
 }

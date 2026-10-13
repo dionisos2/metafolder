@@ -37,6 +37,12 @@ impl DaemonClient for BlockingClient {
         if let Some(token) = &self.token {
             req = req.set("Authorization", &format!("Bearer {token}"));
         }
+        if let Some((key, name)) = crate::daemon_proxy::current_command() {
+            use metafolder_core::context;
+            req = req
+                .set(context::COMMAND_HEADER, &key)
+                .set(context::COMMAND_NAME_HEADER, &context::encode(&name));
+        }
         let result = match body {
             Some(json) => req.send_json(json),
             None => req.call(),

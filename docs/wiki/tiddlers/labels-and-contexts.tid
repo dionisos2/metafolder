@@ -6,9 +6,8 @@ status: proposed
 summary: Operations are grouped by nested labels (name, description, parent) opened as contexts by scripts, commands and the GUI — passed along as an id, so leaving a context is just not passing it on.
 
 ''Being built'' (October 2026): labels, contexts and commands are in place in the daemon,
-the CLI, the GUI and the shipped scripts ([[Log endpoints]]); undo still takes the
-innermost label of the newest change ([[The undo selection]]), and the [[log panel]]
-lists labels without their nesting.
+the CLI, the GUI and the shipped scripts ([[Log endpoints]]), and undo and redo offer them
+([[Undo and redo by label]]); the [[log panel]] lists labels without their nesting.
 
 A ''label'' is `{id, name, description, parent, created}`. Each operation carries its
 ''innermost'' label; the others are its ancestors, found by following the parents. Same

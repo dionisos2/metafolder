@@ -356,3 +356,86 @@ async fn reverting_an_empty_label_reverts_nothing() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+// ── Undo and redo of a label (doc "Undo and redo by label") ─────────────────
+
+/// Sets field `a` of `uuid` to `n`, inside `label`.
+async fn set_a(app: &Router, repo: &str, uuid: &str, n: i64, label: i64) {
+    let (status, body) = send(
+        app,
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{uuid}/fields/a"),
+        Some(json!({"value": {"type": "int", "value": n}})),
+        Some(&label.to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+async fn field_a(app: &Router, repo: &str, uuid: &str) -> Value {
+    let (_, record) =
+        send(app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None, None).await;
+    record["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == "a")
+        .map(|f| f["value"]["value"].clone())
+        .unwrap_or(Value::Null)
+}
+
+async fn revert(app: &Router, repo: &str, target: Value) -> Value {
+    let (status, body) =
+        send(app, "POST", &format!("/repos/{repo}/revert"), Some(json!({"target": target})), None)
+            .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body
+}
+
+/// Undoing a run takes back what still stands of it — not an answer already
+/// taken back, and not the going back itself, which would put that answer back.
+#[tokio::test]
+async fn undoing_a_label_takes_back_only_its_standing_changes() {
+    let (app, repo, _root) = setup("undo_label").await;
+    let (_, record) = create(&app, &repo, None).await;
+    let uuid = record["uuid"].as_str().unwrap().to_string();
+    let run = new_label(&app, &repo, json!({"name": "run"})).await;
+    let first = new_label(&app, &repo, json!({"name": "answer 1", "parent": run})).await;
+    set_a(&app, &repo, &uuid, 2, first).await;
+    // Going back over answer 1, inside the run: an undo of it.
+    revert(&app, &repo, json!({"label_id": first})).await;
+    let second = new_label(&app, &repo, json!({"name": "answer 1 again", "parent": run})).await;
+    set_a(&app, &repo, &uuid, 3, second).await;
+    assert_eq!(field_a(&app, &repo, &uuid).await, 3);
+
+    let (status, plan) = send(
+        &app,
+        "GET",
+        &format!("/repos/{repo}/revert/plan?target_label_id={run}&only=changes"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{plan}");
+    assert_eq!(plan["operations"].as_array().unwrap().len(), 1, "only the standing change: {plan}");
+
+    let undo = revert(&app, &repo, json!({"label_id": run, "only": "changes"})).await;
+    assert_eq!(undo["reverted_operations"].as_array().unwrap().len(), 1, "{undo}");
+    assert_eq!(field_a(&app, &repo, &uuid).await, 1, "back to before the run");
+
+    // Its redo takes the undo back: the run's standing undos, that is.
+    let undo_label = undo["label"].as_i64().unwrap();
+    let redo = revert(&app, &repo, json!({"label_id": undo_label, "only": "undos"})).await;
+    assert_eq!(redo["reverted_operations"].as_array().unwrap().len(), 1, "{redo}");
+    assert_eq!(field_a(&app, &repo, &uuid).await, 3);
+
+    let (status, body) = send(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/revert"),
+        Some(json!({"target": {"label_id": run, "only": "everything"}})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+}

@@ -1429,6 +1429,42 @@ export async function dispatch(
   }
 }
 
+/** `log:undo` / `log:redo` (doc "Undo and redo by label"): the label named,
+ *  or — none named — the one the newest change (undo) was written in; when it
+ *  was written in several, which one is asked, innermost first. */
+async function undoOrRedo(ws: string, redo: boolean, named: string | undefined): Promise<void> {
+  let label: number | null = null;
+  if (named !== undefined) {
+    label = Number.parseInt(named, 10);
+    if (!Number.isFinite(label)) {
+      await status(`not a label: "${named}"`);
+      return;
+    }
+  } else {
+    const candidates = await invoke<{ id: number; name: string }[]>('log_candidates', {
+      wsId: ws,
+      redo,
+    });
+    if (candidates.length > 1) {
+      const chosen = await collectArgs(
+        [
+          {
+            name: 'label',
+            prompt: () => `${redo ? 'Redo' : 'Undo'} which label?`,
+            complete: () => candidates.map((c) => `${c.id} ${c.name}`),
+          },
+        ],
+        [],
+        promptForArg,
+      );
+      if (chosen === null) return;
+      label = Number.parseInt(chosen[0] ?? '', 10);
+      if (!Number.isFinite(label)) return;
+    }
+  }
+  await invoke('log_navigate', { wsId: ws, redo, label });
+}
+
 /** Tells the daemon proxy a command starts; its key, or null when the proxy
  *  cannot be told (a test without the Rust side). */
 async function beginCommand(name: string): Promise<string | null> {
@@ -1686,10 +1722,8 @@ async function runCommand(name: string, args: string[], context: ExecContext): P
       return true;
     }
     case 'log:undo':
-      if (ws) await invoke('log_navigate', { wsId: ws, redo: false });
-      return true;
     case 'log:redo':
-      if (ws) await invoke('log_navigate', { wsId: ws, redo: true });
+      if (ws) await undoOrRedo(ws, name === 'log:redo', args[0]);
       return true;
     case 'repos:open':
       await invoke('panel_set_type', { slot: context.slot, panelType: 'repos' });

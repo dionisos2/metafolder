@@ -450,14 +450,11 @@ enum LogCommand {
         #[arg(long)]
         raw: bool,
     },
-    /// Undo the newest change you made that still stands, by reverting it
+    /// Undo a label of your newest change still standing (none named: list them)
     Undo {
-        /// "plan" to print what undo would do, without writing anything
-        #[arg(num_args = 0..=1)]
+        /// [plan] [LABEL]: "plan" previews; without a label, the candidates are listed
+        #[arg(num_args = 0..=2)]
         args: Vec<String>,
-        /// Undo again and again, while the change is newer than this operation
-        #[arg(long)]
-        after: Option<i64>,
         /// Leave out the operations needing a filesystem action
         #[arg(long = "metadata-only")]
         metadata_only: bool,
@@ -474,10 +471,10 @@ enum LogCommand {
         #[arg(long)]
         silent: bool,
     },
-    /// Take the newest undo that still stands back, by reverting it
+    /// Take back the undos of a label of the newest undo still standing (none named: list them)
     Redo {
-        /// "plan" to print what redo would do, without writing anything
-        #[arg(num_args = 0..=1)]
+        /// [plan] [LABEL]: "plan" previews; without a label, the candidates are listed
+        #[arg(num_args = 0..=2)]
         args: Vec<String>,
         /// Leave out the operations needing a filesystem action
         #[arg(long = "metadata-only")]
@@ -1544,15 +1541,26 @@ fn dispatch_ignore(ctx: &Ctx, command: Option<IgnoreCommand>) -> CmdResult {
 /// The lone optional positional of `mf log undo` / `mf log redo`: the literal
 /// `plan`, or nothing. They take no target — finding one is the whole job — so
 /// anything else is a usage error rather than a silently ignored word.
-fn plan_argument(args: &[String], what: &str) -> Result<bool, metafolder_cli::client::CliError> {
-    match args.first().map(String::as_str) {
-        None => Ok(false),
-        Some("plan") => Ok(true),
-        Some(other) => Err(metafolder_cli::client::CliError::Usage(format!(
-            "'{other}' is not a valid argument; mf log {what} takes no target (it finds one) \
-             — say 'plan' to preview it"
-        ))),
-    }
+/// `[plan] [LABEL]`: whether to preview, and the label named.
+fn undo_arguments(
+    args: &[String],
+) -> Result<(bool, Option<i64>), metafolder_cli::client::CliError> {
+    let (plan, rest) = match args.split_first() {
+        Some((first, rest)) if first == "plan" => (true, rest),
+        _ => (false, args),
+    };
+    let label = match rest {
+        [] => None,
+        [label] => Some(label.parse::<i64>().map_err(|_| {
+            metafolder_cli::client::CliError::Usage(format!("'{label}' is not a label id"))
+        })?),
+        _ => {
+            return Err(metafolder_cli::client::CliError::Usage(
+                "give at most 'plan' and one label id".into(),
+            ))
+        }
+    };
+    Ok((plan, label))
 }
 
 /// The two `move_file` policies, with the defaults of `mf rollback`.
@@ -1584,21 +1592,16 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
         Some(LogCommand::Show { target, raw }) => log::log_show(ctx, &target, raw),
         Some(LogCommand::Undo {
             args,
-            after,
             metadata_only,
             on_move_available,
             on_move_unavailable,
             force,
             silent,
         }) => {
-            let plan_only = plan_argument(&args, "undo")?;
+            let (plan_only, label) = undo_arguments(&args)?;
             let policies = move_policies(on_move_available, on_move_unavailable)?;
-            log::undo_run(
-                ctx,
-                plan_only,
-                policies,
-                log::UndoOpts { after, metadata_only, force, silent },
-            )
+            let opts = log::UndoOpts { metadata_only, force, silent };
+            log::undo_run(ctx, false, plan_only, label, policies, opts)
         }
         Some(LogCommand::Redo {
             args,
@@ -1608,14 +1611,10 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
             force,
             silent,
         }) => {
-            let plan_only = plan_argument(&args, "redo")?;
+            let (plan_only, label) = undo_arguments(&args)?;
             let policies = move_policies(on_move_available, on_move_unavailable)?;
-            log::redo_run(
-                ctx,
-                plan_only,
-                policies,
-                log::UndoOpts { after: None, metadata_only, force, silent },
-            )
+            let opts = log::UndoOpts { metadata_only, force, silent };
+            log::undo_run(ctx, true, plan_only, label, policies, opts)
         }
         Some(LogCommand::Revert {
             args,
@@ -1644,7 +1643,7 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
                     "give a label id or --op, not both".into(),
                 ));
             }
-            let target = log::RevertTarget { label_id, op_ids: op };
+            let target = log::RevertTarget { label_id, op_ids: op, only: None };
             let policies = log::RollbackPolicies {
                 on_available: on_move_available
                     .as_deref()

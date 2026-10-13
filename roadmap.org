@@ -17,8 +17,8 @@ redo are reverts — which fixed the three undo/redo bugs that motivated it (the
 lost redo, the redo stopping at a redone undo, the scripts' going back). The
 old log is emptied, not converted (user); retention per origin (done before
 the labels: the trim had to leave the revisions behind first); labels replace
-revisions in the daemon; contexts in the clients (CLI, GUI, scripts). Left, in
-order: undo and redo by label, the log panel as a label tree, then a sweep of the word "revision"
+revisions in the daemon; contexts in the clients (CLI, GUI, scripts); undo and
+redo by label. Left, in order: the log panel as a label tree, then a sweep of the word "revision"
 through the notes and comments (where it means "one write"). Deferred past the first build: the
 GUI's work context (its scope is undecided), "rollback = revert since T".
 

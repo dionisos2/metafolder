@@ -2,33 +2,52 @@ title: Undo and redo
 tags: [[Event log]]
 kind: guide
 aliases: undo redo
-summary: mf log undo (Ctrl+Z) takes back the newest change you made, whatever the watcher wrote since; mf log redo (Ctrl+Shift+Z) takes the newest undo back.
+summary: mf log undo (Ctrl+Z) takes back a label of the newest change you made, whatever the watcher wrote since; mf log redo (Ctrl+Shift+Z) takes a label of the newest undo back.
 
 ```
-mf -n music log undo plan      # what undo would do, and why — nothing written
-mf -n music log undo
-mf -n music log redo plan
-mf -n music log redo
+mf -n music log undo           # which labels the newest change is in — nothing written
+mf -n music log undo 42        # undo label 42: its changes still standing
+mf -n music log undo plan 42   # what that would do — nothing written
+mf -n music log redo           # which labels the newest undo is in
+mf -n music log redo 57
 ```
 
 In the GUI: <<key "log:undo" Ctrl+z>> and <<key "log:redo" Ctrl+Shift+z>>, from anywhere.
 
-''Undo'' takes back the newest change ''you'' made that still stands — not the watcher's,
-not a previous undo — by reverting it ([[The undo selection]]): the watcher's revisions
-written since stay where they are — they record what really happened on disk ([[Why undo does not step HEAD back]]). Pressed again, it takes back the change before, and so on.
-The undo is itself a revision in the log.
+''Undo'' looks for the newest change ''you'' made that still stands — not the watcher's,
+not a previous undo ([[The undo selection]]) — and offers the ''labels'' it was written in,
+innermost first: the command that made it, the answer of a script it was part of, the
+script's run… ([[Labels and contexts]]). Undoing a label reverts every change of it still
+standing, onto the current state: the watcher's operations written since stay where they
+are — they record what really happened on disk ([[Why undo does not step HEAD back]]).
+Pressed again, it takes back the change before, and so on. The undo is itself written in
+a label: the command's (`mf log undo 42`), or `undo of label 42`.
 
-''Redo'' takes the newest undo that still stands back, by reverting it — whatever the
-watcher wrote in between. Pressed again, it takes back the undo before. A new change of
-yours clears what could be redone; it re-applies undos only — not arbitrary history (that
-is `mf log revert`). Undo and redo compose: undo, redo, undo lands where the first undo
-did ([[Why undo and redo do not oscillate]]).
+On the command line the label is named: `mf log undo` alone lists the candidates and
+writes nothing — undo then never takes back more or less than meant. In the GUI, a change
+written in a single label (an edit, one command) is undone at once; one written in several
+(a command inside a script's answer, inside its run) asks which, in the command input's
+completion, innermost first.
 
-Neither needs a target: finding it is their whole job. `plan` shows the revision and the
-reason, and writes nothing. With nothing to take back they say `Nothing to undo.` /
-`Nothing to redo.` and exit 0. `mf log undo --after <op>` undoes again and again while your
-newest change is newer than that operation (`mf log head` gives the operation); a script
-going back reverts the label of its answer instead ([[Writing a GUI script]]).
+''Redo'' is the same over the newest undo that still stands: its labels are offered, and
+redoing one reverts its undos — whatever the watcher wrote in between. Pressed again, it
+takes back the undo before. A new change of yours clears what could be redone; it
+re-applies undos only — not arbitrary history (that is `mf log revert`). Undo and redo
+compose: undo, redo, undo lands where the first undo did ([[Why undo and redo do not oscillate]]).
+
+`plan` with a label shows what the revert would write, and writes nothing. With nothing to
+take back they say `Nothing to undo.` / `Nothing to redo.` and exit 0.
+
+!! Two writers at once
+
+"Newest" is the newest ''operation'', not the newest thing you did. When two clients write
+at the same time — a script running while you edit by hand, two windows —, the newest
+operation may be the other one's: undo then offers ''its'' labels, not the ones of what you
+just did. The candidates' names say whose they are before anything is undone; name the
+label you mean. In the GUI, two commands running at once — a long reconcile and a field
+edited meanwhile — even share a label ([[Labels and contexts]]).
+
+!! Files
 
 Files come along. Undoing a trashing brings the file back from the trash, redoing it
 sends it there again; undoing a move made through metafolder moves the file back

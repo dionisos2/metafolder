@@ -1,6 +1,6 @@
 title: mf log undo
 tags: [[CLI command]] [[Event log]]
 kind: reference
-summary: Undo the newest change you made, whichever mechanism that takes
+summary: Undo a label of your newest change still standing (none named: list them)
 
-Takes back the newest change you made — rolling back or reverting, whichever the log calls for; `plan` shows which and why ([[Undo and redo]], [[The undo selection]]).
+Without a label, lists the labels your newest change still standing was written in, innermost first, and writes nothing; with one, reverts its changes still standing; `plan <label>` previews it ([[Undo and redo]], [[The undo selection]]).
