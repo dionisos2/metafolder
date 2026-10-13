@@ -12,7 +12,7 @@ workspace's selection ([[Workspace variables]]). Every panel of the ''same'' wor
 that follows it — [[metarecord-detail panel]], [[file panel]], [[workspace-info panel]] — updates at once, in
 either slot; a slot showing another workspace is not affected.
 
-''Opening'' a row of `metarecord-list` — a double-click, or
+''Opening'' a row of `metarecord-list` — its `↗` button ([[Opening a row]]), or
 <<key "metarecord-list:open" Enter>> — shows it in the other slot of the same
 workspace: in the [[file panel]] when the metarecord has a path, in
 `metarecord-detail` otherwise (`panel:open other`). A hidden slot is opened for it.

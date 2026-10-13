@@ -213,3 +213,31 @@ describe('listing what refers to the selected node', () => {
     expect(s.statusBar.message).toHaveBeenCalledWith('select a node first');
   });
 });
+
+// Going into a node is its › button (doc "Opening a row"), not a double click.
+describe('treeref open buttons', () => {
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = () => {};
+  });
+
+  /** The breadcrumb, as text. */
+  const crumbs = (root: ShadowRoot) => root.getElementById('breadcrumb')?.textContent ?? '';
+  const rowOf = (root: ShadowRoot, name: string) =>
+    [...root.querySelectorAll('li')].find((li) => li.querySelector('.name')?.textContent === name)!;
+
+  test("a node's button goes into it", async () => {
+    const s = stub();
+    await mount(s);
+    rowOf(s.root, 'notes').querySelector<HTMLButtonElement>('button.mf-open-enter')!.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(crumbs(s.root)).toContain('notes');
+  });
+
+  test('a double click on a node does not go into it', async () => {
+    const s = stub();
+    await mount(s);
+    rowOf(s.root, 'notes').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(crumbs(s.root)).not.toContain('notes');
+  });
+});

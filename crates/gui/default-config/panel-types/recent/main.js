@@ -7,7 +7,7 @@
 // change, or on an explicit refresh — not on every view — so it never reorders
 // under the cursor while you navigate.
 
-import { byId, el, field, formatAge, formatValue, whereArg } from '/__ui.js';
+import { byId, el, field, formatAge, formatValue, openButton, whereArg } from '/__ui.js';
 import { rowActionsProvider, baseName } from '/__file-actions.js';
 import { registerFind } from '/__find-entry.js';
 
@@ -68,7 +68,6 @@ export function mount(root, metafolder) {
           {
             class: [index === cursorIndex && 'cursor'],
             onclick: () => select(index),
-            ondblclick: () => void open(),
             'data-mf-uuid': row.uuid,
             ...(row.absPaths[0]
               ? {
@@ -78,6 +77,11 @@ export function mount(root, metafolder) {
                 }
               : {}),
           },
+          // doc "Opening a row"
+          openButton('show', 'Show in the other slot', async () => {
+            await select(index);
+            await open();
+          }),
           el('span', { class: 'name' }, rowName(row)),
           el('span', { class: 'path' }, row.relPath),
           el('span', { class: 'age' }, formatViewedAge(row.viewedAt, now)),

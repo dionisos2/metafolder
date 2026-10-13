@@ -1,7 +1,7 @@
 // metarecord-list panel: metarecords of the active repo filtered by an embedded
 // DSL query; primary selection source (doc "metarecord-list panel").
 
-import { byId, el, fields, messageOf, qs, thumbnail, whereArg } from '/__ui.js';
+import { byId, el, fields, messageOf, openButton, qs, thumbnail, whereArg } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { fetchMounts, offlineMountFor, relativeTo, unavailableLabel } from '/__mounts.js';
 import { createPagedList } from '/__paged-list.js';
@@ -650,6 +650,7 @@ export async function mount(root, metafolder) {
 
   function renderHeader() {
     byId(root, 'header-row').replaceChildren(
+      el('th', { class: 'open-col' }), // the rows' open buttons
       ...columns.map((column) => {
         const active = isSortable(column) ? sort.find((s) => s.field === column.name) : undefined;
         const th = el(
@@ -776,8 +777,8 @@ export async function mount(root, metafolder) {
               selection.has(metarecord.uuid) && 'checked',
             ],
             onclick: () => setCursor(index),
-            ondblclick: () => openSelected(),
           },
+          el('td', { class: 'open-cell' }, rowOpenButton(index)),
           columns.map((column) => el('td', {}, cellText(column, metarecord))),
         );
         fillOrphan(tr, metarecord);
@@ -796,7 +797,6 @@ export async function mount(root, metafolder) {
               selection.has(metarecord.uuid) && 'checked',
             ],
             onclick: () => setCursor(index),
-            ondblclick: () => openSelected(),
           },
           thumbnail(metafolder.guiServer, pathsOf(metarecord)[0], {
             glyphClass: 'glyph',
@@ -804,8 +804,13 @@ export async function mount(root, metafolder) {
           }),
           el(
             'div',
-            { class: 'name' },
-            cellQuickText(gridNameColumn, metarecord) || metarecord.uuid.slice(0, 8),
+            { class: 'card-foot' },
+            rowOpenButton(index),
+            el(
+              'div',
+              { class: 'name' },
+              cellQuickText(gridNameColumn, metarecord) || metarecord.uuid.slice(0, 8),
+            ),
           ),
         );
         fillOrphan(card, metarecord);
@@ -908,6 +913,15 @@ export async function mount(root, metafolder) {
    *  detail otherwise — at the target: the other slot by default. The row is
    *  the published selection already, so a new workspace's copy shows it.
    *  @param {string} where `here`, `other` or `new` */
+  /** A row's (or card's) open button (doc "Opening a row"): it selects the
+   *  row, then shows it in the other slot. @param {number} index */
+  function rowOpenButton(index) {
+    return openButton('show', 'Show in the other slot', async () => {
+      await setCursor(index);
+      await openSelected();
+    });
+  }
+
   async function openSelected(where = 'other') {
     const metarecord = metarecords[cursorIndex];
     if (!metarecord) return;

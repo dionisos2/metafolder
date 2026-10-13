@@ -73,6 +73,8 @@ function stub() {
     },
     statusBar,
     contextMenu: Object.assign(noop, { addDefaultItems: noop }),
+    // `mf.atTarget`, faked: the body runs on this same stub.
+    atTarget: vi.fn(async (_where: string, body: (mf: unknown) => unknown) => body(api)),
   };
   return { api, handlers, specs, statusBar, root: shadowRoot() };
 }
@@ -119,5 +121,34 @@ describe('recent:find', () => {
     await s.handlers.get('recent:find')!('zzz');
     expect(cursorName(s.root)).toBe('jazz.mp3');
     expect(s.statusBar.error).toHaveBeenCalled();
+  });
+});
+
+// Opening a row is its ↗ button (doc "Opening a row"), not a double click.
+describe('recent open buttons', () => {
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = () => {};
+  });
+
+  test("a row's button shows that row in the other slot", async () => {
+    const s = stub();
+    await mount(s);
+    const row = [...s.root.querySelectorAll('li')].find(
+      (li) => li.querySelector('.name')?.textContent === 'rock.mp3',
+    )!;
+    row.querySelector<HTMLButtonElement>('button.mf-open-show')!.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(cursorName(s.root)).toBe('rock.mp3');
+    expect(s.api.atTarget).toHaveBeenCalledWith('other', expect.any(Function));
+    expect(s.api.workspace.set).toHaveBeenCalledWith('selected_paths', ['/repo/other/rock.mp3']);
+    expect(s.api.commands.invoke).toHaveBeenCalledWith('panel:open here file');
+  });
+
+  test('a double click on a row opens nothing', async () => {
+    const s = stub();
+    await mount(s);
+    s.root.querySelector('li')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(s.api.commands.invoke).not.toHaveBeenCalled();
   });
 });

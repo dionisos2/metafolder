@@ -13,7 +13,7 @@
 // new node under the current one (schema type first, then the name), the way
 // the file manager creates a folder. doc "treeref panel".
 
-import { byId, el, whereArg } from '/__ui.js';
+import { byId, el, openButton, whereArg } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
 import { createSelect } from '/__select.js';
 import { fileActionsProvider, metarecordMenuItems } from '/__file-actions.js';
@@ -432,9 +432,10 @@ export async function mount(root, metafolder) {
           {
             class: [index === cursorIndex && 'cursor'],
             onclick: () => select(index),
-            ondblclick: () => descend(index),
             ...fileRowAttrs(child),
           },
+          // doc "Opening a row"
+          openButton('enter', 'Go into this node', () => descend(index)),
           el('span', { class: 'icon' }, '🏷️'),
           el('span', { class: 'name' }, nodeLabel(child)),
         ),

@@ -149,6 +149,20 @@
       th .col-resize:hover {
         background: var(--mf-accent, #4c56c4);
       }
+      th.open-col,
+      td.open-cell {
+        width: 1.8em;
+        padding: 0 0 0 4px;
+        cursor: default;
+      }
+      .card-foot {
+        display: flex;
+        align-items: center;
+      }
+      .card-foot .name {
+        flex: 1;
+        min-width: 0;
+      }
       td {
         padding: 3px 8px;
         white-space: nowrap;

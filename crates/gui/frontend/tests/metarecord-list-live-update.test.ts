@@ -258,7 +258,7 @@ const mounted: (() => void)[] = [];
 /** The visible rows: their first cell (the `mfr_path:path` column) and orphan mark. */
 function rows(shadow: ShadowRoot) {
   return [...shadow.querySelectorAll('#rows tr')].map((tr) => ({
-    path: tr.querySelector('td')?.textContent ?? '',
+    path: tr.querySelector('td:not(.open-cell)')?.textContent ?? '', // past the open button
     orphan: tr.classList.contains('orphan'),
   }));
 }

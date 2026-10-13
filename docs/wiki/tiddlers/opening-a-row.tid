@@ -31,3 +31,6 @@ focus where it was (the panel's keys keep working).
 
 |!Panel |!Button |!Opening |
 |[[file-manager panel]] |`›` on a folder, `↗` on a file and on `.` |goes into the folder; selects the file (or the folder shown) and shows it in the other slot |
+|[[metarecord-list panel]] |`↗`, in a column of its own — under the thumbnail in the grid |shows the metarecord in the other slot: the file panel, or the detail panel when it has no file |
+|[[treeref panel]] |`›` |goes into the node |
+|[[recent panel]] |`↗` |shows the metarecord in the other slot |
