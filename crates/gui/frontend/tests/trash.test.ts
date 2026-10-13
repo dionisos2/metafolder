@@ -105,6 +105,21 @@ describe('trash panel actions', () => {
     expect(api.contextMenu).toHaveBeenCalled();
   });
 
+  // Restoring writes to the disk: no one-click button for it, and no double
+  // click either — a click on a row only selects it (doc "Opening a row").
+  test('a double click on an entry restores nothing', async () => {
+    const { api, trash } = stub();
+    const shadow = shadowForTrash();
+    mount(shadow, api as never);
+    await new Promise((r) => setTimeout(r, 0));
+    const row = () => shadow.querySelector('#entries > li') as HTMLElement;
+    row().click();
+    await new Promise((r) => setTimeout(r, 0));
+    row().dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(trash.restore).not.toHaveBeenCalled();
+  });
+
   test('restore, delete and empty drive the trash API', async () => {
     const { api, handlers, trash, workspace, statusBar } = stub();
     mount(shadowForTrash(), api as never);

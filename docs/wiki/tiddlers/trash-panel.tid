@@ -8,7 +8,7 @@ Open it with `panel:open here trash` (<<key "panel:open here trash" "t b">>). On
 row per entry — name, size, age, reason, the path it was trashed from — newest
 first.
 
-* <<key "trash:restore" Enter>> — restore the selected entry to its original path, metarecords included ([[What restoring does]]).
+* <<key "trash:restore" Enter>> — restore the selected entry to its original path, metarecords included ([[What restoring does]]). Not a button on the row, nor a double click: it writes to the disk, on a row clicked often ([[Opening a row]]).
 * <<key "trash:delete" Delete>> — delete the selected entry permanently (confirmed).
 * `trash:empty` — delete every entry permanently (confirmed).
 * <<key "trash:find" f>> — jump to an entry by name; each candidate shows the path it was trashed from, so two entries sharing a name are still told apart ([[Jumping to an entry]]).

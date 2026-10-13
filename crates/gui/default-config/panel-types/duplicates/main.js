@@ -18,7 +18,7 @@
 // worst exactly here, where it is the number the
 // deletion decision is made on.
 
-import { byId, el, field, formatSize, formatValue } from '/__ui.js';
+import { byId, el, field, formatSize, formatValue, openButton } from '/__ui.js';
 import { registerFind } from '/__find-entry.js';
 import { createCatchup } from '/__watcher-settle.js';
 import { rowActionsProvider, baseName } from '/__file-actions.js';
@@ -118,7 +118,24 @@ export function mount(root, metafolder) {
       const li =
         row.member === null
           ? el('li', { class: i === cursorIndex ? 'cursor' : '' }, [
-              el('span', { class: 'twisty' }, row.group.expanded ? '▾' : '▸'),
+              // Unfolds in place (doc "Opening a row"): a click on the row
+              // only selects it.
+              el(
+                'button',
+                {
+                  type: 'button',
+                  class: 'twisty',
+                  title: row.group.expanded ? 'Fold the group' : 'Unfold the group',
+                  tabIndex: -1,
+                  onmousedown: (/** @type {MouseEvent} */ event) => event.preventDefault(),
+                  onclick: async (/** @type {MouseEvent} */ event) => {
+                    event.stopPropagation();
+                    await select(i);
+                    await activate();
+                  },
+                },
+                row.group.expanded ? '▾' : '▸',
+              ),
               el('span', { class: 'size reclaim' }, formatSize(row.group.reclaimable)),
               el('span', { class: 'size' }, formatSize(row.group.size)),
               el('span', { class: 'count' }, String(row.group.count)),
@@ -140,13 +157,13 @@ export function mount(root, metafolder) {
                   : {}),
               },
               [
+                openButton('show', 'Show in the other slot', () => showMember(i)),
                 el('span', { class: 'linked' }, row.member.inode ? '+' : ' '),
                 el('span', { class: 'path' }, row.member.path),
               ],
             );
       li.dataset.mfRow = String(i);
       li.addEventListener('click', () => void select(i));
-      li.addEventListener('dblclick', () => void activate());
       entriesList.appendChild(li);
     });
     const total = groups.reduce((n, g) => n + g.reclaimable, 0);
@@ -169,6 +186,17 @@ export function mount(root, metafolder) {
     if (row && repo !== null) {
       await workspace.set('selected_metarecord', { uuid: row.member?.uuid ?? row.group.uuid, repo });
     }
+  }
+
+  /** A copy's open button (doc "Opening a row"): selects it, and shows it in
+   *  the other slot — the file panel follows the selected paths.
+   *  @param {number} index */
+  async function showMember(index) {
+    await select(index);
+    const member = rows[index]?.member;
+    if (!member) return;
+    await workspace.set('selected_paths', member.absPath ? [member.absPath] : []);
+    await commands.invoke(`panel:open other ${member.absPath ? 'file' : 'metarecord-detail'}`);
   }
 
   /** Enter: expand or collapse the group under the cursor (on a member row,

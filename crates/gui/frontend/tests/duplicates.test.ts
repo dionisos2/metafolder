@@ -136,7 +136,7 @@ function stubApi(
           handlers.set(name, spec.handler);
           return null;
         },
-        invoke: () => null,
+        invoke: vi.fn((_line: string): null => null),
       },
       addKeybinding: async () => null,
       fs: { readDir: async () => [], stat: async () => ({}), exists: async () => true, homeDir: async () => '/home/user' },
@@ -174,6 +174,7 @@ async function mountPanel(groups: unknown[], members: Member[], options: Options
   };
   return {
     shadow,
+    api,
     calls,
     statusBar,
     setVar,
@@ -297,6 +298,51 @@ describe('duplicates panel', () => {
     await p.invoke('duplicates:keep');
     expect(p.trashPath).not.toHaveBeenCalled();
     expect(p.rows()).toHaveLength(3);
+  });
+});
+
+// A group still unfolds in place, by its ▸/▾ button; a copy opens with its ↗
+// button (doc "Opening a row"). No double click.
+describe('duplicates panel, its buttons', () => {
+  beforeEach(() => {
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    document.body.replaceChildren();
+  });
+  const members = [
+    { uuid: 'm1', path: '/a.bin' },
+    { uuid: 'm2', path: '/b.bin' },
+  ];
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+
+  test("a group's twisty unfolds it, and folds it back", async () => {
+    const p = await mountPanel([group('g1', 10, 2, 10)], members);
+    p.rows()[0].querySelector<HTMLButtonElement>('button.twisty')!.click();
+    await tick();
+    expect(p.rows()).toHaveLength(3);
+    p.rows()[0].querySelector<HTMLButtonElement>('button.twisty')!.click();
+    await tick();
+    expect(p.rows()).toHaveLength(1);
+  });
+
+  test("a copy's button selects it and shows it in the other slot", async () => {
+    const p = await mountPanel([group('g1', 10, 2, 10)], members);
+    p.rows()[0].querySelector<HTMLButtonElement>('button.twisty')!.click();
+    await tick();
+    p.rows()[2].querySelector<HTMLButtonElement>('button.mf-open-show')!.click();
+    await tick();
+    expect(p.cursorRow()).toBe(p.rows()[2]);
+    expect(p.setVar).toHaveBeenCalledWith('selected_metarecord', { uuid: 'm2', repo: 'r' });
+    expect(p.setVar).toHaveBeenCalledWith('selected_paths', ['/repo/b.bin']);
+    expect(p.api.commands.invoke).toHaveBeenCalledWith('panel:open other file');
+  });
+
+  test('a double click on a group row does not unfold it', async () => {
+    const p = await mountPanel([group('g1', 10, 2, 10)], members);
+    p.rows()[0].click(); // the cursor onto it, as a double click's first click does
+    await tick();
+    p.rows()[0].dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    await tick();
+    expect(p.rows()).toHaveLength(1);
   });
 });
 

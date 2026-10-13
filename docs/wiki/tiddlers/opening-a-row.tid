@@ -34,3 +34,5 @@ focus where it was (the panel's keys keep working).
 |[[metarecord-list panel]] |`↗`, in a column of its own — under the thumbnail in the grid |shows the metarecord in the other slot: the file panel, or the detail panel when it has no file |
 |[[treeref panel]] |`›` |goes into the node |
 |[[recent panel]] |`↗` |shows the metarecord in the other slot |
+|[[duplicates panel]] |`▸`/`▾` on a group, `↗` on a copy |unfolds the group in place; shows the copy in the other slot |
+|[[trash panel]] |none |restoring writes to the disk: <<key "trash:restore" Enter>> or the right-click menu, never one click |

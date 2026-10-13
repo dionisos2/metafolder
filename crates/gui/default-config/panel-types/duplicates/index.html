@@ -55,10 +55,20 @@
       li.member {
         padding-left: 28px;
       }
-      .twisty {
+      button.twisty {
         flex: none;
-        width: 1em;
+        width: 1.5em;
+        padding: 0;
+        font: inherit;
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 3px;
         color: var(--mf-fg-dim, #8a8a96);
+        cursor: pointer;
+      }
+      button.twisty:hover {
+        border-color: var(--mf-accent, #4c56c4);
+        color: var(--mf-fg, #fff);
       }
       .size {
         flex: none;

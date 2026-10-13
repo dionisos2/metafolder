@@ -48,7 +48,6 @@ export function mount(root, metafolder) {
           {
             class: [index === cursorIndex && 'cursor'],
             onclick: () => select(index),
-            ondblclick: () => void doRestore(),
             oncontextmenu: (/** @type {MouseEvent} */ event) => rowMenu(event, index),
           },
           el('span', { class: 'icon' }, entry.is_dir ? '📁' : '🗑️'),
