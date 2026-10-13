@@ -57,12 +57,15 @@ million keys (a folder of 292 files renamed) to 20 000, and from 1.56 million
   checking its MIME type and metadata, 1 listing it for the orphan scan. One
   read of the record's rows would answer the last three passes at once (≈ 1
   key a row), a gain only on records with few user fields: not built.
-- reading the log right after an undo read the whole log (=42287c53=): the
-  redo's two reads went from 702 000 keys to 171 000, which is what was undone
-  (a write of 50 000 operations). The run that read only 20 000 keys was a
-  lost redo: the watcher wrote between an undo-by-rollback and its redo — the
-  cause of the event log's redesign (doc "The operation log"), to measure
-  again on the next recorded run.
+- undo and redo, measured again 13 October 2026 on the redesigned log (an
+  unrecorded run, keys only): reading the log after them costs 509 keys
+  (702 000 before =42287c53=). The bulk write tags 25 000 records (201 000
+  keys); its undo read 533 000 keys and its redo 589 000, the GUI reading
+  the revert plan (201 000 / 251 000) before a revert that reads 327 000. The
+  GUI now sends the revert straight and reads the plan only when a file
+  action needs it (doc "Revert endpoints"). Left: the revert itself, ≈ 13
+  keys an operation, 1.6× the write it undoes — to see on the next recorded
+  run.
 
 * TODO watcher
 ** TODO keep hunting with the simulated kernel

@@ -382,6 +382,30 @@ pub struct RevertRequest<'r> {
     pub metadata_only: bool,
 }
 
+/// A revert for a caller that needs no plan of its own (nothing to confirm,
+/// nothing to report per operation): asks the daemon to write it at once, and
+/// reads the plan only when it refuses because a file action is needed (409) —
+/// then [`revert`] coordinates it. The plan costs about as much as the revert
+/// on a large label, so reading it first doubled an undo touching no file.
+pub fn revert_unplanned(
+    repo: &Repo<'_>,
+    request: &RevertRequest<'_>,
+    policies: &MovePolicies,
+    ui: &dyn NavigationUi,
+) -> Result<Json, NavError> {
+    let mut body = json!({"target": request.target});
+    if request.metadata_only {
+        body["skip_filesystem"] = json!(true);
+    }
+    match repo.client.post(&format!("{}/revert", repo.base()), &body) {
+        Err(e) if e.status == Some(409) => {
+            let plan = revert_plan(repo, request.target)?;
+            revert(repo, request, &plan, policies, ui)
+        }
+        answer => Ok(answer?),
+    }
+}
+
 /// Writes the revert `plan` (as [`revert_plan`] answered it) describes: in one
 /// call when nothing needs a file action (or `metadata_only` leaves those out),
 /// otherwise through the coordinated protocol — `start` takes the lock, the
@@ -733,6 +757,116 @@ mod tests {
                 "next_cursor": null}),
             ),
         ])
+    }
+
+    /// A daemon answering by the first `"METHOD /path"` substring that matches,
+    /// an answer being a body or an HTTP status, and remembering every call.
+    struct Scripted {
+        answers: Vec<(&'static str, Result<Json, u16>)>,
+        calls: RefCell<Vec<String>>,
+    }
+    impl DaemonClient for Scripted {
+        fn request(&self, method: &str, path: &str, _: Option<&Json>) -> Result<Json, DaemonError> {
+            let key = format!("{method} {path}");
+            self.calls.borrow_mut().push(key.clone());
+            match self.answers.iter().find(|(m, _)| key.contains(m)).map(|(_, a)| a) {
+                Some(Ok(body)) => Ok(body.clone()),
+                Some(Err(status)) => Err(DaemonError { status: Some(*status), message: key }),
+                None => Err(DaemonError { status: Some(404), message: format!("no {key}") }),
+            }
+        }
+    }
+
+    fn scripted(answers: Vec<(&'static str, Result<Json, u16>)>) -> Scripted {
+        Scripted { answers, calls: RefCell::new(Vec::new()) }
+    }
+
+    // An undo touching no file is one request: the plan, which costs as much
+    // as the revert itself on a large label, is not read for nothing.
+    #[test]
+    fn an_unplanned_revert_without_files_reads_no_plan() {
+        let root = scratch("unplanned");
+        let daemon = scripted(vec![(
+            "POST /repos/r/revert",
+            Ok(json!({"label": 4, "reverted_operations": [1, 2]})),
+        )]);
+        let repo = Repo {
+            client: &daemon,
+            repo: "r".into(),
+            root: root.clone(),
+            trash: TrashDir::new(root.join(".trash")),
+        };
+        let target = json!({"label_id": 3, "only": "changes"});
+        let request = RevertRequest { target: &target, metadata_only: false };
+        let response = revert_unplanned(
+            &repo,
+            &request,
+            &policies(Policy::Skip, Policy::Skip),
+            &Quiet::default(),
+        )
+        .unwrap();
+        assert_eq!(response["label"], json!(4));
+        assert_eq!(*daemon.calls.borrow(), vec!["POST /repos/r/revert".to_string()]);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // The daemon refuses a direct revert needing a file action (409): only
+    // then is the plan read, and the coordinated revert takes over.
+    #[test]
+    fn an_unplanned_revert_needing_files_falls_back_to_the_coordinated_one() {
+        let root = scratch("unplanned_fs");
+        let daemon = scripted(vec![
+            ("POST /repos/r/revert/start", Ok(json!({"operations": []}))),
+            ("POST /repos/r/revert/commit", Ok(json!({"label": 5, "reverted_operations": []}))),
+            ("POST /repos/r/revert", Err(409)),
+            ("GET /repos/r/revert/plan", Ok(json!({"requires_lock": true, "operations": []}))),
+        ]);
+        let repo = Repo {
+            client: &daemon,
+            repo: "r".into(),
+            root: root.clone(),
+            trash: TrashDir::new(root.join(".trash")),
+        };
+        let target = json!({"label_id": 3});
+        let request = RevertRequest { target: &target, metadata_only: false };
+        let response = revert_unplanned(
+            &repo,
+            &request,
+            &policies(Policy::Skip, Policy::Skip),
+            &Quiet::default(),
+        )
+        .unwrap();
+        assert_eq!(response["label"], json!(5));
+        let calls = daemon.calls.borrow();
+        assert_eq!(calls[0], "POST /repos/r/revert");
+        assert!(calls[1].starts_with("GET /repos/r/revert/plan"), "{calls:?}");
+        assert_eq!(calls[2], "POST /repos/r/revert/start");
+        assert_eq!(calls.last().unwrap(), "POST /repos/r/revert/commit");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // Any other refusal is the answer: no plan is read to fail a second time.
+    #[test]
+    fn an_unplanned_revert_reports_other_refusals() {
+        let root = scratch("unplanned_err");
+        let daemon = scripted(vec![("POST /repos/r/revert", Err(400))]);
+        let repo = Repo {
+            client: &daemon,
+            repo: "r".into(),
+            root: root.clone(),
+            trash: TrashDir::new(root.join(".trash")),
+        };
+        let target = json!({"label_id": 3});
+        let request = RevertRequest { target: &target, metadata_only: false };
+        assert!(revert_unplanned(
+            &repo,
+            &request,
+            &policies(Policy::Skip, Policy::Skip),
+            &Quiet::default()
+        )
+        .is_err());
+        assert_eq!(daemon.calls.borrow().len(), 1);
+        std::fs::remove_dir_all(&root).ok();
     }
 
     // A trashing redone sends the file back as a trashing does: captured, into

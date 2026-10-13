@@ -53,6 +53,13 @@ the revert wrote in.
 |`409` |a file action needed without `skip_filesystem`; recreating a metarecord whose uuid exists again |
 |`423` |a navigation lock is held |
 
+A client with nothing to confirm sends `POST /revert` straight away and reads the plan
+only on its `409` (`core::navigation::revert_unplanned`: the GUI's undo, redo and
+`log:revert`). The plan costs about as much as the revert itself — 201 000 keys before
+a 327 000-key undo of 25 000 operations ([[The session scenario]], 13 October 2026) —
+so reading it first nearly doubled an undo that moves no file. The CLI reads it: it
+confirms an overwrite (`changed_since`) and reports per operation.
+
 `commit` may only narrow the target fixed at `start` (an id outside it is `400`);
 operations left out are reported with `reason: "client_skipped"`. After `abort`, reversing any file action already done (or
 reconciling) is the client's job, as for a rollback.

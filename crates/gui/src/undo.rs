@@ -132,7 +132,8 @@ fn with_notes(summary: String, notes: &[String]) -> String {
 }
 
 /// The revert half of an undo: write the inverse at HEAD onto the current
-/// state, files included (`core::navigation::revert`). Nothing blocks it: a
+/// state, files included (`core::navigation::revert_unplanned`: no plan is
+/// read unless a file action needs one). Nothing blocks it: a
 /// later write on the same cell is overwritten (doc "Reverting onto the
 /// current state"), which undo — taking the newest change — almost never meets.
 async fn revert(
@@ -146,9 +147,8 @@ async fn revert(
 ) -> Result<(), String> {
     let target = if redo { undo::redo_target(label_id) } else { undo::undo_target(label_id) };
     let result = blocking(daemon, repo, move |repo, ui| {
-        let plan = navigation::revert_plan(repo, &target)?;
         let request = RevertRequest { target: &target, metadata_only: false };
-        navigation::revert(repo, &request, &plan, &GUI_POLICIES, ui)
+        navigation::revert_unplanned(repo, &request, &GUI_POLICIES, ui)
     })
     .await;
     let (response, notes) = match result {
@@ -219,7 +219,7 @@ pub async fn log_candidates(
 }
 
 /// The log panel's `log:revert`: writes the inverse of `target` at HEAD, files
-/// included (`core::navigation::revert`). Answers the daemon's revert response
+/// included (`core::navigation::revert_unplanned`). Answers the daemon's revert response
 /// (`label`, `reverted_operations`, `skipped_operations`) with the `notes`
 /// the file actions left. The panel reads the plan and confirms an overwrite
 /// of a cell changed since before it gets here.
@@ -230,9 +230,8 @@ pub async fn log_revert(
     target: Value,
 ) -> Result<Value, String> {
     let (mut response, notes) = blocking(&app.daemon, &repo, move |repo, ui| {
-        let plan = navigation::revert_plan(repo, &target)?;
         let request = RevertRequest { target: &target, metadata_only: false };
-        navigation::revert(repo, &request, &plan, &GUI_POLICIES, ui)
+        navigation::revert_unplanned(repo, &request, &GUI_POLICIES, ui)
     })
     .await?;
     response["notes"] = json!(notes);
