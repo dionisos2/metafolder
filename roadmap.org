@@ -6,139 +6,16 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 "Version scope and non-goals"); the ones worth keeping in view are listed at
 the end.
 
-* TODO performance
-The recurring defect of this project is a cost that grows with the repository
-where it should grow with the answer. Each item names where.
-
-** TODO the query planner: the next choices
-Built September 2026 from the cases profiling found, not from the old design
-(the old adaptive planner stays a record: doc "Indexing architecture"): a deferred text leaf's
-candidates narrowed by trigrams (=495ea1b=), and the first choice made on a
-cost — an =osm= path's anchors cut by a rare earlier term (=1140e07=). What
-is left, each to measure before building:
-- an unsorted page under a large subtree: =FollowsTransitive= reads the
-  root's whole descendant bitmap where a page wants 100 ids. Measured 7
-  October 2026 (=query.folder= against =query.page=, a folder holding the
-  whole repository): +0.08 ms on M (21 000 nodes), +0.4 ms on L (105 000),
-  about 4 ms extrapolated to a million. The way out — a per-candidate
-  ancestry check stopping at the page — costs ≈ 100 × depth × 2 µs ≈ 1 ms,
-  so it loses below roughly 300 000 nodes, and its walk cannot be budgeted
-  without the subtree's size, which the store does not keep. Not built;
-- a two-term =osm= path whose earlier term is common: the bench's finder,
-  still ≈ 5 ms on L, nearly all of it each anchor's ancestry (≈ 2 µs a random
-  read). No bitmap formulation found cheaper on that shape;
-- whatever the next reading shows: the slow log of a repository in daily use
-  is replaced by doc "The session scenario" (=scripts/session.sh=, 11 October
-  2026), a scripted day of GUI use on 50 000 files with every operation
-  logged. Its runs show no query over budget: every list, finder and
-  folder step stays under 1 s on a neutral machine, the most keys a list step
-  read being 19 000 for five pages. What it did find is below.
-
-** TODO what the session runs found (11–13 October 2026, 50 000 files)
-Recorded on a neutral machine (=benchmarks/session/=). The background tasks
-are in the slow log since =e7d7ffff=, which showed the biggest cost at once: a
-path's resolution compared each name with all its siblings (=e7882221=). A
-reconcile with nothing to do went from 43.8 s and 242 million keys to 9.7 s and
-3.8 million; the first one from 60 s to 25 s; the watcher's flushes from 2.1
-million keys (a folder of 292 files renamed) to 20 000, and from 1.56 million
-(1 000 files created) to 53 000. The run of 13 October 2026 (=2254409b=)
-confirmed the rest: undo from 1.45 million keys to 307 000 (redo 310 000, a
-revert like the undo since the log's redesign), the duplicate scan from 16 s to
-12 s — but the GUI's change feed still waited 5.6 s behind its one write at the
-end, which a write now cuts in takes of a quarter of a second (doc "The
-duplicate scan"; longest wait 0.4 s). Every step is within its budget. Left:
-- a second reconcile read 3.8 million keys, ≈ 75 a file: each path resolved
-  four times, and every file's path read back by the orphan scan. Resolved
-  once since =a46549ef=: 2.2 million keys, 7.3 s. Not all of it is "nothing to
-  do": in the session it is the first one computing MIME types, so it writes
-  =mfr_mime= on every file. A truly idle one, measured 12 October 2026 (every
-  phase now named in the slow log): ≈ 22 keys a path, the same on 8× the files
-  — 3 resolving it, 13 comparing its stat fields (one prefix each), 3 and 2
-  checking its MIME type and metadata, 1 listing it for the orphan scan. One
-  read of the record's rows would answer the last three passes at once (≈ 1
-  key a row), a gain only on records with few user fields: not built.
-
-* TODO watcher
-** TODO keep hunting with the simulated kernel
-=watchd/src/sim.rs= (a kernel kept in step with the real filesystem, held to
-the real one by a fidelity test) found a bug a commit on its first day
-(=8dea90c=, =3a9c64a=, =287a225=, and the inotify one it led to, =5e013ff=).
-Driven 9 October 2026: bursts mixing renames and removals of the same names
-read late (=early_journey.rs=, every regime), and nested roots of two
-subscribers (=sim.rs=). They found two bugs, both in the inotify half the
-journey runs beside the simulator (=77776ca1=, =5614e701=); the overlapping
-roots behave; a root moved away freezes its repository until it is loaded
-again (doc "When the root moves"). A kernel overflow end to end
-(=tests/watch_overflow.rs=): its diagnostic named only =mf reconcile=, which
-recovers neither a lost deletion nor a lost rename of an unhashed file; it names
-the orphan scan now.
-
-The mount table, driven 10 October 2026 (=tests/watch_mounts.rs=, both
-sources, each test in a user namespace; the simulator keeps a mount table held
-to the kernel by the fidelity test): a drive plugged in and out with work going
-on, mounted over a tracked directory, mounted at two points of one repository.
-Found: the broker's path memo outlived a mount change (=701881a0=); the inotify
-source never watched a drive plugged in (=75c6022f=); and two points of one
-drive could only ever be reported through one — a second mount is now an
-entry, never walked (doc "Second mounts").
-
-One drive in two repositories, the case it left: the broker resolved through
-one mount point, so the other repository heard nothing; each event is now told
-again at every mount of the filesystem showing its path (doc "Second mounts").
-Nothing named is left to drive.
-
-** TODO fanotify: what the note leaves open
-From doc "Watcher open questions" (and doc "The fanotify broker"):
-- network filesystems: a per-repository override of the source, not asked
-  for so far.
-
-* TODO correctness, minor
-** TODO =daemon/src/sync.rs= =locate()= uses =Path::exists()=
-It follows symlinks. Harmless — it probes the sync database file metafolder
-creates under =internal/=, never a tracked path, which is why the
-=mf-path-exists-follows-symlinks= semgrep rule leaves it out. Revisit only if
-that file ever becomes user-placeable.
-
 * TODO tooling
-** TODO the untested parts the coverage pass found
-Measured 7 October 2026 (=cargo llvm-cov --workspace=, every test): 87 % of
-the lines, by crate core 94 %, daemon 93 %, watchd 96 %, cli 87 %, gui 82 %
-(the bench, a harness run by =scripts/bench.sh= and not by tests, 15 %).
-What is worth a test, most first:
-- the GUI's own orchestration around the core flows: done 10 October 2026
-  (reports, refusals and status messages of =duplicates=, =trash=, =orphan=,
-  =undo= — the blocked revert included —, =sync='s runner, =ignore='s parse).
-  Lines after it: =duplicates.rs= 80 %, =orphan.rs= 80 %, =undo.rs= 75 %,
-  =sync.rs= 64 %, =trash.rs= 62 %, =ignore.rs= 59 %, the gui crate 85 %; what
-  is left in them is the =#[tauri::command]= wrappers;
-- =cli/src/commands.rs=: done 10 October 2026 (=watch check=, =watch
-  exceeded=, =orphan relink=, =orphan clear='s prompt, =field get -q=,
-  =duplicate list --sort/--limit=; it found =-i= run as a query when not a
-  UUID, =a150685d=): 197 lines missed of 2 326, was 365. Then 11 October
-  2026: =slow='s filters, window, cut and refusals, =trash prune='s
-  =-s=/=-d=/=--dry-run= and conflicting selectors, =watch activity --reset=,
-  both repository selectors from the environment: 142 lines missed. Then 14
-  October 2026: =repo check='s problems (a store damaged behind the daemon's
-  back), =repo restore --from=/=--metafolder= (it found two backups of one
-  second sharing a directory, =af7057a7=), a failed or cancelled task (a stub
-  daemon), =duplicate clear='s prompt, =duplicate scan --no-wait/--json=, the
-  =task= commands' =--json=, and every =watch check= reason as a unit test:
-  100 lines missed (by =cargo llvm-cov -p metafolder-cli=, 148 before). Then
-  the same day: =--tsv= with =-i=, =order='s dry run and unrecorded folder,
-  =ignore -d= on an untracked directory and an emptied =mf_ignore=, =watch
-  status='s starved and unlimited budgets (a stub daemon), three usage errors:
-  97 lines missed. What is left is a daemon error propagated by =?=, the
-  second page of a paged read (the tag vocabulary, =duplicate list=), and
-  =watch exceeded='s =--json= and coverage-regime forms: nothing named.
-The Tauri wrappers now count: =scripts/coverage.sh= (10 October 2026; doc
-"Measuring coverage") runs =scripts/gui-e2e.sh= on instrumented binaries and
-merges it with the tests. With the =repos=, =list=, =layout= and =script=
-scenarios: 89.2 % of the lines, gui 91.8 % (=commands.rs= 64 %, =lib.rs=
-82 %, =repo_init.rs= 96 %). Left at zero in =commands.rs=: what only a mouse
-or a keyboard reaches — the keybinding editor of the config overlay
+** TODO the GUI wrappers only a mouse or a keyboard reaches
+=scripts/coverage.sh= (doc "Measuring coverage") counts the Tauri wrappers
+through =scripts/gui-e2e.sh=, which only types commands. Left at zero in
+=gui/src/commands.rs=: the keybinding editor of the config overlay
 (=set/remove_user_keybinding=, =suggest_keybinding=, =config_info=), the value
 picker (=pick_*=), a tab's close button, the command input's prompt and
-history, the detail panel's ref seeds, =open_with=, =devtools:open=.
+history, the detail panel's ref seeds, =open_with=, =devtools:open=. Reaching
+them means driving a keyboard and a mouse (=xdotool=, not installed here),
+which the e2e note rules out today ("no pixel, no DOM"): a decision first.
 
 * TODO structure
 Not problems of behaviour; worth doing for navigability, each a large diff.
@@ -146,20 +23,8 @@ Not problems of behaviour; worth doing for navigability, each a large diff.
   =metarecord-detail= 2 203): they share the instance's state, so extracting
   anything means passing an explicit context — a rewrite, not to start
   casually.
-- Long sequential functions (=reconcile_full_reported= 326 lines,
-  =flush_pending_once= 243): linear phase sequences over shared state;
-  extraction would cost ten-parameter signatures. Left alone deliberately.
 
 * TODO shipped tagging scripts
-** TODO the mock =mf= log loses argument boundaries
-=scripts/lib/mf-mock.sh= (and =daemon-fixture.sh=) log each call as ="$*"=,
-arguments joined by spaces, so an assertion glob can match text *inside* an
-argument — a DSL query holds spaces. No false positive seen, and the log's
-form is the interface of =mock_count= / =mock_calls_matching=: changing it
-rewrites the hundred assertions of six suites. Deferred, cost above gain. If it
-ever bites: keep =$*= as the readable log and write a second one, arguments
-separated by =\x1f=, with a =mock_count_argv= for the assertions that need it.
-
 ** TODO =mf path= once per question in the tagging scripts
 =gui-tag-folder.sh= and =gui-tag-pair.sh= call =mf path "$uuid"= for the preview
 at each question, right after reading the same record's *relative* path
@@ -175,7 +40,7 @@ Named where they are, kept here so they are not forgotten:
   two parts of the event log's redesign the user left for later.
 - doc "Storage open questions": readers that never block on KV (operations
   stay sequential — decided September 2026); a KV bit-sliced index.
-- =docs/spec-sync.org= (not migrated, docs.org item 29): "Performance concerns"; "Cross-machine sync" (the remote
+- doc "Sync open questions", doc "Cross-machine sync" (the remote
   =.metafolder/= brought local for the sync and sent back, the remote locked
   meanwhile — a network filesystem is refused since SQLite was dropped).
 - doc "Query cost model": =POST /query/explain=, entirely unimplemented (=POST

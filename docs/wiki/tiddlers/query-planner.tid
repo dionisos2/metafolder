@@ -21,3 +21,14 @@ proposed, it starts minimal and oriented to the store — one cost choice at a t
 what profiling finds — not from the old design, whose SQL-specific parts are obsolete
 and whose ambition was probably too great. Meanwhile such local choices are not a
 violation of anything.
+
+!! Measured and not built
+
+Two choices were weighed against measurements and left out; they need not be measured
+again unless the repositories grow by an order of magnitude.
+
+* ''An unsorted page under a large subtree.'' `follows_transitive` reads the root's whole descendant bitmap where a page wants a hundred ids. Measured 7 October 2026 (`query.folder` against `query.page` of [[The timed regression suite]], a folder holding the whole repository): +0.08 ms on 21 000 nodes, +0.4 ms on 105 000, about 4 ms extrapolated to a million. The alternative — a per-candidate ancestry check stopping at the page — costs ≈ 100 × depth × 2 µs ≈ 1 ms, so it loses below roughly 300 000 nodes, and its walk cannot be budgeted without the subtree's size, which the store does not keep.
+* ''A two-term `osm` path whose earlier term is common'' (the bench's finder): ≈ 5 ms on 105 000 nodes, nearly all of it each anchor's ancestry (≈ 2 µs a random read). No bitmap formulation was found cheaper on that shape.
+
+[[The session scenario]] (a day of GUI use on 50 000 files) showed no query over its
+budget: every list, finder and folder step under 1 s on a neutral machine.
