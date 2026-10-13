@@ -250,10 +250,10 @@ scenario_undo_redo() {
 
     run log:undo
     command_ok "undo: the command resolves"
-    status_is "undo: rolls the last revision back" info "Undo: revision * rolled back (1 operations)."
+    status_is "undo: takes back the label of the last change" info "Undid label * (1 operations)*"
 
     run log:redo
-    status_is "redo: re-applies it" info "Redo: revision * re-applied (1 operations)."
+    status_is "redo: takes the undo back" info "Redid label * (1 operations)*"
 
     run log:redo
     status_is "redo at the tip: nothing to redo" info "Nothing to redo."

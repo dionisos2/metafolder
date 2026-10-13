@@ -226,7 +226,7 @@ fn create_root_entry(conn: &mut crate::store::Handle) -> Result<()> {
         Field::new("mfr_type", Value::String("dir".to_string())),
         Field::new("mf_watch", Value::Bool(false)),
     ];
-    let mut writer = Writer::begin(conn, None)?;
+    let mut writer = Writer::begin(conn, Some("repository created".into()))?;
     writer.create_metarecord(fields)?;
     writer.commit()
 }

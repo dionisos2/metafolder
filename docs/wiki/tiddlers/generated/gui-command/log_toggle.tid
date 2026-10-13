@@ -1,7 +1,7 @@
 title: $:/mf/gen/GUI command/log:toggle
 catalog: GUI command
 target: log:toggle
-summary: Log: toggle a view flag (the watcher’s labels / the selected label’s operations)
+summary: Log: toggle a view flag (the watcher’s work / the selected label opened)
 
 !! Reference
 

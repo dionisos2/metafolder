@@ -24,7 +24,7 @@ const PAGE = 100;
 
 /**
  * What the log panel publishes.
- * @typedef {{repo: string, rev_id: number, op_id: number|null}} LogEntry
+ * @typedef {{repo: string, label_id: number, op_id: number|null}} LogEntry
  *
  * One operation of `GET /log/labels/:id`.
  * @typedef {{id: number, op_type: string, entity_uuid: string,
@@ -68,7 +68,7 @@ export async function mount(root, metafolder) {
   /** @param {number} offset */
   function url(offset) {
     if (!entry) throw new Error('no log entry selected');
-    const base = `/repos/${entry.repo}/log/labels/${entry.rev_id}`;
+    const base = `/repos/${entry.repo}/log/labels/${entry.label_id}`;
     return singleOp() ? `${base}?op=${entry.op_id}` : `${base}?offset=${offset}&limit=${PAGE}`;
   }
 

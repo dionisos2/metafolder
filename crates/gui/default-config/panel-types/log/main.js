@@ -1,26 +1,18 @@
-// log panel: the operations grouped by their (innermost) label, newest first,
-// expandable into operations; revert and prune (doc "log panel"). Internally
-// a group is still called a revision: the label tree is the next step.
+// log panel: the history as a tree of labels — the units of work newest
+// first (a command, a script's run, a flush of the watcher), each opening onto
+// the labels nested in it, down to the operations; revert and prune (doc
+// "log panel", doc "Labels and contexts").
 
 import { byId, el, qs } from '/__ui.js';
 import { registerFind } from '/__find-entry.js';
 import { moveSelection, edgeSelection } from './selection.js';
-import { annotate, revertTarget, shownRevisions } from './annotate.js';
+import { buildTree, keyOf, marksOf, revertTarget, rows } from './tree.js';
 
 /**
- * A label as this panel displays it: its name, when its newest operation was
- * written, and the operation count, origin and HEAD marker computed here.
- * @typedef {{id: number, timestamp: number, label: string|null, origin: string|null,
- *            opCount: number, isHead: boolean}} Revision
- *
- * One operation row of `GET /log`, with its label as `rev_id`.
- * @typedef {{id: number, rev_id: number, label_id: number, timestamp?: number,
- *            origin?: string|null, op_type: string,
- *            field_name?: string|null, entity_uuid?: string|null,
- *            reverts_op_id?: number|null}} Operation
- *
- * What is selected: a revision row, or one operation of an expanded revision.
- * @typedef {{kind: 'rev'|'op', id: number, revId: number}} Selection
+ * @typedef {import('./tree.js').Op} Op
+ * @typedef {import('./tree.js').Label} Label
+ * @typedef {import('./tree.js').Node} Node
+ * @typedef {import('./tree.js').Row} Row
  *
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder
  */
@@ -34,28 +26,31 @@ export async function mount(root, metafolder) {
 
   /** @type {string|null} */
   let repo = null;
-  /** @type {Revision[]} */
-  let revisions = [];
-  /** @type {Operation[]} raw ops from GET /log */
+  /** @type {Op[]} raw ops from GET /log, oldest first */
   let operations = [];
-  /** @type {Selection|null} */
-  let selection = null;
+  /** @type {Node[]} */
+  let tree = [];
+  /** What each node is (see tree.js). */
+  let marks = marksOf([]);
+  /** The newest operation of the log: the node holding it is marked HEAD. */
   /** @type {number|null} */
-  let expandedRev = null;
-  /** What each revision is: the daemon's or the user's, an undo, undone
-   *  (see annotate.js). @type {Map<number, any>} */
-  let marks = new Map();
-  // The watcher writes a revision per batch of filesystem events, which can
-  // bury the user's own changes; hiding them keeps only what the user wrote
-  // (and HEAD). A display filter: the fetch is the same either way.
+  let head = null;
+  /** The key of the row under the cursor (`label:12`, `op:34`, `watcher:7`). */
+  /** @type {string|null} */
+  let selection = null;
+  /** The keys of the nodes opened. @type {Set<string>} */
+  const expanded = new Set();
+  // The watcher writes a label per flush, which can bury the user's own work;
+  // hiding them keeps only what the user wrote. A display filter: the fetch is
+  // the same either way.
   let showWatcher = true;
-  // The list view fetches a bounded window of the most recent operations so a
+  // The list fetches a bounded window of the most recent operations so a
   // repository with millions of them (a large initial reconcile) still loads;
   // "Show more" grows the window.
   const LOG_PAGE = 1000;
   let limit = LOG_PAGE;
 
-  const rows = byId(root, 'rows');
+  const rowsElement = byId(root, 'rows');
   const table = qs(root, 'table');
   const placeholderElement = byId(root, 'placeholder');
   const moreBox = byId(root, 'more');
@@ -65,7 +60,7 @@ export async function mount(root, metafolder) {
   const watcherCheckbox = byId(root, 'show-watcher', HTMLInputElement);
   const statusLine = byId(root, 'status-line');
   /** Repository-wide log size (`GET /log` totals), independent of the window
-   *  actually fetched. @type {{operations: number, revisions: number}|null} */
+   *  actually fetched. @type {{operations: number, labels: number}|null} */
   let totals = null;
 
   async function refresh() {
@@ -74,48 +69,19 @@ export async function mount(root, metafolder) {
       return;
     }
     try {
-      // Only the most recent `limit` operations, so a huge log loads quickly.
-      const query = `?limit=${limit}`;
-      const log = /** @type {{operations?: Operation[], head?: number,
-       *                      labels?: {id: number, name: string, created: number}[],
+      const log = /** @type {{operations?: Op[], head?: number, labels?: Label[],
        *                      total_operations?: number, total_labels?: number}} */ (
-        await daemon.call('GET', `/repos/${repo}/log${query}`)
+        await daemon.call('GET', `/repos/${repo}/log?limit=${limit}`)
       );
-      operations = (log.operations ?? []).map((op) => ({ ...op, rev_id: op.label_id }));
+      operations = log.operations ?? [];
+      head = log.head ?? null;
       totals =
         typeof log.total_operations === 'number' && typeof log.total_labels === 'number'
-          ? { operations: log.total_operations, revisions: log.total_labels }
+          ? { operations: log.total_operations, labels: log.total_labels }
           : null;
-      const head = log.head;
-      /** @type {Map<number, Operation[]>} */
-      const members = new Map();
-      /** @type {number|null} */
-      let headRev = null;
-      for (const op of operations) {
-        members.set(op.rev_id, [...(members.get(op.rev_id) ?? []), op]);
-        if (op.id === head) headRev = op.rev_id;
-      }
-      // The labels the operations are in; their ancestors, also listed, wait
-      // for the label tree.
-      revisions = (log.labels ?? [])
-        .filter((label) => members.has(label.id))
-        .map((label) => {
-          const ops = members.get(label.id) ?? [];
-          return {
-            id: label.id,
-            timestamp: Math.max(label.created, ...ops.map((op) => op.timestamp ?? 0)),
-            label: label.name,
-            origin: ops.every((op) => op.origin === 'watcher') ? 'watcher' : null,
-            opCount: ops.length,
-            isHead: label.id === headRev,
-          };
-        })
-        .sort(
-          (a, b) =>
-            Math.max(...(members.get(b.id) ?? []).map((o) => o.id)) -
-            Math.max(...(members.get(a.id) ?? []).map((o) => o.id)),
-        ); // newest first
-      marks = annotate(revisions, operations);
+      tree = buildTree(operations, log.labels ?? []);
+      marks = marksOf(operations);
+      if (selection !== null && !findNode(selection)) selection = null;
       render();
       // Offer "Show more" while the list fills the requested window: older
       // operations may lie beyond it.
@@ -128,6 +94,31 @@ export async function mount(root, metafolder) {
     }
   }
 
+  /** Every node of the tree, depth first. @returns {Node[]} */
+  function allNodes() {
+    /** @type {Node[]} */
+    const out = [];
+    /** @param {Node[]} nodes */
+    const walk = (nodes) => {
+      for (const n of nodes) {
+        out.push(n);
+        if (n.kind !== 'op') walk(n.children);
+      }
+    };
+    walk(tree);
+    return out;
+  }
+
+  /** @param {string} key */
+  function findNode(key) {
+    return allNodes().find((n) => keyOf(n) === key) ?? null;
+  }
+
+  /** The rows on screen. @returns {Row[]} */
+  function visible() {
+    return rows(tree, expanded, showWatcher);
+  }
+
   /** How much log there is: what is on screen, and — when the fetched window is
    *  only part of it — the repository-wide totals it was cut from. */
   function renderStatusLine() {
@@ -135,165 +126,82 @@ export async function mount(root, metafolder) {
       statusLine.textContent = '';
       return;
     }
-    const shownRevs = revisions.length;
+    const units = tree.length;
     const shownOps = operations.length;
-    const parts = [
-      `${shownRevs} label${shownRevs === 1 ? '' : 's'}`,
-      `${shownOps} operation${shownOps === 1 ? '' : 's'}`,
-    ];
-    let line = parts.join(' · ');
-    if (totals && (totals.revisions > shownRevs || totals.operations > shownOps)) {
-      line += ` — of ${totals.revisions} / ${totals.operations} in the repository`;
+    let line = `${units} unit${units === 1 ? '' : 's'} of work · ${shownOps} operation${
+      shownOps === 1 ? '' : 's'
+    }`;
+    if (totals && totals.operations > shownOps) {
+      line += ` — of ${totals.operations} operations, ${totals.labels} labels in the repository`;
     }
-    const hidden = shownRevs - visible().length;
-    if (hidden > 0) line += ` · ${hidden} watcher label${hidden === 1 ? '' : 's'} hidden`;
+    const hidden = showWatcher ? 0 : tree.length - visible().filter((r) => r.depth === 0).length;
+    if (hidden > 0) line += ` · ${hidden} of the watcher's hidden`;
     statusLine.textContent = line;
   }
 
-  /** The revisions on screen: every fetched one, less the watcher's when they
-   *  are hidden. */
-  function visible() {
-    return shownRevisions(revisions, marks, showWatcher);
-  }
-
-  /** The revision the selection is in — an operation belongs to one.
-   *  @returns {number|null} */
-  function selectedRev() {
-    return selection ? selection.revId : null;
-  }
-
-  /** Selects a revision; with toggleOps, also expands/collapses its operations.
-   *  @param {number} id @param {{toggleOps?: boolean}} [options] */
-  function selectRevision(id, { toggleOps = false } = {}) {
-    selection = { kind: 'rev', id, revId: id };
-    if (toggleOps) expandedRev = expandedRev === id ? null : id;
-    render();
-    root.querySelector('tr.selected')?.scrollIntoView({ block: 'nearest' });
-  }
-
-  /** Selects one operation of an expanded revision: what a revert then aims at.
-   *  @param {Operation} op */
-  function selectOperation(op) {
-    selection = { kind: 'op', id: op.id, revId: op.rev_id };
-    render();
-    root.querySelector('tr.selected')?.scrollIntoView({ block: 'nearest' });
-  }
-
-  /** Every row the cursor can land on, in display order, keyed by kind so a
-   *  revision and an operation sharing a number stay distinct. */
-  function cursorRows() {
-    return visible().flatMap((rev) =>
-      expandedRev === rev.id
-        ? [
-            { id: `rev:${rev.id}` },
-            ...operationsOf(rev.id).map((op) => ({ id: `op:${op.id}` })),
-          ]
-        : [{ id: `rev:${rev.id}` }],
-    );
-  }
-
-  /** The key of the current selection, as `cursorRows` spells it. */
-  function cursorKey() {
-    return selection ? `${selection.kind}:${selection.id}` : null;
-  }
-
-  /** Moves the cursor to a `cursorRows` key.
-   *  @param {string|number|null} key */
-  function selectKey(key) {
+  /** Moves the cursor to `key`, opening or closing it with `toggle`.
+   *  @param {string|null} key @param {{toggle?: boolean}} [options] */
+  function select(key, { toggle = false } = {}) {
     if (key === null) return;
-    const [kind, raw] = String(key).split(':');
-    const id = Number(raw);
-    if (kind === 'op') {
-      const op = operations.find((o) => o.id === id);
-      if (op) selectOperation(op);
-      return;
+    selection = key;
+    if (toggle && !key.startsWith('op:')) {
+      if (expanded.has(key)) expanded.delete(key);
+      else expanded.add(key);
     }
-    selectRevision(id);
+    render();
+    root.querySelector('tr.selected')?.scrollIntoView({ block: 'nearest' });
   }
 
   /** @param {number} delta */
   function moveBy(delta) {
-    selectKey(moveSelection(cursorRows(), cursorKey(), delta));
+    const keys = visible().map((r) => ({ id: r.key }));
+    select(/** @type {string|null} */ (moveSelection(keys, selection, delta)));
   }
 
   /** @param {string} edge */
   function moveToEdge(edge) {
-    selectKey(edgeSelection(cursorRows(), edge));
+    const keys = visible().map((r) => ({ id: r.key }));
+    select(/** @type {string|null} */ (edgeSelection(keys, edge)));
   }
 
-  /** @param {number} revId */
-  function operationsOf(revId) {
-    return operations.filter((o) => o.rev_id === revId);
-  }
-
-  /** What a revision is, as the badges of the status column: HEAD, whose write
-   *  it was, whether it is an undo, and whether it has already been undone
-   *  (see annotate.js). @param {Revision} rev */
-  function statusBadges(rev) {
-    const mark = marks.get(rev.id) ?? {};
+  /** What a node is, as the badges of the status column: HEAD, whose write it
+   *  was, whether it is an undo, and whether it has been undone.
+   *  @param {Node} node */
+  function statusBadges(node) {
+    const mark = marks(node);
+    const ops = node.kind === 'op' ? [node.op] : node.ops;
     const badges = [];
-    if (rev.isHead) badges.push(el('span', { class: 'badge head-marker' }, 'HEAD'));
+    if (head !== null && ops.some((o) => o.id === head)) {
+      badges.push(el('span', { class: 'badge head-marker' }, 'HEAD'));
+    }
     if (mark.watcher) {
       badges.push(
-        el(
-          'span',
-          { class: 'badge watcher', title: 'written for the filesystem, not by you' },
-          'watcher',
-        ),
+        el('span', { class: 'badge watcher', title: 'written for the filesystem, not by you' }, 'watcher'),
       );
     }
-    if (mark.isRevert) {
-      const of = mark.reverts.length ? ` #${mark.reverts.join(', #')}` : '';
-      badges.push(el('span', { class: 'badge revert' }, `undo of${of}`));
+    if (mark.undoOf.length > 0) {
+      badges.push(el('span', { class: 'badge revert' }, `undo of #${mark.undoOf.join(', #')}`));
     }
-    if (mark.undoneBy !== null && mark.undoneBy !== undefined) {
+    if (mark.undone !== null) {
+      const by = mark.undoneBy.length > 0 ? ` by #${mark.undoneBy.join(', #')}` : '';
       badges.push(
-        el(
-          'span',
-          { class: 'badge undone' },
-          mark.fullyUndone ? `undone by #${mark.undoneBy}` : `partly undone by #${mark.undoneBy}`,
-        ),
+        el('span', { class: 'badge undone' }, `${mark.undone === 'partly' ? 'partly ' : ''}undone${by}`),
       );
     }
     return badges;
   }
 
-  /** @param {Revision} rev */
-  function revisionRow(rev) {
-    const mark = marks.get(rev.id) ?? {};
-    return el(
-      'tr',
-      {
-        class: [
-          'rev',
-          selection?.kind === 'rev' && rev.id === selection.id && 'selected',
-          mark.watcher && 'watcher-row',
-          mark.fullyUndone && 'undone-row',
-        ],
-        onclick: () => selectRevision(rev.id),
-        ondblclick: () => selectRevision(rev.id, { toggleOps: true }),
-      },
-      el('td', {}, `#${rev.id}`, rev.label && [' ', el('span', { class: 'label' }, rev.label)]),
-      el('td', {}, new Date(rev.timestamp).toLocaleString()), // ms since epoch
-      el('td', {}, String(rev.opCount)),
-      el('td', {}, statusBadges(rev)),
-    );
-  }
-
-  /** One operation, as its own selectable row: selecting it is how a revert is
-   *  narrowed to part of a revision (`log:revert` then targets it alone).
-   *  @param {Operation} op */
-  function operationRow(op) {
-    const undone = operations.some((o) => o.reverts_op_id === op.id);
-    return el(
-      'tr',
-      {
-        class: ['ops', selection?.kind === 'op' && op.id === selection.id && 'selected'],
-        onclick: () => selectOperation(op),
-      },
-      el(
+  /** The first cell: an arrow for what opens, the label's number and name, or
+   *  the operation.
+   *  @param {Row} row */
+  function nameCell(row) {
+    const { node, depth } = row;
+    const indent = { style: `padding-left: ${8 + depth * 16}px` };
+    if (node.kind === 'op') {
+      const op = node.op;
+      return el(
         'td',
-        { colSpan: 4 },
+        indent,
         el(
           'span',
           { class: 'op' },
@@ -301,9 +209,45 @@ export async function mount(root, metafolder) {
             op.entity_uuid ? ` on ${String(op.entity_uuid).slice(0, 8)}…` : ''
           }`,
         ),
-        op.reverts_op_id != null && [' ', el('span', { class: 'badge revert' }, `undo of op ${op.reverts_op_id}`)],
-        undone && [' ', el('span', { class: 'badge undone' }, 'undone')],
-      ),
+      );
+    }
+    const arrow = expanded.has(row.key) ? '▾ ' : '▸ ';
+    if (node.kind === 'watcher') {
+      return el('td', indent, arrow, el('span', { class: 'label' }, `${node.children.length} flushes of the watcher`));
+    }
+    const description = node.label.description;
+    return el(
+      'td',
+      { ...indent, title: description ?? '' },
+      arrow,
+      `#${node.id} `,
+      el('span', { class: 'label' }, node.label.name),
+      description ? el('span', { class: 'description' }, ` — ${description}`) : null,
+    );
+  }
+
+  /** @param {Row} row */
+  function rowElement(row) {
+    const { node } = row;
+    const mark = marks(node);
+    const ops = node.kind === 'op' ? [node.op] : node.ops;
+    const newest = ops.reduce((t, o) => Math.max(t, o.timestamp ?? 0), 0);
+    return el(
+      'tr',
+      {
+        class: [
+          node.kind === 'op' ? 'ops' : 'rev',
+          row.key === selection && 'selected',
+          mark.watcher && 'watcher-row',
+          mark.undone === 'fully' && 'undone-row',
+        ],
+        onclick: () => select(row.key),
+        ondblclick: () => select(row.key, { toggle: true }),
+      },
+      nameCell(row),
+      el('td', {}, newest > 0 ? new Date(newest).toLocaleString() : ''),
+      el('td', {}, node.kind === 'op' ? '' : String(ops.length)),
+      el('td', {}, statusBadges(node)),
     );
   }
 
@@ -311,13 +255,14 @@ export async function mount(root, metafolder) {
   let publishedKey = 'null';
 
   /** Publishes the selection for the log-detail panel (doc "log-detail
-   *  panel"): the revision, and the operation when the cursor is on one. Called
+   *  panel"): the label, and the operation when the cursor is on one. Called
    *  from render, so every path that moves or drops the selection publishes. */
   function publishSelection() {
-    const entry =
-      selection && repo
-        ? { repo, rev_id: selection.revId, op_id: selection.kind === 'op' ? selection.id : null }
-        : null;
+    const node = selection === null ? null : findNode(selection);
+    /** @type {{repo: string, label_id: number, op_id: number|null}|null} */
+    let entry = null;
+    if (repo && node?.kind === 'op') entry = { repo, label_id: node.op.label_id, op_id: node.op.id };
+    if (repo && node?.kind === 'label') entry = { repo, label_id: node.id, op_id: null };
     const key = JSON.stringify(entry);
     if (key === publishedKey) return;
     publishedKey = key;
@@ -326,43 +271,32 @@ export async function mount(root, metafolder) {
 
   function render() {
     publishSelection();
-    placeholderElement.hidden = revisions.length > 0;
-    if (revisions.length === 0) placeholderElement.textContent = 'Empty log.';
-    table.hidden = revisions.length === 0;
-    const nothing = selection === null;
-    revertButton.disabled = nothing;
-    pruneButton.disabled = nothing;
+    placeholderElement.hidden = tree.length > 0;
+    if (tree.length === 0) placeholderElement.textContent = 'Empty log.';
+    table.hidden = tree.length === 0;
+    const target = revertTarget(selection);
+    revertButton.disabled = target === null;
+    pruneButton.disabled = target === null;
     // The revert acts on whatever is selected, so the button says which.
     revertButton.textContent =
-      selection?.kind === 'op'
-        ? `Revert op ${selection.id} (log:revert)`
+      target !== null && 'op_ids' in target
+        ? `Revert op ${target.op_ids[0]} (log:revert)`
         : 'Revert selected (log:revert)';
     watcherCheckbox.checked = showWatcher;
-
-    rows.replaceChildren(
-      ...visible().flatMap((rev) =>
-        expandedRev === rev.id
-          ? [revisionRow(rev), ...operationsOf(rev.id).map(operationRow)]
-          : [revisionRow(rev)],
-      ),
-    );
+    rowsElement.replaceChildren(...visible().map(rowElement));
     renderStatusLine();
   }
 
-  /** The oldest operation of a revision: what a prune keeps from.
-   *  @param {number} revId */
-  function firstOpOf(revId) {
-    return Math.min(...operations.filter((o) => o.rev_id === revId).map((o) => o.id));
-  }
-
   async function prune() {
-    const rev = selectedRev();
-    if (rev === null) return;
-    if (!confirm(`Prune all history before label #${rev}? This cannot be undone.`)) return;
+    const target = revertTarget(selection);
+    if (target === null || repo === null) return;
+    const what = 'op_ids' in target ? `operation ${target.op_ids[0]}` : `label #${target.label_id}`;
+    if (!confirm(`Prune all history before ${what}? This cannot be undone.`)) return;
     try {
       const result = /** @type {{pruned_operations: number, pruned_labels: number}} */ (
         await daemon.call('POST', `/repos/${repo}/log/prune`, {
-          target: { id: firstOpOf(rev) },
+          // A label is kept whole: the cut is its oldest operation.
+          target: 'op_ids' in target ? { id: target.op_ids[0] } : { label: target.label_id },
         })
       );
       void statusBar.message(
@@ -370,22 +304,21 @@ export async function mount(root, metafolder) {
         statusErrorMs,
       );
       selection = null;
-      expandedRev = null;
+      expanded.clear();
       await refresh();
     } catch (error) {
       await statusBar.error(error);
     }
   }
 
-  // Undoes the selected revision in place, by writing its inverse at HEAD
-  // (doc "Revert"). It does not move anything back, so the
-  // watcher flushes that landed since are left exactly where they are.
+  // Undoes the selection in place, by writing its inverse onto the current
+  // state (doc "Revert"). It moves nothing back, so the watcher's flushes that
+  // landed since are left exactly where they are.
   /** What `GET /revert/plan` answers (doc "Revert"). An operation whose cell
    *  was written since carries `changed_since` (doc "Reverting onto the
    *  current state"): the revert overwrites that write.
    *  @typedef {{requires_lock?: boolean,
    *             operations?: {changed_since?: {label_id?: number} | null}[]}} RevertPlan */
-
 
   /** The query string for a revert plan of `target`.
    *  @param {{label_id: number}|{op_ids: number[]}} target */
@@ -403,8 +336,8 @@ export async function mount(root, metafolder) {
       : `label #${target.label_id}`;
   }
 
-  /** Reverts whatever is selected: one operation when the cursor is inside an
-   *  expanded revision, the whole revision otherwise. */
+  /** Reverts whatever is selected: a label whole — what is nested in it
+   *  included — or one operation. */
   async function revert() {
     const target = revertTarget(selection);
     if (target === null) return;
@@ -421,34 +354,50 @@ export async function mount(root, metafolder) {
     await runRevert(target, plan);
   }
 
-  /** Reverts one operation even when a whole revision is selected: expands it
-   *  and asks for the operation, so "undo just this field" is reachable from
-   *  the keyboard as well as by clicking the row. */
+  /** Reverts one operation even when a label is selected: opens it down to
+   *  its newest operation and asks for that, so "undo just this field" is
+   *  reachable from the keyboard as well as by clicking the row. */
   async function revertOperation() {
-    if (selection?.kind === 'op') return revert();
-    const rev = selectedRev();
-    if (rev === null) return;
-    const members = operationsOf(rev);
-    if (members.length === 0) return;
-    if (members.length === 1) {
-      selectOperation(members[0]);
+    const node = selection === null ? null : findNode(selection);
+    if (node === null) return;
+    if (node.kind === 'op') return revert();
+    if (node.ops.length === 1) {
+      openTo(node.ops[0]);
       return revert();
     }
-    expandedRev = rev;
-    selectOperation(members[0]);
-    void statusBar.message(
-      `Label #${rev} has ${members.length} operations: pick one and press revert again.`,
-      statusMessageMs,
-    );
+    if (node.ops.length > 0) {
+      openTo(node.ops[0]);
+      void statusBar.message(
+        `${node.ops.length} operations: pick one and press revert again.`,
+        statusMessageMs,
+      );
+    }
   }
 
-  /** The widening counterpart: revert the whole revision the cursor is in,
-   *  whichever operation of it is selected. */
-  async function revertRevision() {
-    const rev = selectedRev();
-    if (rev === null) return;
-    selection = { kind: 'rev', id: rev, revId: rev };
-    render();
+  /** Opens every node between the top level and `op`, and selects it.
+   *  @param {Op} op */
+  function openTo(op) {
+    const target = `op:${op.id}`;
+    /** @param {Node[]} nodes @returns {boolean} */
+    const open = (nodes) => {
+      for (const n of nodes) {
+        if (keyOf(n) === target) return true;
+        if (n.kind !== 'op' && open(n.children)) {
+          expanded.add(keyOf(n));
+          return true;
+        }
+      }
+      return false;
+    };
+    open(tree);
+    select(target);
+  }
+
+  /** The widening counterpart: reverts the label the operation under the
+   *  cursor was written in. */
+  async function revertLabel() {
+    const node = selection === null ? null : findNode(selection);
+    if (node?.kind === 'op') select(`label:${node.op.label_id}`);
     return revert();
   }
 
@@ -472,9 +421,11 @@ export async function mount(root, metafolder) {
     const files = plan.requires_lock ? ', moving files on disk' : '';
     // Reverting something already undone writes a second inverse — almost never
     // what is meant, so it is said out loud rather than silently done.
+    const node = selection === null ? null : findNode(selection);
+    const mark = node === null ? null : marks(node);
     const undone =
-      'label_id' in target && marks.get(target.label_id)?.undoneBy != null
-        ? `\n\nNote: it was already undone by label #${marks.get(target.label_id).undoneBy}.`
+      mark !== null && mark.undone !== null
+        ? `\n\nNote: it was already ${mark.undone === 'partly' ? 'partly ' : ''}undone.`
         : '';
     if (
       !confirm(
@@ -498,20 +449,18 @@ export async function mount(root, metafolder) {
     }
   }
 
-  // Showing/hiding the watcher's revisions is a display filter: no refetch. A
-  // selection inside a revision that disappears is dropped rather than left
-  // pointing at a row nobody can see.
+  // Showing/hiding the watcher's work is a display filter: no refetch. A
+  // selection inside what disappears is dropped rather than left pointing at a
+  // row nobody can see.
   /** @param {boolean} [on] */
   function toggleWatcher(on) {
     showWatcher = on ?? !showWatcher;
-    const ids = new Set(visible().map((rev) => rev.id));
-    if (selection && !ids.has(selection.revId)) selection = null;
-    if (expandedRev !== null && !ids.has(expandedRev)) expandedRev = null;
+    if (selection !== null && !visible().some((r) => r.key === selection)) selection = null;
     render();
   }
   watcherCheckbox.addEventListener('change', () => toggleWatcher(watcherCheckbox.checked));
 
-  // Grow the fetched window by one page and reload (list view only).
+  // Grow the fetched window by one page and reload.
   showMoreButton.addEventListener('click', () => {
     limit += LOG_PAGE;
     void refresh();
@@ -524,17 +473,17 @@ export async function mount(root, metafolder) {
   revertButton.addEventListener('click', () => void revert());
   pruneButton.addEventListener('click', () => void prune());
 
-  // Reverting: what is selected by default, or a named widening of it. The
-  // scope is an argument rather than sibling command names, so a keybinding
-  // reads as what it does (`log:revert label`).
+  // Reverting: what is selected by default, or a named narrowing or widening
+  // of it. The scope is an argument rather than sibling command names, so a
+  // keybinding reads as what it does (`log:revert label`).
   /** @type {Record<string, () => unknown>} */
   const REVERTS = {
     op: () => revertOperation(),
-    label: () => revertRevision(),
+    label: () => revertLabel(),
   };
 
   void commands.register('log:revert', {
-    label: `Log: revert what is selected, or a wider scope (${Object.keys(REVERTS).join(' / ')})`,
+    label: `Log: revert what is selected, or a narrower or wider scope (${Object.keys(REVERTS).join(' / ')})`,
     reveal: true,
     args: [
       {
@@ -544,8 +493,8 @@ export async function mount(root, metafolder) {
         complete: () => Object.keys(REVERTS),
       },
     ],
-    // No scope: revert exactly what the selection is — a revision, or one
-    // operation of it.
+    // No scope: revert exactly what the selection is — a label, or one
+    // operation.
     handler: (scope) => {
       if (scope === undefined) return revert();
       const run = REVERTS[scope];
@@ -558,13 +507,12 @@ export async function mount(root, metafolder) {
   const LOG_FLAGS = {
     watcher: () => toggleWatcher(),
     ops: () => {
-      const rev = selectedRev();
-      if (rev !== null) selectRevision(rev, { toggleOps: true });
+      if (selection !== null) select(selection, { toggle: true });
     },
   };
 
   void commands.register('log:toggle', {
-    label: 'Log: toggle a view flag (the watcher’s labels / the selected label’s operations)',
+    label: 'Log: toggle a view flag (the watcher’s work / the selected label opened)',
     args: [
       {
         name: 'flag',
@@ -580,7 +528,7 @@ export async function mount(root, metafolder) {
   });
 
   void commands.register('log:prune', {
-    label: 'Log: prune history before the selected revision',
+    label: 'Log: prune history before the selected label or operation',
     reveal: true,
     handler: prune,
   });
@@ -588,31 +536,29 @@ export async function mount(root, metafolder) {
   void commands.register('log:next', { label: 'Log: move the selection down', handler: () => moveBy(1) });
   void commands.register('log:prev', { label: 'Log: move the selection up', handler: () => moveBy(-1) });
   void commands.register('log:first', {
-    label: 'Log: move the selection to the newest revision',
+    label: 'Log: move the selection to the newest row',
     handler: () => moveToEdge('first'),
   });
   void commands.register('log:last', {
-    label: 'Log: move the selection to the oldest revision',
+    label: 'Log: move the selection to the oldest row',
     handler: () => moveToEdge('last'),
   });
-  // Jump to a revision by number or label, like every other list panel
-  // (doc "Jumping to an entry"). A log is the list one most often arrives at
-  // knowing exactly which revision is wanted, so scrolling to it was the odd
-  // one out.
+  // Jump to a label by number or name, like every other list panel (doc
+  // "Jumping to an entry"): over the rows on screen.
   void registerFind(metafolder, 'log:find', {
-    label: 'Log: jump to a revision by number or label',
-    prompt: 'Go to revision:',
+    label: 'Log: jump to a label by number or name',
+    prompt: 'Go to label:',
     entries: () =>
-      visible().map((rev) => ({
-        name: `#${rev.id}`,
-        label: rev.label ? `#${rev.id} — ${rev.label}` : `#${rev.id}`,
-      })),
+      visible().map(({ node }) => {
+        if (node.kind === 'op') return { name: `op ${node.op.id}`, label: `op ${node.op.id}` };
+        if (node.kind === 'watcher') return { name: 'watcher', label: 'flushes of the watcher' };
+        return { name: `#${node.id}`, label: `#${node.id} — ${node.label.name}` };
+      }),
     select: (index) => {
-      const rev = visible()[index];
-      if (rev) selectRevision(rev.id);
+      const row = visible()[index];
+      if (row) select(row.key);
     },
   });
-
 
   // Keybindings for this panel live in keybindings.toml (when = "log").
 
@@ -621,9 +567,9 @@ export async function mount(root, metafolder) {
   workspace.onChange('metarecords:dirty', () => metafolder.whenVisible(deferredRefresh));
   workspace.onChange('active_repo', (value) => {
     repo = /** @type {string|null} */ (value ?? null);
-    // A selection is a revision of the previous repository.
+    // A selection is a label of the previous repository.
     selection = null;
-    expandedRev = null;
+    expanded.clear();
     publishSelection();
     limit = LOG_PAGE; // reset the window for the new repository
     metafolder.whenVisible(deferredRefresh);

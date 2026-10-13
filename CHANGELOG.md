@@ -165,6 +165,14 @@ than breaking them.
     `mf_watch = true` no longer reads as unwatched.
 
 ### Changed
+- **The log panel is a tree of labels.** A row per unit of work — a command, a
+  script's run, a context — newest first, opening onto the labels nested in it
+  down to single operations; consecutive flushes of the watcher fold into one
+  row. Badges (`watcher`, `undo of #N`, `undone by #N`, `partly undone`) are
+  computed over everything under a row, and `log:revert` reverts a label whole
+  or one operation (`log:revert label` widens from an operation). The
+  `selected_log_entry` workspace variable is `{repo, label_id, op_id}` (doc
+  "log panel").
 - **Undo and redo by label.** Undo offers the labels your newest change still
   standing was written in, innermost first — the command, the script's answer,
   its run —, and undoing one takes back its changes still standing, its own

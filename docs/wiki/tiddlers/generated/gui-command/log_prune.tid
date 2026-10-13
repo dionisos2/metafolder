@@ -1,7 +1,7 @@
 title: $:/mf/gen/GUI command/log:prune
 catalog: GUI command
 target: log:prune
-summary: Log: prune history before the selected revision
+summary: Log: prune history before the selected label or operation
 
 !! Reference
 

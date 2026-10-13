@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- Built-in panel type: event log — revisions and operations (doc
+<!-- Built-in panel type: event log — a tree of labels and operations (doc
      "log panel"). -->
 <html lang="en">
   <head>
@@ -60,7 +60,7 @@
         cursor: pointer;
       }
       tr.ops td {
-        padding: 1px 8px 1px 24px;
+        padding: 1px 8px;
       }
       tr.ops:hover,
       tr.ops.selected {
@@ -113,6 +113,9 @@
       .label {
         color: var(--mf-accent, #4c56c4);
       }
+      .description {
+        color: var(--mf-fg-dim, #8a8a96);
+      }
       .placeholder {
         padding: 20px;
         text-align: center;
@@ -132,23 +135,23 @@
   <body>
     <div id="toolbar">
       <button id="refresh">Refresh</button>
-      <button id="undo" title="Undo your last change still standing, by reverting it — the watcher's revisions are left in place (ctrl+z)">
+      <button id="undo" title="Undo a label of your last change still standing — the watcher's work is left in place (ctrl+z)">
         Undo (log:undo)
       </button>
-      <button id="redo" title="Take the newest undo still standing back, by reverting it (ctrl+shift+z)">
+      <button id="redo" title="Take back a label of the newest undo still standing (ctrl+shift+z)">
         Redo (log:redo)
       </button>
       <button id="revert" disabled title="Write the inverse of what is selected onto the current state, leaving the history in place (shift+r)">
         Revert selected (log:revert)
       </button>
       <button id="prune" disabled>Prune before selected (log:prune)</button>
-      <label id="watcher-toggle" class="toggle" title="Show the revisions the daemon wrote for the filesystem (log:toggle watcher, shift+w)"><input type="checkbox" id="show-watcher" checked />Watcher</label>
+      <label id="watcher-toggle" class="toggle" title="Show the labels the daemon wrote for the filesystem (log:toggle watcher, shift+w)"><input type="checkbox" id="show-watcher" checked />Watcher</label>
     </div>
     <div id="revisions">
       <p class="placeholder" id="placeholder">Loading…</p>
       <table hidden>
         <thead>
-          <tr><th>revision</th><th>timestamp</th><th>operations</th><th>status</th></tr>
+          <tr><th>label</th><th>newest</th><th>operations</th><th>status</th></tr>
         </thead>
         <tbody id="rows"></tbody>
       </table>
