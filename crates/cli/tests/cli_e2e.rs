@@ -874,6 +874,25 @@ fn test_set_uuid_replaces_all_rows() {
 }
 
 #[test]
+fn test_set_specs_must_share_one_name() {
+    let (repo, _root) = init_repo("set_names");
+    let uuid = create_metarecord(&repo, &["tag:string=a"]);
+    let out = mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-i",
+        &uuid,
+        "field",
+        "set",
+        "tag:string=c",
+        "genre:string=d",
+    ]);
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert!(out.stderr.contains("must share the same name"), "{}", out.stderr);
+}
+
+#[test]
 fn test_set_with_predicate_prints_updated_count() {
     let (repo, _root) = init_repo("set_pred");
     create_metarecord(&repo, &["genre:string=jazz"]);
@@ -6546,4 +6565,135 @@ fn test_a_failed_or_cancelled_task_is_an_error() {
     let out = mf_full(&["-p", &port, "-u", &repo, "duplicate", "scan"], None, &[], false);
     assert_eq!(out.code, 1, "{}", out.stderr);
     assert!(out.stderr.contains("duplicates: cancelled"), "{}", out.stderr);
+}
+
+/// `--tsv` with `-i`: one row for the record (first value of each selected
+/// field); `--select '*'` names no field list, a usage error.
+#[test]
+fn test_metarecord_get_tsv_with_an_id_selector() {
+    let (repo, _root) = init_repo("tsv_id");
+    let uuid = create_metarecord(&repo, &["name:string=Coltrane", "lead:bool=true"]);
+    let out =
+        mf(&["-u", &repo, "metarecord", "-i", &uuid, "get", "--select", "lead,name,x", "--tsv"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout, "true\tColtrane\t\n");
+
+    let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "get", "--select", "*", "--tsv"]);
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert!(out.stderr.contains("--tsv requires --select"), "{}", out.stderr);
+}
+
+/// `mf order --dry-run` prints the planned positions and writes none of them.
+#[test]
+fn test_order_dry_run_writes_nothing() {
+    let (repo, root) = init_repo("order_dry");
+    let album = root.join("album");
+    std::fs::create_dir_all(&album).unwrap();
+    for f in ["song1.avi", "song2.avi"] {
+        std::fs::write(album.join(f), b"x").unwrap();
+    }
+    let track = |p: std::path::PathBuf| {
+        let out = mf(&["-u", &repo, "metarecord", "add", "--path", p.to_str().unwrap()]);
+        assert_ok(&out);
+        out.stdout.trim().to_string()
+    };
+    let album_uuid = track(album.clone());
+    let song1 = track(album.join("song1.avi"));
+    track(album.join("song2.avi"));
+
+    let out = mf(&["-u", &repo, "order", album.to_str().unwrap(), "--dry-run"]);
+    assert_ok(&out);
+    let lines: Vec<&str> = out.stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "{}", out.stdout);
+    let first: Vec<&str> = lines[0].split('\t').collect();
+    assert_eq!(first[1], "order_file=1", "{}", out.stdout);
+    assert_eq!(first[2], "song1.avi", "{}", out.stdout);
+
+    for (uuid, field) in [(&song1, "order_file"), (&album_uuid, "order_numbered")] {
+        let out = mf(&["-u", &repo, "metarecord", "-i", uuid, "field", "get", field]);
+        assert!(out.stdout.trim().is_empty(), "the dry run wrote {field}: {}", out.stdout);
+    }
+
+    // A folder without a metarecord has no children to number.
+    let loose = root.join("loose");
+    std::fs::create_dir(&loose).unwrap();
+    let out = mf(&["-u", &repo, "order", loose.to_str().unwrap()]);
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    assert!(out.stderr.contains("no metarecord"), "{}", out.stderr);
+}
+
+/// `mf ignore -d` on a directory with no metarecord is an error naming it; a
+/// `set` with no preset empties `mf_ignore`, which `list -d` then shows.
+#[test]
+fn test_ignore_untracked_dir_and_emptied_patterns() {
+    let (repo, root) = init_repo("ignore_dir");
+    let dir = root.join("sub");
+    std::fs::create_dir(&dir).unwrap();
+    let out = mf_cfg(&["-u", &repo, "ignore", "add", "node", "-d", dir.to_str().unwrap()]);
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    assert!(out.stderr.contains("no metarecord is associated with"), "{}", out.stderr);
+
+    assert_ok(&mf(&["-u", &repo, "metarecord", "add", "--path", dir.to_str().unwrap()]));
+    let out = mf_cfg(&["-u", &repo, "ignore", "set", "node", "-d", dir.to_str().unwrap()]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("node_modules"), "{}", out.stdout);
+
+    let out = mf_cfg(&["-u", &repo, "ignore", "set", "-d", dir.to_str().unwrap()]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), "mf_ignore is now empty");
+
+    let out = mf_cfg(&["-u", &repo, "ignore", "list", "-d", dir.to_str().unwrap()]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("Active patterns on the target:\n  (none)"), "{}", out.stdout);
+
+    // Only `set` may be given no preset.
+    let out = mf_cfg(&["-u", &repo, "ignore", "add", "-d", dir.to_str().unwrap()]);
+    assert_eq!(out.code, 2, "{}", out.stderr);
+}
+
+/// A stub daemon whose `GET /watch` answers `body`: a starved budget, or a
+/// platform without inotify, cannot be had on demand. Returns its port.
+fn stub_watch_daemon(body: serde_json::Value) -> String {
+    use axum::routing::get;
+    let app = axum::Router::new()
+        .route("/repos/:repo/watch", get(move || async move { axum::Json(body) }));
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    listener.set_nonblocking(true).unwrap();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async move {
+            let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+            axum::serve(listener, app).await.unwrap();
+        });
+    });
+    port.to_string()
+}
+
+/// `watch status` adds the budget lines when the budget is in trouble: a
+/// starved one says another program holds the watches; one without a cap
+/// (no inotify) is "unlimited", its excluded subtrees still counted.
+#[test]
+fn test_watch_status_reports_a_starved_or_unlimited_budget() {
+    let repo = Uuid::new_v4().as_simple().to_string();
+    let port = stub_watch_daemon(serde_json::json!({
+        "paused": false, "pending_events": 0, "backend": "inotify", "watched_dirs": 7,
+        "watch_budget": {"cap": 100, "limit": 1000, "share": 10, "exceeded_dirs": 0,
+                         "starved": true},
+    }));
+    let out = mf_full(&["-p", &port, "-u", &repo, "watch", "status"], None, &[], false);
+    assert_ok(&out);
+    assert!(out.stdout.contains("7 of 100 watch(es) used (share 10% of 1000)"), "{}", out.stdout);
+    assert!(out.stdout.contains("STARVED"), "{}", out.stdout);
+    assert!(!out.stdout.contains("excluded"), "{}", out.stdout);
+
+    let port = stub_watch_daemon(serde_json::json!({
+        "paused": false, "pending_events": 0, "backend": "inotify", "watched_dirs": 7,
+        "watch_budget": {"exceeded_dirs": 2, "starved": false},
+    }));
+    let out = mf_full(&["-p", &port, "-u", &repo, "watch", "status"], None, &[], false);
+    assert_ok(&out);
+    assert!(out.stdout.contains("unlimited on this platform"), "{}", out.stdout);
+    assert!(out.stdout.contains("2 subtree(s) left unwatched"), "{}", out.stdout);
+    assert!(!out.stdout.contains("STARVED"), "{}", out.stdout);
 }

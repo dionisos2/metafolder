@@ -3160,6 +3160,25 @@ mod tests {
     fn test_parse_sort_rejects_bad_order() {
         assert!(parse_sort(&["a:up".into()]).is_err());
     }
+
+    #[test]
+    fn test_parse_sort_rejects_an_empty_field_name() {
+        let err = parse_sort(&[":desc".into()]).unwrap_err();
+        assert!(matches!(err, CliError::Usage(ref m) if m.contains("empty field name")), "{err:?}");
+    }
+
+    #[test]
+    fn test_resolve_selector_takes_one_source() {
+        let eq = ["name=x".to_string()];
+        for (q, i, eq) in [
+            (Some("a = 1"), Some("0"), &[][..]),
+            (Some("a = 1"), None, &eq[..]),
+            (None, Some("0"), &eq[..]),
+        ] {
+            let err = resolve_selector(q, i, eq, false).unwrap_err();
+            assert!(matches!(err, CliError::Usage(ref m) if m.contains("mutually exclusive")));
+        }
+    }
     /// Every reason `POST /watch/check` gives for a path not watched reads as
     /// a phrase naming what to look at.
     #[test]

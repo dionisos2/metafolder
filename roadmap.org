@@ -123,10 +123,13 @@ What is worth a test, most first:
   second sharing a directory, =af7057a7=), a failed or cancelled task (a stub
   daemon), =duplicate clear='s prompt, =duplicate scan --no-wait/--json=, the
   =task= commands' =--json=, and every =watch check= reason as a unit test:
-  100 lines missed (by =cargo llvm-cov -p metafolder-cli=, 148 before). What is
-  left: =--tsv= with =-i=, =order='s dry run, =ignore -d= on an untracked
-  directory and an emptied =mf_ignore=, =watch status='s starved and
-  unlimited budgets, and unreachable defensive branches.
+  100 lines missed (by =cargo llvm-cov -p metafolder-cli=, 148 before). Then
+  the same day: =--tsv= with =-i=, =order='s dry run and unrecorded folder,
+  =ignore -d= on an untracked directory and an emptied =mf_ignore=, =watch
+  status='s starved and unlimited budgets (a stub daemon), three usage errors:
+  97 lines missed. What is left is a daemon error propagated by =?=, the
+  second page of a paged read (the tag vocabulary, =duplicate list=), and
+  =watch exceeded='s =--json= and coverage-regime forms: nothing named.
 The Tauri wrappers now count: =scripts/coverage.sh= (10 October 2026; doc
 "Measuring coverage") runs =scripts/gui-e2e.sh= on instrumented binaries and
 merges it with the tests. With the =repos=, =list=, =layout= and =script=
