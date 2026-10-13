@@ -90,7 +90,7 @@ async function mountPanel() {
     /** The first cell of each row, without its button. */
     rows: () =>
       [...shadow.querySelectorAll<HTMLElement>('#rows tr')].map((tr) =>
-        tr.querySelector('td.name')!.textContent!.trim(),
+        tr.querySelector('td.name')!.textContent.trim(),
       ),
     rowWith,
     crumbs: () => shadow.getElementById('breadcrumb')!.textContent ?? '',
