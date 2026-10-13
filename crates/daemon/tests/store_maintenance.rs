@@ -110,6 +110,23 @@ async fn backups_by_request_and_when_due() {
     assert!(root.path().join(".metafolder/internal/backups/auto/backup.json").exists());
 }
 
+/// Two backups by request within the same second (the default directory is
+/// named to the second) are two backups: the second never replaces the first.
+#[tokio::test]
+async fn two_backups_in_one_second_are_kept_apart() {
+    let (app, repo, _root, _state) = setup("backup_twice").await;
+    let mut paths = Vec::new();
+    for _ in 0..3 {
+        let (status, body) = request(&app, "POST", &format!("/repos/{repo}/backup"), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        paths.push(std::path::PathBuf::from(body["path"].as_str().unwrap()));
+    }
+    for (i, path) in paths.iter().enumerate() {
+        assert!(path.join("backup.json").exists(), "{}", path.display());
+        assert!(!paths[..i].contains(path), "a new directory each time: {paths:?}");
+    }
+}
+
 /// Initialises a repository with a `kept` note, takes a backup of it, then
 /// writes a `lost` note.
 async fn backed_up(app: &Router, root: &TempDir) -> String {

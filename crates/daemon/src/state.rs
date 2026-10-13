@@ -672,8 +672,11 @@ impl RepoState {
 
     /// Takes a verified backup (`mf repo backup`, doc "Backups and restore")
     /// into `dest` — which must not exist — or, by default, into a new
-    /// `internal/backups/manual-<time>/`.
+    /// `internal/backups/manual-<time>/` (`-2`, `-3`… when a backup of the
+    /// same second holds the name: `write_backup` replaces its destination).
     pub fn backup(&self, dest: Option<PathBuf>) -> Result<crate::backup::BackupInfo, ApiError> {
+        // Held while the name is chosen, so two requests cannot pick the same.
+        let conn = self.conn.lock_recover();
         let dest = match dest {
             Some(dest) => {
                 if dest.exists() {
@@ -687,10 +690,16 @@ impl RepoState {
             None => {
                 let stamp = metafolder_core::date::iso8601_from_ms(metafolder_core::date::now_ms())
                     .replace(':', "-");
-                self.backups_dir().join(format!("manual-{stamp}"))
+                let dir = self.backups_dir();
+                let mut dest = dir.join(format!("manual-{stamp}"));
+                let mut n = 1;
+                while dest.exists() {
+                    n += 1;
+                    dest = dir.join(format!("manual-{stamp}-{n}"));
+                }
+                dest
             }
         };
-        let conn = self.conn.lock_recover();
         crate::backup::write_backup(&**conn, &self.metafolder_dir, &dest)
             .map_err(|e| ApiError::internal(format!("backup failed: {e:#}")))
     }

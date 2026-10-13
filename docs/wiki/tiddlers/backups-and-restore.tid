@@ -15,7 +15,8 @@ compacting hot copy), with the repository's `config.json` and `schema.json` and 
 `backup.json` (when, which store, how many metarecords). It is written under a
 temporary name, then opened and checked before it takes its place: a store damaged
 since the last backup fails its new one, which then never replaces a good one.
-`--to` must name a new directory.
+`--to` must name a new directory; by default the directory is always a new one too (a
+second backup within the same second is `manual-<time>-2`).
 
 The daemon also backs up each loaded repository ''automatically'', every
 `auto-backup-days` days (default 1; `0` turns it off — [[Daemon configuration]]),
