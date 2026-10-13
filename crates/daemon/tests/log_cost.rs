@@ -15,6 +15,7 @@ use metafolder_core::metarecord::{Field, Value};
 use metafolder_daemon::kvstore::KvStore;
 use metafolder_daemon::log::{Retention, Writer, ORIGIN_WATCHER};
 use metafolder_daemon::log_view::{listing, LogQuery};
+use metafolder_daemon::revert;
 use metafolder_daemon::store::{Log, Rows};
 
 mod common;
@@ -225,4 +226,55 @@ fn trim_cost(big: usize) -> u64 {
 #[test]
 fn trimming_the_log_does_not_read_the_operations_it_keeps() {
     assert_eq!(trim_cost(1), trim_cost(2_000), "the trim read the operations it keeps");
+}
+
+/// The keys undoing a bulk tagging reads, and the keys the tagging itself
+/// read, for `n` metarecords.
+fn undo_cost(n: usize) -> (u64, u64) {
+    let (mut kv, _dir) = common::kv::store();
+    let mut w = Writer::begin(&mut kv, None).unwrap();
+    let uuids: Vec<_> = (0..n)
+        .map(|i| w.create_metarecord(vec![Field::new("rank", Value::Int(i as i64))]).unwrap().uuid)
+        .collect();
+    w.commit().unwrap();
+    let (label, write) = reads_of(&mut kv, |kv| {
+        let mut w = Writer::begin(kv, Some("tag".into())).unwrap();
+        for &u in &uuids {
+            w.append_field(u, "tag", Value::String("x".into())).unwrap();
+        }
+        let label = w.label_id();
+        w.commit().unwrap();
+        label
+    });
+    // What `POST /revert` with `{"label_id": label, "only": "changes"}` does.
+    let (_, undo) = reads_of(&mut kv, |kv| {
+        let ops = revert::label_ops(kv, label).unwrap();
+        let ops = revert::narrow(kv, ops, revert::Only::Changes).unwrap();
+        for op in &ops {
+            assert!(revert::fs_action(kv, op).unwrap().is_none());
+        }
+        let mut w = Writer::begin(kv, None).unwrap();
+        assert_eq!(revert::apply(&mut w, &ops).unwrap(), n);
+        w.commit().unwrap();
+    });
+    (undo, write)
+}
+
+/// Undoing a write costs the write it makes — a deletion for an append — and
+/// what the log says of each operation it undoes: the label's entry and the
+/// operation (2 keys), its reverts (1), and the one snapshot its inverse needs
+/// (2 for a one-row append), plus a few keys once. Reading the side of the
+/// snapshot it does not need cost one key an operation more: 13 an operation
+/// where the tagging read 6.
+#[test]
+fn undoing_a_bulk_write_reads_only_the_snapshots_it_uses() {
+    let n = 500;
+    let (undo, write) = undo_cost(n);
+    let per_op = |keys: u64| keys as f64 / n as f64;
+    assert!(
+        undo <= write + 6 * n as u64 + 20,
+        "undoing {n} appends read {undo} keys ({:.1} an operation), the appends {write} ({:.1})",
+        per_op(undo),
+        per_op(write)
+    );
 }

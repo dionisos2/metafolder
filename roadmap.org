@@ -63,9 +63,13 @@ million keys (a folder of 292 files renamed) to 20 000, and from 1.56 million
   keys); its undo read 533 000 keys and its redo 589 000, the GUI reading
   the revert plan (201 000 / 251 000) before a revert that reads 327 000. The
   GUI now sends the revert straight and reads the plan only when a file
-  action needs it (doc "Revert endpoints"). Left: the revert itself, ≈ 13
-  keys an operation, 1.6× the write it undoes — to see on the next recorded
-  run.
+  action needs it (doc "Revert endpoints"). The revert itself, measured 13
+  October 2026 on an undone tagging: 13 keys an operation where the write
+  read 6 — the deletion (7), the label's entry and the operation (2), its
+  reverts (1), and both sides of its snapshot (3) where the inverse needs one.
+  Now 12 (only the side used is read; =log_cost.rs= holds it). The 5 left
+  are the log's own facts on the operation: not reducible without a layout
+  change. To confirm on the next recorded run.
 
 * TODO watcher
 ** TODO keep hunting with the simulated kernel

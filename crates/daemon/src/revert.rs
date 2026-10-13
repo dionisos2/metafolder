@@ -288,9 +288,10 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
         // correction from a change (doc "Log storage").
         writer.reverting(Some(op.id));
         // Read through the writer's own transaction, so the state the revert
-        // is computed from is the state it is written into.
-        let before = writer.store().snapshots(op.id, false)?;
-        let after = writer.store().snapshots(op.id, true)?;
+        // is computed from is the state it is written into. Each inverse needs
+        // one side of the snapshot at most, and reading a side costs a key
+        // even when empty: only the side used is read.
+        let before = |writer: &Writer| writer.store().snapshots(op.id, false);
         match op.op_type.as_str() {
             "create_metarecord" => {
                 // Already gone: there is nothing left to take back.
@@ -309,20 +310,22 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
                     ))
                     .into());
                 }
+                let before = before(writer)?;
                 writer.create_metarecord_with_uuid(op.entity_uuid, rows_to_fields(&before))?;
             }
             "set_metarecord" => {
+                let before = before(writer)?;
                 writer.set_record(op.entity_uuid, rows_to_fields(&before))?;
             }
             "append_field" => {
-                for row in &after {
+                for row in &writer.store().snapshots(op.id, true)? {
                     writer.delete_fields_valued(op.entity_uuid, &row.name, &row.value)?;
                 }
             }
             "delete_field" => {
                 // One `delete_field` may carry every row of a name (an unset, a
                 // removal by value): each comes back.
-                for row in &before {
+                for row in &before(writer)? {
                     writer.append_field(op.entity_uuid, &row.name, row.value.clone())?;
                 }
             }
@@ -337,6 +340,7 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
                     .clone()
                     .ok_or_else(|| anyhow::anyhow!("operation {} carries no field name", op.id))?;
                 let op_type = written_as(op);
+                let before = before(writer)?;
                 if before.is_empty() {
                     // The field did not exist: remove the cell entirely rather
                     // than write the explicit-absence sentinel.
