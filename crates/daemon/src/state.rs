@@ -28,7 +28,7 @@ const SLOW_EVENT: std::time::Duration = std::time::Duration::from_secs(1);
 struct RulesSlot {
     rules: Option<Arc<crate::eligibility::WatchRules>>,
     /// The HEAD the rules are known to describe: the one they were read at, or
-    /// a later one whose revisions moved no rule.
+    /// a later one whose writes moved no rule.
     valid_at: Option<Option<i64>>,
     /// Bumped by the ingest thread once it has buffered a batch holding an
     /// event that touches a rule (a move or removal of a rule-carrying
@@ -322,7 +322,7 @@ impl RepoState {
         Ok(())
     }
     /// The rule index, current as of the connection's HEAD: re-read when a
-    /// revision since the last read may have moved a rule, and published for
+    /// write since the last read may have moved a rule, and published for
     /// the ingest thread. One `head` read when nothing changed.
     pub fn watch_rules(
         &self,
@@ -345,7 +345,7 @@ impl RepoState {
         Ok(rules)
     }
 
-    /// Brings the rule index in step with a revision just committed: re-read
+    /// Brings the rule index in step with a write just committed: re-read
     /// when it wrote a rule or moved a metarecord a rule depends on, otherwise
     /// only re-stamped with the new HEAD. A failure is logged — the next reader
     /// re-reads.
@@ -377,8 +377,8 @@ impl RepoState {
         } else {
             conn.head().map(|head| {
                 let mut slot = self.watch_rules.lock_recover();
-                // Only a stamp that described the state this revision started
-                // from moves forward: one already behind (a revision that did
+                // Only a stamp that described the state this write started
+                // from moves forward: one already behind (a write that did
                 // not settle, such as a flush) stays behind, and the next
                 // reader re-reads.
                 if slot.valid_at == Some(effects.base_head()) {
@@ -390,7 +390,7 @@ impl RepoState {
             self.watch_rules.lock_recover().valid_at = None;
             crate::diagnostics::warn_for(
                 "watcher",
-                format!("could not bring the watch rules up to the new revision: {e:#}"),
+                format!("could not bring the watch rules up to the new write: {e:#}"),
                 self.uuid(),
             );
         }
@@ -474,7 +474,7 @@ impl RepoState {
         }
     }
 
-    /// Brings this repository's in-memory state back in step with a revision
+    /// Brings this repository's in-memory state back in step with a write
     /// that has just been committed on `conn`: the watch rules and, when the
     /// write changed the watched scope, the watch set. The forest and the query
     /// index need nothing — they are the store's own, derived in the write's
@@ -835,7 +835,7 @@ impl RepoState {
             // until the watcher is dropped, and a tick landing in that window
             // reports a step that has already finished.
             drop(watchdog);
-            p.detail(format!("{} events, {} revisions", stats.events, stats.revisions));
+            p.detail(format!("{} events, {} writes", stats.events, stats.revisions));
         }
         let quiet = self.watch_quiet_period;
         let executor = crate::executor::spawn(self, quiet);

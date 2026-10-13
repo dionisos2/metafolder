@@ -1,6 +1,6 @@
 title: log:redo
 tags: [[GUI command]] [[Event log]]
 kind: reference
-summary: Take the newest undo back
+summary: Take back a label of the newest undo (asked when there are several)
 
 The GUI's redo: the same selection as `mf log redo` ([[Undo and redo]]).

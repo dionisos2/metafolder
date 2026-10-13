@@ -1,4 +1,4 @@
-//! `log:undo` / `log:redo` (doc "Revision commands in the GUI"): shell builtins
+//! `log:undo` / `log:redo` (doc "Log commands in the GUI"): shell builtins
 //! reverting the active repo's newest change, or its newest undo, through the
 //! daemon's revert API (`core::navigation`). Tests run a stub daemon on an
 //! ephemeral port.

@@ -334,7 +334,7 @@ pub fn prune(conn: &mut dyn Database, target: i64) -> Result<(usize, usize)> {
 }
 
 /// Buffered operations are flushed to the database once this many accumulate,
-/// keeping the Writer's memory bounded on huge revisions (e.g. reconcile).
+/// keeping the Writer's memory bounded on huge writes (e.g. reconcile).
 pub const FLUSH_THRESHOLD: usize = 4096;
 
 /// A `(field name, metarecord)` cell of a forest an operation moved a position
@@ -359,19 +359,19 @@ fn moved_cells_of(before: &[FieldRow], after: &[FieldRow], entity: Uuid) -> Vec<
     out
 }
 
-/// What a committed revision obliges its caller to bring back in step — the
+/// What a committed write obliges its caller to bring back in step — the
 /// in-memory state a transaction cannot update itself (see
 /// `RepoState::settle`). Read off the writer *before* `commit` consumes it.
 #[derive(Debug, Default, Clone)]
 pub struct WriteEffects {
-    /// The cells the revision moved a position of, one entry per operation and
-    /// field, in write order. Never truncated: a revision that changed the
+    /// The cells the write moved a position of, one entry per operation and
+    /// field, in write order. Never truncated: a write that changed the
     /// whole forest is exactly the one whose upkeep must not be guessed at.
     tree: Vec<MovedCell>,
-    /// HEAD when the revision began: what the in-memory state settled by this
-    /// revision must have described for a cheap upkeep to be enough.
+    /// HEAD when the write began: what the in-memory state settled by this
+    /// write must have described for a cheap upkeep to be enough.
     base_head: Option<i64>,
-    /// Whether the revision wrote a field that decides which directories are
+    /// Whether the write wrote a field that decides which directories are
     /// watched.
     watch: bool,
 }
@@ -382,12 +382,12 @@ impl WriteEffects {
         !self.tree.is_empty()
     }
 
-    /// The cells the revision moved a position of, in write order.
+    /// The cells the write moved a position of, in write order.
     pub fn moved_cells(&self) -> &[MovedCell] {
         &self.tree
     }
 
-    /// True if the revision wrote `mf_watch` / `mf_ignore` (eligibility) or
+    /// True if the write wrote `mf_watch` / `mf_ignore` (eligibility) or
     /// `mfr_watch_exceeded` (the watch budget). A caller that keeps a live
     /// inotify watch set must refresh it: the set of watched directories may
     /// have changed.
@@ -395,7 +395,7 @@ impl WriteEffects {
         self.watch
     }
 
-    /// HEAD when the revision began.
+    /// HEAD when the write began.
     pub fn base_head(&self) -> Option<i64> {
         self.base_head
     }
@@ -447,12 +447,12 @@ impl Retention {
 }
 
 /// A single logged write transaction. All changes made through one Writer
-/// form one revision; commit is atomic. Dropping a Writer without committing
+/// form one write; commit is atomic. Dropping a Writer without committing
 /// rolls everything back. After any method returns an error, the Writer must
-/// be dropped (the whole revision is abandoned).
+/// be dropped (the whole write is abandoned).
 ///
 /// Data-table changes are applied immediately (later changes and lookups in
-/// the same revision observe them); the log rows are buffered and inserted
+/// the same write observe them); the log rows are buffered and inserted
 /// in bulk, in batches of [`FLUSH_THRESHOLD`] operations.
 pub struct Writer<'c> {
     tx: Box<dyn WriteTxn + 'c>,
@@ -464,29 +464,29 @@ pub struct Writer<'c> {
     /// When this write began: every operation it records carries it.
     timestamp: i64,
     /// The newest operation: HEAD as of `begin`, then the last one this
-    /// revision flushed. What `commit` records as the log's head.
+    /// write flushed. What `commit` records as the log's head.
     chain_head: Option<i64>,
     /// Number of operations already flushed to the database.
     flushed: i64,
     pending: Vec<NewOp>,
-    /// Per-revision cache of each field name's established (non-`Nothing`) value
+    /// Per-write cache of each field name's established (non-`Nothing`) value
     /// type, populated lazily on the first checked write of a name. Collapses the
     /// per-write type probe to one DB seek per field name (a bulk reconcile/watcher
-    /// revision writes the same ~8 reserved names across thousands of records).
+    /// write writes the same ~8 reserved names across thousands of records).
     field_types: HashMap<String, String>,
-    /// Field names whose type check this revision deferred to commit, and the
+    /// Field names whose type check this write deferred to commit, and the
     /// reason it may: see [`Self::defer_type_checks`]. Empty for every ordinary
     /// write, which is checked as it happens.
     deferred_types: Option<HashSet<String>>,
-    /// The `tree_ref` positions this revision wrote with their check deferred
+    /// The `tree_ref` positions this write wrote with their check deferred
     /// to commit (see [`Self::defer_type_checks`]): `(metarecord, field,
     /// value)`. `None` for every ordinary write, checked as it happens.
     deferred_trees: Option<std::cell::RefCell<Vec<(Uuid, String, Value)>>>,
     /// How much history to keep behind HEAD; applied on commit.
     retention: Retention,
-    /// What this revision will oblige its caller to refresh, accumulated as the
+    /// What this write will oblige its caller to refresh, accumulated as the
     /// operations are recorded rather than read back off `pending` — which the
-    /// flush above empties, so a long revision used to forget its early writes.
+    /// flush above empties, so a long write used to forget its early writes.
     effects: WriteEffects,
     /// The cells a *manual* operation took a `tree_ref` row from, checked once
     /// at commit (see [`Self::check_forest_integrity`]). Deduplicated through
@@ -639,12 +639,12 @@ impl<'c> Writer<'c> {
         &*self.tx
     }
 
-    /// Number of operations recorded so far in this revision.
+    /// Number of operations recorded so far in this write.
     pub fn op_count(&self) -> i64 {
         self.flushed + self.pending.len() as i64
     }
 
-    /// What this revision obliges its caller to bring back in step (watch
+    /// What this write obliges its caller to bring back in step (watch
     /// rules, watch set). Read it before [`Self::commit`], which consumes the writer.
     pub fn effects(&self) -> WriteEffects {
         self.effects.clone()
@@ -684,15 +684,15 @@ impl<'c> Writer<'c> {
     /// refused when it *names* a parent carrying no position of its own, so a
     /// position may not be *removed* while metarecords are placed under it.
     ///
-    /// Checked once, on the state the revision is about to commit, rather than
+    /// Checked once, on the state the write is about to commit, rather than
     /// per operation — deleting a whole subtree is legitimate even though the
     /// parent goes first, and only the committed state has to be a forest.
     ///
     /// Without it the children stayed, naming a node that no longer existed:
     /// *detached*, reachable by uuid but under no parent and in no roots map, so
     /// `GET /tree/roots` and path reconstruction disagreed about them ever after.
-    /// Defers this revision's type checks — and its forest checks — to
-    /// [`Self::commit`], where they are made against the state the revision
+    /// Defers this write's type checks — and its forest checks — to
+    /// [`Self::commit`], where they are made against the state the write
     /// lands on rather than against each intermediate one.
     ///
     /// Only a revert needs this, and only because of how it works: it undoes a
@@ -703,7 +703,7 @@ impl<'c> Writer<'c> {
     /// type.
     ///
     /// Deferring is not skipping: [`Self::check_deferred_types`] refuses a
-    /// revision that leaves two value types under one field name, which is what
+    /// write that leaves two value types under one field name, which is what
     /// the per-write check was protecting.
     pub fn defer_type_checks(&mut self) {
         self.deferred_types.get_or_insert_with(Default::default);
@@ -711,8 +711,8 @@ impl<'c> Writer<'c> {
         // before the folder when the folder was deleted first (a trashing's
         // cascade), so a position may name a parent not there *yet*.
         self.deferred_trees.get_or_insert_with(Default::default);
-        // The per-revision cache holds types probed under the eager rule; drop
-        // it so nothing downstream reads a type this revision is about to move.
+        // The per-write cache holds types probed under the eager rule; drop
+        // it so nothing downstream reads a type this write is about to move.
         self.field_types.clear();
     }
 
@@ -724,7 +724,7 @@ impl<'c> Writer<'c> {
         self.reverting = op_id;
     }
 
-    /// The deferred check: every field name this revision wrote must carry a
+    /// The deferred check: every field name this write wrote must carry a
     /// single value type across the repository (doc "One value type per field name").
     fn check_deferred_types(&self) -> Result<()> {
         let Some(names) = &self.deferred_types else { return Ok(()) };
@@ -742,9 +742,9 @@ impl<'c> Writer<'c> {
         Ok(())
     }
 
-    /// The deferred forest check: every position the revision wrote that is
+    /// The deferred forest check: every position the write wrote that is
     /// still there must name a parent that is, without a cycle or too deep a
-    /// chain — checked once, on the state the revision lands on.
+    /// chain — checked once, on the state the write lands on.
     fn check_deferred_trees(&self) -> Result<()> {
         let Some(deferred) = &self.deferred_trees else { return Ok(()) };
         for (uuid, name, value) in deferred.borrow().iter() {
@@ -1093,7 +1093,7 @@ impl<'c> Writer<'c> {
     }
 
     /// Converts every non-`Nothing` row of field `name` to the type `to`,
-    /// repository-wide, in this one revision (doc "Changing a field's type"). The target may be any
+    /// repository-wide, in this one write (doc "Changing a field's type"). The target may be any
     /// type, including the reference variants.
     /// Row-scoped (each row keeps its id) and
     /// bypasses the per-write type check (it *is* the type change). `Nothing`
@@ -1104,7 +1104,7 @@ impl<'c> Writer<'c> {
     /// metarecords whose values fell back to the sentinel.
     pub fn retype_field(&mut self, name: &str, to: FieldType) -> Result<RetypeSummary> {
         // The field's established type changes here; drop any cached entry so a
-        // later checked write in this revision re-probes.
+        // later checked write in this write re-probes.
         self.field_types.remove(name);
         let mut converted = 0usize;
         let mut fallback: std::collections::BTreeSet<Uuid> = Default::default();
@@ -1330,7 +1330,7 @@ impl<'c> Writer<'c> {
             return Ok(());
         }
         if let Some(deferred) = &mut self.deferred_types {
-            // Checked once at commit instead, over the state this revision
+            // Checked once at commit instead, over the state this write
             // actually lands on.
             deferred.insert(field_name.to_string());
             return Ok(());

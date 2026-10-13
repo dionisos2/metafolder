@@ -20,7 +20,7 @@ pub fn store() -> (KvStore, TempDir) {
 }
 
 /// Reverts every operation newer than `after` (all of them for `None`), as
-/// one revision — the log's only way back (doc "The operation log").
+/// one write — the log's only way back (doc "The operation log").
 pub fn revert_since(kv: &mut KvStore, after: Option<i64>) {
     use metafolder_daemon::store::Log;
     let ops = kv.ops_after(after.unwrap_or(0)).unwrap();

@@ -643,7 +643,7 @@ async fn test_delete_by_query() {
     let (_, before) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;
     let revs_before = revisions(&before);
 
-    // Atomic predicate delete: one request, one revision, returns the count.
+    // Atomic predicate delete: one request, one write, returns the count.
     let (status, body) = request(
         &app,
         "POST",
@@ -666,7 +666,7 @@ async fn test_delete_by_query() {
     .await;
     assert_eq!(left.as_array().unwrap().len(), 1);
 
-    // The whole delete is a single revision (atomic, revertable as a unit).
+    // The whole delete is a single write (atomic, revertable as a unit).
     let (_, after) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;
     assert_eq!(revisions(&after) - revs_before, 1, "bulk delete must be one revision");
 }
@@ -1054,7 +1054,7 @@ async fn test_batch_unset_removes_the_whole_field() {
     let (_, before) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;
     let revs_before = revisions(&before);
 
-    // Unset removes the whole field (both rows) from every match, one revision.
+    // Unset removes the whole field (both rows) from every match, one write.
     let (status, body) = request(
         &app,
         "POST",
@@ -1074,7 +1074,7 @@ async fn test_batch_unset_removes_the_whole_field() {
     .await;
     assert_eq!(left.as_array().unwrap().len(), 0, "field is now unknown everywhere");
 
-    // One revision per metarecord change, but bundled into one revision overall.
+    // One write per metarecord change, but bundled into one write overall.
     let (_, after) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;
     assert_eq!(revisions(&after) - revs_before, 1, "bulk unset must be one revision");
 
@@ -1399,7 +1399,7 @@ async fn test_query_within_its_timeout_answers() {
     assert_eq!(body, json!([a]));
 }
 
-/// The repository's revision count (`GET /log` totals).
+/// The repository's write count (`GET /log` totals).
 async fn revisions(app: &Router, repo: &str) -> u64 {
     let (status, body) = request(app, "GET", &format!("/repos/{repo}/log?limit=1"), None).await;
     assert_eq!(status, StatusCode::OK, "log failed: {body}");
@@ -1407,7 +1407,7 @@ async fn revisions(app: &Router, repo: &str) -> u64 {
 }
 
 /// `POST /query/fields/batch` applies a list of writes — creations included —
-/// as ONE revision, every query read against the repository as it was before
+/// as ONE write, every query read against the repository as it was before
 /// the batch, each op reporting what it changed.
 #[tokio::test]
 async fn test_batch_of_writes_is_one_revision() {

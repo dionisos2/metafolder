@@ -11,7 +11,7 @@ query ([[Query endpoints]]). They overlap only on one metarecord (its URL, or a 
 
 |!Route |!Does |
 |<<cmd "POST /repos/:repo/metarecords">> |creates one: `{"fields": […], "force"?}` → the full metarecord, `id` on each field; with `"path"` (and `"parents"?`), the metarecord of that file ([[Recording a path]]) |
-|<<cmd "POST /repos/:repo/metarecords/bulk">> |creates many in one revision (below) |
+|<<cmd "POST /repos/:repo/metarecords/bulk">> |creates many in one write (below) |
 |<<cmd "GET /repos/:repo/metarecords/:uuid">> |reads one, each field with its row `id` |
 |<<cmd "PUT /repos/:repo/metarecords/:uuid">> |replaces its whole field set, keeping the uuid: `{"fields": […], "force"?}` → the metarecord |
 |<<cmd "DELETE /repos/:repo/metarecords/:uuid">> |deletes it and its fields → `204`; the repository's root is refused (`400`) |
@@ -44,7 +44,7 @@ order given. `force` covers the whole batch. `skip_existing` turns a uuid alread
 taken into a skip instead of a `409` — a subtree restore meeting a node the watcher
 re-tracked meanwhile would otherwise have to query first.
 
-It is ''all or nothing'': one revision, one transaction; the first refusal (a taken
+It is ''all or nothing'': one write, one transaction; the first refusal (a taken
 uuid, a reserved field without `force`, a schema violation naming its
 `metarecord_uuid`) rolls the batch back. Metarecords are applied ''in the order
 given'', and a `tree_ref` whose parent has no row yet is refused ([[Referential integrity of a forest]]), so a subtree comes

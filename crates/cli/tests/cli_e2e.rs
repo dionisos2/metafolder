@@ -2606,7 +2606,7 @@ fn test_trash_and_restore_a_directory_round_trips_the_whole_subtree() {
 // Reverting a trashing brings the *bytes* back too, not just the metarecord.
 // A revert writes the inverse forward rather than rewinding HEAD, and nothing
 // in `delete_metarecord` says a file is involved — an ordinary one touches no
-// file at all. The revision's `origin` is what tells the client to go looking
+// file at all. The write's `origin` is what tells the client to go looking
 // in the trash-bin (doc "Trash, undo and redo").
 #[test]
 fn test_revert_of_a_trashing_brings_the_file_back() {
@@ -2835,7 +2835,7 @@ fn test_trash_add_records_the_metarecord_version() {
 }
 
 // End to end: in a watched repo, `mf trash -f` deletes the metarecord in a
-// revision stamped `trash`; undoing it brings the file back from the trash
+// write stamped `trash`; undoing it brings the file back from the trash
 // with it (doc "Trash, undo and redo").
 #[test]
 fn test_undo_auto_restores_from_trash() {
@@ -5368,7 +5368,7 @@ fn test_slow_names_what_it_left_out() {
     assert_eq!(out.stdout.lines().count(), 2, "a cancelled clear keeps the log: {}", out.stdout);
 }
 
-// ── `mf log revert` (doc "Reverting a revision") ──────────────────────────────
+// ── `mf log revert` (doc "Reverting a label") ──────────────────────────────
 
 #[tokio::test(flavor = "current_thread")]
 async fn test_log_revert_undoes_a_revision_and_reports_the_blocker() {
@@ -5377,14 +5377,14 @@ async fn test_log_revert_undoes_a_revision_and_reports_the_blocker() {
 
     let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]);
     assert_ok(&out);
-    // The revision that write produced is the one HEAD sits in.
+    // The write that write produced is the one HEAD sits in.
     let out = mf(&["-u", &repo, "log", "revert", "--force"]);
     assert_ok(&out);
     assert!(out.stdout.contains("Reverted"), "unexpected output: {}", out.stdout);
 
     assert_eq!(rating_of(&repo, &uuid), 3, "the revert restored the previous value");
 
-    // A revert is itself an ordinary revision, so the log kept both.
+    // A revert is itself an ordinary write, so the log kept both.
     let out = mf(&["-u", &repo, "log"]);
     assert_ok(&out);
     assert!(out.stdout.lines().count() >= 3, "the log keeps the mistake and its correction");
@@ -5429,7 +5429,7 @@ fn rating_of(repo: &str, uuid: &str) -> i64 {
         .unwrap_or_else(|| panic!("no rating in:\n{}", out.stdout))
 }
 
-/// The revision that set `rating` to 5: revisions are listed newest first, so
+/// The write that set `rating` to 5: writes are listed newest first, so
 /// it is the one below the write that now blocks reverting it.
 fn oldest_revision_with_rating(repo: &str) -> String {
     let out = mf(&["-u", repo, "log", "list"]);
@@ -5613,7 +5613,7 @@ fn test_log_undo_repeats_down_the_users_changes() {
     assert!(out.stdout.contains('1'), "stdout: {}", out.stdout);
 }
 
-/// Undo runs out rather than eating the repository: it stops at the revision
+/// Undo runs out rather than eating the repository: it stops at the write
 /// that founds the history (the root metarecord the daemon writes at init),
 /// and says so instead of emptying the log.
 #[test]

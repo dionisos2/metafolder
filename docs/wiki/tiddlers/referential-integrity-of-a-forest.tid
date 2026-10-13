@@ -9,8 +9,8 @@ reference on every manual write:
 * ''Creating'' a position: the parent must be a metarecord that itself has a position ''in the same forest''. One that does not exist, or exists in another forest only, is refused with `400` (`invalid TreeRef parent …: no such metarecord carrying a 'path' TreeRef field`).
 * ''Removing'' one: a position may not be taken away while metarecords are placed under it — refused with `400` naming the first children (`cannot remove the last 'path' position of …: 2 metarecord(s) are placed under it ("jazz", "rock"); move or delete them first`). This covers every shape that takes a position away: `unset`, deleting the row, setting the field to `nothing` or to another value, a whole-record overwrite, deleting the metarecord.
 
-That second check runs ''once, against the state the revision is about to commit'',
-not per operation: deleting a whole subtree in one revision is fine even though the
+That second check runs ''once, against the state the write is about to commit'',
+not per operation: deleting a whole subtree in one write is fine even though the
 parent goes first; only the committed state must be a forest.
 
 One position can never be removed: the ''filesystem root'', the `mfr_path` node with

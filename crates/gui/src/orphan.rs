@@ -88,7 +88,7 @@ pub async fn count(
 
 /// `orphan:delete` — delete every metarecord carrying the marker. The files are
 /// gone already; what goes is the metadata that was still standing for them.
-/// Confirmed by the caller, and rollback-able like any other revision.
+/// Confirmed by the caller, and rollback-able like any other write.
 pub async fn delete(
     gui: Arc<GuiState>,
     daemon: Arc<DaemonProxy>,

@@ -8,7 +8,7 @@ A metarecord is ''viewed'' when `metarecord-detail` or the [[file panel]] shows 
 GUI keeps the last 200 of each repository, most recent first, each once: viewing one
 again moves it to the front. The list is the GUI's — a file of the repository,
 `.metafolder/gui/recent` — and no field of the metarecord: recording a view writes
-nothing to the daemon, so it adds no revision to the event log.
+nothing to the daemon, so it adds no write to the event log.
 
 !! As a pick
 

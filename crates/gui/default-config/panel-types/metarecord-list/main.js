@@ -1301,7 +1301,7 @@ export async function mount(root, metafolder) {
 
       if (op === BULK_OPS.trash) {
         // The files go to the trash, their metarecords with them, in one
-        // revision (doc "Sending files to the trash"); the Rust side posts the
+        // write (doc "Sending files to the trash"); the Rust side posts the
         // outcome and marks the lists dirty.
         if (
           !confirm(

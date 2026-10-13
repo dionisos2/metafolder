@@ -163,14 +163,14 @@ mod tests {
         let page = json!({
             "entries": [
                 { "level": "info", "scope": "executor",
-                  "message": "flush on photos: 1 event in 3 ms -> 1 revision; create /a.txt" },
+                  "message": "flush on photos: 1 event in 3 ms -> 1 write; create /a.txt" },
             ],
             "next_since": 9,
         });
         let (lines, next) = lines_from_page(&page, 0);
         assert_eq!(
             texts(&lines),
-            vec!["daemon executor: flush on photos: 1 event in 3 ms -> 1 revision; create /a.txt"]
+            vec!["daemon executor: flush on photos: 1 event in 3 ms -> 1 write; create /a.txt"]
         );
         assert_eq!(next, 9);
     }

@@ -416,7 +416,7 @@ pub(super) async fn orphans_clear(
 
 /// `POST /repos/:repo/orphans/mark`: flag every orphaned metarecord with
 /// `orphan = true` and take the flag back from records that are not orphaned
-/// any more, in one revision (doc "Finding and clearing orphans"). Both
+/// any more, in one write (doc "Finding and clearing orphans"). Both
 /// populations count: a stale `mfr_path` the disk scan proves gone, and one
 /// already `Nothing`. Returns `{orphans, marked, unmarked}`.
 pub(super) async fn orphans_mark(

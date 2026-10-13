@@ -1,13 +1,13 @@
 title: Why undo does not step HEAD back
 tags: [[Event log]]
 kind: rationale
-summary: Rolling HEAD back one revision would unrecord what the watcher saw — facts still true on disk — so undo reverts in place.
+summary: Rolling HEAD back one write would unrecord what the watcher saw — facts still true on disk — so undo reverts in place.
 
-The obvious undo — move HEAD back one revision — is wrong as soon as the watcher runs.
-Between the change you want back and the present sit the watcher's revisions: a file
+The obvious undo — move HEAD back one write — is wrong as soon as the watcher runs.
+Between the change you want back and the present sit the watcher's writes: a file
 touched, a directory renamed, a file gone. Rewinding HEAD over them ''unrecords facts
 that are still true on disk'', and the metadata falls out of step with the filesystem the
-daemon exists to track. The watcher's revisions are not yours to undo.
+daemon exists to track. The watcher's writes are not yours to undo.
 
 So undo reverts: it writes the inverse of your change onto the current state, and the
 watcher's work stays. It first chose between a rollback (when your change was still the
@@ -16,6 +16,6 @@ written yet, which nobody controls, and that cost redo its footing when the watc
 between an undo and its redo. Undo and redo are reverts only since October 2026, and the
 log is no longer a tree ([[Why the log stops being a tree]]).
 
-The origin a revision carries is what makes the distinction possible: the operation
+The origin a write carries is what makes the distinction possible: the operation
 types cannot say it, since a file arriving is a creation like any other
 ([[Operations and their origin]]).

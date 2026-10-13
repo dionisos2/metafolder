@@ -974,7 +974,7 @@ fn relink_after_restore(
     }
 }
 
-/// Deletes the metarecords a trashing takes with it, in one revision the daemon
+/// Deletes the metarecords a trashing takes with it, in one write the daemon
 /// stamps `origin = 'trash'` (doc "POST /repos/:repo/metarecords/trash").
 ///
 /// Only the nodes marked `trashed` — never the captured ancestors, which are the
@@ -1052,7 +1052,7 @@ pub fn recreate_subtree(
             // all-or-nothing), so the chunk is sent again one node at a time and
             // only the refused ones are skipped. Parent first still holds: a
             // child whose parent was refused is refused in turn, and skipped.
-            // The rare path, so its one revision per node is acceptable.
+            // The rare path, so its one write per node is acceptable.
             Err(e) if is_benign_relink_error(&e) => {
                 for record in chunk {
                     match bulk(std::slice::from_ref(record)) {

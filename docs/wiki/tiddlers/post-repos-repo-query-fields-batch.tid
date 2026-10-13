@@ -2,6 +2,6 @@ title: POST /repos/:repo/query/fields/batch
 tags: [[HTTP endpoint]] [[Query endpoints]]
 kind: reference
 audience: dev
-summary: Applies a list of writes, in order, as one revision.
+summary: Applies a list of writes, in order, as one write.
 
 Bodies, answers and errors: [[Query endpoints]].

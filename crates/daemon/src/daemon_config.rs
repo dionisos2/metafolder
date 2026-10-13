@@ -16,7 +16,7 @@ use crate::state::AppState;
 /// filesystem event before flushing the pending buffer. See [`DaemonSettings`].
 /// Two seconds rather than the former half second: an editor's save, a copy,
 /// an archive extraction arrive as bursts spread over more than 500 ms, and
-/// each flush is a revision of its own — they buried the user's own changes
+/// each flush is a write of its own — they buried the user's own changes
 /// in the log and ate the log-retention budget.
 pub const DEFAULT_WATCH_QUIET_PERIOD_MS: u64 = 2000;
 
@@ -74,8 +74,8 @@ pub const DEFAULT_AUTO_BACKUP_DAYS: u32 = 1;
 #[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
 pub struct DaemonSettings {
     /// Quiet period before the watcher's executor flushes buffered filesystem
-    /// events (compaction + one revision per group). Larger values batch more
-    /// aggressively (fewer revisions, more latency); useful on slow/network
+    /// events (compaction + one write per group). Larger values batch more
+    /// aggressively (fewer writes, more latency); useful on slow/network
     /// filesystems that emit bursts of events.
     pub watch_quiet_period_ms: u64,
     /// Percentage of the kernel's per-user watch limit this daemon will spend
@@ -95,7 +95,7 @@ pub struct DaemonSettings {
     pub log_retention_watcher_ops: u64,
     /// Operations of every other origin the event log keeps (`0`: all).
     pub log_retention_user_ops: u64,
-    /// The retention of revisions before October 2026, gone with them: read
+    /// The retention of writes before October 2026, gone with them: read
     /// so an edited config still loads, ignored with a warning
     /// ([`DaemonSettings::obsolete`]).
     pub log_retention_revisions: Option<toml::Value>,

@@ -39,10 +39,10 @@ when it is a directory, its folder when it is a file; with nothing selected, the
 manager's current directory; with neither, an error, never the repository root. There is
 no dry run; the status bar names the folder and how many positions were written.
 
-''A numbering is one revision'': the positions and the folder's marker go in one
+''A numbering is one write'': the positions and the folder's marker go in one
 `query/fields/batch`, so one undo (`mf log undo`, <<key "log:undo" Ctrl+z>>) takes the whole
 numbering back. A folder of more than 2000 children is the exception — a batch is kept
-under the daemon's 2 MiB body limit, so it is written in several revisions. The
+under the daemon's 2 MiB body limit, so it is written in several writes. The
 orchestration lives in `metafolder_core::order`, shared by both.
 
 The two position fields were first named `order_position_file` and

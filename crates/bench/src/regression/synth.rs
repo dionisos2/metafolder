@@ -6,8 +6,8 @@
 //! measurements needs the opposite property: the same work, byte for byte, on
 //! every run. So the regression suite builds its own repositories from a fixed
 //! seed, writing them through the daemon's own library (a `Writer` per
-//! revision, like every other write in the system) rather than through HTTP,
-//! which would make generating a 5 000-revision log slower than measuring it.
+//! write, like every other write in the system) rather than through HTTP,
+//! which would make generating a 5 000-write log slower than measuring it.
 
 use std::path::Path;
 
@@ -27,9 +27,9 @@ pub struct Shape {
     pub dirs: usize,
     /// File metarecords, spread over the directories.
     pub files: usize,
-    /// Revisions of one operation each, written after the bulk — the shape a
+    /// Writes of one operation each, written after the bulk — the shape a
     /// long-lived repository ends up with, where a manual edit or a watcher
-    /// flush is its own revision.
+    /// flush is its own write.
     pub revisions: usize,
 }
 
@@ -68,7 +68,7 @@ pub fn build_named(dir: &Path, shape: &Shape, name: &str) -> Result<Uuid> {
     let repo_uuid = opened.config.repo_uuid;
     let store = opened.metafolder_dir.join(repo::INTERNAL_DIR).join(repo::KV_DIR);
     drop(opened.conn);
-    // Generation only: an fsync per revision would make building the log
+    // Generation only: an fsync per write would make building the log
     // longer than the whole measurement (and the generated repository is
     // disposable).
     let mut conn = KvStore::open_unsynced(&store)?;
@@ -79,7 +79,7 @@ pub fn build_named(dir: &Path, shape: &Shape, name: &str) -> Result<Uuid> {
         .child_by_bytes("mfr_path", None, b"")?
         .context("the repository has no filesystem root")?;
 
-    // One revision for the tree, as a reconcile would write it.
+    // One write for the tree, as a reconcile would write it.
     let mut dirs = Vec::with_capacity(shape.dirs);
     let mut writer = Writer::begin(&mut conn, Some("synthetic tree".to_string()))?;
     for k in 0..shape.dirs {
@@ -112,7 +112,7 @@ pub fn build_named(dir: &Path, shape: &Shape, name: &str) -> Result<Uuid> {
     }
     writer.commit()?;
 
-    // Then the log: one revision per write, which is what makes reading the log
+    // Then the log: one write per write, which is what makes reading the log
     // back a different problem from reading the data.
     for i in 0..shape.revisions {
         let mut writer = Writer::begin(&mut conn, None)?;

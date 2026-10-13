@@ -1,5 +1,5 @@
 //! The derived key spaces (doc "Storage"
-//! a): what the query source reads, written in each revision's own
+//! a): what the query source reads, written in each write's own
 //! transaction and rebuilt from the primary data by [`KvStore::reindex`].
 //!
 //! | table | key                                  | value                    |

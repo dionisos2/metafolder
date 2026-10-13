@@ -1,4 +1,4 @@
-// log-detail panel: what the revision (or the operation) selected in the log
+// log-detail panel: what the write (or the operation) selected in the log
 // panel changed, field by field — the before and after of every operation
 // (doc "log-detail panel"). Follows `selected_log_entry`.
 
@@ -19,7 +19,7 @@ const OP_LABELS = /** @type {Record<string, string>} */ ({
 });
 
 /** Operations fetched per page of a whole revision: a reconcile writes one
- *  revision holding every file it found, each operation with its snapshots. */
+ *  write holding every file it found, each operation with its snapshots. */
 const PAGE = 100;
 
 /**
@@ -49,7 +49,7 @@ export async function mount(root, metafolder) {
   /** @type {Operation[]} */
   let operations = [];
   // With an operation selected, only it is shown until the user widens to the
-  // whole revision.
+  // whole write.
   let whole = false;
   let showUnchanged = false;
   /** Guards against a slow answer overwriting a newer selection's. */
@@ -310,7 +310,7 @@ export async function mount(root, metafolder) {
     unchanged: () => toggleUnchanged(),
   };
   void commands.register('log-detail:toggle', {
-    label: 'Log detail: toggle a view flag (the whole revision / unchanged fields)',
+    label: 'Log detail: toggle a view flag (the whole label / unchanged fields)',
     args: [
       {
         name: 'flag',

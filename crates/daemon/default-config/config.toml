@@ -22,10 +22,10 @@
 # Quiet period, in milliseconds, before the watcher's executor flushes the
 # buffered filesystem events (it waits until no new event has arrived for this
 # long, then compacts and applies them). Larger values batch more aggressively
-# — fewer revisions but more latency before changes show up; helpful on slow or
-# network filesystems that emit bursts of events. Each flush is one revision
+# — fewer writes but more latency before changes show up; helpful on slow or
+# network filesystems that emit bursts of events. Each flush is one write
 # (per kind of change) in the log, so a short period splits one gesture — a
-# save, a copy, an extraction — into many revisions. Default: 2000.
+# save, a copy, an extraction — into many writes. Default: 2000.
 watch-quiet-period-ms = 2000
 
 # Percentage of the kernel's per-user inotify watch limit

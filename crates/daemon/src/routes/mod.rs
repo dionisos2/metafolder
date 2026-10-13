@@ -385,7 +385,7 @@ fn validate_schema(
 /// With an optional optimistic-concurrency precondition (doc "Conditional writes"):
 /// when `expected_version` is given and the metarecord's
 /// current version differs, the write is rejected with `409` (nothing written,
-/// no revision), fenced by the transaction's exclusive lock.
+/// no write), fenced by the transaction's exclusive lock.
 async fn write_record_checked<F>(
     state: &AppState,
     repo_uuid: Uuid,
@@ -418,7 +418,7 @@ where
 /// gates on repository writability and on the field name being writable,
 /// resolves the query to its match set, then opens **one** logged [`Writer`]
 /// and lets `write` mutate each match in turn — the whole batch is a single
-/// revision.
+/// write.
 ///
 /// `write` answers whether that metarecord actually changed: a match it left
 /// alone is neither schema-validated nor counted, which is what makes the
@@ -474,7 +474,7 @@ struct ExpectedVersion {
     expected_version: Option<u64>,
 }
 
-/// 409 (no revision written) when `expected` is given and the metarecord's
+/// 409 (no write written) when `expected` is given and the metarecord's
 /// current version differs — the optimistic-concurrency precondition used by
 /// cross-repo sync propagation (doc "Conditional writes").
 fn ensure_version(

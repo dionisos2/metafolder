@@ -1440,7 +1440,7 @@ export async function mount(root, metafolder) {
             forceBodyFor(field),
           );
         } else {
-          // Several rows: one write, so one revision and one undo. A value
+          // Several rows: one write, so one write and one undo. A value
           // names every row equal to it, which is what the daemon's `remove`
           // deletes — one op per distinct value matched.
           await batchOnCurrent(
@@ -1526,7 +1526,7 @@ export async function mount(root, metafolder) {
         if (all.length === 0) throw new Error(`no field "${field}"`);
         const concrete = all.filter((f) => f.value.type !== 'nothing');
         const force = forceFor(field);
-        // One revision either way: the field's rows are rewritten together.
+        // One write either way: the field's rows are rewritten together.
         /** @type {Metafolder.Value[]} */
         let values;
         if (concrete.length === 0) {
@@ -1924,7 +1924,7 @@ export async function mount(root, metafolder) {
 
     trash: {
       // The files of the whole set go to the trash, their metarecords with
-      // them, in one revision (doc "Sending files to the trash"). No field, no
+      // them, in one write (doc "Sending files to the trash"). No field, no
       // value; confirmed on its own terms like `delete`, naming the count.
       // The Rust side posts the outcome (files trashed, metarecords without a
       // file kept) and marks the lists dirty.

@@ -9,7 +9,7 @@ created, changed, moved, deleted. Events go through one pipeline whatever produc
 
 # a ''source'' delivers them — inotify, one watch per directory (the ''budget'' regime), or a fanotify broker covering whole filesystems (the ''coverage'' regime) ([[Watch sources and regimes]]);
 # the ''ingest'' thread counts them ([[Watch activity]]), drops those on ineligible paths ([[Eligibility]]) and buffers the rest, in memory;
-# once the filesystem has been quiet for two seconds the ''executor'' flushes the buffer: it compacts it, groups it by kind, and applies each group as one revision ([[Event batching]], [[Event semantics]]).
+# once the filesystem has been quiet for two seconds the ''executor'' flushes the buffer: it compacts it, groups it by kind, and applies each group as one write ([[Event batching]], [[Event semantics]]).
 
 Only the watcher (and a forced write) sets `mfr_path` to `nothing`: a file seen deleted.
 Reconcile never does; it leaves a stale path in place ([[Reconcile]]).

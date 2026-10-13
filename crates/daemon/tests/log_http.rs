@@ -178,16 +178,16 @@ async fn test_label_detail() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-// A revision can hold every operation of a reconcile — hundreds of thousands,
+// A write can hold every operation of a reconcile — hundreds of thousands,
 // each with its snapshots. The detail view pages through them, or asks for the
-// one operation the user selected, instead of pulling the whole revision.
+// one operation the user selected, instead of pulling the whole write.
 #[tokio::test]
 async fn test_revision_detail_pages_its_operations() {
     let (app, repo, _root) = setup("rev_page").await;
     for v in [1, 2, 3] {
         create(&app, &repo, json!([{"name": "g", "value": {"type": "int", "value": v}}])).await;
     }
-    // One revision, three operations.
+    // One write, three operations.
     let (status, _) = request(
         &app,
         "POST",
@@ -207,7 +207,7 @@ async fn test_revision_detail_pages_its_operations() {
     assert_eq!(all.len(), 3);
     assert_eq!(whole["label"]["operation_count"], 3);
 
-    // A window: offset + limit, the count still the whole revision's.
+    // A window: offset + limit, the count still the whole write's.
     let (status, page) =
         request(&app, "GET", &format!("/repos/{repo}/log/labels/head?offset=1&limit=1"), None)
             .await;
@@ -227,7 +227,7 @@ async fn test_revision_detail_pages_its_operations() {
     assert_eq!(ops[0]["id"].as_i64().unwrap(), all[2]);
     assert!(ops[0]["snapshots_after"].is_array());
 
-    // An operation of another revision is not this revision's.
+    // An operation of another write is not this write's.
     let (status, _) =
         request(&app, "GET", &format!("/repos/{repo}/log/labels/head?op=1"), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -254,7 +254,7 @@ async fn test_set_record_is_one_op_and_reverts_exactly() {
     let (_, log_before) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;
     let revs_before = revisions(&log_before);
 
-    // Whole-record set: a totally different field set, one revision.
+    // Whole-record set: a totally different field set, one write.
     let (status, after) = request(
         &app,
         "PUT",
@@ -268,7 +268,7 @@ async fn test_set_record_is_one_op_and_reverts_exactly() {
     assert_eq!(new_fields[0]["name"].as_str().unwrap(), "c");
     assert_ne!(after["version"].as_u64().unwrap(), version_before, "the write moves the version");
 
-    // Exactly one new revision, whose single operation is set_metarecord.
+    // Exactly one new write, whose single operation is set_metarecord.
     let (_, log_after) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;
     assert_eq!(revisions(&log_after) - revs_before, 1, "set_record must be one revision");
     let ops = log_after["operations"].as_array().unwrap();

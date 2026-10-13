@@ -62,7 +62,7 @@
 "8" = { command = "workspace:goto 8" }
 "9" = { command = "workspace:goto 9" }
 
-# Event log navigation (one revision per step, on the active repo).
+# Event log navigation (one write per step, on the active repo).
 "ctrl+z" = { command = "log:undo" }
 "ctrl+shift+z" = { command = "log:redo" }
 
@@ -413,7 +413,7 @@
 # log: undoing a *past* change in place — the reverts. Shifted keys throughout:
 # plain "r" is refresh in every panel, and the log's own list keys (j/k, enter)
 # are the ones the fingers already know. "shift+r" reverts whatever the cursor
-# is on (a revision, or one operation of an expanded one), which is the whole
+# is on (a write, or one operation of an expanded one), which is the whole
 # point of being able to select an operation.
 "shift+r" = { command = "log:revert", when = "log" }
 "shift+o" = { command = "log:revert op", when = "log" }
@@ -617,7 +617,7 @@
   { command = "metarecord:bulk selection delete", when = "metarecord-detail" },
   { command = "metarecord:bulk selection delete", when = "metarecord-list" },
 ]
-# "t" sends the files to the trash, their metarecords with them (one revision,
+# "t" sends the files to the trash, their metarecords with them (one write,
 # restorable from the trash panel); metarecords without a file are left alone.
 "m m t" = [
   { command = "metarecord:bulk selection trash", when = "metarecord-detail" },

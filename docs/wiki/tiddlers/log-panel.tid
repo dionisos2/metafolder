@@ -31,6 +31,6 @@ whether undoing it makes sense, computed over everything under it:
 
 <<key "log:revert" Shift+r>>, <<key "log:revert op" Shift+o>>, <<key "log:revert label" Shift+v>>,
 `log:prune` — and the global <<key "log:undo" Ctrl+z>> / <<key "log:redo" Ctrl+Shift+z>>,
-also as toolbar buttons: [[Revision commands in the GUI]].
+also as toolbar buttons: [[Log commands in the GUI]].
 
 The cursor is published as `selected_log_entry`, which the [[log-detail panel]] follows.

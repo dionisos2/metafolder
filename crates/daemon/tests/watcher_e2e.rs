@@ -410,7 +410,7 @@ async fn test_renaming_a_directory_keeps_its_whole_subtree_watched(regime: Regim
 }
 
 /// A file moved between two watched directories keeps its metarecord and lands
-/// at the new path (one revision, not delete + create).
+/// at the new path (one write, not delete + create).
 async fn test_file_moved_between_directories_keeps_its_metarecord(regime: Regime) {
     let fs = regime.fs();
     let (app, repo, root) = watched_repo("dirmove", regime).await;

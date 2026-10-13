@@ -1,6 +1,6 @@
 //! Cost assertions for whole HTTP routes (doc "Performance testing"): the keys
 //! the store reads to answer one request, on a repository and on one eight
-//! times larger — files, folders and revisions alike. `kv_cost.rs` and
+//! times larger — files, folders and writes alike. `kv_cost.rs` and
 //! `log_cost.rs` hold the store's and the log's own operations to the same
 //! rule; this file holds the routes built on them, where an extra walk of the
 //! log or of the forest can hide around an operation that is bounded itself.
@@ -27,7 +27,7 @@ mod common;
 use common::TempDir;
 
 /// A loaded repository of `files` files under `dirs` folders (an 8-way tree,
-/// on disk too, tracked), and a log of `revisions` one-write revisions.
+/// on disk too, tracked), and a log of `writes` one-write writes.
 struct Repo {
     app: Router,
     state: Arc<AppState>,
@@ -157,7 +157,7 @@ fn bounded(what: &str, small: u64, large: u64) {
     assert!(large <= small + small / 2 + 20, "{what}: {small} keys, then {large} on 8x");
 }
 
-/// The repository, and one eight times larger: files, folders and revisions.
+/// The repository, and one eight times larger: files, folders and writes.
 async fn pair() -> (Repo, Repo) {
     (load("small", 1).await, load("large", 8).await)
 }

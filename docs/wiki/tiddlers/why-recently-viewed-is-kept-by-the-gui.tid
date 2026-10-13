@@ -7,9 +7,9 @@ summary: The list of metarecords last looked at is a file of the GUI, not a fiel
 !! A view is not a write
 
 The obvious place for "last viewed" is a field on the metarecord. But every write to
-the daemon goes through the event log: one revision, and a new version of the
+the daemon goes through the event log: one write, and a new version of the
 metarecord, per write ([[Writes and atomicity]]). Recording each ''view'' that way
-would fill the history with revisions nobody made, put them in the way of
+would fill the history with writes nobody made, put them in the way of
 <<key "log:undo" Ctrl+z>>, and change a version that other clients compare.
 
 So the list is the GUI's, as the input history is ([[Input history]]): one text file

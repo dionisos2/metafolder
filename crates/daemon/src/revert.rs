@@ -2,7 +2,7 @@
 //!
 //! A revert undoes a set of past operations *without moving HEAD*: it applies
 //! the inverse of each member, newest to oldest, to the state as it is now,
-//! and writes those inverses through [`log::Writer`] as a new revision
+//! and writes those inverses through [`log::Writer`] as a new write
 //! (doc "Reverting onto the current state"). What an operation wrote is never
 //! a condition for undoing it — a later write on the same cell does not block
 //! the revert, it only earns a warning in the plan ([`changed_since`]).
@@ -205,7 +205,7 @@ pub enum FsAction {
 const MAX_REVERT_CHAIN: usize = 64;
 
 /// Whether `op` creates or deletes a metarecord whose bytes a *trashing* took:
-/// the `delete_metarecord` of a revision stamped `trash`, or a create/delete a
+/// the `delete_metarecord` of a write stamped `trash`, or a create/delete a
 /// revert wrote whose `reverts_op_id` chain leads back to one. Only the first
 /// says so in its own row — the undo of a trashing, when it is a revert, writes
 /// an ordinary `create_metarecord`, and the redo of that a `delete_metarecord`

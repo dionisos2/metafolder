@@ -3,4 +3,4 @@ tags: [[GUI command]] [[Event log]]
 kind: reference
 summary: Log: move the selection down
 
-Moves the selection down, into an expanded revision's operations too ([[log panel]]).
+Moves the selection down, into an expanded write's operations too ([[log panel]]).

@@ -44,7 +44,7 @@ impl From<TrashError> for NavError {
     }
 }
 
-/// What to do with a `move` step (doc "Reverting a revision").
+/// What to do with a `move` step (doc "Reverting a label").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Policy {
     Apply,
@@ -137,7 +137,7 @@ pub fn decide_move(
         // Move the file there when it is present; when it is gone there is
         // nothing to move — the metadata still follows the revert, keeping
         // the recorded path rather than rewinding to a location the file is
-        // not at (doc "Reverting a revision").
+        // not at (doc "Reverting a label").
         Policy::Apply => {
             if available {
                 let dest = Path::new(to);
@@ -156,7 +156,7 @@ pub fn decide_move(
                 // trash the occupant first so its content survives (doc "Trash").
                 // The occupant's own metarecord is unknown here (the op's
                 // entity_uuid names the *moved* record, not this file), so the
-                // entry records only the causing revision, not a metarecord.
+                // entry records only the causing write, not a metarecord.
                 //
                 // Note: trash-then-rename is not atomic. If the rename fails
                 // after trashing (e.g. `from` vanished, or a cross-device
@@ -626,7 +626,7 @@ mod tests {
         let entries = trash.entries().unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].reason, Reason::Revert);
-        // The entry records the causing revision, but no metarecord — the op's
+        // The entry records the causing write, but no metarecord — the op's
         // entity_uuid names the moved record, not this displaced occupant.
         assert_eq!(entries[0].metarecord, None);
         std::fs::remove_file(&to).unwrap();
@@ -842,10 +842,10 @@ mod tests {
         std::fs::remove_dir_all(&base).ok();
     }
 
-    // A revision that orphans a record writes several fields (mfr_path and
+    // A write that orphans a record writes several fields (mfr_path and
     // mfr_path_old), so its operations restore to different versions while the
     // trash entry records only the version the record had *before* the whole
-    // revision. Every op of the revision must reach the same decision.
+    // write. Every op of the write must reach the same decision.
     #[test]
     fn deleted_steps_of_one_revision_share_the_pre_revision_version() {
         let base = scratch("del3");

@@ -63,7 +63,7 @@ pub fn scan_orphans(repo: &RepoState) -> Result<Vec<OrphanEntry>, ApiError> {
 /// cascading to every descendant — the same transition the watcher makes on a
 /// live delete. A uuid whose file exists again (or is unreadable/unknown) is
 /// skipped, so a stale scan never orphans a since-recreated file. All changes go
-/// in one revision. Returns how many top-level records were orphaned.
+/// in one write. Returns how many top-level records were orphaned.
 pub fn clear_orphans(repo: &RepoState, uuids: &[Uuid]) -> Result<usize, ApiError> {
     let mut conn = repo.conn.lock_recover();
     let cache = repo.tree();
@@ -179,7 +179,7 @@ pub struct MarkResult {
     pub unmarked: usize,
 }
 
-/// Marks every orphaned metarecord with `orphan = true`, in one revision.
+/// Marks every orphaned metarecord with `orphan = true`, in one write.
 ///
 /// "Orphan" here covers both populations the user means by the word: a record
 /// whose `mfr_path` still resolves to a path the disk scan proves gone (see

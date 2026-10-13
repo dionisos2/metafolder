@@ -40,7 +40,7 @@ mf -n music metarecord -q 'rating = 0' delete                  # asks first; --f
 ```
 
 * `field set` replaces every row of the name with the values given (several specs, one name); `add` appends one; `remove` takes out the rows equal to the value, leaving the others; `unset` removes the name entirely — not the same as setting it to `nothing` ([[Nothing versus unknown]]).
-* A query selector writes every match in ''one'' revision, one operation per metarecord changed; `field add` prints how many metarecords gained a row.
+* A query selector writes every match in ''one'' write, one operation per metarecord changed; `field add` prints how many metarecords gained a row.
 * `metarecord set` overwrites the whole record — any field not listed goes, `mfr_*` and `mf_*` included, so a careless one untracks a file. It needs `-i` and a mandatory `-f`, so that it is never confused with `field set`. Round-trip the output of `get` to keep everything.
 * `delete` of a query asks for confirmation with the number of matches, then deletes them in one atomic request.
 * Writing an `mfr_*` field needs `-f`/`--force` ([[Reserved fields]]).
@@ -71,4 +71,4 @@ There is no `mf field add`: rows are born under a name (`metarecord … field ad
 |`field delete <id>` |one `delete_field` |
 |`retype` |per converted row, a `delete_field` then an `append_field` |
 
-A write to many metarecords is still one revision; `mf log undo` takes it back whole.
+A write to many metarecords is still one write; `mf log undo` takes it back whole.

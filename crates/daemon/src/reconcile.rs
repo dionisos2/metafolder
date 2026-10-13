@@ -80,7 +80,7 @@ fn cancelled() -> ApiError {
 }
 
 /// Full reconcile: walk the repository root and synchronise the database.
-/// Everything runs in a single transaction (one revision). When `threshold`
+/// Everything runs in a single transaction (one write). When `threshold`
 /// is `Some`, the v2 similarity phase runs after fingerprinting, appending
 /// score-based candidates for still-unmatched orphans and new files
 /// (doc "File similarity"). When `compute_mime` is set, files

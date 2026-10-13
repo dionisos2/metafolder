@@ -26,7 +26,7 @@ there, or was not. The rewrites that follow an `add` or a `deny` are not counted
 ([[Tag subsumption and exclusivity]]).
 
 A verb is several writes — creating a missing entry, adding the ref, dropping what it
-subsumes or contradicts — sent as one batch, so it is ''one'' revision of the event log
+subsumes or contradicts — sent as one batch, so it is ''one'' write of the event log
 ([[Operations and their origin]]): `mf log undo` takes the whole command back, the entries
 it created included ([[Undo and redo]]).
 

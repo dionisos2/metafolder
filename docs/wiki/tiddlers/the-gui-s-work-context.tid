@@ -1,0 +1,16 @@
+title: The GUI's work context
+tags: [[Labels and contexts]]
+kind: reference
+audience: dev
+status: deferred
+summary: A GUI command opening a context that every later user operation carries until it is closed — naming the work under way; deferred (user, October 2026).
+
+What replaced the "labelled revision is a retention floor" rule ([[The operation log]]): to
+name a stretch of work, the user opens a context in the GUI, and every later operation of
+theirs — not the watcher's — is written inside it until it is closed, so the work can be
+looked at, or undone, whole ([[Undo and redo by label]]).
+
+Deferred by the user (12 October 2026): secondary. Undecided until it is built: whether it
+belongs to a workspace or to the whole GUI, and whether it survives a restart. The pieces
+exist — the proxy already sends the command's key with every request, and a context is a
+label id ([[Labels and contexts]]).

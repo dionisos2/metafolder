@@ -34,7 +34,7 @@ change is seen ([[Commands]]).
 |<<key "metarecord:field rename" "m n">> |`rename` |renames the field on this metarecord, all its values with it |
 |<<key "metarecord:field retype" "m t">> |`retype` |converts its values to another type, on this metarecord |
 
-Each of them is one revision, however many rows it touches — a `rename` or a `retype`
+Each of them is one write, however many rows it touches — a `rename` or a `retype`
 of a field holding five values is undone in one step ([[Query endpoints]]). `rename`
 onto a name the metarecord already has adds the values to it. To retype a field in
 the whole repository, use `mf retype` or the [[repos panel]]'s ''Retype…''
@@ -42,7 +42,7 @@ the whole repository, use `mf retype` or the [[repos panel]]'s ''Retype…''
 
 !! Several metarecords: `metarecord:bulk`
 
-`metarecord:bulk <target> <operation> …` does the same over a set, in one revision
+`metarecord:bulk <target> <operation> …` does the same over a set, in one write
 ([[Editing a set of metarecords]]). The target comes first and is never guessed:
 
 * `selection` — the checked metarecords ([[Cross-panel selection]]);

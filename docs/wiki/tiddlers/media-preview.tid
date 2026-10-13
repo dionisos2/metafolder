@@ -47,7 +47,7 @@ to query or delete like any other. When a video resumes, the toolbar shows where
 `↩ 12:34`.
 
 It is written when you pause, seek or reach the end, when the preview moves to
-another file, and every 15 seconds while the video plays. Each write is a revision of
+another file, and every 15 seconds while the video plays. Each write is a write of
 the event log, so a position that has not moved by a second is not written again.
 
 * Stopped in the first 5 seconds, or in the last 10: nothing is kept, and a stored position is removed — nothing was watched, or everything was.

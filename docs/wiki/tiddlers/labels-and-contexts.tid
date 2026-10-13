@@ -2,10 +2,9 @@ title: Labels and contexts
 tags: [[The operation log]]
 kind: reference
 audience: dev
-status: proposed
 summary: Operations are grouped by nested labels (name, description, parent) opened as contexts by scripts, commands and the GUI — passed along as an id, so leaving a context is just not passing it on.
 
-''Being built'' (October 2026): labels, contexts and commands are in place in the daemon,
+Built in October 2026 ([[The operation log]]): labels, contexts and commands are in place in the daemon,
 the CLI, the GUI and the shipped scripts ([[Log endpoints]]), undo and redo offer them
 ([[Undo and redo by label]]), and the [[log panel]] shows their tree.
 
@@ -48,5 +47,5 @@ one line, or they would drown the rest.
 !! Deferred
 
 The GUI's work context is secondary (user, 12 October 2026), and not part of the first
-build: whether it belongs to a workspace or to the whole GUI, and whether it survives a
+build ([[The GUI's work context]]): whether it belongs to a workspace or to the whole GUI, and whether it survives a
 restart, is decided when it is built. So is renaming or describing a label after the fact.

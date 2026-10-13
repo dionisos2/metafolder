@@ -1,10 +1,10 @@
 title: Trash, undo and redo
 tags: Trash
 kind: reference
-summary: A trashing is an ordinary revision: undo brings the file back, redo sends it back.
+summary: A trashing is an ordinary write: undo brings the file back, redo sends it back.
 
-A trashing writes its own revision, stamped `origin = 'trash'`. It is not the
-watcher's (only `watcher` revisions are out of an undo's reach), so it can be
+A trashing writes its own write, stamped `origin = 'trash'`. It is not the
+watcher's (only `watcher` writes are out of an undo's reach), so it can be
 undone like any change you made.
 
 !! Two ways back

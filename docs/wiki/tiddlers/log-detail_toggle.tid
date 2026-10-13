@@ -1,6 +1,6 @@
 title: log-detail:toggle
 tags: [[GUI command]] [[Event log]]
 kind: reference
-summary: Log detail: toggle a view flag (the whole revision / unchanged fields)
+summary: Log detail: toggle a view flag (the whole label / unchanged fields)
 
-`whole` widens an operation to its revision, `unchanged` lists the fields it did not change ([[log-detail panel]]).
+`whole` widens an operation to its label's own operations, `unchanged` lists the fields it did not change ([[log-detail panel]]).

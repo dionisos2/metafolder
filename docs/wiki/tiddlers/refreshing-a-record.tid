@@ -6,7 +6,7 @@ audience: dev
 
 
 <<cmd "POST /repos/:repo/metarecords/:uuid/refresh">> `[?expected_version=<n>]`
-stats the file at the record's path and writes, in one revision, every stat field
+stats the file at the record's path and writes, in one write, every stat field
 that differs from the stored one ([[File metadata fields]]). When the size or the
 mtime moved, what was derived from the old content goes with it — the hashes and
 the duplicate group — as on a watcher `Modify(Data)` ([[Event semantics]]). It

@@ -8,7 +8,7 @@
 //! sends: a large copy is thousands of them and costs next to nothing, since
 //! they compact into one modification. An *operation* is what reached the log:
 //! it is durable, spends the retention budget and buries the user's own
-//! changes — a file touched every few seconds is few events and a revision
+//! changes — a file touched every few seconds is few events and a write
 //! each time.
 //!
 //! Counts are *recursive*: an event at `/a/b/c` counts once on `/a/b/c`, `/a/b`,
@@ -81,7 +81,7 @@ impl WatchActivity {
 
     /// Counts the operations a flush wrote: each entry is the path(s) of one
     /// applied event (see [`event_paths`]) and how many operations applying it
-    /// recorded. Called once the revision is committed — what was rolled back
+    /// recorded. Called once the write is committed — what was rolled back
     /// cost nothing.
     pub fn record_operations(&mut self, written: &[(Vec<RelPath>, u64)]) {
         let mut touched: HashSet<RelPath> = HashSet::new();

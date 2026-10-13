@@ -375,7 +375,7 @@ export async function mount(root, metafolder) {
   /** @type {Playback|null} */
   let playback = null;
   // A write in flight: pause/seek/interval can all fire while one is running,
-  // and each write is an event-log revision — never stack them.
+  // and each write is an event-log write — never stack them.
   let saving = false;
 
   /** @param {number|null} seconds */
@@ -432,7 +432,7 @@ export async function mount(root, metafolder) {
   // seek to the stored position, then keep it up to date. Writes happen on
   // pause/seek/end, on teardown, and periodically while playing — never on
   // `timeupdate` (which fires several times a second, and every write is an
-  // event-log revision).
+  // event-log write).
   /** @param {HTMLMediaElement} media @param {number|null} stored */
   function attachPlayback(media, stored) {
     if (localPath !== null || selected === null) return; // no metarecord to store it on

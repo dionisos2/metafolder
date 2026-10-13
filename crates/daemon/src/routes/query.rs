@@ -445,7 +445,7 @@ pub(super) fn single_value(
 }
 
 /// Runs the query server-side and sets the field on every match in a single
-/// transaction (one revision). `value` sets one row; `values` a multi-map set —
+/// transaction (one write). `value` sets one row; `values` a multi-map set —
 /// either way one `SetField` op per metarecord.
 pub(super) async fn batch_set(
     State(state): State<Arc<AppState>>,
@@ -466,7 +466,7 @@ pub(super) async fn batch_set(
 }
 
 /// Runs the query server-side and adds one field row to every match in a
-/// single transaction (one revision) — the bulk form of `POST
+/// single transaction (one write) — the bulk form of `POST
 /// /metarecords/:uuid/fields`, and the set-layer half of `mf metarecord field
 /// add`. Multi-map: appends, never replaces existing rows.
 pub(super) async fn batch_add(
@@ -487,7 +487,7 @@ pub(super) async fn batch_add(
 }
 
 /// Runs the query server-side and removes every field row equal to
-/// `(name, value)` from each match in a single transaction (one revision) — the
+/// `(name, value)` from each match in a single transaction (one write) — the
 /// inverse of `batch_add`. `updated` counts the metarecords actually changed
 /// (those that carried at least one matching row).
 pub(super) async fn batch_remove(
@@ -514,7 +514,7 @@ pub(super) struct BatchUnsetBody {
 }
 
 /// Runs the query server-side and removes the field *entirely* (every row of
-/// `name`) from each match in a single transaction (one revision; one
+/// `name`) from each match in a single transaction (one write; one
 /// `DeleteField` op per affected metarecord). The field becomes unknown. `updated`
 /// counts the metarecords that carried the field.
 pub(super) async fn batch_unset(
@@ -593,7 +593,7 @@ enum Ready {
 }
 
 /// `POST /repos/:repo/query/fields/batch`: several writes — creations and the
-/// set-layer verbs — applied in order as **one** revision, so a client
+/// set-layer verbs — applied in order as **one** write, so a client
 /// operation made of several steps (`mf tag add` and its rewrites) is undone
 /// in one step (doc "Editing a set of metarecords"). Every query is resolved
 /// against the repository as it stood *before* the batch, so an op never sees
@@ -745,7 +745,7 @@ pub(super) struct RetypeBody {
 }
 
 /// `POST /repos/:repo/retype`: converts every non-`Nothing` row of the field
-/// `name` to any value type, repository-wide, in one revision
+/// `name` to any value type, repository-wide, in one write
 /// (doc "Changing a field's type"). Reserved fields (`mfr_*`/`mf_*`) are
 /// rejected unconditionally — the system owns their types.
 pub(super) async fn retype_field(
@@ -791,7 +791,7 @@ pub(super) struct QueryDeleteBody {
 }
 
 /// `POST /repos/:repo/query/delete` — deletes every metarecord matching `query` in a
-/// single transaction (one revision). Atomic and free of the client-side
+/// single transaction (one write). Atomic and free of the client-side
 /// TOCTOU of selecting then deleting one-by-one over HTTP.
 pub(super) async fn delete_by_query(
     State(state): State<Arc<AppState>>,

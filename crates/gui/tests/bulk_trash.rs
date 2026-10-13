@@ -1,5 +1,5 @@
 //! Trashing a set of metarecords at once — the checked selection or the list's
-//! query (doc "Sending files to the trash"). One revision deletes every
+//! query (doc "Sending files to the trash"). One write deletes every
 //! metarecord of the set, then each file's bytes move into the trash as an
 //! entry of its own; a file under a directory of the set travels with the
 //! directory, and the repository root is never trashed. Tests run a stub daemon

@@ -152,7 +152,7 @@ describe('savePosition / clearPosition', () => {
     );
   });
 
-  // Every write goes through the daemon's event log (one revision per write),
+  // Every write goes through the daemon's event log (one write per write),
   // so a failed write must not be retried in a loop, and must not take the
   // panel down either: playing a video is not a write-critical operation.
   test('a failing write is swallowed', async () => {
@@ -170,7 +170,7 @@ describe('write throttling', () => {
   // The panel persists on pause/seek/teardown and periodically while playing.
   // MIN_DELTA guards the periodic path: without it a paused-but-ticking
   // element would write an identical value every interval, one event-log
-  // revision each time.
+  // write each time.
   test('MIN_DELTA is the smallest position change worth a revision', () => {
     expect(MIN_DELTA).toBeGreaterThan(0);
   });

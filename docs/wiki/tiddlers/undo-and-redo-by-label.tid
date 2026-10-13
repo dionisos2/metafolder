@@ -28,7 +28,7 @@ The undo is itself written in a label: the command's that asked for it (`mf log 
 
 Redo is the same over the ''newest undo still standing'': its labels are the candidates,
 and redoing one reverts its undos still standing (`"only": "undos"`). Two rules carried
-over from the revisions ([[Why undo and redo do not oscillate]]):
+over from the selection of revisions ([[Why undo and redo do not oscillate]]):
 
 * an undo of an undo is a redo — undo never offers an undo, redo never offers a redo;
 * an operation is undone only while the revert that undid it still stands, resolved along the whole chain.

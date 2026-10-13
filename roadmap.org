@@ -6,22 +6,6 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 "Version scope and non-goals"); the ones worth keeping in view are listed at
 the end.
 
-* TODO the event log as a set of operations
-Proposed 12 October 2026 (doc "The operation log", =status: proposed=): the
-history tree, HEAD navigation, rollback and revisions replaced by an ordered
-set of operations, reverted onto the current state, grouped by nested labels
-opened as contexts; undo and redo by label; retention per origin. What
-motivates it is in doc "Why the log stops being a tree". Done: a revert is
-applied onto the current state (=3ff1d593=); the log is a sequence, undo and
-redo are reverts — which fixed the three undo/redo bugs that motivated it (the
-lost redo, the redo stopping at a redone undo, the scripts' going back). The
-old log is emptied, not converted (user); retention per origin (done before
-the labels: the trim had to leave the revisions behind first); labels replace
-revisions in the daemon; contexts in the clients (CLI, GUI, scripts); undo and
-redo by label; the log panel as a label tree. Left: a sweep of the word "revision"
-through the notes and comments (where it means "one write"). Deferred past the first build: the
-GUI's work context (its scope is undecided), "rollback = revert since T".
-
 * TODO performance
 The recurring defect of this project is a cost that grows with the repository
 where it should grow with the answer. Each item names where.
@@ -75,9 +59,10 @@ million keys (a folder of 292 files renamed) to 20 000, and from 1.56 million
   key a row), a gain only on records with few user fields: not built.
 - reading the log right after an undo read the whole log (=42287c53=): the
   redo's two reads went from 702 000 keys to 171 000, which is what was undone
-  (a revision of 50 000 operations). The run that read only 20 000 keys was a
-  lost redo: the watcher wrote between an undo-by-rollback and its redo (see
-  the event log below).
+  (a write of 50 000 operations). The run that read only 20 000 keys was a
+  lost redo: the watcher wrote between an undo-by-rollback and its redo — the
+  cause of the event log's redesign (doc "The operation log"), to measure
+  again on the next recorded run.
 
 * TODO watcher
 ** TODO keep hunting with the simulated kernel
@@ -183,6 +168,8 @@ a CLI addition to weigh first.
 
 * Deferred in the specs
 Named where they are, kept here so they are not forgotten:
+- doc "The GUI's work context", doc "Reverting everything since a time": the
+  two parts of the event log's redesign the user left for later.
 - doc "Storage open questions": readers that never block on KV (operations
   stay sequential — decided September 2026); a KV bit-sliced index.
 - =docs/spec-sync.org= (not migrated, docs.org item 29): "Performance concerns"; "Cross-machine sync" (the remote

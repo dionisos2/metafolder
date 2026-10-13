@@ -196,7 +196,7 @@ fn plan_bulk_trash(
 /// Trashes the files of every metarecord `query` matches (doc "Sending files
 /// to the trash"): the order of [`trash_tracked`], over a set. Everything is
 /// captured first, then the metarecords are deleted in **one** call — one
-/// revision to undo, and a reference from one member of the set to another is
+/// write to undo, and a reference from one member of the set to another is
 /// not a refusal — and only then do the bytes move, one trash entry per file
 /// or directory. A refusal from the daemon therefore leaves every file where
 /// it was; a move that fails afterwards is reported in `failed` and the others

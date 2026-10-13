@@ -33,7 +33,7 @@ pub const GROUP_SCHEMA: &str = "duplicate_group";
 /// group is never a bare field clear: see [`leave_group`].
 pub const GROUP_FIELD: &str = "mfr_duplicate_group";
 
-/// How long the scan's writes accumulate in one revision before it commits.
+/// How long the scan's writes accumulate in one write before it commits.
 /// Every commit is an `fsync` (doc "Writes and atomicity"): committing per
 /// batch of files and per size class spent 17 of 31 s committing on 50 000
 /// files. One transaction for the whole scan would throw every hash computed
@@ -384,7 +384,7 @@ fn write_hash(
     Ok(())
 }
 
-/// Commits one window of the scan's writes as a revision; an empty one writes
+/// Commits one window of the scan's writes as a write; an empty one writes
 /// nothing (`Writer::commit` drops it).
 fn commit(writer: Writer) -> Result<(), ApiError> {
     metafolder_core::slowlog::timed("commit", || writer.commit()).map_err(ApiError::from)
@@ -570,7 +570,7 @@ fn write_class_groups(
         let group = entry.uuid;
         // Writing only what changed is what makes a re-scan of an unchanged
         // repository produce no operation at all — `Writer::commit` then drops
-        // the empty revision. The comparison is against the values loaded up
+        // the empty write. The comparison is against the values loaded up
         // front, so it costs no read here.
         if entry.count != Some(count) {
             writer

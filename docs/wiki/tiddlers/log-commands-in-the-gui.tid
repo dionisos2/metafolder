@@ -1,4 +1,4 @@
-title: Revision commands in the GUI
+title: Log commands in the GUI
 tags: [[Event log]]
 kind: guide
 summary: Undo, redo, revert, label and prune from the GUI — confirmations before, files carried along, no questions while the repository is locked.

@@ -20,7 +20,7 @@ fn create(conn: &mut KvStore, fields: Vec<Field>) -> metafolder_core::metarecord
     m
 }
 
-/// Reverts the revision the newest operation belongs to, as one new revision.
+/// Reverts the write the newest operation belongs to, as one new write.
 fn revert_last_revision(conn: &mut KvStore) {
     let head = conn.head().unwrap().unwrap();
     let rev = conn.op(head).unwrap().unwrap().label_id;
@@ -101,7 +101,7 @@ fn test_field_type_unlocks_when_empty() {
 #[test]
 fn test_field_type_unlocks_within_one_revision() {
     // The per-Writer type cache must not go stale: clearing a field to Nothing
-    // mid-revision unlocks its type, so a later different-type write succeeds in
+    // mid-write unlocks its type, so a later different-type write succeeds in
     // the *same* Writer.
     let (mut conn, _dir) = test_conn();
     let m = create(&mut conn, vec![Field::new("note", Value::Int(1))]);
@@ -513,7 +513,7 @@ fn test_delete_record_removes_everything_and_snapshots_before() {
     assert_eq!(conn.snapshots(op.id, false).unwrap().len(), 2);
 }
 
-// ── Writer: revision grouping and HEAD chain ──────────────────────────────────
+// ── Writer: write grouping and HEAD chain ──────────────────────────────────
 
 #[test]
 fn test_multiple_ops_in_one_revision_chain() {
@@ -895,7 +895,7 @@ fn test_entity_version_columns_name_the_states_around_the_operation() {
     // `entity_version_before`/`after` are provenance, not authority: nothing
     // reads them to decide what to write. They must still agree with the states
     // they name, or a client correlating an operation with something it
-    // observed from outside the revision would be misled.
+    // observed from outside the write would be misled.
     let (mut conn, _dir) = test_conn();
     let m = create(&mut conn, vec![]);
     let before_write = conn.version(m.uuid).unwrap().unwrap();
@@ -979,7 +979,7 @@ fn test_assemble_selected_is_cancellable() {
 
 // ── Join plans (correlated reads must seek, not scan) ─────────────────────────
 
-// ── What a revision obliges its caller to refresh ─────────────────────────────
+// ── What a write obliges its caller to refresh ─────────────────────────────
 
 /// A `Writer` that has recorded `n` operations touching nothing of interest.
 fn pad_operations(w: &mut Writer, uuid: Uuid, n: usize) {
@@ -1061,7 +1061,7 @@ fn test_each_shape_of_operation_names_the_cell_it_moved() {
 #[test]
 fn test_a_tree_cell_survives_a_flush_of_the_operation_buffer() {
     // The buffered operations are written out in batches, and the effects used
-    // to be read off that buffer: a revision long enough to flush forgot every
+    // to be read off that buffer: a write long enough to flush forgot every
     // tree write that preceded the flush.
     let (mut conn, _dir) = test_conn();
     let root = create(&mut conn, vec![Field::new("p", tree_ref(None, "r"))]).uuid;
@@ -1109,7 +1109,7 @@ fn test_a_revision_touching_neither_asks_for_no_refresh() {
 
 #[test]
 fn test_a_large_revision_lists_every_cell_it_changed() {
-    // The list used to be dropped past a cap. A revision that changes thousands
+    // The list used to be dropped past a cap. A write that changes thousands
     // of positions is exactly the one whose upkeep must not be guessed at, so
     // it is never truncated.
     let (mut conn, _dir) = test_conn();
@@ -1149,7 +1149,7 @@ fn forest_pair(conn: &mut KvStore) -> (Uuid, Uuid) {
     (root, child)
 }
 
-/// The error a committed revision refuses with, or a panic if it committed.
+/// The error a committed write refuses with, or a panic if it committed.
 fn refused(conn: &mut KvStore, write: impl FnOnce(&mut Writer)) -> String {
     let mut w = Writer::begin(conn, None).unwrap();
     write(&mut w);
@@ -1206,8 +1206,8 @@ fn test_a_whole_record_overwrite_may_not_drop_a_position_with_children() {
 
 #[test]
 fn test_the_invariant_is_checked_at_the_end_of_the_revision_not_per_operation() {
-    // Deleting a whole subtree in one revision is legitimate even though the
-    // parent goes first: what must hold is the state the revision commits, not
+    // Deleting a whole subtree in one write is legitimate even though the
+    // parent goes first: what must hold is the state the write commits, not
     // every intermediate one.
     let (mut conn, _dir) = test_conn();
     let (root, child) = forest_pair(&mut conn);

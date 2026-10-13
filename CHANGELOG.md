@@ -165,6 +165,13 @@ than breaking them.
     `mf_watch = true` no longer reads as unwatched.
 
 ### Changed
+- **"Revision" is gone from the vocabulary.** What one request writes is a
+  *write*; what groups writes is a *label*. The watcher's flush report says
+  `-> 2 writes`, the notes and messages say the same, and the notes "Reverting
+  a revision" and "Revision commands in the GUI" are now "Reverting a label"
+  and "Log commands in the GUI". The redesign of the event log is complete
+  (doc "The operation log"); left for later by decision: the GUI's work
+  context and "revert everything since a time".
 - **The log panel is a tree of labels.** A row per unit of work — a command, a
   script's run, a context — newest first, opening onto the labels nested in it
   down to single operations; consecutive flushes of the watcher fold into one

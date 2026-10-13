@@ -1,4 +1,4 @@
-//! Tests for the pending-event executor: compaction, revision grouping, and
+//! Tests for the pending-event executor: compaction, write grouping, and
 //! filesystem event semantics (doc "Watcher").
 
 use std::path::Path;
@@ -81,7 +81,7 @@ fn op_count(repo: &RepoState, op_type: Option<&str>) -> i64 {
     }
 }
 
-/// How many revisions the log holds.
+/// How many writes the log holds.
 fn revision_count(repo: &RepoState) -> i64 {
     metafolder_daemon::store::Log::counts(&*repo.conn.lock().unwrap()).unwrap().1
 }
@@ -138,7 +138,7 @@ fn test_a_flush_reports_what_it_did_to_the_diagnostics_feed() {
     assert_eq!(lines.len(), 1, "one summary line per flush, got {lines:?}");
     let line = &lines[0];
     assert!(line.contains("1 event"), "{line}");
-    assert!(line.contains("1 revision"), "{line}");
+    assert!(line.contains("1 write"), "{line}");
     assert!(line.contains("create /reported.txt"), "{line}");
 }
 
@@ -1070,7 +1070,7 @@ fn test_groups_become_separate_revisions() {
     enqueue(&repo, &[FsEvent::Create("/old.txt".into())]);
     executor::flush_pending(&repo).unwrap();
 
-    // A mixed buffer: 2 creates + 1 modify → two revisions.
+    // A mixed buffer: 2 creates + 1 modify → two writes.
     write_file(&root, "old.txt", b"oo");
     enqueue(
         &repo,
@@ -1083,7 +1083,7 @@ fn test_groups_become_separate_revisions() {
     let revisions_before = revision_count(&repo);
     executor::flush_pending(&repo).unwrap();
     assert_eq!(revision_count(&repo) - revisions_before, 2, "one revision per op_type group");
-    // Both creates share one revision.
+    // Both creates share one write.
     let create_revs = {
         let conn = repo.conn.lock().unwrap();
         let ops = metafolder_daemon::store::Log::all_ops(&*conn).unwrap();
@@ -1595,7 +1595,7 @@ fn test_a_flush_never_scans_the_repository_for_orphans() {
     );
 }
 
-/// A revision the watcher writes says so (`revision.origin`), whatever
+/// A write the watcher writes says so (`write.origin`), whatever
 /// operation types it holds: a file arriving is recorded as a
 /// `create_metarecord`, indistinguishable by type from a user's write, and the
 /// undo selection (doc "Undo and redo") must not mistake one for the
@@ -1609,7 +1609,7 @@ fn test_a_watcher_revision_records_its_origin() {
     assert!(resolve(&repo, "/arrived.txt").is_some(), "the watcher should track the file");
 
     let conn = repo.conn.lock().unwrap();
-    // The revision holding the arrival — the newest one.
+    // The write holding the arrival — the newest one.
     let (rev_id, origin) = newest_revision(&*conn);
     let types: Vec<String> = metafolder_daemon::store::Log::label_ops(&*conn, rev_id)
         .unwrap()

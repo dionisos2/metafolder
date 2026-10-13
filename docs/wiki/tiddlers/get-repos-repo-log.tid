@@ -2,6 +2,6 @@ title: GET /repos/:repo/log
 tags: [[HTTP endpoint]] [[Log endpoints]]
 kind: reference
 audience: dev
-summary: The history, as operations and revisions: linear, active or the whole tree, bounded.
+summary: The history, as operations and writes: linear, active or the whole tree, bounded.
 
 Bodies, answers and errors: [[Log endpoints]].

@@ -2,13 +2,21 @@ title: The operation log
 tags: [[Event log]]
 kind: overview
 audience: dev
-status: proposed
-summary: A proposed redesign of the event log: an ordered set of reversible operations grouped by nested labels, with one mechanism (revert onto the current state) instead of a history tree, HEAD navigation and rollback.
+summary: The event log since October 2026: an ordered set of reversible operations grouped by nested labels, with one mechanism (revert onto the current state) instead of a history tree, HEAD navigation and rollback.
 
-''Proposed 12 October 2026, being built.'' Done: reverting onto the current state; the log as a sequence, undo and redo as reverts (the old log is emptied, not converted); retention per origin ([[Automatic retention]]); labels and contexts, in the daemon and the clients ([[Labels and contexts]]); undo and redo by label ([[Undo and redo by label]]); the log panel as a tree of labels ([[log panel]]). The event log today is a tree of
-operations with a movable HEAD, two mechanisms (rollback and revert) and revisions
-([[Event log]]). This proposal replaces it with an ''ordered set of operations'': why, in
-[[Why the log stops being a tree]].
+''Proposed 12 October 2026, built the following days.'' Until then the event log was a
+tree of operations with a movable HEAD, two mechanisms (rollback and revert) and
+revisions. It is now an ''ordered set of operations'' — why, in [[Why the log stops being a tree]] — built in steps: reverting onto the current state ([[Reverting onto the current state]]); the log as a sequence, undo and redo as reverts; retention per origin
+([[Automatic retention]]); labels instead of revisions, and contexts in the clients
+([[Labels and contexts]]); undo and redo by label ([[Undo and redo by label]]); the log
+panel as a tree of labels ([[log panel]]). Each step that changed the store's layout
+''emptied the log'' of an older store rather than converting it — the metarecords kept —
+which the user chose ([[Persisted format changes]]).
+
+Two things were left for later, by the user's decision: the GUI's ''work context''
+([[The GUI's work context]]), and ''"rollback" as "revert everything since T"''
+([[Reverting everything since a time]]). Renaming or describing a label after the
+fact is not built either.
 
 !! The model
 
@@ -29,19 +37,20 @@ The old "labelled revision is a retention floor" rule (doc "Automatic retention"
 dropped: naming a stretch of work is a context in the GUI ([[Labels and contexts]]), not
 a promise to keep a global state that the log no longer knows how to rebuild.
 
-!! What goes
+!! What went
 
-* HEAD, its navigation, the history tree and its branches; LCA and navigation paths; `mode=active`/`mode=tree` on `GET /log`; `prune --linearize`.
-* The coordinated step-by-step navigation and its lock (`/rollback/start|step|abort`); the file side of a revert, which already exists, stays.
-* The dependency analysis: doc "Operation dependencies", `with_dependents`, "blocked by".
-* Revisions as a grouping, `revision.origin` (replaced by the label root), labels on revisions.
-* Restoring a past ''global'' state. Nothing in daily use needs it; the watcher's revisions make it a state that never really existed on disk anyway.
+* HEAD's navigation, the history tree and its branches; LCA and navigation paths; `mode=active`/`mode=tree` on `GET /log`; `prune linearize`; `mf log list --tree`/`--graph` and the log panel's graph.
+* The coordinated step-by-step navigation and its lock (`/rollback/*`, `mf log rollback`, `log:rollback`); the file side of a revert stays.
+* The dependency analysis: `with_dependents`, "blocked by".
+* Revisions, as a grouping and as a word: `rev_id`, `/log/revisions/:id`, labels set on a revision afterwards (`PATCH`, `log:mark`), the "labelled revision is a retention floor" rule.
+* Restoring a past ''global'' state. Nothing in daily use needs it; the watcher's work makes it a state that never really existed on disk anyway.
 
-!! What it costs
+!! Where it differs from the proposal
 
-* A persisted-format change, so a conversion ships with it (doc "Persisted format changes"): HEAD's ancestry is kept, abandoned branches dropped, each revision becomes a label (under the watcher's root when its origin was `watcher`), `reverts_op_id` kept.
-* A wire break: `/rollback/*`, `rev_id`, `head`/`mode` on `/log` change or go — `API_VERSION` is bumped.
-* The daemon's log, `core::undo`, `core::navigation`, the CLI's `mf log`, the GUI's undo/redo and log panel, the change feed (simpler: the log never moves back) and the shipped tagging scripts' going back.
+* ''Origin'' stays on each operation, set by the daemon, instead of being read off the root label a label descends from: a trashing's `trash` origin must survive inside any context ([[Operations and their origin]]).
+* A command's label is opened ''at its first write'', the client sending a key (`X-Metafolder-Command`) rather than creating the label before writing — so a command that only reads opens nothing ([[Labels and contexts]]).
+* A context names its repository (`METAFOLDER_LABEL=<repo>:<label>`): a label id means nothing in another one.
+* The GUI knows which command runs, not which call each made: two commands running at once share a label.
 
 <<list-kind rationale>>
 

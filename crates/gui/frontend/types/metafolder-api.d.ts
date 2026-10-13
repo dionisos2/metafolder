@@ -280,7 +280,7 @@ declare namespace Metafolder {
     views?(prior: string[]): CompletionView[] | Promise<CompletionView[]>;
     /** Whether the argument may be left out. Supplied inline it is used;
      *  omitted it is skipped rather than prompted, so the command falls back
-     *  to its default (`log:revert` vs `log:revert revision`). */
+     *  to its default (`log:revert` vs `log:revert write`). */
     optional?: boolean;
     /** Whether the argument applies at all, given the ones already collected.
      *  A generic command declares the union of its operations' arguments and
@@ -388,7 +388,7 @@ declare namespace Metafolder {
      *  panel's delete, and `metarecord:remove`'s OK. */
     trashPath(repo: string, path: string): Promise<string>;
     /** Sends the files of every metarecord `query` matches to the trash, their
-     *  metarecords deleted in one revision (doc "Sending files to the trash").
+     *  metarecords deleted in one write (doc "Sending files to the trash").
      *  Posts the outcome to the status bar itself. `metarecord:bulk <target>
      *  trash`. */
     trashQuery(repo: string, query: unknown): Promise<BulkTrashOutcome>;

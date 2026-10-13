@@ -60,7 +60,7 @@ gone from disk, count as departures too — direct entries only. The batch's dep
 are indexed once by that key: pairing each arrival with each departure (a `stat` and a
 store read per pair) held the repository a minute for a few hundred files each way.
 What no arrival takes back is a removal — `mv d e && rm e/x`, or `mv e/x` out of the
-repository — applied as one last revision of the flush, once every arrival has had its
+repository — applied as one last write of the flush, once every arrival has had its
 chance. Before that step, `e/x` stayed tracked at a path that no longer existed, and
 reconcile, which never orphans, never took it back.
 

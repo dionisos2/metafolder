@@ -1,6 +1,6 @@
 //! Pending-event executor (doc "Event batching"): the watcher
 //! buffers raw filesystem events in memory; after a quiet period the executor
-//! compacts them, groups them by resulting operation type (one revision per
+//! compacts them, groups them by resulting operation type (one write per
 //! group), and applies the event semantics to the data tables through the
 //! logged write flow.
 //!
@@ -83,7 +83,7 @@ fn return_pending(repo: &RepoState, events: Vec<(FsEvent, Option<i64>)>) {
 /// `RenameFrom`/`RenameTo` events (its From/To correlation can fail under load)
 /// back into a single [`FsEvent::Rename`], by pairing events that carry the
 /// same non-null inotify cookie. Without this, an intra-tree rename would
-/// degrade into a delete + arrival (two revisions, and the metarecord orphaned
+/// degrade into a delete + arrival (two writes, and the metarecord orphaned
 /// until an `mf orphan relink`). Events without a
 /// cookie, and genuine one-sided renames (a file that left or entered the
 /// repository, with no matching cookie), are left untouched.
@@ -245,7 +245,7 @@ fn compact(events: Vec<FsEvent>) -> Vec<FsEvent> {
     out.into_iter().flatten().collect()
 }
 
-/// Groups for revision splitting; each group becomes one revision. Note:
+/// Groups for write splitting; each group becomes one write. Note:
 /// arrivals (`Rename(To)`) form their own group because their resulting op
 /// type (create vs file_moved) is only known per file at apply time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -395,7 +395,7 @@ fn flush_summary(
     };
     let wrote = match revisions {
         0 => "nothing written".to_string(),
-        n => plural(n, "revision"),
+        n => plural(n, "write"),
     };
     let ignored = if ignored > 0 { format!(" ({ignored} ignored)") } else { String::new() };
     let mut events = listed.join(", ");
@@ -542,13 +542,13 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
         let mut ignored = 0usize;
         let mut applied = 0usize;
         // The batch's groups, then — when it moved a directory — one last
-        // revision for the departures the source never delivered
+        // write for the departures the source never delivered
         // (`Apply::remove_vanished_from_moved`).
         let sweep = (!moved.is_empty()).then(Vec::new);
         for (kind, group) in
             groups.into_iter().map(|(k, g)| (Some(k), g)).chain(sweep.map(|g| (None, g)))
         {
-            // The filesystem's doing, not a client's (doc "Revisions and
+            // The filesystem's doing, not a client's (doc "Writes and
             // operations"): an arrival is a `create_metarecord` like any other,
             // so the operations have to say where they came from — the
             // watcher's context gives them its origin, under its own label.
@@ -675,7 +675,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
     }
 }
 
-/// Application context for one revision (one group of events).
+/// Application context for one write (one group of events).
 struct Apply<'a, 'c> {
     /// Where the subtree scan reports its progress: one event can hide an
     /// arbitrarily large tree, and the per-event counter cannot show it.
@@ -1844,7 +1844,7 @@ mod tests {
     fn a_summary_names_what_the_flush_saw_and_what_it_wrote() {
         let listed = vec![describe(&create("/a.txt"))];
         let line = flush_summary("photos", 1, &listed, 1, 0, Duration::from_millis(12));
-        assert_eq!(line, "flush on photos: 1 event in 12 ms -> 1 revision; create /a.txt");
+        assert_eq!(line, "flush on photos: 1 event in 12 ms -> 1 write; create /a.txt");
     }
 
     #[test]
@@ -1867,7 +1867,7 @@ mod tests {
         let line = flush_summary("photos", events.len(), &listed, 2, 0, Duration::from_millis(40));
         assert_eq!(
             line,
-            "flush on photos: 4 events in 40 ms -> 2 revisions; \
+            "flush on photos: 4 events in 40 ms -> 2 writes; \
              create /a, modified /b, rename /c -> /d (+1 more)"
         );
     }

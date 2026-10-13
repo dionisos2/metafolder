@@ -86,7 +86,7 @@ fn inbound_referrers(
 }
 
 /// `POST /repos/:repo/metarecords/trash`: deletes metarecords on the
-/// trash-bin's behalf, in one revision stamped `origin = 'trash'`
+/// trash-bin's behalf, in one write stamped `origin = 'trash'`
 /// (doc "POST /repos/:repo/metarecords/trash").
 ///
 /// The trash-bin's two halves have different owners: the bytes are the client's
@@ -100,7 +100,7 @@ fn inbound_referrers(
 ///
 /// No record-count cap: uuids are 32 characters each, so axum's 2 MiB body
 /// limit already bounds a call at tens of thousands of them, and a trashing has
-/// to be *one* revision — paging it would break the thing it is for.
+/// to be *one* write — paging it would break the thing it is for.
 pub(super) async fn trash_delete_endpoint(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
@@ -177,7 +177,7 @@ pub(super) struct BulkCreateBody {
 }
 
 /// `POST /repos/:repo/metarecords/bulk`: creates many metarecords, each at its
-/// own (optional) caller-supplied UUID, in **one revision**
+/// own (optional) caller-supplied UUID, in **one write**
 /// (doc "Metarecord endpoints").
 ///
 /// All-or-nothing, like every other batch writer here: one [`Writer`], one

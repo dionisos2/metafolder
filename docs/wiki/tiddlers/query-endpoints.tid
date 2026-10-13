@@ -36,7 +36,7 @@ a daemon bug, never a slow answer ([[How queries are evaluated]]).
 Every operation over a ''set'' lives under `/query`, with a `query` in the body; a
 `uuid_in` targets an explicit set (a multi-selection). Directly addressed things use
 the resource routes ([[Metarecord endpoints]]); the two overlap only on one
-metarecord, by design. A write over a set is ''one revision'', one operation per
+metarecord, by design. A write over a set is ''one write'', one operation per
 metarecord changed ([[Editing metarecords from the command line]]); a reserved field
 without `force` is a `400` ([[Reserved fields]]).
 
@@ -46,9 +46,9 @@ without `force` is a `400` ([[Reserved fields]]).
 * ''remove'' takes out the row equal to the value — at most one per match — leaving other rows and non-matches alone.
 * ''unset'' removes every row of the name: the field becomes unknown, not `nothing`.
 
-!! Several writes as one revision
+!! Several writes as one write
 
-`POST /query/fields/batch` applies a list of writes, in order, as ''one'' revision — so
+`POST /query/fields/batch` applies a list of writes, in order, as ''one'' write — so
 a client operation made of several steps is undone in one step (`mf tag add` and the
 refs it drops, [[Tag subsumption and exclusivity]]). An op is one of:
 
@@ -63,4 +63,4 @@ never sees what an earlier one wrote — a creation included, which is why a cli
 needs to point at a new metarecord supplies its `uuid`. Schema validation runs once, at
 the end, on each metarecord the batch changed ([[Delta validation]]). All or nothing:
 one failing op rolls the whole batch back. An empty batch, or one that changes nothing,
-leaves no revision.
+leaves no write.

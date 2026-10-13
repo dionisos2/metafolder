@@ -1,9 +1,9 @@
 title: Editing a set of metarecords
 tags: Query
 kind: guide
-summary: Every match of a query written in one revision — from mf metarecord -q … field, or the /query/fields/* endpoints — and undone in one step.
+summary: Every match of a query written in one write — from mf metarecord -q … field, or the /query/fields/* endpoints — and undone in one step.
 
-A query selector turns a write into a write over ''every match'', in one revision
+A query selector turns a write into a write over ''every match'', in one write
 that `mf log undo` takes back whole:
 
 ```

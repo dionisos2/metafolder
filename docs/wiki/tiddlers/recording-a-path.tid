@@ -5,7 +5,7 @@ summary: A path's metarecord is created on request — refused when it exists or
 
 `POST /repos/:repo/metarecords` with a `path` creates the metarecord of that file or
 directory without the watcher or a reconcile: its `mfr_path` and stat fields are read
-from disk, in one revision, beside whatever `fields` the request carries
+from disk, in one write, beside whatever `fields` the request carries
 ([[Metarecord endpoints]]).
 
 !! Recorded, not followed

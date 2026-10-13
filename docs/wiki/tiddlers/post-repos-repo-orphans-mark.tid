@@ -2,6 +2,6 @@ title: POST /repos/:repo/orphans/mark
 tags: [[HTTP endpoint]] [[Orphan scan]]
 kind: reference
 audience: dev
-summary: Marks the orphans with orphan = true and unmarks the rest, in one revision.
+summary: Marks the orphans with orphan = true and unmarks the rest, in one write.
 
 Bodies, answers and errors: [[Orphan scan]].

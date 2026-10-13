@@ -3,4 +3,4 @@ tags: [[CLI command]] Revert
 kind: reference
 summary: Undo a label — what was written inside it — or an operation, by writing its inverse
 
-Reverts a label — its children included (default: the newest operation's) — or operations with `--op`, by writing their inverse onto the current state; `plan` previews it and names any later write it would overwrite ([[Reverting a revision]]).
+Reverts a label — its children included (default: the newest operation's) — or operations with `--op`, by writing their inverse onto the current state; `plan` previews it and names any later write it would overwrite ([[Reverting a label]]).

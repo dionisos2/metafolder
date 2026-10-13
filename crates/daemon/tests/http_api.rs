@@ -1412,7 +1412,7 @@ async fn test_append_duplicate_is_a_no_op_and_by_id_duplicate_is_rejected() {
 
 // ── Bulk creation (doc "Metarecord endpoints") ────────────────
 
-/// The number of revisions the repository's log holds.
+/// The number of writes the repository's log holds.
 async fn revision_count(app: &Router, repo: &str) -> usize {
     let (status, body) = request(app, "GET", &format!("/repos/{repo}/log"), None).await;
     assert_eq!(status, StatusCode::OK, "log failed: {body}");
@@ -1425,8 +1425,8 @@ fn bulk_uri(repo: &str) -> String {
 
 #[tokio::test]
 async fn test_bulk_create_writes_one_revision_at_the_supplied_uuids() {
-    // The whole point of the endpoint: N metarecords, one revision — not N
-    // revisions and N fsyncs.
+    // The whole point of the endpoint: N metarecords, one write — not N
+    // writes and N fsyncs.
     let (app, repo, root) = app_with_repo("bulk_one_revision").await;
     let before = revision_count(&app, &repo).await;
 
@@ -1715,7 +1715,7 @@ async fn newest_revision_origin(app: &Router, repo: &str) -> Value {
 
 #[tokio::test]
 async fn test_trash_delete_writes_one_revision_stamped_trash() {
-    // A trashing is one revision — one thing to undo — and it says who asked
+    // A trashing is one write — one thing to undo — and it says who asked
     // for it, so a revert later knows the bytes are in the trash-bin.
     let (app, repo, root) = app_with_repo("trash_stamp").await;
     let uuids: Vec<String> = {

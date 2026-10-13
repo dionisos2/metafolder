@@ -1,4 +1,4 @@
-//! `log:undo` / `log:redo` (doc "Revision commands in the GUI", doc "Undo
+//! `log:undo` / `log:redo` (doc "Log commands in the GUI", doc "Undo
 //! and redo by label"): undo a label of the newest change the *user* made to
 //! the active repository, and take a label of the newest undo back.
 //!
@@ -80,7 +80,7 @@ pub async fn navigate(
 /// The GUI's move policies. It asks nothing while the lock is held — a window
 /// left open would freeze the repository's writes — so a move applies whether
 /// or not the file is where the log says: when it is not, the metadata follows
-/// the navigation and keeps the recorded path (doc "Reverting a revision", the CLI's own default when the
+/// the navigation and keeps the recorded path (doc "Reverting a label", the CLI's own default when the
 /// file is there).
 pub const GUI_POLICIES: MovePolicies =
     MovePolicies { on_available: Policy::Apply, on_unavailable: Policy::Apply };

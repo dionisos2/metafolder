@@ -1,7 +1,7 @@
 title: Changing a field's type
 tags: [[Data model]]
 kind: guide
-summary: mf retype converts every value of a field to another type, in one revision you can roll back; what cannot convert falls back to a findable default.
+summary: mf retype converts every value of a field to another type, in one write you can roll back; what cannot convert falls back to a findable default.
 
 A field name's type is fixed by its first write ([[One value type per field name]]).
 To change it, ''retype'' the field — every value of that name, in the whole
@@ -13,7 +13,7 @@ retyped rating to float: 1204 value(s) converted, 0 fell back to the default
 ```
 
 Any type can be reached from any other: a mistyped field is never stuck. The
-retype is one logged revision, so `mf log undo` takes it back. Reserved names
+retype is one logged write, so `mf log undo` takes it back. Reserved names
 (`mfr_*`, `mf_*`) cannot be retyped: the system owns their types.
 
 !! How values convert

@@ -37,7 +37,7 @@ The metarecord panels also offer ''Move to trash'' in their context menu ([[Cont
 [[metarecord-list panel]] shows (<<key "metarecord:bulk query trash" "m q t">>). It
 asks first, naming the count, then:
 
-* captures every metarecord of the set and deletes them all in ''one'' revision — one undo, and a reference from one member of the set to another is not a refusal ([[What trashing does]]);
+* captures every metarecord of the set and deletes them all in ''one'' write — one undo, and a reference from one member of the set to another is not a refusal ([[What trashing does]]);
 * moves each file or directory into the trash as an entry of its own, restored one by one ([[Restoring from the trash]]);
 * leaves out what has no file (a metarecord without `mfr_path`, an orphan), what lies under a directory of the set (it goes with the directory), and the repository root.
 

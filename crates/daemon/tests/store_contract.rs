@@ -23,8 +23,8 @@ fn tref(parent: Option<Uuid>, name: &str) -> Field {
     Field::new("loc", Value::TreeRef { parent, name: name.into() })
 }
 
-/// A root, a child with two string rows, and a later revision rewriting one
-/// field: three operations over two revisions.
+/// A root, a child with two string rows, and a later write rewriting one
+/// field: three operations over two writes.
 fn fixture() -> (Handle, TempDir, Uuid, Uuid) {
     let (mut conn, dir) = open();
     let mut w = Writer::begin(&mut conn, None).unwrap();
@@ -508,7 +508,7 @@ fn a_kv_store_grows_past_its_initial_map() {
     assert_eq!(last.map(|s| s.len()), Some(blob.len()), "reopened below its size, it reads it all");
 }
 
-/// One revision far larger than the map the store began on — a first
+/// One write far larger than the map the store began on — a first
 /// reconcile of a big tree, a conversion — must still commit: the room a
 /// write transaction starts with is the free space of the disk (up to a
 /// cap), not twice what the store happens to hold. Before, it failed whole

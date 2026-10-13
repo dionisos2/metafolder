@@ -1,6 +1,6 @@
 title: log:revert
 tags: [[GUI command]] [[Event log]]
 kind: reference
-summary: Log: revert what is selected, or a wider scope
+summary: Log: revert what is selected, or a narrower or wider scope
 
-Reverts the selected revision or operation; `op` narrows, `revision` widens ([[Revision commands in the GUI]]).
+Reverts the selected label — what is nested in it included — or operation; `op` narrows to one operation, `label` widens to the label an operation is in ([[Log commands in the GUI]]).

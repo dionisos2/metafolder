@@ -26,7 +26,7 @@ A whole-repository reconcile, step by step:
 
 ''7. Refresh'' the stat fields of what is in place (only changed fields are written, so an idle reconcile adds nothing to the log; hashes are left alone), then the ''MIME'' and ''metadata'' phases for files lacking them.
 
-All of it is one transaction, one revision. Offline mount points are pruned from the walk
+All of it is one transaction, one write. Offline mount points are pruned from the walk
 and from the orphan split: their existence on disk is unknown, not false.
 
 A candidate in the result:

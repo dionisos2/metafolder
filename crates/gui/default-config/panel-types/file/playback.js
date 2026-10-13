@@ -19,7 +19,7 @@ export const MIN_RESUME = 5;
 // percentage — 5% of a three-hour film is nine minutes, which is not "the end".
 export const END_MARGIN = 10;
 // Smallest position change worth writing. Every write is one event-log
-// revision, so the periodic save skips a position that has not really moved.
+// write, so the periodic save skips a position that has not really moved.
 export const MIN_DELTA = 1;
 // How often the position is persisted while the video plays. Pause, seek and
 // teardown persist immediately; this only bounds what an abruptly killed
@@ -113,7 +113,7 @@ export async function savePosition(daemon, repo, uuid, seconds) {
 }
 
 // Remove the stored position. Only call this when one is actually stored: an
-// unset of an absent field would still open an event-log revision.
+// unset of an absent field would still open an event-log write.
 /**
  * @param {Daemon} daemon @param {string} repo @param {string} uuid
  * @returns {Promise<null>}

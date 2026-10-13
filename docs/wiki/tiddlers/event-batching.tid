@@ -1,13 +1,13 @@
 title: Event batching
 tags: Watcher
 kind: reference
-summary: Events wait in memory until the disk has been quiet for 2 s, then are filtered, re-paired, compacted and split by kind into revisions.
+summary: Events wait in memory until the disk has been quiet for 2 s, then are filtered, re-paired, compacted and split by kind into writes.
 
 The watcher does not apply events one by one: it buffers them ''in memory'', and the
 executor applies the buffer once ''2 s'' pass with no new event
 (`watch-quiet-period-ms`, [[Daemon configuration]]). It was 500 ms, which made a save, a
 copy or an archive extraction — bursts longer than half a second — several flushes, each
-its own revision, burying your own changes in the log and spending the retention
+its own write, burying your own changes in the log and spending the retention
 budget. The cost is latency: a change appears two seconds after the disk goes quiet. It
 is a debounce, not a cap: a stream with no two-second pause is flushed when it stops.
 A client waiting for the watcher reads the period from `GET /watch` (`quiet_period_ms`)
@@ -23,7 +23,7 @@ until the daemon stops.
 
 Ingestion is batched too: the ingest thread takes everything the backend has delivered
 (up to a few thousand events) at once, so a mass arrival costs a handful of lock
-acquisitions. Pasting N files is N `Create` events and ''one'' revision, undone as a unit.
+acquisitions. Pasting N files is N `Create` events and ''one'' write, undone as a unit.
 
 !! Filtering at ingestion
 
@@ -59,7 +59,7 @@ to apply: swapping two files through a temporary name (`A→TMP`, `B→A`, `TMP�
 collapse to the cycle `A→B`, `B→A`, which no order can apply. The hop through the
 temporary name breaks the cycle, as it did on disk.
 
-''Step 3 — split by kind.'' The compacted operations are grouped by resulting operation type; each group is one revision, committed in the order of its first event. So a batch of 5 creations and 2 modifications is two revisions — never a mix of kinds, each undone on its own. A very large copy arriving over more than the window may be split across flushes; each part is still undone on its own.
+''Step 3 — split by kind.'' The compacted operations are grouped by resulting operation type; each group is one write, committed in the order of its first event. So a batch of 5 creations and 2 modifications is two writes — never a mix of kinds, each undone on its own. A very large copy arriving over more than the window may be split across flushes; each part is still undone on its own.
 
-The revisions carry `origin = watcher`, which is how an undo tells your changes from the
+The writes carry `origin = watcher`, which is how an undo tells your changes from the
 watcher's. What each event does: [[Event semantics]].

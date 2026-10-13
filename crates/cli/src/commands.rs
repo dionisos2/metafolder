@@ -505,7 +505,7 @@ pub fn delete(ctx: &Ctx, target: &str, force: bool) -> Result<i32, CliError> {
                 }
             }
             // One atomic request: the daemon selects and deletes in a single
-            // revision (no client-side TOCTOU, no partial deletion).
+            // write (no client-side TOCTOU, no partial deletion).
             let resp =
                 ctx.client.post(&format!("{base}/query/delete"), &json!({"query": query}))?;
             println!("{}", resp["deleted"].as_u64().unwrap_or(0));
@@ -1307,7 +1307,7 @@ fn load_vocab(ctx: &Ctx, base: &str) -> Result<Vocab, CliError> {
 }
 
 /// The writes one `mf tag` command makes, sent as a single
-/// `POST /query/fields/batch` so the command is one revision — undone by one
+/// `POST /query/fields/batch` so the command is one write — undone by one
 /// `mf log undo`, rewrites and created entries included (doc "Tag subsumption
 /// and exclusivity"). Every op reads the selection as it stood before the
 /// batch.
@@ -1396,7 +1396,7 @@ fn with_descendants(path: &str, vocab: &Vocab) -> Vec<String> {
 /// `mf tag [sel] add <path>` — the record(s) *have* the tag: (idempotently) add
 /// the positive ref, drop the more general ancestor tags, the negatives and
 /// mixed marks it contradicts (on the tag and its ancestors), and, when the tag
-/// is exclusive, its siblings. One revision. The idempotence is the daemon's:
+/// is exclusive, its siblings. One write. The idempotence is the daemon's:
 /// appending a ref a record already carries is a no-op (doc "No duplicate
 /// rows"), so the row that is already there is left alone, id included.
 pub fn tag_add(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> {
@@ -1425,7 +1425,7 @@ pub fn tag_add(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> {
 /// `mf tag [sel] deny <path>` — the record(s) do *not* have the tag: add the
 /// negative ref, drop the more specific descendant negatives it subsumes and the
 /// positives and mixed marks it contradicts (on the tag and its descendants).
-/// One revision.
+/// One write.
 pub fn tag_deny(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let cfg = ctx.tag.clone();
@@ -1449,7 +1449,7 @@ pub fn tag_deny(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> 
 /// drop the whole answers that contradicts: "partly X" is false once the
 /// folder wholly has X or a descendant of X (a positive on the tag or below),
 /// or wholly lacks X or an ancestor of X (a negative on the tag or above). The
-/// descend logic lives in the scripts. One revision.
+/// descend logic lives in the scripts. One write.
 pub fn tag_mixed(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let cfg = ctx.tag.clone();

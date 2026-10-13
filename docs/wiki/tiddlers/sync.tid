@@ -16,7 +16,7 @@ Both repositories must be loaded in the same daemon, with identical schemas
 ([[Why schemas must be identical]]).
 
 Nothing is destroyed. A file a sync overwrites or removes goes to that
-repository's trash ([[Trash]]); a metarecord it deletes is a revision of the event
+repository's trash ([[Trash]]); a metarecord it deletes is a write of the event
 log, which an undo takes back ([[Event log]]). What sync knows about a pair — its
 links, and what the two sides held at their last sync — is kept apart from both
 repositories' data ([[The sync database]]).

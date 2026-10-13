@@ -85,7 +85,7 @@ async fn field_of(app: &Router, repo: &str, uuid: &str, name: &str) -> Option<Va
         .map(|f| f["value"].clone())
 }
 
-/// The id of the revision whose operations last touched `field` of `uuid`.
+/// The id of the write whose operations last touched `field` of `uuid`.
 async fn last_revision(app: &Router, repo: &str) -> i64 {
     let (status, body) = request(app, "GET", &format!("/repos/{repo}/log"), None).await;
     assert_eq!(status, StatusCode::OK, "log failed: {body}");
@@ -122,7 +122,7 @@ async fn test_revert_restores_the_previous_value_without_moving_head() {
         field_of(&app, &repo, &uuid, "rating").await,
         Some(json!({"type": "int", "value": 3}))
     );
-    // A revert is a new revision at HEAD, not a rewind: the log keeps both.
+    // A revert is a new write at HEAD, not a rewind: the log keeps both.
     assert!(body["label"].as_i64().unwrap() > rev);
     assert_eq!(body["reverted_operations"].as_array().unwrap().len(), 1);
 
@@ -397,7 +397,7 @@ async fn test_reverting_a_single_operation_of_a_revision() {
     let (app, repo, _root) = setup("op_target").await;
     let a = create(&app, &repo, json!([{"name": "x", "value": {"type": "int", "value": 1}}])).await;
     let b = create(&app, &repo, json!([{"name": "x", "value": {"type": "int", "value": 1}}])).await;
-    // One revision writing the same field of two records: two operations.
+    // One write writing the same field of two records: two operations.
     let (status, body) = request(
         &app,
         "POST",
@@ -733,7 +733,7 @@ async fn test_a_revert_names_the_operations_it_undid() {
 
 // ── Trashings: the bytes live in the trash-bin ───────────────────────────────
 
-/// Deletes `uuid` the way the trash-bin does: one revision stamped `trash`.
+/// Deletes `uuid` the way the trash-bin does: one write stamped `trash`.
 async fn trash(app: &Router, repo: &str, uuid: &str) {
     let (status, body) = request(
         app,
@@ -745,7 +745,7 @@ async fn trash(app: &Router, repo: &str, uuid: &str) {
     assert_eq!(status, StatusCode::OK, "trash failed: {body}");
 }
 
-/// Reverts revision `rev_id` through the coordinated protocol, applying every
+/// Reverts write `rev_id` through the coordinated protocol, applying every
 /// operation (as a client would once it has done the file actions).
 async fn coordinated_revert(app: &Router, repo: &str, rev_id: i64) {
     let (status, plan) = start(app, repo, json!({"target": {"label_id": rev_id}})).await;

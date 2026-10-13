@@ -2,10 +2,10 @@ title: Why undo and redo do not oscillate
 tags: [[Event log]]
 kind: rationale
 audience: dev
-summary: Two rules keep undo and redo from trading the same revision back and forth — and make undo, redo, undo compose.
+summary: Two rules keep undo and redo from trading the same write back and forth — and make undo, redo, undo compose.
 
-Undo and redo move in opposite directions over the same revisions, so each needs a rule
-saying which revisions are ''not'' its own:
+Undo and redo move in opposite directions over the same writes, so each needs a rule
+saying which writes are ''not'' its own:
 
 * ''A revert of a revert is a redo, not an undo.'' Undo never picks a revert, and redo looks for a revert of an ''ordinary change'' — otherwise pressing redo twice would undo again. A target outside the read window counts as an ordinary change: the conservative reading, which at worst offers a redo with nothing to take back.
 * ''An operation is undone only while the revert that undid it still stands.'' A revert that was itself reverted undid nothing any more, and the change it had taken back stands again. So liveness is resolved along the whole revert chain (`reverts_op_id` after `reverts_op_id`), not read off one link. Without it the pair does not compose: after undo then redo, undo would find its target "already undone" and refuse to take it back a second time.

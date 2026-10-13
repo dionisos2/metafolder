@@ -1,12 +1,12 @@
 title: What trashing does
 tags: Trash
 kind: reference
-summary: Capture the metarecords, delete them in one revision, then move the bytes — in that order, and why.
+summary: Capture the metarecords, delete them in one write, then move the bytes — in that order, and why.
 
 Trashing is three steps, and their order is not free.
 
 # ''Capture.'' The client reads the target metarecord, walks ''up'' to record its ancestors, and ''down'' the `mfr_path` forest to record every descendant — each with all its fields — through the daemon's ordinary read endpoints, before anything is touched. Once the metarecords are gone there is nothing left to read.
-# ''Delete the metarecords'' — the target and its descendants, never the ancestors (the parent directories stay) — in one revision, through [[POST /repos/:repo/metarecords/trash]].
+# ''Delete the metarecords'' — the target and its descendants, never the ancestors (the parent directories stay) — in one write, through [[POST /repos/:repo/metarecords/trash]].
 # ''Move the bytes'' into the trash directory ([[Trash on-disk layout]]): a rename, or a copy then delete when the trash is on another filesystem than the file (an external `.metafolder`), which carries the modification time over. A file, a symlink (the link itself, not its target) or a whole directory can be trashed.
 
 Deleting before moving is what keeps the watcher out of it: when the file
@@ -14,7 +14,7 @@ disappears, the watcher looks its path up, finds no metarecord there any more,
 and has nothing to orphan. The other order would orphan the metarecords in the
 gap between the two steps.
 
-A trashing is ''one revision'', so it is one thing to undo
+A trashing is ''one write'', so it is one thing to undo
 ([[Trash, undo and redo]]). It holds whether or not the path is watched: an
 unwatched file loses its metarecord too, instead of keeping one that points at
 nothing.

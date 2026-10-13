@@ -20,9 +20,9 @@ use metafolder_daemon::store::{Log, Rows};
 mod common;
 use common::TempDir;
 
-/// A repository whose log holds `revisions` revisions of one operation each —
+/// A repository whose log holds `writes` writes of one operation each —
 /// the shape a long-lived repository ends up with, where almost every write is
-/// its own revision (a manual edit, a watcher flush).
+/// its own write (a manual edit, a watcher flush).
 fn repo_with_log(revisions: usize) -> (KvStore, TempDir) {
     let (mut kv, dir) = common::kv::store();
     for i in 0..revisions {
@@ -45,7 +45,7 @@ fn reads_of<R>(kv: &mut KvStore, f: impl FnOnce(&mut KvStore) -> R) -> (R, u64) 
 }
 
 /// A log longer than any window below reads — the first walk of a window of
-/// 20 revisions reads 160 operations — and one sixteen times longer. On a
+/// 20 writes reads 160 operations — and one sixteen times longer. On a
 /// log shorter than the window the whole log *is* the window, and the two
 /// would read different amounts for the right reason.
 const SHORT_LOG: usize = 200;
@@ -96,8 +96,8 @@ fn a_revision_bound_returns_whole_revisions_newest_first() {
     assert_eq!(body["total_labels"], 40, "the totals still cover the whole log");
 }
 
-/// A log whose first revision is a reconcile of `big` operations, followed by
-/// `small` revisions of one operation each.
+/// A log whose first write is a reconcile of `big` operations, followed by
+/// `small` writes of one operation each.
 fn repo_after_reconcile(big: usize, small: usize) -> (KvStore, TempDir) {
     let (mut kv, dir) = common::kv::store();
     let mut w = Writer::begin(&mut kv, Some("reconcile".into())).unwrap();
@@ -113,8 +113,8 @@ fn repo_after_reconcile(big: usize, small: usize) -> (KvStore, TempDir) {
     (kv, dir)
 }
 
-/// `mf log list` asks for twenty revisions *and* a number of operations: a
-/// reconcile's revision holds tens of thousands, and reading it whole to show
+/// `mf log list` asks for twenty writes *and* a number of operations: a
+/// reconcile's write holds tens of thousands, and reading it whole to show
 /// its line cost 0.7 s and 400 MB on a 50 000-file repository.
 fn revisions_and_ops(revisions: usize, limit: usize) -> LogQuery {
     LogQuery { labels: Some(revisions), limit: Some(limit), ..LogQuery::default() }
@@ -137,7 +137,7 @@ fn a_revision_window_is_bounded_by_operations_too() {
     for whole in &revisions[1..] {
         assert!(whole.get("partial").is_none(), "{whole}");
     }
-    // Twenty revisions of one operation each are still all there.
+    // Twenty writes of one operation each are still all there.
     let (kv, _dir) = repo_with_log(40);
     let body = listing(&kv, &revisions_and_ops(20, 100)).unwrap();
     assert_eq!(body["labels"].as_array().unwrap().len(), 20);
@@ -169,7 +169,7 @@ fn reading_one_metarecord_costs_the_same_in_a_repository_sixteen_times_larger() 
 
 #[test]
 fn a_filtered_bounded_read_looks_past_the_window_for_matches() {
-    // One metarecord written at the very start, then 300 revisions touching
+    // One metarecord written at the very start, then 300 writes touching
     // others. A bounded read filtered on that metarecord must still find its
     // operations: a window is a bound on what is *returned*, not a promise to
     // stop looking (doc "Log endpoints").

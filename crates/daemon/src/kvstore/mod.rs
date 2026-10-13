@@ -166,7 +166,7 @@ fn cell_prefix(uuid: &[u8], field: &str) -> Vec<u8> {
 /// The version of the primary layout this code writes, `layout` in `meta`
 /// (absent: the first one, rows keyed `uuid · row id` in `cells`; 2: the
 /// history tree, operations chained to a parent; 3: the sequence, before the
-/// operations were split by origin; 4: operations grouped by revision; 5:
+/// operations were split by origin; 4: operations grouped by write; 5:
 /// before the reverts of an operation were indexed).
 const LAYOUT: i64 = 6;
 
@@ -1278,7 +1278,7 @@ impl Begin for KvStore {
 impl KvStore {
     /// Grows the map so the write transaction about to start has the room
     /// [`map_to_grant`] promises — the disk's free space, up to a cap: a
-    /// revision of any size commits unless the disk itself is full. Done here
+    /// write of any size commits unless the disk itself is full. Done here
     /// because LMDB allows a resize only while the process has no transaction
     /// open — which `&mut self` guarantees: every transaction borrows the
     /// store.
@@ -1305,7 +1305,7 @@ impl KvStore {
     /// * the log of an older layout is **dropped, not converted** — the
     ///   history tree (layouts 1 and 2: operations chained to a parent,
     ///   `op_children`, `restorations`), and the sequence before it was split
-    ///   by origin (3), the one grouped by revisions (4), and the one with no
+    ///   by origin (3), the one grouped by writes (4), and the one with no
     ///   index of its reverts (5). The log is emptied, the metarecords kept (user
     ///   decision, October 2026; doc "The operation log").
     ///

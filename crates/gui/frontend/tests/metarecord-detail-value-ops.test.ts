@@ -270,7 +270,7 @@ describe('metarecord:field remove — the field, then the value', () => {
     ];
     const { specs, calls } = await mountPanel(fields);
     await specs.get('metarecord:field')!.handler('remove', 'rating', '5');
-    // Several rows go in ONE write — one revision, so one undo — and not one
+    // Several rows go in ONE write — one write, so one undo — and not one
     // DELETE per row.
     expect(calls.filter((c) => c.method === 'DELETE')).toEqual([]);
     expect(calls.filter((c) => c.method === 'POST')).toEqual([

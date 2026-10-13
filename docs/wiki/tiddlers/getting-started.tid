@@ -70,10 +70,10 @@ mf -n music metarecord -q 'rating>=4' -s get --count
 
 !! Taking a change back
 
-Every write is a revision of the repository's history ([[Event log]]):
+Every write is a write of the repository's history ([[Event log]]):
 
 ```
-mf -n music log               # the revisions, newest first
+mf -n music log               # the writes, newest first
 mf -n music log undo          # takes back the newest change you made
 mf -n music log redo          # … and brings it back
 ```

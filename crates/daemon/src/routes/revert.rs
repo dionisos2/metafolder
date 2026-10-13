@@ -368,7 +368,7 @@ pub(super) struct RevertCommitBody {
     apply: Vec<i64>,
 }
 
-/// `POST /revert/commit`: writes the revert as one revision, releases the lock
+/// `POST /revert/commit`: writes the revert as one write, releases the lock
 /// and replays the watcher buffer.
 pub(super) async fn revert_commit(
     State(state): State<Arc<AppState>>,

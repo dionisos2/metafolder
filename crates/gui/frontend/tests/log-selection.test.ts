@@ -1,5 +1,5 @@
 // Log panel selection movement (panel-types/log/selection.js): arrow-key
-// navigation over the reverse-chronological revision list.
+// navigation over the reverse-chronological write list.
 
 import { describe, expect, test } from 'vitest';
 import { moveSelection, edgeSelection } from '../../default-config/panel-types/log/selection.js';

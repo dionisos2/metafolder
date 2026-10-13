@@ -20,7 +20,7 @@ catalog gives the keys of each command, and each panel's note, the keys of that 
 |<<key "panel:toggle split" v>> / <<key "panel:unsplit" u>> |two panels side by side, or one / back to one ([[Panel slots and layout]]) |
 |<<key "panel:focus next" o>> / <<key "panel:swap" x>> |the other panel / exchange the two |
 |<<key "panel:toggle fullscreen" z>> |the focused panel alone on the screen, and back (`Escape` leaves it too) |
-|<<key "log:undo" Ctrl+z>> / <<key "log:redo" Ctrl+Shift+z>> |undo your last change / redo it ([[Revision commands in the GUI]]) |
+|<<key "log:undo" Ctrl+z>> / <<key "log:redo" Ctrl+Shift+z>> |undo your last change / redo it ([[Log commands in the GUI]]) |
 |<<key "find:open" Ctrl+f>> |search the text of the focused panel ([[Find in a panel]]) |
 |<<key "status:clear" Ctrl+l>> |clear the status bar's message |
 
@@ -47,7 +47,7 @@ the detail — share their keys. Each has its own command behind the key
 |!Key |!Does |
 |<<key "metarecord-list:next, file-manager:next, treeref:next, log:next, trash:next, recent:next, duplicates:next, metarecord:row-next" "↓ or j">> / <<key "metarecord-list:prev, file-manager:prev, treeref:prev, log:prev, trash:prev, recent:prev, duplicates:prev, metarecord:row-prev" "↑ or k">> |the next / the previous row |
 |<<key "metarecord-list:first, file-manager:first, treeref:first, log:first, trash:first, recent:first, duplicates:first" Home>> / <<key "metarecord-list:last, file-manager:last, treeref:last, log:last, trash:last, recent:last, duplicates:last" End>> |the first / the last row |
-|<<key "metarecord-list:open, file-manager:activate, treeref:descend, log:toggle ops, trash:restore, recent:open, duplicates:toggle, metarecord:row-edit" Enter>> |what the panel is for: open the row, enter the directory, go down the tree, expand the revision or the group, restore the entry, edit the field |
+|<<key "metarecord-list:open, file-manager:activate, treeref:descend, log:toggle ops, trash:restore, recent:open, duplicates:toggle, metarecord:row-edit" Enter>> |what the panel is for: open the row, enter the directory, go down the tree, expand the write or the group, restore the entry, edit the field |
 |<<key "file-manager:parent, treeref:parent, metarecord:back, file:back" Backspace>> |go back up: the parent directory, the parent node, the metarecord shown before, the folder of the previewed file |
 |<<key "file-manager:root, treeref:root" "/">> |the top: the root directory, the roots of the tree |
 |<<key "file-manager:find, treeref:find, log:find, trash:find, recent:find, duplicates:find" f>> |move the cursor to a row named in the command input ([[Jumping to an entry]]) |

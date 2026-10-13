@@ -1,0 +1,15 @@
+title: Reverting everything since a time
+tags: [[The operation log]]
+kind: reference
+audience: dev
+status: deferred
+summary: "Rollback" as a choice of set: revert every operation of the user's written since a time, onto the current state — deferred (user, October 2026).
+
+With the log a sequence ([[The operation log]]), going "back to this morning" is no longer
+a navigation but one more revert: every operation of the user's — not the watcher's —
+written since T and still standing, reverted onto the current state, newest first. The
+daemon already has what it takes: `last_op_at_or_before` finds the operation at a time,
+and a revert takes any set of operations.
+
+Deferred by the user (12 October 2026, "plus tard"): nothing in daily use needs it yet.
+When it is built, the name "rollback" may be reused for it.

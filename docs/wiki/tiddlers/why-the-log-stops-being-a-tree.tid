@@ -2,7 +2,6 @@ title: Why the log stops being a tree
 tags: [[The operation log]]
 kind: rationale
 audience: dev
-status: proposed
 summary: The tree rested on three assumptions the watcher broke — few revisions, undo only of the last one, rollback to a state that existed — and its two mechanisms produced undo/redo bugs no rule could close.
 
 The history tree was chosen on three assumptions (user, 12 October 2026). Each turned out

@@ -208,7 +208,7 @@ use serde_json::{json, Value};
 /// The boolean field written on the *folder* once its children are numbered, so
 /// an already-processed folder can be recognised (`order_numbered = true`) and
 /// the untreated ones found (`order_numbered is absent`). Never written by a
-/// dry run, and left alone when it is already `true` (no revision on a re-run).
+/// dry run, and left alone when it is already `true` (no write on a re-run).
 pub const FIELD_NUMBERED: &str = "order_numbered";
 
 /// Writes per `query/fields/batch` request, each about 150 bytes of JSON.
@@ -353,7 +353,7 @@ pub fn run(
         return Ok(Outcome { path, planned, written: 0, marked: false });
     }
 
-    // The positions and the marker in one batch — one revision, so one undo
+    // The positions and the marker in one batch — one write, so one undo
     // takes the whole numbering back. Each op targets its one child (a
     // `uuid_in` of one) since each gets its own value. The marker is written
     // once: re-running `order` on an already numbered folder sends nothing.
@@ -372,7 +372,7 @@ pub fn run(
         ops.push(set(folder_uuid, FIELD_NUMBERED, json!({"type": "bool", "value": true})));
     }
     // Under the daemon's 2 MiB body limit: a folder with more children than a
-    // batch holds is numbered in several revisions.
+    // batch holds is numbered in several writes.
     for chunk in ops.chunks(BATCH_OPS) {
         client.post(&format!("{base}/query/fields/batch"), &json!({ "ops": chunk }))?;
     }
@@ -603,7 +603,7 @@ mod orchestration_tests {
         assert!(writes.iter().any(|(u, n, _)| u == "c" && n == FIELD_DIR));
     }
 
-    /// A numbering is one revision, so one undo takes it back: the positions
+    /// A numbering is one write, so one undo takes it back: the positions
     /// and the marker go in a single batch, not one request per child.
     #[test]
     fn test_run_writes_the_whole_numbering_in_one_request() {
@@ -614,7 +614,7 @@ mod orchestration_tests {
     }
 
     /// A folder with nothing left to number and already marked writes nothing:
-    /// not even an empty batch (which would still be a revision).
+    /// not even an empty batch (which would still be a write).
     #[test]
     fn test_a_rerun_sends_no_write_at_all() {
         let folder = json!({
@@ -638,7 +638,7 @@ mod orchestration_tests {
 
     #[test]
     fn test_run_does_not_rewrite_an_existing_marker() {
-        // The marker is already true: a re-run must not produce a revision for
+        // The marker is already true: a re-run must not produce a write for
         // it (positions are never overwritten either, so the run is a no-op).
         let folder = json!({
             "uuid": "folder",

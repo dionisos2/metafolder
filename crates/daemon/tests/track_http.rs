@@ -330,7 +330,7 @@ async fn uuid_at(app: &Router, repo: &str, rel: &str) -> Option<String> {
 }
 
 /// A path whose parent is recorded becomes a metarecord with its stat fields,
-/// `mf_watch = false` and the caller's own fields, in one revision.
+/// `mf_watch = false` and the caller's own fields, in one write.
 #[tokio::test]
 async fn test_create_at_path_records_the_path_not_watched() {
     let (app, repo, root) = setup("atpath").await;

@@ -1,21 +1,21 @@
 title: Event log
 kind: overview
 aliases: log history event-log
-summary: Every write is a revision in a sequence of operations kept beside the data — so any change can be audited, undone, or reverted onto the current state.
+summary: Every write is recorded as operations in a sequence kept beside the data, grouped by the labels of the work they belong to — so any change can be audited, undone, or reverted onto the current state.
 
 Every change to a repository's metadata is recorded in its ''event log'', in the same
 store and the same transaction as the change itself. The log is a ''sequence'' of
 operations, each recording what it replaced, which is what makes it more than an audit
 trail:
 
-* ''auditing'' — the full history of any metarecord ([[Reading the log]]);
-* ''undo'' and ''redo'' — take back the newest change ''you'' made, and take that back in turn;
-* ''revert'' — undo one past revision or operation by writing what it replaced, onto the current state, as a new revision.
+* ''auditing'' — the full history of any metarecord, and of any piece of work: operations are grouped by nested ''labels'' — a command, a script's run, a context you open ([[Reading the log]], [[Labels and contexts]]);
+* ''undo'' and ''redo'' — take back a label of the newest change ''you'' made, and take that back in turn ([[Undo and redo]]);
+* ''revert'' — undo a past label or operation by writing what it replaced, onto the current state, as a new write.
 
 Nothing moves back over the log: it only grows, and loses history only by an explicit
-prune, or by the retention limit (the last 200 revisions by default). It stopped being a
-tree with a movable HEAD in October 2026 ([[Why the log stops being a tree]]); the rest of
-that redesign — labels instead of revisions — is [[The operation log]].
+prune, or by retention (the last 50 000 operations of the watcher and million of the
+rest, by default — [[Automatic retention]]). It stopped being a tree with a movable HEAD,
+and its revisions became labels, in October 2026 ([[The operation log]], [[Why the log stops being a tree]]).
 
 !! Use it
 

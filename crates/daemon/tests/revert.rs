@@ -1,5 +1,5 @@
 //! Library-level tests for reverting (doc "Revert"), where a
-//! revision's exact shape can be built on purpose.
+//! write's exact shape can be built on purpose.
 //!
 //! The delicate cases all come from one place: a revert is a new write, so
 //! its inserts take fresh ids, and nothing may address a row by the id a
@@ -37,7 +37,7 @@ fn state(conn: &KvStore) -> Vec<(String, String, String)> {
     rows
 }
 
-/// Reverts `ops` (oldest first) as one new revision, the way the route does.
+/// Reverts `ops` (oldest first) as one new write, the way the route does.
 fn revert_ops(conn: &mut KvStore, ops: &[log::OpRow]) {
     let mut w = Writer::begin(conn, None).unwrap();
     revert::apply(&mut w, ops).unwrap();
@@ -54,7 +54,7 @@ fn field_values(conn: &KvStore, uuid: Uuid, name: &str) -> Vec<Value> {
 
 // ── The id remap ──────────────────────────────────────────────────────────────
 
-/// A revision that appends a row and then deletes it. Walking the inverses
+/// A write that appends a row and then deletes it. Walking the inverses
 /// backwards re-creates the row under a *new* id before the inverse of the
 /// append has to remove it — so that inverse must follow the remap, or it
 /// deletes nothing and leaves a row the revert invented.
@@ -87,7 +87,7 @@ fn test_revert_of_an_append_then_delete_of_the_same_row() {
     assert_eq!(state(&conn), before, "the revert lands exactly on the pre-revision state");
 }
 
-/// A revision that appends a row and then replaces the whole cell. The inverse
+/// A write that appends a row and then replaces the whole cell. The inverse
 /// of the `set_field` re-creates the cell — including the appended row, under a
 /// new id — and the inverse of the append must then find *that* row.
 #[test]
@@ -183,7 +183,7 @@ fn test_a_revert_still_refuses_a_real_type_conflict() {
         w.commit().unwrap();
         (a.uuid, b.uuid)
     };
-    // The revision to revert: it removes the only `rating` row.
+    // The write to revert: it removes the only `rating` row.
     let rev = {
         let mut w = Writer::begin(&mut conn, None).unwrap();
         w.clear_field_as(OpType::SetField, uuid, "rating").unwrap();
@@ -264,7 +264,7 @@ fn test_revert_of_a_delete_record_recreates_it_with_the_same_uuid() {
     assert_eq!(state(&conn), before, "the record returns under its own uuid");
 }
 
-/// A folder and its file deleted in one revision, the folder first — what a
+/// A folder and its file deleted in one write, the folder first — what a
 /// trashing's cascade writes. The revert recreates them newest first, so the
 /// file before its folder: its position names a parent not there *yet*. The
 /// forest is checked on the state the revert lands on, not on each step.
@@ -352,7 +352,7 @@ fn test_revert_of_the_last_revisions_returns_to_the_state_before_them() {
 
     let expected = state(&conn);
 
-    // Three revisions of assorted shapes.
+    // Three writes of assorted shapes.
     let mut revs = vec![];
     for (i, shape) in [0, 1, 2].iter().enumerate() {
         let mut w = Writer::begin(&mut conn, None).unwrap();

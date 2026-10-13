@@ -11,7 +11,7 @@ name = "metafolder-bench"
 anyhow = "1"
 metafolder-core = { path = "../core" }
 # The regression suite generates its repositories through the daemon's own
-# library: a `Writer` per revision builds a 5 000-revision log in seconds,
+# library: a `Writer` per write builds a 5 000-write log in seconds,
 # where the same thing over HTTP takes minutes (doc "The timed regression suite").
 metafolder-daemon = { path = "../daemon" }
 tokio = { version = "1", features = ["full"] }

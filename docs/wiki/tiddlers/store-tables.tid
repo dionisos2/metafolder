@@ -65,7 +65,7 @@ compress to runs). Deleted ids are not reused.
 
 Every row change goes through one primitive (`derive_row`), every metarecord creation
 and removal through two others — reverts included — so the derived data is
-maintained in each revision's own transaction; `check` holds all of it to a rebuild.
+maintained in each write's own transaction; `check` holds all of it to a rebuild.
 
 !! Key size
 

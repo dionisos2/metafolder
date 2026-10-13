@@ -16,7 +16,7 @@ Each panel has the command under its own name, on the same key:
 |!Command |!Finds |!A candidate reads |
 |`file-manager:find` |an entry of the directory shown |its name, with a final `/` for a directory |
 |`treeref:find` |a child of the current node |its name |
-|<<cmd "log:find">> |a revision listed |`#12`, followed by its label when it has one |
+|<<cmd "log:find">> |a write listed |`#12`, followed by its label when it has one |
 |<<cmd "trash:find">> |an entry of the trash |its name, then the path it was trashed from |
 |`recent:find` |a metarecord seen recently |its name, then its path |
 |<<cmd "duplicates:find">> |a group or a copy |the group's hash and number of copies; the copy's path |

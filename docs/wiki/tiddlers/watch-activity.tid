@@ -25,12 +25,12 @@ large video is fifteen thousand of them — one per `write()` — and costs next
 since they compact into one modification ([[Event batching]]). An ''operation'' is what
 reached the log: it is durable, spends the retention budget, buries your own changes in
 the history and makes every panel re-read. A file touched every few seconds is few
-events and a revision each time. So a path can be loud and harmless, or quiet and
+events and a write each time. So a path can be loud and harmless, or quiet and
 costly; above, `/.cache` receives a fifth of the events and writes three quarters of the
 log. Rank by events to find what floods the watcher, by operations to find what floods
 the log.
 
-An operation is counted on the path of the event that caused it, once its revision is
+An operation is counted on the path of the event that caused it, once its write is
 committed: a removed directory's cascade counts on the directory, a flush that was
 stopped counts nothing.
 
@@ -54,7 +54,7 @@ reads as zero.
 
 * ''Recursive'': an event at `/a/b/c` counts once on it, `/a/b`, `/a` and the root; a rename on every path along both sides. The root's count is the total, and the largest counts lead down to the source — per-directory counts would not, a build tree scattering its events over hundreds of hash-named directories each quiet on its own.
 * ''As delivered'': counted on arrival, before compaction and before any filter. Under the coverage regime an untracked subtree still sends events and still counts; under the budget regime it holds no watch and sends nothing.
-* ''In memory only'': from the load (`since_ms`) or the last reset. A diagnosis of the current load, not history — a field would add a revision per flush to the very log the noise floods.
+* ''In memory only'': from the load (`since_ms`) or the last reset. A diagnosis of the current load, not history — a field would add a write per flush to the very log the noise floods.
 * ''Bounded'': at most 100 000 paths; past that the least active (events plus operations) go, deepest first among equals, so a path never outlives its parent. Small counts are approximate, large ones exact.
 
 The counts answer from memory, never waiting for the repository — so they answer during

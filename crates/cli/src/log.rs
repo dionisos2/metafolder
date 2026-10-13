@@ -125,7 +125,7 @@ pub struct UndoOpts {
 // ── Move policies ─────────────────────────────────────────────────────────────
 
 /// Parses a `--on-move-available`/`--on-move-unavailable` value
-/// (doc "Reverting a revision").
+/// (doc "Reverting a label").
 pub fn parse_policy(s: &str) -> Result<Policy, CliError> {
     match s {
         "apply" => Ok(Policy::Apply),
@@ -416,7 +416,7 @@ pub fn log_show(ctx: &Ctx, target: &str, raw: bool) -> Result<i32, CliError> {
             continue;
         }
         // For field-scoped ops (set_field, file_*) the field name precedes the
-        // before/after to make multi-field revisions readable.
+        // before/after to make multi-field writes readable.
         let prefix = op["field_name"].as_str().map(|f| format!("{f} ")).unwrap_or_default();
         println!("    {prefix}before:  {}", fmt_snapshots(before));
         println!("    {prefix}after:   {}", fmt_snapshots(after));
@@ -572,7 +572,7 @@ mod tests {
     }
 }
 
-// ── `mf log revert` (doc "Reverting a revision") ──────────────────────────────
+// ── `mf log revert` (doc "Reverting a label") ──────────────────────────────
 
 /// What to revert: a label — its children's operations included — an
 /// explicit list of operations, or, omitted, the label of the newest

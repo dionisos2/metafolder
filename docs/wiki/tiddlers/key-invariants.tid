@@ -31,7 +31,7 @@ change of design, to be decided as such, with its note rewritten.
 
 !! Writes and the log
 
-* Every write goes through `log::Writer`: one revision is one transaction covering the rows, the log, HEAD and the derived key spaces, so HEAD and the data never disagree ([[Writes and atomicity]], [[Operations and their origin]]; semgrep `mf-write-outside-writer`).
+* Every write goes through `log::Writer`: one write is one transaction covering the rows, the log, HEAD and the derived key spaces, so HEAD and the data never disagree ([[Writes and atomicity]], [[Operations and their origin]]; semgrep `mf-write-outside-writer`).
 * A write on a loaded repository goes through the repository's own writer, so that its configured retention applies ([[Automatic retention]]; semgrep `mf-writer-bypasses-retention`).
 * The log is a sequence: an operation names no parent, nothing moves back over it, and a revert is a write like any other ([[The operation log]]).
 
