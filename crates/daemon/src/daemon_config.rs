@@ -30,14 +30,14 @@ pub const DEFAULT_WATCH_BUDGET_SHARE: u8 = 50;
 /// absent, and the daemon says so and watches with inotify.
 pub const DEFAULT_WATCHD_SOCKET: &str = "/run/metafolder/watchd.sock";
 
-/// Default log retention: 200 revisions. A revision is an *event* — a batch of
-/// filesystem changes, a command — not an operation, so 200 of them is already
-/// more history than anyone walks back through, and it keeps the database of a
-/// default installation from growing without bound. Labelled revisions are kept
-/// regardless (see `log_retention_keep_labels`), so the one kind of history a
-/// user deliberately named is the one the limit cannot take
-/// (doc "Automatic retention").
-pub const DEFAULT_LOG_RETENTION_REVISIONS: u64 = 200;
+/// Default retention of the watcher's operations (doc "Automatic
+/// retention"): its churn — every save, copy and extraction under a watched
+/// tree — is what fills a log, and little of it is ever undone.
+pub const DEFAULT_LOG_RETENTION_WATCHER_OPS: u64 = 50_000;
+
+/// Default retention of every other operation: the user's own history, kept
+/// long (user decision, October 2026).
+pub const DEFAULT_LOG_RETENTION_USER_OPS: u64 = 1_000_000;
 
 /// Default threshold for the slow-operation log (doc "Slow log"): an operation
 /// past it is written to the repository's log with its phase breakdown. Two
@@ -89,14 +89,18 @@ pub struct DaemonSettings {
     /// inotify and says so. Pointing it at a path where nothing listens is how
     /// one stays on inotify.
     pub watchd_socket: PathBuf,
-    /// Revisions of history the event log keeps behind HEAD; the oldest fall
-    /// off as new ones arrive. `0` keeps everything. A repository may override
-    /// it in its own `config.json`.
-    pub log_retention_revisions: u64,
-    /// Never trim past a labelled revision: a named checkpoint holds the log
-    /// open rather than being dropped by the limit above. Default true — the
-    /// limit is on by default, so the escape hatch from it is too.
-    pub log_retention_keep_labels: bool,
+    /// Operations of the watcher the event log keeps; the oldest fall off as
+    /// new ones arrive. `0` keeps everything. A repository may override it in
+    /// its own `config.json`.
+    pub log_retention_watcher_ops: u64,
+    /// Operations of every other origin the event log keeps (`0`: all).
+    pub log_retention_user_ops: u64,
+    /// The retention of revisions before October 2026, gone with them: read
+    /// so an edited config still loads, ignored with a warning
+    /// ([`DaemonSettings::obsolete`]).
+    pub log_retention_revisions: Option<toml::Value>,
+    /// See `log_retention_revisions`.
+    pub log_retention_keep_labels: Option<toml::Value>,
     /// Largest number of metarecords one watcher-driven cascade may orphan.
     /// Beyond it the cascade is skipped and a warning logged: a batch that
     /// would null thousands of paths is a filesystem going away, not a
@@ -124,8 +128,10 @@ impl Default for DaemonSettings {
             watch_budget_share: DEFAULT_WATCH_BUDGET_SHARE,
             watchd_socket: PathBuf::from(DEFAULT_WATCHD_SOCKET),
             orphan_cascade_limit: DEFAULT_ORPHAN_CASCADE_LIMIT,
-            log_retention_revisions: DEFAULT_LOG_RETENTION_REVISIONS,
-            log_retention_keep_labels: true,
+            log_retention_watcher_ops: DEFAULT_LOG_RETENTION_WATCHER_OPS,
+            log_retention_user_ops: DEFAULT_LOG_RETENTION_USER_OPS,
+            log_retention_revisions: None,
+            log_retention_keep_labels: None,
             slow_operation_threshold_ms: DEFAULT_SLOW_OPERATION_THRESHOLD_MS,
             slow_operation_reads_threshold: DEFAULT_SLOW_OPERATION_READS_THRESHOLD,
             slow_read_threshold_ms: DEFAULT_SLOW_READ_THRESHOLD_MS,
@@ -143,9 +149,28 @@ impl DaemonSettings {
     /// The log-retention policy these settings describe.
     pub fn log_retention(&self) -> crate::log::Retention {
         crate::log::Retention {
-            revisions: self.log_retention_revisions,
-            keep_labels: self.log_retention_keep_labels,
+            watcher_ops: self.log_retention_watcher_ops,
+            user_ops: self.log_retention_user_ops,
         }
+    }
+
+    /// The settings this file sets that no longer mean anything, each with
+    /// what replaced it — a warning at startup, not an error: they were
+    /// shipped, and a config the user edited keeps them.
+    pub fn obsolete(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        for (key, set) in [
+            ("log-retention-revisions", self.log_retention_revisions.is_some()),
+            ("log-retention-keep-labels", self.log_retention_keep_labels.is_some()),
+        ] {
+            if set {
+                out.push(format!(
+                    "the setting '{key}' is ignored: the log is kept by operations per origin \
+                     now (log-retention-watcher-ops, log-retention-user-ops)"
+                ));
+            }
+        }
+        out
     }
 }
 
@@ -300,11 +325,23 @@ mod tests {
         assert_eq!(empty.watchd_socket, PathBuf::from(DEFAULT_WATCHD_SOCKET));
         assert_eq!(
             empty.log_retention(),
-            crate::log::Retention { revisions: DEFAULT_LOG_RETENTION_REVISIONS, keep_labels: true },
-            "history is bounded out of the box, and a named checkpoint holds it open"
+            crate::log::Retention { watcher_ops: 50_000, user_ops: 1_000_000 },
+            "history is bounded out of the box, the user's far longer than the watcher's"
         );
-        assert_eq!(DEFAULT_LOG_RETENTION_REVISIONS, 200);
         assert_eq!(DaemonConfig::default().settings, DaemonSettings::default());
+    }
+
+    #[test]
+    fn test_the_retention_of_revisions_is_read_and_ignored() {
+        // Shipped until October 2026: a config the user edited still has it,
+        // and must load — with a warning naming what replaced it.
+        let s: DaemonSettings =
+            toml::from_str("log-retention-revisions = 200\nlog-retention-keep-labels = true")
+                .unwrap();
+        assert_eq!(s.log_retention(), DaemonSettings::default().log_retention());
+        let warnings = s.obsolete();
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert!(warnings[0].contains("log-retention-watcher-ops"), "{warnings:?}");
     }
 
     #[test]
@@ -320,16 +357,17 @@ mod tests {
     fn test_read_config_parses_the_settings_table() {
         let path = write_config(
             "[settings]\nwatch-quiet-period-ms = 1500\n\
-             orphan-cascade-limit = 7\nlog-retention-revisions = 500\n\
-             log-retention-keep-labels = true\n",
+             orphan-cascade-limit = 7\nlog-retention-watcher-ops = 500\n\
+             log-retention-user-ops = 0\n",
         );
         let config = read_config(&path).unwrap();
         assert_eq!(config.settings.watch_quiet_period_ms, 1500);
         assert_eq!(config.settings.orphan_cascade_limit, 7);
         assert_eq!(
             config.settings.log_retention(),
-            crate::log::Retention { revisions: 500, keep_labels: true }
+            crate::log::Retention { watcher_ops: 500, user_ops: 0 }
         );
+        assert!(config.settings.obsolete().is_empty());
         std::fs::remove_file(&path).unwrap();
     }
 

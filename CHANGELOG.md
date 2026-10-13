@@ -154,6 +154,15 @@ than breaking them.
     `mf_watch = true` no longer reads as unwatched.
 
 ### Changed
+- **The log is kept by operations per origin.** `log-retention-watcher-ops`
+  (default 50 000) and `log-retention-user-ops` (default 1 000 000) replace
+  `log-retention-revisions` and `log-retention-keep-labels`, daemon-wide and
+  per repository (`log_retention_watcher_ops`, `log_retention_user_ops` in
+  `config.json`): the watcher's churn no longer pushes your own history out of
+  a log that kept 200 revisions of both. The old keys are read, ignored, and
+  named in a warning at startup. The store's layout 4 splits the operations by
+  origin; like layout 3 it empties the log of an older store instead of
+  converting it (doc "Automatic retention").
 - **The event log is a sequence, not a tree: undo and redo are reverts only.**
   An operation names no parent; HEAD is the newest operation and only moves
   forward. Undo reverts your newest change still standing, redo the newest undo

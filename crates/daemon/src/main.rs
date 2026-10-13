@@ -35,6 +35,10 @@ async fn main() {
         },
         None => Default::default(),
     };
+    for warning in config.settings.obsolete() {
+        eprintln!("[daemon] Warning: {warning}");
+        metafolder_daemon::diagnostics::warn("config", warning);
+    }
 
     // The shipped default schema seeded into each new repo at init. Resolved
     // unconditionally; the copy is skipped at init time if the file is absent.

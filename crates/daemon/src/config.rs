@@ -51,18 +51,18 @@ pub struct RepoConfig {
     pub schema: Option<PathBuf>,
     /// Creation timestamp (Unix seconds).
     pub created_at: u64,
-    /// Revisions of history this repository's event log keeps behind HEAD,
-    /// overriding the daemon's `[settings] log-retention-revisions`. `0` keeps
-    /// everything; absent defers to the daemon (doc "Automatic retention"). Per repository because
-    /// the volumes are not comparable — a
-    /// watched media tree writes revisions all day, a hand-curated one barely
-    /// any.
+    /// Operations of the watcher this repository's event log keeps,
+    /// overriding the daemon's `[settings] log-retention-watcher-ops`. `0`
+    /// keeps them all; absent defers to the daemon (doc "Automatic
+    /// retention"). Per repository because the volumes are not comparable —
+    /// a watched media tree writes operations all day, a hand-curated one
+    /// barely any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub log_retention_revisions: Option<u64>,
-    /// Whether a labelled revision stops the trim, overriding the daemon's
-    /// `[settings] log-retention-keep-labels`.
+    pub log_retention_watcher_ops: Option<u64>,
+    /// Operations of every other origin kept, overriding the daemon's
+    /// `[settings] log-retention-user-ops`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub log_retention_keep_labels: Option<bool>,
+    pub log_retention_user_ops: Option<u64>,
     /// A daemon-internal repository (e.g. a cross-repo sync plan repo,
     /// doc "The sync plan"): loaded and usable like any repo, but hidden from
     /// `GET /repos` unless `?all=true`.
@@ -86,8 +86,8 @@ impl RepoConfig {
             root_relative: None,
             schema: None,
             created_at,
-            log_retention_revisions: None,
-            log_retention_keep_labels: None,
+            log_retention_watcher_ops: None,
+            log_retention_user_ops: None,
             system: false,
             storage: Storage::Kv,
         }
@@ -151,8 +151,8 @@ impl RepoConfig {
     /// the daemon's settings otherwise.
     pub fn log_retention(&self, daemon: crate::log::Retention) -> crate::log::Retention {
         crate::log::Retention {
-            revisions: self.log_retention_revisions.unwrap_or(daemon.revisions),
-            keep_labels: self.log_retention_keep_labels.unwrap_or(daemon.keep_labels),
+            watcher_ops: self.log_retention_watcher_ops.unwrap_or(daemon.watcher_ops),
+            user_ops: self.log_retention_user_ops.unwrap_or(daemon.user_ops),
         }
     }
 
@@ -242,15 +242,14 @@ mod tests {
 
     #[test]
     fn test_log_retention_defers_to_the_daemon_unless_overridden() {
-        let daemon = crate::log::Retention { revisions: 500, keep_labels: false };
+        let daemon = crate::log::Retention { watcher_ops: 500, user_ops: 900 };
         let mut config = RepoConfig::new(PathBuf::from("/r"), "r".into());
         assert_eq!(config.log_retention(daemon), daemon, "no override: the daemon decides");
 
-        config.log_retention_revisions = Some(20);
-        config.log_retention_keep_labels = Some(true);
+        config.log_retention_watcher_ops = Some(20);
         assert_eq!(
             config.log_retention(daemon),
-            crate::log::Retention { revisions: 20, keep_labels: true }
+            crate::log::Retention { watcher_ops: 20, user_ops: 900 }
         );
     }
 
@@ -263,8 +262,8 @@ mod tests {
                        "version":1,"root":"/r","created_at":0}"#;
         std::fs::write(dir.join("config.json"), json).unwrap();
         let config = RepoConfig::read(&dir).unwrap();
-        assert_eq!(config.log_retention_revisions, None);
-        assert_eq!(config.log_retention_keep_labels, None);
+        assert_eq!(config.log_retention_watcher_ops, None);
+        assert_eq!(config.log_retention_user_ops, None);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

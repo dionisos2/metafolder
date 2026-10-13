@@ -24,6 +24,7 @@ another.
 |`ops_by_rev` |revision · seq · op id |— |
 |`ops_by_entity` |uuid · op id |— |
 |`revisions` |revision id |timestamp · label · origin |
+|`watcher_ops`, `user_ops` |op id |— (the operations of each retention class, [[Automatic retention]]) |
 
 A record's rows ''of one field'' are one prefix of `field_cells`, so checking a
 candidate on the field searched reads those rows, not all of its record's — a real

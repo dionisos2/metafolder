@@ -224,6 +224,7 @@ fn appended_operations_chain_from_head() {
             value: Value::Int(3),
         }],
         reverts_op_id: None,
+        origin: None,
     };
     let first = {
         let tx = conn.begin_write().unwrap();

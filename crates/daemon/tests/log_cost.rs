@@ -13,7 +13,7 @@
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_daemon::kvstore::KvStore;
-use metafolder_daemon::log::{Retention, Writer};
+use metafolder_daemon::log::{Retention, Writer, ORIGIN_WATCHER};
 use metafolder_daemon::log_view::{listing, LogQuery};
 use metafolder_daemon::store::{Log, Rows};
 
@@ -194,30 +194,35 @@ fn a_filtered_bounded_read_looks_past_the_window_for_matches() {
     }
 }
 
-/// The keys one write reads when it trims 100 revisions of one operation off
-/// a log that keeps 20: 18 of one operation, then one of `big` operations
-/// (a reconcile's, say), then the write's own.
+/// The keys one watcher write reads when it trims 100 of the watcher's
+/// operations off a log that keeps 20 of them, behind `big` operations of the
+/// user's (a reconcile's, say) that the trim keeps.
 fn trim_cost(big: usize) -> u64 {
-    let (mut kv, _dir) = repo_with_log(118);
+    let (mut kv, _dir) = common::kv::store();
     let mut w = Writer::begin(&mut kv, None).unwrap();
     for i in 0..big {
         w.create_metarecord(vec![Field::new("rank", Value::Int(i as i64))]).unwrap();
     }
     w.commit().unwrap();
-    let (_, reads) = reads_of(&mut kv, |kv| {
-        let retention = Retention { revisions: 20, keep_labels: false };
+    let watcher_write = |kv: &mut KvStore, retention: Retention| {
         let mut w = Writer::begin_with_retention(kv, None, retention).unwrap();
-        w.create_metarecord(vec![Field::new("kind", Value::String("new".into()))]).unwrap();
+        w.set_origin(ORIGIN_WATCHER).unwrap();
+        w.create_metarecord(vec![Field::new("kind", Value::String("file".into()))]).unwrap();
         w.commit().unwrap();
-    });
-    assert_eq!(kv.counts().unwrap().1, 20, "the trim kept 20 revisions");
+    };
+    for _ in 0..119 {
+        watcher_write(&mut kv, Retention::UNLIMITED);
+    }
+    let retention = Retention { watcher_ops: 20, user_ops: 0 };
+    let (_, reads) = reads_of(&mut kv, |kv| watcher_write(kv, retention));
+    assert_eq!(kv.counts().unwrap().0, 20 + big as i64, "the trim kept 20 watcher operations");
     reads
 }
 
-/// The retention trim deletes the oldest revisions. What it reads must depend
-/// on what it deletes, never on how much the revisions it *keeps* hold: it
-/// runs once every `slack` writes, and a trim that reads the whole log reads
-/// a reconcile's tens of thousands of operations each time.
+/// The retention trim deletes the oldest operations of an origin. What it
+/// reads must depend on what it deletes, never on how much the log *keeps*:
+/// it runs once every `slack` writes, and a trim that reads the whole log
+/// reads a reconcile's tens of thousands of operations each time.
 #[test]
 fn trimming_the_log_does_not_read_the_operations_it_keeps() {
     assert_eq!(trim_cost(1), trim_cost(2_000), "the trim read the operations it keeps");

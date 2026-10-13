@@ -253,41 +253,46 @@ impl WriteEffects {
 
 // ── Automatic retention (doc "Automatic retention") ────────────────
 
-/// How much history the log keeps behind HEAD. Applied by [`Writer::commit`],
-/// inside the write's own transaction: a trim is a range delete over the
-/// oldest operations, which costs less than the append that triggered it and
-/// adds no `fsync` of its own.
+/// How much history the log keeps: a number of operations per origin — the
+/// watcher's, and everything else (doc "Automatic retention"). Applied by
+/// [`Writer::commit`], inside the write's own transaction: a trim deletes the
+/// oldest operations of an origin, which costs less than the append that
+/// triggered it and adds no `fsync` of its own.
+///
+/// Two budgets because the volumes are not comparable: a watched tree writes
+/// operations all day, and a limit shared with them would let that churn push
+/// the user's own history out. Nothing in the log depends on an older
+/// operation being there (doc "The operation log"), so either end can go.
 ///
 /// Deliberately *not* a [`prune`]: no `VACUUM`. In a steady state the freed
 /// pages are what the next appends write into, so the database settles on a
 /// plateau instead of being rewritten whole at every trim.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Retention {
-    /// Revisions to keep. `0` = unlimited: nothing is ever dropped.
-    pub revisions: u64,
-    /// Never trim past a labelled revision: a named checkpoint is a floor, and
-    /// the log grows past the limit rather than losing it.
-    pub keep_labels: bool,
+    /// Operations of the watcher to keep. `0` = unlimited.
+    pub watcher_ops: u64,
+    /// Operations of every other origin to keep. `0` = unlimited.
+    pub user_ops: u64,
 }
 
 impl Retention {
     /// Keep everything. Deliberately not a `Default` impl: the default a
-    /// repository actually writes with is the configured one
-    /// (`DEFAULT_LOG_RETENTION_REVISIONS`), and a silent `Retention::default()`
-    /// meaning "unlimited" would read as agreeing with it.
-    pub const UNLIMITED: Self = Self { revisions: 0, keep_labels: false };
+    /// repository actually writes with is the configured one, and a silent
+    /// `Retention::default()` meaning "unlimited" would read as agreeing with
+    /// it.
+    pub const UNLIMITED: Self = Self { watcher_ops: 0, user_ops: 0 };
 
-    /// How far past the limit the log is allowed to drift before a trim runs.
-    /// Hysteresis, not sloppiness: trimming one revision per write would dirty
-    /// the oldest (cold) pages of the log at every single commit, where one
-    /// trim per `slack` revisions costs the same work spread over `slack`
+    /// How far past a limit the log is allowed to drift before a trim runs.
+    /// Hysteresis, not sloppiness: trimming one operation per write would
+    /// dirty the oldest (cold) pages of the log at every single commit, where
+    /// one trim per `slack` operations costs the same work spread over `slack`
     /// transactions that were going to write anyway.
-    pub fn slack(revisions: u64) -> u64 {
-        (revisions / 10).max(1)
+    pub fn slack(limit: u64) -> u64 {
+        (limit / 10).max(1)
     }
 
     pub(crate) fn enabled(&self) -> bool {
-        self.revisions > 0
+        self.watcher_ops > 0 || self.user_ops > 0
     }
 }
 
@@ -338,6 +343,9 @@ pub struct Writer<'c> {
     /// each of them as `reverts_op_id` (see [`Self::reverting`]). `None` for
     /// every ordinary write.
     reverting: Option<i64>,
+    /// Who this write is on behalf of (see [`Self::set_origin`]), stamped
+    /// onto each operation it records.
+    origin: Option<String>,
 }
 
 impl<'c> Writer<'c> {
@@ -373,6 +381,7 @@ impl<'c> Writer<'c> {
             tree_lost: Vec::new(),
             tree_lost_seen: HashMap::new(),
             reverting: None,
+            origin: None,
         })
     }
 
@@ -389,6 +398,7 @@ impl<'c> Writer<'c> {
     /// arriving is recorded as a `create_metarecord`, indistinguishable by type
     /// from a metarecord the user created.
     pub fn set_origin(&mut self, origin: &str) -> Result<()> {
+        self.origin = Some(origin.to_string());
         self.tx.set_revision_origin(self.rev_id, origin)
     }
 
@@ -1036,6 +1046,7 @@ impl<'c> Writer<'c> {
             before,
             after,
             reverts_op_id: self.reverting,
+            origin: self.origin.clone(),
         });
         if self.pending.len() >= FLUSH_THRESHOLD {
             self.flush_pending()?;

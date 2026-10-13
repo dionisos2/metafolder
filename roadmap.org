@@ -15,9 +15,10 @@ motivates it is in doc "Why the log stops being a tree". Done: a revert is
 applied onto the current state (=3ff1d593=); the log is a sequence, undo and
 redo are reverts — which fixed the three undo/redo bugs that motivated it (the
 lost redo, the redo stopping at a redone undo, the scripts' going back). The
-old log is emptied, not converted (user). Left, in order: labels replace
-revisions (daemon), contexts in the clients, undo and redo by label, retention
-per origin, the log panel as a label tree. Deferred past the first build: the
+old log is emptied, not converted (user); retention per origin (done before
+the labels: the trim had to leave the revisions behind first). Left, in order:
+labels replace revisions (daemon), contexts in the clients, undo and redo by
+label, the log panel as a label tree. Deferred past the first build: the
 GUI's work context (its scope is undecided), "rollback = revert since T".
 
 * TODO performance

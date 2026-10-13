@@ -1,10 +1,10 @@
-//! Automatic log retention (doc "Automatic retention"): the log
-//! keeps a bounded number of revisions behind HEAD, the oldest falling off as
-//! new ones arrive.
+//! Automatic log retention (doc "Automatic retention"): the log keeps a
+//! bounded number of operations per origin — the watcher's, and everything
+//! else — the oldest of each falling off as new ones arrive.
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_daemon::kvstore::KvStore;
-use metafolder_daemon::log::{Retention, Writer};
+use metafolder_daemon::log::{Retention, Writer, ORIGIN_WATCHER};
 use metafolder_daemon::store::Log;
 
 mod common;
@@ -13,79 +13,79 @@ fn test_conn() -> (KvStore, common::TempDir) {
     common::kv::store()
 }
 
-/// One revision holding one operation.
-fn write_revision(conn: &mut KvStore, retention: Retention, label: Option<&str>) {
-    let mut w = Writer::begin_with_retention(conn, label.map(str::to_string), retention).unwrap();
+/// One write holding one operation, the watcher's when `watcher`.
+fn write(conn: &mut KvStore, retention: Retention, watcher: bool) -> i64 {
+    let mut w = Writer::begin_with_retention(conn, None, retention).unwrap();
+    if watcher {
+        w.set_origin(ORIGIN_WATCHER).unwrap();
+    }
     w.create_metarecord(vec![Field::new("n", Value::Int(1))]).unwrap();
     w.commit().unwrap();
+    conn.head().unwrap().unwrap()
 }
 
-fn revisions(conn: &KvStore) -> i64 {
-    conn.counts().unwrap().1
+fn ops(conn: &KvStore, watcher: bool) -> usize {
+    conn.all_ops()
+        .unwrap()
+        .iter()
+        .filter(|o| (o.origin.as_deref() == Some(ORIGIN_WATCHER)) == watcher)
+        .count()
 }
 
-/// Whether what survives is the newest stretch of the log: consecutive ids
-/// ending at HEAD — a trim only ever cuts the oldest end.
-fn newest_stretch(conn: &KvStore) -> bool {
-    let ids: Vec<i64> = conn.all_ops().unwrap().iter().map(|o| o.id).collect();
-    ids.windows(2).all(|w| w[1] == w[0] + 1) && ids.last().copied() == conn.head().unwrap()
-}
-
-/// How many revisions still in the log carry a label.
-fn labelled(conn: &KvStore) -> usize {
-    let revs: Vec<i64> = conn.all_ops().unwrap().iter().map(|o| o.rev_id).collect();
-    conn.revisions(&revs).unwrap().values().filter(|m| m.label.is_some()).count()
+const fn keep(watcher_ops: u64, user_ops: u64) -> Retention {
+    Retention { watcher_ops, user_ops }
 }
 
 #[test]
-fn test_unlimited_retention_keeps_every_revision() {
-    // The default: nothing is ever dropped (doc "Automatic retention").
+fn test_unlimited_retention_keeps_every_operation() {
     let (mut conn, _dir) = test_conn();
-    for _ in 0..50 {
-        write_revision(&mut conn, Retention::UNLIMITED, None);
+    for i in 0..50 {
+        write(&mut conn, Retention::UNLIMITED, i % 2 == 0);
     }
-    assert_eq!(revisions(&conn), 50);
+    assert_eq!(conn.counts().unwrap().0, 50);
 }
 
 #[test]
-fn test_retention_trims_the_oldest_revisions() {
-    // With a limit of 10, 60 revisions written leave the log bounded: the limit
-    // itself plus at most the slack the trim tolerates before running again.
+fn test_retention_trims_the_oldest_operations_of_an_origin() {
+    // With a limit of 10, 60 operations written leave the log bounded: the
+    // limit itself plus at most the slack the trim tolerates.
     let (mut conn, _dir) = test_conn();
-    let retention = Retention { revisions: 10, keep_labels: false };
+    let mut written = Vec::new();
     for _ in 0..60 {
-        write_revision(&mut conn, retention, None);
+        written.push(write(&mut conn, keep(0, 10), false));
     }
-    let kept = revisions(&conn);
+    let kept = ops(&conn, false);
     assert!(
-        (10..=10 + Retention::slack(10) as i64).contains(&kept),
-        "expected the log bounded around 10 revisions, kept {kept}"
+        (10..=10 + Retention::slack(10) as usize).contains(&kept),
+        "expected the log bounded around 10 operations, kept {kept}"
     );
-    assert!(newest_stretch(&conn));
+    let survivors: Vec<i64> = conn.all_ops().unwrap().iter().map(|o| o.id).collect();
+    assert_eq!(survivors, written[written.len() - kept..], "the newest are what is kept");
 }
 
+/// The point of a limit per origin: the watcher's churn does not push the
+/// user's own history out.
 #[test]
-fn test_trimmed_log_keeps_the_newest_operations() {
-    // What survives is the *newest* history: a stretch ending at HEAD.
+fn test_the_watchers_churn_does_not_take_the_users_history() {
     let (mut conn, _dir) = test_conn();
-    let retention = Retention { revisions: 5, keep_labels: false };
-    for _ in 0..40 {
-        write_revision(&mut conn, retention, None);
+    let retention = keep(5, 1_000);
+    let mine: Vec<i64> = (0..3).map(|_| write(&mut conn, retention, false)).collect();
+    for _ in 0..100 {
+        write(&mut conn, retention, true);
     }
-    assert!(newest_stretch(&conn));
+    for op in mine {
+        assert!(conn.op(op).unwrap().is_some(), "user operation {op} was trimmed");
+    }
+    let watcher = ops(&conn, true);
+    assert!(watcher <= 5 + Retention::slack(5) as usize, "kept {watcher} watcher operations");
 }
 
 #[test]
 fn test_trim_drops_the_snapshots_of_pruned_operations() {
-    // op_snapshot is the bulk of the log on disk; a trim that left them behind
-    // would bound the revision count and nothing else.
+    // Snapshots are the bulk of the log on disk; a trim that left them behind
+    // would bound the operation count and nothing else.
     let (mut conn, _dir) = test_conn();
-    let retention = Retention { revisions: 5, keep_labels: false };
-    let mut written = Vec::new();
-    for _ in 0..40 {
-        write_revision(&mut conn, retention, None);
-        written.push(conn.head().unwrap().unwrap());
-    }
+    let written: Vec<i64> = (0..40).map(|_| write(&mut conn, keep(0, 5), false)).collect();
     let pruned: Vec<i64> =
         written.into_iter().filter(|&op| conn.op(op).unwrap().is_none()).collect();
     assert!(!pruned.is_empty(), "the trim pruned nothing");
@@ -97,28 +97,13 @@ fn test_trim_drops_the_snapshots_of_pruned_operations() {
 }
 
 #[test]
-fn test_trim_removes_labelled_revisions_by_default() {
+fn test_a_write_left_with_no_operation_goes_with_its_last_one() {
     let (mut conn, _dir) = test_conn();
-    let retention = Retention { revisions: 5, keep_labels: false };
-    write_revision(&mut conn, retention, Some("checkpoint"));
     for _ in 0..40 {
-        write_revision(&mut conn, retention, None);
+        write(&mut conn, keep(0, 5), false);
     }
-    assert_eq!(labelled(&conn), 0, "keep_labels = false lets a checkpoint fall off");
-}
-
-#[test]
-fn test_trim_stops_at_the_oldest_label_when_asked() {
-    // keep_labels: a named checkpoint is a floor — nothing older than it is
-    // dropped, so the log grows past the limit rather than losing it.
-    let (mut conn, _dir) = test_conn();
-    let retention = Retention { revisions: 5, keep_labels: true };
-    write_revision(&mut conn, retention, Some("checkpoint"));
-    for _ in 0..40 {
-        write_revision(&mut conn, retention, None);
-    }
-    assert_eq!(labelled(&conn), 1, "the checkpoint survives");
-    assert_eq!(revisions(&conn), 41, "and so does everything after it");
+    let (operations, groups) = conn.counts().unwrap();
+    assert_eq!(operations, groups, "one operation per write: as many groups as operations");
 }
 
 // ── Configuration ─────────────────────────────────────────────────────────────
@@ -135,18 +120,17 @@ fn test_a_repository_writes_with_its_configured_retention() {
 
     let root = TempDir::new("log_retention_repo");
     let mut opened = repo::init_repository(&root, None, None, false).unwrap();
-    opened.config.log_retention_revisions = Some(4);
+    opened.config.log_retention_user_ops = Some(4);
     let settings = DaemonSettings {
-        log_retention_revisions: 900,
-        log_retention_keep_labels: true,
+        log_retention_watcher_ops: 900,
+        log_retention_user_ops: 900,
         ..DaemonSettings::default()
     };
     let state = RepoState::from_opened_with(opened, &settings);
     assert_eq!(
         state.log_retention(),
-        Retention { revisions: 4, keep_labels: true },
-        "each key resolves on its own: the repository overrides the count, \
-         the daemon still decides about labels"
+        keep(900, 4),
+        "each key resolves on its own: the repository overrides one, the daemon decides the other"
     );
 
     for _ in 0..30 {
@@ -156,6 +140,6 @@ fn test_a_repository_writes_with_its_configured_retention() {
         w.commit().unwrap();
     }
     let conn = state.conn.lock().unwrap();
-    let kept = metafolder_daemon::store::Log::counts(&*conn).unwrap().1;
-    assert!(kept <= 4 + Retention::slack(4) as i64, "kept {kept} revisions");
+    let kept = metafolder_daemon::store::Log::counts(&*conn).unwrap().0;
+    assert!(kept <= 4 + Retention::slack(4) as i64, "kept {kept} operations");
 }

@@ -56,25 +56,20 @@ watchd-socket = "/run/metafolder/watchd.sock"
 # re-checks every path against the disk). 0 disables the check. Default: 10000.
 orphan-cascade-limit = 10000
 
-# How many revisions of history the event log keeps behind HEAD. Every write
-# records a revision, so a repository under an active watcher accumulates them
-# for ever; past this many, the oldest fall off at the next write (the trim runs
-# inside that write's own transaction — it costs less than the append that
-# triggered it). What is kept is the *newest* history, so a rollback can still
-# walk back this many revisions. Two things it does not do: it never touches the
-# revision HEAD stands on, and it reclaims no disk space to the filesystem —
-# the freed pages are reused by the next writes, so the database settles on a
-# plateau instead of growing (use `mf log prune` for an actual VACUUM).
-# A revision is an event — a batch of filesystem changes, a command — not an
-# operation, so the default is already far more history than one walks back
-# through. 0 = unlimited, keep everything. Default: 200.
-log-retention-revisions = 200
+# How many operations of the watcher the event log keeps. Every change the
+# watcher sees under a watched tree is recorded, so a repository under an active
+# watcher accumulates them for ever; past this many, the oldest fall off at the
+# next write (the trim runs inside that write's own transaction — it costs less
+# than the append that triggered it). It reclaims no disk space to the
+# filesystem: the freed pages are reused by the next writes, so the database
+# settles on a plateau instead of growing (use `mf log prune` for an actual
+# VACUUM). Kept apart from your own operations below, so the watcher's churn
+# never pushes your history out. 0 = unlimited. Default: 50000.
+log-retention-watcher-ops = 50000
 
-# Whether a labelled revision (a checkpoint you named) stops the trim above:
-# with true, nothing older than the oldest label is ever dropped and the log
-# grows past the limit rather than losing the checkpoint — the escape hatch from
-# a limit that is on by default. Default: true.
-log-retention-keep-labels = true
+# How many of every other operation — your own changes, from the command line,
+# the GUI or a script — the event log keeps. 0 = unlimited. Default: 1000000.
+log-retention-user-ops = 1000000
 
 # How long an operation must take, in milliseconds, before the daemon writes it
 # to the repository's slow-operation log (.metafolder/internal/slow/, read with

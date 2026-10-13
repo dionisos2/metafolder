@@ -159,10 +159,6 @@ macro_rules! forward_to_store {
                 let $me = self;
                 Log::counts($conn)
             }
-            fn counters(&self) -> Result<Counters> {
-                let $me = self;
-                Log::counters($conn)
-            }
             fn revision_ops(&self, rev: i64) -> Result<Vec<OpRow>> {
                 let $me = self;
                 Log::revision_ops($conn, rev)
@@ -429,8 +425,6 @@ pub trait Log {
     fn revisions(&self, ids: &[i64]) -> Result<HashMap<i64, RevisionMeta>>;
     /// How many operations and revisions the log holds.
     fn counts(&self) -> Result<(i64, i64)>;
-    /// The next id each counter hands out.
-    fn counters(&self) -> Result<Counters>;
     /// A revision's operations, oldest first.
     fn revision_ops(&self, rev: i64) -> Result<Vec<OpRow>>;
     /// An entity's operations newer than `after`, oldest first.
@@ -779,6 +773,9 @@ pub struct NewOp {
     pub after: Vec<FieldRow>,
     /// The operation this one undoes, when a revert writes it.
     pub reverts_op_id: Option<i64>,
+    /// Who wrote it (`log::ORIGIN_WATCHER`, `ORIGIN_TRASH`), `None` for a
+    /// client's ordinary write — what retention sorts it by.
+    pub origin: Option<String>,
 }
 
 /// A write transaction: everything it writes commits together or not at all,
@@ -819,26 +816,7 @@ pub trait WriteTxn: Store {
     /// Deletes the revisions no operation belongs to any more.
     fn drop_empty_revisions(&self) -> Result<()>;
 
-    /// Puts a revision under its own id — a conversion copying a history
-    /// (doc "How the storage backend was built").
-    fn import_revision(&self, id: i64, meta: &RevisionMeta) -> Result<()>;
-    /// Puts an operation and its snapshots under their own ids (a
-    /// conversion); its revision is already there.
-    fn import_op(&self, op: &OpRow, before: &[FieldRow], after: &[FieldRow]) -> Result<()>;
-    /// Moves the counters to at least `counters`, so no id below them is
-    /// handed out again.
-    fn raise_counters(&self, counters: Counters) -> Result<()>;
-
     fn commit(self: Box<Self>) -> Result<()>;
-}
-
-/// The next id each of a store's counters hands out: rows, operations,
-/// revisions. Ids are never reused, so a copy carries these along.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Counters {
-    pub next_row: i64,
-    pub next_op: i64,
-    pub next_rev: i64,
 }
 
 /// Opens write transactions.

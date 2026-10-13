@@ -22,6 +22,8 @@
 //! | ops_by_rev    | revision · seq · op id           | —                         |
 //! | ops_by_entity | uuid · op id                     | —                         |
 //! | revisions     | revision id                      | timestamp · label · origin|
+//! | watcher_ops   | op id                            | —                         |
+//! | user_ops      | op id                            | —                         |
 //!
 //! A record's rows of one field are one prefix of `field_cells`: checking a
 //! candidate on the field searched reads those rows, not all of its record's
@@ -31,7 +33,10 @@
 //! ([`LAYOUT`]).
 //!
 //! The log is a sequence (doc "The operation log"): an operation names no
-//! parent, and "the log up to here" is a range of `ops`.
+//! parent, and "the log up to here" is a range of `ops`. `watcher_ops` and
+//! `user_ops` split it by origin, for the retention each one has (doc
+//! "Automatic retention"): their sizes are B-tree statistics and their first
+//! keys the oldest operations of each.
 //!
 //! Row ids, operation ids and revision ids are allocated from counters in
 //! `meta` and never reused; a row put back under its own id moves the counter
@@ -52,7 +57,7 @@ use uuid::Uuid;
 use crate::error::DomainError;
 use crate::log::{OpRow, Retention};
 use crate::rows::{self, FieldRow, RawValue, TreeRow};
-use crate::store::{Begin, Counters, Log, NewOp, Questions, RevisionMeta, Rows, WriteTxn};
+use crate::store::{Begin, Log, NewOp, Questions, RevisionMeta, Rows, WriteTxn};
 
 mod derived;
 mod source;
@@ -78,6 +83,8 @@ struct Tables {
     ops_by_rev: Db,
     ops_by_entity: Db,
     revisions: Db,
+    watcher_ops: Db,
+    user_ops: Db,
     // Derived (see `derived`).
     ids: Db,
     uuids: Db,
@@ -148,8 +155,9 @@ fn cell_prefix(uuid: &[u8], field: &str) -> Vec<u8> {
 
 /// The version of the primary layout this code writes, `layout` in `meta`
 /// (absent: the first one, rows keyed `uuid · row id` in `cells`; 2: the
-/// history tree, operations chained to a parent).
-const LAYOUT: i64 = 3;
+/// history tree, operations chained to a parent; 3: the sequence, before the
+/// operations were split by origin).
+const LAYOUT: i64 = 4;
 
 /// A name inside a composite key: escaped, then terminated.
 fn name_key(name: &str) -> Vec<u8> {
@@ -304,20 +312,6 @@ fn enc_op(op: &NewOp, rev: i64, seq: i64) -> Vec<u8> {
         .bytes(op.entity.as_bytes())
         .opt_int(op.version_before.map(|v| v as i64))
         .opt_int(op.version_after.map(|v| v as i64))
-        .opt_bytes(op.field_name.as_deref().map(str::as_bytes))
-        .opt_int(op.reverts_op_id);
-    out.0
-}
-
-/// [`enc_op`] for an operation read back whole — the same bytes.
-fn enc_op_row(op: &OpRow) -> Vec<u8> {
-    let mut out = Out::default();
-    out.int(op.rev_id)
-        .int(op.seq)
-        .bytes(op.op_type.as_bytes())
-        .bytes(op.entity_uuid.as_bytes())
-        .opt_int(op.entity_version_before.map(|v| v as i64))
-        .opt_int(op.entity_version_after.map(|v| v as i64))
         .opt_bytes(op.field_name.as_deref().map(str::as_bytes))
         .opt_int(op.reverts_op_id);
     out.0
@@ -480,6 +474,8 @@ impl KvStore {
             ops_by_rev: db("ops_by_rev")?,
             ops_by_entity: db("ops_by_entity")?,
             revisions: db("revisions")?,
+            watcher_ops: db("watcher_ops")?,
+            user_ops: db("user_ops")?,
             ids: db("ids")?,
             uuids: db("uuids")?,
             sets: db("sets")?,
@@ -1045,16 +1041,6 @@ macro_rules! kv_reads {
                     Ok(($read.t.ops.len($read.r)? as i64, $read.t.revisions.len($read.r)? as i64))
                 })
             }
-            fn counters(&self) -> Result<Counters> {
-                let $me = self;
-                $with(&mut |$read: &Read| {
-                    Ok(Counters {
-                        next_row: $read.meta("next_row")?.unwrap_or(1),
-                        next_op: $read.meta("next_op")?.unwrap_or(1),
-                        next_rev: $read.meta("next_rev")?.unwrap_or(1),
-                    })
-                })
-            }
             fn revision_ops(&self, rev: i64) -> Result<Vec<OpRow>> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
@@ -1239,10 +1225,11 @@ impl KvStore {
     /// * the first layout's rows (`cells`, keyed `uuid · row id`) move into
     ///   `field_cells`, keyed by field, and `row_owner` points at their new
     ///   prefixes — a batch of rows in memory at a time;
-    /// * the history tree (layouts 1 and 2: operations chained to a parent,
-    ///   `op_children`, `restorations`) is **dropped, not converted** — the
-    ///   log is emptied, the metarecords kept (user decision, October 2026;
-    ///   doc "The operation log").
+    /// * the log of an older layout is **dropped, not converted** — the
+    ///   history tree (layouts 1 and 2: operations chained to a parent,
+    ///   `op_children`, `restorations`), and the sequence before it was split
+    ///   by origin (3). The log is emptied, the metarecords kept (user
+    ///   decision, October 2026; doc "The operation log").
     ///
     /// A new store has nothing to move and only records the layout.
     fn migrate_layout(&mut self) -> Result<()> {
@@ -1282,7 +1269,15 @@ impl KvStore {
                     old.clear(&mut w)?;
                 }
             }
-            for db in [t.ops, t.snaps, t.ops_by_rev, t.ops_by_entity, t.revisions] {
+            for db in [
+                t.ops,
+                t.snaps,
+                t.ops_by_rev,
+                t.ops_by_entity,
+                t.revisions,
+                t.watcher_ops,
+                t.user_ops,
+            ] {
                 db.clear(&mut w)?;
             }
             t.meta.delete(&mut w, b"head")?;
@@ -1388,7 +1383,18 @@ impl KvTxn<'_> {
         }
         t.ops_by_rev.delete(&mut w, &key(&[&be(op.rev_id), &be(op.seq), &be(id)]))?;
         t.ops_by_entity.delete(&mut w, &key(&[op.entity_uuid.as_bytes(), &be(id)]))?;
+        t.watcher_ops.delete(&mut w, &be(id))?;
+        t.user_ops.delete(&mut w, &be(id))?;
         Ok(())
+    }
+
+    /// The table of the operations of `origin`'s retention class.
+    fn class(&self, origin: Option<&str>) -> Db {
+        if origin == Some(crate::log::ORIGIN_WATCHER) {
+            self.t.watcher_ops
+        } else {
+            self.t.user_ops
+        }
     }
 }
 
@@ -1551,6 +1557,7 @@ impl WriteTxn for KvTxn<'_> {
             }
             t.ops_by_rev.put(&mut w, &key(&[&be(rev), &be(seq), &be(id)]), &[])?;
             t.ops_by_entity.put(&mut w, &key(&[op.entity.as_bytes(), &be(id)]), &[])?;
+            self.class(op.origin.as_deref()).put(&mut w, &be(id), &[])?;
         }
         let last = base + ops.len() as i64 - 1;
         t.meta.put(&mut w, b"next_op", &be(last + 1))?;
@@ -1568,12 +1575,11 @@ impl WriteTxn for KvTxn<'_> {
         Ok(())
     }
 
-    /// The log trim (`log::trim`), over these tables: keep the `revisions` newest
-    /// (and, when asked, everything from the oldest labelled one), cutting at
-    /// the first operation of the oldest kept revision. Reads what it deletes,
-    /// and one key per revision it keeps — never the operations those hold
-    /// (`tests/log_cost.rs`): it runs once every `slack` writes, and the kept
-    /// revisions may be a reconcile's.
+    /// The log trim (`log::Retention`), over these tables: for each origin
+    /// past its limit and slack, the oldest operations down to the limit — the
+    /// first keys of its table. Reads what it deletes and two statistics,
+    /// never the operations it keeps (`tests/log_cost.rs`): it runs once every
+    /// `slack` writes, and what is kept may be a reconcile's.
     fn trim(&self, retention: Retention, _head: i64) -> Result<usize> {
         if !retention.enabled() {
             return Ok(0);
@@ -1582,48 +1588,32 @@ impl WriteTxn for KvTxn<'_> {
             self.reads.fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
             metafolder_core::slowlog::count_reads(n as u64);
         };
-        let total = self.t.revisions.len(&self.txn.borrow())?;
-        count(1);
-        if total <= retention.revisions + Retention::slack(retention.revisions) {
+        let mut doomed: Vec<i64> = Vec::new();
+        for (table, limit) in
+            [(self.t.watcher_ops, retention.watcher_ops), (self.t.user_ops, retention.user_ops)]
+        {
+            if limit == 0 {
+                continue;
+            }
+            let txn = self.txn.borrow();
+            let total = table.len(&txn)?;
+            count(1);
+            if total <= limit + Retention::slack(limit) {
+                continue;
+            }
+            let cut = (total - limit) as usize;
+            for e in table.iter(&txn)?.take(cut) {
+                doomed.push(from_be(e?.0));
+            }
+            count(cut);
+        }
+        if doomed.is_empty() {
             return Ok(0);
         }
-        // The oldest revisions, up to the first one kept: the ones cut, and
-        // the one the cut stops at (or, keeping labels, the oldest label).
-        let cut = (total - retention.revisions) as usize;
-        let oldest: Vec<(i64, RevisionMeta)> = {
-            let txn = self.txn.borrow();
-            let mut out = Vec::with_capacity(cut + 1);
-            for e in self.t.revisions.iter(&txn)?.take(cut + 1) {
-                let (k, v) = e?;
-                out.push((from_be(k), dec_revision(v)?));
-            }
-            out
-        };
-        count(oldest.len());
-        let mut keep_from = oldest[cut].0;
-        if retention.keep_labels {
-            if let Some((id, _)) = oldest.iter().find(|(_, m)| m.label.is_some()) {
-                keep_from = keep_from.min(*id);
-            }
-        }
-        let Some(cutoff) = self.first_op_of(keep_from)? else { return Ok(0) };
-        // Everything older than the cutoff.
-        let mut doomed: Vec<i64> = {
-            let txn = self.txn.borrow();
-            let end = be(cutoff);
-            let range = (std::ops::Bound::Unbounded, std::ops::Bound::Excluded(&end[..]));
-            let mut out = Vec::new();
-            for e in self.t.ops.range(&txn, &range)? {
-                out.push(from_be(e?.0));
-            }
-            out
-        };
-        count(doomed.len() + 1);
         let mut revs_hit: HashSet<i64> = HashSet::new();
         for &id in &doomed {
             revs_hit.insert(Log::op(self, id)?.context("an operation listed a moment ago")?.rev_id);
         }
-        doomed.sort_unstable_by(|a, b| b.cmp(a));
         self.delete_ops(&doomed)?;
         for rev in revs_hit {
             if self.first_op_of(rev)?.is_none() {
@@ -1670,42 +1660,6 @@ impl WriteTxn for KvTxn<'_> {
             };
             if empty {
                 self.t.revisions.delete(&mut self.txn.borrow_mut(), &be(rev))?;
-            }
-        }
-        Ok(())
-    }
-
-    fn import_revision(&self, id: i64, meta: &RevisionMeta) -> Result<()> {
-        self.t.revisions.put(&mut self.txn.borrow_mut(), &be(id), &enc_revision(meta))?;
-        self.bump_past("next_rev", id)
-    }
-
-    fn import_op(&self, op: &OpRow, before: &[FieldRow], after: &[FieldRow]) -> Result<()> {
-        {
-            let mut w = self.txn.borrow_mut();
-            let t = self.t;
-            let id = op.id;
-            t.ops.put(&mut w, &be(id), &enc_op_row(op))?;
-            for (flag, rows) in [(0u8, before), (1u8, after)] {
-                for (n, row) in rows.iter().enumerate() {
-                    let k = key(&[&be(id), &[flag], &(n as u32).to_be_bytes()]);
-                    t.snaps.put(&mut w, &k, &enc_row(row))?;
-                }
-            }
-            t.ops_by_rev.put(&mut w, &key(&[&be(op.rev_id), &be(op.seq), &be(id)]), &[])?;
-            t.ops_by_entity.put(&mut w, &key(&[op.entity_uuid.as_bytes(), &be(id)]), &[])?;
-        }
-        self.bump_past("next_op", op.id)
-    }
-
-    fn raise_counters(&self, counters: Counters) -> Result<()> {
-        for (name, next) in [
-            ("next_row", counters.next_row),
-            ("next_op", counters.next_op),
-            ("next_rev", counters.next_rev),
-        ] {
-            if next > 1 {
-                self.bump_past(name, next - 1)?;
             }
         }
         Ok(())
