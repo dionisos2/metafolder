@@ -7,8 +7,10 @@ import { describe, expect, test } from 'vitest';
 import {
   buildTree,
   marksOf,
+  nodesAlong,
+  pathTo,
   revertTarget,
-  rows,
+  rowsAt,
 } from '../../default-config/panel-types/log/tree.js';
 
 type Op = {
@@ -39,10 +41,11 @@ const label = (id: number, name: string, parent: number | null = null) => ({
   created: 0,
 });
 
-/** The keys of the rows shown, `expanded` opened. */
+/** The keys of the rows shown with the panel gone into `path` (the keys of
+ *  the nodes entered, outermost first; none: the top level). */
 type Label = ReturnType<typeof label>;
-const keys = (ops: Op[], labels: Label[], expanded: string[] = [], showWatcher = true) =>
-  rows(buildTree(ops, labels), new Set(expanded), showWatcher).map((r) => r.key);
+const keys = (ops: Op[], labels: Label[], path: string[] = [], showWatcher = true) =>
+  rowsAt(buildTree(ops, labels), path, showWatcher).map((r) => r.key);
 
 describe('buildTree', () => {
   test('a script run is one row, opening onto its answers, then their commands', () => {
@@ -56,18 +59,9 @@ describe('buildTree', () => {
     ];
     const ops = [op(10, 3), op(11, 3), op(12, 5), op(13, 9)];
     expect(keys(ops, labels)).toEqual(['label:9', 'label:1']);
-    expect(keys(ops, labels, ['label:1'])).toEqual(['label:9', 'label:1', 'label:4', 'label:2']);
-    expect(keys(ops, labels, ['label:1', 'label:2', 'label:3'])).toEqual([
-      'label:9',
-      'label:1',
-      'label:4',
-      'label:2',
-      'label:3',
-      'op:11',
-      'op:10',
-    ]);
-    const run = rows(buildTree(ops, labels), new Set(), true)[1];
-    expect(run.depth).toBe(0);
+    expect(keys(ops, labels, ['label:1'])).toEqual(['label:4', 'label:2']);
+    expect(keys(ops, labels, ['label:1', 'label:2', 'label:3'])).toEqual(['op:11', 'op:10']);
+    const run = rowsAt(buildTree(ops, labels), [], true)[1];
     expect(run.node.kind === 'label' && run.node.ops.map((o) => o.id)).toEqual([12, 11, 10]);
   });
 
@@ -76,14 +70,38 @@ describe('buildTree', () => {
       label(4, 'edit'), label(5, 'watcher flush', 1)];
     const ops = [watcher(10, 2), watcher(11, 3), op(12, 4), watcher(13, 5)];
     expect(keys(ops, labels)).toEqual(['label:5', 'label:4', 'watcher:3']);
-    expect(keys(ops, labels, ['watcher:3'])).toEqual(['label:5', 'label:4', 'watcher:3', 'label:3', 'label:2']);
+    expect(keys(ops, labels, ['watcher:3'])).toEqual(['label:3', 'label:2']);
     expect(keys(ops, labels, [], false)).toEqual(['label:4']);
+    // Hiding the watcher's work filters the top level only: a fold gone into
+    // still lists its flushes.
+    expect(keys(ops, labels, ['watcher:3'], false)).toEqual(['label:3', 'label:2']);
   });
 
   test('a label with operations of its own lists them beside its children, newest first', () => {
     const labels = [label(1, 'run'), label(2, 'answer', 1)];
     const ops = [op(10, 1), op(11, 2), op(12, 1)];
-    expect(keys(ops, labels, ['label:1'])).toEqual(['label:1', 'op:12', 'label:2', 'op:10']);
+    expect(keys(ops, labels, ['label:1'])).toEqual(['op:12', 'label:2', 'op:10']);
+  });
+});
+
+describe('the path gone into', () => {
+  const labels = [label(1, 'run'), label(2, 'answer', 1), label(3, 'command', 2), label(9, 'edit')];
+  const ops = [op(10, 3), op(11, 3), op(12, 9)];
+
+  test('pathTo: the nodes to go into for a node to be listed, outermost first', () => {
+    const tree = buildTree(ops, labels);
+    expect(pathTo(tree, 'op:11')).toEqual(['label:1', 'label:2', 'label:3']);
+    expect(pathTo(tree, 'label:2')).toEqual(['label:1']);
+    expect(pathTo(tree, 'label:9')).toEqual([]);
+    expect(pathTo(tree, 'op:99')).toBeNull();
+  });
+
+  test('nodesAlong: the nodes of a path, cut where it no longer leads (a refresh, a prune)', () => {
+    const tree = buildTree(ops, labels);
+    expect(nodesAlong(tree, ['label:1', 'label:2']).map((n) => n.kind === 'label' && n.id)).toEqual([1, 2]);
+    expect(nodesAlong(tree, ['label:1', 'label:7', 'label:3']).map((n) => n.kind === 'label' && n.id)).toEqual([1]);
+    expect(nodesAlong(tree, ['op:10'])).toEqual([]); // an operation is not gone into
+    expect(keys(ops, labels, ['label:1', 'label:7'])).toEqual(['label:2']);
   });
 });
 

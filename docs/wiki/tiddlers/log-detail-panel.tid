@@ -10,7 +10,7 @@ it follows the log panel's cursor (`selected_log_entry`) and reads the label wit
 snapshots.
 
 * ''A label'': its header — number, name, time, `HEAD` and `watcher` badges, operation count — then its operations, a hundred at a time (''Show more operations''): a reconcile is one label holding every file it found, never fetched whole.
-* ''An operation'' (the cursor inside an expanded label): that operation alone, highlighted; `log-detail:toggle whole` (the ''Whole label'' button) widens to the label's own operations.
+* ''An operation'' (the cursor on an operation, inside a label gone into): that operation alone, highlighted; `log-detail:toggle whole` (the ''Whole label'' button) widens to the label's own operations.
 
 Each operation shows its type, field and `undo of op N` badge, the metarecord it wrote with
 that metarecord's ''current'' path — clicking the uuid selects it and shows it in the other

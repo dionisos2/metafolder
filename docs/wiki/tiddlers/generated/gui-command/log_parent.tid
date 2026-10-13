@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/log:parent
+catalog: GUI command
+target: log:parent
+summary: Log: back out to the level above
+
+!! Reference
+
+* Defined by the ``log`` panel
+
+!! Default keys
+
+* ``backspace`` → ``log:parent`` (in the ``log`` panel)
+* ``left`` → ``log:parent`` (in the ``log`` panel)

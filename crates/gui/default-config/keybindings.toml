@@ -308,7 +308,7 @@
   { command = "metarecord-list:open other", when = "metarecord-list" },
   { command = "file-manager:activate", when = "file-manager" },
   { command = "treeref:descend", when = "treeref" },
-  { command = "log:toggle ops", when = "log" },
+  { command = "log:descend", when = "log" },
   { command = "trash:restore", when = "trash" },
   { command = "recent:open other", when = "recent" },
   { command = "duplicates:toggle", when = "duplicates" },
@@ -330,6 +330,7 @@
 "right" = [
   { command = "metarecord-list:open other", when = "metarecord-list" },
   { command = "treeref:descend", when = "treeref" },
+  { command = "log:descend", when = "log" },
   { command = "recent:open other", when = "recent" },
   { command = "duplicates:toggle", when = "duplicates" },
   # In the file panel left/right seek the previewed media (see the transport
@@ -338,6 +339,7 @@
 ]
 "left" = [
   { command = "treeref:parent", when = "treeref" },
+  { command = "log:parent", when = "log" },
   # In metarecord-detail there is nothing to descend into, so left/backspace
   # step back out of a chain of followed references. (Enter stays field-edit.)
   { command = "metarecord:back", when = "metarecord-detail" },
@@ -345,6 +347,7 @@
 ]
 "backspace" = [
   { command = "treeref:parent", when = "treeref" },
+  { command = "log:parent", when = "log" },
   { command = "file-manager:parent", when = "file-manager" },
   { command = "metarecord:back", when = "metarecord-detail" },
   # Going up is what backspace means in every other panel; the `file` panel

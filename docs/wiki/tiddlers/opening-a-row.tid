@@ -33,6 +33,7 @@ focus where it was (the panel's keys keep working).
 |[[file-manager panel]] |`›` on a folder, `↗` on a file and on `.` |goes into the folder; selects the file (or the folder shown) and shows it in the other slot |
 |[[metarecord-list panel]] |`↗`, in a column of its own — under the thumbnail in the grid |shows the metarecord in the other slot: the file panel, or the detail panel when it has no file |
 |[[treeref panel]] |`›` |goes into the node |
+|[[log panel]] |`›` on a label or a fold of the watcher's flushes |goes into it: the list shows what it holds (it used to unfold in place — no reason for the log to unfold where the treeref panel goes into) |
 |[[recent panel]] |`↗` |shows the metarecord in the other slot |
 |[[duplicates panel]] |`▸`/`▾` on a group, `↗` on a copy |unfolds the group in place; shows the copy in the other slot |
 |[[trash panel]] |none |restoring writes to the disk: <<key "trash:restore" Enter>> or the right-click menu, never one click |

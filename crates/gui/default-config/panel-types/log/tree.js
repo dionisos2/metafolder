@@ -3,7 +3,9 @@
 //
 // A row of the top level is a unit of work: for an operation of yours, its
 // outermost label — a script's run, a command —; for one of the watcher, its
-// flush. A unit opens onto the labels nested in it, down to the operations.
+// flush. Going into a unit lists the labels nested in it, and so on down to the
+// operations: the panel shows one level at a time, like the treeref panel
+// (doc "Opening a row").
 // Consecutive flushes of the watcher fold into one row, or they would drown
 // the rest. Everything is newest first, by the newest operation under it.
 //
@@ -32,7 +34,7 @@ const WATCHER_OP_TYPES = ['file_deleted', 'file_moved', 'file_modified'];
  *         | {kind: 'watcher', id: number, children: Node[], ops: Op[], newest: number}} Node
  *
  * A row on screen.
- * @typedef {{key: string, depth: number, node: Node}} Row
+ * @typedef {{key: string, node: Node}} Row
  */
 
 /** @param {Op} op */
@@ -43,7 +45,7 @@ export function isWatcherOp(op) {
   );
 }
 
-/** The key a node is selected, expanded and found by.
+/** The key a node is selected, gone into and found by.
  *  @param {Node} node */
 export function keyOf(node) {
   if (node.kind === 'op') return `op:${node.op.id}`;
@@ -130,26 +132,65 @@ export function buildTree(ops, labels) {
 }
 
 /**
- * The rows on screen: the top level, and the children of every node expanded.
- * With the watcher's work hidden, its units and folds are left out.
- * @param {Node[]} tree @param {Set<string>} expanded @param {boolean} showWatcher
+ * The nodes of `path` (keys, outermost first), each a child of the one before
+ * — cut at the first that is not (a refresh or a prune took it away) or that
+ * cannot be gone into (an operation).
+ * @param {Node[]} tree @param {string[]} path
+ * @returns {Node[]}
+ */
+export function nodesAlong(tree, path) {
+  /** @type {Node[]} */
+  const out = [];
+  let level = tree;
+  for (const key of path) {
+    const next = level.find((n) => keyOf(n) === key);
+    if (!next || next.kind === 'op') break;
+    out.push(next);
+    level = next.children;
+  }
+  return out;
+}
+
+/**
+ * The rows on screen: the children of the node `path` leads to, or the top
+ * level. With the watcher's work hidden, its units and folds are left out of
+ * the top level.
+ * @param {Node[]} tree @param {string[]} path @param {boolean} showWatcher
  * @returns {Row[]}
  */
-export function rows(tree, expanded, showWatcher) {
-  /** @type {Row[]} */
-  const out = [];
-  /** @param {Node[]} nodes @param {number} depth */
-  const walk = (nodes, depth) => {
+export function rowsAt(tree, path, showWatcher) {
+  const along = nodesAlong(tree, path);
+  const last = along[along.length - 1];
+  const level = last && last.kind !== 'op' ? last.children : tree;
+  return level
+    .filter(
+      (n) =>
+        showWatcher ||
+        along.length > 0 ||
+        !(n.kind === 'watcher' || (n.kind === 'label' && n.watcher)),
+    )
+    .map((n) => ({ key: keyOf(n), node: n }));
+}
+
+/**
+ * The path to go into for `key` to be listed: the keys of its ancestors,
+ * outermost first; null when no node has that key.
+ * @param {Node[]} tree @param {string} key
+ * @returns {string[]|null}
+ */
+export function pathTo(tree, key) {
+  /** @param {Node[]} nodes @param {string[]} above @returns {string[]|null} */
+  const find = (nodes, above) => {
     for (const n of nodes) {
-      if (!showWatcher && depth === 0 && (n.kind === 'watcher' || (n.kind === 'label' && n.watcher))) {
-        continue;
+      if (keyOf(n) === key) return above;
+      if (n.kind !== 'op') {
+        const found = find(n.children, [...above, keyOf(n)]);
+        if (found) return found;
       }
-      out.push({ key: keyOf(n), depth, node: n });
-      if (n.kind !== 'op' && expanded.has(keyOf(n))) walk(n.children, depth + 1);
     }
+    return null;
   };
-  walk(tree, 0);
-  return out;
+  return find(tree, []);
 }
 
 /**

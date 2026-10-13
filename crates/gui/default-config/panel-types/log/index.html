@@ -49,6 +49,25 @@
         padding: 3px 8px;
         white-space: nowrap;
       }
+      th.open-col,
+      td.open-cell {
+        width: 1.8em;
+        padding: 0 0 0 4px;
+      }
+      #breadcrumb {
+        padding: 3px 8px;
+        color: var(--mf-fg-dim, #8a8a96);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #breadcrumb .crumb {
+        cursor: pointer;
+      }
+      #breadcrumb .crumb:hover {
+        color: var(--mf-fg, #fff);
+        text-decoration: underline;
+      }
       tr.rev {
         cursor: pointer;
       }
@@ -134,6 +153,7 @@
   </head>
   <body>
     <div id="toolbar">
+      <button id="up" disabled title="Back out to the level above (log:parent, backspace)">↑ up</button>
       <button id="refresh">Refresh</button>
       <button id="undo" title="Undo a label of your last change still standing — the watcher's work is left in place (ctrl+z)">
         Undo (log:undo)
@@ -147,11 +167,12 @@
       <button id="prune" disabled>Prune before selected (log:prune)</button>
       <label id="watcher-toggle" class="toggle" title="Show the labels the daemon wrote for the filesystem (log:toggle watcher, shift+w)"><input type="checkbox" id="show-watcher" checked />Watcher</label>
     </div>
+    <div id="breadcrumb"></div>
     <div id="revisions">
       <p class="placeholder" id="placeholder">Loading…</p>
       <table hidden>
         <thead>
-          <tr><th>label</th><th>newest</th><th>operations</th><th>status</th></tr>
+          <tr><th class="open-col"></th><th>label</th><th>newest</th><th>operations</th><th>status</th></tr>
         </thead>
         <tbody id="rows"></tbody>
       </table>

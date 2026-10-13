@@ -5,12 +5,14 @@ summary: The log panel type
 
 !! Commands
 
+* ``log:descend`` — Log: go into the selected label
 * ``log:find`` — Log: jump to a label by number or name
 * ``log:first`` — Log: move the selection to the newest row
 * ``log:last`` — Log: move the selection to the oldest row
 * ``log:next`` — Log: move the selection down
+* ``log:parent`` — Log: back out to the level above
 * ``log:prev`` — Log: move the selection up
 * ``log:prune`` — Log: prune history before the selected label or operation
 * ``log:refresh`` — Log: refresh from the daemon
 * ``log:revert`` — Log: revert what is selected, or a narrower or wider scope
-* ``log:toggle`` — Log: toggle a view flag (the watcher’s work / the selected label opened)
+* ``log:toggle`` — Log: toggle a view flag (the watcher’s work)

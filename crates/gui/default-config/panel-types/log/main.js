@@ -1,12 +1,13 @@
 // log panel: the history as a tree of labels — the units of work newest
-// first (a command, a script's run, a flush of the watcher), each opening onto
-// the labels nested in it, down to the operations; revert and prune (doc
-// "log panel", doc "Labels and contexts").
+// first (a command, a script's run, a flush of the watcher), each gone into
+// onto the labels nested in it, down to the operations, one level at a time
+// like the treeref panel; revert and prune (doc "log panel", doc "Labels and
+// contexts").
 
-import { byId, el, qs } from '/__ui.js';
+import { byId, el, openButton, qs } from '/__ui.js';
 import { registerFind } from '/__find-entry.js';
 import { moveSelection, edgeSelection } from './selection.js';
-import { buildTree, keyOf, marksOf, revertTarget, rows } from './tree.js';
+import { buildTree, keyOf, marksOf, nodesAlong, pathTo, revertTarget, rowsAt } from './tree.js';
 
 /**
  * @typedef {import('./tree.js').Op} Op
@@ -38,8 +39,9 @@ export async function mount(root, metafolder) {
   /** The key of the row under the cursor (`label:12`, `op:34`, `watcher:7`). */
   /** @type {string|null} */
   let selection = null;
-  /** The keys of the nodes opened. @type {Set<string>} */
-  const expanded = new Set();
+  /** The keys of the nodes gone into, outermost first: the rows listed are
+   *  the children of the last one (none: the units of work). @type {string[]} */
+  let path = [];
   // The watcher writes a label per flush, which can bury the user's own work;
   // hiding them keeps only what the user wrote. A display filter: the fetch is
   // the same either way.
@@ -58,6 +60,8 @@ export async function mount(root, metafolder) {
   const revertButton = byId(root, 'revert', HTMLButtonElement);
   const pruneButton = byId(root, 'prune', HTMLButtonElement);
   const watcherCheckbox = byId(root, 'show-watcher', HTMLInputElement);
+  const breadcrumb = byId(root, 'breadcrumb');
+  const upButton = byId(root, 'up', HTMLButtonElement);
   const statusLine = byId(root, 'status-line');
   /** Repository-wide log size (`GET /log` totals), independent of the window
    *  actually fetched. @type {{operations: number, labels: number}|null} */
@@ -81,7 +85,9 @@ export async function mount(root, metafolder) {
           : null;
       tree = buildTree(operations, log.labels ?? []);
       marks = marksOf(operations);
-      if (selection !== null && !findNode(selection)) selection = null;
+      // What a refresh or a prune took away is left: back up to what remains.
+      path = nodesAlong(tree, path).map(keyOf);
+      if (selection !== null && !visible().some((r) => r.key === selection)) selection = null;
       render();
       // Offer "Show more" while the list fills the requested window: older
       // operations may lie beyond it.
@@ -116,7 +122,7 @@ export async function mount(root, metafolder) {
 
   /** The rows on screen. @returns {Row[]} */
   function visible() {
-    return rows(tree, expanded, showWatcher);
+    return rowsAt(tree, path, showWatcher);
   }
 
   /** How much log there is: what is on screen, and — when the fetched window is
@@ -134,22 +140,45 @@ export async function mount(root, metafolder) {
     if (totals && totals.operations > shownOps) {
       line += ` — of ${totals.operations} operations, ${totals.labels} labels in the repository`;
     }
-    const hidden = showWatcher ? 0 : tree.length - visible().filter((r) => r.depth === 0).length;
+    const hidden = showWatcher ? 0 : tree.length - rowsAt(tree, [], false).length;
     if (hidden > 0) line += ` · ${hidden} of the watcher's hidden`;
     statusLine.textContent = line;
   }
 
-  /** Moves the cursor to `key`, opening or closing it with `toggle`.
-   *  @param {string|null} key @param {{toggle?: boolean}} [options] */
-  function select(key, { toggle = false } = {}) {
+  /** Moves the cursor to `key`. @param {string|null} key */
+  function select(key) {
     if (key === null) return;
     selection = key;
-    if (toggle && !key.startsWith('op:')) {
-      if (expanded.has(key)) expanded.delete(key);
-      else expanded.add(key);
-    }
     render();
     root.querySelector('tr.selected')?.scrollIntoView({ block: 'nearest' });
+  }
+
+  /** Goes into the row `key` (the selected one by default): a label or a
+   *  fold of the watcher's flushes; an operation holds nothing. The cursor
+   *  lands on the first thing it holds. @param {string|null} [key] */
+  function descend(key = selection) {
+    const node = key === null ? null : findNode(key);
+    if (key === null || node === null || node.kind === 'op') return;
+    path = [...path, key];
+    selection = visible()[0]?.key ?? null;
+    render();
+  }
+
+  /** Back out to the level above `depth` nodes (the units of work at 0), the
+   *  cursor on the node it came out of. @param {number} depth */
+  function backTo(depth) {
+    if (depth < 0 || depth >= path.length) return;
+    selection = path[depth];
+    path = path.slice(0, depth);
+    select(selection);
+  }
+
+  /** Goes to where `key` is listed, and selects it. @param {string} key */
+  function reveal(key) {
+    const above = pathTo(tree, key);
+    if (above === null) return;
+    path = above;
+    select(key);
   }
 
   /** @param {number} delta */
@@ -191,35 +220,30 @@ export async function mount(root, metafolder) {
     return badges;
   }
 
-  /** The first cell: an arrow for what opens, the label's number and name, or
-   *  the operation.
-   *  @param {Row} row */
-  function nameCell(row) {
-    const { node, depth } = row;
-    const indent = { style: `padding-left: ${8 + depth * 16}px` };
+  /** The name cell: the label's number and name, or the operation.
+   *  @param {Node} node */
+  function nameText(node) {
     if (node.kind === 'op') {
       const op = node.op;
-      return el(
-        'td',
-        indent,
-        el(
-          'span',
-          { class: 'op' },
-          `op ${op.id}: ${op.op_type}${op.field_name ? ` ${op.field_name}` : ''}${
-            op.entity_uuid ? ` on ${String(op.entity_uuid).slice(0, 8)}…` : ''
-          }`,
-        ),
-      );
+      return `op ${op.id}: ${op.op_type}${op.field_name ? ` ${op.field_name}` : ''}${
+        op.entity_uuid ? ` on ${String(op.entity_uuid).slice(0, 8)}…` : ''
+      }`;
     }
-    const arrow = expanded.has(row.key) ? '▾ ' : '▸ ';
+    if (node.kind === 'watcher') return `${node.children.length} flushes of the watcher`;
+    return `#${node.id} ${node.label.name}`;
+  }
+
+  /** @param {Row} row */
+  function nameCell(row) {
+    const { node } = row;
+    if (node.kind === 'op') return el('td', { class: 'name' }, el('span', { class: 'op' }, nameText(node)));
     if (node.kind === 'watcher') {
-      return el('td', indent, arrow, el('span', { class: 'label' }, `${node.children.length} flushes of the watcher`));
+      return el('td', { class: 'name' }, el('span', { class: 'label' }, nameText(node)));
     }
     const description = node.label.description;
     return el(
       'td',
-      { ...indent, title: description ?? '' },
-      arrow,
+      { class: 'name', title: description ?? '' },
       `#${node.id} `,
       el('span', { class: 'label' }, node.label.name),
       description ? el('span', { class: 'description' }, ` — ${description}`) : null,
@@ -242,8 +266,13 @@ export async function mount(root, metafolder) {
           mark.undone === 'fully' && 'undone-row',
         ],
         onclick: () => select(row.key),
-        ondblclick: () => select(row.key, { toggle: true }),
       },
+      // What holds something is gone into by its button (doc "Opening a row").
+      el(
+        'td',
+        { class: 'open-cell' },
+        node.kind === 'op' ? null : openButton('enter', 'Go into it', () => descend(row.key)),
+      ),
       nameCell(row),
       el('td', {}, newest > 0 ? new Date(newest).toLocaleString() : ''),
       el('td', {}, node.kind === 'op' ? '' : String(ops.length)),
@@ -283,8 +312,23 @@ export async function mount(root, metafolder) {
         ? `Revert op ${target.op_ids[0]} (log:revert)`
         : 'Revert selected (log:revert)';
     watcherCheckbox.checked = showWatcher;
+    renderBreadcrumb();
     rowsElement.replaceChildren(...visible().map(rowElement));
     renderStatusLine();
+  }
+
+  /** Where the list is: the units of work, then each node gone into — each a
+   *  way back to its level. */
+  function renderBreadcrumb() {
+    const along = nodesAlong(tree, path);
+    upButton.disabled = along.length === 0;
+    breadcrumb.replaceChildren(
+      el('span', { class: 'crumb', onclick: () => backTo(0) }, 'units of work'),
+      ...along.flatMap((node, depth) => [
+        el('span', { class: 'sep' }, ' / '),
+        el('span', { class: 'crumb', onclick: () => backTo(depth + 1) }, nameText(node)),
+      ]),
+    );
   }
 
   async function prune() {
@@ -304,7 +348,6 @@ export async function mount(root, metafolder) {
         statusErrorMs,
       );
       selection = null;
-      expanded.clear();
       await refresh();
     } catch (error) {
       await statusBar.error(error);
@@ -374,30 +417,16 @@ export async function mount(root, metafolder) {
     }
   }
 
-  /** Opens every node between the top level and `op`, and selects it.
-   *  @param {Op} op */
+  /** Goes to where `op` is listed, and selects it. @param {Op} op */
   function openTo(op) {
-    const target = `op:${op.id}`;
-    /** @param {Node[]} nodes @returns {boolean} */
-    const open = (nodes) => {
-      for (const n of nodes) {
-        if (keyOf(n) === target) return true;
-        if (n.kind !== 'op' && open(n.children)) {
-          expanded.add(keyOf(n));
-          return true;
-        }
-      }
-      return false;
-    };
-    open(tree);
-    select(target);
+    reveal(`op:${op.id}`);
   }
 
   /** The widening counterpart: reverts the label the operation under the
    *  cursor was written in. */
   async function revertLabel() {
     const node = selection === null ? null : findNode(selection);
-    if (node?.kind === 'op') select(`label:${node.op.label_id}`);
+    if (node?.kind === 'op') reveal(`label:${node.op.label_id}`);
     return revert();
   }
 
@@ -467,6 +496,7 @@ export async function mount(root, metafolder) {
   });
 
   byId(root, 'refresh').addEventListener('click', () => void refresh());
+  upButton.addEventListener('click', () => backTo(path.length - 1));
   // Shell builtins (they work on the active repo, no selection needed).
   byId(root, 'undo').addEventListener('click', () => void commands.invoke('log:undo'));
   byId(root, 'redo').addEventListener('click', () => void commands.invoke('log:redo'));
@@ -506,13 +536,10 @@ export async function mount(root, metafolder) {
   /** @type {Record<string, () => unknown>} */
   const LOG_FLAGS = {
     watcher: () => toggleWatcher(),
-    ops: () => {
-      if (selection !== null) select(selection, { toggle: true });
-    },
   };
 
   void commands.register('log:toggle', {
-    label: 'Log: toggle a view flag (the watcher’s work / the selected label opened)',
+    label: 'Log: toggle a view flag (the watcher’s work)',
     args: [
       {
         name: 'flag',
@@ -531,6 +558,14 @@ export async function mount(root, metafolder) {
     label: 'Log: prune history before the selected label or operation',
     reveal: true,
     handler: prune,
+  });
+  void commands.register('log:descend', {
+    label: 'Log: go into the selected label',
+    handler: () => descend(),
+  });
+  void commands.register('log:parent', {
+    label: 'Log: back out to the level above',
+    handler: () => backTo(path.length - 1),
   });
   void commands.register('log:refresh', { label: 'Log: refresh from the daemon', handler: refresh });
   void commands.register('log:next', { label: 'Log: move the selection down', handler: () => moveBy(1) });
@@ -569,7 +604,7 @@ export async function mount(root, metafolder) {
     repo = /** @type {string|null} */ (value ?? null);
     // A selection is a label of the previous repository.
     selection = null;
-    expanded.clear();
+    path = [];
     publishSelection();
     limit = LOG_PAGE; // reset the window for the new repository
     metafolder.whenVisible(deferredRefresh);
