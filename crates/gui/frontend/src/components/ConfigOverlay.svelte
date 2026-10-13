@@ -10,6 +10,14 @@
   let focus = $state('');
   let textInput = $state(false);
   let bindingError = $state('');
+  /** The key field: focused when the view opens and after a save, so the
+   *  editor is usable from the keyboard alone (the view owns the keys while
+   *  open — lib/settingsKeys.ts). */
+  let comboInput = $state<HTMLInputElement | null>(null);
+
+  $effect(() => {
+    comboInput?.focus();
+  });
 
   $effect(() => {
     if (store.ui.configOpen && store.ui.configInfo === null) {
@@ -49,6 +57,7 @@
       });
       combo = '';
       command = '';
+      comboInput?.focus();
     } catch (error) {
       bindingError = String(error);
     }
@@ -93,7 +102,11 @@
       </dl>
       <h3>Keybindings</h3>
       <div class="binding-form">
-        <input placeholder="combo (e.g. ctrl+k or g g)" bind:value={combo} />
+        <input
+          placeholder="combo (e.g. ctrl+k or g g)"
+          bind:this={comboInput}
+          bind:value={combo}
+        />
         <input placeholder="command (e.g. workspace:new)" bind:value={command} />
         <input placeholder="when (panel type, empty = global)" bind:value={when} />
         <input placeholder="focus (widget, empty = none)" bind:value={focus} />

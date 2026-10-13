@@ -20,6 +20,11 @@ applies while typing ([[Keybindings]]).
 
 A change applies at once, in every panel, and is written to the file.
 
+The view is usable from the keyboard alone. It opens with the key field focused, and
+the focus goes back there after a save. While it is open it takes every key: no
+binding runs behind it, so Tab walks its fields and buttons and
+Enter presses the focused one. Escape closes it.
+
 Saving replaces the binding of the ''same key in the same place'' (same `when`, same
 `focus`). So giving a command another key is two steps: save it under the new key,
 then remove the old row. And changing only the `when` of a row adds a second

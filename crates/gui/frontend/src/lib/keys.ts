@@ -20,6 +20,7 @@ import {
   store,
 } from './store.svelte';
 import { describeKeyStep } from './describeKey';
+import { settingsViewKey } from './settingsKeys';
 import type { SlotId } from './types';
 
 // The shell owns the single default context menu now (panels no longer run in
@@ -98,6 +99,15 @@ export function installKeys() {
     'keydown',
     (event) => {
       if (hasOpenMenu()) return; // the menu's own navigation handles the keys
+      // The settings view is modal: it owns every key while open.
+      const settings = settingsViewKey(store.ui.configOpen, event.key);
+      if (settings === 'close') {
+        event.preventDefault();
+        event.stopPropagation();
+        store.ui.configOpen = false;
+        return;
+      }
+      if (settings === 'own') return;
       // Escape cancels the help-cursor mode (before anything else).
       if (store.ui.helpCursorActive && event.key === 'Escape') {
         event.preventDefault();
