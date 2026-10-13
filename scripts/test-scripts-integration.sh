@@ -129,6 +129,19 @@ run_script "$FOLDER" rootno
 assert "root-no: a top-level file is denied" has_neg "$TOP" rootno
 assert "root-no: a nested file is denied" has_neg "$INNER" rootno
 
+# ── gui-tag-folder going back, against the real daemon ──────────────────────
+# Each answer writes in a label of its own inside the run's (doc "Labels and
+# contexts"); going back reverts that label, and only it.
+hy_reset
+hy_prompt /
+hy_input n m y u n y       # scope; root mixed; sub yes; BACK; sub no; top yes
+run_script "$FOLDER" backtag
+assert "back: the answer taken back left nothing behind" has_no_tag "$INNER" backtag
+assert "back: the answer given instead stands" has_neg "$INNER" backtag
+assert "back: the walk went on" has_tag "$TOP" backtag
+assert "back: the last write sits in the run's label" \
+    [ "$(df_mf log show HEAD 2>/dev/null | grep -c 'in label .* gui-tag-folder backtag')" -eq 1 ]
+
 # ── gui-tag-folder MIXED on the root: descend into the direct children ───────
 # Exercises the full breadth-first descent against the real daemon: the child
 # listing (`mfr_path -> ""`), the per-child mfr_type read, and applying a

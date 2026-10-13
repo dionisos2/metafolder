@@ -51,6 +51,11 @@ enum Command {
         #[command(subcommand)]
         command: Option<TaskCommand>,
     },
+    /// Contexts: name the work under way, so what is written in it is one label
+    Label {
+        #[command(subcommand)]
+        command: LabelCommand,
+    },
     /// The history of operations, by label (default: list)
     Log {
         #[command(subcommand)]
@@ -403,6 +408,14 @@ enum TaskCommand {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum LabelCommand {
+    /// Open a label inside the current context and print it, to export as METAFOLDER_LABEL
+    Begin { name: String, description: Option<String> },
+    /// Show a label (default: the current context) and the labels it is nested in
+    Show { label: Option<String> },
 }
 
 #[derive(Subcommand)]
@@ -1206,7 +1219,16 @@ fn main() {
         (None, None) => (config.repo.name.clone(), config.repo.uuid.clone()),
         explicit => explicit,
     };
-    let ctx = Ctx::new(port, repo_name, repo_uuid, &config);
+    let command = match command_headers() {
+        Ok(command) => command,
+        Err(message) => {
+            eprintln!("error: {message}");
+            std::process::exit(2);
+        }
+    };
+    let client = metafolder_cli::client::Client::new(&format!("http://127.0.0.1:{port}"))
+        .in_command(command);
+    let ctx = Ctx::with_client(client, repo_name, repo_uuid, &config);
     let result = dispatch(&ctx, cli.command);
     match result {
         Ok(code) => std::process::exit(code),
@@ -1215,6 +1237,30 @@ fn main() {
             std::process::exit(error.exit_code());
         }
     }
+}
+
+/// What this command tells the daemon (doc "Labels and contexts"): a fresh key
+/// for its label, named after its command line and described by its query,
+/// inside the context `METAFOLDER_LABEL` passes on.
+fn command_headers() -> Result<metafolder_cli::client::CommandHeaders, String> {
+    use metafolder_core::context::{self, Context};
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let context = match std::env::var(context::LABEL_ENV) {
+        Ok(value) if !value.trim().is_empty() => Some(Context::parse(&value).ok_or_else(|| {
+            format!(
+                "{}='{value}' is not a context (<repo uuid>:<label id>, as `mf label begin` \
+                 prints it)",
+                context::LABEL_ENV
+            )
+        })?),
+        _ => None,
+    };
+    Ok(metafolder_cli::client::CommandHeaders {
+        key: context::new_command_key(),
+        name: metafolder_cli::label::command_line(&args),
+        description: metafolder_cli::label::query_of(&args).map(|q| format!("query: {q}")),
+        context,
+    })
 }
 
 type CmdResult = Result<i32, metafolder_cli::client::CliError>;
@@ -1249,6 +1295,12 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
                 TaskCommand::Show { id, stop, json } => commands::task(ctx, &id, stop, json),
             }
         }
+        Command::Label { command } => match command {
+            LabelCommand::Begin { name, description } => {
+                metafolder_cli::label::begin(ctx, &name, description.as_deref())
+            }
+            LabelCommand::Show { label } => metafolder_cli::label::show(ctx, label.as_deref()),
+        },
         Command::Log { command } => dispatch_log(ctx, command),
         Command::Slow { command } => dispatch_slow(ctx, command),
         Command::Trash { file, force, command } => dispatch_trash(ctx, file, force, command),

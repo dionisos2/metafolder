@@ -1,0 +1,6 @@
+title: mf label show
+tags: [[CLI command]] [[Event log]]
+kind: reference
+summary: Show a label (default: the current context) and the labels it is nested in
+
+A label — a label id, or a context as `mf label begin` prints it; by default the one `METAFOLDER_LABEL` passes on — with its description and the labels it is nested in ([[Labels and contexts]]).

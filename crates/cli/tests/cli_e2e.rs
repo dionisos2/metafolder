@@ -53,7 +53,8 @@ fn mf_full(args: &[&str], stdin: Option<&str>, envs: &[(&str, &str)], daemon: bo
     cmd.args(args);
     cmd.env_remove("METAFOLDER_REPO")
         .env_remove("METAFOLDER_REPO_NAME")
-        .env_remove("METAFOLDER_DAEMON_PORT");
+        .env_remove("METAFOLDER_DAEMON_PORT")
+        .env_remove("METAFOLDER_LABEL");
     for (k, v) in envs {
         cmd.env(k, v);
     }
@@ -6244,4 +6245,75 @@ fn test_duplicate_list_sort_and_limit() {
     let out = mf(&["-u", &repo, "duplicate", "list", "--sort", "size:sideways"]);
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);
     assert!(out.stderr.contains("unknown sort order 'sideways'"), "stderr: {}", out.stderr);
+}
+
+// ── Contexts (doc "Labels and contexts") ─────────────────────────────────────
+
+/// `mf log show HEAD --raw`: the newest operation's label.
+fn head_label(repo: &str, envs: &[(&str, &str)]) -> serde_json::Value {
+    let out = mf_full(&["-u", repo, "log", "show", "HEAD", "--raw"], None, envs, true);
+    assert_ok(&out);
+    serde_json::from_str::<serde_json::Value>(&out.stdout).unwrap()["label"].clone()
+}
+
+/// A command writes in a label of its own, named after its command line,
+/// inside the context `mf label begin` opened and `METAFOLDER_LABEL` passes on.
+#[test]
+fn test_a_command_writes_in_its_own_label_inside_the_context() {
+    let (repo, _root) = init_repo("label_context");
+    let out = mf(&["-u", &repo, "label", "begin", "tag run", "all the photos"]);
+    assert_ok(&out);
+    let context = out.stdout.trim().to_string();
+    let (_, run) = context.split_once(':').expect("<repo>:<id>");
+    let envs = [("METAFOLDER_LABEL", context.as_str())];
+
+    let out = mf_full(&["-u", &repo, "metarecord", "add", "rating:int=3"], None, &envs, true);
+    assert_ok(&out);
+    let label = head_label(&repo, &[]);
+    assert_eq!(label["parent"].as_i64().unwrap().to_string(), run, "{label}");
+    assert!(label["name"].as_str().unwrap().contains("metarecord add rating:int=3"), "{label}");
+    assert_eq!(label["ancestors"][0]["description"], "all the photos");
+
+    // `mf label show` names the context it runs in.
+    let out = mf_full(&["-u", &repo, "label", "show"], None, &envs, true);
+    assert_ok(&out);
+    assert!(out.stdout.contains("tag run"), "{}", out.stdout);
+
+    // A nested context is a child of the one it was begun in.
+    let out = mf_full(&["-u", &repo, "label", "begin", "answer 1"], None, &envs, true);
+    assert_ok(&out);
+    let answer = out.stdout.trim().to_string();
+    let out = mf_full(
+        &["-u", &repo, "metarecord", "add", "rating:int=4"],
+        None,
+        &[("METAFOLDER_LABEL", answer.as_str())],
+        true,
+    );
+    assert_ok(&out);
+    let label = head_label(&repo, &[]);
+    let answer_id = answer.split_once(':').unwrap().1;
+    assert_eq!(label["parent"].as_i64().unwrap().to_string(), answer_id, "{label}");
+    assert_eq!(label["ancestors"][1]["id"].as_i64().unwrap().to_string(), run, "{label}");
+}
+
+/// A context names its repository: in another one, it is not sent.
+#[test]
+fn test_a_context_is_not_sent_to_another_repository() {
+    let (repo, _root) = init_repo("label_scope");
+    let (other, _other_root) = init_repo("label_scope_other");
+    let out = mf(&["-u", &repo, "label", "begin", "run"]);
+    assert_ok(&out);
+    let context = out.stdout.trim().to_string();
+    let out = mf_full(
+        &["-u", &other, "metarecord", "add", "rating:int=3"],
+        None,
+        &[("METAFOLDER_LABEL", context.as_str())],
+        true,
+    );
+    assert_ok(&out);
+    assert_eq!(head_label(&other, &[])["parent"], serde_json::Value::Null);
+
+    let out =
+        mf_full(&["-u", &repo, "metarecord", "get"], None, &[("METAFOLDER_LABEL", "12")], true);
+    assert_eq!(out.code, 2, "a malformed context is a usage error: {}", out.stderr);
 }

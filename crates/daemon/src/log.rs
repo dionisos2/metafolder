@@ -137,9 +137,21 @@ pub enum WriteContext {
     /// Under a label the write opens — and drops again when it writes
     /// nothing.
     New(NewLabel),
+    /// Under the label of a client's command: opened at the command's first
+    /// write (inside `label.parent`), found again by `key` at its next ones.
+    Command { key: Uuid, label: NewLabel },
     /// Under a label opened for one flush of the watcher, inside the
     /// watcher's own label. The operations' origin is [`ORIGIN_WATCHER`].
     Watcher,
+}
+
+/// The command a request says it is a step of (`X-Metafolder-Command` and
+/// its name and description, doc "Labels and contexts").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandHeader {
+    pub key: Uuid,
+    pub name: String,
+    pub description: Option<String>,
 }
 
 /// A label a write opens.
@@ -156,12 +168,21 @@ impl WriteContext {
         WriteContext::New(NewLabel { name: name.into(), description: None, parent: None })
     }
 
-    /// The context of a request: inside the label the client named, or a
-    /// new root label named `name` when it named none.
-    pub fn of_request(label: Option<i64>, name: impl Into<String>) -> Self {
-        match label {
-            Some(id) => WriteContext::In(id),
-            None => WriteContext::new(name),
+    /// The context of a request: the label of the command it is a step of
+    /// (inside the label the client named), or inside the label the client
+    /// named, or a new root label named `name` when it named neither.
+    pub fn of_request(
+        label: Option<i64>,
+        command: Option<CommandHeader>,
+        name: impl Into<String>,
+    ) -> Self {
+        match (command, label) {
+            (Some(command), parent) => WriteContext::Command {
+                key: command.key,
+                label: NewLabel { name: command.name, description: command.description, parent },
+            },
+            (None, Some(id)) => WriteContext::In(id),
+            (None, None) => WriteContext::new(name),
         }
     }
 
@@ -533,6 +554,21 @@ impl<'c> Writer<'c> {
                 };
                 (tx.create_label(&meta)?, true)
             }
+            WriteContext::Command { key, label } => match tx.label_of_command(key)? {
+                Some(id) => (id, false),
+                None => {
+                    if let Some(parent) = label.parent {
+                        check_client_label(&*tx, parent)?;
+                    }
+                    let meta = LabelMeta {
+                        name: label.name,
+                        description: label.description,
+                        parent: label.parent,
+                        created: timestamp,
+                    };
+                    (tx.create_command_label(&meta, key)?, true)
+                }
+            },
             WriteContext::Watcher => {
                 origin = Some(ORIGIN_WATCHER.to_string());
                 let root = match tx.watcher_label()? {

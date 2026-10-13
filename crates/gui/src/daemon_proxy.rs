@@ -65,6 +65,17 @@ pub struct DaemonProxy {
     /// them: firing one drops its request, and with it the connection — which
     /// the daemon takes as a cancel of the query it was running (doc "Query limits").
     aborts: Mutex<Aborts>,
+    /// The command the shell is running, told to the daemon with every
+    /// request so what it writes is one label (doc "Labels and contexts").
+    command: Mutex<Option<RunningCommand>>,
+}
+
+/// The command under way: its key and name, and how many commands deep the
+/// shell is in it — one run from inside it is part of it.
+struct RunningCommand {
+    key: String,
+    name: String,
+    depth: usize,
 }
 
 /// How long an abort that found no call in flight is kept for the call it may
@@ -109,6 +120,38 @@ impl DaemonProxy {
             slow: crate::slow::SlowLog::new(slow_threshold_ms),
             internal_dirs: Mutex::new(std::collections::HashMap::new()),
             aborts: Mutex::new(Aborts::default()),
+            command: Mutex::new(None),
+        }
+    }
+
+    /// A command starts: its key, which [`Self::command_end`] takes back. One
+    /// started while another runs is part of it, and gets the outer key — the
+    /// approximation of a shell that knows which command runs, not which call
+    /// each command made: two commands running at once share a label.
+    pub fn command_begin(&self, name: &str) -> String {
+        let mut guard = self.command.lock_recover();
+        match guard.as_mut() {
+            Some(running) => {
+                running.depth += 1;
+                running.key.clone()
+            }
+            None => {
+                let key = metafolder_core::context::new_command_key();
+                *guard = Some(RunningCommand { key: key.clone(), name: name.into(), depth: 1 });
+                key
+            }
+        }
+    }
+
+    /// The command `key` ended; a key that is not the current one changes
+    /// nothing.
+    pub fn command_end(&self, key: &str) {
+        let mut guard = self.command.lock_recover();
+        if let Some(running) = guard.as_mut().filter(|r| r.key == key) {
+            running.depth -= 1;
+            if running.depth == 0 {
+                *guard = None;
+            }
         }
     }
 
@@ -273,6 +316,12 @@ impl DaemonProxy {
         let mut request = self.client.request(method, &url);
         if let Some(token) = token {
             request = request.bearer_auth(token);
+        }
+        if let Some(running) = self.command.lock_recover().as_ref() {
+            use metafolder_core::context;
+            request = request
+                .header(context::COMMAND_HEADER, &running.key)
+                .header(context::COMMAND_NAME_HEADER, context::encode(&running.name));
         }
         if let Some((op_id, client_context)) = timing {
             request = request.header(crate::slow::OP_ID_HEADER, op_id);

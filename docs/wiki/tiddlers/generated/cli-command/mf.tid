@@ -13,6 +13,7 @@ Usage: mf [OPTIONS] <COMMAND>
 Commands:
   repo        Repository management (default: list)
   task        Background tasks (default: list)
+  label       Contexts: name the work under way, so what is written in it is one label
   log         The history of operations, by label (default: list)
   slow        Slow-operation log: what took seconds, and where the time went
   trash       Trash-bin: safely trash a file, or restore/prune (default: list)

@@ -538,6 +538,8 @@ pub fn run(options: Options) {
             shell_exec::run_shell,
             bash_complete::bash_complete,
             commands::daemon_request,
+            commands::command_begin,
+            commands::command_end,
             commands::daemon_abort,
             commands::daemon_set_url,
             commands::parse_query,

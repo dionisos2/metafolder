@@ -305,24 +305,24 @@ mf_gui_scope_into() { # <outfile> <get args...>
 # mf_gui_ask_answer turns that into the letter `u` for a script that offers it.
 # What "back" means is the script's own business, but for a walk that writes as
 # it goes the answer is always the same: return the repository to where it was
-# before the answer, and ask again. These two helpers are that.
+# before the answer, and ask again. These two helpers are that: each answer
+# writes in a label of its own, and going back reverts it.
 
-# The newest operation of the log. Note it BEFORE writing, so the write can be
-# undone exactly — the event log records what each write replaced, which no
-# hand-written "untag" could.
-mf_log_head() {
-    mf log head 2>/dev/null || printf '0\n'
+# Open a label inside the current context and print it — what to export as
+# METAFOLDER_LABEL so every `mf` started meanwhile writes in it (doc "Labels
+# and contexts"). Empty when it could not be opened: the writes then go where
+# they would have anyway.
+mf_label_begin() { # <name> [description]
+    mf label begin "$@" 2>/dev/null || true
 }
 
-# Undo what was written since the operation `mf_log_head` reported: every
-# change of the user's newer than it that still stands, reverted — the
-# watcher's own writes meanwhile are left alone (doc "The undo selection"). A
-# no-op when nothing was written since (an idempotent `mf tag` often writes
-# nothing at all), which is why the head is compared rather than counted.
-mf_log_back_to() { # <op-id>
+# Undo what was written in a context: every operation of its label and of the
+# labels nested in it, reverted onto the current state — the watcher's own
+# writes meanwhile are left alone, and an answer that wrote nothing reverts
+# nothing (an idempotent `mf tag` often writes nothing at all).
+mf_label_back() { # <context>
     [ -n "${1:-}" ] || return 0
-    [ "$(mf_log_head)" = "$1" ] && return 0
-    mf log undo --after "$1" --force --silent >/dev/null 2>&1 \
+    mf log revert "${1##*:}" --force --silent >/dev/null 2>&1 \
         || mf_gui_report "could not undo the last answer"
 }
 

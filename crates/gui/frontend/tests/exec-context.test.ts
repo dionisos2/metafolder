@@ -152,7 +152,7 @@ describe('a builtin dispatched in a context', () => {
     const context: ExecContext = { ws: 'ws-2', slot: 'right' };
     expect(await dispatch('message:clear', context)).toEqual({ ok: true });
     expect(await dispatch('panel:open here file', context)).toEqual({ ok: true });
-    expect(tauri.filter((c) => c.cmd !== 'append_message')).toEqual([
+    expect(tauri.filter((c) => c.cmd !== 'append_message' && !c.cmd.startsWith('command_'))).toEqual([
       { cmd: 'clear_messages', args: { wsId: 'ws-2' } },
       // ws-2 is not on screen: shown in the context's slot first.
       { cmd: 'tab_assign', args: { wsId: 'ws-2', slot: 'right' } },

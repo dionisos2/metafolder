@@ -167,6 +167,8 @@ struct RequestInfo {
     /// The label the client writes in (`X-Metafolder-Label`, doc "Labels and
     /// contexts").
     label: Option<i64>,
+    /// The command the request is a step of (`X-Metafolder-Command`).
+    command: Option<crate::log::CommandHeader>,
 }
 
 /// Where the request being served writes — [`crate::log::current_context`],
@@ -179,8 +181,10 @@ pub(crate) fn request_context() -> crate::log::WriteContext {
 /// named `name` when the request names no label: entered on the task's own
 /// thread with [`crate::log::enter_context`].
 pub(crate) fn task_context(name: &str) -> crate::log::WriteContext {
-    let label = REQUEST.try_with(|info| info.label).ok().flatten();
-    crate::log::WriteContext::of_request(label, name)
+    match REQUEST.try_with(|info| (info.label, info.command.clone())) {
+        Ok((label, command)) => crate::log::WriteContext::of_request(label, command, name),
+        Err(_) => crate::log::WriteContext::new(name),
+    }
 }
 
 tokio::task_local! {
@@ -208,7 +212,11 @@ async fn name_operation(
             .map(|p| p.as_str())
             .unwrap_or_else(|| request.uri().path())
             .to_string();
-        let label = match request.headers().get("x-metafolder-label") {
+        let command = match command_header(request.headers()) {
+            Ok(command) => command,
+            Err(e) => return e.into_response(),
+        };
+        let label = match request.headers().get(metafolder_core::context::LABEL_HEADER) {
             None => None,
             Some(v) => match v.to_str().ok().and_then(|s| s.trim().parse::<i64>().ok()) {
                 Some(id) => Some(id),
@@ -225,10 +233,42 @@ async fn name_operation(
             op_id: short_header(request.headers(), "x-metafolder-op-id"),
             client: short_header(request.headers(), "x-metafolder-context"),
             label,
+            command,
         }
     };
     REQUEST.scope(info, next.run(request)).await
 }
+
+/// The command a request names (doc "Labels and contexts"): its key, and
+/// the name and description its label is opened with. A key that is not 32 hex
+/// digits is a `400`; no key, no command.
+fn command_header(
+    headers: &axum::http::HeaderMap,
+) -> Result<Option<crate::log::CommandHeader>, ApiError> {
+    use metafolder_core::context;
+    let Some(key) = headers.get(context::COMMAND_HEADER) else { return Ok(None) };
+    let key = key
+        .to_str()
+        .ok()
+        .and_then(|k| Uuid::parse_str(k.trim()).ok())
+        .ok_or_else(|| ApiError::bad_request("X-Metafolder-Command must be 32 hex digits"))?;
+    let text = |name: &str| {
+        headers.get(name).and_then(|v| v.to_str().ok()).map(|v| {
+            let decoded = context::decode(v);
+            decoded.chars().take(MAX_LABEL_TEXT).collect::<String>()
+        })
+    };
+    Ok(Some(crate::log::CommandHeader {
+        key,
+        name: text(context::COMMAND_NAME_HEADER)
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| "command".into()),
+        description: text(context::COMMAND_DESCRIPTION_HEADER),
+    }))
+}
+
+/// The most characters a label's name or description keeps from a header.
+const MAX_LABEL_TEXT: usize = 4096;
 
 /// One client-supplied header, capped: a rogue client must not be able to fill
 /// the log with a single entry.
@@ -283,6 +323,7 @@ where
         let _context = info.as_ref().map(|info| {
             crate::log::enter_context(crate::log::WriteContext::of_request(
                 info.label,
+                info.command.clone(),
                 info.op.clone(),
             ))
         });

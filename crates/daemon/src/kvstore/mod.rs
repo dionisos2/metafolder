@@ -23,6 +23,7 @@
 //! | ops_by_entity | uuid · op id                     | —                         |
 //! | labels        | label id                         | name · description · parent · created |
 //! | label_kids    | parent label · child label       | —                         |
+//! | label_keys    | command key                      | label id                  |
 //! | watcher_ops   | op id                            | —                         |
 //! | user_ops      | op id                            | —                         |
 //!
@@ -89,6 +90,7 @@ struct Tables {
     ops_by_entity: Db,
     labels: Db,
     label_kids: Db,
+    label_keys: Db,
     watcher_ops: Db,
     user_ops: Db,
     // Derived (see `derived`).
@@ -347,13 +349,26 @@ fn op_timestamp(v: &[u8]) -> Result<i64> {
     r.int()
 }
 
-fn enc_label(m: &LabelMeta) -> Vec<u8> {
+/// A label, and the key of the command that opened it, if one did (a
+/// command's later writes find it by that key).
+fn enc_label(m: &LabelMeta, key: Option<Uuid>) -> Vec<u8> {
     let mut out = Out::default();
     out.bytes(m.name.as_bytes())
         .opt_bytes(m.description.as_deref().map(str::as_bytes))
         .opt_int(m.parent)
-        .int(m.created);
+        .int(m.created)
+        .opt_bytes(key.as_ref().map(|k| &k.as_bytes()[..]));
     out.0
+}
+
+/// The command key [`enc_label`] stored after the label.
+fn dec_label_key(b: &[u8]) -> Result<Option<Uuid>> {
+    let mut r = In(b);
+    r.string()?;
+    r.opt_bytes()?;
+    r.opt_int()?;
+    r.int()?;
+    Ok(r.opt_bytes()?.map(uuid_of))
 }
 
 fn dec_label(b: &[u8]) -> Result<LabelMeta> {
@@ -494,6 +509,7 @@ impl KvStore {
             ops_by_entity: db("ops_by_entity")?,
             labels: db("labels")?,
             label_kids: db("label_kids")?,
+            label_keys: db("label_keys")?,
             watcher_ops: db("watcher_ops")?,
             user_ops: db("user_ops")?,
             ids: db("ids")?,
@@ -1088,6 +1104,13 @@ macro_rules! kv_reads {
                 let $me = self;
                 $with(&mut |$read: &Read| $read.label_children(label))
             }
+            fn label_of_command(&self, key: Uuid) -> Result<Option<i64>> {
+                let $me = self;
+                $with(&mut |$read: &Read| {
+                    $read.count(1)?;
+                    Ok($read.t.label_keys.get($read.r, key.as_bytes())?.map(from_be))
+                })
+            }
             fn watcher_label(&self) -> Result<Option<i64>> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
@@ -1315,6 +1338,7 @@ impl KvStore {
                 t.ops_by_entity,
                 t.labels,
                 t.label_kids,
+                t.label_keys,
                 t.watcher_ops,
                 t.user_ops,
             ] {
@@ -1393,6 +1417,17 @@ impl KvTxn<'_> {
         let Value::TreeRef { parent, name: node } = value else { return None };
         let p = parent.map_or(ROOT, |p| *p.as_bytes());
         Some(key(&[&name_key(name), &p, &node_key(node.as_bytes())]))
+    }
+
+    /// Writes a new label, and its place among its parent's children.
+    fn put_label(&self, meta: &LabelMeta, command: Option<Uuid>) -> Result<i64> {
+        let id = self.next("next_label")?;
+        let mut w = self.txn.borrow_mut();
+        self.t.labels.put(&mut w, &be(id), &enc_label(meta, command))?;
+        if let Some(parent) = meta.parent {
+            self.t.label_kids.put(&mut w, &key(&[&be(parent), &be(id)]), &[])?;
+        }
+        Ok(id)
     }
 
     /// Drops `label` if nothing is left in it — no operation, no child label —
@@ -1556,21 +1591,31 @@ impl WriteTxn for KvTxn<'_> {
     }
 
     fn create_label(&self, meta: &LabelMeta) -> Result<i64> {
-        let id = self.next("next_label")?;
-        let mut w = self.txn.borrow_mut();
-        self.t.labels.put(&mut w, &be(id), &enc_label(meta))?;
-        if let Some(parent) = meta.parent {
-            self.t.label_kids.put(&mut w, &key(&[&be(parent), &be(id)]), &[])?;
-        }
+        self.put_label(meta, None)
+    }
+
+    fn create_command_label(&self, meta: &LabelMeta, key: Uuid) -> Result<i64> {
+        let id = self.put_label(meta, Some(key))?;
+        self.t.label_keys.put(&mut self.txn.borrow_mut(), key.as_bytes(), &be(id))?;
         Ok(id)
     }
 
     fn drop_label(&self, id: i64) -> Result<()> {
         let Some(meta) = Log::labels(self, &[id])?.remove(&id) else { return Ok(()) };
+        let command = {
+            let txn = self.txn.borrow();
+            match self.t.labels.get(&txn, &be(id))? {
+                Some(b) => dec_label_key(b)?,
+                None => None,
+            }
+        };
         let mut w = self.txn.borrow_mut();
         self.t.labels.delete(&mut w, &be(id))?;
         if let Some(parent) = meta.parent {
             self.t.label_kids.delete(&mut w, &key(&[&be(parent), &be(id)]))?;
+        }
+        if let Some(command) = command {
+            self.t.label_keys.delete(&mut w, command.as_bytes())?;
         }
         Ok(())
     }

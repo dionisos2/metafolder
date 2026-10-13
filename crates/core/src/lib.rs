@@ -2,6 +2,7 @@ pub mod auth;
 pub mod config;
 #[cfg(feature = "sync-config")]
 pub mod config_sync;
+pub mod context;
 pub mod daemon_client;
 pub mod date;
 pub mod doc_gen;

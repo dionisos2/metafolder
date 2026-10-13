@@ -49,14 +49,15 @@ fn resolve_revert_target(
                     .ok_or_else(|| ApiError::bad_request("label_id must be an integer"))?,
                 _ => return Err(ApiError::bad_request("label_id must be a number or \"head\"")),
             };
-            let ops = crate::revert::label_ops(conn, label_id)?;
-            if ops.is_empty() {
+            // A label nothing was written in reverts nothing; one that does not
+            // exist (or was dropped with its last operation) is a 404.
+            if conn.labels(&[label_id])?.is_empty() {
                 return Err(ApiError::not_found(format!(
-                    "label {label_id} holds no operation: it does not exist, or what it held \
-                     was pruned or trimmed away"
+                    "no label {label_id}: it never existed, or what it held was pruned or \
+                     trimmed away"
                 )));
             }
-            ops
+            crate::revert::label_ops(conn, label_id)?
         }
         (None, Some(ids)) => {
             if ids.is_empty() {

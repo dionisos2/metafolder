@@ -5,11 +5,10 @@ audience: dev
 status: proposed
 summary: Operations are grouped by nested labels (name, description, parent) opened as contexts by scripts, commands and the GUI — passed along as an id, so leaving a context is just not passing it on.
 
-''Being built'' (October 2026): the daemon side is done — labels, the
-`X-Metafolder-Label` header, a label per request without one, the watcher's label
-([[Log endpoints]]). The clients do not open contexts yet (`mf label`, `METAFOLDER_LABEL`,
-the GUI's label per command, the scripts'), and undo still takes the innermost label of
-the newest change ([[The undo selection]]).
+''Being built'' (October 2026): labels, contexts and commands are in place in the daemon,
+the CLI, the GUI and the shipped scripts ([[Log endpoints]]); undo still takes the
+innermost label of the newest change ([[The undo selection]]), and the [[log panel]]
+lists labels without their nesting.
 
 A ''label'' is `{id, name, description, parent, created}`. Each operation carries its
 ''innermost'' label; the others are its ancestors, found by following the parents. Same
@@ -20,18 +19,24 @@ ids onto each of a bulk write's 50 000 operations.
 
 A context is a label that the writes made inside it carry. It is ''not daemon state'':
 
-* `mf label begin "name" "description"` creates a label, child of the current context, and prints its id;
-* the caller exports it (`METAFOLDER_LABEL=<id>`), and every `mf` started meanwhile sends it with its requests;
+* `mf label begin "name" "description"` creates a label, child of the current context, and prints it as `<repo uuid>:<label id>` ([[mf label begin]]);
+* the caller exports it (`METAFOLDER_LABEL=<repo>:<id>`), and every `mf` started meanwhile sends it (`X-Metafolder-Label`) with its requests to that repository — a label id means nothing in another one, where it is not sent;
 * leaving the context is ceasing to export it — the end of a subshell or a function's `local`. A script that crashes leaves nothing open behind it.
 
 Every command opens its own label, a child of the context: `mf metarecord -q '…' field
-set …` is a label whose description is the command line and its query, so the log shows
-what was asked, not only what was written.
+set …` is a label named after the command line and described by its query, so the log
+shows what was asked, not only what was written. It is opened ''at the command's first
+write'', not when it starts: the client draws a key for the command and sends it with
+every request (`X-Metafolder-Command`, with the label's name and description,
+percent-encoded); the daemon opens the label at the first write carrying the key, and the
+command's later writes find it by the key. A command that only reads — most of them, and
+some read through `POST` — opens nothing, and the client never has to guess which of its
+requests write.
 
 !! Who opens which
 
-* A shipped tagging script: one label for the run, one per answer (its going back is reverting the last answer's label — no head noted by hand, no rollback), one per command inside.
-* The GUI: one label per command. A script launched from the GUI inherits the context of the command that launched it.
+* A shipped tagging script: one label for the run, one per answer (its going back is reverting the last answer's label — no head noted by hand, no rollback), one per command inside ([[Writing a GUI script]]).
+* The GUI: one label per command. The shell tells the daemon proxy when a command starts and ends, and every request in between carries its key; a command run from inside another is part of it. The proxy knows which command runs, not which call each made: two commands running at once — a long reconcile and a field edited meanwhile — share a label. A script launched from the GUI (`script:run`) runs in a label of its own, passed on as `METAFOLDER_LABEL`; a plain `!` line in none, each `mf` it runs being a command anyway.
 * The GUI's ''work context'': a command opens a context that every later user operation carries until it is closed — naming the work under way, so it can be looked at or reverted whole. The watcher's operations do not carry it.
 * The watcher: one label per flush ("watcher flush"), under a ''watcher root'' ("watcher") that only the daemon can write under: a client naming it, or a label inside it, as its context or as a new label's parent is refused. The ''origin'' stays on each operation, set by the daemon ([[Operations and their origin]]) — not read off the root as first proposed: a trashing's `trash` origin must survive inside any context, and undo and retention read the operation.
 

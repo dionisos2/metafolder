@@ -1,0 +1,23 @@
+title: $:/mf/gen/CLI command/mf label begin
+catalog: CLI command
+target: mf label begin
+summary: Open a label inside the current context and print it, to export as METAFOLDER_LABEL
+
+!! Reference
+
+```
+Open a label inside the current context and print it, to export as METAFOLDER_LABEL
+
+Usage: mf label begin <NAME> [DESCRIPTION]
+
+Arguments:
+  <NAME>
+          
+
+  [DESCRIPTION]
+          
+
+Options:
+  -h, --help
+          Print help
+```

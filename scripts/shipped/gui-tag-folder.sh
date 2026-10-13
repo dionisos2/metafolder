@@ -362,16 +362,23 @@ WARNED_SKIP=0
 CURRENT=""       # the current folder — THE PATH IS THE STACK: going up is
                  # trimming one component, so the walk holds nothing else.
 
-# One frame per answer, pushed before it is applied: the history's position (so
-# the writes can be undone exactly), where the walk stood, and the sizes of the
+# One frame per answer, pushed before it is applied: the label its writes go in
+# (so they can be undone exactly), where the walk stood, and the sizes of the
 # two lists an answer can grow. Going back pops one and restores all of it —
-# the writes through the event log, which puts back the exact field rows and
+# the writes by reverting their label, which puts back the exact field rows and
 # versions, the rest by assignment. Undoing the write is what re-opens the
 # entry: it comes back into the query on its own.
 BACK_STACK=()
 
+# The run is one label, each answer one inside it (doc "Labels and contexts"):
+# the log shows the run whole, and an answer is what going back reverts.
+RUN_LABEL=$(mf_label_begin "gui-tag-folder $TAG" "${SCOPE:-every metarecord}")
+[ -z "$RUN_LABEL" ] || export METAFOLDER_LABEL="$RUN_LABEL"
+
 while :; do
     [ -z "$STOP" ] || break
+    # Back in the run's context: an answer's label holds that answer only.
+    [ -z "$RUN_LABEL" ] || export METAFOLDER_LABEL="$RUN_LABEL"
 
     kind="dir"
     uuid=$(first_child dir)
@@ -435,10 +442,10 @@ while :; do
             mf_gui_report "nothing to go back to"
             continue
         fi
-        IFS=$'\t' read -r b_head b_current b_closed b_excluded b_markers b_skipped \
+        IFS=$'\t' read -r b_label b_current b_closed b_excluded b_markers b_skipped \
             <<<"${BACK_STACK[-1]}"
         unset "BACK_STACK[-1]"
-        mf_log_back_to "$b_head"
+        mf_label_back "${b_label#.}"
         CURRENT=${b_current#.}
         while [ "${#CLOSED_DIRS[@]}" -gt "$b_closed" ]; do unset "CLOSED_DIRS[-1]"; done
         while [ "${#EXCLUDED[@]}" -gt "$b_excluded" ]; do unset "EXCLUDED[-1]"; done
@@ -447,11 +454,12 @@ while :; do
         continue
     fi
 
-    frame_head=$(mf_log_head)
-    # The folder is prefixed so the field is never empty: a tab is IFS
-    # *whitespace*, so `read` collapses two consecutive ones, and the walk
+    answer_label=$(mf_label_begin "$disp: $answer")
+    [ -z "$answer_label" ] || export METAFOLDER_LABEL="$answer_label"
+    # The label and the folder are prefixed so no field is ever empty: a tab is
+    # IFS *whitespace*, so `read` collapses two consecutive ones, and the walk
     # root's path — the empty string — would shift every field after it.
-    BACK_STACK+=("$frame_head	.$CURRENT	${#CLOSED_DIRS[@]}	${#EXCLUDED[@]}	$MARKERS	$SKIPPED")
+    BACK_STACK+=(".$answer_label	.$CURRENT	${#CLOSED_DIRS[@]}	${#EXCLUDED[@]}	$MARKERS	$SKIPPED")
 
     case $answer in
         y | n)

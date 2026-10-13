@@ -1,0 +1,20 @@
+title: $:/mf/gen/CLI command/mf label show
+catalog: CLI command
+target: mf label show
+summary: Show a label (default: the current context) and the labels it is nested in
+
+!! Reference
+
+```
+Show a label (default: the current context) and the labels it is nested in
+
+Usage: mf label show [LABEL]
+
+Arguments:
+  [LABEL]
+          
+
+Options:
+  -h, --help
+          Print help
+```

@@ -45,7 +45,7 @@ the revert wrote in.
 
 |!Status |!When |
 |`400` |an `unknown` operation; the revert would leave two types under one name; a context label that does not exist or is the watcher's |
-|`404` |no such label or operation — pruned, trimmed, or never there |
+|`404` |no such label or operation — pruned, trimmed, or never there; a label that exists but holds nothing reverts nothing |
 |`409` |a file action needed without `skip_filesystem`; recreating a metarecord whose uuid exists again |
 |`423` |a navigation lock is held |
 

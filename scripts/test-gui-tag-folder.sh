@@ -567,23 +567,26 @@ assert "up: the sibling left behind is found on the way up" [ "$(asked /a/b/z.tx
 # `backspace` during a question resolves the wait with `back` (doc
 # "Script sessions"); the letter `u` (undo) is its typed twin. The answer is undone
 # through the event log — which restores the exact rows — and the entry, open
-# once more, is what the next step query returns.
+# once more, is what the next step query returns. Each answer writes in a
+# label of its own (doc "Labels and contexts"); going back reverts it.
 mock_reset
 setup_top
 walk_children "" file file-a file-b file-a file-b
 walk_path file-a /top/a.txt
 walk_path file-b /top/b.txt
 walk_counts 2 2 1 2 1
-mock_respond 'log head' '@queue:heads'
-mock_queue heads 10 11 12 13 14 15
+mock_respond 'label begin *' '@queue:labels'
+mock_queue labels r:1 r:2 r:3 r:4 r:5 r:6
 mock_prompt '/top'
 #   a.txt yes, then BACK at b.txt's question — which undoes it and re-asks —
 #   then a.txt no, b.txt yes.
 mock_input n y u n y
 bash "$SCRIPT" music >/dev/null; code=$?
 assert "back: exits 0" [ "$code" -eq 0 ]
-assert "back: the undone answer was undone through the log" \
-    [ "$(mock_count 'log undo --after * --force --silent')" -eq 1 ]
+assert "back: the undone answer's label was reverted" \
+    [ "$(mock_count 'log revert 2 --force --silent')" -eq 1 ]
+assert "back: and nothing else was" [ "$(mock_count 'log revert*')" -eq 1 ]
+assert "back: the run is a label" [ "$(mock_count 'label begin gui-tag-folder music *')" -eq 1 ]
 assert "back: the previous entry is asked again" [ "$(asked /top/a.txt)" -eq 2 ]
 assert "back: and the second answer is the one that stands" \
     [ "$(mock_count 'tag -i file-a deny music')" -eq 1 ]
@@ -602,15 +605,15 @@ walk_children "" file file-b file-b
 walk_path dir-sub /sub
 walk_path file-b /b.txt
 walk_counts 3 3 2 3 2
-mock_respond 'log head' '@queue:heads2'
-mock_queue heads2 20 21 22 23 24 25
+mock_respond 'label begin *' '@queue:labels2'
+mock_queue labels2 r:1 r:2 r:3 r:4 r:5 r:6
 mock_prompt '/top'
 #   sub skipped, BACK at the next question, sub answered m this time, then done
 mock_input n s u m n
 out=$(bash "$SCRIPT" music); code=$?
 assert "back skip: exits 0" [ "$code" -eq 0 ]
 assert "back skip: the marker write was undone" \
-    [ "$(mock_count 'log undo --after * --force --silent')" -eq 1 ]
+    [ "$(mock_count 'log revert 2 --force --silent')" -eq 1 ]
 assert "back skip: the folder is asked again" [ "$(asked /sub)" -eq 2 ]
 assert "back skip: its subtree is no longer excluded once the skip is undone" \
     [ "$(mock_calls_matching 'metarecord -q * get --count' | tail -1 | grep -c 'NOT mfr_path' || true)" -eq 0 ]
@@ -623,13 +626,12 @@ setup_top
 walk_children "" dir dir-top dir-top
 walk_path dir-top /top
 walk_counts 1 1 1
-mock_respond 'log head' '7'
 mock_prompt '/top'
 mock_input n u y
 out=$(bash "$SCRIPT" music 2>&1); code=$?
 assert "back at the start: exits 0" [ "$code" -eq 0 ]
 assert_contains "back at the start: says there is nothing to go back to" "$out" "nothing to go back to"
-assert "back at the start: nothing was undone" [ "$(mock_count 'log undo*')" -eq 0 ]
+assert "back at the start: nothing was undone" [ "$(mock_count 'log revert*')" -eq 0 ]
 assert "back at the start: the first entry is asked twice" [ "$(asked /top)" -eq 2 ]
 
 # ── Case 21: a failing `mf tag` is reported, not a silent "stopped" ─────────

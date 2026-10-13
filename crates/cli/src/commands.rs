@@ -36,8 +36,18 @@ impl Ctx {
         uuid: Option<String>,
         config: &crate::config::CliConfig,
     ) -> Self {
+        Self::with_client(Client::new(&format!("http://127.0.0.1:{port}")), name, uuid, config)
+    }
+
+    /// A context over `client` — one that says which command it runs.
+    pub fn with_client(
+        client: Client,
+        name: Option<String>,
+        uuid: Option<String>,
+        config: &crate::config::CliConfig,
+    ) -> Self {
         Self {
-            client: Client::new(&format!("http://127.0.0.1:{port}")),
+            client,
             name,
             uuid,
             page_size: config.settings.page_size,

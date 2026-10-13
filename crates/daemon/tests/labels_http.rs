@@ -222,3 +222,137 @@ async fn prune_keeps_a_label_whole() {
     assert_eq!(ops.len(), 2, "{log}");
     assert!(ops.iter().all(|op| op["label_id"] == kept), "{log}");
 }
+
+// ── A command's label (doc "Labels and contexts") ────────────────────────────
+
+/// Sends `request` as one step of a client command: the command's key and
+/// name, and the context it runs in.
+async fn send_in_command(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+    command: (&str, &str),
+    context: Option<i64>,
+) -> (StatusCode, Value) {
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("x-metafolder-command", command.0)
+        .header("x-metafolder-command-name", metafolder_core::context::encode(command.1));
+    if let Some(context) = context {
+        builder = builder.header("x-metafolder-label", context.to_string());
+    }
+    let request = match body {
+        Some(v) => builder
+            .header("content-type", "application/json")
+            .body(Body::from(v.to_string()))
+            .unwrap(),
+        None => builder.body(Body::empty()).unwrap(),
+    };
+    let response = app.clone().oneshot(request).await.unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let value =
+        if bytes.is_empty() { Value::Null } else { serde_json::from_slice(&bytes).unwrap() };
+    (status, value)
+}
+
+/// A command opens its label at its first write, and writes all its requests
+/// in it — inside the context it runs in. Its reads open nothing.
+#[tokio::test]
+async fn a_commands_writes_share_one_label_opened_at_the_first() {
+    let (app, repo, _root) = setup("command").await;
+    let run = new_label(&app, &repo, json!({"name": "tag run"})).await;
+    let (_, before) = send(&app, "GET", &format!("/repos/{repo}/log?limit=1"), None, None).await;
+    let key = "6a1f0c2e9b8d4f37a5e1c3b2d4f6a8e0";
+    let name = "mf metarecord -q 'année = 2024' field set été:bool=true";
+
+    let query = json!({"query": {"type": "is_present", "field": "a"}, "limit": 10});
+    let (status, _) = send_in_command(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(query),
+        (key, name),
+        Some(run),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, after_read) =
+        send(&app, "GET", &format!("/repos/{repo}/log?limit=1"), None, None).await;
+    assert_eq!(after_read["total_labels"], before["total_labels"], "a read opens no label");
+
+    let fields = json!({"fields": [{"name": "a", "value": {"type": "int", "value": 1}}]});
+    for _ in 0..2 {
+        let (status, body) = send_in_command(
+            &app,
+            "POST",
+            &format!("/repos/{repo}/metarecords"),
+            Some(fields.clone()),
+            (key, name),
+            Some(run),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    let (_, log) = send(&app, "GET", &format!("/repos/{repo}/log?limit=2"), None, None).await;
+    let ops = log["operations"].as_array().unwrap();
+    assert_eq!(ops[0]["label_id"], ops[1]["label_id"], "one label for the command: {log}");
+    let id = ops[0]["label_id"].as_i64().unwrap();
+    let (_, label) = send(&app, "GET", &format!("/repos/{repo}/labels/{id}"), None, None).await;
+    assert_eq!(label["name"], name, "the name comes back whole, accents included");
+    assert_eq!(label["parent"], run, "inside the context the command runs in");
+
+    // Another command is another label.
+    let (_, _) = send_in_command(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords"),
+        Some(fields),
+        ("0b8f2a7e5c1d4e3fa9b8c7d6e5f4a3b2", "mf metarecord add"),
+        None,
+    )
+    .await;
+    let other = newest_op(&app, &repo).await;
+    assert_ne!(other["label_id"], id);
+}
+
+/// Reverting a label nothing was written in reverts nothing — what a script
+/// going back over an answer that wrote nothing asks for. An unknown label is
+/// still a `404`.
+#[tokio::test]
+async fn reverting_an_empty_label_reverts_nothing() {
+    let (app, repo, _root) = setup("revert_empty").await;
+    let empty = new_label(&app, &repo, json!({"name": "answer 3"})).await;
+    let (status, body) = send(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/revert"),
+        Some(json!({"target": {"label_id": empty}})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["label"], Value::Null);
+    let (status, plan) = send(
+        &app,
+        "GET",
+        &format!("/repos/{repo}/revert/plan?target_label_id={empty}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{plan}");
+    assert_eq!(plan["operations"], json!([]));
+
+    let (status, _) = send(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/revert"),
+        Some(json!({"target": {"label_id": 99999}})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

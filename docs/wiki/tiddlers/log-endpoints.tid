@@ -17,6 +17,13 @@ of its own, named after the route (`PUT /repos/:repo/metarecords/:uuid/fields/:n
 header that is not a number is a `400`; one naming a label that does not exist, or the
 watcher's or one inside it, is a `400` too, and nothing is written.
 
+A request that is one step of a client's command says so: `X-Metafolder-Command: <32 hex
+digits>`, a key the client draws for the command, with `X-Metafolder-Command-Name` and
+`X-Metafolder-Command-Description` (percent-encoded UTF-8). Its first write opens the
+command's label — inside `X-Metafolder-Label`'s when there is one — and the later writes
+with the same key go in it; a read opens nothing. A key that is not 32 hex digits is a
+`400`.
+
 !! GET /log
 
 |!Parameter |!Default |!Does |

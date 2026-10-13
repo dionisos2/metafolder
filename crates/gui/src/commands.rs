@@ -477,6 +477,20 @@ pub fn append_message(app: AppHandle, ws_id: String, text: String) -> Result<(),
 
 // ── Daemon ───────────────────────────────────────────────────────────────
 
+/// The shell starts running command `name` (doc "Labels and contexts"): what
+/// it writes until [`command_end`] is one label, named after it. Answers the
+/// key to end it with.
+#[tauri::command]
+pub fn command_begin(app: AppHandle<'_>, name: String) -> String {
+    app.daemon.command_begin(&name)
+}
+
+/// The command `key` ended.
+#[tauri::command]
+pub fn command_end(app: AppHandle<'_>, key: String) {
+    app.daemon.command_end(&key);
+}
+
 #[tauri::command]
 pub async fn daemon_request(
     app: AppHandle<'_>,

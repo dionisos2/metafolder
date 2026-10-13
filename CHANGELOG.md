@@ -14,6 +14,17 @@ than breaking them.
 ## [Unreleased]
 
 ### Added
+- **Contexts: what one piece of work writes is one label.** `mf label begin
+  NAME [DESCRIPTION]` opens a label and prints it (`<repo>:<id>`); exported as
+  `METAFOLDER_LABEL`, every `mf` started meanwhile writes inside it, and `mf
+  label show` reads it. Every command writing anything is a label of its own,
+  named after its command line and described by its query — opened at its
+  first write (`X-Metafolder-Command`), so a command that only reads opens
+  none. In the GUI each command is a label, and a script it runs gets a
+  context. The tagging scripts write each run, and each answer, in a label;
+  going back reverts the answer's (`mf log undo --after` is no longer what it
+  uses). Reverting a label that holds nothing reverts nothing instead of a
+  `404` (doc "Labels and contexts").
 - **The slow log names every pass of a reconcile.** `placed`, `refresh`,
   `mime` and `metadata` join `resolve` and `path_of`: an idle reconcile's keys
   are all attributed now (≈ 22 a path — 3 resolving it, 13 comparing its stat

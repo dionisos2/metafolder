@@ -904,7 +904,9 @@ async function runScript(path: string, ws: string | null): Promise<void> {
   if (needsPanel(store.layout, ws, 'shell')) {
     await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'shell' });
   }
-  await runShell(`bash ${shellQuote(path)}`);
+  // A script's writes are one label in the log, its commands' nested in it
+  // (doc "Labels and contexts").
+  await runShell(`bash ${shellQuote(path)}`, `script ${path.split('/').pop() ?? path}`);
 }
 
 /**
@@ -1195,11 +1197,11 @@ export async function setFullscreen(on: boolean): Promise<void> {
   }
 }
 
-export async function runShell(commandLine: string): Promise<void> {
+export async function runShell(commandLine: string, label?: string): Promise<void> {
   const ws = focusedWs();
   if (!ws) return;
   try {
-    await invoke('run_shell', { wsId: ws, commandLine });
+    await invoke('run_shell', { wsId: ws, commandLine, label: label ?? null });
   } catch (error) {
     await status(String(error));
   }
@@ -1407,6 +1409,9 @@ export async function dispatch(
     await invoke('append_message', { wsId: ws, text: `> ${echo}` });
   }
 
+  // What the command writes is one label in the log, named after it (doc
+  // "Labels and contexts"): the proxy tells the daemon while it runs.
+  const commandKey = await beginCommand([name, ...args].join(' ').trim());
   try {
     const handled = await runCommand(name, args, context);
     if (!handled) {
@@ -1419,6 +1424,28 @@ export async function dispatch(
     const message = String(error);
     await status(message);
     return { ok: false, error: message };
+  } finally {
+    await endCommand(commandKey);
+  }
+}
+
+/** Tells the daemon proxy a command starts; its key, or null when the proxy
+ *  cannot be told (a test without the Rust side). */
+async function beginCommand(name: string): Promise<string | null> {
+  try {
+    return await invoke<string>('command_begin', { name });
+  } catch {
+    return null;
+  }
+}
+
+/** Tells the daemon proxy the command `key` ended. */
+async function endCommand(key: string | null): Promise<void> {
+  if (key === null) return;
+  try {
+    await invoke('command_end', { key });
+  } catch {
+    // The proxy keeps nothing that outlives the next command's begin.
   }
 }
 

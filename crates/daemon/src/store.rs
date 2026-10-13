@@ -171,6 +171,10 @@ macro_rules! forward_to_store {
                 let $me = self;
                 Log::label_children($conn, label)
             }
+            fn label_of_command(&self, key: Uuid) -> Result<Option<i64>> {
+                let $me = self;
+                Log::label_of_command($conn, key)
+            }
             fn watcher_label(&self) -> Result<Option<i64>> {
                 let $me = self;
                 Log::watcher_label($conn)
@@ -439,6 +443,8 @@ pub trait Log {
     fn label_first_op(&self, label: i64) -> Result<Option<i64>>;
     /// A label's children, oldest first.
     fn label_children(&self, label: i64) -> Result<Vec<i64>>;
+    /// The label the command `key` opened at its first write, if it did.
+    fn label_of_command(&self, key: Uuid) -> Result<Option<i64>>;
     /// The label the watcher's flushes are opened under, once there is one
     /// (doc "Labels and contexts").
     fn watcher_label(&self) -> Result<Option<i64>>;
@@ -812,6 +818,9 @@ pub trait WriteTxn: Store {
 
     /// A new label; its id. Its parent, when it has one, is there.
     fn create_label(&self, meta: &LabelMeta) -> Result<i64>;
+    /// A new label opened by the command `key`, which its later writes find
+    /// with [`Log::label_of_command`].
+    fn create_command_label(&self, meta: &LabelMeta, key: Uuid) -> Result<i64>;
     /// Removes a label that holds nothing (no operation, no child).
     fn drop_label(&self, id: i64) -> Result<()>;
     /// Records the label the watcher's flushes are opened under.

@@ -35,6 +35,20 @@ pub struct Client {
     /// token file. `None` when the file is missing — typically because the
     /// peer is not running, in which case the request fails at transport.
     token: Option<String>,
+    /// The command this process runs, told to the daemon with every request
+    /// (doc "Labels and contexts"); `None` for a client that is no command.
+    command: Option<CommandHeaders>,
+}
+
+/// What a command tells the daemon about itself: the key its label is found
+/// by, the name and description it is opened with at the first write, and the
+/// context it runs in.
+#[derive(Debug, Clone)]
+pub struct CommandHeaders {
+    pub key: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub context: Option<metafolder_core::context::Context>,
 }
 
 /// The client every piece of core orchestration drives (trash, ignore, order,
@@ -63,7 +77,20 @@ impl Client {
             peer,
             agent: ureq::Agent::new(),
             token: metafolder_core::auth::read_token(&service).ok(),
+            command: None,
         }
+    }
+
+    /// The same client, telling the daemon its requests are steps of
+    /// `command`.
+    pub fn in_command(mut self, command: CommandHeaders) -> Self {
+        self.command = Some(command);
+        self
+    }
+
+    /// The context the command runs in, if any.
+    pub fn context(&self) -> Option<metafolder_core::context::Context> {
+        self.command.as_ref().and_then(|c| c.context)
     }
 
     /// Sends a request and returns the parsed JSON body (Null when empty,
@@ -105,6 +132,18 @@ impl Client {
         let mut req = self.agent.request(method, &url);
         if let Some(token) = &self.token {
             req = req.set("Authorization", &format!("Bearer {token}"));
+        }
+        if let Some(command) = &self.command {
+            use metafolder_core::context;
+            req = req
+                .set(context::COMMAND_HEADER, &command.key)
+                .set(context::COMMAND_NAME_HEADER, &context::encode(&command.name));
+            if let Some(description) = &command.description {
+                req = req.set(context::COMMAND_DESCRIPTION_HEADER, &context::encode(description));
+            }
+            if let Some(label) = command.context.and_then(|c| c.label_for(path)) {
+                req = req.set(context::LABEL_HEADER, &label.to_string());
+            }
         }
         for (key, value) in query {
             req = req.query(key, value);

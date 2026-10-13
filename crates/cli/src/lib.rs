@@ -7,6 +7,7 @@ pub mod commands;
 pub mod config;
 pub mod fieldspec;
 pub mod gui;
+pub mod label;
 pub mod log;
 pub mod slow;
 pub mod sync;

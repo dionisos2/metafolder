@@ -1,0 +1,6 @@
+title: mf label begin
+tags: [[CLI command]] [[Event log]]
+kind: reference
+summary: Open a label inside the current context and print it, to export as METAFOLDER_LABEL
+
+Opens a label named `NAME` (described by `DESCRIPTION`), inside the context `METAFOLDER_LABEL` passes on when there is one, and prints it as `<repo uuid>:<label id>` — what to export so every `mf` started meanwhile writes in it ([[Labels and contexts]]).

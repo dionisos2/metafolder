@@ -100,18 +100,24 @@ and exits 1.
 Backspace answers any question with `back`. List `u` among the letters of
 `mf_gui_ask_answer` and you receive `u`; leave it out and the question is asked again.
 For a script that writes as it goes, going back is always the same thing — return the
-repository to where it was before the answer, and ask again:
+repository to where it was before the answer, and ask again. Each answer writes in a
+label of its own ([[Labels and contexts]]), and going back reverts it:
 
 ```
-head=$(mf_log_head)          # before writing
-mf tag -i "$uuid" add "$TAG"
+RUN_LABEL=$(mf_label_begin "my-script $TAG")      # once: the run is one label
+export METAFOLDER_LABEL=$RUN_LABEL
 ...
-mf_log_back_to "$head"       # on u
+answer=$(mf_label_begin "$path: y")               # inside the run's
+METAFOLDER_LABEL=$answer mf tag -i "$uuid" add "$TAG"
+...
+mf_label_back "$answer"                           # on u
 ```
 
-`mf_log_head` is [[mf log head]], and `mf_log_back_to` an `mf log undo --after` it — every
-change of yours since reverted, what each one replaced coming back, which no hand-written
-''untag'' would do; the watcher's writes meanwhile are left alone ([[Undo and redo]]).
+`mf_label_begin` is [[mf label begin]] (empty when it could not open one), and
+`mf_label_back` an [[mf log revert]] of the answer's label — what each write of the
+answer replaced coming back, which no hand-written ''untag'' would do; the watcher's
+writes meanwhile are left alone, and an answer that wrote nothing reverts nothing. Go
+back to the run's context before the next answer, or the next one nests in this one.
 Keep a stack of what each answer changed in the script too: the position, the
 counters ''as they were before the entry was counted'', whatever the answer had
 settled. Restoring counters saved after the entry was counted subtracts twice.

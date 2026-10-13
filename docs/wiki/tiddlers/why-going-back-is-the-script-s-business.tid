@@ -27,9 +27,11 @@ never a silent no-op, and never the default branch of the caller's `case`, which
 stops the run.
 
 A script that writes as it goes undoes through the ''event log'', the one exact way:
-it notes the newest operation before each answer (`mf log head`, added for this) and
-undoes what it wrote since (`mf log undo --after`; a rollback to the noted operation until
-October 2026, which also unrecorded the watcher's writes meanwhile — [[Why the log stops being a tree]]). That puts back what each write replaced ([[Undo and redo]]); an ''untag''
+each answer writes in a label of its own, and going back reverts that label
+([[Labels and contexts]]). Before that, it noted the newest operation before each answer
+(`mf log head`) and undid what was written since — by a rollback to the noted operation
+until October 2026, which also unrecorded the watcher's writes meanwhile ([[Why the log stops being a tree]]), then by `mf log undo --after`, which a change of the user's made
+meanwhile from another client would have swept up. That puts back what each write replaced ([[Undo and redo]]); an ''untag''
 written by hand does not, and has to know every rule the write applied ([[Tag subsumption and exclusivity]]).
 
 Two choices were the user's: the stack goes ''back to the first question'', and going

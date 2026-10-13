@@ -17,6 +17,18 @@ pub async fn run_to_completion(
     ws_id: String,
     command_line: String,
 ) -> Result<(), String> {
+    run_in(gui, ws_id, command_line, None).await
+}
+
+/// [`run_to_completion`], the subprocess passed `context` as
+/// `METAFOLDER_LABEL`: every `mf` it starts writes in that label (doc
+/// "Labels and contexts").
+pub async fn run_in(
+    gui: Arc<GuiState>,
+    ws_id: String,
+    command_line: String,
+    context: Option<metafolder_core::context::Context>,
+) -> Result<(), String> {
     // A per-run id the subprocess can address its own progress with
     // (`mf gui progress` reads it from METAFOLDER_GUI_TASK); session-unique.
     // It also groups the run's lines in the shell log.
@@ -34,6 +46,11 @@ pub async fn run_to_completion(
         .env("METAFOLDER_GUI_TASK", &task_id)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+    match context {
+        Some(context) => command.env(metafolder_core::context::LABEL_ENV, context.to_string()),
+        // The GUI's own context, if it was started in one, is not the run's.
+        None => command.env_remove(metafolder_core::context::LABEL_ENV),
+    };
     // Its own process group, so `script:stop` can signal the script *and* every
     // child it spawned (the `mf gui input` blocked on a question above all) with
     // one killpg — signalling the shell alone would leave those behind.
@@ -141,20 +158,47 @@ async fn forward(
     }
 }
 
+/// `label`: run it in a label of its own, so what a script writes is one
+/// piece of work in the log — opened in the workspace's active repository,
+/// and passed on as `METAFOLDER_LABEL`. A plain `!` line names none: each `mf`
+/// it runs is a command with a label of its own anyway.
 #[tauri::command]
 pub fn run_shell(
     app: tauri::State<'_, Arc<crate::commands::App>>,
     ws_id: String,
     command_line: String,
+    label: Option<String>,
 ) -> Result<(), String> {
     let gui = app.gui.clone();
+    let daemon = app.daemon.clone();
     let message_ms = app.status_timeouts().message_ms;
     tauri::async_runtime::spawn(async move {
-        if let Err(error) = run_to_completion(gui.clone(), ws_id.clone(), command_line).await {
+        let context = match label {
+            Some(name) => open_context(&gui, &daemon, &ws_id, &name).await,
+            None => None,
+        };
+        if let Err(error) = run_in(gui.clone(), ws_id.clone(), command_line, context).await {
             let _ = gui.post_status(&ws_id, &error, "error", Some(message_ms));
         }
     });
     Ok(())
+}
+
+/// Opens a label named `name` in the workspace's active repository: the
+/// context a script runs in. `None` — and the script runs as it would have —
+/// when there is no repository or the daemon refuses.
+async fn open_context(
+    gui: &GuiState,
+    daemon: &crate::daemon_proxy::DaemonProxy,
+    ws_id: &str,
+    name: &str,
+) -> Option<metafolder_core::context::Context> {
+    let repo = gui.active_repo(ws_id).ok()?;
+    let body = serde_json::json!({"name": name});
+    let response =
+        daemon.request("POST", &format!("/repos/{repo}/labels"), Some(body)).await.ok()?;
+    let label = response.body["id"].as_i64().filter(|_| response.status < 300)?;
+    Some(metafolder_core::context::Context { repo: uuid::Uuid::parse_str(&repo).ok()?, label })
 }
 
 /// The two ways the user ends a run (doc "Script sessions").
@@ -226,6 +270,21 @@ mod tests {
 
     fn gui() -> Arc<GuiState> {
         Arc::new(GuiState::new(Arc::new(RecordingNotifier::new())))
+    }
+
+    /// A script runs in the context it was given, and a plain line in none —
+    /// not even one the GUI itself was started in (doc "Labels and contexts").
+    #[tokio::test]
+    async fn test_a_run_is_given_its_context_and_only_it() {
+        let gui = gui();
+        let context = metafolder_core::context::Context { repo: uuid::Uuid::nil(), label: 7 };
+        let line = "echo \"in:${METAFOLDER_LABEL:-none}\"";
+        run_in(gui.clone(), "ws-1".into(), line.into(), Some(context)).await.unwrap();
+        run_in(gui.clone(), "ws-1".into(), line.into(), None).await.unwrap();
+        let log = gui.shell_log("ws-1").unwrap();
+        let out: Vec<&str> =
+            log.iter().filter(|e| e.kind == ShellLine::Stdout).map(|e| e.text.as_str()).collect();
+        assert_eq!(out, [format!("in:{context}").as_str(), "in:none"]);
     }
 
     #[tokio::test]

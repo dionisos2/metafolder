@@ -333,6 +333,14 @@ fn a_label_names_its_operations_and_its_children() {
     assert!(tx.labels(&[a]).unwrap().is_empty());
     tx.set_watcher_label(run).unwrap();
     assert_eq!(tx.watcher_label().unwrap(), Some(run));
+
+    // A command's label is found by its key, until it is dropped.
+    let key = Uuid::new_v4();
+    assert_eq!(tx.label_of_command(key).unwrap(), None);
+    let command = tx.create_command_label(&meta(Some(run)), key).unwrap();
+    assert_eq!(tx.label_of_command(key).unwrap(), Some(command));
+    tx.drop_label(command).unwrap();
+    assert_eq!(tx.label_of_command(key).unwrap(), None);
 }
 
 #[test]

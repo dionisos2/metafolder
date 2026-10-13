@@ -27,8 +27,8 @@ did ([[Why undo and redo do not oscillate]]).
 Neither needs a target: finding it is their whole job. `plan` shows the revision and the
 reason, and writes nothing. With nothing to take back they say `Nothing to undo.` /
 `Nothing to redo.` and exit 0. `mf log undo --after <op>` undoes again and again while your
-newest change is newer than that operation — what a script uses to go back to where it was
-(`mf log head` gives the operation; [[Writing a GUI script]]).
+newest change is newer than that operation (`mf log head` gives the operation); a script
+going back reverts the label of its answer instead ([[Writing a GUI script]]).
 
 Files come along. Undoing a trashing brings the file back from the trash, redoing it
 sends it there again; undoing a move made through metafolder moves the file back

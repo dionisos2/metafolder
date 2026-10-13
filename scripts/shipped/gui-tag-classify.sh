@@ -85,6 +85,11 @@ for u in ${UUIDS+"${UUIDS[@]}"}; do [ -n "$u" ] && TOTAL=$((TOTAL + 1)); done
 
 mf_gui_session_open metarecord-detail
 
+# The run is one label (doc "Labels and contexts"): what it writes reads, and
+# reverts, as one piece of work.
+RUN_LABEL=$(mf_label_begin "gui-tag-classify")
+[ -z "$RUN_LABEL" ] || export METAFOLDER_LABEL="$RUN_LABEL"
+
 TMP=$(mf_gui_tmpdir)
 UNIVERSE="$TMP/universe"
 POS="$TMP/pos"

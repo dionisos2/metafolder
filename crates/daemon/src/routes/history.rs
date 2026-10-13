@@ -66,6 +66,7 @@ pub(super) async fn create_label(
         repo_state.ensure_writable()?;
         let parent = body.parent.or(match request_context() {
             crate::log::WriteContext::In(id) => Some(id),
+            crate::log::WriteContext::Command { label, .. } => label.parent,
             _ => None,
         });
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
