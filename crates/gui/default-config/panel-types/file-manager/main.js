@@ -314,9 +314,7 @@ export async function mount(root, metafolder) {
     // folder, nothing highlighted in it yet. The shell's `ignore:*` commands
     // read it too, to know which directory the user is looking at (doc
     // "Setting ignore patterns").
-    appliedLocation = { dir, cursor: null };
-    await workspace.set('file-manager:dir', dir);
-    await workspace.set('file-manager:cursor', null);
+    await writeLocation({ dir, cursor: null }, ['dir', 'cursor']);
     const dirUuid = await enrichSelfParent();
     await enrichChildren(dirUuid);
     await refreshEligibility();
@@ -522,8 +520,7 @@ export async function mount(root, metafolder) {
     if (!listing[cursorIndex]) return;
     root.querySelector('li.cursor')?.scrollIntoView({ block: 'nearest' });
     const cursor = listing[cursorIndex].name;
-    appliedLocation = { ...appliedLocation, cursor };
-    await workspace.set('file-manager:cursor', cursor);
+    await writeLocation({ ...appliedLocation, cursor }, ['cursor']);
     await propagateSelection();
   }
 
@@ -833,6 +830,31 @@ export async function mount(root, metafolder) {
 
   /** @type {{dir: string|null, cursor: string|null}} */
   let appliedLocation = { dir: null, cursor: null };
+  // A read of the variables that overlaps the panel's own move is stale: begun
+  // before it, it finds where the panel WAS (and going there undid a
+  // double-click into a folder); begun between its two writes, half of each.
+  // Such a read is dropped, and the variables re-read once the writes are done.
+  let locationEpoch = 0;
+  let locationWrites = 0;
+  let followDropped = false;
+
+  /** Moves the panel's location to `location`, writing the named variables.
+   *  @param {{dir: string|null, cursor: string|null}} location
+   *  @param {('dir'|'cursor')[]} keys */
+  async function writeLocation(location, keys) {
+    appliedLocation = location;
+    locationEpoch += 1;
+    locationWrites += 1;
+    try {
+      for (const key of keys) await workspace.set(`file-manager:${key}`, location[key]);
+    } finally {
+      locationWrites -= 1;
+    }
+    if (locationWrites === 0 && followDropped) {
+      followDropped = false;
+      scheduleFollowLocation();
+    }
+  }
 
   /** @returns {Promise<{dir: string|null, cursor: string|null}>} */
   async function variableLocation() {
@@ -860,7 +882,12 @@ export async function mount(root, metafolder) {
   }
 
   async function followLocationVariables() {
-    const next = await variableLocation();
+    const epoch = locationEpoch;
+    const next = locationWrites === 0 ? await variableLocation() : null;
+    if (next === null || epoch !== locationEpoch || locationWrites > 0) {
+      followDropped = true;
+      return;
+    }
     if (next.dir === null) return;
     if (next.dir === appliedLocation.dir && next.cursor === appliedLocation.cursor) return;
     await showLocation(next.dir, next.cursor);

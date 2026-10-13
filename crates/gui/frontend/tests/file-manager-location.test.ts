@@ -203,6 +203,40 @@ describe('file-manager location variables', () => {
     expect(s.root.getElementById('constrain')).toHaveProperty('checked', false);
     expect(cursorName(s.root)).toBe('far.txt');
   });
+
+  // The echo of the panel's own cursor write starts a read of the variables;
+  // a double-click opening a folder while that read is in flight must not be
+  // undone by it: the read predates the panel's own move, so what it found is
+  // where the panel WAS (the bug: the folder opened, then the parent again —
+  // "nothing happens", or a flash).
+  test('a read predating its own move does not send the panel back', async () => {
+    const s = stub('r', {});
+    await mount(s);
+    let release: () => void = () => {};
+    let gate: Promise<void> | null = null;
+    const get = s.api.workspace.get;
+    s.api.workspace.get = async (key: string) => {
+      const value = await get(key); // the value as it is now…
+      if (gate) await gate; // …answered later
+      return value;
+    };
+    const row = () =>
+      [...s.root.querySelectorAll('li')].find((li) => li.textContent?.includes('sub'))!;
+
+    row().click();
+    await settle();
+    gate = new Promise((r) => (release = r));
+    s.subscriptions.get('file-manager:cursor')?.('sub'); // the echo
+    await new Promise((r) => setTimeout(r, 0)); // its read starts, held
+    row().dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    await settle();
+    gate = null;
+    release();
+    await settle();
+
+    expect(s.root.getElementById('current-path')?.textContent).toBe('/repo/sub');
+    expect(s.fs.readDir).toHaveBeenLastCalledWith('/repo/sub');
+  });
 });
 
 // ── The command side, as the shipped `commands.js` defines it ───────────────

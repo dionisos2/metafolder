@@ -135,7 +135,10 @@ script or another panel, the panel goes there — at once when it is on screen, 
 next is otherwise; with no `file-manager:dir`, it opens at the repository root.
 `file-manager:reveal` writes them, and so does a folder picker, to start where the form
 already points. A write of where the panel already is, or of what it wrote itself,
-does nothing ([[Cross-panel selection]]).
+does nothing ([[Cross-panel selection]]). Nor does a read of the variables that
+overlaps one of the panel's own moves: begun before it, it finds where the panel
+''was'' — following it sent a double-click into a folder straight back to the
+parent — so it is dropped, and the variables re-read once the move's writes are done.
 
 The view settings — the root constraint, hidden files, the activity or operations order — are
 not variables: they are the panel's, for the session.
