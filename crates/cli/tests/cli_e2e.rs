@@ -6374,3 +6374,176 @@ fn test_undo_offers_the_context_and_takes_it_back_whole() {
     let rating = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "get", "rating"]);
     assert!(rating.stdout.contains('2'), "{}", rating.stdout);
 }
+
+// ── What the coverage pass left (roadmap "the untested parts") ────────────────
+
+/// `mf repo check` on a store whose derived data was damaged behind the
+/// daemon's back: one problem per line, the repair named on stderr, exit 1;
+/// `mf repo reindex` makes it whole again.
+#[test]
+fn test_repo_check_reports_damage_and_reindex_repairs_it() {
+    let (repo, root) = init_repo("check_damage");
+    create_metarecord(&repo, &["note:string=kept"]);
+    assert_ok(&mf(&["-u", &repo, "repo", "unload"]));
+    {
+        // Every set chunk dropped (the universe, presence, parents), as the
+        // daemon's own test of `check` does (kv_derived.rs).
+        let kv = root.join(".metafolder/internal/kv");
+        let env =
+            unsafe { heed::EnvOpenOptions::new().max_dbs(32).map_size(1 << 30).open(&kv) }.unwrap();
+        let mut w = env.write_txn().unwrap();
+        let sets: heed::Database<heed::types::Bytes, heed::types::Bytes> =
+            env.open_database(&w, Some("sets")).unwrap().unwrap();
+        sets.clear(&mut w).unwrap();
+        w.commit().unwrap();
+    }
+    assert_ok(&mf(&["repo", "load", root.to_str().unwrap()]));
+
+    let out = mf(&["-u", &repo, "repo", "check"]);
+    assert_eq!(out.code, 1, "problems found: exit 1\nstdout: {}", out.stdout);
+    assert!(!out.stdout.trim().is_empty() && !out.stdout.contains("ok\n"), "{}", out.stdout);
+    assert!(out.stderr.contains("problem(s)"), "{}", out.stderr);
+    assert!(out.stderr.contains("mf repo reindex"), "{}", out.stderr);
+
+    assert_ok(&mf(&["-u", &repo, "repo", "reindex"]));
+    let out = mf(&["-u", &repo, "repo", "check"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), "ok");
+}
+
+/// `mf repo restore --from DIR` puts a named backup back (not the most recent
+/// one); `--metafolder DIR` addresses the repository by its `.metafolder`.
+#[test]
+fn test_repo_restore_from_a_named_backup_and_by_metafolder() {
+    let (repo, root) = init_repo("restore_from");
+    let first = create_metarecord(&repo, &["note:string=first"]);
+    let named = mf(&["-u", &repo, "repo", "backup"]);
+    assert_ok(&named);
+    let named = named.stdout.trim().to_string();
+    create_metarecord(&repo, &["note:string=second"]);
+    assert_ok(&mf(&["-u", &repo, "repo", "backup"]));
+    create_metarecord(&repo, &["note:string=third"]);
+
+    let out = mf(&["-u", &repo, "repo", "restore", "--from", &named]);
+    assert_ok(&out);
+    assert!(out.stdout.contains(&format!("restored from {named}")), "{}", out.stdout);
+    let out = mf(&["-u", &repo, "metarecord", "-q", "note IS PRESENT", "get"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), first, "the named backup, not the newest one");
+
+    let metafolder = root.join(".metafolder");
+    let out = mf(&["repo", "restore", "--metafolder", metafolder.to_str().unwrap()]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("restored from"), "{}", out.stdout);
+    assert!(out.stderr.contains("mf reconcile"), "{}", out.stderr);
+}
+
+/// `mf duplicate clear` without `-y`: nothing to clear is said, not asked; a
+/// declined prompt leaves the groups in place.
+#[test]
+fn test_duplicate_clear_asks_and_says_when_there_is_nothing() {
+    let (repo, _dir) =
+        tracked_repo("dupclear_ask", &[("a.txt", b"same bytes"), ("b.txt", b"same bytes")]);
+    let out = mf(&["-u", &repo, "duplicate", "clear"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("No duplicate groups to clear."), "{}", out.stdout);
+
+    assert_ok(&mf(&["-u", &repo, "duplicate", "scan"]));
+    let out = mf_full(&["-u", &repo, "duplicate", "clear"], Some("n\n"), &[], true);
+    assert_ok(&out);
+    assert!(out.stdout.contains("Aborted."), "{}", out.stdout);
+    let linked = mf(&["-u", &repo, "metarecord", "-q", "mfr_duplicate_group IS PRESENT", "get"]);
+    assert_eq!(linked.stdout.split_whitespace().count(), 2, "kept: {}", linked.stdout);
+}
+
+/// `--json` on the task commands prints the daemon's body as it is; a
+/// repository with no task says so.
+#[test]
+fn test_task_commands_json_and_no_tasks() {
+    let (repo, root) = init_repo("task_json");
+    let out = mf(&["-u", &repo, "task", "list"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout, "no tasks\n");
+
+    std::fs::write(root.join("a.txt"), b"a").unwrap();
+    assert_ok(&mf(&["-u", &repo, "reconcile"]));
+    let out = mf(&["-u", &repo, "task", "list", "--json"]);
+    assert_ok(&out);
+    let listed: serde_json::Value = serde_json::from_str(out.stdout.trim()).unwrap();
+    let id = listed[0]["id"].as_str().unwrap_or_else(|| panic!("{listed}")).to_string();
+    let out = mf(&["-u", &repo, "task", "show", &id, "--json"]);
+    assert_ok(&out);
+    let shown: serde_json::Value = serde_json::from_str(out.stdout.trim()).unwrap();
+    assert_eq!(shown["id"], id.as_str(), "{shown}");
+}
+
+/// `mf duplicate scan --no-wait` prints the task id alone; `--json` prints the
+/// result's body; `--metarecord` must be a UUID (a usage error, before any request).
+#[test]
+fn test_duplicate_scan_no_wait_json_and_entry() {
+    let (repo, _dir) =
+        tracked_repo("dupscan_flags", &[("a.txt", b"same bytes"), ("b.txt", b"same bytes")]);
+    let out = mf(&["-u", &repo, "duplicate", "scan", "--no-wait"]);
+    assert_ok(&out);
+    let task = out.stdout.trim().to_string();
+    assert!(is_hex_uuid(&task), "a task id: {}", out.stdout);
+    // One scan at a time per repository: the next waits for this one.
+    poll_mf(&["-u", &repo, "task", "show", &task], |s| s.contains(" done"));
+
+    let out = mf(&["-u", &repo, "duplicate", "scan", "--json"]);
+    assert_ok(&out);
+    let body: serde_json::Value = serde_json::from_str(out.stdout.trim()).unwrap();
+    assert!(body.is_object(), "{}", out.stdout);
+
+    let out = mf(&["-u", &repo, "duplicate", "scan", "--metarecord", "not-a-uuid"]);
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert!(out.stderr.contains("invalid metarecord UUID"), "{}", out.stderr);
+}
+
+/// A stub daemon whose duplicate scan ends in `status`: a failed or cancelled
+/// task cannot be had on demand from the real one. Returns its port.
+fn stub_task_daemon(status: &'static str) -> String {
+    use axum::routing::{get, post};
+    let app = axum::Router::new()
+        .route(
+            "/repos/:repo/duplicates/scan",
+            post(|| async { axum::Json(serde_json::json!({"task_id": "t1"})) }),
+        )
+        .route(
+            "/repos/:repo/tasks/:id",
+            get(move || async move {
+                let mut task = serde_json::json!({"id": "t1", "status": status});
+                if status == "failed" {
+                    task["error"] = "disk on fire".into();
+                }
+                axum::Json(task)
+            }),
+        );
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    listener.set_nonblocking(true).unwrap();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async move {
+            let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+            axum::serve(listener, app).await.unwrap();
+        });
+    });
+    port.to_string()
+}
+
+/// A task that ends failed reports the daemon's error; a cancelled one says so;
+/// both exit 1.
+#[test]
+fn test_a_failed_or_cancelled_task_is_an_error() {
+    let repo = Uuid::new_v4().as_simple().to_string();
+    let port = stub_task_daemon("failed");
+    let out = mf_full(&["-p", &port, "-u", &repo, "duplicate", "scan"], None, &[], false);
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    assert!(out.stderr.contains("disk on fire"), "{}", out.stderr);
+
+    let port = stub_task_daemon("cancelled");
+    let out = mf_full(&["-p", &port, "-u", &repo, "duplicate", "scan"], None, &[], false);
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    assert!(out.stderr.contains("duplicates: cancelled"), "{}", out.stderr);
+}

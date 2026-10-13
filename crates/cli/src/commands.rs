@@ -277,9 +277,6 @@ pub fn repos(ctx: &Ctx, all: bool) -> Result<i32, CliError> {
     Ok(0)
 }
 
-/// `mf unload`: unloads the repository from the daemon (`POST …/unload`),
-/// printing its UUID. A repository not loaded (404) or in a rollback navigation
-/// (409) is reported as an error.
 /// `mf repo check`: "ok" on a healthy store, else one problem per line and
 /// exit 1.
 pub fn check_repo(ctx: &Ctx) -> Result<i32, CliError> {
@@ -361,6 +358,9 @@ pub fn reindex_repo(ctx: &Ctx) -> Result<i32, CliError> {
     Ok(0)
 }
 
+/// `mf unload`: unloads the repository from the daemon (`POST …/unload`),
+/// printing its UUID. A repository not loaded (404) or in a rollback navigation
+/// (409) is reported as an error.
 pub fn unload(ctx: &Ctx) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let resp = ctx.client.request("POST", &format!("{base}/unload"), &[], None)?;
@@ -3159,5 +3159,42 @@ mod tests {
     #[test]
     fn test_parse_sort_rejects_bad_order() {
         assert!(parse_sort(&["a:up".into()]).is_err());
+    }
+    /// Every reason `POST /watch/check` gives for a path not watched reads as
+    /// a phrase naming what to look at.
+    #[test]
+    fn not_watched_phrase_names_each_reason() {
+        let phrase = |entry: Json| not_watched_phrase(&entry);
+        assert_eq!(
+            phrase(json!({"reason": "offline", "offline_mount": "/media/usb"})),
+            "on the volume mounted at /media/usb, which is unplugged"
+        );
+        assert!(phrase(json!({"reason": "second_mount", "second_mount": "/m2"}))
+            .starts_with("inside /m2, a second mount"));
+        assert_eq!(
+            phrase(json!({"reason": "internal"})),
+            "inside the daemon's own runtime directory (.metafolder/internal)"
+        );
+        assert!(phrase(json!({"reason": "unwatched", "watched_dir": ""}))
+            .starts_with("no watch on / right now"));
+        assert_eq!(phrase(json!({"reason": "novel"})), "unknown state");
+        // Eligible itself, but its directory is not: the directory is named.
+        assert_eq!(
+            phrase(json!({
+                "reason": "untracked", "eligible": true, "watched_dir": "/music",
+                "dir_eligibility_reason": "something_new",
+            })),
+            "its directory /music is untracked: not tracked (\"something_new\")"
+        );
+    }
+
+    #[test]
+    fn format_age_picks_the_coarsest_unit() {
+        let now = metafolder_core::date::now_ms();
+        assert_eq!(format_age(now - 5_000), "5s ago");
+        assert_eq!(format_age(now - 3 * 60_000), "3m ago");
+        assert_eq!(format_age(now - 2 * 3_600_000), "2h ago");
+        assert_eq!(format_age(now - 4 * 86_400_000), "4d ago");
+        assert_eq!(format_age(now + 60_000), "0s ago", "a clock ahead is not negative");
     }
 }

@@ -2179,6 +2179,7 @@ version = "0.3.0"
 dependencies = [
  "axum",
  "clap",
+ "heed",
  "libc",
  "metafolder-core",
  "metafolder-daemon",
