@@ -27,6 +27,7 @@ import { type ExpandDeps, expandShellPlaceholders, shellQuote } from './placehol
 import { focusedContext, focusedWs, flashStatus, slotPayload, store, workspaceById } from './store.svelte';
 import { isTarget, resolveTarget, TARGETS } from './targets';
 import { daemonWork } from './working';
+import { changeFeed } from './panels/changes';
 import type { CommandDef, ExecContext, LayoutView } from './types';
 
 export type ParsedInvocation = { name: string; args: string[] } | { shell: string } | null;
@@ -808,8 +809,6 @@ async function resetWatchActivity(ws: string | null): Promise<void> {
     await status(e instanceof Error ? e.message : String(e));
     return;
   }
-  // Imported late: `panels/api` imports this module.
-  const { changeFeed } = await import('./panels/api');
   changeFeed.notify(repo);
   await status('watch activity reset', 'info');
 }

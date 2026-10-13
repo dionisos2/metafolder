@@ -110,3 +110,6 @@ export function createChangeFeed() {
 }
 
 export type ChangeFeed = ReturnType<typeof createChangeFeed>;
+
+/** The daemon change feed — one per realm, heard by every panel. */
+export const changeFeed = createChangeFeed();

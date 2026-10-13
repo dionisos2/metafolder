@@ -11,7 +11,7 @@ import { invoke as ipcInvoke } from '../ipc';
 import { checkTarget, resolveTarget } from '../targets';
 import type { ExecContext } from '../types';
 import { daemonWork } from '../working';
-import { createChangeFeed, type ChangeEvent } from './changes';
+import { changeFeed, type ChangeEvent } from './changes';
 import {
   createReads,
   type DaemonResponse,
@@ -19,8 +19,7 @@ import {
   type ReadOptions,
 } from './reads';
 
-/** The daemon change feed — one per realm, heard by every panel. */
-export const changeFeed = createChangeFeed();
+export { changeFeed };
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 /**
