@@ -552,8 +552,12 @@ pub(super) async fn duplicates_scan(
         ApiError::conflict("a duplicate scan is already in progress for this repository")
     })?;
 
-    let opts =
-        crate::duplicates::ScanOptions { min_size: body.min_size, rehash: body.rehash, scope };
+    let opts = crate::duplicates::ScanOptions {
+        min_size: body.min_size,
+        rehash: body.rehash,
+        scope,
+        ..Default::default()
+    };
     let context = task_context("duplicate scan");
     tokio::task::spawn_blocking(move || {
         let _context = crate::log::enter_context(context);

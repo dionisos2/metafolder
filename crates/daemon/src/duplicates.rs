@@ -44,6 +44,12 @@ pub const GROUP_FIELD: &str = "mfr_duplicate_group";
 /// hash cache is precisely the work worth keeping.
 const COMMIT_EVERY: std::time::Duration = std::time::Duration::from_secs(20);
 
+/// How long a write of the scan holds the store at most: a first scan writes
+/// every hash it computed, which on 50 000 files held it 5.6 s in one piece —
+/// every request, the GUI's change feed first, waiting behind it. Past this, the
+/// write commits, gives the store back, and takes it again.
+const HOLD: std::time::Duration = std::time::Duration::from_millis(250);
+
 /// Progress is reported every this many items inside the scan loops.
 const PROGRESS_STEP: usize = 64;
 
@@ -59,11 +65,14 @@ pub struct ScanOptions {
     pub rehash: bool,
     /// Restrict the scan to this metarecord's subtree.
     pub scope: Option<Uuid>,
+    /// The longest one write holds the store before it commits and gives it
+    /// back ([`HOLD`] by default).
+    pub hold: std::time::Duration,
 }
 
 impl Default for ScanOptions {
     fn default() -> Self {
-        ScanOptions { min_size: 1, rehash: false, scope: None }
+        ScanOptions { min_size: 1, rehash: false, scope: None, hold: HOLD }
     }
 }
 
@@ -213,6 +222,7 @@ pub fn scan_reported(
         grouped: HashSet::new(),
         touched: HashSet::new(),
         opened: Instant::now(),
+        hold: opts.hold,
     };
     let total = classes.iter().map(|(_, m)| m.len()).sum::<usize>() as u64;
     reporter.progress("partial", Some(0), Some(total));
@@ -310,6 +320,8 @@ struct Writes<'a> {
     grouped: HashSet<Uuid>,
     touched: HashSet<Uuid>,
     opened: Instant,
+    /// [`ScanOptions::hold`].
+    hold: std::time::Duration,
 }
 
 impl Writes<'_> {
@@ -326,23 +338,58 @@ impl Writes<'_> {
     /// links are read again, a record gone since gets no hash, and a group
     /// member is checked on disk — a file changed after it was hashed is left
     /// out, and its change, flushed by the watcher after this write, finds it
-    /// in no group (doc "The duplicate scan").
+    /// in no group (doc "The duplicate scan"). The hashes go first, in takes of
+    /// at most [`ScanOptions::hold`] each; the groups and the prune go in the
+    /// last one, which reads the groups and links it writes against.
     fn flush(
         &mut self,
         result: &mut ScanResult,
         prune: Option<(Option<&HashSet<Uuid>>, &Reporter)>,
     ) -> Result<(), ApiError> {
         let repo = self.repo;
-        let mut conn = metafolder_core::slowlog::timed("wait:conn", || repo.conn.lock_recover());
-        let mut existing = crate::store::Questions::duplicate_groups(&*conn)?;
-        let mut links = crate::store::Questions::ref_map(&*conn, GROUP_FIELD)?;
-        let mut writer = Writer::begin_in(&mut *conn, self.context.clone(), repo.log_retention())?;
-        for (uuid, field, hash, stamp) in self.hashes.drain(..) {
-            if crate::store::Rows::version(writer.store(), uuid)?.is_some() {
-                write_hash(&mut writer, uuid, field, &hash, stamp)?;
+        let mut hashes = std::mem::take(&mut self.hashes);
+        // In key order: a take then dirties a slice of the store's pages, not
+        // pages all over it — a commit's cost is the pages it writes, and
+        // unsorted, 25 takes cost 3.7 s of commits on 50 000 files, 1.8 s sorted.
+        hashes.sort_by_key(|(uuid, field, ..)| (*uuid, *field));
+        let mut hashes = hashes.into_iter().peekable();
+        loop {
+            let mut conn =
+                metafolder_core::slowlog::timed("wait:conn", || repo.conn.lock_recover());
+            let held = Instant::now();
+            let mut writer =
+                Writer::begin_in(&mut *conn, self.context.clone(), repo.log_retention())?;
+            while let Some((uuid, field, hash, stamp)) = hashes.next() {
+                if crate::store::Rows::version(writer.store(), uuid)?.is_some() {
+                    write_hash(&mut writer, uuid, field, &hash, stamp)?;
+                }
+                if held.elapsed() >= self.hold && hashes.peek().is_some() {
+                    break;
+                }
             }
+            if hashes.peek().is_none() {
+                return self.write_groups(writer, result, prune);
+            }
+            // Held long enough: commit, and let a waiting request in before
+            // taking the store again — a mutex released and retaken at once is
+            // most often retaken by the same thread.
+            self.commit(writer)?;
+            drop(conn);
+            std::thread::sleep(std::time::Duration::from_millis(2));
         }
-        let root = &repo.config.root;
+    }
+
+    /// The end of a write: the groups of the completed classes, then the prune
+    /// when `prune` is given, in the take the write ends with.
+    fn write_groups(
+        &mut self,
+        mut writer: Writer,
+        result: &mut ScanResult,
+        prune: Option<(Option<&HashSet<Uuid>>, &Reporter)>,
+    ) -> Result<(), ApiError> {
+        let mut existing = crate::store::Questions::duplicate_groups(writer.store())?;
+        let mut links = crate::store::Questions::ref_map(writer.store(), GROUP_FIELD)?;
+        let root = &self.repo.config.root;
         for (size, mut members) in self.classes.drain(..) {
             let mut kept = Vec::with_capacity(members.len());
             for member in members.drain(..) {
@@ -378,12 +425,17 @@ impl Writes<'_> {
                 reporter,
             )?;
         }
+        self.commit(writer)?;
+        self.opened = Instant::now();
+        Ok(())
+    }
+
+    /// Commits one take of a write; the next ones write inside its label.
+    fn commit(&mut self, writer: Writer) -> Result<(), ApiError> {
         if writer.op_count() > 0 {
             self.context = crate::log::WriteContext::In(writer.label_id());
         }
-        commit(writer)?;
-        self.opened = Instant::now();
-        Ok(())
+        commit(writer)
     }
 }
 

@@ -600,3 +600,36 @@ fn a_quick_scan_writes_one_revision_whatever_its_classes() {
     assert_eq!(result.groups, 40);
     assert_eq!(revisions(&repo) - before, 1, "one window, one revision");
 }
+
+// ── Holding the store ────────────────────────────────────────────────────────
+
+/// How many times the scan took the store, from its captured slow-log entry.
+fn store_takes(repo: &RepoState, opts: &ScanOptions) -> u32 {
+    let (outcome, entry) =
+        metafolder_core::slowlog::capture("task duplicates", || duplicates::scan(repo, opts));
+    outcome.unwrap();
+    entry.phases.iter().filter(|p| p.name == "wait:conn").map(|p| p.count).sum()
+}
+
+#[test]
+fn a_write_gives_the_store_back_once_it_held_it_its_allowed_time() {
+    // A first scan writes every hash it computed in one window: on 50 000
+    // files that held the store 5.6 s, the GUI's change feed waiting behind it.
+    // A write longer than `hold` commits and takes the store again.
+    let (repo, root) = setup("hold");
+    for pair in 0..3 {
+        let bytes = format!("pair number {pair} of identical files");
+        write_file(&root, &format!("p{pair}a.txt"), bytes.as_bytes());
+        write_file(&root, &format!("p{pair}b.txt"), bytes.as_bytes());
+    }
+    reconcile::reconcile(&repo).unwrap();
+
+    let opts = ScanOptions { hold: std::time::Duration::ZERO, ..ScanOptions::default() };
+    // The first reads, then one take per hash (six partial, six full), the
+    // groups going with the last.
+    assert!(store_takes(&repo, &opts) > 12, "the first reads, and twelve writes");
+    assert_eq!(duplicates::scan(&repo, &opts).unwrap().groups, 3, "the result is the same");
+
+    let rehash = ScanOptions { rehash: true, ..ScanOptions::default() };
+    assert_eq!(store_takes(&repo, &rehash), 2, "a short write is one take: the reads, then it");
+}

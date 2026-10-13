@@ -34,20 +34,19 @@ is left, each to measure before building:
   folder step stays under 1 s on a neutral machine, the most keys a list step
   read being 19 000 for five pages. What it did find is below.
 
-** TODO what the session runs found (11–12 October 2026, 50 000 files)
+** TODO what the session runs found (11–13 October 2026, 50 000 files)
 Recorded on a neutral machine (=benchmarks/session/=). The background tasks
 are in the slow log since =e7d7ffff=, which showed the biggest cost at once: a
 path's resolution compared each name with all its siblings (=e7882221=). A
 reconcile with nothing to do went from 43.8 s and 242 million keys to 9.7 s and
 3.8 million; the first one from 60 s to 25 s; the watcher's flushes from 2.1
 million keys (a folder of 292 files renamed) to 20 000, and from 1.56 million
-(1 000 files created) to 53 000. Every step is within its budget. Left:
-- the duplicate scan: 29.5 s, then 15 s once its writes were committed every
-  two seconds instead of 503 times (=9212c562=). It held the store for the
-  whole scan, so the GUI's change feed waited as long. Since 13 October 2026
-  it hashes with the store free and takes it back every 20 s to write, the
-  groups and links read again and each member checked on disk (doc "The
-  duplicate scan"). To confirm on the next recorded run.
+(1 000 files created) to 53 000. The run of 13 October 2026 (=2254409b=)
+confirmed the rest: undo from 1.45 million keys to 307 000 (redo 310 000, a
+revert like the undo since the log's redesign), the duplicate scan from 16 s to
+12 s — but the GUI's change feed still waited 5.6 s behind its one write at the
+end, which a write now cuts in takes of a quarter of a second (doc "The
+duplicate scan"; longest wait 0.4 s). Every step is within its budget. Left:
 - a second reconcile read 3.8 million keys, ≈ 75 a file: each path resolved
   four times, and every file's path read back by the orphan scan. Resolved
   once since =a46549ef=: 2.2 million keys, 7.3 s. Not all of it is "nothing to
@@ -58,19 +57,6 @@ million keys (a folder of 292 files renamed) to 20 000, and from 1.56 million
   checking its MIME type and metadata, 1 listing it for the orphan scan. One
   read of the record's rows would answer the last three passes at once (≈ 1
   key a row), a gain only on records with few user fields: not built.
-- undo and redo, measured again 13 October 2026 on the redesigned log (an
-  unrecorded run, keys only): reading the log after them costs 509 keys
-  (702 000 before =42287c53=). The bulk write tags 25 000 records (201 000
-  keys); its undo read 533 000 keys and its redo 589 000, the GUI reading
-  the revert plan (201 000 / 251 000) before a revert that reads 327 000. The
-  GUI now sends the revert straight and reads the plan only when a file
-  action needs it (doc "Revert endpoints"). The revert itself, measured 13
-  October 2026 on an undone tagging: 13 keys an operation where the write
-  read 6 — the deletion (7), the label's entry and the operation (2), its
-  reverts (1), and both sides of its snapshot (3) where the inverse needs one.
-  Now 12 (only the side used is read; =log_cost.rs= holds it). The 5 left
-  are the log's own facts on the operation: not reducible without a layout
-  change. To confirm on the next recorded run.
 
 * TODO watcher
 ** TODO keep hunting with the simulated kernel

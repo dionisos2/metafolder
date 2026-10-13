@@ -45,6 +45,17 @@ nothing, it writes what is pending first. Twenty seconds, not the watcher's two:
 losing a window here costs only hashes to compute again, never a store out of step
 with the files.
 
+A window bounds how often the scan writes, not how long one write takes: a first
+scan has every hash to write, and its one write at the end held the store 5.6 s on
+50 000 files, the GUI's change feed waiting behind it. So a write holding the store
+for more than ''a quarter of a second'' (`HOLD`) commits the hashes written so far,
+gives the store back — pausing a moment, or the same thread takes the lock again
+before the request waiting for it — and takes it again for the rest. The hashes are
+written in record order: a commit costs the pages it writes, and a take writing
+records at random dirties pages all over the store (25 takes cost 3.7 s of commits
+unsorted, 1.8 s sorted; the longest wait behind the scan fell to 0.4 s). The groups and
+the prune go in the last take, which reads the groups and links it writes against.
+
 A field is written only when it is absent or changed, so a re-scan of an
 unchanged repository writes nothing.
 
