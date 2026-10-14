@@ -430,9 +430,10 @@ impl Eval<'_> {
     fn deferrable_text<'q>(&self, q: &'q Query) -> Option<(Vec<&'q Query>, Vec<&'q Query>)> {
         let deferrable = |q: &Query| match q {
             Query::Matches { field, aspect: Aspect::Value, .. }
-            | Query::Osm { field, mode: metafolder_core::query::OsmMode::Direct, .. } => {
-                self.src.value_type(field.as_str()) == Some("tree_ref")
-            }
+            | Query::Osm { field, mode: metafolder_core::query::OsmMode::Direct, .. } => self
+                .src
+                .value_type(field.as_str())
+                .is_some_and(metafolder_core::metarecord::is_position_type),
             _ => false,
         };
         let (rest, leaves): (Vec<&Query>, Vec<&Query>) = match q {
@@ -651,7 +652,11 @@ impl Eval<'_> {
         }
         if let [key] = sort {
             // A source with an ordered index of the values walks it.
-            if self.src.value_type(&key.field).is_some_and(|t| t != "tree_ref") {
+            if self
+                .src
+                .value_type(&key.field)
+                .is_some_and(|t| !metafolder_core::metarecord::is_position_type(t))
+            {
                 let walked =
                     self.value_page(matched, &accepts, &key.field, !key.ascending, limit, after);
                 if walked.is_some() {
@@ -659,7 +664,10 @@ impl Eval<'_> {
                 }
             }
             // A path sort walks the store's forest in key order.
-            let tree = self.src.value_type(key.field.as_str()) == Some("tree_ref");
+            let tree = self
+                .src
+                .value_type(key.field.as_str())
+                .is_some_and(metafolder_core::metarecord::is_position_type);
             let keys = roots.and_then(|r| r.keys);
             if let (true, Some(keys)) = (tree, keys) {
                 let within = roots.and_then(|r| walk_bound(q, &key.field, r));
@@ -948,7 +956,11 @@ impl Eval<'_> {
     ) -> Result<Vec<KeyLookup<'a>>, Unsupported> {
         sort.iter()
             .map(|k| {
-                let tree = if self.src.value_type(k.field.as_str()) == Some("tree_ref") {
+                let tree = if self
+                    .src
+                    .value_type(k.field.as_str())
+                    .is_some_and(metafolder_core::metarecord::is_position_type)
+                {
                     // A tree sort rebuilds the paths from the store's forest.
                     // The caller always hands the resolver in on a repository that
                     // serves at all, so this is an invariant, not a fallback.
@@ -1117,7 +1129,12 @@ impl Eval<'_> {
                 // upstream by `query_validate` (doc "Field aspects"), so
                 // this is a backstop. Under `value` the scan is the ordinary
                 // name scan.
-                if *aspect == Aspect::Raw && self.src.value_type(field) == Some("tree_ref") {
+                if *aspect == Aspect::Raw
+                    && self
+                        .src
+                        .value_type(field)
+                        .is_some_and(metafolder_core::metarecord::is_position_type)
+                {
                     return Err(unsupported("MATCHES on a tree_ref field needs an aspect"));
                 }
                 self.text_scan(field, pattern, restrict)
@@ -1208,7 +1225,11 @@ impl Eval<'_> {
     /// On anything else `:path` is a `400`, raised upstream by
     /// `query_validate`.
     fn path_presence(&self, field: &str, present: bool) -> Result<RoaringBitmap, Unsupported> {
-        if self.src.value_type(field).is_some_and(|t| t != "tree_ref") {
+        if self
+            .src
+            .value_type(field)
+            .is_some_and(|t| !metafolder_core::metarecord::is_position_type(t))
+        {
             return Err(unsupported("the ':path' aspect"));
         }
         Ok(if present { self.present_of(field) } else { self.absent_of(field) })
@@ -1366,7 +1387,11 @@ impl Eval<'_> {
         // (doc "Ordered substring matching"), before this runs. Decline rather than answer with an
         // empty bitmap, which would turn that mistake into a silent "no rows".
         // A field with no values at all is vacuously empty in both engines.
-        if self.src.value_type(field).is_some_and(|t| t != "tree_ref") {
+        if self
+            .src
+            .value_type(field)
+            .is_some_and(|t| !metafolder_core::metarecord::is_position_type(t))
+        {
             return Err(unsupported("osm path on a non-tree_ref field"));
         }
         // A blank query (the search box emptied) matches every metarecord with a
@@ -1465,7 +1490,7 @@ impl Eval<'_> {
         // is a backstop.
         if aspect == Aspect::Raw
             && !matches!(op, CmpOp::Eq | CmpOp::Neq)
-            && self.src.value_type(field) == Some("tree_ref")
+            && self.src.value_type(field).is_some_and(metafolder_core::metarecord::is_position_type)
         {
             return Err(unsupported("ordered comparison on a tree_ref field needs an aspect"));
         }
@@ -1478,7 +1503,11 @@ impl Eval<'_> {
         // bitmap. A string field keeps literal equality (the index handles it).
         if matches!(op, CmpOp::Eq | CmpOp::Neq) && aspect == Aspect::Raw {
             if let Value::String(s) = value {
-                if self.src.value_type(field) == Some("tree_ref") {
+                if self
+                    .src
+                    .value_type(field)
+                    .is_some_and(metafolder_core::metarecord::is_position_type)
+                {
                     // A missing entry means nobody resolved this path: decline.
                     let resolved = roots.and_then(|r| r.node.get(&(field.to_string(), s.clone())));
                     let Some(node) = resolved else {

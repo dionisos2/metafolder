@@ -315,7 +315,7 @@ impl KvSource<'_> {
             "bool" | "string" => Kind::Categorical,
             "int" | "float" => Kind::Numeric,
             "datetime" => Kind::Datetime,
-            "tree_ref" => Kind::Reference { tree: true },
+            "tree_ref" | "hierarchy_ref" => Kind::Reference { tree: true },
             _ => Kind::Reference { tree: false },
         })
     }
@@ -844,7 +844,7 @@ impl Source for KvSource<'_> {
     }
 
     fn value_type(&self, field: &str) -> Option<&str> {
-        const TYPES: [&str; 9] = [
+        const TYPES: [&str; 10] = [
             "string",
             "int",
             "float",
@@ -852,6 +852,7 @@ impl Source for KvSource<'_> {
             "datetime",
             "ref",
             "tree_ref",
+            "hierarchy_ref",
             "refbase",
             "externalref",
         ];
@@ -1089,7 +1090,7 @@ impl Source for KvSource<'_> {
 
     fn follow(&self, field: &str) -> Option<Follow> {
         Some(match self.value_type(field)? {
-            "tree_ref" => Follow::Tree,
+            "tree_ref" | "hierarchy_ref" => Follow::Tree,
             "ref" => Follow::Direct,
             _ => Follow::None,
         })

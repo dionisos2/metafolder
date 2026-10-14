@@ -22,6 +22,11 @@ use metafolder_core::metarecord::TreeName;
 use crate::log::MAX_TREE_DEPTH;
 use crate::store::Rows;
 
+/// The most paths [`TreeCache::paths_of`] gives one node: a hierarchy's
+/// paths multiply with every node of several parents above it, and a client
+/// showing them has no use for thousands.
+pub const MAX_PATHS: usize = 256;
+
 /// Separator joining the components of a *sort key* — the form a `tree_ref`
 /// value takes when a query sorts on it (doc "Pagination and sorting").
 ///
@@ -171,29 +176,54 @@ impl TreeCache {
         anyhow::bail!("TreeRef chain deeper than {MAX_TREE_DEPTH} for entry {uuid}")
     }
 
-    /// All filesystem-style paths of a metarecord in `field`'s forest, one per
-    /// position — one, save in a repository an older daemon let hold more
-    /// (doc "One position per forest"). Positions whose parent is
-    /// not in the forest (stale) are skipped. The reverse of
+    /// All filesystem-style paths of a metarecord in `field`'s forest: one
+    /// per way up to a root, through every position of every node on the way
+    /// — one in a forest (doc "One position per forest"), several in a
+    /// hierarchy (doc "Hierarchy references"). Positions whose parent is not
+    /// in the forest (stale) are skipped. The reverse of
     /// [`Self::resolve_path`].
+    ///
+    /// The empty repo-root gives a parent path of `""`, so a top-level
+    /// filesystem node joins to a leading-"/" path (`/file.txt`) — the same
+    /// form the DSL and `resolve_path` use, so the two round-trip. A
+    /// named-root forest (e.g. tags) has a non-empty root name and so no
+    /// leading "/".
     pub fn paths_of(&self, store: &dyn Rows, field: &str, uuid: Uuid) -> Result<Vec<String>> {
+        let mut memo = HashMap::new();
+        let mut paths = self.paths_within(store, field, uuid, 0, &mut memo)?;
+        paths.truncate(MAX_PATHS);
+        Ok(paths)
+    }
+
+    fn paths_within(
+        &self,
+        store: &dyn Rows,
+        field: &str,
+        uuid: Uuid,
+        depth: usize,
+        memo: &mut HashMap<Uuid, Vec<String>>,
+    ) -> Result<Vec<String>> {
+        if let Some(paths) = memo.get(&uuid) {
+            return Ok(paths.clone());
+        }
+        if depth >= MAX_TREE_DEPTH {
+            anyhow::bail!("TreeRef chain deeper than {MAX_TREE_DEPTH} for entry {uuid}");
+        }
         let mut paths = Vec::new();
         for (parent, name) in store.positions(field, uuid)? {
             match parent {
                 None => paths.push(name),
                 Some(parent) => {
-                    if let Some(parent_path) = self.path_of(store, field, parent)? {
-                        // Mirror `path_of` exactly: the empty repo-root gives
-                        // `parent_path == ""`, so a top-level filesystem node
-                        // joins to a leading-"/" path (`/file.txt`) — the same
-                        // form the DSL and `resolve_path` use, so the two
-                        // round-trip. A named-root forest (e.g. tags) has a
-                        // non-empty root name and so no leading "/".
+                    for parent_path in self.paths_within(store, field, parent, depth + 1, memo)? {
                         paths.push(format!("{parent_path}/{name}"));
                     }
                 }
             }
+            if paths.len() >= MAX_PATHS {
+                break;
+            }
         }
+        memo.insert(uuid, paths.clone());
         Ok(paths)
     }
 

@@ -340,6 +340,13 @@ pub enum FieldType {
     ExternalRef,
 }
 
+/// Whether a value type places a metarecord in a hierarchy of named nodes —
+/// `tree_ref` (one position) or `hierarchy_ref` (several parents) — which is
+/// what the tree questions (a subtree, a path, a parent) read.
+pub fn is_position_type(value_type: &str) -> bool {
+    matches!(value_type, "tree_ref" | "hierarchy_ref")
+}
+
 impl FieldType {
     pub fn as_str(self) -> &'static str {
         match self {

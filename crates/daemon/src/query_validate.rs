@@ -103,7 +103,7 @@ pub fn validate_query_types(
 /// is one, or when the field has no data at all.
 fn other_type(field: &str, type_of: &dyn Fn(&str) -> Option<String>) -> Option<String> {
     match type_of(field) {
-        Some(t) if t != "tree_ref" => Some(t),
+        Some(t) if !metafolder_core::metarecord::is_position_type(&t) => Some(t),
         _ => None,
     }
 }
@@ -114,7 +114,8 @@ fn check_aspect(
     kind: ReadKind,
     type_of: &dyn Fn(&str) -> Option<String>,
 ) -> Result<(), ApiError> {
-    let is_tree = type_of(field).as_deref() == Some("tree_ref");
+    let is_tree =
+        type_of(field).as_deref().is_some_and(metafolder_core::metarecord::is_position_type);
     match aspect {
         // The tree-only aspects on a field that holds something else. A field
         // with no data at all is vacuously fine.

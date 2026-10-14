@@ -23,7 +23,7 @@ use crate::error::ApiError;
 use crate::index::{Eval, QueryRoots};
 use crate::log::MAX_TREE_DEPTH;
 use crate::store::Rows;
-use crate::tree_cache::{PathSeek, TreeCache};
+use crate::tree_cache::{PathSeek, TreeCache, MAX_PATHS};
 
 /// Rewrites every forest-served leaf of `q` into the `uuid_in` set it matches.
 ///
@@ -227,17 +227,17 @@ fn osm_path_seeded(
     let mut paths = AncestorPaths { store, field, fold: lower, known: HashMap::new() };
     let mut subtrees = Vec::new();
     for (uuid, positions) in found {
-        // doc "One position per forest".
-        let Some((parent, name)) = positions.into_iter().next() else { continue };
-        // A root's path is its bare name; every other node joins with '/'.
-        let path = match parent {
-            None => lower(&name),
-            Some(parent) => match paths.path(parent)? {
-                Some(above) => format!("{above}/{}", lower(&name)),
-                None => continue, // a stale position: no path through it
-            },
-        };
-        if osm_advance(&path, &terms_lower, OsmProgress::default()).matched == terms_lower.len() {
+        // Every path of the node — one in a forest, one per way up in a
+        // hierarchy. A root's path is its bare name; every other node joins
+        // with '/'; a stale position has none.
+        let mut matched = false;
+        for (parent, name) in positions {
+            for path in paths.paths_at(parent, &name)? {
+                let advance = osm_advance(&path, &terms_lower, OsmProgress::default());
+                matched |= advance.matched == terms_lower.len();
+            }
+        }
+        if matched {
             subtrees.push(uuid);
         }
     }
@@ -318,15 +318,15 @@ fn path_suffix_seeded(
     let mut matched = Vec::new();
     for (uuid, positions) in found {
         // Every path of the node, as the walk visits them.
+        let mut hit = false;
         for (parent, name) in positions {
-            let path = match parent {
-                None => Some(name),
-                Some(parent) => paths.path(parent)?.map(|above| format!("{above}/{name}")),
-            };
-            if path.is_some_and(|p| pred(&p)) {
-                matched.push(uuid);
+            hit |= paths.paths_at(parent, &name)?.iter().any(|p| pred(p));
+            if hit {
                 break;
             }
+        }
+        if hit {
+            matched.push(uuid);
         }
     }
     matched.sort_unstable();
@@ -386,50 +386,58 @@ type Position = (Option<Uuid>, String);
 /// A node of a forest and its positions there.
 type Named = (Uuid, Vec<Position>);
 
-/// The path of each node, as `TreeCache::path_of` assembles it, each name
-/// passed through `fold` (lower-cased for an `osm` path), remembered, so
-/// candidates sharing a folder read its ancestry once.
+/// The paths of each node, as `TreeCache::paths_of` assembles them — one per
+/// way up to a root, several in a hierarchy (doc "Hierarchy references") —
+/// each name passed through `fold` (lower-cased for an `osm` path),
+/// remembered, so candidates sharing a folder read its ancestry once.
 struct AncestorPaths<'a> {
     store: &'a dyn Rows,
     field: &'a str,
     fold: fn(&str) -> String,
-    known: HashMap<Uuid, Option<String>>,
+    known: HashMap<Uuid, Vec<String>>,
 }
 
 impl AncestorPaths<'_> {
-    fn path(&mut self, uuid: Uuid) -> Result<Option<String>, ApiError> {
-        // Climb to a node already known (or a root), then settle the chain
-        // back down.
-        let mut chain: Vec<(Uuid, Option<Position>)> = Vec::new();
-        let mut cur = uuid;
-        let mut above = loop {
-            if let Some(known) = self.known.get(&cur) {
-                break known.clone();
-            }
-            if chain.len() >= MAX_TREE_DEPTH {
-                return Err(ApiError::internal(format!(
-                    "TreeRef chain deeper than {MAX_TREE_DEPTH} for entry {uuid}"
-                )));
-            }
-            let first =
-                self.store.positions(self.field, cur).map_err(ApiError::from)?.into_iter().next();
-            let parent = first.as_ref().and_then(|(p, _)| *p);
-            chain.push((cur, first));
-            match parent {
-                Some(p) => cur = p,
-                None => break None,
-            }
-        };
-        for (node, first) in chain.into_iter().rev() {
-            let path = match first {
-                None => None,
-                Some((None, name)) => Some((self.fold)(&name)),
-                Some((Some(_), name)) => above.map(|a| format!("{a}/{}", (self.fold)(&name))),
-            };
-            self.known.insert(node, path.clone());
-            above = path;
+    fn paths(&mut self, uuid: Uuid) -> Result<Vec<String>, ApiError> {
+        self.paths_within(uuid, 0)
+    }
+
+    fn paths_within(&mut self, uuid: Uuid, depth: usize) -> Result<Vec<String>, ApiError> {
+        if let Some(known) = self.known.get(&uuid) {
+            return Ok(known.clone());
         }
-        Ok(above)
+        if depth >= MAX_TREE_DEPTH {
+            return Err(ApiError::internal(format!(
+                "TreeRef chain deeper than {MAX_TREE_DEPTH} for entry {uuid}"
+            )));
+        }
+        let mut out = Vec::new();
+        for (parent, name) in self.store.positions(self.field, uuid).map_err(ApiError::from)? {
+            let name = (self.fold)(&name);
+            match parent {
+                None => out.push(name),
+                Some(p) => {
+                    for above in self.paths_within(p, depth + 1)? {
+                        out.push(format!("{above}/{name}"));
+                    }
+                }
+            }
+            if out.len() >= MAX_PATHS {
+                out.truncate(MAX_PATHS);
+                break;
+            }
+        }
+        self.known.insert(uuid, out.clone());
+        Ok(out)
+    }
+
+    /// The paths of a node at one of its positions: `(parent, name)`.
+    fn paths_at(&mut self, parent: Option<Uuid>, name: &str) -> Result<Vec<String>, ApiError> {
+        let name = (self.fold)(name);
+        Ok(match parent {
+            None => vec![name],
+            Some(p) => self.paths(p)?.into_iter().map(|above| format!("{above}/{name}")).collect(),
+        })
     }
 }
 

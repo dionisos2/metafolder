@@ -49,7 +49,7 @@ fn inbound_referrers(
 ) -> Result<Vec<Uuid>, ApiError> {
     let fields: Vec<String> = {
         let engine = engine(conn)?;
-        ["ref", "tree_ref"]
+        ["ref", "tree_ref", "hierarchy_ref"]
             .iter()
             .flat_map(|ty| engine.field_catalog(Some(ty)))
             .map(|(name, _)| name)
