@@ -255,6 +255,29 @@ fn a_page_with_a_wide_operand_and_a_rare_name_reads_the_name() {
     bounded("wide range and a rare osm name, a page", &q, &[], false);
 }
 
+/// A comparison on a field whose values are all distinct (a name, a size, a
+/// date) has no posting to take whole: walking its range reads a key per
+/// holder. Beside a narrow operand it checks the narrow operand's records
+/// instead (doc "Query planner").
+#[test]
+fn a_range_on_distinct_values_costs_the_narrow_operand() {
+    let name = |op: fn(String, Value) -> Query, s: &str| op("name".into(), Value::String(s.into()));
+    let q = and(vec![name(gt, "file"), subtree()]);
+    bounded("range on distinct values, in a subtree", &q, &[], true);
+    let q = and(vec![subtree(), name(neq, "file000123.txt")]);
+    bounded("not equal on distinct values, in a subtree", &q, &[], true);
+    let q = and(vec![name(lt, "g"), eq("kind", "rare")]);
+    bounded("range on distinct values, and a rare value", &q, &[], true);
+}
+
+fn neq(field: String, value: Value) -> Query {
+    Query::Neq { field, value, aspect: Aspect::Raw }
+}
+
+fn lt(field: String, value: Value) -> Query {
+    Query::Lt { field, value, aspect: Aspect::Raw }
+}
+
 #[test]
 fn a_negation_combines_with_a_narrow_operand() {
     let q = and(vec![Query::Not { operand: Box::new(eq("kind", "note")) }, subtree()]);

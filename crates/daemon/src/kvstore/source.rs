@@ -31,6 +31,7 @@ use super::derived::{
 };
 use super::{dec_row, name_key, uuid_of, KvStore, Tables};
 use crate::index::keys::{sort_rep, CmpOp, SortRep};
+use crate::index::plan;
 use crate::index::{unsupported, Follow, NamedNode, RepReader, Source, Unsupported, Walked};
 
 /// A read snapshot of a KV store, answering the evaluator's questions.
@@ -727,7 +728,7 @@ impl KvSource<'_> {
             return self.having(candidates, field, &text);
         }
         if let Some(r) = restrict {
-            if r.len().saturating_mul(4) < self.present(field).len() {
+            if plan::probes(r.len(), self.present(field).len()) {
                 return r
                     .iter()
                     .filter(|&id| {
@@ -914,7 +915,13 @@ impl Source for KvSource<'_> {
         }
     }
 
-    fn compare(&self, field: &str, op: CmpOp, value: &Value) -> Result<RoaringBitmap, Unsupported> {
+    fn compare(
+        &self,
+        field: &str,
+        op: CmpOp,
+        value: &Value,
+        restrict: Option<&RoaringBitmap>,
+    ) -> Result<RoaringBitmap, Unsupported> {
         let Some(kind) = self.kind(field) else { return Ok(RoaringBitmap::new()) };
         // A string operand on a forest compares the names.
         if let (Kind::Reference { tree: true }, Value::String(s)) = (kind, value) {
@@ -942,8 +949,23 @@ impl Source for KvSource<'_> {
             });
         }
         let key = value_key(value);
+        // A few candidates are checked on their own rows, where a walk would
+        // read a key per holder of a range (an equality reads one value's
+        // posting or run: it is never probed). Each row is decided by its key,
+        // as the walk decides it.
+        let probe = restrict
+            .filter(|r| op != CmpOp::Eq && plan::probes(r.len(), self.present(field).len()));
         match op {
             CmpOp::Eq => Ok(key.map(|k| self.equal(field, &k, value)).unwrap_or_default()),
+            CmpOp::Neq if probe.is_some() => {
+                let differs = |v: &Value| match value_key(v) {
+                    None => false,
+                    // A key cut and hashed is shared: the values decide.
+                    Some(k) if Some(&k) == key.as_ref() => is_hashed(&k) && v != value,
+                    Some(_) => true,
+                };
+                Ok(self.having(probe.expect("a probe").clone(), field, &differs))
+            }
             CmpOp::Neq => {
                 let mut out = self.all_but(field, VALUE, key.as_deref());
                 if let Some(k) = key.as_deref().filter(|k| is_hashed(k)) {
@@ -981,7 +1003,33 @@ impl Source for KvSource<'_> {
                             }
                             _ => false,
                         };
-                        self.ordered_exact(field, VALUE, &k[..1], op, &k, &holds)
+                        let region = &k[..1];
+                        match probe {
+                            Some(r) => {
+                                // `ordered_exact`'s decision, row by row: the
+                                // texts cut where the operand is are decided
+                                // on their values, the rest on their keys.
+                                let ambiguous = long_prefix(&k[1..])
+                                    .filter(|_| region == [2])
+                                    .map(|tail| [region, tail].concat());
+                                let row = |v: &Value| match value_key(v) {
+                                    None => false,
+                                    Some(rk)
+                                        if ambiguous
+                                            .as_ref()
+                                            .is_some_and(|a| rk.starts_with(a)) =>
+                                    {
+                                        holds(v)
+                                    }
+                                    Some(rk) => {
+                                        rk.starts_with(region)
+                                            && op.matches_ordering(rk.as_slice().cmp(k.as_slice()))
+                                    }
+                                };
+                                self.having(r.clone(), field, &row)
+                            }
+                            None => self.ordered_exact(field, VALUE, region, op, &k, &holds),
+                        }
                     }
                     _ => RoaringBitmap::new(),
                 })

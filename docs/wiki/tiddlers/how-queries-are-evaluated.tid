@@ -16,7 +16,7 @@ The steps of one request (`routes::run_query_filter`), each a phase of the slow 
 
 # ''Validate'' — every `400` ([[Query validation]]).
 # ''Prepare'' — resolve what goes through the forest: path targets of `->`/`->*`/`=>*` and exact-node operands of `=`/`!=` become node uuids handed to the evaluator (`QueryRoots`); the two leaves no bitmap can hold — a `:path` predicate and an order-sensitive `osm` path — are resolved against the forest and ''rewritten'' into the `uuid_in` set they match ([[The forest as a query provider]]).
-# ''Evaluate'' — the filter as bitmap operations; text predicates (`MATCHES`, `osmd`) run last inside an `AND`, on the running intersection; a subtree is a descendant bitmap; `count` is the bitmap's cardinality.
+# ''Evaluate'' — the filter as bitmap operations; the scans (`MATCHES`, `osmd`, `!=`, ranges) run last inside an `AND`, on the running intersection, checking a few candidates on their own rows ([[Query planner]]); a subtree is a descendant bitmap; `count` is the bitmap's cardinality.
 # ''Page'' — fetch or walk, by estimated cost ([[Sorting and postings]]); a page without a count checks text predicates lazily, only where the sort looks ([[Text search in the store]]).
 
 Each request reads one snapshot of the store; nothing is resident between requests.

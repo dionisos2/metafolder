@@ -1,9 +1,8 @@
 title: Query planner
 tags: [[Query engine]]
-kind: question
+kind: reference
 audience: dev
-status: proposed
-summary: The adaptive planner was dropped when each operand had one way to be answered; on the key-value store there are alternatives again, so a minimal one may be worth having.
+summary: A minimal planner, oriented to the store: the scans of an AND run last on its running intersection, and a few candidates are checked on their own rows instead of walking a field.
 
 The original indexing design had an ''adaptive planner'' choosing an access path per
 operand. It was taken off the roadmap in September 2026: in the resident engine each
@@ -16,11 +15,37 @@ rule on exact counts: fetch versus walk ([[Sorting and postings]]), lazy text ch
 ([[Text search in the store]]), `osm` anchors cut to a rarer term's folders
 ([[The forest in the store]]), reading versus walking by uuid order.
 
-So a planner "may be useful again — to be seen" (user, September 2026). If one is
-proposed, it starts minimal and oriented to the store — one cost choice at a time, from
-what profiling finds — not from the old design, whose SQL-specific parts are obsolete
-and whose ambition was probably too great. Meanwhile such local choices are not a
-violation of anything.
+So a planner "may be useful again — to be seen" (user, September 2026): minimal and
+oriented to the store — one cost choice at a time, from what profiling finds — not the
+old design, whose SQL-specific parts are obsolete and whose ambition was probably too
+great. The local choices above are not a violation of anything.
+
+!! What the planner decides
+
+It was built in October 2026 (`index/plan.rs`). No statistics and no cost model of the
+whole query: each choice is a fixed rule on the query's shape, or on an exact count the
+store already holds.
+
+* ''The order of an `and`.'' Its operands answered from a bitmap or a posting — presence,
+  equality, `in`, a subtree, a follow, `uuid_in` — are evaluated first, in the query's
+  order; the ''scans'' last: `matches`, `osm direct`, `!=` and the ordered comparisons, each
+  handed the running intersection as its candidates. Once the intersection is empty,
+  nothing more is evaluated. The order is a property of the shape, so every page of a
+  paginated session is served the same way.
+* ''Probe or walk.'' A scan given candidates checks their own rows (a uuid and the
+  field's rows each, about four keys) when there are fewer than a quarter of the field's
+  holders; otherwise it walks the field's values. Each row is decided by its key, as
+  the walk decides it, so the two cannot answer differently
+  (`tests/index_oracle.rs`).
+
+What this bought: a range on a field whose values are all distinct — a name, a size, a
+date — has no posting to take whole, and walking it read a key per holder. Beside a
+folder, `size > 1000000` read the whole field (16 109 keys on 16 000 records); it now
+reads the folder (`tests/kv_cost.rs`, `a_range_on_distinct_values_costs_the_narrow_operand`).
+
+The page's choices — fetch or walk, how far a walk may go — stay with the sort
+([[Sorting and postings]]); the anchors of an `osm` path with the forest
+([[The forest in the store]]).
 
 !! Measured and not built
 

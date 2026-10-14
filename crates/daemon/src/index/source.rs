@@ -67,8 +67,16 @@ pub trait Source {
     fn in_uuid_order(&self, after: Option<Uuid>) -> Box<dyn Iterator<Item = (Uuid, u32)> + '_>;
 
     /// The ids with a row of `field` satisfying `op value` (multi-map: any
-    /// row). The row semantics are the oracle's `scalar_predicate`.
-    fn compare(&self, field: &str, op: CmpOp, value: &Value) -> Result<RoaringBitmap, Unsupported>;
+    /// row), within `restrict` when given — which a source may check record by
+    /// record rather than walk the field's values (doc "Query planner"). The
+    /// row semantics are the oracle's `scalar_predicate`.
+    fn compare(
+        &self,
+        field: &str,
+        op: CmpOp,
+        value: &Value,
+        restrict: Option<&RoaringBitmap>,
+    ) -> Result<RoaringBitmap, Unsupported>;
     /// The ids sharing a value of `field` with one of `seed`'s.
     fn same_as(&self, field: &str, seed: &RoaringBitmap) -> RoaringBitmap;
     /// The ids whose text (a string value, a `tree_ref` name) satisfies

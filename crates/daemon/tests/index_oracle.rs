@@ -1745,5 +1745,66 @@ fn long_texts_answer_like_short_ones() {
         o.check_sorted(&present("one"), &[("one", asc)], None);
         o.check_paginated(&present("note"), &[("note", asc)], 3);
     }
-    let _ = ids;
+    // Beside a narrow operand, a comparison checks its candidates' rows
+    // instead of walking the range (doc "Query planner"): the long texts
+    // must be decided there as they are by the walk.
+    for op in [neq, lt, lte, gt, gte] {
+        for operand in [&p, &long, &format!("{p}15"), &format!("{p}\0"), &"a".to_string()] {
+            for pair in ids.chunks(2) {
+                let narrow = Query::UuidIn { uuids: pair.to_vec() };
+                o.check(&and(vec![op("note", s(operand)), narrow.clone()]));
+                o.check(&and(vec![narrow, op("one", s(operand))]));
+            }
+        }
+    }
+}
+
+/// A comparison beside a narrow operand is answered on the narrow operand's
+/// records (doc "Query planner"): every type a comparison takes, multi-map
+/// rows, `Nothing`, ints against floats, must answer as the walk does.
+#[test]
+fn a_comparison_checked_on_its_candidates_answers_like_the_walk() {
+    let mut o = Oracle::new();
+    let mut rare = Vec::new();
+    for n in 0..60i64 {
+        let mut fields = vec![
+            Field::new("size", i(n)),
+            Field::new("weight", Value::Float(n as f64 + 0.5)),
+            Field::new("name", s(&format!("file{n:03}"))),
+            Field::new("at", dt(&format!("2026-01-01T00:00:{:02}Z", n % 60))),
+        ];
+        if n % 7 == 0 {
+            fields.push(Field::new("size", i(1000 - n)));
+            fields.push(Field::new("name", Value::Nothing));
+        }
+        if n % 9 == 0 {
+            fields.push(Field::new("flag", Value::Bool(n % 2 == 0)));
+        }
+        let u = o.create(fields);
+        if n % 13 == 3 {
+            rare.push(u);
+        }
+    }
+    o.create(vec![Field::new("size", Value::Nothing)]);
+    let narrow = Query::UuidIn { uuids: rare };
+    let cases = [
+        ("size", i(20)),
+        ("size", Value::Float(20.5)),
+        ("weight", i(20)),
+        ("weight", Value::Float(20.5)),
+        ("size", i(990)),
+        ("name", s("file016")),
+        ("name", s("file")),
+        ("at", dt("2026-01-01T00:00:16Z")),
+        ("flag", Value::Bool(true)),
+        ("size", s("x")),
+    ];
+    for (field, value) in cases {
+        let ops: &[fn(&str, Value) -> Query] =
+            if matches!(value, Value::Bool(_)) { &[eq, neq] } else { &[eq, neq, lt, lte, gt, gte] };
+        for op in ops {
+            o.check(&and(vec![op(field, value.clone()), narrow.clone()]));
+            o.check_count(&and(vec![narrow.clone(), op(field, value.clone())]));
+        }
+    }
 }

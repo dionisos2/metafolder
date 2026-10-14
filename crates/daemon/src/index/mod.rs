@@ -21,6 +21,7 @@
 //! into `UuidIn` sets before the index sees them (`crate::forest_query`).
 
 pub mod keys;
+pub(crate) mod plan;
 pub mod source;
 
 use std::borrow::Cow;
@@ -215,16 +216,6 @@ impl Residual<'_, '_> {
 
 /// What reading one match's sort key costs in a fetch, in walk steps.
 const FETCH_COST: u64 = 4;
-
-/// Whether a node is a text predicate — one answered by scanning the field's
-/// distinct values. These are the only operands a candidate restriction makes
-/// cheaper, so `Eval::intersect` evaluates them last.
-fn is_text_predicate(q: &Query) -> bool {
-    matches!(
-        q,
-        Query::Matches { .. } | Query::Osm { mode: metafolder_core::query::OsmMode::Direct, .. }
-    )
-}
 
 /// A metarecord's position in a sort order: one representative per sort key
 /// (`None` = the field is absent, which sorts last) plus the uuid tiebreak.
@@ -445,8 +436,9 @@ impl Eval<'_> {
     }
 
     /// The candidates of a query whose text leaves wait — its other operands
-    /// (text last, as [`Self::intersect`] does), within the holders of each
-    /// leaf's field — and the checks the leaves leave to the page.
+    /// (in the planner's order, as [`Self::intersect`] does), within the
+    /// holders of each leaf's field — and the checks the leaves leave to the
+    /// page.
     fn defer_text<'q, 'k>(
         &self,
         rest: &[&Query],
@@ -454,10 +446,11 @@ impl Eval<'_> {
         roots: Option<&QueryRoots>,
         keys: &'k crate::tree_cache::SortKeys<'k>,
     ) -> Result<(RoaringBitmap, Residual<'q, 'k>), Unsupported> {
-        let (text, plain): (Vec<&Query>, Vec<&Query>) =
-            rest.iter().copied().partition(|o| is_text_predicate(o));
         let mut acc: Option<RoaringBitmap> = None;
-        for operand in plain.into_iter().chain(text) {
+        for operand in plan::and_order(rest.iter().copied()) {
+            if acc.as_ref().is_some_and(RoaringBitmap::is_empty) {
+                break;
+            }
             let bm = self.eval_within(operand, roots, acc.as_ref())?;
             acc = Some(match acc {
                 None => bm,
@@ -1044,22 +1037,22 @@ impl Eval<'_> {
             }
 
             Query::Eq { field, value, aspect } => {
-                self.compare(field, CmpOp::Eq, value, roots, *aspect)
+                self.compare(field, CmpOp::Eq, value, roots, *aspect, restrict)
             }
             Query::Neq { field, value, aspect } => {
-                self.compare(field, CmpOp::Neq, value, roots, *aspect)
+                self.compare(field, CmpOp::Neq, value, roots, *aspect, restrict)
             }
             Query::Lt { field, value, aspect } => {
-                self.compare(field, CmpOp::Lt, value, roots, *aspect)
+                self.compare(field, CmpOp::Lt, value, roots, *aspect, restrict)
             }
             Query::Lte { field, value, aspect } => {
-                self.compare(field, CmpOp::Lte, value, roots, *aspect)
+                self.compare(field, CmpOp::Lte, value, roots, *aspect, restrict)
             }
             Query::Gt { field, value, aspect } => {
-                self.compare(field, CmpOp::Gt, value, roots, *aspect)
+                self.compare(field, CmpOp::Gt, value, roots, *aspect, restrict)
             }
             Query::Gte { field, value, aspect } => {
-                self.compare(field, CmpOp::Gte, value, roots, *aspect)
+                self.compare(field, CmpOp::Gte, value, roots, *aspect, restrict)
             }
 
             Query::In { .. } => {
@@ -1420,14 +1413,12 @@ impl Eval<'_> {
         Ok(self.expand_subtrees(field, seeds, true))
     }
 
-    /// `And`, evaluated cheapest-first: the operands that are pure bitmap work
-    /// go first, and the running intersection is then handed to the text scans
-    /// as their candidate set. This is what makes "this folder, name matching X"
-    /// cost the folder's size rather than the repository's — the scan skips
-    /// every value whose bitmap misses the candidates.
-    ///
-    /// The order is a property of the query shape, so it does not change what a
-    /// paginated session is served by.
+    /// `And`, in the planner's order ([`plan::and_order`]): the operands that
+    /// are pure bitmap work go first, and the running intersection is then
+    /// handed to the scans — text predicates, `!=` and ranges — as their
+    /// candidate set. This is what makes "this folder, name matching X" or
+    /// "this folder, larger than Y" cost the folder's size rather than the
+    /// repository's.
     fn intersect(
         &self,
         operands: &[Query],
@@ -1437,11 +1428,12 @@ impl Eval<'_> {
         if operands.is_empty() {
             return Err(unsupported("'and'/'or' need an operand"));
         }
-        let (text, rest): (Vec<&Query>, Vec<&Query>) =
-            operands.iter().partition(|o| is_text_predicate(o));
-
         let mut acc: Option<RoaringBitmap> = restrict.cloned();
-        for operand in rest.into_iter().chain(text) {
+        for operand in plan::and_order(operands) {
+            // Nothing left to intersect with: what follows cannot add a match.
+            if acc.as_ref().is_some_and(RoaringBitmap::is_empty) {
+                break;
+            }
             let bm = self.eval_within(operand, roots, acc.as_ref())?;
             acc = Some(match acc {
                 None => bm,
@@ -1477,6 +1469,7 @@ impl Eval<'_> {
         value: &Value,
         roots: Option<&QueryRoots>,
         aspect: Aspect,
+        restrict: Option<&RoaringBitmap>,
     ) -> Result<RoaringBitmap, Unsupported> {
         if matches!(value, Value::Nothing) {
             return Err(unsupported("comparison with 'nothing'"));
@@ -1538,7 +1531,7 @@ impl Eval<'_> {
                 }
             }
         }
-        self.src.compare(field, op, value)
+        self.src.compare(field, op, value, restrict)
     }
 
     fn present_of(&self, field: &str) -> RoaringBitmap {
