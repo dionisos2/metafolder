@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/cursor:root
+catalog: GUI command
+target: cursor:root
+summary: Take a panel to its top level (self / a panel type)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``/`` → ``cursor:root self``

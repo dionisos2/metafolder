@@ -1049,8 +1049,8 @@ scenario_walk() {
     keys Return
     assert "walk: a file named is selected" until_ok 10 fm_at /a/b c.txt
 
-    run file-manager:parent
-    run file-manager:parent
+    run cursor:parent file-manager
+    run cursor:parent file-manager
     run cursor:find file-manager walk a/
     assert "walk: again from the root" until_ok 10 fm_at /a
     typed "b"
@@ -1074,7 +1074,7 @@ scenario_walk() {
     keys Return
     assert "walk (treeref): a leaf named is selected" until_ok 10 tree_at /a/b/c.txt
 
-    run treeref:root
+    run cursor:root treeref
     run cursor:find treeref walk /
     sleep 1
     typed "a"

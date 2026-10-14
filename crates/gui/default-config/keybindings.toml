@@ -295,17 +295,15 @@
   { command = "file:seek +10", when = "file" },
 ]
 "left" = [
-  { command = "treeref:parent", when = "treeref" },
-  { command = "log:parent", when = "log" },
+  { command = "cursor:parent self" },
   # In metarecord-detail there is nothing to descend into, so left/backspace
   # step back out of a chain of followed references. (Enter stays field-edit.)
   { command = "metarecord:back", when = "metarecord-detail" },
   { command = "file:seek -10", when = "file" },
 ]
 "backspace" = [
-  { command = "treeref:parent", when = "treeref" },
-  { command = "log:parent", when = "log" },
-  { command = "file-manager:parent", when = "file-manager" },
+  # Up one level, in every panel that has levels (doc "Generic panel commands").
+  { command = "cursor:parent self" },
   { command = "metarecord:back", when = "metarecord-detail" },
   # Going up is what backspace means in every other panel; the `file` panel
   # browses folders too, so it means the same there. mpv's "back to normal
@@ -390,10 +388,10 @@
 # finder elsewhere, so the two never meet.
 "/" = [
   { command = "metarecord-list:focus finder", when = "metarecord-list" },
-  { command = "file-manager:root", when = "file-manager" },
   # The tree explorer browses a forest the way the file manager browses the
-  # disk, so "/" means the same there: back to the roots.
-  { command = "treeref:root", when = "treeref" },
+  # disk, so "/" means the same in both: back to the top (doc "Generic panel
+  # commands").
+  { command = "cursor:root self" },
 ]
 # Show/hide dot-entries, on the combo the desktop file managers use.
 "ctrl+h" = { command = "file-manager:toggle hidden", when = "file-manager" }

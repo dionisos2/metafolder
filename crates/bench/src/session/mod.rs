@@ -477,7 +477,7 @@ async fn run_step(id: &str, s: &mut Session, quiet: Duration) -> Result<Option<I
             drawn(s, quiet).await
         }
         "fm.root" => {
-            s.command("file-manager:root", None).await?;
+            s.command("cursor:root file-manager", None).await?;
             drawn(s, quiet).await
         }
         "treeref.open" => {

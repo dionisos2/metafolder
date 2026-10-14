@@ -1,0 +1,13 @@
+title: cursor:parent
+tags: [[GUI command]] [[Generic panel commands]]
+kind: reference
+summary: Take a panel up one level (self / a panel type)
+
+Takes a panel up one level: the focused panel with `self`, the panel type named otherwise ([[Generic panel commands]]).
+
+|!Panel |!Goes to |
+|[[file-manager panel]] |the parent of the directory displayed; at the repository root it is refused while ''constrain to repo root'' is checked |
+|[[treeref panel]] |the parent of the node it is in |
+|[[log panel]] |the level above the label it is in, the cursor on the row it came out of; at the units of work, nothing |
+
+In the [[metarecord-detail panel]] and the [[file panel]] the same keys go ''back'' instead — to the metarecord shown before, to the folder of the previewed file —, which is not a parent: they keep commands of their own.

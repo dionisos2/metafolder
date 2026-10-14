@@ -1186,10 +1186,6 @@ export async function mount(root, metafolder) {
     label: 'File manager: record the selected path — its metarecord, mf_watch = false',
     handler: addSelected,
   });
-  void commands.register('file-manager:root', {
-    label: 'File manager: jump to the root (the repo root, or / with no repo)',
-    handler: gotoRoot,
-  });
 
   /** @type {Record<string, () => unknown>} */
   const FM_FLAGS = {
@@ -1258,10 +1254,9 @@ export async function mount(root, metafolder) {
     label: 'File manager: open directory / confirm file',
     handler: () => activate(cursorIndex),
   });
-  void commands.register('file-manager:parent', {
-    label: 'File manager: go up one level',
-    handler: goUp,
-  });
+  // Up one level, and to the top, on `cursor:parent` / `cursor:root` (doc
+  // "Generic panel commands"): the root is the repo root, or / with no repo.
+  metafolder.provide({ parent: goUp, root: gotoRoot });
   void commands.register('file-manager:rename', {
     label: 'File manager: rename the selected entry',
     handler: renameSelected,

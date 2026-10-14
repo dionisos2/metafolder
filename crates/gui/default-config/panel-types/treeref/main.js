@@ -484,14 +484,9 @@ export async function mount(root, metafolder) {
     label: 'TreeRef explorer: descend into the selected node',
     handler: () => descend(cursorIndex),
   });
-  void commands.register('treeref:parent', {
-    label: 'TreeRef explorer: go up one level',
-    handler: goUp,
-  });
-  void commands.register('treeref:root', {
-    label: 'TreeRef explorer: jump to the forest roots',
-    handler: gotoRoot,
-  });
+  // Up one level, and to the forest roots, on `cursor:parent` /
+  // `cursor:root` (doc "Generic panel commands").
+  metafolder.provide({ parent: goUp, root: gotoRoot });
   // Read again on `view:refresh` (doc "Generic panel commands").
   metafolder.provide({ refresh: () => refresh() });
   // The drop-down's keyboard equivalent: pick the TreeRef field to explore

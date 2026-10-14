@@ -25,8 +25,8 @@ is not known beforehand: going into a leaf shows an empty list.
 |!Key |!Does |
 |<<key "cursor:next self" "↓ or j">> / <<key "cursor:prev self" "↑ or k">>, <<key "cursor:first self" Home>> / <<key "cursor:last self" End>> |move the cursor (`End`: the last child loaded) |
 |<<key "treeref:descend" "Enter or →">>, or the `›` button of a row ([[Opening a row]]) |go into the node |
-|<<key "treeref:parent" "Backspace or ←">> |back to its parent |
-|<<key "treeref:root" "/">> |back to the roots |
+|<<key "cursor:parent self" "Backspace or ←">> |back to its parent |
+|<<key "cursor:root self" "/">> |back to the roots |
 |<<key "cursor:find self select" f>> |jump to a child by name, among those loaded ([[Jumping to an entry]]) |
 |<<key "cursor:find self walk" d>> |walk down by name: a node with children is gone into and the question asked again, a leaf is selected (`shift+Enter` stops on a node) |
 |<<key "view:refresh self" r>> |read the fields and the children again |

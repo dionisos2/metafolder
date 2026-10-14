@@ -26,6 +26,9 @@ than breaking them.
 - **`view:refresh <panel>`**: the same for reading a panel again — one `r`
   for the nine panels that had their own `<panel>:refresh` (the file panel
   keeps `r` for `file:restart`).
+- **`cursor:parent <panel>` and `cursor:root <panel>`**: up one level and to
+  the top — `Backspace`/`←` and `/` — for the file manager, the tree explorer
+  and (up only) the log. The file manager gains `←`.
 - **Walking down a path by name in the file manager and the tree explorer.**
   `d` runs `cursor:find self walk`: a directory (a node with children) named
   is entered and the question asked again from inside, a file (a leaf) named
@@ -337,6 +340,8 @@ than breaking them.
   to one of them is reported as naming no command. The `/__find-entry.js`
   helper (`registerFind`) went with them.
 - **The per-panel `<panel>:refresh` commands**, replaced by `view:refresh`.
+- **`file-manager:parent`/`:root`, `treeref:parent`/`:root` and
+  `log:parent`**, replaced by `cursor:parent` and `cursor:root`.
 - **Labelling a revision after the fact**: `PATCH /log/revisions/:id`, the log
   panel's `log:mark` (Shift+L) and `mf log revert --label`. Renaming or
   describing a label once written is deferred; a context names the work while

@@ -65,6 +65,11 @@ describe('neededFunctions', () => {
     expect(neededFunctions('cursor:find', ['walk'])).toEqual(['entries', 'select', 'enter']);
   });
 
+  test('going up needs parent, going to the top needs root', () => {
+    expect(neededFunctions('cursor:parent', [])).toEqual(['parent']);
+    expect(neededFunctions('cursor:root', [])).toEqual(['root']);
+  });
+
   test('refreshing the view needs refresh', () => {
     expect(neededFunctions('view:refresh', [])).toEqual(['refresh']);
   });
@@ -190,6 +195,26 @@ describe('runGeneric — moving the cursor', () => {
   test('a panel lacking a needed function is an error naming the command and the panel', async () => {
     await expect(run('cursor:next', { select: () => {} })).rejects.toThrow(
       'cursor:next is not implemented for the trash panel',
+    );
+  });
+});
+
+describe('runGeneric — going up', () => {
+  test('cursor:parent goes up one level', async () => {
+    const parent = vi.fn();
+    await run('cursor:parent', { parent });
+    expect(parent).toHaveBeenCalledOnce();
+  });
+
+  test('cursor:root goes to the top', async () => {
+    const root = vi.fn();
+    await run('cursor:root', { root });
+    expect(root).toHaveBeenCalledOnce();
+  });
+
+  test('a flat list has no parent', async () => {
+    await expect(run('cursor:parent', list(3).fns)).rejects.toThrow(
+      'cursor:parent is not implemented for the trash panel',
     );
   });
 });

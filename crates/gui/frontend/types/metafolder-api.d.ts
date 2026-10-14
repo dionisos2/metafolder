@@ -325,6 +325,10 @@ declare namespace Metafolder {
     enter?(index: number): boolean | Promise<boolean>;
     /** Reads what the panel shows again (`view:refresh`). */
     refresh?(): unknown;
+    /** Goes up one level — the parent directory, node or label (`cursor:parent`). */
+    parent?(): unknown;
+    /** Goes to the top — the root directory, a forest's roots (`cursor:root`). */
+    root?(): unknown;
   }
 
   interface CommandOptions {

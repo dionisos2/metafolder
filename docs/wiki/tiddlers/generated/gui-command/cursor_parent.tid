@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/cursor:parent
+catalog: GUI command
+target: cursor:parent
+summary: Take a panel up one level (self / a panel type)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``backspace`` → ``cursor:parent self``
+* ``left`` → ``cursor:parent self``

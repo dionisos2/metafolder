@@ -549,10 +549,8 @@ export async function mount(root, metafolder) {
     label: 'Log: go into the selected label',
     handler: () => descend(),
   });
-  void commands.register('log:parent', {
-    label: 'Log: back out to the level above',
-    handler: () => backTo(path.length - 1),
-  });
+  // Back out to the level above on `cursor:parent` (doc "Generic panel commands").
+  metafolder.provide({ parent: () => backTo(path.length - 1) });
   // Read again on `view:refresh` (doc "Generic panel commands").
   metafolder.provide({ refresh });
   // The cursor, for the generic commands (doc "Generic panel commands"): the

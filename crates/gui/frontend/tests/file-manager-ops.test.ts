@@ -278,7 +278,7 @@ describe('file-manager filesystem operations', () => {
   test('navigation, toggles and activation are wired', async () => {
     const { api, handlers, fs } = await mount('repo-1');
     fs.readDir.mockClear();
-    await handlers.get('file-manager:root')!();
+    await generic(api.provide, 'cursor:root');
     await generic(api.provide, 'view:refresh');
     await handlers.get('file-manager:toggle')!('hidden');
     await handlers.get('file-manager:toggle')!('root');
@@ -289,7 +289,7 @@ describe('file-manager filesystem operations', () => {
     await cursor(api.provide, 'next');
     await cursor(api.provide, 'next');
     await handlers.get('file-manager:activate')!();
-    await handlers.get('file-manager:parent')!();
+    await generic(api.provide, 'cursor:parent');
     expect(fs.readDir).toHaveBeenCalled();
   });
 
@@ -306,7 +306,7 @@ describe('file-manager filesystem operations', () => {
     await handlers.get('file-manager:activate')!();
     expect(root.getElementById('current-path')!.textContent).toBe('/dir1');
 
-    await handlers.get('file-manager:root')!();
+    await generic(api.provide, 'cursor:root');
     expect(root.getElementById('current-path')!.textContent).toBe('/');
   });
 

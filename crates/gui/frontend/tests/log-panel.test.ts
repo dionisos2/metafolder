@@ -4,7 +4,7 @@
 // out. A row's › button goes into it; a click only selects; no double click.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { cursor } from './support/cursor';
+import { generic } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -87,7 +87,7 @@ async function mountPanel() {
     api,
     run: async (name: string, ...args: string[]) => {
       // A generic command runs on what the panel provided (doc "Generic panel commands").
-      if (name.startsWith('cursor:')) await cursor(api.provide, name.slice('cursor:'.length), ...args);
+      if (name.startsWith('cursor:')) await generic(api.provide, name, ...args);
       else await handlers.get(name)!(...args);
       await settle();
     },
@@ -135,13 +135,13 @@ describe('log panel: going into a label', () => {
     expect(p.shadow.querySelector('#rows button.mf-open')).toBeNull();
   });
 
-  test('log:descend goes into the selected row; log:parent comes back onto it', async () => {
+  test('log:descend goes into the selected row; cursor:parent comes back onto it', async () => {
     const p = await mountPanel();
     await p.run('cursor:last'); // #1 run
     await p.run('log:descend');
     expect(p.rows()).toEqual(['#2 answer']);
     expect(p.selected()).toBe('#2 answer');
-    await p.run('log:parent');
+    await p.run('cursor:parent');
     expect(p.rows()).toEqual(['#9 edit', '#1 run']);
     expect(p.selected()).toBe('#1 run');
   });

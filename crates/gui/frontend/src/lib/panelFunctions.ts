@@ -42,6 +42,10 @@ export interface PanelFunctions {
   enter?: (index: number) => boolean | Promise<boolean>;
   /** Reads what the panel shows again. */
   refresh?: () => unknown;
+  /** Goes up one level: the parent directory, node or label. */
+  parent?: () => unknown;
+  /** Goes to the top: the root directory, the roots of a forest. */
+  root?: () => unknown;
 }
 export type FunctionName = keyof PanelFunctions;
 
@@ -57,6 +61,8 @@ const NEEDS: Record<string, (rest: string[]) => FunctionName[]> = {
   'cursor:last': () => ['count', 'select'],
   'cursor:find': (rest) =>
     rest[0] === 'walk' ? ['entries', 'select', 'enter'] : ['entries', 'select'],
+  'cursor:parent': () => ['parent'],
+  'cursor:root': () => ['root'],
   'view:refresh': () => ['refresh'],
 };
 
@@ -185,6 +191,12 @@ export async function runGeneric(
       if (count > 0) await fns.select(count - 1);
       return;
     }
+    case 'cursor:parent':
+      await fns.parent();
+      return;
+    case 'cursor:root':
+      await fns.root();
+      return;
     case 'view:refresh':
       await fns.refresh();
       return;

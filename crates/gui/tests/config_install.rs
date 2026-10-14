@@ -203,8 +203,8 @@ fn test_load_config_errors_without_a_config_file() {
     assert!(config.load_config().is_err());
 }
 
-// The file-manager's two toggles that had no key: jumping to the root (the
-// disk root when no repository is active) and revealing dot-entries.
+// The file-manager's two keys that had none: jumping to the root (the disk
+// root when no repository is active) and revealing dot-entries.
 #[test]
 fn test_file_manager_root_and_hidden_keybindings() {
     let (_guard, config) = temp_config();
@@ -221,7 +221,11 @@ fn test_file_manager_root_and_hidden_keybindings() {
             .map(|b| b.invocation.clone())
     };
 
-    assert_eq!(in_fm(&["/"]).as_deref(), Some("file-manager:root"));
+    // The root is the generic `cursor:root`, bound once for every panel that
+    // has a top (doc "Generic panel commands").
+    assert!(compiled
+        .iter()
+        .any(|b| b.keys == ["/"] && b.when.is_none() && b.invocation == "cursor:root self"));
     assert_eq!(in_fm(&["ctrl+h"]).as_deref(), Some("file-manager:toggle hidden"));
 }
 

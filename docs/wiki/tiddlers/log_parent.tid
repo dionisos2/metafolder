@@ -1,6 +1,0 @@
-title: log:parent
-tags: [[GUI command]]
-kind: reference
-summary: Log: back out to the level above
-
-Backs out of the label the [[log panel]] is in, to the level above, the cursor on the row it came out of; at the units of work, does nothing.
