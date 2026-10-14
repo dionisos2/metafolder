@@ -53,6 +53,27 @@ A letter pressed with no text field focused is a binding (`n` switches workspace
 opens the help). That is why a scenario never types text before a field is known to
 hold the focus.
 
+!! Clicks
+
+What only a mouse reaches — a tab's close button, the value picker's button in a field
+editor, the settings view's `Remove` — is clicked through WebKit's remote inspector, never
+at coordinates: a click aimed at a place moves with every change of style. The GUI runs with
+`WEBKIT_INSPECTOR_HTTP_SERVER` on a loopback port of its own, and `scripts/lib/webview.mjs`
+(`node`) evaluates in the shell's page a search for the element, in the document and in
+every panel's shadow root: `click <selector> <text> <inner selector> <inner text>` clicks
+the one ''visible'' element matching the selector whose text contains the text (a hidden
+workspace's panel is mounted too), or the one matching the inner selector inside it. A
+scenario names a tab by its name and a keybinding's row by its key, not by their position.
+
+Exactly one element must match, or nothing is clicked and the call fails: wrapped in
+`until_ok`, it waits for the element to appear, and a selector gone stale fails, instead
+of clicking something else.
+
+The inspector answers any local process for the duration of the run, and the GUI it
+reaches runs shell commands: a throwaway daemon, but a run belongs on a machine whose
+other users are trusted. Without `node`, or when the inspector does not answer, the
+clicking scenarios (`tab-close`, `pick-button`, `suggested-key`) are a loud `SKIP`.
+
 !! Its own configuration
 
 The GUI reads a private copy of the installed configuration (`XDG_CONFIG_HOME` under
@@ -68,9 +89,11 @@ land just after the command resolved, and is waited for (`until_ok`), never assu
 
 !! What is asserted
 
-What a command ''said'', not how the window shows it: no pixel, no DOM, no panel
-layout. A change of style never breaks a scenario; a change of wording or of
-behaviour does, which is the point.
+What a command ''said'', not how the window shows it: no pixel, no panel layout, and DOM
+only where the GUI says something nowhere else — the settings view shows its refusals in the
+view itself, not on the status bar. A change of style never breaks a scenario; a change of
+wording or of behaviour does, which is the point. A click is named by selector, so renaming
+a class it uses breaks one: the price of reaching what no command reaches.
 
 Before each command the script posts a marker message of its own. A command that
 reports nothing leaves the marker on the bar, so it fails instead of passing on the
@@ -105,14 +128,18 @@ then `status_is <name> <kind> <glob>`, `command_ok`, or the `assert_*` of
 selection (through the `file` panel); `show_panel <slot> <type> <command>` shows a
 panel and waits until one of its commands answers. A keyboard scenario starts with
 `needs_keyboard <name> || return 0`, then presses keys with `keys` (`xdotool` names:
-`colon`, `Return`, `ctrl+p`) and types text with `typed`. Add the name to the default
+`colon`, `Return`, `ctrl+p`) and types text with `typed`. A clicking one starts with
+`needs_clicks <name> || return 0` and clicks with `until_ok 10 click …`;
+`shows <selector> <text>` is true when exactly one such element is visible, `webview text …`
+prints it. Add the name to the default
 list at the top.
 
 Name the target of a command that acts on the selection, even when the default would
 do: the workspaces show the `message` panel because the metarecord list selects a
-record of its own once loaded, at a moment no scenario controls.
+record of its own once loaded, at a moment no scenario controls. A value picker for a `ref` shows
+one: the `pick-button` scenario waits for the list's cursor (`shows 'tr.row.cursor, …'`)
+before it selects the record to pick, or the list's first row replaced it now and then.
 
 !! Not covered
 
-* The `sync` panel's conflict editor: a resolution is chosen in a row of the panel and saved with its button, which no command reaches. The `sync` scenario runs a plan without conflicts.
-* What only a mouse reaches: a tab's close button, the value picker's button in a field editor (the `picker` scenario opens a picker through `repos:load`), the refusal to remove a key a panel suggested (its row has no fixed place in the list).
+* The `sync` panel's conflict editor: a resolution is chosen in a row of the panel and saved with its button, which no command reaches. The `sync` scenario runs a plan without conflicts; a click could reach it now.

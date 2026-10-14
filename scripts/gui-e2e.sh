@@ -19,6 +19,14 @@
 # would type into whatever the user is doing, or into the desktop's own
 # shortcuts. Without both they are a loud SKIP.
 #
+# What only a mouse reaches (a tab's close button, the field editor's picker
+# button, the settings view's Remove) is clicked through WebKit's remote
+# inspector (scripts/lib/webview.mjs, node): by selector and text, never by
+# coordinates. The inspector listens on loopback for the run's duration, open
+# to any local process — a throwaway daemon, but the GUI runs shell commands.
+# Without node, or an inspector that does not answer, those scenarios are a
+# loud SKIP.
+#
 # Not part of check.sh: it needs a display, the WebView and a built frontend.
 #
 # Prerequisites:
@@ -29,7 +37,8 @@
 #     its panels and keybindings from ~/.config/metafolder/gui/;
 #   - Xvfb (Arch: xorg-server-xvfb), else a display ($DISPLAY or
 #     $WAYLAND_DISPLAY) and no keyboard scenario;
-#   - xdotool, for the keyboard scenarios.
+#   - xdotool, for the keyboard scenarios;
+#   - node, for the clicking ones.
 #
 # METAFOLDER_BIN_DIR (default target/debug) names the directory of the three
 # binaries; scripts/coverage.sh points it at instrumented ones, which is why
@@ -39,7 +48,7 @@
 # Usage:  scripts/gui-e2e.sh [--unsandboxed] [--keep-logs] [scenario...]
 #   with no scenario, runs them all: undo-redo duplicates orphans trash
 #   reconcile ignore sync repos list layout script errors picker refs prompt
-#   history keybindings open-with devtools.
+#   history keybindings open-with tab-close pick-button suggested-key devtools.
 #   --unsandboxed  pass --allow-unsandboxed-webview to the GUI (a container
 #                  that forbids WebKit's sandbox; never on real data)
 #   --keep-logs    keep the work directory (daemon.log, gui.log) on exit
@@ -65,7 +74,8 @@ for arg in "$@"; do
 done
 [ ${#SCENARIOS[@]} -gt 0 ] \
     || SCENARIOS=(undo-redo duplicates orphans trash reconcile ignore sync repos list layout script
-        errors picker refs prompt history keybindings open-with devtools)
+        errors picker refs prompt history keybindings open-with tab-close pick-button
+        suggested-key devtools)
 
 # shellcheck source=lib/daemon-fixture.sh
 . scripts/lib/daemon-fixture.sh
@@ -91,6 +101,7 @@ WORK=$_DF_TMP
 GUI_PORT=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')
 GUI_PID=""
 XVFB_PID=""
+INSPECTOR_PORT=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')
 
 cleanup() {
     [ -n "$GUI_PID" ] && kill "$GUI_PID" 2>/dev/null && wait "$GUI_PID" 2>/dev/null
@@ -166,7 +177,8 @@ PANEL
 gui_args=(--gui-port "$GUI_PORT" --daemon-port "$DF_PORT")
 $UNSANDBOXED && gui_args+=(--allow-unsandboxed-webview)
 # What the GUI runs (scripts) finds this mf first, and this GUI with it.
-XDG_CONFIG_HOME="$CONFIG_HOME" PATH="$(cd "$(dirname "$_DF_MF")" && pwd):$PATH" \
+WEBKIT_INSPECTOR_HTTP_SERVER="127.0.0.1:$INSPECTOR_PORT" \
+    XDG_CONFIG_HOME="$CONFIG_HOME" PATH="$(cd "$(dirname "$_DF_MF")" && pwd):$PATH" \
     METAFOLDER_GUI_URL="http://127.0.0.1:$GUI_PORT" \
     "$GUI_BIN" "${gui_args[@]}" >"$WORK/gui.log" 2>&1 &
 GUI_PID=$!
@@ -305,6 +317,34 @@ needs_keyboard() {
 # GUI's window. typed <text> — types text there.
 keys() { xdotool windowfocus --sync "$GUI_WIN" key --delay 30 "$@"; }
 typed() { xdotool windowfocus --sync "$GUI_WIN" type --delay 30 -- "$1"; }
+
+# needs_clicks <scenario> — false, and a loud SKIP, when nothing can click.
+CLICKS=""
+needs_clicks() {
+    # Asked once: the inspector answers for the shell's page.
+    if [ -z "$CLICKS" ]; then
+        CLICKS=false
+        command -v node >/dev/null && webview ready >/dev/null 2>&1 && CLICKS=true
+    fi
+    $CLICKS && return 0
+    printf 'SKIP %s: needs node and the WebKit inspector (clicks go through it)\n' "$1"
+    return 1
+}
+
+# webview <action> <args…> — scripts/lib/webview.mjs against this GUI.
+# click <selector> [<text> [<inner selector> [<inner text>]]] clicks the one
+# visible element so named, and fails, clicking nothing, unless exactly one
+# matches: wrapped in until_ok, it waits for the element to appear.
+webview() { node scripts/lib/webview.mjs "127.0.0.1:$INSPECTOR_PORT" "$@"; }
+click() { webview click "$@" >/dev/null 2>&1; }
+# shows <selector> [<text>] — exactly one such element is visible.
+shows() { webview text "$@" >/dev/null 2>&1; }
+# reads <value> <selector…> — the element's text (an input's value) is <value>.
+reads() {
+    local want=$1
+    shift
+    [ "$(webview text "$@" 2>/dev/null)" = "$want" ]
+}
 
 # ── scenarios ────────────────────────────────────────────────────────────────
 
@@ -678,17 +718,19 @@ scenario_errors() {
         'no loaded repository named "nowhere"'
 }
 
-# picking — a value picker is open (its workspace is named after the pick).
+# picking [<name>] — a value picker is open (its workspace is named after the
+# pick: 'Pick a repository' by default).
 picking() {
-    [ "$(gui_status "any(w['name'] == 'Pick a repository' for w in s['workspaces'])")" = True ]
+    [ "$(gui_status "any(w['name'] == '${1:-Pick a repository}' for w in s['workspaces'])")" = True ]
 }
 
-# picker_slot — the slot showing the picker.
+# picker_slot [<name>] — the slot showing the picker.
 picker_slot() {
     gui_status "next(k for k in ('left', 'right') if s['layout'][k] and next(
         w['name'] for w in s['workspaces'] if w['id'] == s['layout'][k]['workspace_id'])
-        == 'Pick a repository')"
+        == '${1:-Pick a repository}')"
 }
+not_picking() { ! picking "$@"; }
 
 scenario_picker() {
     new_repo picker
@@ -860,6 +902,82 @@ scenario_open_with() {
     command_ok "open with: a program given runs"
     assert "open with: the program runs" until_ok 10 test -s "$WORK/opened"
     assert_eq "open with: on the selected file" "$file" "$(cat "$WORK/opened" 2>/dev/null)"
+}
+
+# has_ws <id> — the GUI holds that workspace.
+has_ws() { [ "$(gui_status "any(w['id'] == '$1' for w in s['workspaces'])")" = True ]; }
+lacks_ws() { ! has_ws "$1"; }
+
+scenario_tab_close() {
+    needs_clicks tab-close || return 0
+    new_repo tab-close
+    local n0 doomed
+    run workspace:fork
+    doomed=$(gui_status "s['workspaces'][-1]['id']")
+    mfg layout left "$doomed" >/dev/null
+    run workspace:rename Doomed tab
+    mfg layout left "$WS" >/dev/null
+    n0=$(ws_count)
+
+    assert "tab close: its button is clicked" until_ok 10 click '.tab-bar .tab' 'Doomed tab' '.close'
+    assert "tab close: the workspace goes" until_ok 10 lacks_ws "$doomed"
+    assert_eq "tab close: only that one" $((n0 - 1)) "$(ws_count)"
+    assert_eq "tab close: the shown one stays" "$WS" "$(slot_ws left)"
+}
+
+# field_is <uuid> <field> <value> — the daemon holds that value.
+field_is() { [ "$(df_mf metarecord -i "$1" field get "$2" 2>/dev/null)" = "$3" ]; }
+
+scenario_pick_button() {
+    needs_clicks pick-button || return 0
+    new_repo pick-button
+    local a b c f
+    for f in a b c; do echo "$f" >"$REPO_DIR/$f.txt"; done
+    a=$(record "$REPO_DIR/a.txt")
+    b=$(record "$REPO_DIR/b.txt")
+    c=$(record "$REPO_DIR/c.txt")
+    df_mf metarecord -i "$a" field set "friend:ref=$b" >/dev/null
+    select_path "$REPO_DIR/a.txt"
+    show_panel left metarecord-detail metarecord:cancel
+
+    # The row's Edit opens its inline editor, whose ref widget has the button.
+    assert "pick button: the field is edited" until_ok 10 click '#field-rows tr' friend button Edit
+    assert "pick button: is clicked" until_ok 10 click '#field-rows tr' friend .pick-btn
+    assert "pick button: opens a picker" until_ok 10 picking "Pick: friend"
+    # The picker shows a metarecord list, which selects its first row once
+    # loaded: a selection made before would be overwritten by it.
+    assert "pick button: the picker's list has selected a row" \
+        until_ok 10 shows 'tr.row.cursor, .card.cursor'
+    mfg view "$(picker_slot "Pick: friend")" file --path "$REPO_DIR/c.txt" >/dev/null \
+        || die "view file c.txt"
+    run pick:confirm
+    assert "pick button: the picker closes" until_ok 10 not_picking "Pick: friend"
+    # The pick's result reaches the editor after the command resolves.
+    assert "pick button: the editor holds the pick" \
+        until_ok 10 reads "$c" '#field-rows tr' friend input
+    assert "pick button: the edit is confirmed" until_ok 10 click '#field-rows tr' friend button OK
+    assert "pick button: the picked metarecord is written" until_ok 10 field_is "$a" friend "$c"
+}
+
+scenario_suggested_key() {
+    needs_clicks suggested-key || return 0
+    new_repo suggested-key
+    # The panel suggests ctrl+alt+y when it mounts.
+    show_panel left e2e-keys e2e-keys:ping
+    run config:open
+
+    assert "suggested key: its Remove is clicked" \
+        until_ok 10 click '.binding-table tr' ctrl+alt+y button Remove
+    # The settings view says its errors itself, not on the status bar.
+    assert_contains "suggested key: the removal is refused, saying why" \
+        "$(until_ok 10 webview text '.dialog .error' 2>/dev/null)" \
+        "is suggested by a panel or by commands.js"
+    assert "suggested key: its row stays" shows '.binding-table tr' ctrl+alt+y
+    assert "settings: closed by its button" click '.dialog header button'
+
+    mfg message --workspace "$WS" "e2e: before ctrl+alt+y" >/dev/null
+    run e2e-keys:ping
+    status_is "suggested key: the command still runs" info "e2e: pinged"
 }
 
 # Last: the inspector docks into the window and may take the keyboard.

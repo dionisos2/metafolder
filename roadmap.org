@@ -6,15 +6,6 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 "Version scope and non-goals"); the ones worth keeping in view are listed at
 the end.
 
-* TODO tooling
-** TODO the GUI wrappers only a mouse reaches
-=scripts/gui-e2e.sh= presses keys since 14 October 2026 (=xdotool= on a
-private =Xvfb=, doc "Testing the GUI end to end"): =gui/src/commands.rs= went
-from 64 % to 84 % of its lines. Left at zero: what only a mouse reaches — a
-tab's close button (=workspace_close_ws=), the value picker's button in a
-field editor, the refusal to remove a key a panel suggested. Clicking means
-coordinates, which a change of style would break: not done.
-
 * TODO structure
 Not problems of behaviour; worth doing for navigability, each a large diff.
 - The big panels are one =mount()= each (=metarecord-list= 1 895 lines,
