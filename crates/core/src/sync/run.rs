@@ -531,15 +531,29 @@ impl<'a> Run<'a> {
         op.from.or_else(|| conflict_resolve(all, op, field).as_deref().and_then(Side::parse))
     }
 
-    /// How deep a link sits in the filesystem (0 without a path), to run
-    /// parents first.
+    /// How deep a link sits in its forests — the filesystem, a tag
+    /// vocabulary, any `tree_ref` or `hierarchy_ref` field — by its longest
+    /// path on either side (0 without one), to run parents first: a parent
+    /// made by the sync must be placed before what it holds is placed under
+    /// it.
     fn depth(&self, key: (Uuid, Uuid)) -> Result<usize, CliError> {
+        let mut deepest = 0;
         for (repo, rec) in [(self.pair.a, key.0), (self.pair.b, key.1)] {
-            if let Ok(Some(p)) = lookup::mfr_path_of(self.ctx, repo, rec) {
-                return Ok(p.split('/').filter(|c| !c.is_empty()).count());
+            let Ok(Some(record)) = lookup::get_record(self.ctx, repo, rec) else { continue };
+            let mut fields: Vec<&str> = record
+                .fields
+                .iter()
+                .filter(|f| f.value.position().is_some())
+                .map(|f| f.name.as_str())
+                .collect();
+            fields.dedup();
+            for field in fields {
+                for p in lookup::tree_paths(self.ctx, repo, rec, field).unwrap_or_default() {
+                    deepest = deepest.max(p.split('/').filter(|c| !c.is_empty()).count());
+                }
             }
         }
-        Ok(0)
+        Ok(deepest)
     }
 
     // ── ops ─────────────────────────────────────────────────────────────────

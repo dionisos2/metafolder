@@ -14,13 +14,15 @@ question remains. No daemon/GUI dependency, so it is unit-testable
 to share the hierarchy helpers.
 
 Usage: gui-tag-next.sh <universe_file> <pos_file> <neg_file>
-  universe_file : one tag path per line (`mf tag list`); further TAB columns
+  universe_file : one line per tag path (`mf tag list`): "path <TAB> uuid".
+                  A tag of several parents has several paths, one uuid; a
+                  line without the uuid is a tag of its own. Further columns
                   are ignored. Line order breaks depth ties.
   pos_file      : positive tag paths (one per line).
   neg_file      : negative tag paths (one per line).
 
 A tag path is "/"-separated (e.g. musique/jazz). Semantics: adding a specific
 tag drops its more general ancestors; a generic negative blocks its whole
-subtree; a specific positive implies (and hides) its ancestors. Siblings never
-exclude each other.
+subtree — under every path of the tags in it; a specific positive implies
+(and hides) its ancestors. Siblings never exclude each other.
 ```

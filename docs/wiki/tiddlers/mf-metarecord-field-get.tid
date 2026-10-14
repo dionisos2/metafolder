@@ -3,4 +3,4 @@ tags: [[CLI command]] [[Data model]]
 kind: reference
 summary: Print the field's value(s)
 
-Prints a field's values; `--resolve <field>` follows each `ref` to the referenced metarecord's `<field>` ([[Editing metarecords from the command line]]).
+Prints a field's values; `--resolve <field>` follows each `ref` to the referenced metarecord's `<field>` — a position is printed as its path, one line per path for a node of several parents ([[Editing metarecords from the command line]]).

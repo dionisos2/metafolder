@@ -3775,6 +3775,59 @@ fn test_sync_run_resync_propagates_field() {
     );
 }
 
+/// A tag of several parents syncs as the same node, by its path, and the side
+/// holding it under fewer parents gains the others (doc "Hierarchy
+/// references"): a path the target lacks is a parent to add, not another
+/// position the record would be forced out of.
+#[test]
+fn test_sync_a_hierarchy_adds_the_missing_parent() {
+    let (a, _adir) = tracked_repo("hier_a", &[("doc.txt", b"x")]);
+    let (b, _bdir) = tracked_repo("hier_b", &[("doc.txt", b"x")]);
+    let tag = |repo: &str, specs: &[String]| {
+        let mut all = vec!["mf_schema:string=tag".to_string()];
+        all.extend_from_slice(specs);
+        let refs: Vec<&str> = all.iter().map(String::as_str).collect();
+        create_metarecord(repo, &refs)
+    };
+    let sport_a = tag(&a, &["path:hierarchy_ref=/sport".into()]);
+    let courir_a = tag(&a, &[format!("path:hierarchy_ref={sport_a}/courir")]);
+    let event_a = tag(&a, &["path:hierarchy_ref=/évènement".into()]);
+    tag(
+        &a,
+        &[
+            format!("path:hierarchy_ref={courir_a}/maraton"),
+            format!("path:hierarchy_ref={event_a}/maraton"),
+        ],
+    );
+    let sport_b = tag(&b, &["path:hierarchy_ref=/sport".into()]);
+    let courir_b = tag(&b, &[format!("path:hierarchy_ref={sport_b}/courir")]);
+    let maraton_b = tag(&b, &[format!("path:hierarchy_ref={courir_b}/maraton")]);
+
+    let intents = write_intents(
+        "hier",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mf_schema = \"tag\"'\n"),
+    );
+    // A first sync finds two different sets of parents: a conflict, settled
+    // here for A's.
+    let prefer = format!("prefer:{a}");
+    let intents = intents.to_str().unwrap();
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents, "--on-conflict", &prefer]));
+    let run = mf(&["sync", "run", &a, &b, "--yes"]);
+    assert_ok(&run);
+    assert!(run.stdout.contains("skipped: 0"), "{}", run.stdout);
+
+    // B's marathon is the same node, now under both parents.
+    let out =
+        mf(&["-u", &b, "metarecord", "-i", &maraton_b, "get", "--resolve-tree", "path", "--tsv"]);
+    assert_ok(&out);
+    let mut paths: Vec<&str> = out.stdout.lines().map(|l| l.rsplit('\t').next().unwrap()).collect();
+    paths.sort();
+    assert_eq!(paths, vec!["sport/courir/maraton", "évènement/maraton"], "{}", out.stdout);
+    let out = mf(&["-u", &b, "metarecord", "-q", r#"path:value = "maraton""#, "get"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.lines().count(), 1, "one marathon in B: {}", out.stdout);
+}
+
 /// A record's first value for `field` (as a string), or None.
 fn field_value_of(repo: &str, uuid: &str, field: &str) -> Option<String> {
     let got = mf(&["-u", repo, "metarecord", "-i", uuid, "get", "--select", "*"]);
@@ -4951,12 +5004,98 @@ fn test_mf_tag_subsumption_deny_list() {
     tag(&["-i", &rec, "deny", "administratif"]);
     assert_eq!(names("negative_tag"), vec!["administratif"]);
 
-    // list = the vocabulary, one path per line (auto-created cinema tags present).
+    // list = the vocabulary, path<TAB>uuid (auto-created cinema tags present).
     let out = mf(&["-u", &repo, "tag", "list"]);
     assert_ok(&out);
-    assert!(out.stdout.lines().any(|l| l == "musique/jazz"), "list:\n{}", out.stdout);
-    assert!(out.stdout.lines().any(|l| l == "administratif"), "list:\n{}", out.stdout);
-    assert!(out.stdout.lines().any(|l| l == "cinema/thriller"), "list:\n{}", out.stdout);
+    let listed: Vec<&str> = out.stdout.lines().filter_map(|l| l.split('\t').next()).collect();
+    for path in ["musique/jazz", "administratif", "cinema/thriller"] {
+        assert!(listed.contains(&path), "{path} in list:\n{}", out.stdout);
+    }
+    let jazz_line = format!("musique/jazz\t{jazz}");
+    assert!(out.stdout.lines().any(|l| l == jazz_line), "list:\n{}", out.stdout);
+}
+
+/// A tag vocabulary that is a hierarchy (doc "Hierarchy references"): a tag
+/// under two parents has both paths, and subsumption follows every one — its
+/// ancestors by either parent are implied, a negative on either parent covers it.
+#[test]
+fn test_mf_tag_follows_every_parent_of_a_hierarchy() {
+    let (repo, _root) = init_repo("tag-hierarchy");
+    let rec = create_metarecord(&repo, &["note:string=target"]);
+    let mk_tag = |specs: &[&str]| create_metarecord(&repo, specs);
+    let sport = mk_tag(&["mf_schema:string=tag", "path:hierarchy_ref=/sport"]);
+    let courir =
+        mk_tag(&["mf_schema:string=tag", format!("path:hierarchy_ref={sport}/courir").as_str()]);
+    let event = mk_tag(&["mf_schema:string=tag", "path:hierarchy_ref=/évènement"]);
+    let maraton = mk_tag(&[
+        "mf_schema:string=tag",
+        format!("path:hierarchy_ref={courir}/maraton").as_str(),
+        format!("path:hierarchy_ref={event}/maraton").as_str(),
+    ]);
+
+    let tag = |args: &[&str]| {
+        let mut v: Vec<&str> = vec!["-u", repo.as_str(), "tag"];
+        v.extend_from_slice(args);
+        assert_ok(&mf(&v));
+    };
+    let names = |field: &str| -> Vec<String> {
+        let out = mf(&[
+            "-u",
+            &repo,
+            "metarecord",
+            "-i",
+            &rec,
+            "field",
+            "get",
+            field,
+            "--resolve",
+            "path",
+        ]);
+        assert_ok(&out);
+        let mut v: Vec<String> = out.stdout.lines().map(String::from).collect();
+        v.sort();
+        v
+    };
+
+    // Named by one path, the tag shows both; its ancestor by the other path goes.
+    tag(&["-i", &rec, "add", "sport/courir"]);
+    tag(&["-i", &rec, "add", "évènement/maraton"]);
+    assert_eq!(names("tag"), vec!["sport/courir/maraton", "évènement/maraton"]);
+
+    // Not an event: not a marathon either, whichever path named it.
+    tag(&["-i", &rec, "deny", "évènement"]);
+    assert!(names("tag").is_empty(), "{:?}", names("tag"));
+    assert_eq!(names("negative_tag"), vec!["évènement"]);
+
+    // A marathon by its sport path is an event: the negative goes.
+    tag(&["-i", &rec, "add", "sport/courir/maraton"]);
+    assert!(names("negative_tag").is_empty(), "{:?}", names("negative_tag"));
+
+    // The list has one line per path, with the tag's uuid.
+    let out = mf(&["-u", &repo, "tag", "list"]);
+    assert_ok(&out);
+    for path in ["sport/courir/maraton", "évènement/maraton"] {
+        let line = format!("{path}\t{maraton}");
+        assert!(out.stdout.lines().any(|l| l == line), "{line} in:\n{}", out.stdout);
+    }
+}
+
+/// A fresh vocabulary is a hierarchy: `mf tag` creates its entries with a
+/// `hierarchy_ref`, while a vocabulary already placed by `tree_ref` keeps it.
+#[test]
+fn test_mf_tag_creates_a_hierarchy() {
+    let (repo, _root) = init_repo("tag-fresh");
+    let rec = create_metarecord(&repo, &["note:string=target"]);
+    assert_ok(&mf(&["-u", &repo, "tag", "-i", &rec, "add", "cinema/thriller"]));
+    let out = mf(&["-u", &repo, "field", "list"]);
+    assert_ok(&out);
+    assert!(
+        out.stdout
+            .lines()
+            .any(|l| l.split_whitespace().collect::<Vec<_>>() == ["path", "hierarchy_ref"]),
+        "{}",
+        out.stdout
+    );
 }
 
 /// A positive and a negative never contradict each other: `add X` takes back

@@ -1093,10 +1093,15 @@ pub fn field_get(
     // the target field is a TreeRef, print its resolved path (a second
     // round-trip) rather than the raw `(parent, name)` — the natural join for a
     // hierarchy (e.g. a record's tags → their tag paths).
-    let mut by_uuid: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    // A node of a hierarchy has several paths: each is a line.
+    let mut by_uuid: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
     let target_is_tree = entries.into_iter().flatten().any(|e| {
         e["fields"].as_array().into_iter().flatten().any(|f| {
-            f["name"].as_str() == Some(target) && f["value"]["type"].as_str() == Some("tree_ref")
+            f["name"].as_str() == Some(target)
+                && f["value"]["type"]
+                    .as_str()
+                    .is_some_and(metafolder_core::metarecord::is_position_type)
         })
     });
     if target_is_tree {
@@ -1105,10 +1110,10 @@ pub fn field_get(
             &json!({"query": ref_query, "field": target}),
         )?;
         for r in &refs {
-            if let Some(path) =
-                resolved[r].as_array().and_then(|p| p.first()).and_then(|p| p.as_str())
-            {
-                by_uuid.insert(r.clone(), path.to_string());
+            let paths = resolved[r].as_array().into_iter().flatten();
+            let paths: Vec<String> = paths.filter_map(|p| p.as_str().map(String::from)).collect();
+            if !paths.is_empty() {
+                by_uuid.insert(r.clone(), paths);
             }
         }
     } else {
@@ -1121,13 +1126,13 @@ pub fn field_get(
                     .find(|f| f["name"].as_str() == Some(target))
                     .and_then(|f| raw_value_line(&f["value"]))
                 {
-                    by_uuid.insert(u.to_string(), line);
+                    by_uuid.insert(u.to_string(), vec![line]);
                 }
             }
         }
     }
     for r in &refs {
-        if let Some(line) = by_uuid.get(r) {
+        for line in by_uuid.get(r).into_iter().flatten() {
             println!("{line}");
         }
     }
@@ -1249,18 +1254,64 @@ pub fn order(
 
 // ── mf tag (doc "Tag subsumption") ───────────────────────────────────────────
 
-/// The tag vocabulary loaded once per `mf tag` run.
+/// The tag vocabulary loaded once per `mf tag` run. A tag in a hierarchy has
+/// one path per way up (doc "Hierarchy references"), and every path is
+/// listed, so the string ancestors of all its paths are exactly its ancestors
+/// by every parent, and the same for its descendants.
 struct Vocab {
-    /// Tag path → entry uuid (hex).
+    /// Tag path → entry uuid (hex). Several paths may name one entry.
     name2uuid: std::collections::HashMap<String, String>,
+    /// Entry uuid → all its paths.
+    paths: std::collections::HashMap<String, Vec<String>>,
     /// All tag paths (for descendant scans).
     names: Vec<String>,
+    /// The value type entries are placed with: the field's own, else
+    /// `hierarchy_ref` for a vocabulary not begun yet.
+    path_type: String,
+}
+
+impl Vocab {
+    /// The paths of the tag at `path` — all of them when it exists, else the
+    /// one it is named by.
+    fn paths_of(&self, path: &str) -> Vec<String> {
+        self.name2uuid
+            .get(path)
+            .and_then(|u| self.paths.get(u))
+            .cloned()
+            .unwrap_or_else(|| vec![path.to_string()])
+    }
+
+    /// The tags strictly above the tag at `path`, by every parent.
+    fn ancestors(&self, path: &str) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for p in self.paths_of(path) {
+            for a in crate::tag::ancestors(&p) {
+                if !out.contains(&a) {
+                    out.push(a);
+                }
+            }
+        }
+        out
+    }
+
+    /// The tags strictly below the tag at `path`, by every parent.
+    fn descendants(&self, path: &str) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for p in self.paths_of(path) {
+            for d in crate::tag::descendants(&p, &self.names) {
+                if !out.contains(&d) {
+                    out.push(d);
+                }
+            }
+        }
+        out
+    }
 }
 
 /// Loads the tag vocabulary (`<type_field> = <entry_type>`). A tag's identity is
-/// the resolved path of its `path_field` TreeRef, all fetched in one
-/// `resolve-tree` round-trip (uuid → paths); an entry with no resolvable path is
-/// not part of the vocabulary.
+/// its entry, named by the resolved paths of its `path_field` (a `tree_ref` or a
+/// `hierarchy_ref`), all fetched in one `resolve-tree` round-trip (uuid →
+/// paths); an entry with no resolvable path is not part of the vocabulary.
 fn load_vocab(ctx: &Ctx, base: &str) -> Result<Vocab, CliError> {
     let cfg = &ctx.tag;
     let query = json!({
@@ -1271,13 +1322,37 @@ fn load_vocab(ctx: &Ctx, base: &str) -> Result<Vocab, CliError> {
         &format!("{base}/query/fields/resolve-tree"),
         &json!({"query": query, "field": cfg.path_field}),
     )?;
-    let mut vocab = Vocab { name2uuid: std::collections::HashMap::new(), names: Vec::new() };
+    let fields = ctx.client.get(&format!("{base}/fields"), &[])?;
+    let path_type = fields
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|f| f["name"].as_str() == Some(cfg.path_field.as_str()))
+        .and_then(|f| f["type"].as_str())
+        .filter(|t| metafolder_core::metarecord::is_position_type(t))
+        .unwrap_or("hierarchy_ref")
+        .to_string();
+    let mut vocab = Vocab {
+        name2uuid: std::collections::HashMap::new(),
+        paths: std::collections::HashMap::new(),
+        names: Vec::new(),
+        path_type,
+    };
     for (uuid, paths) in resolved.as_object().into_iter().flatten() {
-        let Some(path) = paths.as_array().and_then(|p| p.first()).and_then(|p| p.as_str()) else {
-            continue;
-        };
-        vocab.name2uuid.insert(path.to_string(), uuid.to_string());
-        vocab.names.push(path.to_string());
+        let paths: Vec<String> = paths
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|p| p.as_str())
+            .map(String::from)
+            .collect();
+        for path in &paths {
+            vocab.name2uuid.insert(path.clone(), uuid.to_string());
+            vocab.names.push(path.clone());
+        }
+        if !paths.is_empty() {
+            vocab.paths.insert(uuid.to_string(), paths);
+        }
     }
     Ok(vocab)
 }
@@ -1316,10 +1391,11 @@ impl<'a> TagBatch<'a> {
         let uuid = Uuid::new_v4().as_simple().to_string();
         self.ops.push(json!({"op": "create", "uuid": uuid, "fields": [
             {"name": self.cfg.type_field, "value": {"type": "string", "value": self.cfg.entry_type}},
-            {"name": self.cfg.path_field, "value": {"type": "tree_ref",
+            {"name": self.cfg.path_field, "value": {"type": vocab.path_type,
                 "value": {"parent": parent, "name": leaf}}},
         ]}));
         vocab.name2uuid.insert(path.to_string(), uuid.clone());
+        vocab.paths.insert(uuid.clone(), vec![path.to_string()]);
         vocab.names.push(path.to_string());
         uuid
     }
@@ -1331,11 +1407,17 @@ impl<'a> TagBatch<'a> {
         self.ops.len() - 1
     }
 
-    /// Plans the removal of `field:ref=<tag>` from the selection, for each of
-    /// `paths` present in the vocabulary.
+    /// Plans the removal of `field:ref=<tag>` from the selection, for each tag
+    /// of `paths` present in the vocabulary — once per tag, however many of
+    /// its paths are given.
     fn remove<'p>(&mut self, vocab: &Vocab, field: &str, paths: impl IntoIterator<Item = &'p str>) {
+        let mut done: Vec<&String> = Vec::new();
         for path in paths {
             if let Some(uuid) = vocab.name2uuid.get(path) {
+                if done.contains(&uuid) {
+                    continue;
+                }
+                done.push(uuid);
                 self.ops.push(json!({"op": "remove", "query": self.query, "name": field,
                     "value": {"type": "ref", "value": uuid}}));
             }
@@ -1359,14 +1441,14 @@ fn target_query(selector: &str) -> Result<Json, CliError> {
     })
 }
 
-/// `path` and its proper ancestors.
-fn with_ancestors(path: &str) -> Vec<String> {
-    std::iter::once(path.to_string()).chain(crate::tag::ancestors(path)).collect()
+/// The tag at `path` and its proper ancestors, by every parent.
+fn with_ancestors(path: &str, vocab: &Vocab) -> Vec<String> {
+    std::iter::once(path.to_string()).chain(vocab.ancestors(path)).collect()
 }
 
-/// `path` and its descendants in the vocabulary.
+/// The tag at `path` and its descendants in the vocabulary, by every parent.
 fn with_descendants(path: &str, vocab: &Vocab) -> Vec<String> {
-    std::iter::once(path.to_string()).chain(crate::tag::descendants(path, &vocab.names)).collect()
+    std::iter::once(path.to_string()).chain(vocab.descendants(path)).collect()
 }
 
 /// `mf tag [sel] add <path>` — the record(s) *have* the tag: (idempotently) add
@@ -1381,11 +1463,11 @@ pub fn tag_add(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> {
     let mut batch = TagBatch::new(&cfg, target_query(selector)?);
     let tag_uuid = batch.ensure_entry(&mut vocab, path);
     let counted = batch.add(&cfg.positive, &tag_uuid);
-    let ancestors = crate::tag::ancestors(path);
+    let ancestors = vocab.ancestors(path);
     batch.remove(&vocab, &cfg.positive, ancestors.iter().map(String::as_str));
     // Having the tag means wholly having every ancestor: a negative on any of
     // them, or on the tag itself, is now false, and so is a mixed mark.
-    let contradicted = with_ancestors(path);
+    let contradicted = with_ancestors(path, &vocab);
     batch.remove(&vocab, &cfg.negative, contradicted.iter().map(String::as_str));
     batch.remove(&vocab, &cfg.mixed, contradicted.iter().map(String::as_str));
     let n = batch.send(ctx, &base, counted)?;
@@ -1404,7 +1486,7 @@ pub fn tag_deny(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> 
     let mut batch = TagBatch::new(&cfg, target_query(selector)?);
     let tag_uuid = batch.ensure_entry(&mut vocab, path);
     let counted = batch.add(&cfg.negative, &tag_uuid);
-    let descendants = crate::tag::descendants(path, &vocab.names);
+    let descendants = vocab.descendants(path);
     batch.remove(&vocab, &cfg.negative, descendants.iter().map(String::as_str));
     // Not having the tag means having none of its descendants: a positive on
     // any of them, or on the tag itself, is now false, and so is a mixed mark.
@@ -1430,7 +1512,7 @@ pub fn tag_mixed(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError>
     let counted = batch.add(&cfg.mixed, &tag_uuid);
     let positives = with_descendants(path, &vocab);
     batch.remove(&vocab, &cfg.positive, positives.iter().map(String::as_str));
-    let negatives = with_ancestors(path);
+    let negatives = with_ancestors(path, &vocab);
     batch.remove(&vocab, &cfg.negative, negatives.iter().map(String::as_str));
     let n = batch.send(ctx, &base, counted)?;
     println!("{n}");
@@ -1455,14 +1537,16 @@ pub fn tag_remove(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError
     Ok(0)
 }
 
-/// `mf tag list` — the vocabulary, one path per line, path-sorted. This is
-/// exactly the universe format the tagging scripts consume.
+/// `mf tag list` — the vocabulary as TSV `path<TAB>uuid`, one line per path
+/// (a tag of several parents has several), path-sorted. This is exactly the
+/// universe format the tagging scripts consume: the uuid tells them which
+/// paths are one tag.
 pub fn tag_list(ctx: &Ctx) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let mut vocab = load_vocab(ctx, &base)?;
     vocab.names.sort();
     for name in &vocab.names {
-        println!("{name}");
+        println!("{name}\t{}", vocab.name2uuid[name]);
     }
     Ok(0)
 }

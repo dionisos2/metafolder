@@ -1,6 +1,6 @@
 title: mf tag list
 tags: [[CLI command]] [[Hierarchical tags]]
 kind: reference
-summary: List the tag vocabulary, one path per line
+summary: List the tag vocabulary as TSV: path<TAB>uuid, one line per path
 
-The vocabulary, one tag per line, as the tagging scripts read it ([[Tagging from the command line]]).
+The vocabulary, one line per tag path with the tag's uuid, as the tagging scripts read it ([[Tagging from the command line]]).

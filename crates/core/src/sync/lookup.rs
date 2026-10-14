@@ -217,19 +217,25 @@ impl<'a> Translator<'a> {
         Ok(p)
     }
 
-    /// A record's identity for a `ref` fallback: its first TreeRef position.
-    fn identity(&self, repo: Uuid, record: Uuid) -> Result<Option<(String, String)>, SyncError> {
+    /// A record's identity for a `ref` fallback: its first position — in a
+    /// forest, or in a hierarchy (whose first path it takes) — and whether
+    /// that is a hierarchy.
+    fn identity(
+        &self,
+        repo: Uuid,
+        record: Uuid,
+    ) -> Result<Option<(String, String, bool)>, SyncError> {
         let Some(rec) = get_record(self.ctx, repo, record)? else { return Ok(None) };
-        let mut fields: Vec<&str> = rec
+        let mut fields: Vec<(&str, bool)> = rec
             .fields
             .iter()
-            .filter(|f| matches!(f.value, Value::TreeRef { .. }))
-            .map(|f| f.name.as_str())
+            .filter(|f| f.value.position().is_some())
+            .map(|f| (f.name.as_str(), matches!(f.value, Value::HierarchyRef { .. })))
             .collect();
         fields.dedup();
-        for field in fields {
+        for (field, hierarchy) in fields {
             if let Some(path) = self.path_in(repo, record, field)? {
-                return Ok(Some((field.to_string(), path)));
+                return Ok(Some((field.to_string(), path, hierarchy)));
             }
         }
         Ok(None)
@@ -237,7 +243,13 @@ impl<'a> Translator<'a> {
 
     /// The record at `path` in `field`'s forest of `repo`, made (ancestors
     /// first) when absent.
-    fn find_or_create(&self, repo: Uuid, field: &str, path: &str) -> Result<Uuid, SyncError> {
+    fn find_or_create(
+        &self,
+        repo: Uuid,
+        field: &str,
+        path: &str,
+        hierarchy: bool,
+    ) -> Result<Uuid, SyncError> {
         if let Some(u) = resolve_path(self.ctx, repo, field, path)? {
             return Ok(u);
         }
@@ -248,10 +260,15 @@ impl<'a> Translator<'a> {
             )));
         };
         let parent = match parent_path {
-            Some(p) => Some(self.find_or_create(repo, field, p)?),
+            Some(p) => Some(self.find_or_create(repo, field, p, hierarchy)?),
             None => None,
         };
-        let value = Value::TreeRef { parent, name: TreeName::from(name) };
+        let name = TreeName::from(name);
+        let value = if hierarchy {
+            Value::HierarchyRef { parent, name }
+        } else {
+            Value::TreeRef { parent, name }
+        };
         let resp = self.ctx.client.post(
             &format!("/repos/{}/metarecords", repo.as_simple()),
             &json!({"fields": [{"name": field, "value": value}], "force": true}),
@@ -276,13 +293,13 @@ impl Translate for Translator<'_> {
         let (src, dst) = (self.pair.repo(from), self.pair.repo(from.other()));
         let found = match how {
             Lookup::Ref => self.identity(src, record)?,
-            Lookup::Parent { field } => {
-                self.path_in(src, record, field)?.map(|p| (field.to_string(), p))
+            Lookup::Parent { field, hierarchy } => {
+                self.path_in(src, record, field)?.map(|p| (field.to_string(), p, hierarchy))
             }
         };
-        let Some((field, path)) = found else { return Ok(None) };
+        let Some((field, path, hierarchy)) = found else { return Ok(None) };
         if self.create {
-            Ok(Some(self.find_or_create(dst, &field, &path)?))
+            Ok(Some(self.find_or_create(dst, &field, &path, hierarchy)?))
         } else {
             resolve_path(self.ctx, dst, &field, &path)
         }

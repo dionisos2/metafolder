@@ -38,7 +38,8 @@ run_case() {
     fi
 }
 
-# Universe: one tag path per line (what `mf tag list` prints).
+# Universe: one tag path per line, optionally <TAB> its uuid (what `mf tag
+# list` prints); without a uuid each path is a tag of its own.
 U_BASE=$(printf 'musique\nadministratif\nmusique/jazz\nmusique/rock\n')
 
 # 1. Top level first: nothing answered yet -> shallowest, in universe order.
@@ -61,12 +62,21 @@ run_case "descend-to-child" "$U_BASE" $'musique\n' $'administratif\n' "musique/j
 run_case "multi-genre-sibling" "$U_BASE" $'musique/jazz\n' $'administratif\n' \
     "musique/rock" 0
 
-# 6. The retired partition/exclusive columns of an older `mf tag list` are
-#    ignored: the sibling is still offered.
-U_OLD=$(printf 'musique\t1\t0\nmusique/jazz\t0\t1\nmusique/rock\t0\t0\n')
-run_case "old-flag-columns-ignored" "$U_OLD" $'musique/jazz\n' "" "musique/rock" 0
+# 6. Columns after the uuid are ignored: the sibling is still offered.
+U_EXTRA=$(printf 'musique\tA\tx\nmusique/jazz\tB\ty\nmusique/rock\tC\tz\n')
+run_case "extra-columns-ignored" "$U_EXTRA" $'musique/jazz\n' "" "musique/rock" 0
 
-# 7. Nothing left to ask -> exit 1, empty output.
+# 7. A tag of several parents (doc "Hierarchy references") is one line per
+#    path, with its uuid. A negative above one of its paths rules out the tag
+#    under every path: not an event, so not a marathon, even as a race.
+U_HIER=$(printf 'sport\tU1\nsport/courir\tU2\nsport/courir/maraton\tU3\névènement\tU4\névènement/maraton\tU3\n')
+run_case "negative-blocks-every-path" "$U_HIER" $'sport/courir\n' $'évènement\n' "" 1
+
+# 8. Without that negative, the marathon is asked about, once, by the path
+#    under the accepted branch.
+run_case "alias-asked-once" "$U_HIER" $'sport/courir\n' "" "évènement" 0
+
+# 9. Nothing left to ask -> exit 1, empty output.
 run_case "exhausted" "$U_BASE" $'musique/jazz\nmusique/rock\n' $'administratif\n' "" 1
 
 echo "----"

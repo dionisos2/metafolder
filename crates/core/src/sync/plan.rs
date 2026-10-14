@@ -189,7 +189,7 @@ impl Reads {
                         continue;
                     };
                     for f in m["fields"].as_array().into_iter().flatten() {
-                        if f["value"]["type"] == "tree_ref" {
+                        if is_position(f) {
                             if let Some(name) = f["name"].as_str() {
                                 if !fields.iter().any(|n| n == name) {
                                     fields.push(name.to_string());
@@ -1023,8 +1023,21 @@ fn resolve_link(
             return Ok(LinkDecision::Skip);
         }
         // Type-1: a free position must not force T out of one it already holds.
+        // In a hierarchy a free path is a parent T lacks, which the sync adds
+        // beside the ones it has (doc "Hierarchy references").
         let t_ids = identity_paths_in(ctx, reads, target_repo, t)?;
+        let source = reads.record(ctx, source_repo, record)?;
+        let hierarchies: Vec<&str> = source["fields"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|f| f["value"]["type"] == "hierarchy_ref")
+            .filter_map(|f| f["name"].as_str())
+            .collect();
         for (field, path, o) in &occ {
+            if hierarchies.contains(&field.as_str()) {
+                continue;
+            }
             if o.is_none() && t_ids.iter().any(|(tf, tp)| tf == field && tp != path) {
                 return Err(incoherence(
                     record,
@@ -1057,7 +1070,7 @@ fn identity_paths_in(
     let m = reads.record(ctx, repo, record)?;
     let mut fields: Vec<String> = Vec::new();
     for f in m["fields"].as_array().cloned().unwrap_or_default() {
-        if f["value"]["type"] == "tree_ref" {
+        if is_position(&f) {
             if let Some(name) = f["name"].as_str() {
                 if !fields.iter().any(|n| n == name) {
                     fields.push(name.to_string());
@@ -1137,9 +1150,7 @@ fn match_by_fields(
             if linked_target.contains(&uuid) || planned_target.contains(&uuid) {
                 continue;
             }
-            let has_tree_ref = r["fields"]
-                .as_array()
-                .is_some_and(|fs| fs.iter().any(|f| f["value"]["type"] == "tree_ref"));
+            let has_tree_ref = r["fields"].as_array().is_some_and(|fs| fs.iter().any(is_position));
             if has_tree_ref || field_signature(&r) != sig {
                 continue;
             }
@@ -1156,6 +1167,12 @@ fn match_by_fields(
     Ok((matches.len() == 1).then(|| matches[0]))
 }
 
+/// Whether a field (JSON) places its record in a forest or a hierarchy — a
+/// position, which gives the record an identity by path.
+fn is_position(f: &Json) -> bool {
+    f["value"]["type"].as_str().is_some_and(crate::metarecord::is_position_type)
+}
+
 /// A record's sync-relevant field signature: `(name, value_json)` for each field
 /// that is not `mfr_*` and not reference-typed, sorted for comparison.
 fn field_signature(m: &Json) -> Vec<(String, Json)> {
@@ -1166,7 +1183,10 @@ fn field_signature(m: &Json) -> Vec<(String, Json)> {
             continue;
         }
         let vtype = f["value"]["type"].as_str().unwrap_or_default();
-        if matches!(vtype, "ref" | "tree_ref" | "refbase" | "externalref" | "nothing") {
+        if matches!(
+            vtype,
+            "ref" | "tree_ref" | "hierarchy_ref" | "refbase" | "externalref" | "nothing"
+        ) {
             continue;
         }
         sig.push((name.to_string(), f["value"].clone()));

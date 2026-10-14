@@ -445,7 +445,7 @@ fn fmt_snapshot_value(row: &Json) -> String {
         // datetime is stored as Unix ms in value_int; display it as ISO-8601.
         "datetime" => row["value_int"].as_i64().map(date::iso8601_from_ms).unwrap_or_default(),
         "ref" | "refbase" | "externalref" => row["value_uuid"].as_str().unwrap_or("").to_string(),
-        "tree_ref" => row["value_name"].as_str().unwrap_or("").to_string(),
+        "tree_ref" | "hierarchy_ref" => row["value_name"].as_str().unwrap_or("").to_string(),
         other => format!("<{other}>"),
     }
 }

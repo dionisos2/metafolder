@@ -162,6 +162,9 @@ impl Snapshot {
                 Value::TreeRef { name: n, .. } => {
                     Value::TreeRef { parent: value_b, name: n.clone() }
                 }
+                Value::HierarchyRef { name: n, .. } => {
+                    Value::HierarchyRef { parent: value_b, name: n.clone() }
+                }
                 other => other.clone(),
             };
             snap.common.entry(name.to_string()).or_default().push((value, b));
@@ -176,7 +179,7 @@ impl Snapshot {
             for (a, b) in pairs {
                 let value_b = match b {
                     Value::Ref(u) => Some(*u),
-                    Value::TreeRef { parent, .. } => *parent,
+                    Value::TreeRef { parent, .. } | Value::HierarchyRef { parent, .. } => *parent,
                     _ => None,
                 };
                 out.push(json!({
@@ -217,11 +220,13 @@ impl Snapshot {
 // ── Translation ─────────────────────────────────────────────────────────────
 
 /// What a counterpart is looked up for: the target of a `ref`, or the parent of
-/// a `tree_ref` in `field`'s forest — the path that falls back on differs.
+/// a position in `field`'s forest — the path that falls back on differs. A
+/// parent missing on the other side is made there with the type of the
+/// position: a `hierarchy_ref` (`hierarchy`) or a `tree_ref`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lookup<'a> {
     Ref,
-    Parent { field: &'a str },
+    Parent { field: &'a str, hierarchy: bool },
 }
 
 /// Answers, for a record of one side, its counterpart on the other side (doc
@@ -249,8 +254,11 @@ pub fn translate(
     Ok(match value {
         Value::Ref(u) => tr.counterpart(from, *u, Lookup::Ref)?.map(Value::Ref),
         Value::TreeRef { parent: Some(p), name } => tr
-            .counterpart(from, *p, Lookup::Parent { field })?
+            .counterpart(from, *p, Lookup::Parent { field, hierarchy: false })?
             .map(|q| Value::TreeRef { parent: Some(q), name: name.clone() }),
+        Value::HierarchyRef { parent: Some(p), name } => tr
+            .counterpart(from, *p, Lookup::Parent { field, hierarchy: true })?
+            .map(|q| Value::HierarchyRef { parent: Some(q), name: name.clone() }),
         other => Some(other.clone()),
     })
 }
@@ -511,6 +519,39 @@ mod tests {
         assert_eq!(translate(&b, Side::B, "category", &tr).unwrap(), Some(a));
         let unlinked = Value::TreeRef { parent: Some(u(9)), name };
         assert_eq!(translate(&unlinked, Side::A, "category", &tr).unwrap(), None);
+    }
+
+    #[test]
+    fn a_hierarchy_ref_translates_its_parent_as_a_tree_ref_does() {
+        let tr = Links(HashMap::from([(u(1), u(2))]));
+        let name = TreeName::from("maraton");
+        let a = Value::HierarchyRef { parent: Some(u(1)), name: name.clone() };
+        let b = Value::HierarchyRef { parent: Some(u(2)), name: name.clone() };
+        assert_eq!(translate(&a, Side::A, "path", &tr).unwrap(), Some(b.clone()));
+        let root = Value::HierarchyRef { parent: None, name: name.clone() };
+        assert_eq!(translate(&root, Side::A, "path", &tr).unwrap(), Some(root));
+        let unlinked = Value::HierarchyRef { parent: Some(u(9)), name };
+        assert_eq!(translate(&unlinked, Side::A, "path", &tr).unwrap(), None);
+    }
+
+    #[test]
+    fn a_hierarchy_ref_snapshot_keeps_both_perspectives() {
+        let mut snap = Snapshot::default();
+        let name = TreeName::from("maraton");
+        snap.common.insert(
+            "path".into(),
+            vec![
+                (
+                    Value::HierarchyRef { parent: Some(u(1)), name: name.clone() },
+                    Value::HierarchyRef { parent: Some(u(2)), name: name.clone() },
+                ),
+                (
+                    Value::HierarchyRef { parent: Some(u(3)), name: name.clone() },
+                    Value::HierarchyRef { parent: Some(u(4)), name },
+                ),
+            ],
+        );
+        assert_eq!(Snapshot::from_wire(&snap.to_wire()), snap);
     }
 
     #[test]

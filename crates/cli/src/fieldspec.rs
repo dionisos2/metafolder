@@ -43,17 +43,21 @@ pub fn parse_field_spec(spec: &str) -> Result<(String, Value), String> {
             })?;
             Value::ExternalRef { repo: parse_uuid(repo)?, metarecord: parse_uuid(metarecord)? }
         }
-        ("tree_ref", Some(v)) => {
+        (ty @ ("tree_ref" | "hierarchy_ref"), Some(v)) => {
             let (parent, leaf) = v.split_once('/').ok_or_else(|| {
-                format!("invalid tree_ref value '{v}': expected <parent_uuid>/<name> or /<name>")
+                format!("invalid {ty} value '{v}': expected <parent_uuid>/<name> or /<name>")
             })?;
             if leaf.is_empty() || leaf.contains('/') {
                 return Err(format!(
-                    "invalid tree_ref name '{leaf}': must be a single non-empty path component"
+                    "invalid {ty} name '{leaf}': must be a single non-empty path component"
                 ));
             }
             let parent = if parent.is_empty() { None } else { Some(parse_uuid(parent)?) };
-            Value::TreeRef { parent, name: leaf.into() }
+            if ty == "tree_ref" {
+                Value::TreeRef { parent, name: leaf.into() }
+            } else {
+                Value::HierarchyRef { parent, name: leaf.into() }
+            }
         }
         (other, None) => {
             return Err(format!("invalid field spec '{spec}': missing '=value' for type '{other}'"))
@@ -237,6 +241,20 @@ mod tests {
             ok("parent:tree_ref=8f3a2b1c4d5e6f708192a3b4c5d6e7f8/félins"),
             ("parent".into(), Value::TreeRef { parent: Some(parent), name: "félins".into() })
         );
+    }
+
+    #[test]
+    fn test_hierarchy_ref_takes_the_tree_ref_form() {
+        let parent = Uuid::parse_str("8f3a2b1c4d5e6f708192a3b4c5d6e7f8").unwrap();
+        assert_eq!(
+            ok("path:hierarchy_ref=8f3a2b1c4d5e6f708192a3b4c5d6e7f8/maraton"),
+            ("path".into(), Value::HierarchyRef { parent: Some(parent), name: "maraton".into() })
+        );
+        assert_eq!(
+            ok("path:hierarchy_ref=/sport"),
+            ("path".into(), Value::HierarchyRef { parent: None, name: "sport".into() })
+        );
+        err("path:hierarchy_ref=/a/b");
     }
 
     #[test]

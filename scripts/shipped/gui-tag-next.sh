@@ -7,15 +7,17 @@
 # to share the hierarchy helpers.
 #
 # Usage: gui-tag-next.sh <universe_file> <pos_file> <neg_file>
-#   universe_file : one tag path per line (`mf tag list`); further TAB columns
+#   universe_file : one line per tag path (`mf tag list`): "path <TAB> uuid".
+#                   A tag of several parents has several paths, one uuid; a
+#                   line without the uuid is a tag of its own. Further columns
 #                   are ignored. Line order breaks depth ties.
 #   pos_file      : positive tag paths (one per line).
 #   neg_file      : negative tag paths (one per line).
 #
 # A tag path is "/"-separated (e.g. musique/jazz). Semantics: adding a specific
 # tag drops its more general ancestors; a generic negative blocks its whole
-# subtree; a specific positive implies (and hides) its ancestors. Siblings never
-# exclude each other.
+# subtree — under every path of the tags in it; a specific positive implies
+# (and hides) its ancestors. Siblings never exclude each other.
 
 set -euo pipefail
 
@@ -71,12 +73,13 @@ gui_tag_next() {
     # metarecord. gui-tag-folder.sh already records the lesson — "one process
     # per entry is seconds of pure forking" — and this was the worst offender.
     local -a order=() positives=()
-    local -A is_pos=() is_neg=()
-    local path line
+    local -A is_pos=() is_neg=() tag_of=() blocked=()
+    local path line uuid
 
-    while IFS=$'\t' read -r path _ || [ -n "$path" ]; do
+    while IFS=$'\t' read -r path uuid _ || [ -n "$path" ]; do
         [ -n "$path" ] || continue
         order+=("$path")
+        tag_of[$path]=${uuid:-$path}
     done <"$universe"
 
     while IFS= read -r line || [ -n "$line" ]; do
@@ -90,35 +93,41 @@ gui_tag_next() {
         is_neg[$line]=1
     done <"$neg"
 
-    local best="" best_depth=-1
-    local ancestor child child_parent parent depth slashes blocked engaged
+    # A generic negative blocks its whole subtree, and a tag of several
+    # parents is in it whichever path the question would name it by: the
+    # tags under a negative, by any of their paths, are set aside first.
+    # Walking a path's own ancestors costs its depth rather than the
+    # negatives' length.
+    local ancestor
     for path in ${order+"${order[@]}"}; do
-        [ -z "${is_pos[$path]:-}" ] || continue           # already positive
-        [ -z "${is_neg[$path]:-}" ] || continue           # already negative
-
-        # A generic negative blocks its whole subtree. Walking the candidate's
-        # own ancestors is the same set as scanning the negatives for one, and
-        # costs the path's depth rather than the negatives' length.
-        blocked=0
         ancestor=$path
         while [ "${ancestor%/*}" != "$ancestor" ]; do
             ancestor=${ancestor%/*}
             if [ -n "${is_neg[$ancestor]:-}" ]; then
-                blocked=1
+                blocked[${tag_of[$path]}]=1
                 break
             fi
         done
-        [ "$blocked" = 0 ] || continue
+        if [ -n "${is_pos[$path]:-}" ] || [ -n "${is_neg[$path]:-}" ]; then
+            blocked[${tag_of[$path]}]=1 # answered, under one of its paths
+        fi
+    done
+
+    local best="" best_depth=-1
+    local child child_parent parent depth slashes hidden engaged
+    for path in ${order+"${order[@]}"}; do
+        # Answered, or under a negative — by any of the tag's paths.
+        [ -z "${blocked[${tag_of[$path]}]:-}" ] || continue
 
         # A specific positive implies — and so hides — its ancestors.
-        blocked=0
+        hidden=0
         for child in ${positives+"${positives[@]}"}; do
             if [[ $child == "$path"/* ]]; then
-                blocked=1
+                hidden=1
                 break
             fi
         done
-        [ "$blocked" = 0 ] || continue
+        [ "$hidden" = 0 ] || continue
 
         # Reachable: the branch is engaged (the parent, or one of its direct
         # children, is positive). Top-level tags are always reachable.

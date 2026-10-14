@@ -538,7 +538,7 @@ enum TagVerb {
     Mixed { path: String },
     /// Drop the tag from the record(s) (undo of add)
     Remove { path: String },
-    /// List the tag vocabulary, one path per line
+    /// List the tag vocabulary as TSV: path<TAB>uuid, one line per path
     List,
 }
 
