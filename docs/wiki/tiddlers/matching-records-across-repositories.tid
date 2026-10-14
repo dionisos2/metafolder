@@ -11,12 +11,12 @@ into B, then B's into A.
 !! By position
 
 A record's identity is its position in each forest it sits in: the path of each
-of its `tree_ref` fields ([[TreeRef forest]]) — `mfr_path` for a file, the tag
-forest for a tag. A position holds one record, so the path names at most one
+of its `tree_ref` and `hierarchy_ref` fields ([[TreeRef forest]],
+[[Hierarchy references]]) — `mfr_path` for a file, the tag hierarchy for a tag. A position holds one record, so the path names at most one
 counterpart.
 
 * ''One position'' (a file, a tag): the record at that path on the other side, found through the forest's own path resolution (`tree/resolve-path`) — any forest, whatever its root convention ([[TreeRef path conventions]]). None there: a ''bare'' record is planned, created by the run and placed at that path by the link's first sync.
-* ''Several positions'': each position's occupant on the other side. Two different occupants, or one that already sits elsewhere in a forest where this record's position is free, is an ''incoherence'': the plan stops and names the record and its positions, so that no half-plan is written; `mf sync link` settles it by hand. One occupant, otherwise: linked to it. None: a bare record.
+* ''Several positions'': each position's occupant on the other side. Two different occupants, or one that already sits elsewhere in a forest where this record's position is free, is an ''incoherence'': the plan stops and names the record and its positions, so that no half-plan is written; `mf sync link` settles it by hand. One occupant, otherwise: linked to it. None: a bare record. In a hierarchy a path free on the other side is no incoherence: it is a parent the occupant lacks, which the link's sync adds.
 
 The plan asks for the occupants by set, not per record: an `or` of exact-node equalities (`field = "path"`, up to 200 positions a request) and `query/fields/resolve-tree` to map each answer back to the position it holds. An answer that does not map back by its text — a case-insensitive repository spelling the name otherwise — is asked again through `tree/resolve-path`, and a position is read as free only when every occupant found was accounted for.
 
@@ -26,7 +26,7 @@ not want in one repository; the next sync carries that deletion over.
 
 !! Without a position
 
-A record with no `tree_ref` field (an abstract record, an orphan whose path is
+A record with no position field (an abstract record, an orphan whose path is
 gone) is linked to the one record of the other side with ''exactly'' the same
 fields — `mfr_*` fields and references aside —, that has no position and no link
 either. None, or more than one: a bare record. The other side is searched to the

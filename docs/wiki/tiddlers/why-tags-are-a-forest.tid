@@ -15,6 +15,12 @@ a `tree_ref` `path` and pointed at it with `tag`. Everything was unified on the 
 * renaming or moving a tag is one write to one node, and every path under it follows;
 * the [[treeref panel]] browses and edits the vocabulary as it does folders.
 
+In October 2026 a tag's `path` became a `hierarchy_ref`, the forest's generalisation
+to several parents, for the tags that are a kind of two things
+([[Hierarchy references]]); the queries, the tree panel and the guarantees above
+still serve it. A repository created before keeps its forest until converted
+([[Converting a tag vocabulary to a hierarchy]]).
+
 The field names became singular at the same time — `tag`, `negative_tag`,
 `mixed_tag` — since each row holds one tag. Data written with the old convention is not
 converted: `mf tag` does not see it. No conversion was written because none was needed:

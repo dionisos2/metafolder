@@ -15,6 +15,7 @@ A command that writes fields takes a ''field spec'', `name:type[=value]` (the ty
 |`datetime` |`name:datetime=<ISO-8601 UTC>` |`added:datetime=2024-01-01T12:00:00Z` |
 |`ref` |`name:ref=<metarecord uuid>` |`author:ref=8f3a…` |
 |`tree_ref` |`name:tree_ref=<parent uuid>/<name>`, or `/<name>` for a root |`parent:tree_ref=8f3a…/félins` |
+|`hierarchy_ref` |the same form, one spec per parent |`path:hierarchy_ref=8f3a…/maraton` |
 |`refbase` |`name:refbase=<repository uuid>` |`origin:refbase=47ab…` |
 |`externalref` |`name:externalref=<repository uuid>:<metarecord uuid>` |`link:externalref=47ab…:8f3a…` |
 

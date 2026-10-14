@@ -4,9 +4,12 @@ aliases: tag tagging negative_tag mixed_tag vocabulary
 summary: Tags are metarecords placed in a tree by their path; a record points at the tags it has, the ones it has not, and — for a folder — the ones it partly has.
 
 A ''tag'' is a metarecord of its own, a ''tag entry'' (`mf_schema = "tag"`), whose
-place in the hierarchy is a `tree_ref` field `path`: `musique/jazz` is the entry named
-`jazz` under the entry named `musique` ([[TreeRef forest]]). The path is the tag's
-identity; an optional `label` may name it for display.
+place in the hierarchy is a `hierarchy_ref` field `path`: `musique/jazz` is the entry
+named `jazz` under the entry named `musique`. A tag may hang under several parents —
+a marathon is a race and an event, so it is both `sport/courir/maraton` and
+`évènement/maraton` ([[Hierarchy references]]); a repository created before October
+2026 places its tags in a `tree_ref` forest, one parent each ([[TreeRef forest]]).
+The paths name the tag; an optional `label` may name it for display.
 
 A record says what it is about through three multi-valued `ref` fields pointing at tag
 entries:

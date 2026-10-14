@@ -7,8 +7,10 @@ summary: tree_ref fields place metarecords in trees — one forest per field nam
 A `tree_ref` value places its metarecord in a tree: it names a ''parent'' (or none,
 for a root) and the metarecord's ''name'' under it ([[Value types]]). All the
 `tree_ref` rows of one field name form a ''forest'' — several roots allowed — and
-different field names are independent forests: `mfr_path` is the filesystem, the
-tag hierarchy is `path` on the tag entries, a collection could be another.
+different field names are independent forests: `mfr_path` is the filesystem, a
+collection could be another. Where a node must hang under several parents — a tag
+that is a kind of two things — the field is a `hierarchy_ref` instead, which keeps
+the rules below but the single position ([[Hierarchy references]]).
 
 A forest is held to four rules on every write, each refused with `400`:
 

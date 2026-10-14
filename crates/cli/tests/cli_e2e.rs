@@ -5080,6 +5080,52 @@ fn test_mf_tag_follows_every_parent_of_a_hierarchy() {
     }
 }
 
+/// A repository created before hierarchies has a forest vocabulary and a schema
+/// saying so. Converting it (doc "Hierarchy references") is the schema's
+/// constraint changed, reloaded, then the field retyped — after which a tag
+/// takes a second parent, and `mf tag` keeps working.
+#[test]
+fn test_a_tree_vocabulary_converts_to_a_hierarchy() {
+    let (repo, root) = init_repo("tag-convert");
+    let schema = |ty: &str, max: &str| {
+        format!(
+            r#"{{"version": 1, "groups": [{{"targets": ["tag"], "constraints": [
+                {{"field": "path", "type": "{ty}", "min": 1{max}}}]}}]}}"#
+        )
+    };
+    let file = root.join(".metafolder/schema.json");
+    std::fs::write(&file, schema("tree_ref", r#", "max": 1"#)).unwrap();
+    assert_ok(&mf(&["-u", &repo, "schema", "reload"]));
+    let rec = create_metarecord(&repo, &["note:string=target"]);
+    assert_ok(&mf(&["-u", &repo, "tag", "-i", &rec, "add", "sport/courir/maraton"]));
+    assert_ok(&mf(&["-u", &repo, "tag", "-i", &rec, "add", "évènement"]));
+    let out = mf(&["-u", &repo, "field", "list"]);
+    assert!(out.stdout.lines().any(|l| l == "path\ttree_ref"), "{}", out.stdout);
+
+    std::fs::write(&file, schema("hierarchy_ref", "")).unwrap();
+    assert_ok(&mf(&["-u", &repo, "schema", "reload"]));
+    let out = mf(&["-u", &repo, "retype", "path", "hierarchy_ref"]);
+    assert_ok(&out);
+
+    let id_of = |q: &str| -> String {
+        let out = mf(&["-u", &repo, "metarecord", "-q", q, "get"]);
+        assert_ok(&out);
+        out.stdout.trim().to_string()
+    };
+    let maraton = id_of(r#"path = "sport/courir/maraton""#);
+    let event = id_of(r#"path = "évènement""#);
+    let spec = format!("path:hierarchy_ref={event}/maraton");
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &maraton, "field", "add", &spec]));
+    assert_eq!(id_of(r#"path = "évènement/maraton""#), maraton);
+    // The marathon is an event now: tagging it drops the event tag it implies.
+    assert_ok(&mf(&["-u", &repo, "tag", "-i", &rec, "add", "évènement/maraton"]));
+    let out =
+        mf(&["-u", &repo, "metarecord", "-i", &rec, "field", "get", "tag", "--resolve", "path"]);
+    let mut tags: Vec<&str> = out.stdout.lines().collect();
+    tags.sort();
+    assert_eq!(tags, vec!["sport/courir/maraton", "évènement/maraton"]);
+}
+
 /// A fresh vocabulary is a hierarchy: `mf tag` creates its entries with a
 /// `hierarchy_ref`, while a vocabulary already placed by `tree_ref` keeps it.
 #[test]

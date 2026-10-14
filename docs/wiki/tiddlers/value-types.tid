@@ -12,6 +12,7 @@ summary: The ten value types, what each holds, and their JSON form.
 |`datetime` |an instant, stored as Unix milliseconds (UTC) |an ISO-8601 string, `YYYY-MM-DDTHH:MM:SSZ` |
 |`ref` |another metarecord of the same repository |its uuid |
 |`tree_ref` |a position in a named tree: a parent and a name |`{"parent": <uuid or null>, "name": …}` |
+|`hierarchy_ref` |a position in a hierarchy, one row per parent ([[Hierarchy references]]) |`{"parent": <uuid or null>, "name": …}` |
 |`refbase` |a repository |its uuid |
 |`externalref` |a metarecord of another repository |`{"repo": <uuid>, "metarecord": <uuid>}` |
 

@@ -20,6 +20,10 @@ reporting the metarecord like any value that fell back ([[Changing a field's typ
 `mfr_path` is stricter still: a metarecord holds at most one `mfr_path` row of any
 kind, `nothing` included — a file tracks one path.
 
+A node that ''is'' under several parents — a tag that is a race and an event — is
+what a `hierarchy_ref` places ([[Hierarchy references]]): a type of its own, where
+several parents are an implication and not a second path.
+
 The multi-map stays the rule for every other type. A file under several names (hard
 links) is several metarecords, one per path, related by `mfr_inode`
 ([[What counts as a duplicate]]); a tag at several places of a hierarchy is a `ref`

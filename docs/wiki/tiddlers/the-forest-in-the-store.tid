@@ -8,7 +8,8 @@ For every `tree_ref` field, each node with children keeps the bitmap of ''all'' 
 descendants, and each target the bitmap of the ids pointing at it (a folder's
 children, a `ref`'s referrers). A node holds one position per forest
 ([[One position per forest]]), which is what makes this set
-arithmetic:
+arithmetic (a `hierarchy_ref` node of several parents is the exception, recomputed
+from its ancestors' children when it loses one: [[Hierarchy references]]):
 
 * ''a node is created'' under a parent: its id joins each ancestor's bitmap — about depth chunk writes;
 * ''a subtree moves'': its descendants and itself leave each old ancestor's bitmap and join each new one's — about depth operations, ''independent of the subtree's size'' (a move of 750 000 records took 6 ms, measured);

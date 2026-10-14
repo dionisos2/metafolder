@@ -1,0 +1,27 @@
+title: Converting a tag vocabulary to a hierarchy
+tags: [[Hierarchical tags]]
+kind: guide
+summary: A repository created before October 2026 places its tags with tree_ref: change the schema's constraint, reload it, retype the field — then a tag can take a second parent.
+
+A repository created before October 2026 places its tags with a `tree_ref` `path`,
+and its copy of the schema says so (`"type": "tree_ref", "max": 1` on `path`,
+[[Schema file]]). It keeps working as it is: `mf tag` writes the type the field has.
+To let a tag hang under several parents ([[Hierarchy references]]), convert it:
+
+# In the repository's `.metafolder/schema.json`, change the tag group's `path` constraint to `{"field": "path", "type": "hierarchy_ref", "min": 1}` — the new type, and no `max`.
+# `mf -n <repo> schema reload`.
+# `mf -n <repo> retype path hierarchy_ref` — every tree is a hierarchy, so nothing falls back ([[Changing a field's type]]).
+
+It is one write, undone by `mf log undo` (the schema file is not: put the old
+constraint back by hand). Then a second parent is an added row:
+
+```
+mf -n <repo> metarecord -q 'path = "sport/courir/maraton"' field add path:hierarchy_ref=<évènement's uuid>/maraton
+```
+
+or, in the GUI's detail panel on the tag, `metarecord:field add path évènement/maraton`
+— the parent is typed by its path.
+
+Done in this order: retyped first, the field would break the constraint the schema
+still holds. `tests/cli_e2e.rs` (`test_a_tree_vocabulary_converts_to_a_hierarchy`)
+runs it.

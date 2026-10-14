@@ -1,9 +1,8 @@
 title: Hierarchy references
 tags: [[Hierarchical tags]] [[TreeRef forest]]
 kind: reference
-status: proposed
 aliases: hierarchy_ref polyhierarchy
-summary: A proposed hierarchy_ref type: a node with one name and several parents, no cycle — so a tag can be both a kind of running and a kind of event.
+summary: hierarchy_ref places a node under several parents, with one name and no cycle — so a tag can be a kind of running and a kind of event at once; every tree question reads all its paths.
 
 A `tree_ref` gives a node one parent ([[One position per forest]]). That is right for
 a file, which has one path, and wrong for a concept that is a kind of two things: a
@@ -13,24 +12,23 @@ write — a marathon is more specific than "a race that is an event", and it may
 narrower tags of its own, which are races and events too.
 
 A `hierarchy_ref` is the type for that: a hierarchy where a node may hang under
-several parents. `mfr_path` stays a `tree_ref`; the tag vocabulary's `path` becomes a
-`hierarchy_ref`. Two types for two meanings, rather than reopening several positions
-in a forest, whose problems ([[One position per forest]]) are those of a node with one
-path, not of an implication.
-
-Status: decided with the user in October 2026, not built.
+several parents. `mfr_path` stays a `tree_ref`; a tag's `path` is a `hierarchy_ref`
+in a repository created since October 2026 ([[Tag entries and references]]). Two
+types for two meanings, rather than several positions in a forest, whose problems
+([[One position per forest]]) are those of a node with one path, not of an
+implication. Decided with the user in October 2026.
 
 !! The value
 
-* ''One name per node'', several parents. A node's rows are one per parent, all bearing the same name; a node with no parent is a root. The same concept cannot be named differently in two places.
-* A multi-valued field: adding a parent is an append, leaving one a removal of that row, moving a node a set of its rows.
-* `tree_ref`'s JSON shape (`{parent, name}`) per row, under its own `type`.
+* ''One row per parent'', all bearing the node's ''one name''; a node with a root row (no parent) is a root. The same concept cannot be named differently in two places: a write giving a node two names is refused (`400`), and renaming it is a set of all its rows.
+* Adding a parent is an append, leaving one a removal of that row, moving a node a set of its rows.
+* `tree_ref`'s JSON shape per row, under its own type: `{"type": "hierarchy_ref", "value": {"parent": <uuid or null>, "name": …}}`, written `path:hierarchy_ref=<parent>/<name>` on the command line ([[Field specifications]]).
 
 !! What stays true
 
-* ''No cycle'': a write adding a parent P to a node N is refused (`400`) when N is P or an ancestor of P. Depth ≤ 1000, as for a forest.
-* ''Referential integrity'': a parent exists in the same hierarchy; a node with children cannot lose its last row ([[Referential integrity of a forest]]).
-* ''Names are unique among the children of each parent'', so a path still names at most one node.
+* ''No cycle'': a parent that is the node itself, or below it by any path, is refused. Depth ≤ 1000, as in a forest.
+* ''Referential integrity'': a parent is a node of the same hierarchy; a node with children may lose a parent but not its last position ([[Referential integrity of a forest]]).
+* ''Names are unique among the children of each parent'', so a path names at most one node.
 
 !! Paths
 
@@ -38,41 +36,49 @@ A node has one path per way up to a root: the marathon is `sport/courir/maraton`
 `évènement/maraton`.
 
 * `path = "évènement/maraton"` resolves segment by segment, as in a tree, and finds it.
-* `:path`, `osm(path, …)` and `resolve-tree` are multi-valued: a node matches when one of its paths does, and `resolve-tree` returns them all.
-* The clients show ''every'' path of a node, not a canonical one.
+* `:path`, `:parent`, `osm(path, …)` read ''every'' path: a node matches when one of them does. `resolve-tree` returns them all, up to 256 a node.
+* The clients show every path: one line each in `mf … field get --resolve` and `mf tag list`, one row per parent in the GUI's detail panel, each shown as the path through that parent.
+* Sorted by path, a node takes the smallest of its positions' keys, each made of the name under its parent's key — the rule of a multi-valued field ([[Pagination and sorting]]).
 
 !! Following
 
-`field ->* …` and `field =>* …` accept a `hierarchy_ref` ([[Following references]]):
-the descendants of a node are everything below it by any path, counted once.
-`tag -> (path =>* "évènement")` finds the marathons. So subsumption, the tag queries
-(`#=évènement`) and the treeref panel get the second parent from the type, with no
-convention of their own.
+`field ->* …` and `field =>* …` read a hierarchy ([[Following references]]): the
+descendants of a node are everything below it by any path, counted once.
+`tag -> (path =>* "évènement")` finds what is tagged with a marathon. So subsumption,
+the tag queries (`#=évènement`) and the [[treeref panel]] get the second parent from
+the type, with no convention of their own.
 
 !! In the store
 
 Each node keeps the bitmap of its descendants, as in a forest
 ([[The forest in the store]]), so a subtree stays one read.
 
-* ''Adding'' an edge N → P adds N and N's descendants to P and to each ancestor of P.
-* ''Removing'' an edge cannot subtract: an ancestor may still reach those nodes by another path. The ancestors the edge reached are recomputed bottom-up, each from its children's bitmaps. The cost is the number of those ancestors, not the depth — negligible for a vocabulary of tags, and the reason `mfr_path` does not use this type.
+* ''Adding'' an edge N → P adds N and N's descendants to P and to each of P's ancestors, by every path up.
+* ''Removing'' an edge cannot subtract: an ancestor may still reach those nodes another way. P's bitmap and its ancestors' are recomputed from their children's, the children outside that set standing for their subtrees by their stored bitmaps. The cost is the number of those ancestors, not the depth — negligible for a vocabulary of tags, and the reason `mfr_path` does not use this type.
 
-This is the part to test hardest: an oracle recomputing every bitmap from the rows,
-compared after random sequences of adds, removals, moves and reverts (the query oracle
-already answers `=>*` by walking the rows — [[The query oracle]]).
+`tests/hierarchy_ref.rs` holds every bitmap to a walk of the rows after random
+sequences of new nodes, added parents, moves and removed parents, and to a rebuild
+([[Checking and reindexing a repository]]); `tests/hierarchy_query.rs` holds the
+serving path to [[The query oracle]] on every tree question.
 
 !! Tags
 
-`mf tag` reads ancestry from the daemon instead of from path strings (today
-`is_ancestor("musique", "musique/jazz")` compares strings): the ancestors of a tag are
-all its ancestors by every parent. Subsumption and the contradictions keep their
-meaning ([[Tag subsumption]]).
+`mf tag` reads a tag's ancestors and descendants through all its paths: the string
+ancestors of every path of a tag are its ancestors by every parent. Subsumption and
+the contradictions keep their meaning ([[Tag subsumption]]): having the marathon
+drops the event and the race tags, not being an event takes back the marathon
+whichever path named it. `gui-tag-next.sh` sets a tag aside once any of its paths is
+under a negative. Exclusivity was removed first: siblings are ambiguous once a node
+has several parents ([[Why tags have no exclusivity]]).
 
-Exclusivity was removed first, independently of this type: siblings are ambiguous once
-a node has several parents ([[Why tags have no exclusivity]]).
+A repository whose vocabulary is still a forest keeps it, and `mf tag` keeps writing
+`tree_ref` there; [[Converting a tag vocabulary to a hierarchy]] says how to change it.
 
-!! Delivery
+!! Sync
 
-* A new `Value` variant: a new JSON type, so `API_VERSION` is bumped.
-* The tag vocabulary's `path` is converted from `tree_ref` to `hierarchy_ref` — every tree is a valid hierarchy, so the conversion is one-to-one ([[Persisted format changes]], [[Changing a field's type]]).
-* [[Why tags are a forest]] and [[One position per forest]] are updated to point here.
+A `hierarchy_ref` crosses repositories as a `tree_ref` does
+([[Ref translation during sync]]): its parent is translated, its name kept. A node is
+matched by any of its paths ([[Matching records across repositories]]); a path the
+other side lacks is a parent to add there, not a position the record would be forced
+out of. On a first sync two different sets of parents are a conflict, settled like
+any other ([[Sync conflicts]]).

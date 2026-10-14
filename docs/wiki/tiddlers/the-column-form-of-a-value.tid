@@ -10,14 +10,14 @@ It is the key-value store's form of a row and the form a log snapshot shows, so 
 changes only with a migration.
 
 |!Column |!Holds |
-|`value_type` |`nothing` · `string` · `int` · `float` · `bool` · `datetime` · `ref` · `tree_ref` · `refbase` · `externalref` |
+|`value_type` |`nothing` · `string` · `int` · `float` · `bool` · `datetime` · `ref` · `tree_ref` · `hierarchy_ref` · `refbase` · `externalref` |
 |`value_text` |`string` |
 |`value_int` |`int`, `bool` (0/1), `datetime` (Unix ms) |
 |`value_real` |`float` |
-|`value_uuid` |`ref`/`refbase`/`externalref`: the uuid pointed at; `tree_ref`: the parent (the zero uuid for a root) |
+|`value_uuid` |`ref`/`refbase`/`externalref`: the uuid pointed at; `tree_ref`, `hierarchy_ref`: the parent (the zero uuid for a root) |
 |`value_ref_repo` |`externalref`: the repository |
-|`value_name` |`tree_ref`: the name as displayed |
-|`value_name_bytes` |`tree_ref`: the name's exact bytes (its identity) |
+|`value_name` |`tree_ref`, `hierarchy_ref`: the name as displayed |
+|`value_name_bytes` |`tree_ref`, `hierarchy_ref`: the name's exact bytes (its identity) |
 
 Uuids are stored as their 16 raw bytes. The metarecord's version is stored beside its
 rows ([[Metarecord version]]); where the rows sit in the store: [[Store tables]].

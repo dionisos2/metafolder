@@ -21,7 +21,8 @@ retype is one logged write, so `mf log undo` takes it back. Reserved names
 * ''To `string`'' — always, losslessly, by the value's canonical text: numbers and booleans as text, dates as ISO-8601, `ref`/`refbase` as a 32-hex uuid, `tree_ref` as `<parent-hex>/<name>` (`/<name>` for a root), `externalref` as `<repo-hex>:<metarecord-hex>`.
 * ''From `string`'' — by parsing that same form (surrounding spaces ignored). `string` is the hub: to reinterpret a value as another reference type, go through it.
 * ''Between scalars'' — `int`, `float`, `bool` and `datetime` convert between each other (a float to an int truncates; a bool is `0`/`1`; a date is its Unix milliseconds; a number is true unless zero), except a `bool` to a `datetime`.
-* ''Between two different reference types'', or between a reference and a scalar other than `string` — no conversion.
+* ''Between `tree_ref` and `hierarchy_ref''' — as they are: every tree is a hierarchy ([[Hierarchy references]]). Back to `tree_ref`, a node keeps its first parent and the others fall back, being second positions.
+* ''Between two other reference types'', or between a reference and a scalar other than `string` — no conversion.
 
 A value that does not convert takes the target's ''default'', chosen to be easy to
 find afterwards: `0`, `0.0`, `false`, `""`, the Unix epoch, or `nothing` for the

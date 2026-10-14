@@ -8,7 +8,7 @@ summary: What a tag entry holds, how records point at one, and the [tag] table t
 
 |!Field |!Type |!Meaning |
 |`mf_schema` |`string` = `tag` |marks the metarecord as a tag entry |
-|`path` |`tree_ref` |its position: parent entry and name. A top-level tag is a root of the forest, so paths have no leading `/` ([[TreeRef path conventions]]) |
+|`path` |`hierarchy_ref`, one row per parent (`tree_ref` in a repository created before October 2026) |its positions: parent entry and name, the same name on every row ([[Hierarchy references]]). A top-level tag is a root, so paths have no leading `/` ([[TreeRef path conventions]]) |
 |`label` |`string` |optional display name |
 
 An entry with no resolvable `path` is not part of the vocabulary. `mf tag` creates
