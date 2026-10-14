@@ -843,11 +843,13 @@ mod tests {
                 "`f` does not find an entry in the {panel} panel"
             );
         }
-        // `d` walks down by name in the file manager (a directory found is
-        // entered and the question asked again).
-        assert!(table.iter().any(|b| b.keys == ["d"]
-            && b.when.as_deref() == Some("file-manager")
-            && b.invocation == "file-manager:find walk"));
+        // `d` walks down by name in the file manager and the tree explorer
+        // (a directory, a node with children, is entered and asked again).
+        for panel in ["file-manager", "treeref"] {
+            assert!(table.iter().any(|b| b.keys == ["d"]
+                && b.when.as_deref() == Some(panel)
+                && b.invocation == format!("{panel}:find walk")));
+        }
         // The treeref field picker moved off `f` to make room for it.
         assert!(table.iter().any(|b| b.keys == ["shift+f"] && b.invocation == "treeref:set field"));
         assert!(!f.iter().any(|b| b.invocation == "treeref:set field"));

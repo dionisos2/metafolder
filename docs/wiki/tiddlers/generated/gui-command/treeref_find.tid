@@ -9,4 +9,5 @@ summary: TreeRef explorer: jump to a child by name
 
 !! Default keys
 
-* ``f`` → ``treeref:find`` (in the ``treeref`` panel)
+* ``d`` → ``treeref:find walk`` (in the ``treeref`` panel)
+* ``f`` → ``treeref:find select`` (in the ``treeref`` panel)

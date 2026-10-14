@@ -1052,6 +1052,39 @@ scenario_walk() {
     typed "b"
     keys shift+Return
     assert "walk: shift+return stops on the directory, selected" until_ok 10 fm_at /a b
+
+    # The tree explorer walks the same way, over the mfr_path forest: a node
+    # with children is gone into, a leaf is selected.
+    record "$REPO_DIR/a" >/dev/null && record "$REPO_DIR/a/b" >/dev/null &&
+        record "$REPO_DIR/a/b/c.txt" >/dev/null || die "record a/b/c.txt"
+    show_panel left treeref treeref:refresh
+    run treeref:set field mfr_path
+    run treeref:find walk /
+    for name in a b; do
+        sleep 1
+        typed "$name"
+        keys Return
+    done
+    sleep 1
+    typed "c.txt"
+    keys Return
+    assert "walk (treeref): a leaf named is selected" until_ok 10 tree_at /a/b/c.txt
+
+    run treeref:root
+    run treeref:find walk /
+    sleep 1
+    typed "a"
+    keys Return
+    sleep 1
+    typed "b"
+    keys shift+Return
+    assert "walk (treeref): shift+return stops on the node, selected" until_ok 10 tree_at /a/b
+}
+
+# tree_at <path> — the tree explorer's selected node is <path>.
+tree_at() {
+    [ "$(ws_var selected_treeref | python3 -c 'import json, sys
+print((json.load(sys.stdin) or {}).get("path"))')" = "$1" ]
 }
 
 scenario_devtools() {

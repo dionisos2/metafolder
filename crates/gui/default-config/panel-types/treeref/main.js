@@ -524,6 +524,18 @@ export async function mount(root, metafolder) {
     prompt: 'Go to child:',
     entries: () => children.map((child) => ({ name: nodeLabel(child) })),
     select,
+    // `treeref:find walk` goes into a node that has children. Whether it has
+    // is not known beforehand (a leaf entered shows an empty list), so one
+    // child is asked for: a leaf is selected instead, like a file.
+    enter: async (index) => {
+      const child = children[index];
+      if (!child || repo === null) return false;
+      const probe = await daemon.query(repo, { query: childrenQuery(field, child.uuid), limit: 1 });
+      if (probe.records.length === 0) return false;
+      stack = [...stack, { uuid: child.uuid, name: child.name }];
+      await fetchChildren(true);
+      return true;
+    },
   });
 
   // Which forest the explorer browses, and which Ref field it follows back:

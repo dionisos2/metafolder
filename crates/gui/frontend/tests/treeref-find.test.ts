@@ -55,7 +55,14 @@ function stub() {
     visible: true,
     whenVisible: (fn: () => void) => fn(),
     daemon: {
-      query: vi.fn(async () => ({ records: [], nextCursor: null })),
+      query: vi.fn(async (_repo: string, req: { query: { target?: { uuids?: string[] } } }) =>
+        req.query.target?.uuids?.[0] === 'u-music'
+          ? {
+              records: [{ uuid: 'u-jazz', fields: [{ name: 'tag', value: { type: 'tree_ref', value: { parent: 'u-music', name: 'jazz' } } }] }],
+              nextCursor: null,
+            }
+          : { records: [], nextCursor: null },
+      ),
       treePaths: async (_repo: string, _field: string, uuids: string[]) =>
         Object.fromEntries(uuids.map((uuid) => [uuid, [] as string[]])),
       metarecords: async () => new Map(),
@@ -114,14 +121,14 @@ describe('treeref:find', () => {
     const s = stub();
     await mount(s);
     const args = s.specs.get('treeref:find');
-    expect(args).toHaveLength(1);
-    expect(await args![0].complete!('', [])).toEqual(['music', 'movies', 'notes']);
+    expect(args).toHaveLength(2);
+    expect(await args![1].complete!('', [])).toEqual(['music', 'movies', 'notes']);
   });
 
   test('an answer moves the cursor onto that child', async () => {
     const s = stub();
     await mount(s);
-    await s.handlers.get('treeref:find')!('notes');
+    await s.handlers.get('treeref:find')!('select', 'notes');
     expect(cursorName(s.root)).toBe('notes');
     expect(s.api.workspace.set).toHaveBeenCalledWith(
       'selected_metarecord',
@@ -133,7 +140,7 @@ describe('treeref:find', () => {
     const s = stub();
     await mount(s);
     s.api.daemon.query.mockClear();
-    await s.handlers.get('treeref:find')!('mo es');
+    await s.handlers.get('treeref:find')!('select', 'mo es');
     expect(cursorName(s.root)).toBe('movies');
     expect(s.api.daemon.query).not.toHaveBeenCalled();
   });
@@ -141,10 +148,37 @@ describe('treeref:find', () => {
   test('no match reports an error and leaves the cursor alone', async () => {
     const s = stub();
     await mount(s);
-    await s.handlers.get('treeref:find')!('music');
-    await s.handlers.get('treeref:find')!('zzz');
+    await s.handlers.get('treeref:find')!('select', 'music');
+    await s.handlers.get('treeref:find')!('select', 'zzz');
     expect(cursorName(s.root)).toBe('music');
     expect(s.statusBar.error).toHaveBeenCalled();
+  });
+});
+
+// doc "Jumping to an entry": `walk` goes into a node that has children and
+// asks again from inside; a leaf — whether a node has children is not known
+// beforehand, so it is asked — is selected and ends the walk.
+describe('treeref:find walk', () => {
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = () => {};
+  });
+  const crumbs = (root: ShadowRoot) => root.getElementById('breadcrumb')?.textContent ?? '';
+
+  test('a node with children is gone into, and the question asked again', async () => {
+    const s = stub();
+    await mount(s);
+    await s.handlers.get('treeref:find')!('walk', 'music');
+    expect(crumbs(s.root)).toContain('music');
+    expect(s.api.commands.invoke).toHaveBeenCalledWith('treeref:find walk');
+  });
+
+  test('a leaf is selected, not gone into, and the walk stops', async () => {
+    const s = stub();
+    await mount(s);
+    await s.handlers.get('treeref:find')!('walk', 'notes');
+    expect(cursorName(s.root)).toBe('notes');
+    expect(crumbs(s.root)).not.toContain('notes');
+    expect(s.api.commands.invoke).not.toHaveBeenCalled();
   });
 });
 
@@ -177,7 +211,7 @@ describe('listing what refers to the selected node', () => {
   test('writes the query into the list’s variables at the target, then shows the list', async () => {
     const s = stub();
     await mount(s);
-    await s.handlers.get('treeref:find')!('music');
+    await s.handlers.get('treeref:find')!('select', 'music');
     s.api.workspace.set.mockClear();
     await s.handlers.get('treeref:list-refs')!('new');
     // At the target: in a new workspace, the list here stays as it was.

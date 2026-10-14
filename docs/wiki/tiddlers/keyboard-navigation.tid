@@ -50,8 +50,8 @@ the detail — share their keys. Each has its own command behind the key
 |<<key "metarecord-list:open, file-manager:activate, treeref:descend, log:descend, trash:restore, recent:open, duplicates:toggle, metarecord:row-edit" Enter>> |what the panel is for: open the row, enter the directory, go down the tree or into the label, expand the group, restore the entry, edit the field |
 |<<key "file-manager:parent, treeref:parent, metarecord:back, file:back" Backspace>> |go back up: the parent directory, the parent node, the metarecord shown before, the folder of the previewed file |
 |<<key "file-manager:root, treeref:root" "/">> |the top: the root directory, the roots of the tree |
-|<<key "file-manager:find select, treeref:find, log:find, trash:find, recent:find, duplicates:find" f>> |move the cursor to a row named in the command input ([[Jumping to an entry]]) |
-|<<key "file-manager:find walk" d>> |walk down a path by name: enter each directory named, until a file ([[Jumping to an entry]]) |
+|<<key "file-manager:find select, treeref:find select, log:find, trash:find, recent:find, duplicates:find" f>> |move the cursor to a row named in the command input ([[Jumping to an entry]]) |
+|<<key "file-manager:find walk, treeref:find walk" d>> |walk down a path by name: enter each directory (node) named, until a file (a leaf) ([[Jumping to an entry]]) |
 |<<key "metarecord-list:select toggle, file-manager:select toggle" Space>> |check or uncheck the row ([[Cross-panel selection]]) |
 |<<key "metarecord-list:refresh, file-manager:refresh, treeref:refresh, log:refresh, trash:refresh, recent:refresh, duplicates:refresh, repos:refresh" r>> |read the content again |
 |<<key "metarecord:remove, file-manager:delete, trash:delete, duplicates:trash" Delete>> |remove what is selected, after a confirmation: to the trash where there is a file ([[Trash]]) |

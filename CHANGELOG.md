@@ -14,14 +14,15 @@ than breaking them.
 ## [Unreleased]
 
 ### Added
-- **Walking down a path by name in the file manager.** `d` runs
-  `file-manager:find walk`: a directory named is entered and the question asked
-  again from inside, a file named is selected. `shift+Enter` stops on a
+- **Walking down a path by name in the file manager and the tree explorer.**
+  `d` runs `file-manager:find walk` / `treeref:find walk`: a directory (a node
+  with children) named is entered and the question asked again from inside, a
+  file (a leaf) named is selected. `shift+Enter` stops on a
   directory, selected — the new *alternate* answer of an interactive argument
   (`ArgSpec.alternate`), which rewrites the arguments answered before it, so
-  the step runs, and is echoed, as `file-manager:find select`. The find takes
-  its mode first now: `f` is `file-manager:find select` (doc "Jumping to an
-  entry").
+  the step runs, and is echoed, as `<panel>:find select`. Both finds take
+  their mode first now: `f` is `file-manager:find select` / `treeref:find
+  select` (doc "Jumping to an entry").
 - **Contexts: what one piece of work writes is one label.** `mf label begin
   NAME [DESCRIPTION]` opens a label and prints it (`<repo>:<id>`); exported as
   `METAFOLDER_LABEL`, every `mf` started meanwhile writes inside it, and `mf
