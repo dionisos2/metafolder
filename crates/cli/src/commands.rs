@@ -368,6 +368,24 @@ pub fn unload(ctx: &Ctx) -> Result<i32, CliError> {
     Ok(0)
 }
 
+/// The selected repository's root as the daemon reports it, without a
+/// trailing `/`.
+fn repo_root(ctx: &Ctx) -> Result<String, CliError> {
+    let info = ctx.repo_info()?;
+    let root = info["root"]
+        .as_str()
+        .ok_or_else(|| CliError::Op("daemon did not report the repo root".into()))?;
+    Ok(root.trim_end_matches('/').to_string())
+}
+
+/// `mf repo root`: the selected repository's absolute root, so a script builds
+/// absolute paths from `--resolve-tree` ones without a call per record.
+pub fn print_repo_root(ctx: &Ctx) -> Result<i32, CliError> {
+    let root = repo_root(ctx)?;
+    println!("{}", if root.is_empty() { "/" } else { &root });
+    Ok(0)
+}
+
 /// `mf repo rename`: renames the repository (`PATCH /repos/:repo`), printing
 /// its UUID. A name another loaded repository holds (409) is an error.
 pub fn rename_repo(ctx: &Ctx, name: &str) -> Result<i32, CliError> {
@@ -1556,17 +1574,7 @@ pub fn path(ctx: &Ctx, uuid: &str, relative: bool) -> Result<i32, CliError> {
     if relative {
         println!("{rel}");
     } else {
-        let repos = ctx.client.get("/repos", &[])?;
-        let repo_simple = base.trim_start_matches("/repos/");
-        let root = repos
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|r| r["repo_uuid"] == repo_simple)
-            .and_then(|r| r["root"].as_str())
-            .ok_or_else(|| CliError::Op(format!("repository {repo_simple} is not loaded")))?
-            .trim_end_matches('/')
-            .to_string();
+        let root = repo_root(ctx)?;
         if rel == "/" {
             println!("{root}");
         } else {

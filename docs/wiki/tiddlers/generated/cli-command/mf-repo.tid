@@ -15,6 +15,7 @@ Commands:
   init     Initialise a new repository and print its UUID
   load     Load an existing repository, wait for its warmup and print its UUID
   unload   Unload the selected repository (stops its watcher, releases its DB lock)
+  root     Print the selected repository's root (an absolute path)
   rename   Rename the selected repository and print its UUID
   check    Check that the selected repository's store holds together
   reindex  Rebuild what the selected repository derives from its data (its indexes)

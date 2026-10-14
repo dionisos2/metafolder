@@ -170,6 +170,22 @@ mf_gui_query_path() { # <relpath>
     if [ "$1" = "/" ]; then printf ''; else printf '%s' "$1"; fi
 }
 
+# Read the repository's absolute root into REPO_ROOT, once per run (`mf repo
+# root`; call mf_gui_bind_repo first). With it, mf_gui_abs_path turns the
+# relative paths a batched `--resolve-tree mfr_path` read gives into absolute
+# ones — where `mf path <uuid>` was one daemon call per record, per question.
+mf_gui_read_root() {
+    REPO_ROOT=$(mf repo root) || mf_die "cannot read the repository's root"
+    REPO_ROOT=${REPO_ROOT%/} # a repository at / joins as "" + "/a"
+}
+
+# The absolute path of a relative tree path ("" or "/" for the root, "/a/b"
+# below), on the REPO_ROOT mf_gui_read_root read.
+mf_gui_abs_path() { # <relpath>
+    local rel=${1%/}
+    if [ -n "$REPO_ROOT$rel" ]; then printf '%s' "$REPO_ROOT$rel"; else printf /; fi
+}
+
 # Escape a string for use inside a double-quoted DSL literal. File and tag names
 # are user data: a folder legitimately called `Rock "n" Roll` closed the literal
 # early and turned the whole query into a syntax error — which, read through a

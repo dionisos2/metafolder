@@ -239,6 +239,13 @@ tree_path() { # <uuid> -> its root-relative path ("" for the repository root)
     first_line "$TMP/path"
 }
 
+# The absolute path of the record the last tree_path resolved, or "" when it
+# resolved to nothing at all (no line — the root is an EMPTY line): the preview
+# then shows "no file" rather than the previous entry's.
+last_abs_path() {
+    if [ -s "$TMP/path" ]; then mf_gui_abs_path "$(first_line "$TMP/path")"; fi
+}
+
 num() { case ${1:-} in '' | *[!0-9]*) printf 0 ;; *) printf '%s' "$1" ;; esac; }
 
 # ── The skip markers ─────────────────────────────────────────────────────────
@@ -375,6 +382,8 @@ BACK_STACK=()
 RUN_LABEL=$(mf_label_begin "gui-tag-folder $TAG" "${SCOPE:-every metarecord}")
 [ -z "$RUN_LABEL" ] || export METAFOLDER_LABEL="$RUN_LABEL"
 
+mf_gui_read_root # each preview is the root + the path tree_path resolved
+
 while :; do
     [ -z "$STOP" ] || break
     # Back in the run's context: an answer's label holds that answer only.
@@ -414,13 +423,14 @@ while :; do
     fi
 
     path=$(tree_path "$uuid")
+    abs=$(last_abs_path)
     disp=${path:-/}
     remaining=$(num "$(open_count)")
     done_now=$((TOTAL - remaining + 1))
     [ "$done_now" -ge 1 ] || done_now=1
     [ "$done_now" -le "$TOTAL" ] || done_now=$TOTAL
     mf_gui_progress --done "$done_now" --total "$TOTAL" --phase "$disp"
-    mf_gui_show_file "$(mf path "$uuid" 2>/dev/null || true)"
+    mf_gui_show_file "$abs"
     counter="$((remaining - 1)) left"
 
     back_hint=""

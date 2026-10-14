@@ -1,0 +1,13 @@
+title: mf repo root
+tags: [[CLI command]] Daemon
+kind: reference
+summary: Print the selected repository's root (an absolute path)
+
+Prints the root of the repository `-n`/`-u` names, as the daemon reports it
+(`GET /repos/:repo`, [[Repository endpoints]]), without a trailing `/`.
+
+It is for scripts that act on many records: read the root once, read every
+record's relative path in one call (`mf metarecord -q … get --resolve-tree
+mfr_path --tsv`), and join them. `mf path` gives the same absolute path
+for one record, but at one daemon call per record. The tagging scripts do this
+through `mf_gui_read_root` and `mf_gui_abs_path` ([[lib/mf-gui.sh]]).

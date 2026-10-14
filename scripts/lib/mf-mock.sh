@@ -258,6 +258,9 @@ case "$sig" in
     # Reads a test did not stub: an empty result is a legitimate answer.
     "metarecord "*" get"*|"metarecord get"*|"field "*|"path "*) exit 0 ;;
     "order "*|"orphan "*|"reconcile"*) exit 0 ;;
+    # The repository's root, unstubbed: empty, so a path built on it is the
+    # bare relative one.
+    "repo root") exit 0 ;;
     # A path nobody stubbed has no metarecord, as the real `mf uuid` says.
     "uuid "*) exit 1 ;;
     # The GUI scripting API, whose output every caller discards.

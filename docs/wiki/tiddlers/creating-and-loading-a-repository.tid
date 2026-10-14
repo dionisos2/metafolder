@@ -9,6 +9,7 @@ mf repo init <root> --metafolder <path>     # … or anywhere else
 mf repo load <root>                         # load it (--metafolder <path> for an external one)
 mf repo                                     # the loaded repositories (mf repo list)
 mf -n <name> repo rename <new-name>         # rename it
+mf -n <name> repo root                      # print its root
 mf -n <name> repo unload                    # unload it
 ```
 

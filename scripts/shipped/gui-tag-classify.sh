@@ -91,6 +91,18 @@ RUN_LABEL=$(mf_label_begin "gui-tag-classify")
 [ -z "$RUN_LABEL" ] || export METAFOLDER_LABEL="$RUN_LABEL"
 
 TMP=$(mf_gui_tmpdir)
+
+# Every relative path of the scope in one round-trip, and the root once: the
+# preview's absolute path is built from both. `mf path` was two daemon calls per
+# record for what the whole scope answers at once. A record with no position is
+# absent from the rows, and is classified all the same, without a preview.
+declare -A REL_OF
+mf_gui_scope_into "$TMP/paths" --resolve-tree mfr_path --tsv
+while IFS=$'\t' read -r u p; do
+    [ -n "$u" ] || continue
+    REL_OF[$u]=$p
+done <"$TMP/paths"
+mf_gui_read_root
 UNIVERSE="$TMP/universe"
 POS="$TMP/pos"
 NEG="$TMP/neg"
@@ -103,12 +115,16 @@ for UUID in ${UUIDS+"${UUIDS[@]}"}; do
     [ -z "$STOP" ] || break
     [ -n "$UUID" ] || continue
     done_n=$((done_n + 1))
-    rel=$(mf path --relative "$UUID" 2>/dev/null || true)
+    rel="" abs=""
+    if [ -n "${REL_OF[$UUID]+set}" ]; then
+        rel=${REL_OF[$UUID]:-/}
+        abs=$(mf_gui_abs_path "$rel")
+    fi
     mf_gui_progress --done "$done_n" --total "$TOTAL" --phase "${rel:-$UUID}"
     # Setting the file view also publishes selected_metarecord for this
     # workspace, which the detail panel follows — no extra plumbing needed. A
     # record with no file behind it is classified all the same, without preview.
-    mf_gui_show_file "$(mf path "$UUID" 2>/dev/null || true)"
+    mf_gui_show_file "$abs"
 
     while :; do
         mf metarecord -i "$UUID" field get tag --resolve path >"$POS"

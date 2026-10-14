@@ -751,18 +751,19 @@ assert "decided: the scope is counted only when the open set is empty" \
     [ "$(mock_count 'metarecord -q *mfr_path IS PRESENT get --count')" -eq 2 ]
 
 # ── Case 28: an entry whose file cannot be resolved CLEARS the preview ──────
-# The preview is set from `mf path <uuid>`, which can come back empty — a
-# record with no resolvable `mfr_path`, a repository unloaded mid-run. Showing
-# nothing was a no-op, so the PREVIOUS entry's file stayed on screen while the
-# question asked about this one: the wrong file, presented as the subject.
+# The preview is the repository root + the entry's resolved path, and the
+# resolution can come back empty — a record whose `mfr_path` went away mid-run.
+# Showing nothing was a no-op, so the PREVIOUS entry's file stayed on screen
+# while the question asked about this one: the wrong file, presented as the
+# subject.
 mock_reset
 setup_top
 walk_children "" file file-a file-b
-walk_path file-a /a.txt
-walk_path file-b /b.txt
-mock_respond 'path file-a' '/abs/a.txt'   # the first entry previews fine
-# file-b has no `path` row: `mf path file-b` answers nothing, as the real one
-# does for a record it cannot resolve.
+walk_path file-a /a.txt                   # the first entry previews fine
+# file-b's resolution answers no line at all, as the real one does for a record
+# it cannot resolve (the repository root answers an EMPTY line).
+walk_path file-b
+mock_respond 'repo root' '/abs'
 walk_counts 2 2 1
 mock_prompt '/top'
 mock_input n y y
@@ -774,6 +775,8 @@ assert "unresolved preview: the unresolvable one clears the panel" \
     [ "$(mock_count 'gui view left file --path ')" -eq 1 ]
 assert "unresolved preview: both questions were asked" \
     [ "$(mock_count 'gui input*')" -eq 3 ]  # the scope question, then two entries
+assert "unresolved preview: the root is read once, no \`mf path\` per entry" \
+    [ "$(mock_count 'repo root')" -eq 1 ] && [ "$(mock_count 'path *')" -eq 0 ]
 
 # ── Case 29: the scratch workspace opens on the session's own panels ────────
 # Created bare, it is first shown with its default panel — the metarecord list
@@ -784,7 +787,7 @@ mock_reset
 setup_top
 walk_children "" file file-a
 walk_path file-a /a.txt
-mock_respond 'path file-a' '/abs/a.txt'
+mock_respond 'repo root' '/abs'
 walk_counts 1 1
 mock_prompt '/top'
 mock_input n y

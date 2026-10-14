@@ -1,0 +1,16 @@
+title: $:/mf/gen/CLI command/mf repo root
+catalog: CLI command
+target: mf repo root
+summary: Print the selected repository's root (an absolute path)
+
+!! Reference
+
+```
+Print the selected repository's root (an absolute path)
+
+Usage: mf repo root
+
+Options:
+  -h, --help
+          Print help
+```

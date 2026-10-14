@@ -312,6 +312,8 @@ enum RepoCommand {
     },
     /// Unload the selected repository (stops its watcher, releases its DB lock)
     Unload,
+    /// Print the selected repository's root (an absolute path)
+    Root,
     /// Rename the selected repository and print its UUID
     Rename {
         /// The new name, unique among the loaded repositories
@@ -1279,6 +1281,7 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
                 commands::load(ctx, root.as_deref(), metafolder.as_deref(), no_wait)
             }
             RepoCommand::Unload => commands::unload(ctx),
+            RepoCommand::Root => commands::print_repo_root(ctx),
             RepoCommand::Check => commands::check_repo(ctx),
             RepoCommand::Reindex => commands::reindex_repo(ctx),
             RepoCommand::Backup { to } => commands::backup_repo(ctx, to.as_deref()),

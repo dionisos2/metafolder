@@ -13,16 +13,6 @@ Not problems of behaviour; worth doing for navigability, each a large diff.
   anything means passing an explicit context — a rewrite, not to start
   casually.
 
-* TODO shipped tagging scripts
-** TODO =mf path= once per question in the tagging scripts
-=gui-tag-folder.sh= and =gui-tag-pair.sh= call =mf path "$uuid"= for the preview
-at each question, right after reading the same record's *relative* path
-(=--resolve-tree mfr_path=). Only the repository's absolute root is missing to
-build it without the round-trip. One HTTP call per keystroke of a human: not
-felt. Clean fix: a CLI printing a repository's root (=mf repo root=, or a
-=--root= on =mf repo list=, whose JSON would need =jq=), read once per run —
-a CLI addition to weigh first.
-
 * Deferred in the specs
 Named where they are, kept here so they are not forgotten:
 - doc "The GUI's work context", doc "Reverting everything since a time": the

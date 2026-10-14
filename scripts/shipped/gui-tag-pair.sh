@@ -88,22 +88,24 @@ mapfile -t uuids <"$TMP/worklist"
 mf_check_scope_size "${#uuids[@]}" "files with no opinion on this tag"
 total=${#uuids[@]}
 
-# Every relative path in one round-trip, the way gui-tag-folder reads its walk:
-# `mf path --relative` per entry was a second daemon call for something the whole
-# worklist can answer at once.
+# Every relative path in one round-trip, and the root once: the preview's
+# absolute path is built from both. `mf path` per entry was a daemon call per
+# question for something the whole worklist can answer at once.
 declare -A REL_OF
 mf_into "$TMP/paths" metarecord -q "$PREDICATE" get --resolve-tree mfr_path --tsv
 while IFS=$'\t' read -r u p; do
     [ -n "$u" ] || continue
     REL_OF[$u]=$p
 done <"$TMP/paths"
+mf_gui_read_root
 
 yes=0 no=0 skipped=0 i=0
 for uuid in "${uuids[@]}"; do
     [ -n "$uuid" ] || continue
     i=$((i + 1))
-    abs=$(mf path "$uuid") || continue # the file disappeared meanwhile
-    rel=${REL_OF[$uuid]-}
+    [ -n "${REL_OF[$uuid]+set}" ] || continue # its path went away meanwhile
+    rel=${REL_OF[$uuid]}
+    abs=$(mf_gui_abs_path "$rel")
     mf_gui_progress --done "$i" --total "$total" --phase "$rel"
     mf_gui_show_file "$abs"
     case "$(mf_gui_ask_answer \

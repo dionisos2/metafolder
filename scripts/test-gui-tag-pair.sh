@@ -26,11 +26,10 @@ setup_gui() { # [<gui query response>]
     # Default: the GUI is showing everything — the empty query, a real answer
     # (every metarecord) and not "nothing published".
     mock_respond 'gui query'         "${1-}"
-    # `mf path --relative U` must be tried before the bare `mf path U`.
-    mock_respond 'path --relative *' 'rel/path'
-    mock_respond 'path *'            '/abs/path'
-    # The relative paths come from one batched read, not from `mf path` per
-    # entry; the rows are uuid<TAB>path.
+    # The root is read once; each preview is the root + the entry's relative
+    # path, which comes from one batched read (rows: uuid<TAB>path) — not from
+    # `mf path` per entry.
+    mock_respond 'repo root'         '/abs'
     mock_respond 'metarecord -q * get --resolve-tree mfr_path --tsv' \
         $'u1\t/f1\nu2\t/f2\nu3\t/f3\nu4\t/f4\nu5\t/f5'
 }
@@ -50,6 +49,10 @@ assert "walk: u3 skipped (no tag op)"          [ "$(mock_count 'tag -i u3 *')" -
 assert "walk: u4 not tagged (Escape)"          [ "$(mock_count 'tag -i u4 *')" -eq 0 ]
 assert "walk: u5 untouched after Escape stops" [ "$(mock_count 'tag -i u5 *')" -eq 0 ]
 assert_contains "walk: summary counts correct" "$out" "1 yes, 1 no, 1 skipped"
+assert "walk: the preview is the root + the relative path" \
+    [ "$(mock_count 'gui view left file --path /abs/f1')" -eq 1 ]
+assert "walk: the root is read once" [ "$(mock_count 'repo root')" -eq 1 ]
+assert "walk: no \`mf path\` per entry" [ "$(mock_count 'path *')" -eq 0 ]
 
 # The predicate must exclude files already carrying an opinion and target files.
 pred=$(mock_calls_matching 'metarecord -q * get --limit*')

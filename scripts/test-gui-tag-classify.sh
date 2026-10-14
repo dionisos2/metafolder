@@ -27,8 +27,10 @@ UNIVERSE=$'admin\t0\t0\nmusic\t0\t0\nmusic/jazz\t0\t0\nmusic/rock\t0\t0'
 setup_common() { # [<gui query response>]
     mock_respond 'gui repo'         'repo-1'
     mock_respond 'gui query'        "${1-@exit:1}"
-    mock_respond 'path rec-1'       '/abs/file'
-    mock_respond 'path --relative rec-1' '/file'
+    mock_respond 'repo root'        '/abs'
+    # Every relative path of the scope in one read (rows: uuid<TAB>path).
+    mock_respond 'metarecord -q * get --resolve-tree mfr_path --tsv' \
+        $'rec-1\t/file\nrec-2\t/file2'
     mock_respond 'tag list'         "$UNIVERSE"
     mock_respond 'gui layout left'  'saved-left'
     mock_respond 'gui layout right' 'saved-right'
@@ -86,7 +88,8 @@ mock_reset
 mock_respond 'tag list'         ''            # empty vocabulary
 mock_respond 'gui repo'         'repo-1'
 mock_respond 'gui query'        '@exit:1'
-mock_respond 'path rec-1'       '/abs/file'
+mock_respond 'repo root'        '/abs'
+mock_respond 'metarecord -q * get --resolve-tree mfr_path --tsv' $'rec-1\t/file'
 mock_respond 'metarecord -q rec-1 get --sort mfr_path*' 'rec-1'
 mock_respond 'gui layout left'  'saved-left'
 mock_respond 'gui layout right' 'saved-right'
@@ -158,13 +161,16 @@ mock_reset
 Q='rating > 3'
 setup_common
 mock_respond "metarecord -q $Q get --sort mfr_path*" $'rec-1\nrec-2'
-mock_respond 'path rec-2'            '/abs/file2'
-mock_respond 'path --relative rec-2' '/file2'
 mock_input n y y n   q               # rec-1 fully classified, then rec-2 stopped
 out=$(bash "$SCRIPT" "$Q"); code=$?
 assert "set: exits 0" [ "$code" -eq 0 ]
 assert "set: the first record is classified" [ "$(mock_count 'tag -i rec-1 add music')" -eq 1 ]
 assert "set: the second record is reached" [ "$(mock_count 'gui progress*--phase /file2')" -ge 1 ]
+assert "set: each preview is the root + the relative path" \
+    [ "$(mock_count 'gui view left file --path /abs/file')" -eq 1 ] \
+    && [ "$(mock_count 'gui view left file --path /abs/file2')" -eq 1 ]
+assert "set: the root is read once, no \`mf path\` per record" \
+    [ "$(mock_count 'repo root')" -eq 1 ] && [ "$(mock_count 'path *')" -eq 0 ]
 assert "set: the progress bar knows the total" \
     [ "$(mock_count 'gui progress --done 1 --total 2*')" -ge 1 ]
 
@@ -173,8 +179,6 @@ mock_reset
 Q='rating > 3'
 setup_common
 mock_respond "metarecord -q $Q get --sort mfr_path*" $'rec-1\nrec-2'
-mock_respond 'path rec-2'            '/abs/file2'
-mock_respond 'path --relative rec-2' '/file2'
 mock_input q
 bash "$SCRIPT" "$Q" >/dev/null; code=$?
 assert "quit: exits 0" [ "$code" -eq 0 ]

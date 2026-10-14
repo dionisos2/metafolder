@@ -1691,6 +1691,20 @@ fn test_path_of_the_root_entry() {
 }
 
 #[test]
+fn test_repo_root_prints_the_absolute_root() {
+    let (repo, root) = init_repo("repo_root");
+    let out = mf(&["-u", &repo, "repo", "root"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout, format!("{}\n", root.to_str().unwrap()));
+}
+
+#[test]
+fn test_repo_root_needs_a_repo() {
+    let out = mf(&["repo", "root"]);
+    assert_eq!(out.code, 2, "stdout: {}", out.stdout);
+}
+
+#[test]
 fn test_path_fails_on_entry_without_mfr_path() {
     let (repo, _root) = init_repo("path_none");
     let uuid = create_metarecord(&repo, &["title:string=no path"]);
