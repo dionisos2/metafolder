@@ -1,0 +1,82 @@
+title: Hierarchy references
+tags: [[Hierarchical tags]] [[TreeRef forest]]
+kind: reference
+status: proposed
+aliases: hierarchy_ref polyhierarchy
+summary: A proposed hierarchy_ref type: a node with one name and several parents, no cycle — so a tag can be both a kind of running and a kind of event.
+
+A `tree_ref` gives a node one parent ([[One position per forest]]). That is right for
+a file, which has one path, and wrong for a concept that is a kind of two things: a
+marathon is a race (`sport/courir`) ''and'' an event (`évènement`). Neither tree
+alone says it, and a tag that is "A and B" is not always a conjunction a query could
+write — a marathon is more specific than "a race that is an event", and it may have
+narrower tags of its own, which are races and events too.
+
+A `hierarchy_ref` is the type for that: a hierarchy where a node may hang under
+several parents. `mfr_path` stays a `tree_ref`; the tag vocabulary's `path` becomes a
+`hierarchy_ref`. Two types for two meanings, rather than reopening several positions
+in a forest, whose problems ([[One position per forest]]) are those of a node with one
+path, not of an implication.
+
+Status: decided with the user in October 2026, not built.
+
+!! The value
+
+* ''One name per node'', several parents. A node's rows are one per parent, all bearing the same name; a node with no parent is a root. The same concept cannot be named differently in two places.
+* A multi-valued field: adding a parent is an append, leaving one a removal of that row, moving a node a set of its rows.
+* `tree_ref`'s JSON shape (`{parent, name}`) per row, under its own `type`.
+
+!! What stays true
+
+* ''No cycle'': a write adding a parent P to a node N is refused (`400`) when N is P or an ancestor of P. Depth ≤ 1000, as for a forest.
+* ''Referential integrity'': a parent exists in the same hierarchy; a node with children cannot lose its last row ([[Referential integrity of a forest]]).
+* ''Names are unique among the children of each parent'', so a path still names at most one node.
+
+!! Paths
+
+A node has one path per way up to a root: the marathon is `sport/courir/maraton` and
+`évènement/maraton`.
+
+* `path = "évènement/maraton"` resolves segment by segment, as in a tree, and finds it.
+* `:path`, `osm(path, …)` and `resolve-tree` are multi-valued: a node matches when one of its paths does, and `resolve-tree` returns them all.
+* The clients show ''every'' path of a node, not a canonical one.
+
+!! Following
+
+`field ->* …` and `field =>* …` accept a `hierarchy_ref` ([[Following references]]):
+the descendants of a node are everything below it by any path, counted once.
+`tag -> (path =>* "évènement")` finds the marathons. So subsumption, the tag queries
+(`#=évènement`) and the treeref panel get the second parent from the type, with no
+convention of their own.
+
+!! In the store
+
+Each node keeps the bitmap of its descendants, as in a forest
+([[The forest in the store]]), so a subtree stays one read.
+
+* ''Adding'' an edge N → P adds N and N's descendants to P and to each ancestor of P.
+* ''Removing'' an edge cannot subtract: an ancestor may still reach those nodes by another path. The ancestors the edge reached are recomputed bottom-up, each from its children's bitmaps. The cost is the number of those ancestors, not the depth — negligible for a vocabulary of tags, and the reason `mfr_path` does not use this type.
+
+This is the part to test hardest: an oracle recomputing every bitmap from the rows,
+compared after random sequences of adds, removals, moves and reverts (the query oracle
+already answers `=>*` by walking the rows — [[The query oracle]]).
+
+!! Tags
+
+`mf tag` reads ancestry from the daemon instead of from path strings (today
+`is_ancestor("musique", "musique/jazz")` compares strings): the ancestors of a tag are
+all its ancestors by every parent. Subsumption and the contradictions keep their
+meaning ([[Tag subsumption and exclusivity]]).
+
+''Exclusivity goes'', before this type and independently of it (user, October 2026):
+`partition` and `exclusive`, sibling removal in `mf tag add`, their columns in
+`mf tag list`, their keys in the `[tag]` table and their use in the tagging scripts.
+Siblings are ambiguous once a node has several parents, and an exclusive set is
+usually a number in disguise (a rating). Flags already written stay as ordinary fields
+with no effect.
+
+!! Delivery
+
+* A new `Value` variant: a new JSON type, so `API_VERSION` is bumped.
+* The tag vocabulary's `path` is converted from `tree_ref` to `hierarchy_ref` — every tree is a valid hierarchy, so the conversion is one-to-one ([[Persisted format changes]], [[Changing a field's type]]).
+* [[Why tags are a forest]] and [[One position per forest]] are updated to point here.
