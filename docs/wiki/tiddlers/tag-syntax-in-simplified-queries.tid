@@ -26,7 +26,7 @@ the tag, including the ones never asked about it; `#!jazz` only those that answe
 ''no'' — `mf tag deny`, or the tagging scripts ([[Hierarchical tags]]). The records not
 yet asked are `! #jazz AND ! #!jazz`. Like `#jazz`, `#!jazz` looks at the tag named and
 not its neighbours: denying `music` also says "not jazz"
-([[Tag subsumption and exclusivity]]), but a record denying only `music` is found by `#!music`, not `#!jazz`.
+([[Tag subsumption]]), but a record denying only `music` is found by `#!music`, not `#!jazz`.
 
 `#=` exists because tagging a record with a narrower tag drops the broader one, so
 "music/jazz or anything under it" is the question usually meant. Before August 2026

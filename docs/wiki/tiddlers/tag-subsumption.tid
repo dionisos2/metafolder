@@ -1,8 +1,8 @@
-title: Tag subsumption and exclusivity
+title: Tag subsumption
 tags: [[Hierarchical tags]]
 kind: reference
 aliases: subsumption
-summary: A specific tag implies its ancestors, a general negative covers its descendants, and an exclusive tag pushes its siblings out — mf tag keeps records written that way.
+summary: A specific tag implies its ancestors and a general negative covers its descendants — mf tag keeps records written that way.
 
 A path is read as an implication: `musique/jazz` ''is'' music. So a record carries the
 most specific thing known about it, and `mf tag` rewrites it to stay so:
@@ -10,12 +10,11 @@ most specific thing known about it, and `mf tag` rewrites it to stay so:
 * `add P` — the record gains `tag` → P and loses its `tag` refs to P's ''ancestors'', which P already says. It keeps the ones to P's descendants (`musique/jazz/bebop` says more than `musique/jazz`).
 * `deny P` — the record gains `negative_tag` → P and loses its `negative_tag` refs to P's ''descendants'', which "not P" already says.
 * ''Contradictions'' — each answer also takes back the opposite answers it makes false. Having P means wholly having every ancestor of P, so `add P` removes the `negative_tag` and `mixed_tag` refs to P and to its ancestors. Not having P means having none of its descendants, so `deny P` removes the `tag` and `mixed_tag` refs to P and to its descendants (a mixed mark is "partly", which a whole answer settles). Conversely `mixed P` — partly P, partly not — removes the `tag` refs to P and to its descendants (wholly jazz would be wholly music) and the `negative_tag` refs to P and to its ancestors (wholly not music would be wholly not jazz). The rest is compatible and stays: "not bebop" beside jazz, "music" beside "not jazz".
-* ''Exclusivity'' — when P is exclusive, `add P` also removes the `tag` refs to P's siblings. P is exclusive when it carries `exclusive = true`, or when its parent carries `partition = true` (all the parent's children are then exclusive of one another).
 * `remove P` rewrites nothing else.
 
 The rewrite is per record, over the whole selection, in the order: create the entry if it
-is missing, add the ref, drop what it subsumes, drop what it contradicts, drop the
-siblings — all of it one batch, one write ([[Query endpoints]]). Each step reads the
+is missing, add the ref, drop what it subsumes, drop what it contradicts — all of it
+one batch, one write ([[Query endpoints]]). Each step reads the
 selection as it was before the command, so a query that names the tag itself
 (`-q 'tag -> …'`) selects the same records for every step.
 Adding a ref the record already has writes nothing ([[No duplicate rows]]), so running
@@ -27,5 +26,7 @@ nothing of the old one.
 
 The classification flow asks its questions in the same terms: a question is not asked
 about a tag already implied by a more specific positive, about anything under a general
-negative, or about a sibling an exclusive tag has ruled out (`gui-tag-next.sh`,
-[[Classifying with tags]]).
+negative (`gui-tag-next.sh`, [[Classifying with tags]]).
+
+Siblings never exclude each other: `musique/jazz` and `musique/rock` go together. Tags
+used to be able to exclude their siblings ([[Why tags have no exclusivity]]).

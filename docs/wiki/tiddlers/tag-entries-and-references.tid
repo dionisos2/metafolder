@@ -1,7 +1,7 @@
 title: Tag entries and references
 tags: [[Hierarchical tags]]
 kind: reference
-aliases: tag-entry partition exclusive
+aliases: tag-entry
 summary: What a tag entry holds, how records point at one, and the [tag] table that names every field.
 
 !! A tag entry
@@ -9,14 +9,12 @@ summary: What a tag entry holds, how records point at one, and the [tag] table t
 |!Field |!Type |!Meaning |
 |`mf_schema` |`string` = `tag` |marks the metarecord as a tag entry |
 |`path` |`tree_ref` |its position: parent entry and name. A top-level tag is a root of the forest, so paths have no leading `/` ([[TreeRef path conventions]]) |
-|`partition` |`bool` |on a parent: its direct children exclude one another |
-|`exclusive` |`bool` |on a child: it excludes its siblings |
 |`label` |`string` |optional display name |
 
 An entry with no resolvable `path` is not part of the vocabulary. `mf tag` creates
 entries as it needs them — a missing `cinema/thriller` is created with the missing
-`cinema` above it — with `mf_schema` and `path` only: the flags are set by hand, like
-any field.
+`cinema` above it — with `mf_schema` and `path` only. The `partition` and `exclusive`
+flags of older vocabularies have no effect ([[Why tags have no exclusivity]]).
 
 !! On a record
 
@@ -30,7 +28,7 @@ The shipped schema declares `tag` on `note` and `bookmark` ([[Schema file]]).
 !! Field names
 
 Every name above except `label` comes from the `[tag]` table of the CLI configuration
-(`type-field`, `entry-type`, `path-field`, `positive`, `negative`, `mixed`,
-`partition`, `exclusive`); the defaults are the names shown ([[CLI configuration]]).
+(`type-field`, `entry-type`, `path-field`, `positive`, `negative`, `mixed`); the
+defaults are the names shown ([[CLI configuration]]).
 The shipped scripts, the simplified grammar's tag forms and the GUI's ref pickers use
 the defaults.

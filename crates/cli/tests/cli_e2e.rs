@@ -4852,14 +4852,15 @@ fn test_metarecord_get_resolve_tree_tsv_keeps_the_uuid() {
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);
 }
 
-// ── mf tag (hierarchical tags: subsumption, exclusivity) ──────────────────────
+// ── mf tag (hierarchical tags: subsumption) ───────────────────────────────────
 
 #[test]
-fn test_mf_tag_subsumption_exclusivity_deny_list() {
+fn test_mf_tag_subsumption_deny_list() {
     let (repo, _root) = init_repo("tag");
     let rec = create_metarecord(&repo, &["note:string=target"]);
     // Vocabulary as a TreeRef forest on `path`: each tag is a node whose parent
-    // is another tag entry. jazz is exclusive among musique's children.
+    // is another tag entry. jazz carries the retired `exclusive` flag, which is
+    // now an ordinary field with no effect.
     let mk_tag = |specs: &[&str]| create_metarecord(&repo, specs);
     let musique = mk_tag(&["mf_schema:string=tag", "path:tree_ref=/musique"]);
     let jazz = mk_tag(&[
@@ -4902,8 +4903,10 @@ fn test_mf_tag_subsumption_exclusivity_deny_list() {
     tag(&["-i", &rec, "add", "musique/rock"]);
     assert_eq!(names("tag"), vec!["musique/rock"]);
 
-    // jazz is exclusive → adding it drops the sibling rock.
+    // Siblings never exclude each other: adding jazz keeps rock, flag or not.
     tag(&["-i", &rec, "add", "musique/jazz"]);
+    assert_eq!(names("tag"), vec!["musique/jazz", "musique/rock"]);
+    tag(&["-i", &rec, "remove", "musique/rock"]);
     assert_eq!(names("tag"), vec!["musique/jazz"]);
 
     // The record's single `tag` row id, to tell an untouched row from a rewritten one.
@@ -4938,7 +4941,7 @@ fn test_mf_tag_subsumption_exclusivity_deny_list() {
 
     // A path absent from the vocabulary is auto-created as a node chain
     // (cinema → cinema/thriller) by `ensure_tag_entry`. It is unrelated to bebop,
-    // so both tags coexist (add only drops ancestors and exclusive siblings).
+    // so both tags coexist (add only drops ancestors).
     tag(&["-i", &rec, "add", "cinema/thriller"]);
     assert_eq!(names("tag"), vec!["cinema/thriller", "musique/jazz/bebop"]);
 
@@ -4948,12 +4951,12 @@ fn test_mf_tag_subsumption_exclusivity_deny_list() {
     tag(&["-i", &rec, "deny", "administratif"]);
     assert_eq!(names("negative_tag"), vec!["administratif"]);
 
-    // list = the vocabulary TSV with 0/1 flags (auto-created cinema tags present).
+    // list = the vocabulary, one path per line (auto-created cinema tags present).
     let out = mf(&["-u", &repo, "tag", "list"]);
     assert_ok(&out);
-    assert!(out.stdout.lines().any(|l| l == "musique/jazz\t0\t1"), "list:\n{}", out.stdout);
-    assert!(out.stdout.lines().any(|l| l == "administratif\t0\t0"), "list:\n{}", out.stdout);
-    assert!(out.stdout.lines().any(|l| l == "cinema/thriller\t0\t0"), "list:\n{}", out.stdout);
+    assert!(out.stdout.lines().any(|l| l == "musique/jazz"), "list:\n{}", out.stdout);
+    assert!(out.stdout.lines().any(|l| l == "administratif"), "list:\n{}", out.stdout);
+    assert!(out.stdout.lines().any(|l| l == "cinema/thriller"), "list:\n{}", out.stdout);
 }
 
 /// A positive and a negative never contradict each other: `add X` takes back

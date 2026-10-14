@@ -50,7 +50,7 @@ without `force` is a `400` ([[Reserved fields]]).
 
 `POST /query/fields/batch` applies a list of writes, in order, as ''one'' write — so
 a client operation made of several steps is undone in one step (`mf tag add` and the
-refs it drops, [[Tag subsumption and exclusivity]]). An op is one of:
+refs it drops, [[Tag subsumption]]). An op is one of:
 
 |!`op` |!Fields |!Result |
 |`create` |`fields`, `uuid`?, `force`? |`{"uuid"}` — the new metarecord; a `uuid` already taken is a `409` |

@@ -62,7 +62,7 @@
 # way to revise a wrong answer over a subtree — and ignores the skip markers.
 #
 # `mf tag` owns the tag model: it creates the entry if the vocabulary lacks it,
-# adds the ref idempotently, and applies the subsumption/exclusivity rewrites
+# adds the ref idempotently, and applies the subsumption rewrites
 # (add drops the more general ancestor tags, deny drops the more specific
 # descendant negatives, and each drops what it contradicts — so a --redo that
 # reverses an answer leaves no trace of the old one). So this script is only the walk + the y/n/m questions.

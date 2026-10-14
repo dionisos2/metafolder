@@ -16,11 +16,11 @@ mock_init
 # shellcheck source=lib/assert.sh
 source "$HERE/lib/assert.sh"
 
-# A four-tag vocabulary: two top-level, two children of `music` (non-exclusive).
+# A four-tag vocabulary: two top-level, two children of `music`.
 # Name-sorted, because that is the only order `mf tag list` ever prints
 # (`commands.rs`, `vocab.names.sort()`). Fed unsorted, the suite was exercising
 # the depth tie-break on an input the CLI cannot produce.
-UNIVERSE=$'admin\t0\t0\nmusic\t0\t0\nmusic/jazz\t0\t0\nmusic/rock\t0\t0'
+UNIVERSE=$'admin\nmusic\nmusic/jazz\nmusic/rock'
 
 # The optional argument is what `mf gui query` answers (the table is
 # first-match-wins, so it cannot be overridden by a later row).

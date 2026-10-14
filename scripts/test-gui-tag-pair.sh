@@ -19,7 +19,7 @@ source "$HERE/lib/assert.sh"
 # set here and not overridden later by a second row.
 setup_gui() { # [<gui query response>]
     mock_respond 'gui repo'          'repo-1'
-    mock_respond 'tag list'          $'music\t0\t0\nmusic/jazz\t0\t0'
+    mock_respond 'tag list'          $'music\nmusic/jazz'
     mock_respond 'gui layout left'   'saved-left'
     mock_respond 'gui layout right'  'saved-right'
     mock_respond 'gui workspace new*' 'ws-1'

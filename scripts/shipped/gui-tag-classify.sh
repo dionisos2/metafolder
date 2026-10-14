@@ -11,14 +11,14 @@
 #   Escape -> stop
 #
 # The question ORDER (descend into a tag's children only once it is accepted,
-# skip subtrees under a generic negative, honour exclusivity) is the pure
+# skip subtrees under a generic negative) is the pure
 # selector in gui-tag-next.sh. The tag MODEL — creating entries, adding the
-# ref, and the subsumption/exclusivity rewrites (drop ancestors on add,
-# descendants on deny, siblings when exclusive, contradicted answers) — is `mf tag`, so this driver no
+# ref, and the subsumption rewrites (drop ancestors on add, descendants on
+# deny, contradicted answers) — is `mf tag`, so this driver no
 # longer re-implements any of it.
 #
-# The vocabulary and exclusivity flags come from `mf tag list`
-# (path<TAB>partition<TAB>exclusive), the metarecord's current tags from
+# The vocabulary comes from `mf tag list` (one path per line), the
+# metarecord's current tags from
 # `mf … field get <field> --resolve path` — one round-trip each, no per-entry
 # loops. Resumable: answered questions are skipped, so re-run until nothing is
 # left to ask.

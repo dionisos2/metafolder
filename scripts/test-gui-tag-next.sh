@@ -38,8 +38,8 @@ run_case() {
     fi
 }
 
-# Universe columns: path <TAB> partition <TAB> exclusive  (flags 0/1, default 0).
-U_BASE=$(printf 'musique\t0\t0\nadministratif\t0\t0\nmusique/jazz\t0\t0\nmusique/rock\t0\t0\n')
+# Universe: one tag path per line (what `mf tag list` prints).
+U_BASE=$(printf 'musique\nadministratif\nmusique/jazz\nmusique/rock\n')
 
 # 1. Top level first: nothing answered yet -> shallowest, in universe order.
 run_case "top-level-first" "$U_BASE" "" "" "musique" 0
@@ -56,20 +56,17 @@ run_case "negative-blocks-subtree" "$U_BASE" "" $'musique\n' "administratif" 0
 #    child is proposed.
 run_case "descend-to-child" "$U_BASE" $'musique\n' $'administratif\n' "musique/jazz" 0
 
-# 5. Multi-genre (non exclusive): musique specialised to jazz (parent removed),
-#    the sibling rock is still offered.
+# 5. Multi-genre: musique specialised to jazz (parent removed), the sibling
+#    rock is still offered — siblings never exclude each other.
 run_case "multi-genre-sibling" "$U_BASE" $'musique/jazz\n' $'administratif\n' \
     "musique/rock" 0
 
-# 6. Child marked exclusive closes the branch: no sibling offered.
-U_EXCL_CHILD=$(printf 'musique\t0\t0\nmusique/jazz\t0\t1\nmusique/rock\t0\t0\n')
-run_case "exclusive-child-closes" "$U_EXCL_CHILD" $'musique/jazz\n' "" "" 1
+# 6. The retired partition/exclusive columns of an older `mf tag list` are
+#    ignored: the sibling is still offered.
+U_OLD=$(printf 'musique\t1\t0\nmusique/jazz\t0\t1\nmusique/rock\t0\t0\n')
+run_case "old-flag-columns-ignored" "$U_OLD" $'musique/jazz\n' "" "musique/rock" 0
 
-# 7. Parent partition makes children mutually exclusive: branch closed too.
-U_PART=$(printf 'musique\t1\t0\nmusique/jazz\t0\t0\nmusique/rock\t0\t0\n')
-run_case "partition-parent-closes" "$U_PART" $'musique/jazz\n' "" "" 1
-
-# 8. Nothing left to ask -> exit 1, empty output.
+# 7. Nothing left to ask -> exit 1, empty output.
 run_case "exhausted" "$U_BASE" $'musique/jazz\nmusique/rock\n' $'administratif\n' "" 1
 
 echo "----"

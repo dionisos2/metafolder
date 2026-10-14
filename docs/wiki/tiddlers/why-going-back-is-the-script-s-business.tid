@@ -32,7 +32,7 @@ each answer writes in a label of its own, and going back reverts that label
 (`mf log head`) and undid what was written since — by a rollback to the noted operation
 until October 2026, which also unrecorded the watcher's writes meanwhile ([[Why the log stops being a tree]]), then by `mf log undo --after`, which a change of the user's made
 meanwhile from another client would have swept up. That puts back what each write replaced ([[Undo and redo]]); an ''untag''
-written by hand does not, and has to know every rule the write applied ([[Tag subsumption and exclusivity]]).
+written by hand does not, and has to know every rule the write applied ([[Tag subsumption]]).
 
 Two choices were the user's: the stack goes ''back to the first question'', and going
 back ''re-opens the subtree'' the answer had settled — a re-asked question whose

@@ -11,7 +11,7 @@
 #   Escape -> stop
 #
 # The tag model (entries + tag/negative_tag refs, TreeRef `path` hierarchy,
-# exclusivity) is owned by `mf tag`; this script is just the display + y/n loop.
+# subsumption) is owned by `mf tag`; this script is just the display + y/n loop.
 # Files already referencing the tag either way are excluded, so it is resumable.
 # Skipped files come back on the next run.
 #

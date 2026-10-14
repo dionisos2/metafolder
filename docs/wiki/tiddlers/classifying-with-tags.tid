@@ -7,7 +7,7 @@ summary: Three GUI scripts ask the questions for you — every tag of one file, 
 The GUI ships three tagging scripts, run from the GUI's `script:run` launcher or from a
 shell while the GUI is open ([[Running shipped scripts]]). Each shows what it asks about in the panels and waits for a
 key; each writes through `mf tag`, so the rules of
-[[Tag subsumption and exclusivity]] hold whatever you answer. All three take a
+[[Tag subsumption]] hold whatever you answer. All three take a
 ''query as their scope'': the argument if given, else the selection checked in the list,
 or the query the list shows, or — when the list shows nothing — a folder you pick
 ([[A query is the scope]]). And
@@ -25,8 +25,7 @@ an environment variable); `gui-tag-folder.sh` reads nothing ahead and has no cap
 
 `gui-tag-classify.sh [<query>]` walks the metarecords of the query. For each it descends the
 vocabulary: it asks about top-level tags, and only goes down into a tag's children once
-you have said yes to it; a no closes the whole subtree below it, and a yes to an
-exclusive tag closes its siblings. The file shows in the left panel, its metadata in the
+you have said yes to it; a no closes the whole subtree below it. The file shows in the left panel, its metadata in the
 right one. It only asks about tags that exist: grow the vocabulary with `mf tag add` or
 in the [[treeref panel]].
 

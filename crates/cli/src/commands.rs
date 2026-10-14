@@ -1203,13 +1203,6 @@ pub fn field_by_id_delete(ctx: &Ctx, id: i64, force: bool) -> Result<i32, CliErr
 
 // ── File tracking (doc "File tracking") ────────────────────────────────────────
 
-// ── Field extraction from a metarecord's `fields` JSON array ─────────────────
-
-/// A bool field's value.
-fn field_bool(fields: &Json, name: &str) -> Option<bool> {
-    metafolder_core::daemon_client::field_value(fields, name)?["value"].as_bool()
-}
-
 /// `mf order <folder>` — assigns `order_file` / `order_dir` to
 /// the folder's direct children so that "sort by position" orders them sensibly
 /// (album tracks, series seasons, …). Files and directories are numbered
@@ -1254,72 +1247,37 @@ pub fn order(
     Ok(0)
 }
 
-// ── mf tag (doc "Tag subsumption and exclusivity") ───────────────────────────
+// ── mf tag (doc "Tag subsumption") ───────────────────────────────────────────
 
 /// The tag vocabulary loaded once per `mf tag` run.
 struct Vocab {
     /// Tag path → entry uuid (hex).
     name2uuid: std::collections::HashMap<String, String>,
-    /// All tag paths (for descendant/sibling scans).
+    /// All tag paths (for descendant scans).
     names: Vec<String>,
-    /// Paths flagged `partition = true`.
-    partitions: std::collections::HashSet<String>,
-    /// Paths flagged `exclusive = true`.
-    exclusives: std::collections::HashSet<String>,
 }
 
-/// Loads the tag vocabulary (`<type_field> = <entry_type>`) with its flags, paginating.
-/// A tag's identity is the resolved path of its `path_field` TreeRef, fetched in
-/// one `resolve-tree` round-trip and joined onto the per-entry flags.
+/// Loads the tag vocabulary (`<type_field> = <entry_type>`). A tag's identity is
+/// the resolved path of its `path_field` TreeRef, all fetched in one
+/// `resolve-tree` round-trip (uuid → paths); an entry with no resolvable path is
+/// not part of the vocabulary.
 fn load_vocab(ctx: &Ctx, base: &str) -> Result<Vocab, CliError> {
     let cfg = &ctx.tag;
     let query = json!({
         "type": "eq", "field": cfg.type_field,
         "value": {"type": "string", "value": cfg.entry_type},
     });
-    let mut vocab = Vocab {
-        name2uuid: std::collections::HashMap::new(),
-        names: Vec::new(),
-        partitions: std::collections::HashSet::new(),
-        exclusives: std::collections::HashSet::new(),
-    };
-    // Resolve every tag entry's hierarchy path in one call (uuid → [paths]).
     let resolved = ctx.client.post(
         &format!("{base}/query/fields/resolve-tree"),
         &json!({"query": query, "field": cfg.path_field}),
     )?;
-    // Per-entry flags (paginated); joined onto the resolved paths above.
-    let mut cursor: Option<String> = None;
-    loop {
-        let mut body = json!({
-            "query": query,
-            "select": [cfg.partition, cfg.exclusive],
-            "limit": ctx.page_size,
-        });
-        if let Some(c) = &cursor {
-            body["cursor"] = json!(c);
-        }
-        let resp = ctx.client.post(&format!("{base}/query"), &body)?;
-        for entry in resp["results"].as_array().into_iter().flatten() {
-            let Some(uuid) = entry["uuid"].as_str() else { continue };
-            let Some(path) =
-                resolved[uuid].as_array().and_then(|p| p.first()).and_then(|p| p.as_str())
-            else {
-                continue; // no resolvable path → not part of the vocabulary
-            };
-            vocab.name2uuid.insert(path.to_string(), uuid.to_string());
-            vocab.names.push(path.to_string());
-            if field_bool(&entry["fields"], &cfg.partition) == Some(true) {
-                vocab.partitions.insert(path.to_string());
-            }
-            if field_bool(&entry["fields"], &cfg.exclusive) == Some(true) {
-                vocab.exclusives.insert(path.to_string());
-            }
-        }
-        match resp["next_cursor"].as_str() {
-            Some(c) => cursor = Some(c.to_string()),
-            None => break,
-        }
+    let mut vocab = Vocab { name2uuid: std::collections::HashMap::new(), names: Vec::new() };
+    for (uuid, paths) in resolved.as_object().into_iter().flatten() {
+        let Some(path) = paths.as_array().and_then(|p| p.first()).and_then(|p| p.as_str()) else {
+            continue;
+        };
+        vocab.name2uuid.insert(path.to_string(), uuid.to_string());
+        vocab.names.push(path.to_string());
     }
     Ok(vocab)
 }
@@ -1413,8 +1371,7 @@ fn with_descendants(path: &str, vocab: &Vocab) -> Vec<String> {
 
 /// `mf tag [sel] add <path>` — the record(s) *have* the tag: (idempotently) add
 /// the positive ref, drop the more general ancestor tags, the negatives and
-/// mixed marks it contradicts (on the tag and its ancestors), and, when the tag
-/// is exclusive, its siblings. One write. The idempotence is the daemon's:
+/// mixed marks it contradicts (on the tag and its ancestors). One write. The idempotence is the daemon's:
 /// appending a ref a record already carries is a no-op (doc "No duplicate
 /// rows"), so the row that is already there is left alone, id included.
 pub fn tag_add(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> {
@@ -1431,10 +1388,6 @@ pub fn tag_add(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> {
     let contradicted = with_ancestors(path);
     batch.remove(&vocab, &cfg.negative, contradicted.iter().map(String::as_str));
     batch.remove(&vocab, &cfg.mixed, contradicted.iter().map(String::as_str));
-    if crate::tag::is_exclusive(path, &vocab.partitions, &vocab.exclusives) {
-        let siblings = crate::tag::siblings(path, &vocab.names);
-        batch.remove(&vocab, &cfg.positive, siblings.iter().map(String::as_str));
-    }
     let n = batch.send(ctx, &base, counted)?;
     println!("{n}");
     Ok(0)
@@ -1502,17 +1455,14 @@ pub fn tag_remove(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError
     Ok(0)
 }
 
-/// `mf tag list` — the vocabulary as TSV `path<TAB>partition<TAB>exclusive`
-/// (0/1), path-sorted. This is exactly the universe format the tagging scripts
-/// consume.
+/// `mf tag list` — the vocabulary, one path per line, path-sorted. This is
+/// exactly the universe format the tagging scripts consume.
 pub fn tag_list(ctx: &Ctx) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let mut vocab = load_vocab(ctx, &base)?;
     vocab.names.sort();
     for name in &vocab.names {
-        let p = vocab.partitions.contains(name) as u8;
-        let e = vocab.exclusives.contains(name) as u8;
-        println!("{name}\t{p}\t{e}");
+        println!("{name}");
     }
     Ok(0)
 }

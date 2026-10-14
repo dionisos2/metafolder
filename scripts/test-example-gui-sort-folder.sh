@@ -22,7 +22,7 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/mf-sort.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 
 # Vocabulary uses the French tag paths the template's routing rules expect.
-UNIVERSE=$'musique\t0\t0\nmusique/jazz\t0\t0'
+UNIVERSE=$'musique\nmusique/jazz'
 
 setup_common() {
     mock_respond 'gui repo'          'repo-1'

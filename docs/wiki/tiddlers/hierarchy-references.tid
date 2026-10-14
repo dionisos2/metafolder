@@ -66,14 +66,10 @@ already answers `=>*` by walking the rows — [[The query oracle]]).
 `mf tag` reads ancestry from the daemon instead of from path strings (today
 `is_ancestor("musique", "musique/jazz")` compares strings): the ancestors of a tag are
 all its ancestors by every parent. Subsumption and the contradictions keep their
-meaning ([[Tag subsumption and exclusivity]]).
+meaning ([[Tag subsumption]]).
 
-''Exclusivity goes'', before this type and independently of it (user, October 2026):
-`partition` and `exclusive`, sibling removal in `mf tag add`, their columns in
-`mf tag list`, their keys in the `[tag]` table and their use in the tagging scripts.
-Siblings are ambiguous once a node has several parents, and an exclusive set is
-usually a number in disguise (a rating). Flags already written stay as ordinary fields
-with no effect.
+Exclusivity was removed first, independently of this type: siblings are ambiguous once
+a node has several parents ([[Why tags have no exclusivity]]).
 
 !! Delivery
 

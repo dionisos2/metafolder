@@ -1,0 +1,19 @@
+title: Why tags have no exclusivity
+tags: [[Hierarchical tags]]
+kind: rationale
+summary: Tags once could exclude their siblings, by a flag on the entries; it was removed in October 2026, being ambiguous once a tag has several parents and rarely what was meant.
+
+Until October 2026 two `bool` fields on the tag entries made tags exclude one another:
+`partition` on a parent (its direct children exclude one another) and `exclusive` on a
+child (it excludes its siblings). `mf tag add` then dropped the excluded siblings, and
+the classification flow stopped asking about them. The rule was data rather than code
+because which tags go together depends on the vocabulary, not on the program.
+
+It was removed (user, October 2026), for two reasons:
+
+* ''Siblings stop being well defined'' once a tag may have several parents ([[Hierarchy references]]): a marathon under both `sport/courir` and `évènement` would be exclusive of the children of which parent? Every answer complicates subsumption, the scripts and the new type for a feature little used.
+* ''An exclusive set is usually a number in disguise'': ratings `1` to `5` as five exclusive tags are an `int` field, which a query compares and sorts.
+
+Flags written before stay as ordinary fields with no effect; nothing converts them.
+`mf tag list` printed them as two more columns; it prints the path alone now, and the
+tagging scripts ignore any column after it.

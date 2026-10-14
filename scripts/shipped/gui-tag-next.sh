@@ -7,16 +7,15 @@
 # to share the hierarchy helpers.
 #
 # Usage: gui-tag-next.sh <universe_file> <pos_file> <neg_file>
-#   universe_file : one tag per line, TAB columns "path <TAB> partition <TAB> exclusive"
-#                   (flags 0/1, missing = 0). Line order breaks depth ties.
+#   universe_file : one tag path per line (`mf tag list`); further TAB columns
+#                   are ignored. Line order breaks depth ties.
 #   pos_file      : positive tag paths (one per line).
 #   neg_file      : negative tag paths (one per line).
 #
 # A tag path is "/"-separated (e.g. musique/jazz). Semantics: adding a specific
 # tag drops its more general ancestors; a generic negative blocks its whole
-# subtree; a specific positive implies (and hides) its ancestors. Exclusivity is
-# data-driven — `exclusive` on a child, or `partition` on its parent, makes the
-# parent's direct children mutually exclusive.
+# subtree; a specific positive implies (and hides) its ancestors. Siblings never
+# exclude each other.
 
 set -euo pipefail
 
@@ -72,14 +71,12 @@ gui_tag_next() {
     # metarecord. gui-tag-folder.sh already records the lesson — "one process
     # per entry is seconds of pure forking" — and this was the worst offender.
     local -a order=() positives=()
-    local -A part=() excl=() is_pos=() is_neg=()
-    local path col_part col_excl line
+    local -A is_pos=() is_neg=()
+    local path line
 
-    while IFS=$'\t' read -r path col_part col_excl || [ -n "$path" ]; do
+    while IFS=$'\t' read -r path _ || [ -n "$path" ]; do
         [ -n "$path" ] || continue
         order+=("$path")
-        part[$path]=${col_part:-0}
-        excl[$path]=${col_excl:-0}
     done <"$universe"
 
     while IFS= read -r line || [ -n "$line" ]; do
@@ -94,7 +91,7 @@ gui_tag_next() {
     done <"$neg"
 
     local best="" best_depth=-1
-    local ancestor child child_parent parent depth slashes blocked engaged closed
+    local ancestor child child_parent parent depth slashes blocked engaged
     for path in ${order+"${order[@]}"}; do
         [ -z "${is_pos[$path]:-}" ] || continue           # already positive
         [ -z "${is_neg[$path]:-}" ] || continue           # already negative
@@ -124,26 +121,19 @@ gui_tag_next() {
         [ "$blocked" = 0 ] || continue
 
         # Reachable: the branch is engaged (the parent, or one of its direct
-        # children, is positive) and not closed by an exclusive sibling already
-        # chosen. Top-level tags are always reachable.
+        # children, is positive). Top-level tags are always reachable.
         parent=${path%/*}
         [ "$parent" = "$path" ] && parent=""
         if [ -n "$parent" ]; then
             engaged=0
-            closed=0
+            [ -n "${is_pos[$parent]:-}" ] && engaged=1
             for child in ${positives+"${positives[@]}"}; do
+                [ "$engaged" = 0 ] || break
                 child_parent=${child%/*}
                 [ "$child_parent" = "$child" ] && child_parent=""
-                [ "$child_parent" = "$parent" ] || continue
-                engaged=1
-                # Exclusive by its own flag, or because its parent partitions
-                # its children.
-                if [ "${excl[$child]:-0}" = 1 ] || [ "${part[$parent]:-0}" = 1 ]; then
-                    closed=1
-                fi
+                [ "$child_parent" = "$parent" ] && engaged=1
             done
-            [ -n "${is_pos[$parent]:-}" ] && engaged=1
-            { [ "$engaged" = 1 ] && [ "$closed" = 0 ]; } || continue
+            [ "$engaged" = 1 ] || continue
         fi
 
         slashes=${path//[!\/]/}

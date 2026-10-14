@@ -23,7 +23,7 @@ The second line tags a whole folder's content; `=>*` would include the folder it
 Each verb prints how many records it changed: gained the ref for `add`, `deny` and
 `mixed`, lost it for `remove`. `0` means nothing needed writing — the tag was already
 there, or was not. The rewrites that follow an `add` or a `deny` are not counted
-([[Tag subsumption and exclusivity]]).
+([[Tag subsumption]]).
 
 A verb is several writes — creating a missing entry, adding the ref, dropping what it
 subsumes or contradicts — sent as one batch, so it is ''one'' write of the event log
@@ -34,6 +34,5 @@ it created included ([[Undo and redo]]).
 mf tag list
 ```
 
-prints the vocabulary, one tag per line, sorted by path: `path<TAB>partition<TAB>exclusive`
-with the flags as `0`/`1`. It takes no selector; it is the format the tagging scripts
+prints the vocabulary, one tag path per line, sorted. It takes no selector; it is the format the tagging scripts
 read ([[Classifying with tags]]).
