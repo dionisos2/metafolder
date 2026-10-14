@@ -150,12 +150,24 @@ pub fn commands() -> Vec<Command> {
         .collect();
 
     // Panel commands: `commands.register('<name>'` and the shared
-    // `registerFind(metafolder, '<name>'` helper (panel-shim/find-entry.js).
+    // `registerFind(metafolder, '<name>'` helper (panel-shim/find-entry.js), in
+    // every module of the panel — a command may live in a sub-module that
+    // `main.js` imports (metarecord-detail/bulk-commands.js).
     for panel in panel_types() {
-        let main_js = default_config().join("panel-types").join(&panel).join("main.js");
-        let Ok(source) = std::fs::read_to_string(&main_js) else { continue };
-        for (name, label) in scan(&source, &["commands.register('", "registerFind(metafolder, '"]) {
-            out.push(Command { name, label, owner: Owner::Panel(panel.clone()) });
+        let dir = default_config().join("panel-types").join(&panel);
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let mut modules: Vec<_> = entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "js"))
+            .collect();
+        modules.sort();
+        for module in modules {
+            let Ok(source) = std::fs::read_to_string(&module) else { continue };
+            for (name, label) in
+                scan(&source, &["commands.register('", "registerFind(metafolder, '"])
+            {
+                out.push(Command { name, label, owner: Owner::Panel(panel.clone()) });
+            }
         }
     }
 
