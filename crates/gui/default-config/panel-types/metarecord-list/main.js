@@ -19,6 +19,7 @@ import { latestOnly } from '/__coalesce.js';
 import { createCatchup } from '/__watcher-settle.js';
 import { createBulkEdit } from './bulk-edit.js';
 import { createDisplayData } from './display-data.js';
+import { asText, createQueryEditor } from './query-editor.js';
 import {
   parseColumns,
   isSortable,
@@ -76,7 +77,7 @@ function parseColumnsOr(spec, fallback) {
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder
  */
 export async function mount(root, metafolder) {
-  const { daemon, workspace, commands, statusBar, query, bench, changes } = metafolder;
+  const { daemon, workspace, commands, statusBar, bench, changes } = metafolder;
   const defaultPageSize = metafolder.pageSize ?? DEFAULT_PAGE_SIZE_FALLBACK;
   // UX timing knobs (config.toml `[panels]`), with the module fallbacks below.
   const { settings } = metafolder;
@@ -90,7 +91,6 @@ export async function mount(root, metafolder) {
     metafolder.defaults.gridNameColumn,
     DEFAULT_GRID_NAME_COLUMN,
   )[0];
-  const livePreviewMs = settings.livePreviewDebounceMs ?? 130;
   const statusMessageMs = settings.statusMessageMs ?? 5000;
 
   /** @type {string|null} */
@@ -142,22 +142,11 @@ export async function mount(root, metafolder) {
   }
   let pageSize = defaultPageSize; // persisted per workspace
   let loading = false;
-  /** @type {Record<string, unknown>|null} null = match all (the structural base query) */
-  let queryIR = null;
-  // The same base query as DSL *text*, kept in step with `queryIR` at every
-  // assignment below. It is what a script receives (`mf gui query`,
-  // doc "metarecord-list panel"): text is what `mf metarecord -q` takes and what a script composes
-  // with. It must be this local and not `metarecord-list:normal-query`, which
-  // mirrors the B zone and is therefore only written while that zone is shown.
-  /** @type {string} '' = match all */
-  let queryText = '';
   let finderText = ''; // quick OSM filter, AND-ed onto the base query
   /** @type {string[]} */
   let finderFields = defaultFinderFields.slice();
   /** @type {ReturnType<typeof setTimeout>|undefined} */
   let finderTimer;
-  let normalShown = true; // zone B (normal DSL) revealed? (default: yes)
-  let normalFrozen = false; // zone B decoupled (hand-edited, authoritative)?
   let queryInitialized = false; // first query compiled on first display
   // The list runs its query eagerly on first display (and whenever a repo
   // becomes active): searches are fast enough that showing the repo's contents
@@ -169,8 +158,6 @@ export async function mount(root, metafolder) {
    *  as a persistent body state so a failed load is never mistaken for an
    *  empty result. Cleared on the next successful fetch. @type {string|null} */
   let fetchError = null;
-  /** @type {ReturnType<typeof setTimeout>|undefined} */
-  let livePreviewTimer;
   /** @type {SortKey[]} */
   let sort = [];
   let cursorIndex = -1;
@@ -190,13 +177,7 @@ export async function mount(root, metafolder) {
   const finderFieldsLabel = byId(root, 'finder-fields');
   const queryInput = byId(root, 'query-input', HTMLInputElement);
   const columnsInput = byId(root, 'columns-input', HTMLInputElement);
-  const queryError = byId(root, 'query-error');
   const columnsError = byId(root, 'columns-error');
-  const normalToggle = byId(root, 'normal-toggle');
-  const normalEditor = byId(root, 'normal-editor');
-  const normalInput = byId(root, 'normal-input', HTMLInputElement);
-  const normalError = byId(root, 'normal-error');
-  const normalFreeze = byId(root, 'normal-freeze', HTMLInputElement);
 
   // Per-repo input history (doc "Input history"): ctrl-p/ctrl-n walk,
   // ctrl-r OSM search. Recorded on explicit submits only, never the debounce.
@@ -213,6 +194,17 @@ export async function mount(root, metafolder) {
     ...historyDeps,
   });
   const queryHistory = attachHistory(queryInput, { zone: 'metarecord-list:query', ...historyDeps });
+
+  // ── Query (two-zone editor, ./query-editor.js) ──────────────────────────
+  const editor = createQueryEditor({
+    root,
+    metafolder,
+    history: queryHistory,
+    onApply: () => {
+      queryRan = true;
+    },
+    run: () => fetchPage(true),
+  });
 
   // ── Display data (./display-data.js) ─────────────────────────────────
   const display = createDisplayData({
@@ -272,7 +264,7 @@ export async function mount(root, metafolder) {
   function effectiveQuery() {
     const r = repo;
     const targets = finderTargets(finderFields, (f) => (r ? (fieldTypes.get(f) ?? null) : null));
-    return composeQuery(queryIR, finderClause(splitTerms(finderText), targets));
+    return composeQuery(editor.ir(), finderClause(splitTerms(finderText), targets));
   }
 
   // The same query as DSL text. Built from the same inputs by the same-shaped
@@ -281,7 +273,7 @@ export async function mount(root, metafolder) {
   function effectiveQueryText() {
     const r = repo;
     const targets = finderTargets(finderFields, (f) => (r ? (fieldTypes.get(f) ?? null) : null));
-    return composeQueryText(queryText, finderClauseText(splitTerms(finderText), targets));
+    return composeQueryText(editor.text(), finderClauseText(splitTerms(finderText), targets));
   }
 
   /** Aborts the page read in flight. @type {AbortController|null} */
@@ -623,80 +615,11 @@ export async function mount(root, metafolder) {
     await commands.invoke(`panel:open ${where} ${paths.length > 0 ? 'file' : 'metarecord-detail'}`);
   }
 
-  // ── Query (two-zone editor) ─────────────────────────────────────────────
-
-  /** Recomputes `queryIR` from the current editor state (no fetch). */
-  async function recomputeQuery() {
-    queryError.textContent = '';
-    normalError.textContent = '';
-    /** @type {string} */
-    let dsl;
-    if (normalShown && normalFrozen) {
-      dsl = normalInput.value.trim(); // frozen normal DSL is authoritative
-    } else {
-      const simplified = queryInput.value.trim();
-      if (simplified === '') {
-        dsl = '';
-      } else {
-        try {
-          dsl = String(await query.expand(simplified)).trim();
-        } catch (error) {
-          queryError.textContent = messageOf(error);
-          return false;
-        }
-      }
-      if (normalShown) normalInput.value = dsl; // reflect in B
-    }
-    // The base query as normal DSL, published for the panels that act on "the
-    // current query" (metarecord-detail's bulk commands). It must be THIS
-    // value: `metarecord-list:query` holds the *simplified* text, which the
-    // normal-DSL parser does not read, and `metarecord-list:normal-query`
-    // mirrors the B zone and is only written while that zone is shown. Both
-    // expansion and the frozen-zone case are already settled here.
-    void workspace.set('metarecord-list:base-query-text', dsl);
-    // Tell the slow-operation log what this panel is running, so an entry for a
-    // slow query names the text the user typed and not just the IR
-    // (doc "Correlating the GUI and the daemon").
-    daemon.setContext?.(dsl === '' ? 'match all' : dsl);
-    if (dsl === '') {
-      queryIR = null; // empty = match all
-      queryText = '';
-    } else {
-      try {
-        queryIR = /** @type {Record<string, unknown>} */ (await query.parse(dsl));
-        queryText = dsl; // only once the parse succeeded: the two stay in step
-      } catch (error) {
-        (normalShown ? normalError : queryError).textContent = messageOf(error);
-        return false;
-      }
-    }
-    return true;
-  }
-
-  async function applyQuery() {
-    queryRan = true;
-    queryHistory.push(queryInput.value.trim());
-    const ok = await recomputeQuery();
-    await persistQueryState();
-    if (ok) await fetchPage(true);
-  }
-
-  async function persistQueryState() {
-    await writeQueryState({ query: queryInput.value, normal: normalInput.value });
-  }
-
   /** Empties all three search fields and re-runs (empty query = match all). */
   async function clearAllQueries() {
     finderInput.value = '';
     finderText = '';
-    queryInput.value = '';
-    normalInput.value = '';
-    queryError.textContent = '';
-    normalError.textContent = '';
-    // Back to mirroring the (now empty) simplified query, so B shows empty too.
-    if (normalFrozen) await setNormalFrozen(false);
-    await recomputeQuery(); // queryIR = null (match all)
-    await persistQueryState();
+    await editor.clear();
     await workspace.set('metarecord-list:finder', '');
     queryRan = true;
     await fetchPage(true);
@@ -709,7 +632,7 @@ export async function mount(root, metafolder) {
    *  typed into the visible DSL zone — which is exactly the point of the
    *  command, showing a new user what the detection wrote and where to edit it. */
   async function showOrphans() {
-    await showQuery('orphan = true');
+    await editor.show('orphan = true');
   }
 
   // ── Duplicates (doc "duplicates panel") ────────────────────────────────────
@@ -727,159 +650,7 @@ export async function mount(root, metafolder) {
       await statusBar.message('no metarecord is selected', statusMessageMs);
       return;
     }
-    await showQuery(`same(mfr_duplicate_group, ${uuid})`);
-  }
-
-  // ── The query variables are the state (doc "Cross-panel selection") ─────
-  // `metarecord-list:query`, `:normal-query`, `:normal-frozen` and
-  // `:normal-shown` are not a record of what the panel shows: they ARE it.
-  // Another panel or a command shows a query by writing them, and a forked
-  // workspace shows the same list because it has the same variables. What a
-  // write is compared with is the state this panel last applied or wrote — not
-  // the inputs, which hold a draft until it is applied — so its own writes
-  // coming back, and a write of what it already shows, change nothing. A
-  // command writes several of them in a row: they are gathered and run once,
-  // on the final state.
-
-  /** @typedef {{query: string, normal: string, frozen: boolean, shown: boolean}} QueryState */
-
-  /** @type {QueryState} the state last applied or written by this panel */
-  let appliedState = { query: '', normal: '', frozen: false, shown: true };
-
-  // A read of the variables that overlaps the panel's own write is stale: begun
-  // before it, it finds the state the panel HAD (and applying it put the old
-  // query back and ran it); begun between two of its writes, half of each.
-  // Such a read is dropped, and the variables re-read once the writes are done.
-  let stateEpoch = 0;
-  let stateWrites = 0;
-  let followDropped = false;
-
-  /** @type {Record<keyof QueryState, string>} */
-  const STATE_VARIABLES = {
-    query: 'metarecord-list:query',
-    normal: 'metarecord-list:normal-query',
-    frozen: 'metarecord-list:normal-frozen',
-    shown: 'metarecord-list:normal-shown',
-  };
-
-  /** Makes `change` part of the panel's state, writing its variables.
-   *  @param {Partial<QueryState>} change */
-  async function writeQueryState(change) {
-    appliedState = { ...appliedState, ...change };
-    stateEpoch += 1;
-    stateWrites += 1;
-    try {
-      for (const [key, value] of Object.entries(change)) {
-        await workspace.set(STATE_VARIABLES[/** @type {keyof QueryState} */ (key)], value);
-      }
-    } finally {
-      stateWrites -= 1;
-    }
-    if (stateWrites === 0 && followDropped) {
-      followDropped = false;
-      scheduleFollowQueryVariables();
-    }
-  }
-
-  /** @param {QueryState} a @param {QueryState} b */
-  function sameQueryState(a, b) {
-    return a.query === b.query && a.normal === b.normal && a.frozen === b.frozen && a.shown === b.shown;
-  }
-
-  /** @returns {Promise<QueryState>} the state the variables hold now */
-  async function variableQueryState() {
-    const [query, normal, frozen, shown] = await Promise.all([
-      workspace.get('metarecord-list:query'),
-      workspace.get('metarecord-list:normal-query'),
-      workspace.get('metarecord-list:normal-frozen'),
-      workspace.get('metarecord-list:normal-shown'),
-    ]);
-    return {
-      query: asText(query),
-      normal: asText(normal),
-      frozen: frozen === true,
-      // Zone B is revealed by default: only an explicit stored `false` hides it.
-      shown: shown !== false,
-    };
-  }
-
-  /** Brings the zones to what the variables say, and runs it when it differs
-   *  from what this panel last applied. */
-  async function followQueryVariables() {
-    const epoch = stateEpoch;
-    const next = stateWrites === 0 ? await variableQueryState() : null;
-    if (next === null || epoch !== stateEpoch || stateWrites > 0) {
-      followDropped = true;
-      return;
-    }
-    if (sameQueryState(next, appliedState)) return;
-    queryInput.value = next.query;
-    if (next.shown !== normalShown) await setNormalShown(next.shown);
-    if (next.frozen !== normalFrozen) await setNormalFrozen(next.frozen);
-    // After the setters: unfreezing refreshes B from A, which is what an
-    // unfrozen B shows anyway; a frozen B is the variable's text.
-    if (next.frozen) normalInput.value = next.normal;
-    await applyQuery();
-  }
-
-  /** @type {ReturnType<typeof setTimeout> | undefined} */
-  let followTimer;
-  function scheduleFollowQueryVariables() {
-    clearTimeout(followTimer);
-    followTimer = setTimeout(
-      () => metafolder.whenVisible(() => void followQueryVariables()),
-      0,
-    );
-  }
-
-  /** Puts `dsl` in the normal zone — shown and frozen, so a query the GUI wrote
-   *  stays visible, hand-editable and composable rather than being a hidden
-   *  override — and runs it. @param {string} dsl */
-  async function showQuery(dsl) {
-    normalInput.value = dsl;
-    if (!normalShown) await setNormalShown(true);
-    if (!normalFrozen) await setNormalFrozen(true);
-    await applyQuery();
-  }
-
-  /** Debounced live mirror of expand(A) into B (preview only — does not run). */
-  function scheduleLivePreview() {
-    if (!normalShown || normalFrozen) return;
-    clearTimeout(livePreviewTimer);
-    livePreviewTimer = setTimeout(() => void refreshPreview(), livePreviewMs);
-  }
-
-  async function refreshPreview() {
-    if (!normalShown || normalFrozen) return;
-    queryError.textContent = '';
-    const simplified = queryInput.value.trim();
-    if (simplified === '') {
-      normalInput.value = '';
-      return;
-    }
-    try {
-      normalInput.value = String(await query.expand(simplified)).trim();
-    } catch (error) {
-      queryError.textContent = messageOf(error);
-    }
-  }
-
-  /** @param {boolean} shown */
-  async function setNormalShown(shown) {
-    normalShown = shown;
-    normalEditor.hidden = !shown;
-    normalToggle.textContent = shown ? 'Hide normal DSL' : 'Show normal DSL';
-    if (shown && !normalFrozen) await refreshPreview();
-    await writeQueryState({ shown });
-  }
-
-  /** @param {boolean} frozen */
-  async function setNormalFrozen(frozen) {
-    normalFrozen = frozen;
-    normalFreeze.checked = frozen;
-    normalInput.readOnly = !frozen;
-    if (!frozen && normalShown) await refreshPreview();
-    await writeQueryState({ frozen });
+    await editor.show(`same(mfr_duplicate_group, ${uuid})`);
   }
 
   // ── Columns ─────────────────────────────────────────────────────────────
@@ -967,15 +738,6 @@ export async function mount(root, metafolder) {
   byId(root, 'columns-apply').addEventListener('click', () => {
     void commands.invoke('metarecord-list:apply columns');
   });
-  // Enter applies AND leaves the field (blur) so the panel accelerators resume;
-  // Shift+Enter applies but keeps the focus for another edit.
-  queryInput.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter') return;
-    void applyQuery();
-    if (!event.shiftKey) queryInput.blur();
-  });
-  queryInput.addEventListener('input', scheduleLivePreview);
-
   // ── Finder (quick OSM filter) ─────────────────────────────────────────────
 
   function updateFinderFieldsLabel() {
@@ -1009,13 +771,6 @@ export async function mount(root, metafolder) {
   // keybindings.toml with `focus = "finder"` — the `data-mf-focus` tag below is
   // what scopes them to this input. So they are all configurable, not hard-coded.
   finderInput.dataset.mfFocus = 'finder';
-  normalToggle.addEventListener('click', () => void setNormalShown(!normalShown));
-  normalFreeze.addEventListener('change', () => void setNormalFrozen(normalFreeze.checked));
-  normalInput.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter') return;
-    void applyQuery();
-    if (!event.shiftKey) normalInput.blur();
-  });
   columnsInput.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter') return;
     void applyColumns();
@@ -1086,7 +841,7 @@ export async function mount(root, metafolder) {
   // of four commands.
   //
   // The quirk that matters most: while zone B is *shown and frozen* it is what
-  // the query runs (`recomputeQuery`), so anything that hands the user zone A
+  // the query runs (./query-editor.js), so anything that hands the user zone A
   // must unfreeze B first or the field it just focused feeds nothing.
   // Unfreezing discards a hand-edited B, which re-mirrors expand(A) — that is
   // the accepted trade in doc "metarecord-list panel".
@@ -1112,28 +867,16 @@ export async function mount(root, metafolder) {
       },
     },
     simplified: {
-      input: queryInput,
-      enter: () => setNormalFrozen(false),
-      apply: () => applyQuery(),
-      clear: async () => {
-        queryInput.value = '';
-        queryError.textContent = '';
-        await setNormalFrozen(false);
-      },
+      input: editor.simplifiedInput,
+      enter: () => editor.editSimplified(),
+      apply: () => editor.apply(),
+      clear: () => editor.clearSimplified(),
     },
     normal: {
-      input: normalInput,
-      enter: async () => {
-        await setNormalShown(true);
-        await setNormalFrozen(true);
-      },
-      apply: () => applyQuery(),
-      clear: async () => {
-        await setNormalShown(true);
-        await setNormalFrozen(true);
-        normalInput.value = '';
-        normalError.textContent = '';
-      },
+      input: editor.normalInput,
+      enter: () => editor.editNormal(),
+      apply: () => editor.apply(),
+      clear: () => editor.clearNormal(),
     },
     columns: {
       input: columnsInput,
@@ -1268,7 +1011,7 @@ export async function mount(root, metafolder) {
   // toggle and `metarecord-list:set mode` persist the same variable.
   /** @type {Record<string, () => unknown>} */
   const TOGGLES = {
-    normal: () => setNormalShown(!normalShown),
+    normal: () => editor.toggleNormal(),
     mode: () => SETTINGS.mode.apply(mode === 'grid' ? 'table' : 'grid'),
   };
 
@@ -1448,7 +1191,7 @@ export async function mount(root, metafolder) {
     byId(root, 'no-repo').hidden = repo !== null;
     if (!queryInitialized) {
       queryInitialized = true;
-      await recomputeQuery();
+      await editor.recompute();
     }
     if (repo !== null) {
       // Read the field catalog so the finder can auto-detect osm/osmd per field.
@@ -1487,14 +1230,6 @@ export async function mount(root, metafolder) {
     scheduleCatchupSync();
   });
   workspace.onChange('active_repo', () => metafolder.whenVisible(deferredStart));
-  for (const key of [
-    'metarecord-list:query',
-    'metarecord-list:normal-query',
-    'metarecord-list:normal-frozen',
-    'metarecord-list:normal-shown',
-  ]) {
-    workspace.onChange(key, scheduleFollowQueryVariables);
-  }
 
   // Keep the list live when the daemon reflects a change out-of-band from our
   // own query round-trip — chiefly a watcher-driven update (a GUI rename lands
@@ -1549,24 +1284,13 @@ export async function mount(root, metafolder) {
       : defaultFinderFields.slice();
   updateFinderFieldsLabel();
 
-  // Restore the two-zone query editor (values only — no daemon call here).
-  // Zone B is revealed by default: the expanded DSL is what actually runs, so
-  // showing it teaches the mapping.
-  appliedState = await variableQueryState();
-  queryInput.value = appliedState.query;
-  normalInput.value = appliedState.normal;
-  normalFrozen = appliedState.frozen;
-  normalFreeze.checked = normalFrozen;
-  normalInput.readOnly = !normalFrozen;
-  normalShown = appliedState.shown;
-  normalEditor.hidden = !normalShown;
-  normalToggle.textContent = normalShown ? 'Hide normal DSL' : 'Show normal DSL';
+  await editor.restore();
 
   metafolder.whenVisible(deferredStart);
 
   return () => {
     clearTimeout(finderTimer);
-    clearTimeout(followTimer);
+    editor.dispose();
     catchup.cancel();
     finderHistory.detach();
     queryHistory.detach();
@@ -1576,13 +1300,3 @@ export async function mount(root, metafolder) {
     detachScroll();
   };
 }
-
-/** A persisted workspace variable read back as text: anything that is not a
- *  string (a stale value of another shape) reads as empty, never as
- *  "[object Object]".
- *  @param {unknown} value */
-function asText(value) {
-  return typeof value === 'string' ? value : '';
-}
-
-/** The message of a thrown daemon/parser error. */
