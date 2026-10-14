@@ -1,0 +1,6 @@
+title: cursor:next
+tags: [[GUI command]] [[Generic panel commands]]
+kind: reference
+summary: Move a panel's cursor down one row (self / a panel type)
+
+Moves the cursor of a panel down one row: of the focused panel with `self`, of the panel type named otherwise ([[Generic panel commands]]). On the last row a paged list has loaded — the [[metarecord-list panel]] — it loads the next page first, so a script or a key reaches every match, even while the panel is not on screen. With no row under the cursor, it lands on the first.

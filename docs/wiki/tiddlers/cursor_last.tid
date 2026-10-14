@@ -1,0 +1,6 @@
+title: cursor:last
+tags: [[GUI command]] [[Generic panel commands]]
+kind: reference
+summary: Move a panel's cursor to the last row (self / a panel type)
+
+Moves the cursor of a panel onto its last row — the last one ''loaded'' in a paged list such as the [[metarecord-list panel]] or the [[treeref panel]] ([[Generic panel commands]]).

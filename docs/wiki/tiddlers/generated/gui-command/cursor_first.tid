@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/cursor:first
+catalog: GUI command
+target: cursor:first
+summary: Move a panel's cursor to the first row (self / a panel type)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``home`` → ``cursor:first self``
+* ``home`` → ``cursor:first metarecord-list`` (in the ``file`` panel)

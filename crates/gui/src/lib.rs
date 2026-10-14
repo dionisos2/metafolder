@@ -153,6 +153,19 @@ fn register_builtins(registry: &CommandRegistry) {
         ("script:kill", "Kill the running script outright (the one asking, by default)", true),
         ("pick:confirm", "Confirm the value picker's selection", true),
         ("pick:cancel", "Cancel the value picker", true),
+        // Generic panel commands (doc "Generic panel commands"): one command
+        // for every panel providing what it needs, the panel named first (a
+        // panel type, or `self`). `log=false` for the moves: a keystroke-level
+        // action, like stepping through find matches.
+        ("cursor:next", "Move a panel's cursor down one row (self / a panel type)", false),
+        ("cursor:prev", "Move a panel's cursor up one row (self / a panel type)", false),
+        ("cursor:first", "Move a panel's cursor to the first row (self / a panel type)", false),
+        ("cursor:last", "Move a panel's cursor to the last row (self / a panel type)", false),
+        (
+            "cursor:find",
+            "Move a panel's cursor to a row named in the command input (select / walk)",
+            true,
+        ),
         // Find in panel (doc "Find in a panel"). `log=false`: stepping
         // through matches is a keystroke-level action, not a command worth a
         // message-log line.

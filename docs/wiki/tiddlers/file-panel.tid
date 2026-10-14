@@ -72,9 +72,10 @@ written `plus`, `+` being what joins the keys of a combination ([[Keybindings]])
 
 !! Walking a list from the preview
 
-<<key "metarecord-list:next" ↓>> / <<key "metarecord-list:prev" ↑>> and
-<<key "metarecord-list:first" Home>> / <<key "metarecord-list:last" End>> are bound
-here to the ''list's'' commands: they move the cursor of the workspace's
+<<key "cursor:next metarecord-list" ↓>> / <<key "cursor:prev metarecord-list" ↑>> and
+<<key "cursor:first metarecord-list" Home>> / <<key "cursor:last metarecord-list" End>> are bound
+here to the ''list'': they name `metarecord-list` instead of `self`
+([[Generic panel commands]]), so they move the cursor of the workspace's
 [[metarecord-list panel]], and the preview follows. That is how a folder of pictures
 is flipped through without leaving the preview — plain keybindings, to change like
 the others.

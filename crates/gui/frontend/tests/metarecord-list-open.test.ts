@@ -91,6 +91,7 @@ function stubApi(vars: Record<string, unknown>, calls: Call[]) {
         adoptRepo: async () => {},
         onChange: (key: string, fn: (value: unknown) => void) => void listeners.set(key, fn),
       },
+      provide: vi.fn(),
       commands: {
         register: async (name: string, opts: { handler?: Handler; args?: unknown[] }) => {
           if (opts.handler) handlers.set(name, opts.handler);

@@ -21,7 +21,6 @@
       "/__columns.js": ["../panel-shim/columns.js"],
       "/__completions.js": ["../panel-shim/completions.js"],
       "/__finder.js": ["../panel-shim/finder.js"],
-      "/__find-entry.js": ["../panel-shim/find-entry.js"],
       "/__keyhints.js": ["../panel-shim/keyhints.js"],
       "/__history.js": ["../panel-shim/history.js"],
       "/__help.js": ["../panel-shim/help.js"],

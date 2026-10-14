@@ -9,7 +9,6 @@
 
 import { byId, el, field, formatAge, formatValue, openButton, whereArg } from '/__ui.js';
 import { rowActionsProvider, baseName } from '/__file-actions.js';
-import { registerFind } from '/__find-entry.js';
 
 /** The first field named `name` on `rec` as text, or '' when absent.
  *  @param {Metafolder.Metarecord} rec @param {string} name */
@@ -161,39 +160,22 @@ export function mount(root, metafolder) {
 
   byId(root, 'refresh').addEventListener('click', () => void load());
 
-  // Jump to a row by name — the shared list-panel find, on the same key as
-  // everywhere else. Several recently-viewed records can share a display name,
-  // so each candidate carries its path, which the typed terms search too.
-  void registerFind(metafolder, 'recent:find', {
-    label: 'Recent: jump to a metarecord by name',
-    prompt: 'Go to metarecord:',
+  void commands.register('recent:refresh', {
+    label: 'Recent: reload the list',
+    handler: () => load(),
+  });
+  // The cursor, for the generic commands (doc "Generic panel commands").
+  // Several recently-viewed records can share a display name, so each find
+  // candidate carries its path, which the typed terms search too.
+  metafolder.provide({
+    index: () => cursorIndex,
+    count: () => rows.length,
+    select,
     entries: () =>
       rows.map((row) => ({
         name: rowName(row),
         ...(row.relPath && { label: `${rowName(row)} — ${row.relPath}` }),
       })),
-    select,
-  });
-
-  void commands.register('recent:refresh', {
-    label: 'Recent: reload the list',
-    handler: () => load(),
-  });
-  void commands.register('recent:next', {
-    label: 'Recent: move down',
-    handler: () => select(cursorIndex + 1),
-  });
-  void commands.register('recent:prev', {
-    label: 'Recent: move up',
-    handler: () => select(cursorIndex - 1),
-  });
-  void commands.register('recent:first', {
-    label: 'Recent: jump to the most recent',
-    handler: () => select(0),
-  });
-  void commands.register('recent:last', {
-    label: 'Recent: jump to the oldest',
-    handler: () => select(rows.length - 1),
   });
   void commands.register('recent:open', {
     label: 'Recent: open the highlighted metarecord (here / other / new)',

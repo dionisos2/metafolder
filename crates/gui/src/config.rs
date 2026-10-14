@@ -1071,7 +1071,9 @@ mod tests {
         std::fs::write(config.keybindings_path(), shipped).unwrap();
 
         config.set_user_keybinding("h h", "help:open queries", None, None, false).unwrap();
-        config.set_user_keybinding("f", "trash:other", Some("trash"), None, false).unwrap();
+        config
+            .set_user_keybinding("f", "metarecord-list:other", Some("metarecord-list"), None, false)
+            .unwrap();
         let written = std::fs::read_to_string(config.keybindings_path()).unwrap();
         let changed: Vec<(&str, &str)> =
             shipped.lines().zip(written.lines()).filter(|(a, b)| a != b).collect();

@@ -7,6 +7,7 @@
 // change nothing.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { cursor } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import shipped from '../../default-config/commands.js';
@@ -86,6 +87,7 @@ function stub(repo: string | null, vars: Record<string, unknown>, repoRoot = '/r
       set: setVar,
       onChange: (key: string, cb: (value: unknown) => void) => subscriptions.set(key, cb),
     },
+    provide: vi.fn(),
     commands: {
       register: (name: string, opts: { handler?: Handler }) => {
         if (opts.handler) handlers.set(name, opts.handler);
@@ -219,7 +221,7 @@ describe('file-manager location variables', () => {
   test('navigating writes the location, and its own writes coming back change nothing', async () => {
     const s = stub('r', {});
     await mount(s);
-    await s.handlers.get('file-manager:find')!('select', 'sub');
+    await cursor(s.api.provide, 'find', 'select', 'sub');
     // The cursor is on `sub`: that is the location now.
     expect(s.setVar).toHaveBeenCalledWith('file-manager:cursor', 'sub');
     s.fs.readDir.mockClear();

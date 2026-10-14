@@ -44,9 +44,9 @@ binding, or a list of them when the key does different things in different place
 "ctrl+t" = { command = "workspace:new" }
 "ctrl+a" = { command = "editing:goto line-start", text-input = true }
 
-"j" = [
-  { command = "metarecord-list:next", when = "metarecord-list" },
-  { command = "file-manager:next",    when = "file-manager" },
+"r" = [
+  { command = "metarecord-list:refresh", when = "metarecord-list" },
+  { command = "file:restart",            when = "file" },
 ]
 
 "enter" = [

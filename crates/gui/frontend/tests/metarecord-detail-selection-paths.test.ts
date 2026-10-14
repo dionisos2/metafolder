@@ -105,6 +105,7 @@ async function mountPanel(firstUuid: string) {
       adoptRepo: async () => {},
       onChange: (key: string, cb: (value: unknown) => void) => subscriptions.set(key, cb),
     },
+    provide: vi.fn(),
     commands: { register: async () => {}, invoke: () => null },
     addKeybinding: async () => null,
     fs: {

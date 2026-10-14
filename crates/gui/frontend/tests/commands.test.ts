@@ -892,8 +892,8 @@ describe('collectArgs', () => {
 
   // The alternate confirmation (Shift-Enter): an argument may declare what
   // confirming it that way means — a rewrite of the arguments collected before
-  // it, so `file-manager:find walk` answered with Shift-Enter runs as
-  // `file-manager:find select` (doc "Interactive command arguments").
+  // it, so `cursor:find self walk` answered with Shift-Enter runs as
+  // `cursor:find self select` (doc "Interactive command arguments").
   const mode = (): ArgSpec => ({ name: 'mode', prompt: () => 'Mode?' });
   const entry = (): ArgSpec => ({
     name: 'entry',

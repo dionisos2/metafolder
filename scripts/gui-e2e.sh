@@ -422,7 +422,7 @@ scenario_trash() {
     assert_not "trash: the file is gone" test -e "$REPO_DIR/f.txt"
 
     show_panel left trash trash:refresh
-    run trash:first
+    run cursor:first trash
     run trash:restore
     status_is "trash restore: says where" info "Restored $REPO_DIR/f.txt"
     assert "trash restore: the file is back" test -e "$REPO_DIR/f.txt"
@@ -1026,7 +1026,7 @@ fm_at() {
         [ "$(ws_var file-manager:cursor)" = "$cursor" ]
 }
 
-# doc "Jumping to an entry": `file-manager:find walk` enters each directory
+# doc "Jumping to an entry": `cursor:find file-manager walk` enters each directory
 # named and asks again from inside; a file ends the walk, selected, and
 # shift+Return stops on a directory, selected.
 scenario_walk() {
@@ -1036,7 +1036,7 @@ scenario_walk() {
     touch "$REPO_DIR/a/b/c.txt" "$REPO_DIR/a/other.txt"
     show_panel left file-manager file-manager:refresh
 
-    run file-manager:find walk a/
+    run cursor:find file-manager walk a/
     assert "walk: a directory named is entered" until_ok 10 fm_at /a
     typed "b"
     keys Return
@@ -1047,7 +1047,7 @@ scenario_walk() {
 
     run file-manager:parent
     run file-manager:parent
-    run file-manager:find walk a/
+    run cursor:find file-manager walk a/
     assert "walk: again from the root" until_ok 10 fm_at /a
     typed "b"
     keys shift+Return
@@ -1059,7 +1059,7 @@ scenario_walk() {
         record "$REPO_DIR/a/b/c.txt" >/dev/null || die "record a/b/c.txt"
     show_panel left treeref treeref:refresh
     run treeref:set field mfr_path
-    run treeref:find walk /
+    run cursor:find treeref walk /
     for name in a b; do
         sleep 1
         typed "$name"
@@ -1071,7 +1071,7 @@ scenario_walk() {
     assert "walk (treeref): a leaf named is selected" until_ok 10 tree_at /a/b/c.txt
 
     run treeref:root
-    run treeref:find walk /
+    run cursor:find treeref walk /
     sleep 1
     typed "a"
     keys Return

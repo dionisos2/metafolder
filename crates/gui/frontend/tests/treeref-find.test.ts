@@ -1,11 +1,12 @@
-// treeref panel: the keyboard pickers of the toolbar — `treeref:find` (jump to
-// a child by name, the shared list-panel find) and `treeref:set field` (choose
+// treeref panel: the keyboard pickers of the toolbar — `cursor:find treeref`
+// (jump to a child by name, the generic list-panel find) and `treeref:set field` (choose
 // the explored forest, which must NOT pre-fill the minibuffer: the answer is a
 // new field name, not an edit of the current one).
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { cursor, findCandidates } from './support/cursor';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/treeref');
 
@@ -81,6 +82,7 @@ function stub() {
       set: vi.fn(async () => {}),
       onChange: noop,
     },
+    provide: vi.fn(),
     commands: {
       register: vi.fn((name: string, opts: { handler?: Handler; args?: ArgSpec[] }) => {
         if (opts.handler) handlers.set(name, opts.handler);
@@ -112,7 +114,7 @@ function cursorName(root: ShadowRoot): string | null {
   return root.querySelector('li.cursor .name')?.textContent ?? null;
 }
 
-describe('treeref:find', () => {
+describe('cursor:find in the tree explorer', () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = () => {};
   });
@@ -120,15 +122,13 @@ describe('treeref:find', () => {
   test('completes over the children on display', async () => {
     const s = stub();
     await mount(s);
-    const args = s.specs.get('treeref:find');
-    expect(args).toHaveLength(2);
-    expect(await args![1].complete!('', [])).toEqual(['music', 'movies', 'notes']);
+    expect(await findCandidates(s.api.provide)).toEqual(['music', 'movies', 'notes']);
   });
 
   test('an answer moves the cursor onto that child', async () => {
     const s = stub();
     await mount(s);
-    await s.handlers.get('treeref:find')!('select', 'notes');
+    await cursor(s.api.provide, 'find', 'select', 'notes');
     expect(cursorName(s.root)).toBe('notes');
     expect(s.api.workspace.set).toHaveBeenCalledWith(
       'selected_metarecord',
@@ -140,25 +140,24 @@ describe('treeref:find', () => {
     const s = stub();
     await mount(s);
     s.api.daemon.query.mockClear();
-    await s.handlers.get('treeref:find')!('select', 'mo es');
+    await cursor(s.api.provide, 'find', 'select', 'mo es');
     expect(cursorName(s.root)).toBe('movies');
     expect(s.api.daemon.query).not.toHaveBeenCalled();
   });
 
-  test('no match reports an error and leaves the cursor alone', async () => {
+  test('no match is an error and leaves the cursor alone', async () => {
     const s = stub();
     await mount(s);
-    await s.handlers.get('treeref:find')!('select', 'music');
-    await s.handlers.get('treeref:find')!('select', 'zzz');
+    await cursor(s.api.provide, 'find', 'select', 'music');
+    await expect(cursor(s.api.provide, 'find', 'select', 'zzz')).rejects.toThrow(/no entry/);
     expect(cursorName(s.root)).toBe('music');
-    expect(s.statusBar.error).toHaveBeenCalled();
   });
 });
 
 // doc "Jumping to an entry": `walk` goes into a node that has children and
 // asks again from inside; a leaf — whether a node has children is not known
 // beforehand, so it is asked — is selected and ends the walk.
-describe('treeref:find walk', () => {
+describe('cursor:find walk in the tree explorer', () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = () => {};
   });
@@ -167,18 +166,18 @@ describe('treeref:find walk', () => {
   test('a node with children is gone into, and the question asked again', async () => {
     const s = stub();
     await mount(s);
-    await s.handlers.get('treeref:find')!('walk', 'music');
+    const reinvoked = await cursor(s.api.provide, 'find', 'walk', 'music');
     expect(crumbs(s.root)).toContain('music');
-    expect(s.api.commands.invoke).toHaveBeenCalledWith('treeref:find walk');
+    expect(reinvoked).toEqual(['cursor:find panel walk']);
   });
 
   test('a leaf is selected, not gone into, and the walk stops', async () => {
     const s = stub();
     await mount(s);
-    await s.handlers.get('treeref:find')!('walk', 'notes');
+    const reinvoked = await cursor(s.api.provide, 'find', 'walk', 'notes');
     expect(cursorName(s.root)).toBe('notes');
     expect(crumbs(s.root)).not.toContain('notes');
-    expect(s.api.commands.invoke).not.toHaveBeenCalled();
+    expect(reinvoked).toEqual([]);
   });
 });
 
@@ -211,7 +210,7 @@ describe('listing what refers to the selected node', () => {
   test('writes the query into the list’s variables at the target, then shows the list', async () => {
     const s = stub();
     await mount(s);
-    await s.handlers.get('treeref:find')!('select', 'music');
+    await cursor(s.api.provide, 'find', 'select', 'music');
     s.api.workspace.set.mockClear();
     await s.handlers.get('treeref:list-refs')!('new');
     // At the target: in a new workspace, the list here stays as it was.

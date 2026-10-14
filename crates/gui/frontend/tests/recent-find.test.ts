@@ -1,4 +1,4 @@
-// recent panel: `recent:find` — the shared list-panel find over the
+// recent panel: `cursor:find recent` — the generic list-panel find over the
 // recently-viewed rows (doc "Jumping to an entry"). A row's identity is its
 // display name, and since several records can share one, each candidate carries
 // the path that tells them apart.
@@ -6,6 +6,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { cursor, findCandidates } from './support/cursor';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/recent');
 
@@ -63,6 +64,7 @@ function stub() {
       set: vi.fn(async () => {}),
       onChange: noop,
     },
+    provide: vi.fn(),
     commands: {
       register: vi.fn((name: string, opts: { handler?: Handler; args?: ArgSpec[] }) => {
         if (opts.handler) handlers.set(name, opts.handler);
@@ -87,7 +89,7 @@ async function mount(s: ReturnType<typeof stub>) {
 
 const cursorName = (root: ShadowRoot) => root.querySelector('li.cursor .name')?.textContent ?? null;
 
-describe('recent:find', () => {
+describe('cursor:find in the recent list', () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = () => {};
   });
@@ -95,9 +97,7 @@ describe('recent:find', () => {
   test('completes over the rows, each with its path', async () => {
     const s = stub();
     await mount(s);
-    const args = s.specs.get('recent:find')!;
-    expect(args).toHaveLength(1);
-    expect(await args[0].complete!()).toEqual([
+    expect(await findCandidates(s.api.provide)).toEqual([
       'jazz.mp3 — /music/jazz.mp3',
       'rock.mp3 — /other/rock.mp3',
     ]);
@@ -106,7 +106,7 @@ describe('recent:find', () => {
   test('an answer moves the cursor and publishes the selection', async () => {
     const s = stub();
     await mount(s);
-    await s.handlers.get('recent:find')!('rock');
+    await cursor(s.api.provide, 'find', 'select', 'rock');
     expect(cursorName(s.root)).toBe('rock.mp3');
     expect(s.api.workspace.set).toHaveBeenCalledWith('selected_metarecord', {
       uuid: 'u2',
@@ -114,13 +114,12 @@ describe('recent:find', () => {
     });
   });
 
-  test('no match reports an error and leaves the cursor alone', async () => {
+  test('no match is an error and leaves the cursor alone', async () => {
     const s = stub();
     await mount(s);
-    await s.handlers.get('recent:find')!('jazz');
-    await s.handlers.get('recent:find')!('zzz');
+    await cursor(s.api.provide, 'find', 'select', 'jazz');
+    await expect(cursor(s.api.provide, 'find', 'select', 'zzz')).rejects.toThrow(/no entry/);
     expect(cursorName(s.root)).toBe('jazz.mp3');
-    expect(s.statusBar.error).toHaveBeenCalled();
   });
 });
 

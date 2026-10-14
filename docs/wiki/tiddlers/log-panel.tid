@@ -23,7 +23,7 @@ whether undoing it makes sense, computed over everything under it:
 
 !! Moving around
 
-* <<key "log:next" "↓ or j">> / <<key "log:prev" "↑ or k">>, <<key "log:first" Home>> / <<key "log:last" End>>, <<key "log:find" f>> (a row on screen by label number or name, [[Jumping to an entry]]) — the selection, over every listed row.
+* <<key "cursor:next self" "↓ or j">> / <<key "cursor:prev self" "↑ or k">>, <<key "cursor:first self" Home>> / <<key "cursor:last self" End>>, <<key "cursor:find self select" f>> (a row on screen by label number or name, [[Jumping to an entry]]) — the selection, over every listed row.
 * <<key "log:descend" "Enter or →">>, or the row's `›` button ([[Opening a row]]) — go into the row under the cursor: the list shows what it holds, the cursor on its first row. A revert aims at what is under the cursor: a label whole — what is nested in it included —, or one operation.
 * <<key "log:parent" "Backspace or ←">>, or ''↑ up'', or a step of the breadcrumb — back out, the cursor on the row it came out of.
 * <<key "log:toggle watcher" Shift+w>> — hide or show the watcher's work (shown by default). A display filter over what was fetched; the status line says how many units are hidden, and a selection inside one is dropped.

@@ -1,0 +1,6 @@
+title: cursor:first
+tags: [[GUI command]] [[Generic panel commands]]
+kind: reference
+summary: Move a panel's cursor to the first row (self / a panel type)
+
+Moves the cursor of a panel onto its first row — in the [[log panel]], the newest; in the [[recent panel]], the most recent ([[Generic panel commands]]).

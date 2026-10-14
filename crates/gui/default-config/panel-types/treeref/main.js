@@ -17,7 +17,6 @@ import { byId, el, openButton, whereArg } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
 import { createSelect } from '/__select.js';
 import { fileActionsProvider, metarecordMenuItems } from '/__file-actions.js';
-import { registerFind } from '/__find-entry.js';
 import { loadSchema as loadSharedSchema, schemaTypes, templateFields } from '/__schema-template.js';
 import { childrenQuery, nodeFields, refQueryDsl, treeNameOf, treeRefPath } from './queries.js';
 
@@ -481,22 +480,6 @@ export async function mount(root, metafolder) {
     await fetchChildren(true);
   }
 
-  void commands.register('treeref:next', {
-    label: 'TreeRef explorer: move the cursor down',
-    handler: () => select(cursorIndex + 1),
-  });
-  void commands.register('treeref:prev', {
-    label: 'TreeRef explorer: move the cursor up',
-    handler: () => select(cursorIndex - 1),
-  });
-  void commands.register('treeref:first', {
-    label: 'TreeRef explorer: move to the first child',
-    handler: () => select(0),
-  });
-  void commands.register('treeref:last', {
-    label: 'TreeRef explorer: move to the last loaded child',
-    handler: () => select(children.length - 1),
-  });
   void commands.register('treeref:descend', {
     label: 'TreeRef explorer: descend into the selected node',
     handler: () => descend(cursorIndex),
@@ -516,17 +499,17 @@ export async function mount(root, metafolder) {
   // The drop-down's keyboard equivalent: pick the TreeRef field to explore
   // without leaving the keyboard (doc "treeref panel").
 
-  // Jump to a child by name — the shared list-panel find, on the same key as
-  // everywhere else. Only the *loaded* children are searched, as in a paged
-  // list; the search is over the displayed label, so the mfr_path root is "/".
-  void registerFind(metafolder, 'treeref:find', {
-    label: 'TreeRef explorer: jump to a child by name',
-    prompt: 'Go to child:',
-    entries: () => children.map((child) => ({ name: nodeLabel(child) })),
+  // The cursor, for the generic commands (doc "Generic panel commands"). A
+  // find searches only the *loaded* children, as in a paged list, over the
+  // displayed label, so the mfr_path root is "/".
+  metafolder.provide({
+    index: () => cursorIndex,
+    count: () => children.length,
     select,
-    // `treeref:find walk` goes into a node that has children. Whether it has
-    // is not known beforehand (a leaf entered shows an empty list), so one
-    // child is asked for: a leaf is selected instead, like a file.
+    entries: () => children.map((child) => ({ name: nodeLabel(child) })),
+    // `cursor:find treeref walk` goes into a node that has children. Whether
+    // it has is not known beforehand (a leaf entered shows an empty list), so
+    // one child is asked for: a leaf is selected instead, like a file.
     enter: async (index) => {
       const child = children[index];
       if (!child || repo === null) return false;

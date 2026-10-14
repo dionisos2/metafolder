@@ -1,0 +1,6 @@
+title: cursor:prev
+tags: [[GUI command]] [[Generic panel commands]]
+kind: reference
+summary: Move a panel's cursor up one row (self / a panel type)
+
+Moves the cursor of a panel up one row, stopping on the first: of the focused panel with `self`, of the panel type named otherwise ([[Generic panel commands]]).

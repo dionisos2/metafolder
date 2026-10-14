@@ -20,6 +20,7 @@ import {
   store,
 } from './store.svelte';
 import { describeKeyStep } from './describeKey';
+import { appliesHere, functionProvider } from './panelFunctions';
 import { settingsViewKey } from './settingsKeys';
 import type { SlotId } from './types';
 
@@ -137,6 +138,7 @@ export function installKeys() {
             panelType: focusedPanelType(),
             textInput: inTextInputContext(target),
             focus: focusScope(path),
+            applies: bindingApplies,
           },
           commandLabel,
         );
@@ -201,6 +203,7 @@ export function installKeys() {
         panelType: focusedPanelType(),
         textInput,
         focus: focusScope(path),
+        applies: bindingApplies,
       });
       // Continuation hint: shown while a sequence is pending, cleared by
       // any other outcome (fired, cancelled with escape, aborted).
@@ -260,4 +263,11 @@ export function installKeys() {
     },
     { capture: true },
   );
+}
+
+/** Whether a binding's command applies where the focus is: a generic command
+ *  (`cursor:next self`) only in a panel providing what it needs, so its key
+ *  passes through elsewhere (doc "Generic panel commands"). */
+function bindingApplies(invocation: string): boolean {
+  return appliesHere(invocation, focusedPanelType(), (type) => functionProvider()?.provided(type));
 }

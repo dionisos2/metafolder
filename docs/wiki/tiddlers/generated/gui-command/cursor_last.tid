@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/cursor:last
+catalog: GUI command
+target: cursor:last
+summary: Move a panel's cursor to the last row (self / a panel type)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``end`` → ``cursor:last self``
+* ``end`` → ``cursor:last metarecord-list`` (in the ``file`` panel)

@@ -14,3 +14,7 @@ summary: The repos panel type
 * ``repos:stop`` — Repos: stop one of the active repository's running tasks
 * ``repos:unload`` — Repos: unload a repository from the daemon
 * ``repos:watch-exceeded`` — Repos: list the subtrees left unwatched for want of watch budget
+
+!! Generic commands
+
+Provides nothing to [[Generic panel commands]].

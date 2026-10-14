@@ -567,16 +567,6 @@ export async function mount(root, metafolder) {
     await propagateSelection();
   }
 
-  /** Move the selection down one row, loading the next page when it reaches
-   *  the end of what is loaded. The scroll pager only fires on a real scroll
-   *  event of a displayed panel, so keyboard/script navigation — which works
-   *  just as well on a panel sitting in a hidden workspace — has to ask for
-   *  the next page itself. */
-  async function moveNext() {
-    if (cursorIndex + 1 >= metarecords.length && nextCursor) await fetchPage(false);
-    await setCursor(cursorIndex + 1);
-  }
-
   async function toggleChecked() {
     const metarecord = metarecords[cursorIndex];
     if (!metarecord) return;
@@ -780,21 +770,16 @@ export async function mount(root, metafolder) {
 
   // ── Wiring ──────────────────────────────────────────────────────────────
 
-  void commands.register('metarecord-list:next', {
-    label: 'Metarecord list: move the selection down',
-    handler: () => moveNext(),
-  });
-  void commands.register('metarecord-list:prev', {
-    label: 'Metarecord list: move the selection up',
-    handler: () => setCursor(cursorIndex - 1),
-  });
-  void commands.register('metarecord-list:first', {
-    label: 'Metarecord list: move the selection to the first row',
-    handler: () => setCursor(0),
-  });
-  void commands.register('metarecord-list:last', {
-    label: 'Metarecord list: move the selection to the last loaded row',
-    handler: () => setCursor(metarecords.length - 1),
+  // The cursor, for the generic commands (doc "Generic panel commands").
+  // `more` loads the next page when `cursor:next` reaches the last row loaded:
+  // the scroll pager only fires on a real scroll event of a displayed panel,
+  // so keyboard/script navigation — which works just as well on a panel
+  // sitting in a hidden workspace — has to ask for it itself.
+  metafolder.provide({
+    index: () => cursorIndex,
+    count: () => metarecords.length,
+    select: setCursor,
+    more: () => (nextCursor ? fetchPage(false) : undefined),
   });
   void commands.register('metarecord-list:page', {
     label: 'Metarecord list: load a page (next)',

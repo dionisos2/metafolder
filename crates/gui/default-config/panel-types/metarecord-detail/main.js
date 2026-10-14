@@ -367,15 +367,9 @@ export async function mount(root, metafolder) {
   function rowItems() {
     return metarecord?.fields ?? [];
   }
-  /** @param {number} delta */
-  function moveCursor(delta) {
-    const n = rowItems().length;
-    if (n === 0) {
-      cursorIndex = -1;
-      return;
-    }
-    const base = cursorIndex < 0 ? (delta < 0 ? 0 : -1) : cursorIndex;
-    cursorIndex = Math.max(0, Math.min(base + delta, n - 1));
+  /** Puts the field cursor on row `index`. @param {number} index */
+  function selectRow(index) {
+    cursorIndex = index;
     render();
     root.querySelector('tr.cursor')?.scrollIntoView({ block: 'nearest' });
   }
@@ -739,15 +733,11 @@ export async function mount(root, metafolder) {
 
   // Keyboard editing (doc "Commands"): every field/metarecord operation is a command,
   // so the panel is fully drivable without the mouse.
-  void commands.register('metarecord:row-next', {
-    label: 'Move the field cursor down',
-    log: false,
-    handler: () => moveCursor(1),
-  });
-  void commands.register('metarecord:row-prev', {
-    label: 'Move the field cursor up',
-    log: false,
-    handler: () => moveCursor(-1),
+  // The field cursor, for the generic commands (doc "Generic panel commands").
+  metafolder.provide({
+    index: () => cursorIndex,
+    count: () => rowItems().length,
+    select: selectRow,
   });
   void commands.register('metarecord:row-edit', {
     label: 'Edit the field under the cursor',

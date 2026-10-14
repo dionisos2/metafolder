@@ -1,6 +1,0 @@
-title: log:last
-tags: [[GUI command]] [[Event log]]
-kind: reference
-summary: Log: move the selection to the oldest row
-
-Selects the oldest row on screen ([[log panel]]).

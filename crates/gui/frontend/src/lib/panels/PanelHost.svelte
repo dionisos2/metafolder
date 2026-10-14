@@ -15,6 +15,7 @@
   import { createPanelApi, type PanelApiInstance } from './api';
   import { createPanelArgSource } from './argSource';
   import { setFindRootProvider } from './roots';
+  import { providedNames, setFunctionProvider, type PanelFunctions } from '../panelFunctions';
   import { helpCursorSheet } from '../cursor';
   import type { CommandDef, ExecContext, SlotId } from '../types';
   import { createVisibilityGate } from '../../../../panel-shim/visibility.js';
@@ -38,6 +39,11 @@
   const instances = new Map<string, PanelInstance>();
   // Panel command handlers, keyed `${wsId}|${panelType}|${name}`.
   const panelHandlers = new Map<string, (...args: string[]) => unknown>();
+  // What each instance provides to the generic commands (doc "Generic panel
+  // commands"), keyed like the instances, and what each panel *type* provides
+  // — the same for every instance, and asked synchronously by the key matcher.
+  const panelFunctions = new Map<string, PanelFunctions>();
+  const providedByType = new Map<string, Set<string>>();
   // A panel command's declared arguments, per instance like its handler —
   // the prompt/completion functions read the state of the panel that declared
   // them (lib/panels/argSource.ts).
@@ -103,6 +109,11 @@
           }
         },
         registerHandler: (name, handler) => panelHandlers.set(`${key}|${name}`, handler),
+        provide: (functions) => {
+          const merged = { ...panelFunctions.get(key), ...functions };
+          panelFunctions.set(key, merged);
+          providedByType.set(panelType, providedNames(merged));
+        },
         registerArgs: (name, args) => {
           panelArgSource.register(key, name, args);
           // Mirrored by name too: the autocomplete asks synchronously whether
@@ -203,6 +214,7 @@
       if (handlerKey.startsWith(`${key}|`)) panelHandlers.delete(handlerKey);
     }
     panelArgSource.forget(key);
+    panelFunctions.delete(key);
     instance.host.remove();
     instances.delete(key);
   }
@@ -333,6 +345,19 @@
       }),
     ];
 
+    // The generic commands run on the functions of the instance they name, in
+    // their workspace — mounted first, like a panel command's (doc "Generic
+    // panel commands").
+    setFunctionProvider({
+      get: async (wsId, panelType) => {
+        const instance = ensureInstance(wsId, panelType);
+        if (!instance) return null;
+        await instance.mounted.catch(() => {});
+        return panelFunctions.get(instanceKey(wsId, panelType)) ?? null;
+      },
+      provided: (panelType) => providedByType.get(panelType),
+    });
+
     // The focused workspace's instance answers for a panel command's declared
     // arguments — the same instance `setPanelDispatch` below runs the handler
     // on, so the prompts and the work are one panel's.
@@ -373,6 +398,7 @@
       setPanelDispatch(null);
       setPanelArgs(null);
       setFindRootProvider(null);
+      setFunctionProvider(null);
     };
   });
 </script>

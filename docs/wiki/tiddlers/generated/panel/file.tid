@@ -15,3 +15,7 @@ summary: The file panel type
 * ``file:toggle`` — File: toggle a view flag
 * ``file:volume`` — File: step the volume
 * ``file:zoom`` — File: zoom the previewed image/video
+
+!! Generic commands
+
+Provides nothing to [[Generic panel commands]].

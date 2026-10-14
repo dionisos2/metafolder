@@ -6,3 +6,7 @@ summary: The hello panel type
 !! Commands
 
 * ``hello:greet`` — Hello: greet in the status bar
+
+!! Generic commands
+
+Provides nothing to [[Generic panel commands]].

@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/cursor:find
+catalog: GUI command
+target: cursor:find
+summary: Move a panel's cursor to a row named in the command input (select / walk)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``d`` → ``cursor:find self walk``
+* ``f`` → ``cursor:find self select``

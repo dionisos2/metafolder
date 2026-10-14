@@ -290,9 +290,39 @@ declare namespace Metafolder {
     when?(prior: string[]): boolean;
     /** The alternate confirmation (Shift-Enter): the arguments collected
      *  before this one are replaced by `prior(collected)` (as many), so
-     *  `file-manager:find walk` answered that way runs as
-     *  `file-manager:find select`. `hint` is shown beside the input. */
+     *  `cursor:find self walk` answered that way runs as
+     *  `cursor:find self select`. `hint` is shown beside the input. */
     alternate?: { hint: string; prior(prior: string[]): string[] };
+  }
+
+  /** One searchable row of `PanelFunctions.entries`: `label` is what the
+   *  completion offers and typed terms match (the context telling rows of the
+   *  same name apart); `name` the bare identity. Without a label, the two are one.
+   *  `index`: the row `select`/`enter` get, when the entries skip some rows;
+   *  by default the entry's position. */
+  interface FindRow {
+    name: string;
+    label?: string;
+    index?: number;
+  }
+
+  /** What a panel provides to the generic commands (doc "Generic panel
+   *  commands"), each optional: a command needs some of them, and is "not
+   *  implemented" for a panel lacking one. */
+  interface PanelFunctions {
+    /** The cursor's row, -1 when there is none. */
+    index?(): number;
+    /** How many rows there are (loaded, for a paged list). */
+    count?(): number;
+    /** Moves the cursor onto row `index`, always within `0..count()-1`. */
+    select?(index: number): unknown;
+    /** Loads more rows; asked by `cursor:next` on the last row loaded. */
+    more?(): unknown;
+    /** The rows `cursor:find` searches, as displayed now. */
+    entries?(): FindRow[] | Promise<FindRow[]>;
+    /** Enters row `index` (a directory) and says whether it could:
+     *  `cursor:find <panel> walk` then asks again from inside. */
+    enter?(index: number): boolean | Promise<boolean>;
   }
 
   interface CommandOptions {
@@ -614,6 +644,10 @@ declare namespace Metafolder {
     readonly config: PanelConfig;
     readonly workspace: Workspace;
     readonly commands: Commands;
+    /** Provides functions to the generic commands (doc "Generic panel
+     *  commands"): `cursor:next self` in this panel runs on them. A later call
+     *  adds to what an earlier one provided. */
+    provide(functions: PanelFunctions): void;
     /** `commands.invoke` lifted to the top of the object
      *  (`withTopLevelInvoke`, doc "User commands"): composing existing
      *  commands is what a command is *for*, so the call it makes most should

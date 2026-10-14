@@ -152,6 +152,7 @@ async function mountPanel(
       adoptRepo: async () => {},
       onChange: noop,
     },
+    provide: vi.fn(),
     commands: {
       register: async (name: string, spec: Spec) => void specs.set(name, spec),
       invoke: () => null,

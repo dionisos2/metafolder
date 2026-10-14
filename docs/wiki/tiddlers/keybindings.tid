@@ -45,7 +45,7 @@ A binding with nothing else applies everywhere, except while typing in a text
 field. Three settings change that:
 
 |!Setting |!Effect |
-|`when = "<panel type>"` |only while a panel of that type has the focus — which is what lets `j` move the cursor in each list panel, with a different command in each |
+|`when = "<panel type>"` |only while a panel of that type has the focus — which is what lets `Enter` open a row in the list and restore an entry in the trash, a different command in each |
 |`text-input = true` |also while typing in a text field. Without it the key is left to the field: a binding on `n` must not fire in the middle of a word |
 |`focus = "<name>"` |only while one particular text field has the focus, and then ''even though'' it is a text field. Two fields have a name: `find`, the find bar ([[Find in a panel]]), and `finder`, the finder of `metarecord-list` |
 
@@ -58,6 +58,12 @@ When the same key has several bindings that apply, the most specific wins: one w
 without `text-input` — the stricter. That is how `Enter` steps through the matches
 in the find bar, applies the finder in its field, opens the row in the list, and
 confirms the command input everywhere else.
+
+A binding also applies only where its ''command'' can run. A generic command —
+`cursor:next self`, run on the focused panel's cursor ([[Generic panel commands]])
+— cannot run in a panel without a cursor, so there its key is not bound at all and
+does what it would do unbound: `j` is one general binding, yet the help still
+scrolls with the arrows.
 
 One key can have only one binding in a given place: the same key, `when` and `focus`.
 

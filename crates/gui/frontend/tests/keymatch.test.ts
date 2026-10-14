@@ -108,6 +108,25 @@ describe('createMatcher', () => {
     expect(matcher.feed('j', noInput)).toEqual({ invocation: 'global:j' });
   });
 
+  test('a binding whose command does not apply here passes through', () => {
+    // `cursor:next self` in a panel that provides no cursor (doc "Generic
+    // panel commands"): the key is not bound there, and falls to what is.
+    const matcher = createMatcher([b(['j'], 'cursor:next self'), b(['j'], 'other:j', 'file')]);
+    const applies = (invocation: string) => invocation !== 'cursor:next self';
+    expect(matcher.feed('j', { panelType: 'help', textInput: false, applies })).toBeNull();
+    expect(matcher.feed('j', { panelType: 'file', textInput: false, applies })).toEqual({
+      invocation: 'other:j',
+    });
+    expect(
+      matcher.feed('j', { panelType: 'trash', textInput: false, applies: () => true }),
+    ).toEqual({ invocation: 'cursor:next self' });
+  });
+
+  test('a sequence is not pending on a binding that does not apply', () => {
+    const matcher = createMatcher([b(['g', 'x'], 'cursor:next self')]);
+    expect(matcher.feed('g', { panelType: 'help', textInput: false, applies: () => false })).toBeNull();
+  });
+
   test('text-input=false bindings are suppressed while typing', () => {
     const matcher = createMatcher([
       b(['j'], 'metarecord-list:next', 'metarecord-list'),

@@ -632,16 +632,17 @@ mod tests {
         assert!(table.iter().any(|b| b.keys == [":"]));
         assert!(table.iter().any(|b| b.keys == ["x"] && b.invocation == "panel:swap"));
 
-        // The panel bindings now live in the shipped file (not addKeybinding):
-        // the same combo carries several scoped bindings.
+        // Moving a cursor is one generic command for every panel (doc "Generic
+        // panel commands"): one global `down`, plus the panels it drives from
+        // elsewhere — the file panel and the finder drive the list's cursor.
         let down: Vec<_> = table.iter().filter(|b| b.keys == ["down"]).collect();
-        assert!(down.len() >= 6, "expected per-panel `down` bindings, got {}", down.len());
-        assert!(down.iter().any(|b| b.when.as_deref() == Some("metarecord-list")
-            && b.invocation == "metarecord-list:next"));
         assert!(down
             .iter()
-            .any(|b| b.when.as_deref() == Some("file-manager")
-                && b.invocation == "file-manager:next"));
+            .any(|b| b.when.is_none() && b.focus.is_none() && b.invocation == "cursor:next self"));
+        assert!(down
+            .iter()
+            .any(|b| b.when.as_deref() == Some("file")
+                && b.invocation == "cursor:next metarecord-list"));
         // `enter` mixes a global text-input binding with per-panel actions.
         let enter: Vec<_> = table.iter().filter(|b| b.keys == ["enter"]).collect();
         assert!(enter.iter().any(|b| b.when.is_none() && b.text_input));
@@ -831,25 +832,18 @@ mod tests {
     #[test]
     fn test_shipped_defaults_bind_find_per_panel_and_fullscreen() {
         // doc "Jumping to an entry": every list panel with a row cursor puts
-        // its find on the same key, so the gesture is one gesture.
+        // its find on the same key, so the gesture is one gesture — one
+        // generic command, run wherever the focused panel can find a row
+        // (doc "Generic panel commands").
         let defaults = include_str!("../default-config/keybindings.toml");
         let table = KeybindingSet::from_sources(defaults, "").unwrap().compiled();
         let f: Vec<_> = table.iter().filter(|b| b.keys == ["f"]).collect();
-        for panel in ["file-manager", "treeref", "trash", "recent"] {
-            assert!(
-                f.iter().any(|b| b.when.as_deref() == Some(panel)
-                    && (b.invocation == format!("{panel}:find")
-                        || b.invocation == format!("{panel}:find select"))),
-                "`f` does not find an entry in the {panel} panel"
-            );
-        }
-        // `d` walks down by name in the file manager and the tree explorer
-        // (a directory, a node with children, is entered and asked again).
-        for panel in ["file-manager", "treeref"] {
-            assert!(table.iter().any(|b| b.keys == ["d"]
-                && b.when.as_deref() == Some(panel)
-                && b.invocation == format!("{panel}:find walk")));
-        }
+        assert!(f.iter().any(|b| b.when.is_none() && b.invocation == "cursor:find self select"));
+        // `d` walks down by name where a row can be entered (a directory, a
+        // node with children): asked again from inside.
+        assert!(table.iter().any(|b| b.keys == ["d"]
+            && b.when.is_none()
+            && b.invocation == "cursor:find self walk"));
         // The treeref field picker moved off `f` to make room for it.
         assert!(table.iter().any(|b| b.keys == ["shift+f"] && b.invocation == "treeref:set field"));
         assert!(!f.iter().any(|b| b.invocation == "treeref:set field"));

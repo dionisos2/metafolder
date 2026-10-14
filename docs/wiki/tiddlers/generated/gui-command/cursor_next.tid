@@ -1,0 +1,15 @@
+title: $:/mf/gen/GUI command/cursor:next
+catalog: GUI command
+target: cursor:next
+summary: Move a panel's cursor down one row (self / a panel type)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``down`` → ``cursor:next self``
+* ``down`` → ``cursor:next metarecord-list`` (while ``finder`` is focused)
+* ``down`` → ``cursor:next metarecord-list`` (in the ``file`` panel)
+* ``j`` → ``cursor:next self``

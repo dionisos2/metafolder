@@ -7,6 +7,7 @@
 import { createPathResolver } from '../../../../panel-shim/resolve.js';
 import { showMenu } from '../../../../panel-shim/menu.js';
 import { type ArgSpec, withTopLevelInvoke } from '../commands';
+import type { PanelFunctions } from '../panelFunctions';
 import { invoke as ipcInvoke } from '../ipc';
 import { checkTarget, resolveTarget } from '../targets';
 import type { ExecContext } from '../types';
@@ -78,6 +79,9 @@ export interface PanelApiDeps {
   onCommandsChanged: () => void;
   /** Adds a provider to the shell's single default context menu. */
   addDefaultMenuItems: (provider: (event: MouseEvent) => unknown[]) => void;
+  /** Records the functions this instance provides to the generic commands
+   *  (doc "Generic panel commands"); absent where none can run (a user command). */
+  provide?: (functions: PanelFunctions) => void;
 }
 
 export interface PanelApiCtx {
@@ -165,11 +169,11 @@ export function createUserCommandApi(
   );
 
   // The panel-only members (`panelType`, `pageSize`, `defaults`, the visibility
-  // gate) are dropped rather than faked. Spread-and-delete rather than
+  // gate, `provide` — a command has no cursor) are dropped rather than faked. Spread-and-delete rather than
   // omit-destructuring: pulling a method out just to discard it is a detached
   // method reference, which is exactly what `unbound-method` is about.
   const rest = { ...(api as MetafolderApi & Record<string, unknown>) };
-  for (const key of ['panelType', 'pageSize', 'defaults', 'visible', 'onVisibility', 'whenVisible']) {
+  for (const key of ['panelType', 'pageSize', 'defaults', 'visible', 'onVisibility', 'whenVisible', 'provide']) {
     delete rest[key];
   }
 
@@ -599,6 +603,13 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       // The live keybinding table, so a panel can *show* a shortcut rather than
       // restate it: the help pages fill their key hints from it (/__keyhints.js).
       keybindings: () => invoke('get_compiled_keybindings') as Promise<Metafolder.Binding[]>,
+    },
+
+    /** The functions behind the generic commands (doc "Generic panel
+     *  commands"): `cursor:next self` runs on what the focused panel provides
+     *  here. A later call adds to (and replaces) what an earlier one provided. */
+    provide(functions: PanelFunctions) {
+      deps.provide?.(functions);
     },
 
     // `commands.invoke` lifted to the top of the object (doc "User

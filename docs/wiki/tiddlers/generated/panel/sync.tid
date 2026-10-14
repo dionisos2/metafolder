@@ -10,3 +10,7 @@ summary: The sync panel type
 * ``sync:plan`` — Sync: compute the plan (from the intents file given, else the toolbar\
 * ``sync:run`` — Sync: run the plan
 * ``sync:status`` — Sync: show the pair status
+
+!! Generic commands
+
+Provides nothing to [[Generic panel commands]].

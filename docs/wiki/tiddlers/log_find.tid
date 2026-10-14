@@ -1,6 +1,0 @@
-title: log:find
-tags: [[GUI command]] [[Event log]]
-kind: reference
-summary: Log: jump to a label by number or name
-
-Moves the cursor onto a row named by its label's number or name ([[Jumping to an entry]], [[log panel]]).

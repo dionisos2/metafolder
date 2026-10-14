@@ -114,6 +114,7 @@ async function mountPanel(watchResults: Record<string, unknown>[] | null) {
       adoptRepo: async () => {},
       onChange: noop,
     },
+    provide: vi.fn(),
     commands: { register: async () => null, invoke: () => null },
     addKeybinding: async () => null,
     fs: { readDir: async () => [], stat: async () => ({}), exists: async () => true, homeDir: async () => '/home/user' },

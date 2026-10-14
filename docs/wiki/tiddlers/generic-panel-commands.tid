@@ -1,0 +1,74 @@
+title: Generic panel commands
+tags: Commands Keybindings
+kind: reference
+aliases: generic-commands cursor-commands provide
+summary: One command for every panel that can do it — cursor:next self moves the cursor of whatever panel has the focus — run on functions the panel provides with metafolder.provide.
+
+Some commands do the same thing in every panel that shows rows under a cursor:
+moving to the next row, to the first, finding a row by name. They are not one
+command per panel type (`trash:next`, `log:next`…) but ''one command'', which
+the shell runs on a few functions the panel provides:
+
+|!Command |!Does |!Needs |
+|<<cmd "cursor:next">> |the next row; on the last row loaded, loads more first (`more`) |`index`, `count`, `select` |
+|<<cmd "cursor:prev">> |the previous row |`index`, `count`, `select` |
+|<<cmd "cursor:first">> |the first row |`count`, `select` |
+|<<cmd "cursor:last">> |the last row loaded |`count`, `select` |
+|<<cmd "cursor:find">> `select` |the row named in the command input ([[Jumping to an entry]]) |`entries`, `select` |
+|<<cmd "cursor:find">> `walk` |the same, entering what can be entered and asking again |`entries`, `select`, `enter` |
+
+With no row under the cursor, `next` and `prev` both land on the first row, and
+none of them moves past either end. An empty list is left alone.
+
+!! Which panel
+
+The first argument is ''required'': the panel the command acts on.
+
+* `self` is the panel that has the focus: `cursor:next self` is what <<key "cursor:next self" j>> runs.
+* A panel type is that panel in the workspace, focused or not, on screen or not — mounted first if it has to be, like a panel's own command. In the [[file panel]], the arrows run `cursor:next metarecord-list`: the list beside it moves, and the preview follows.
+
+A script names the panel it drives (`mf gui command "cursor:next trash"`), so
+what it does does not depend on where the focus happens to be.
+
+A panel that lacks a function the command needs answers with an error:
+`cursor:next is not implemented for the help panel`. A ''key'' bound to the
+command does not get that far: a binding fires only where its command applies,
+so in a panel without a cursor the key passes through as if it were not bound,
+and the help scrolls with the arrows as before ([[Keybindings]]).
+
+!! Providing the functions
+
+A panel type hands the shell its functions once, at mount
+([[Writing a panel type]]):
+
+```
+metafolder.provide({
+  index: () => cursorIndex,         // the cursor's row, -1 when there is none
+  count: () => rows.length,         // how many rows (loaded, for a paged list)
+  select: (i) => moveCursorTo(i),   // always called with 0 <= i < count()
+  entries: () => rows.map((r) => ({ name: r.name, label: `${r.name} — ${r.path}` })),
+});
+```
+
+|!Function |!Is |
+|`index()` |the row under the cursor, -1 when there is none |
+|`count()` |how many rows there are — loaded ones, for a paged list |
+|`select(i)` |puts the cursor on row `i`, which the shell keeps within `0..count()-1` |
+|`more()` |loads more rows; asked by `cursor:next` on the last row loaded (the [[metarecord-list panel]]) |
+|`entries()` |the rows `cursor:find` searches, as displayed now: a `name`, an optional `label` the candidates show and the typed terms match, and an optional `index` — the row `select` gets when the entries skip some (the file manager's `.` and `..`) |
+|`enter(i)` |enters row `i` and says whether it could — a directory, a node with children |
+
+Every function is optional; a panel provides what it can do, and a later call
+adds to what an earlier one provided. Each panel's note in the [[Panel]] catalog
+lists what it provides.
+
+!! Why one command
+
+Seven list panels each had their own `next`, `prev`, `first`, `last` and, but
+one, `find` — some thirty commands doing one thing, each with its note — and
+every key carried one binding per panel: `j` alone was eight lines of
+`keybindings.toml`, and moving it meant editing all eight. The code behind
+them was one line each (`select(cursorIndex + 1)`): what differed from panel to
+panel was what a row is, never what moving does. That part is now the panel's
+functions, and the moving is written once, in the shell
+(`frontend/src/lib/panelFunctions.ts`).

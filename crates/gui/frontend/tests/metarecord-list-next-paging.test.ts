@@ -1,4 +1,4 @@
-// metarecord-list keyboard paging: `metarecord-list:next` at the end of the
+// metarecord-list keyboard paging: `cursor:next` (the list's `more`) at the end of the
 // loaded rows pulls the next page instead of stopping there.
 //
 // The scroll-driven pager only fires on a real scroll event, so a panel that is
@@ -7,6 +7,7 @@
 // must load more on its own.
 
 import { describe, expect, test, vi, beforeEach } from 'vitest';
+import { cursor } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -93,6 +94,7 @@ function stubApi(handlers: Map<string, Handler>, calls: QueryCall[], pages: numb
       adoptRepo: async () => {},
       onChange: noop,
     },
+    provide: vi.fn(),
     commands: {
       register: async (name: string, spec: { handler: Handler }) => {
         handlers.set(name, spec.handler);
@@ -126,16 +128,15 @@ async function mountPanel(pages: number) {
     selected: () =>
       (api.store.get('selected_metarecord') as { uuid: string } | undefined)?.uuid ?? null,
     rows: () => shadow.querySelectorAll('#rows tr').length,
-    invoke: async (name: string, arg?: unknown) => {
-      const h = handlers.get(name);
-      if (!h) throw new Error(`command not registered: ${name}`);
-      await h(arg);
+    /** `cursor:next` on the list (doc "Generic panel commands"). */
+    next: async () => {
+      await cursor(api.provide, 'next');
       await new Promise((r) => setTimeout(r, 0)); // selection propagation
     },
   };
 }
 
-describe('metarecord-list:next at the end of the loaded rows', () => {
+describe('cursor:next at the end of the loaded rows', () => {
   beforeEach(() => {
     vi.stubGlobal(
       'fetch',
@@ -152,12 +153,12 @@ describe('metarecord-list:next at the end of the loaded rows', () => {
     expect(p.rows()).toBe(PAGE);
     expect(p.selected()).toBe('m1');
 
-    await p.invoke('metarecord-list:next'); // m2
-    await p.invoke('metarecord-list:next'); // m3 — the last loaded row
+    await p.next(); // m2
+    await p.next(); // m3 — the last loaded row
     expect(p.calls).toHaveLength(1);
     expect(p.selected()).toBe('m3');
 
-    await p.invoke('metarecord-list:next'); // past it: pull page 2
+    await p.next(); // past it: pull page 2
 
     expect(p.calls).toHaveLength(2);
     expect(p.calls[1].cursor).toBe('1'); // page 2
@@ -168,7 +169,7 @@ describe('metarecord-list:next at the end of the loaded rows', () => {
   test('stops on the last row once the daemon has no more', async () => {
     const p = await mountPanel(1);
 
-    for (let i = 0; i < 5; i++) await p.invoke('metarecord-list:next');
+    for (let i = 0; i < 5; i++) await p.next();
 
     expect(p.calls).toHaveLength(1); // no cursor: nothing more to ask for
     expect(p.selected()).toBe('m3');

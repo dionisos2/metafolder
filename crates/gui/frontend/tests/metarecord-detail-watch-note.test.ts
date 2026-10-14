@@ -146,6 +146,7 @@ async function mountPanel(
       adoptRepo: async () => {},
       onChange: noop,
     },
+    provide: () => {},
     commands: { register: async () => {}, invoke: () => null },
     addKeybinding: async () => null,
     fs: {

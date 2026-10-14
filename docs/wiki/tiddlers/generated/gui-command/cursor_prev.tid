@@ -1,0 +1,15 @@
+title: $:/mf/gen/GUI command/cursor:prev
+catalog: GUI command
+target: cursor:prev
+summary: Move a panel's cursor up one row (self / a panel type)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``k`` → ``cursor:prev self``
+* ``up`` → ``cursor:prev self``
+* ``up`` → ``cursor:prev metarecord-list`` (while ``finder`` is focused)
+* ``up`` → ``cursor:prev metarecord-list`` (in the ``file`` panel)

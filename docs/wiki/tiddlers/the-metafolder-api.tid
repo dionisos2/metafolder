@@ -119,6 +119,26 @@ two are those of [[Keybindings]]. `combo` may be a sequence (`g r`).
 compiled key table as it stands — `[{keys, invocation, when, text_input, focus}]` —
 which is what the help fills its key hints from.
 
+!! `provide`
+
+A panel that shows rows under a cursor does not register its own `next`, `prev`,
+`first`, `last` or `find`: it hands the shell a few functions, and the generic
+commands — `cursor:next self`, `cursor:find self select`… — run on them
+([[Generic panel commands]]).
+
+```
+metafolder.provide({
+  index: () => cursorIndex,
+  count: () => rows.length,
+  select: (i) => moveCursorTo(i),
+  entries: () => rows.map((r) => ({ name: r.name })),
+});
+```
+
+Each function is optional, and a command needing one the panel lacks is "not
+implemented" for it; a key bound to such a command passes through. The functions
+and what each command needs are listed in [[Generic panel commands]].
+
 !! `fs`
 
 The disk, through the Rust side; the daemon is not involved, so a tracked file
@@ -182,7 +202,6 @@ absolute path: `import { el, byId } from '/__ui.js'`. Their sources are in
 |`/__menu.js`, `/__select.js` |the HTML menu, and a drop-down built on it in place of the native `<select>` |
 |`/__file-actions.js` |cut, copy, paste, rename, trash on a row, with one clipboard for the whole GUI, and the shared context menu |
 |`/__multi-select.js` |the checked selection ([[Cross-panel selection]]) |
-|`/__find-entry.js` |`registerFind`: a panel's `<panel>:find` command ([[Jumping to an entry]]) |
 |`/__history.js` |`attachHistory` on a text field |
 |`/__paged-list.js`, `/__coalesce.js` |loading a long list by pages; `latestOnly`, for an effect asked for faster than it runs |
 |`/__value-widget.js`, `/__schema-template.js`, `/__completions.js` |typed value inputs and the picker runner; the user schema, read once per repository; the candidate rules of a completion |

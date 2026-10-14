@@ -49,7 +49,6 @@ const IGNORE_JS: &str = include_str!("../../panel-shim/ignore.js");
 const WATCHED_JS: &str = include_str!("../../panel-shim/watched.js");
 const ACTIVITY_JS: &str = include_str!("../../panel-shim/activity.js");
 const WATCHER_SETTLE_JS: &str = include_str!("../../panel-shim/watcher-settle.js");
-const FIND_ENTRY_JS: &str = include_str!("../../panel-shim/find-entry.js");
 const KEYHINTS_JS: &str = include_str!("../../panel-shim/keyhints.js");
 
 #[derive(Clone)]
@@ -85,7 +84,6 @@ pub fn build_router(state: ServerState) -> Router {
         .route("/__columns.js", get(|| async { javascript(COLUMNS_JS) }))
         .route("/__completions.js", get(|| async { javascript(COMPLETIONS_JS) }))
         .route("/__finder.js", get(|| async { javascript(FINDER_JS) }))
-        .route("/__find-entry.js", get(|| async { javascript(FIND_ENTRY_JS) }))
         .route("/__keyhints.js", get(|| async { javascript(KEYHINTS_JS) }))
         .route("/__history.js", get(|| async { javascript(HISTORY_JS) }))
         .route("/__help.js", get(|| async { javascript(HELP_JS) }))

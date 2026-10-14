@@ -1,11 +1,13 @@
 // file-manager "jump to an entry" picker (doc "file-manager panel"):
-// `file-manager:find` collects the entry name in the command input, completing
-// over the current directory's entries (filtered by ordered substring like every
-// other picker), and moves the cursor onto the chosen entry.
+// `cursor:find file-manager` collects the entry name in the command input,
+// completing over the current directory's entries (filtered by ordered
+// substring like every other picker), and moves the cursor onto the chosen
+// entry (doc "Generic panel commands").
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { cursor, findCandidates } from './support/cursor';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/file-manager');
 
@@ -81,6 +83,7 @@ function stub() {
       }),
       onChange: noop,
     },
+    provide: vi.fn(),
     commands: {
       register: (name: string, opts: { handler?: Handler; args?: ArgSpec[] }) => {
         if (opts.handler) handlers.set(name, opts.handler);
@@ -108,7 +111,7 @@ function cursorName(root: ShadowRoot): string | null {
   return root.querySelector('li.cursor .name')?.textContent ?? null;
 }
 
-describe('file-manager:find', () => {
+describe('cursor:find in the file manager', () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = () => {}; // jsdom has no scrollIntoView
   });
@@ -116,15 +119,13 @@ describe('file-manager:find', () => {
   test('completes over the current directory, directories marked with a slash', async () => {
     const s = stub();
     await mount(s);
-    const args = s.specs.get('file-manager:find');
-    expect(args).toHaveLength(2);
-    expect(await args![1].complete!()).toEqual(['sub/', 'notes.txt', 'top.txt']);
+    expect(await findCandidates(s.api.provide)).toEqual(['sub/', 'notes.txt', 'top.txt']);
   });
 
   test('an accepted completion moves the cursor onto that entry', async () => {
     const s = stub();
     await mount(s);
-    await s.handlers.get('file-manager:find')!('select', 'top.txt');
+    await cursor(s.api.provide, 'find', 'select', 'top.txt');
     expect(cursorName(s.root)).toBe('top.txt');
     expect(s.api.workspace.set).toHaveBeenCalledWith('selected_paths', ['/repo/top.txt']);
   });
@@ -133,7 +134,7 @@ describe('file-manager:find', () => {
     const s = stub();
     await mount(s);
     s.fs.readDir.mockClear();
-    await s.handlers.get('file-manager:find')!('select', 'sub/');
+    await cursor(s.api.provide, 'find', 'select', 'sub/');
     expect(cursorName(s.root)).toBe('sub');
     expect(s.fs.readDir).not.toHaveBeenCalled();
   });
@@ -141,43 +142,41 @@ describe('file-manager:find', () => {
   test('a typed value matches by ordered substring', async () => {
     const s = stub();
     await mount(s);
-    await s.handlers.get('file-manager:find')!('select', 'no txt');
+    await cursor(s.api.provide, 'find', 'select', 'no txt');
     expect(cursorName(s.root)).toBe('notes.txt');
   });
 
-  test('no match reports an error and leaves the cursor alone', async () => {
+  test('no match is an error and leaves the cursor alone', async () => {
     const s = stub();
     await mount(s);
-    await s.handlers.get('file-manager:find')!('select', 'top.txt');
-    await s.handlers.get('file-manager:find')!('select', 'zzz');
+    await cursor(s.api.provide, 'find', 'select', 'top.txt');
+    await expect(cursor(s.api.provide, 'find', 'select', 'zzz')).rejects.toThrow(/no entry/);
     expect(cursorName(s.root)).toBe('top.txt');
-    expect(s.statusBar.error).toHaveBeenCalled();
   });
 
   test('hidden entries are offered only when hidden files are shown', async () => {
     const s = stub();
     await mount(s);
-    const complete = s.specs.get('file-manager:find')![1].complete!;
-    expect(await complete()).not.toContain('.hidden.txt');
+    expect(await findCandidates(s.api.provide)).not.toContain('.hidden.txt');
     await s.handlers.get('file-manager:toggle')!('hidden');
     await new Promise((r) => setTimeout(r, 0));
-    expect(await complete()).toContain('.hidden.txt');
+    expect(await findCandidates(s.api.provide)).toContain('.hidden.txt');
   });
 
   test('walk mode enters a directory and asks again from inside it', async () => {
     const s = stub();
     await mount(s);
-    await s.handlers.get('file-manager:find')!('walk', 'sub/');
+    const reinvoked = await cursor(s.api.provide, 'find', 'walk', 'sub/');
     expect(s.fs.readDir).toHaveBeenCalledWith('/repo/sub');
-    expect(s.api.commands.invoke).toHaveBeenCalledWith('file-manager:find walk');
-    expect(await s.specs.get('file-manager:find')![1].complete!()).toEqual(['song.mp3']);
+    expect(reinvoked).toEqual(['cursor:find panel walk']);
+    expect(await findCandidates(s.api.provide)).toEqual(['song.mp3']);
   });
 
   test('walk mode selects a file and stops', async () => {
     const s = stub();
     await mount(s);
-    await s.handlers.get('file-manager:find')!('walk', 'top.txt');
+    const reinvoked = await cursor(s.api.provide, 'find', 'walk', 'top.txt');
     expect(cursorName(s.root)).toBe('top.txt');
-    expect(s.api.commands.invoke).not.toHaveBeenCalled();
+    expect(reinvoked).toEqual([]);
   });
 });

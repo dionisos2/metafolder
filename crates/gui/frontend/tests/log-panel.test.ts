@@ -4,6 +4,7 @@
 // out. A row's › button goes into it; a click only selects; no double click.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { cursor } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -65,6 +66,7 @@ async function mountPanel() {
       set: vi.fn(async () => {}),
       onChange: noop,
     },
+    provide: vi.fn(),
     commands: {
       register: async (name: string, opts: { handler?: Handler }) => {
         if (opts.handler) handlers.set(name, opts.handler);
@@ -84,7 +86,9 @@ async function mountPanel() {
     shadow,
     api,
     run: async (name: string, ...args: string[]) => {
-      await handlers.get(name)!(...args);
+      // A generic command runs on what the panel provided (doc "Generic panel commands").
+      if (name.startsWith('cursor:')) await cursor(api.provide, name.slice('cursor:'.length), ...args);
+      else await handlers.get(name)!(...args);
       await settle();
     },
     /** The first cell of each row, without its button. */
@@ -133,7 +137,7 @@ describe('log panel: going into a label', () => {
 
   test('log:descend goes into the selected row; log:parent comes back onto it', async () => {
     const p = await mountPanel();
-    await p.run('log:last'); // #1 run
+    await p.run('cursor:last'); // #1 run
     await p.run('log:descend');
     expect(p.rows()).toEqual(['#2 answer']);
     expect(p.selected()).toBe('#2 answer');
@@ -144,7 +148,7 @@ describe('log panel: going into a label', () => {
 
   test('a crumb goes back to its level', async () => {
     const p = await mountPanel();
-    await p.run('log:last');
+    await p.run('cursor:last');
     await p.run('log:descend');
     await p.run('log:descend');
     expect(p.rows()).toEqual(['#3 mf tag add']);
@@ -166,7 +170,7 @@ describe('log panel: going into a label', () => {
 
   test('reverting one operation from a label goes to where that operation is listed', async () => {
     const p = await mountPanel();
-    await p.run('log:first'); // #9 edit: one operation
+    await p.run('cursor:first'); // #9 edit: one operation
     p.api.daemon.call.mockResolvedValueOnce({ operations: [] } as never); // the plan: nothing
     await p.run('log:revert', 'op');
     expect(p.rows()).toEqual(['op 12: set_field tag']);

@@ -3,6 +3,7 @@
 // mount path (Shadow root + index.html markup) so the id lookups are real.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { cursor, findCandidates } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { mount } from '../../default-config/panel-types/trash/main.js';
@@ -69,6 +70,7 @@ function stub() {
     trash,
     workspace,
     statusBar,
+    provide: vi.fn(),
     commands: {
       register: vi.fn(
         (name: string, opts: { handler?: (...a: string[]) => unknown; args?: ArgSpec[] }) => {
@@ -128,7 +130,7 @@ describe('trash panel actions', () => {
     await new Promise((r) => setTimeout(r, 0));
 
     // Move the cursor onto the first entry, then restore it.
-    await handlers.get('trash:next')!();
+    await cursor(api.provide, 'next');
     await handlers.get('trash:restore')!();
     expect(trash.restore).toHaveBeenCalledWith('repo-1', 'a');
     expect(workspace.set).toHaveBeenCalledWith('metarecords:dirty', expect.any(Number));
@@ -143,34 +145,31 @@ describe('trash panel actions', () => {
     expect(statusBar.message).toHaveBeenCalled();
   });
 
-  test('trash:find completes over the entries and moves the cursor', async () => {
-    const { api, handlers, specs, statusBar } = stub();
+  test('cursor:find completes over the entries and moves the cursor', async () => {
+    const { api } = stub();
     const shadow = shadowForTrash();
     mount(shadow, api as never);
     await new Promise((r) => setTimeout(r, 0));
 
     // Each candidate carries its original path: two entries can share a name,
     // and the path is what tells them apart (and is searchable too).
-    const args = specs.get('trash:find')!;
-    expect(args).toHaveLength(1);
-    expect(await args[0].complete!()).toEqual(['x.txt — /r/x.txt', 'dir — /r/dir/']);
+    expect(await findCandidates(api.provide)).toEqual(['x.txt — /r/x.txt', 'dir — /r/dir/']);
 
-    await handlers.get('trash:find')!('dir');
+    await cursor(api.provide, 'find', 'select', 'dir');
     expect(shadow.querySelector('li.cursor .name')?.textContent).toBe('dir');
 
-    // A path term finds the entry too; no match is a status-bar error.
-    await handlers.get('trash:find')!('/r/x');
+    // A path term finds the entry too; no match is an error.
+    await cursor(api.provide, 'find', 'select', '/r/x');
     expect(shadow.querySelector('li.cursor .name')?.textContent).toBe('x.txt');
-    await handlers.get('trash:find')!('zzz');
+    await expect(cursor(api.provide, 'find', 'select', 'zzz')).rejects.toThrow(/no entry/);
     expect(shadow.querySelector('li.cursor .name')?.textContent).toBe('x.txt');
-    expect(statusBar.error).toHaveBeenCalled();
   });
 
   test('destructive actions are cancelled when unconfirmed', async () => {
     vi.stubGlobal('confirm', vi.fn(() => false));
     const { api, handlers, trash } = stub();
     mount(shadowForTrash(), api as never);
-    await handlers.get('trash:next')!();
+    await cursor(api.provide, 'next');
     await handlers.get('trash:delete')!();
     await handlers.get('trash:empty')!();
     expect(trash.remove).not.toHaveBeenCalled();

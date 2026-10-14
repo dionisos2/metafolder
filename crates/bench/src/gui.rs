@@ -518,7 +518,7 @@ impl Gui {
         self.view_set("left", "metarecord-list").await?;
         self.command("metarecord-list:refresh").await; // no auto-load on display
         settle().await;
-        self.command("metarecord-list:first").await;
+        self.command("cursor:first metarecord-list").await;
         settle().await;
         self.bench_clear().await?;
         self.layout_set("right", &ws).await?;
@@ -550,11 +550,11 @@ impl Gui {
         self.view_set("right", "metarecord-detail").await?;
         self.command("metarecord-list:refresh").await; // no auto-load on display
         settle().await;
-        self.command("metarecord-list:first").await;
+        self.command("cursor:first metarecord-list").await;
         settle().await;
         self.bench_clear().await?;
         for _ in 0..STEPS {
-            self.command("metarecord-list:next").await;
+            self.command("cursor:next metarecord-list").await;
             tokio::time::sleep(STEP).await; // let the detail panel settle
         }
         settle().await;
@@ -575,7 +575,7 @@ impl Gui {
         settle().await;
         self.bench_clear().await?;
         for _ in 0..STEPS {
-            self.command("file-manager:next").await;
+            self.command("cursor:next file-manager").await;
             tokio::time::sleep(STEP).await;
         }
         settle().await;

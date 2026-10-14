@@ -5,8 +5,6 @@
 // contexts").
 
 import { byId, el, openButton, qs } from '/__ui.js';
-import { registerFind } from '/__find-entry.js';
-import { moveSelection, edgeSelection } from './selection.js';
 import { buildTree, keyOf, marksOf, nodesAlong, pathTo, revertTarget, rowsAt } from './tree.js';
 
 /**
@@ -179,18 +177,6 @@ export async function mount(root, metafolder) {
     if (above === null) return;
     path = above;
     select(key);
-  }
-
-  /** @param {number} delta */
-  function moveBy(delta) {
-    const keys = visible().map((r) => ({ id: r.key }));
-    select(/** @type {string|null} */ (moveSelection(keys, selection, delta)));
-  }
-
-  /** @param {string} edge */
-  function moveToEdge(edge) {
-    const keys = visible().map((r) => ({ id: r.key }));
-    select(/** @type {string|null} */ (edgeSelection(keys, edge)));
   }
 
   /** What a node is, as the badges of the status column: HEAD, whose write it
@@ -568,31 +554,22 @@ export async function mount(root, metafolder) {
     handler: () => backTo(path.length - 1),
   });
   void commands.register('log:refresh', { label: 'Log: refresh from the daemon', handler: refresh });
-  void commands.register('log:next', { label: 'Log: move the selection down', handler: () => moveBy(1) });
-  void commands.register('log:prev', { label: 'Log: move the selection up', handler: () => moveBy(-1) });
-  void commands.register('log:first', {
-    label: 'Log: move the selection to the newest row',
-    handler: () => moveToEdge('first'),
-  });
-  void commands.register('log:last', {
-    label: 'Log: move the selection to the oldest row',
-    handler: () => moveToEdge('last'),
-  });
-  // Jump to a label by number or name, like every other list panel (doc
-  // "Jumping to an entry"): over the rows on screen.
-  void registerFind(metafolder, 'log:find', {
-    label: 'Log: jump to a label by number or name',
-    prompt: 'Go to label:',
+  // The cursor, for the generic commands (doc "Generic panel commands"): the
+  // rows on screen, newest first, the selection being one of their keys. A
+  // find jumps to a label by number or name.
+  metafolder.provide({
+    index: () => visible().findIndex((row) => row.key === selection),
+    count: () => visible().length,
+    select: (index) => {
+      const row = visible()[index];
+      if (row) select(row.key);
+    },
     entries: () =>
       visible().map(({ node }) => {
         if (node.kind === 'op') return { name: `op ${node.op.id}`, label: `op ${node.op.id}` };
         if (node.kind === 'watcher') return { name: 'watcher', label: 'flushes of the watcher' };
         return { name: `#${node.id}`, label: `#${node.id} — ${node.label.name}` };
       }),
-    select: (index) => {
-      const row = visible()[index];
-      if (row) select(row.key);
-    },
   });
 
   // Keybindings for this panel live in keybindings.toml (when = "log").

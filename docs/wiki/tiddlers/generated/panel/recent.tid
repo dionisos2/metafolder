@@ -5,10 +5,9 @@ summary: The recent panel type
 
 !! Commands
 
-* ``recent:find`` — Recent: jump to a metarecord by name
-* ``recent:first`` — Recent: jump to the most recent
-* ``recent:last`` — Recent: jump to the oldest
-* ``recent:next`` — Recent: move down
 * ``recent:open`` — Recent: open the highlighted metarecord (here / other / new)
-* ``recent:prev`` — Recent: move up
 * ``recent:refresh`` — Recent: reload the list
+
+!! Generic commands
+
+Provides ``index``, ``count``, ``select``, ``entries`` to [[Generic panel commands]].

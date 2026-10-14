@@ -14,6 +14,8 @@ export interface DescribeContext {
   panelType?: string | null;
   textInput?: boolean;
   focus?: string | null;
+  /** Whether a binding's command can run here (doc "Generic panel commands"). */
+  applies?: (invocation: string) => boolean;
 }
 
 /** One `help:key` step — a union, not a bag of optional fields: `keys` grows
@@ -99,5 +101,7 @@ function scopeGap(binding: Binding, context: DescribeContext): string {
     parts.push(`in ${binding.when}`);
   }
   if (!binding.text_input && context.textInput) parts.push('when not typing');
+  // In scope, yet excluded: its command cannot run on the focused panel.
+  if (parts.length === 0) parts.push('in a panel implementing it');
   return parts.join(' ');
 }

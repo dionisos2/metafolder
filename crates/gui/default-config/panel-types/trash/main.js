@@ -4,7 +4,6 @@
 // no daemon endpoint).
 
 import { byId, el, formatAge, formatSize } from '/__ui.js';
-import { registerFind } from '/__find-entry.js';
 
 /**
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder
@@ -153,21 +152,6 @@ export function mount(root, metafolder) {
   deleteButton.addEventListener('click', () => void doDelete());
   emptyButton.addEventListener('click', () => void doEmpty());
 
-  // Jump to an entry by name — the shared list-panel find, on the same key as
-  // everywhere else. Two entries can share a name (the same file trashed
-  // twice), so each candidate carries the path it was trashed from, which the
-  // typed terms search too.
-  void registerFind(metafolder, 'trash:find', {
-    label: 'Trash: jump to an entry by name',
-    entries: () =>
-      entries.map((entry) => {
-        const name = entry.original_name || entry.id;
-        const path = entry.is_dir ? `${entry.original_path}/` : entry.original_path;
-        return { name, label: `${name} — ${path}` };
-      }),
-    select,
-  });
-
   void commands.register('trash:refresh', {
     label: 'Trash: reload the entries',
     handler: () => load(),
@@ -184,23 +168,20 @@ export function mount(root, metafolder) {
     label: 'Trash: permanently delete every entry',
     handler: () => doEmpty(),
   });
-  void commands.register('trash:next', {
-    label: 'Trash: move down',
-    handler: () => select(cursorIndex + 1),
-  });
-  void commands.register('trash:prev', {
-    label: 'Trash: move up',
-    handler: () => select(cursorIndex - 1),
-  });
-  // Home/End, like every other list panel. `select` already clamps, so the two
-  // ends are just the two extremes of the same move.
-  void commands.register('trash:first', {
-    label: 'Trash: move to the first entry',
-    handler: () => select(0),
-  });
-  void commands.register('trash:last', {
-    label: 'Trash: move to the last entry',
-    handler: () => select(entries.length - 1),
+  // The cursor, for the generic commands (doc "Generic panel commands").
+  // Two entries can share a name (the same file trashed twice), so each find
+  // candidate carries the path it was trashed from, which the typed terms
+  // search too.
+  metafolder.provide({
+    index: () => cursorIndex,
+    count: () => entries.length,
+    select,
+    entries: () =>
+      entries.map((entry) => {
+        const name = entry.original_name || entry.id;
+        const path = entry.is_dir ? `${entry.original_path}/` : entry.original_path;
+        return { name, label: `${name} — ${path}` };
+      }),
   });
 
   // Keybindings for this panel live in keybindings.toml (when = "trash").

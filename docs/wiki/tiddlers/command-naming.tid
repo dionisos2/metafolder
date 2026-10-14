@@ -15,8 +15,11 @@ commands is an argument, never part of the verb''. There is no `zoom-in` beside
 `zoom-out`, no `bulk-set-field` beside `bulk-delete`: one `file:zoom`, one
 `metarecord:bulk`, each taking what varies.
 
-The namespace is the panel type for a panel's command (`metarecord-list:next`), and
-the thing acted on for the shell's (`panel:split`, `workspace:new`). A command that
+The namespace is the panel type for a panel's command (`metarecord-list:open`), and
+the thing acted on for the shell's (`panel:split`, `workspace:new`, `cursor:next`).
+What every panel with a cursor does alike is one shell command whose first argument
+names the panel — `cursor:next self`, `cursor:next trash` — and not one command per
+panel type ([[Generic panel commands]]). A command that
 is the GUI half of an `mf` subcommand — same work, same fields — takes the `mf:`
 prefix and the CLI's verb: `mf:order` is `mf order`. (`reconcile:run` is older than
 the rule and keeps its name.)
@@ -42,7 +45,7 @@ Grouped by what they touch, which is what a name must make obvious:
 |a text zone |`focus <zone>`, `clear <zone>`, `apply <zone> [stay]`, `insert <zone> <text> [stay]` |
 |a form, an overlay, a panel |`open [what]`, `open-X` (a form of this panel), `close`, `cancel`, `reveal <type>` |
 |a view flag |`toggle <flag>` |
-|the cursor or the selection |`next`, `prev`, `first`, `last`, `page <which>`, `find [text]`, `select <toggle/all/none>`, and the `row-X` family (the row under the cursor) |
+|the cursor or the selection |`cursor:next/prev/first/last <panel>`, `cursor:find <panel> <mode>`, `page <which>`, `select <toggle/all/none>`, and the `row-X` family (the row under the cursor) |
 |a view setting |`set <setting> [value]` |
 |the media player |`play-pause`, `restart`, `mute`, `seek <±s>`, `speed <up/down/reset>`, `volume <up/down>`, `zoom <in/out/fit/reset>` |
 |the repository |`<noun> <op>` with `op` among `set`, `add`, `remove`, `unset`, `delete`, and the plain verbs `create`, `delete`, `rename`, `record`, `trash`, `restore`, `prune`, `reconcile`, `rollback`, `undo`, `redo`, `revert [what]`, `mark`, `run`, `load`, `unload`, `stop` |
@@ -58,7 +61,7 @@ The five operations are those of the daemon and of the CLI ([[The verb pattern]]
 !! Two forms kept on purpose
 
 * `open-X` names a ''form of this panel'' (`metarecord:open-add-field`, `repos:open-init`). Folding it into `open <what>` would collide with the bare `repos:open`, which shows the repos panel and opens no form.
-* `row-X` is the cursor family (`metarecord:row-next`, `row-edit`, `row-delete`). It is deliberately not `field-X`: `metarecord:field-edit` would sit one hyphen away from `metarecord:field edit`, which asks which field and which value instead of taking the row under the cursor.
+* `row-X` is the family acting on the row under the cursor (`metarecord:row-edit`, `row-delete`); moving that cursor is `cursor:next self`, like everywhere. It is deliberately not `field-X`: `metarecord:field-edit` would sit one hyphen away from `metarecord:field edit`, which asks which field and which value instead of taking the row under the cursor.
 
 `edit-` is not a verb. Focusing an input is `focus`, opening a form is `open`, and an
 edit made through the command input is `<noun> <op>`: nothing is named for the fact

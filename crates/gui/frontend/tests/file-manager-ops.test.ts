@@ -6,6 +6,9 @@
 // command handlers.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { cursor } from './support/cursor';
+
+type ProvideMock = Parameters<typeof cursor>[0];
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -81,6 +84,7 @@ function stub(repo: string | null) {
       set: vi.fn(async () => {}),
       onChange: noop,
     },
+    provide: vi.fn(),
     commands: {
       register: (name: string, opts: { handler?: Handler }) => {
         if (opts.handler) handlers.set(name, opts.handler);
@@ -97,8 +101,8 @@ function stub(repo: string | null) {
 }
 
 /** Moves the cursor onto `song.mp3` (index 3: '.', '..', dir1, song.mp3). */
-async function selectSong(handlers: Map<string, Handler>) {
-  for (let i = 0; i < 4; i++) await handlers.get('file-manager:next')!();
+async function selectSong(api: { provide: ProvideMock }) {
+  for (let i = 0; i < 4; i++) await cursor(api.provide, 'next');
 }
 
 describe('file-manager filesystem operations', () => {
@@ -170,23 +174,23 @@ describe('file-manager filesystem operations', () => {
   });
 
   test('rename moves the selected entry to the new name', async () => {
-    const { handlers, fs } = await mount(null);
-    await selectSong(handlers);
+    const { api, handlers, fs } = await mount(null);
+    await selectSong(api);
     promptSpy.mockReturnValueOnce('anthem.mp3');
     await handlers.get('file-manager:rename')!();
     expect(fs.move).toHaveBeenCalledWith('/song.mp3', '/anthem.mp3');
   });
 
   test('duplicate copies to a collision-free " copy" name', async () => {
-    const { handlers, fs } = await mount(null);
-    await selectSong(handlers);
+    const { api, handlers, fs } = await mount(null);
+    await selectSong(api);
     await handlers.get('file-manager:duplicate')!();
     expect(fs.copy).toHaveBeenCalledWith('/song.mp3', '/song copy.mp3');
   });
 
   test('copy then paste copies into the current directory (deduped)', async () => {
-    const { handlers, fs } = await mount(null);
-    await selectSong(handlers);
+    const { api, handlers, fs } = await mount(null);
+    await selectSong(api);
     await handlers.get('file-manager:copy')!();
     await handlers.get('file-manager:paste')!();
     // Pasting song.mp3 back into its own directory dedupes to "song copy.mp3".
@@ -195,8 +199,8 @@ describe('file-manager filesystem operations', () => {
   });
 
   test('cut then paste moves into the current directory', async () => {
-    const { handlers, fs } = await mount(null);
-    await selectSong(handlers);
+    const { api, handlers, fs } = await mount(null);
+    await selectSong(api);
     await handlers.get('file-manager:cut')!();
     await handlers.get('file-manager:paste')!();
     expect(fs.move).toHaveBeenCalledWith('/song.mp3', '/song copy.mp3');
@@ -210,8 +214,8 @@ describe('file-manager filesystem operations', () => {
   });
 
   test('delete with no repo removes permanently after confirmation', async () => {
-    const { handlers, fs, trash } = await mount(null);
-    await selectSong(handlers);
+    const { api, handlers, fs, trash } = await mount(null);
+    await selectSong(api);
     await handlers.get('file-manager:delete')!();
     expect(confirmSpy).toHaveBeenCalled();
     expect(fs.remove).toHaveBeenCalledWith('/song.mp3');
@@ -219,8 +223,8 @@ describe('file-manager filesystem operations', () => {
   });
 
   test('delete with an active repo routes to the trash', async () => {
-    const { handlers, fs, trash } = await mount('repo-1');
-    await selectSong(handlers);
+    const { api, handlers, fs, trash } = await mount('repo-1');
+    await selectSong(api);
     await handlers.get('file-manager:delete')!();
     expect(trash.trashPath).toHaveBeenCalledWith('repo-1', '/song.mp3');
     expect(fs.remove).not.toHaveBeenCalled();
@@ -229,20 +233,20 @@ describe('file-manager filesystem operations', () => {
   test('a declined confirmation aborts the delete (both paths)', async () => {
     confirmSpy.mockReturnValue(false);
     const noRepo = await mount(null);
-    await selectSong(noRepo.handlers);
+    await selectSong(noRepo.api);
     await noRepo.handlers.get('file-manager:delete')!();
     expect(noRepo.fs.remove).not.toHaveBeenCalled();
 
     const withRepo = await mount('repo-1');
-    await selectSong(withRepo.handlers);
+    await selectSong(withRepo.api);
     await withRepo.handlers.get('file-manager:delete')!();
     expect(withRepo.trash.trashPath).not.toHaveBeenCalled();
   });
 
   test('operations on the synthetic "." / ".." rows are refused', async () => {
-    const { handlers, fs, trash, statusBar } = await mount(null);
+    const { api, handlers, fs, trash, statusBar } = await mount(null);
     // Cursor at index 0 (the "." row) — not a real entry.
-    await handlers.get('file-manager:first')!();
+    await cursor(api.provide, 'first');
     await handlers.get('file-manager:rename')!();
     await handlers.get('file-manager:duplicate')!();
     await handlers.get('file-manager:delete')!();
@@ -254,8 +258,8 @@ describe('file-manager filesystem operations', () => {
   });
 
   test('rename to the same name (or blank) is a no-op', async () => {
-    const { handlers, fs } = await mount(null);
-    await selectSong(handlers);
+    const { api, handlers, fs } = await mount(null);
+    await selectSong(api);
     promptSpy.mockReturnValueOnce('song.mp3');
     await handlers.get('file-manager:rename')!();
     promptSpy.mockReturnValueOnce('');
@@ -272,18 +276,18 @@ describe('file-manager filesystem operations', () => {
   });
 
   test('navigation, toggles and activation are wired', async () => {
-    const { handlers, fs } = await mount('repo-1');
+    const { api, handlers, fs } = await mount('repo-1');
     fs.readDir.mockClear();
     await handlers.get('file-manager:root')!();
     await handlers.get('file-manager:refresh')!();
     await handlers.get('file-manager:toggle')!('hidden');
     await handlers.get('file-manager:toggle')!('root');
-    await handlers.get('file-manager:last')!();
-    await handlers.get('file-manager:prev')!();
+    await cursor(api.provide, 'last');
+    await cursor(api.provide, 'prev');
     // Activate the dir1 row (index 2) — opens it.
-    await handlers.get('file-manager:first')!();
-    await handlers.get('file-manager:next')!();
-    await handlers.get('file-manager:next')!();
+    await cursor(api.provide, 'first');
+    await cursor(api.provide, 'next');
+    await cursor(api.provide, 'next');
     await handlers.get('file-manager:activate')!();
     await handlers.get('file-manager:parent')!();
     expect(fs.readDir).toHaveBeenCalled();
@@ -292,13 +296,13 @@ describe('file-manager filesystem operations', () => {
   // Browsing the disk with no repository, "repo root" names nothing: the button
   // says "root" and goes to the filesystem root, so the jump is never a dead end.
   test('with no active repository the root button jumps to the disk root', async () => {
-    const { handlers, root } = await mount(null);
+    const { api, handlers, root } = await mount(null);
     expect(root.getElementById('goto-root')!.textContent).toBe('root');
     // Descend into dir1 (index 2: '.', '..', dir1) so the jump has somewhere
     // to come back from.
-    await handlers.get('file-manager:first')!();
-    await handlers.get('file-manager:next')!();
-    await handlers.get('file-manager:next')!();
+    await cursor(api.provide, 'first');
+    await cursor(api.provide, 'next');
+    await cursor(api.provide, 'next');
     await handlers.get('file-manager:activate')!();
     expect(root.getElementById('current-path')!.textContent).toBe('/dir1');
 
@@ -325,8 +329,8 @@ describe('file-manager filesystem operations', () => {
   });
 
   test('rename / duplicate / trash errors are surfaced', async () => {
-    const { handlers, fs, trash, statusBar } = await mount('repo-1');
-    await selectSong(handlers);
+    const { api, handlers, fs, trash, statusBar } = await mount('repo-1');
+    await selectSong(api);
     fs.move.mockRejectedValueOnce(new Error('x'));
     promptSpy.mockReturnValueOnce('r.mp3');
     await handlers.get('file-manager:rename')!();
@@ -338,28 +342,28 @@ describe('file-manager filesystem operations', () => {
   });
 
   test('new-file and permanent-delete errors are surfaced', async () => {
-    const { handlers, fs, statusBar } = await mount(null);
+    const { api, handlers, fs, statusBar } = await mount(null);
     fs.createFile.mockRejectedValueOnce(new Error('x'));
     promptSpy.mockReturnValueOnce('f');
     await handlers.get('file-manager:new')!('file');
-    await selectSong(handlers);
+    await selectSong(api);
     fs.remove.mockRejectedValueOnce(new Error('x'));
     await handlers.get('file-manager:delete')!();
     expect(statusBar.error).toHaveBeenCalledTimes(2);
   });
 
   test('paste surfaces per-item errors and refuses pasting into itself', async () => {
-    const { handlers, fs, statusBar } = await mount(null);
-    await selectSong(handlers);
+    const { api, handlers, fs, statusBar } = await mount(null);
+    await selectSong(api);
     await handlers.get('file-manager:copy')!();
     fs.copy.mockRejectedValueOnce(new Error('x'));
     await handlers.get('file-manager:paste')!();
     expect(statusBar.error).toHaveBeenCalled();
 
     // Cut dir1, navigate into it, then paste — refused (into itself).
-    await handlers.get('file-manager:first')!();
-    await handlers.get('file-manager:next')!();
-    await handlers.get('file-manager:next')!(); // dir1
+    await cursor(api.provide, 'first');
+    await cursor(api.provide, 'next');
+    await cursor(api.provide, 'next'); // dir1
     await handlers.get('file-manager:cut')!();
     await handlers.get('file-manager:activate')!(); // opens /dir1
     await handlers.get('file-manager:paste')!();

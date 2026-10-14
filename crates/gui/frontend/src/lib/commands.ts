@@ -27,6 +27,16 @@ import { type ExpandDeps, expandShellPlaceholders, shellQuote } from './placehol
 import { focusedContext, focusedWs, flashStatus, slotPayload, store, workspaceById } from './store.svelte';
 import { isTarget, resolveTarget, TARGETS } from './targets';
 import { daemonWork } from './working';
+import {
+  FIND_MODES,
+  findCandidates,
+  functionProvider,
+  GENERIC_COMMANDS,
+  neededFunctions,
+  resolvePanel,
+  runGeneric,
+  SELF,
+} from './panelFunctions';
 import { changeFeed } from './panels/changes';
 import type { CommandDef, ExecContext, LayoutView } from './types';
 
@@ -289,8 +299,8 @@ export interface ArgSpec {
    *  confirmation (doc "Interactive command arguments"): the arguments
    *  collected before it are replaced by `prior(collected)` (as many), so the
    *  invocation that runs, and is echoed, says what was asked for.
-   *  `file-manager:find walk` answered with Shift-Enter runs as
-   *  `file-manager:find select`. `hint` names it beside the input. Absent ⇒
+   *  `cursor:find self walk` answered with Shift-Enter runs as
+   *  `cursor:find self select`. `hint` names it beside the input. Absent ⇒
    *  Shift-Enter is a plain Enter. */
   alternate?: { hint: string; prior: (prior: string[]) => string[] };
 }
@@ -1140,6 +1150,54 @@ registerArgs('panel:toggle', [
   },
 ]);
 
+// Generic panel commands (doc "Generic panel commands"): the first argument
+// is the panel they act on — a panel type, or `self` for the focused one. The
+// candidates are the panel types providing what the command needs.
+function panelArg(command: string): ArgSpec {
+  return {
+    name: 'panel',
+    prompt: () => `Which panel? (${SELF}, or a panel type)`,
+    complete: (_partial, prior) => {
+      const needed = neededFunctions(command, prior.slice(1)) ?? [];
+      const provider = functionProvider();
+      const types = store.panelTypes.filter((type) =>
+        needed.every((fn) => provider?.provided(type)?.has(fn)),
+      );
+      return [SELF, ...types];
+    },
+  };
+}
+
+/** The panel type a generic command's `panel` argument designates, in `context`. */
+function genericPanel(arg: string | undefined, context: ExecContext): string {
+  return resolvePanel(arg, context.slot ? slotPayload(context.slot).panel_type : null);
+}
+
+for (const command of GENERIC_COMMANDS) {
+  if (command !== 'cursor:find') registerArgs(command, [panelArg(command)]);
+}
+registerArgs('cursor:find', [
+  panelArg('cursor:find'),
+  {
+    name: 'mode',
+    prompt: () => `Find how? (${FIND_MODES.join(' / ')})`,
+    complete: () => [...FIND_MODES],
+  },
+  {
+    name: 'entry',
+    prompt: () => 'Go to entry:',
+    complete: async (_partial, prior) => {
+      const ws = focusedWs();
+      const provider = functionProvider();
+      if (!ws || !provider) return [];
+      const type = genericPanel(prior[0], focusedContext());
+      return findCandidates(await provider.get(ws, type));
+    },
+    // Shift-Enter stops on what is found, even a directory a walk would enter.
+    alternate: { hint: 'select', prior: (prior) => [prior[0] ?? SELF, 'select'] },
+  },
+]);
+
 registerArgs('panel:focus', [
   {
     name: 'slot',
@@ -1885,6 +1943,19 @@ async function runCommand(name: string, args: string[], context: ExecContext): P
     case 'quit':
       await invoke('quit');
       return true;
+  }
+
+  // A generic panel command: run on the functions its panel provides.
+  if (GENERIC_COMMANDS.includes(name)) {
+    const [panel, ...rest] = args;
+    const panelType = genericPanel(panel, context);
+    if (!ws) throw new Error('no workspace in the focused slot');
+    const functions = await functionProvider()?.get(ws, panelType);
+    await runGeneric(name, functions ?? {}, rest, {
+      panelType,
+      reinvoke: (invocation) => void dispatch(invocation, context),
+    });
+    return true;
   }
 
   // Not a shell builtin: a user command, then a panel's. Builtins win, so a

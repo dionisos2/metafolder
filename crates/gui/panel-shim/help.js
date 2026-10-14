@@ -28,7 +28,7 @@
 /**
  * The page in `manifest` named `name` (case-insensitive): by its `id`, else by
  * its `title`, else by one of its `aliases`. The title is what names a command's
- * note — `trash:find`, whose id cannot hold the colon — and it comes before
+ * note — `cursor:find`, whose id cannot hold the colon — and it comes before
  * the aliases so that a command's own note wins over a page that merely lists
  * the command among its aliases.
  *

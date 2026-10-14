@@ -14,15 +14,22 @@ than breaking them.
 ## [Unreleased]
 
 ### Added
+- **Generic panel commands: one `cursor:next` for every list panel.** A panel
+  hands the shell a few functions (`metafolder.provide({index, count, select,
+  more, entries, enter})`) and `cursor:next`, `cursor:prev`, `cursor:first`,
+  `cursor:last` and `cursor:find` run on them. Their first argument, required,
+  is the panel: `self` (the focused one) or a panel type — the file panel's
+  arrows run `cursor:next metarecord-list`. A key bound to one fires only in a
+  panel providing what it needs, and passes through elsewhere, so `j` is one
+  binding instead of eight. The detail panel gains `Home`/`End`. Each panel's
+  generated note lists what it provides (doc "Generic panel commands").
 - **Walking down a path by name in the file manager and the tree explorer.**
-  `d` runs `file-manager:find walk` / `treeref:find walk`: a directory (a node
-  with children) named is entered and the question asked again from inside, a
-  file (a leaf) named is selected. `shift+Enter` stops on a
-  directory, selected — the new *alternate* answer of an interactive argument
-  (`ArgSpec.alternate`), which rewrites the arguments answered before it, so
-  the step runs, and is echoed, as `<panel>:find select`. Both finds take
-  their mode first now: `f` is `file-manager:find select` / `treeref:find
-  select` (doc "Jumping to an entry").
+  `d` runs `cursor:find self walk`: a directory (a node with children) named
+  is entered and the question asked again from inside, a file (a leaf) named
+  is selected. `shift+Enter` stops on a directory, selected — the new
+  *alternate* answer of an interactive argument (`ArgSpec.alternate`), which
+  rewrites the arguments answered before it, so the step runs, and is echoed,
+  as `cursor:find self select`, what `f` runs (doc "Jumping to an entry").
 - **Contexts: what one piece of work writes is one label.** `mf label begin
   NAME [DESCRIPTION]` opens a label and prints it (`<repo>:<id>`); exported as
   `METAFOLDER_LABEL`, every `mf` started meanwhile writes inside it, and `mf
@@ -320,6 +327,12 @@ than breaking them.
   "Command names (non-exhaustive default set)", "User commands").
 
 ### Removed
+- **The per-panel cursor commands** — `<panel>:next`, `:prev`, `:first`,
+  `:last` and `:find` of the metarecord list, file manager, tree explorer, log,
+  trash, recent list and duplicates, and `metarecord:row-next`/`row-prev` —
+  replaced by the generic `cursor:*` commands (see Added); a key of yours bound
+  to one of them is reported as naming no command. The `/__find-entry.js`
+  helper (`registerFind`) went with them.
 - **Labelling a revision after the fact**: `PATCH /log/revisions/:id`, the log
   panel's `log:mark` (Shift+L) and `mf log revert --label`. Renaming or
   describing a label once written is deferred; a context names the work while

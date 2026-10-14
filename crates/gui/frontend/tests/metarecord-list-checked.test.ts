@@ -8,6 +8,7 @@
 // what cannot be shown or unchecked any more.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { cursor } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -120,6 +121,7 @@ function stub(vars: Record<string, unknown>, existing: Set<string>) {
         set.add(listener);
       },
     },
+    provide: vi.fn(),
     commands: {
       register: (name: string, opts: { handler?: Handler }) => {
         if (opts.handler) handlers.set(name, opts.handler);
@@ -184,7 +186,7 @@ describe('the checked selection across lists', () => {
     const harness = await mountList({});
     // Check A and B (the cursor starts on row 0; then move to row 1).
     await harness.handlers.get('metarecord-list:select')!('toggle');
-    await harness.handlers.get('metarecord-list:next')!();
+    await cursor(harness.api.provide, 'next');
     await harness.handlers.get('metarecord-list:select')!('toggle');
     expect(harness.selected()).toEqual(['u-a', 'u-b']);
 

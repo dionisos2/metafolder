@@ -451,13 +451,13 @@ async fn run_step(id: &str, s: &mut Session, quiet: Duration) -> Result<Option<I
             drawn(s, quiet).await
         }
         "detail.open" => {
-            s.command("metarecord-list:first", None).await?;
+            s.command("cursor:first metarecord-list", None).await?;
             s.show("right", "metarecord-detail", Some("mf:detail:render")).await?;
             drawn(s, quiet).await
         }
         "detail.nav" => {
             for _ in 0..10 {
-                s.command("metarecord-list:next", None).await?;
+                s.command("cursor:next metarecord-list", None).await?;
             }
             drawn(s, quiet).await
         }
@@ -471,7 +471,7 @@ async fn run_step(id: &str, s: &mut Session, quiet: Duration) -> Result<Option<I
             let rel = folder.strip_prefix(&s.data)?.to_path_buf();
             for part in rel.components() {
                 let name = part.as_os_str().to_string_lossy();
-                s.command(&format!("file-manager:find select {name}"), None).await?;
+                s.command(&format!("cursor:find file-manager select {name}"), None).await?;
                 s.command("file-manager:activate", None).await?;
             }
             drawn(s, quiet).await

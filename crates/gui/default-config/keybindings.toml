@@ -217,80 +217,37 @@
 "m o" = { command = "mf:order" }
 
 # ── Panel navigation and actions ─────────────────────────────────────────────
-# The list panels share the same navigation combos, each dispatched to its own
-# panel type via `when`. Commands are routed to their owning panel type whether
-# focused or not, so e.g. in the `file` panel the arrows still drive the
-# metarecord-list selection (the file panel follows through selected_paths).
+# Moving a cursor is one generic command for every panel (doc "Generic panel
+# commands"): `cursor:next self` runs in the focused panel, and only in a panel
+# that has a cursor — elsewhere the key passes through (the help scrolls with
+# the arrows). Naming a panel type instead drives that one: in the `file`
+# panel the arrows still move the metarecord-list selection (the file panel
+# follows through selected_paths), and so do they while typing in its finder.
 
-# Move down / up one row. The `focus = "finder"` entries let the arrows drive
-# the metarecord-list selection while you type in its finder input.
+# Move down / up one row.
 "down" = [
-  { command = "metarecord-list:next", when = "file" },
-  { command = "metarecord-list:next", when = "metarecord-list" },
-  { command = "metarecord-list:next", focus = "finder" },
-  { command = "file-manager:next", when = "file-manager" },
-  { command = "treeref:next", when = "treeref" },
-  { command = "log:next", when = "log" },
-  { command = "trash:next", when = "trash" },
-  { command = "recent:next", when = "recent" },
-  { command = "duplicates:next", when = "duplicates" },
-  { command = "metarecord:row-next", when = "metarecord-detail" },
+  { command = "cursor:next self" },
+  { command = "cursor:next metarecord-list", when = "file" },
+  { command = "cursor:next metarecord-list", focus = "finder" },
 ]
 "up" = [
-  { command = "metarecord-list:prev", when = "file" },
-  { command = "metarecord-list:prev", when = "metarecord-list" },
-  { command = "metarecord-list:prev", focus = "finder" },
-  { command = "file-manager:prev", when = "file-manager" },
-  { command = "treeref:prev", when = "treeref" },
-  { command = "log:prev", when = "log" },
-  { command = "trash:prev", when = "trash" },
-  { command = "recent:prev", when = "recent" },
-  { command = "duplicates:prev", when = "duplicates" },
-  { command = "metarecord:row-prev", when = "metarecord-detail" },
+  { command = "cursor:prev self" },
+  { command = "cursor:prev metarecord-list", when = "file" },
+  { command = "cursor:prev metarecord-list", focus = "finder" },
 ]
 
 # Vim-style down / up.
-"j" = [
-  { command = "metarecord-list:next", when = "metarecord-list" },
-  { command = "file-manager:next", when = "file-manager" },
-  { command = "treeref:next", when = "treeref" },
-  { command = "log:next", when = "log" },
-  { command = "trash:next", when = "trash" },
-  { command = "recent:next", when = "recent" },
-  { command = "duplicates:next", when = "duplicates" },
-  { command = "metarecord:row-next", when = "metarecord-detail" },
-]
-"k" = [
-  { command = "metarecord-list:prev", when = "metarecord-list" },
-  { command = "file-manager:prev", when = "file-manager" },
-  { command = "treeref:prev", when = "treeref" },
-  { command = "log:prev", when = "log" },
-  { command = "trash:prev", when = "trash" },
-  { command = "recent:prev", when = "recent" },
-  { command = "duplicates:prev", when = "duplicates" },
-  { command = "metarecord:row-prev", when = "metarecord-detail" },
-]
+"j" = { command = "cursor:next self" }
+"k" = { command = "cursor:prev self" }
 
 # Jump to first / last row.
 "home" = [
-  { command = "metarecord-list:first", when = "file" },
-  { command = "metarecord-list:first", when = "metarecord-list" },
-  { command = "file-manager:first", when = "file-manager" },
-  { command = "treeref:first", when = "treeref" },
-  { command = "log:first", when = "log" },
-  { command = "recent:first", when = "recent" },
-  { command = "trash:first", when = "trash" },
-  { command = "duplicates:first", when = "duplicates" },
+  { command = "cursor:first self" },
+  { command = "cursor:first metarecord-list", when = "file" },
 ]
 "end" = [
-  { command = "metarecord-list:last", when = "file" },
-  { command = "metarecord-list:last", when = "metarecord-list" },
-  { command = "file-manager:last", when = "file-manager" },
-  { command = "treeref:last", when = "treeref" },
-  { command = "log:last", when = "log" },
-  { command = "recent:last", when = "recent" },
-  { command = "trash:last", when = "trash" },
-  { command = "duplicates:last", when = "duplicates" },
+  { command = "cursor:last self" },
+  { command = "cursor:last metarecord-list", when = "file" },
 ]
 
 # Enter: confirm while typing (global), otherwise the focused panel's primary
@@ -497,21 +454,16 @@
 # the daemon the same question. Ctrl+f is the other find: it highlights
 # rendered text without moving any cursor (doc "Find in a panel").
 "f" = [
+  { command = "cursor:find self select" },
   { command = "metarecord-list:clear finder", when = "metarecord-list" },
-  { command = "file-manager:find select", when = "file-manager" },
-  { command = "treeref:find select", when = "treeref" },
-  { command = "trash:find", when = "trash" },
-  { command = "recent:find", when = "recent" },
-  { command = "log:find", when = "log" },
-  { command = "duplicates:find", when = "duplicates" },
 ]
 # "d" = descend by name: the find in `walk` mode enters the directory (the
 # node with children) found and asks again from inside, so a path is walked
 # down one name at a time; a file (a leaf) found is selected, and Shift+Enter
-# stops on a directory, selected (doc "Jumping to an entry").
+# stops on a directory, selected (doc "Jumping to an entry"). Only where a row
+# can be entered (the file manager, the tree).
 "d" = [
-  { command = "file-manager:find walk", when = "file-manager" },
-  { command = "treeref:find walk", when = "treeref" },
+  { command = "cursor:find self walk" },
   { command = "metarecord:row-delete", when = "metarecord-detail" },
 ]
 # treeref: pick which TreeRef field's forest the panel explores (the drop-down's

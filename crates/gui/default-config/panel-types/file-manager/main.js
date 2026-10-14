@@ -7,7 +7,6 @@ import { copyText } from '/__menu.js';
 import { createPagedList } from '/__paged-list.js';
 import { createMultiSelect } from '/__multi-select.js';
 import { latestOnly } from '/__coalesce.js';
-import { registerFind } from '/__find-entry.js';
 import { createCatchup } from '/__watcher-settle.js';
 import {
   relPath,
@@ -926,13 +925,17 @@ export async function mount(root, metafolder) {
   }
 
   /** The current listing's real entries — the synthetic "." / ".." rows are
-   *  not jump targets — as the rows `file-manager:find` searches. Directories
+   *  not jump targets — as the rows `cursor:find` searches. Directories
    *  are labelled with a trailing "/" so the picker shows what each entry is
    *  (as in a shell listing), the name itself staying what is matched. */
   function findRows() {
-    return listing
-      .slice(syntheticCount)
-      .map((e) => ({ name: e.name, ...(e.is_dir && { label: `${e.name}/` }) }));
+    // The rows skip the synthetic "." / ".." head of the listing, so each
+    // names the listing row it stands for.
+    return listing.slice(syntheticCount).map((e, i) => ({
+      name: e.name,
+      index: i + syntheticCount,
+      ...(e.is_dir && { label: `${e.name}/` }),
+    }));
   }
 
   /** Highlights the entry named `name` in the current listing, if present.
@@ -1237,32 +1240,17 @@ export async function mount(root, metafolder) {
     label: 'File manager: reload the current directory',
     handler: refresh,
   });
-  void commands.register('file-manager:next', {
-    label: 'File manager: move down',
-    handler: () => select(cursorIndex + 1),
-  });
-  void commands.register('file-manager:prev', {
-    label: 'File manager: move up',
-    handler: () => select(cursorIndex - 1),
-  });
-  void commands.register('file-manager:first', {
-    label: 'File manager: move to the first entry',
-    handler: () => select(0),
-  });
-  void commands.register('file-manager:last', {
-    label: 'File manager: move to the last entry',
-    handler: () => select(listing.length - 1),
-  });
-  void registerFind(metafolder, 'file-manager:find', {
-    label: 'File manager: jump to an entry by name',
-    prompt: 'Go to entry:',
+  // The cursor, for the generic commands (doc "Generic panel commands"):
+  // `cursor:next self`, `cursor:find self walk`…
+  metafolder.provide({
+    index: () => cursorIndex,
+    count: () => listing.length,
+    select,
     entries: findRows,
-    // The rows skip the synthetic "." / ".." head of the listing, so the index
-    // the finder answers with is offset back onto the displayed list.
-    select: (index) => select(index + syntheticCount),
-    // `file-manager:find walk` enters a directory and asks again from inside.
+    // `cursor:find file-manager walk` enters a directory and asks again from
+    // inside.
     enter: async (index) => {
-      const item = listing[index + syntheticCount];
+      const item = listing[index];
       if (!item?.is_dir) return false;
       await open(item.path);
       return true;

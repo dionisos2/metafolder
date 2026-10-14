@@ -149,10 +149,9 @@ pub fn commands() -> Vec<Command> {
         .map(|c| Command { name: c.name, label: c.label, owner: Owner::Shell })
         .collect();
 
-    // Panel commands: `commands.register('<name>'` and the shared
-    // `registerFind(metafolder, '<name>'` helper (panel-shim/find-entry.js), in
-    // every module of the panel — a command may live in a sub-module that
-    // `main.js` imports (metarecord-detail/bulk-commands.js).
+    // Panel commands: `commands.register('<name>'`, in every module of the
+    // panel — a command may live in a sub-module that `main.js` imports
+    // (metarecord-detail/bulk-commands.js).
     for panel in panel_types() {
         let dir = default_config().join("panel-types").join(&panel);
         let Ok(entries) = std::fs::read_dir(&dir) else { continue };
@@ -163,9 +162,7 @@ pub fn commands() -> Vec<Command> {
         modules.sort();
         for module in modules {
             let Ok(source) = std::fs::read_to_string(&module) else { continue };
-            for (name, label) in
-                scan(&source, &["commands.register('", "registerFind(metafolder, '"])
-            {
+            for (name, label) in scan(&source, &["commands.register('"]) {
                 out.push(Command { name, label, owner: Owner::Panel(panel.clone()) });
             }
         }
@@ -258,6 +255,80 @@ fn command_note(c: &Command, bindings: &[CompiledBinding]) -> String {
     )
 }
 
+/// The names a panel module provides to the generic commands (doc "Generic
+/// panel commands"): the top-level keys of the object literal handed to
+/// `metafolder.provide({…})`, in order. Strings and comments are skipped, and
+/// so is whatever nests deeper than the object itself.
+fn provided(source: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = source;
+    while let Some(at) = rest.find("metafolder.provide({") {
+        let body = &rest[at + "metafolder.provide({".len()..];
+        let mut chars = body.char_indices().peekable();
+        let (mut depth, mut expect_key) = (1usize, true);
+        let mut end = body.len();
+        while let Some((i, c)) = chars.next() {
+            match c {
+                '\'' | '"' | '`' => {
+                    let mut escaped = false;
+                    for (_, d) in chars.by_ref() {
+                        if escaped {
+                            escaped = false;
+                        } else if d == '\\' {
+                            escaped = true;
+                        } else if d == c {
+                            break;
+                        }
+                    }
+                }
+                '/' if chars.peek().is_some_and(|&(_, d)| d == '/') => {
+                    for (_, d) in chars.by_ref() {
+                        if d == '\n' {
+                            break;
+                        }
+                    }
+                }
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = i;
+                        break;
+                    }
+                }
+                ',' if depth == 1 => expect_key = true,
+                c if expect_key && depth == 1 && (c.is_alphabetic() || c == '_') => {
+                    let mut name = c.to_string();
+                    while let Some(&(_, d)) = chars.peek() {
+                        if !(d.is_alphanumeric() || d == '_') {
+                            break;
+                        }
+                        name.push(d);
+                        chars.next();
+                    }
+                    out.push(name);
+                    expect_key = false;
+                }
+                _ => {}
+            }
+        }
+        rest = &body[end..];
+    }
+    out
+}
+
+/// Every module of a shipped panel type, concatenated.
+fn panel_source(panel: &str) -> String {
+    let dir = default_config().join("panel-types").join(panel);
+    let Ok(entries) = std::fs::read_dir(&dir) else { return String::new() };
+    let mut modules: Vec<_> = entries
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "js"))
+        .collect();
+    modules.sort();
+    modules.iter().filter_map(|m| std::fs::read_to_string(m).ok()).collect()
+}
+
 fn panel_note(panel: &str, commands: &[Command]) -> String {
     let mut text = String::from("!! Commands\n\n");
     let own: Vec<&Command> =
@@ -267,6 +338,14 @@ fn panel_note(panel: &str, commands: &[Command]) -> String {
     }
     for c in own {
         text.push_str(&format!("* {} — {}\n", code(&c.name), c.label));
+    }
+    text.push_str("\n!! Generic commands\n\n");
+    let names = provided(&panel_source(panel));
+    if names.is_empty() {
+        text.push_str("Provides nothing to [[Generic panel commands]].\n");
+    } else {
+        let list: Vec<String> = names.iter().map(|n| code(n)).collect();
+        text.push_str(&format!("Provides {} to [[Generic panel commands]].\n", list.join(", ")));
     }
     let target = format!("{panel} panel");
     let title = format!("$:/mf/gen/Panel/{target}");
@@ -285,10 +364,10 @@ mod tests {
     fn scan_reads_names_and_their_labels() {
         let source = "commands.register('a:one', {\n  label: 'First',\n});\n\
                       commands.register('a:two', { handler });\n\
-                      registerFind(metafolder, 'a:find', { label: `Find` });\n\
+                      helper(metafolder, 'a:find', { label: `Find` });\n\
                       commands.register('a:page', variant('page', PAGES, 'Go to a page'));";
         assert_eq!(
-            scan(source, &["commands.register('", "registerFind(metafolder, '"]),
+            scan(source, &["commands.register('", "helper(metafolder, '"]),
             vec![
                 ("a:one".to_string(), "First".to_string()),
                 ("a:two".into(), String::new()),
@@ -329,6 +408,28 @@ mod tests {
         assert_eq!(owner("user:thing"), None);
         let restore = all.iter().find(|c| c.name == "trash:restore").unwrap();
         assert_eq!(restore.label, "Trash: restore the selected entry");
+    }
+
+    #[test]
+    fn provided_reads_the_names_a_panel_provides() {
+        // doc "Generic panel commands": the top-level keys of the object
+        // handed to `metafolder.provide`, in order — a nested object or a
+        // function body's own keys are not.
+        let source = "x();\n  metafolder.provide({\n    index: () => cursorIndex,\n    \
+                      count: () => rows.length,\n    select,\n    entries: () =>\n      \
+                      rows.map((row) => ({ name: row.n, label: row.l })),\n    \
+                      enter: async (index) => {\n      const item = { a: 1 };\n      \
+                      return true;\n    },\n  });\n";
+        assert_eq!(provided(source), ["index", "count", "select", "entries", "enter"]);
+        assert!(provided("commands.register('a:b', {});").is_empty());
+    }
+
+    #[test]
+    fn a_panel_note_lists_what_the_panel_provides() {
+        let note = panel_note("trash", &[]);
+        assert!(note.contains("!! Generic commands"), "{note}");
+        assert!(note.contains("``index``, ``count``, ``select``, ``entries``"), "{note}");
+        assert!(panel_note("help", &[]).contains("Provides nothing"));
     }
 
     /// The wiki's generated notes for the `GUI command` and `Panel` catalogs

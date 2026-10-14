@@ -84,6 +84,7 @@ function stub(repo: string | null) {
         varListeners.set(key, list);
       },
     },
+    provide: vi.fn(),
     commands: {
       register: (name: string, opts: { handler?: Handler }) => {
         if (opts.handler) handlers.set(name, opts.handler);

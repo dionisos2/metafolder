@@ -103,6 +103,17 @@ describe('describeKeyStep — a key that runs nothing', () => {
     });
   });
 
+  test('a generic command the focused panel cannot run is bound elsewhere', () => {
+    // `cursor:next self` in a panel without a cursor (doc "Generic panel
+    // commands"): the key passes through there, and the help says why.
+    const generic = [b(['j'], 'cursor:next self')];
+    const inHelp = { panelType: 'help', textInput: false, applies: () => false };
+    expect(describeKeyStep([], 'j', generic, inHelp, labelOf)).toEqual({
+      reported: true,
+      message: 'j is not bound to any command here (elsewhere: cursor:next self in a panel implementing it)',
+    });
+  });
+
   test('a key a text input swallows is said to be bound when not typing', () => {
     expect(describeKeyStep([], 'z', table, { panelType: null, textInput: true }, labelOf)).toEqual({
       reported: true,

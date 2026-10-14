@@ -5,21 +5,22 @@ aliases: find-entry jump-to-entry
 summary: In a list panel, f asks for a name in the command input and moves the cursor onto the row — selected, not opened.
 
 In a panel that shows rows under a cursor,
-<<key "file-manager:find select, treeref:find select, log:find, trash:find, recent:find, duplicates:find" f>>
+<<key "cursor:find self select" f>>
 asks for an entry in the command input and moves the cursor onto it. Where
 [[Find in a panel]] highlights text and selects nothing, this selects a row and
 highlights nothing: the panel's keys — open, enter, restore, trash — then act on
 what was found.
 
-Each panel has the command under its own name, on the same key:
+It is one command, <<cmd "cursor:find">>, run on the rows of whichever panel has
+the focus ([[Generic panel commands]]). What a row is depends on the panel:
 
-|!Command |!Finds |!A candidate reads |
-|`file-manager:find select` |an entry of the directory shown |its name, with a final `/` for a directory |
-|`treeref:find select` |a child of the current node |its name |
-|<<cmd "log:find">> |a write listed |`#12`, followed by its label when it has one |
-|<<cmd "trash:find">> |an entry of the trash |its name, then the path it was trashed from |
-|`recent:find` |a metarecord seen recently |its name, then its path |
-|<<cmd "duplicates:find">> |a group or a copy |the group's hash and number of copies; the copy's path |
+|!Panel |!Finds |!A candidate reads |
+|[[file-manager panel]] |an entry of the directory shown |its name, with a final `/` for a directory |
+|[[treeref panel]] |a child of the current node |its name |
+|[[log panel]] |a write listed |`#12`, followed by its label when it has one |
+|[[trash panel]] |an entry of the trash |its name, then the path it was trashed from |
+|[[recent panel]] |a metarecord seen recently |its name, then its path |
+|[[duplicates panel]] |a group or a copy |the group's hash and number of copies; the copy's path |
 
 They all behave the same way:
 
@@ -32,20 +33,20 @@ They all behave the same way:
 
 !! Walking down a path
 
-The finds of the file manager and of the [[treeref panel]] take a first argument,
-the mode: `select` is the find above, and `walk`
-(<<key "file-manager:find walk, treeref:find walk" d>>, for ''descend'') goes
-''into'' what it finds. A directory found — a node with children — is entered and
-the same question asked again from inside, so a path is walked down one name at a
-time; a file found — a leaf — is selected, and the walk stops. Whether a node has
-children is not known beforehand, so the walk asks the daemon for one before going
-in. To stop on a directory, selected rather than entered, answer with
-`shift+Enter` — the alternate answer of [[Interactive command arguments]], which
-runs the step as `<panel>:find select`. `Escape` stops where the walk is.
+The second argument is the mode: `select` is the find above, and `walk`
+(<<key "cursor:find self walk" d>>, for ''descend'') goes ''into'' what it finds.
+A directory found — a node with children — is entered and the same question asked
+again from inside, so a path is walked down one name at a time; a file found — a
+leaf — is selected, and the walk stops. Whether a node has children is not known
+beforehand, so the [[treeref panel]] asks the daemon for one before going in. To
+stop on a directory, selected rather than entered, answer with `shift+Enter` — the
+alternate answer of [[Interactive command arguments]], which runs the step as
+`cursor:find self select`. `Escape` stops where the walk is.
 
-The key is free in every list panel, so the other finds can take the mode the day
-their rows can be entered.
+Only the panels whose rows can be entered — the file manager and the tree —
+provide what a walk needs (`enter`); elsewhere the key passes through. Another
+panel gains the mode the day it provides `enter`.
 
-`metarecord-list` has no such command. Its rows come from a query, not from a list
+`metarecord-list` provides no entries. Its rows come from a query, not from a list
 already loaded, so the same key (<<key "metarecord-list:clear finder" f>>) edits its
 finder: the same question, asked of the daemon.

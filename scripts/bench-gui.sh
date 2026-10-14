@@ -117,7 +117,7 @@ scenario_open_detail() {
     mfg view left metarecord-list >/dev/null
     mfg command metarecord-list:refresh >/dev/null 2>&1 || true # no auto-load on display
     settle
-    mfg command metarecord-list:first >/dev/null 2>&1 || true # sets selected_metarecord
+    mfg command cursor:first metarecord-list >/dev/null 2>&1 || true # sets selected_metarecord
     settle
     clear_bench
     mfg layout right "$ws" >/dev/null
@@ -145,11 +145,11 @@ scenario_list_detail_nav() {
     mfg view right metarecord-detail >/dev/null
     mfg command metarecord-list:refresh >/dev/null 2>&1 || true # no auto-load on display
     settle
-    mfg command metarecord-list:first >/dev/null 2>&1 || true
+    mfg command cursor:first metarecord-list >/dev/null 2>&1 || true
     settle
     clear_bench
     for ((i = 0; i < STEPS; i++)); do
-        mfg command metarecord-list:next >/dev/null 2>&1 || true
+        mfg command cursor:next metarecord-list >/dev/null 2>&1 || true
         sleep "$STEP" # let the detail panel's async load settle before the next move
     done
     settle
@@ -168,7 +168,7 @@ scenario_fm_nav() {
     settle
     clear_bench
     for ((i = 0; i < STEPS; i++)); do
-        mfg command file-manager:next >/dev/null 2>&1 || true
+        mfg command cursor:next file-manager >/dev/null 2>&1 || true
         sleep "$STEP"
     done
     settle

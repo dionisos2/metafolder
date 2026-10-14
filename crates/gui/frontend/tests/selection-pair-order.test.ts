@@ -81,6 +81,7 @@ function stub() {
       set: setVar,
       onChange: (key: string, cb: (value: unknown) => void) => subscriptions.set(key, cb),
     },
+    provide: vi.fn(),
     commands: {
       register: () => Promise.resolve(null),
       invoke: () => null,

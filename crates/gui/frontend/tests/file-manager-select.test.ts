@@ -6,6 +6,7 @@
 // entry has no uuid to check and says so instead of silently doing nothing.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { cursor } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -134,6 +135,7 @@ function stub(vars: Record<string, unknown>, existing: Set<string>) {
         set.add(listener);
       },
     },
+    provide: vi.fn(),
     commands: {
       register: (name: string, opts: { handler?: Handler }) => {
         if (opts.handler) handlers.set(name, opts.handler);
@@ -181,8 +183,8 @@ function rows(shadow: ShadowRoot): Element[] {
 
 /** Moves the cursor onto `index` through the panel's own navigation (the
  *  cursor starts at -1, so row N takes N + 1 moves). */
-async function moveTo(handlers: Map<string, Handler>, index: number) {
-  for (let i = 0; i <= index; i++) await handlers.get('file-manager:next')!();
+async function moveTo(api: { provide: Parameters<typeof cursor>[0] }, index: number) {
+  for (let i = 0; i <= index; i++) await cursor(api.provide, 'next');
 }
 
 describe('checking metarecords from the file manager', () => {
@@ -193,8 +195,8 @@ describe('checking metarecords from the file manager', () => {
   });
 
   test('toggle checks then unchecks the tracked row under the cursor', async () => {
-    const { handlers, selected, shadow } = await mountFileManager();
-    await moveTo(handlers, 3); // song.mp3
+    const { api, handlers, selected, shadow } = await mountFileManager();
+    await moveTo(api, 3); // song.mp3
     await handlers.get('file-manager:select')!('toggle');
     expect(selected()).toEqual(['u-song']);
     expect(rows(shadow)[3].classList.contains('checked')).toBe(true);
@@ -203,8 +205,8 @@ describe('checking metarecords from the file manager', () => {
   });
 
   test('an untracked entry cannot be checked, and says so', async () => {
-    const { handlers, selected, statusBar, store } = await mountFileManager();
-    await moveTo(handlers, 4); // plain.txt
+    const { api, handlers, selected, statusBar, store } = await mountFileManager();
+    await moveTo(api, 4); // plain.txt
     await handlers.get('file-manager:select')!('toggle');
     expect(selected()).toEqual([]);
     expect(store.has('selected_metarecords')).toBe(false);

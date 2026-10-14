@@ -71,7 +71,7 @@ then runs nothing ([[Changing keybindings]]).
 
 Any name will do; `user:` keeps yours apart from the shipped ones. A name that is
 already a command — of the shell (`quit`, `panel:open`…) or of a panel
-(`log:find`…) — is ''left out'': the existing command stays as it is, and the status
+(`log:refresh`…) — is ''left out'': the existing command stays as it is, and the status
 bar names the entry that was ignored. An entry can add to the command set, never
 replace part of it unnoticed.
 

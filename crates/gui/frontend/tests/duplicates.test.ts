@@ -5,6 +5,7 @@
 // spot — dissolving it when a single copy is left, exactly as the daemon does.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { cursor } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 
@@ -131,6 +132,7 @@ function stubApi(
         adoptRepo: async () => {},
         onChange: noop,
       },
+      provide: vi.fn(),
       commands: {
         register: async (name: string, spec: { handler: Handler }) => {
           handlers.set(name, spec.handler);
@@ -168,6 +170,8 @@ async function mountPanel(groups: unknown[], members: Member[], options: Options
   mod.mount(shadow, api as never);
   await new Promise((r) => setTimeout(r, 0)); // let the deferred start settle
   const invoke = async (name: string) => {
+    // A generic command runs on what the panel provided (doc "Generic panel commands").
+    if (name.startsWith('cursor:')) return void (await cursor(api.provide, name.slice('cursor:'.length)));
     const h = handlers.get(name);
     if (!h) throw new Error(`command not registered: ${name}`);
     await h();
@@ -211,7 +215,7 @@ describe('duplicates panel', () => {
       { uuid: 'm2', path: '/b.bin' },
     ];
     const p = await mountPanel([group('g1', 10, 2, 10)], members);
-    await p.invoke('duplicates:next'); // onto the group row
+    await p.invoke('cursor:next'); // onto the group row
     await p.invoke('duplicates:toggle'); // expand it
     await new Promise((r) => setTimeout(r, 0));
     p.rows()[1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -226,10 +230,10 @@ describe('duplicates panel', () => {
       { uuid: 'm3', path: '/copy2.bin' },
     ];
     const p = await mountPanel([group('g1', 10, 3, 20)], members);
-    await p.invoke('duplicates:next');
+    await p.invoke('cursor:next');
     await p.invoke('duplicates:toggle');
     await new Promise((r) => setTimeout(r, 0));
-    await p.invoke('duplicates:next'); // onto the first member, the one to keep
+    await p.invoke('cursor:next'); // onto the first member, the one to keep
     await p.invoke('duplicates:keep');
 
     expect(p.trashPath.mock.calls.map((c) => c[1])).toEqual([
@@ -245,7 +249,7 @@ describe('duplicates panel', () => {
       { uuid: 'm2', path: '/b.bin' },
     ];
     const p = await mountPanel([group('g1', 10, 2, 10)], members);
-    await p.invoke('duplicates:next'); // the cursor sits on the group row
+    await p.invoke('cursor:next'); // the cursor sits on the group row
     await p.invoke('duplicates:keep');
     expect(p.trashPath).not.toHaveBeenCalled();
     expect(p.statusBar.message).toHaveBeenCalled();
@@ -258,10 +262,10 @@ describe('duplicates panel', () => {
       { uuid: 'm3', path: '/c.bin' },
     ];
     const p = await mountPanel([group('g1', 10, 3, 20)], members);
-    await p.invoke('duplicates:next');
+    await p.invoke('cursor:next');
     await p.invoke('duplicates:toggle');
     await new Promise((r) => setTimeout(r, 0));
-    await p.invoke('duplicates:next');
+    await p.invoke('cursor:next');
     await p.invoke('duplicates:trash');
 
     expect(p.trashPath.mock.calls.map((c) => c[1])).toEqual(['/repo/a.bin']);
@@ -276,10 +280,10 @@ describe('duplicates panel', () => {
       { uuid: 'm2', path: '/b.bin' },
     ];
     const p = await mountPanel([group('g1', 10, 2, 10)], members);
-    await p.invoke('duplicates:next');
+    await p.invoke('cursor:next');
     await p.invoke('duplicates:toggle');
     await new Promise((r) => setTimeout(r, 0));
-    await p.invoke('duplicates:next');
+    await p.invoke('cursor:next');
     await p.invoke('duplicates:trash');
     expect(p.rows()).toHaveLength(0);
   });
@@ -291,10 +295,10 @@ describe('duplicates panel', () => {
       { uuid: 'm2', path: '/b.bin' },
     ];
     const p = await mountPanel([group('g1', 10, 2, 10)], members);
-    await p.invoke('duplicates:next');
+    await p.invoke('cursor:next');
     await p.invoke('duplicates:toggle');
     await new Promise((r) => setTimeout(r, 0));
-    await p.invoke('duplicates:next');
+    await p.invoke('cursor:next');
     await p.invoke('duplicates:keep');
     expect(p.trashPath).not.toHaveBeenCalled();
     expect(p.rows()).toHaveLength(3);
@@ -376,10 +380,10 @@ describe('duplicates panel, the harder paths', () => {
       { uuid: 'm2', path: '/b.bin' },
     ];
     const p = await mountPanel([group('g1', 10, 2, 10)], members);
-    await p.invoke('duplicates:next');
+    await p.invoke('cursor:next');
     await p.invoke('duplicates:toggle');
     await new Promise((r) => setTimeout(r, 0));
-    await p.invoke('duplicates:next'); // onto /a.bin
+    await p.invoke('cursor:next'); // onto /a.bin
     await p.invoke('duplicates:refresh');
     await new Promise((r) => setTimeout(r, 0));
 
@@ -393,10 +397,10 @@ describe('duplicates panel, the harder paths', () => {
       { uuid: 'm2', path: '/b.bin' },
     ];
     const p = await mountPanel([group('g1', 10, 2, 10)], members);
-    await p.invoke('duplicates:next');
+    await p.invoke('cursor:next');
     await p.invoke('duplicates:toggle');
     await new Promise((r) => setTimeout(r, 0));
-    await p.invoke('duplicates:next');
+    await p.invoke('cursor:next');
     await p.invoke('duplicates:toggle'); // from a member row: collapse
 
     expect(p.rows()).toHaveLength(1);
@@ -405,7 +409,7 @@ describe('duplicates panel, the harder paths', () => {
 
   test('the cursor stops at the top instead of wrapping', async () => {
     const p = await mountPanel([group('g1', 10, 2, 10), group('g2', 8, 2, 8)], []);
-    await p.invoke('duplicates:prev');
+    await p.invoke('cursor:prev');
     expect(p.rows()[0].classList.contains('cursor')).toBe(true);
   });
 
@@ -418,11 +422,11 @@ describe('duplicates panel, the harder paths', () => {
       { uuid: 'm3', path: '/c.bin' },
     ];
     const p = await mountPanel([group('g1', 10, 3, 20)], members);
-    await p.invoke('duplicates:next');
+    await p.invoke('cursor:next');
     await p.invoke('duplicates:toggle');
     await new Promise((r) => setTimeout(r, 0));
     expect(p.rows()[1].textContent).toContain('(no path)');
-    await p.invoke('duplicates:next');
+    await p.invoke('cursor:next');
     await p.invoke('duplicates:trash');
 
     expect(p.trashPath).not.toHaveBeenCalled();
@@ -436,13 +440,13 @@ describe('duplicates panel, the harder paths', () => {
       { uuid: 'm3', path: '/copy' },
     ];
     const p = await mountPanel([group('g1', 16, 3, 16)], members);
-    await p.invoke('duplicates:next');
+    await p.invoke('cursor:next');
     await p.invoke('duplicates:toggle');
     await new Promise((r) => setTimeout(r, 0));
     expect(p.rows()[1].textContent).toContain('+');
 
-    await p.invoke('duplicates:next'); // /orig
-    await p.invoke('duplicates:next'); // /link, the other name of that inode
+    await p.invoke('cursor:next'); // /orig
+    await p.invoke('cursor:next'); // /link, the other name of that inode
     await p.invoke('duplicates:trash');
 
     expect(p.trashPath.mock.calls.map((c) => c[1])).toEqual(['/repo/link']);
@@ -460,10 +464,10 @@ describe('duplicates panel, the harder paths', () => {
     const p = await mountPanel([group('g1', 10, 4, 30)], members, {
       trashFails: ['/repo/copy2.bin'],
     });
-    await p.invoke('duplicates:next');
+    await p.invoke('cursor:next');
     await p.invoke('duplicates:toggle');
     await new Promise((r) => setTimeout(r, 0));
-    await p.invoke('duplicates:next'); // /keep.bin
+    await p.invoke('cursor:next'); // /keep.bin
     await p.invoke('duplicates:keep');
 
     expect(p.statusBar.error).toHaveBeenCalled();

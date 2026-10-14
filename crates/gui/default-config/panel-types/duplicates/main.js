@@ -19,7 +19,6 @@
 // deletion decision is made on.
 
 import { byId, el, field, formatSize, formatValue, openButton } from '/__ui.js';
-import { registerFind } from '/__find-entry.js';
 import { createCatchup } from '/__watcher-settle.js';
 import { rowActionsProvider, baseName } from '/__file-actions.js';
 
@@ -422,37 +421,20 @@ export function mount(root, metafolder) {
     label: 'Duplicates: reload the groups',
     handler: () => load(),
   });
-  void commands.register('duplicates:next', {
-    label: 'Duplicates: move down',
-    handler: () => select(cursorIndex + 1),
-  });
-  void commands.register('duplicates:prev', {
-    label: 'Duplicates: move up',
-    handler: () => select(cursorIndex - 1),
-  });
-  // Home/End, like every other list panel. `select` clamps and no-ops on an
-  // empty list, so the two ends are the same move at its extremes.
-  void commands.register('duplicates:first', {
-    label: 'Duplicates: move to the first row',
-    handler: () => select(0),
-  });
-  void commands.register('duplicates:last', {
-    label: 'Duplicates: move to the last row',
-    handler: () => select(rows.length - 1),
-  });
-  // Jump to a group by hash or to a member by path, like every other list panel
-  // (doc "Jumping to an entry"). A scan of a large repository produces hundreds
-  // of groups, which is exactly when scrolling stops being an option.
-  void registerFind(metafolder, 'duplicates:find', {
-    label: 'Duplicates: jump to a group or a copy by name',
-    prompt: 'Go to:',
+  // The cursor, for the generic commands (doc "Generic panel commands"). A
+  // find jumps to a group by hash or to a member by path: a scan of a large
+  // repository produces hundreds of groups, which is exactly when scrolling
+  // stops being an option.
+  metafolder.provide({
+    index: () => cursorIndex,
+    count: () => rows.length,
+    select,
     entries: () =>
       rows.map((row) =>
         row.member === null
           ? { name: row.group.hash, label: `${row.group.hash} — ${row.group.count} copies` }
           : { name: row.member.path, label: row.member.path },
       ),
-    select,
   });
 
   void commands.register('duplicates:toggle', {

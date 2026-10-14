@@ -87,7 +87,13 @@ export function comboFromEvent(event) {
 /**
  * The context one key event is matched in.
  *
- * @typedef {{panelType?: string|null, textInput?: boolean, focus?: string|null}} MatchContext
+ * `applies(invocation)` says whether a binding's command applies here at all:
+ * a generic command (`cursor:next self`) does not in a panel that lacks what it
+ * needs, and its key then passes through as if unbound (doc "Generic panel
+ * commands"). Absent ⇒ every command applies.
+ *
+ * @typedef {{panelType?: string|null, textInput?: boolean, focus?: string|null,
+ *            applies?: (invocation: string) => boolean}} MatchContext
  */
 
 /** @param {unknown} value */
@@ -95,6 +101,11 @@ const has = (value) => value !== null && value !== undefined;
 
 /** @param {Binding} binding @param {MatchContext} context */
 function eligible(binding, context) {
+  return inScope(binding, context) && (context.applies?.(binding.invocation) ?? true);
+}
+
+/** @param {Binding} binding @param {MatchContext} context */
+function inScope(binding, context) {
   // A focus-scoped binding targets one named widget (e.g. the finder input):
   // it fires only while that widget is focused, and does so regardless of the
   // text-input gate (the widget is usually an input itself). It may still

@@ -95,6 +95,7 @@ function stubApi(handlers: Map<string, Handler>, calls: Call[], queryCalls: unkn
         adoptRepo: async () => {},
         onChange: noop,
       },
+      provide: vi.fn(),
       commands: {
         register: async (name: string, spec: { handler: Handler }) => {
           handlers.set(name, spec.handler);

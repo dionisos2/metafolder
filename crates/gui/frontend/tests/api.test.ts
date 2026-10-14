@@ -13,6 +13,7 @@ function setup() {
   const registerArgs = vi.fn();
   const onCommandsChanged = vi.fn();
   const addDefaultMenuItems = vi.fn();
+  const provide = vi.fn();
 
   let visible = false;
   const visibilityGate = {
@@ -26,7 +27,7 @@ function setup() {
   };
 
   const instance = createPanelApi(
-    { invoke, dispatch, registerHandler, registerArgs, onCommandsChanged, addDefaultMenuItems },
+    { invoke, dispatch, registerHandler, registerArgs, onCommandsChanged, addDefaultMenuItems, provide },
     {
       wsId: 'ws-1',
       panelType: 'metarecord-list',
@@ -37,7 +38,7 @@ function setup() {
     },
   );
   const api = instance.api as any;
-  return { instance, api, invoke, dispatch, registerHandler, registerArgs, onCommandsChanged, addDefaultMenuItems, visibilityGate };
+  return { instance, api, invoke, dispatch, registerHandler, registerArgs, onCommandsChanged, addDefaultMenuItems, provide, visibilityGate };
 }
 
 describe('panel api — sync', () => {
@@ -344,19 +345,26 @@ describe('panel api — commands & keybindings', () => {
         visibilityGate: { visible: false, set: noop, whenVisible: noop } as never,
       },
     );
-    (instance.api as any).commands.register('log:find', { handler: () => {} });
-    expect(order).toEqual(['claim log:find', 'handler log:find']);
+    (instance.api as any).commands.register('log:refresh', { handler: () => {} });
+    expect(order).toEqual(['claim log:refresh', 'handler log:refresh']);
+  });
+
+  test('provide hands the panel functions to the shell (doc "Generic panel commands")', () => {
+    const { api, provide } = setup();
+    const functions = { index: () => 0, count: () => 1, select: () => {} };
+    api.provide(functions);
+    expect(provide).toHaveBeenCalledWith(functions);
   });
 
   test('register stores the handler and registers metadata', () => {
     const { api, invoke, registerHandler, onCommandsChanged } = setup();
     const handler = vi.fn();
-    api.commands.register('metarecord-list:next', { label: 'Next', handler });
-    expect(registerHandler).toHaveBeenCalledWith('metarecord-list:next', handler);
+    api.commands.register('metarecord-list:refresh', { label: 'Refresh', handler });
+    expect(registerHandler).toHaveBeenCalledWith('metarecord-list:refresh', handler);
     expect(invoke).toHaveBeenCalledWith('register_command', {
       panelType: 'metarecord-list',
-      name: 'metarecord-list:next',
-      label: 'Next',
+      name: 'metarecord-list:refresh',
+      label: 'Refresh',
       reveal: false,
       log: true,
     });
@@ -382,10 +390,10 @@ describe('panel api — commands & keybindings', () => {
 
   test('addKeybinding defaults when to the panel type', async () => {
     const { api, invoke } = setup();
-    await api.addKeybinding('metarecord-list:next', 'j');
+    await api.addKeybinding('metarecord-list:refresh', 'j');
     expect(invoke).toHaveBeenCalledWith('suggest_keybinding', {
       combo: 'j',
-      invocation: 'metarecord-list:next',
+      invocation: 'metarecord-list:refresh',
       when: 'metarecord-list',
       textInput: false,
       focus: null,
