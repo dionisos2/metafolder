@@ -8,8 +8,6 @@ import { fetchWatched, summarizeWatched } from '/__watched.js';
 import { activityTitle, fetchActivity, isHot, operationsTitle } from '/__activity.js';
 import {
   createTypePicker,
-  parseRawValue,
-  rawValueCompletions,
   widgetFor,
   createPickRunner,
   TYPES,
@@ -18,9 +16,16 @@ import {
 import { loadSchema as loadSharedSchema, schemaTypes, templateFields } from '/__schema-template.js';
 import { fileMenuItems, metarecordMenuItems } from '/__file-actions.js';
 import { createAnnotator } from './annotations.js';
-import { createRefSeeds } from './ref-seeds.js';
 import { createNavHistory } from './nav-history.js';
 import { settledType, splitTypeValue } from './field-args.js';
+import {
+  CONCRETE_TYPES,
+  NOTHING,
+  createFieldCatalog,
+  createValues,
+  distinctValues,
+  sameValue,
+} from './values.js';
 
 /**
  * The selected metarecord's identity, as the other panels publish it.
@@ -140,7 +145,7 @@ export async function mount(root, metafolder) {
     const repo = await repoForAdd();
     const name = addNameInput().value.trim();
     if (!repo || !name) return setTypeLock(null);
-    const types = await readCatalog(repo);
+    const types = await catalog.read(repo);
     // The name may have changed while awaiting; re-read the current value.
     if (addNameInput().value.trim() !== name) return;
     setTypeLock(types.get(name) ?? null);
@@ -173,7 +178,7 @@ export async function mount(root, metafolder) {
     // new metarecord's fields (when `current` is still null).
     const repo = await repoForAdd();
     if (!repo) return;
-    const type = (await readCatalog(repo)).get(name);
+    const type = (await catalog.read(repo)).get(name);
     if (typeof type === 'string') {
       picker.setAllowed([type, 'nothing']);
       if (currentType === 'nothing') picker.set(type); // swaps in the typed widget
@@ -182,28 +187,13 @@ export async function mount(root, metafolder) {
     }
   }
 
-  /** The repository's field catalogue (name → type) as last read — what the
-   *  synchronous decisions (a type argument's `when`) consult. Every path that
-   *  leads to one of them reads it first, so it is never older than the
-   *  gesture; nothing else keeps it. @type {{repo: string|null, types: Map<string, string>}} */
-  let catalog = { repo: null, types: new Map() };
-  /** Reads `repo`'s field catalogue from the daemon (one cheap read). A
-   *  daemon that does not answer leaves the last one read.
-   *  @param {string} repo @returns {Promise<Map<string, string>>} */
-  async function readCatalog(repo) {
-    try {
-      const types = new Map((await daemon.fields(repo)).map((f) => [f.name, f.type]));
-      catalog = { repo, types };
-    } catch {
-      if (catalog.repo !== repo) catalog = { repo, types: new Map() };
-    }
-    return catalog.types;
-  }
-  /** The catalogue's type for `name`, as last read for `repo` (no call).
-   *  @param {string} repo @param {string} name */
-  function knownType(repo, name) {
-    return catalog.repo === repo ? (catalog.types.get(name) ?? null) : null;
-  }
+  // The field catalogue and the value vocabulary (./values.js).
+  const catalog = createFieldCatalog(daemon);
+  const vocab = createValues({
+    daemon,
+    config,
+    parseQuery: (dsl) => metafolder.query.parse(dsl),
+  });
 
   /** @param {string} name */
   const isReserved = (name) => name.startsWith('mfr_');
@@ -225,7 +215,7 @@ export async function mount(root, metafolder) {
    *  @param {string} name */
   const forceBodyFor = (name) => (isReserved(name) ? forceFor(name) : null);
   const dirty = () => {
-    forgetTreePaths(); // our own write may have moved a node in some forest
+    vocab.forgetTreePaths(); // our own write may have moved a node in some forest
     return workspace.set('metarecords:dirty', Date.now());
   };
 
@@ -455,7 +445,7 @@ export async function mount(root, metafolder) {
         resolvePaths: (field, uuids) => daemon.treePaths(selection.repo, field, uuids),
         getMetarecords: async (uuids) =>
           Object.fromEntries(await daemon.metarecords(selection.repo, uuids)),
-        refLabel: (field, uuid) => refLabelFor(selection.repo, field, uuid),
+        refLabel: (field, uuid) => vocab.refLabel(selection.repo, field, uuid),
       });
     } catch (error) {
       metarecord = null;
@@ -852,139 +842,9 @@ export async function mount(root, metafolder) {
     const cur = current;
     if (cur) {
       // Offline: the record's own names are enough (readCatalog never throws).
-      for (const name of (await readCatalog(cur.repo)).keys()) names.add(name);
+      for (const name of (await catalog.read(cur.repo)).keys()) names.add(name);
     }
     return [...names].sort();
-  }
-
-  /** The one-line form of an explicit absence in a value slot — the glyph
-   *  `formatValue` renders it as. It names the Nothing rows, which carry no
-   *  raw form to parse. */
-  const NOTHING = '∅';
-
-  /** A one-line editable form of a value — the inverse of `parseValueForField`.
-   *  Async: a tree_ref renders as its resolved path, and a `ref` with a
-   *  completion seed (doc "Ref value seeds") as its path in the seed
-   *  forest. Values are *entered* that way, so every form that shows one to be
-   *  edited or removed shows it that way too.
-   *  @param {string} repo @param {string} uuid @param {string} field
-   *  @param {Metafolder.Value} value */
-  async function rawOfValue(repo, uuid, field, value) {
-    switch (value.type) {
-      case 'nothing':
-        return '';
-      case 'bool':
-        return value.value ? 'true' : 'false';
-      case 'ref': {
-        // A `[ref-seeds]` rule names the target (doc "Ref value seeds"):
-        // the value reads back as the label its naming gives the target — what
-        // is typed is what is shown.
-        const seeds = await refSeedsFor(repo, field);
-        if (seeds) {
-          const label = await seeds.labelOf(String(value.value)).catch(() => null);
-          if (label) return label;
-        }
-        // A target the naming gives no label keeps its uuid — unambiguous
-        // either way, only less legible.
-        return String(value.value);
-      }
-      case 'refbase':
-        return String(value.value);
-      case 'tree_ref': {
-        const body = /** @type {{paths?: string[]}} */ (
-          await daemon.call(
-            'GET',
-            `/repos/${repo}/metarecords/${uuid}/fields/${encodeURIComponent(field)}/resolve-tree`,
-          )
-        );
-        return body.paths?.[0] ?? value.value.name;
-      }
-      case 'externalref':
-        // Same one-line form as formatValue (ui.js); the value is an object, so
-        // the default String(...) would render "[object Object]".
-        return `${value.value.repo} :: ${value.value.metarecord}`;
-      default:
-        // Only primitive-valued types (string/int/float/datetime) reach here.
-        return String(value.value);
-    }
-  }
-
-  /** The `[ref-seeds]` engine of a field (doc "Ref value seeds"), built
-   *  once per field — its columns parse once, its pages come per call — and
-   *  null for a field no rule names (not even the `*` default), where the
-   *  legacy completion seeds still speak. @param {string} repo
-   *  @param {string} field
-   *  @type {Map<string, Promise<ReturnType<typeof createRefSeeds>|null>>} */
-  const refSeedsCache = new Map();
-  /** @param {string} repo @param {string} field */
-  function refSeedsFor(repo, field) {
-    const key = `${repo}|${field}`;
-    let hit = refSeedsCache.get(key);
-    if (!hit) {
-      hit = buildRefSeeds(repo, field);
-      // A failed build must not be cached (like the tree paths): a config
-      // fixed while the panel is open must take effect on the next prompt.
-      hit.catch(() => refSeedsCache.delete(key));
-      refSeedsCache.set(key, hit);
-    }
-    return hit;
-  }
-
-  /** @param {string} repo @param {string} field */
-  async function buildRefSeeds(repo, field) {
-    const rule = await config.refSeed(field);
-    if (!rule) return null;
-    const separator = await config.labelSeparator();
-    return createRefSeeds({
-      rule,
-      separator,
-      parseQuery: (dsl) => metafolder.query.parse(dsl),
-      runQuery: async (query, opts) => {
-        const body = /** @type {{results?: Metafolder.Metarecord[], total?: number}} */ (
-          await daemon.call('POST', `/repos/${repo}/query`, {
-            query,
-            select: '*',
-            sort: opts.sort,
-            limit: opts.limit,
-            count: true,
-          })
-        );
-        return { records: body.results ?? [], total: body.total ?? null };
-      },
-      resolvePaths: (f, uuids) => daemon.treePaths(repo, f, uuids),
-      getMetarecords: async (uuids) => Object.fromEntries(await daemon.metarecords(repo, uuids)),
-    });
-  }
-
-  /** What a `ref` value reads back as under the value: its label in the
-   *  field's `[ref-seeds]` naming (doc "Ref value seeds"), else null — the
-   *  target's `name` then applies.
-   *  @param {string} repo @param {string} field @param {string} uuid */
-  async function refLabelFor(repo, field, uuid) {
-    const seeds = await refSeedsFor(repo, field);
-    return seeds ? seeds.labelOf(uuid).catch(() => null) : null;
-  }
-
-  /** A value's payload in an order-independent shape, so identity comparison
-   *  below cannot read a key order as a difference.
-   *  @param {Metafolder.Value} v */
-  function payloadOf(v) {
-    switch (v.type) {
-      case 'nothing':
-        return null;
-      case 'tree_ref':
-        return [v.value.parent, v.value.name];
-      case 'externalref':
-        return [v.value.repo, v.value.metarecord];
-      default:
-        return v.value;
-    }
-  }
-
-  /** Value identity, for the removal match: same type, same payload.
-   *  @param {Metafolder.Value} a @param {Metafolder.Value} b */
-  function sameValue(a, b) {
-    return a.type === b.type && JSON.stringify(payloadOf(a)) === JSON.stringify(payloadOf(b));
   }
 
   /** The value type to apply for `field`: an existing row's type, else the repo
@@ -996,15 +856,11 @@ export async function mount(root, metafolder) {
     if (existing) return existing.value.type;
     const cur = current;
     if (cur) {
-      const t = (await readCatalog(cur.repo)).get(field);
+      const t = (await catalog.read(cur.repo)).get(field);
       if (t) return t;
     }
     return 'string';
   }
-
-  /** The concrete value types a type argument completes over — every type but
-   *  `nothing`, which is an absence and carries no value to parse. */
-  const CONCRETE_TYPES = TYPES.filter((t) => t !== 'nothing');
 
   /** Makes `repo`'s field catalogue readable *synchronously*. The type
    *  argument's `when` consults it and cannot await, so an unread catalogue
@@ -1012,7 +868,7 @@ export async function mount(root, metafolder) {
    *  that leads to that decision reads it first.
    *  @param {string|null} repo */
   async function warmFieldCatalog(repo) {
-    if (repo) await readCatalog(repo);
+    if (repo) await catalog.read(repo);
   }
 
   /** The type `target` would be written as without asking — read from live
@@ -1022,7 +878,7 @@ export async function mount(root, metafolder) {
     return settledType({
       rows: metarecord?.fields ?? [],
       name: target,
-      catalog: current ? knownType(current.repo, target) : null,
+      catalog: current ? catalog.known(current.repo, target) : null,
     });
   }
 
@@ -1050,101 +906,13 @@ export async function mount(root, metafolder) {
     );
   }
 
-  /** Builds a Value of `type` from a one-line raw string. tree_ref is special:
-   *  `raw` is a PATH, whose parent is resolved to a uuid via /tree/resolve-path.
-   *  ref is special when the field has a completion seed (doc "Ref value seeds"):
-   *  `raw` is a PATH in the seed tree_ref field, resolved to the
-   *  target uuid (a 32-hex `raw` is always taken as the uuid directly).
-   *  @param {string} repo @param {string} field @param {string} type @param {string} raw */
-  async function parseValueForField(repo, field, type, raw) {
-    if (type === 'ref') {
-      // A `[ref-seeds]` rule names the targets (doc "Ref value seeds"):
-      // what is typed is a label of its naming, whole, resolved to the uuid it
-      // names (an explicit uuid always wins).
-      const seeds = await refSeedsFor(repo, field);
-      if (seeds) return { type, value: await seeds.resolve(raw) };
-      // No rule names this field (not even `*`): the value is the uuid typed.
-      return { type, value: raw.trim() };
-    }
-    if (type !== 'tree_ref') return parseRawValue(type, raw);
-    const path = raw.trim();
-    const slash = path.lastIndexOf('/');
-    if (slash === -1) return { type, value: { parent: null, name: path } };
-    const parentPath = path.slice(0, slash);
-    const name = path.slice(slash + 1);
-    const res = /** @type {{uuid: string|null}} */ (
-      await daemon.call('POST', `/repos/${repo}/tree/resolve-path`, { field, path: parentPath })
-    );
-    if (!res.uuid) throw new Error(`parent path "${parentPath}" does not exist in "${field}"`);
-    return { type, value: { parent: res.uuid, name } };
-  }
-
-  /** Memoized forest paths, keyed `repo|field`. Building one is a whole-forest
-   *  `resolve-tree` plus tens of thousands of strings (~1 s on a 50 000-record
-   *  repository); `m s` / `m a` / `m v` would each pay it again. The promise is
-   *  cached, so concurrent prompts share one round-trip. Dropped whenever the
-   *  data changes — a stale candidate list would offer paths that no longer
-   *  exist. @type {Map<string, Promise<string[]>>} */
-  const treePathsCache = new Map();
-  function forgetTreePaths() {
-    treePathsCache.clear();
-  }
-
-  /** Every path in `field`'s forest, for tree_ref value completion (a static
-   *  list filtered client-side; bounded by the forest size). @param {string} repo @param {string} field */
-  function treePathsForField(repo, field) {
-    const key = `${repo}|${field}`;
-    const hit = treePathsCache.get(key);
-    if (hit) return hit;
-    const pending = (async () => {
-      const body = /** @type {Record<string, string[]>} */ (
-        await daemon.call('POST', `/repos/${repo}/query/fields/resolve-tree`, {
-          query: { type: 'is_present', field },
-          field,
-        })
-      );
-      const paths = new Set();
-      for (const list of Object.values(body)) for (const p of list) paths.add(p);
-      return [...paths].sort();
-    })();
-    // A failed build must not be cached, or the field completes to nothing
-    // until the panel is remounted.
-    pending.catch(() => treePathsCache.delete(key));
-    treePathsCache.set(key, pending);
-    return pending;
-  }
-
-  /** The views of a value argument for `type` on `field` (doc "Completion views"):
-   *  the field's `[ref-seeds]` naming when it has a rule — the whole
-   *  line, then each column, `completion:cycle` walking them — and one plain
-   *  view otherwise (a tree_ref's own forest, a legacy seed forest's paths, a
-   *  closed value set). @param {string} repo @param {string} field
-   *  @param {string} type */
-  async function refValueViews(repo, field, type) {
-    if (type === 'ref') {
-      const seeds = await refSeedsFor(repo, field);
-      if (seeds) return seeds.views();
-    }
-    // A closed value set (bool: true/false) needs no repository lookup.
-    const closed = rawValueCompletions(type);
-    if (closed.length > 0) return [plainView(type, Promise.resolve(closed))];
-    // A tree_ref value completes over its own forest.
-    return type === 'tree_ref' ? [plainView('path', treePathsForField(repo, field))] : [];
-  }
-
-  /** The one view of a plain candidate list. @param {string} title
-   *  @param {Promise<string[]>} items */
-  function plainView(title, items) {
-    return { title, items: async () => ({ items: await items }) };
-  }
-
   /** The value views for `field`, over the type that value will be written as
    *  — the one the type argument just collected, when it was asked for, so the
    *  views offer the right naming. @param {string} field
    *  @param {string|null} type */
   async function valueViewsFor(field, type) {
     const cur = requireCurrent();
-    return refValueViews(cur.repo, field, type ?? (await fieldTypeOf(field)));
+    return vocab.views(cur.repo, field, type ?? (await fieldTypeOf(field)));
   }
 
   /** One candidate per row of `field` — the values `remove` and `edit` can
@@ -1159,7 +927,7 @@ export async function mount(root, metafolder) {
     return Promise.all(
       rowsOfName(field).map(async (r) => {
         if (r.value.type === 'nothing') return { label: NOTHING, value: NOTHING };
-        const raw = await rawOfValue(cur.repo, cur.uuid, r.name, r.value);
+        const raw = await vocab.rawOf(cur.repo, cur.uuid, r.name, r.value);
         // A ref's value is its target — the row it names, whatever its label
         // reads as; every other value *is* its raw form.
         return { label: raw, value: r.value.type === 'ref' ? String(r.value.value) : raw };
@@ -1192,12 +960,12 @@ export async function mount(root, metafolder) {
         // A raw that does not parse as this type is simply not that row's
         // value; the raw-form comparison below still gets its say.
         parsed = /** @type {Metafolder.Value|null} */ (
-          await parseValueForField(cur.repo, r.name, r.value.type, raw).catch(() => null)
+          await vocab.parse(cur.repo, r.name, r.value.type, raw).catch(() => null)
         );
         parsedByType.set(r.value.type, parsed);
       }
       if (parsed !== null && sameValue(parsed, r.value)) matched.push(r);
-      else if ((await rawOfValue(cur.repo, cur.uuid, r.name, r.value)) === raw) matched.push(r);
+      else if ((await vocab.rawOf(cur.repo, cur.uuid, r.name, r.value)) === raw) matched.push(r);
     }
     return matched;
   }
@@ -1236,15 +1004,6 @@ export async function mount(root, metafolder) {
     await daemon.call('POST', `/repos/${cur.repo}/query/fields/batch`, {
       ops: ops.map(({ op, ...rest }) => ({ op, query, ...rest })),
     });
-  }
-
-  /** `values` without its repeats — a field holds a value once (doc "No
-   *  duplicate rows"). @param {Metafolder.Value[]} values */
-  function distinctValues(values) {
-    /** @type {Metafolder.Value[]} */
-    const out = [];
-    for (const v of values) if (!out.some((o) => sameValue(o, v))) out.push(v);
-    return out;
   }
 
   // ── Field operations on the current metarecord ──────────────────────────
@@ -1316,13 +1075,13 @@ export async function mount(root, metafolder) {
           const rows = (metarecord?.fields ?? []).filter(
             (f) => f.name === p[1] && f.value.type !== 'nothing',
           );
-          return rows.length === 1 ? rawOfValue(cur.repo, cur.uuid, p[1], rows[0].value) : '';
+          return rows.length === 1 ? vocab.rawOf(cur.repo, cur.uuid, p[1], rows[0].value) : '';
         },
         views: (p) => valueViewsFor(p[1], typeForPrior(p)),
       },
       run: async (field, raw, type) => {
         const cur = requireCurrent();
-        const value = await parseValueForField(cur.repo, field, type, raw);
+        const value = await vocab.parse(cur.repo, field, type, raw);
         const force = forceFor(field);
         await daemon.call('PUT', api(`/fields/${encodeURIComponent(field)}`), { value, ...force });
         await load();
@@ -1339,7 +1098,7 @@ export async function mount(root, metafolder) {
       },
       run: async (field, raw, type) => {
         const cur = requireCurrent();
-        const value = await parseValueForField(cur.repo, field, type, raw);
+        const value = await vocab.parse(cur.repo, field, type, raw);
         const force = forceFor(field);
         await daemon.call('POST', api('/fields'), { name: field, value, ...force });
         await load();
@@ -1370,7 +1129,7 @@ export async function mount(root, metafolder) {
           const cur = requireCurrent();
           const row = await editRowIn(p);
           return row && row.value.type !== 'nothing'
-            ? rawOfValue(cur.repo, cur.uuid, row.name, row.value)
+            ? vocab.rawOf(cur.repo, cur.uuid, row.name, row.value)
             : '';
         },
         views: async (p) => {
@@ -1389,7 +1148,7 @@ export async function mount(root, metafolder) {
         // what the row is. A Nothing row has none, and takes the type the
         // argument settled: giving an absence a value establishes a type.
         const as = row.value.type !== 'nothing' ? row.value.type : type;
-        const value = await parseValueForField(cur.repo, field, as, raw);
+        const value = await vocab.parse(cur.repo, field, as, raw);
         const force = forceFor(field);
         await daemon.call('PATCH', `/repos/${cur.repo}/fields/${row.id}`, { value, ...force });
         await load();
@@ -1422,7 +1181,7 @@ export async function mount(root, metafolder) {
           const cur = requireCurrent();
           return rows[0].value.type === 'nothing'
             ? NOTHING
-            : rawOfValue(cur.repo, cur.uuid, rows[0].name, rows[0].value);
+            : vocab.rawOf(cur.repo, cur.uuid, rows[0].name, rows[0].value);
         },
         complete: (p) => rowValueChoices(p[1]),
       },
@@ -1531,7 +1290,7 @@ export async function mount(root, metafolder) {
         let values;
         if (concrete.length === 0) {
           // Only absences: the new type comes with the value that carries it.
-          values = [/** @type {Metafolder.Value} */ (await parseValueForField(cur.repo, field, type, raw))];
+          values = [/** @type {Metafolder.Value} */ (await vocab.parse(cur.repo, field, type, raw))];
         } else {
           // Each value re-read as the new type; an explicit absence has
           // nothing to convert and stays one.
@@ -1541,10 +1300,10 @@ export async function mount(root, metafolder) {
               values.push(r.value);
               continue;
             }
-            const text = await rawOfValue(cur.repo, cur.uuid, field, r.value);
+            const text = await vocab.rawOf(cur.repo, cur.uuid, field, r.value);
             values.push(
               /** @type {Metafolder.Value} */ (
-                await parseValueForField(cur.repo, field, type, text)
+                await vocab.parse(cur.repo, field, type, text)
               ),
             );
           }
@@ -1666,13 +1425,13 @@ export async function mount(root, metafolder) {
   /** @param {string|null} repo @returns {Promise<string[]>} */
   async function catalogFieldNames(repo) {
     if (!repo) return [];
-    return [...(await readCatalog(repo)).keys()].sort();
+    return [...(await catalog.read(repo)).keys()].sort();
   }
 
   /** The value type recorded for `field` in the repo catalog, else `string`.
    *  @param {string} repo @param {string} field */
   async function catalogType(repo, field) {
-    return (await readCatalog(repo)).get(field) ?? 'string';
+    return (await catalog.read(repo)).get(field) ?? 'string';
   }
 
   /** The value views for a bulk value arg (repo-wide type lookup); mirrors the
@@ -1681,7 +1440,7 @@ export async function mount(root, metafolder) {
   async function bulkValueViews(field, type) {
     const repo = await repoForAdd();
     if (!repo) return [];
-    return refValueViews(repo, field, type ?? (await catalogType(repo, field)));
+    return vocab.views(repo, field, type ?? (await catalogType(repo, field)));
   }
 
   // The repo the bulk arguments were last warmed against. The type argument's
@@ -1695,7 +1454,7 @@ export async function mount(root, metafolder) {
    *  operation writes to *other* records. @param {string} field */
   function settledBulkType(field) {
     const repo = bulkArgRepo ?? current?.repo ?? null;
-    return settledType({ name: field, catalog: repo ? knownType(repo, field) : null });
+    return settledType({ name: field, catalog: repo ? catalog.known(repo, field) : null });
   }
 
   /** The type of a bulk write whose invocation carried none — the inline case.
@@ -1703,7 +1462,7 @@ export async function mount(root, metafolder) {
    *  @param {string} repo @param {string} field */
   async function requireBulkType(repo, field) {
     await warmFieldCatalog(repo);
-    const known = knownType(repo, field);
+    const known = catalog.known(repo, field);
     if (typeof known === 'string' && known !== 'nothing') return known;
     throw new Error(
       `no type known for "${field}" — name one: metarecord:bulk <op> <field> <type> <value>`,
@@ -1958,7 +1717,7 @@ export async function mount(root, metafolder) {
    *  @param {BulkTarget} t @param {string} field @param {string} raw
    *  @param {string|null} type */
   async function bulkValue(t, field, raw, type) {
-    return parseValueForField(t.repo, field, type ?? (await requireBulkType(t.repo, field)), raw);
+    return vocab.parse(t.repo, field, type ?? (await requireBulkType(t.repo, field)), raw);
   }
 
   /** One set-layer call over the target, returning the number of metarecords
@@ -2132,7 +1891,7 @@ export async function mount(root, metafolder) {
       addForm.classList.add('open');
       addNameInput().focus();
       const repo = await repoForAdd();
-      if (repo) await readCatalog(repo); // read the catalog for the type lock
+      if (repo) await catalog.read(repo); // read the catalog for the type lock
       void syncTypeToName();
     },
   });
@@ -2246,7 +2005,7 @@ export async function mount(root, metafolder) {
   // Another panel changed metarecords (log revert, file-manager track, …):
   // reload — unless an edit is in progress.
   function onMetarecordsDirty() {
-    forgetTreePaths();
+    vocab.forgetTreePaths();
     if (editingField !== null || addFieldInProgress()) return;
     void load();
   }
@@ -2255,7 +2014,7 @@ export async function mount(root, metafolder) {
   // A daemon-side change nobody in the GUI raised (a rename made outside it,
   // picked up by the change feed) must drop the memoized forest paths too, or
   // the value completion would keep offering positions that no longer exist.
-  const unsubscribeChanges = changes.subscribe(() => forgetTreePaths());
+  const unsubscribeChanges = changes.subscribe(() => vocab.forgetTreePaths());
 
   current = /** @type {Selection|null} */ ((await workspace.get('selected_metarecord')) ?? null);
   await load();
