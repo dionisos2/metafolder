@@ -60,9 +60,13 @@ describe('neededFunctions', () => {
     expect(neededFunctions('cursor:last', [])).toEqual(['count', 'select']);
   });
 
-  test('find needs entries, and enter only to walk', () => {
+  test('find needs entries, and descend only to walk', () => {
     expect(neededFunctions('cursor:find', ['select'])).toEqual(['entries', 'select']);
-    expect(neededFunctions('cursor:find', ['walk'])).toEqual(['entries', 'select', 'enter']);
+    expect(neededFunctions('cursor:find', ['walk'])).toEqual(['entries', 'select', 'descend']);
+  });
+
+  test('going down needs the index and descend', () => {
+    expect(neededFunctions('cursor:descend', [])).toEqual(['index', 'descend']);
   });
 
   test('going up needs parent, going to the top needs root', () => {
@@ -199,6 +203,20 @@ describe('runGeneric — moving the cursor', () => {
   });
 });
 
+describe('runGeneric — going down', () => {
+  test('cursor:descend goes into the row under the cursor', async () => {
+    const descend = vi.fn(async () => true);
+    await run('cursor:descend', { index: () => 2, descend });
+    expect(descend).toHaveBeenCalledWith(2);
+  });
+
+  test('with no row under the cursor there is nothing to go into', async () => {
+    const descend = vi.fn(async () => true);
+    await run('cursor:descend', { index: () => -1, descend });
+    expect(descend).not.toHaveBeenCalled();
+  });
+});
+
 describe('runGeneric — going up', () => {
   test('cursor:parent goes up one level', async () => {
     const parent = vi.fn();
@@ -262,10 +280,10 @@ describe('runGeneric — finding an entry', () => {
 
   test('walk enters what can be entered, and asks again for the same panel', async () => {
     const select = vi.fn();
-    const enter = vi.fn(async () => true);
+    const descend = vi.fn(async () => true);
     const reinvoke = vi.fn();
-    await run('cursor:find', { entries: () => rows, select, enter }, ['walk', 'sub'], reinvoke);
-    expect(enter).toHaveBeenCalledWith(0);
+    await run('cursor:find', { entries: () => rows, select, descend }, ['walk', 'sub'], reinvoke);
+    expect(descend).toHaveBeenCalledWith(0);
     expect(select).not.toHaveBeenCalled();
     expect(reinvoke).toHaveBeenCalledWith('cursor:find trash walk');
   });
@@ -273,8 +291,8 @@ describe('runGeneric — finding an entry', () => {
   test('walk selects (and stops at) what cannot be entered', async () => {
     const select = vi.fn();
     const reinvoke = vi.fn();
-    const enter = vi.fn(async () => false);
-    await run('cursor:find', { entries: () => rows, select, enter }, ['walk', 'top'], reinvoke);
+    const descend = vi.fn(async () => false);
+    await run('cursor:find', { entries: () => rows, select, descend }, ['walk', 'top'], reinvoke);
     expect(select).toHaveBeenCalledWith(2);
     expect(reinvoke).not.toHaveBeenCalled();
   });
@@ -283,18 +301,33 @@ describe('runGeneric — finding an entry', () => {
     // The file manager searches its real entries, not the synthetic "." and
     // ".." heading the listing: each row names the listing row it stands for.
     const select = vi.fn();
-    const enter = vi.fn(async () => true);
+    const descend = vi.fn(async () => true);
     const skipping = () => [
       { name: 'sub', index: 2 },
       { name: 'top.txt', index: 3 },
     ];
     await run('cursor:find', { entries: skipping, select }, ['select', 'top.txt']);
     expect(select).toHaveBeenCalledWith(3);
-    await run('cursor:find', { entries: skipping, select, enter }, ['walk', 'sub']);
-    expect(enter).toHaveBeenCalledWith(2);
+    await run('cursor:find', { entries: skipping, select, descend }, ['walk', 'sub']);
+    expect(descend).toHaveBeenCalledWith(2);
   });
 
-  test('walk in a panel that cannot enter is not implemented', async () => {
+  test('walk asks leaf, where the panel can go into a leaf, and stops on one', async () => {
+    // The tree explorer goes into any node (an empty one is where children are
+    // added), so whether a walk stops is its `leaf` to say.
+    const select = vi.fn();
+    const descend = vi.fn(async () => true);
+    const leaf = vi.fn(async (index: number) => index === 2);
+    const reinvoked = vi.fn();
+    await run('cursor:find', { entries: () => rows, select, descend, leaf }, ['walk', 'top'], reinvoked);
+    expect(select).toHaveBeenCalledWith(2);
+    expect(descend).not.toHaveBeenCalled();
+    await run('cursor:find', { entries: () => rows, select, descend, leaf }, ['walk', 'sub'], reinvoked);
+    expect(descend).toHaveBeenCalledWith(0);
+    expect(reinvoked).toHaveBeenCalledOnce();
+  });
+
+  test('walk in a panel that cannot descend is not implemented', async () => {
     await expect(
       run('cursor:find', { entries: () => rows, select: () => {} }, ['walk', 'sub']),
     ).rejects.toThrow('cursor:find walk is not implemented for the trash panel');

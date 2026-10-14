@@ -44,8 +44,9 @@ alternate answer of [[Interactive command arguments]], which runs the step as
 `cursor:find self select`. `Escape` stops where the walk is.
 
 Only the panels whose rows can be entered — the file manager and the tree —
-provide what a walk needs (`enter`); elsewhere the key passes through. Another
-panel gains the mode the day it provides `enter`.
+provide what a walk needs (`descend`) — and the log, whose labels hold labels;
+elsewhere the key passes through. Another panel gains the mode the day it
+provides `descend`.
 
 `metarecord-list` provides no entries. Its rows come from a query, not from a list
 already loaded, so the same key (<<key "metarecord-list:clear finder" f>>) edits its

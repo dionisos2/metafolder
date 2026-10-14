@@ -19,4 +19,4 @@ summary: The file-manager panel type
 
 !! Generic commands
 
-Provides ``refresh``, ``index``, ``count``, ``select``, ``entries``, ``enter``, ``parent``, ``root`` to [[Generic panel commands]].
+Provides ``refresh``, ``index``, ``count``, ``select``, ``entries``, ``descend``, ``parent``, ``root`` to [[Generic panel commands]].

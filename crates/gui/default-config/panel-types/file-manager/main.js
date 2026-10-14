@@ -1241,9 +1241,9 @@ export async function mount(root, metafolder) {
     count: () => listing.length,
     select,
     entries: findRows,
-    // `cursor:find file-manager walk` enters a directory and asks again from
-    // inside.
-    enter: async (index) => {
+    // `cursor:descend` and `cursor:find file-manager walk` go into a
+    // directory; a file is not gone into.
+    descend: async (index) => {
       const item = listing[index];
       if (!item?.is_dir) return false;
       await open(item.path);

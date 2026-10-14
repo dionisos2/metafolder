@@ -15,7 +15,8 @@ the shell runs on a few functions the panel provides:
 |<<cmd "cursor:first">> |the first row |`count`, `select` |
 |<<cmd "cursor:last">> |the last row loaded |`count`, `select` |
 |<<cmd "cursor:find">> `select` |the row named in the command input ([[Jumping to an entry]]) |`entries`, `select` |
-|<<cmd "cursor:find">> `walk` |the same, entering what can be entered and asking again |`entries`, `select`, `enter` |
+|<<cmd "cursor:find">> `walk` |the same, going into what can be gone into and asking again |`entries`, `select`, `descend` |
+|<<cmd "cursor:descend">> |into the row under the cursor: a directory, a node, a label |`index`, `descend` |
 |<<cmd "cursor:parent">> |up one level: the parent directory, node or label |`parent` |
 |<<cmd "cursor:root">> |to the top: the root directory, a forest's roots |`root` |
 |<<cmd "view:refresh">> |reads what the panel shows again |`refresh` |
@@ -59,7 +60,8 @@ metafolder.provide({
 |`select(i)` |puts the cursor on row `i`, which the shell keeps within `0..count()-1` |
 |`more()` |loads more rows; asked by `cursor:next` on the last row loaded (the [[metarecord-list panel]]) |
 |`entries()` |the rows `cursor:find` searches, as displayed now: a `name`, an optional `label` the candidates show and the typed terms match, and an optional `index` — the row `select` gets when the entries skip some (the file manager's `.` and `..`) |
-|`enter(i)` |enters row `i` and says whether it could — a directory, a node with children |
+|`descend(i)` |goes into row `i` — a directory, a node, a label — and says whether it could (a file, an operation, cannot be gone into) |
+|`leaf(i)` |whether row `i` has nothing below it, for a panel whose `descend` goes into a leaf too: the tree explorer, where an empty node is where children are added. A walk stops on a leaf — without `leaf`, on what `descend` refuses |
 |`refresh()` |reads what the panel shows again |
 |`parent()` |goes up one level |
 |`root()` |goes to the top level |

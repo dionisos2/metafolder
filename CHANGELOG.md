@@ -29,6 +29,12 @@ than breaking them.
 - **`cursor:parent <panel>` and `cursor:root <panel>`**: up one level and to
   the top — `Backspace`/`←` and `/` — for the file manager, the tree explorer
   and (up only) the log. The file manager gains `←`.
+- **`cursor:descend <panel>`**: into the row under the cursor — `Enter` and
+  `→` in the tree explorer and the log, `→` in the file manager. The function
+  behind it, `descend(i)`, is also what a walk (`cursor:find … walk`) goes
+  into with, so the log can now walk down its labels by name (`d`); a panel
+  whose `descend` goes into a leaf too (the tree) says where a walk stops with
+  `leaf(i)`.
 - **Walking down a path by name in the file manager and the tree explorer.**
   `d` runs `cursor:find self walk`: a directory (a node with children) named
   is entered and the question asked again from inside, a file (a leaf) named
@@ -342,6 +348,7 @@ than breaking them.
 - **The per-panel `<panel>:refresh` commands**, replaced by `view:refresh`.
 - **`file-manager:parent`/`:root`, `treeref:parent`/`:root` and
   `log:parent`**, replaced by `cursor:parent` and `cursor:root`.
+- **`treeref:descend` and `log:descend`**, replaced by `cursor:descend`.
 - **Labelling a revision after the fact**: `PATCH /log/revisions/:id`, the log
   panel's `log:mark` (Shift+L) and `mf log revert --label`. Renaming or
   describing a label once written is deferred; a context names the work while

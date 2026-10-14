@@ -135,10 +135,10 @@ describe('log panel: going into a label', () => {
     expect(p.shadow.querySelector('#rows button.mf-open')).toBeNull();
   });
 
-  test('log:descend goes into the selected row; cursor:parent comes back onto it', async () => {
+  test('cursor:descend goes into the selected row; cursor:parent comes back onto it', async () => {
     const p = await mountPanel();
     await p.run('cursor:last'); // #1 run
-    await p.run('log:descend');
+    await p.run('cursor:descend');
     expect(p.rows()).toEqual(['#2 answer']);
     expect(p.selected()).toBe('#2 answer');
     await p.run('cursor:parent');
@@ -149,8 +149,8 @@ describe('log panel: going into a label', () => {
   test('a crumb goes back to its level', async () => {
     const p = await mountPanel();
     await p.run('cursor:last');
-    await p.run('log:descend');
-    await p.run('log:descend');
+    await p.run('cursor:descend');
+    await p.run('cursor:descend');
     expect(p.rows()).toEqual(['#3 mf tag add']);
     const top = p.shadow.querySelector<HTMLElement>('#breadcrumb .crumb')!;
     top.click();

@@ -354,11 +354,23 @@ export async function mount(root, metafolder) {
   }
 
   /** @param {number} index */
-  function descend(index) {
+  /** Goes into the child at `index` — a leaf too: an empty node is where
+   *  children are added — and says whether there was one. @param {number} index */
+  async function descend(index) {
     const child = children[index];
-    if (!child) return;
+    if (!child) return false;
     stack = [...stack, { uuid: child.uuid, name: child.name }];
-    void fetchChildren(true);
+    await fetchChildren(true);
+    return true;
+  }
+
+  /** Whether the child at `index` has no children of its own. Not known
+   *  beforehand, so one is asked for. @param {number} index */
+  async function leaf(index) {
+    const child = children[index];
+    if (!child || repo === null) return true;
+    const probe = await daemon.query(repo, { query: childrenQuery(field, child.uuid), limit: 1 });
+    return probe.records.length === 0;
   }
 
   function goUp() {
@@ -445,7 +457,7 @@ export async function mount(root, metafolder) {
             ...fileRowAttrs(child),
           },
           // doc "Opening a row"
-          openButton('enter', 'Go into this node', () => descend(index)),
+          openButton('enter', 'Go into this node', () => void descend(index)),
           el('span', { class: 'icon' }, '🏷️'),
           el('span', { class: 'name' }, nodeLabel(child)),
         ),
@@ -480,10 +492,6 @@ export async function mount(root, metafolder) {
     await fetchChildren(true);
   }
 
-  void commands.register('treeref:descend', {
-    label: 'TreeRef explorer: descend into the selected node',
-    handler: () => descend(cursorIndex),
-  });
   // Up one level, and to the forest roots, on `cursor:parent` /
   // `cursor:root` (doc "Generic panel commands").
   metafolder.provide({ parent: goUp, root: gotoRoot });
@@ -500,18 +508,10 @@ export async function mount(root, metafolder) {
     count: () => children.length,
     select,
     entries: () => children.map((child) => ({ name: nodeLabel(child) })),
-    // `cursor:find treeref walk` goes into a node that has children. Whether
-    // it has is not known beforehand (a leaf entered shows an empty list), so
-    // one child is asked for: a leaf is selected instead, like a file.
-    enter: async (index) => {
-      const child = children[index];
-      if (!child || repo === null) return false;
-      const probe = await daemon.query(repo, { query: childrenQuery(field, child.uuid), limit: 1 });
-      if (probe.records.length === 0) return false;
-      stack = [...stack, { uuid: child.uuid, name: child.name }];
-      await fetchChildren(true);
-      return true;
-    },
+    // `cursor:descend` goes into any node; `cursor:find treeref walk` goes
+    // into a node that has children, and selects a leaf instead, like a file.
+    descend,
+    leaf,
   });
 
   // Which forest the explorer browses, and which Ref field it follows back:

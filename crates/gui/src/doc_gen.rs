@@ -418,9 +418,9 @@ mod tests {
         let source = "x();\n  metafolder.provide({\n    index: () => cursorIndex,\n    \
                       count: () => rows.length,\n    select,\n    entries: () =>\n      \
                       rows.map((row) => ({ name: row.n, label: row.l })),\n    \
-                      enter: async (index) => {\n      const item = { a: 1 };\n      \
+                      descend: async (index) => {\n      const item = { a: 1 };\n      \
                       return true;\n    },\n  });\n";
-        assert_eq!(provided(source), ["index", "count", "select", "entries", "enter"]);
+        assert_eq!(provided(source), ["index", "count", "select", "entries", "descend"]);
         assert!(provided("commands.register('a:b', {});").is_empty());
     }
 

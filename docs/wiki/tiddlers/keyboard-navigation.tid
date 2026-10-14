@@ -49,7 +49,7 @@ run on the focused panel; in a panel without a cursor these keys pass through
 |!Key |!Does |
 |<<key "cursor:next self" "↓ or j">> / <<key "cursor:prev self" "↑ or k">> |the next / the previous row |
 |<<key "cursor:first self" Home>> / <<key "cursor:last self" End>> |the first / the last row |
-|<<key "metarecord-list:open, file-manager:activate, treeref:descend, log:descend, trash:restore, recent:open, duplicates:toggle, metarecord:row-edit" Enter>> |what the panel is for: open the row, enter the directory, go down the tree or into the label, expand the group, restore the entry, edit the field |
+|<<key "metarecord-list:open, file-manager:activate, cursor:descend self, trash:restore, recent:open, duplicates:toggle, metarecord:row-edit" Enter>> |what the panel is for: open the row, enter the directory, go down the tree or into the label, expand the group, restore the entry, edit the field |
 |<<key "cursor:parent self, metarecord:back, file:back" "Backspace or ←">> |go back up: the parent directory, the parent node, the label above; in the detail and the file panel, the metarecord shown before, the folder of the previewed file |
 |<<key "cursor:root self" "/">> |the top: the root directory, the roots of the tree |
 |<<key "cursor:find self select" f>> |move the cursor to a row named in the command input ([[Jumping to an entry]]) |

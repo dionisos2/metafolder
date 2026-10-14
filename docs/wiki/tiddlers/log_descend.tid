@@ -1,6 +1,0 @@
-title: log:descend
-tags: [[GUI command]]
-kind: reference
-summary: Log: go into the selected label
-
-Goes into the row under the cursor of the [[log panel]] — a label, or a fold of the watcher's flushes: the list then shows what it holds, the cursor on its first row. An operation holds nothing. The row's `›` button does the same ([[Opening a row]]).

@@ -166,6 +166,7 @@ fn register_builtins(registry: &CommandRegistry) {
             "Move a panel's cursor to a row named in the command input (select / walk)",
             true,
         ),
+        ("cursor:descend", "Take a panel into the row under its cursor (self / a panel type)", true),
         ("cursor:parent", "Take a panel up one level (self / a panel type)", true),
         ("cursor:root", "Take a panel to its top level (self / a panel type)", true),
         ("view:refresh", "Read what a panel shows again (self / a panel type)", true),

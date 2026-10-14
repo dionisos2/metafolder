@@ -17,7 +17,7 @@ import { osmMatch, splitTerms } from '../../../panel-shim/finder.js';
  *  what typed terms are matched against (a panel whose rows are ambiguous by
  *  name labels each with the context telling them apart); `name` is the bare
  *  identity an answer may name exactly. Without a `label` the two are one.
- *  `index` is the row `select`/`enter` get, when the entries skip some of the
+ *  `index` is the row `select`/`descend` get, when the entries skip some of the
  *  rows (the file manager's "." and ".."); by default, the entry's position. */
 export interface FindRow {
   name: string;
@@ -38,8 +38,14 @@ export interface PanelFunctions {
   more?: () => unknown;
   /** The rows `cursor:find` searches, as displayed now. */
   entries?: () => FindRow[] | Promise<FindRow[]>;
-  /** Enters row `index` (a directory) and says whether it could. */
-  enter?: (index: number) => boolean | Promise<boolean>;
+  /** Goes into row `index` — a directory, a node with children, a label — and
+   *  says whether it could (a file, a leaf, cannot be gone into). */
+  descend?: (index: number) => boolean | Promise<boolean>;
+  /** Whether row `index` has nothing below it, for a panel whose `descend`
+   *  goes into a leaf too (the tree explorer: an empty node is where children
+   *  are added). A walk stops on a leaf; without `leaf`, on what `descend`
+   *  refuses. */
+  leaf?: (index: number) => boolean | Promise<boolean>;
   /** Reads what the panel shows again. */
   refresh?: () => unknown;
   /** Goes up one level: the parent directory, node or label. */
@@ -60,7 +66,8 @@ const NEEDS: Record<string, (rest: string[]) => FunctionName[]> = {
   'cursor:first': () => ['count', 'select'],
   'cursor:last': () => ['count', 'select'],
   'cursor:find': (rest) =>
-    rest[0] === 'walk' ? ['entries', 'select', 'enter'] : ['entries', 'select'],
+    rest[0] === 'walk' ? ['entries', 'select', 'descend'] : ['entries', 'select'],
+  'cursor:descend': () => ['index', 'descend'],
   'cursor:parent': () => ['parent'],
   'cursor:root': () => ['root'],
   'view:refresh': () => ['refresh'],
@@ -191,6 +198,11 @@ export async function runGeneric(
       if (count > 0) await fns.select(count - 1);
       return;
     }
+    case 'cursor:descend': {
+      const index = fns.index();
+      if (index >= 0) await fns.descend(index);
+      return;
+    }
     case 'cursor:parent':
       await fns.parent();
       return;
@@ -208,7 +220,8 @@ export async function runGeneric(
       const found = matchEntry(text, rows);
       if (found < 0) throw new Error(`no entry matching "${text}"`);
       const index = rows[found].index ?? found;
-      if (mode === 'walk' && (await fns.enter(index))) {
+      const stop = mode !== 'walk' || (functions.leaf ? await functions.leaf(index) : false);
+      if (!stop && (await fns.descend(index))) {
         reinvoke(`${name} ${panelType} walk`);
         return;
       }

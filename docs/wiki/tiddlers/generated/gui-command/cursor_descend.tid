@@ -1,0 +1,14 @@
+title: $:/mf/gen/GUI command/cursor:descend
+catalog: GUI command
+target: cursor:descend
+summary: Take a panel into the row under its cursor (self / a panel type)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``enter`` → ``cursor:descend self`` (in the ``log`` panel)
+* ``enter`` → ``cursor:descend self`` (in the ``treeref`` panel)
+* ``right`` → ``cursor:descend self``

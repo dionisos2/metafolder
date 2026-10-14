@@ -154,12 +154,15 @@ export async function mount(root, metafolder) {
   /** Goes into the row `key` (the selected one by default): a label or a
    *  fold of the watcher's flushes; an operation holds nothing. The cursor
    *  lands on the first thing it holds. @param {string|null} [key] */
+  /** Goes into the row `key`, and says whether it did: an operation holds
+   *  nothing to go into. @param {string|null} key */
   function descend(key = selection) {
     const node = key === null ? null : findNode(key);
-    if (key === null || node === null || node.kind === 'op') return;
+    if (key === null || node === null || node.kind === 'op') return false;
     path = [...path, key];
     selection = visible()[0]?.key ?? null;
     render();
+    return true;
   }
 
   /** Back out to the level above `depth` nodes (the units of work at 0), the
@@ -545,10 +548,6 @@ export async function mount(root, metafolder) {
     reveal: true,
     handler: prune,
   });
-  void commands.register('log:descend', {
-    label: 'Log: go into the selected label',
-    handler: () => descend(),
-  });
   // Back out to the level above on `cursor:parent` (doc "Generic panel commands").
   metafolder.provide({ parent: () => backTo(path.length - 1) });
   // Read again on `view:refresh` (doc "Generic panel commands").
@@ -563,6 +562,9 @@ export async function mount(root, metafolder) {
       const row = visible()[index];
       if (row) select(row.key);
     },
+    // `cursor:descend` goes into a label (and so does a walk, `cursor:find
+    // log walk`, label after label).
+    descend: (index) => descend(visible()[index]?.key ?? null),
     entries: () =>
       visible().map(({ node }) => {
         if (node.kind === 'op') return { name: `op ${node.op.id}`, label: `op ${node.op.id}` };

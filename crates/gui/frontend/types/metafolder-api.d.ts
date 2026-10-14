@@ -298,7 +298,7 @@ declare namespace Metafolder {
   /** One searchable row of `PanelFunctions.entries`: `label` is what the
    *  completion offers and typed terms match (the context telling rows of the
    *  same name apart); `name` the bare identity. Without a label, the two are one.
-   *  `index`: the row `select`/`enter` get, when the entries skip some rows;
+   *  `index`: the row `select`/`descend` get, when the entries skip some rows;
    *  by default the entry's position. */
   interface FindRow {
     name: string;
@@ -320,9 +320,13 @@ declare namespace Metafolder {
     more?(): unknown;
     /** The rows `cursor:find` searches, as displayed now. */
     entries?(): FindRow[] | Promise<FindRow[]>;
-    /** Enters row `index` (a directory) and says whether it could:
-     *  `cursor:find <panel> walk` then asks again from inside. */
-    enter?(index: number): boolean | Promise<boolean>;
+    /** Goes into row `index` — a directory, a node with children, a label —
+     *  and says whether it could (`cursor:descend`; `cursor:find <panel> walk`
+     *  then asks again from inside). */
+    descend?(index: number): boolean | Promise<boolean>;
+    /** Whether row `index` has nothing below it — for a panel whose `descend`
+     *  goes into a leaf too: a walk stops on a leaf. */
+    leaf?(index: number): boolean | Promise<boolean>;
     /** Reads what the panel shows again (`view:refresh`). */
     refresh?(): unknown;
     /** Goes up one level — the parent directory, node or label (`cursor:parent`). */

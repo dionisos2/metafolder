@@ -264,8 +264,11 @@
   { command = "find:next", focus = "find" },
   { command = "metarecord-list:open other", when = "metarecord-list" },
   { command = "file-manager:activate", when = "file-manager" },
-  { command = "treeref:descend", when = "treeref" },
-  { command = "log:descend", when = "log" },
+  # Go into the row (doc "Generic panel commands"). Scoped: `enter` already has
+  # its global binding (editing:confirm), and the file manager's Enter is
+  # `file-manager:activate`, which also confirms a file.
+  { command = "cursor:descend self", when = "treeref" },
+  { command = "cursor:descend self", when = "log" },
   { command = "trash:restore", when = "trash" },
   { command = "recent:open other", when = "recent" },
   { command = "duplicates:toggle", when = "duplicates" },
@@ -286,8 +289,8 @@
 # Right / left: descend into / go up (open in the other panel for lists).
 "right" = [
   { command = "metarecord-list:open other", when = "metarecord-list" },
-  { command = "treeref:descend", when = "treeref" },
-  { command = "log:descend", when = "log" },
+  # Go into the row: a node, a label, a directory (doc "Generic panel commands").
+  { command = "cursor:descend self" },
   { command = "recent:open other", when = "recent" },
   { command = "duplicates:toggle", when = "duplicates" },
   # In the file panel left/right seek the previewed media (see the transport
