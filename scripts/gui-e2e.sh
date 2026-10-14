@@ -16,8 +16,8 @@
 # never shows on the user's desktop. The keyboard scenarios (prompt history
 # keybindings open-with) need it and xdotool: they press keys where no command
 # reaches — the settings view, the command input — and on a real display they
-# would type into whatever the user is doing (or, under a keymap such as bépo,
-# into the desktop's own shortcuts). Without both they are a loud SKIP.
+# would type into whatever the user is doing, or into the desktop's own
+# shortcuts. Without both they are a loud SKIP.
 #
 # Not part of check.sh: it needs a display, the WebView and a built frontend.
 #
