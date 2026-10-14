@@ -45,5 +45,7 @@ What changed while it was lost is not replayed: the buffer was dropped. Nothing 
 reconciled on its own after a load ([[Moving a repository]]); a removal made meanwhile
 leaves a stale path, which `mf orphan detect` finds.
 
-Left open ([[Watcher open questions]]): finding a repository that comes back on a
-remounted drive by its volume identity, rather than waiting for a load.
+A repository whose root comes back on a remounted drive is not recognised by its volume
+identity either — not reloaded, not even offered (decided October 2026): its return is a
+load like any other. A drive plugged back in ''under'' a root is another matter, followed
+at once ([[Offline subtrees]]).
