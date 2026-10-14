@@ -374,7 +374,7 @@ describe('repos panel — a lost repository', () => {
 
 describe('repos panel — running tasks', () => {
   test('an in-flight task is shown under its repository and can be stopped', async () => {
-    const { api, provide, daemon, handlers } = setup({ activeRepo: 'r1' });
+    const { api, provide, daemon } = setup({ activeRepo: 'r1' });
     daemon.repos.push({ repo_uuid: 'r1', name: 'photos', root: '/tmp/photos' });
     daemon.tasks.push({
       id: 't1',
@@ -701,7 +701,7 @@ describe('repos panel — commands', () => {
   });
 
   test('refresh picks up a repository loaded from elsewhere', async () => {
-    const { api, provide, daemon, handlers } = setup();
+    const { api, provide, daemon } = setup();
     const shadow = shadowForRepos();
     await mount(shadow, api);
     await settle();
