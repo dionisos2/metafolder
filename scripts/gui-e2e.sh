@@ -49,7 +49,7 @@
 #   with no scenario, runs them all: undo-redo duplicates orphans trash
 #   reconcile ignore sync repos list layout script errors picker refs prompt
 #   history keybindings open-with tab-close pick-button suggested-key walk
-#   devtools.
+#   slideshow devtools.
 #   --unsandboxed  pass --allow-unsandboxed-webview to the GUI (a container
 #                  that forbids WebKit's sandbox; never on real data)
 #   --keep-logs    keep the work directory (daemon.log, gui.log) on exit
@@ -76,7 +76,7 @@ done
 [ ${#SCENARIOS[@]} -gt 0 ] \
     || SCENARIOS=(undo-redo duplicates orphans trash reconcile ignore sync repos list layout script
         errors picker refs hierarchy prompt history keybindings open-with tab-close pick-button
-        suggested-key walk devtools)
+        suggested-key walk slideshow devtools)
 
 # shellcheck source=lib/daemon-fixture.sh
 . scripts/lib/daemon-fixture.sh
@@ -1083,6 +1083,43 @@ scenario_walk() {
     typed "b"
     keys shift+Return
     assert "walk (treeref): shift+return stops on the node, selected" until_ok 10 tree_at /a/b
+}
+
+# The slideshow (doc "Slideshow"): `file:play query` walks what the list
+# shows — the images for their time, the rest passed over — and says when it is
+# done. The file panel must be on screen: a hidden one shows nothing, so a
+# slideshow there waits.
+scenario_slideshow() {
+    new_repo slideshow
+    # Two 1×1 PNGs and a text: two images to wait on, the rest to skip.
+    for name in a b; do
+        printf '\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x01\0\0\0\x01\x08\x06\0\0\0\x1f\x15\xc4\x89\0\0\0\rIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\0\0\0\0IEND\xaeB`\x82' \
+            >"$REPO_DIR/$name.png"
+        record "$REPO_DIR/$name.png" >/dev/null || die "record $name.png"
+    done
+    echo hello >"$REPO_DIR/c.txt"
+    record "$REPO_DIR/c.txt" >/dev/null || die "record c.txt"
+
+    show_panel left metarecord-list view:refresh metarecord-list
+    # Assigned rather than split: an earlier scenario may have left the right
+    # slot open, and `panel:split` would then close it.
+    mfg layout right "$WS" >/dev/null || die "layout right $WS"
+    mfg view right file >/dev/null || die "view right file"
+
+    run file:play selection
+    status_is "slideshow: an empty selection plays nothing" info \
+        'No metarecords are checked — nothing to play.'
+
+    run file:play query
+    command_ok "slideshow: file:play query starts"
+    assert "slideshow: the query shown is played to its end" until_ok 30 says 'Slideshow finished.'
+    # The text and the root folder are passed over, never left on screen.
+    assert_eq "slideshow: it ends on an image" png \
+        "$(ws_var selected_paths | python3 -c 'import json, sys; print(json.load(sys.stdin)[0].rsplit(".", 1)[-1])')"
+
+    run file:play stop
+    status_is "slideshow: stop with none running says so" info 'No slideshow is running.'
+    mfg layout right - >/dev/null
 }
 
 # tree_at <path> — the tree explorer's selected node is <path>.

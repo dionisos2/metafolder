@@ -1,0 +1,54 @@
+title: Slideshow
+tags: [[file panel]]
+kind: reference
+aliases: playlist diaporama autoplay shuffle
+summary: file:play shows the checked selection or the query the list shows one file after another — audio and video to their end, images for a few seconds, a GIF for one pass — skipping everything else.
+
+<<cmd "file:play">> turns the [[file panel]] into a playlist. It walks a list of
+metarecords and, for each, shows its file the way the panel always does, then moves on:
+
+|!File |!Stays |
+|audio, video |until it ends, then a short pause (`slideshow-gap-seconds`, 0.5 s) |
+|image |`slideshow-image-seconds` (3 s) |
+|GIF |one pass of its animation, read from the file; `slideshow-gif-seconds` (5 s) when it has none to read — a single frame, a truncated file |
+|anything else — a document, a text, a folder, a metarecord without a file |nothing: it is passed over without being selected, so it neither flashes by nor counts as viewed ([[recent panel]]) |
+
+The three durations are settings of `[panel-defaults.file]` ([[GUI configuration]]).
+A video starts from its beginning, as in any playlist, not where you last stopped it
+([[Media preview]]); its position is still written as usual, so watching it to the end
+clears a stored one. A GIF is shown moving whatever the ''animate'' box says.
+
+!! What it plays
+
+The first argument says which list, as for the bulk operations
+([[Editing metarecords in the GUI]]):
+
+* `selection` — the checked metarecords ([[Cross-panel selection]]), in the order they were checked;
+* `query` — every metarecord the [[metarecord-list panel]] shows, finder included, in its sort order. The list is read once, at the start: a later change of the query does not change what plays.
+* `stop` — ends the slideshow, leaving the file shown on screen.
+
+Two options follow, in any order: `shuffle` plays the list in a random order, and
+`loop` starts it over at the end instead of stopping — with `shuffle`, in a new order
+each pass, never the same file twice in a row across the seam. `file:play query shuffle
+loop` is a radio over what the list shows.
+
+A list where nothing can be shown ends at once (''Slideshow: nothing to play.''), even
+with `loop`.
+
+!! While it plays
+
+It moves the workspace's selection, so every panel that follows it follows the
+slideshow; the list's cursor moves onto the row when the list has it loaded.
+
+* Choosing another file by hand — the arrows, a click in the list — shows that file the slideshow's way, then goes on from ''it'' when it is in the list (the next one after it), from where it was otherwise. A file chosen so that the slideshow would pass over is shown, and the next one comes at once.
+* <<key "file:play-pause" Space>> pauses a video or an audio file as always, and the slideshow waits for it; in front of an image or in the pause after a video, it holds the slideshow, and pressing it again lets it go on.
+* Walking into a folder of the preview, or up out of the file (<<key "file:back" Backspace>>), holds it too, until the selection moves again.
+* It runs only while the panel is on screen: a hidden panel shows nothing, so the slideshow waits there.
+
+!! When a file cannot play
+
+A file whose decoder is missing shows its message for the length of the pause, and
+the next one comes. A pipeline that ''stalls'' with every decoder present is another
+matter: nothing reports it, and the slideshow waits on it like on a long video — the
+risk [[Why a media file is not played on sight]] describes, which a slideshow
+takes deliberately, one file at a time.

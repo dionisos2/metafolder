@@ -8,6 +8,7 @@ summary: The file panel type
 * ``file:back`` — File: go up one level (out of a listing, or to the containing folder)
 * ``file:mute`` — File: mute / unmute
 * ``file:page`` — File: go to a page of the document
+* ``file:play`` — File: play one file after another — the checked selection or the query shown (selection / query / stop) [shuffle] [loop]
 * ``file:play-pause`` — File: play / pause the media
 * ``file:restart`` — File: play the media from the start
 * ``file:seek`` — File: seek the previewed media by a signed number of seconds

@@ -123,6 +123,7 @@ script can read and set.
 |`metarecord-list:mode` |`table` or `grid` ([[Display modes]]) |
 |`metarecord-list:effective-query` |what was last run, finder included, as [[Query IR]] — what `metarecord:bulk` acts on |
 |`metarecord-list:effective-query-text` |the same as DSL text (empty for everything), which [[mf gui query]] prints |
+|`metarecord-list:sort` |the order it was run in, as the query body's `sort` (empty for none) — what a [[Slideshow]] of `query` plays it in |
 |`metarecord-list:base-query-text` |the query without the finder, as DSL text |
 
 The four query variables (`:query`, `:normal-query`, `:normal-shown`,

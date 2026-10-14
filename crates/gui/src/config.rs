@@ -856,6 +856,9 @@ mod tests {
         assert_eq!(file["zoom-step"], serde_json::json!(1.25));
         assert_eq!(file["zoom-min"], serde_json::json!(0.05));
         assert_eq!(file["zoom-max"], serde_json::json!(40));
+        assert_eq!(file["slideshow-image-seconds"], serde_json::json!(3));
+        assert_eq!(file["slideshow-gif-seconds"], serde_json::json!(5));
+        assert_eq!(file["slideshow-gap-seconds"], serde_json::json!(0.5));
         assert!(file["text-extensions"].as_array().unwrap().contains(&serde_json::json!("md")));
     }
 

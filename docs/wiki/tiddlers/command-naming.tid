@@ -47,7 +47,7 @@ Grouped by what they touch, which is what a name must make obvious:
 |a view flag |`toggle <flag>` |
 |the cursor or the selection |`cursor:next/prev/first/last <panel>`, `cursor:find <panel> <mode>`, `page <which>`, `select <toggle/all/none>`, and the `row-X` family (the row under the cursor) |
 |a view setting |`set <setting> [value]` |
-|the media player |`play-pause`, `restart`, `mute`, `seek <±s>`, `speed <up/down/reset>`, `volume <up/down>`, `zoom <in/out/fit/reset>` |
+|the media player |`play-pause`, `play <what> [options]` (a [[Slideshow]]), `restart`, `mute`, `seek <±s>`, `speed <up/down/reset>`, `volume <up/down>`, `zoom <in/out/fit/reset>` |
 |the repository |`<noun> <op>` with `op` among `set`, `add`, `remove`, `unset`, `delete`, and the plain verbs `create`, `delete`, `rename`, `record`, `trash`, `restore`, `prune`, `reconcile`, `rollback`, `undo`, `redo`, `revert [what]`, `mark`, `run`, `load`, `unload`, `stop` |
 
 ''A command that writes to the repository carries either `<noun> <op>` or a plain

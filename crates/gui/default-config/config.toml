@@ -160,3 +160,9 @@ text-preview-limit = 262144
 zoom-step = 1.25
 zoom-min = 0.05
 zoom-max = 40
+# The slideshow (`file:play`), in seconds: how long an image stays, how long a
+# GIF whose length cannot be read stays (an animated one plays through once),
+# and the pause after an audio or a video has ended (0 for none).
+slideshow-image-seconds = 3
+slideshow-gif-seconds = 5
+slideshow-gap-seconds = 0.5

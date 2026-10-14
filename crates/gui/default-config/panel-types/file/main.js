@@ -24,6 +24,16 @@ import {
   clearPosition,
 } from './playback.js';
 import { fetchMounts, offlineMountFor, relativeTo, unavailableLabel } from '/__mounts.js';
+import {
+  GAP_SECONDS,
+  GIF_SECONDS,
+  IMAGE_SECONDS,
+  PLAY_OPTIONS,
+  createPlaylist,
+  gifDurationMs,
+  parsePlayArgs,
+  stepFor,
+} from './slideshow.js';
 
 // Directory grid: render this many thumbnails per window (more on scroll), so
 // opening a folder with thousands of files does not build/load them all at
@@ -81,6 +91,14 @@ function positiveNumber(configured, fallback) {
     : fallback;
 }
 
+/** A configured number of seconds that may be 0, or `fallback`.
+ *  @param {unknown} configured @param {number} fallback */
+function nonNegativeNumber(configured, fallback) {
+  return typeof configured === 'number' && Number.isFinite(configured) && configured >= 0
+    ? configured
+    : fallback;
+}
+
 /**
  * Where "up one level" lands (doc "file panel"): out of a drilled-in
  * listing, or — when the panel is following the selection — into the folder
@@ -127,6 +145,10 @@ export async function mount(root, metafolder) {
   const zoomStep = positiveNumber(defaults.zoomStep, ZOOM_STEP);
   const zoomMin = positiveNumber(defaults.zoomMin, ZOOM_MIN);
   const zoomMax = positiveNumber(defaults.zoomMax, ZOOM_MAX);
+  // The slideshow's waits (doc "Slideshow").
+  const slideshowImageMs = positiveNumber(defaults.slideshowImageSeconds, IMAGE_SECONDS) * 1000;
+  const slideshowGifMs = positiveNumber(defaults.slideshowGifSeconds, GIF_SECONDS) * 1000;
+  const slideshowGapMs = nonNegativeNumber(defaults.slideshowGapSeconds, GAP_SECONDS) * 1000;
 
   /** @type {string[]} */
   let paths = [];
@@ -433,15 +455,18 @@ export async function mount(root, metafolder) {
   // pause/seek/end, on teardown, and periodically while playing — never on
   // `timeupdate` (which fires several times a second, and every write is an
   // event-log write).
-  /** @param {HTMLMediaElement} media @param {number|null} stored */
-  function attachPlayback(media, stored) {
+  /** @param {HTMLMediaElement} media @param {number|null} stored
+   *  @param {boolean} [seek] false: start from the beginning (a slideshow),
+   *  though the stored position is still known — and so cleared when the
+   *  video is watched to its end */
+  function attachPlayback(media, stored, seek = true) {
     if (localPath !== null || selected === null) return; // no metarecord to store it on
     const { uuid, repo } = selected;
     /** @type {Playback} */
     const state = { media, repo, uuid, stored, timer: null };
     playback = state;
 
-    if (stored !== null) {
+    if (stored !== null && seek) {
       // The element has no source yet, so `loadedmetadata` is still ahead of
       // us: the seek lands the moment the duration is known, before a single
       // frame has been decoded — no opening frame is ever shown.
@@ -626,29 +651,32 @@ export async function mount(root, metafolder) {
   // user's request: the decoder probe (gst-discoverer, which reports the missing
   // plugins without ever building the pipeline that crashes WebKit), the stored
   // playback position, the zoom target.
-  /** @param {boolean} play @returns {Promise<void>} */
-  async function mountMedia(play) {
-    if (!pendingMedia) return;
+  /** @param {boolean} play @param {{resume?: boolean}} [options] `resume:
+   *  false` starts from the beginning (a slideshow)
+   *  @returns {Promise<HTMLMediaElement|null>} the element, or null when none
+   *  was built (nothing waiting, the view moved on, the file cannot play) */
+  async function mountMedia(play, { resume = true } = {}) {
+    if (!pendingMedia) return null;
     const { kind, path, url, generation } = pendingMedia;
     const current = () => generation === renderGeneration;
     const support = await mediaSupport();
-    if (!current()) return;
+    if (!current()) return null;
     if (!support[kind]) {
       placeholder(
         `media preview disabled: missing GStreamer elements: ` +
           `${support.missing.join(', ')} (install gst-plugins-good)`,
       );
-      return;
+      return null;
     }
     placeholder('checking media support…');
     const probe = await probeFile(path);
-    if (!current()) return;
+    if (!current()) return null;
     if (probe && probe.missing.length > 0) {
       placeholder(
         `cannot play this file: missing GStreamer plugin(s): ${probe.missing.join(', ')} ` +
           `(try gst-libav / gst-plugins-bad / gst-plugins-ugly)`,
       );
-      return;
+      return null;
     }
     // Every decoder is present, but the one GStreamer will pick cannot keep
     // up with this stream: play it anyway (the user may only want to seek
@@ -658,7 +686,7 @@ export async function mount(root, metafolder) {
     // Read the resume position before building the element, so that everything
     // the first frame depends on is already known when loading starts.
     const stored = kind === 'video' ? await loadResume() : null;
-    if (!current()) return; // the view moved on while we read
+    if (!current()) return null; // the view moved on while we read
     // `preload="metadata"`: fetch only enough for the first frame and duration
     // — never buffer/decode the whole stream ahead of the viewer.
     const media = el(kind, { controls: true, preload: 'metadata' });
@@ -678,12 +706,13 @@ export async function mount(root, metafolder) {
     // not narrow `media`, hence the instanceof.)
     if (media instanceof HTMLVideoElement) {
       setZoomTarget(media);
-      attachPlayback(media, stored);
+      attachPlayback(media, stored, resume);
     }
     // The source goes on last, once every listener — the resume seek included —
     // is armed: nothing can load, and therefore be shown, before them.
     media.src = url;
     if (play) void media.play().catch(() => {});
+    return media;
   }
 
   // Directory view: a thumbnail grid of the folder's entries, rendered in
@@ -860,6 +889,7 @@ export async function mount(root, metafolder) {
     const path = viewedPath();
     if (!path) {
       placeholder('No file selected');
+      slideStep(generation, 'skip');
       return;
     }
     // The file may be on a volume that is not plugged in. Saying "no preview
@@ -869,6 +899,7 @@ export async function mount(root, metafolder) {
     if (generation !== renderGeneration) return;
     if (mount) {
       placeholder(unavailableLabel(mount));
+      slideStep(generation, 'skip');
       return;
     }
     // A directory has no meaningful file preview: list its contents instead.
@@ -880,6 +911,7 @@ export async function mount(root, metafolder) {
       // Unreachable/removed: fall through to the file preview.
     }
     if (info?.is_dir) {
+      slideStep(generation, 'skip');
       await renderDirectory(path, generation);
       return;
     }
@@ -889,12 +921,15 @@ export async function mount(root, metafolder) {
     // The kind is the content's. A name that lies — or says nothing — changes
     // nothing: `main.ts` is text and `clip.ts` a video, and both are right.
     const kind = info?.kind ?? null;
+    // What the slideshow, when one runs, does with it once it is shown.
+    const step = stepFor(kind);
 
     if (kind === 'image' || kind === 'gif') {
       const gif = kind === 'gif';
       gifAnimateWrap.hidden = !gif;
       const img = el('img', { onerror: () => placeholder('cannot load the file') });
-      if (gif && !animateGifs) {
+      // A slideshow shows a GIF moving: it waits for one pass of it.
+      if (gif && !animateGifs && !slideshowFollowed()) {
         try {
           const still = await staticFirstFrame(url);
           if (generation !== renderGeneration) {
@@ -911,14 +946,19 @@ export async function mount(root, metafolder) {
       }
       viewer.replaceChildren(img);
       setZoomTarget(img);
+      slideStep(generation, step, url);
     } else if (kind === 'audio' || kind === 'video') {
       renderMedia(kind, path, url, generation);
+      slideStep(generation, step);
     } else if (kind === 'document') {
+      slideStep(generation, step);
       await renderDocument(path, generation);
     } else if (text.has(extension)) {
       // A known text extension: render as text unconditionally.
+      slideStep(generation, step);
       await renderText(url, generation, true);
     } else {
+      slideStep(generation, step);
       // Neither a known kind nor a listed text extension: sniff the bytes and
       // preview it only if it looks like text (so plain-text files with an
       // unlisted extension work).
@@ -965,6 +1005,14 @@ export async function mount(root, metafolder) {
     // click in metarecord-detail) must not re-target the played file's
     // position onto another metarecord.
     selected = /** @type {Selected|null} */ ((await workspace.get('selected_metarecord')) ?? null);
+    if (show) {
+      // The selection moved: the slideshow's own step, or the user choosing a
+      // file — then it goes on from that one (when it is in the list).
+      const uuid = selected?.uuid ?? null;
+      if (uuid !== null && uuid !== show.expected) show.list.jumpTo(uuid);
+      show.expected = null;
+      clearShowTimer();
+    }
     const repo = await workspace.get('active_repo');
     activeRepo = typeof repo === 'string' && repo !== '' ? repo : null;
     // Record the view in the repo's recently-viewed list (GUI-side, no daemon
@@ -999,6 +1047,12 @@ export async function mount(root, metafolder) {
   void commands.register('file:play-pause', {
     label: 'File: play / pause the media',
     handler: async () => {
+      // A slideshow waiting (an image on screen, the pause after a video):
+      // hold it, or let it go on.
+      if (show && (show.timer !== null || show.paused)) {
+        toggleShowPause();
+        return;
+      }
       // Nothing mounted yet: the poster is showing, so this is the gesture that
       // loads the player rather than a transport control.
       if (pendingMedia) {
@@ -1172,6 +1226,293 @@ export async function mount(root, metafolder) {
   }
   gifAnimateBox.addEventListener('change', () => setAnimateGifs(gifAnimateBox.checked));
 
+  // --- Slideshow ----------------------------------------------------------
+  //
+  // `file:play` (doc "Slideshow"): one file after another, taken from the
+  // checked selection or the query the metarecord list shows. It moves the
+  // workspace's selection — every panel follows, this one included — and each
+  // file, once shown, says what comes next (`slideStep`): an audio or a video
+  // plays to its end, then a short pause; an image stays a few seconds; a GIF
+  // one pass of its animation; anything else is passed over.
+
+  /**
+   * @typedef {{
+   *   repo: string,
+   *   list: ReturnType<typeof createPlaylist>,
+   *   expected: string|null,
+   *   skipped: number,
+   *   timer: ReturnType<typeof setTimeout>|null,
+   *   deadline: number,
+   *   remaining: number|null,
+   *   then: (() => unknown)|null,
+   *   paused: boolean,
+   * }} Show
+   * `expected`: the uuid the slideshow itself selected last, to tell its own
+   * steps from the user's. `skipped`: files passed over in a row — a whole
+   * list of them ends the slideshow rather than spinning on a loop.
+   */
+  /** @type {Show|null} */
+  let show = null;
+
+  /** Whether the file shown is the slideshow's (not a drill-in of the user's). */
+  function slideshowFollowed() {
+    return show !== null && localPath === null;
+  }
+
+  function clearShowTimer() {
+    if (!show) return;
+    if (show.timer !== null) clearTimeout(show.timer);
+    show.timer = null;
+    show.remaining = null;
+    show.then = null;
+  }
+
+  /** Runs `then` in `ms`, unless the slideshow is paused: then it waits for
+   *  the resume. @param {number} ms @param {() => unknown} then */
+  function showAfter(ms, then) {
+    const s = show;
+    if (!s) return;
+    clearShowTimer();
+    s.then = then;
+    if (s.paused) {
+      s.remaining = ms;
+      return;
+    }
+    s.deadline = Date.now() + ms;
+    s.timer = setTimeout(() => {
+      if (show !== s) return;
+      s.timer = null;
+      s.then = null;
+      void then();
+    }, ms);
+  }
+
+  function toggleShowPause() {
+    const s = show;
+    if (!s) return;
+    if (s.paused) {
+      s.paused = false;
+      const { remaining, then } = s;
+      if (then) showAfter(remaining ?? 0, then);
+      void statusBar.message('Slideshow resumed.', statusMessageMs);
+      return;
+    }
+    const then = s.then;
+    const remaining = s.timer !== null ? Math.max(0, s.deadline - Date.now()) : s.remaining;
+    if (s.timer !== null) clearTimeout(s.timer);
+    s.timer = null;
+    s.paused = true;
+    s.then = then;
+    s.remaining = remaining;
+    void statusBar.message('Slideshow paused.', statusMessageMs);
+  }
+
+  /** @param {string|null} message */
+  function stopShow(message) {
+    clearShowTimer();
+    show = null;
+    if (message) void statusBar.message(message, statusMessageMs);
+  }
+
+  /** Counts a file passed over; true when the slideshow ended for it — every
+   *  file of the list in a row, so there is nothing to play. @param {Show} s */
+  function noteSkip(s) {
+    s.skipped += 1;
+    if (s.skipped < s.list.size) return false;
+    stopShow('Slideshow: nothing to play.');
+    return true;
+  }
+
+  /** The absolute paths of a metarecord's file. @param {string} repo
+   *  @param {string} uuid @returns {Promise<string[]>} */
+  async function filePaths(repo, uuid) {
+    try {
+      const relative = (await daemon.treePaths(repo, 'mfr_path', [uuid]))[uuid] ?? [];
+      const rootPath = await daemon.repoRoot(repo);
+      // Resolved paths are "/"-rooted, '' being the root itself.
+      return relative.map((p) => (p === '' ? rootPath : `${rootPath}${p}`));
+    } catch {
+      return [];
+    }
+  }
+
+  /** The content's kind of a file, null for a folder or what cannot be read.
+   *  @param {string} path */
+  async function kindOf(path) {
+    try {
+      const info = /** @type {{is_dir?: boolean, kind?: string|null}} */ (await fs.stat(path));
+      return info?.is_dir ? null : (info?.kind ?? null);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Selects the next file of the list the slideshow can show, passing over
+   *  the others. */
+  async function advance() {
+    const s = show;
+    if (!s) return;
+    clearShowTimer();
+    for (;;) {
+      const uuid = s.list.next();
+      if (uuid === null) {
+        stopShow('Slideshow finished.');
+        return;
+      }
+      const found = await filePaths(s.repo, uuid);
+      // What would be passed over is never selected: it would flash by, and
+      // count as viewed (the recent panel) without having been.
+      const kind = found.length > 0 ? await kindOf(found[0]) : null;
+      if (show !== s) return; // stopped, or another started, meanwhile
+      if (stepFor(kind) === 'skip') {
+        if (noteSkip(s)) return;
+        continue;
+      }
+      s.expected = uuid;
+      await workspace.set('selected_metarecord', { uuid, repo: s.repo });
+      await workspace.set('selected_paths', found);
+      return;
+    }
+  }
+
+  /**
+   * What the slideshow does with the file `renderViewer` just showed.
+   * @param {number} generation the render that showed it
+   * @param {'media'|'image'|'gif'|'skip'} step
+   * @param {string} [url] the file's raw URL (a GIF's bytes are read for its length)
+   */
+  function slideStep(generation, step, url) {
+    const s = show;
+    if (!s || generation !== renderGeneration) return;
+    clearShowTimer();
+    // The user walked off the slideshow's file (into a folder of the grid, up
+    // out of the file): it holds until the selection moves again.
+    if (!slideshowFollowed()) return;
+    if (step === 'skip') {
+      if (!noteSkip(s)) showAfter(0, advance);
+      return;
+    }
+    s.skipped = 0;
+    if (step === 'image') showAfter(slideshowImageMs, advance);
+    else if (step === 'gif') void waitForGif(s, generation, url ?? '');
+    else void playToEnd(s, generation);
+  }
+
+  /** One pass of the GIF shown, or the fixed wait when its length cannot be
+   *  read. @param {Show} s @param {number} generation @param {string} url */
+  async function waitForGif(s, generation, url) {
+    /** @type {number|null} */
+    let duration = null;
+    try {
+      const response = await fetch(url);
+      if (response.ok) duration = gifDurationMs(new Uint8Array(await response.arrayBuffer()));
+    } catch {
+      // Unreadable: the fixed wait.
+    }
+    if (show !== s || generation !== renderGeneration) return;
+    showAfter(duration ?? slideshowGifMs, advance);
+  }
+
+  /** Plays the media shown from its start, and goes on once it has ended (or
+   *  could not play). @param {Show} s @param {number} generation */
+  async function playToEnd(s, generation) {
+    const media = await mountMedia(true, { resume: false });
+    if (show !== s || generation !== renderGeneration) return;
+    const next = () => {
+      if (show === s && activeMedia === media) showAfter(slideshowGapMs, advance);
+    };
+    if (!media) {
+      // It cannot play here (a missing decoder): its message stays up for the
+      // pause, then the next file.
+      if (!noteSkip(s)) showAfter(slideshowGapMs, advance);
+      return;
+    }
+    media.addEventListener('ended', next);
+    media.addEventListener('error', next);
+  }
+
+  /** @param {{target: 'selection'|'query', shuffle: boolean, loop: boolean}} request */
+  async function startShow({ target, shuffle, loop }) {
+    stopShow(null);
+    const repo = await workspace.get('active_repo');
+    if (typeof repo !== 'string' || repo === '') throw new Error('no active repository');
+    /** @type {string[]} */
+    let uuids;
+    if (target === 'selection') {
+      const checked = await workspace.get('selected_metarecords');
+      uuids = Array.isArray(checked) ? checked.filter((u) => typeof u === 'string') : [];
+      if (uuids.length === 0) {
+        void statusBar.message('No metarecords are checked — nothing to play.', statusMessageMs);
+        return;
+      }
+    } else {
+      // What the metarecord list shows, in its order (both published by it).
+      const query = await workspace.get('metarecord-list:effective-query');
+      if (!query) {
+        void statusBar.message('The metarecord list shows no query — nothing to play.', statusMessageMs);
+        return;
+      }
+      const sort = await workspace.get('metarecord-list:sort');
+      const result = await daemon.call('POST', `/repos/${repo}/query`, {
+        query,
+        ...(Array.isArray(sort) && sort.length > 0 && { sort }),
+      });
+      uuids = Array.isArray(result) ? result.filter((u) => typeof u === 'string') : [];
+      if (uuids.length === 0) {
+        void statusBar.message('No metarecords match — nothing to play.', statusMessageMs);
+        return;
+      }
+    }
+    show = {
+      repo,
+      list: createPlaylist(uuids, { shuffle, loop }),
+      expected: null,
+      skipped: 0,
+      timer: null,
+      deadline: 0,
+      remaining: null,
+      then: null,
+      paused: false,
+    };
+    const how = [shuffle && 'shuffled', loop && 'looping'].filter(Boolean).join(', ');
+    void statusBar.message(
+      `Slideshow: ${uuids.length} metarecord${uuids.length === 1 ? '' : 's'}${how ? ` (${how})` : ''}.`,
+      statusMessageMs,
+    );
+    await advance();
+  }
+
+  /** The option slots of `file:play`: either option, in either. */
+  const playOption = {
+    name: 'option',
+    optional: true,
+    prompt: () => `Option? (${PLAY_OPTIONS.join(' / ')})`,
+    complete: () => PLAY_OPTIONS,
+    /** @param {string[]} prior */
+    when: (prior) => prior[0] !== 'stop',
+  };
+  void commands.register('file:play', {
+    label: 'File: play one file after another — the checked selection or the query shown (selection / query / stop) [shuffle] [loop]',
+    args: [
+      {
+        name: 'target',
+        prompt: () => 'Play what? (selection / query / stop)',
+        complete: () => ['selection', 'query', 'stop'],
+      },
+      playOption,
+      playOption,
+    ],
+    /** @param {...(string|undefined)} args */
+    handler: (...args) => {
+      const request = parsePlayArgs(args);
+      const { target, shuffle, loop } = request;
+      if (target !== 'stop') return startShow({ target, shuffle, loop });
+      if (show) stopShow('Slideshow stopped.');
+      else void statusBar.message('No slideshow is running.', statusMessageMs);
+      return undefined;
+    },
+  });
+
   // Keybindings for this panel live in keybindings.toml (when = "file").
 
   // Right-click the preview to cut/copy/paste/rename/duplicate/trash the shown
@@ -1205,6 +1546,7 @@ export async function mount(root, metafolder) {
   // Release the media pipeline if the panel is unmounted (workspace closed or
   // panel type switched) so it cannot keep decoding in the background.
   return () => {
+    stopShow(null);
     teardownMedia();
     revokeStaticGif();
     if (detachDirScroll) detachDirScroll();

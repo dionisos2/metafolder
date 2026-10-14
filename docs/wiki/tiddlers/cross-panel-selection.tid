@@ -12,6 +12,11 @@ workspace's selection ([[Workspace variables]]). Every panel of the ''same'' wor
 that follows it — [[metarecord-detail panel]], [[file panel]], [[workspace-info panel]] — updates at once, in
 either slot; a slot showing another workspace is not affected.
 
+The [[metarecord-list panel]] follows a selection made ''elsewhere'' too — a
+[[Slideshow]], a click in the [[recent panel]] or the file manager: when it has the
+metarecord's row loaded, its cursor moves there, so its arrows go on from what is on
+screen. Only the highlight moves; nothing is selected again.
+
 ''Opening'' a row of `metarecord-list` — its `↗` button ([[Opening a row]]), or
 <<key "metarecord-list:open" Enter>> — shows it in the other slot of the same
 workspace: in the [[file panel]] when the metarecord has a path, in

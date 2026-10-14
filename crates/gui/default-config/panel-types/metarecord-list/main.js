@@ -340,6 +340,9 @@ export async function mount(root, metafolder) {
         // is showing (`mf gui query`). '' = match all, the text counterpart of
         // MATCH_ALL.
         await workspace.set('metarecord-list:effective-query-text', effectiveQueryText() ?? '');
+        // ...and its order, so whoever plays what the list shows plays it in
+        // this order (the file panel's slideshow, doc "Slideshow").
+        await workspace.set('metarecord-list:sort', sort);
       }
       let result;
       try {
@@ -548,9 +551,17 @@ export async function mount(root, metafolder) {
     }
   }
 
+  // The selections this list wrote whose echo has not come back yet (uuid →
+  // how many). Every write comes back to every listener, the writer's
+  // included, and possibly after the cursor has moved on: an echo is not
+  // another panel's choice to follow.
+  /** @type {Map<string, number>} */
+  const pendingEchoes = new Map();
+
   const propagateSelection = latestOnly(async () => {
     const metarecord = metarecords[cursorIndex];
     if (!metarecord) return;
+    pendingEchoes.set(metarecord.uuid, (pendingEchoes.get(metarecord.uuid) ?? 0) + 1);
     await workspace.set('selected_metarecord', { uuid: metarecord.uuid, repo });
     await workspace.set('selected_paths', pathsOf(metarecord));
   });
@@ -1105,6 +1116,27 @@ export async function mount(root, metafolder) {
     const target = repo;
     catchup.schedule(target, [200, 1300], () => void changes.sync(target));
   }
+  // A selection made by another panel (the file panel's slideshow, a click in
+  // the recent panel) moves the cursor onto its row when the list has it
+  // loaded, so the arrows go on from the file on screen. Only the highlight
+  // moves: the selection is already what it should be, and propagating it
+  // again would only echo it back.
+  workspace.onChange('selected_metarecord', (value) => {
+    const uuid = /** @type {{uuid?: unknown}|null} */ (value)?.uuid;
+    if (typeof uuid !== 'string') return;
+    const echoes = pendingEchoes.get(uuid) ?? 0;
+    if (echoes > 0) {
+      if (echoes === 1) pendingEchoes.delete(uuid);
+      else pendingEchoes.set(uuid, echoes - 1);
+      return;
+    }
+    if (metarecords[cursorIndex]?.uuid === uuid) return;
+    const index = metarecords.findIndex((m) => m.uuid === uuid);
+    if (index < 0) return;
+    cursorIndex = index;
+    moveCursorHighlight();
+    root.querySelector('tr.cursor')?.scrollIntoView({ block: 'nearest' });
+  });
   workspace.onChange('metarecords:dirty', () => {
     metafolder.whenVisible(deferredStart);
     scheduleCatchupSync();

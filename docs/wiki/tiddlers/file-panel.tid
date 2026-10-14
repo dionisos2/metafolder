@@ -80,6 +80,10 @@ here to the ''list'': they name `metarecord-list` instead of `self`
 is flipped through without leaving the preview — plain keybindings, to change like
 the others.
 
+To have it flipped through for you — each image for a few seconds, each video to
+its end — run a [[Slideshow]]: `file:play query`, or `file:play selection` for the
+checked metarecords.
+
 !! Right click
 
 In a workspace that has a repository, a right click offers the file's actions,

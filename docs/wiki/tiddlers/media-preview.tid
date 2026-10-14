@@ -54,6 +54,7 @@ the event log, so a position that has not moved by a second is not written again
 * A stored position beyond the end of the file is ignored.
 * Nothing is stored for a file without a metarecord, nor for a video reached by clicking a tile of a folder's grid: the position follows the ''selected'' metarecord.
 * Audio does not resume.
+* A [[Slideshow]] plays every video from its beginning.
 
 !! When it cannot play
 

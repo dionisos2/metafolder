@@ -17,6 +17,10 @@ media file: a poster rendered out of process, and the element only on
 `file:play-pause` or a click ([[Media preview]]). The checks moved to that moment;
 walking through videos costs neither a probe nor a decoder.
 
+A [[Slideshow]] is that request made once for a whole list: it builds one element
+per file, after the same checks, and tears each down before the next. A stall there
+is not detected either — the slideshow waits on it as on a long video.
+
 Around the element itself:
 
 * it is torn down explicitly when the view changes — pause, drop the source, `load()`. A detached element keeps its pipeline until it is collected, and where no device consumes the output the decoder's queue grows without bound.
