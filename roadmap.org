@@ -8,10 +8,14 @@ the end.
 
 * TODO structure
 Not problems of behaviour; worth doing for navigability, each a large diff.
-- The big panels are one =mount()= each (=metarecord-list= 1 895 lines,
-  =metarecord-detail= 2 203): they share the instance's state, so extracting
-  anything means passing an explicit context — a rewrite, not to start
-  casually.
+- The big panels' =main.js= are still large (=metarecord-list= 1 300 lines,
+  =metarecord-detail= 1 490). Their self-contained parts are out, each taking
+  an explicit context (list: =bulk-edit.js=, =display-data.js=,
+  =query-editor.js=; detail: =values.js=, =notes.js=, =bulk-commands.js=).
+  What remains reads the instance's state at every step: the list's fetch,
+  render and commands, and the detail's =metarecord:field= operations
+  (=FIELD_OPS=, ~400 lines) over the shown record. Next candidate if it grows:
+  =FIELD_OPS= behind a context exposing the shown record and =load=.
 
 * Deferred in the specs
 Named where they are, kept here so they are not forgotten:
