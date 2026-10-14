@@ -1260,6 +1260,13 @@ export async function mount(root, metafolder) {
     // The rows skip the synthetic "." / ".." head of the listing, so the index
     // the finder answers with is offset back onto the displayed list.
     select: (index) => select(index + syntheticCount),
+    // `file-manager:find walk` enters a directory and asks again from inside.
+    enter: async (index) => {
+      const item = listing[index + syntheticCount];
+      if (!item?.is_dir) return false;
+      await open(item.path);
+      return true;
+    },
   });
   void commands.register('file-manager:activate', {
     label: 'File manager: open directory / confirm file',

@@ -53,7 +53,8 @@ change. The ''entries'' are not watched — a file another program creates appea
 * The button at the start of a row ([[Opening a row]]) — `›` on a folder enters it; `↗` on a file, or on `.` (the folder shown), selects it and shows it in the other slot.
 * <<key "file-manager:parent" Backspace>>, or ''↑ up'' — the parent directory.
 * <<key "file-manager:root" "/">>, or the root button — the repository root; `/` when the workspace has no repository, and the button then reads ''root''.
-* <<key "file-manager:find" f>> — jump to an entry of this directory by name ([[Jumping to an entry]]).
+* <<key "file-manager:find select" f>> — jump to an entry of this directory by name ([[Jumping to an entry]]).
+* <<key "file-manager:find walk" d>> — walk down by name: a directory found is entered and the question asked again, a file found is selected (`shift+Enter` stops on a directory).
 
 ''constrain to repo root'' (<<key "file-manager:toggle root" Ctrl+r>>, checked at
 first) keeps the browsing inside the repository: going above its root is refused, and

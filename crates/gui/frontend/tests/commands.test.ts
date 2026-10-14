@@ -889,6 +889,38 @@ describe('collectArgs', () => {
     await collectArgs([bare], [], fn);
     expect(requests[0]).toEqual({ argName: 'x', prompt: 'X?', initial: '', completions: [] });
   });
+
+  // The alternate confirmation (Shift-Enter): an argument may declare what
+  // confirming it that way means — a rewrite of the arguments collected before
+  // it, so `file-manager:find walk` answered with Shift-Enter runs as
+  // `file-manager:find select` (doc "Interactive command arguments").
+  const mode = (): ArgSpec => ({ name: 'mode', prompt: () => 'Mode?' });
+  const entry = (): ArgSpec => ({
+    name: 'entry',
+    prompt: () => 'Entry?',
+    alternate: { hint: 'select', prior: () => ['select'] },
+  });
+
+  test('the prompt request carries the alternate hint', async () => {
+    const { fn, requests } = scriptedPrompt(['x']);
+    await collectArgs([mode(), entry()], ['walk'], fn);
+    expect(requests[0].alternate).toBe('select');
+  });
+
+  test('a plain answer keeps the arguments collected before it', async () => {
+    const fn = vi.fn(async () => ({ value: 'sub', alternate: false }));
+    expect(await collectArgs([mode(), entry()], ['walk'], fn)).toEqual(['walk', 'sub']);
+  });
+
+  test('an alternate answer rewrites the arguments collected before it', async () => {
+    const fn = vi.fn(async () => ({ value: 'sub', alternate: true }));
+    expect(await collectArgs([mode(), entry()], ['walk'], fn)).toEqual(['select', 'sub']);
+  });
+
+  test('an alternate answer to an argument declaring none is a plain answer', async () => {
+    const fn = vi.fn(async () => ({ value: 'jazz', alternate: true }));
+    expect(await collectArgs([field(), value()], ['tag'], fn)).toEqual(['tag', 'jazz']);
+  });
 });
 
 describe('resolveSubmission', () => {

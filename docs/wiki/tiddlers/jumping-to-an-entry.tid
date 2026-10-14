@@ -5,7 +5,7 @@ aliases: find-entry jump-to-entry
 summary: In a list panel, f asks for a name in the command input and moves the cursor onto the row — selected, not opened.
 
 In a panel that shows rows under a cursor,
-<<key "file-manager:find, treeref:find, log:find, trash:find, recent:find, duplicates:find" f>>
+<<key "file-manager:find select, treeref:find, log:find, trash:find, recent:find, duplicates:find" f>>
 asks for an entry in the command input and moves the cursor onto it. Where
 [[Find in a panel]] highlights text and selects nothing, this selects a row and
 highlights nothing: the panel's keys — open, enter, restore, trash — then act on
@@ -14,7 +14,7 @@ what was found.
 Each panel has the command under its own name, on the same key:
 
 |!Command |!Finds |!A candidate reads |
-|`file-manager:find` |an entry of the directory shown |its name, with a final `/` for a directory |
+|`file-manager:find select` |an entry of the directory shown |its name, with a final `/` for a directory |
 |`treeref:find` |a child of the current node |its name |
 |<<cmd "log:find">> |a write listed |`#12`, followed by its label when it has one |
 |<<cmd "trash:find">> |an entry of the trash |its name, then the path it was trashed from |
@@ -29,6 +29,19 @@ They all behave the same way:
 * A text matching nothing leaves the cursor where it was, and the status bar says `no entry matching "…"`. An empty answer does nothing.
 * The row is ''selected, not opened'': a directory is not entered, a node is not descended into, a trashed file is not restored.
 * Only the rows the panel has loaded are looked at.
+
+!! Walking down a path
+
+The file manager's find takes a first argument, the mode: `select` is the find
+above, and `walk` (<<key "file-manager:find walk" d>>, for ''descend'') goes ''into''
+what it finds. A directory found is entered and the same question asked again from
+inside, so a path is walked down one name at a time; a file found is selected, and
+the walk stops. To stop on a directory, selected rather than entered, answer with
+`shift+Enter` — the alternate answer of [[Interactive command arguments]], which
+runs the step as `file-manager:find select`. `Escape` stops where the walk is.
+
+The key is free in every list panel, so the other finds can take the mode the day
+their rows can be entered (a node of the [[treeref panel]] can).
 
 `metarecord-list` has no such command. Its rows come from a query, not from a list
 already loaded, so the same key (<<key "metarecord-list:clear finder" f>>) edits its

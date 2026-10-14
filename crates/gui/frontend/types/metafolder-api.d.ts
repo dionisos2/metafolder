@@ -288,6 +288,11 @@ declare namespace Metafolder {
      *  A generic command declares the union of its operations' arguments and
      *  drops the ones an operation has no use for. */
     when?(prior: string[]): boolean;
+    /** The alternate confirmation (Shift-Enter): the arguments collected
+     *  before this one are replaced by `prior(collected)` (as many), so
+     *  `file-manager:find walk` answered that way runs as
+     *  `file-manager:find select`. `hint` is shown beside the input. */
+    alternate?: { hint: string; prior(prior: string[]): string[] };
   }
 
   interface CommandOptions {

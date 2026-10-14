@@ -109,7 +109,11 @@ export const store = $state({
     /// interactive argument collection) by calling this with the entered
     /// text, or null on cancel — instead of the Rust `prompt_resolve`
     /// (script prompts). Mutually exclusive: only one prompt owns the input.
-    promptResolver: null as ((value: string | null) => void) | null,
+    /// `alternate` is true when it was confirmed with Shift-Enter.
+    promptResolver: null as ((value: string | null, alternate?: boolean) => void) | null,
+    /// The hint of the active prompt's alternate confirmation (Shift-Enter,
+    /// `ArgSpec.alternate`), or null when it has none.
+    promptAlternate: null as string | null,
     /// Non-null while a key sequence is pending (shell or panel matcher):
     /// the typed prefix and the bindings that can still complete it.
     pendingKeys: null as {
@@ -472,6 +476,7 @@ export async function initStore() {
     store.ui.promptWorkspaces = prompt.workspaces;
     store.ui.promptTask = prompt.task;
     store.ui.promptDraft = '';
+    store.ui.promptAlternate = null;
   });
   // A script's `POST /gui/input` wait: keep its question in a dedicated bar,
   // never on the status line where an error would overwrite it.

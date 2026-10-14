@@ -23,6 +23,7 @@ narrowed as you type like the command list.
 |!Key |!Does |
 |`Enter` |answers with the ''highlighted candidate'', and moves on to the next argument |
 |`ctrl+Enter` |answers with the text as typed, even when a candidate is highlighted — for a new value that happens to match an existing one |
+|`shift+Enter` |answers the way the argument declares as its ''alternate'', when it has one — the hint then reads `⇧⏎ …`. <<key "file-manager:find walk" d>> answered this way stops on the directory instead of entering it. Elsewhere it is a plain `Enter` |
 |`Up` past the first row |removes the highlight; `Enter` then answers with the text as typed |
 |`Tab` |writes the highlighted candidate into the line |
 |<<key "completion:cycle forward" "ctrl+,">> / <<key "completion:cycle back" "ctrl+.">> |show the candidates named another way, when there are several ([[Completion views]]) |
@@ -30,6 +31,11 @@ narrowed as you type like the command list.
 
 With no candidate offered, or none highlighted, `Enter` answers with the text as
 typed. The hint at the right of the line recalls the two forms: `⏎ pick · ⌃⏎ new`.
+
+An alternate answer does not hand the command a flag: it rewrites the arguments
+answered before it, so the invocation that runs — and is echoed in the
+[[message panel]] — says what was asked for: `file-manager:find walk` answered with
+`shift+Enter` runs as `file-manager:find select`.
 
 At most 200 candidates are shown; typing narrows them.
 

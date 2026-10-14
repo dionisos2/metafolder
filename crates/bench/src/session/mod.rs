@@ -471,7 +471,7 @@ async fn run_step(id: &str, s: &mut Session, quiet: Duration) -> Result<Option<I
             let rel = folder.strip_prefix(&s.data)?.to_path_buf();
             for part in rel.components() {
                 let name = part.as_os_str().to_string_lossy();
-                s.command(&format!("file-manager:find {name}"), None).await?;
+                s.command(&format!("file-manager:find select {name}"), None).await?;
                 s.command("file-manager:activate", None).await?;
             }
             drawn(s, quiet).await

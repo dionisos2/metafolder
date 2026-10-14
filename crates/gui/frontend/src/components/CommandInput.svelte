@@ -303,8 +303,9 @@
    *  collection (promptResolver) is resolved locally; a script prompt goes to
    *  Rust (prompt_resolve). Cancel → the collector aborts / the script sees
    *  "cancel". */
-  function resolvePrompt(confirm: boolean, text: string | null) {
+  function resolvePrompt(confirm: boolean, text: string | null, alternate = false) {
     const resolver = store.ui.promptResolver;
+    store.ui.promptAlternate = null;
     store.ui.promptText = null;
     store.ui.promptCompletions = [];
     store.ui.promptItems = [];
@@ -315,7 +316,7 @@
     store.ui.promptTask = null;
     store.ui.promptDraft = '';
     store.ui.promptResolver = null;
-    if (resolver) resolver(confirm ? (text ?? '') : null);
+    if (resolver) resolver(confirm ? (text ?? '') : null, alternate);
     else void invoke('prompt_resolve', { confirm, text: confirm ? text : null });
   }
 
@@ -344,8 +345,9 @@
   // a command (resolveSubmission). Snapshot before clearing
   // the draft, since `suggestions` recomputes from it. In a prompt, plain
   // Enter accepts the highlighted completion while `raw` (Ctrl-Enter, or a
-  // deselected list) confirms the typed free value.
-  async function submit(raw = false) {
+  // deselected list) confirms the typed free value. `alternate` (Shift-Enter)
+  // confirms it the way the argument declares (`ArgSpec.alternate`).
+  async function submit(raw = false, alternate = false) {
     const input = draft;
     const picked =
       promptText === null
@@ -368,7 +370,7 @@
       // it to Rust or to the frontend collector, which then prompts for the
       // next argument (if any).
       element?.blur();
-      resolvePrompt(true, promptValue);
+      resolvePrompt(true, promptValue, alternate);
       return;
     }
     element?.blur();
@@ -391,7 +393,8 @@
       event.preventDefault();
       // Ctrl/Cmd-Enter confirms the typed free value even when a completion is
       // highlighted (doc "Interactive command arguments").
-      void submit(event.ctrlKey || event.metaKey);
+      // Shift-Enter is the alternate confirmation, where the argument has one.
+      void submit(event.ctrlKey || event.metaKey, event.shiftKey);
     } else if (event.key === 'Escape') {
       event.preventDefault();
       unfocus();
@@ -495,8 +498,10 @@
     />
     {#if promptText !== null && suggestions.length > 0}
       <span class="hint" title="Enter picks the highlighted value; Ctrl-Enter keeps what you typed"
-        >⏎ pick · ⌃⏎ new{#if viewCount > 1} · ⌃, {viewHint}{/if}</span
+        >⏎ pick · ⌃⏎ new{#if store.ui.promptAlternate !== null} · ⇧⏎ {store.ui.promptAlternate}{/if}{#if viewCount > 1} · ⌃, {viewHint}{/if}</span
       >
+    {:else if promptText !== null && store.ui.promptAlternate !== null}
+      <span class="hint">⇧⏎ {store.ui.promptAlternate}</span>
     {/if}
   </div>
 </div>

@@ -3,4 +3,6 @@ tags: [[GUI command]] [[file-manager panel]]
 kind: reference
 summary: File manager: jump to an entry by name
 
-Moves the cursor of the [[file-manager panel]] onto an entry named in the command input ([[Jumping to an entry]]). Only the displayed directory is searched — its dot-entries only while they are shown — and a directory is selected, not entered; directories carry a trailing `/` among the candidates.
+Moves the cursor of the [[file-manager panel]] onto an entry named in the command input ([[Jumping to an entry]]). Only the displayed directory is searched — its dot-entries only while they are shown; directories carry a trailing `/` among the candidates.
+
+The first argument is the mode. `file-manager:find select` (<<key "file-manager:find select" f>>) selects the entry, a directory included, without entering it. `file-manager:find walk` (<<key "file-manager:find walk" d>>) enters a directory found and asks again from inside it, and selects a file found; `shift+Enter` makes that step a `select` ([[Walking down a path|Jumping to an entry]]).

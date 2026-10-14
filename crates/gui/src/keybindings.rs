@@ -837,12 +837,17 @@ mod tests {
         let f: Vec<_> = table.iter().filter(|b| b.keys == ["f"]).collect();
         for panel in ["file-manager", "treeref", "trash", "recent"] {
             assert!(
-                f.iter()
-                    .any(|b| b.when.as_deref() == Some(panel)
-                        && b.invocation == format!("{panel}:find")),
+                f.iter().any(|b| b.when.as_deref() == Some(panel)
+                    && (b.invocation == format!("{panel}:find")
+                        || b.invocation == format!("{panel}:find select"))),
                 "`f` does not find an entry in the {panel} panel"
             );
         }
+        // `d` walks down by name in the file manager (a directory found is
+        // entered and the question asked again).
+        assert!(table.iter().any(|b| b.keys == ["d"]
+            && b.when.as_deref() == Some("file-manager")
+            && b.invocation == "file-manager:find walk"));
         // The treeref field picker moved off `f` to make room for it.
         assert!(table.iter().any(|b| b.keys == ["shift+f"] && b.invocation == "treeref:set field"));
         assert!(!f.iter().any(|b| b.invocation == "treeref:set field"));

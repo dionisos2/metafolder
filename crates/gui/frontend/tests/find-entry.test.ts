@@ -141,3 +141,72 @@ describe('registerFind', () => {
     expect(select).toHaveBeenCalledWith(1);
   });
 });
+
+// The walking variant (doc "Jumping to an entry"): a panel that can *enter* a
+// row (a directory) registers its find with an `enter` callback, and the
+// command then takes a first `select | walk` argument. `walk` enters what can
+// be entered and asks again from inside; a Shift-Enter answer selects instead.
+describe('registerFind with enter', () => {
+  function setup() {
+    const s = stubApi();
+    const invoke = vi.fn(() => null);
+    (s.api.commands as Record<string, unknown>).invoke = invoke;
+    const select = vi.fn(async (_index: number) => {});
+    const enter = vi.fn(async (index: number) => rows[index].name === 'sub');
+    void registerFind(s.api as never, 'demo:find', {
+      label: 'Demo',
+      entries: () => rows,
+      select,
+      enter,
+    });
+    return { ...s, select, enter, invoke };
+  }
+
+  test('the mode is asked first, the entry second', async () => {
+    const s = setup();
+    const args = s.specs.get('demo:find')! as unknown as {
+      name: string;
+      complete?: () => unknown;
+      alternate?: { hint: string; prior: (p: string[]) => string[] };
+    }[];
+    expect(args.map((a) => a.name)).toEqual(['mode', 'entry']);
+    expect(await args[0].complete!()).toEqual(['select', 'walk']);
+    expect(args[1].alternate!.prior(['walk'])).toEqual(['select']);
+  });
+
+  test('select mode selects a directory without entering it', async () => {
+    const s = setup();
+    await s.handlers.get('demo:find')!('select', 'sub/');
+    expect(s.select).toHaveBeenCalledWith(0);
+    expect(s.enter).not.toHaveBeenCalled();
+  });
+
+  test('walk mode enters a directory and asks again', async () => {
+    const s = setup();
+    await s.handlers.get('demo:find')!('walk', 'sub/');
+    expect(s.enter).toHaveBeenCalledWith(0);
+    expect(s.select).not.toHaveBeenCalled();
+    expect(s.invoke).toHaveBeenCalledWith('demo:find walk');
+  });
+
+  test('walk mode selects what cannot be entered, and stops', async () => {
+    const s = setup();
+    await s.handlers.get('demo:find')!('walk', 'top.txt');
+    expect(s.select).toHaveBeenCalledWith(2);
+    expect(s.invoke).not.toHaveBeenCalled();
+  });
+
+  test('walk mode with no match reports it and stops', async () => {
+    const s = setup();
+    await s.handlers.get('demo:find')!('walk', 'zzz');
+    expect(s.statusBar.error).toHaveBeenCalled();
+    expect(s.invoke).not.toHaveBeenCalled();
+  });
+
+  test('an unknown mode is an error', async () => {
+    const s = setup();
+    await s.handlers.get('demo:find')!('dive', 'sub/');
+    expect(s.statusBar.error).toHaveBeenCalledWith('unknown find mode "dive" (select / walk)', 2000);
+    expect(s.select).not.toHaveBeenCalled();
+  });
+});

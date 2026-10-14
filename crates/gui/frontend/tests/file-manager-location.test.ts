@@ -219,7 +219,7 @@ describe('file-manager location variables', () => {
   test('navigating writes the location, and its own writes coming back change nothing', async () => {
     const s = stub('r', {});
     await mount(s);
-    await s.handlers.get('file-manager:find')!('sub');
+    await s.handlers.get('file-manager:find')!('select', 'sub');
     // The cursor is on `sub`: that is the location now.
     expect(s.setVar).toHaveBeenCalledWith('file-manager:cursor', 'sub');
     s.fs.readDir.mockClear();

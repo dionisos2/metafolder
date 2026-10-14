@@ -48,7 +48,8 @@
 # Usage:  scripts/gui-e2e.sh [--unsandboxed] [--keep-logs] [scenario...]
 #   with no scenario, runs them all: undo-redo duplicates orphans trash
 #   reconcile ignore sync repos list layout script errors picker refs prompt
-#   history keybindings open-with tab-close pick-button suggested-key devtools.
+#   history keybindings open-with tab-close pick-button suggested-key walk
+#   devtools.
 #   --unsandboxed  pass --allow-unsandboxed-webview to the GUI (a container
 #                  that forbids WebKit's sandbox; never on real data)
 #   --keep-logs    keep the work directory (daemon.log, gui.log) on exit
@@ -75,7 +76,7 @@ done
 [ ${#SCENARIOS[@]} -gt 0 ] \
     || SCENARIOS=(undo-redo duplicates orphans trash reconcile ignore sync repos list layout script
         errors picker refs hierarchy prompt history keybindings open-with tab-close pick-button
-        suggested-key devtools)
+        suggested-key walk devtools)
 
 # shellcheck source=lib/daemon-fixture.sh
 . scripts/lib/daemon-fixture.sh
@@ -1010,6 +1011,49 @@ scenario_suggested_key() {
 }
 
 # Last: the inspector docks into the window and may take the keyboard.
+# ws_var <key> — a variable of the scenario's workspace, as JSON.
+ws_var() {
+    curl -sf -H "Authorization: Bearer $(cat "$XDG_RUNTIME_DIR/metafolder/gui.token")" \
+        "http://127.0.0.1:$GUI_PORT/gui/workspaces/$WS/vars/$1" |
+        python3 -c 'import json, sys; print(json.dumps(json.load(sys.stdin)["value"]))'
+}
+# fm_at <dir> [<cursor>] — the file manager shows <dir> (under the
+# repository), its cursor on <cursor> — on nothing when none is given.
+fm_at() {
+    local cursor=null
+    [ $# -gt 1 ] && cursor="\"$2\""
+    [ "$(ws_var file-manager:dir)" = "\"$REPO_DIR$1\"" ] &&
+        [ "$(ws_var file-manager:cursor)" = "$cursor" ]
+}
+
+# doc "Jumping to an entry": `file-manager:find walk` enters each directory
+# named and asks again from inside; a file ends the walk, selected, and
+# shift+Return stops on a directory, selected.
+scenario_walk() {
+    needs_keyboard walk || return 0
+    new_repo walk
+    mkdir -p "$REPO_DIR/a/b"
+    touch "$REPO_DIR/a/b/c.txt" "$REPO_DIR/a/other.txt"
+    show_panel left file-manager file-manager:refresh
+
+    run file-manager:find walk a/
+    assert "walk: a directory named is entered" until_ok 10 fm_at /a
+    typed "b"
+    keys Return
+    assert "walk: and the question asked again inside it" until_ok 10 fm_at /a/b
+    typed "c.txt"
+    keys Return
+    assert "walk: a file named is selected" until_ok 10 fm_at /a/b c.txt
+
+    run file-manager:parent
+    run file-manager:parent
+    run file-manager:find walk a/
+    assert "walk: again from the root" until_ok 10 fm_at /a
+    typed "b"
+    keys shift+Return
+    assert "walk: shift+return stops on the directory, selected" until_ok 10 fm_at /a b
+}
+
 scenario_devtools() {
     new_repo devtools
     run devtools:open

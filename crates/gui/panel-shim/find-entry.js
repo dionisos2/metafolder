@@ -47,6 +47,9 @@ export function matchEntry(answer, rows) {
   return index;
 }
 
+/** The modes of a find command that can enter a row (`config.enter`). */
+const MODES = ['select', 'walk'];
+
 /**
  * Registers `name` as this panel's find command. `entries()` is called afresh
  * on every completion and every answer — the rows are what the panel displays
@@ -55,30 +58,69 @@ export function matchEntry(answer, rows) {
  * nothing is a status-bar error; an empty answer is a silent no-op (the
  * question was abandoned).
  *
+ * A panel whose rows can be *entered* (a directory) passes `enter(index)`,
+ * which enters the row and says whether it could. The command then takes a
+ * first argument, the mode: `select` is the find above; `walk` enters what can
+ * be entered and asks again from inside, and selects (and stops at) what
+ * cannot. Confirming an answer with Shift-Enter runs it as `select`, which
+ * stops on a directory instead of entering it.
+ *
  * @param {MetafolderApi} metafolder
  * @param {string} name
  * @param {{label: string, prompt?: string,
  *          entries: () => FindRow[] | Promise<FindRow[]>,
- *          select: (index: number) => unknown}} config
+ *          select: (index: number) => unknown,
+ *          enter?: (index: number) => boolean | Promise<boolean>}} config
  */
-export function registerFind(metafolder, name, { label, prompt = 'Go to entry:', entries, select }) {
+export function registerFind(
+  metafolder,
+  name,
+  { label, prompt = 'Go to entry:', entries, select, enter },
+) {
   const { commands, statusBar } = metafolder;
   const errorMs = metafolder.settings?.statusErrorMs ?? 8000;
+  const entry = {
+    name: 'entry',
+    prompt: () => prompt,
+    complete: async () => (await entries()).map(labelOf),
+  };
+
+  /** The index `answer` designates, or -1 (after saying why, if it matters). */
+  async function find(/** @type {string} */ answer) {
+    const text = answer.trim();
+    if (text === '') return -1;
+    const index = matchEntry(text, await entries());
+    if (index < 0) await statusBar.error(`no entry matching "${text}"`, errorMs);
+    return index;
+  }
+
+  if (!enter) {
+    return commands.register(name, {
+      label,
+      args: [entry],
+      handler: async (/** @type {string} */ answer) => {
+        const index = await find(answer);
+        if (index >= 0) await select(index);
+      },
+    });
+  }
   return commands.register(name, {
     label,
     args: [
-      {
-        name: 'entry',
-        prompt: () => prompt,
-        complete: async () => (await entries()).map(labelOf),
-      },
+      { name: 'mode', prompt: () => `Find how? (${MODES.join(' / ')})`, complete: () => MODES },
+      { ...entry, alternate: { hint: 'select', prior: () => ['select'] } },
     ],
-    handler: async (answer) => {
-      const text = answer.trim();
-      if (text === '') return;
-      const index = matchEntry(text, await entries());
-      if (index < 0) {
-        await statusBar.error(`no entry matching "${text}"`, errorMs);
+    handler: async (/** @type {string} */ mode, /** @type {string} */ answer) => {
+      if (!MODES.includes(mode)) {
+        await statusBar.error(`unknown find mode "${mode}" (${MODES.join(' / ')})`, errorMs);
+        return;
+      }
+      const index = await find(answer);
+      if (index < 0) return;
+      if (mode === 'walk' && (await enter(index))) {
+        // Asked again from inside — not awaited, so this invocation ends
+        // before the next one waits for its answer.
+        void commands.invoke(`${name} walk`);
         return;
       }
       await select(index);

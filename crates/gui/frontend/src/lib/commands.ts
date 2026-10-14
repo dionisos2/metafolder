@@ -285,6 +285,14 @@ export interface ArgSpec {
    *  names no field, `metarecord:bulk unset` no value. Absent ⇒ always asked.
    *  It sees only prior arguments, so it is always decidable when reached. */
   when?: (prior: string[]) => boolean;
+  /** What confirming this argument with Shift-Enter means — the *alternate*
+   *  confirmation (doc "Interactive command arguments"): the arguments
+   *  collected before it are replaced by `prior(collected)` (as many), so the
+   *  invocation that runs, and is echoed, says what was asked for.
+   *  `file-manager:find walk` answered with Shift-Enter runs as
+   *  `file-manager:find select`. `hint` names it beside the input. Absent ⇒
+   *  Shift-Enter is a plain Enter. */
+  alternate?: { hint: string; prior: (prior: string[]) => string[] };
 }
 
 /** One argument's resolved prompt, handed to the prompt driver.
@@ -304,12 +312,22 @@ export interface ArgPromptRequest {
   initial: string;
   completions: CompletionItem[] | Promise<CompletionItem[]>;
   source?: { views: LoadedView[] } | Promise<{ views: LoadedView[] }>;
+  /** The argument's alternate confirmation (`ArgSpec.alternate`), by its
+   *  hint; absent when it has none. */
+  alternate?: string;
+}
+
+/** An answer that says how it was confirmed: `alternate` for Shift-Enter. */
+export interface PromptAnswer {
+  value: string;
+  alternate: boolean;
 }
 
 /** Drives one interactive argument prompt; resolves to the *value* of the
- *  chosen candidate (or, for text no candidate names, the text itself), or
- *  null when the user cancels (Escape). */
-export type ArgPromptFn = (request: ArgPromptRequest) => Promise<string | null>;
+ *  chosen candidate (or, for text no candidate names, the text itself) —
+ *  bare, or with how it was confirmed — or null when the user cancels
+ *  (Escape). */
+export type ArgPromptFn = (request: ArgPromptRequest) => Promise<string | PromptAnswer | null>;
 
 // Frontend-side registry of declared argument specs, keyed by command name.
 // The Rust `CommandDef` only lists names/labels; the arg functions are live
@@ -975,9 +993,17 @@ export async function collectArgs(
         ? source.then(({ views }) => views[0]?.items('').then((page) => page.items) ?? [])
         : [],
       ...(source ? { source } : {}),
+      ...(spec.alternate ? { alternate: spec.alternate.hint } : {}),
     });
     if (answer === null) return null;
-    result.push(answer);
+    if (typeof answer === 'string') {
+      result.push(answer);
+      continue;
+    }
+    if (answer.alternate && spec.alternate) {
+      result.splice(0, result.length, ...spec.alternate.prior(prior));
+    }
+    result.push(answer.value);
   }
   return result;
 }
@@ -1269,14 +1295,17 @@ function shellExpandDeps(ws: string | null): ExpandDeps {
  * owns the input — an interactive collection and a script prompt are mutually
  * exclusive.
  */
-async function promptForArg(request: ArgPromptRequest): Promise<string | null> {
+async function promptForArg(request: ArgPromptRequest): Promise<string | PromptAnswer | null> {
   if (store.ui.promptText !== null || store.ui.promptResolver !== null) {
     await status('the command input is busy with another prompt');
     return null;
   }
-  return new Promise<string | null>((resolve) => {
+  return new Promise<string | PromptAnswer | null>((resolve) => {
     const ws = focusedWs();
-    store.ui.promptResolver = resolve;
+    const resolver = (value: string | null, alternate = false) =>
+      resolve(value === null ? null : { value, alternate });
+    store.ui.promptResolver = resolver;
+    store.ui.promptAlternate = request.alternate ?? null;
     store.ui.promptText = request.prompt;
     store.ui.promptCompletions = [];
     store.ui.promptItems = [];
@@ -1296,7 +1325,7 @@ async function promptForArg(request: ArgPromptRequest): Promise<string | null> {
       // flight is left alone.
       void Promise.resolve(request.source).then(
         (source) => {
-          if (store.ui.promptResolver !== resolve) return;
+          if (store.ui.promptResolver !== resolver) return;
           store.ui.promptSource = source;
           void loadPromptCompletions('');
         },
@@ -1311,7 +1340,7 @@ async function promptForArg(request: ArgPromptRequest): Promise<string | null> {
       // answered or cancelled and another prompt owns the input.
       void request.completions.then(
         (items) => {
-          if (store.ui.promptResolver === resolve) setPromptItems(items);
+          if (store.ui.promptResolver === resolver) setPromptItems(items);
         },
         () => {
           /* a failed candidate list just means no completions */

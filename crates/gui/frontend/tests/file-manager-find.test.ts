@@ -87,7 +87,7 @@ function stub() {
         if (opts.args) specs.set(name, opts.args);
         return Promise.resolve(null);
       },
-      invoke: () => null,
+      invoke: vi.fn(() => null),
     },
     fs,
     statusBar,
@@ -117,14 +117,14 @@ describe('file-manager:find', () => {
     const s = stub();
     await mount(s);
     const args = s.specs.get('file-manager:find');
-    expect(args).toHaveLength(1);
-    expect(await args![0].complete!()).toEqual(['sub/', 'notes.txt', 'top.txt']);
+    expect(args).toHaveLength(2);
+    expect(await args![1].complete!()).toEqual(['sub/', 'notes.txt', 'top.txt']);
   });
 
   test('an accepted completion moves the cursor onto that entry', async () => {
     const s = stub();
     await mount(s);
-    await s.handlers.get('file-manager:find')!('top.txt');
+    await s.handlers.get('file-manager:find')!('select', 'top.txt');
     expect(cursorName(s.root)).toBe('top.txt');
     expect(s.api.workspace.set).toHaveBeenCalledWith('selected_paths', ['/repo/top.txt']);
   });
@@ -133,7 +133,7 @@ describe('file-manager:find', () => {
     const s = stub();
     await mount(s);
     s.fs.readDir.mockClear();
-    await s.handlers.get('file-manager:find')!('sub/');
+    await s.handlers.get('file-manager:find')!('select', 'sub/');
     expect(cursorName(s.root)).toBe('sub');
     expect(s.fs.readDir).not.toHaveBeenCalled();
   });
@@ -141,15 +141,15 @@ describe('file-manager:find', () => {
   test('a typed value matches by ordered substring', async () => {
     const s = stub();
     await mount(s);
-    await s.handlers.get('file-manager:find')!('no txt');
+    await s.handlers.get('file-manager:find')!('select', 'no txt');
     expect(cursorName(s.root)).toBe('notes.txt');
   });
 
   test('no match reports an error and leaves the cursor alone', async () => {
     const s = stub();
     await mount(s);
-    await s.handlers.get('file-manager:find')!('top.txt');
-    await s.handlers.get('file-manager:find')!('zzz');
+    await s.handlers.get('file-manager:find')!('select', 'top.txt');
+    await s.handlers.get('file-manager:find')!('select', 'zzz');
     expect(cursorName(s.root)).toBe('top.txt');
     expect(s.statusBar.error).toHaveBeenCalled();
   });
@@ -157,10 +157,27 @@ describe('file-manager:find', () => {
   test('hidden entries are offered only when hidden files are shown', async () => {
     const s = stub();
     await mount(s);
-    const complete = s.specs.get('file-manager:find')![0].complete!;
+    const complete = s.specs.get('file-manager:find')![1].complete!;
     expect(await complete()).not.toContain('.hidden.txt');
     await s.handlers.get('file-manager:toggle')!('hidden');
     await new Promise((r) => setTimeout(r, 0));
     expect(await complete()).toContain('.hidden.txt');
+  });
+
+  test('walk mode enters a directory and asks again from inside it', async () => {
+    const s = stub();
+    await mount(s);
+    await s.handlers.get('file-manager:find')!('walk', 'sub/');
+    expect(s.fs.readDir).toHaveBeenCalledWith('/repo/sub');
+    expect(s.api.commands.invoke).toHaveBeenCalledWith('file-manager:find walk');
+    expect(await s.specs.get('file-manager:find')![1].complete!()).toEqual(['song.mp3']);
+  });
+
+  test('walk mode selects a file and stops', async () => {
+    const s = stub();
+    await mount(s);
+    await s.handlers.get('file-manager:find')!('walk', 'top.txt');
+    expect(cursorName(s.root)).toBe('top.txt');
+    expect(s.api.commands.invoke).not.toHaveBeenCalled();
   });
 });

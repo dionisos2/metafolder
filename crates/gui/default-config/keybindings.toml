@@ -498,12 +498,20 @@
 # rendered text without moving any cursor (doc "Find in a panel").
 "f" = [
   { command = "metarecord-list:clear finder", when = "metarecord-list" },
-  { command = "file-manager:find", when = "file-manager" },
+  { command = "file-manager:find select", when = "file-manager" },
   { command = "treeref:find", when = "treeref" },
   { command = "trash:find", when = "trash" },
   { command = "recent:find", when = "recent" },
   { command = "log:find", when = "log" },
   { command = "duplicates:find", when = "duplicates" },
+]
+# "d" = descend by name: the file manager's find in `walk` mode enters the
+# directory found and asks again from inside, so a path is walked down one
+# name at a time; a file found is selected, and Shift+Enter stops on a
+# directory, selected (doc "Jumping to an entry").
+"d" = [
+  { command = "file-manager:find walk", when = "file-manager" },
+  { command = "metarecord:row-delete", when = "metarecord-detail" },
 ]
 # treeref: pick which TreeRef field's forest the panel explores (the drop-down's
 # keyboard equivalent; the field name completes). It keeps the F key, shifted,
@@ -527,7 +535,6 @@
 "c" = { command = "metarecord-list:clear all", when = "metarecord-list" }
 
 # metarecord-detail: field actions and record creation.
-"d" = { command = "metarecord:row-delete", when = "metarecord-detail" }
 "a" = { command = "metarecord:open-add-field", when = "metarecord-detail" }
 "ctrl+n" = [
   { command = "metarecord:create", when = "metarecord-detail" },
