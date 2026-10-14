@@ -204,7 +204,7 @@ const recentChoices = new Map();
 function firstFieldText(rec, name) {
   const value = rec?.fields?.find((f) => f.name === name)?.value;
   if (!value || value.type === 'nothing') return '';
-  if (value.type === 'tree_ref') return `${value.value.parent ?? '(root)'} / ${value.value.name}`;
+  if (value.type === 'tree_ref' || value.type === 'hierarchy_ref') return `${value.value.parent ?? '(root)'} / ${value.value.name}`;
   if (value.type === 'externalref') return `${value.value.repo} :: ${value.value.metarecord}`;
   return String(value.value);
 }

@@ -658,3 +658,33 @@ async fn test_bulk_create_violation_rolls_the_whole_batch_back() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test]
+async fn test_the_shipped_schema_places_a_tag_under_several_parents() {
+    // The shipped default (seeded into every new repository) declares a tag's
+    // position as a hierarchy (doc "Hierarchy references"): a marathon is a
+    // race and an event, two `path` rows of one name.
+    let shipped = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("default-config/schema.default.json"),
+    )
+    .unwrap();
+    let schema: Value = serde_json::from_str(&shipped).unwrap();
+    let (app, repo, root) = setup_with_schema("shippedhier", schema).await;
+    let tag = |path: Value| {
+        json!([{"name": "mf_schema", "value": {"type": "string", "value": "tag"}},
+               {"name": "path", "value": path}])
+    };
+    let node = |parent: &str, name: &str| {
+        let parent = if parent.is_empty() { Value::Null } else { json!(parent) };
+        json!({"type": "hierarchy_ref", "value": {"parent": parent, "name": name}})
+    };
+    let (status, sport) = create(&app, &repo, tag(node("", "sport"))).await;
+    assert_eq!(status, StatusCode::OK, "{sport}");
+    let (_, event) = create(&app, &repo, tag(node("", "évènement"))).await;
+    let (sport, event) = (sport["uuid"].as_str().unwrap(), event["uuid"].as_str().unwrap());
+    let mut fields = tag(node(sport, "maraton"));
+    fields.as_array_mut().unwrap().push(json!({"name": "path", "value": node(event, "maraton")}));
+    let (status, body) = create(&app, &repo, fields).await;
+    assert_eq!(status, StatusCode::OK, "a tag of two parents is valid: {body}");
+    drop(root);
+}

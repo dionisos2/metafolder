@@ -74,7 +74,7 @@ for arg in "$@"; do
 done
 [ ${#SCENARIOS[@]} -gt 0 ] \
     || SCENARIOS=(undo-redo duplicates orphans trash reconcile ignore sync repos list layout script
-        errors picker refs prompt history keybindings open-with tab-close pick-button
+        errors picker refs hierarchy prompt history keybindings open-with tab-close pick-button
         suggested-key devtools)
 
 # shellcheck source=lib/daemon-fixture.sh
@@ -777,6 +777,35 @@ scenario_refs() {
     run metarecord:field add buddy ref bob
     assert_eq "ref: a seed label is resolved to its uuid" "$bob" \
         "$(df_mf metarecord -i "$a" field get buddy)"
+}
+
+# A tag of several parents (doc "Hierarchy references"): a second parent is
+# added from the detail panel by typing its path, and the node then answers
+# under both.
+scenario_hierarchy() {
+    new_repo hierarchy
+    local maraton
+    df_mf metarecord add mf_schema:string=tag path:hierarchy_ref=/sport >/dev/null
+    df_mf metarecord add mf_schema:string=tag path:hierarchy_ref=/évènement >/dev/null
+    show_panel left metarecord-detail metarecord:cancel
+
+    # Made in the panel, which selects it; each parent typed by its path.
+    run metarecord:create tag
+    command_ok "hierarchy: a tag is created"
+    run metarecord:field set path hierarchy_ref sport/maraton
+    command_ok "hierarchy: placed under a first parent"
+    # The field's type is settled now: the value alone.
+    run metarecord:field add path évènement/maraton
+    command_ok "hierarchy: a second parent is added by its path"
+    maraton=$(df_mf metarecord -q 'path = "évènement/maraton"' get)
+    assert_eq "hierarchy: the node has both parents" \
+        "$(printf 'sport/maraton\névènement/maraton')" \
+        "$(df_mf metarecord -i "$maraton" get --resolve-tree path --tsv | cut -f2 | LC_ALL=C sort)"
+    assert_eq "hierarchy: it is below either parent" "$maraton" \
+        "$(df_mf metarecord -q 'path ->* "évènement"' get)"
+    assert_eq "hierarchy: and below the other" "$maraton" "$(df_mf metarecord -q 'path ->* "sport"' get)"
+    run metarecord:field add path sport/marathon
+    assert "hierarchy: a node keeps one name" [ "$LAST_RC" != 0 ]
 }
 
 scenario_prompt() {

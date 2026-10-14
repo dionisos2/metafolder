@@ -91,6 +91,19 @@ describe('createTypePicker', () => {
   });
 });
 
+describe('parseRawValue of a hierarchy_ref', () => {
+  test('takes the tree_ref form: parent uuid / name, or a bare name for a root', () => {
+    expect(parseRawValue('hierarchy_ref', 'p1/maraton')).toEqual({
+      type: 'hierarchy_ref',
+      value: { parent: 'p1', name: 'maraton' },
+    });
+    expect(parseRawValue('hierarchy_ref', 'sport')).toEqual({
+      type: 'hierarchy_ref',
+      value: { parent: null, name: 'sport' },
+    });
+  });
+});
+
 describe('parseRawValue', () => {
   test('parses each type from its raw string form', () => {
     expect(parseRawValue('string', 'jazz')).toEqual({ type: 'string', value: 'jazz' });

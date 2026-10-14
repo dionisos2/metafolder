@@ -110,17 +110,26 @@ export async function mount(root, metafolder) {
 
   // ── Field picker ──────────────────────────────────────────────────────────
 
-  /** The repo's TreeRef field names, the current one always among them (it
-   *  stays selectable even if the catalog is momentarily empty). */
+  /** The type of each field the panel can explore — a forest (`tree_ref`) or
+   *  a hierarchy (`hierarchy_ref`, doc "Hierarchy references") — as last read.
+   *  @type {Map<string, 'tree_ref'|'hierarchy_ref'>} */
+  const positionTypes = new Map();
+
+  /** The repo's forest and hierarchy field names, the current one always among
+   *  them (it stays selectable even if the catalog is momentarily empty). */
   async function treeRefFieldNames() {
     /** @type {{name: string}[]} */
-    let list = [];
-    try {
-      list = /** @type {{name: string}[]} */ (
-        (await daemon.call('GET', `/repos/${repo}/fields?type=tree_ref`)) ?? []
-      );
-    } catch (error) {
-      await statusBar.error(error);
+    const list = [];
+    for (const type of /** @type {const} */ (['tree_ref', 'hierarchy_ref'])) {
+      try {
+        const got = /** @type {{name: string}[]} */ (
+          (await daemon.call('GET', `/repos/${repo}/fields?type=${type}`)) ?? []
+        );
+        for (const f of got) positionTypes.set(f.name, type);
+        list.push(...got);
+      } catch (error) {
+        await statusBar.error(error);
+      }
     }
     const names = list.map((f) => f.name);
     if (!names.includes(field)) names.unshift(field);
@@ -256,10 +265,12 @@ export async function mount(root, metafolder) {
       }
       type = wanted;
     }
+    if (!positionTypes.has(field)) await treeRefFieldNames();
     const fields = nodeFields(type ? templateFields(schema, type) : [], {
       field,
       parent: currentUuid(),
       name: leaf,
+      type: positionTypes.get(field) ?? 'tree_ref',
     });
     // A position on an `mfr_*` field is a reserved write (doc "Reserved fields"),
     // as in metarecord-detail's create.

@@ -67,6 +67,7 @@ export async function mount(root, metafolder) {
       'datetime',
       'ref',
       'tree_ref',
+      'hierarchy_ref',
       'externalref',
       'refbase',
     ].map((t) => ({ value: t })),

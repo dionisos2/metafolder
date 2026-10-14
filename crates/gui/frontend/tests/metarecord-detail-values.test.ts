@@ -61,6 +61,26 @@ describe('createValues', () => {
     });
   });
 
+  test('a hierarchy_ref row reads back as the path through its own parent', async () => {
+    const calls: Call[] = [];
+    const values = create(calls);
+    const row = { type: 'hierarchy_ref', value: { parent: 'p1', name: 'maraton' } } as never;
+    expect(await values.rawOf('r', 'u', 'tag', row)).toBe('/music/jazz/maraton');
+    expect(calls[0].path).toBe('/repos/r/metarecords/p1/fields/tag/resolve-tree');
+    const root = { type: 'hierarchy_ref', value: { parent: null, name: 'sport' } } as never;
+    expect(await values.rawOf('r', 'u', 'tag', root)).toBe('sport');
+  });
+
+  test('a hierarchy_ref path parses to its parent node and its name', async () => {
+    const values = create([]);
+    expect(await values.parse('r', 'tag', 'hierarchy_ref', '/music/jazz')).toEqual({
+      type: 'hierarchy_ref',
+      value: { parent: 'p'.repeat(32), name: 'jazz' },
+    });
+    const [view] = await values.views('r', 'tag', 'hierarchy_ref');
+    expect(((await view.items('', [])) as { items: string[] }).items).toEqual(['/x', '/y']);
+  });
+
   test('a ref no rule names is the uuid typed', async () => {
     const values = create([]);
     expect(await values.parse('r', 'link', 'ref', ' abc ')).toEqual({ type: 'ref', value: 'abc' });

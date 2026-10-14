@@ -300,6 +300,17 @@ export function thumbnail(guiServer, path, options = {}) {
 }
 
 /**
+ * Whether a value type places a metarecord in a tree of named nodes: a
+ * `tree_ref` (one position) or a `hierarchy_ref` (one row per parent, doc
+ * "Hierarchy references") — what paths, parents and subtrees are read from.
+ *
+ * @param {string|null|undefined} type
+ */
+export function isPositionType(type) {
+  return type === 'tree_ref' || type === 'hierarchy_ref';
+}
+
+/**
  * Display form of a Value ({type, value} JSON, doc "Value types"). `value` is
  * absent for `nothing` (explicit absence), which renders as ∅.
  *
@@ -311,6 +322,7 @@ export function formatValue(field) {
     case 'nothing':
       return '∅';
     case 'tree_ref':
+    case 'hierarchy_ref':
       return `${field.value.parent ?? '(root)'} / ${field.value.name}`;
     case 'externalref':
       return `${field.value.repo} :: ${field.value.metarecord}`;
@@ -393,6 +405,7 @@ export function valueEl(value, onOpen) {
     case 'refbase':
       return el('span', {}, link(value.value));
     case 'tree_ref':
+    case 'hierarchy_ref':
       return el(
         'span',
         {},

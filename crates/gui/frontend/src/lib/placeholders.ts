@@ -125,6 +125,7 @@ function formatScalar(name: string, value: { type: string; value?: unknown }): s
     case 'nothing':
       throw new ResolveError(`field '${name}' is empty (Nothing)`);
     case 'tree_ref':
+    case 'hierarchy_ref':
       throw new ResolveError(`field '${name}' is a tree reference; use %${name}:path`);
     default:
       throw new ResolveError(`field '${name}' has unsupported type '${value.type}'`);

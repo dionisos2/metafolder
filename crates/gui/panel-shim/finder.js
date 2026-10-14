@@ -34,7 +34,10 @@ export function finderTargets(entries, typeOf) {
       if (aspect === 'path') return { field: entry.slice(0, cut), mode: 'path' };
       if (aspect === 'value') return { field: entry.slice(0, cut), mode: 'direct' };
     }
-    return { field: entry, mode: typeOf(entry) === 'tree_ref' ? 'path' : 'direct' };
+    // A forest or a hierarchy (doc "Hierarchy references") searches its paths.
+    const type = typeOf(entry);
+    const positional = type === 'tree_ref' || type === 'hierarchy_ref';
+    return { field: entry, mode: positional ? 'path' : 'direct' };
   });
 }
 

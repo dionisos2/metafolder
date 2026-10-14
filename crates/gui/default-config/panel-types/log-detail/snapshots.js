@@ -41,8 +41,9 @@ export function snapshotValue(s) {
     case 'refbase':
       return /** @type {Metafolder.Value} */ ({ type: s.value_type, value: s.value_uuid ?? '' });
     case 'tree_ref':
+    case 'hierarchy_ref':
       return {
-        type: 'tree_ref',
+        type: s.value_type === 'hierarchy_ref' ? 'hierarchy_ref' : 'tree_ref',
         value: {
           parent: !s.value_uuid || s.value_uuid === ZERO_UUID ? null : s.value_uuid,
           name: s.value_name ?? '',

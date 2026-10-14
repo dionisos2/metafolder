@@ -61,8 +61,9 @@ export function createAnnotator({ resolvePaths, getMetarecords, refLabel }) {
    */
   async function annotate(fieldName, value) {
     try {
-      if (value.type === 'tree_ref') {
-        // A rootless node's path is its name, already displayed.
+      if (value.type === 'tree_ref' || value.type === 'hierarchy_ref') {
+        // A rootless node's path is its name, already displayed. A row of a
+        // hierarchy reads as the path through its own parent.
         if (value.value.parent === null) return null;
         return await treeRefPath(fieldName, value.value);
       }

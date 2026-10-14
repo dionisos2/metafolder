@@ -24,7 +24,8 @@ declare namespace Metafolder {
    *
    * The tags are what serde emits for `core::metarecord::Value`, which is
    * `rename_all = "lowercase"` — hence `refbase` and `externalref` with no
-   * underscore. Only `TreeRef` carries an explicit rename, to `tree_ref`.
+   * underscore. Only `TreeRef` and `HierarchyRef` carry an explicit rename, to
+   * `tree_ref` and `hierarchy_ref`.
    */
   type Value =
     | { type: 'nothing' }
@@ -32,10 +33,11 @@ declare namespace Metafolder {
     | { type: 'int' | 'float'; value: number }
     | { type: 'bool'; value: boolean }
     | { type: 'ref' | 'refbase'; value: string }
-    | { type: 'tree_ref'; value: TreeRef }
+    | { type: 'tree_ref' | 'hierarchy_ref'; value: TreeRef }
     | { type: 'externalref'; value: { repo: string; metarecord: string } };
 
-  /** A `tree_ref` value: the parent metarecord (null at a forest root) + name. */
+  /** A position — `tree_ref`, or one row of a `hierarchy_ref` (doc "Hierarchy
+   *  references") —: the parent metarecord (null at a forest root) + name. */
   interface TreeRef {
     parent: string | null;
     name: string;

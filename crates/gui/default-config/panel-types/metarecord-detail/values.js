@@ -25,6 +25,7 @@ function payloadOf(v) {
     case 'nothing':
       return null;
     case 'tree_ref':
+    case 'hierarchy_ref':
       return [v.value.parent, v.value.name];
     case 'externalref':
       return [v.value.repo, v.value.metarecord];
@@ -176,6 +177,21 @@ export function createValues({ daemon, config, parseQuery }) {
         );
         return body.paths?.[0] ?? value.value.name;
       }
+      case 'hierarchy_ref': {
+        // One row per parent (doc "Hierarchy references"): the row reads as
+        // the path through its own parent, which the node's first path may
+        // not go through.
+        const { parent, name } = value.value;
+        if (!parent) return name;
+        const body = /** @type {{paths?: string[]}} */ (
+          await daemon.call(
+            'GET',
+            `/repos/${repo}/metarecords/${parent}/fields/${encodeURIComponent(field)}/resolve-tree`,
+          )
+        );
+        const above = body.paths?.[0];
+        return above === undefined ? name : above === '' ? `/${name}` : `${above}/${name}`;
+      }
       case 'externalref':
         // Same one-line form as formatValue (ui.js); the value is an object, so
         // the default String(...) would render "[object Object]".
@@ -211,7 +227,7 @@ export function createValues({ daemon, config, parseQuery }) {
       // No rule names this field (not even `*`): the value is the uuid typed.
       return { type, value: raw.trim() };
     }
-    if (type !== 'tree_ref') return parseRawValue(type, raw);
+    if (type !== 'tree_ref' && type !== 'hierarchy_ref') return parseRawValue(type, raw);
     const path = raw.trim();
     const slash = path.lastIndexOf('/');
     if (slash === -1) return { type, value: { parent: null, name: path } };
@@ -270,8 +286,10 @@ export function createValues({ daemon, config, parseQuery }) {
     // A closed value set (bool: true/false) needs no repository lookup.
     const closed = rawValueCompletions(type);
     if (closed.length > 0) return [plainView(type, Promise.resolve(closed))];
-    // A tree_ref value completes over its own forest.
-    return type === 'tree_ref' ? [plainView('path', treePathsForField(repo, field))] : [];
+    // A position completes over its own forest or hierarchy.
+    return type === 'tree_ref' || type === 'hierarchy_ref'
+      ? [plainView('path', treePathsForField(repo, field))]
+      : [];
   }
 
   return {

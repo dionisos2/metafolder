@@ -155,7 +155,8 @@ export function isSortable(column) {
  * @param {string[]|undefined} resolvedPaths
  */
 function projectValue(value, mode, resolvedPaths) {
-  if (value.type === 'tree_ref') {
+  // Explicit, so the check narrows the value to a position.
+  if (value.type === 'tree_ref' || value.type === 'hierarchy_ref') {
     switch (mode) {
       case 'value':
         return value.value.name || '(root)';
@@ -170,7 +171,7 @@ function projectValue(value, mode, resolvedPaths) {
         return formatValue(value);
     }
   }
-  return formatValue(value); // aspects don't apply to non-tree_ref values
+  return formatValue(value); // aspects apply to positions only
 }
 
 /**

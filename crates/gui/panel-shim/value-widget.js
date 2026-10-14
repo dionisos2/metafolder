@@ -32,6 +32,7 @@ export const TYPES = [
   'nothing',
   'ref',
   'tree_ref',
+  'hierarchy_ref',
 ];
 
 /** Wires `button` as a type drop-down; returns {get, set, setAllowed}. The menu
@@ -134,7 +135,8 @@ export function parseRawValue(type, raw) {
       return { type: 'nothing' };
     case 'ref':
       return { type, value: raw.trim() };
-    case 'tree_ref': {
+    case 'tree_ref':
+    case 'hierarchy_ref': {
       // "parent-uuid/name" or just "name" for a root.
       const slash = raw.indexOf('/');
       return slash === -1
@@ -226,7 +228,7 @@ export function createPickRunner(metafolder) {
       let panel;
       /** @type {Record<string, unknown>} */
       let vars = {};
-      if (valueType === 'tree_ref') {
+      if (valueType === 'tree_ref' || valueType === 'hierarchy_ref') {
         // The parent is any forest node; open the explorer on the edited
         // field's own forest as the natural starting point.
         panel = 'treeref';
@@ -309,7 +311,8 @@ export function widgetFor(type, initial, opts = {}) {
       const button = pickButton(input, opts.pick, type, 'Pick a metarecord');
       return { element: el('span', {}, input, ' ', button), read };
     }
-    case 'tree_ref': {
+    case 'tree_ref':
+    case 'hierarchy_ref': {
       const seed = /** @type {Metafolder.TreeRef|null|undefined} */ (initial);
       const parent = el('input', {
         placeholder: 'parent uuid (empty = root)',

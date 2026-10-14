@@ -146,3 +146,22 @@ describe('nodeFields (treeref:add: a metarecord at a new node)', () => {
     ]);
   });
 });
+
+describe('a hierarchy (doc "Hierarchy references")', () => {
+  test('a node of several parents has one name', () => {
+    const record = {
+      uuid: 'm',
+      fields: [
+        { name: 'path', value: { type: 'hierarchy_ref', value: { parent: 'a', name: 'maraton' } } },
+        { name: 'path', value: { type: 'hierarchy_ref', value: { parent: 'b', name: 'maraton' } } },
+      ],
+    } as never;
+    expect(treeNameOf(record, 'path')).toBe('maraton');
+  });
+
+  test('a node added to a hierarchy is placed with a hierarchy_ref', () => {
+    expect(
+      nodeFields([], { field: 'path', parent: 'p1', name: 'maraton', type: 'hierarchy_ref' }),
+    ).toEqual([{ name: 'path', value: { type: 'hierarchy_ref', value: { parent: 'p1', name: 'maraton' } } }]);
+  });
+});

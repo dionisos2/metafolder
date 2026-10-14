@@ -180,7 +180,7 @@ export async function mount(root, metafolder) {
    *  @param {Metafolder.Value} value @param {string} field */
   function valueEl(value, field) {
     const span = el('span', { class: 'value' }, formatValue(value));
-    if (value.type === 'tree_ref' && entry) {
+    if ((value.type === 'tree_ref' || value.type === 'hierarchy_ref') && entry) {
       const tree = value.value;
       daemon
         .resolveTreeRef(entry.repo, tree, field)

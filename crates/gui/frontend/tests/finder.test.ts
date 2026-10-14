@@ -40,6 +40,11 @@ describe('finderTargets', () => {
     ]);
   });
 
+  it('searches a hierarchy by path, as a forest', () => {
+    const typeOf = (f: string) => ({ path: 'hierarchy_ref' })[f] ?? null;
+    expect(finderTargets(['path'], typeOf)).toEqual([{ field: 'path', mode: 'path' }]);
+  });
+
   it('falls back to direct for an unknown explicit mode', () => {
     expect(finderTargets(['label:weird'], () => null)).toEqual([
       { field: 'label:weird', mode: 'direct' },

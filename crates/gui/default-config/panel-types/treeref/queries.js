@@ -30,7 +30,8 @@ export function treeRefPath(names) {
 }
 
 // The single name component a metarecord contributes to `field`'s forest (the
-// first tree_ref row of that field), or null when it carries no such position.
+// first position row of that field — a node of a hierarchy bears one name on
+// all its rows), or null when it carries no such position.
 /**
  * @param {Metafolder.Metarecord|null|undefined} metarecord
  * @param {string} field
@@ -38,7 +39,8 @@ export function treeRefPath(names) {
  */
 export function treeNameOf(metarecord, field) {
   for (const f of metarecord?.fields ?? []) {
-    if (f.name === field && f.value.type === 'tree_ref') return f.value.value.name;
+    if (f.name !== field) continue;
+    if (f.value.type === 'tree_ref' || f.value.type === 'hierarchy_ref') return f.value.value.name;
   }
   return null;
 }
@@ -71,9 +73,10 @@ export function refQueryDsl({ refField, treeField, path, scope }) {
 
 // The fields of the metarecord `treeref:add` creates: the schema type's
 // template (from /__schema-template.js, empty when no type was chosen) plus the
-// tree position — one `tree_ref` row on the *explored* field, its name the
-// chosen value and its parent the node the panel is open on (null at the forest
-// roots, where the new node becomes a root).
+// tree position — one row on the *explored* field, of the field's own type
+// (`tree_ref`, or `hierarchy_ref` in a hierarchy: doc "Hierarchy references"),
+// its name the chosen value and its parent the node the panel is open on (null
+// at the forest roots, where the new node becomes a root).
 //
 // A template row already naming the field (the schema constrains the position
 // field itself — templated as Nothing when it carries no default) is
@@ -82,12 +85,13 @@ export function refQueryDsl({ refField, treeField, path, scope }) {
 // a node that has one.
 /**
  * @param {{name: string, value: Metafolder.Value}[]} template
- * @param {{field: string, parent: string|null, name: string}} node
+ * @param {{field: string, parent: string|null, name: string,
+ *   type?: 'tree_ref'|'hierarchy_ref'}} node
  * @returns {{name: string, value: Metafolder.Value}[]}
  */
-export function nodeFields(template, { field, parent, name }) {
+export function nodeFields(template, { field, parent, name, type = 'tree_ref' }) {
   /** @type {Metafolder.Value} */
-  const position = { type: 'tree_ref', value: { parent, name } };
+  const position = { type, value: { parent, name } };
   let placed = false;
   const fields = template.map((f) => {
     if (f.name !== field) return f;

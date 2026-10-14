@@ -47,7 +47,9 @@ function createDisplayStore() {
 
 /** @param {Metafolder.Metarecord} metarecord @param {string} field */
 function hasTreeRef(metarecord, field) {
-  return fields(metarecord, field).some((f) => f.value.type === 'tree_ref');
+  return fields(metarecord, field).some(
+    (f) => f.value.type === 'tree_ref' || f.value.type === 'hierarchy_ref',
+  );
 }
 
 /**

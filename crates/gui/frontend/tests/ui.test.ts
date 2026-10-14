@@ -2,7 +2,7 @@
 // shared by the built-in panel types (doc "The metafolder API").
 
 import { describe, expect, test, vi } from 'vitest';
-import { el, field, fields, formatAge, formatSize, formatValue, messageOf, valueEl, thumbnail, isThumbnailable, isVideoThumbnailable, fileTypeGlyph, looksLikeText } from '../../panel-shim/ui.js';
+import { el, field, fields, formatAge, formatSize, formatValue, isPositionType, messageOf, valueEl, thumbnail, isThumbnailable, isVideoThumbnailable, fileTypeGlyph, looksLikeText } from '../../panel-shim/ui.js';
 
 describe('thumbnail', () => {
   test('isThumbnailable: only image extensions, case-insensitive', () => {
@@ -343,5 +343,32 @@ describe('ui formatting helpers', () => {
     expect(formatAge(now - 2 * 86_400_000, now)).toBe('2d ago');
     // A clock skew (future timestamp) never goes negative.
     expect(formatAge(now + 10_000, now)).toBe('0s ago');
+  });
+});
+
+describe('hierarchy_ref (doc "Hierarchy references")', () => {
+  test('a hierarchy_ref reads as a tree_ref does, one row per parent', () => {
+    const value = { type: 'hierarchy_ref', value: { parent: 'p1', name: 'maraton' } } as never;
+    expect(formatValue(value)).toBe('p1 / maraton');
+    expect(formatValue({ type: 'hierarchy_ref', value: { parent: null, name: 'sport' } } as never)).toBe(
+      '(root) / sport',
+    );
+  });
+
+  test('both position types are positions', () => {
+    expect(isPositionType('tree_ref')).toBe(true);
+    expect(isPositionType('hierarchy_ref')).toBe(true);
+    expect(isPositionType('ref')).toBe(false);
+    expect(isPositionType(undefined)).toBe(false);
+  });
+
+  test('the parent of a hierarchy_ref is a link', () => {
+    const opened: string[] = [];
+    const node = valueEl(
+      { type: 'hierarchy_ref', value: { parent: 'p1', name: 'maraton' } } as never,
+      (uuid) => opened.push(uuid),
+    );
+    (node.querySelector('a') as HTMLAnchorElement).click();
+    expect(opened).toEqual(['p1']);
   });
 });
