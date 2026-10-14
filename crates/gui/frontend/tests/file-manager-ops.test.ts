@@ -6,7 +6,7 @@
 // command handlers.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { cursor } from './support/cursor';
+import { cursor, generic } from './support/cursor';
 
 type ProvideMock = Parameters<typeof cursor>[0];
 import { readFileSync } from 'node:fs';
@@ -279,7 +279,7 @@ describe('file-manager filesystem operations', () => {
     const { api, handlers, fs } = await mount('repo-1');
     fs.readDir.mockClear();
     await handlers.get('file-manager:root')!();
-    await handlers.get('file-manager:refresh')!();
+    await generic(api.provide, 'view:refresh');
     await handlers.get('file-manager:toggle')!('hidden');
     await handlers.get('file-manager:toggle')!('root');
     await cursor(api.provide, 'last');

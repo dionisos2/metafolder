@@ -16,6 +16,7 @@ the shell runs on a few functions the panel provides:
 |<<cmd "cursor:last">> |the last row loaded |`count`, `select` |
 |<<cmd "cursor:find">> `select` |the row named in the command input ([[Jumping to an entry]]) |`entries`, `select` |
 |<<cmd "cursor:find">> `walk` |the same, entering what can be entered and asking again |`entries`, `select`, `enter` |
+|<<cmd "view:refresh">> |reads what the panel shows again |`refresh` |
 
 With no row under the cursor, `next` and `prev` both land on the first row, and
 none of them moves past either end. An empty list is left alone.
@@ -57,6 +58,7 @@ metafolder.provide({
 |`more()` |loads more rows; asked by `cursor:next` on the last row loaded (the [[metarecord-list panel]]) |
 |`entries()` |the rows `cursor:find` searches, as displayed now: a `name`, an optional `label` the candidates show and the typed terms match, and an optional `index` — the row `select` gets when the entries skip some (the file manager's `.` and `..`) |
 |`enter(i)` |enters row `i` and says whether it could — a directory, a node with children |
+|`refresh()` |reads what the panel shows again |
 
 Every function is optional; a panel provides what it can do, and a later call
 adds to what an earlier one provided. Each panel's note in the [[Panel]] catalog

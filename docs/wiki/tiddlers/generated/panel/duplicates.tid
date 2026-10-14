@@ -6,10 +6,9 @@ summary: The duplicates panel type
 !! Commands
 
 * ``duplicates:keep`` — Duplicates: keep the copy under the cursor, trash the others
-* ``duplicates:refresh`` — Duplicates: reload the groups
 * ``duplicates:toggle`` — Duplicates: expand or collapse the group under the cursor
 * ``duplicates:trash`` — Duplicates: send the copy under the cursor to the trash
 
 !! Generic commands
 
-Provides ``index``, ``count``, ``select``, ``entries`` to [[Generic panel commands]].
+Provides ``refresh``, ``index``, ``count``, ``select``, ``entries`` to [[Generic panel commands]].

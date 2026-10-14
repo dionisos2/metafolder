@@ -5,9 +5,8 @@ summary: The log-detail panel type
 
 !! Commands
 
-* ``log-detail:refresh`` — Log detail: refresh from the daemon
 * ``log-detail:toggle`` — Log detail: toggle a view flag (the whole label / unchanged fields)
 
 !! Generic commands
 
-Provides nothing to [[Generic panel commands]].
+Provides ``refresh`` to [[Generic panel commands]].

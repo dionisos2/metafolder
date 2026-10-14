@@ -251,11 +251,15 @@ run() {
 # its metarecord the workspace's selection.
 select_path() { mfg view left file --path "$1" >/dev/null || die "view file $1"; }
 
-# show_panel <slot> <type> <command> — shows a panel type and waits until it
-# has mounted: until its own `command` (one that loads, so the panel's data is
+# show_panel <slot> <type> <invocation…> — shows a panel type and waits until it
+# has mounted: until the `invocation` (one that loads, so the panel's data is
 # there too) is known and resolves.
 show_panel() {
-    local slot=$1 type=$2 command=$3
+    local slot=$1 type=$2
+    shift 2
+    # The rest is the invocation, whatever its number of words
+    # (`view:refresh repos`).
+    local command="$*"
     mfg view "$slot" "$type" >/dev/null || die "view $slot $type"
     for _ in $(seq 1 40); do
         mfg command --timeout-ms 10000 "$command" >/dev/null 2>&1 && return 0
@@ -421,7 +425,7 @@ scenario_trash() {
     status_is "trash: trashes the file" info "Trashed f.txt — restore it from the trash panel"
     assert_not "trash: the file is gone" test -e "$REPO_DIR/f.txt"
 
-    show_panel left trash trash:refresh
+    show_panel left trash view:refresh trash
     run cursor:first trash
     run trash:restore
     status_is "trash restore: says where" info "Restored $REPO_DIR/f.txt"
@@ -525,7 +529,7 @@ scenario_repos() {
     new_repo repos-host
     local dir="$WORK/repos/created" uuid root
     mkdir -p "$dir"
-    show_panel left repos repos:refresh
+    show_panel left repos view:refresh repos
 
     # The workspace has its repository: the new one is announced, not adopted.
     run repos:init "$dir" made
@@ -555,11 +559,11 @@ scenario_list() {
     # text, expanded then parsed by the GUI backend.
     run workspace:send "$WS" metarecord-list:query note=hello
     command_ok "list: the query is sent to the workspace"
-    show_panel left metarecord-list metarecord-list:refresh
+    show_panel left metarecord-list view:refresh metarecord-list
     assert_eq "list: the simplified query is expanded" 'note = "hello"' "$(mfg query)"
 
     run workspace:send "$WS" metarecord-list:query 'note = = ='
-    run metarecord-list:refresh
+    run view:refresh metarecord-list
     assert_eq "list: an invalid query is not run" 'note = "hello"' "$(mfg query)"
 }
 
@@ -739,7 +743,7 @@ scenario_picker() {
     mkdir -p "$picked"
     uuid=$(df_mf repo init --name picked "$picked" | head -n 1)
     df_mf -u "$uuid" repo unload >/dev/null
-    show_panel left repos repos:refresh
+    show_panel left repos view:refresh repos
 
     # repos:load resolves once the pick does: it runs beside the scenario.
     mfg command --timeout-ms 60000 repos:load >/dev/null 2>&1 &
@@ -1034,7 +1038,7 @@ scenario_walk() {
     new_repo walk
     mkdir -p "$REPO_DIR/a/b"
     touch "$REPO_DIR/a/b/c.txt" "$REPO_DIR/a/other.txt"
-    show_panel left file-manager file-manager:refresh
+    show_panel left file-manager view:refresh file-manager
 
     run cursor:find file-manager walk a/
     assert "walk: a directory named is entered" until_ok 10 fm_at /a
@@ -1057,7 +1061,7 @@ scenario_walk() {
     # with children is gone into, a leaf is selected.
     record "$REPO_DIR/a" >/dev/null && record "$REPO_DIR/a/b" >/dev/null &&
         record "$REPO_DIR/a/b/c.txt" >/dev/null || die "record a/b/c.txt"
-    show_panel left treeref treeref:refresh
+    show_panel left treeref view:refresh treeref
     run treeref:set field mfr_path
     run cursor:find treeref walk /
     for name in a b; do

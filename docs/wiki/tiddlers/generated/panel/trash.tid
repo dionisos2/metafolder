@@ -7,9 +7,8 @@ summary: The trash panel type
 
 * ``trash:delete`` — Trash: permanently delete the selected entry
 * ``trash:empty`` — Trash: permanently delete every entry
-* ``trash:refresh`` — Trash: reload the entries
 * ``trash:restore`` — Trash: restore the selected entry
 
 !! Generic commands
 
-Provides ``index``, ``count``, ``select``, ``entries`` to [[Generic panel commands]].
+Provides ``refresh``, ``index``, ``count``, ``select``, ``entries`` to [[Generic panel commands]].

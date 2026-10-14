@@ -14,7 +14,6 @@ summary: The file-manager panel type
 * ``file-manager:parent`` — File manager: go up one level
 * ``file-manager:paste`` — File manager: paste the clipboard into the current directory
 * ``file-manager:record`` — File manager: record the selected path — its metarecord, mf_watch = false
-* ``file-manager:refresh`` — File manager: reload the current directory
 * ``file-manager:rename`` — File manager: rename the selected entry
 * ``file-manager:root`` — File manager: jump to the root (the repo root, or / with no repo)
 * ``file-manager:select`` — File manager: change the checked multi-selection (toggle / all / none)
@@ -22,4 +21,4 @@ summary: The file-manager panel type
 
 !! Generic commands
 
-Provides ``index``, ``count``, ``select``, ``entries``, ``enter`` to [[Generic panel commands]].
+Provides ``refresh``, ``index``, ``count``, ``select``, ``entries``, ``enter`` to [[Generic panel commands]].

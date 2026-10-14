@@ -160,10 +160,8 @@ export function mount(root, metafolder) {
 
   byId(root, 'refresh').addEventListener('click', () => void load());
 
-  void commands.register('recent:refresh', {
-    label: 'Recent: reload the list',
-    handler: () => load(),
-  });
+  // Read again on `view:refresh` (doc "Generic panel commands").
+  metafolder.provide({ refresh: () => load() });
   // The cursor, for the generic commands (doc "Generic panel commands").
   // Several recently-viewed records can share a display name, so each find
   // candidate carries its path, which the typed terms search too.

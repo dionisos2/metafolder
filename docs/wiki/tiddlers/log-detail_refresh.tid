@@ -1,6 +1,0 @@
-title: log-detail:refresh
-tags: [[GUI command]] [[Event log]]
-kind: reference
-summary: Log detail: refresh from the daemon
-
-Reads the shown write again ([[log-detail panel]]).

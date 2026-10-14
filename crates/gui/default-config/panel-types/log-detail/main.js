@@ -324,10 +324,8 @@ export async function mount(root, metafolder) {
       return run();
     },
   });
-  void commands.register('log-detail:refresh', {
-    label: 'Log detail: refresh from the daemon',
-    handler: load,
-  });
+  // Read again on `view:refresh` (doc "Generic panel commands").
+  metafolder.provide({ refresh: load });
 
   /** @param {unknown} value */
   function follow(value) {

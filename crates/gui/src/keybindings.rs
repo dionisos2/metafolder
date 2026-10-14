@@ -852,6 +852,7 @@ mod tests {
         // panels re-read their rows, the file panel plays the media from the
         // start (there is no list there to re-read).
         let r: Vec<_> = table.iter().filter(|b| b.keys == ["r"]).collect();
+        assert!(r.iter().any(|b| b.when.is_none() && b.invocation == "view:refresh self"));
         assert!(r
             .iter()
             .any(|b| b.when.as_deref() == Some("file") && b.invocation == "file:restart"));

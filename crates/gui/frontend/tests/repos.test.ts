@@ -8,6 +8,7 @@
 // only the Tauri `invoke` seam replaced by a router over an in-memory daemon.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { generic } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createPanelApi } from '../src/lib/panels/api';
@@ -169,6 +170,7 @@ function setup(options: { activeRepo?: string | null } = {}) {
     }
   });
 
+  const provide = vi.fn();
   const instance = createPanelApi(
     {
       invoke,
@@ -177,6 +179,7 @@ function setup(options: { activeRepo?: string | null } = {}) {
       registerArgs: () => {},
       onCommandsChanged: () => {},
       addDefaultMenuItems: () => {},
+      provide,
     },
     {
       wsId: 'ws-1',
@@ -197,6 +200,7 @@ function setup(options: { activeRepo?: string | null } = {}) {
     initRepo,
     picks,
     created,
+    provide,
     pushVarChanged: instance.pushVarChanged,
   };
 }
@@ -370,7 +374,7 @@ describe('repos panel — a lost repository', () => {
 
 describe('repos panel — running tasks', () => {
   test('an in-flight task is shown under its repository and can be stopped', async () => {
-    const { api, daemon, handlers } = setup({ activeRepo: 'r1' });
+    const { api, provide, daemon, handlers } = setup({ activeRepo: 'r1' });
     daemon.repos.push({ repo_uuid: 'r1', name: 'photos', root: '/tmp/photos' });
     daemon.tasks.push({
       id: 't1',
@@ -396,7 +400,7 @@ describe('repos panel — running tasks', () => {
 
     // A finished task is no longer listed.
     daemon.tasks.length = 0;
-    await command(handlers, 'repos:refresh')();
+    await generic(provide, 'view:refresh');
     await settle();
     expect(shadow.querySelectorAll('.repo-tasks .repo-task')).toHaveLength(0);
   });
@@ -697,14 +701,14 @@ describe('repos panel — commands', () => {
   });
 
   test('refresh picks up a repository loaded from elsewhere', async () => {
-    const { api, daemon, handlers } = setup();
+    const { api, provide, daemon, handlers } = setup();
     const shadow = shadowForRepos();
     await mount(shadow, api);
     await settle();
     expect(shadow.querySelectorAll('#repo-list > li')).toHaveLength(0);
 
     daemon.repos.push({ repo_uuid: 'r9', name: 'later', root: '/tmp/later' });
-    await command(handlers, 'repos:refresh')();
+    await generic(provide, 'view:refresh');
     await settle();
     expect(shadow.querySelectorAll('#repo-list > li')).toHaveLength(1);
   });

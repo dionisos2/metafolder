@@ -44,7 +44,7 @@ place of its rows.
 
 The marks follow the repository: they are read again whenever the daemon reports a
 change. The ''entries'' are not watched — a file another program creates appears on
-<<key "file-manager:refresh" r>>, or after an operation of the panel's own.
+<<key "view:refresh self" r>>, or after an operation of the panel's own.
 
 !! Moving around
 

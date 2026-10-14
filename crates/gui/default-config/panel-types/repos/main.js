@@ -668,10 +668,8 @@ export async function mount(root, metafolder) {
     label: 'Repos: pick a folder and load the repository in it',
     handler: loadPicked,
   });
-  void commands.register('repos:refresh', {
-    label: 'Repos: refresh the repository list',
-    handler: () => refresh(),
-  });
+  // Read again on `view:refresh` (doc "Generic panel commands").
+  metafolder.provide({ refresh: () => refresh() });
   void commands.register('repos:open-retype', {
     label: 'Repos: open the field-type conversion form for the active repository',
     reveal: true,

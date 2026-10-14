@@ -45,8 +45,8 @@ binding, or a list of them when the key does different things in different place
 "ctrl+a" = { command = "editing:goto line-start", text-input = true }
 
 "r" = [
-  { command = "metarecord-list:refresh", when = "metarecord-list" },
-  { command = "file:restart",            when = "file" },
+  { command = "view:refresh self" },
+  { command = "file:restart", when = "file" },
 ]
 
 "enter" = [

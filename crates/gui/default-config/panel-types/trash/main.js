@@ -152,10 +152,8 @@ export function mount(root, metafolder) {
   deleteButton.addEventListener('click', () => void doDelete());
   emptyButton.addEventListener('click', () => void doEmpty());
 
-  void commands.register('trash:refresh', {
-    label: 'Trash: reload the entries',
-    handler: () => load(),
-  });
+  // Read again on `view:refresh` (doc "Generic panel commands").
+  metafolder.provide({ refresh: () => load() });
   void commands.register('trash:restore', {
     label: 'Trash: restore the selected entry',
     handler: () => doRestore(),

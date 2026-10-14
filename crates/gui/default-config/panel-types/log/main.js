@@ -553,7 +553,8 @@ export async function mount(root, metafolder) {
     label: 'Log: back out to the level above',
     handler: () => backTo(path.length - 1),
   });
-  void commands.register('log:refresh', { label: 'Log: refresh from the daemon', handler: refresh });
+  // Read again on `view:refresh` (doc "Generic panel commands").
+  metafolder.provide({ refresh });
   // The cursor, for the generic commands (doc "Generic panel commands"): the
   // rows on screen, newest first, the selection being one of their keys. A
   // find jumps to a label by number or name.

@@ -7,7 +7,7 @@
 // must load more on its own.
 
 import { describe, expect, test, vi, beforeEach } from 'vitest';
-import { cursor } from './support/cursor';
+import { cursor, generic } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -45,7 +45,12 @@ function pageOf(index: number) {
 }
 
 /** A stub API over a two-page daemon result (6 records, page size 3). */
-function stubApi(handlers: Map<string, Handler>, calls: QueryCall[], pages: number) {
+function stubApi(
+  handlers: Map<string, Handler>,
+  calls: QueryCall[],
+  pages: number,
+  { displayed = true } = {},
+) {
   const noop = () => {};
   const store = new Map<string, unknown>([['active_repo', 'r']]);
   return {
@@ -59,7 +64,8 @@ function stubApi(handlers: Map<string, Handler>, calls: QueryCall[], pages: numb
     defaults: {},
     visible: false, // never displayed: the scroll pager can never fire
     onVisibility: noop,
-    whenVisible: (fn: () => void) => fn(), // …but the panel still ran its query
+    // …but the panel still ran its query — unless it is never displayed at all.
+    whenVisible: (fn: () => void) => (displayed ? fn() : undefined),
     bench: { measure: (_n: string, fn: () => unknown) => fn(), record: noop },
     daemon: {
       query: async (_repo: string, body: { cursor?: string; limit: number }) => {
@@ -113,11 +119,11 @@ function stubApi(handlers: Map<string, Handler>, calls: QueryCall[], pages: numb
   };
 }
 
-async function mountPanel(pages: number) {
+async function mountPanel(pages: number, options: { displayed?: boolean } = {}) {
   const shadow = shadowFor();
   const handlers = new Map<string, Handler>();
   const calls: QueryCall[] = [];
-  const api = stubApi(handlers, calls, pages);
+  const api = stubApi(handlers, calls, pages, options);
   const mod = await import('../../default-config/panel-types/metarecord-list/main.js');
   await mod.mount(shadow, api as never);
   await new Promise((r) => setTimeout(r, 0)); // let the deferred start settle
@@ -128,6 +134,7 @@ async function mountPanel(pages: number) {
     selected: () =>
       (api.store.get('selected_metarecord') as { uuid: string } | undefined)?.uuid ?? null,
     rows: () => shadow.querySelectorAll('#rows tr').length,
+    provide: api.provide,
     /** `cursor:next` on the list (doc "Generic panel commands"). */
     next: async () => {
       await cursor(api.provide, 'next');
@@ -173,5 +180,29 @@ describe('cursor:next at the end of the loaded rows', () => {
 
     expect(p.calls).toHaveLength(1); // no cursor: nothing more to ask for
     expect(p.selected()).toBe('m3');
+  });
+});
+
+// `view:refresh` is what a script runs to load a list it has just put on screen
+// (doc "Generic panel commands"): it must load even when it comes before the
+// panel's first display has started it — and resolve once the rows are there.
+describe('view:refresh before the first display', () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('[]', { status: 200 })),
+    );
+    document.body.replaceChildren();
+    if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
+  });
+
+  test('reads the active repository and loads its first page', async () => {
+    const p = await mountPanel(2, { displayed: false });
+    expect(p.calls).toHaveLength(0); // never displayed: nothing ran yet
+
+    await generic(p.provide, 'view:refresh');
+
+    expect(p.calls).toHaveLength(1);
+    expect(p.rows()).toBe(PAGE);
   });
 });

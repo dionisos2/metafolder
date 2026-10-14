@@ -1,0 +1,16 @@
+title: view:refresh
+tags: [[GUI command]] [[Generic panel commands]]
+kind: reference
+summary: Read what a panel shows again (self / a panel type)
+
+Reads what a panel shows again: the focused panel with `self`, the panel type named otherwise ([[Generic panel commands]]). What that means depends on the panel:
+
+|!Panel |!Reads again |
+|[[metarecord-list panel]] |runs its query again; the cursor stays on its metarecord when it is still listed |
+|[[file-manager panel]] |the displayed directory, and what the repository says of its entries, keeping the cursor where it was. The panel does not watch the disk: a file another program created appears on a refresh |
+|[[treeref panel]] |the repository's fields and the children shown |
+|[[log panel]], [[log-detail panel]] |the log; the shown write |
+|[[trash panel]], [[recent panel]], [[duplicates panel]] |the entries, the recently viewed metarecords, the groups |
+|[[repos panel]] |the loaded repositories, their tasks and their tracking notices |
+
+In the [[file panel]] the same key, <<key "file:restart" r>>, plays the media from the start instead: there is nothing to list again.

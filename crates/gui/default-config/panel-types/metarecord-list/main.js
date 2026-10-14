@@ -915,13 +915,12 @@ export async function mount(root, metafolder) {
     },
   });
 
-  void commands.register('metarecord-list:refresh', {
-    label: 'Metarecord list: reload from the daemon',
-    handler: () => {
-      queryRan = true; // a manual refresh always loads, even with no repo yet armed
-      return fetchPage(true);
-    },
-  });
+  // Read again on `view:refresh` (doc "Generic panel commands").
+  // A refresh is a start: it reads the active repository too, so it loads even
+  // when it comes before the first display has started the panel (a script
+  // showing the list then refreshing it), and it always loads — `start` arms
+  // the query whenever there is a repository.
+  metafolder.provide({ refresh: () => start() });
   // Two entry points to bulk editing (doc "Editing metarecords in the GUI"):
   // this one is the mouse-oriented half — the in-panel form (op picker + value
   // widget), opened by the footer button. The keyboard half is

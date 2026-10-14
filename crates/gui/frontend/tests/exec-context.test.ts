@@ -88,7 +88,7 @@ describe('the API of a user command', () => {
       const m = inner as unknown as typeof mf;
       expect(m.context).toEqual(other);
       await m.workspace.set('k', 1);
-      await m.invoke('metarecord-list:refresh');
+      await m.invoke('view:refresh metarecord-list');
       return 'done';
     });
     expect(result).toBe('done');

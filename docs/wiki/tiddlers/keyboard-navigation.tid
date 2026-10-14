@@ -55,7 +55,7 @@ run on the focused panel; in a panel without a cursor these keys pass through
 |<<key "cursor:find self select" f>> |move the cursor to a row named in the command input ([[Jumping to an entry]]) |
 |<<key "cursor:find self walk" d>> |walk down a path by name: enter each directory (node) named, until a file (a leaf) — in the file manager and the tree ([[Jumping to an entry]]) |
 |<<key "metarecord-list:select toggle, file-manager:select toggle" Space>> |check or uncheck the row ([[Cross-panel selection]]) |
-|<<key "metarecord-list:refresh, file-manager:refresh, treeref:refresh, log:refresh, trash:refresh, recent:refresh, duplicates:refresh, repos:refresh" r>> |read the content again |
+|<<key "view:refresh self" r>> |read the content again |
 |<<key "metarecord:remove, file-manager:delete, trash:delete, duplicates:trash" Delete>> |remove what is selected, after a confirmation: to the trash where there is a file ([[Trash]]) |
 
 In the metarecord list, <<key "metarecord-list:focus finder" "/">> and

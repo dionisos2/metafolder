@@ -6,7 +6,7 @@
 // entry has no uuid to check and says so instead of silently doing nothing.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { cursor } from './support/cursor';
+import { cursor, generic } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -254,7 +254,7 @@ describe('checking metarecords from the file manager', () => {
     expect(harness.selected()).toEqual(['u-song']);
     // …and another one checked elsewhere is pruned the same way on a reload.
     harness.externalSet('selected_metarecords', ['u-song', 'u-gone']);
-    await harness.handlers.get('file-manager:refresh')!();
+    await generic(harness.api.provide, 'view:refresh');
     expect(harness.selected()).toEqual(['u-song']);
   });
 });

@@ -29,7 +29,7 @@ is not known beforehand: going into a leaf shows an empty list.
 |<<key "treeref:root" "/">> |back to the roots |
 |<<key "cursor:find self select" f>> |jump to a child by name, among those loaded ([[Jumping to an entry]]) |
 |<<key "cursor:find self walk" d>> |walk down by name: a node with children is gone into and the question asked again, a leaf is selected (`shift+Enter` stops on a node) |
-|<<key "treeref:refresh" r>> |read the fields and the children again |
+|<<key "view:refresh self" r>> |read the fields and the children again |
 
 The node under the cursor is the workspace's selection, so [[metarecord-detail panel]]
 beside it shows it; its field, uuid and path are also published as `selected_treeref`

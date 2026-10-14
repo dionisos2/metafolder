@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/view:refresh
+catalog: GUI command
+target: view:refresh
+summary: Read what a panel shows again (self / a panel type)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``r`` → ``view:refresh self``

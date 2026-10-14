@@ -65,6 +65,10 @@ describe('neededFunctions', () => {
     expect(neededFunctions('cursor:find', ['walk'])).toEqual(['entries', 'select', 'enter']);
   });
 
+  test('refreshing the view needs refresh', () => {
+    expect(neededFunctions('view:refresh', [])).toEqual(['refresh']);
+  });
+
   test('a command that is not generic needs nothing — null', () => {
     expect(neededFunctions('panel:swap', [])).toBeNull();
   });
@@ -186,6 +190,20 @@ describe('runGeneric — moving the cursor', () => {
   test('a panel lacking a needed function is an error naming the command and the panel', async () => {
     await expect(run('cursor:next', { select: () => {} })).rejects.toThrow(
       'cursor:next is not implemented for the trash panel',
+    );
+  });
+});
+
+describe('runGeneric — the view', () => {
+  test('view:refresh re-reads the panel', async () => {
+    const refresh = vi.fn();
+    await run('view:refresh', { refresh });
+    expect(refresh).toHaveBeenCalledOnce();
+  });
+
+  test('a panel that cannot refresh says so', async () => {
+    await expect(run('view:refresh', {})).rejects.toThrow(
+      'view:refresh is not implemented for the trash panel',
     );
   });
 });

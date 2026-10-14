@@ -166,6 +166,7 @@ fn register_builtins(registry: &CommandRegistry) {
             "Move a panel's cursor to a row named in the command input (select / walk)",
             true,
         ),
+        ("view:refresh", "Read what a panel shows again (self / a panel type)", true),
         // Find in panel (doc "Find in a panel"). `log=false`: stepping
         // through matches is a keystroke-level action, not a command worth a
         // message-log line.

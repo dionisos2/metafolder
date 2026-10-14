@@ -20,4 +20,4 @@ recorded without changing are hidden, with a count, unless `log-detail:toggle un
 (the ''Unchanged fields'' checkbox). A `tree_ref` value is shown as the path it names.
 
 It re-reads when metarecords change (a rollback moves HEAD, a label may change);
-`log-detail:refresh` does it by hand.
+`view:refresh self` (<<key "view:refresh self" r>>) does it by hand.

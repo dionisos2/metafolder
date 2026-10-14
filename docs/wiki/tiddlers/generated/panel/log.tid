@@ -8,10 +8,9 @@ summary: The log panel type
 * ``log:descend`` — Log: go into the selected label
 * ``log:parent`` — Log: back out to the level above
 * ``log:prune`` — Log: prune history before the selected label or operation
-* ``log:refresh`` — Log: refresh from the daemon
 * ``log:revert`` — Log: revert what is selected, or a narrower or wider scope
 * ``log:toggle`` — Log: toggle a view flag (the watcher’s work)
 
 !! Generic commands
 
-Provides ``index``, ``count``, ``select``, ``entries`` to [[Generic panel commands]].
+Provides ``refresh``, ``index``, ``count``, ``select``, ``entries`` to [[Generic panel commands]].

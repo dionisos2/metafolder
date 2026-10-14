@@ -23,6 +23,9 @@ than breaking them.
   panel providing what it needs, and passes through elsewhere, so `j` is one
   binding instead of eight. The detail panel gains `Home`/`End`. Each panel's
   generated note lists what it provides (doc "Generic panel commands").
+- **`view:refresh <panel>`**: the same for reading a panel again — one `r`
+  for the nine panels that had their own `<panel>:refresh` (the file panel
+  keeps `r` for `file:restart`).
 - **Walking down a path by name in the file manager and the tree explorer.**
   `d` runs `cursor:find self walk`: a directory (a node with children) named
   is entered and the question asked again from inside, a file (a leaf) named
@@ -333,6 +336,7 @@ than breaking them.
   replaced by the generic `cursor:*` commands (see Added); a key of yours bound
   to one of them is reported as naming no command. The `/__find-entry.js`
   helper (`registerFind`) went with them.
+- **The per-panel `<panel>:refresh` commands**, replaced by `view:refresh`.
 - **Labelling a revision after the fact**: `PATCH /log/revisions/:id`, the log
   panel's `log:mark` (Shift+L) and `mf log revert --label`. Renaming or
   describing a label once written is deferred; a context names the work while

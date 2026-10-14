@@ -12,21 +12,27 @@ export function provided(provide: ProvideMock): PanelFunctions {
 }
 
 /**
- * Runs `cursor:<verb> <args…>` on the panel, e.g. `cursor(provide, 'next')`,
- * `cursor(provide, 'find', 'walk', 'sub/')`. What a walk asks again is pushed
- * onto `reinvoked`.
+ * Runs the generic command `name` (`view:refresh`, `cursor:find`…) on the
+ * panel, `args` being its arguments after the panel. What a walk asks again is
+ * returned.
  */
-export async function cursor(
+export async function generic(
   provide: ProvideMock,
-  verb: string,
+  name: string,
   ...args: string[]
 ): Promise<string[]> {
   const reinvoked: string[] = [];
-  await runGeneric(`cursor:${verb}`, provided(provide), args, {
+  await runGeneric(name, provided(provide), args, {
     panelType: 'panel',
     reinvoke: (invocation) => reinvoked.push(invocation),
   });
   return reinvoked;
+}
+
+/** `cursor:<verb> <args…>`, e.g. `cursor(provide, 'next')`,
+ *  `cursor(provide, 'find', 'walk', 'sub/')`. */
+export function cursor(provide: ProvideMock, verb: string, ...args: string[]): Promise<string[]> {
+  return generic(provide, `cursor:${verb}`, ...args);
 }
 
 /** The candidates `cursor:find` offers for the panel. */

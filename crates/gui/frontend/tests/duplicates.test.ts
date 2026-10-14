@@ -5,7 +5,7 @@
 // spot — dissolving it when a single copy is left, exactly as the daemon does.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { cursor } from './support/cursor';
+import { generic } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 
@@ -171,7 +171,7 @@ async function mountPanel(groups: unknown[], members: Member[], options: Options
   await new Promise((r) => setTimeout(r, 0)); // let the deferred start settle
   const invoke = async (name: string) => {
     // A generic command runs on what the panel provided (doc "Generic panel commands").
-    if (name.startsWith('cursor:')) return void (await cursor(api.provide, name.slice('cursor:'.length)));
+    if (name.startsWith('cursor:') || name.startsWith('view:')) return void (await generic(api.provide, name));
     const h = handlers.get(name);
     if (!h) throw new Error(`command not registered: ${name}`);
     await h();
@@ -384,7 +384,7 @@ describe('duplicates panel, the harder paths', () => {
     await p.invoke('duplicates:toggle');
     await new Promise((r) => setTimeout(r, 0));
     await p.invoke('cursor:next'); // onto /a.bin
-    await p.invoke('duplicates:refresh');
+    await p.invoke('view:refresh');
     await new Promise((r) => setTimeout(r, 0));
 
     expect(p.rows()).toHaveLength(3); // still expanded

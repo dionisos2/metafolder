@@ -323,6 +323,8 @@ declare namespace Metafolder {
     /** Enters row `index` (a directory) and says whether it could:
      *  `cursor:find <panel> walk` then asks again from inside. */
     enter?(index: number): boolean | Promise<boolean>;
+    /** Reads what the panel shows again (`view:refresh`). */
+    refresh?(): unknown;
   }
 
   interface CommandOptions {

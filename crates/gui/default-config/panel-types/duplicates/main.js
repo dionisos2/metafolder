@@ -417,10 +417,8 @@ export function mount(root, metafolder) {
   byId(root, 'refresh').addEventListener('click', () => void load());
   byId(root, 'scan').addEventListener('click', () => void commands.invoke('mf:duplicate scan'));
 
-  void commands.register('duplicates:refresh', {
-    label: 'Duplicates: reload the groups',
-    handler: () => load(),
-  });
+  // Read again on `view:refresh` (doc "Generic panel commands").
+  metafolder.provide({ refresh: () => load() });
   // The cursor, for the generic commands (doc "Generic panel commands"). A
   // find jumps to a group by hash or to a member by path: a scan of a large
   // repository produces hundreds of groups, which is exactly when scrolling

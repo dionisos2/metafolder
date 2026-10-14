@@ -1236,10 +1236,8 @@ export async function mount(root, metafolder) {
     },
   });
 
-  void commands.register('file-manager:refresh', {
-    label: 'File manager: reload the current directory',
-    handler: refresh,
-  });
+  // Read again on `view:refresh` (doc "Generic panel commands").
+  metafolder.provide({ refresh });
   // The cursor, for the generic commands (doc "Generic panel commands"):
   // `cursor:next self`, `cursor:find self walk`…
   metafolder.provide({

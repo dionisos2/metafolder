@@ -9,7 +9,6 @@ summary: The repos panel type
 * ``repos:load`` — Repos: pick a folder and load the repository in it
 * ``repos:open-init`` — Repos: open the init form
 * ``repos:open-retype`` — Repos: open the field-type conversion form for the active repository
-* ``repos:refresh`` — Repos: refresh the repository list
 * ``repos:resume`` — Repos: resume tracking on the active repository
 * ``repos:stop`` — Repos: stop one of the active repository's running tasks
 * ``repos:unload`` — Repos: unload a repository from the daemon
@@ -17,4 +16,4 @@ summary: The repos panel type
 
 !! Generic commands
 
-Provides nothing to [[Generic panel commands]].
+Provides ``refresh`` to [[Generic panel commands]].

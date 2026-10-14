@@ -492,10 +492,8 @@ export async function mount(root, metafolder) {
     label: 'TreeRef explorer: jump to the forest roots',
     handler: gotoRoot,
   });
-  void commands.register('treeref:refresh', {
-    label: 'TreeRef explorer: reload from the daemon',
-    handler: () => refresh(),
-  });
+  // Read again on `view:refresh` (doc "Generic panel commands").
+  metafolder.provide({ refresh: () => refresh() });
   // The drop-down's keyboard equivalent: pick the TreeRef field to explore
   // without leaving the keyboard (doc "treeref panel").
 

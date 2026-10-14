@@ -28,7 +28,7 @@ whether undoing it makes sense, computed over everything under it:
 * <<key "log:parent" "Backspace or ←">>, or ''↑ up'', or a step of the breadcrumb — back out, the cursor on the row it came out of.
 * <<key "log:toggle watcher" Shift+w>> — hide or show the watcher's work (shown by default). A display filter over what was fetched; the status line says how many units are hidden, and a selection inside one is dropped.
 * ''Show older operations'' — the list fetches the newest thousand operations, so a repository with millions of them still opens; the button widens the window by as much again.
-* <<key "log:refresh" r>> — read the log again. The status line gives how many units of work and operations are listed, and the repository's totals when the window is only part of the log.
+* <<key "view:refresh self" r>> — read the log again. The status line gives how many units of work and operations are listed, and the repository's totals when the window is only part of the log.
 
 !! Acting
 

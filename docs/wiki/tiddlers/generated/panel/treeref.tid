@@ -9,11 +9,10 @@ summary: The treeref panel type
 * ``treeref:descend`` — TreeRef explorer: descend into the selected node
 * ``treeref:list-refs`` — TreeRef explorer: list the metarecords pointing at the selected node (here / other / new)
 * ``treeref:parent`` — TreeRef explorer: go up one level
-* ``treeref:refresh`` — TreeRef explorer: reload from the daemon
 * ``treeref:root`` — TreeRef explorer: jump to the forest roots
 * ``treeref:set`` — TreeRef explorer: change a view setting
 * ``treeref:toggle`` — TreeRef explorer: toggle a view flag (scope: the exact node ⇄ its whole subtree)
 
 !! Generic commands
 
-Provides ``index``, ``count``, ``select``, ``entries``, ``enter`` to [[Generic panel commands]].
+Provides ``refresh``, ``index``, ``count``, ``select``, ``entries``, ``enter`` to [[Generic panel commands]].

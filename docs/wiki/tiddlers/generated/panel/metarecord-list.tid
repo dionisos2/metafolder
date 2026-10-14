@@ -13,11 +13,10 @@ summary: The metarecord-list panel type
 * ``metarecord-list:open-bulk-edit`` — Metarecord list: open the bulk edit / delete form (set/add/remove/unset/delete)
 * ``metarecord-list:page`` — Metarecord list: load a page (next)
 * ``metarecord-list:query`` — Metarecord list: run a canned query (duplicates / orphans)
-* ``metarecord-list:refresh`` — Metarecord list: reload from the daemon
 * ``metarecord-list:select`` — Metarecord list: change the multi-selection (toggle / all / none)
 * ``metarecord-list:set`` — Metarecord list: change a view setting
 * ``metarecord-list:toggle`` — Metarecord list: toggle a view flag
 
 !! Generic commands
 
-Provides ``index``, ``count``, ``select``, ``more`` to [[Generic panel commands]].
+Provides ``index``, ``count``, ``select``, ``more``, ``refresh`` to [[Generic panel commands]].

@@ -2,8 +2,9 @@
 // functions through `metafolder.provide` — where its cursor is, how many rows it
 // shows, how to move onto one — and one shell command works in every panel that
 // provides what it needs: `cursor:next <panel>` instead of a `<panel>:next` per
-// panel type. The panel is a required argument, a panel type or `self` (the
-// focused one), so a key can drive a panel beside the focused one
+// panel type, `view:refresh <panel>` instead of a `<panel>:refresh`. The panel
+// is a required argument, a panel type or `self` (the focused one), so a key
+// can drive a panel beside the focused one
 // (`cursor:next metarecord-list` in the file panel) and a script names the panel
 // it drives.
 //
@@ -39,6 +40,8 @@ export interface PanelFunctions {
   entries?: () => FindRow[] | Promise<FindRow[]>;
   /** Enters row `index` (a directory) and says whether it could. */
   enter?: (index: number) => boolean | Promise<boolean>;
+  /** Reads what the panel shows again. */
+  refresh?: () => unknown;
 }
 export type FunctionName = keyof PanelFunctions;
 
@@ -54,6 +57,7 @@ const NEEDS: Record<string, (rest: string[]) => FunctionName[]> = {
   'cursor:last': () => ['count', 'select'],
   'cursor:find': (rest) =>
     rest[0] === 'walk' ? ['entries', 'select', 'enter'] : ['entries', 'select'],
+  'view:refresh': () => ['refresh'],
 };
 
 export const GENERIC_COMMANDS = Object.keys(NEEDS);
@@ -181,6 +185,9 @@ export async function runGeneric(
       if (count > 0) await fns.select(count - 1);
       return;
     }
+    case 'view:refresh':
+      await fns.refresh();
+      return;
     case 'cursor:find': {
       const [mode, ...words] = rest;
       const text = words.join(' ').trim();

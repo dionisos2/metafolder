@@ -428,7 +428,7 @@ async fn run_step(id: &str, s: &mut Session, quiet: Duration) -> Result<Option<I
             // The list is on screen since `idle`: showing it again draws
             // nothing, reloading it does.
             s.bench_clear().await?;
-            s.command("metarecord-list:refresh", None).await?;
+            s.command("view:refresh metarecord-list", None).await?;
             s.show("left", "metarecord-list", Some("mf:list:render")).await?;
             drawn(s, quiet).await
         }
@@ -482,7 +482,7 @@ async fn run_step(id: &str, s: &mut Session, quiet: Duration) -> Result<Option<I
         }
         "treeref.open" => {
             s.show("left", "treeref", None).await?;
-            s.command("treeref:refresh", None).await?;
+            s.command("view:refresh treeref", None).await?;
             drawn(s, quiet).await
         }
         "bulk.add" => {
@@ -501,7 +501,7 @@ async fn run_step(id: &str, s: &mut Session, quiet: Duration) -> Result<Option<I
         }
         "log.open" => {
             s.show("right", "log", None).await?;
-            s.command("log:refresh", None).await?;
+            s.command("view:refresh log", None).await?;
             drawn(s, quiet).await
         }
         "fs.rename_dir" => {

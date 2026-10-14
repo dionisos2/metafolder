@@ -313,16 +313,10 @@
   { command = "file:back", when = "file" },
 ]
 
-# Refresh the current view.
+# Refresh the current view: one generic command, for every panel that can
+# read its content again (doc "Generic panel commands").
 "r" = [
-  { command = "treeref:refresh", when = "treeref" },
-  { command = "file-manager:refresh", when = "file-manager" },
-  { command = "trash:refresh", when = "trash" },
-  { command = "recent:refresh", when = "recent" },
-  { command = "repos:refresh", when = "repos" },
-  { command = "duplicates:refresh", when = "duplicates" },
-  { command = "log:refresh", when = "log" },
-  { command = "metarecord-list:refresh", when = "metarecord-list" },
+  { command = "view:refresh self" },
   # In the file panel there is nothing to re-list: "refresh" means play the
   # media from the start again.
   { command = "file:restart", when = "file" },
