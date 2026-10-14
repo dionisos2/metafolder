@@ -297,6 +297,7 @@ fn validate_comparison(value: &Value, ordered: bool) -> Result<(), ApiError> {
         | Value::Ref(_)
         | Value::RefBase(_)
         | Value::TreeRef { .. }
+        | Value::HierarchyRef { .. }
         | Value::ExternalRef { .. }
             if ordered =>
         {

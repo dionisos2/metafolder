@@ -126,7 +126,9 @@ pub(crate) fn trigrams(lower: &str) -> std::collections::BTreeSet<[u8; 3]> {
 pub(crate) fn search_text(value: &Value) -> Option<String> {
     match value {
         Value::String(s) => Some(s.to_lowercase()),
-        Value::TreeRef { name, .. } => Some(name.display().to_lowercase()),
+        Value::TreeRef { name, .. } | Value::HierarchyRef { name, .. } => {
+            Some(name.display().to_lowercase())
+        }
         _ => None,
     }
 }
@@ -243,6 +245,10 @@ pub(crate) fn value_key(value: &Value) -> Option<Vec<u8>> {
             let parent = parent.map_or(ZERO, |p| *p.as_bytes());
             tagged(7, &[&parent[..], &text_key(name.as_bytes())].concat())
         }
+        Value::HierarchyRef { parent, name } => {
+            let parent = parent.map_or(ZERO, |p| *p.as_bytes());
+            tagged(8, &[&parent[..], &text_key(name.as_bytes())].concat())
+        }
     })
 }
 
@@ -259,25 +265,22 @@ pub(crate) fn type_tag(value_type: &str) -> Option<u8> {
         "refbase" => 5,
         "externalref" => 6,
         "tree_ref" => 7,
+        "hierarchy_ref" => 8,
         _ => return None,
     })
 }
 
-/// The key of a `tree_ref` value in the name partition.
+/// The key of a position (`tree_ref`, `hierarchy_ref`) in the name partition.
 pub(crate) fn name_part_key(value: &Value) -> Option<Vec<u8>> {
-    match value {
-        Value::TreeRef { name, .. } => Some(text_key(name.display().as_bytes())),
-        _ => None,
-    }
+    value.position().map(|(_, name)| text_key(name.display().as_bytes()))
 }
 
-/// The uuid a value points at — a `ref`'s referent, a `tree_ref`'s parent
-/// (the zero uuid for a root) — which is what `Follows` matches.
+/// The uuid a value points at — a `ref`'s referent, a position's parent (the
+/// zero uuid for a root) — which is what `Follows` matches.
 pub(crate) fn target_of(value: &Value) -> Option<[u8; 16]> {
     match value {
         Value::Ref(u) => Some(*u.as_bytes()),
-        Value::TreeRef { parent, .. } => Some(parent.map_or(ZERO, |p| *p.as_bytes())),
-        _ => None,
+        _ => value.position().map(|(parent, _)| parent.map_or(ZERO, |p| *p.as_bytes())),
     }
 }
 
@@ -594,8 +597,8 @@ impl KvTxn<'_> {
         if let Some(target) = target_of(value) {
             self.bump(self.t.parts, &part_key(field, TARGET, &target, id), delta)?;
         }
-        if let Value::TreeRef { .. } = value {
-            let parent = target_of(value).expect("a tree_ref has a parent key");
+        if value.position().is_some() {
+            let parent = target_of(value).expect("a position has a parent key");
             self.bump(self.t.kids, &kids_key(&parent, field, id), delta)?;
             if let Some(pid) = self.id(&parent)? {
                 let member = delta > 0 || self.has_kids(&parent, field)?;
@@ -628,10 +631,115 @@ impl KvTxn<'_> {
             let held = rows.iter().any(|r| target_of(&r.value) == Some(target));
             self.chunk_member(SETS, &referrers_prefix(field, &target), id, held)?;
         }
-        if let Value::TreeRef { parent: Some(parent), .. } = value {
-            self.derive_descendants(uuid, id, field, *parent, delta > 0)?;
+        match value {
+            Value::TreeRef { parent: Some(parent), .. } => {
+                self.derive_descendants(uuid, id, field, *parent, delta > 0)?;
+            }
+            Value::HierarchyRef { parent: Some(parent), .. } => {
+                self.derive_hierarchy(uuid, id, field, *parent, delta > 0)?;
+            }
+            _ => {}
         }
         Ok(())
+    }
+
+    /// An edge `uuid` → `parent` of a hierarchy came (`add`) or went (doc
+    /// "Hierarchy references"). Coming, the node and everything below it join
+    /// the descendants of `parent` and of each of its ancestors, by every path
+    /// up. Going cannot subtract: an ancestor may still reach those nodes
+    /// another way. So the descendants of `parent` and of its ancestors — the
+    /// only bitmaps the edge was in — are recomputed from their children, the
+    /// stored bitmaps of the children outside that set standing for their
+    /// subtrees.
+    fn derive_hierarchy(
+        &self,
+        uuid: Uuid,
+        id: u32,
+        field: &str,
+        parent: Uuid,
+        add: bool,
+    ) -> Result<()> {
+        let ancestors = self.hierarchy_ancestors(field, parent)?;
+        if add {
+            let mut moving =
+                self.read_chunked(SETS, &descendants_prefix(field, uuid.as_bytes()))?;
+            moving.insert(id);
+            for ancestor in &ancestors {
+                let prefix = descendants_prefix(field, ancestor.as_bytes());
+                self.chunk_apply(SETS, &prefix, &moving, true)?;
+            }
+            return Ok(());
+        }
+        let mut recomputed = Vec::with_capacity(ancestors.len());
+        for ancestor in &ancestors {
+            recomputed.push(self.reachable_below(field, *ancestor, &ancestors)?);
+        }
+        for (ancestor, now) in ancestors.iter().zip(recomputed) {
+            let prefix = descendants_prefix(field, ancestor.as_bytes());
+            let before = self.read_chunked(SETS, &prefix)?;
+            self.chunk_apply(SETS, &prefix, &(&before - &now), false)?;
+            self.chunk_apply(SETS, &prefix, &(&now - &before), true)?;
+        }
+        Ok(())
+    }
+
+    /// `node` and every node above it in a hierarchy, by every parent, each
+    /// once.
+    fn hierarchy_ancestors(&self, field: &str, node: Uuid) -> Result<BTreeSet<Uuid>> {
+        let mut seen = BTreeSet::from([node]);
+        let mut todo = vec![node];
+        while let Some(n) = todo.pop() {
+            for row in Rows::rows_named(self, n, field)? {
+                if let Value::HierarchyRef { parent: Some(p), .. } = row.value {
+                    if seen.insert(p) {
+                        todo.push(p);
+                    }
+                }
+            }
+        }
+        Ok(seen)
+    }
+
+    /// The ids below `node`, walked down its children; a child outside
+    /// `walked` is not walked into, its stored descendant bitmap read
+    /// instead.
+    fn reachable_below(
+        &self,
+        field: &str,
+        node: Uuid,
+        walked: &BTreeSet<Uuid>,
+    ) -> Result<RoaringBitmap> {
+        let mut out = RoaringBitmap::new();
+        let mut seen = BTreeSet::from([node]);
+        let mut todo = vec![node];
+        while let Some(n) = todo.pop() {
+            for (child, child_id) in self.children_of(field, n)? {
+                out.insert(child_id);
+                if !seen.insert(child) {
+                    continue;
+                }
+                if walked.contains(&child) {
+                    todo.push(child);
+                } else {
+                    out |= self.read_chunked(SETS, &descendants_prefix(field, child.as_bytes()))?;
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// The nodes placed directly under `parent` in `field`, with their ids.
+    fn children_of(&self, field: &str, parent: Uuid) -> Result<Vec<(Uuid, u32)>> {
+        let prefix = [&parent.as_bytes()[..], &name_key(field)].concat();
+        let r = self.txn.borrow();
+        let mut out = Vec::new();
+        for entry in self.t.kids.prefix_iter(&r, &prefix)? {
+            let (k, _) = entry?;
+            let id = dense(&k[prefix.len()..]);
+            let uuid = self.t.uuids.get(&r, &id.to_be_bytes())?.context("a kid without a uuid")?;
+            out.push((uuid_of(uuid), id));
+        }
+        Ok(out)
     }
 
     /// A position of `uuid` under `parent` in a forest came (`add`) or
@@ -799,7 +907,7 @@ impl KvStore {
         // node's own id), for the closure below.
         let mut parents: BTreeMap<String, RoaringBitmap> = BTreeMap::new();
         let mut fields: HashMap<String, u32> = HashMap::new();
-        let mut parent_of: HashMap<(u32, Uuid), (Uuid, Option<u32>)> = HashMap::new();
+        let mut parent_of: HashMap<(u32, Uuid), (Vec<Uuid>, Option<u32>)> = HashMap::new();
         let mut owner: Option<([u8; 16], Option<u32>)> = None;
         for entry in t.cells.iter(r)? {
             let (k, v) = entry?;
@@ -830,8 +938,9 @@ impl KvStore {
                 *group.parts.entry((TARGET, target.to_vec())).or_default() += 1;
                 group.targets.insert(target);
             }
-            if let Value::TreeRef { parent, .. } = &row.value {
-                let target = target_of(&row.value).expect("a tree_ref has a parent key");
+            if let Some((parent, _)) = row.value.position() {
+                let parent = &parent;
+                let target = target_of(&row.value).expect("a position has a parent key");
                 *group.kids.entry(target).or_default() += 1;
                 if let Some(parent_id) = id_of(t, r, &target)? {
                     match parents.get_mut(&row.name) {
@@ -846,7 +955,9 @@ impl KvStore {
                 if let Some(p) = parent {
                     let next = fields.len() as u32;
                     let field = *fields.entry(row.name.clone()).or_insert(next);
-                    parent_of.insert((field, Uuid::from_bytes(uuid)), (*p, id));
+                    let entry = parent_of.entry((field, Uuid::from_bytes(uuid))).or_default();
+                    entry.0.push(*p);
+                    entry.1 = id;
                 }
             }
             if let Some(text) = search_text(&row.value) {
@@ -870,11 +981,16 @@ impl KvStore {
         }
         let names: HashMap<u32, &str> =
             fields.iter().map(|(name, i)| (*i, name.as_str())).collect();
+        // Every ancestor once, by every parent: a forest's node has one, a
+        // hierarchy's several (doc "Hierarchy references").
         for ((field, _), (first, id)) in &parent_of {
             let Some(id) = *id else { continue };
-            let mut up = Some(*first);
-            for _ in 0..crate::log::MAX_TREE_DEPTH {
-                let Some(ancestor) = up else { break };
+            let mut seen: BTreeSet<Uuid> = BTreeSet::new();
+            let mut todo: Vec<Uuid> = first.clone();
+            while let Some(ancestor) = todo.pop() {
+                if !seen.insert(ancestor) {
+                    continue;
+                }
                 let entry = Entry {
                     space: DESCENDANT,
                     tag: 0,
@@ -884,7 +1000,9 @@ impl KvStore {
                     count: 1,
                 };
                 sink(Side::Expected, entry)?;
-                up = parent_of.get(&(*field, ancestor)).map(|(parent, _)| *parent);
+                if let Some((parents, _)) = parent_of.get(&(*field, ancestor)) {
+                    todo.extend(parents.iter().copied());
+                }
             }
         }
         drop(parent_of);

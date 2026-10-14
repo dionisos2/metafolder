@@ -23,6 +23,7 @@ const VALUE_TYPES: &[&str] = &[
     "datetime",
     "ref",
     "tree_ref",
+    "hierarchy_ref",
     "refbase",
     "externalref",
 ];
@@ -248,7 +249,7 @@ fn check_default_kind(value_type: &str, v: &serde_json::Value) -> Result<(), Str
         "int" => v.is_i64() || v.is_u64(),
         "float" => v.is_number(),
         "bool" => v.is_boolean(),
-        "tree_ref" => v.get("name").is_some_and(serde_json::Value::is_string),
+        "tree_ref" | "hierarchy_ref" => v.get("name").is_some_and(serde_json::Value::is_string),
         "externalref" => v.is_object(),
         // `nothing` is an absence, not a value: omit `default` to template it.
         _ => false,
@@ -270,6 +271,7 @@ fn value_type_name(v: &Value) -> &'static str {
         Value::DateTime(_) => "datetime",
         Value::Ref(_) => "ref",
         Value::TreeRef { .. } => "tree_ref",
+        Value::HierarchyRef { .. } => "hierarchy_ref",
         Value::RefBase(_) => "refbase",
         Value::ExternalRef { .. } => "externalref",
     }

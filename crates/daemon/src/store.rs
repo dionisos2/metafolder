@@ -370,10 +370,7 @@ pub trait Rows {
         Ok(self
             .rows_named(uuid, field)?
             .into_iter()
-            .filter_map(|r| match r.value {
-                Value::TreeRef { parent, name } => Some((parent, name.display().into_owned())),
-                _ => None,
-            })
+            .filter_map(|r| r.value.position().map(|(p, name)| (p, name.display().into_owned())))
             .collect())
     }
     /// The metarecords holding a position in `field`'s forest (each once).
@@ -868,10 +865,24 @@ pub trait Begin {
 /// daemon refuses to write since September 2026 but an older one let through
 /// (doc "One position per forest") — one line each, for
 /// `mf repo check`. Fixed by setting the field to the one position to keep.
+/// A `hierarchy_ref` field is a hierarchy, where several are the point (doc
+/// "Hierarchy references").
 pub fn one_position_problems(store: &dyn Rows) -> Result<Vec<String>> {
     let mut count: std::collections::BTreeMap<(String, Uuid), usize> = Default::default();
+    let mut forests: HashMap<String, bool> = HashMap::new();
     for row in store.forest()? {
-        *count.entry((row.field_name, row.uuid)).or_default() += 1;
+        let forest = match forests.get(&row.field_name) {
+            Some(forest) => *forest,
+            None => {
+                let types = store.value_types(&row.field_name)?;
+                let forest = !types.iter().any(|t| t == "hierarchy_ref");
+                forests.insert(row.field_name.clone(), forest);
+                forest
+            }
+        };
+        if forest {
+            *count.entry((row.field_name, row.uuid)).or_default() += 1;
+        }
     }
     Ok(count
         .into_iter()

@@ -302,6 +302,15 @@ pub enum Value {
         parent: Option<Uuid>,
         name: TreeName,
     },
+    /// Position in a named hierarchy, where a node may hang under several
+    /// parents (doc "Hierarchy references"): one row per parent, every row
+    /// of a node bearing the same name. Same shape as [`Value::TreeRef`].
+    #[serde(rename = "hierarchy_ref")]
+    HierarchyRef {
+        #[serde(with = "hex_uuid_opt")]
+        parent: Option<Uuid>,
+        name: TreeName,
+    },
     /// Reference to a repository UUID.
     RefBase(#[serde(with = "hex_uuid")] DatabaseId),
     /// Cross-repo reference: (repo UUID, metarecord UUID).
@@ -326,6 +335,7 @@ pub enum FieldType {
     DateTime,
     Ref,
     TreeRef,
+    HierarchyRef,
     RefBase,
     ExternalRef,
 }
@@ -340,6 +350,7 @@ impl FieldType {
             FieldType::DateTime => "datetime",
             FieldType::Ref => "ref",
             FieldType::TreeRef => "tree_ref",
+            FieldType::HierarchyRef => "hierarchy_ref",
             FieldType::RefBase => "refbase",
             FieldType::ExternalRef => "externalref",
         }
@@ -354,6 +365,7 @@ impl FieldType {
             "datetime" => Some(FieldType::DateTime),
             "ref" => Some(FieldType::Ref),
             "tree_ref" => Some(FieldType::TreeRef),
+            "hierarchy_ref" => Some(FieldType::HierarchyRef),
             "refbase" => Some(FieldType::RefBase),
             "externalref" => Some(FieldType::ExternalRef),
             _ => None,
@@ -375,8 +387,20 @@ impl Value {
             Value::DateTime(_) => "datetime",
             Value::Ref(_) => "ref",
             Value::TreeRef { .. } => "tree_ref",
+            Value::HierarchyRef { .. } => "hierarchy_ref",
             Value::RefBase(_) => "refbase",
             Value::ExternalRef { .. } => "externalref",
+        }
+    }
+
+    /// The position a `tree_ref` or a `hierarchy_ref` holds — its parent
+    /// (`None` for a root) and its name; `None` for every other value.
+    pub fn position(&self) -> Option<(Option<Uuid>, &TreeName)> {
+        match self {
+            Value::TreeRef { parent, name } | Value::HierarchyRef { parent, name } => {
+                Some((*parent, name))
+            }
+            _ => None,
         }
     }
 
@@ -404,7 +428,7 @@ impl Value {
             T::Float => Value::Float(0.0),
             T::Bool => Value::Bool(false),
             T::DateTime => Value::DateTime(0),
-            T::Ref | T::TreeRef | T::RefBase | T::ExternalRef => Value::Nothing,
+            T::Ref | T::TreeRef | T::HierarchyRef | T::RefBase | T::ExternalRef => Value::Nothing,
         };
         let ok = |v: Value| (v, false);
         let fallback = || (sentinel(), true);
@@ -467,6 +491,21 @@ impl Value {
                 ok(Value::TreeRef { parent: *parent, name: name.clone() })
             }
             (Value::String(s), T::TreeRef) => parse_tree_ref(s).map_or_else(fallback, ok),
+            // The two positional types convert into each other as they are:
+            // every tree is a hierarchy, and a hierarchy's rows are positions.
+            (
+                Value::TreeRef { parent, name } | Value::HierarchyRef { parent, name },
+                T::HierarchyRef,
+            ) => ok(Value::HierarchyRef { parent: *parent, name: name.clone() }),
+            (Value::HierarchyRef { parent, name }, T::TreeRef) => {
+                ok(Value::TreeRef { parent: *parent, name: name.clone() })
+            }
+            (Value::String(s), T::HierarchyRef) => parse_tree_ref(s)
+                .map(|v| match v {
+                    Value::TreeRef { parent, name } => Value::HierarchyRef { parent, name },
+                    other => other,
+                })
+                .map_or_else(fallback, ok),
             (Value::ExternalRef { repo, metarecord }, T::ExternalRef) => {
                 ok(Value::ExternalRef { repo: *repo, metarecord: *metarecord })
             }
@@ -489,10 +528,12 @@ impl Value {
             Value::DateTime(ms) => crate::date::iso8601_from_ms(*ms),
             Value::Ref(u) => u.as_simple().to_string(),
             Value::RefBase(u) => u.as_simple().to_string(),
-            Value::TreeRef { parent, name } => match parent {
-                Some(p) => format!("{}/{name}", p.as_simple()),
-                None => format!("/{name}"),
-            },
+            Value::TreeRef { parent, name } | Value::HierarchyRef { parent, name } => {
+                match parent {
+                    Some(p) => format!("{}/{name}", p.as_simple()),
+                    None => format!("/{name}"),
+                }
+            }
             Value::ExternalRef { repo, metarecord } => {
                 format!("{}:{}", repo.as_simple(), metarecord.as_simple())
             }
@@ -938,6 +979,49 @@ mod tests {
         let v = Value::TreeRef { parent: None, name: "".into() };
         let json = serde_json::to_string(&v).unwrap();
         assert_eq!(json, r#"{"type":"tree_ref","value":{"parent":null,"name":""}}"#);
+    }
+
+    #[test]
+    fn test_value_json_format_hierarchy_ref() {
+        let parent = Uuid::parse_str("8f3a2b1c-4d5e-6f70-8192-a3b4c5d6e7f8").unwrap();
+        let v = Value::HierarchyRef { parent: Some(parent), name: "maraton".into() };
+        let json = serde_json::to_string(&v).unwrap();
+        assert_eq!(
+            json,
+            r#"{"type":"hierarchy_ref","value":{"parent":"8f3a2b1c4d5e6f708192a3b4c5d6e7f8","name":"maraton"}}"#
+        );
+        assert_eq!(serde_json::from_str::<Value>(&json).unwrap(), v);
+        assert_eq!(v.type_str(), "hierarchy_ref");
+        assert_eq!(FieldType::parse("hierarchy_ref"), Some(FieldType::HierarchyRef));
+        assert_eq!(FieldType::HierarchyRef.as_str(), "hierarchy_ref");
+    }
+
+    #[test]
+    fn test_position_is_shared_by_both_positional_types() {
+        let p = Uuid::new_v4();
+        let tree = Value::TreeRef { parent: Some(p), name: "a".into() };
+        let hier = Value::HierarchyRef { parent: Some(p), name: "a".into() };
+        assert_eq!(tree.position(), Some((Some(p), &TreeName::from("a".to_string()))));
+        assert_eq!(hier.position(), tree.position());
+        assert_eq!(Value::Ref(p).position(), None);
+    }
+
+    #[test]
+    fn test_convert_between_tree_and_hierarchy_is_lossless() {
+        use FieldType as T;
+        let p = Uuid::new_v4();
+        let tree = Value::TreeRef { parent: Some(p), name: "jazz".into() };
+        let hier = Value::HierarchyRef { parent: Some(p), name: "jazz".into() };
+        assert_eq!(tree.convert_to(T::HierarchyRef), (hier.clone(), false));
+        assert_eq!(hier.convert_to(T::TreeRef), (tree.clone(), false));
+        // Through the String hub too, with the same grammar as a tree_ref.
+        let (s, _) = hier.convert_to(T::String);
+        assert_eq!(s, Value::String(format!("{}/jazz", p.as_simple())));
+        assert_eq!(s.convert_to(T::HierarchyRef), (hier, false));
+        assert_eq!(
+            Value::String("/root".into()).convert_to(T::HierarchyRef),
+            (Value::HierarchyRef { parent: None, name: "root".into() }, false)
+        );
     }
 
     #[test]

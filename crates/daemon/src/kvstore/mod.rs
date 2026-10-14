@@ -688,9 +688,9 @@ impl Read<'_> {
         let cell = key(&[&cell_prefix(&v[..16], field), &v[16..24]]);
         self.count(1)?;
         let row = self.t.cells.get(self.r, &cell)?.context("a forest position without its row")?;
-        match dec_row(row)?.value {
-            Value::TreeRef { name, .. } => Ok(name.as_bytes().to_vec()),
-            _ => bail!("a forest position whose row is no tree_ref"),
+        match dec_row(row)?.value.position() {
+            Some((_, name)) => Ok(name.as_bytes().to_vec()),
+            None => bail!("a forest position whose row is no position"),
         }
     }
 
@@ -1431,7 +1431,7 @@ impl KvTxn<'_> {
     }
 
     fn forest_key(name: &str, value: &Value) -> Option<Vec<u8>> {
-        let Value::TreeRef { parent, name: node } = value else { return None };
+        let (parent, node) = value.position()?;
         let p = parent.map_or(ROOT, |p| *p.as_bytes());
         Some(key(&[&name_key(name), &p, &node_key(node.as_bytes())]))
     }

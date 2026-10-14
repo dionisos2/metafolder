@@ -75,12 +75,13 @@ impl Data {
     }
 
     /// What a field holds, as the type check before evaluation asks it:
-    /// `tree_ref` when any row is one, else a type it carries.
+    /// a position type (`tree_ref`, `hierarchy_ref`) when any row is one, else
+    /// a type it carries.
     fn stored_type(&self, field: &str) -> Option<String> {
         let mut other = None;
         for (_, row) in self.rows(field) {
             match &row.value {
-                Value::TreeRef { .. } => return Some("tree_ref".into()),
+                v if v.position().is_some() => return Some(v.type_str().into()),
                 Value::Nothing => {}
                 v => other = Some(v.type_str().to_string()),
             }
@@ -93,7 +94,8 @@ impl Data {
     }
 }
 
-/// One field's forest, rebuilt from its `tree_ref` rows.
+/// One field's forest, rebuilt from its position rows (`tree_ref`, or a
+/// `hierarchy_ref`, where a node may have several parents).
 struct Forest<'a> {
     /// Every position, in row-id order: `(node, parent, name)`.
     positions: Vec<(Uuid, Option<Uuid>, &'a TreeName)>,
@@ -111,7 +113,8 @@ impl<'a> Forest<'a> {
         let mut of_node: HashMap<_, Vec<_>> = HashMap::new();
         let mut below: HashMap<_, Vec<_>> = HashMap::new();
         for (uuid, row) in rows {
-            if let Value::TreeRef { parent, name } = &row.value {
+            if let Some((parent, name)) = row.value.position() {
+                let parent = &parent;
                 positions.push((*uuid, *parent, name));
                 first.entry(*uuid).or_insert((*parent, name));
                 of_node.entry(*uuid).or_default().push((*parent, name));
@@ -159,38 +162,30 @@ impl<'a> Forest<'a> {
         cur
     }
 
-    /// The path of a node through its first positions, `None` when the chain
-    /// meets a parent outside the forest.
-    fn path_of(&self, node: Uuid) -> Option<String> {
-        let mut comps = Vec::new();
-        let mut cur = node;
-        for _ in 0..MAX_TREE_DEPTH {
-            let (parent, name) = self.first.get(&cur)?;
-            comps.push(name.display().into_owned());
-            match parent {
-                Some(p) => cur = *p,
-                None => {
-                    comps.reverse();
-                    return Some(comps.join("/"));
-                }
-            }
-        }
-        None
+    /// Every path of a node: one per way up to a root, through every
+    /// position of every node on the way (a hierarchy's node has several). A
+    /// filesystem root is named `""`, so its descendants' paths start with
+    /// `/`; a named root's do not.
+    fn paths_of(&self, node: Uuid) -> Vec<String> {
+        self.paths_within(node, 0)
     }
 
-    /// Every path of a node, one per position whose parent chain reaches a
-    /// root. A filesystem root is named `""`, so its descendants' paths start
-    /// with `/`; a named root's do not.
-    fn paths_of(&self, node: Uuid) -> Vec<String> {
-        self.of_node
-            .get(&node)
-            .into_iter()
-            .flatten()
-            .filter_map(|(parent, name)| match parent {
-                None => Some(name.display().into_owned()),
-                Some(p) => self.path_of(*p).map(|pp| format!("{pp}/{}", name.display())),
-            })
-            .collect()
+    fn paths_within(&self, node: Uuid, depth: usize) -> Vec<String> {
+        if depth >= MAX_TREE_DEPTH {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for (parent, name) in self.of_node.get(&node).into_iter().flatten() {
+            match parent {
+                None => out.push(name.display().into_owned()),
+                Some(p) => out.extend(
+                    self.paths_within(*p, depth + 1)
+                        .into_iter()
+                        .map(|pp| format!("{pp}/{}", name.display())),
+                ),
+            }
+        }
+        out
     }
 
     /// The nodes with at least one path satisfying `pred`.
@@ -482,18 +477,16 @@ fn eval(data: &Data, q: &Query) -> Result<Set, ApiError> {
         Query::Follows { field, target } => match target {
             FollowTarget::Condition(cond) => {
                 let targets = eval(data, cond)?;
-                data.holders(field, |_, v| match v {
-                    Value::Ref(t) => targets.contains(t),
-                    Value::TreeRef { parent: Some(p), .. } => targets.contains(p),
+                data.holders(field, |_, v| match (v, v.position()) {
+                    (Value::Ref(t), _) => targets.contains(t),
+                    (_, Some((Some(p), _))) => targets.contains(&p),
                     _ => false,
                 })
             }
             FollowTarget::Path(path) => match data.forest(field).resolve(path) {
                 None => Set::new(),
-                Some(node) => data.holders(
-                    field,
-                    |_, v| matches!(v, Value::TreeRef { parent: Some(p), .. } if *p == node),
-                ),
+                Some(node) => data
+                    .holders(field, |_, v| matches!(v.position(), Some((Some(p), _)) if p == node)),
             },
         },
         Query::FollowsTransitive { field, target, inclusive } => {
@@ -531,9 +524,9 @@ fn eval(data: &Data, q: &Query) -> Result<Set, ApiError> {
 /// is, or is not, the explicit absence `Nothing`.
 fn presence(data: &Data, field: &str, aspect: Aspect, present: bool) -> Set {
     if aspect == Aspect::Parent {
-        return data.holders(field, |_, v| match v {
-            Value::TreeRef { parent, .. } => parent.is_some() == present,
-            _ => false,
+        return data.holders(field, |_, v| match v.position() {
+            Some((parent, _)) => parent.is_some() == present,
+            None => false,
         });
     }
     data.holders(field, |_, v| matches!(v, Value::Nothing) != present)
@@ -570,8 +563,7 @@ fn path_operand(value: &Value) -> Result<&str, ApiError> {
 fn text_of(v: &Value) -> Option<std::borrow::Cow<'_, str>> {
     match v {
         Value::String(s) => Some(std::borrow::Cow::Borrowed(s)),
-        Value::TreeRef { name, .. } => Some(name.display()),
-        _ => None,
+        _ => v.position().map(|(_, name)| name.display()),
     }
 }
 
@@ -614,8 +606,8 @@ fn row_predicate<'a>(
             // `:parent` names the parent by its path: the positions under it.
             if aspect == Aspect::Parent {
                 let node = data.forest(field).resolve(text);
-                return Ok(Box::new(move |_, v| match (v, node) {
-                    (Value::TreeRef { parent: Some(p), .. }, Some(n)) => *p == n,
+                return Ok(Box::new(move |_, v| match (v.position(), node) {
+                    (Some((Some(p), _)), Some(n)) => p == n,
                     _ => false,
                 }));
             }
@@ -625,14 +617,14 @@ fn row_predicate<'a>(
                 let node = data.forest(field).resolve(text);
                 return Ok(Box::new(move |owner, v| match v {
                     Value::String(s) => s == text,
-                    Value::TreeRef { .. } => Some(owner) == node,
+                    v if v.position().is_some() => Some(owner) == node,
                     _ => false,
                 }));
             }
             // The row's own text: a string, or a position's name.
-            Box::new(move |_, v| match v {
-                Value::String(s) => op.holds(Some(s.as_str().cmp(text))),
-                Value::TreeRef { name, .. } => op.holds(Some(name.display().as_ref().cmp(text))),
+            Box::new(move |_, v| match (v, v.position()) {
+                (Value::String(s), _) => op.holds(Some(s.as_str().cmp(text))),
+                (_, Some((_, name))) => op.holds(Some(name.display().as_ref().cmp(text))),
                 _ => false,
             })
         }
@@ -659,15 +651,17 @@ fn row_predicate<'a>(
             }
             Box::new(move |_, v| matches!(v, Value::RefBase(x) if x == u))
         }
-        Value::TreeRef { parent, name } => {
+        Value::TreeRef { parent, name } | Value::HierarchyRef { parent, name } => {
             if op.is_ordered() {
-                return equality_only("tree_ref");
+                return equality_only(value.type_str());
             }
-            Box::new(move |_, v| match v {
-                Value::TreeRef { parent: p, name: n } => {
-                    p == parent && n.display() == name.display()
+            Box::new(move |_, v| match v.position() {
+                Some((p, n)) => {
+                    v.type_str() == value.type_str()
+                        && p == *parent
+                        && n.display() == name.display()
                 }
-                _ => false,
+                None => false,
             })
         }
         Value::ExternalRef { repo, metarecord } => {
@@ -686,9 +680,11 @@ fn row_predicate<'a>(
 fn same_value(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Float(x), Value::Float(y)) => x == y,
-        (Value::TreeRef { parent: p, name: n }, Value::TreeRef { parent: q, name: m }) => {
-            p == q && n.as_bytes() == m.as_bytes()
-        }
+        (Value::TreeRef { parent: p, name: n }, Value::TreeRef { parent: q, name: m })
+        | (
+            Value::HierarchyRef { parent: p, name: n },
+            Value::HierarchyRef { parent: q, name: m },
+        ) => p == q && n.as_bytes() == m.as_bytes(),
         _ => a == b,
     }
 }
@@ -752,7 +748,9 @@ fn sort_value(forest: &Forest<'_>, v: &Value) -> Option<SortValue> {
         Value::ExternalRef { metarecord, .. } => {
             (4, None, None, Some(metarecord.as_bytes().to_vec()))
         }
-        Value::TreeRef { parent, name } => (5, None, Some(forest.sort_key(*parent, name)), None),
+        Value::TreeRef { parent, name } | Value::HierarchyRef { parent, name } => {
+            (5, None, Some(forest.sort_key(*parent, name)), None)
+        }
     })
 }
 

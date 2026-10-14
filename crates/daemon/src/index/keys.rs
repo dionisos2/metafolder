@@ -94,7 +94,9 @@ pub(crate) fn sort_rep(value: &Value) -> Option<SortRep> {
         Value::DateTime(ms) => Some(SortRep::DateTime(*ms)),
         Value::Ref(u) | Value::RefBase(u) => Some(SortRep::Ref(*u.as_bytes())),
         Value::ExternalRef { metarecord, .. } => Some(SortRep::Ref(*metarecord.as_bytes())),
-        Value::TreeRef { name, .. } => Some(SortRep::Tree(name.display().as_ref().into())),
+        Value::TreeRef { name, .. } | Value::HierarchyRef { name, .. } => {
+            Some(SortRep::Tree(name.display().as_ref().into()))
+        }
         Value::Nothing => None,
     }
 }

@@ -130,8 +130,8 @@ pub(crate) fn encode_value(value: &Value) -> EncodedValue {
             e = EncodedValue::new("ref");
             e.uuid = Some(uuid_to_bytes(*id));
         }
-        Value::TreeRef { parent, name } => {
-            e = EncodedValue::new("tree_ref");
+        Value::TreeRef { parent, name } | Value::HierarchyRef { parent, name } => {
+            e = EncodedValue::new(value.type_str());
             e.uuid = Some(uuid_to_bytes(parent.unwrap_or(ZERO_UUID)));
             // Both: the text is what queries and displays read, the bytes are
             // what identifies the node (doc "Tree names").
@@ -178,7 +178,7 @@ pub(crate) fn decode_value(raw: RawValue) -> Result<Value> {
         "bool" => Ok(Value::Bool(int.context("value_int missing")? != 0)),
         "datetime" => Ok(Value::DateTime(int.context("value_int missing")?)),
         "ref" => Ok(Value::Ref(bytes_to_uuid(uuid.context("value_uuid missing")?)?)),
-        "tree_ref" => {
+        "tree_ref" | "hierarchy_ref" => {
             let parent = bytes_to_uuid(uuid.context("value_uuid missing")?)?;
             // The bytes are authoritative; the text is only a fallback for a
             // row written before the column existed (the migration back-fills
@@ -187,9 +187,11 @@ pub(crate) fn decode_value(raw: RawValue) -> Result<Value> {
                 Some(bytes) => TreeName::from_bytes(bytes),
                 None => TreeName::from(name.context("value_name missing")?),
             };
-            Ok(Value::TreeRef {
-                parent: if parent == ZERO_UUID { None } else { Some(parent) },
-                name,
+            let parent = if parent == ZERO_UUID { None } else { Some(parent) };
+            Ok(if value_type == "tree_ref" {
+                Value::TreeRef { parent, name }
+            } else {
+                Value::HierarchyRef { parent, name }
             })
         }
         "refbase" => Ok(Value::RefBase(bytes_to_uuid(uuid.context("value_uuid missing")?)?)),

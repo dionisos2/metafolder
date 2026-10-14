@@ -810,12 +810,10 @@ fn rep_value(rep: &SortRep) -> Option<Value> {
     })
 }
 
-/// A `tree_ref` row's name, as the text partitions hold it.
+/// A position's name (`tree_ref`, `hierarchy_ref`), as the text partitions
+/// hold it.
 fn name_of(v: &Value) -> Option<String> {
-    match v {
-        Value::TreeRef { name, .. } => Some(name.display().into_owned()),
-        _ => None,
-    }
+    v.position().map(|(_, name)| name.display().into_owned())
 }
 
 /// Removes consecutive duplicates from a sorted iterator.
@@ -966,6 +964,7 @@ impl Source for KvSource<'_> {
                         Value::Ref(_)
                         | Value::RefBase(_)
                         | Value::TreeRef { .. }
+                        | Value::HierarchyRef { .. }
                         | Value::ExternalRef { .. },
                     ) => return Err(unsupported("ordered comparison on a reference")),
                     (Kind::Categorical, Value::String(_)) => true,
@@ -1075,7 +1074,7 @@ impl Source for KvSource<'_> {
                 let mut positions = Vec::new();
                 for entry in self.t.cells.prefix_iter(&self.r, &super::cell_prefix(uuid, field))? {
                     self.read_keys(1)?;
-                    if let Value::TreeRef { parent, name } = dec_row(entry?.1)?.value {
+                    if let Some((parent, name)) = dec_row(entry?.1)?.value.position() {
                         positions.push((parent, name.display().into_owned()));
                     }
                 }

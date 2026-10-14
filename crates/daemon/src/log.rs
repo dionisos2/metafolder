@@ -352,7 +352,7 @@ pub struct MovedCell {
 fn moved_cells_of(before: &[FieldRow], after: &[FieldRow], entity: Uuid) -> Vec<MovedCell> {
     let mut out: Vec<MovedCell> = Vec::new();
     for row in before.iter().chain(after) {
-        if matches!(row.value, Value::TreeRef { .. }) && !out.iter().any(|c| c.field == row.name) {
+        if row.value.position().is_some() && !out.iter().any(|c| c.field == row.name) {
             out.push(MovedCell { field: row.name.clone(), uuid: entity });
         }
     }
@@ -662,7 +662,7 @@ impl<'c> Writer<'c> {
     ) {
         for row in before {
             if op_type.is_manual()
-                && matches!(row.value, Value::TreeRef { .. })
+                && row.value.position().is_some()
                 && !self
                     .tree_lost_seen
                     .get(row.name.as_str())
@@ -764,7 +764,7 @@ impl<'c> Writer<'c> {
                 continue;
             }
             let placed = self.tx.rows_named(*uuid, field_name)?;
-            if placed.iter().any(|r| matches!(r.value, Value::TreeRef { .. })) {
+            if placed.iter().any(|r| r.value.position().is_some()) {
                 continue;
             }
             let mut named: Vec<String> =
@@ -1117,7 +1117,7 @@ impl<'c> Writer<'c> {
                 // A converted TreeRef must satisfy the forest invariants like any
                 // other write; a violating value is demoted to the Nothing
                 // sentinel (and reported) so the retype as a whole still succeeds.
-                if matches!(new_value, Value::TreeRef { .. }) {
+                if new_value.position().is_some() {
                     let valid = self
                         .validate_one_position(uuid, &row.name, &new_value, Some(row.id))
                         .and_then(|()| self.validate_tree_ref(uuid, &row.name, &new_value));
@@ -1310,10 +1310,7 @@ impl<'c> Writer<'c> {
             .tx
             .rows_named(uuid, field)?
             .into_iter()
-            .filter_map(|r| match r.value {
-                Value::TreeRef { parent, .. } => Some(parent),
-                _ => None,
-            })
+            .filter_map(|r| r.value.position().map(|(parent, _)| parent))
             .collect())
     }
 
@@ -1368,7 +1365,8 @@ impl<'c> Writer<'c> {
     /// a `tree_ref` value joins `uuid`'s rows of
     /// `name` only if no row staying beside it — every one but `replaced` — is
     /// a position already, other than this very value (an append of it is a
-    /// no-op).
+    /// no-op). A `hierarchy_ref` may join other positions, all bearing its
+    /// name (doc "Hierarchy references").
     fn validate_one_position(
         &self,
         uuid: Uuid,
@@ -1376,25 +1374,26 @@ impl<'c> Writer<'c> {
         value: &Value,
         replaced: Option<i64>,
     ) -> Result<()> {
-        if !matches!(value, Value::TreeRef { .. }) {
+        if value.position().is_none() {
             return Ok(());
         }
-        let taken = self.tx.rows_named(uuid, name)?.into_iter().any(|r| {
-            Some(r.id) != replaced && matches!(r.value, Value::TreeRef { .. }) && r.value != *value
-        });
-        if taken {
-            return Err(second_position(uuid, name));
-        }
-        Ok(())
+        // Of the same type only: in the middle of a retype, the rows not
+        // converted yet are no positions of the kind being written.
+        let staying = self.tx.rows_named(uuid, name)?;
+        let staying = staying
+            .iter()
+            .filter(|r| Some(r.id) != replaced && r.value.type_str() == value.type_str())
+            .map(|r| (name, &r.value));
+        validate_one_position_each(uuid, staying.chain([(name, value)]))
     }
 
     /// For TreeRef values: the parent must be null (root) or an existing metarecord
     /// carrying a TreeRef of the same field name; the write must not create a
     /// cycle nor exceed [`MAX_TREE_DEPTH`] (doc "TreeRef forest").
     fn validate_tree_ref(&self, metarecord: Uuid, field_name: &str, value: &Value) -> Result<()> {
-        let Value::TreeRef { .. } = value else {
+        if value.position().is_none() {
             return Ok(());
-        };
+        }
         if let Some(deferred) = &self.deferred_trees {
             deferred.borrow_mut().push((metarecord, field_name.to_string(), value.clone()));
             return Ok(());
@@ -1404,10 +1403,10 @@ impl<'c> Writer<'c> {
 
     /// [`Self::validate_tree_ref`]'s check, against the state as it stands.
     fn check_tree_ref(&self, metarecord: Uuid, field_name: &str, value: &Value) -> Result<()> {
-        let Value::TreeRef { parent, .. } = value else {
+        let Some((parent, _)) = value.position() else {
             return Ok(());
         };
-        let Some(parent) = parent else {
+        let Some(parent) = &parent else {
             return Ok(()); // Root node: nothing to check.
         };
         if *parent == metarecord {
@@ -1470,22 +1469,37 @@ impl<'c> Writer<'c> {
 
 /// [`Writer::validate_one_position`] over the whole row set a write leaves on
 /// `uuid` — a creation, an overwrite, a multi-valued set: at most one distinct
-/// `tree_ref` value per name.
+/// `tree_ref` value per name, and one name across a name's `hierarchy_ref`
+/// values.
 fn validate_one_position_each<'v>(
     uuid: Uuid,
     rows: impl Iterator<Item = (&'v str, &'v Value)>,
 ) -> Result<()> {
     let mut seen: HashMap<&str, &Value> = HashMap::new();
     for (name, value) in rows {
-        if !matches!(value, Value::TreeRef { .. }) {
-            continue;
-        }
-        match seen.insert(name, value) {
-            Some(other) if other != value => return Err(second_position(uuid, name)),
+        match value {
+            Value::TreeRef { .. } => match seen.insert(name, value) {
+                Some(other) if other != value => return Err(second_position(uuid, name)),
+                _ => {}
+            },
+            Value::HierarchyRef { name: node, .. } => match seen.insert(name, value) {
+                Some(other) if other.position().is_some_and(|(_, n)| n != node) => {
+                    return Err(second_name(uuid, name));
+                }
+                _ => {}
+            },
             _ => {}
         }
     }
     Ok(())
+}
+
+fn second_name(uuid: Uuid, name: &str) -> anyhow::Error {
+    DomainError::BadRequest(format!(
+        "metarecord {uuid} would bear two names in the '{name}' hierarchy: every \
+         position of a node has one name (set all its positions to rename it)"
+    ))
+    .into()
 }
 
 fn second_position(uuid: Uuid, name: &str) -> anyhow::Error {
