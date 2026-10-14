@@ -145,6 +145,7 @@ function stub(vars: Record<string, unknown>, existing: Set<string>) {
     },
     fs,
     trash,
+    recent: { touch: vi.fn(async () => {}), list: vi.fn(async () => []) },
     statusBar,
     contextMenu: Object.assign(noop, { addDefaultItems: noop }),
   };

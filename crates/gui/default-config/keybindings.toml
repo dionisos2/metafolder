@@ -210,6 +210,25 @@
 "w g f" = { command = "metarecord-list:folder other" }
 "b g f" = { command = "metarecord-list:folder new" }
 
+# Jump to a frecent folder ("g d" = go → directory), zoxide-style (doc
+# "Frecent folders"): the `folder:open` picker completes over the folders of
+# the recently-viewed metarecords, the most frequently and recently used
+# first. "g d" opens the pick in the file manager, "g c" lists its children and
+# "g t" its whole subtree in the metarecord list. Here by default, like
+# `cd`.
+"g d" = { command = "folder:open files here" }
+"i g d" = { command = "folder:open files here" }
+"w g d" = { command = "folder:open files other" }
+"b g d" = { command = "folder:open files new" }
+"g c" = { command = "folder:open children here" }
+"i g c" = { command = "folder:open children here" }
+"w g c" = { command = "folder:open children other" }
+"b g c" = { command = "folder:open children new" }
+"g t" = { command = "folder:open subtree here" }
+"i g t" = { command = "folder:open subtree here" }
+"w g t" = { command = "folder:open subtree other" }
+"b g t" = { command = "folder:open subtree new" }
+
 # Number the selection's folder ("m o" = metarecord → order): `mf:order` on the
 # selected folder, or on the selected file's folder — no prompt, the status bar
 # names the folder it numbered. Global, like the "g" family: the selection is

@@ -740,12 +740,15 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         invoke('history_append', { repo, zone, entry }) as Promise<void>,
     },
 
-    /** Per-repo "recently viewed metarecords" — a GUI-side LRU list under
+    /** Per-repo "recently viewed metarecords" — a GUI-side list under
      *  `.metafolder/gui/recent` (crate::recent). `touch` records a view (the
-     *  timestamp is the GUI's clock); `list` returns entries newest first. */
+     *  timestamp is the GUI's clock); `list` returns entries newest first,
+     *  each with its rank (one per view, aged — doc "Frecent folders"). */
     recent: {
       list: (repo: string, limit?: number) =>
-        invoke('recent_read', { repo, limit }) as Promise<{ uuid: string; viewed_at: string }[]>,
+        invoke('recent_read', { repo, limit }) as Promise<
+          { uuid: string; viewed_at: string; rank: number }[]
+        >,
       touch: (repo: string, uuid: string) =>
         invoke('recent_touch', { repo, uuid }) as Promise<void>,
     },

@@ -1,9 +1,16 @@
 //! Per-repo "recently viewed metarecords" list (a GUI-side concern, like the
 //! input history — the daemon plays no part). A single plain-text file
 //! `.metafolder/gui/recent`, one entry per line, **newest first**, each line
-//! `<uuid-32hex>\t<iso8601>`. Unlike the append-only input history this is an
-//! LRU set: touching an already-present uuid moves it to the front and refreshes
-//! its timestamp (no duplicates), so re-viewing never evicts distinct records.
+//! `<uuid-32hex>\t<iso8601>\t<rank>`. Unlike the append-only input history
+//! this is a set: touching an already-present uuid moves it to the front,
+//! refreshes its timestamp and adds one to its rank (no duplicates).
+//!
+//! The rank is zoxide's (doc "Frecent folders"): one per view, every rank
+//! scaled by [`AGING`] whenever their total exceeds [`MAX_RANK_SUM`], and an
+//! entry dropped once its rank falls under one — unless it is among the newest
+//! [`MAX_ENTRIES`], which are always kept. What a rank is worth (the recency
+//! weighting) is the reader's business, in the shipped `commands.js`. A line
+//! of the older two-column form reads as rank 1.
 //!
 //! The file is ordinary trackable content (covered in practice by the default
 //! `\.metafolder(/.*)?$` ignore pattern). Repo `.metafolder/` resolution is
@@ -12,17 +19,24 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-/// Entries kept; older ones are dropped on touch.
+/// The newest entries, always kept whatever their rank.
 pub const MAX_ENTRIES: usize = 200;
+
+/// The total rank past which every rank is scaled by [`AGING`].
+pub const MAX_RANK_SUM: f64 = 1000.0;
+
+/// The factor applied to every rank when their total exceeds [`MAX_RANK_SUM`].
+pub const AGING: f64 = 0.9;
 
 const RECENT_FILE: &str = "gui/recent";
 
-/// One viewed metarecord: its uuid (32-char lowercase hex) and the ISO-8601
-/// timestamp of the most recent view.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One viewed metarecord: its uuid (32-char lowercase hex), the ISO-8601
+/// timestamp of the most recent view, and its rank (one per view, aged).
+#[derive(Debug, Clone, PartialEq)]
 pub struct Entry {
     pub uuid: String,
     pub viewed_at: String,
+    pub rank: f64,
 }
 
 /// Serializes read-modify-write cycles on the recent file. Process-local;
@@ -59,8 +73,9 @@ pub fn read(metafolder_dir: &Path, limit: Option<usize>) -> Result<Vec<Entry>, S
 }
 
 /// Records a view of `uuid` at `viewed_at` (an ISO-8601 timestamp): removes any
-/// existing entry for the same uuid, inserts it at the front, caps to the newest
-/// [`MAX_ENTRIES`] and rewrites atomically. `viewed_at` must be a non-empty
+/// existing entry for the same uuid, inserts it at the front with its rank plus
+/// one, ages the ranks when their total exceeds [`MAX_RANK_SUM`] and rewrites
+/// atomically. `viewed_at` must be a non-empty
 /// single line without a tab.
 pub fn touch(metafolder_dir: &Path, uuid: &str, viewed_at: &str) -> Result<(), String> {
     let uuid = normalize_uuid(uuid)?;
@@ -69,15 +84,21 @@ pub fn touch(metafolder_dir: &Path, uuid: &str, viewed_at: &str) -> Result<(), S
     }
     let _guard = LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
     let mut entries = read_entries(metafolder_dir)?;
-    entries.retain(|e| e.uuid != uuid);
-    entries.insert(0, Entry { uuid, viewed_at: viewed_at.to_string() });
-    entries.truncate(MAX_ENTRIES);
+    let previous = entries.iter().position(|e| e.uuid == uuid).map(|i| entries.remove(i).rank);
+    let rank = previous.unwrap_or(0.0) + 1.0;
+    entries.insert(0, Entry { uuid, viewed_at: viewed_at.to_string(), rank });
+    age(&mut entries);
 
     let file = recent_file(metafolder_dir);
     let dir = file.parent().expect("recent file has the gui dir as parent");
     std::fs::create_dir_all(dir).map_err(|e| format!("cannot create gui directory: {e}"))?;
-    let mut content: String =
-        entries.iter().map(|e| format!("{}\t{}\n", e.uuid, e.viewed_at)).collect();
+    let mut content: String = entries
+        .iter()
+        .map(|e| {
+            // Three decimals: aging would otherwise write float noise.
+            format!("{}\t{}\t{}\n", e.uuid, e.viewed_at, (e.rank * 1000.0).round() / 1000.0)
+        })
+        .collect();
     content.shrink_to_fit();
     let tmp = file.with_extension("tmp");
     std::fs::write(&tmp, content).map_err(|e| format!("cannot write recent file: {e}"))?;
@@ -85,8 +106,26 @@ pub fn touch(metafolder_dir: &Path, uuid: &str, viewed_at: &str) -> Result<(), S
     Ok(())
 }
 
+/// Zoxide's aging: once the ranks add up to more than [`MAX_RANK_SUM`], every
+/// rank is scaled by [`AGING`] and the entries left under one go — except the
+/// newest [`MAX_ENTRIES`], so a burst of new views never empties the list.
+fn age(entries: &mut Vec<Entry>) {
+    if entries.iter().map(|e| e.rank).sum::<f64>() <= MAX_RANK_SUM {
+        return;
+    }
+    for entry in entries.iter_mut() {
+        entry.rank *= AGING;
+    }
+    let mut index = 0;
+    entries.retain(|e| {
+        index += 1;
+        index <= MAX_ENTRIES || e.rank >= 1.0
+    });
+}
+
 /// Raw parse of the recent file (no locking): newest-first lines
-/// `<uuid>\t<viewed_at>`. Malformed lines (no tab, bad uuid) are skipped so a
+/// `<uuid>\t<viewed_at>[\t<rank>]`, a missing rank read as 1. Malformed lines
+/// (no tab, bad uuid, a rank that is not a positive number) are skipped so a
 /// hand-edited file stays well-formed.
 fn read_entries(metafolder_dir: &Path) -> Result<Vec<Entry>, String> {
     let file = recent_file(metafolder_dir);
@@ -98,9 +137,14 @@ fn read_entries(metafolder_dir: &Path) -> Result<Vec<Entry>, String> {
     Ok(String::from_utf8_lossy(&bytes)
         .lines()
         .filter_map(|line| {
-            let (uuid, viewed_at) = line.split_once('\t')?;
+            let (uuid, rest) = line.split_once('\t')?;
             let uuid = normalize_uuid(uuid).ok()?;
-            (!viewed_at.is_empty()).then(|| Entry { uuid, viewed_at: viewed_at.to_string() })
+            let (viewed_at, rank) = match rest.split_once('\t') {
+                Some((viewed_at, rank)) => (viewed_at, rank.parse::<f64>().ok()?),
+                None => (rest, 1.0),
+            };
+            let valid = !viewed_at.is_empty() && rank.is_finite() && rank > 0.0;
+            valid.then(|| Entry { uuid, viewed_at: viewed_at.to_string(), rank })
         })
         .collect())
 }
@@ -153,10 +197,13 @@ mod tests {
         touch(&dir, &a, "2026-08-15T10:00:00Z").unwrap();
         assert_eq!(
             read(&dir, None).unwrap(),
-            vec![Entry { uuid: a.clone(), viewed_at: "2026-08-15T10:00:00Z".into() }]
+            vec![Entry { uuid: a.clone(), viewed_at: "2026-08-15T10:00:00Z".into(), rank: 1.0 }]
         );
         let file = dir.join("gui/recent");
-        assert_eq!(std::fs::read_to_string(&file).unwrap(), format!("{a}\t2026-08-15T10:00:00Z\n"));
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            format!("{a}\t2026-08-15T10:00:00Z\t1\n")
+        );
     }
 
     #[test]
@@ -180,8 +227,8 @@ mod tests {
         assert_eq!(
             read(&dir, None).unwrap(),
             vec![
-                Entry { uuid: a, viewed_at: "2026-08-15T10:00:02Z".into() },
-                Entry { uuid: b, viewed_at: "2026-08-15T10:00:01Z".into() },
+                Entry { uuid: a, viewed_at: "2026-08-15T10:00:02Z".into(), rank: 2.0 },
+                Entry { uuid: b, viewed_at: "2026-08-15T10:00:01Z".into(), rank: 1.0 },
             ]
         );
     }
@@ -208,18 +255,86 @@ mod tests {
         assert_eq!(got, vec![c, b]);
     }
 
+    fn rank_of(dir: &Path, uuid: &str) -> f64 {
+        read(dir, None).unwrap().into_iter().find(|e| e.uuid == uuid).unwrap().rank
+    }
+
     #[test]
-    fn test_cap_keeps_the_newest_max_entries() {
-        let dir = temp_metafolder("cap");
+    fn test_a_line_without_rank_reads_as_one_view() {
+        let dir = temp_metafolder("old_format");
+        let (a, _, _) = uuids();
+        std::fs::create_dir_all(dir.join("gui")).unwrap();
+        std::fs::write(dir.join("gui/recent"), format!("{a}\t2026-08-15T10:00:00Z\n")).unwrap();
+        assert_eq!(
+            read(&dir, None).unwrap(),
+            vec![Entry { uuid: a, viewed_at: "2026-08-15T10:00:00Z".into(), rank: 1.0 }]
+        );
+    }
+
+    #[test]
+    fn test_each_view_adds_one_to_the_rank() {
+        let dir = temp_metafolder("rank");
+        let (a, b, _) = uuids();
+        touch(&dir, &a, "2026-08-15T10:00:00Z").unwrap();
+        touch(&dir, &b, "2026-08-15T10:00:01Z").unwrap();
+        touch(&dir, &a, "2026-08-15T10:00:02Z").unwrap();
+        assert_eq!(rank_of(&dir, &a), 2.0);
+        assert_eq!(rank_of(&dir, &b), 1.0);
+        let text = std::fs::read_to_string(dir.join("gui/recent")).unwrap();
+        assert_eq!(text, format!("{a}\t2026-08-15T10:00:02Z\t2\n{b}\t2026-08-15T10:00:01Z\t1\n"));
+    }
+
+    #[test]
+    fn test_a_bad_rank_skips_the_line() {
+        let dir = temp_metafolder("bad_rank");
+        let (a, b, _) = uuids();
+        std::fs::create_dir_all(dir.join("gui")).unwrap();
+        let text = format!("{a}\t2026-08-15T10:00:00Z\tx\n{b}\t2026-08-15T10:00:00Z\t-1\n");
+        std::fs::write(dir.join("gui/recent"), text).unwrap();
+        assert_eq!(read(&dir, None).unwrap(), Vec::<Entry>::new());
+    }
+
+    #[test]
+    fn test_an_often_viewed_entry_outlives_the_newest_max_entries() {
+        let dir = temp_metafolder("frequent");
+        let (a, _, _) = uuids();
+        for _ in 0..3 {
+            touch(&dir, &a, "2026-08-15T10:00:00Z").unwrap();
+        }
         for i in 0..(MAX_ENTRIES + 5) {
-            let uuid = format!("{i:032x}");
-            touch(&dir, &uuid, "2026-08-15T10:00:00Z").unwrap();
+            touch(&dir, &format!("{:032x}", i + 100), "2026-08-15T10:00:01Z").unwrap();
         }
         let got = read(&dir, None).unwrap();
-        assert_eq!(got.len(), MAX_ENTRIES);
-        // Newest first: the last touched is at the front, the oldest 5 are gone.
-        assert_eq!(got.first().unwrap().uuid, format!("{:032x}", MAX_ENTRIES + 4));
-        assert_eq!(got.last().unwrap().uuid, format!("{:032x}", 5));
+        assert_eq!(got.len(), MAX_ENTRIES + 6);
+        assert_eq!(got.last().unwrap().uuid, a);
+    }
+
+    #[test]
+    fn test_aging_scales_ranks_and_drops_the_old_rare_entries() {
+        let dir = temp_metafolder("aging");
+        let (a, _, _) = uuids();
+        // `a` holds most of the total rank; MAX_ENTRIES + 10 single views
+        // after it bring the total one past MAX_RANK_SUM on the very last one.
+        let heavy = MAX_RANK_SUM as usize - MAX_ENTRIES - 10 + 1;
+        for _ in 0..heavy {
+            touch(&dir, &a, "2026-08-15T10:00:00Z").unwrap();
+        }
+        // Ten single views that will fall out of the newest MAX_ENTRIES.
+        for i in 0..10 {
+            touch(&dir, &format!("{:032x}", i + 100), "2026-08-15T10:00:01Z").unwrap();
+        }
+        for i in 0..MAX_ENTRIES {
+            touch(&dir, &format!("{:032x}", i + 1000), "2026-08-15T10:00:02Z").unwrap();
+        }
+        let got = read(&dir, None).unwrap();
+        // The total exceeded MAX_RANK_SUM on the last touch: every rank was
+        // scaled by AGING, the ten old single views fell under one and went;
+        // the newest MAX_ENTRIES stay whatever their rank.
+        assert_eq!(got.len(), MAX_ENTRIES + 1);
+        assert!(got[..MAX_ENTRIES].iter().all(|e| (e.rank - AGING).abs() < 1e-9));
+        assert_eq!(got[MAX_ENTRIES].uuid, a);
+        assert!((got[MAX_ENTRIES].rank - heavy as f64 * AGING).abs() < 1e-6);
+        assert!(got.iter().map(|e| e.rank).sum::<f64>() <= MAX_RANK_SUM);
     }
 
     #[test]

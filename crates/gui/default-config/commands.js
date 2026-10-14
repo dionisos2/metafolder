@@ -22,9 +22,10 @@
 // The shipped entries are as much yours as any other. The Delete key's
 // `metarecord:remove`, the cross-panel `file-manager:reveal` and
 // `metarecord-list:folder`, the orphan cleanup `orphan:delete` /
-// `orphan:detect-delete`, and the picks `repos:switch` / `recent` are defined
-// here rather than compiled into the shell exactly so their questions, and the
-// actions their answers run, stay editable (doc "User commands").
+// `orphan:detect-delete`, and the picks `repos:switch` / `recent` /
+// `folder:open` are defined here rather than compiled into the shell exactly
+// so their questions, and the actions their answers run, stay editable (doc
+// "User commands").
 //
 // A syntax error in this file stops the GUI from starting, with the error on
 // screen. `config:reload commands` re-reads it without a restart.
@@ -222,6 +223,88 @@ function recentLine(rec, relPath, uuid = rec?.uuid) {
   return parts.filter(Boolean).join(' — ') || uuid || '';
 }
 
+/** `folder:open`'s candidate display line → repo-relative folder path,
+ *  rebuilt on each completion pass. */
+/** @type {Map<string, string>} */
+const folderChoices = new Map();
+
+/**
+ * What a recently-viewed entry is worth now (doc "Frecent folders"): its rank —
+ * one per view, aged by the GUI — weighted by how long ago it was last viewed,
+ * with zoxide's weights. Change them here to change the order of `folder:open`.
+ * @param {number} rank
+ * @param {string} viewedAt ISO-8601
+ * @param {number} now Unix ms
+ */
+function frecency(rank, viewedAt, now) {
+  const age = now - Date.parse(viewedAt);
+  const hour = 3600 * 1000;
+  if (age < hour) return rank * 4;
+  if (age < 24 * hour) return rank * 2;
+  if (age < 7 * 24 * hour) return rank / 2;
+  return rank / 4;
+}
+
+/**
+ * The folders of the recently-viewed metarecords, best first, as
+ * repo-relative tree paths ('' is the root): a folder counts for itself,
+ * anything else for its parent folder, and a folder is worth the sum of its
+ * entries' `frecency`. A record with no position in the tree, or whose folder
+ * has none, counts for nothing.
+ * @param {MetafolderApi} mf
+ * @param {string} repo
+ */
+async function frecentFolders(mf, repo) {
+  const entries = /** @type {{ uuid: string, viewed_at: string, rank: number }[]} */ (
+    await mf.recent.list(repo)
+  );
+  if (entries.length === 0) return [];
+  const records = await mf.daemon.metarecords(
+    repo,
+    entries.map((e) => e.uuid),
+  );
+  const now = Date.now();
+  /** @type {Map<string, number>} folder uuid → score */
+  const scores = new Map();
+  for (const entry of entries) {
+    const fields = records.get(entry.uuid)?.fields ?? [];
+    const position = fields.find((f) => f.name === 'mfr_path')?.value;
+    if (position?.type !== 'tree_ref') continue;
+    const isDir = fields.some(
+      (f) => f.name === 'mfr_type' && f.value.type === 'string' && f.value.value === 'dir',
+    );
+    const folder = isDir ? entry.uuid : position.value.parent;
+    if (!folder) continue;
+    scores.set(folder, (scores.get(folder) ?? 0) + frecency(entry.rank, entry.viewed_at, now));
+  }
+  const paths = await mf.daemon.treePaths(repo, 'mfr_path', [...scores.keys()]);
+  return [...scores]
+    .filter(([uuid]) => typeof paths[uuid]?.[0] === 'string')
+    .map(([uuid, score]) => ({ path: paths[uuid][0], score }))
+    .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
+    .map((f) => f.path);
+}
+
+/**
+ * Lists `query` in the metarecord list at the target, landed in its DSL zone
+ * frozen so it stays visible and editable — the list's query variables are its
+ * state: written at the target, the list there shows them whether it is on
+ * screen already or not.
+ * @param {MetafolderApi} mf
+ * @param {string} where
+ * @param {string} query
+ * @param {string} folder the repo-relative folder, for the status bar
+ */
+async function listAt(mf, where, query, folder) {
+  await mf.atTarget(where, async (/** @type {MetafolderApi} */ mf) => {
+    await mf.workspace.set('metarecord-list:normal-query', query);
+    await mf.workspace.set('metarecord-list:normal-shown', true);
+    await mf.workspace.set('metarecord-list:normal-frozen', true);
+    await mf.invoke('panel:open here metarecord-list');
+    await mf.statusBar.message(`Listing ${folder || '/'}`);
+  });
+}
+
 export default {
   // The Delete key on a metarecord (doc "Sending files to the trash"): the record goes
   // either way, so what is asked about is its file. Without one this is a
@@ -345,15 +428,65 @@ export default {
         await mf.statusBar.error('the selection lies outside the repository');
         return;
       }
-      // The list's query variables are its state: written at the target, the
-      // list there shows them whether it is on screen already or not.
-      await mf.atTarget(where, async (/** @type {MetafolderApi} */ mf) => {
-        await mf.workspace.set('metarecord-list:normal-query', `mfr_path -> ${dslString(folder)}`);
-        await mf.workspace.set('metarecord-list:normal-shown', true);
-        await mf.workspace.set('metarecord-list:normal-frozen', true);
-        await mf.invoke('panel:open here metarecord-list');
-        await mf.statusBar.message(`Listing ${folder || '/'}`);
-      });
+      await listAt(mf, where, `mfr_path -> ${dslString(folder)}`, folder);
+    },
+  },
+
+  // Jump to a frecent folder (keybindings.toml "g d" / "g c" / "g t"; doc
+  // "Frecent folders"), zoxide-style: the pick completes over the folders of
+  // the recently-viewed metarecords, best first (`frecentFolders` above), and
+  // opens the choice as `view` says — `files` in the file manager, `children`
+  // (`mfr_path -> folder`) or `subtree` (`mfr_path ->* folder`) in the
+  // metarecord list — at the target, here by default.
+  'folder:open': {
+    label: 'Open a frequently and recently used folder (files / children / subtree)',
+    args: [
+      {
+        name: 'view',
+        prompt: () => 'Open as? (files / children / subtree)',
+        initial: () => 'files',
+        complete: () => ['files', 'children', 'subtree'],
+      },
+      whereArg('here'),
+      {
+        name: 'folder',
+        prompt: () => 'Folder:',
+        complete: async (/** @type {MetafolderApi} */ mf) => {
+          folderChoices.clear();
+          const repo = /** @type {string | null} */ (await mf.workspace.get('active_repo'));
+          if (!repo) return [];
+          const folders = await frecentFolders(mf, repo);
+          for (const folder of folders) folderChoices.set(folder || '/', folder);
+          return [...folderChoices.keys()];
+        },
+      },
+    ],
+    run: async (
+      /** @type {MetafolderApi} */ mf,
+      /** @type {string} */ view = 'files',
+      /** @type {string} */ where = 'here',
+      /** @type {string[]} */ ...words
+    ) => {
+      // The pick is the last argument: typed inline, its words arrive apart.
+      const choice = words.join(' ');
+      const repo = /** @type {string | null} */ (await mf.workspace.get('active_repo'));
+      const folder = folderChoices.get(choice);
+      // Thrown rather than reported: the shell posts a command's failure itself.
+      if (!repo || folder === undefined) throw new Error(`no frecent folder matches "${choice}"`);
+      if (view === 'files') {
+        const dir = (await mf.daemon.repoRoot(repo)).replace(/\/+$/, '') + folder;
+        await mf.atTarget(where, async (/** @type {MetafolderApi} */ mf) => {
+          await mf.workspace.set('file-manager:dir', dir || '/');
+          await mf.workspace.set('file-manager:cursor', null);
+          await mf.invoke('panel:open here file-manager');
+        });
+      } else if (view === 'children') {
+        await listAt(mf, where, `mfr_path -> ${dslString(folder)}`, folder);
+      } else if (view === 'subtree') {
+        await listAt(mf, where, `mfr_path ->* ${dslString(folder)}`, folder);
+      } else {
+        throw new Error(`unknown view "${view}" (files / children / subtree)`);
+      }
     },
   },
 

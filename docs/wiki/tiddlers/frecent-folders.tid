@@ -1,0 +1,55 @@
+title: Frecent folders
+tags: [[Panel types]]
+kind: reference
+aliases: folder-open zoxide frecency
+summary: Jumping to a folder you use often and lately, zoxide-style — opened in the file manager, or listed (its children or its whole subtree) in the metarecord list.
+
+`folder:open` is a pick of the command input, like `recent` ([[recent panel]]): it
+offers the folders of the metarecords you viewed in this repository, the most
+''frecent'' first — frequently and recently used — and opens the one you pick. Type to
+narrow; the filter is the command input's ordered substring match, so `mu ja` finds
+`/music/jazz`.
+
+|!Key |!Opens the folder |
+|<<key "folder:open files here" "g d">> |in the [[file-manager panel]] |
+|<<key "folder:open children here" "g c">> |in the [[metarecord-list panel]], as `mfr_path -> "<folder>"`: its direct children |
+|<<key "folder:open subtree here" "g t">> |in the [[metarecord-list panel]], as `mfr_path ->* "<folder>"`: everything under it ([[Following references]]) |
+
+Here by default, as `cd` would; the `i`, `w` and `b` prefixes choose here, the other
+slot or a new workspace ([[Panel slots and layout]]). The command is
+`folder:open <view> <where> <folder>`, with `files`, `children` or `subtree` as the
+view.
+
+!! Which folders, in which order
+
+The candidates come from the recently-viewed list, where each metarecord carries a
+''rank'': one per view ([[Why recently viewed is kept by the GUI]]). Two things count
+as a view of a folder:
+
+* going into it in the [[file-manager panel]] — once per arrival, not again when the same folder is listed anew (a refresh, an operation);
+* viewing anything ''in'' it: a file the [[file panel]] or `metarecord-detail` shows counts for its parent folder.
+
+A folder is worth the sum of its entries, each entry its rank weighted by how long ago
+it was last viewed — zoxide's weights:
+
+|!Last viewed |!Weight |
+|less than an hour ago |×4 |
+|less than a day ago |×2 |
+|less than a week ago |×½ |
+|older |×¼ |
+
+The weights are those of `frecency` in the shipped `gui/commands.js`, and the folders
+are gathered by `frecentFolders` next to it ([[User commands]]): change them there to
+change the order. A record without a position in the tree — an orphan, a record with
+no file — counts for nothing, and neither does a folder that has lost its own.
+
+Because an entry is a metarecord and not a path, a folder keeps its history when it
+is renamed or moved, which zoxide cannot do.
+
+!! How the ranks age
+
+As in zoxide, the ranks do not grow forever: once they add up to more than 1000, every
+rank is multiplied by 0.9 and the entries left under one go. The 200 most recently
+viewed are always kept, whatever their rank, so a burst of new views never empties
+the list; beyond them stays only what was viewed often. `crates/gui/src/recent.rs`
+holds the constants.

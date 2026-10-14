@@ -4,9 +4,10 @@ kind: reference
 aliases: recently-viewed
 summary: The metarecords you looked at last in this repository, newest first — as a panel, and as a pick from the command input.
 
-A metarecord is ''viewed'' when `metarecord-detail` or the [[file panel]] shows it. The
-GUI keeps the last 200 of each repository, most recent first, each once: viewing one
-again moves it to the front. The list is the GUI's — a file of the repository,
+A metarecord is ''viewed'' when `metarecord-detail` or the [[file panel]] shows it, and
+a folder when the [[file-manager panel]] goes into it. The GUI keeps the last 200 of
+each repository — and, beyond them, those viewed often ([[Frecent folders]]) — most
+recent first, each once: viewing one again moves it to the front. The list is the GUI's — a file of the repository,
 `.metafolder/gui/recent` — and no field of the metarecord: recording a view writes
 nothing to the daemon, so it adds no write to the event log.
 

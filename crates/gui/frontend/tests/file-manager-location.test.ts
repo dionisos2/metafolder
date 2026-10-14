@@ -96,6 +96,7 @@ function stub(repo: string | null, vars: Record<string, unknown>, repoRoot = '/r
       invoke: vi.fn(async (_line: string) => null),
     },
     fs,
+    recent: { touch: vi.fn(async () => {}), list: vi.fn(async () => []) },
     statusBar,
     trash: { trashPath: vi.fn(async () => '') },
     contextMenu: Object.assign(noop, { addDefaultItems: noop }),

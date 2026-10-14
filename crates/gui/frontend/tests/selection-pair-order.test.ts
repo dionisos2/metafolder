@@ -87,6 +87,7 @@ function stub() {
       invoke: () => null,
     },
     fs,
+    recent: { touch: vi.fn(async () => {}), list: vi.fn(async () => []) },
     statusBar: { message: vi.fn(async () => {}), error: vi.fn(async () => {}) },
     trash: { trashPath: vi.fn(async () => '') },
     contextMenu: Object.assign(noop, { addDefaultItems: noop }),

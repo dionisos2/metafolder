@@ -94,6 +94,7 @@ function stub(repo: string | null) {
     },
     fs,
     trash,
+    recent: { touch: vi.fn(async () => {}), list: vi.fn(async () => []) },
     statusBar,
     contextMenu: Object.assign(noop, { addDefaultItems: noop }),
   };

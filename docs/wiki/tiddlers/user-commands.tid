@@ -55,14 +55,14 @@ An error thrown by `run` is shown in the status bar, like any command's failure.
 
 !! The shipped entries
 
-The shipped file holds two examples, `user:rate` and `user:tag-query`, and seven
+The shipped file holds two examples, `user:rate` and `user:tag-query`, and eight
 commands of the GUI itself that are written here so that their questions and what
 their answers run can be edited:
 
 * `metarecord:remove` ([[Sending files to the trash]]);
 * `file-manager:reveal` and `metarecord-list:folder` ([[Cross-panel selection]]);
 * `orphan:delete` and `orphan:detect-delete` ([[Orphans in the GUI]]);
-* `repos:switch` and `recent`, the two pickers.
+* `repos:switch`, `recent` and `folder:open`, the pickers ([[Frecent folders]]).
 
 They are ordinary entries: removing one removes the command, and a key bound to it
 then runs nothing ([[Changing keybindings]]).

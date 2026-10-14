@@ -55,6 +55,7 @@ change. The ''entries'' are not watched — a file another program creates appea
 * <<key "cursor:root self" "/">>, or the root button — the repository root; `/` when the workspace has no repository, and the button then reads ''root''.
 * <<key "cursor:find self select" f>> — jump to an entry of this directory by name ([[Jumping to an entry]]).
 * <<key "cursor:find self walk" d>> — walk down by name: a directory found is entered and the question asked again, a file found is selected (`shift+Enter` stops on a directory).
+* <<key "folder:open files here" "g d">> — a folder you use often and lately, from anywhere ([[Frecent folders]]). Each folder the panel goes into counts as a view of it.
 
 ''constrain to repo root'' (<<key "file-manager:toggle root" Ctrl+r>>, checked at
 first) keeps the browsing inside the repository: going above its root is refused, and

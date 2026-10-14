@@ -2,7 +2,7 @@ title: Why recently viewed is kept by the GUI
 tags: [[Panel types]]
 kind: rationale
 audience: dev
-summary: The list of metarecords last looked at is a file of the GUI, not a field of the metarecord: a view must not be a write; it stores a time, and the panel shows a snapshot.
+summary: The list of metarecords last looked at is a file of the GUI, not a field of the metarecord: a view must not be a write; it stores a time and a rank, and the panel shows a snapshot.
 
 !! A view is not a write
 
@@ -13,18 +13,26 @@ would fill the history with writes nobody made, put them in the way of
 <<key "log:undo" Ctrl+z>>, and change a version that other clients compare.
 
 So the list is the GUI's, as the input history is ([[Input history]]): one text file
-per repository, `.metafolder/gui/recent`, a line `<uuid>` tab `<ISO-8601 time>` per
-metarecord, newest first, at most 200. Viewing a metarecord again moves its line to
+per repository, `.metafolder/gui/recent`, a line `<uuid>` tab `<ISO-8601 time>` tab
+`<rank>` per metarecord, newest first. Viewing a metarecord again moves its line to
 the front rather than adding one. `crates/gui/src/recent.rs` holds it, behind
 `metafolder.recent.touch` and `metafolder.recent.list` ([[The metafolder API]]); the
 [[metarecord-detail panel]] and the [[file panel]] call `touch` when the metarecord they
-show changes, and not when the same one is reloaded.
+show changes, and not when the same one is reloaded; the [[file-manager panel]] when it
+goes into another folder.
 
-!! A time, not a counter
+!! A time and a rank
 
-Each line carries when the metarecord was viewed, not a rank. A counter would need
-its maximum read back at each start; with a time and an order, the file ''is'' the
-state, and the panel can say "3 min ago" for free.
+Each line carries when the metarecord was last viewed and a ''rank'': one per view,
+aged as zoxide ages its own, so that [[Frecent folders]] can tell a folder used every
+day from one opened once. The rank is per line and not a position in a global order:
+with a time and a rank on each line, the file ''is'' the state, nothing has to be read
+back at start, and the panel can say "3 min ago" for free. A line of the older
+two-column form, from before the rank, reads as one view.
+
+What the rank is worth is not decided here: `recent.rs` only counts and ages,
+and the weighting by recency is the shipped `gui/commands.js`'s, where it can be
+changed.
 
 !! The panel shows a snapshot
 

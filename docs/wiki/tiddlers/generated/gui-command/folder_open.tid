@@ -1,0 +1,23 @@
+title: $:/mf/gen/GUI command/folder:open
+catalog: GUI command
+target: folder:open
+summary: Open a frequently and recently used folder (files / children / subtree)
+
+!! Reference
+
+* Defined by the shipped ``commands.js``
+
+!! Default keys
+
+* ``b g c`` → ``folder:open children new``
+* ``b g d`` → ``folder:open files new``
+* ``b g t`` → ``folder:open subtree new``
+* ``g c`` → ``folder:open children here``
+* ``g d`` → ``folder:open files here``
+* ``g t`` → ``folder:open subtree here``
+* ``i g c`` → ``folder:open children here``
+* ``i g d`` → ``folder:open files here``
+* ``i g t`` → ``folder:open subtree here``
+* ``w g c`` → ``folder:open children other``
+* ``w g d`` → ``folder:open files other``
+* ``w g t`` → ``folder:open subtree other``

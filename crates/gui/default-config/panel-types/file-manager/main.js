@@ -75,6 +75,9 @@ export async function mount(root, metafolder) {
   let internalDir = null;
   /** @type {string|null} */
   let currentDir = null;
+  /** @type {string|null} uuid of the folder last recorded in the
+   *  recently-viewed list, so a re-listing of it is not another view */
+  let lastViewedDir = null;
   // True when this panel is a value picker resolving to a folder path (doc
   // "Value picker", e.g. the repos panel's "Browse…"): the right-click menu then
   // offers "Pick this folder", so confirming does not depend on knowing the
@@ -315,6 +318,12 @@ export async function mount(root, metafolder) {
     // "Setting ignore patterns").
     await writeLocation({ dir, cursor: null }, ['dir', 'cursor']);
     const dirUuid = await enrichSelfParent();
+    // Going into a folder is a view of it (doc "Frecent folders"), recorded
+    // once per arrival: a refresh or a mutation listing it again is not one.
+    if (repo && dirUuid && dirUuid !== lastViewedDir) {
+      lastViewedDir = dirUuid;
+      void metafolder.recent.touch(repo, dirUuid);
+    }
     await enrichChildren(dirUuid);
     await refreshEligibility();
     await refreshActivity();

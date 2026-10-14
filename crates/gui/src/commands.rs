@@ -740,7 +740,7 @@ pub async fn history_append(
         .map_err(|e| format!("blocking task failed: {e}"))?
 }
 
-/// Recently-viewed metarecords (crate::recent) — a GUI-side LRU list under
+/// Recently-viewed metarecords (crate::recent) — a GUI-side ranked list under
 /// `.metafolder/gui/recent`, like the input history: the daemon plays no part.
 #[tauri::command]
 pub async fn recent_read(
@@ -754,7 +754,7 @@ pub async fn recent_read(
         .map_err(|e| format!("blocking task failed: {e}"))??;
     Ok(entries
         .into_iter()
-        .map(|e| serde_json::json!({ "uuid": e.uuid, "viewed_at": e.viewed_at }))
+        .map(|e| serde_json::json!({ "uuid": e.uuid, "viewed_at": e.viewed_at, "rank": e.rank }))
         .collect())
 }
 

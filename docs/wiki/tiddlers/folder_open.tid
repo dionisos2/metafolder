@@ -1,0 +1,6 @@
+title: folder:open
+tags: [[GUI command]] [[Panel types]]
+kind: reference
+summary: Open a frequently and recently used folder (files / children / subtree)
+
+`folder:open <view> <where> <folder>` jumps to a folder picked in the command input among the folders of the metarecords viewed in this repository, the most frecent first ([[Frecent folders]]). `files` opens it in the [[file-manager panel]]; `children` and `subtree` list its direct children or everything under it in the [[metarecord-list panel]]. Defined in the shipped `gui/commands.js` ([[User commands]]).
