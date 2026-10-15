@@ -74,7 +74,7 @@ for arg in "$@"; do
     esac
 done
 [ ${#SCENARIOS[@]} -gt 0 ] \
-    || SCENARIOS=(undo-redo duplicates orphans trash reconcile ignore sync repos list layout script script-workspaces
+    || SCENARIOS=(undo-redo duplicates orphans trash remove reconcile ignore sync repos list layout script script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close
         pick-button suggested-key walk slideshow devtools)
 
@@ -430,6 +430,43 @@ scenario_trash() {
     run trash:restore
     status_is "trash restore: says where" info "Restored $REPO_DIR/f.txt"
     assert "trash restore: the file is back" test -e "$REPO_DIR/f.txt"
+}
+
+has_record() { df_mf metarecord -i "$1" get >/dev/null 2>&1; }
+
+# Delete on a metarecord with a file asks three ways in the command input
+# (doc "metarecord:remove-file"): Escape keeps everything, `trash` trashes the
+# file, `delete` keeps the file and deletes the metarecord.
+scenario_remove() {
+    needs_keyboard remove || return 0
+    new_repo remove
+    printf 'x\n' >"$REPO_DIR/f.txt"
+    printf 'y\n' >"$REPO_DIR/g.txt"
+    local f g runner
+    f=$(record "$REPO_DIR/f.txt")
+    g=$(record "$REPO_DIR/g.txt")
+    select_path "$REPO_DIR/f.txt"
+
+    mfg command --timeout-ms 60000 metarecord:remove >/dev/null 2>&1 &
+    runner=$!
+    sleep 1
+    keys Escape
+    wait "$runner"
+    assert "remove, escape: the file stays" test -e "$REPO_DIR/f.txt"
+    assert "remove, escape: the metarecord stays" has_record "$f"
+
+    mfg command --timeout-ms 60000 metarecord:remove >/dev/null 2>&1 &
+    runner=$!
+    sleep 1
+    typed "trash"
+    keys Return
+    wait "$runner"
+    assert "remove, trash: the file is trashed" until_ok 10 test ! -e "$REPO_DIR/f.txt"
+
+    select_path "$REPO_DIR/g.txt"
+    answering yes metarecord:remove-file delete
+    assert "remove, delete: the file stays" test -e "$REPO_DIR/g.txt"
+    assert_not "remove, delete: the metarecord is gone" has_record "$g"
 }
 
 scenario_reconcile() {

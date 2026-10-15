@@ -23,7 +23,7 @@ When another metarecord still points at one of those being trashed (a `ref` or
 In the `metarecord-list`, `metarecord-detail` and `treeref` panels,
 on the selected metarecord:
 
-* <<key "metarecord:remove" Delete>> — <<cmd "metarecord:remove">>: if the metarecord has a file, asks whether to trash it (OK) or keep it and delete the metarecord alone (Cancel); without a file, deletes the metarecord.
+* <<key "metarecord:remove" Delete>> — <<cmd "metarecord:remove">>: if the metarecord has a file, asks in the command input whether to trash the file or keep it and delete the metarecord alone — Escape does neither (<<cmd "metarecord:remove-file">>); without a file, deletes the metarecord.
 * <<key "metarecord:trash" Ctrl+Delete>> — <<cmd "metarecord:trash">>: trashes the file at once (confirmed).
 * <<key "metarecord:delete" Shift+Delete>> — <<cmd "metarecord:delete">>: deletes the metarecord and keeps the file.
 

@@ -305,16 +305,29 @@ async function listAt(mf, where, query, folder) {
   });
 }
 
+/**
+ * The selected metarecord's file — its repository, absolute path and name —
+ * or null when nothing is selected or the metarecord has no file. The
+ * repository root itself is named by its path.
+ * @param {MetafolderApi} mf
+ */
+async function selectedFile(mf) {
+  const selection = await selectedMetarecord(mf);
+  if (!selection) return null;
+  const rel = await metarecordFile(mf, selection.repo, selection.uuid);
+  if (rel === undefined) return null;
+  const root = await mf.daemon.repoRoot(selection.repo);
+  return {
+    repo: selection.repo,
+    path: rel === '' ? root : `${root}/${rel}`,
+    name: rel === '' ? root : (rel.split('/').pop() ?? rel),
+  };
+}
+
 export default {
-  // The Delete key on a metarecord (doc "Sending files to the trash"): the record goes
-  // either way, so what is asked about is its file. Without one this is a
-  // plain `metarecord:delete`; with one the question names the two canonical
-  // actions and runs the picked one — OK trashes the file, the metarecord
-  // going with it (a tracked path's records are captured and deleted before
-  // the bytes move, `mf trash -f`'s order), so the question doubles as the
-  // confirmation `metarecord:trash` would ask; Cancel falls through to
-  // `metarecord:delete`, which keeps the file and confirms the record's
-  // deletion itself.
+  // The Delete key on a metarecord (doc "Sending files to the trash"). Without
+  // a file this is a plain `metarecord:delete`, which confirms itself; with
+  // one, `metarecord:remove-file` asks what to do with the file.
   //
   // The keybindings default binds `delete` here (keybindings.toml), so
   // dropping this entry drops the command — rebind the key or put an entry
@@ -327,19 +340,45 @@ export default {
         await mf.statusBar.error('no metarecord is selected');
         return;
       }
-      const { uuid, repo } = selection;
-      const rel = await metarecordFile(mf, repo, uuid);
-      if (rel === undefined) {
-        await mf.invoke('metarecord:delete');
+      const rel = await metarecordFile(mf, selection.repo, selection.uuid);
+      await mf.invoke(rel === undefined ? 'metarecord:delete' : 'metarecord:remove-file');
+    },
+  },
+
+  // The question `metarecord:remove` asks of a metarecord with a file, in the
+  // command input rather than an OK/Cancel dialog, which cannot say "neither":
+  // `trash` sends the file to the trash, the metarecord going with it (a
+  // tracked path's records are captured and deleted before the bytes move,
+  // `mf trash -f`'s order), so the question doubles as the confirmation
+  // `metarecord:trash` would ask; `delete` keeps the file and runs
+  // `metarecord:delete`, which confirms the record's deletion itself; Escape
+  // does nothing. `metarecord:remove-file trash` answers inline.
+  'metarecord:remove-file': {
+    label: 'Remove the selected metarecord with a file: trash the file, or delete the metarecord only',
+    args: [
+      {
+        name: 'how',
+        prompt: async (/** @type {MetafolderApi} */ mf) => {
+          const file = await selectedFile(mf);
+          return file ? `Remove "${file.name}":` : 'Remove:';
+        },
+        complete: () => [
+          { label: 'trash file (its metarecord goes with it)', value: 'trash' },
+          { label: 'delete metarecord (the file is kept)', value: 'delete' },
+        ],
+      },
+    ],
+    run: async (/** @type {MetafolderApi} */ mf, /** @type {string} */ how = '') => {
+      if (how !== 'trash' && how !== 'delete') {
+        await mf.statusBar.error(`answer "trash" or "delete", not "${how}"`);
         return;
       }
-      const name = rel === '' ? await mf.daemon.repoRoot(repo) : (rel.split('/').pop() ?? rel);
-      const trashFile = window.confirm(
-        `Send "${name}" to the trash?\n\n` +
-          'OK = trash the file (its metarecord is deleted with it, restorable from the trash panel).\n' +
-          'Cancel = keep the file and delete the metarecord only.',
-      );
-      if (!trashFile) {
+      const file = await selectedFile(mf);
+      if (!file) {
+        await mf.statusBar.error('the selected metarecord has no file');
+        return;
+      }
+      if (how === 'delete') {
         await mf.invoke('metarecord:delete');
         return;
       }
@@ -349,8 +388,7 @@ export default {
       // gets from its Rust command. A refusal is posted the same way — the key
       // that started this should not be what throws it.
       try {
-        const root = await mf.daemon.repoRoot(repo);
-        const trashed = await mf.trash.trashPath(repo, rel === '' ? root : `${root}/${rel}`);
+        const trashed = await mf.trash.trashPath(file.repo, file.path);
         await mf.statusBar.message(`Trashed ${trashed} — restore it from the trash panel`);
         await mf.workspace.set('metarecords:dirty', Date.now());
       } catch (error) {

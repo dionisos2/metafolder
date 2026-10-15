@@ -1,9 +1,9 @@
 // The Delete key on a metarecord (doc "Sending files to the trash"), as the shipped
 // `commands.js` defines it since the command left the shell builtins:
-// `metarecord:remove` deletes the metarecord either way and settles its file
-// on the way. Without a file it runs a plain `metarecord:delete`; with one,
-// the question decides between trashing the file (the metarecord going with
-// it) and deleting the metarecord alone, the file kept. `metarecord:trash` and
+// `metarecord:remove` settles a metarecord and its file. Without a file it
+// runs a plain `metarecord:delete`; with one, `metarecord:remove-file` asks in
+// the command input whether to trash the file (the metarecord going with it),
+// delete the metarecord alone, the file kept — or, with Escape, nothing. `metarecord:trash` and
 // `metarecord:delete` keep their own behaviour — the command composes them
 // rather than replacing them, and the question doubles as the trash
 // confirmation.
@@ -81,6 +81,12 @@ function run() {
   return shipped['metarecord:remove'].run(fakeMf() as never);
 }
 
+function removeFile(how: string) {
+  return shipped['metarecord:remove-file'].run(fakeMf() as never, how);
+}
+
+const howArg = () => shipped['metarecord:remove-file'].args![0];
+
 beforeEach(() => {
   for (const list of Object.values(calls)) list.length = 0;
   state.selection = { uuid: 'u-1', repo: 'r-1' };
@@ -120,17 +126,52 @@ describe('metarecord:remove', () => {
     expect(calls.trash).toEqual([]);
   });
 
-  test('with a file, OK trashes the file and its metarecord', async () => {
+  test('with a file, it asks the three-way question of metarecord:remove-file', async () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     await run();
+
+    // An OK/Cancel dialog cannot say "neither": Cancel used to delete the
+    // metarecord. The question is a prompt now, whose Escape cancels.
+    expect(confirm).not.toHaveBeenCalled();
+    expect(calls.invoked).toEqual(['metarecord:remove-file']);
+    expect(calls.trash).toEqual([]);
+  });
+
+  test("the metarecord's file is read from the daemon's resolve-tree", async () => {
+    await run();
+
+    expect(calls.daemon).toContainEqual({
+      method: 'GET',
+      path: '/repos/r-1/metarecords/u-1/fields/mfr_path/resolve-tree',
+    });
+  });
+});
+
+describe('metarecord:remove-file', () => {
+  test('the question names the file, and offers trashing it or deleting the metarecord', async () => {
+    const prompt = await howArg().prompt!(fakeMf() as never);
+    expect(prompt).toContain('"song.mp3"');
+    const items = (await (howArg().complete as (mf: never, p: string, prior: string[]) => unknown)(
+      fakeMf() as never,
+      '',
+      [],
+    )) as { label: string; value: string }[];
+    expect(items.map((i) => i.value)).toEqual(['trash', 'delete']);
+    expect(items[0].label).toContain('trash file');
+    expect(items[1].label).toContain('delete metarecord');
+  });
+
+  test('trash: trashes the file and its metarecord', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    await removeFile('trash');
 
     // The question doubles as the confirmation `metarecord:trash` would ask,
     // so nothing re-confirms afterwards — and the metarecord goes with the
     // file (a tracked path's records are captured and deleted before the bytes
     // move), so `metarecord:delete` has nothing left to do.
-    expect(confirm).toHaveBeenCalledTimes(1);
-    expect(String(confirm.mock.calls[0][0])).toContain('song.mp3');
+    expect(confirm).not.toHaveBeenCalled();
     expect(calls.trash).toEqual([{ repo: 'r-1', path: '/srv/music/song.mp3' }]);
     expect(calls.invoked).toEqual([]);
     // The trashing says nothing and refreshes nothing on its own: the status
@@ -143,58 +184,54 @@ describe('metarecord:remove', () => {
     expect(typeof calls.writes[0].value).toBe('number');
   });
 
-  test('with a file, Cancel keeps the file and deletes the metarecord', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
-
-    await run();
+  test('delete: keeps the file and deletes the metarecord', async () => {
+    await removeFile('delete');
 
     expect(calls.trash).toEqual([]);
     expect(calls.invoked).toEqual(['metarecord:delete']);
     expect(calls.writes).toEqual([]);
   });
 
-  test('the question names both outcomes and the file it is about', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
+  test('any other answer does nothing, and says so', async () => {
+    await removeFile('maybe');
 
-    await run();
-
-    const question = String(vi.mocked(window.confirm).mock.calls[0][0]);
-    expect(question).toContain('Send "song.mp3" to the trash?');
-    expect(question).toContain('OK = trash the file');
-    expect(question).toContain('Cancel = keep the file and delete the metarecord only.');
-  });
-
-  test("the metarecord's file is read from the daemon's resolve-tree", async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
-
-    await run();
-
-    expect(calls.daemon).toContainEqual({
-      method: 'GET',
-      path: '/repos/r-1/metarecords/u-1/fields/mfr_path/resolve-tree',
-    });
+    expect(calls.trash).toEqual([]);
+    expect(calls.invoked).toEqual([]);
+    expect(calls.status).toEqual([
+      { kind: 'error', text: 'answer "trash" or "delete", not "maybe"' },
+    ]);
   });
 
   test('the repository root itself is the file when the path resolves to it', async () => {
     state.paths = [''];
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
 
-    await run();
+    expect(await howArg().prompt!(fakeMf() as never)).toContain('"/srv"');
+    await removeFile('trash');
 
     // `mfr_path` of '' is the repository root — named as itself in the
     // question, trashed as itself.
-    expect(String(vi.mocked(window.confirm).mock.calls[0][0])).toContain('Send "/srv" to the trash?');
     expect(calls.trash).toEqual([{ repo: 'r-1', path: '/srv' }]);
   });
 
   test('a refused trashing is reported, and refreshes nothing', async () => {
     state.trashError = new Error('trashing refused');
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
 
-    await run();
+    await removeFile('trash');
 
     expect(calls.status).toEqual([{ kind: 'error', text: 'trashing refused' }]);
     expect(calls.writes).toEqual([]);
     expect(calls.invoked).toEqual([]);
+  });
+
+  test('a metarecord without a file has nothing to trash', async () => {
+    state.paths = [];
+
+    await removeFile('trash');
+
+    expect(calls.trash).toEqual([]);
+    expect(calls.invoked).toEqual([]);
+    expect(calls.status).toEqual([
+      { kind: 'error', text: 'the selected metarecord has no file' },
+    ]);
   });
 });

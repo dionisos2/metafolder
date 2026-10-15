@@ -59,7 +59,7 @@ The shipped file holds two examples, `user:rate` and `user:tag-query`, and eight
 commands of the GUI itself that are written here so that their questions and what
 their answers run can be edited:
 
-* `metarecord:remove` ([[Sending files to the trash]]);
+* `metarecord:remove` and `metarecord:remove-file` ([[Sending files to the trash]]);
 * `file-manager:reveal` and `metarecord-list:folder` ([[Cross-panel selection]]);
 * `orphan:delete` and `orphan:detect-delete` ([[Orphans in the GUI]]);
 * `repos:switch`, `recent` and `folder:open`, the pickers ([[Frecent folders]]).
