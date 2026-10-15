@@ -30,8 +30,8 @@ type Handler = (...args: string[]) => unknown;
 type ArgSpec = { name: string; prompt: () => unknown; complete?: () => string[] | Promise<string[]> };
 
 const VIEWED = [
-  { uuid: 'u1', viewed_at: new Date().toISOString() },
-  { uuid: 'u2', viewed_at: new Date().toISOString() },
+  { uuid: 'u1', viewed_at: new Date().toISOString(), rank: 3 },
+  { uuid: 'u2', viewed_at: new Date().toISOString(), rank: 1.25 },
 ];
 const NAMES: Record<string, string> = { u1: 'jazz.mp3', u2: 'rock.mp3' };
 const PATHS: Record<string, string> = { u1: '/music/jazz.mp3', u2: '/other/rock.mp3' };
@@ -120,6 +120,18 @@ describe('cursor:find in the recent list', () => {
     await cursor(s.api.provide, 'find', 'select', 'jazz');
     await expect(cursor(s.api.provide, 'find', 'select', 'zzz')).rejects.toThrow(/no entry/);
     expect(cursorName(s.root)).toBe('jazz.mp3');
+  });
+});
+
+// Each row shows its rank (doc "Frecent folders"): one per view, aged, so
+// shown to one decimal.
+describe('recent rows', () => {
+  test('carry their rank', async () => {
+    Element.prototype.scrollIntoView = () => {};
+    const s = stub();
+    await mount(s);
+    const ranks = [...s.root.querySelectorAll('li .rank')].map((e) => e.textContent);
+    expect(ranks).toEqual(['rank 3', 'rank 1.3']);
   });
 });
 

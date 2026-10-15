@@ -1,5 +1,5 @@
 // recent panel: the repository's recently-viewed metarecords (crate::recent),
-// newest first, one row "<name>  <mfr_path>  <viewed N ago>". A GUI-side
+// newest first, one row "<name>  <mfr_path>  <rank>  <viewed N ago>". A GUI-side
 // concern — the list comes from metafolder.recent (no daemon endpoint); the
 // display fields (label/name/mfr_path) are read from the daemon. Opening
 // a row publishes the selection and reveals the viewer, like the metarecord
@@ -25,7 +25,7 @@ export function formatViewedAge(iso, now = Date.now()) {
 }
 
 /**
- * @typedef {{ uuid: string, viewedAt: string, label: string, name: string,
+ * @typedef {{ uuid: string, viewedAt: string, rank: number, label: string, name: string,
  *   relPath: string, absPaths: string[], isDir: boolean }} Row
  *
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder
@@ -83,6 +83,11 @@ export function mount(root, metafolder) {
           }),
           el('span', { class: 'name' }, rowName(row)),
           el('span', { class: 'path' }, row.relPath),
+          el(
+            'span',
+            { class: 'rank', title: 'One per view, aged (doc "Frecent folders")' },
+            `rank ${Math.round(row.rank * 10) / 10}`,
+          ),
           el('span', { class: 'age' }, formatViewedAge(row.viewedAt, now)),
         ),
       ),
@@ -147,6 +152,7 @@ export function mount(root, metafolder) {
       return {
         uuid: e.uuid,
         viewedAt: e.viewed_at,
+        rank: e.rank,
         label: rec === undefined ? '' : fieldText(rec, 'label'),
         name: rec === undefined ? '' : fieldText(rec, 'name'),
         relPath: relPaths[0] ?? '',

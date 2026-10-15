@@ -211,20 +211,30 @@ function firstFieldText(rec, name) {
 }
 
 /**
+ * A rank or a score as shown: to one decimal, since ranks age (doc "Frecent
+ * folders") — `3`, `2.7`.
+ * @param {number} value
+ */
+function formatRank(value) {
+  return String(Math.round(value * 10) / 10);
+}
+
+/**
  * One `recent` candidate line: the repo-relative `mfr_path`, the `label` and
- * the `name`, joined by an em dash, with the empty parts dropped. Falls back
- * to the uuid when nothing else is known, so a candidate is never blank.
+ * the `name`, joined by an em dash, with the empty parts dropped — the uuid
+ * when nothing else is known, so a candidate is never blank — then the rank.
  * @param {Metafolder.Metarecord | undefined} rec
  * @param {string} relPath
  * @param {string} [uuid]
+ * @param {number} [rank]
  */
-function recentLine(rec, relPath, uuid = rec?.uuid) {
+function recentLine(rec, relPath, uuid = rec?.uuid, rank = 1) {
   const parts = [relPath, firstFieldText(rec, 'label'), firstFieldText(rec, 'name')];
-  return parts.filter(Boolean).join(' — ') || uuid || '';
+  return `${parts.filter(Boolean).join(' — ') || uuid || ''} — rank ${formatRank(rank)}`;
 }
 
-/** `folder:open`'s candidate display line → repo-relative folder path,
- *  rebuilt on each completion pass. */
+/** `folder:open`'s candidate display line ("<folder> — score <n>") →
+ *  repo-relative folder path, rebuilt on each completion pass. */
 /** @type {Map<string, string>} */
 const folderChoices = new Map();
 
@@ -246,8 +256,8 @@ function frecency(rank, viewedAt, now) {
 }
 
 /**
- * The folders of the recently-viewed metarecords, best first, as
- * repo-relative tree paths ('' is the root): a folder counts for itself,
+ * The folders of the recently-viewed metarecords, best first, each as its
+ * repo-relative tree path ('' is the root) and its score: a folder counts for itself,
  * anything else for its parent folder, and a folder is worth the sum of its
  * entries' `frecency`. A record with no position in the tree, or whose folder
  * has none, counts for nothing.
@@ -281,8 +291,7 @@ async function frecentFolders(mf, repo) {
   return [...scores]
     .filter(([uuid]) => typeof paths[uuid]?.[0] === 'string')
     .map(([uuid, score]) => ({ path: paths[uuid][0], score }))
-    .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
-    .map((f) => f.path);
+    .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
 }
 
 /**
@@ -493,8 +502,9 @@ export default {
           folderChoices.clear();
           const repo = /** @type {string | null} */ (await mf.workspace.get('active_repo'));
           if (!repo) return [];
-          const folders = await frecentFolders(mf, repo);
-          for (const folder of folders) folderChoices.set(folder || '/', folder);
+          for (const { path, score } of await frecentFolders(mf, repo)) {
+            folderChoices.set(`${path || '/'} — score ${formatRank(score)}`, path);
+          }
           return [...folderChoices.keys()];
         },
       },
@@ -508,7 +518,10 @@ export default {
       // The pick is the last argument: typed inline, its words arrive apart.
       const choice = words.join(' ');
       const repo = /** @type {string | null} */ (await mf.workspace.get('active_repo'));
-      const folder = folderChoices.get(choice);
+      // A picked line, or a bare folder path typed inline.
+      const folder =
+        folderChoices.get(choice) ??
+        [...folderChoices.values()].find((path) => (path || '/') === choice);
       // Thrown rather than reported: the shell posts a command's failure itself.
       if (!repo || folder === undefined) throw new Error(`no frecent folder matches "${choice}"`);
       if (view === 'files') {
@@ -658,7 +671,9 @@ export default {
           recentChoices.clear();
           const repo = /** @type {string | null} */ (await mf.workspace.get('active_repo'));
           if (!repo) return [];
-          const entries = /** @type {{ uuid: string }[]} */ (await mf.recent.list(repo));
+          const entries = /** @type {{ uuid: string, rank: number }[]} */ (
+            await mf.recent.list(repo)
+          );
           const uuids = entries.map((e) => e.uuid);
           if (uuids.length === 0) return [];
           const [records, paths] = await Promise.all([
@@ -667,8 +682,8 @@ export default {
           ]);
           /** @type {string[]} */
           const lines = [];
-          for (const { uuid } of entries) {
-            const line = recentLine(records.get(uuid), paths[uuid]?.[0] ?? '', uuid);
+          for (const { uuid, rank } of entries) {
+            const line = recentLine(records.get(uuid), paths[uuid]?.[0] ?? '', uuid, rank);
             if (!recentChoices.has(line)) recentChoices.set(line, uuid); // newest wins on a collision
             lines.push(line);
           }

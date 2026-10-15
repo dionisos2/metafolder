@@ -118,7 +118,7 @@ describe('the candidates', () => {
     viewed('song', 1);
     viewed('films', 2);
 
-    expect(await complete()).toEqual(['/films', '/music']);
+    expect(await complete()).toEqual(['/films — score 8', '/music — score 4']);
   });
 
   test("a folder's entries add up", async () => {
@@ -131,7 +131,7 @@ describe('the candidates', () => {
     viewed('b', 2);
     viewed('music', 1);
 
-    expect(await complete()).toEqual(['/music', '/films']);
+    expect(await complete()).toEqual(['/music — score 20', '/films — score 12']);
   });
 
   test('recency weighs: an hour ×4, a day ×2, a week ×½, older ×¼', async () => {
@@ -145,7 +145,12 @@ describe('the candidates', () => {
     viewed('week', 7, 48 * HOUR);
     viewed('old', 13, 30 * 24 * HOUR);
 
-    expect(await complete()).toEqual(['/hour', '/day', '/week', '/old']);
+    expect(await complete()).toEqual([
+      '/hour — score 4',
+      '/day — score 3.8',
+      '/week — score 3.5',
+      '/old — score 3.3',
+    ]);
   });
 
   test('the root shows as /, and a folder with no path is left out', async () => {
@@ -159,7 +164,7 @@ describe('the candidates', () => {
     viewed('nofile', 5);
     viewed('unknown', 5);
 
-    expect(await complete()).toEqual(['/']);
+    expect(await complete()).toEqual(['/ — score 4']);
   });
 
   test('no active repository: no candidate', async () => {
@@ -176,7 +181,7 @@ describe('opening the pick', () => {
 
   test('files: the file manager, in the folder, at the target', async () => {
     await complete();
-    await run('files', 'here', '/music');
+    await run('files', 'here', '/music — score 4');
 
     expect(calls.targets).toEqual(['here']);
     expect(calls.sets).toEqual([
@@ -190,9 +195,16 @@ describe('opening the pick', () => {
     file('top', 'root');
     viewed('top', 9);
     await complete();
-    await run('files', 'here', '/');
+    await run('files', 'here', '/ — score 36');
 
     expect(calls.sets[0]).toEqual({ key: 'file-manager:dir', value: '/srv' });
+  });
+
+  test('a bare folder path, typed inline, is a pick too', async () => {
+    await complete();
+    await run('files', 'here', '/music');
+
+    expect(calls.sets[0]).toEqual({ key: 'file-manager:dir', value: '/srv/music' });
   });
 
   test('children: the metarecord list, with the folder followed one step', async () => {

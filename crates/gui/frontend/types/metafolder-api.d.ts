@@ -499,14 +499,16 @@ declare namespace Metafolder {
     append(repo: string, zone: string, entry: string): Promise<void>;
   }
 
-  /** One entry of the recently-viewed list: a metarecord uuid and the ISO-8601
-   *  timestamp of its most recent view. */
+  /** One entry of the recently-viewed list: a metarecord uuid, the ISO-8601
+   *  timestamp of its most recent view, and its rank — one per view, aged
+   *  (doc "Frecent folders"). */
   interface RecentEntry {
     uuid: string;
     viewed_at: string;
+    rank: number;
   }
 
-  /** Per-repo "recently viewed metarecords" (crate::recent): a GUI-side LRU
+  /** Per-repo "recently viewed metarecords" (crate::recent): a GUI-side
    *  list under `.metafolder/gui/recent`, newest first. `touch` records a view;
    *  `list` reads back the newest `limit` entries (all when omitted). */
   interface Recent {

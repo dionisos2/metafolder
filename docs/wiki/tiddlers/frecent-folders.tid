@@ -6,9 +6,9 @@ summary: Jumping to a folder you use often and lately, zoxide-style — opened i
 
 `folder:open` is a pick of the command input, like `recent` ([[recent panel]]): it
 offers the folders of the metarecords you viewed in this repository, the most
-''frecent'' first — frequently and recently used — and opens the one you pick. Type to
-narrow; the filter is the command input's ordered substring match, so `mu ja` finds
-`/music/jazz`.
+''frecent'' first — frequently and recently used — each with its score, and opens the
+one you pick. Type to narrow; the filter is the command input's ordered substring
+match, so `mu ja` finds `/music/jazz`. A bare folder path typed inline is a pick too.
 
 |!Key |!Opens the folder |
 |<<key "folder:open files here" "g d">> |in the [[file-manager panel]] |
@@ -24,7 +24,8 @@ view.
 
 The candidates come from the recently-viewed list, where each metarecord carries a
 ''rank'': one per view ([[Why recently viewed is kept by the GUI]]). Two things count
-as a view of a folder:
+as a view of a folder (the [[recent panel]] and the `recent` pick show each entry's
+rank):
 
 * going into it in the [[file-manager panel]] — once per arrival, not again when the same folder is listed anew (a refresh, an operation);
 * viewing anything ''in'' it: a file the [[file panel]] or `metarecord-detail` shows counts for its parent folder.

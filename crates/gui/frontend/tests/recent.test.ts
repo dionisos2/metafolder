@@ -14,7 +14,7 @@ import shipped from '../../default-config/commands.js';
 
 const state = {
   repo: 'r' as string | null,
-  entries: [] as { uuid: string; viewed_at: string }[],
+  entries: [] as { uuid: string; viewed_at: string; rank?: number }[],
   records: {} as Record<string, Metafolder.Metarecord>,
   paths: {} as Record<string, string[]>,
 };
@@ -67,8 +67,13 @@ const str = (value: string): Metafolder.Value => ({ type: 'string', value });
 
 /** One row of the recently-viewed list, with the record and tree path the
  *  daemon answers for it (`relPath` null = the record has no file). */
-function viewed(uuid: string, entries: [string, Metafolder.Value][], relPath: string | null = '') {
-  state.entries.push({ uuid, viewed_at: new Date().toISOString() });
+function viewed(
+  uuid: string,
+  entries: [string, Metafolder.Value][],
+  relPath: string | null = '',
+  rank = 1,
+) {
+  state.entries.push({ uuid, viewed_at: new Date().toISOString(), rank });
   state.records[uuid] = { uuid, fields: entries.map(([name, value]) => ({ name, value })) };
   state.paths[uuid] = relPath === null ? [] : [relPath];
 }
@@ -88,13 +93,13 @@ describe('the candidate lines', () => {
       ['name', str('jazz.mp3')],
     ], 'music/jazz.mp3');
 
-    expect(await complete()).toEqual(['music/jazz.mp3 — Blue — jazz.mp3']);
+    expect(await complete()).toEqual(['music/jazz.mp3 — Blue — jazz.mp3 — rank 1']);
   });
 
   test('the missing parts are dropped (no label)', async () => {
     viewed('u1', [['name', str('jazz.mp3')]], 'music/jazz.mp3');
 
-    expect(await complete()).toEqual(['music/jazz.mp3 — jazz.mp3']);
+    expect(await complete()).toEqual(['music/jazz.mp3 — jazz.mp3 — rank 1']);
   });
 
   test('the first row of a multi-map field wins', async () => {
@@ -104,7 +109,7 @@ describe('the candidate lines', () => {
       ['name', str('jazz.mp3')],
     ], 'music/jazz.mp3');
 
-    expect(await complete()).toEqual(['music/jazz.mp3 — a — jazz.mp3']);
+    expect(await complete()).toEqual(['music/jazz.mp3 — a — jazz.mp3 — rank 1']);
   });
 
   test('a nothing value counts as missing (explicit absence)', async () => {
@@ -113,27 +118,33 @@ describe('the candidate lines', () => {
       ['name', str('jazz.mp3')],
     ], 'music/jazz.mp3');
 
-    expect(await complete()).toEqual(['music/jazz.mp3 — jazz.mp3']);
+    expect(await complete()).toEqual(['music/jazz.mp3 — jazz.mp3 — rank 1']);
   });
 
   test('a non-string scalar is read as text', async () => {
     viewed('u1', [['label', { type: 'int', value: 5 }]], 'music/jazz.mp3');
 
-    expect(await complete()).toEqual(['music/jazz.mp3 — 5']);
+    expect(await complete()).toEqual(['music/jazz.mp3 — 5 — rank 1']);
+  });
+
+  test('the rank closes the line, to one decimal (it ages)', async () => {
+    viewed('u1', [['name', str('jazz.mp3')]], 'music/jazz.mp3', 2.71);
+
+    expect(await complete()).toEqual(['music/jazz.mp3 — jazz.mp3 — rank 2.7']);
   });
 
   test('a record with no path, label or name falls back to its uuid', async () => {
     viewed('deadbeef', [], null);
 
-    expect(await complete()).toEqual(['deadbeef']);
+    expect(await complete()).toEqual(['deadbeef — rank 1']);
   });
 
   test('a record the daemon no longer knows shows its uuid', async () => {
     // Deleted since it was viewed: no record, no path — the line must still
     // name the pick, or the list loses its place.
-    state.entries.push({ uuid: 'gone-uuid', viewed_at: new Date().toISOString() });
+    state.entries.push({ uuid: 'gone-uuid', viewed_at: new Date().toISOString(), rank: 1 });
 
-    expect(await complete()).toEqual(['gone-uuid']);
+    expect(await complete()).toEqual(['gone-uuid — rank 1']);
   });
 
   test('the list is offered newest first, and a colliding line goes to the newest', async () => {
@@ -141,9 +152,12 @@ describe('the candidate lines', () => {
     // kept for the first — the newest — to name.
     viewed('newer', [['name', str('same.mp3')]], 'music/same.mp3');
     viewed('older', [['name', str('same.mp3')]], 'music/same.mp3');
-    expect(await complete()).toEqual(['music/same.mp3 — same.mp3', 'music/same.mp3 — same.mp3']);
+    expect(await complete()).toEqual([
+      'music/same.mp3 — same.mp3 — rank 1',
+      'music/same.mp3 — same.mp3 — rank 1',
+    ]);
 
-    await run('music/same.mp3 — same.mp3');
+    await run('music/same.mp3 — same.mp3 — rank 1');
 
     expect(calls.sets[0].value).toEqual({ uuid: 'newer', repo: 'r' });
   });
