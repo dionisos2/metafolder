@@ -1,4 +1,4 @@
-// log-detail panel (panel-types/log-detail/snapshots.js): an operation's
+// log panel (panel-types/log/snapshots.js): an operation's
 // before/after snapshots, read back as values and paired field by field, which
 // is what the panel shows as "what this operation changed".
 
@@ -6,7 +6,7 @@ import { describe, expect, test } from 'vitest';
 import {
   fieldChanges,
   snapshotValue,
-} from '../../default-config/panel-types/log-detail/snapshots.js';
+} from '../../default-config/panel-types/log/snapshots.js';
 
 const ZERO = '0'.repeat(32);
 const A = 'a'.repeat(32);

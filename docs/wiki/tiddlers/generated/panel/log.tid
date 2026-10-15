@@ -7,7 +7,7 @@ summary: The log panel type
 
 * ``log:prune`` — Log: prune history before the selected label or operation
 * ``log:revert`` — Log: revert what is selected, or a narrower or wider scope
-* ``log:toggle`` — Log: toggle a view flag (the watcher’s work)
+* ``log:toggle`` — Log: toggle a view flag (the watcher’s work / the unchanged fields of an operation)
 
 !! Generic commands
 

@@ -28,6 +28,7 @@ function shadowFor(): ShadowRoot {
 
 type Handler = (...args: string[]) => unknown;
 
+const ENTITY = 'e'.repeat(32);
 const op = (id: number, label: number) => ({
   id,
   label_id: label,
@@ -37,6 +38,27 @@ const op = (id: number, label: number) => ({
   timestamp: id * 1000,
   field_name: 'tag',
   entity_uuid: null,
+});
+/** What `GET /log/labels/:id?op=` answers: the operation with its snapshots. */
+const DETAIL = (id: number, label: number) => ({
+  label: { id: label, name: 'mf tag add', created: 0, is_head: false, operation_count: 2 },
+  operations: [
+    {
+      id,
+      op_type: 'set_field',
+      entity_uuid: ENTITY,
+      field_name: 'tag',
+      reverts_op_id: null,
+      snapshots_before: [
+        { field_name: 'tag', value_type: 'string', value_text: 'old' },
+        { field_name: 'rating', value_type: 'int', value_int: 3 },
+      ],
+      snapshots_after: [
+        { field_name: 'tag', value_type: 'string', value_text: 'new' },
+        { field_name: 'rating', value_type: 'int', value_int: 3 },
+      ],
+    },
+  ],
 });
 const label = (id: number, name: string, parent: number | null = null) => ({
   id,
@@ -60,7 +82,16 @@ async function mountPanel() {
   const api = {
     settings: {},
     whenVisible: (fn: () => void) => fn(),
-    daemon: { call: vi.fn(async () => structuredClone(LOG)) },
+    daemon: {
+      call: vi.fn(async (_method: string, url: string) => {
+        const detail = /\/log\/labels\/(\d+)\?op=(\d+)$/.exec(url);
+        if (detail) return DETAIL(Number(detail[2]), Number(detail[1]));
+        return structuredClone(LOG);
+      }),
+      resolvePath: vi.fn(async () => '/photos/a.jpg'),
+      resolveTreeRef: vi.fn(async () => ''),
+      repoRoot: vi.fn(async () => '/root'),
+    },
     workspace: {
       get: async (key: string) => (key === 'active_repo' ? 'r' : null),
       set: vi.fn(async () => {}),
@@ -98,6 +129,11 @@ async function mountPanel() {
       ),
     rowWith,
     crumbs: () => shadow.getElementById('breadcrumb')!.textContent ?? '',
+    /** The operation gone into: its before/after table, one row per field. */
+    detail: () =>
+      [...shadow.querySelectorAll<HTMLElement>('#op-detail tbody tr')].map((tr) =>
+        [...tr.querySelectorAll('td')].map((td) => td.textContent?.trim()).join(' | '),
+      ),
     selected: () => shadow.querySelector('#rows tr.selected td.name')?.textContent?.trim() ?? null,
   };
 }
@@ -125,14 +161,41 @@ describe('log panel: going into a label', () => {
     expect(p.crumbs()).toContain('#1 run');
   });
 
-  test('down to the operations, which have no button: they hold nothing', async () => {
+  test("down to an operation, whose › button shows what it changed, field by field", async () => {
     const p = await mountPanel();
-    for (const name of ['run', 'answer', 'mf tag add']) {
+    for (const name of ['run', 'answer', 'mf tag add', 'op 10']) {
       p.rowWith(name).querySelector<HTMLButtonElement>('button.mf-open-enter')!.click();
       await settle();
     }
-    expect(p.rows()).toEqual(['op 11: set_field tag', 'op 10: set_field tag']);
-    expect(p.shadow.querySelector('#rows button.mf-open')).toBeNull();
+    expect(p.api.daemon.call).toHaveBeenCalledWith('GET', '/repos/r/log/labels/3?op=10');
+    expect(p.rows()).toEqual([]);
+    expect(p.crumbs()).toContain('op 10');
+    // The unchanged field is hidden until asked for.
+    expect(p.detail()).toEqual(['tag | old | new']);
+    expect(p.shadow.getElementById('op-detail')!.textContent).toContain('/photos/a.jpg');
+    await p.run('log:toggle', 'unchanged');
+    expect(p.detail()).toEqual(['tag | old | new', 'rating | 3 | 3']);
+  });
+
+  test('cursor:parent comes back out of an operation onto its row', async () => {
+    const p = await mountPanel();
+    await p.run('cursor:first'); // #9 edit
+    await p.run('cursor:descend');
+    await p.run('cursor:descend'); // op 12
+    expect(p.detail()).toEqual(['tag | old | new']);
+    await p.run('cursor:parent');
+    expect(p.shadow.getElementById('op-detail')!.hidden).toBe(true);
+    expect(p.selected()).toBe('op 12: set_field tag');
+  });
+
+  test('reverting while an operation is shown reverts that operation', async () => {
+    const p = await mountPanel();
+    await p.run('cursor:first');
+    await p.run('cursor:descend');
+    await p.run('cursor:descend'); // op 12
+    p.api.daemon.call.mockResolvedValueOnce({ operations: [] } as never); // the plan: nothing
+    await p.run('log:revert');
+    expect(p.api.daemon.call).toHaveBeenCalledWith('GET', '/repos/r/revert/plan?target_op_ids=12');
   });
 
   test('cursor:descend goes into the selected row; cursor:parent comes back onto it', async () => {

@@ -1,6 +1,7 @@
 title: log panel
 tags: Panel [[Event log]]
 kind: reference
+aliases: log-detail snapshot before after diff
 summary: The repository's history as a tree of labels — a unit of work per row (a command, a script's run, the watcher's flushes folded), opening down to single operations, with badges saying what each is.
 
 Open it with `panel:open here log` (<<key "panel:open here log" "t o">>). One row per
@@ -9,7 +10,7 @@ label it was written in — a command, a script's run, a context you opened ([[L
 single row (`N flushes of the watcher`), or they would drown the rest. Going into a row
 lists the labels nested in it and its own operations, newest first, down to single
 operations: a run onto its answers, an answer onto its commands, a command onto what it
-wrote. The list shows one level at a time, as the [[treeref panel]] does; the
+wrote — and an operation onto what it changed. The list shows one level at a time, as the [[treeref panel]] does; the
 breadcrumb above it says where it is, each step a way back.
 
 A label row shows its number, name and description, the time of its newest operation,
@@ -24,16 +25,28 @@ whether undoing it makes sense, computed over everything under it:
 !! Moving around
 
 * <<key "cursor:next self" "↓ or j">> / <<key "cursor:prev self" "↑ or k">>, <<key "cursor:first self" Home>> / <<key "cursor:last self" End>>, <<key "cursor:find self select" f>> (a row on screen by label number or name, [[Jumping to an entry]]) — the selection, over every listed row.
-* <<key "cursor:descend self" "Enter or →">>, or the row's `›` button ([[Opening a row]]) — go into the row under the cursor: the list shows what it holds, the cursor on its first row. A revert aims at what is under the cursor: a label whole — what is nested in it included —, or one operation.
+* <<key "cursor:descend self" "Enter or →">>, or the row's `›` button ([[Opening a row]]) — go into the row under the cursor: the list shows what it holds, the cursor on its first row; an operation shows what it changed. A revert aims at what is under the cursor — a label whole, what is nested in it included, or one operation —, or at the operation gone into.
 * <<key "cursor:parent self" "Backspace or ←">>, or ''↑ up'', or a step of the breadcrumb — back out, the cursor on the row it came out of.
 * <<key "log:toggle watcher" Shift+w>> — hide or show the watcher's work (shown by default). A display filter over what was fetched; the status line says how many units are hidden, and a selection inside one is dropped.
 * ''Show older operations'' — the list fetches the newest thousand operations, so a repository with millions of them still opens; the button widens the window by as much again.
 * <<key "view:refresh self" r>> — read the log again. The status line gives how many units of work and operations are listed, and the repository's totals when the window is only part of the log.
+
+!! What an operation changed
+
+Going into an operation shows it in place of the list: its type, field and `undo of op N`
+badge, the metarecord it wrote with that metarecord's ''current'' path — clicking the uuid
+selects it and shows it in the other slot — and a before/after table: one row per field
+name, a name's values compared as a set (fields are a multi-map), rows marked added,
+removed or changed. Fields the operation recorded without changing are hidden, with a
+count, unless `log:toggle unchanged` (the ''Unchanged fields'' checkbox). A
+`tree_ref` value is shown as the path it names. It is read again with the log, so a revert
+shows at once.
+
+This replaced the `log-detail` panel, which showed the same beside the log, following its
+cursor: one panel, gone into like the rest of the tree, rather than two kept in step.
 
 !! Acting
 
 <<key "log:revert" Shift+r>>, <<key "log:revert op" Shift+o>>, <<key "log:revert label" Shift+v>>,
 `log:prune` — and the global <<key "log:undo" Ctrl+z>> / <<key "log:redo" Ctrl+Shift+z>>,
 also as toolbar buttons: [[Log commands in the GUI]].
-
-The cursor is published as `selected_log_entry`, which the [[log-detail panel]] follows.

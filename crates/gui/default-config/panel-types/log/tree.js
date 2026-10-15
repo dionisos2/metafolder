@@ -4,8 +4,8 @@
 // A row of the top level is a unit of work: for an operation of yours, its
 // outermost label — a script's run, a command —; for one of the watcher, its
 // flush. Going into a unit lists the labels nested in it, and so on down to the
-// operations: the panel shows one level at a time, like the treeref panel
-// (doc "Opening a row").
+// operations, and into an operation for what it changed: the panel shows one
+// level at a time, like the treeref panel (doc "Opening a row").
 // Consecutive flushes of the watcher fold into one row, or they would drown
 // the rest. Everything is newest first, by the newest operation under it.
 //
@@ -133,8 +133,8 @@ export function buildTree(ops, labels) {
 
 /**
  * The nodes of `path` (keys, outermost first), each a child of the one before
- * — cut at the first that is not (a refresh or a prune took it away) or that
- * cannot be gone into (an operation).
+ * — cut at the first that is not (a refresh or a prune took it away), and after
+ * an operation: gone into, it shows what it changed and holds nothing.
  * @param {Node[]} tree @param {string[]} path
  * @returns {Node[]}
  */
@@ -144,8 +144,9 @@ export function nodesAlong(tree, path) {
   let level = tree;
   for (const key of path) {
     const next = level.find((n) => keyOf(n) === key);
-    if (!next || next.kind === 'op') break;
+    if (!next) break;
     out.push(next);
+    if (next.kind === 'op') break;
     level = next.children;
   }
   return out;
@@ -153,15 +154,16 @@ export function nodesAlong(tree, path) {
 
 /**
  * The rows on screen: the children of the node `path` leads to, or the top
- * level. With the watcher's work hidden, its units and folds are left out of
- * the top level.
+ * level; none in an operation. With the watcher's work hidden, its units and
+ * folds are left out of the top level.
  * @param {Node[]} tree @param {string[]} path @param {boolean} showWatcher
  * @returns {Row[]}
  */
 export function rowsAt(tree, path, showWatcher) {
   const along = nodesAlong(tree, path);
   const last = along[along.length - 1];
-  const level = last && last.kind !== 'op' ? last.children : tree;
+  if (last?.kind === 'op') return [];
+  const level = last ? last.children : tree;
   return level
     .filter(
       (n) =>

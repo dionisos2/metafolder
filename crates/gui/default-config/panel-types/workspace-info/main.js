@@ -9,7 +9,6 @@ const STANDARD = [
   'selected_paths',
   'selected_metarecord',
   'selected_metarecords',
-  'selected_log_entry',
   'selected_treeref',
 ];
 

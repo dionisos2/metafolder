@@ -339,6 +339,13 @@ than breaking them.
   "Command names (non-exhaustive default set)", "User commands").
 
 ### Removed
+- **The `log-detail` panel.** What an operation changed is shown by the log
+  panel itself: an operation row has a `›` button (or Enter/→), and going into
+  it shows its before/after table in place of the list, the breadcrumb leading
+  back. `log-detail:toggle unchanged` is now `log:toggle unchanged`; `whole`
+  is gone (going into the label lists its operations). The
+  `selected_log_entry` workspace variable, which only that panel read, is no
+  longer published, and the `t e` keys are unbound (doc "log panel").
 - **The per-panel cursor commands** — `<panel>:next`, `:prev`, `:first`,
   `:last` and `:find` of the metarecord list, file manager, tree explorer, log,
   trash, recent list and duplicates, and `metarecord:row-next`/`row-prev` —

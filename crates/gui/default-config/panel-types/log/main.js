@@ -1,17 +1,37 @@
 // log panel: the history as a tree of labels — the units of work newest
 // first (a command, a script's run, a flush of the watcher), each gone into
 // onto the labels nested in it, down to the operations, one level at a time
-// like the treeref panel; revert and prune (doc "log panel", doc "Labels and
-// contexts").
+// like the treeref panel, and into an operation for what it changed, field by
+// field; revert and prune (doc "log panel", doc "Labels and contexts").
 
-import { byId, el, openButton, qs } from '/__ui.js';
+import { byId, el, formatValue, openButton, qs } from '/__ui.js';
+import { fieldChanges } from './snapshots.js';
 import { buildTree, keyOf, marksOf, nodesAlong, pathTo, revertTarget, rowsAt } from './tree.js';
+
+/** Operation types, as a sentence fragment. */
+const OP_LABELS = /** @type {Record<string, string>} */ ({
+  create_metarecord: 'created the metarecord',
+  delete_metarecord: 'deleted the metarecord',
+  set_metarecord: 'overwrote the metarecord',
+  set_field: 'set a field',
+  append_field: 'added a value',
+  delete_field: 'deleted a field row',
+  file_deleted: 'file deleted (watcher)',
+  file_moved: 'file moved (watcher)',
+  file_modified: 'file modified (watcher)',
+});
 
 /**
  * @typedef {import('./tree.js').Op} Op
  * @typedef {import('./tree.js').Label} Label
  * @typedef {import('./tree.js').Node} Node
  * @typedef {import('./tree.js').Row} Row
+ *
+ * One operation of `GET /log/labels/:id?op=`, with what it changed.
+ * @typedef {{id: number, op_type: string, entity_uuid: string,
+ *            field_name: string|null, reverts_op_id: number|null,
+ *            snapshots_before: import('./snapshots.js').Snapshot[],
+ *            snapshots_after: import('./snapshots.js').Snapshot[]}} Detail
  *
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder
  */
@@ -44,6 +64,14 @@ export async function mount(root, metafolder) {
   // hiding them keeps only what the user wrote. A display filter: the fetch is
   // the same either way.
   let showWatcher = true;
+  // In an operation, the fields it recorded without changing them are hidden
+  // unless asked for.
+  let showUnchanged = false;
+  /** The operation gone into, as last read (null while it is being read).
+   *  @type {Detail|null} */
+  let detail = null;
+  /** Guards against a slow answer overwriting a newer operation's. */
+  let detailGeneration = 0;
   // The list fetches a bounded window of the most recent operations so a
   // repository with millions of them (a large initial reconcile) still loads;
   // "Show more" grows the window.
@@ -58,6 +86,9 @@ export async function mount(root, metafolder) {
   const revertButton = byId(root, 'revert', HTMLButtonElement);
   const pruneButton = byId(root, 'prune', HTMLButtonElement);
   const watcherCheckbox = byId(root, 'show-watcher', HTMLInputElement);
+  const opDetail = byId(root, 'op-detail');
+  const opBody = byId(root, 'op-body');
+  const unchangedCheckbox = byId(root, 'unchanged', HTMLInputElement);
   const breadcrumb = byId(root, 'breadcrumb');
   const upButton = byId(root, 'up', HTMLButtonElement);
   const statusLine = byId(root, 'status-line');
@@ -87,9 +118,8 @@ export async function mount(root, metafolder) {
       path = nodesAlong(tree, path).map(keyOf);
       if (selection !== null && !visible().some((r) => r.key === selection)) selection = null;
       render();
-      // Offer "Show more" while the list fills the requested window: older
-      // operations may lie beyond it.
-      moreBox.hidden = operations.length < limit;
+      // A revert may have changed what the operation shown is said to be.
+      void loadDetail();
     } catch (error) {
       moreBox.hidden = true;
       totals = null;
@@ -123,6 +153,19 @@ export async function mount(root, metafolder) {
     return rowsAt(tree, path, showWatcher);
   }
 
+  /** The operation gone into, if the list is in one. */
+  function shownOp() {
+    const last = nodesAlong(tree, path).at(-1);
+    return last?.kind === 'op' ? last.op : null;
+  }
+
+  /** What the commands act on: the operation gone into, else the row under the
+   *  cursor. */
+  function focusKey() {
+    const op = shownOp();
+    return op ? `op:${op.id}` : selection;
+  }
+
   /** How much log there is: what is on screen, and — when the fetched window is
    *  only part of it — the repository-wide totals it was cut from. */
   function renderStatusLine() {
@@ -151,17 +194,17 @@ export async function mount(root, metafolder) {
     root.querySelector('tr.selected')?.scrollIntoView({ block: 'nearest' });
   }
 
-  /** Goes into the row `key` (the selected one by default): a label or a
-   *  fold of the watcher's flushes; an operation holds nothing. The cursor
-   *  lands on the first thing it holds. @param {string|null} [key] */
-  /** Goes into the row `key`, and says whether it did: an operation holds
-   *  nothing to go into. @param {string|null} key */
+  /** Goes into the row `key` (the selected one by default), and says whether
+   *  it did: a label or a fold of the watcher's flushes, the cursor landing on
+   *  the first thing it holds; or an operation, which shows what it changed.
+   *  Nothing is below an operation. @param {string|null} [key] */
   function descend(key = selection) {
     const node = key === null ? null : findNode(key);
-    if (key === null || node === null || node.kind === 'op') return false;
+    if (key === null || node === null || shownOp() !== null) return false;
     path = [...path, key];
     selection = visible()[0]?.key ?? null;
     render();
+    if (node.kind === 'op') void loadDetail();
     return true;
   }
 
@@ -256,11 +299,16 @@ export async function mount(root, metafolder) {
         ],
         onclick: () => select(row.key),
       },
-      // What holds something is gone into by its button (doc "Opening a row").
+      // A row is gone into by its button (doc "Opening a row"): a label for
+      // what it holds, an operation for what it changed.
       el(
         'td',
         { class: 'open-cell' },
-        node.kind === 'op' ? null : openButton('enter', 'Go into it', () => descend(row.key)),
+        openButton(
+          'enter',
+          node.kind === 'op' ? 'Show what it changed' : 'Go into it',
+          () => descend(row.key),
+        ),
       ),
       nameCell(row),
       el('td', {}, newest > 0 ? new Date(newest).toLocaleString() : ''),
@@ -269,30 +317,170 @@ export async function mount(root, metafolder) {
     );
   }
 
-  /** What was last published as `selected_log_entry`, to publish changes only. */
-  let publishedKey = 'null';
+  /** Reads what the operation gone into changed (its snapshots). */
+  async function loadDetail() {
+    const mine = ++detailGeneration;
+    const op = shownOp();
+    if (op === null || repo === null) return;
+    try {
+      const body = /** @type {{operations?: Detail[]}} */ (
+        await daemon.call('GET', `/repos/${repo}/log/labels/${op.label_id}?op=${op.id}`)
+      );
+      if (mine !== detailGeneration) return;
+      detail = body.operations?.[0] ?? null;
+      renderDetail();
+    } catch (error) {
+      if (mine !== detailGeneration) return;
+      detail = null;
+      opBody.replaceChildren(
+        el('p', { class: 'placeholder' }, error instanceof Error ? error.message : String(error)),
+      );
+    }
+  }
 
-  /** Publishes the selection for the log-detail panel (doc "log-detail
-   *  panel"): the label, and the operation when the cursor is on one. Called
-   *  from render, so every path that moves or drops the selection publishes. */
-  function publishSelection() {
-    const node = selection === null ? null : findNode(selection);
-    /** @type {{repo: string, label_id: number, op_id: number|null}|null} */
-    let entry = null;
-    if (repo && node?.kind === 'op') entry = { repo, label_id: node.op.label_id, op_id: node.op.id };
-    if (repo && node?.kind === 'label') entry = { repo, label_id: node.id, op_id: null };
-    const key = JSON.stringify(entry);
-    if (key === publishedKey) return;
-    publishedKey = key;
-    void workspace.set('selected_log_entry', entry);
+  /** Publishes a metarecord the operation touched as the selection, and shows
+   *  it in the other slot (doc "Cross-panel selection").
+   *  @param {string} uuid */
+  async function openMetarecord(uuid) {
+    if (repo === null) return;
+    const at = repo;
+    const [rootPath, relPath] = await Promise.all([
+      daemon.repoRoot(at).catch(() => null),
+      daemon.resolvePath(at, uuid).catch(() => null),
+    ]);
+    const paths =
+      rootPath === null || relPath === null
+        ? []
+        : [relPath === '' ? rootPath : `${rootPath}${relPath}`];
+    await workspace.set('selected_metarecord', { uuid, repo: at });
+    await workspace.set('selected_paths', paths);
+    await commands.invoke('panel:open other metarecord-detail');
+  }
+
+  /** A metarecord uuid, clickable, followed by its current path once known.
+   *  @param {string} uuid */
+  function entityEl(uuid) {
+    const where = el('span', {}, '');
+    if (repo !== null) {
+      daemon
+        .resolvePath(repo, uuid)
+        .then((path) => {
+          where.textContent = ` — ${path === '' ? '/' : path}`;
+        })
+        .catch(() => {
+          where.textContent = ' — (no current path)';
+        });
+    }
+    return el(
+      'div',
+      { class: 'entity' },
+      'on ',
+      el(
+        'a',
+        {
+          href: '#',
+          class: 'ref-link',
+          title: 'Show this metarecord',
+          onclick: (/** @type {Event} */ event) => {
+            event.preventDefault();
+            void openMetarecord(uuid);
+          },
+        },
+        uuid,
+      ),
+      where,
+    );
+  }
+
+  /** A value, with a tree_ref shown as the path it names once resolved.
+   *  @param {Metafolder.Value} value @param {string} field */
+  function valueEl(value, field) {
+    const span = el('span', { class: 'value' }, formatValue(value));
+    if ((value.type === 'tree_ref' || value.type === 'hierarchy_ref') && repo !== null) {
+      const tree = value.value;
+      daemon
+        .resolveTreeRef(repo, tree, field)
+        .then((path) => {
+          span.textContent = path === '' ? '/' : path;
+          span.title = `${field}: parent ${tree.parent ?? '(root)'}, name "${tree.name}"`;
+        })
+        .catch(() => {});
+    }
+    return span;
+  }
+
+  /** @param {Metafolder.Value[]} values @param {string} field */
+  function valuesCell(values, field) {
+    return values.length === 0
+      ? el('span', { class: 'absent' }, '—')
+      : values.map((v) => valueEl(v, field));
+  }
+
+  /** What the operation gone into changed: its head, the metarecord it wrote,
+   *  and a before/after table, one row per field name. */
+  function renderDetail() {
+    unchangedCheckbox.checked = showUnchanged;
+    const op = detail;
+    if (op === null || shownOp()?.id !== op.id) {
+      opBody.replaceChildren(el('p', { class: 'placeholder' }, 'Loading…'));
+      return;
+    }
+    const changes = fieldChanges(op.snapshots_before ?? [], op.snapshots_after ?? []);
+    const shown = showUnchanged ? changes : changes.filter((c) => c.status !== 'unchanged');
+    const hidden = changes.length - shown.length;
+    const children = [
+      el(
+        'div',
+        { class: 'op-head' },
+        `op ${op.id} · ${op.op_type}${op.field_name ? ` · ${op.field_name}` : ''}`,
+        el('span', { class: 'description' }, ` — ${OP_LABELS[op.op_type] ?? op.op_type}`),
+        op.reverts_op_id != null
+          ? el('span', { class: 'badge revert' }, `undo of op ${op.reverts_op_id}`)
+          : null,
+      ),
+      entityEl(op.entity_uuid),
+      shown.length === 0
+        ? null
+        : el(
+          'table',
+          { class: 'changes' },
+          el(
+            'thead',
+            {},
+            el('tr', {}, el('th', {}, 'field'), el('th', {}, 'before'), el('th', {}, 'after')),
+          ),
+          el(
+            'tbody',
+            {},
+            ...shown.map((change) =>
+              el(
+                'tr',
+                { class: change.status },
+                el('td', { class: 'field' }, change.field),
+                el('td', { class: 'before' }, valuesCell(change.before, change.field)),
+                el('td', { class: 'after' }, valuesCell(change.after, change.field)),
+              ),
+            ),
+          ),
+        ),
+      hidden > 0
+        ? el('div', { class: 'entity' }, `${hidden} unchanged field${hidden === 1 ? '' : 's'} not shown`)
+        : null,
+    ];
+    opBody.replaceChildren(...children.filter((c) => c !== null));
   }
 
   function render() {
-    publishSelection();
+    const inOp = shownOp() !== null;
     placeholderElement.hidden = tree.length > 0;
     if (tree.length === 0) placeholderElement.textContent = 'Empty log.';
-    table.hidden = tree.length === 0;
-    const target = revertTarget(selection);
+    table.hidden = tree.length === 0 || inOp;
+    opDetail.hidden = !inOp;
+    if (inOp) renderDetail();
+    // Offer "Show older" while the list fills the requested window: older
+    // operations may lie beyond it.
+    moreBox.hidden = inOp || operations.length < limit;
+    const target = revertTarget(focusKey());
     revertButton.disabled = target === null;
     pruneButton.disabled = target === null;
     // The revert acts on whatever is selected, so the button says which.
@@ -321,7 +509,7 @@ export async function mount(root, metafolder) {
   }
 
   async function prune() {
-    const target = revertTarget(selection);
+    const target = revertTarget(focusKey());
     if (target === null || repo === null) return;
     const what = 'op_ids' in target ? `operation ${target.op_ids[0]}` : `label #${target.label_id}`;
     if (!confirm(`Prune all history before ${what}? This cannot be undone.`)) return;
@@ -371,7 +559,7 @@ export async function mount(root, metafolder) {
   /** Reverts whatever is selected: a label whole — what is nested in it
    *  included — or one operation. */
   async function revert() {
-    const target = revertTarget(selection);
+    const target = revertTarget(focusKey());
     if (target === null) return;
     /** @type {RevertPlan} */
     let plan;
@@ -390,7 +578,8 @@ export async function mount(root, metafolder) {
    *  its newest operation and asks for that, so "undo just this field" is
    *  reachable from the keyboard as well as by clicking the row. */
   async function revertOperation() {
-    const node = selection === null ? null : findNode(selection);
+    const key = focusKey();
+    const node = key === null ? null : findNode(key);
     if (node === null) return;
     if (node.kind === 'op') return revert();
     if (node.ops.length === 1) {
@@ -414,7 +603,8 @@ export async function mount(root, metafolder) {
   /** The widening counterpart: reverts the label the operation under the
    *  cursor was written in. */
   async function revertLabel() {
-    const node = selection === null ? null : findNode(selection);
+    const key = focusKey();
+    const node = key === null ? null : findNode(key);
     if (node?.kind === 'op') reveal(`label:${node.op.label_id}`);
     return revert();
   }
@@ -439,7 +629,8 @@ export async function mount(root, metafolder) {
     const files = plan.requires_lock ? ', moving files on disk' : '';
     // Reverting something already undone writes a second inverse — almost never
     // what is meant, so it is said out loud rather than silently done.
-    const node = selection === null ? null : findNode(selection);
+    const key = focusKey();
+    const node = key === null ? null : findNode(key);
     const mark = node === null ? null : marks(node);
     const undone =
       mark !== null && mark.undone !== null
@@ -477,6 +668,13 @@ export async function mount(root, metafolder) {
     render();
   }
   watcherCheckbox.addEventListener('change', () => toggleWatcher(watcherCheckbox.checked));
+
+  /** @param {boolean} [on] */
+  function toggleUnchanged(on) {
+    showUnchanged = on ?? !showUnchanged;
+    renderDetail();
+  }
+  unchangedCheckbox.addEventListener('change', () => toggleUnchanged(unchangedCheckbox.checked));
 
   // Grow the fetched window by one page and reload.
   showMoreButton.addEventListener('click', () => {
@@ -525,10 +723,11 @@ export async function mount(root, metafolder) {
   /** @type {Record<string, () => unknown>} */
   const LOG_FLAGS = {
     watcher: () => toggleWatcher(),
+    unchanged: () => toggleUnchanged(),
   };
 
   void commands.register('log:toggle', {
-    label: 'Log: toggle a view flag (the watcher’s work)',
+    label: 'Log: toggle a view flag (the watcher’s work / the unchanged fields of an operation)',
     args: [
       {
         name: 'flag',
@@ -562,8 +761,8 @@ export async function mount(root, metafolder) {
       const row = visible()[index];
       if (row) select(row.key);
     },
-    // `cursor:descend` goes into a label (and so does a walk, `cursor:find
-    // log walk`, label after label).
+    // `cursor:descend` goes into a label or an operation (and so does a
+    // walk, `cursor:find log walk`, label after label).
     descend: (index) => descend(visible()[index]?.key ?? null),
     entries: () =>
       visible().map(({ node }) => {
@@ -583,7 +782,6 @@ export async function mount(root, metafolder) {
     // A selection is a label of the previous repository.
     selection = null;
     path = [];
-    publishSelection();
     limit = LOG_PAGE; // reset the window for the new repository
     metafolder.whenVisible(deferredRefresh);
   });

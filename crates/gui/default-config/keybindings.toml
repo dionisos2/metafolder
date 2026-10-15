@@ -99,7 +99,6 @@
 "t f" = { command = "panel:open here file" }
 "t m" = { command = "panel:open here file-manager" }
 "t o" = { command = "panel:open here log" }
-"t e" = { command = "panel:open here log-detail" }
 "t r" = { command = "panel:open here repos" }
 "t g" = { command = "panel:open here message" }
 "t s" = { command = "panel:open here shell" }
@@ -116,7 +115,6 @@
 "i t f" = { command = "panel:open here file" }
 "i t m" = { command = "panel:open here file-manager" }
 "i t o" = { command = "panel:open here log" }
-"i t e" = { command = "panel:open here log-detail" }
 "i t r" = { command = "panel:open here repos" }
 "i t g" = { command = "panel:open here message" }
 "i t s" = { command = "panel:open here shell" }
@@ -133,7 +131,6 @@
 "w t f" = { command = "panel:open other file" }
 "w t m" = { command = "panel:open other file-manager" }
 "w t o" = { command = "panel:open other log" }
-"w t e" = { command = "panel:open other log-detail" }
 "w t r" = { command = "panel:open other repos" }
 "w t g" = { command = "panel:open other message" }
 "w t s" = { command = "panel:open other shell" }
@@ -150,7 +147,6 @@
 "b t f" = { command = "panel:open new file" }
 "b t m" = { command = "panel:open new file-manager" }
 "b t o" = { command = "panel:open new log" }
-"b t e" = { command = "panel:open new log-detail" }
 "b t r" = { command = "panel:open new repos" }
 "b t g" = { command = "panel:open new message" }
 "b t s" = { command = "panel:open new shell" }

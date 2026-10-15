@@ -9,7 +9,7 @@ Reads what a panel shows again: the focused panel with `self`, the panel type na
 |[[metarecord-list panel]] |runs its query again; the cursor stays on its metarecord when it is still listed |
 |[[file-manager panel]] |the displayed directory, and what the repository says of its entries, keeping the cursor where it was. The panel does not watch the disk: a file another program created appears on a refresh |
 |[[treeref panel]] |the repository's fields and the children shown |
-|[[log panel]], [[log-detail panel]] |the log; the shown write |
+|[[log panel]] |the log, and the operation gone into |
 |[[trash panel]], [[recent panel]], [[duplicates panel]] |the entries, the recently viewed metarecords, the groups |
 |[[repos panel]] |the loaded repositories, their tasks and their tracking notices |
 

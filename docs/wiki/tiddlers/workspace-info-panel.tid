@@ -10,8 +10,7 @@ Open it with `panel:open here workspace-info`
 as JSON, updated as it changes.
 
 The standard ones come first, `null` while unset — `active_repo`, `selected_paths`,
-`selected_metarecord`, `selected_metarecords`, `selected_log_entry`,
-`selected_treeref` — then every other variable the workspace holds, by name: each
+`selected_metarecord`, `selected_metarecords`, `selected_treeref` — then every other variable the workspace holds, by name: each
 panel's own (`metarecord-list:query`, `treeref:scope`…) and whatever a script wrote.
 
 It is read-only, and has no command of its own. It is the place to look when a panel

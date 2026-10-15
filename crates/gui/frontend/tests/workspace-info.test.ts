@@ -64,12 +64,11 @@ describe('workspace-info', () => {
 
   test('the standard variables come first, unset ones as null', async () => {
     const { keys, rows } = await mountWith({ 'treeref:scope': 'exact', active_repo: 'r' });
-    expect(keys().slice(0, 6)).toEqual([
+    expect(keys().slice(0, 5)).toEqual([
       'active_repo',
       'selected_paths',
       'selected_metarecord',
       'selected_metarecords',
-      'selected_log_entry',
       'selected_treeref',
     ]);
     expect(rows()['selected_metarecord']).toBe('null');

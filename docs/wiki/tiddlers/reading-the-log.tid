@@ -33,4 +33,4 @@ values before and after; `--raw` the JSON. A `tree_ref` value shows its name, no
 resolved path. `mf log head` prints the newest operation's id — what `mf log undo
 --after` takes.
 
-In the GUI: the [[log panel]], and the [[log-detail panel]] beside it for what a label changed.
+In the GUI: the [[log panel]], down to what each operation changed.

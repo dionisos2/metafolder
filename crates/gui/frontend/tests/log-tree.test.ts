@@ -6,6 +6,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   buildTree,
+  keyOf,
   marksOf,
   nodesAlong,
   pathTo,
@@ -100,8 +101,15 @@ describe('the path gone into', () => {
     const tree = buildTree(ops, labels);
     expect(nodesAlong(tree, ['label:1', 'label:2']).map((n) => n.kind === 'label' && n.id)).toEqual([1, 2]);
     expect(nodesAlong(tree, ['label:1', 'label:7', 'label:3']).map((n) => n.kind === 'label' && n.id)).toEqual([1]);
-    expect(nodesAlong(tree, ['op:10'])).toEqual([]); // an operation is not gone into
     expect(keys(ops, labels, ['label:1', 'label:7'])).toEqual(['label:2']);
+  });
+
+  test('an operation is gone into last: it lists nothing, and nothing is below it', () => {
+    const tree = buildTree(ops, labels);
+    const path = ['label:1', 'label:2', 'label:3', 'op:10'];
+    expect(nodesAlong(tree, path).map(keyOf)).toEqual(path);
+    expect(nodesAlong(tree, [...path, 'op:11']).map(keyOf)).toEqual(path);
+    expect(keys(ops, labels, path)).toEqual([]);
   });
 });
 

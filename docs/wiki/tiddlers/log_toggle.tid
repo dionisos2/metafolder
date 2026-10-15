@@ -1,6 +1,6 @@
 title: log:toggle
 tags: [[GUI command]] [[Event log]]
 kind: reference
-summary: Log: toggle a view flag (the watcher’s work / the selected label opened)
+summary: Log: toggle a view flag (the watcher’s work / the unchanged fields of an operation)
 
-`ops` opens or closes the selected row, `watcher` hides or shows the watcher's work. ([[log panel]])
+`watcher` hides or shows the watcher's work; `unchanged` lists, in an operation gone into, the fields it recorded without changing them ([[log panel]]).
