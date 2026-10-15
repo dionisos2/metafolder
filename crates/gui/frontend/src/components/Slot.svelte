@@ -188,10 +188,13 @@
   .slot-button {
     border: none;
     border-radius: 3px;
-    padding: 0 4px;
+    padding: 0 6px;
     background: transparent;
     color: var(--mf-fg-dim, #8a8a96);
     font: inherit;
+    /* Big enough to aim at: twice the header text. */
+    font-size: 1.5em;
+    line-height: 1.1;
     cursor: pointer;
   }
   .slot-button:hover {

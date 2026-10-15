@@ -127,22 +127,32 @@ option {
   opacity: 0.8;
 }
 
-/* A row's open button (/__ui.js openButton, doc "Opening a row"): a small
- * icon, dim until its row is hovered or under the cursor. `.mf-open-enter`
- * goes into the row, `.mf-open-show` shows it in another panel. */
+/* A row's open button (/__ui.js openButton, doc "Opening a row"): an icon big
+ * enough to aim at. `.mf-open-show` (shows the row in another panel) is dim
+ * until its row is hovered or under the cursor; `.mf-open-enter` (goes into the
+ * row: a folder, a tree node) is always ringed in the accent colour, since it
+ * is the one way in. */
 button.mf-open {
   flex: none;
-  width: 1.5em;
+  width: 1.7em;
   padding: 0;
   font: inherit;
-  line-height: 1.2;
+  font-size: 1.5em;
+  line-height: 1.1;
   text-align: center;
   background: transparent;
   color: var(--mf-fg-dim);
   border: 1px solid transparent;
-  border-radius: 3px;
+  border-radius: 4px;
   cursor: pointer;
-  opacity: 0.35;
+  opacity: 0.45;
+}
+button.mf-open-enter {
+  color: var(--mf-fg);
+  border-color: var(--mf-accent);
+  background: color-mix(in srgb, var(--mf-accent) 30%, transparent);
+  font-weight: bold;
+  opacity: 0.85;
 }
 :hover > button.mf-open,
 :hover > * > button.mf-open,
@@ -152,6 +162,15 @@ button.mf-open {
 button.mf-open:hover {
   border-color: var(--mf-accent);
   color: var(--mf-fg);
+}
+
+/* The other small clickable icons of the panels: a value's pick button (🔍,
+ * /__value-widget.js) and a field's + (metarecord-detail). */
+button.pick-btn,
+button.add-value {
+  font-size: 1.4em;
+  min-width: 1.8em;
+  line-height: 1.1;
 }
 
 /* Entry references rendered as clickable links (/__ui.js valueEl). */

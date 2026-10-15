@@ -135,7 +135,9 @@
   .close {
     color: var(--mf-fg-dim, #8a8a96);
     border-radius: 3px;
-    padding: 0 3px;
+    padding: 0 4px;
+    font-size: 1.4em;
+    line-height: 1;
   }
   .close:hover {
     color: var(--mf-error, #c44c56);

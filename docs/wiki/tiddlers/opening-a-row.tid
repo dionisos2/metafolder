@@ -2,13 +2,16 @@ title: Opening a row
 tags: GUI
 kind: reference
 aliases: open-button double-click
-summary: A click on a row selects it, and only that; opening is a small button at the start of the row — › goes into it, ↗ shows it in the other slot. No double click.
+summary: A click on a row selects it, and only that; opening is a button at the start of the row — › goes into it, ↗ shows it in the other slot. No double click.
 
 A click on a row of a panel ''selects'' it, and does nothing else. ''Opening'' it is a
-small button at the start of the row, dim until the row is hovered or under the cursor:
+button at the start of the row, drawn larger than the text so it is easy to aim at:
 
-* `›` — go ''into'' the row: the listing then shows what it holds (a folder).
-* `↗` — ''show'' the row in the other slot (a file, in the [[file panel]]).
+* `›` — go ''into'' the row: the listing then shows what it holds (a folder). Always ringed in the accent colour: it is the one way in, and must not be missed.
+* `↗` — ''show'' the row in the other slot (a file, in the [[file panel]]). Dim until the row is hovered or under the cursor.
+
+Both are styled in the user stylesheet (`button.mf-open`, `button.mf-open-enter`;
+[[GUI configuration]]).
 
 The keyboard is unchanged: <<key "file-manager:activate" Enter>> and its kind still open
 the row under the cursor.
