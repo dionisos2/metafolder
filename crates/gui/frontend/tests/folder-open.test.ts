@@ -1,7 +1,7 @@
 // Jumping to a frecent folder (`folder:open`, keybindings.toml "g d"/"g c"/
 // "g t"), as the shipped `commands.js` defines it: the candidates are the
 // folders of the recently-viewed metarecords — a folder itself, the parent of
-// anything else — each worth the sum of its entries' frecency (zoxide's rank
+// anything else — each worth the best of its entries' frecency (zoxide's rank
 // weighted by recency, doc "Frecent folders"), best first. The pick opens the
 // folder in the file manager, or lists its children or its subtree in the
 // metarecord list.
@@ -121,17 +121,29 @@ describe('the candidates', () => {
     expect(await complete()).toEqual(['/films — score 8', '/music — score 4']);
   });
 
-  test("a folder's entries add up", async () => {
+  test('a folder is worth its best entry, not their sum', async () => {
+    // Walking many files of a folder is not using it often: three files seen
+    // twice each weigh what one of them does.
     folder('music', '/music');
     folder('films', '/films');
     file('a', 'music');
     file('b', 'music');
+    file('c', 'music');
     viewed('films', 3);
     viewed('a', 2);
     viewed('b', 2);
-    viewed('music', 1);
+    viewed('c', 2);
 
-    expect(await complete()).toEqual(['/music — score 20', '/films — score 12']);
+    expect(await complete()).toEqual(['/films — score 12', '/music — score 8']);
+  });
+
+  test("the folder's own visits are one of its entries", async () => {
+    folder('music', '/music');
+    file('a', 'music');
+    viewed('music', 5);
+    viewed('a', 1);
+
+    expect(await complete()).toEqual(['/music — score 20']);
   });
 
   test('recency weighs: an hour ×4, a day ×2, a week ×½, older ×¼', async () => {

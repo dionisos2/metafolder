@@ -237,8 +237,9 @@ const folderChoices = new Map();
 /**
  * The folders of the recently-viewed metarecords, best first, each as its
  * repo-relative tree path ('' is the root) and its score: a folder counts for itself,
- * anything else for its parent folder, and a folder is worth the sum of its
- * entries' `frecency`. A record with no position in the tree, or whose folder
+ * anything else for its parent folder, and a folder is worth its best entry's
+ * `frecency` — the best and not the sum, so that walking many files of a folder
+ * does not count as using it often. A record with no position in the tree, or whose folder
  * has none, counts for nothing.
  * @param {MetafolderApi} mf
  * @param {string} repo
@@ -253,7 +254,7 @@ async function frecentFolders(mf, repo) {
     entries.map((e) => e.uuid),
   );
   const now = Date.now();
-  /** @type {Map<string, number>} folder uuid → score */
+  /** @type {Map<string, number>} folder uuid → its best entry's score */
   const scores = new Map();
   for (const entry of entries) {
     const fields = records.get(entry.uuid)?.fields ?? [];
@@ -264,7 +265,8 @@ async function frecentFolders(mf, repo) {
     );
     const folder = isDir ? entry.uuid : position.value.parent;
     if (!folder) continue;
-    scores.set(folder, (scores.get(folder) ?? 0) + frecency(entry.rank, entry.viewed_at, now));
+    const score = frecency(entry.rank, entry.viewed_at, now);
+    scores.set(folder, Math.max(scores.get(folder) ?? 0, score));
   }
   const paths = await mf.daemon.treePaths(repo, 'mfr_path', [...scores.keys()]);
   return [...scores]
