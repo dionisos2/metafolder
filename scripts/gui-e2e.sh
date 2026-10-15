@@ -813,8 +813,8 @@ scenario_hierarchy() {
     assert "hierarchy: a parent that does not exist is refused" [ "$LAST_RC" != 0 ]
 }
 
-# The same with the mouse (doc "metarecord-detail panel"): the + of the field's
-# row opens the add form on it, and the new parent is typed by its path.
+# The same with the mouse (doc "metarecord-detail panel"): the + of the field
+# opens the add form on it, and the new parent alone is typed, by its path.
 scenario_hierarchy_form() {
     needs_clicks hierarchy-form || return 0
     needs_keyboard hierarchy-form || return 0
@@ -831,11 +831,16 @@ scenario_hierarchy_form() {
     assert "hierarchy form: the field's + is clicked" \
         until_ok 10 click 'button.add-value[title*=path]'
     assert "hierarchy form: the form is on that field" until_ok 10 reads path '#add-name'
-    # The value input has the focus.
-    typed "évènement/maraton"
+    # The value input has the focus; the node has its name, so the parent alone.
+    typed "évènement"
     assert "hierarchy form: added" click '#add-append'
     assert "hierarchy form: the node has both parents" until_ok 10 paths_are "$maraton" \
         "$(printf 'sport/maraton\névènement/maraton')"
+    # Shown as one field: the name once, a line per parent.
+    assert "hierarchy form: the node's name is shown once" \
+        until_ok 10 shows '#field-rows td.name[rowspan="2"]' maraton
+    assert "hierarchy form: a line names the new parent" \
+        until_ok 10 shows '#field-rows td.value' évènement
 }
 # paths_are <uuid> <paths> — the node's paths, one a line, sorted.
 paths_are() {

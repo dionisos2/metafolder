@@ -220,6 +220,24 @@ describe('widgetFor', () => {
     expect(input.value).toBe('x/pu/leaf');
   });
 
+  test('a further parent of a named node is typed alone', async () => {
+    const parse = vi.fn(async (raw: string) => ({ parsed: raw }) as never);
+    const pathOf = vi.fn(async (uuid: string) => (uuid === 'pa' ? 'a/b' : `p-${uuid}`));
+    const w = widgetFor(
+      'hierarchy_ref',
+      { parent: 'pa', name: 'n' },
+      { pick: async () => 'pu', parent: { name: 'n', parse, pathOf } },
+    );
+    const input = w.element.querySelector('input')!;
+    await new Promise((r) => setTimeout(r, 0));
+    expect(input.value).toBe('a/b');
+    expect(w.element.textContent).toContain('n');
+    expect(await w.read()).toEqual({ parsed: 'a/b' });
+    w.element.querySelector<HTMLButtonElement>('button.pick-btn')!.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(input.value).toBe('p-pu');
+  });
+
   test('tree_ref reads parent (empty = root) and name', () => {
     const w = widgetFor('tree_ref', { parent: 'abcd', name: 'notes.txt' });
     expect(w.read()).toEqual({ type: 'tree_ref', value: { parent: 'abcd', name: 'notes.txt' } });

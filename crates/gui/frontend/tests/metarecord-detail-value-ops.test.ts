@@ -116,7 +116,11 @@ async function mountPanel(
         calls.push({ method, path, body });
         if (method === 'GET' && path === `/repos/${REPO}/metarecords/${UUID}`)
           return { uuid: UUID, version: 1, fields };
-        if (method === 'GET' && path.endsWith('/resolve-tree')) return { paths: treePaths };
+        if (method === 'GET' && path.endsWith('/resolve-tree')) {
+          // A node of `tree` reads as its own path; anything else as `treePaths`.
+          const node = path.split('/metarecords/')[1]?.split('/')[0] ?? '';
+          return { paths: byUuid[node] !== undefined ? [byUuid[node]] : treePaths };
+        }
         // The whole-forest path listing behind a value completion: empty —
         // these tests name values, they do not complete over the forest.
         if (method === 'POST' && path.endsWith('/resolve-tree')) return {};
@@ -177,7 +181,7 @@ async function mountPanel(
   /** Puts the field cursor on row `index`, as `cursor:next` would. */
   const cursorTo = (index: number) =>
     (api.provide.mock.calls[0][0] as { select: (i: number) => void }).select(index);
-  return { specs, calls, shadow, cursorTo };
+  return { specs, calls, shadow, cursorTo, store };
 }
 
 /** Collects `invocation`'s missing arguments, answering each prompt in turn
@@ -500,7 +504,7 @@ const maratonFields = (): Field[] => [
 ];
 
 describe('adding a value to a field from its row (doc "metarecord-detail panel")', () => {
-  test('the row’s + opens the add form on that field, its type, and takes a path', async () => {
+  test('the field’s + opens the add form on that field, its type, and takes a parent', async () => {
     const { shadow, calls } = await mountPanel(maratonFields(), {
       catalog: { path: 'hierarchy_ref' },
       tree: { évènement: U_BLUES },
@@ -514,9 +518,9 @@ describe('adding a value to a field from its row (doc "metarecord-detail panel")
     expect(shadow.getElementById('add-form')!.classList.contains('open')).toBe(true);
     expect((shadow.getElementById('add-name') as HTMLInputElement).value).toBe('path');
     expect(shadow.getElementById('add-type')!.textContent).toContain('hierarchy_ref');
-    // The parent is typed by its path, as in the command input.
+    // The node has its name: the new parent alone is typed, by its path.
     const input = shadow.querySelector<HTMLInputElement>('#add-value input')!;
-    input.value = 'évènement/maraton';
+    input.value = 'évènement';
     shadow.getElementById('add-append')!.click();
     await settle();
     await settle();
@@ -541,7 +545,7 @@ describe('adding a value to a field from its row (doc "metarecord-detail panel")
     expect((shadow.getElementById('add-name') as HTMLInputElement).value).toBe('path');
   });
 
-  test('editing a hierarchy row in place shows, and takes, the path through its parent', async () => {
+  test('editing a hierarchy row in place shows, and takes, its parent', async () => {
     const { shadow, specs, calls, cursorTo } = await mountPanel(maratonFields(), {
       catalog: { path: 'hierarchy_ref' },
       tree: { évènement: U_BLUES },
@@ -552,8 +556,8 @@ describe('adding a value to a field from its row (doc "metarecord-detail panel")
     await settle();
     await settle();
     const input = shadow.querySelector<HTMLInputElement>('td.value input')!;
-    expect(input.value).toBe('sport/maraton');
-    input.value = 'évènement/maraton';
+    expect(input.value).toBe('sport');
+    input.value = 'évènement';
     const ok = [...shadow.querySelectorAll<HTMLButtonElement>('td.ops button')].find(
       (b) => b.textContent === 'OK',
     )!;
@@ -648,5 +652,57 @@ describe('a hierarchy node’s parents (doc "Hierarchy references")', () => {
       path: `/repos/${REPO}/fields/7`,
       body: { value: { type: 'hierarchy_ref', value: { parent: U_BLUES, name: 'maraton' } } },
     });
+  });
+});
+
+describe('a hierarchy node shown as one field: its name once, a line per parent', () => {
+  const twoParents = (): Field[] => [
+    { id: 7, name: 'path', value: { type: 'hierarchy_ref', value: { parent: U_PARENT, name: 'maraton' } } },
+    { id: 8, name: 'rating', value: { type: 'int', value: 3 } },
+    { id: 9, name: 'path', value: { type: 'hierarchy_ref', value: { parent: U_BLUES, name: 'maraton' } } },
+  ];
+  const opts = {
+    catalog: { path: 'hierarchy_ref', rating: 'int' },
+    tree: { évènement: U_BLUES, sport: U_PARENT },
+  };
+  const rows = (shadow: ShadowRoot) => [...shadow.querySelectorAll<HTMLTableRowElement>('#field-rows tr')];
+
+  test('the rows of a field are together, the name cell spanning them, the node’s name in it', async () => {
+    const { shadow } = await mountPanel(twoParents(), opts);
+    await settle();
+    await settle();
+    const trs = rows(shadow);
+    expect(trs).toHaveLength(3);
+    const names = shadow.querySelectorAll<HTMLTableCellElement>('#field-rows td.name');
+    expect(names).toHaveLength(2); // path (spanning two lines), rating
+    expect(names[0].rowSpan).toBe(2);
+    expect(names[0].textContent).toContain('path');
+    expect(names[0].textContent).toContain('maraton');
+    expect(trs[2].textContent).toContain('rating');
+    // Each line names its parent by its path, and only that.
+    const values = trs.slice(0, 2).map((tr) => tr.querySelector('td.value')!.textContent ?? '');
+    expect(values[0]).toContain('sport');
+    expect(values[1]).toContain('évènement');
+    expect(values.join('')).not.toContain('maraton');
+    // One + for the field, on its last line.
+    expect(trs[1].querySelector('button.add-value')).not.toBeNull();
+    expect(trs[0].querySelector('button.add-value')).toBeNull();
+  });
+
+  test('a parent line opens the parent', async () => {
+    const { shadow, store } = await mountPanel(twoParents(), opts);
+    await settle();
+    rows(shadow)[1].querySelector<HTMLAnchorElement>('a.ref-link')!.click();
+    await settle();
+    expect(store.get('selected_metarecord')).toMatchObject({ uuid: U_BLUES });
+  });
+
+  test('a root line reads as the root', async () => {
+    const fields: Field[] = [
+      { id: 7, name: 'path', value: { type: 'hierarchy_ref', value: { parent: null, name: 'maraton' } } },
+    ];
+    const { shadow } = await mountPanel(fields, opts);
+    await settle();
+    expect(rows(shadow)[0].querySelector('td.value')!.textContent).toContain('(root)');
   });
 });

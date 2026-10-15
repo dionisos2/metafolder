@@ -316,11 +316,47 @@ function pathWidget(type, seed, path, pick) {
 }
 
 /**
+ * A row of a hierarchy node that has its name (doc "Hierarchy references"):
+ * the parent alone is typed, by its path, and the name is shown after it.
+ *
+ * @param {Metafolder.TreeRef|null|undefined} seed
+ * @param {ParentVocabulary} vocab
+ * @param {PickFn} [pick]
+ */
+function parentWidget(seed, vocab, pick) {
+  const input = el('input', { placeholder: 'parent path (empty: a root)' });
+  if (seed?.parent) {
+    void vocab
+      .pathOf(seed.parent)
+      .then((path) => {
+        if (input.value === '') input.value = path;
+      })
+      .catch(() => {});
+  }
+  const read = () => vocab.parse(input.value);
+  const name = el('span', { class: 'node-name' }, ` / ${vocab.name}`);
+  if (!pick) return { element: el('span', {}, input, name), read };
+  const button = el(
+    'button',
+    { type: 'button', class: 'pick-btn', title: 'Pick the parent metarecord' },
+    '🔍',
+  );
+  button.addEventListener('click', () => {
+    void (async () => {
+      const parent = await pick('hierarchy_ref');
+      if (parent) input.value = await vocab.pathOf(parent);
+    })();
+  });
+  return { element: el('span', {}, input, name, ' ', button), read };
+}
+
+/**
  * Builds an interactive input widget for a value; returns {element, read()}.
  * `opts.pick(valueType) -> Promise<uuid|null>` enables the value picker on
  * `ref`/`refbase`/`tree_ref` widgets (fills the uuid / the tree parent).
  * `opts.path` types a `tree_ref`/`hierarchy_ref` as a path rather than a
- * parent uuid and a name; `read` then answers a promise.
+ * parent uuid and a name; `read` then answers a promise. `opts.parent` types
+ * a `hierarchy_ref` of a node that has its name as its parent alone.
  *
  * @typedef {(valueType: string) => Promise<string|null>} PickFn
  * @typedef {{
@@ -328,11 +364,17 @@ function pathWidget(type, seed, path, pick) {
  *   through: (parent: string|null, name: string) => Promise<string>,
  * }} PathVocabulary the field's path vocabulary: a path to its value, and
  *   the path a value reads as through a given parent
+ * @typedef {{
+ *   name: string,
+ *   parse: (raw: string) => Promise<Metafolder.Value>,
+ *   pathOf: (uuid: string) => Promise<string>,
+ * }} ParentVocabulary a named hierarchy node's: its name, a parent's path
+ *   to the row under it, and a node's path
  *
  * @param {string} type
  * @param {ValuePayload|null} [initial] the current payload; its shape follows
  *   `type`, so each branch narrows it itself
- * @param {{pick?: PickFn, path?: PathVocabulary}} [opts]
+ * @param {{pick?: PickFn, path?: PathVocabulary, parent?: ParentVocabulary}} [opts]
  * @returns {{element: HTMLElement, read: () => Metafolder.Value|Promise<Metafolder.Value>}}
  */
 export function widgetFor(type, initial, opts = {}) {
@@ -366,6 +408,7 @@ export function widgetFor(type, initial, opts = {}) {
     case 'tree_ref':
     case 'hierarchy_ref': {
       const seed = /** @type {Metafolder.TreeRef|null|undefined} */ (initial);
+      if (type === 'hierarchy_ref' && opts.parent) return parentWidget(seed, opts.parent, opts.pick);
       if (opts.path) return pathWidget(type, seed, opts.path, opts.pick);
       const parent = el('input', {
         placeholder: 'parent uuid (empty = root)',

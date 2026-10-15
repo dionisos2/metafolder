@@ -20,8 +20,10 @@ the input matching the type chosen.
 |`refbase` |a uuid, with a 🔍 button |
 |`externalref` |a repository uuid and a metarecord uuid |
 
-A position is shown, and edited, as the path through its own parent: a hierarchy node's
-second row reads `évènement/maraton`, not its first path. The bulk edit of
+A position is shown, and edited, as the path through its own parent. A row of a
+[[hierarchy node|Hierarchy references]] that has its name is its parent alone: the
+input holds the parent's path (`évènement`, empty for a root), the name follows it,
+fixed. The bulk edit of
 [[metarecord-list panel]] still takes a parent uuid and a name.
 
 The type button offers every type but the last two. `refbase` and `externalref` are not offered

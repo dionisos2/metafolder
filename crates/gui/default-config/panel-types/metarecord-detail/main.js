@@ -92,27 +92,50 @@ export async function mount(root, metafolder) {
   // add-field form and the inline editors. `pickOpts(nameOf)` builds the
   // widget option that opens a picker seeded for the field being edited.
   const pickRunner = createPickRunner(metafolder);
-  /** @param {() => string} nameOf */
   // A position is typed as a path, the command input's vocabulary (doc
-  // "Field editor"), resolved in the field's own forest or hierarchy.
-  const pickOpts = (nameOf) => ({
-    /** @param {string} valueType */
-    pick: (valueType) => pickRunner.run({ field: nameOf(), valueType }),
-    path: {
-      /** @param {string} type @param {string} raw */
-      parse: async (type, raw) =>
-        /** @type {Metafolder.Value} */ (await vocab.parse(await requireRepo(), nameOf(), type, raw)),
-      /** @param {string|null} parent @param {string} name */
-      through: async (parent, name) =>
-        vocab.pathThrough(await requireRepo(), nameOf(), parent, name),
-    },
-  });
-  const addPickOpts = pickOpts(() => addNameInput().value.trim());
+  // "Field editor"), resolved in the field's own forest or hierarchy; a
+  // further row of a hierarchy node that has its name, as its parent alone
+  // (doc "Hierarchy references").
+  /** @param {() => string} nameOf */
+  const pickOpts = (nameOf) => {
+    const name = hierarchyName(nameOf());
+    return {
+      pick: (/** @type {string} */ valueType) => pickRunner.run({ field: nameOf(), valueType }),
+      path: {
+        parse: async (/** @type {string} */ type, /** @type {string} */ raw) =>
+          /** @type {Metafolder.Value} */ (
+            await vocab.parse(await requireRepo(), nameOf(), type, raw)
+          ),
+        through: async (/** @type {string|null} */ parent, /** @type {string} */ leaf) =>
+          vocab.pathThrough(await requireRepo(), nameOf(), parent, leaf),
+      },
+      parent:
+        name === null
+          ? undefined
+          : {
+              name,
+              parse: async (/** @type {string} */ raw) =>
+                vocab.parseParent(await requireRepo(), nameOf(), raw, name),
+              pathOf: async (/** @type {string} */ uuid) =>
+                vocab.parentRaw(await requireRepo(), nameOf(), uuid),
+            },
+    };
+  };
 
-  /** The form's value widget follows the picked type.
+  /** The one name of the hierarchy node the shown metarecord is in `field`,
+   *  null when it is not one. @param {string} field */
+  function hierarchyName(field) {
+    for (const f of metarecord?.fields ?? []) {
+      if (f.name === field && f.value.type === 'hierarchy_ref') return f.value.value.name;
+    }
+    return null;
+  }
+
+  /** The form's value widget follows the picked type — and, for a hierarchy
+   *  node, the field named: a further parent is typed alone.
    *  @param {string} type */
   function setAddWidget(type) {
-    addWidget = widgetFor(type, undefined, addPickOpts);
+    addWidget = widgetFor(type, undefined, pickOpts(() => addNameInput().value.trim()));
     addValueSlot.replaceChildren(addWidget.element);
   }
   const addTypeButton = byId(root, 'add-type');
@@ -155,6 +178,8 @@ export async function mount(root, metafolder) {
     // The name may have changed while awaiting; re-read the current value.
     if (addNameInput().value.trim() !== name) return;
     setTypeLock(types.get(name) ?? null);
+    // Whether the value is a parent alone follows the name.
+    if (typePicker.get() === 'hierarchy_ref') setAddWidget('hierarchy_ref');
   }
   addNameInput().addEventListener('input', () => void syncTypeToName());
 
@@ -270,12 +295,60 @@ export async function mount(root, metafolder) {
     const loaded = metarecord;
     if (!loaded) return;
     metarecordHead.textContent = `uuid ${loaded.uuid} — version ${loaded.version}`;
-    fieldRows.replaceChildren(...loaded.fields.map(fieldRow));
+    fieldRows.replaceChildren(...rowItems().map(fieldRow));
   }
 
   /** @param {string} name @param {string} type */
   function nameCell(name, type) {
     return el('td', { class: 'name' }, name, ' ', el('span', { class: 'type' }, type));
+  }
+
+  /** The name cell of row `index`: its own — or, for the rows of a
+   *  hierarchy node (doc "Hierarchy references"), one spanning them all,
+   *  naming the node once; the following rows then have none.
+   *  @param {Field} field @param {number} index @returns {HTMLElement|null} */
+  function nameCellFor(field, index) {
+    const items = rowItems();
+    const group = items.filter((f) => f.name === field.name);
+    if (!group.every((f) => f.value.type === 'hierarchy_ref')) {
+      return nameCell(field.name, field.value.type);
+    }
+    if (items[index - 1]?.name === field.name) return null;
+    const cell = nameCell(field.name, field.value.type);
+    cell.rowSpan = group.length;
+    if (field.value.type === 'hierarchy_ref') {
+      cell.append(el('div', { class: 'node-name' }, field.value.value.name));
+    }
+    return cell;
+  }
+
+  /** A hierarchy row's value: its parent, a link reading as the parent's
+   *  path, or the root. @param {Metafolder.TreeRef} position @param {string} field */
+  function parentEl(position, field) {
+    const { parent } = position;
+    if (parent === null) return el('span', { class: 'parent' }, '↳ (root)');
+    const link = el(
+      'a',
+      {
+        href: '#',
+        class: 'ref-link',
+        onclick: (/** @type {Event} */ event) => {
+          event.preventDefault();
+          openRef(parent, null);
+        },
+      },
+      parent,
+    );
+    const repo = current?.repo;
+    if (repo) {
+      void vocab
+        .parentRaw(repo, field, parent)
+        .then((path) => {
+          link.textContent = path;
+        })
+        .catch(() => {});
+    }
+    return el('span', { class: 'parent' }, '↳ ', link);
   }
 
   /** @param {Field} field @param {number} index */
@@ -320,8 +393,12 @@ export async function mount(root, metafolder) {
       );
       queueMicrotask(() => focusWidget(widget));
     } else {
-      value.replaceChildren(valueEl(field.value, openRef));
-      appendAnnotation(value, field);
+      if (field.value.type === 'hierarchy_ref') {
+        value.replaceChildren(parentEl(field.value.value, field.name));
+      } else {
+        value.replaceChildren(valueEl(field.value, openRef));
+        appendAnnotation(value, field);
+      }
       ops.append(
         el(
           'button',
@@ -339,7 +416,7 @@ export async function mount(root, metafolder) {
       // One more value of this field (doc "metarecord-detail panel"), on its
       // last row: a field holds several values — a hierarchy node one per
       // parent — and this is where a new one goes.
-      if (metarecord?.fields[index + 1]?.name !== field.name) {
+      if (rowItems()[index + 1]?.name !== field.name) {
         ops.append(
           el(
             'button',
@@ -357,10 +434,11 @@ export async function mount(root, metafolder) {
         );
       }
     }
+    const name = nameCellFor(field, index);
     return el(
       'tr',
       { class: [readonly && 'readonly', index === cursorIndex && 'cursor'] },
-      nameCell(field.name, field.value.type),
+      ...(name ? [name] : []),
       value,
       ops,
     );
@@ -398,9 +476,19 @@ export async function mount(root, metafolder) {
   // ── Keyboard cursor over the field rows ───────────────────────────────
 
   // The list the cursor walks: the loaded metarecord's fields.
-  /** @returns {Field[]} */
+  /** The rows of a field name together, in the order the names first come
+   *  — a field is read as a whole, a hierarchy node as one name.
+   *  @returns {Field[]} */
   function rowItems() {
-    return metarecord?.fields ?? [];
+    const fields = metarecord?.fields ?? [];
+    /** @type {Map<string, Field[]>} */
+    const byName = new Map();
+    for (const f of fields) {
+      const group = byName.get(f.name);
+      if (group) group.push(f);
+      else byName.set(f.name, [f]);
+    }
+    return [...byName.values()].flat();
   }
   /** Puts the field cursor on row `index`. @param {number} index */
   function selectRow(index) {

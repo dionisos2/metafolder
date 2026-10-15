@@ -8,7 +8,9 @@ Open it with `panel:open here metarecord-detail`
 (<<key "panel:open here metarecord-detail" "t d">>). It shows the workspace's selected
 metarecord ([[Cross-panel selection]]): its uuid and [[version|Metarecord version]],
 then one row per field row — name, type, value. A field holding several values has as
-many rows ([[Fields and values]]). With nothing selected it says so, and offers ''New
+many rows, kept together ([[Fields and values]]). A [[hierarchy node|Hierarchy references]]
+shows its name once, beside a line per parent — a link to the parent, reading as its
+path — each of them edited or deleted on its own. With nothing selected it says so, and offers ''New
 metarecord''.
 
 !! Notes under the head
@@ -37,7 +39,7 @@ one.
 * <<key "cursor:next self" "↓ or j">> / <<key "cursor:prev self" "↑ or k">>, <<key "cursor:first self" Home>> / <<key "cursor:last self" End>> — move the cursor over the rows ([[Generic panel commands]]).
 * <<key "metarecord:row-edit" Enter>>, or the row's ''Edit'' button — edit the value in place, with the [[Field editor]]: `Enter` saves, `Escape` cancels (`metarecord:cancel`).
 * <<key "metarecord:row-delete" d>>, or the row's ''Delete'' button — delete that row, after a confirmation.
-* <<key "metarecord:row-add" "+">>, or the ''+'' on a field's last row — the add form below, on that field's name and type: one more value of it. A [[hierarchy node|Hierarchy references]] gets another parent so, its path typed through the new parent (`évènement/maraton`).
+* <<key "metarecord:row-add" "+">>, or the ''+'' on a field's last row — the add form below, on that field's name and type: one more value of it. A [[hierarchy node|Hierarchy references]] gets another parent so, the parent alone typed, by its path (`évènement`).
 * <<key "metarecord:open-add-field" a>>, or ''Add / set field…'' — the form for a new value: a name, a type, a value, then ''Add field'' (one more row) or ''Set field (replace)'' (in place of every row of that name). A name the repository already knows offers its type and `nothing` only ([[One value type per field name]]).
 * <<key "metarecord:field set" "m s">> and the other `m` keys — the same from the command input, with completion ([[Editing metarecords in the GUI]]).
 

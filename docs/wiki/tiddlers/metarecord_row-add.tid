@@ -3,4 +3,4 @@ tags: [[GUI command]] Metarecord
 kind: reference
 summary: Add a value to the field under the cursor
 
-Opens the add form of [[metarecord-detail panel]] on the name and type of the field under the cursor, for one more value of it — the ''+'' on the field's last row does the same. On a `hierarchy_ref` that is a further parent, typed as the path through it ([[Hierarchy references]], [[Field editor]]). An `mfr_*` field is left alone unless ''force'' is checked.
+Opens the add form of [[metarecord-detail panel]] on the name and type of the field under the cursor, for one more value of it — the ''+'' on the field's last row does the same. On a `hierarchy_ref` that is a further parent, typed alone, by its path ([[Hierarchy references]], [[Field editor]]). An `mfr_*` field is left alone unless ''force'' is checked.

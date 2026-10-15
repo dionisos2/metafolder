@@ -87,6 +87,14 @@
         color: var(--mf-fg-dim, #8a8a96);
         font-size: 0.85em;
       }
+      /* A hierarchy node: its name once, under the field's, its parents on
+         the lines the cell spans. */
+      td.name[rowspan] {
+        vertical-align: top;
+      }
+      td.name .node-name {
+        font-weight: bold;
+      }
       td.value {
         width: 100%;
         word-break: break-all;

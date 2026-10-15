@@ -37,7 +37,7 @@ A node has one path per way up to a root: the marathon is `sport/courir/maraton`
 
 * `path = "évènement/maraton"` resolves segment by segment, as in a tree, and finds it.
 * `:path`, `:parent`, `osm(path, …)` read ''every'' path: a node matches when one of them does. `resolve-tree` returns them all, up to 256 a node.
-* The clients show every path: one line each in `mf … field get --resolve` and `mf tag list`, one row per parent in the GUI's detail panel, each shown as the path through that parent.
+* The clients show every path: one line each in `mf … field get --resolve` and `mf tag list`, in the GUI's detail panel, the node's name once and a line per parent, each naming the parent by its path ([[metarecord-detail panel]]).
 * Sorted by path, a node takes the smallest of its positions' keys, each made of the name under its parent's key — the rule of a multi-valued field ([[Pagination and sorting]]).
 
 !! Following
