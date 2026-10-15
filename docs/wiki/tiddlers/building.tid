@@ -32,9 +32,9 @@ scripts/complete-build.sh
 
 It takes no argument and does, in the one order that works:
 
+# `npm install`, the first time, then `npm --prefix crates/gui/frontend run build` — the Svelte shell, which Tauri embeds into the GUI binary at compile time, so ''before'' the cargo build (bundled after it, as the script once did, the binary kept the previous bundle until the next run);
 # `cargo build`, `cargo test --workspace --no-run`, and `cargo build -p metafolder-core --features sync-config` — the three sets of artifacts the project uses;
 # `scripts/prune-target.sh`, which deletes what those builds superseded;
-# `npm install`, the first time, then `npm --prefix crates/gui/frontend run build` — the Svelte shell, which Tauri embeds into the GUI binary at compile time;
 # `scripts/doc build` — this wiki, rendered into `docs/wiki/dist/`;
 # `target/debug/metafolder-sync-config` — the shipped defaults, the shipped scripts and the rendered documentation applied to the configuration repository ([[Updating the configuration]], [[Shipped defaults in the source tree]]).
 

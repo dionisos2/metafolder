@@ -3,14 +3,15 @@
 # and the user configuration, in the one order that works.
 #
 # What it does, and why in this order:
-#   1. the workspace, the test binaries and the sync-config core — the three
-#      artifact "universes" that must all be current before pruning;
-#   2. scripts/prune-target.sh, which deletes only what those builds superseded;
-#   3. the frontend bundle. Tauri embeds `crates/gui/frontend/dist` into the
-#      binary at compile time and `npm run build` is separate from `cargo`, so
-#      skipping it leaves the app on a stale bundle with confusing runtime
+#   1. the frontend bundle, FIRST. Tauri embeds `crates/gui/frontend/dist` into
+#      the binary at compile time and `npm run build` is separate from `cargo`,
+#      so skipping it — or running it after the cargo build, as this script
+#      once did — leaves the app on a stale bundle with confusing runtime
 #      errors (e.g. "unknown metafolder API method: query.expand" after a
-#      bridge.ts change);
+#      bridge.ts change, or a shell command that ignores its new code);
+#   2. the workspace, the test binaries and the sync-config core — the three
+#      artifact "universes" that must all be current before pruning;
+#   3. scripts/prune-target.sh, which deletes only what those builds superseded;
 #   4. the documentation (scripts/doc build → docs/wiki/dist/);
 #   5. metafolder-sync-config, which applies crates/*/default-config/ (and the
 #      rendered documentation) to the user's config repo at ~/.config/metafolder/.
@@ -21,6 +22,19 @@ set -euo pipefail
 
 repo=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 cd "$repo" || exit 1
+
+# First run on a fresh checkout: install the npm deps once. node_modules lives
+# at the repo root — the frontend and the documentation wiki are npm workspace
+# members — so that is where their presence is read. TiddlyWiki is tested on its
+# own: a checkout installed before the wiki joined the workspace has
+# node_modules without it.
+if [ ! -d node_modules ] || [ ! -d node_modules/tiddlywiki ]; then
+    echo "==> Installing npm dependencies…"
+    npm install
+fi
+
+echo "==> Building the GUI frontend bundle…"
+npm --prefix crates/gui/frontend run build
 
 # Build the workspace, then the sync-config binary with the feature scoped to
 # core only: `--features sync-config` on the whole workspace would recompile
@@ -36,19 +50,6 @@ cargo build -p metafolder-core --features sync-config
 # between two builds of different feature sets — each would look "new" and
 # evict the other, forcing perpetual recompilation.
 scripts/prune-target.sh
-
-# First run on a fresh checkout: install the npm deps once. node_modules lives
-# at the repo root — the frontend and the documentation wiki are npm workspace
-# members — so that is where their presence is read. TiddlyWiki is tested on its
-# own: a checkout installed before the wiki joined the workspace has
-# node_modules without it.
-if [ ! -d node_modules ] || [ ! -d node_modules/tiddlywiki ]; then
-    echo "==> Installing npm dependencies…"
-    npm install
-fi
-
-echo "==> Building the GUI frontend bundle…"
-npm --prefix crates/gui/frontend run build
 
 # Render the documentation wiki (docs/wiki/) into docs/wiki/dist/, which the
 # config sync installs to ~/.config/metafolder/docs/ — and refuses to run

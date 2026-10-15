@@ -89,6 +89,12 @@ assert "builds the test binaries before pruning" \
 assert "builds the sync-config core before pruning" \
     [ "$(printf '%s\n' "$order" | grep -n 'features sync-config' | cut -d: -f1)" \
       -lt "$(printf '%s\n' "$order" | grep -n '^prune-target$' | cut -d: -f1)" ]
+# Tauri embeds the bundle into the GUI binary when cargo compiles it: bundled
+# after the cargo build, the binary carried the previous bundle until the next
+# run — a frontend change looked unapplied after a complete build.
+assert "bundles the frontend before the cargo build embeds it" \
+    [ "$(printf '%s\n' "$order" | grep -n 'run build' | cut -d: -f1)" \
+      -lt "$(printf '%s\n' "$order" | grep -n '^cargo build$' | head -n1 | cut -d: -f1)" ]
 assert "bundles the frontend before applying the config" \
     [ "$(printf '%s\n' "$order" | grep -n 'run build' | cut -d: -f1)" \
       -lt "$(printf '%s\n' "$order" | grep -n '^sync-config$' | cut -d: -f1)" ]
