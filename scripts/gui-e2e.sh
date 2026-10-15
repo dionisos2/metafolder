@@ -785,8 +785,8 @@ scenario_refs() {
 }
 
 # A tag of several parents (doc "Hierarchy references"): a second parent is
-# added from the detail panel by typing its path, and the node then answers
-# under both.
+# added from the detail panel by typing the parent's path — the node keeps its
+# name — and the node then answers under both.
 scenario_hierarchy() {
     new_repo hierarchy
     local maraton
@@ -799,8 +799,8 @@ scenario_hierarchy() {
     command_ok "hierarchy: a tag is created"
     run metarecord:field set path hierarchy_ref sport/maraton
     command_ok "hierarchy: placed under a first parent"
-    # The field's type is settled now: the value alone.
-    run metarecord:field add path évènement/maraton
+    # The field's type is settled now, and the node's name: the parent alone.
+    run metarecord:field add path évènement
     command_ok "hierarchy: a second parent is added by its path"
     maraton=$(df_mf metarecord -q 'path = "évènement/maraton"' get)
     assert_eq "hierarchy: the node has both parents" \
@@ -809,8 +809,8 @@ scenario_hierarchy() {
     assert_eq "hierarchy: it is below either parent" "$maraton" \
         "$(df_mf metarecord -q 'path ->* "évènement"' get)"
     assert_eq "hierarchy: and below the other" "$maraton" "$(df_mf metarecord -q 'path ->* "sport"' get)"
-    run metarecord:field add path sport/marathon
-    assert "hierarchy: a node keeps one name" [ "$LAST_RC" != 0 ]
+    run metarecord:field add path nowhere
+    assert "hierarchy: a parent that does not exist is refused" [ "$LAST_RC" != 0 ]
 }
 
 # The same with the mouse (doc "metarecord-detail panel"): the + of the field's

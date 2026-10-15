@@ -19,8 +19,8 @@ constraint back by hand). Then a second parent is an added row:
 mf -n <repo> metarecord -q 'path = "sport/courir/maraton"' field add path:hierarchy_ref=<évènement's uuid>/maraton
 ```
 
-or, in the GUI's detail panel on the tag, `metarecord:field add path évènement/maraton`
-— the parent is typed by its path.
+or, in the GUI's detail panel on the tag, `metarecord:field add path évènement` — the
+new parent alone, typed by its path: the tag keeps its name.
 
 Done in this order: retyped first, the field would break the constraint the schema
 still holds. `tests/cli_e2e.rs` (`test_a_tree_vocabulary_converts_to_a_hierarchy`)

@@ -567,3 +567,86 @@ describe('adding a value to a field from its row (doc "metarecord-detail panel")
     });
   });
 });
+
+describe('a hierarchy node’s parents (doc "Hierarchy references")', () => {
+  // maraton, under sport (U_PARENT); évènement is U_BLUES.
+  const opts = {
+    catalog: { path: 'hierarchy_ref' },
+    tree: { évènement: U_BLUES, sport: U_PARENT },
+    treePaths: ['sport'],
+  };
+
+  test('add asks only for the new parent: the node keeps its one name', async () => {
+    const { specs, calls } = await mountPanel(maratonFields(), opts);
+    const { prompts, args } = await collect(specs.get('metarecord:field')!, ['add'], [
+      'path',
+      'évènement',
+    ]);
+    expect(prompts).toEqual(['Field to add a value to?', 'New parent of "maraton" in "path"?']);
+    await specs.get('metarecord:field')!.handler(...args!);
+    expect(calls).toContainEqual({
+      method: 'POST',
+      path: `/repos/${REPO}/metarecords/${UUID}/fields`,
+      body: {
+        name: 'path',
+        value: { type: 'hierarchy_ref', value: { parent: U_BLUES, name: 'maraton' } },
+      },
+    });
+  });
+
+  test('an empty parent, or /, makes the node a root as well', async () => {
+    for (const root of ['', '/']) {
+      const { specs, calls } = await mountPanel(maratonFields(), opts);
+      await specs.get('metarecord:field')!.handler('add', 'path', root);
+      expect(calls).toContainEqual({
+        method: 'POST',
+        path: `/repos/${REPO}/metarecords/${UUID}/fields`,
+        body: {
+          name: 'path',
+          value: { type: 'hierarchy_ref', value: { parent: null, name: 'maraton' } },
+        },
+      });
+    }
+  });
+
+  test('a parent that does not exist is refused', async () => {
+    const { specs } = await mountPanel(maratonFields(), opts);
+    await expect(
+      specs.get('metarecord:field')!.handler('add', 'path', 'nowhere'),
+    ).rejects.toThrow(/nowhere/);
+  });
+
+  test('a node not placed yet is given its whole path, name included', async () => {
+    const { specs, calls } = await mountPanel([], opts);
+    const { prompts, args } = await collect(specs.get('metarecord:field')!, ['add'], [
+      'path',
+      'sport/maraton',
+    ]);
+    expect(prompts).toEqual(['Field to add a value to?', 'Value to add to "path"?']);
+    await specs.get('metarecord:field')!.handler(...args!);
+    expect(calls).toContainEqual({
+      method: 'POST',
+      path: `/repos/${REPO}/metarecords/${UUID}/fields`,
+      body: {
+        name: 'path',
+        value: { type: 'hierarchy_ref', value: { parent: U_PARENT, name: 'maraton' } },
+      },
+    });
+  });
+
+  test('edit gives a row another parent, starting from the one it has', async () => {
+    const { specs, calls } = await mountPanel(maratonFields(), opts);
+    const { prompts, args, initials } = await collect(specs.get('metarecord:field')!, ['edit'], [
+      'path',
+      'évènement',
+    ]);
+    expect(prompts).toEqual(['Field to edit a value of?', 'New parent of "maraton" in "path"?']);
+    expect(initials[1]).toBe('sport');
+    await specs.get('metarecord:field')!.handler(...args!);
+    expect(calls).toContainEqual({
+      method: 'PATCH',
+      path: `/repos/${REPO}/fields/7`,
+      body: { value: { type: 'hierarchy_ref', value: { parent: U_BLUES, name: 'maraton' } } },
+    });
+  });
+});

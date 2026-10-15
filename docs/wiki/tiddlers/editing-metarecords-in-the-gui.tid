@@ -74,6 +74,7 @@ The value is typed on one line, in the form its type reads ([[Field editor]]). T
 things make that workable for references:
 
 * a `tree_ref` is typed as a path in its tree, completed over the tree's paths: `music/jazz`;
+* a `hierarchy_ref` too, for a node not placed yet. Once it is, `add` and `edit` ask for a ''parent'' only — `New parent of "maraton" in "path"?`, answered `évènement` — since a node has one name ([[Hierarchy references]]); empty, or `/`, places it at the root;
 * a `ref` is typed as the name its seed rule gives the target — a tag by its path — and completed over the rule's candidates, <<key "completion:cycle forward" "Ctrl+,">> going through its columns ([[Ref value seeds]], [[Completion views]]). A uuid is always accepted.
 
 What `edit` and `remove` offer are the values the metarecord ''has'', read back the

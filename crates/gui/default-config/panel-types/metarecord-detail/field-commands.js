@@ -72,6 +72,17 @@ export function registerFieldCommand({
     return (record()?.fields ?? []).filter((f) => f.name === field);
   }
 
+  /** The one name of the node `field` places the displayed record as, when
+   *  it is a hierarchy one already placed (doc "Hierarchy references"): its
+   *  further rows are then named by their parent alone. Null otherwise.
+   *  @param {string} field @returns {string|null} */
+  function hierarchyName(field) {
+    const row = rowsOfName(field).find((f) => f.value.type === 'hierarchy_ref');
+    return row && row.value.type === 'hierarchy_ref' ? row.value.value.name : null;
+  }
+  /** @param {string} field @param {string} name */
+  const parentPrompt = (field, name) => `New parent of "${name}" in "${field}"?`;
+
   /** Whether every row of `field` on the displayed record is a Nothing — a
    *  field that is explicitly absent, with no value to re-encode. */
   function onlyNothingRows(/** @type {string} */ field) {
@@ -349,12 +360,19 @@ export function registerFieldCommand({
       type: {},
       target: { prompt: 'Field to add a value to?', complete: () => completableFieldNames() },
       value: {
-        prompt: (p) => `Value to add to "${p[1]}"?`,
+        prompt: (p) => {
+          const name = hierarchyName(p[1]);
+          return name !== null ? parentPrompt(p[1], name) : `Value to add to "${p[1]}"?`;
+        },
         views: (p) => valueViewsFor(p[1], typeForPrior(p)),
       },
       run: async (field, raw, type) => {
         const cur = requireCurrent();
-        const value = await vocab.parse(cur.repo, field, type, raw);
+        const name = type === 'hierarchy_ref' ? hierarchyName(field) : null;
+        const value =
+          name !== null
+            ? await vocab.parseParent(cur.repo, field, raw, name)
+            : await vocab.parse(cur.repo, field, type, raw);
         const force = forceFor(field);
         await daemon.call('POST', api('/fields'), { name: field, value, ...force });
         await load();
@@ -380,10 +398,17 @@ export function registerFieldCommand({
         complete: (p) => rowValueChoices(p[1]),
       },
       value: {
-        prompt: (p) => `New value for "${p[1]}"?`,
+        // A hierarchy row is given another parent: the node keeps its name.
+        prompt: (p) => {
+          const name = hierarchyName(p[1]);
+          return name !== null ? parentPrompt(p[1], name) : `New value for "${p[1]}"?`;
+        },
         initial: async (p) => {
           const cur = requireCurrent();
           const row = await editRowIn(p);
+          if (row?.value.type === 'hierarchy_ref') {
+            return vocab.parentRaw(cur.repo, row.name, row.value.value.parent);
+          }
           return row && row.value.type !== 'nothing'
             ? vocab.rawOf(cur.repo, cur.uuid, row.name, row.value)
             : '';
@@ -404,7 +429,10 @@ export function registerFieldCommand({
         // what the row is. A Nothing row has none, and takes the type the
         // argument settled: giving an absence a value establishes a type.
         const as = row.value.type !== 'nothing' ? row.value.type : type;
-        const value = await vocab.parse(cur.repo, field, as, raw);
+        const value =
+          row.value.type === 'hierarchy_ref'
+            ? await vocab.parseParent(cur.repo, field, raw, row.value.value.name)
+            : await vocab.parse(cur.repo, field, as, raw);
         const force = forceFor(field);
         await daemon.call('PATCH', `/repos/${cur.repo}/fields/${row.id}`, { value, ...force });
         await load();

@@ -198,14 +198,44 @@ export function createValues({ daemon, config, parseQuery }) {
    *  @param {string} name @returns {Promise<string>} */
   async function pathThrough(repo, field, parent, name) {
     if (!parent) return name;
+    const above = await nodePath(repo, field, parent);
+    return above === null ? name : above === '' ? `/${name}` : `${above}/${name}`;
+  }
+
+  /** A node's path in `field` (its first, for a node of several parents),
+   *  null when it has none. @param {string} repo @param {string} field
+   *  @param {string} uuid @returns {Promise<string|null>} */
+  async function nodePath(repo, field, uuid) {
     const body = /** @type {{paths?: string[]}} */ (
       await daemon.call(
         'GET',
-        `/repos/${repo}/metarecords/${parent}/fields/${encodeURIComponent(field)}/resolve-tree`,
+        `/repos/${repo}/metarecords/${uuid}/fields/${encodeURIComponent(field)}/resolve-tree`,
       )
     );
-    const above = body.paths?.[0];
-    return above === undefined ? name : above === '' ? `/${name}` : `${above}/${name}`;
+    return body.paths?.[0] ?? null;
+  }
+
+  /** A hierarchy row from its parent alone (doc "Hierarchy references"): a
+   *  node has one name, so a new parent is all a further row needs. `raw` is
+   *  the parent's path; empty, or `/`, places the node at the root.
+   *  @param {string} repo @param {string} field @param {string} raw
+   *  @param {string} name @returns {Promise<Metafolder.Value>} */
+  async function parseParent(repo, field, raw, name) {
+    const path = raw.trim();
+    if (path === '' || path === '/') {
+      return { type: 'hierarchy_ref', value: { parent: null, name } };
+    }
+    const res = /** @type {{uuid: string|null}} */ (
+      await daemon.call('POST', `/repos/${repo}/tree/resolve-path`, { field, path })
+    );
+    if (!res.uuid) throw new Error(`parent path "${path}" does not exist in "${field}"`);
+    return { type: 'hierarchy_ref', value: { parent: res.uuid, name } };
+  }
+
+  /** What `parseParent` takes back to `parent`: its path, empty for a root.
+   *  @param {string} repo @param {string} field @param {string|null} parent */
+  async function parentRaw(repo, field, parent) {
+    return parent ? ((await nodePath(repo, field, parent)) ?? parent) : '';
   }
 
   /** What a `ref` value reads back as under the value: its label in the
@@ -301,6 +331,8 @@ export function createValues({ daemon, config, parseQuery }) {
   return {
     rawOf,
     pathThrough,
+    parseParent,
+    parentRaw,
     refLabel,
     parse,
     views,
