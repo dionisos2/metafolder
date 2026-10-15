@@ -9,7 +9,8 @@ A repository's metarecords, their fields and the event log live in its own
 the operating system's page cache keeps the pages in use, and nothing whose size
 grows with the repository is held in the daemon's memory. A repository of any size
 works on an ordinary machine; one that fits in memory ends up entirely in the page
-cache on its own.
+cache on its own — or at once, and kept there, when loaded in memory
+([[Holding a repository in memory]]).
 
 The store holds two kinds of data: the ''primary'' data (metarecords, rows, the
 log, HEAD), the source of truth; and ''derived'' key spaces (ids, bitmaps,

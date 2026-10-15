@@ -6,7 +6,7 @@ summary: The repos panel type
 !! Commands
 
 * ``repos:init`` — Repos: create a repository in a folder (name optional, default: the folder name)
-* ``repos:load`` — Repos: pick a folder and load the repository in it
+* ``repos:load`` — Repos: pick a folder and load the repository in it (in-memory: held in memory)
 * ``repos:open-init`` — Repos: open the init form
 * ``repos:open-retype`` — Repos: open the field-type conversion form for the active repository
 * ``repos:resume`` — Repos: resume tracking on the active repository

@@ -21,6 +21,9 @@ Options:
       --no-wait
           Print the UUID immediately, without waiting for the warmup
 
+      --in-memory
+          Read the whole store into memory and lock it there, so that no read waits on the disk (writes still go to it)
+
   -h, --help
           Print help
 ```

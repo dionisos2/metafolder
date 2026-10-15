@@ -7,7 +7,12 @@ import { createSelect } from '/__select.js';
 
 /**
  * A loaded repository, as `GET /repos` lists it.
- * @typedef {{repo_uuid: string, name: string, root: string, lost?: boolean}} Repo
+ * @typedef {{repo_uuid: string, name: string, root: string, lost?: boolean,
+ *            in_memory?: Residency|null}} Repo
+ *
+ * What of a repository's store is held in memory (doc "Holding a repository
+ * in memory"), when it was loaded so.
+ * @typedef {{bytes: number, pinned: boolean, reason: string|null}} Residency
  *
  * An in-flight daemon task (doc "Tasks").
  * @typedef {{id: string, repo_uuid: string, kind: string, status: string,
@@ -129,7 +134,11 @@ export async function mount(root, metafolder) {
   // "g l"): no form to fill
   // in — the folder picker opens straight away and the pick is loaded. A
   // failure has no form to land in, so it is said in the status bar.
-  async function loadPicked() {
+  /** @param {string} [mode] `in-memory`, or nothing for an ordinary load */
+  async function loadPicked(mode) {
+    if (mode !== undefined && mode !== 'in-memory') {
+      throw new Error(`unknown mode: "${mode}" (expected in-memory)`);
+    }
     const path = await pickRunner.request({
       panel: 'file-manager',
       vars: { 'file-manager:dir': await homeDirCached() },
@@ -143,12 +152,45 @@ export async function mount(root, metafolder) {
     if (!path) return; // cancelled
     try {
       const loaded = /** @type {{repo_uuid: string}} */ (
-        await daemon.call('POST', '/repos/load', { root: path })
+        await daemon.call('POST', '/repos/load', loadBody(path, mode === 'in-memory'))
       );
       await onCreated(loadForm, loaded.repo_uuid);
     } catch (error) {
       await statusBar.error(messageOf(error), statusErrorMs);
     }
+  }
+
+  /** @param {string} path @param {boolean} inMemory */
+  function loadBody(path, inMemory) {
+    return inMemory ? { root: path, in_memory: true } : { root: path };
+  }
+
+  /**
+   * The row's mark of a repository held in memory: locked there, or only read
+   * in — and then why, in its tooltip.
+   * @param {Repo} repo @returns {HTMLElement|null}
+   */
+  function memoryBadge(repo) {
+    const held = repo.in_memory;
+    if (!held) return null;
+    const size = `${Math.ceil(held.bytes / (1 << 20))} MiB`;
+    if (held.pinned) {
+      return el(
+        'span',
+        { class: 'memory', title: `${size} of the store locked in memory` },
+        'in memory',
+      );
+    }
+    const badge = el(
+      'span',
+      {
+        class: 'memory',
+        title: `${size} of the store read into memory, not locked there: ${held.reason ?? ''}`,
+      },
+      'in memory, not locked',
+    );
+    badge.dataset.unpinned = '';
+    return badge;
   }
 
   /**
@@ -212,6 +254,7 @@ export async function mount(root, metafolder) {
                 'div',
                 { class: 'repo-head', onclick: () => openRepo(repo.repo_uuid) },
                 el('strong', {}, repo.name),
+                memoryBadge(repo),
                 el('span', { class: 'root' }, repo.root),
                 el('span', { class: 'uuid' }, repo.repo_uuid.slice(0, 8)),
                 el(
@@ -626,7 +669,13 @@ export async function mount(root, metafolder) {
   loadForm.addEventListener('submit', (event) => {
     event.preventDefault();
     const root_ = byId(root, 'load-root', HTMLInputElement).value.trim();
-    void submit(loadForm, '/repos/load', { root: root_ }, byId(root, 'load-error'));
+    void submit(loadForm, '/repos/load', loadBody(root_, false), byId(root, 'load-error'));
+  });
+  byId(root, 'load-memory').addEventListener('click', () => {
+    const input = byId(root, 'load-root', HTMLInputElement);
+    // The form's own validation, as its submit button would have it.
+    if (!input.reportValidity()) return;
+    void submit(loadForm, '/repos/load', loadBody(input.value.trim(), true), byId(root, 'load-error'));
   });
 
   byId(root, 'show-init').addEventListener('click', () => toggleForm(initForm, true));
@@ -665,7 +714,15 @@ export async function mount(root, metafolder) {
     },
   });
   void commands.register('repos:load', {
-    label: 'Repos: pick a folder and load the repository in it',
+    label: 'Repos: pick a folder and load the repository in it (in-memory: held in memory)',
+    args: [
+      {
+        name: 'mode',
+        optional: true,
+        prompt: () => 'Hold it in memory? (in-memory)',
+        complete: () => ['in-memory'],
+      },
+    ],
     handler: loadPicked,
   });
   // Read again on `view:refresh` (doc "Generic panel commands").

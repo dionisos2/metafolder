@@ -370,6 +370,9 @@ pub(super) struct LoadBody {
     root: Option<PathBuf>,
     #[serde(default)]
     metafolder: Option<PathBuf>,
+    /// Hold the store in memory (doc "Holding a repository in memory").
+    #[serde(default)]
+    in_memory: bool,
 }
 
 pub(super) async fn load_repo(
@@ -387,7 +390,8 @@ pub(super) async fn load_repo(
         }
     };
     let state_for_warmup = state.clone();
-    let uuid = tokio::task::spawn_blocking(move || state.load_repo(locator))
+    let in_memory = body.in_memory;
+    let uuid = tokio::task::spawn_blocking(move || state.load_repo_with(locator, in_memory))
         .await
         .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))??;
     // Finish the load in the background, as an observable `load` task so the

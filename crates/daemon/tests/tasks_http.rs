@@ -473,3 +473,101 @@ async fn a_warming_repository_refuses_data_and_reports_its_state() {
     let (st, body) = post(&app, &format!("/repos/{repo}/query"), any).await;
     assert_eq!(st, StatusCode::OK, "{body}");
 }
+
+/// Loads `root` with `in_memory` and waits for its `load` task to end.
+async fn load_in_memory(app: &Router, root: &std::path::Path, repo: &str) -> Value {
+    let (st, body) =
+        post(app, "/repos/load", serde_json::json!({ "root": root, "in_memory": true })).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let task_id = body["task_id"].as_str().expect("a fresh load has a task").to_string();
+    for _ in 0..100 {
+        let (_, task) = request(app, "GET", &format!("/repos/{repo}/tasks/{task_id}")).await;
+        if task["status"] == "done" || task["status"] == "failed" {
+            return task;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("the load did not end");
+}
+
+#[tokio::test]
+async fn a_repository_loaded_in_memory_says_what_it_holds() {
+    // doc "Holding a repository in memory": the store is read into RAM at
+    // load, and `GET /repos` says how much, and whether it is locked there.
+    let state = Arc::new(AppState::new());
+    let app = routes::build(state.clone());
+    let root = temp_dir("inmemory");
+    let repo = state.init_repo(&root, None, None, false).unwrap().as_simple().to_string();
+
+    // Loaded the ordinary way, nothing is said about memory.
+    let (_, info) = request(&app, "GET", &format!("/repos/{repo}")).await;
+    assert!(info["in_memory"].is_null(), "{info}");
+
+    let (st, _) = post(&app, &format!("/repos/{repo}/unload"), Value::Null).await;
+    assert_eq!(st, StatusCode::OK);
+    let task = load_in_memory(&app, root.path(), &repo).await;
+    assert_eq!(task["status"], "done", "{task}");
+
+    let (_, repos) = request(&app, "GET", "/repos").await;
+    let listed = &repos.as_array().unwrap()[0]["in_memory"];
+    assert!(listed["bytes"].as_u64().unwrap() > 0, "{listed}");
+    // A fresh repository is far below any memory-lock limit worth the name.
+    assert_eq!(listed["pinned"], true, "{listed}");
+    assert!(listed["reason"].is_null(), "{listed}");
+
+    // Writes still go to the disk: what is written is there after a reload.
+    let (st, _) = post(
+        &app,
+        &format!("/repos/{repo}/metarecords"),
+        serde_json::json!({"fields": [{"name": "note", "value": {"type": "string", "value": "kept"}}]}),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _) = post(&app, &format!("/repos/{repo}/unload"), Value::Null).await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _) = post(&app, "/repos/load", serde_json::json!({ "root": root.path() })).await;
+    assert_eq!(st, StatusCode::OK);
+    let mut found = Value::Null;
+    for _ in 0..100 {
+        let (st, body) = post(
+            &app,
+            &format!("/repos/{repo}/query"),
+            serde_json::json!({
+                "query": {"type": "is_present", "field": "note"},
+                "limit": 1,
+                "count": true,
+            }),
+        )
+        .await;
+        if st == StatusCode::OK {
+            found = body;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(found["total"], 1, "{found}");
+}
+
+#[tokio::test]
+async fn loading_in_memory_a_repository_already_loaded_otherwise_is_refused() {
+    // Nothing would be read in: the load of an already loaded repository does
+    // nothing. Said rather than silently answered 200.
+    let state = Arc::new(AppState::new());
+    let app = routes::build(state.clone());
+    let root = temp_dir("inmemoryloaded");
+    let repo = state.init_repo(&root, None, None, false).unwrap().as_simple().to_string();
+    let (st, body) =
+        post(&app, "/repos/load", serde_json::json!({ "root": root.path(), "in_memory": true }))
+            .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{body}");
+    assert!(body["error"].as_str().unwrap().contains("unload"), "{body}");
+
+    // Loaded in memory, loading it in memory again is the ordinary idempotent load.
+    let (st, _) = post(&app, &format!("/repos/{repo}/unload"), Value::Null).await;
+    assert_eq!(st, StatusCode::OK);
+    load_in_memory(&app, root.path(), &repo).await;
+    let (st, body) =
+        post(&app, "/repos/load", serde_json::json!({ "root": root.path(), "in_memory": true }))
+            .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+}

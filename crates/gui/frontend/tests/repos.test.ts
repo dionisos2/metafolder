@@ -41,6 +41,7 @@ interface Repo {
   root: string;
   internal_dir?: string;
   lost?: boolean;
+  in_memory?: { bytes: number; pinned: boolean; reason: string | null } | null;
 }
 
 /** A minimal in-memory stand-in for the daemon's repository endpoints. */
@@ -711,5 +712,106 @@ describe('repos panel — commands', () => {
     await generic(provide, 'view:refresh');
     await settle();
     expect(shadow.querySelectorAll('#repo-list > li')).toHaveLength(1);
+  });
+});
+
+// doc "Holding a repository in memory": the store read into RAM at load.
+describe('repos panel — in memory', () => {
+  beforeEach(() => {
+    changeFeed._reset();
+  });
+
+  const loadedWithMemory = (daemon: ReturnType<typeof fakeDaemon>) =>
+    daemon.calls.filter(
+      (c) => c.path === '/repos/load' && (c.body as { in_memory?: boolean }).in_memory === true,
+    );
+
+  test('the load form loads in memory from its own button', async () => {
+    const { api, daemon, vars } = setup({ activeRepo: null });
+    daemon.repos.push({ repo_uuid: 'r1', name: 'photos', root: '/tmp/photos' });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    openForm(shadow, 'show-load');
+    (shadow.getElementById('load-root') as HTMLInputElement).value = '/tmp/photos';
+    (shadow.getElementById('load-memory') as HTMLButtonElement).click();
+    await settle();
+
+    expect(loadedWithMemory(daemon)).toHaveLength(1);
+    expect((loadedWithMemory(daemon)[0].body as { root: string }).root).toBe('/tmp/photos');
+    expect(vars.get('active_repo')).toBe('r1');
+  });
+
+  test('the ordinary Load does not ask for memory', async () => {
+    const { api, daemon } = setup({ activeRepo: null });
+    daemon.repos.push({ repo_uuid: 'r1', name: 'photos', root: '/tmp/photos' });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    openForm(shadow, 'show-load');
+    submitForm(shadow, 'load-form', { 'load-root': '/tmp/photos' });
+    await settle();
+
+    expect(daemon.calls.some((c) => c.path === '/repos/load')).toBe(true);
+    expect(loadedWithMemory(daemon)).toHaveLength(0);
+  });
+
+  test('repos:load in-memory loads the picked folder in memory', async () => {
+    const { api, daemon, handlers, picks, pushVarChanged } = setup({ activeRepo: null });
+    daemon.repos.push({ repo_uuid: 'r1', name: 'photos', root: '/tmp/photos' });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    const running = command(handlers, 'repos:load')('in-memory');
+    await settle();
+    pushVarChanged('pick_result', { token: picks[0].token, path: '/tmp/photos' });
+    await running;
+    await settle();
+
+    expect(loadedWithMemory(daemon)).toHaveLength(1);
+  });
+
+  test('repos:load with an unknown mode is an error, and picks nothing', async () => {
+    const { api, handlers, picks } = setup({ activeRepo: null });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+    await expect(command(handlers, 'repos:load')('in-ram')).rejects.toThrow('in-memory');
+    expect(picks).toHaveLength(0);
+  });
+
+  test('a repository held in memory says so on its row, and why it is not locked', async () => {
+    const { api, daemon } = setup();
+    daemon.repos.push(
+      {
+        repo_uuid: 'r1',
+        name: 'pinned',
+        root: '/tmp/a',
+        in_memory: { bytes: 3 << 20, pinned: true, reason: null },
+      },
+      {
+        repo_uuid: 'r2',
+        name: 'preloaded',
+        root: '/tmp/b',
+        in_memory: { bytes: 5 << 20, pinned: false, reason: 'the limit is 8 MiB' },
+      },
+      { repo_uuid: 'r3', name: 'plain', root: '/tmp/c', in_memory: null },
+    );
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    const badges = [...shadow.querySelectorAll('#repo-list > li')].map((li) =>
+      li.querySelector<HTMLElement>('.memory'),
+    );
+    expect(badges[0]?.textContent).toBe('in memory');
+    expect(badges[0]?.title).toContain('3 MiB');
+    expect(badges[1]?.textContent).toBe('in memory, not locked');
+    expect(badges[1]?.title).toContain('the limit is 8 MiB');
+    expect(badges[1]?.dataset.unpinned).toBe('');
+    expect(badges[2]).toBeNull();
   });
 });

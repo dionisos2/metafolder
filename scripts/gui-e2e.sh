@@ -76,7 +76,7 @@ done
 [ ${#SCENARIOS[@]} -gt 0 ] \
     || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list layout script script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close
-        pick-button suggested-key walk slideshow devtools shell-line)
+        pick-button suggested-key walk slideshow devtools shell-line repos-memory)
 
 # shellcheck source=lib/daemon-fixture.sh
 . scripts/lib/daemon-fixture.sh
@@ -1090,6 +1090,35 @@ scenario_shell_line() {
     typed "echo kept > $cut dropped"
     keys Left Left Left Left Left Left Left Left ctrl+k Return
     assert "shell line: still focused, ctrl+k cuts the end" until_ok 10 grep -qx kept "$cut"
+}
+
+# in_memory_of <name> — the repository's `in_memory` bytes, from GET /repos.
+in_memory_of() {
+    df_mf repo list | python3 -c 'import json, sys
+r = next((r for r in json.load(sys.stdin) if r["name"] == sys.argv[1]), {})
+print((r.get("in_memory") or {}).get("bytes", 0))' "$1"
+}
+held() { [ "$(in_memory_of "$1")" -gt 0 ]; }
+
+scenario_repos_memory() {
+    needs_keyboard repos-memory || return 0
+    needs_clicks repos-memory || return 0
+    new_repo repos-memory-host
+    local dir="$WORK/repos/held"
+    mkdir -p "$dir"
+    df_mf repo init --name held "$dir" >/dev/null
+    # -u: the fixture exports METAFOLDER_REPO, which -n would contradict.
+    df_mf -u "$(repo_named held)" repo unload >/dev/null
+    show_panel left repos view:refresh repos
+
+    # The load form's own button loads it with its store held in memory (doc
+    # "Holding a repository in memory").
+    assert "repos memory: the load form opens" until_ok 10 click '#show-load'
+    assert "repos memory: its root field takes the keyboard" until_ok 10 click '#load-root'
+    typed "$dir"
+    assert "repos memory: Load in memory is clicked" until_ok 10 click '#load-memory'
+    assert "repos memory: the daemon holds the store in memory" until_ok 10 held held
+    assert "repos memory: its row says so" until_ok 10 shows '#repo-list .memory'
 }
 
 # has_ws <id> — the GUI holds that workspace.

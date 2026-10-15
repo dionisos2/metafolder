@@ -67,6 +67,7 @@ use crate::rows::{self, FieldRow, RawValue, TreeRow};
 use crate::store::{Begin, LabelMeta, Log, NewOp, Questions, Rows, WriteTxn};
 
 mod derived;
+pub mod resident;
 mod source;
 
 pub use source::KvSource;
@@ -116,6 +117,22 @@ pub struct KvStore {
     /// Keys read so far by the store's reads and its query sources — what
     /// the cost assertions count (`tests/kv_cost.rs`).
     reads: std::sync::atomic::AtomicU64,
+    /// What of the map is held in memory, once [`KvStore::make_resident`]
+    /// asked for it (doc "Holding a repository in memory"); shared with
+    /// whoever reports it, so that reading it never waits on the store.
+    resident: ResidencyHandle,
+}
+
+/// What a store holds in memory, readable without the store itself — `GET
+/// /repos` must not wait behind a write for it.
+#[derive(Clone, Default)]
+pub struct ResidencyHandle(std::sync::Arc<std::sync::Mutex<Option<resident::Resident>>>);
+
+impl ResidencyHandle {
+    /// `None` until the store was asked to be held in memory.
+    pub fn get(&self) -> Option<resident::Residency> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|r| r.residency())
+    }
 }
 
 /// A directory that removes itself when dropped, for the unit tests' stores.
@@ -526,8 +543,14 @@ impl KvStore {
         let derived = t.meta.get(&w, b"derived")?.map(from_be);
         let layout = t.meta.get(&w, b"layout")?.map(from_be);
         w.commit()?;
-        let mut store =
-            KvStore { env, t, _lock: lock, dir: dir.to_path_buf(), reads: Default::default() };
+        let mut store = KvStore {
+            env,
+            t,
+            _lock: lock,
+            dir: dir.to_path_buf(),
+            reads: Default::default(),
+            resident: Default::default(),
+        };
         if layout != Some(LAYOUT) {
             store.migrate_layout().context("migrate the key-value store's rows")?;
         }
@@ -1287,12 +1310,82 @@ impl KvStore {
         let used = (info.last_page_number + 1) * self.env.stat().page_size as usize;
         // Unknown free space: at least as much room as the store holds.
         let free = free_space(&self.dir).unwrap_or(used.max(INITIAL_MAP));
-        if let Some(size) = map_to_grant(used, info.map_size, free) {
+        let resized = map_to_grant(used, info.map_size, free);
+        if let Some(size) = resized {
             // SAFETY: no transaction is open in this process (see above), and
             // the repository lock keeps every other process out of the file.
             unsafe { self.env.resize(size) }.context("grow the key-value store's map")?;
         }
+        self.follow_residency(resized.is_some());
         Ok(())
+    }
+
+    /// The bytes of the map in use — what is held in memory: the used pages,
+    /// never past the file's end (reading there would fault).
+    fn used_bytes(&self) -> usize {
+        let used = (self.env.info().last_page_number + 1) * self.env.stat().page_size as usize;
+        let file = std::fs::metadata(self.dir.join("data.mdb")).map_or(used, |m| m.len() as usize);
+        used.min(file)
+    }
+
+    /// Where the store's file is mapped in this process. LMDB does not say —
+    /// its `me_mapaddr` is the address of a *fixed* map only, 0 otherwise —
+    /// so it is found in `/proc/self/maps`: the mapping of `data.mdb` from
+    /// its start. Linux only; `None` elsewhere.
+    fn map_addr(&self) -> Option<usize> {
+        use std::os::unix::fs::MetadataExt;
+        let inode = std::fs::metadata(self.dir.join("data.mdb")).ok()?.ino();
+        let maps = std::fs::read_to_string("/proc/self/maps").ok()?;
+        resident::mapping_of(&maps, inode)
+    }
+
+    /// Reads the store into memory and locks it there when the memory-lock
+    /// limit allows (doc "Holding a repository in memory"); `progress(done,
+    /// total)` in bytes. Asked again, it says what is held. The store must
+    /// stay borrowed meanwhile: a resize would unmap what is being read.
+    pub fn make_resident(&self, progress: &dyn Fn(u64, u64)) -> Result<resident::Residency> {
+        let mut slot = self.resident.0.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.is_none() {
+            let addr = self.map_addr().context(
+                "the store's map is not found in /proc/self/maps: holding it in memory needs Linux",
+            )?;
+            *slot = Some(resident::Resident::take(
+                &resident::Kernel,
+                addr,
+                self.used_bytes(),
+                progress,
+            ));
+        }
+        Ok(slot.as_ref().expect("taken above").residency())
+    }
+
+    /// What is held in memory, `None` when nothing was asked.
+    pub fn residency(&self) -> Option<resident::Residency> {
+        self.resident.get()
+    }
+
+    /// The handle `GET /repos` reads the residency through.
+    pub fn residency_handle(&self) -> ResidencyHandle {
+        self.resident.clone()
+    }
+
+    /// Takes in what the last writes added to the map, or all of it again
+    /// when a resize moved it. Run as a write starts — after the resize, with
+    /// no transaction open — so the pages a commit appended are locked by
+    /// the next one (until then they are the page cache's freshest).
+    fn follow_residency(&self, resized: bool) {
+        let mut slot = self.resident.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(resident) = slot.as_mut() {
+            // The address moves only with a resize: `/proc/self/maps` is read
+            // then, not at every write.
+            let addr = if resized { self.map_addr() } else { Some(resident.addr()) };
+            match addr {
+                Some(addr) => resident.follow(&resident::Kernel, addr, self.used_bytes()),
+                // Mapped again where it cannot be found: whatever was locked
+                // went with the old mapping.
+                None => resident.lose("the store's map, moved by a resize, is not found"),
+            }
+        }
     }
 }
 
@@ -1789,5 +1882,54 @@ mod map_tests {
     #[test]
     fn test_the_map_never_shrinks() {
         assert_eq!(map_to_grant(G, 100 * G, 0), None);
+    }
+}
+
+#[cfg(test)]
+mod resident_tests {
+    use super::test_store;
+    use crate::store::Begin;
+    use metafolder_core::metarecord::Value;
+    use uuid::Uuid;
+
+    /// The bytes of the store in use: what is read into memory.
+    fn used(store: &super::KvStore) -> u64 {
+        ((store.env.info().last_page_number + 1) * store.env.stat().page_size as usize) as u64
+    }
+
+    fn fill(store: &mut super::KvStore, rows: usize) {
+        let w = store.begin_write().unwrap();
+        for i in 0..rows {
+            let uuid = Uuid::new_v4();
+            w.create_metarecord(uuid, 0).unwrap();
+            w.insert_row(uuid, "text", &Value::String(format!("{i:0>200}")), None).unwrap();
+        }
+        w.commit().unwrap();
+    }
+
+    #[test]
+    fn test_a_store_is_held_in_memory_only_when_asked() {
+        let (store, _dir) = test_store();
+        assert_eq!(store.residency(), None);
+        let calls = std::cell::Cell::new(0);
+        let residency = store.make_resident(&|_, _| calls.set(calls.get() + 1)).unwrap();
+        assert_eq!(residency.bytes, used(&store));
+        assert!(calls.get() >= 1, "the load reports its progress");
+        // A test store is far below any memory-lock limit worth the name.
+        assert!(residency.pinned, "{:?}", residency.reason);
+        assert_eq!(store.residency(), Some(residency));
+    }
+
+    #[test]
+    fn test_what_a_write_adds_is_held_too() {
+        let (mut store, _dir) = test_store();
+        store.make_resident(&|_, _| {}).unwrap();
+        let before = store.residency().unwrap().bytes;
+        fill(&mut store, 5000);
+        // Followed when the next write starts: the map may move then.
+        drop(store.begin_write().unwrap());
+        let after = store.residency().unwrap();
+        assert!(after.bytes > before, "{} then {}", before, after.bytes);
+        assert_eq!(after.bytes, used(&store));
     }
 }

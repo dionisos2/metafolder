@@ -309,6 +309,10 @@ enum RepoCommand {
         /// Print the UUID immediately, without waiting for the warmup
         #[arg(long = "no-wait")]
         no_wait: bool,
+        /// Read the whole store into memory and lock it there, so that no
+        /// read waits on the disk (writes still go to it)
+        #[arg(long = "in-memory")]
+        in_memory: bool,
     },
     /// Unload the selected repository (stops its watcher, releases its DB lock)
     Unload,
@@ -1277,8 +1281,8 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
                 no_ignore,
             ),
             RepoCommand::Rename { name } => commands::rename_repo(ctx, &name),
-            RepoCommand::Load { root, metafolder, no_wait } => {
-                commands::load(ctx, root.as_deref(), metafolder.as_deref(), no_wait)
+            RepoCommand::Load { root, metafolder, no_wait, in_memory } => {
+                commands::load(ctx, root.as_deref(), metafolder.as_deref(), no_wait, in_memory)
             }
             RepoCommand::Unload => commands::unload(ctx),
             RepoCommand::Root => commands::print_repo_root(ctx),

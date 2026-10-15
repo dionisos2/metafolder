@@ -7,6 +7,7 @@ summary: mf repo init, load and unload; what a load does in the background, and 
 mf repo init <root>                         # create .metafolder/ inside <root>
 mf repo init <root> --metafolder <path>     # … or anywhere else
 mf repo load <root>                         # load it (--metafolder <path> for an external one)
+mf repo load --in-memory <root>             # … with its store held in memory
 mf repo                                     # the loaded repositories (mf repo list)
 mf -n <name> repo rename <new-name>         # rename it
 mf -n <name> repo root                      # print its root
@@ -21,6 +22,7 @@ nothing: tracking is opt-in ([[Tracking a folder]]).
 repository already has the same name, keeping `-n <name>` unambiguous, or when
 another daemon holds its lock. The daemon answers at once and does the rest in
 the background as a `load` task ([[Tasks]]): reading the declared mount points ([[Mount points]]),
+reading the store into memory when asked to ([[Holding a repository in memory]]),
 starting the watcher
 ([[Watcher]]).
 `mf repo load` waits for it, drawing its progress (`--no-wait` returns at once).

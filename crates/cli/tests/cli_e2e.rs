@@ -267,6 +267,22 @@ fn test_load_no_wait_prints_uuid_immediately() {
 }
 
 #[test]
+fn test_load_in_memory_holds_the_store_in_memory() {
+    // doc "Holding a repository in memory": the listing says what is held.
+    let (repo, root) = init_repo("load_mem");
+    let out = mf(&["-u", &repo, "repo", "unload"]);
+    assert_ok(&out);
+    let out = mf(&["repo", "load", "--in-memory", root.to_str().unwrap()]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), repo);
+    let out = mf(&["repo", "list"]);
+    assert_ok(&out);
+    let listed: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+    let ours = listed.as_array().unwrap().iter().find(|r| r["repo_uuid"] == repo.as_str()).unwrap();
+    assert!(ours["in_memory"]["bytes"].as_u64().unwrap() > 0, "{ours}");
+}
+
+#[test]
 fn test_load_requires_exactly_one_locator() {
     let out = mf(&["repo", "load"]);
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);

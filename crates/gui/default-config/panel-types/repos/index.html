@@ -126,6 +126,17 @@
       .watch-starved {
         color: var(--mf-error, #c44c56);
       }
+      .memory {
+        font-size: 0.8em;
+        padding: 0 5px;
+        border-radius: 3px;
+        border: 1px solid var(--mf-accent, #3d5a80);
+        color: var(--mf-fg, #d8d8e0);
+      }
+      .memory[data-unpinned] {
+        border-style: dashed;
+        color: var(--mf-fg-dim, #8a8a96);
+      }
       .uuid {
         font-family: var(--mf-font-mono, monospace);
         font-size: 0.85em;
@@ -235,6 +246,13 @@
       </div>
       <div class="form-actions">
         <button type="submit">Load</button>
+        <button
+          type="button"
+          id="load-memory"
+          title="Read the whole store into memory and lock it there, so that no read waits on the disk; writes still go to it"
+        >
+          Load in memory
+        </button>
         <button type="button" class="cancel">Cancel</button>
       </div>
       <p class="error" id="load-error"></p>

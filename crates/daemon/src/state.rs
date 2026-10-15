@@ -151,6 +151,12 @@ pub struct RepoState {
     /// repository unloads it (see [`AppState::register`]). Unset in a
     /// repository built outside one (unit tests): it is only frozen.
     on_root_lost: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>>,
+    /// Asked to be held in memory (`POST /repos/load` with `in_memory`, doc
+    /// "Holding a repository in memory"): the warmup reads the store in.
+    in_memory: std::sync::atomic::AtomicBool,
+    /// What the store holds in memory, once read in: read by [`Self::info`]
+    /// without waiting on the store.
+    residency: std::sync::OnceLock<crate::kvstore::ResidencyHandle>,
 }
 
 /// State of an in-progress coordinated revert. It suspends the watcher's
@@ -231,7 +237,20 @@ impl RepoState {
             root_identity,
             root_lost: std::sync::atomic::AtomicBool::new(false),
             on_root_lost: std::sync::OnceLock::new(),
+            in_memory: std::sync::atomic::AtomicBool::new(false),
+            residency: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Asks the warmup to read the store into memory (doc "Holding a
+    /// repository in memory"). Before [`Self::warm`]: asked later, nothing reads it in.
+    pub fn hold_in_memory(&self) {
+        self.in_memory.store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Whether it was loaded to be held in memory.
+    pub fn held_in_memory(&self) -> bool {
+        self.in_memory.load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// Whether the root is still the directory the repository was opened on.
@@ -309,6 +328,7 @@ impl RepoState {
             created_at: self.config.created_at,
             system: self.config.system,
             lost: self.root_lost.load(std::sync::atomic::Ordering::Acquire),
+            in_memory: self.residency.get().and_then(|handle| handle.get()),
         }
     }
 
@@ -636,6 +656,20 @@ impl RepoState {
         // listing must not be the one that loses the unavailable-volume marking.
         // A handful of rows off an indexed field — no phase of its own.
         self.set_declared_mounts(Arc::new(crate::mount::declared_set(&conn, &self.tree())?));
+        if self.held_in_memory() {
+            // With the store held: a resize meanwhile would unmap what is read.
+            let _p = Phase::begin(&self.name(), "read the store into memory");
+            let kv = conn.as_kv().ok_or_else(|| {
+                ApiError::internal("only the key-value store can be held in memory")
+            })?;
+            let residency = kv
+                .make_resident(&|done, total| progress("memory", Some(done), Some(total)))
+                .map_err(|e| ApiError::internal(format!("{e:#}")))?;
+            if let Some(reason) = &residency.reason {
+                crate::diagnostics::warn_for("memory", reason.clone(), self.uuid());
+            }
+            let _ = self.residency.set(kv.residency_handle());
+        }
         Ok(())
     }
 
@@ -1036,6 +1070,9 @@ pub struct RepoInfo {
     /// clients can say why it answers nothing, until it is loaded again or
     /// unloaded.
     pub lost: bool,
+    /// What of its store is held in memory — `null` unless it was loaded with
+    /// `in_memory` (doc "Holding a repository in memory").
+    pub in_memory: Option<crate::kvstore::resident::Residency>,
 }
 
 /// A repository unloaded because its root went away: what is still said about
@@ -1094,6 +1131,14 @@ impl AppState {
     /// idempotent and returns its UUID (the store's exclusive lock would make
     /// a second real open fail anyway).
     pub fn load_repo(&self, locator: RepoLocator) -> Result<Uuid, ApiError> {
+        self.load_repo_with(locator, false)
+    }
+
+    /// [`Self::load_repo`], held in memory when `in_memory` (doc "Holding a
+    /// repository in memory"): the warmup reads the store in. A repository
+    /// already loaded the ordinary way is refused (`409`) — its load would
+    /// read nothing in.
+    pub fn load_repo_with(&self, locator: RepoLocator, in_memory: bool) -> Result<Uuid, ApiError> {
         let metafolder_dir = match &locator {
             RepoLocator::Root(root) => root
                 .canonicalize()
@@ -1110,6 +1155,13 @@ impl AppState {
             let loaded = self.repos.lock_recover().get(&config.repo_uuid).cloned();
             if let Some(loaded) = loaded {
                 if loaded.root_present() {
+                    if in_memory && !loaded.held_in_memory() {
+                        return Err(ApiError::conflict(format!(
+                            "'{}' is already loaded, not in memory: unload it, then load it in \
+                             memory",
+                            loaded.name()
+                        )));
+                    }
                     return Ok(config.repo_uuid);
                 }
                 // Lost, and its unload not done yet: this load is the explicit
@@ -1129,6 +1181,9 @@ impl AppState {
         // the observable `load` task `POST /repos/load` returns. Until then it
         // reports its state and refuses data (`RepoState::ready`).
         let repo_state = Arc::new(RepoState::from_opened_with(opened, &self.settings));
+        if in_memory {
+            repo_state.hold_in_memory();
+        }
         // Before registering: an invalid schema must fail the load, not leave a
         // registered repository that never becomes ready.
         repo_state.load_config()?;
