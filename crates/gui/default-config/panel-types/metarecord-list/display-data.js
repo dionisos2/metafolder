@@ -216,6 +216,15 @@ export function createDisplayData({ daemon, bench, exists, getRepo, getColumns, 
     return !!getRepo() && pathsIn('mfr_path', metarecord.uuid) !== undefined;
   }
 
+  // Whether a metarecord has a file or folder to show (doc "Opening a row"): it
+  // has an mfr_path position, and the read did not find it empty. Paths not
+  // read yet are no evidence of no file.
+  /** @param {Metafolder.Metarecord} metarecord */
+  function hasFile(metarecord) {
+    if (!hasTreeRef(metarecord, 'mfr_path')) return false;
+    return !pathsResolved(metarecord) || pathsOf(metarecord).length > 0;
+  }
+
   // Orphan check environment: paths are pre-resolved (enrich), so this is just a
   // disk stat (no daemon traffic during rendering).
   const orphanCtx = {
@@ -307,6 +316,7 @@ export function createDisplayData({ daemon, bench, exists, getRepo, getColumns, 
     refresh: prepareNow,
     pathsOf,
     pathsResolved,
+    hasFile,
     refreshMounts,
     /** Draws a row's (or card's) marks. @param {HTMLElement} node
      *  @param {Metafolder.Metarecord} metarecord */

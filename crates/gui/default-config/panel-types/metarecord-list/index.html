@@ -149,9 +149,12 @@
       th .col-resize:hover {
         background: var(--mf-accent, #4c56c4);
       }
+      /* Two buttons, ↗ (file panel) and ⓘ (detail panel), doc "Opening a row":
+       * each 1.7em wide in its own 1.5em font. */
       th.open-col,
       td.open-cell {
-        width: 1.8em;
+        width: 5.4em;
+        white-space: nowrap;
         padding: 0 0 0 4px;
         cursor: default;
       }

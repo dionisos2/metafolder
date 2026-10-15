@@ -9,7 +9,6 @@ summary: The metarecord-list panel type
 * ``metarecord-list:clear`` — Metarecord list: clear a zone
 * ``metarecord-list:focus`` — Metarecord list: focus a zone
 * ``metarecord-list:insert`` — Metarecord list: insert text into a zone
-* ``metarecord-list:open`` — Metarecord list: open the selection (here / other / new)
 * ``metarecord-list:open-bulk-edit`` — Metarecord list: open the bulk edit / delete form (set/add/remove/unset/delete)
 * ``metarecord-list:page`` — Metarecord list: load a page (next)
 * ``metarecord-list:query`` — Metarecord list: run a canned query (duplicates / orphans)

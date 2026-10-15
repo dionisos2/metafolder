@@ -4,7 +4,7 @@
 // button's, with a single click.
 
 import { describe, expect, test, vi } from 'vitest';
-import { el, openButton } from '../../panel-shim/ui.js';
+import { el, openButton, viewerButtons } from '../../panel-shim/ui.js';
 
 describe('openButton', () => {
   test('is a small icon button, its action named for hover and screen readers', () => {
@@ -20,6 +20,19 @@ describe('openButton', () => {
   test('each kind has its own icon: going into a thing is not showing it elsewhere', () => {
     expect(openButton('enter', '', () => {}).textContent).toBe('›');
     expect(openButton('show', '', () => {}).textContent).toBe('↗');
+    expect(openButton('detail', '', () => {}).textContent).toBe('ⓘ');
+  });
+
+  test('a disabled button is greyed, says why, and opens nothing', () => {
+    const onOpen = vi.fn();
+    const button = openButton('show', 'Show in the other slot', onOpen, {
+      disabled: 'No file or folder',
+    });
+    expect(button.disabled).toBe(true);
+    expect(button.classList.contains('mf-open-disabled')).toBe(true);
+    expect(button.title).toBe('No file or folder');
+    button.click();
+    expect(onOpen).not.toHaveBeenCalled();
   });
 
   test('one click opens, and the click is not also a click on the row', () => {
@@ -38,5 +51,34 @@ describe('openButton', () => {
     button.dispatchEvent(down);
     expect(down.defaultPrevented).toBe(true);
     expect(button.tabIndex).toBe(-1); // the panel's keys move the cursor, not Tab
+  });
+});
+
+describe('viewerButtons', () => {
+  test('a row shown in the file panel (↗) and the detail panel (ⓘ)', () => {
+    const open = vi.fn();
+    const [file, detail] = viewerButtons({ hasFile: true, hasMetarecord: true, open });
+    expect(file.textContent).toBe('↗');
+    expect(detail.textContent).toBe('ⓘ');
+    file.click();
+    detail.click();
+    expect(open.mock.calls).toEqual([['file'], ['metarecord-detail']]);
+  });
+
+  test('the viewer with nothing to show is greyed', () => {
+    const [file, detail] = viewerButtons({ hasFile: false, hasMetarecord: true, open: () => {} });
+    expect(file.disabled).toBe(true);
+    expect(detail.disabled).toBe(false);
+    const [file2, detail2] = viewerButtons({ hasFile: true, hasMetarecord: false, open: () => {} });
+    expect(file2.disabled).toBe(false);
+    expect(detail2.disabled).toBe(true);
+  });
+
+  test('a folder goes in (›) rather than being shown', () => {
+    const open = vi.fn();
+    const [enter] = viewerButtons({ hasFile: true, hasMetarecord: true, enter: true, open });
+    expect(enter.textContent).toBe('›');
+    enter.click();
+    expect(open).toHaveBeenCalledWith('enter');
   });
 });

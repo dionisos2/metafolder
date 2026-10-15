@@ -262,19 +262,3 @@ describe('metarecord-list query variables', () => {
   });
 });
 
-describe('metarecord-list:open', () => {
-  beforeEach(() => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('[]', { status: 200 })));
-    document.body.replaceChildren();
-  });
-
-  test('takes the open target first, the other slot by default', async () => {
-    await mountPanel({});
-    const [where] = specs.get('metarecord-list:open') as {
-      name: string;
-      initial: () => string;
-    }[];
-    expect(where.name).toBe('where');
-    expect(where.initial()).toBe('other');
-  });
-});

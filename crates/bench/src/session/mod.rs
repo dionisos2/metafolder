@@ -472,7 +472,7 @@ async fn run_step(id: &str, s: &mut Session, quiet: Duration) -> Result<Option<I
             for part in rel.components() {
                 let name = part.as_os_str().to_string_lossy();
                 s.command(&format!("cursor:find file-manager select {name}"), None).await?;
-                s.command("file-manager:activate", None).await?;
+                s.command("file-manager:activate other", None).await?;
             }
             drawn(s, quiet).await
         }

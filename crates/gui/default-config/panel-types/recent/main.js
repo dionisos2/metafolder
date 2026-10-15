@@ -16,8 +16,7 @@ import {
   formatScore,
   formatValue,
   frecency,
-  openButton,
-  whereArg,
+  viewerButtons,
 } from '/__ui.js';
 import { createSelect } from '/__select.js';
 import { rowActionsProvider, baseName } from '/__file-actions.js';
@@ -94,9 +93,13 @@ export function mount(root, metafolder) {
               : {}),
           },
           // doc "Opening a row"
-          openButton('show', 'Show in the other slot', async () => {
-            await select(index);
-            await open();
+          viewerButtons({
+            hasFile: row.absPaths.length > 0,
+            hasMetarecord: true,
+            open: async (what) => {
+              await select(index);
+              await commands.invoke(`panel:open other ${what}`);
+            },
           }),
           el('span', { class: 'name' }, rowName(row)),
           el('span', { class: 'path' }, row.relPath),
@@ -123,21 +126,6 @@ export function mount(root, metafolder) {
     if (!row || !repo) return;
     await workspace.set('selected_metarecord', { uuid: row.uuid, repo });
     await workspace.set('selected_paths', row.absPaths);
-  }
-
-  /** Opens the highlighted row at the target — the other slot by default —
-   *  publishing it as the selection there (file when it has paths, else
-   *  metarecord-detail).
-   *  @param {string} where `here`, `other` or `new` */
-  async function open(where = 'other') {
-    const row = selected();
-    const r = repo;
-    if (!row || !r) return;
-    await metafolder.atTarget(where, async (mf) => {
-      await mf.workspace.set('selected_metarecord', { uuid: row.uuid, repo: r });
-      await mf.workspace.set('selected_paths', row.absPaths);
-      await mf.commands.invoke(`panel:open here ${row.absPaths.length > 0 ? 'file' : 'metarecord-detail'}`);
-    });
   }
 
   async function load() {
@@ -244,12 +232,6 @@ export function mount(root, metafolder) {
       return setSort(value);
     },
   });
-  void commands.register('recent:open', {
-    label: 'Recent: open the highlighted metarecord (here / other / new)',
-    args: [whereArg('other')],
-    handler: (where) => open(where),
-  });
-
   // Keybindings for this panel live in keybindings.toml (when = "recent").
 
   // Right-click a row: the shared "Metarecord" section (open in detail/file,

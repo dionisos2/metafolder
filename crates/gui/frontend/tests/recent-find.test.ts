@@ -176,7 +176,7 @@ describe('recent open buttons', () => {
     Element.prototype.scrollIntoView = () => {};
   });
 
-  test("a row's button shows that row in the other slot", async () => {
+  test("a row's ↗ selects it and shows it in the file panel of the other slot", async () => {
     const s = stub();
     await mount(s);
     const row = [...s.root.querySelectorAll('li')].find(
@@ -185,9 +185,27 @@ describe('recent open buttons', () => {
     row.querySelector<HTMLButtonElement>('button.mf-open-show')!.click();
     await new Promise((r) => setTimeout(r, 0));
     expect(cursorName(s.root)).toBe('rock.mp3');
-    expect(s.api.atTarget).toHaveBeenCalledWith('other', expect.any(Function));
     expect(s.api.workspace.set).toHaveBeenCalledWith('selected_paths', ['/repo/other/rock.mp3']);
-    expect(s.api.commands.invoke).toHaveBeenCalledWith('panel:open here file');
+    expect(s.api.commands.invoke).toHaveBeenCalledWith('panel:open other file');
+  });
+
+  test("a row's ⓘ shows it in the detail panel of the other slot", async () => {
+    const s = stub();
+    await mount(s);
+    const row = [...s.root.querySelectorAll('li')].find(
+      (li) => li.querySelector('.name')?.textContent === 'rock.mp3',
+    )!;
+    row.querySelector<HTMLButtonElement>('button.mf-open-detail')!.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(cursorName(s.root)).toBe('rock.mp3');
+    expect(s.api.commands.invoke).toHaveBeenCalledWith('panel:open other metarecord-detail');
+  });
+
+  test('opening is panel:open: the panel registers no open command of its own', async () => {
+    const s = stub();
+    await mount(s);
+    const registered = s.api.commands.register.mock.calls.map((c: unknown[]) => c[0]);
+    expect(registered).not.toContain('recent:open');
   });
 
   test('a double click on a row opens nothing', async () => {

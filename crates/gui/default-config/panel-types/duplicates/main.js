@@ -1,6 +1,6 @@
 // duplicates panel: the repository's groups of byte-identical files, worst
 // reclaimable space first (doc "duplicates panel"). Groups are collapsed; Enter
-// expands one into its members' paths, `+` marking a member that shares an
+// expands one into its members' paths (and shows a member in the file panel), `+` marking a member that shares an
 // inode with another — removing that name frees nothing.
 //
 // Highlighting a row publishes it as `selected_metarecord` — a member, or the
@@ -18,7 +18,7 @@
 // worst exactly here, where it is the number the
 // deletion decision is made on.
 
-import { byId, el, field, formatSize, formatValue, openButton } from '/__ui.js';
+import { byId, el, field, formatSize, formatValue, viewerButtons, whereArg } from '/__ui.js';
 import { createCatchup } from '/__watcher-settle.js';
 import { rowActionsProvider, baseName } from '/__file-actions.js';
 
@@ -156,7 +156,15 @@ export function mount(root, metafolder) {
                   : {}),
               },
               [
-                openButton('show', 'Show in the other slot', () => showMember(i)),
+                // doc "Opening a row"
+                viewerButtons({
+                  hasFile: Boolean(row.member.absPath),
+                  hasMetarecord: true,
+                  open: async (what) => {
+                    await select(i);
+                    await commands.invoke(`panel:open other ${what}`);
+                  },
+                }),
                 el('span', { class: 'linked' }, row.member.inode ? '+' : ' '),
                 el('span', { class: 'path' }, row.member.path),
               ],
@@ -181,25 +189,27 @@ export function mount(root, metafolder) {
     // shared file actions apply without this panel implementing any of them. A
     // group row publishes the *group* metarecord — it is one too (hash, size,
     // counters), and the detail panel is where its fields can be read.
+    // Its paths too, so a file panel follows the cursor and `panel:open … file`
+    // knows a group has none (doc "Opening a row").
     const row = rows[cursorIndex];
     if (row && repo !== null) {
       await workspace.set('selected_metarecord', { uuid: row.member?.uuid ?? row.group.uuid, repo });
+      await workspace.set('selected_paths', row.member?.absPath ? [row.member.absPath] : []);
     }
   }
 
-  /** A copy's open button (doc "Opening a row"): selects it, and shows it in
-   *  the other slot — the file panel follows the selected paths.
-   *  @param {number} index */
-  async function showMember(index) {
-    await select(index);
-    const member = rows[index]?.member;
-    if (!member) return;
-    await workspace.set('selected_paths', member.absPath ? [member.absPath] : []);
-    await commands.invoke(`panel:open other ${member.absPath ? 'file' : 'metarecord-detail'}`);
+  /** Enter: unfold or fold the group under the cursor; on a copy, show it in the
+   *  file panel at `where` (doc "Opening a row").
+   *  @param {string} [where] `here`, `other` or `new` */
+  async function open(where = 'other') {
+    const row = rows[cursorIndex];
+    if (!row) return;
+    if (row.member === null) await activate();
+    else await commands.invoke(`panel:open ${where} file`);
   }
 
-  /** Enter: expand or collapse the group under the cursor (on a member row,
-   *  collapse its group — the way back out). */
+  /** `duplicates:toggle` (→, the twisty): expand or collapse the group under
+   *  the cursor (on a member row, collapse its group — the way back out). */
   async function activate() {
     const row = rows[cursorIndex];
     if (!row) return;
@@ -438,6 +448,11 @@ export function mount(root, metafolder) {
   void commands.register('duplicates:toggle', {
     label: 'Duplicates: expand or collapse the group under the cursor',
     handler: () => activate(),
+  });
+  void commands.register('duplicates:activate', {
+    label: 'Duplicates: unfold the group / show the copy (here / other / new)',
+    args: [whereArg('other')],
+    handler: (where) => open(where),
   });
   void commands.register('duplicates:keep', {
     label: 'Duplicates: keep the copy under the cursor, trash the others',

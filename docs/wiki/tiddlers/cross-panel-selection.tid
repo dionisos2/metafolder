@@ -18,9 +18,11 @@ metarecord's row loaded, its cursor moves there, so its arrows go on from what i
 screen. Only the highlight moves; nothing is selected again.
 
 ''Opening'' a row of `metarecord-list` — its `↗` button ([[Opening a row]]), or
-<<key "metarecord-list:open" Enter>> — shows it in the other slot of the same
-workspace: in the [[file panel]] when the metarecord has a path, in
-`metarecord-detail` otherwise (`panel:open other`). A hidden slot is opened for it.
+<<key "panel:open other file" Enter>> — shows it in the other slot of the same
+workspace, in the [[file panel]]; its `ⓘ` button, or
+<<key "panel:open other metarecord-detail" Shift+Enter>>, in `metarecord-detail`. Both
+are [[panel:open]]: the row is the selection already, which the panel opened reads. A
+hidden slot is opened for it.
 
 When `metarecord-detail` is editing a field, it asks before showing another
 metarecord: ''Unsaved changes — discard and switch metarecord?''

@@ -1,0 +1,14 @@
+title: $:/mf/gen/GUI command/duplicates:activate
+catalog: GUI command
+target: duplicates:activate
+summary: Duplicates: unfold the group / show the copy (here / other / new)
+
+!! Reference
+
+* Defined by the ``duplicates`` panel
+
+!! Default keys
+
+* ``b enter`` → ``duplicates:activate new`` (in the ``duplicates`` panel)
+* ``enter`` → ``duplicates:activate other`` (in the ``duplicates`` panel)
+* ``i enter`` → ``duplicates:activate here`` (in the ``duplicates`` panel)

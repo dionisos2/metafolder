@@ -9,5 +9,4 @@ summary: Duplicates: expand or collapse the group under the cursor
 
 !! Default keys
 
-* ``enter`` → ``duplicates:toggle`` (in the ``duplicates`` panel)
 * ``right`` → ``duplicates:toggle`` (in the ``duplicates`` panel)

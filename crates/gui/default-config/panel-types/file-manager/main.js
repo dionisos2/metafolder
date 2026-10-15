@@ -2,7 +2,7 @@
 // daemon), distinguish tracked metarecords, add paths to the DB
 // (doc "file-manager panel").
 
-import { byId, el, fileTypeGlyph, openButton } from '/__ui.js';
+import { byId, el, fileTypeGlyph, viewerButtons, whereArg } from '/__ui.js';
 import { copyText } from '/__menu.js';
 import { createPagedList } from '/__paged-list.js';
 import { createMultiSelect } from '/__multi-select.js';
@@ -190,6 +190,27 @@ export async function mount(root, metafolder) {
     } catch (error) {
       await statusBar.error(error);
     }
+    await catchUpSelection();
+  }
+
+  // The tracked status lands after the rows, so a cursor put on an entry before
+  // it did published the path without its metarecord — and the detail panel,
+  // and `panel:open … metarecord-detail`, took a tracked file for an untracked
+  // one (doc "Opening a row"). Published again once known, but only while the
+  // workspace's selection is still that path: one made elsewhere meanwhile is
+  // not this panel's to take back.
+  async function catchUpSelection() {
+    const item = listing[cursorIndex];
+    if (!item) return;
+    const uuid = trackedPaths.get(item.path);
+    if (!uuid) return;
+    const [selected, paths] = await Promise.all([
+      workspace.get('selected_metarecord'),
+      workspace.get('selected_paths'),
+    ]);
+    const ours = Array.isArray(paths) && paths.length === 1 && paths[0] === item.path;
+    const known = /** @type {{uuid?: string} | null} */ (selected)?.uuid === uuid;
+    if (ours && !known) await propagateSelection();
   }
 
   // Which listed entries an ignore pattern excludes (doc "Setting ignore patterns"): one daemon
@@ -412,9 +433,15 @@ export async function mount(root, metafolder) {
             oncontextmenu: (/** @type {MouseEvent} */ event) => rowMenu(event, index),
             ...(title && { title }),
           },
-          entersOnOpen(item)
-            ? openButton('enter', 'Open this folder', () => openRow(index))
-            : openButton('show', 'Show in the other slot', () => openRow(index)),
+          // doc "Opening a row": a folder is gone into, a file (or the folder
+          // shown, ".") shown in the file panel; either in the detail panel
+          // when it has a metarecord.
+          viewerButtons({
+            hasFile: true,
+            hasMetarecord: Boolean(uuid),
+            enter: entersOnOpen(item),
+            open: (what) => openRow(index, what),
+          }),
           el('span', { class: 'icon' }, item.is_dir ? '📁' : fileTypeGlyph(item.name)),
           el('span', { class: 'name' }, item.name),
           // A name holding bytes no text can represent is shown escaped, so say
@@ -534,16 +561,29 @@ export async function mount(root, metafolder) {
     await propagateSelection();
   }
 
-  // A row's open button (doc "Opening a row"): a folder is gone into; a file —
-  // or the folder shown, the "." row — is selected and shown in the other slot,
-  // where the file panel follows the selection.
   /** @param {{name: string, is_dir: boolean}} item */
   function entersOnOpen(item) {
     return item.is_dir && item.name !== '.';
   }
 
+  /** A row's open buttons: `enter`/`file` do what Enter does, `metarecord-detail`
+   *  selects the row and shows its metarecord in the other slot.
+   *  @param {number} index @param {'enter'|'file'|'metarecord-detail'} what */
+  async function openRow(index, what) {
+    if (what !== 'metarecord-detail') {
+      await activate(index);
+      return;
+    }
+    await select(index);
+    await commands.invoke('panel:open other metarecord-detail');
+  }
+
   /** @param {number} index */
-  async function openRow(index) {
+  /** Enter (doc "Opening a row"): a folder is gone into; a file — or the folder
+   *  shown, the "." row — is shown in the file panel at `where`, where the panel
+   *  follows the selection the cursor published.
+   *  @param {number} index @param {string} [where] `here`, `other` or `new` */
+  async function activate(index, where = 'other') {
     const item = listing[index];
     if (!item) return;
     if (entersOnOpen(item)) {
@@ -551,15 +591,7 @@ export async function mount(root, metafolder) {
       return;
     }
     await select(index);
-    await commands.invoke('panel:open other file');
-  }
-
-  /** @param {number} index */
-  async function activate(index) {
-    const item = listing[index];
-    if (!item) return;
-    if (item.is_dir) await open(item.path);
-    else await select(index);
+    await commands.invoke(`panel:open ${where} file`);
   }
 
   // ── The checked multi-selection (doc "Cross-panel selection") ─────────
@@ -1260,8 +1292,9 @@ export async function mount(root, metafolder) {
     },
   });
   void commands.register('file-manager:activate', {
-    label: 'File manager: open directory / confirm file',
-    handler: () => activate(cursorIndex),
+    label: 'File manager: go into the folder / show the file (here / other / new)',
+    args: [whereArg('other')],
+    handler: (where) => activate(cursorIndex, where),
   });
   // Up one level, and to the top, on `cursor:parent` / `cursor:root` (doc
   // "Generic panel commands"): the root is the repo root, or / with no repo.

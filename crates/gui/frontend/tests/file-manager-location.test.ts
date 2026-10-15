@@ -165,6 +165,44 @@ describe('file-manager open buttons', () => {
     expect(cursorName(s.root)).toBe('top.txt');
   });
 
+  test('every row has a ⓘ for the detail panel, greyed on an untracked entry', async () => {
+    const s = stub('r', {});
+    await mount(s);
+    for (const name of ['sub', 'top.txt']) {
+      const detail = rowOf(s.root, name).querySelector<HTMLButtonElement>('button.mf-open-detail')!;
+      expect(detail.disabled).toBe(true); // the stub daemon tracks nothing
+    }
+  });
+
+  test('Enter on a file shows it in the file panel of the other slot', async () => {
+    const s = stub('r', {});
+    await mount(s);
+    rowOf(s.root, 'top.txt').click();
+    await settle();
+    await s.handlers.get('file-manager:activate')!();
+    expect(s.api.commands.invoke).toHaveBeenCalledWith('panel:open other file');
+  });
+
+  test('Enter takes a target: here, other or new', async () => {
+    const s = stub('r', {});
+    await mount(s);
+    rowOf(s.root, 'top.txt').click();
+    await settle();
+    await s.handlers.get('file-manager:activate')!('new');
+    expect(s.api.commands.invoke).toHaveBeenCalledWith('panel:open new file');
+  });
+
+  test('Enter on a folder goes into it, whatever the target', async () => {
+    const s = stub('r', {});
+    await mount(s);
+    rowOf(s.root, 'sub').click();
+    await settle();
+    await s.handlers.get('file-manager:activate')!('new');
+    await settle();
+    expect(s.root.getElementById('current-path')?.textContent).toBe('/repo/sub');
+    expect(s.api.commands.invoke).not.toHaveBeenCalledWith(expect.stringMatching(/^panel:open/));
+  });
+
   test('a double click on a row opens nothing', async () => {
     const s = stub('r', {});
     await mount(s);

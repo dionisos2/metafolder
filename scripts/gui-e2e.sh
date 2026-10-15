@@ -49,7 +49,7 @@
 #   with no scenario, runs them all: undo-redo duplicates orphans trash
 #   reconcile ignore sync repos list layout script errors picker refs hierarchy
 #   hierarchy-form prompt history keybindings open-with tab-close pick-button
-#   suggested-key walk slideshow devtools.
+#   suggested-key walk open-viewers slideshow devtools.
 #   --unsandboxed  pass --allow-unsandboxed-webview to the GUI (a container
 #                  that forbids WebKit's sandbox; never on real data)
 #   --keep-logs    keep the work directory (daemon.log, gui.log) on exit
@@ -76,7 +76,7 @@ done
 [ ${#SCENARIOS[@]} -gt 0 ] \
     || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list layout script script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close
-        pick-button suggested-key walk slideshow devtools shell-line repos-memory)
+        pick-button suggested-key walk open-viewers slideshow devtools shell-line repos-memory)
 
 # shellcheck source=lib/daemon-fixture.sh
 . scripts/lib/daemon-fixture.sh
@@ -1211,6 +1211,70 @@ fm_at() {
     [ $# -gt 1 ] && cursor="\"$2\""
     [ "$(ws_var file-manager:dir)" = "\"$REPO_DIR$1\"" ] &&
         [ "$(ws_var file-manager:cursor)" = "$cursor" ]
+}
+
+# right_type — the panel type the right slot shows ("None" when hidden).
+right_type() { gui_status "(s['layout']['right'] or {}).get('panel_type')"; }
+# right_is <type> — for until_ok, which must re-read it on every try.
+right_is() { [ "$(right_type)" = "$1" ]; }
+
+# errs <glob> — the last status message is an error matching the glob.
+errs() {
+    local got
+    got=$(mfg status-bar --workspace "$WS")
+    # shellcheck disable=SC2053 # the right-hand side is a glob on purpose
+    [[ $got == "error"$'\t'$1 ]]
+}
+
+# doc "Opening a row": Enter shows the row under the cursor in the file panel of
+# the other slot, Shift+Enter in the detail panel — `panel:open`, which refuses
+# a viewer with nothing of the selection to show.
+scenario_open_viewers() {
+    needs_keyboard open-viewers || return 0
+    new_repo open-viewers
+    echo hi >"$REPO_DIR/song.txt"
+    touch "$REPO_DIR/loose.txt"
+    local uuid
+    uuid=$(record "$REPO_DIR/song.txt") || die "record song.txt"
+    df_mf metarecord -i "$uuid" field add note:string=withfile >/dev/null || die "note"
+    df_mf metarecord add note:string=nofile >/dev/null || die "nofile"
+
+    run workspace:send "$WS" metarecord-list:query note=withfile
+    show_panel left metarecord-list view:refresh metarecord-list
+    run panel:focus left
+    keys Return
+    assert "open: Enter shows a file in the file panel" until_ok 10 right_is file
+    run panel:focus left
+    keys shift+Return
+    assert "open: Shift+Enter shows it in the detail panel" until_ok 10 right_is metarecord-detail
+
+    mfg view right message >/dev/null
+    run workspace:send "$WS" metarecord-list:query note=nofile
+    run view:refresh metarecord-list
+    run panel:focus left
+    keys Return
+    assert "open: Enter on a metarecord without a file is refused" until_ok 10 \
+        errs "no file or folder*"
+    assert_eq "open: and nothing opened" message "$(right_type)"
+
+    show_panel left file-manager view:refresh file-manager
+    run cursor:find file-manager select song.txt
+    run panel:focus left
+    keys Return
+    assert "open: Enter on a file of the file manager shows it" until_ok 10 right_is file
+    # Selected as soon as listed, before its tracked status was read: the
+    # metarecord still reaches the selection, so the detail panel opens.
+    run panel:focus left
+    keys shift+Return
+    assert "open: Shift+Enter on a tracked file shows its metarecord" until_ok 10 \
+        right_is metarecord-detail
+    mfg view right message >/dev/null
+    run cursor:find file-manager select loose.txt
+    run panel:focus left
+    keys shift+Return
+    assert "open: Shift+Enter on an untracked file is refused" until_ok 10 \
+        errs "no metarecord*"
+    assert_eq "open: and no detail panel opened" message "$(right_type)"
 }
 
 # doc "Jumping to an entry": `cursor:find file-manager walk` enters each directory

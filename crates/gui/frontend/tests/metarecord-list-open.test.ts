@@ -1,6 +1,7 @@
 // Opening a metarecord-list row is a button on it (doc "Opening a row"): a
 // click on a row or a card only selects it, the ↗ button selects it and shows
-// it in the other slot. A double click opens nothing.
+// it in the file panel of the other slot, the ⓘ button in the detail panel. ↗
+// is greyed on a metarecord without a file. A double click opens nothing.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -26,7 +27,14 @@ function shadowFor(): ShadowRoot {
 }
 
 const RECORDS = [
-  { uuid: 'aaaa', version: 1, fields: [{ id: 1, name: 'title', value: { type: 'string', value: 'first' } }] },
+  {
+    uuid: 'aaaa',
+    version: 1,
+    fields: [
+      { id: 1, name: 'title', value: { type: 'string', value: 'first' } },
+      { id: 3, name: 'mfr_path', value: { type: 'tree_ref', value: { parent: null, name: 'a.txt' } } },
+    ],
+  },
   { uuid: 'bbbb', version: 1, fields: [{ id: 2, name: 'title', value: { type: 'string', value: 'second' } }] },
 ];
 
@@ -60,8 +68,9 @@ function stubApi(vars: Record<string, unknown>, calls: Call[]) {
                   calls.push({ method: 'QUERY', path: `/repos/${repo}/query`, body });
                   return { records: RECORDS, nextCursor: null, total: RECORDS.length };
                 },
+        // `aaaa` is a file, `bbbb` has none.
         treePaths: async (_repo: string, _field: string, uuids: string[]) =>
-          Object.fromEntries(uuids.map((uuid) => [uuid, [] as string[]])),
+          Object.fromEntries(uuids.map((uuid) => [uuid, uuid === 'aaaa' ? ['/a.txt'] : []])),
         metarecords: async () => new Map(),
         fields: async () => [],
         request: async () => ({ status: 200, body: null }),
@@ -142,24 +151,45 @@ describe('metarecord-list open buttons', () => {
     document.body.replaceChildren();
   });
 
-  test("a row's button selects it, then shows it in the other slot", async () => {
+  test("a row's ↗ selects it, then shows it in the file panel of the other slot", async () => {
     const p = await mountPanel();
-    const row = p.shadow.querySelectorAll('tr.row')[1];
-    const button = row.querySelector<HTMLButtonElement>('button.mf-open-show')!;
+    const row = p.shadow.querySelectorAll('tr.row')[0];
     p.order.length = 0;
-    button.click();
+    row.querySelector<HTMLButtonElement>('button.mf-open-show')!.click();
     await settle();
     expect(row.classList.contains('cursor')).toBe(true);
+    expect(p.order).toEqual(['select aaaa', 'panel:open other file']);
+  });
+
+  test("a row's ⓘ shows it in the detail panel, file or not", async () => {
+    const p = await mountPanel();
+    const row = p.shadow.querySelectorAll('tr.row')[1];
+    p.order.length = 0;
+    row.querySelector<HTMLButtonElement>('button.mf-open-detail')!.click();
+    await settle();
     expect(p.order).toEqual(['select bbbb', 'panel:open other metarecord-detail']);
   });
 
-  test("a card's button does the same in the grid", async () => {
+  test('↗ is greyed on a metarecord without a file', async () => {
+    const p = await mountPanel();
+    const [withFile, without] = p.shadow.querySelectorAll('tr.row');
+    expect(withFile.querySelector<HTMLButtonElement>('button.mf-open-show')!.disabled).toBe(false);
+    expect(without.querySelector<HTMLButtonElement>('button.mf-open-show')!.disabled).toBe(true);
+  });
+
+  test("a card's buttons do the same in the grid", async () => {
     const p = await mountPanel();
     const card = p.shadow.querySelectorAll('.card')[1];
     p.order.length = 0;
-    card.querySelector<HTMLButtonElement>('button.mf-open-show')!.click();
+    expect(card.querySelector<HTMLButtonElement>('button.mf-open-show')!.disabled).toBe(true);
+    card.querySelector<HTMLButtonElement>('button.mf-open-detail')!.click();
     await settle();
     expect(p.order).toEqual(['select bbbb', 'panel:open other metarecord-detail']);
+  });
+
+  test('opening is panel:open: the list registers no open command of its own', async () => {
+    await mountPanel();
+    expect(handlers.has('metarecord-list:open')).toBe(false);
   });
 
   test('the button column has a header cell of its own, so the columns stay aligned', async () => {

@@ -1,6 +1,6 @@
 title: file-manager:activate
 tags: [[GUI command]] [[file-manager panel]]
 kind: reference
-summary: File manager: open directory / confirm file
+summary: File manager: go into the folder / show the file (here / other / new)
 
-Opens the directory under the cursor of the [[file-manager panel]]; on a file it only selects it, like a click — the row's `↗` button also shows it in the other slot ([[Opening a row]]). The file is then the workspace's selection, shown by a [[file panel]] beside it ([[Cross-panel selection]]).
+`file-manager:activate <here|other|new>` — Enter in the [[file-manager panel]]. On a folder it goes into it, whatever the target (the row's `›`). On a file, or on `.` (the folder shown), it shows it in a [[file panel]] at the [[open target|Panel slots and layout]] — `panel:open <target> file`, as the row's `↗` does ([[Opening a row]]); the entry is the workspace's selection already ([[Cross-panel selection]]).

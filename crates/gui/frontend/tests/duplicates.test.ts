@@ -172,9 +172,10 @@ async function mountPanel(groups: unknown[], members: Member[], options: Options
   const invoke = async (name: string) => {
     // A generic command runs on what the panel provided (doc "Generic panel commands").
     if (name.startsWith('cursor:') || name.startsWith('view:')) return void (await generic(api.provide, name));
-    const h = handlers.get(name);
-    if (!h) throw new Error(`command not registered: ${name}`);
-    await h();
+    const [command, ...args] = name.split(' ');
+    const h = handlers.get(command);
+    if (!h) throw new Error(`command not registered: ${command}`);
+    await h(...args);
   };
   return {
     shadow,
@@ -340,6 +341,17 @@ describe('duplicates panel, its buttons', () => {
     expect(p.api.commands.invoke).toHaveBeenCalledWith('panel:open other file');
   });
 
+  test("a copy's ⓘ shows it in the detail panel of the other slot", async () => {
+    const p = await mountPanel([group('g1', 10, 2, 10)], members);
+    p.rows()[0].querySelector<HTMLButtonElement>('button.twisty')!.click();
+    await tick();
+    p.rows()[1].querySelector<HTMLButtonElement>('button.mf-open-detail')!.click();
+    await tick();
+    expect(p.cursorRow()).toBe(p.rows()[1]);
+    expect(p.setVar).toHaveBeenCalledWith('selected_metarecord', { uuid: 'm1', repo: 'r' });
+    expect(p.api.commands.invoke).toHaveBeenCalledWith('panel:open other metarecord-detail');
+  });
+
   test('a double click on a group row does not unfold it', async () => {
     const p = await mountPanel([group('g1', 10, 2, 10)], members);
     p.rows()[0].click(); // the cursor onto it, as a double click's first click does
@@ -391,7 +403,38 @@ describe('duplicates panel, the harder paths', () => {
     expect(p.cursorRow()?.textContent).toContain('/a.bin');
   });
 
-  test('Enter on a copy collapses its group and puts the cursor back on it', async () => {
+  test('moving the cursor publishes the paths too, so a file panel follows it', async () => {
+    const members = [
+      { uuid: 'm1', path: '/a.bin' },
+      { uuid: 'm2', path: '/b.bin' },
+    ];
+    const p = await mountPanel([group('g1', 10, 2, 10)], members);
+    await p.invoke('cursor:next');
+    expect(p.setVar).toHaveBeenLastCalledWith('selected_paths', []); // a group is no file
+    await p.invoke('duplicates:toggle');
+    await new Promise((r) => setTimeout(r, 0));
+    await p.invoke('cursor:next');
+    expect(p.setVar).toHaveBeenLastCalledWith('selected_paths', ['/repo/a.bin']);
+  });
+
+  test('Enter on a group unfolds it; on a copy shows it in the file panel at the target', async () => {
+    const members = [
+      { uuid: 'm1', path: '/a.bin' },
+      { uuid: 'm2', path: '/b.bin' },
+    ];
+    const p = await mountPanel([group('g1', 10, 2, 10)], members);
+    await p.invoke('cursor:next');
+    await p.invoke('duplicates:activate other');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(p.rows()).toHaveLength(3);
+    expect(p.api.commands.invoke).not.toHaveBeenCalled();
+    await p.invoke('cursor:next');
+    await p.invoke('duplicates:activate new');
+    expect(p.rows()).toHaveLength(3); // still unfolded
+    expect(p.api.commands.invoke).toHaveBeenCalledWith('panel:open new file');
+  });
+
+  test('toggle on a copy collapses its group and puts the cursor back on it', async () => {
     const members = [
       { uuid: 'm1', path: '/a.bin' },
       { uuid: 'm2', path: '/b.bin' },

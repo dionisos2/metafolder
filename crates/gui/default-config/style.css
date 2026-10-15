@@ -163,6 +163,17 @@ button.mf-open:hover {
   border-color: var(--mf-accent);
   color: var(--mf-fg);
 }
+/* Nothing to open in that viewer (no file, or no metarecord): greyed and struck
+ * through, whether its row is hovered or not. */
+button.mf-open.mf-open-disabled,
+:hover > button.mf-open.mf-open-disabled,
+:hover > * > button.mf-open.mf-open-disabled,
+.cursor button.mf-open.mf-open-disabled {
+  opacity: 0.2;
+  text-decoration: line-through;
+  border-color: transparent;
+  cursor: default;
+}
 
 /* The other small clickable icons of the panels: a value's pick button (🔍,
  * /__value-widget.js) and a field's + (metarecord-detail). */

@@ -1310,6 +1310,28 @@ export async function status(text: string, kind = 'error') {
   if (ws) await invoke('post_status', { wsId: ws, text, kind, timeoutMs: 5000 });
 }
 
+/** Why `panelType`, a viewer of the selection, has nothing of `ws`'s selection
+ *  to show — or `null` when it has, or is no viewer (doc "Opening a row"). A
+ *  metarecord without a file is nothing for the file panel, a path without a
+ *  metarecord nothing for the detail panel; no selection at all is not refused,
+ *  so a viewer can still be opened to set up a layout. */
+async function viewerHasNothing(panelType: string, ws: string | null): Promise<string | null> {
+  if (!ws || (panelType !== 'file' && panelType !== 'metarecord-detail')) return null;
+  const [metarecord, paths] = await Promise.all([
+    invoke('ws_get_var', { wsId: ws, key: 'selected_metarecord' }),
+    invoke('ws_get_var', { wsId: ws, key: 'selected_paths' }),
+  ]);
+  const hasMetarecord = metarecord !== null && typeof metarecord === 'object';
+  const hasPaths = Array.isArray(paths) && paths.length > 0;
+  if (panelType === 'file' && hasMetarecord && !hasPaths) {
+    return 'no file or folder for this metarecord — open it in metarecord-detail instead';
+  }
+  if (panelType === 'metarecord-detail' && hasPaths && !hasMetarecord) {
+    return 'no metarecord for this entry — record it first';
+  }
+  return null;
+}
+
 /** Immersive mode: mirror the flag into the store (the shell hides all
  *  chrome but the focused panel) and drive the OS window fullscreen. */
 export async function setFullscreen(on: boolean): Promise<void> {
@@ -1772,6 +1794,13 @@ async function runCommand(name: string, args: string[], context: ExecContext): P
         return true;
       }
       if (!panelType) return true;
+      const nothing = await viewerHasNothing(panelType, context.ws);
+      if (nothing) {
+        if (context.ws) {
+          await invoke('post_status', { wsId: context.ws, text: nothing, kind: 'error', timeoutMs: 5000 });
+        }
+        return true;
+      }
       const target = await resolveTarget(where, context, invoke);
       // A context's workspace need not be on screen: shown in its slot first.
       if (target.ws && slotPayload(target.slot).workspace_id !== target.ws && where === 'here') {

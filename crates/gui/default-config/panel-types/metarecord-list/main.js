@@ -1,7 +1,7 @@
 // metarecord-list panel: metarecords of the active repo filtered by an embedded
 // DSL query; primary selection source (doc "metarecord-list panel").
 
-import { byId, el, fields, messageOf, openButton, qs, thumbnail, whereArg } from '/__ui.js';
+import { byId, el, fields, messageOf, qs, thumbnail, viewerButtons } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
 import { createMultiSelect } from '/__multi-select.js';
 import { MATCH_ALL } from '/__value-widget.js';
@@ -470,7 +470,7 @@ export async function mount(root, metafolder) {
             ],
             onclick: () => setCursor(index),
           },
-          el('td', { class: 'open-cell' }, rowOpenButton(index)),
+          el('td', { class: 'open-cell' }, rowOpenButtons(index)),
           columns.map((column) => el('td', {}, cellText(column, metarecord))),
         );
         display.mark(tr, metarecord);
@@ -496,7 +496,7 @@ export async function mount(root, metafolder) {
           el(
             'div',
             { class: 'card-foot' },
-            rowOpenButton(index),
+            rowOpenButtons(index),
             el(
               'div',
               { class: 'name' },
@@ -597,24 +597,20 @@ export async function mount(root, metafolder) {
     await selection.clear();
   }
 
-  /** Opens the highlighted row — the file panel when it has a file, the
-   *  detail otherwise — at the target: the other slot by default. The row is
-   *  the published selection already, so a new workspace's copy shows it.
-   *  @param {string} where `here`, `other` or `new` */
-  /** A row's (or card's) open button (doc "Opening a row"): it selects the
-   *  row, then shows it in the other slot. @param {number} index */
-  function rowOpenButton(index) {
-    return openButton('show', 'Show in the other slot', async () => {
-      await setCursor(index);
-      await openSelected();
+  /** A row's (or card's) open buttons (doc "Opening a row"): each selects the
+   *  row, then shows it in the other slot — `↗` in the file panel, greyed when
+   *  the metarecord has no file, `ⓘ` in the detail panel. The keys do the same
+   *  through `panel:open`: the row is the published selection already.
+   *  @param {number} index */
+  function rowOpenButtons(index) {
+    return viewerButtons({
+      hasFile: display.hasFile(metarecords[index]),
+      hasMetarecord: true,
+      open: async (what) => {
+        await setCursor(index);
+        await commands.invoke(`panel:open other ${what}`);
+      },
     });
-  }
-
-  async function openSelected(where = 'other') {
-    const metarecord = metarecords[cursorIndex];
-    if (!metarecord) return;
-    const paths = pathsOf(metarecord);
-    await commands.invoke(`panel:open ${where} ${paths.length > 0 ? 'file' : 'metarecord-detail'}`);
   }
 
   /** Empties all three search fields and re-runs (empty query = match all). */
@@ -823,11 +819,6 @@ export async function mount(root, metafolder) {
       if (!run) throw new Error(`unknown selection: "${what ?? ''}"`);
       return run();
     },
-  });
-  void commands.register('metarecord-list:open', {
-    label: 'Metarecord list: open the selection (here / other / new)',
-    args: [whereArg('other')],
-    handler: (where) => openSelected(where),
   });
   // ── Zones (commands in ./zone-commands.js) ──────────────────────────────
   //

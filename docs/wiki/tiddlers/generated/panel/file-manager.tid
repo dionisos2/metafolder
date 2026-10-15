@@ -5,7 +5,7 @@ summary: The file-manager panel type
 
 !! Commands
 
-* ``file-manager:activate`` — File manager: open directory / confirm file
+* ``file-manager:activate`` — File manager: go into the folder / show the file (here / other / new)
 * ``file-manager:copy`` — File manager: copy the selected entry to the clipboard
 * ``file-manager:cut`` — File manager: cut the selected entry to the clipboard
 * ``file-manager:delete`` — File manager: delete the selected entry (trash when a repo is active)

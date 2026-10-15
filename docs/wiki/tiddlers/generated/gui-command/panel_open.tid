@@ -9,6 +9,12 @@ summary: Open a panel type here, in the other slot, or in a new workspace
 
 !! Default keys
 
+* ``b enter`` → ``panel:open new file`` (in the ``metarecord-list`` panel)
+* ``b enter`` → ``panel:open new file`` (in the ``recent`` panel)
+* ``b shift+enter`` → ``panel:open new metarecord-detail`` (in the ``duplicates`` panel)
+* ``b shift+enter`` → ``panel:open new metarecord-detail`` (in the ``file-manager`` panel)
+* ``b shift+enter`` → ``panel:open new metarecord-detail`` (in the ``metarecord-list`` panel)
+* ``b shift+enter`` → ``panel:open new metarecord-detail`` (in the ``recent`` panel)
 * ``b t b`` → ``panel:open new trash``
 * ``b t d`` → ``panel:open new metarecord-detail``
 * ``b t f`` → ``panel:open new file``
@@ -24,6 +30,14 @@ summary: Open a panel type here, in the other slot, or in a new workspace
 * ``b t v`` → ``panel:open new recent``
 * ``b t w`` → ``panel:open new workspace-info``
 * ``b t y`` → ``panel:open new sync``
+* ``enter`` → ``panel:open other file`` (in the ``metarecord-list`` panel)
+* ``enter`` → ``panel:open other file`` (in the ``recent`` panel)
+* ``i enter`` → ``panel:open here file`` (in the ``metarecord-list`` panel)
+* ``i enter`` → ``panel:open here file`` (in the ``recent`` panel)
+* ``i shift+enter`` → ``panel:open here metarecord-detail`` (in the ``duplicates`` panel)
+* ``i shift+enter`` → ``panel:open here metarecord-detail`` (in the ``file-manager`` panel)
+* ``i shift+enter`` → ``panel:open here metarecord-detail`` (in the ``metarecord-list`` panel)
+* ``i shift+enter`` → ``panel:open here metarecord-detail`` (in the ``recent`` panel)
 * ``i t b`` → ``panel:open here trash``
 * ``i t d`` → ``panel:open here metarecord-detail``
 * ``i t f`` → ``panel:open here file``
@@ -39,6 +53,12 @@ summary: Open a panel type here, in the other slot, or in a new workspace
 * ``i t v`` → ``panel:open here recent``
 * ``i t w`` → ``panel:open here workspace-info``
 * ``i t y`` → ``panel:open here sync``
+* ``right`` → ``panel:open other file`` (in the ``metarecord-list`` panel)
+* ``right`` → ``panel:open other file`` (in the ``recent`` panel)
+* ``shift+enter`` → ``panel:open other metarecord-detail`` (in the ``duplicates`` panel)
+* ``shift+enter`` → ``panel:open other metarecord-detail`` (in the ``file-manager`` panel)
+* ``shift+enter`` → ``panel:open other metarecord-detail`` (in the ``metarecord-list`` panel)
+* ``shift+enter`` → ``panel:open other metarecord-detail`` (in the ``recent`` panel)
 * ``t b`` → ``panel:open here trash``
 * ``t d`` → ``panel:open here metarecord-detail``
 * ``t f`` → ``panel:open here file``

@@ -52,6 +52,9 @@ const NODE_BY_PATH: Record<string, string> = {
   '': 'u-root',
 };
 
+/** When set, the tracked-children read waits for it (a slow daemon). */
+let childrenGate: Promise<void> | null = null;
+
 function stub(vars: Record<string, unknown>, existing: Set<string>) {
   const noop = () => {};
   const handlers = new Map<string, Handler>();
@@ -104,6 +107,7 @@ function stub(vars: Record<string, unknown>, existing: Set<string>) {
           return { uuid: NODE_BY_PATH[rel] ?? null };
         }
         if (method === 'GET' && bare === '/repos/r/tree/children') {
+          if (childrenGate) await childrenGate;
           const uuid = new URLSearchParams(path.split('?')[1] ?? '').get('uuid') ?? '';
           return CHILDREN[uuid] ?? [];
         }
@@ -257,5 +261,57 @@ describe('checking metarecords from the file manager', () => {
     harness.externalSet('selected_metarecords', ['u-song', 'u-gone']);
     await generic(harness.api.provide, 'view:refresh');
     expect(harness.selected()).toEqual(['u-song']);
+  });
+});
+
+// The tracked status arrives after the rows (doc "file-manager panel"): a
+// cursor put on an entry before it did published the path without its
+// metarecord, and the selection stayed "untracked" until the cursor moved —
+// so Shift+Enter refused to show a tracked file's metarecord (doc "Opening a row").
+describe('the selection when the tracked status arrives late', () => {
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = () => {};
+  });
+
+  test("the entry under the cursor gets its metarecord once it is known", async () => {
+    let release = () => {};
+    childrenGate = new Promise<void>((r) => (release = r));
+    try {
+      const harness = stub({}, new Set(['u-root', 'u-music', 'u-dir1', 'u-song']));
+      const shadow = shadowRoot();
+      const mod = await import('../../default-config/panel-types/file-manager/main.js');
+      await mod.mount(shadow, harness.api as never);
+      await settle();
+      await moveTo(harness.api, 3); // song.mp3, its tracked status not read yet
+      expect(harness.store.get('selected_metarecord')).toBeNull();
+      release();
+      await settle();
+      expect(harness.store.get('selected_metarecord')).toEqual({ uuid: 'u-song', repo: 'r' });
+      expect(harness.store.get('selected_paths')).toEqual(['/repo/music/song.mp3']);
+    } finally {
+      childrenGate = null;
+    }
+  });
+
+  test('a selection made elsewhere meanwhile is left alone', async () => {
+    let release = () => {};
+    childrenGate = new Promise<void>((r) => (release = r));
+    try {
+      const harness = stub({}, new Set(['u-root', 'u-music', 'u-dir1', 'u-song']));
+      const shadow = shadowRoot();
+      const mod = await import('../../default-config/panel-types/file-manager/main.js');
+      await mod.mount(shadow, harness.api as never);
+      await settle();
+      await moveTo(harness.api, 3);
+      // Another panel selects something else before the read lands.
+      harness.externalSet('selected_metarecord', { uuid: 'u-other', repo: 'r' });
+      harness.externalSet('selected_paths', ['/elsewhere/x']);
+      release();
+      await settle();
+      expect(harness.store.get('selected_metarecord')).toEqual({ uuid: 'u-other', repo: 'r' });
+      expect(harness.store.get('selected_paths')).toEqual(['/elsewhere/x']);
+    } finally {
+      childrenGate = null;
+    }
   });
 });
