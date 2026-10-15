@@ -350,6 +350,16 @@
     element?.blur();
   }
 
+  /** editing:clear line-end — drop the draft from the caret on (the command
+   *  input is a single line). */
+  function clearToLineEnd() {
+    const caret = element?.selectionStart ?? draft.length;
+    if (caret >= draft.length) return;
+    draft = draft.slice(0, caret);
+    bashCandidates = [];
+    if (currentWs !== null) draftsOf(mode)[currentWs] = draft;
+  }
+
   // Enter runs the highlighted suggestion when the list is non-empty,
   // otherwise the typed text — and the typed text too when it already names
   // a command (resolveSubmission). Snapshot before clearing
@@ -435,6 +445,7 @@
       discard,
       lineStart: () => element?.setSelectionRange(0, 0),
       lineEnd: () => element?.setSelectionRange(draft.length, draft.length),
+      clearToLineEnd,
       // `completion:cycle`: the next (or previous) view of the prompt's
       // candidates (doc "Completion views"). The input owns the cycle
       // because it owns the draft the candidates narrow on.

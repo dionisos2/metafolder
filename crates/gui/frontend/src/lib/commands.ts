@@ -1039,6 +1039,8 @@ export interface EditingTarget {
   discard(): void;
   lineStart(): void;
   lineEnd(): void;
+  /** Remove what follows the caret on its line (`editing:clear line-end`). */
+  clearToLineEnd(): void;
   /** Cycles the prompt's completion views (`completion:cycle`) by `delta`
    *  (1 forward, -1 back). Absent on an input whose prompt offers a single
    *  view — or none. */
@@ -1079,6 +1081,27 @@ export function discardActiveInput(el: Element | null): boolean {
   return cleared;
 }
 
+/** `editing:clear line-end` on an element with no registered editing target —
+ *  a panel's own input: removes what follows the caret (or the selection's
+ *  start) up to the end of its line, as Emacs' kill-line does — so at the end
+ *  of a textarea line, the line break, joining the next one. Fires `input` so
+ *  the panel sees it as typed; the field keeps the keyboard. Returns whether
+ *  anything was removed. */
+export function clearToLineEnd(el: Element | null): boolean {
+  if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) return false;
+  const start = el.selectionStart ?? el.value.length;
+  let end = el.value.length;
+  if (el instanceof HTMLTextAreaElement) {
+    const newline = el.value.indexOf('\n', start);
+    if (newline === start) end = start + 1;
+    else if (newline !== -1) end = newline;
+  }
+  if (end <= start) return false;
+  el.setRangeText('', start, end, 'start');
+  el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+  return true;
+}
+
 // ── Panel dispatch hook (wired by PanelHost) ───────────────────────────
 
 export type PanelDispatch = (
@@ -1111,6 +1134,14 @@ registerArgs('editing:goto', [
     name: 'target',
     prompt: () => 'Move the cursor where? (line-start / line-end)',
     complete: () => ['line-start', 'line-end'],
+  },
+]);
+
+registerArgs('editing:clear', [
+  {
+    name: 'range',
+    prompt: () => 'Clear what? (line-end)',
+    complete: () => ['line-end'],
   },
 ]);
 
@@ -1618,6 +1649,14 @@ async function runCommand(name: string, args: string[], context: ExecContext): P
       return true;
     case 'editing:confirm':
       editingTarget?.confirm();
+      return true;
+    case 'editing:clear':
+      if (args[0] !== 'line-end') {
+        await status(`unknown range: "${args[0] ?? ''}" (expected line-end)`);
+        return true;
+      }
+      if (editingTarget) editingTarget.clearToLineEnd();
+      else clearToLineEnd(deepActiveElement());
       return true;
     case 'completion:cycle': {
       // Walks the views of the prompt's completion (doc "Completion

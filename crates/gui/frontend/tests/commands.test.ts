@@ -8,6 +8,7 @@ import {
   type ArgSpec,
   argSpecFor,
   discardActiveInput,
+  clearToLineEnd,
   clearArgSpecs,
   collectArgs,
   clearUserCommands,
@@ -144,6 +145,67 @@ describe('discardActiveInput', () => {
 
   test('nothing focused is a no-op', () => {
     expect(discardActiveInput(null)).toBe(false);
+  });
+});
+
+// `editing:clear line-end` (ctrl+k) on a PANEL input: what follows the caret
+// on its line goes, as Emacs' kill-line does — and the panel sees it as typed.
+describe('clearToLineEnd', () => {
+  afterEach(() => document.body.replaceChildren());
+
+  function focused<T extends HTMLInputElement | HTMLTextAreaElement>(el: T, value: string, caret: number): T {
+    el.value = value;
+    document.body.append(el);
+    el.focus();
+    el.setSelectionRange(caret, caret);
+    return el;
+  }
+
+  test('removes the end of an input from the caret, and notifies listeners', () => {
+    const input = focused(document.createElement('input'), 'rating>3 tag', 8);
+    const seen: string[] = [];
+    input.addEventListener('input', () => seen.push(input.value));
+
+    expect(clearToLineEnd(input)).toBe(true);
+
+    expect(input.value).toBe('rating>3');
+    expect(input.selectionStart).toBe(8);
+    expect(seen).toEqual(['rating>3']);
+    expect(document.activeElement).toBe(input); // the field keeps the keyboard
+  });
+
+  test('in a textarea, only the end of the current line goes', () => {
+    const area = focused(document.createElement('textarea'), 'one two\nthree', 3);
+    clearToLineEnd(area);
+    expect(area.value).toBe('one\nthree');
+  });
+
+  test('at the end of a textarea line, the line break goes, joining the next one', () => {
+    const area = focused(document.createElement('textarea'), 'one\nthree', 3);
+    clearToLineEnd(area);
+    expect(area.value).toBe('onethree');
+  });
+
+  test('a selection is cut from its start', () => {
+    const input = focused(document.createElement('input'), 'abcdef', 0);
+    input.setSelectionRange(2, 4);
+    clearToLineEnd(input);
+    expect(input.value).toBe('ab');
+  });
+
+  test('at the very end there is nothing to remove, and nothing is announced', () => {
+    const input = focused(document.createElement('input'), 'abc', 3);
+    const seen: string[] = [];
+    input.addEventListener('input', () => seen.push(input.value));
+    expect(clearToLineEnd(input)).toBe(false);
+    expect(seen).toEqual([]);
+  });
+
+  test('a non-text element or nothing focused is a no-op', () => {
+    const button = document.createElement('button');
+    document.body.append(button);
+    expect(clearToLineEnd(button)).toBe(false);
+    expect(clearToLineEnd(null)).toBe(false);
   });
 });
 

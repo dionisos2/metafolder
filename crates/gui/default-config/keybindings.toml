@@ -32,6 +32,7 @@
 "ctrl+q" = { command = "editing:discard", text-input = true }
 "ctrl+a" = { command = "editing:goto line-start", text-input = true }
 "ctrl+e" = { command = "editing:goto line-end", text-input = true }
+"ctrl+k" = { command = "editing:clear line-end", text-input = true }
 
 # Completion views (doc "Completion views"): walk the views of the prompt's
 # candidates, next/previous. A prompt with a single view (the common case)
