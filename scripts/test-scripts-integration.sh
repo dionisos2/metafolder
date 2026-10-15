@@ -62,7 +62,7 @@ assert "fixture: sub dir tracked" [ -n "$SUB" ]
 # ── gui-tag-folder on a SUBFOLDER: whole subtree tagged (regression guard) ────
 hy_reset
 hy_prompt /sub
-hy_input n y            # scope: the query, then the folder
+hy_input q y            # scope: the query, then the folder
 # Run a shipped script and assert it finished cleanly. Every call used to be
 # `bash … >/dev/null 2>&1`, status dropped: a script that died halfway — after
 # writing the first tag — still satisfied assertions that only looked at what it
@@ -91,7 +91,7 @@ assert_not "subfolder: a file OUTSIDE /sub is NOT tagged" has_tag "$TOP" subtag
 # file the query excludes.
 hy_reset
 hy_query 'mfr_path =>* "/sub"'
-hy_input n y               # scope: the query; then yes on the file
+hy_input q y               # scope: the query; then yes on the file
 run_script "$FOLDER" guitag
 assert "gui scope: a file inside the query is tagged" has_tag "$INNER" guitag
 assert_not "gui scope: a file outside it is NOT tagged" has_tag "$TOP" guitag
@@ -104,7 +104,7 @@ assert "gui scope: no folder prompt was needed" \
 # decision.
 hy_reset
 hy_selected "$TOP"
-hy_input y y                # scope: the selection; then yes on the record
+hy_input s y                # scope: the selection; then yes on the record
 run_script "$FOLDER" seltag
 assert "selected: the checked record is tagged" has_tag "$TOP" seltag
 assert_not "selected: the unchecked record is NOT tagged" has_tag "$INNER" seltag
@@ -115,7 +115,7 @@ assert_not "selected: the unchecked record is NOT tagged" has_tag "$INNER" selta
 # naive script tags nothing (or dies resolving the folder).
 hy_reset
 hy_prompt /
-hy_input n y               # scope: the query, then the folder
+hy_input q y               # scope: the query, then the folder
 run_script "$FOLDER" roottag
 assert "root: a top-level file is tagged" has_tag "$TOP" roottag
 assert "root: a nested file is tagged" has_tag "$INNER" roottag
@@ -124,7 +124,7 @@ assert "root: the sub dir is tagged" has_tag "$SUB" roottag
 # ── gui-tag-folder on the ROOT, answered "no": whole subtree denied ──────────
 hy_reset
 hy_prompt /
-hy_input n n               # scope: the query; then no on the root
+hy_input q n               # scope: the query; then no on the root
 run_script "$FOLDER" rootno
 assert "root-no: a top-level file is denied" has_neg "$TOP" rootno
 assert "root-no: a nested file is denied" has_neg "$INNER" rootno
@@ -134,7 +134,7 @@ assert "root-no: a nested file is denied" has_neg "$INNER" rootno
 # contexts"); going back reverts that label, and only it.
 hy_reset
 hy_prompt /
-hy_input n m y u n y       # scope; root mixed; sub yes; BACK; sub no; top yes
+hy_input q m y u n y       # scope; root mixed; sub yes; BACK; sub no; top yes
 run_script "$FOLDER" backtag
 assert "back: the answer taken back left nothing behind" has_no_tag "$INNER" backtag
 assert "back: the answer given instead stands" has_neg "$INNER" backtag
@@ -148,7 +148,7 @@ assert "back: the last write sits in the run's label" \
 # "yes" child dir to its whole subtree.
 hy_reset
 hy_prompt /
-hy_input n m y y           # scope: the query; root=mixed, both children = yes
+hy_input q m y y           # scope: the query; root=mixed, both children = yes
 run_script "$FOLDER" mixtag
 assert "mixed: a top-level file is tagged" has_tag "$TOP" mixtag
 assert "mixed: the sub dir is tagged" has_tag "$SUB" mixtag
@@ -163,7 +163,7 @@ hy_reset
 df_mf tag -i "$TOP" add subs/deep >/dev/null 2>&1      # more SPECIFIC positive
 df_mf tag -i "$INNER" deny wide >/dev/null 2>&1        # more GENERAL negative
 hy_query 'mfr_type = "file"'
-hy_input n s s s s s      # scope: the query; then skip both records
+hy_input q s s s s s      # scope: the query; then skip both records
 run_script "$FOLDER" subs
 assert "resume: a more specific positive answers the question" \
     [ "$(hy_log | grep -c "'/top.txt' has tag 'subs'")" -eq 0 ]
@@ -171,7 +171,7 @@ assert "resume: an undecided file is still asked" \
     [ "$(hy_log | grep -c "'/sub/inner.txt' has tag 'subs'")" -eq 1 ]
 hy_reset
 hy_query 'mfr_type = "file"'
-hy_input n s s s s s
+hy_input q s s s s s
 run_script "$FOLDER" wide/narrow
 assert "resume: a more general negative answers the question" \
     [ "$(hy_log | grep -c "'/sub/inner.txt' has tag 'wide/narrow'")" -eq 0 ]
@@ -191,7 +191,7 @@ hy_reset
 # a first write — so give the tag an entry on a record OUTSIDE the scope.
 df_mf tag -i "$INNER" add skiptag >/dev/null 2>&1
 hy_query 'mfr_path = "/top.txt"'
-hy_input n s n                 # scope: the query; skip the only entry, then keep the marker
+hy_input q s n                 # scope: the query; skip the only entry, then keep the marker
 run_script "$FOLDER" skiptag
 assert "skip: the marker is recorded on the record" \
     [ "$(df_mf metarecord -i "$TOP" field get gui_tag_skipped 2>/dev/null | grep -c .)" -eq 1 ]
@@ -199,7 +199,7 @@ assert "skip: and nothing was tagged" has_no_tag "$TOP" skiptag
 
 hy_reset
 hy_query 'mfr_path = "/top.txt"'
-hy_input n n n                 # scope: the query; keep, then keep again
+hy_input q n n                 # scope: the query; keep, then keep again
 run_script "$FOLDER" skiptag
 assert "skip: the next run does not ask it again" \
     [ "$(hy_log | grep -c "'/top.txt' has tag 'skiptag'")" -eq 0 ]
@@ -208,7 +208,7 @@ assert "skip: it reports a decided query, not an empty one" \
 
 hy_reset
 hy_query 'mfr_path = "/top.txt"'
-hy_input n y y                 # scope: the query; ask again, then answer yes
+hy_input q y y                 # scope: the query; ask again, then answer yes
 run_script "$FOLDER" skiptag
 assert "skip: cleared, the entry is asked again" \
     [ "$(hy_log | grep -c "'/top.txt' has tag 'skiptag'")" -eq 1 ]
@@ -222,7 +222,7 @@ assert "skip: the marker is gone" \
 hy_reset
 hy_query ''
 hy_prompt ptag
-hy_input n y n               # scope: the query; then yes, no
+hy_input q y n               # scope: the query; then yes, no
 run_script "$PAIR"
 # One file positive, one negative (order depends on the query, so count both).
 pos=$({ has_tag "$TOP" ptag && echo 1; has_tag "$INNER" ptag && echo 1; } | grep -c 1)
@@ -291,7 +291,7 @@ assert "orphan fixture: it now resolves to no path" \
 assert "orphan fixture: but it is still a file metarecord" \
     [ "$(df_mf metarecord -q 'mfr_type = "file"' get | grep -c "^$GONE$")" -eq 1 ]
 hy_query 'mfr_type = "file"'
-hy_input n y y y y y       # scope: the query; then yes on the tracked files
+hy_input q y y y y y       # scope: the query; then yes on the tracked files
 run_script "$FOLDER" orphantag
 assert_not "orphan: the path-less record is not tagged" has_tag "$GONE" orphantag
 assert "orphan: no question named an empty path" \

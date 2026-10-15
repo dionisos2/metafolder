@@ -16,9 +16,9 @@ never over a metarecord the query leaves out — however large the folder.
 !! Where the query comes from
 
 # The argument, when one is given.
-# Otherwise the script ''asks'': ''Act on the checked selection (y), or the query the list shows (n)?''
-#* `y` — the metarecords checked in the list ([[mf gui selected]]), written as the query `<uuid> OR <uuid> ...`. With nothing checked the script stops and says so: it does not fall through to the query.
-#* `n` — the query the [[metarecord-list panel]] shows, finder narrowing included ([[mf gui query]]).
+# Otherwise the script ''asks'': ''Act on the checked selection [s], or the query the list shows [q]?''
+#* `s` (selection) — the metarecords checked in the list ([[mf gui selected]]), written as the query `<uuid> OR <uuid> ...`. With nothing checked the script stops and says so: it does not fall through to the query.
+#* `q` (query) — the query the [[metarecord-list panel]] shows, finder narrowing included ([[mf gui query]]).
 # When the list has shown nothing in this workspace, a folder picked with completion, turned into `mfr_path =>* "<folder>"` — the folder and everything under it.
 
 It is the question the GUI's own bulk commands ask ([[Editing metarecords in the GUI]]),

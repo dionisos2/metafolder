@@ -249,19 +249,25 @@ mf_gui_path_uuid() { # <treepath>
 # nothing.
 mf_gui_default_scope() { # [<folder prompt>]
     local scope folder checked answer
-    answer=$(mf_gui_ask_answer \
-        "Act on the checked selection (y), or the query the list shows (n)?" y n)
+    # s/q, not y/n: the two answers are two targets, not a yes and a no.
+    # mf_gui_ask and not mf_gui_ask_answer, which would also await ↓ for `s`
+    # (its "skip" arrow); backspace has no answer to undo here, so it re-asks.
+    while :; do
+        answer=$(mf_gui_ask \
+            "Act on the checked selection [s], or the query the list shows [q]?" s q)
+        [ "$answer" = back ] || break
+    done
     case $answer in
-        y)
+        s)
             checked=$(mf gui selected 2>/dev/null) || checked=""
             if [ -z "$checked" ]; then
-                mf_gui_report "nothing is checked — check some, or run again and answer n"
+                mf_gui_report "nothing is checked — check some, or run again and answer q"
                 return 1
             fi
             printf '%s' "$(printf '%s\n' "$checked" | awk '
                 { printf "%s%s", (NR > 1 ? " OR " : ""), $0 }')"
             ;;
-        n)
+        q)
             if scope=$(mf gui query 2>/dev/null); then
                 printf '%s' "$scope"
                 return 0
