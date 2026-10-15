@@ -9,6 +9,7 @@ be confused with each repository's `config.json` ([[Repository layout on disk]])
 ```
 [[load]]
 root = "/data/music"
+in-memory = true
 
 [[load]]
 metafolder = "/ssd/meta/music/.metafolder"
@@ -18,7 +19,8 @@ watch-quiet-period-ms = 2000
 ```
 
 ''`[[load]]`'' — the repositories to load at startup, each with exactly one of
-`root` or `metafolder`, like a `POST /repos/load` body.
+`root` or `metafolder`, like a `POST /repos/load` body; `in-memory = true` holds the
+repository's store in memory, as `mf repo load --in-memory` does ([[Holding a repository in memory]]).
 
 ''`[settings]`'' — every key optional:
 

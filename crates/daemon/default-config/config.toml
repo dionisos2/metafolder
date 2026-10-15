@@ -7,10 +7,12 @@
 # watched directory) or `metafolder` (an external .metafolder location) — same
 # shape as a POST /repos/load body. A repo that fails to load is a warning, not
 # a fatal error. With no [[load]] block (the default) the daemon auto-loads
-# nothing; uncomment and adapt the example below to opt in.
+# nothing; uncomment and adapt the example below to opt in. `in-memory = true`
+# holds the repository's store in memory (doc "Holding a repository in memory").
 #
 # [[load]]
 # root = "/home/user/music"
+# in-memory = true
 #
 # [[load]]
 # metafolder = "/ssd/meta/photos/.metafolder"

@@ -178,7 +178,7 @@ impl DaemonSettings {
 #[derive(Debug, Default)]
 pub struct DaemonConfig {
     /// Repositories to load at startup.
-    pub load: Vec<RepoLocator>,
+    pub load: Vec<LoadEntry>,
     /// Tunable UX/performance settings (`[settings]`).
     pub settings: DaemonSettings,
 }
@@ -192,7 +192,23 @@ struct RawConfig {
     settings: DaemonSettings,
 }
 
-/// Same shape as a `POST /repos/load` body: exactly one of the two keys.
+/// One repository to load at startup: where it is, and whether to hold its
+/// store in memory (doc "Holding a repository in memory").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoadEntry {
+    pub locator: RepoLocator,
+    pub in_memory: bool,
+}
+
+/// An ordinary load.
+impl From<RepoLocator> for LoadEntry {
+    fn from(locator: RepoLocator) -> LoadEntry {
+        LoadEntry { locator, in_memory: false }
+    }
+}
+
+/// Same shape as a `POST /repos/load` body: exactly one of the two keys —
+/// and `in-memory`, kebab-cased like every key of this file.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawLoadEntry {
@@ -200,6 +216,8 @@ struct RawLoadEntry {
     root: Option<PathBuf>,
     #[serde(default)]
     metafolder: Option<PathBuf>,
+    #[serde(default, rename = "in-memory")]
+    in_memory: bool,
 }
 
 /// Default configuration file path:
@@ -220,14 +238,15 @@ pub fn read_config(path: &Path) -> Result<DaemonConfig> {
         toml::from_str(&contents).with_context(|| format!("parsing {}", path.display()))?;
     let mut load = Vec::with_capacity(raw.load.len());
     for entry in raw.load {
-        load.push(match (entry.root, entry.metafolder) {
+        let locator = match (entry.root, entry.metafolder) {
             (Some(root), None) => RepoLocator::Root(root),
             (None, Some(dir)) => RepoLocator::Metafolder(dir),
             _ => bail!(
                 "in {}: each 'load' entry needs exactly one of 'root' or 'metafolder'",
                 path.display()
             ),
-        });
+        };
+        load.push(LoadEntry { locator, in_memory: entry.in_memory });
     }
     Ok(DaemonConfig { load, settings: raw.settings })
 }
@@ -252,7 +271,7 @@ pub fn apply_with_progress<W: std::io::Write>(
     interactive: bool,
 ) -> Vec<String> {
     let mut warnings = Vec::new();
-    for locator in config.load {
+    for LoadEntry { locator, in_memory } in config.load {
         let path = match &locator {
             RepoLocator::Root(p) | RepoLocator::Metafolder(p) => p.display().to_string(),
         };
@@ -264,7 +283,7 @@ pub fn apply_with_progress<W: std::io::Write>(
             // is what the line can say.
             let _ = writeln!(out, "[daemon] Loading {path}");
         }
-        match state.load_repo(locator) {
+        match state.load_repo_with(locator, in_memory) {
             Ok(uuid) => {
                 if let Ok(repo_state) = state.repo(uuid) {
                     let name = repo_state.name();
@@ -435,7 +454,8 @@ mod tests {
     #[test]
     fn test_apply_interactive_renders_a_progress_bar_and_a_loaded_line() {
         let (state, root, name) = on_disk_repo("tty");
-        let config = DaemonConfig { load: vec![RepoLocator::Root(root)], ..Default::default() };
+        let config =
+            DaemonConfig { load: vec![RepoLocator::Root(root).into()], ..Default::default() };
         let mut out = Vec::new();
         let warnings = apply_with_progress(&state, config, &mut out, true);
         assert!(warnings.is_empty(), "{warnings:?}");
@@ -457,7 +477,7 @@ mod tests {
         let (state, root, name) = on_disk_repo("failing");
         let missing = root.parent().unwrap().join("mf_daemon_apply_absent");
         let config = DaemonConfig {
-            load: vec![RepoLocator::Root(missing.clone()), RepoLocator::Root(root)],
+            load: vec![RepoLocator::Root(missing.clone()).into(), RepoLocator::Root(root).into()],
             ..Default::default()
         };
         let mut out = Vec::new();
@@ -477,7 +497,8 @@ mod tests {
         // nothing at all: name the repository *before* the work starts.
         let (state, root, name) = on_disk_repo("announce");
         let path = root.display().to_string();
-        let config = DaemonConfig { load: vec![RepoLocator::Root(root)], ..Default::default() };
+        let config =
+            DaemonConfig { load: vec![RepoLocator::Root(root).into()], ..Default::default() };
         let mut out = Vec::new();
         apply_with_progress(&state, config, &mut out, false);
         let out = String::from_utf8(out).unwrap();
@@ -492,7 +513,8 @@ mod tests {
     fn test_apply_non_interactive_prints_only_the_loaded_line() {
         let (state, root, name) = on_disk_repo("pipe");
         let path = root.display().to_string();
-        let config = DaemonConfig { load: vec![RepoLocator::Root(root)], ..Default::default() };
+        let config =
+            DaemonConfig { load: vec![RepoLocator::Root(root).into()], ..Default::default() };
         let mut out = Vec::new();
         let warnings = apply_with_progress(&state, config, &mut out, false);
         assert!(warnings.is_empty(), "{warnings:?}");

@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use metafolder_daemon::daemon_config::{self, DaemonConfig};
+use metafolder_daemon::daemon_config::{self, DaemonConfig, LoadEntry};
 use metafolder_daemon::repo::{self, RepoLocator};
 use metafolder_daemon::state::AppState;
 
@@ -45,11 +45,59 @@ metafolder = "/ssd/meta/music/.metafolder"
     assert_eq!(
         config.load,
         vec![
-            RepoLocator::Root(PathBuf::from("/data/music")),
-            RepoLocator::Metafolder(PathBuf::from("/ssd/meta/music/.metafolder")),
+            LoadEntry::from(RepoLocator::Root(PathBuf::from("/data/music"))),
+            LoadEntry::from(RepoLocator::Metafolder(PathBuf::from("/ssd/meta/music/.metafolder"))),
         ]
     );
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// `in-memory = true` loads the repository with its store held in memory
+/// (doc "Holding a repository in memory"); absent, it is an ordinary load.
+#[test]
+fn test_a_load_entry_may_hold_its_repository_in_memory() {
+    let dir = temp_dir("cfg_in_memory");
+    let path = write_config(
+        &dir,
+        r#"
+[[load]]
+root = "/data/music"
+in-memory = true
+
+[[load]]
+root = "/data/photos"
+in-memory = false
+"#,
+    );
+    let config = daemon_config::read_config(&path).unwrap();
+    assert_eq!(
+        config.load,
+        vec![
+            LoadEntry { locator: RepoLocator::Root(PathBuf::from("/data/music")), in_memory: true },
+            LoadEntry::from(RepoLocator::Root(PathBuf::from("/data/photos"))),
+        ]
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn test_apply_holds_in_memory_what_the_entry_asks() {
+    let root = temp_dir("cfg_apply_in_memory");
+    let opened = repo::init_repository(&root, None, None, false).unwrap();
+    drop(opened);
+
+    let state = AppState::new();
+    let config = DaemonConfig {
+        load: vec![LoadEntry { locator: RepoLocator::Root(root.to_path_buf()), in_memory: true }],
+        ..Default::default()
+    };
+    let warnings = daemon_config::apply(&state, config);
+    assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+    let held = state.list_repos(false)[0].in_memory.clone().expect("held in memory");
+    assert!(held.bytes > 0, "{held:?}");
+
+    drop(state);
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -108,8 +156,10 @@ fn test_apply_loads_listed_repos() {
     drop(opened); // release the exclusive lock
 
     let state = AppState::new();
-    let config =
-        DaemonConfig { load: vec![RepoLocator::Root(root.to_path_buf())], ..Default::default() };
+    let config = DaemonConfig {
+        load: vec![RepoLocator::Root(root.to_path_buf()).into()],
+        ..Default::default()
+    };
     let warnings = daemon_config::apply(&state, config);
     assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
     let repos = state.list_repos(false);
@@ -129,8 +179,8 @@ fn test_apply_warns_on_failure_and_loads_the_rest() {
     let state = AppState::new();
     let config = DaemonConfig {
         load: vec![
-            RepoLocator::Root(PathBuf::from("/nonexistent/metafolder/repo")),
-            RepoLocator::Root(root.to_path_buf()),
+            RepoLocator::Root(PathBuf::from("/nonexistent/metafolder/repo")).into(),
+            RepoLocator::Root(root.to_path_buf()).into(),
         ],
         ..Default::default()
     };

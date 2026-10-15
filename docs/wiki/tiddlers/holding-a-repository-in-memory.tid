@@ -9,7 +9,9 @@ mf repo load --in-memory <root>
 ```
 
 or ''Load in memory'' in the [[repos panel]]'s load form, `repos:load in-memory` from
-the keyboard, `{"root": …, "in_memory": true}` for [[POST /repos/load]].
+the keyboard, `{"root": …, "in_memory": true}` for [[POST /repos/load]] — and, for a
+repository the daemon loads at startup, `in-memory = true` in its `[[load]]` entry
+([[Daemon configuration]]).
 
 The load reads the whole store into memory — its phase `memory` counts the bytes —
 then the repository works as any other. Nothing else changes:
