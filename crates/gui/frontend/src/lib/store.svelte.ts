@@ -92,6 +92,16 @@ export const store = $state({
     promptSource: null as { views: LoadedView[] } | null,
     /// Which of `promptSource`'s views is shown.
     promptViewIndex: 0,
+    /// The `POST /gui/prompt` wait the prompt answers (null for a frontend
+    /// argument collection).
+    promptId: null as number | null,
+    /// Bumped whenever a different prompt is mounted, so the command input
+    /// tells two prompts apart even when both are on screen.
+    promptKey: 0,
+    /// The prompts of other workspaces, waiting for theirs to come on screen
+    /// (doc "Script sessions"): one prompt per workspace, the mounted one
+    /// included.
+    parkedPrompts: [] as PromptState[],
     /// The workspaces the prompt belongs to: the ones the asking script owns
     /// (an argument collection owns the workspace it was invoked from). The
     /// command input shows the prompt only while one of them is on screen and
@@ -120,19 +130,11 @@ export const store = $state({
       prefix: string[];
       candidates: { keys: string[]; invocation: string }[];
     } | null,
-    /// A running script's `POST /gui/input` question and the keys it accepts,
-    /// shown in a dedicated bar so a status/error message cannot hide it
-    /// (doc "Script sessions"). Null when no input wait is active. `prompt` is
-    /// always a display string (a generic label when the script gave none).
-    /// `workspaces` are the workspaces the asking script owns: the bar is shown
-    /// only while one of them is on screen (empty = owned by nobody, always
-    /// shown).
-    inputWait: null as {
-      prompt: string;
-      keys: string[];
-      workspaces: string[];
-      task: string | null;
-    } | null,
+    /// The scripts' `POST /gui/input` questions — at most one per workspace —
+    /// and the keys each accepts. The one of the workspace on screen is shown
+    /// in a dedicated bar so a status/error message cannot hide it (doc
+    /// "Script sessions"); see [[activeQuestion]].
+    questions: [] as Question[],
     /// Whether the awaited keys of a script's question reach the script
     /// (doc "Script sessions"). The question bar's checkbox flips it through
     /// `script-keys:toggle`; Rust owns the value and pushes it here, so the
@@ -158,33 +160,65 @@ export const store = $state({
   },
 });
 
-/** Maps a `input-wait-changed` event payload to the `ui.inputWait` state: the
- *  script's question (a generic label when it gave none) and the keys it
- *  accepts, or null when no wait is active. Pure, so it is unit-tested. */
-export function inputWaitState(payload: {
-  active: boolean;
-  temp_keys?: string[];
-  prompt?: string | null;
-  workspaces?: string[];
-  task?: string | null;
-}): { prompt: string; keys: string[]; workspaces: string[]; task: string | null } | null {
-  if (!payload.active) return null;
-  return {
-    prompt: payload.prompt || 'Waiting for input',
-    keys: payload.temp_keys ?? [],
-    workspaces: payload.workspaces ?? [],
-    task: payload.task ?? null,
-  };
+/** One script question (`POST /gui/input`): its wait id, what it asks, the
+ *  keys it accepts, the workspace it is asked in (null: owned by nobody) and
+ *  the asking script's run id. */
+export interface Question {
+  id: number;
+  prompt: string;
+  keys: string[];
+  workspace: string | null;
+  task: string | null;
+}
+
+/** Maps an `input-wait-changed` payload to the `ui.questions` state: each
+ *  question with a generic label when it gave none. Pure, so it is
+ *  unit-tested. */
+export function questionsState(payload: {
+  questions?: {
+    id: number;
+    prompt?: string | null;
+    keys?: string[];
+    workspace?: string | null;
+    task?: string | null;
+  }[];
+}): Question[] {
+  return (payload.questions ?? []).map((q) => ({
+    id: q.id,
+    prompt: q.prompt || 'Waiting for input',
+    keys: q.keys ?? [],
+    workspace: q.workspace ?? null,
+    task: q.task ?? null,
+  }));
 }
 
 /** Whether something owned by `owned` workspaces should be on screen, given the
  *  `visible` ones. An empty or absent owner list means "owned by nobody" — a
  *  wait the GUI did not launch from a script — and is always shown. Pure, so it
- *  is unit-tested; used for both the question bar and the task-bar entry
- *  (doc "Script sessions"). */
+ *  is unit-tested; used for the task-bar entry and the prompt (doc "Script
+ *  sessions"). */
 export function ownedByVisible(owned: string[] | undefined, visible: string[]): boolean {
   if (!owned || owned.length === 0) return true;
   return owned.some((ws) => visible.includes(ws));
+}
+
+/** Which of several per-workspace items (questions, prompts) is shown: the
+ *  focused workspace's, else another visible one's, else one that belongs to
+ *  no open workspace — owned by nobody, or asked in a workspace since closed,
+ *  which would otherwise never come back on screen. Null when every one waits
+ *  in a workspace that is not on screen. Pure, so it is unit-tested. */
+export function pickOwned<T extends { workspace: string | null }>(
+  items: T[],
+  focused: string | null,
+  visible: string[],
+  open: string[],
+): T | null {
+  return (
+    items.find((i) => i.workspace !== null && i.workspace === focused) ??
+    items.find((i) => i.workspace !== null && visible.includes(i.workspace)) ??
+    items.find((i) => i.workspace === null || !open.includes(i.workspace)) ??
+    null
+  );
 }
 
 /** The awaited key that a pressed `combo` answers during a script input wait
@@ -202,21 +236,139 @@ export function inputWaitAnswer(
   return wait.keys.find((k) => k.toLowerCase() === combo) ?? null;
 }
 
-/** Maps a `prompt-requested` payload to the prompt state: its text, the values
- *  its autocomplete offers, and the workspaces the asking script owns. Pure, so
- *  it is unit-tested. */
+/** Maps a `prompt-requested` payload to the prompt state: its wait id, its
+ *  text, the values its autocomplete offers, and the workspace it is asked in
+ *  (as the one-element owner list a prompt carries). Pure, so it is
+ *  unit-tested. */
 export function promptRequestState(payload: {
+  id: number;
   prompt: string;
   completions?: string[];
-  workspaces?: string[];
+  workspace?: string | null;
   task?: string | null;
-}): { text: string; completions: string[]; workspaces: string[]; task: string | null } {
+}): { id: number; text: string; completions: string[]; workspaces: string[]; task: string | null } {
   return {
+    id: payload.id,
     text: payload.prompt,
     completions: payload.completions ?? [],
-    workspaces: payload.workspaces ?? [],
+    workspaces: payload.workspace ? [payload.workspace] : [],
     task: payload.task ?? null,
   };
+}
+
+/** Everything that makes up one command-input prompt, as it is parked while
+ *  its workspace is off screen. */
+export interface PromptState {
+  id: number | null;
+  text: string;
+  completions: string[];
+  items: { label: string; value: string }[];
+  more: boolean;
+  source: { views: LoadedView[] } | null;
+  viewIndex: number;
+  workspaces: string[];
+  task: string | null;
+  draft: string;
+  resolver: ((value: string | null, alternate?: boolean) => void) | null;
+  alternate: string | null;
+}
+
+/** What the command input currently holds as the mounted prompt's answer —
+ *  registered by the command input, read when the prompt is parked. */
+let liveDraft: (() => string | null) | null = null;
+export function registerPromptDraft(read: (() => string | null) | null): void {
+  liveDraft = read;
+}
+
+function mountedPrompt(): PromptState | null {
+  const ui = store.ui;
+  if (ui.promptText === null) return null;
+  return {
+    id: ui.promptId,
+    text: ui.promptText,
+    completions: ui.promptCompletions,
+    items: ui.promptItems,
+    more: ui.promptMore,
+    source: ui.promptSource,
+    viewIndex: ui.promptViewIndex,
+    workspaces: ui.promptWorkspaces,
+    task: ui.promptTask,
+    draft: liveDraft?.() ?? ui.promptDraft,
+    resolver: ui.promptResolver,
+    alternate: ui.promptAlternate,
+  };
+}
+
+function mountPrompt(p: PromptState | null): void {
+  const ui = store.ui;
+  ui.promptId = p?.id ?? null;
+  ui.promptText = p?.text ?? null;
+  ui.promptCompletions = p?.completions ?? [];
+  ui.promptItems = p?.items ?? [];
+  ui.promptMore = p?.more ?? false;
+  ui.promptSource = p?.source ?? null;
+  ui.promptViewIndex = p?.viewIndex ?? 0;
+  ui.promptWorkspaces = p?.workspaces ?? [];
+  ui.promptTask = p?.task ?? null;
+  ui.promptDraft = p?.draft ?? '';
+  ui.promptResolver = p?.resolver ?? null;
+  ui.promptAlternate = p?.alternate ?? null;
+  ui.promptKey += 1;
+}
+
+const ownerOf = (p: PromptState) => ({ prompt: p, workspace: p.workspaces[0] ?? null });
+
+/** Mounts the prompt of the workspace on screen (see [[pickOwned]]), parking
+ *  the one it replaces with what was typed into it. A mounted prompt nothing
+ *  replaces stays mounted, merely put away while its workspace is off screen.
+ *  Run whenever the prompts or the workspaces on screen change. */
+export function settlePrompts(): void {
+  const mounted = mountedPrompt();
+  const all = [...(mounted ? [mounted] : []), ...store.ui.parkedPrompts].map(ownerOf);
+  const chosen = pickOwned(
+    all,
+    focusedWs(),
+    visibleWorkspaces(),
+    store.workspaces.map((w) => w.id),
+  );
+  if (!chosen || chosen.prompt === mounted) return;
+  store.ui.parkedPrompts = [
+    ...(mounted ? [mounted] : []),
+    ...store.ui.parkedPrompts.filter((p) => p !== chosen.prompt),
+  ];
+  mountPrompt(chosen.prompt);
+}
+
+/** A new prompt: mounted at once when the input holds none, parked
+ *  otherwise, then the one of the workspace on screen is mounted. */
+export function offerPrompt(p: PromptState): void {
+  if (store.ui.promptText === null) mountPrompt(p);
+  else store.ui.parkedPrompts = [...store.ui.parkedPrompts, p];
+  settlePrompts();
+}
+
+/** Ends the mounted prompt (answered or cancelled) and mounts the next one
+ *  on screen, if any. */
+export function endMountedPrompt(): void {
+  mountPrompt(null);
+  settlePrompts();
+}
+
+/** Forgets script prompt `id` wherever it is — its wait ended without the
+ *  input answering it (timeout, script gone). */
+export function dropPrompt(id: number): void {
+  if (store.ui.promptId === id && store.ui.promptText !== null) {
+    endMountedPrompt();
+    return;
+  }
+  store.ui.parkedPrompts = store.ui.parkedPrompts.filter((p) => p.id !== id);
+}
+
+/** Whether workspace `ws` (null: nobody) already has a prompt, mounted or
+ *  parked — one prompt per workspace. */
+export function hasPromptIn(ws: string | null): boolean {
+  const all = [...(store.ui.promptText !== null ? [mountedPrompt()!] : []), ...store.ui.parkedPrompts];
+  return all.some((p) => (p.workspaces[0] ?? null) === ws);
 }
 
 /** The prompt text the command input should show, given the waiting prompt,
@@ -239,15 +391,19 @@ export function activePromptText(): string | null {
   return promptShown(store.ui.promptText, store.ui.promptWorkspaces, visibleWorkspaces());
 }
 
-/** The question the keys should currently act on: the live input wait, but only
- *  while one of the workspaces its script owns is on screen. A question put
- *  away by a tab switch (doc "Script sessions") must not
- *  keep the keys of the panel now in front of the user — escape above all, which
- *  would otherwise stop a background script from an unrelated workspace. */
-export function activeQuestion(): { keys: string[]; task: string | null } | null {
-  const wait = store.ui.inputWait;
-  if (!wait) return null;
-  return ownedByVisible(wait.workspaces, visibleWorkspaces()) ? wait : null;
+/** The question on screen, which the question bar shows and the keys act on:
+ *  the one of the focused workspace, else of the other visible one (see
+ *  [[pickOwned]]). A question put away by a tab switch (doc "Script
+ *  sessions") must not keep the keys of the panel now in front of the user —
+ *  escape above all, which would otherwise stop a background script from an
+ *  unrelated workspace. */
+export function activeQuestion(): Question | null {
+  return pickOwned(
+    store.ui.questions,
+    focusedWs(),
+    visibleWorkspaces(),
+    store.workspaces.map((w) => w.id),
+  );
 }
 
 /** What a pressed key does while a script's question is up, before the normal
@@ -423,12 +579,14 @@ export async function initStore() {
 
   await listen<{ workspaces: WorkspaceInfo[] }>('workspaces-changed', (event) => {
     store.workspaces = event.payload.workspaces;
+    settlePrompts();
   });
   // The command list no longer depends on the focused panel (every
   // registered command is listed); panels registering new commands
   // refresh it through the bridge's onCommandsChanged.
   await listen<LayoutView>('layout-changed', (event) => {
     store.layout = event.payload;
+    settlePrompts();
   });
   await listen<{ bindings: Binding[] }>('keybindings-changed', (event) => {
     store.keytable = event.payload.bindings;
@@ -454,41 +612,53 @@ export async function initStore() {
     store.guiApiVersion = event.payload.gui_api_version ?? null;
   });
   // A script's `POST /gui/prompt`: the command input takes the question, but
-  // only while one of the workspaces that script owns is on screen — the
-  // input focuses itself on its own when the prompt is (or becomes) visible,
-  // so nothing here steals the keyboard for a question the user cannot see.
+  // only while the workspace it is asked in is on screen — the input focuses
+  // itself on its own when the prompt is (or becomes) visible, so nothing here
+  // steals the keyboard for a question the user cannot see. One prompt per
+  // workspace: the others wait parked for theirs (doc "Script sessions").
   await listen<{
+    id: number;
     prompt: string;
     completions?: string[];
-    workspaces?: string[];
+    workspace?: string | null;
     task?: string | null;
   }>('prompt-requested', (event) => {
     const prompt = promptRequestState(event.payload);
     // A script's list is static and has one view: strings are their own
     // labels and values (doc "Completion views").
     const items = completionLabels(prompt.completions);
-    store.ui.promptText = prompt.text;
-    store.ui.promptItems = items;
-    store.ui.promptCompletions = items.map((item) => item.label);
-    store.ui.promptMore = false;
-    store.ui.promptSource = null;
-    store.ui.promptViewIndex = 0;
-    store.ui.promptWorkspaces = prompt.workspaces;
-    store.ui.promptTask = prompt.task;
-    store.ui.promptDraft = '';
-    store.ui.promptAlternate = null;
+    offerPrompt({
+      id: prompt.id,
+      text: prompt.text,
+      completions: items.map((item) => item.label),
+      items,
+      more: false,
+      source: null,
+      viewIndex: 0,
+      workspaces: prompt.workspaces,
+      task: prompt.task,
+      draft: '',
+      resolver: null,
+      alternate: null,
+    });
   });
-  // A script's `POST /gui/input` wait: keep its question in a dedicated bar,
-  // never on the status line where an error would overwrite it.
+  // A script prompt whose wait ended elsewhere (timeout, script gone).
+  await listen<{ id: number }>('prompt-ended', (event) => {
+    dropPrompt(event.payload.id);
+  });
+  // The scripts' `POST /gui/input` waits: keep each question in a dedicated
+  // bar, never on the status line where an error would overwrite it.
   await listen<{
-    active: boolean;
-    temp_keys?: string[];
-    prompt?: string | null;
-    workspaces?: string[];
-    task?: string | null;
+    questions?: {
+      id: number;
+      prompt?: string | null;
+      keys?: string[];
+      workspace?: string | null;
+      task?: string | null;
+    }[];
     script_keys?: boolean;
   }>('input-wait-changed', (event) => {
-    store.ui.inputWait = inputWaitState(event.payload);
+    store.ui.questions = questionsState(event.payload);
     store.ui.scriptKeys = event.payload.script_keys ?? true;
   });
   // Running shell scripts: drive the loading indicator in the task bar.

@@ -201,7 +201,7 @@ describe('the other builtins that take arguments', () => {
   });
 
   test('answer:send completes over the keys its question awaits', async () => {
-    store.ui.inputWait = { prompt: 'Delete it?', keys: ['yes', 'no'], workspaces: [], task: null };
+    store.ui.questions = [{ id: 7, prompt: 'Delete it?', keys: ['yes', 'no'], workspace: null, task: null }];
     const done = dispatch('answer:send');
 
     await settle();
@@ -210,8 +210,8 @@ describe('the other builtins that take arguments', () => {
     await answer('yes');
 
     expect(await done).toEqual({ ok: true });
-    expect(invoked).toContainEqual({ cmd: 'answer_send', args: { value: 'yes' } });
-    store.ui.inputWait = null;
+    expect(invoked).toContainEqual({ cmd: 'answer_send', args: { value: 'yes', id: 7 } });
+    store.ui.questions = [];
   });
 });
 

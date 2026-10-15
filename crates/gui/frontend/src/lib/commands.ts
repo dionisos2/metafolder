@@ -24,7 +24,17 @@ import {
 } from './ignore';
 import { invoke } from './ipc';
 import { type ExpandDeps, expandShellPlaceholders, shellQuote } from './placeholders';
-import { focusedContext, focusedWs, flashStatus, slotPayload, store, workspaceById } from './store.svelte';
+import {
+  activeQuestion,
+  flashStatus,
+  focusedContext,
+  focusedWs,
+  hasPromptIn,
+  offerPrompt,
+  slotPayload,
+  store,
+  workspaceById,
+} from './store.svelte';
 import { isTarget, resolveTarget, TARGETS } from './targets';
 import { daemonWork } from './working';
 import {
@@ -1243,7 +1253,7 @@ registerArgs('answer:send', [
   {
     name: 'value',
     prompt: () => 'Answer with:',
-    complete: () => [...(store.ui.inputWait?.keys ?? [])],
+    complete: () => [...(activeQuestion()?.keys ?? [])],
   },
 ]);
 
@@ -1349,34 +1359,38 @@ function shellExpandDeps(ws: string | null): ExpandDeps {
  * Prompt driver for interactive argument collection: opens the command input
  * as a frontend-resolved prompt (doc "Interactive command arguments")
  * and resolves to the chosen *value* (a candidate's, or the typed text when
- * none names it), or null on Escape. Refuses (null) when a prompt already
- * owns the input — an interactive collection and a script prompt are mutually
- * exclusive.
+ * none names it), or null on Escape. Refuses (null) when the workspace already
+ * has a prompt — an interactive collection or a script prompt: one per
+ * workspace (doc "Script sessions").
  */
 async function promptForArg(request: ArgPromptRequest): Promise<string | PromptAnswer | null> {
-  if (store.ui.promptText !== null || store.ui.promptResolver !== null) {
+  const ws = focusedWs();
+  if (hasPromptIn(ws)) {
     await status('the command input is busy with another prompt');
     return null;
   }
   return new Promise<string | PromptAnswer | null>((resolve) => {
-    const ws = focusedWs();
     const resolver = (value: string | null, alternate = false) =>
       resolve(value === null ? null : { value, alternate });
-    store.ui.promptResolver = resolver;
-    store.ui.promptAlternate = request.alternate ?? null;
-    store.ui.promptText = request.prompt;
-    store.ui.promptCompletions = [];
-    store.ui.promptItems = [];
-    store.ui.promptMore = false;
-    store.ui.promptViewIndex = 0;
-    store.ui.promptSource = null;
     // The collection belongs to the workspace the command was invoked from:
     // switching tab puts its question away with the rest of that workspace's
-    // work (doc "Script sessions"). The command input
-    // focuses itself when the prompt is on screen.
-    store.ui.promptWorkspaces = ws === null ? [] : [ws];
-    store.ui.promptTask = null;
-    store.ui.promptDraft = request.initial;
+    // work, and any other workspace's prompt waits parked meanwhile (doc
+    // "Script sessions"). The command input focuses itself when the prompt is
+    // on screen.
+    offerPrompt({
+      id: null,
+      text: request.prompt,
+      completions: [],
+      items: [],
+      more: false,
+      source: null,
+      viewIndex: 0,
+      workspaces: ws === null ? [] : [ws],
+      task: null,
+      draft: request.initial,
+      resolver,
+      alternate: request.alternate ?? null,
+    });
     if (request.source) {
       // The live source owns the list; its first load is the eager page's own
       // memoized call. A prompt that ended or changed while either is in
@@ -1897,26 +1911,36 @@ async function runCommand(name: string, args: string[], context: ExecContext): P
       return true;
     }
     case 'answer:send':
-      // Resolves a script's POST /gui/input wait.
-      await invoke('answer_send', { value: args.join(' ') });
+      // Resolves a script's POST /gui/input wait: the question on screen
+      // (doc "Script sessions").
+      await invoke('answer_send', { value: args.join(' '), id: activeQuestion()?.id ?? null });
       return true;
     case 'script-keys:toggle': {
       // The question bar's checkbox: hand the script's keys back to the panels,
-      // or take them again. Rust owns the flag and re-pushes the keytable, so
-      // the temporary answer bindings follow it (doc "Script sessions").
+      // or take them again. Rust owns the flag and re-broadcasts the questions
+      // with it (doc "Script sessions").
       const enabled = await invoke<boolean>('script_keys_toggle');
       await status(enabled ? 'script keys enabled' : 'script keys disabled', 'info');
       return true;
     }
     case 'script:stop':
       // Escape during a question, or a manual invocation: end the run (and the
-      // question with it). No argument = whichever script is asking.
-      await invoke('script_stop', { task: args[0] ?? null, kill: false });
+      // question with it). No argument = the script asking the question on
+      // screen.
+      await invoke('script_stop', {
+        task: args[0] ?? null,
+        kill: false,
+        question: activeQuestion()?.id ?? null,
+      });
       return true;
     case 'script:kill':
       // Ctrl+escape during a question: the same, with SIGKILL — for a script
       // that did not end on the stop.
-      await invoke('script_stop', { task: args[0] ?? null, kill: true });
+      await invoke('script_stop', {
+        task: args[0] ?? null,
+        kill: true,
+        question: activeQuestion()?.id ?? null,
+      });
       return true;
     case 'status:clear': {
       // Dismiss the transient status-bar message (and the last-command echo).

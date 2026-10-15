@@ -74,7 +74,7 @@ for arg in "$@"; do
     esac
 done
 [ ${#SCENARIOS[@]} -gt 0 ] \
-    || SCENARIOS=(undo-redo duplicates orphans trash reconcile ignore sync repos list layout script
+    || SCENARIOS=(undo-redo duplicates orphans trash reconcile ignore sync repos list layout script script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close
         pick-button suggested-key walk slideshow devtools)
 
@@ -705,6 +705,42 @@ scenario_script() {
     run script:run no-such-script
     status_is "script run: an unknown script is refused" error \
         'no installed script matches "no-such-script"'
+}
+
+# A question belongs to the workspace it is asked in, one per workspace (doc
+# "Script sessions"): two scripts wait side by side, and answer:send answers
+# the question of the workspace on screen.
+scenario_script_workspaces() {
+    new_repo questions
+    local first=$WS second a b
+
+    mfg command --timeout-ms 60000 script:run e2e-ask >/dev/null 2>&1 &
+    a=$!
+    assert "two questions: the first script asks" until_ok 20 asking
+
+    second=$(mfg workspace new --repo "$DF_REPO" --left message) || die "workspace new"
+    mfg layout left "$second" >/dev/null || die "layout left $second"
+    mfg command --timeout-ms 60000 script:run e2e-ask >/dev/null 2>&1 &
+    b=$!
+    # Refused, the second script would say "no answer" at once: its answer
+    # below is the proof that it waits.
+    sleep 1
+
+    WS=$second
+    run answer:send n
+    wait "$b"
+    until_ok 10 says "e2e-ask: got n"
+    status_is "two questions: the second workspace's question got the answer" info \
+        "e2e-ask: got n"
+    assert "two questions: the first is still waiting" asking
+
+    mfg layout left "$first" >/dev/null || die "layout left $first"
+    WS=$first
+    run answer:send y
+    wait "$a"
+    until_ok 10 says "e2e-ask: got y"
+    status_is "two questions: back in the first workspace, its own question" info \
+        "e2e-ask: got y"
 }
 
 scenario_errors() {

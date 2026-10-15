@@ -601,10 +601,11 @@ pub fn open_with_programs(app: AppHandle) -> Vec<String> {
 
 // ── Scripting waits ──────────────────────────────────────────────────────
 
-/// `answer:send <value>` — resolves the active `POST /gui/input` wait.
+/// `answer:send <value>` — resolves the `POST /gui/input` wait `id`: the
+/// question on screen, which the shell names (the first one, with no id).
 #[tauri::command]
-pub fn answer_send(app: AppHandle, value: String) -> Result<(), String> {
-    if app.input.resolve_answer(&value) {
+pub fn answer_send(app: AppHandle, value: String, id: Option<u64>) -> Result<(), String> {
+    if app.input.resolve_answer(id, &value) {
         Ok(())
     } else {
         Err("no script is waiting for input".into())
@@ -612,27 +613,34 @@ pub fn answer_send(app: AppHandle, value: String) -> Result<(), String> {
 }
 
 /// `script-keys:toggle` — the question bar's checkbox: whether a script's
-/// awaited keys still take priority over the GUI's own (doc "Script sessions"). Re-pushes the
-/// keytable so the temporary answer bindings follow the
-/// flag, and the question bar's checkbox with it. Returns the new value.
+/// awaited keys still take priority over the GUI's own (doc "Script sessions"). Re-broadcasts
+/// the questions so the question bar's checkbox follows the flag. Returns the
+/// new value.
 #[tauri::command]
 pub fn script_keys_toggle(app: AppHandle) -> bool {
     let enabled = app.gui.set_script_keys(!app.gui.script_keys_enabled());
-    crate::server::gui_api::push_keytable(&app.gui, &app.keybindings);
+    crate::server::gui_api::push_questions(&app.gui);
     enabled
 }
 
 /// `script:stop [<task>]` and `script:kill [<task>]` — end a running script:
 /// escape, resp. ctrl+escape, during its question, or a manual invocation. The
 /// first asks (`SIGTERM`), the second kills (`SIGKILL`, `kill = true`). With no
-/// run id it is the script asking the current question. A question owned by
+/// run id it is the script asking question `question` — the one on screen,
+/// which the shell names (the first one, with neither). A question owned by
 /// nobody has no script to end: the wait is closed instead, so the GUI never
 /// keeps a bar for an answer that will never come.
 #[tauri::command]
-pub fn script_stop(app: AppHandle, task: Option<String>, kill: Option<bool>) -> Result<(), String> {
+pub fn script_stop(
+    app: AppHandle,
+    task: Option<String>,
+    kill: Option<bool>,
+    question: Option<u64>,
+) -> Result<(), String> {
     use crate::shell_exec::Stop;
     let how = if kill.unwrap_or(false) { Stop::Kill } else { Stop::Terminate };
-    let task = task.or_else(|| app.gui.question().and_then(|q| q.task));
+    let asked = app.gui.questions().into_iter().find(|q| question.is_none_or(|id| q.id == id));
+    let task = task.or_else(|| asked.as_ref().and_then(|q| q.task.clone()));
     match task {
         Some(task) => {
             if crate::shell_exec::stop_script(&app.gui, &task, how) {
@@ -643,7 +651,10 @@ pub fn script_stop(app: AppHandle, task: Option<String>, kill: Option<bool>) -> 
         }
         None => {
             // Nothing to signal: just release whoever is waiting.
-            app.input.close_all();
+            match asked {
+                Some(q) => app.input.close(q.id),
+                None => app.input.close_all(),
+            }
             Ok(())
         }
     }
@@ -679,10 +690,16 @@ pub fn command_done(
     app.commands.resolve_with(id, outcome, confirmations.unwrap_or_default());
 }
 
-/// Command-input resolution of a `POST /gui/prompt` wait.
+/// Command-input resolution of the `POST /gui/prompt` wait `id` (the first
+/// one, with no id).
 #[tauri::command]
-pub fn prompt_resolve(app: AppHandle, confirm: bool, text: Option<String>) -> bool {
-    app.input.resolve_prompt(confirm, text)
+pub fn prompt_resolve(
+    app: AppHandle,
+    confirm: bool,
+    text: Option<String>,
+    id: Option<u64>,
+) -> bool {
+    app.input.resolve_prompt(id, confirm, text)
 }
 
 /// Reported by PanelHost once a panel's `mount` has returned.
@@ -825,9 +842,8 @@ pub fn config_reload(app: AppHandle, what: String) -> Result<String, String> {
                     let mut keybindings = app.keybindings.lock_recover();
                     *keybindings = set.with_suggestions_of(&keybindings);
                 }
-                // Through push_keytable, not push_keybindings: a script's
-                // temporary bindings are layered on top and must survive.
-                crate::server::gui_api::push_keytable(&app.gui, &app.keybindings);
+                let compiled = app.keybindings.lock_recover().compiled();
+                crate::push_keybindings(&app.gui, &compiled);
             }
             "style" => {
                 let css = app.config.load_style()?;

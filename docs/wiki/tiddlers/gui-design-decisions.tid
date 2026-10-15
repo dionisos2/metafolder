@@ -90,12 +90,19 @@ The GUI server binds the `gui-port` of `gui/config.toml` (7524 by default,
 ([[GUI configuration]]). There is no port file written at startup to discover and
 clean up; the cost is that two GUIs need two ports given by hand.
 
-!! One question at a time
+!! One question per workspace
 
-A script waits for the user with `POST /gui/input` or `POST /gui/prompt`. Only one
-such wait exists at a time: a second one is refused at once with `409`, not queued.
-A queue would show the user a question whose script may have given up since
-([[Script sessions]], [[GUI scripting endpoints]]).
+A script waits for the user with `POST /gui/input` or `POST /gui/prompt`. Each
+workspace holds one such wait at a time — the workspace it is asked in: a second one
+there is refused at once with `409`, not queued. A queue would show the user a
+question whose script may have given up since ([[Script sessions]],
+[[GUI scripting endpoints]]).
+
+Until October 2026 there was one wait for the whole GUI, and a question belonged to
+every workspace its script owned, the launching one included: back in the workspace
+the script was started from, its question still sat over the user's own panels, and a
+second script, in another tab, could not ask anything. A question now follows the
+workspace it is asked in, and switching tab shows that tab's.
 
 !! Updates are a merge
 

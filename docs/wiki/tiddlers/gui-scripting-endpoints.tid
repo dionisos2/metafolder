@@ -149,9 +149,12 @@ every member optional, and overwrites only what is given. It always answers `{}`
 
 !! The two waits
 
-`POST /gui/input` and `POST /gui/prompt` block until the user answers. They share
-''one lock'': while either waits, a second call of either is refused with `409`, not
-queued ([[GUI design decisions]]).
+`POST /gui/input` and `POST /gui/prompt` block until the user answers. A wait
+belongs to the workspace it is asked in — the asking script's last opened workspace
+still open, else the one it was launched from; none for a request with no `task` —
+and each workspace holds ''one'': while one waits there, a second call of either in
+the same workspace is refused with `409`, not queued ([[GUI design decisions]]).
+Waits of different workspaces coexist.
 
 `POST /gui/input` takes
 
@@ -160,17 +163,17 @@ queued ([[GUI design decisions]]).
 ```
 
 every member optional. `prompt` is the question shown in its bar (''Waiting for input''
-without one). A key the GUI reserves makes the call fail with `400` ''before'' the lock
-is taken, so the next script is free to ask. With no `keys`, only `answer:send`
+without one). A key the GUI reserves makes the call fail with `400` ''before'' the wait
+is registered, so the next script is free to ask. With no `keys`, only `answer:send`
 answers.
 
-While it waits, each key is bound to `answer:send <key>` in the compiled keybinding
-table, and the shell looks at the awaited keys ''before'' the matcher, so no narrower
-binding wins. Unticking the script keys removes those bindings — a disabled key must
-not stay bound as a fallback. The shell learns all of it from the `input-wait-changed`
-event: `active`, `temp_keys`, `prompt`, `workspaces` (the asking script's, empty when
-nobody's), `task` and `script_keys`; it is sent again, with the table, when the
-checkbox flips.
+No keybinding is installed for the awaited keys: the shell looks at the keys of the
+question ''on screen'' before the matcher, so no narrower binding wins — and a
+question put away in another workspace takes none. The shell learns the questions
+from the `input-wait-changed` event: `questions` (each with its `id`, `keys`,
+`prompt`, `workspace` — null when nobody's — and `task`) and `script_keys`; it is
+sent again when the checkbox flips. `answer:send` answers the question on screen by
+its `id`.
 
 |!Answer |!Means |
 |`{"event": "answer", "value": "left"}` |a key, or `answer:send`; `back` for Backspace |
@@ -185,16 +188,18 @@ checkbox flips.
 
 of which only `prompt` is required. `completions` are
 offered by the command input, ranked and navigated like command names; any text may
-still be typed.
+still be typed. The shell is told by `prompt-requested` (`id`, `prompt`,
+`completions`, `workspace`, `task`) and, when the wait ends without the input
+answering it, by `prompt-ended` (`id`).
 
 |!Answer |!Means |
 |`{"event": "confirm", "text": "4"}` |Enter |
 |`{"event": "cancel"}` |Escape |
 |`{"event": "timeout"}`, `{"event": "closed"}` |as above |
 
-The lock is released by a guard dropped on ''every'' way out — an answer, a timeout,
+A wait is released by a guard dropped on ''every'' way out — an answer, a timeout,
 and the request going away. A script killed while it waits drops its connection, and
-the handler's future with it: released only after the `await`, the lock stayed held
+the handler's future with it: released only after the `await`, the wait stayed held
 for the rest of the GUI's life, and the next script's first question got `409` with
 nothing on screen to say why.
 

@@ -1,9 +1,10 @@
-//! The input-wait lock shared by `POST /gui/input` and `POST /gui/prompt`
-//! (doc "GUI scripting endpoints"): one wait at a time, resolved by the
-//! `answer:send` command, the command input (prompt), a timeout, or GUI
-//! teardown ("closed").
+//! The input waits of `POST /gui/input` and `POST /gui/prompt` (doc "GUI
+//! scripting endpoints"): one wait per workspace — the one it is asked in, or
+//! none for a wait owned by nobody — resolved by the `answer:send` command, the
+//! command input (prompt), a timeout, or GUI teardown ("closed").
 
 use metafolder_core::sync::MutexExt;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use tokio::sync::oneshot;
 
@@ -25,9 +26,17 @@ enum Active {
     Prompt(oneshot::Sender<PromptOutcome>),
 }
 
+struct Entry {
+    id: u64,
+    /// The workspace the wait belongs to; `None` = owned by nobody.
+    owner: Option<String>,
+    active: Active,
+}
+
 #[derive(Default)]
 pub struct InputWait {
-    active: Mutex<Option<Active>>,
+    waits: Mutex<Vec<Entry>>,
+    next_id: AtomicU64,
 }
 
 impl InputWait {
@@ -35,53 +44,65 @@ impl InputWait {
         Self::default()
     }
 
+    /// Whether any wait is up, in any workspace.
     pub fn is_active(&self) -> bool {
-        self.active.lock_recover().is_some()
+        !self.waits.lock_recover().is_empty()
     }
 
-    /// Registers an input wait; `None` when another wait holds the lock.
-    pub fn begin_input(&self) -> Option<oneshot::Receiver<InputOutcome>> {
-        let mut active = self.active.lock_recover();
-        if active.is_some() {
+    fn begin(&self, owner: Option<String>, active: Active) -> Option<u64> {
+        let mut waits = self.waits.lock_recover();
+        if waits.iter().any(|w| w.owner == owner) {
             return None;
         }
-        let (sender, receiver) = oneshot::channel();
-        *active = Some(Active::Input(sender));
-        Some(receiver)
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
+        waits.push(Entry { id, owner, active });
+        Some(id)
     }
 
-    /// Registers a prompt wait; same lock as input waits.
-    pub fn begin_prompt(&self) -> Option<oneshot::Receiver<PromptOutcome>> {
-        let mut active = self.active.lock_recover();
-        if active.is_some() {
-            return None;
-        }
+    /// Registers an input wait in `owner`; `None` when that workspace already
+    /// has one. Returns the wait's id with its receiver.
+    pub fn begin_input(
+        &self,
+        owner: Option<String>,
+    ) -> Option<(u64, oneshot::Receiver<InputOutcome>)> {
         let (sender, receiver) = oneshot::channel();
-        *active = Some(Active::Prompt(sender));
-        Some(receiver)
+        self.begin(owner, Active::Input(sender)).map(|id| (id, receiver))
     }
 
-    /// `answer:send <value>` — resolves the active input wait. Returns
-    /// false when no input wait is active (prompts are not affected).
-    pub fn resolve_answer(&self, value: &str) -> bool {
-        let mut active = self.active.lock_recover();
-        match active.take() {
+    /// Registers a prompt wait; same rule as input waits.
+    pub fn begin_prompt(
+        &self,
+        owner: Option<String>,
+    ) -> Option<(u64, oneshot::Receiver<PromptOutcome>)> {
+        let (sender, receiver) = oneshot::channel();
+        self.begin(owner, Active::Prompt(sender)).map(|id| (id, receiver))
+    }
+
+    /// Takes the wait `id` (or, with no id, the first of the right kind) out
+    /// of the set, when `kind` accepts it.
+    fn take(&self, id: Option<u64>, kind: fn(&Active) -> bool) -> Option<Active> {
+        let mut waits = self.waits.lock_recover();
+        let index = waits.iter().position(|w| id.is_none_or(|id| w.id == id) && kind(&w.active))?;
+        Some(waits.remove(index).active)
+    }
+
+    /// `answer:send <value>` — resolves input wait `id` (the first one, with no
+    /// id). Returns false when there is no such input wait (prompts are not
+    /// affected).
+    pub fn resolve_answer(&self, id: Option<u64>, value: &str) -> bool {
+        match self.take(id, |a| matches!(a, Active::Input(_))) {
             Some(Active::Input(sender)) => {
                 let _ = sender.send(InputOutcome::Answer(value.to_string()));
                 true
             }
-            other => {
-                *active = other;
-                false
-            }
+            _ => false,
         }
     }
 
-    /// Resolves the active prompt (Enter → confirm with text, Escape →
-    /// cancel). Returns false when no prompt is active.
-    pub fn resolve_prompt(&self, confirm: bool, text: Option<String>) -> bool {
-        let mut active = self.active.lock_recover();
-        match active.take() {
+    /// Resolves prompt `id` (the first one, with no id): Enter → confirm with
+    /// text, Escape → cancel. Returns false when there is no such prompt.
+    pub fn resolve_prompt(&self, id: Option<u64>, confirm: bool, text: Option<String>) -> bool {
+        match self.take(id, |a| matches!(a, Active::Prompt(_))) {
             Some(Active::Prompt(sender)) => {
                 let outcome = if confirm {
                     PromptOutcome::Confirm(text.unwrap_or_default())
@@ -91,28 +112,42 @@ impl InputWait {
                 let _ = sender.send(outcome);
                 true
             }
-            other => {
-                *active = other;
-                false
-            }
+            _ => false,
         }
     }
 
-    /// Clears the lock without sending (after a timeout).
-    pub fn end(&self) {
-        self.active.lock_recover().take();
+    /// Forgets wait `id` without sending (a timeout, a dropped request).
+    pub fn end(&self, id: u64) {
+        self.waits.lock_recover().retain(|w| w.id != id);
     }
 
     /// GUI teardown: every waiter receives "closed".
     pub fn close_all(&self) {
-        match self.active.lock_recover().take() {
-            Some(Active::Input(sender)) => {
-                let _ = sender.send(InputOutcome::Closed);
+        for entry in self.waits.lock_recover().drain(..) {
+            match entry.active {
+                Active::Input(sender) => {
+                    let _ = sender.send(InputOutcome::Closed);
+                }
+                Active::Prompt(sender) => {
+                    let _ = sender.send(PromptOutcome::Closed);
+                }
             }
-            Some(Active::Prompt(sender)) => {
-                let _ = sender.send(PromptOutcome::Closed);
+        }
+    }
+
+    /// Closes wait `id` with "closed" — `script:stop` on a question that has
+    /// no script to signal.
+    pub fn close(&self, id: u64) {
+        let mut waits = self.waits.lock_recover();
+        if let Some(index) = waits.iter().position(|w| w.id == id) {
+            match waits.remove(index).active {
+                Active::Input(sender) => {
+                    let _ = sender.send(InputOutcome::Closed);
+                }
+                Active::Prompt(sender) => {
+                    let _ = sender.send(PromptOutcome::Closed);
+                }
             }
-            None => {}
         }
     }
 }

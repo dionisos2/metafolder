@@ -12,6 +12,9 @@ pub const STYLE_CHANGED: &str = "style-changed";
 pub const DAEMON_HEALTH_CHANGED: &str = "daemon-health-changed";
 pub const PROMPT_REQUESTED: &str = "prompt-requested";
 pub const INPUT_WAIT_CHANGED: &str = "input-wait-changed";
+/// A script prompt is over — answered, timed out, or its script gone: `{ "id" }`,
+/// so the command input never keeps a prompt nobody waits on.
+pub const PROMPT_ENDED: &str = "prompt-ended";
 pub const COMMAND_REQUESTED: &str = "command-requested";
 /// The set of shell scripts currently running (doc "Script sessions" running
 /// indicator): `{ "tasks": [{ "workspace_id", "label" }] }`.

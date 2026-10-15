@@ -13,7 +13,13 @@
     setEditingTarget,
     listedCommands,
   } from '../lib/commands';
-  import { activePromptText, focusedWs, store } from '../lib/store.svelte';
+  import {
+    activePromptText,
+    endMountedPrompt,
+    focusedWs,
+    registerPromptDraft,
+    store,
+  } from '../lib/store.svelte';
   import { createTickGate } from '../lib/tick';
   import { attachHistory } from '../../../panel-shim/history.js';
 
@@ -43,6 +49,14 @@
   /** Whether the line currently holds the prompt's answer rather than a
    *  workspace draft. */
   let promptOwned = $state(false);
+  /** Which prompt (`store.ui.promptKey`) the line holds the answer of. */
+  let ownedKey = -1;
+  // A prompt parked for another workspace's takes what was typed into it along
+  // (doc "Script sessions").
+  $effect(() => {
+    registerPromptDraft(() => (promptOwned && ownedKey === store.ui.promptKey ? draft : null));
+    return () => registerPromptDraft(null);
+  });
 
   function draftsOf(which: 'command' | 'bash') {
     return which === 'bash' ? store.bashDrafts : store.inputDrafts;
@@ -91,16 +105,21 @@
   $effect(() => {
     const ws = focusedWs();
     const prompt = promptText !== null;
+    const key = store.ui.promptKey;
     untrack(() => {
-      if (prompt === promptOwned && ws === currentWs) return;
-      // Only a prompt merely put away keeps its text: a resolved one cleared it.
+      if (prompt === promptOwned && ws === currentWs && (!prompt || key === ownedKey)) return;
+      // Only a prompt merely put away keeps its text here: a resolved one
+      // cleared it, and a parked one took it along.
       if (promptOwned) {
-        if (store.ui.promptText !== null) store.ui.promptDraft = draft;
+        if (store.ui.promptText !== null && store.ui.promptKey === ownedKey) {
+          store.ui.promptDraft = draft;
+        }
       } else if (currentWs !== null) {
         draftsOf(mode)[currentWs] = draft;
       }
       currentWs = ws;
       promptOwned = prompt;
+      ownedKey = key;
       bashCandidates = [];
       selectedIndex = 0;
       if (prompt) {
@@ -305,19 +324,10 @@
    *  "cancel". */
   function resolvePrompt(confirm: boolean, text: string | null, alternate = false) {
     const resolver = store.ui.promptResolver;
-    store.ui.promptAlternate = null;
-    store.ui.promptText = null;
-    store.ui.promptCompletions = [];
-    store.ui.promptItems = [];
-    store.ui.promptMore = false;
-    store.ui.promptSource = null;
-    store.ui.promptViewIndex = 0;
-    store.ui.promptWorkspaces = [];
-    store.ui.promptTask = null;
-    store.ui.promptDraft = '';
-    store.ui.promptResolver = null;
+    const id = store.ui.promptId;
+    endMountedPrompt();
     if (resolver) resolver(confirm ? (text ?? '') : null, alternate);
-    else void invoke('prompt_resolve', { confirm, text: confirm ? text : null });
+    else void invoke('prompt_resolve', { confirm, text: confirm ? text : null, id });
   }
 
   function cancelPrompt() {

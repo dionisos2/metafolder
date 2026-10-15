@@ -31,8 +31,9 @@ A script may also ask for a line of text ([[mf gui prompt]]): the question is th
 prompt of [[The command input]], which offers the script's candidates; Enter
 answers, Escape cancels.
 
-Only ''one'' question exists at a time, whatever the number of scripts: a second one is
-refused, not queued ([[GUI design decisions]]).
+Each workspace holds ''one'' question at a time: a second one asked in the same
+workspace is refused, not queued, while questions of different workspaces coexist
+([[GUI design decisions]]).
 
 !! Script keys
 
@@ -96,13 +97,21 @@ command input.
 !! The workspaces a script owns
 
 A script started by the GUI owns the workspace it was launched from, and every
-workspace it opens. Its question bar, its prompt in the command input and its
-task-bar entry show ''only while one of those workspaces is in a visible slot'':
-switching tab puts the question away instead of leaving it over unrelated panels.
+workspace it opens. Its task-bar entry shows ''only while one of those workspaces is
+in a visible slot''.
+
+A question, though, belongs to the one workspace it is ''asked in'': the last
+workspace the script opened that is still open, else the one it was launched from.
+Its bar, or its prompt in the command input, shows only while that workspace is in a
+visible slot — the focused slot's first, then the other's. Switching tab puts the
+question away instead of leaving it over unrelated panels, and brings up the
+question of the workspace switched to, if it has one: two scripts can each wait in
+their own workspace.
 
 * The keys follow the bar: while the question is put away its keys are not borrowed, and neither Escape nor Ctrl+Escape ends a script whose question is off screen.
-* A prompt put away gives the command input back — its own prompt, its draft, its history, Enter running commands — and what was typed as an answer is kept, and comes back with the focus when an owned workspace returns.
+* A prompt put away gives the command input back — its own prompt, its draft, its history, Enter running commands — or the prompt of the workspace now on screen; what was typed as an answer is kept, and comes back with the focus when its workspace returns.
 * The script keeps waiting throughout. Nothing is cancelled by looking elsewhere.
+* A question whose workspace has been closed belongs to no workspace any more, and is shown everywhere.
 
 A question from a script the GUI did not start — one run from a terminal — belongs to
 nobody, and is always shown.

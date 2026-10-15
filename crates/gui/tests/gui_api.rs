@@ -28,7 +28,6 @@ struct Ctx {
     input: Arc<InputWait>,
     commands: Arc<CommandWait>,
     bench: Arc<BenchBuffer>,
-    keybindings: Arc<std::sync::Mutex<metafolder_gui::keybindings::KeybindingSet>>,
     router: axum::Router,
 }
 
@@ -71,7 +70,7 @@ async fn setup_with_daemon(daemon_url: &str) -> Ctx {
         config,
         gui: gui.clone(),
         daemon,
-        keybindings: keybindings.clone(),
+        keybindings,
         input: input.clone(),
         commands: commands.clone(),
         bench: bench.clone(),
@@ -85,7 +84,6 @@ async fn setup_with_daemon(daemon_url: &str) -> Ctx {
         input: input.clone(),
         commands: commands.clone(),
         bench: bench.clone(),
-        keybindings,
         router: server::build_router(state),
     }
 }
@@ -540,7 +538,7 @@ async fn test_input_wait_refuses_the_reserved_keys() {
         request(&router, "POST", "/gui/input", Some(json!({"keys": ["y"]}))).await
     });
     tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(ctx.input.resolve_answer("y"));
+    assert!(ctx.input.resolve_answer(None, "y"));
     let (status, body) = waiting.await.unwrap();
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, json!({"event": "answer", "value": "y"}));
@@ -565,43 +563,38 @@ async fn test_input_wait_payload_carries_the_task_and_the_script_keys_flag() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let payload = ctx.notifier.payloads(events::INPUT_WAIT_CHANGED).last().unwrap().clone();
-    assert_eq!(payload["active"], true);
-    assert_eq!(payload["task"], "script-9");
+    assert_eq!(payload["questions"][0]["task"], "script-9");
     assert_eq!(payload["script_keys"], true);
-    assert_eq!(payload["prompt"], "tag it?");
+    assert_eq!(payload["questions"][0]["prompt"], "tag it?");
 
-    assert!(ctx.input.resolve_answer("y"));
+    assert!(ctx.input.resolve_answer(None, "y"));
     waiting.await.unwrap();
 }
 
 #[tokio::test]
-async fn test_disabling_the_script_keys_removes_the_temporary_bindings() {
-    // Unticking the checkbox must not leave the fallback answer bindings in the
-    // table: the whole point is that the panel's own `y` wins again.
+async fn test_a_question_installs_no_keybinding() {
+    // The shell gives an awaited key to the question *on screen* before any
+    // binding (doc "Script sessions"); a binding in the table would also fire
+    // for a question put away in another workspace, and answer it unseen.
     let ctx = setup().await;
+    ctx.notifier.clear();
     let router = ctx.router.clone();
     let waiting = tokio::spawn(async move {
         request(&router, "POST", "/gui/input", Some(json!({"keys": ["y"]}))).await
     });
     tokio::time::sleep(Duration::from_millis(100)).await;
-    let pushed = |ctx: &Ctx| {
-        ctx.notifier.payloads(events::KEYBINDINGS_CHANGED).last().unwrap()["bindings"].to_string()
-    };
-    assert!(pushed(&ctx).contains("answer:send y"));
+    for push in ctx.notifier.payloads(events::KEYBINDINGS_CHANGED) {
+        assert!(!push["bindings"].to_string().contains("answer:send"));
+    }
 
+    // The checkbox still flips the flag the question bar shows.
     ctx.gui.set_script_keys(false);
-    metafolder_gui::server::gui_api::push_keytable(&ctx.gui, &ctx.keybindings);
-    assert!(!pushed(&ctx).contains("answer:send y"), "disabled keys must not stay bound");
+    metafolder_gui::server::gui_api::push_questions(&ctx.gui);
     let payload = ctx.notifier.payloads(events::INPUT_WAIT_CHANGED).last().unwrap().clone();
     assert_eq!(payload["script_keys"], false);
-    assert_eq!(payload["active"], true, "the question stays on screen, keys or not");
+    assert_eq!(payload["questions"].as_array().unwrap().len(), 1, "the question stays on screen");
 
-    // Re-ticking it restores them.
-    ctx.gui.set_script_keys(true);
-    metafolder_gui::server::gui_api::push_keytable(&ctx.gui, &ctx.keybindings);
-    assert!(pushed(&ctx).contains("answer:send y"));
-
-    assert!(ctx.input.resolve_answer("y"));
+    assert!(ctx.input.resolve_answer(None, "y"));
     waiting.await.unwrap();
 }
 
@@ -616,22 +609,13 @@ async fn test_input_wait_resolves_on_answer() {
     });
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Temporary bindings were installed and pushed.
-    let pushes = ctx.notifier.payloads(events::KEYBINDINGS_CHANGED);
-    assert!(!pushes.is_empty());
-    let last = pushes.last().unwrap()["bindings"].to_string();
-    assert!(last.contains("answer:send left"), "missing temp binding: {last}");
-
-    assert!(ctx.input.resolve_answer("left"));
+    assert!(ctx.input.resolve_answer(None, "left"));
     let (status, body) = waiting.await.unwrap();
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, json!({"event": "answer", "value": "left"}));
 
-    // Temp bindings removed after resolution.
-    let last = ctx.notifier.payloads(events::KEYBINDINGS_CHANGED);
-    assert!(!last.last().unwrap()["bindings"].to_string().contains("answer:send left"));
     // No more waiters: answers go nowhere.
-    assert!(!ctx.input.resolve_answer("left"));
+    assert!(!ctx.input.resolve_answer(None, "left"));
 }
 
 #[tokio::test]
@@ -654,26 +638,25 @@ async fn test_input_wait_broadcasts_its_prompt() {
     // The active input wait carries its question so the frontend can show it
     // in a dedicated bar, separate from the transient status/error line.
     let waits = ctx.notifier.payloads(events::INPUT_WAIT_CHANGED);
-    let active =
-        waits.iter().find(|p| p["active"] == json!(true)).expect("an active input-wait event");
-    assert_eq!(active["prompt"], json!("Which action?"));
+    let active = waits.last().expect("an input-wait event");
+    assert_eq!(active["questions"][0]["prompt"], json!("Which action?"));
+    assert_eq!(active["questions"][0]["keys"], json!(["a", "r"]));
 
-    assert!(ctx.input.resolve_answer("a"));
+    assert!(ctx.input.resolve_answer(None, "a"));
     let _ = waiting.await.unwrap();
 
     // The question is cleared when the wait ends.
     let waits = ctx.notifier.payloads(events::INPUT_WAIT_CHANGED);
-    let last = waits.last().unwrap();
-    assert_eq!(last["active"], json!(false));
-    assert_eq!(last["prompt"], json!(null));
+    assert_eq!(waits.last().unwrap()["questions"], json!([]));
 }
 
 #[tokio::test]
-async fn test_input_wait_carries_the_script_workspaces_and_marks_it_waiting() {
-    // A script's question belongs to the workspaces that script owns: the shell
-    // shows the question bar only while one of them is on screen (doc
-    // "Script sessions"). The task entry also stops spinning while the script is
-    // blocked, so "still working" and "your turn" are distinguishable.
+async fn test_input_wait_belongs_to_the_scripts_latest_workspace_and_marks_it_waiting() {
+    // A script's question belongs to the workspace it is asked in — the last one
+    // the script opened, not the one it was launched from: the shell shows the
+    // question bar only while it is on screen (doc "Script sessions"). The task
+    // entry also stops spinning while the script is blocked, so "still working"
+    // and "your turn" are distinguishable.
     let ctx = setup().await;
     ctx.gui.script_begin("script-7", "ws-1", "gui-tag-folder.sh");
     let (status, body) =
@@ -695,20 +678,73 @@ async fn test_input_wait_carries_the_script_workspaces_and_marks_it_waiting() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let waits = ctx.notifier.payloads(events::INPUT_WAIT_CHANGED);
-    let active =
-        waits.iter().find(|p| p["active"] == json!(true)).expect("an active input-wait event");
-    assert_eq!(active["workspaces"], json!(["ws-1", scratch]));
+    assert_eq!(waits.last().unwrap()["questions"][0]["workspace"], json!(scratch));
 
     let tasks = ctx.notifier.payloads(events::SCRIPT_TASK_CHANGED);
     assert_eq!(tasks.last().unwrap()["tasks"][0]["waiting"], json!(true));
 
-    assert!(ctx.input.resolve_answer("y"));
+    assert!(ctx.input.resolve_answer(None, "y"));
     let _ = waiting.await.unwrap();
 
     let waits = ctx.notifier.payloads(events::INPUT_WAIT_CHANGED);
-    assert_eq!(waits.last().unwrap()["workspaces"], json!([]));
+    assert_eq!(waits.last().unwrap()["questions"], json!([]));
     let tasks = ctx.notifier.payloads(events::SCRIPT_TASK_CHANGED);
     assert_eq!(tasks.last().unwrap()["tasks"][0]["waiting"], json!(false));
+}
+
+#[tokio::test]
+async fn test_a_question_asked_before_any_workspace_opens_belongs_to_the_launching_one() {
+    let ctx = setup().await;
+    ctx.gui.script_begin("script-7", "ws-1", "gui-tag-folder.sh");
+    let router = ctx.router.clone();
+    let waiting = tokio::spawn(async move {
+        request(&router, "POST", "/gui/input", Some(json!({"keys": ["s"], "task": "script-7"})))
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let waits = ctx.notifier.payloads(events::INPUT_WAIT_CHANGED);
+    assert_eq!(waits.last().unwrap()["questions"][0]["workspace"], json!("ws-1"));
+    assert!(ctx.input.resolve_answer(None, "s"));
+    waiting.await.unwrap();
+}
+
+#[tokio::test]
+async fn test_two_workspaces_each_hold_a_question() {
+    // One question per workspace (doc "GUI design decisions"): two scripts
+    // asking from two workspaces both wait, and each answer reaches its own.
+    let ctx = setup().await;
+    let (_, body) = request(&ctx.router, "POST", "/gui/workspaces", Some(json!({}))).await;
+    let other = body["id"].as_str().unwrap().to_string();
+    ctx.gui.script_begin("script-a", "ws-1", "a.sh");
+    ctx.gui.script_begin("script-b", &other, "b.sh");
+    ctx.notifier.clear();
+
+    let router = ctx.router.clone();
+    let a = tokio::spawn(async move {
+        request(&router, "POST", "/gui/input", Some(json!({"keys": ["y"], "task": "script-a"})))
+            .await
+    });
+    let router = ctx.router.clone();
+    let b = tokio::spawn(async move {
+        request(&router, "POST", "/gui/prompt", Some(json!({"prompt": "?", "task": "script-b"})))
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let questions = ctx.notifier.payloads(events::INPUT_WAIT_CHANGED).last().unwrap().clone();
+    let question = &questions["questions"][0];
+    assert_eq!(question["workspace"], json!("ws-1"));
+    let prompt = ctx.notifier.payloads(events::PROMPT_REQUESTED).last().unwrap().clone();
+    assert_eq!(prompt["workspace"], json!(other));
+
+    // Each is resolved by its id; the wrong kind of wait is not touched.
+    let prompt_id = prompt["id"].as_u64().unwrap();
+    let question_id = question["id"].as_u64().unwrap();
+    assert!(!ctx.input.resolve_answer(Some(prompt_id), "y"));
+    assert!(ctx.input.resolve_prompt(Some(prompt_id), true, Some("jazz".into())));
+    assert!(ctx.input.resolve_answer(Some(question_id), "y"));
+    assert_eq!(a.await.unwrap().1, json!({"event": "answer", "value": "y"}));
+    assert_eq!(b.await.unwrap().1, json!({"event": "confirm", "text": "jazz"}));
 }
 
 #[tokio::test]
@@ -720,11 +756,11 @@ async fn test_a_workspace_created_without_a_task_is_owned_by_nobody() {
 }
 
 #[tokio::test]
-async fn test_prompt_carries_the_script_workspaces() {
-    // A script's text prompt belongs to the workspaces that script owns, exactly
+async fn test_prompt_belongs_to_the_scripts_latest_workspace() {
+    // A script's text prompt belongs to the workspace it is asked in, exactly
     // like its question bar: the command input gives the line back to the user
-    // while none of them is on screen (doc "Script sessions"), and shows the prompt again when one
-    // returns.
+    // while it is not on screen (doc "Script sessions"), and shows the prompt
+    // again when it returns.
     let ctx = setup().await;
     ctx.gui.script_begin("script-9", "ws-1", "gui-tag-folder.sh");
     let (status, body) =
@@ -747,10 +783,10 @@ async fn test_prompt_carries_the_script_workspaces() {
 
     let prompts = ctx.notifier.payloads(events::PROMPT_REQUESTED);
     let raised = prompts.last().expect("a prompt-requested event");
-    assert_eq!(raised["workspaces"], json!(["ws-1", scratch]));
+    assert_eq!(raised["workspace"], json!(scratch));
     assert_eq!(raised["task"], json!("script-9"));
 
-    assert!(ctx.input.resolve_prompt(true, Some("jazz".into())));
+    assert!(ctx.input.resolve_prompt(None, true, Some("jazz".into())));
     let _ = waiting.await.unwrap();
 }
 
@@ -768,10 +804,10 @@ async fn test_a_prompt_with_no_run_id_is_owned_by_nobody() {
 
     let prompts = ctx.notifier.payloads(events::PROMPT_REQUESTED);
     let raised = prompts.last().expect("a prompt-requested event");
-    assert_eq!(raised["workspaces"], json!([]));
+    assert_eq!(raised["workspace"], json!(null));
     assert_eq!(raised["task"], json!(null));
 
-    assert!(ctx.input.resolve_prompt(false, None));
+    assert!(ctx.input.resolve_prompt(None, false, None));
     let _ = waiting.await.unwrap();
 }
 
@@ -795,14 +831,14 @@ async fn test_prompt_marks_the_script_waiting_too() {
     let tasks = ctx.notifier.payloads(events::SCRIPT_TASK_CHANGED);
     assert_eq!(tasks.last().unwrap()["tasks"][0]["waiting"], json!(true));
 
-    assert!(ctx.input.resolve_prompt(true, Some("jazz".into())));
+    assert!(ctx.input.resolve_prompt(None, true, Some("jazz".into())));
     let _ = waiting.await.unwrap();
     let tasks = ctx.notifier.payloads(events::SCRIPT_TASK_CHANGED);
     assert_eq!(tasks.last().unwrap()["tasks"][0]["waiting"], json!(false));
 }
 
 #[tokio::test]
-async fn test_concurrent_input_waits_conflict() {
+async fn test_concurrent_input_waits_of_one_workspace_conflict() {
     let ctx = setup().await;
     let router = ctx.router.clone();
     let waiting =
@@ -840,9 +876,9 @@ async fn test_a_dropped_input_request_releases_the_lock() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(!ctx.input.is_active(), "the lock is released when the request is dropped");
 
-    // The temporary answer bindings went with it, and a new wait can start.
-    let bindings = ctx.notifier.payloads(events::KEYBINDINGS_CHANGED);
-    assert!(!bindings.last().unwrap()["bindings"].to_string().contains("answer:send y"));
+    // The question went with it, and a new wait can start.
+    let waits = ctx.notifier.payloads(events::INPUT_WAIT_CHANGED);
+    assert_eq!(waits.last().unwrap()["questions"], json!([]));
     let (status, body) =
         request(&ctx.router, "POST", "/gui/input", Some(json!({"timeout_ms": 30}))).await;
     assert_eq!(status, StatusCode::OK);
@@ -893,7 +929,7 @@ async fn test_prompt_confirm_and_cancel() {
     let prompts = ctx.notifier.payloads(events::PROMPT_REQUESTED);
     assert_eq!(prompts[0]["prompt"], "Enter a rating (1-5): ");
 
-    assert!(ctx.input.resolve_prompt(true, Some("4".into())));
+    assert!(ctx.input.resolve_prompt(None, true, Some("4".into())));
     let (status, body) = waiting.await.unwrap();
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, json!({"event": "confirm", "text": "4"}));
@@ -904,7 +940,7 @@ async fn test_prompt_confirm_and_cancel() {
         request(&router, "POST", "/gui/prompt", Some(json!({"prompt": "? "}))).await
     });
     tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(ctx.input.resolve_prompt(false, None));
+    assert!(ctx.input.resolve_prompt(None, false, None));
     let (_, body) = waiting.await.unwrap();
     assert_eq!(body, json!({"event": "cancel"}));
 }
@@ -930,7 +966,7 @@ async fn test_prompt_forwards_completions() {
     assert_eq!(prompts[0]["prompt"], "Tag: ");
     assert_eq!(prompts[0]["completions"], json!(["jazz", "rock"]));
 
-    assert!(ctx.input.resolve_prompt(true, Some("jazz".into())));
+    assert!(ctx.input.resolve_prompt(None, true, Some("jazz".into())));
     let (status, _) = waiting.await.unwrap();
     assert_eq!(status, StatusCode::OK);
 
@@ -943,7 +979,7 @@ async fn test_prompt_forwards_completions() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     let prompts = ctx.notifier.payloads(events::PROMPT_REQUESTED);
     assert_eq!(prompts[0]["completions"], json!([]));
-    assert!(ctx.input.resolve_prompt(false, None));
+    assert!(ctx.input.resolve_prompt(None, false, None));
     waiting.await.unwrap();
 }
 

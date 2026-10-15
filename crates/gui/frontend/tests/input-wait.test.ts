@@ -1,50 +1,31 @@
 import { describe, expect, it } from 'vitest';
-import { inputWaitAction, inputWaitAnswer, inputWaitState } from '../src/lib/store.svelte';
+import { inputWaitAction, inputWaitAnswer, questionsState } from '../src/lib/store.svelte';
 
 // The script input question (POST /gui/input) is derived into its own state,
 // shown in a dedicated bar so a status/error message can never hide it.
 
-describe('inputWaitState', () => {
-  it('carries the question and accepted keys while active', () => {
-    expect(inputWaitState({ active: true, prompt: 'Which action?', temp_keys: ['a', 'r'] })).toEqual(
-      { prompt: 'Which action?', keys: ['a', 'r'], workspaces: [], task: null },
-    );
+describe('questionsState', () => {
+  it('carries each question, its keys, its workspace and its id', () => {
+    expect(
+      questionsState({
+        questions: [
+          { id: 3, prompt: 'Which action?', keys: ['a', 'r'], workspace: 'ws-2', task: 's-1' },
+        ],
+      }),
+    ).toEqual([
+      { id: 3, prompt: 'Which action?', keys: ['a', 'r'], workspace: 'ws-2', task: 's-1' },
+    ]);
   });
 
   it('uses a generic label when the script gives no question', () => {
-    expect(inputWaitState({ active: true, prompt: null, temp_keys: ['y', 'n'] })).toEqual({
-      prompt: 'Waiting for input',
-      keys: ['y', 'n'],
-      workspaces: [],
-      task: null,
-    });
-    // Missing fields default the same way.
-    expect(inputWaitState({ active: true })).toEqual({
-      prompt: 'Waiting for input',
-      keys: [],
-      workspaces: [],
-      task: null,
-    });
+    expect(questionsState({ questions: [{ id: 1, prompt: null, keys: ['y', 'n'] }] })).toEqual([
+      { id: 1, prompt: 'Waiting for input', keys: ['y', 'n'], workspace: null, task: null },
+    ]);
   });
 
-  it('is null when no wait is active', () => {
-    expect(inputWaitState({ active: false, prompt: 'ignored', temp_keys: ['x'] })).toBeNull();
-  });
-
-  it('carries the workspaces the asking script owns', () => {
-    expect(
-      inputWaitState({ active: true, prompt: '?', temp_keys: ['y'], workspaces: ['ws-1', 'ws-2'] }),
-    ).toEqual({ prompt: '?', keys: ['y'], workspaces: ['ws-1', 'ws-2'], task: null });
-  });
-
-  it('owns no workspace when the wait comes from outside a script', () => {
-    expect(inputWaitState({ active: true, prompt: '?', temp_keys: ['y'] })?.workspaces).toEqual([]);
-  });
-
-  it('carries the asking script\'s run id, so escape knows what to stop', () => {
-    expect(inputWaitState({ active: true, temp_keys: ['y'], task: 'script-3' })?.task).toBe(
-      'script-3',
-    );
+  it('is empty when no wait is active', () => {
+    expect(questionsState({ questions: [] })).toEqual([]);
+    expect(questionsState({})).toEqual([]);
   });
 });
 

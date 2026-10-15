@@ -39,9 +39,11 @@ answered before it, so the invocation that runs — and is echoed in the
 
 At most 200 candidates are shown; typing narrows them.
 
-One question at a time holds the line: while a script's question is pending, a
-command that needs to ask refuses with ''the command input is busy with another
-prompt'', and the reverse.
+One prompt per workspace holds the line: while a prompt is pending in the
+workspace, a command that needs to ask refuses with ''the command input is busy with
+another prompt''. A script prompt asked there meanwhile waits until the command's
+question is answered; a prompt of another workspace waits for its own to be on
+screen ([[Script sessions]]).
 
 Nothing answered here goes into the [[input history|Input history]].
 

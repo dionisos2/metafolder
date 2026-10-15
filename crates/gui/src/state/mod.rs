@@ -75,20 +75,24 @@ pub struct GuiState {
     /// "Script sessions"). The question bar's checkbox flips it; it holds for the
     /// rest of the session, but every new run starts with its keys live.
     script_keys: AtomicBool,
-    /// The question a script is asking right now, kept so the keytable can be
-    /// re-pushed (with or without the temporary answer bindings) when the
-    /// checkbox flips. `None` when no input wait is up.
-    question: Mutex<Option<Question>>,
+    /// The questions scripts are asking right now — at most one per workspace
+    /// (doc "Script sessions") — kept so they can be re-broadcast when the
+    /// checkbox flips. Empty when no input wait is up.
+    questions: Mutex<Vec<Question>>,
     notifier: Arc<dyn FrontendNotifier>,
 }
 
-/// The live `POST /gui/input` question: what the frontend shows in the question
-/// bar, and what the temporary answer bindings are built from.
-#[derive(Clone, Debug, Default, PartialEq)]
+/// A live `POST /gui/input` question: what the frontend shows in the question
+/// bar while its workspace is on screen.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
 pub struct Question {
+    /// The wait's id, which `answer:send` resolves.
+    pub id: u64,
     pub keys: Vec<String>,
     pub prompt: Option<String>,
-    pub workspaces: Vec<String>,
+    /// The workspace the question is asked in; `None` = owned by nobody,
+    /// always shown.
+    pub workspace: Option<String>,
     /// The asking script's run id, so escape knows which run to stop.
     pub task: Option<String>,
 }
@@ -361,7 +365,7 @@ impl GuiState {
             inner: Mutex::new(inner),
             scripts: Mutex::new(HashMap::new()),
             script_keys: AtomicBool::new(true),
-            question: Mutex::new(None),
+            questions: Mutex::new(Vec::new()),
             notifier,
         }
     }
@@ -418,14 +422,19 @@ impl GuiState {
         enabled
     }
 
-    /// The question a script is asking right now, if any.
-    pub fn question(&self) -> Option<Question> {
-        self.question.lock_recover().clone()
+    /// The questions scripts are asking right now.
+    pub fn questions(&self) -> Vec<Question> {
+        self.questions.lock_recover().clone()
     }
 
-    /// Replaces it (a wait beginning, or its guard clearing it).
-    pub fn set_question(&self, question: Option<Question>) {
-        *self.question.lock_recover() = question;
+    /// Adds a question (a wait beginning).
+    pub fn add_question(&self, question: Question) {
+        self.questions.lock_recover().push(question);
+    }
+
+    /// Removes question `id` (its wait's guard, on every exit path).
+    pub fn remove_question(&self, id: u64) {
+        self.questions.lock_recover().retain(|q| q.id != id);
     }
 
     /// Records that run `task_id` owns workspace `ws_id` — called when a script
@@ -442,6 +451,15 @@ impl GuiState {
             task.opened.push(ws_id.to_string());
         }
         self.emit_scripts();
+    }
+
+    /// The workspace run `task_id` asks its questions in: the last one it
+    /// opened that is still open, else the one it was launched from (doc
+    /// "Script sessions"). `None` for an unknown run id.
+    pub fn script_question_workspace(&self, task_id: &str) -> Option<String> {
+        let owned = self.script_workspaces(task_id);
+        let open: Vec<String> = self.workspaces().into_iter().map(|w| w.id).collect();
+        owned.iter().rev().find(|ws| open.contains(ws)).or(owned.first()).cloned()
     }
 
     /// The workspaces run `task_id` owns; empty for an unknown run id.
