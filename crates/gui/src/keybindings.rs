@@ -789,15 +789,13 @@ mod tests {
                 found.iter().all(|i| i == invocation) && !found.is_empty(),
                 "{keys:?} should run `{invocation}`, got {found:?}"
             );
-            // Reachable from either panel: a command dispatches to its own
-            // panel whatever is focused, so the family is not list-only.
+            // Reachable wherever a metarecord is seen or selected — the file
+            // panel, the file manager, a tree — not only from the list and
+            // the detail: a command dispatches to its own panel whatever is
+            // focused, and acts on the workspace's selected metarecord.
             let scopes: Vec<_> =
-                table.iter().filter(|b| b.keys == keys).filter_map(|b| b.when.clone()).collect();
-            assert!(
-                scopes.contains(&"metarecord-list".to_string())
-                    && scopes.contains(&"metarecord-detail".to_string()),
-                "{keys:?} is missing a panel scope: {scopes:?}"
-            );
+                table.iter().filter(|b| b.keys == keys).map(|b| b.when.clone()).collect();
+            assert_eq!(scopes, vec![None], "{keys:?} should be bound in every panel");
         }
 
         // `m b` asks for the target and then the operation; `m m <op>` names both up

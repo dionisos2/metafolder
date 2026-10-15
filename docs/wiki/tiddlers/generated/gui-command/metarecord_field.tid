@@ -9,17 +9,10 @@ summary: Field operation on this metarecord
 
 !! Default keys
 
-* ``m a`` → ``metarecord:field add`` (in the ``metarecord-detail`` panel)
-* ``m a`` → ``metarecord:field add`` (in the ``metarecord-list`` panel)
-* ``m d`` → ``metarecord:field remove`` (in the ``metarecord-detail`` panel)
-* ``m d`` → ``metarecord:field remove`` (in the ``metarecord-list`` panel)
-* ``m n`` → ``metarecord:field rename`` (in the ``metarecord-detail`` panel)
-* ``m n`` → ``metarecord:field rename`` (in the ``metarecord-list`` panel)
-* ``m s`` → ``metarecord:field set`` (in the ``metarecord-detail`` panel)
-* ``m s`` → ``metarecord:field set`` (in the ``metarecord-list`` panel)
-* ``m t`` → ``metarecord:field retype`` (in the ``metarecord-detail`` panel)
-* ``m t`` → ``metarecord:field retype`` (in the ``metarecord-list`` panel)
-* ``m u`` → ``metarecord:field unset`` (in the ``metarecord-detail`` panel)
-* ``m u`` → ``metarecord:field unset`` (in the ``metarecord-list`` panel)
-* ``m v`` → ``metarecord:field edit`` (in the ``metarecord-detail`` panel)
-* ``m v`` → ``metarecord:field edit`` (in the ``metarecord-list`` panel)
+* ``m a`` → ``metarecord:field add``
+* ``m d`` → ``metarecord:field remove``
+* ``m n`` → ``metarecord:field rename``
+* ``m s`` → ``metarecord:field set``
+* ``m t`` → ``metarecord:field retype``
+* ``m u`` → ``metarecord:field unset``
+* ``m v`` → ``metarecord:field edit``

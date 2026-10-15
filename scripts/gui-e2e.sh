@@ -74,7 +74,7 @@ for arg in "$@"; do
     esac
 done
 [ ${#SCENARIOS[@]} -gt 0 ] \
-    || SCENARIOS=(undo-redo duplicates orphans trash remove reconcile ignore sync repos list layout script script-workspaces
+    || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list layout script script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close
         pick-button suggested-key walk slideshow devtools)
 
@@ -468,6 +468,31 @@ scenario_remove() {
     assert "remove, delete: the file stays" test -e "$REPO_DIR/g.txt"
     assert_not "remove, delete: the metarecord is gone" has_record "$g"
 }
+
+# The per-record field keys work wherever a metarecord is selected, the file
+# panel included — not only in the list and the detail.
+scenario_field_keys() {
+    needs_keyboard field-keys || return 0
+    new_repo field-keys
+    printf 'x\n' >"$REPO_DIR/f.txt"
+    local f
+    f=$(record "$REPO_DIR/f.txt")
+    select_path "$REPO_DIR/f.txt"
+    sleep 1
+    keys m a
+    sleep 1
+    typed "e2e_tag"
+    keys Return
+    sleep 0.5
+    typed "string"
+    keys Return
+    sleep 0.5
+    typed "from-the-file-panel"
+    keys Return
+    assert "field keys: m a adds a field from the file panel" \
+        until_ok 10 field_is "$f" e2e_tag from-the-file-panel
+}
+field_is() { [ "$(df_mf metarecord -i "$1" field get "$2" 2>/dev/null)" = "$3" ]; }
 
 scenario_reconcile() {
     new_repo reconcile
