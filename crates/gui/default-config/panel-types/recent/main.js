@@ -1,5 +1,6 @@
 // recent panel: the repository's recently-viewed metarecords (crate::recent),
-// newest first, one row "<name>  <mfr_path>  <rank>  <viewed N ago>". A GUI-side
+// newest first — or best first by score, `recent:set sort` (doc "Frecent
+// folders") — one row "<name>  <mfr_path>  <score>  <viewed N ago>". A GUI-side
 // concern — the list comes from metafolder.recent (no daemon endpoint); the
 // display fields (label/name/mfr_path) are read from the daemon. Opening
 // a row publishes the selection and reveals the viewer, like the metarecord
@@ -7,7 +8,18 @@
 // change, or on an explicit refresh — not on every view — so it never reorders
 // under the cursor while you navigate.
 
-import { byId, el, field, formatAge, formatValue, openButton, whereArg } from '/__ui.js';
+import {
+  byId,
+  el,
+  field,
+  formatAge,
+  formatScore,
+  formatValue,
+  frecency,
+  openButton,
+  whereArg,
+} from '/__ui.js';
+import { createSelect } from '/__select.js';
 import { rowActionsProvider, baseName } from '/__file-actions.js';
 
 /** The first field named `name` on `rec` as text, or '' when absent.
@@ -25,7 +37,7 @@ export function formatViewedAge(iso, now = Date.now()) {
 }
 
 /**
- * @typedef {{ uuid: string, viewedAt: string, rank: number, label: string, name: string,
+ * @typedef {{ uuid: string, viewedAt: string, score: number, label: string, name: string,
  *   relPath: string, absPaths: string[], isDir: boolean }} Row
  *
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder
@@ -38,6 +50,11 @@ export function mount(root, metafolder) {
   /** @type {Row[]} */
   let rows = [];
   let cursorIndex = -1;
+  /** The row order: `time` (newest first, as the list is kept) or `score`
+   *  (best first). The workspace's `recent:sort`, so it survives a restart. */
+  let sort = 'time';
+  /** @type {Row[]} the rows as the list keeps them, newest first */
+  let byTime = [];
 
   const entriesList = byId(root, 'entries');
   const placeholder = byId(root, 'placeholder');
@@ -85,8 +102,8 @@ export function mount(root, metafolder) {
           el('span', { class: 'path' }, row.relPath),
           el(
             'span',
-            { class: 'rank', title: 'One per view, aged (doc "Frecent folders")' },
-            `rank ${Math.round(row.rank * 10) / 10}`,
+            { class: 'score', title: 'Views, weighted by how recent (doc "Frecent folders")' },
+            `score ${formatScore(row.score)}`,
           ),
           el('span', { class: 'age' }, formatViewedAge(row.viewedAt, now)),
         ),
@@ -127,6 +144,7 @@ export function mount(root, metafolder) {
     const r = repo;
     if (r === null) {
       rows = [];
+      byTime = [];
       render();
       return;
     }
@@ -144,7 +162,8 @@ export function mount(root, metafolder) {
       daemon.metarecords(r, uuids).catch(() => new Map()),
       daemon.treePaths(r, 'mfr_path', uuids).catch(() => ({})),
     ]);
-    rows = entries.map((e) => {
+    const now = Date.now();
+    byTime = entries.map((e) => {
       const rec = records.get(e.uuid);
       const relPaths = /** @type {Record<string, string[]>} */ (paths)[e.uuid] ?? [];
       const absPaths =
@@ -152,7 +171,7 @@ export function mount(root, metafolder) {
       return {
         uuid: e.uuid,
         viewedAt: e.viewed_at,
-        rank: e.rank,
+        score: frecency(e.rank, e.viewed_at, now),
         label: rec === undefined ? '' : fieldText(rec, 'label'),
         name: rec === undefined ? '' : fieldText(rec, 'name'),
         relPath: relPaths[0] ?? '',
@@ -160,8 +179,35 @@ export function mount(root, metafolder) {
         isDir: rec !== undefined && fieldText(rec, 'mfr_type') === 'dir',
       };
     });
-    if (cursorIndex >= rows.length) cursorIndex = rows.length - 1;
+    arrange();
+  }
+
+  /** Orders `rows` by `sort`, keeping the cursor on the row it was on. */
+  function arrange() {
+    const at = selected()?.uuid;
+    rows = sort === 'score' ? [...byTime].sort((a, b) => b.score - a.score) : byTime;
+    const index = at === undefined ? -1 : rows.findIndex((row) => row.uuid === at);
+    cursorIndex = index >= 0 ? index : Math.min(cursorIndex, rows.length - 1);
     render();
+  }
+
+  const SORTS = ['time', 'score'];
+  const sortSelect = createSelect(byId(root, 'sort'), {
+    value: sort,
+    options: [
+      { value: 'time', label: 'newest first' },
+      { value: 'score', label: 'best score first' },
+    ],
+    onChange: (value) => void setSort(value),
+  });
+
+  /** @param {string} value */
+  function setSort(value) {
+    if (!SORTS.includes(value)) throw new Error(`unknown order: "${value}" (time / score)`);
+    sort = value;
+    sortSelect.setValue(sort);
+    arrange();
+    return workspace.set('recent:sort', sort);
   }
 
   byId(root, 'refresh').addEventListener('click', () => void load());
@@ -181,6 +227,23 @@ export function mount(root, metafolder) {
         ...(row.relPath && { label: `${rowName(row)} — ${row.relPath}` }),
       })),
   });
+  void commands.register('recent:set', {
+    label: 'Recent: change a view setting (sort: time / score)',
+    args: [
+      { name: 'setting', prompt: () => 'Which setting? (sort)', complete: () => ['sort'] },
+      {
+        name: 'value',
+        prompt: () => 'Order? (time / score)',
+        // The other order, so the key toggles with one Enter.
+        initial: () => (sort === 'time' ? 'score' : 'time'),
+        complete: () => SORTS,
+      },
+    ],
+    handler: (setting, value) => {
+      if (setting !== 'sort') throw new Error(`unknown setting: "${setting ?? ''}" (sort)`);
+      return setSort(value);
+    },
+  });
   void commands.register('recent:open', {
     label: 'Recent: open the highlighted metarecord (here / other / new)',
     args: [whereArg('other')],
@@ -196,6 +259,11 @@ export function mount(root, metafolder) {
 
   async function start() {
     repo = /** @type {string|null} */ ((await workspace.get('active_repo')) ?? null);
+    const saved = await workspace.get('recent:sort');
+    if (typeof saved === 'string' && SORTS.includes(saved)) {
+      sort = saved;
+      sortSelect.setValue(sort);
+    }
     await load();
   }
 

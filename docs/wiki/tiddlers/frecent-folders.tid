@@ -24,8 +24,7 @@ view.
 
 The candidates come from the recently-viewed list, where each metarecord carries a
 ''rank'': one per view ([[Why recently viewed is kept by the GUI]]). Two things count
-as a view of a folder (the [[recent panel]] and the `recent` pick show each entry's
-rank):
+as a view of a folder:
 
 * going into it in the [[file-manager panel]] — once per arrival, not again when the same folder is listed anew (a refresh, an operation);
 * viewing anything ''in'' it: a file the [[file panel]] or `metarecord-detail` shows counts for its parent folder.
@@ -39,9 +38,11 @@ it was last viewed — zoxide's weights:
 |less than a week ago |×½ |
 |older |×¼ |
 
-The weights are those of `frecency` in the shipped `gui/commands.js`, and the folders
-are gathered by `frecentFolders` next to it ([[User commands]]): change them there to
-change the order. A record without a position in the tree — an orphan, a record with
+The same score orders the [[recent panel]] and the `recent` pick when asked to, entry by
+entry. The weights are those of `frecency` in the shared panel helpers
+(`panel-shim/ui.js`, served as `/__ui.js`), so the panel and the picks cannot disagree;
+the folders are gathered by `frecentFolders` in the shipped `gui/commands.js`
+([[User commands]]). A record without a position in the tree — an orphan, a record with
 no file — counts for nothing, and neither does a folder that has lost its own.
 
 Because an entry is a metarecord and not a path, a folder keeps its history when it

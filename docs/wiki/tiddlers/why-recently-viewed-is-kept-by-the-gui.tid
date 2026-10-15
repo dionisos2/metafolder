@@ -30,9 +30,10 @@ with a time and a rank on each line, the file ''is'' the state, nothing has to b
 back at start, and the panel can say "3 min ago" for free. A line of the older
 two-column form, from before the rank, reads as one view.
 
-What the rank is worth is not decided here: `recent.rs` only counts and ages,
-and the weighting by recency is the shipped `gui/commands.js`'s, where it can be
-changed.
+What the rank is worth is not decided here: `recent.rs` only counts and ages, and
+the weighting by recency — the ''score'' the panel and the picks show — is `frecency`
+in the shared panel helpers ([[Frecent folders]]). The rank itself is not shown: the
+score is what orders, so it is the one number on screen.
 
 !! The panel shows a snapshot
 

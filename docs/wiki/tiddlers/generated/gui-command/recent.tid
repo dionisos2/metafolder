@@ -1,7 +1,7 @@
 title: $:/mf/gen/GUI command/recent
 catalog: GUI command
 target: recent
-summary: Open a recently-viewed metarecord (here / other / new)
+summary: Open a recently-viewed metarecord (here / other / new; by time / score)
 
 !! Reference
 
@@ -9,7 +9,11 @@ summary: Open a recently-viewed metarecord (here / other / new)
 
 !! Default keys
 
-* ``b g r`` → ``recent new``
-* ``g r`` → ``recent other``
-* ``i g r`` → ``recent here``
-* ``w g r`` → ``recent other``
+* ``b g m`` → ``recent new score``
+* ``b g r`` → ``recent new time``
+* ``g m`` → ``recent other score``
+* ``g r`` → ``recent other time``
+* ``i g m`` → ``recent here score``
+* ``i g r`` → ``recent here time``
+* ``w g m`` → ``recent other score``
+* ``w g r`` → ``recent other time``

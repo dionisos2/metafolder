@@ -279,6 +279,9 @@ fn test_go_family_load_and_folder_keybindings() {
     assert_eq!(global(&["b", "g", "f"]).as_deref(), Some("metarecord-list:folder new"));
     // The family's other members keep their picks.
     assert_eq!(global(&["g", "o"]).as_deref(), Some("repos:switch"));
-    assert_eq!(global(&["g", "r"]).as_deref(), Some("recent other"));
-    assert_eq!(global(&["w", "g", "r"]).as_deref(), Some("recent other"));
+    assert_eq!(global(&["g", "r"]).as_deref(), Some("recent other time"));
+    assert_eq!(global(&["w", "g", "r"]).as_deref(), Some("recent other time"));
+    // The same pick by score (doc "Frecent folders"), and the folder jump.
+    assert_eq!(global(&["g", "m"]).as_deref(), Some("recent other score"));
+    assert_eq!(global(&["g", "d"]).as_deref(), Some("folder:open files here"));
 }

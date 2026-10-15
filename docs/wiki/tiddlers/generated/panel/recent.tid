@@ -6,6 +6,7 @@ summary: The recent panel type
 !! Commands
 
 * ``recent:open`` — Recent: open the highlighted metarecord (here / other / new)
+* ``recent:set`` — Recent: change a view setting (sort: time / score)
 
 !! Generic commands
 

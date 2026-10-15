@@ -63,7 +63,7 @@
         font-family: var(--mf-font-mono, monospace);
         font-size: 0.9em;
       }
-      .rank,
+      .score,
       .age {
         flex: none;
         color: var(--mf-fg-dim, #8a8a96);
@@ -83,6 +83,7 @@
   <body>
     <div id="toolbar">
       <button id="refresh">Refresh</button>
+      <label>sort <button id="sort" type="button"></button></label>
     </div>
     <p class="placeholder" id="placeholder">Loading…</p>
     <ul id="entries" hidden></ul>

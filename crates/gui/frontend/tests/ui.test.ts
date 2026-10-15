@@ -2,7 +2,7 @@
 // shared by the built-in panel types (doc "The metafolder API").
 
 import { describe, expect, test, vi } from 'vitest';
-import { el, field, fields, formatAge, formatSize, formatValue, isPositionType, messageOf, valueEl, thumbnail, isThumbnailable, isVideoThumbnailable, fileTypeGlyph, looksLikeText } from '../../panel-shim/ui.js';
+import { el, field, fields, formatAge, frecency, formatScore, formatSize, formatValue, isPositionType, messageOf, valueEl, thumbnail, isThumbnailable, isVideoThumbnailable, fileTypeGlyph, looksLikeText } from '../../panel-shim/ui.js';
 
 describe('thumbnail', () => {
   test('isThumbnailable: only image extensions, case-insensitive', () => {
@@ -343,6 +343,25 @@ describe('ui formatting helpers', () => {
     expect(formatAge(now - 2 * 86_400_000, now)).toBe('2d ago');
     // A clock skew (future timestamp) never goes negative.
     expect(formatAge(now + 10_000, now)).toBe('0s ago');
+  });
+});
+
+describe('frecency (doc "Frecent folders")', () => {
+  const now = 1_000_000_000_000;
+  const at = (ms: number) => new Date(now - ms).toISOString();
+  const HOUR = 3_600_000;
+
+  test("the rank, weighted by the last view's age: an hour ×4, a day ×2, a week ×½, older ×¼", () => {
+    expect(frecency(3, at(10 * 60_000), now)).toBe(12);
+    expect(frecency(3, at(5 * HOUR), now)).toBe(6);
+    expect(frecency(3, at(3 * 24 * HOUR), now)).toBe(1.5);
+    expect(frecency(3, at(30 * 24 * HOUR), now)).toBe(0.75);
+  });
+
+  test('a score is shown to one decimal', () => {
+    expect(formatScore(4)).toBe('4');
+    expect(formatScore(3.25)).toBe('3.3');
+    expect(formatScore(0.04)).toBe('0');
   });
 });
 

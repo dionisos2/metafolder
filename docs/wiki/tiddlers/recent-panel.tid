@@ -13,9 +13,11 @@ nothing to the daemon, so it adds no write to the event log.
 
 !! As a pick
 
-<<key "recent" "g r">> (`recent`) lists them in the command input, each as its path,
-its `label`, its `name` and its rank ([[Frecent folders]]: one per view, aged, shown to
-one decimal). Type to narrow, `Enter` to open: the metarecord becomes
+<<key "recent other time" "g r">> (`recent <where> time`) lists them in the command
+input, newest first, each as its path, its `label`, its `name` and its ''score'';
+<<key "recent other score" "g m">> (`recent <where> score`) lists them best score
+first. The score is the entry's number of views, aged, weighted by how recently it was
+last viewed ([[Frecent folders]]), shown to one decimal. Type to narrow, `Enter` to open: the metarecord becomes
 the selection and is shown in the ''other'' slot — in the [[file panel]] when it has a
 file, in `metarecord-detail` otherwise ([[Cross-panel selection]]). The lines are
 built by `recentLine` in the shipped `gui/commands.js` ([[User commands]]): change it
@@ -25,11 +27,14 @@ there to change what a line shows.
 
 Open it with `panel:open here recent` (<<key "panel:open here recent" "t v">>). One row
 per metarecord: its `label`, else its `name`, else the start of its uuid; its path;
-its rank; how long ago it was viewed.
+its score; how long ago it was viewed. The rows are newest first, or best score first
+with ''sort'' in the toolbar or `recent:set sort score`; the choice is the
+workspace's (`recent:sort`).
 
 * <<key "cursor:next self" "↓ or j">> / <<key "cursor:prev self" "↑ or k">>, <<key "cursor:first self" Home>> / <<key "cursor:last self" End>> — move the cursor. The row under it is the workspace's selection, so a detail or file panel beside it follows.
 * <<key "recent:open" "Enter or →">>, or the `↗` button of a row ([[Opening a row]]) — show it in the other slot, as the pick does; <<key "recent:open new" "b Enter">> in a new workspace, <<key "recent:open here" "i Enter">> in place of this panel ([[open targets|Panel slots and layout]]).
 * <<key "cursor:find self select" f>> — jump to a row by name; a candidate carries its path, which tells two rows of the same name apart ([[Jumping to an entry]]).
+* <<key "recent:set sort" s>> — newest first ⇄ best score first (the question offers the other order).
 * <<key "view:refresh self" r>> — read the list again.
 
 The rows are a snapshot: they are read when the panel is shown, on a refresh and when

@@ -31,7 +31,7 @@ type ArgSpec = { name: string; prompt: () => unknown; complete?: () => string[] 
 
 const VIEWED = [
   { uuid: 'u1', viewed_at: new Date().toISOString(), rank: 3 },
-  { uuid: 'u2', viewed_at: new Date().toISOString(), rank: 1.25 },
+  { uuid: 'u2', viewed_at: new Date().toISOString(), rank: 5.01 },
 ];
 const NAMES: Record<string, string> = { u1: 'jazz.mp3', u2: 'rock.mp3' };
 const PATHS: Record<string, string> = { u1: '/music/jazz.mp3', u2: '/other/rock.mp3' };
@@ -60,7 +60,7 @@ function stub() {
     },
     changes: { sync: async () => {}, subscribe: () => () => {} },
     workspace: {
-      get: vi.fn(async (key: string) => (key === 'active_repo' ? 'r' : null)),
+      get: vi.fn(async (key: string): Promise<string | null> => (key === 'active_repo' ? 'r' : null)),
       set: vi.fn(async () => {}),
       onChange: noop,
     },
@@ -123,15 +123,50 @@ describe('cursor:find in the recent list', () => {
   });
 });
 
-// Each row shows its rank (doc "Frecent folders"): one per view, aged, so
-// shown to one decimal.
+// Each row shows its score — its rank weighted by recency, to one decimal
+// (doc "Frecent folders") — and the rows are sorted by time, or by score.
 describe('recent rows', () => {
-  test('carry their rank', async () => {
+  beforeEach(() => {
     Element.prototype.scrollIntoView = () => {};
+  });
+
+  const names = (root: ShadowRoot) =>
+    [...root.querySelectorAll('li .name')].map((e) => e.textContent);
+
+  test('carry their score', async () => {
     const s = stub();
     await mount(s);
-    const ranks = [...s.root.querySelectorAll('li .rank')].map((e) => e.textContent);
-    expect(ranks).toEqual(['rank 3', 'rank 1.3']);
+    const scores = [...s.root.querySelectorAll('li .score')].map((e) => e.textContent);
+    expect(scores).toEqual(['score 12', 'score 20']);
+  });
+
+  test('are newest first by default, best first by score', async () => {
+    const s = stub();
+    await mount(s);
+    expect(names(s.root)).toEqual(['jazz.mp3', 'rock.mp3']);
+
+    await s.handlers.get('recent:set')!('sort', 'score');
+    expect(names(s.root)).toEqual(['rock.mp3', 'jazz.mp3']);
+    expect(s.api.workspace.set).toHaveBeenCalledWith('recent:sort', 'score');
+
+    await s.handlers.get('recent:set')!('sort', 'time');
+    expect(names(s.root)).toEqual(['jazz.mp3', 'rock.mp3']);
+  });
+
+  test('the order is restored from the workspace', async () => {
+    const s = stub();
+    s.api.workspace.get.mockImplementation(async (key: string) =>
+      key === 'active_repo' ? 'r' : key === 'recent:sort' ? 'score' : null,
+    );
+    await mount(s);
+    expect(names(s.root)).toEqual(['rock.mp3', 'jazz.mp3']);
+  });
+
+  test('an unknown setting or order is refused', async () => {
+    const s = stub();
+    await mount(s);
+    expect(() => s.handlers.get('recent:set')!('sort', 'size')).toThrow(/unknown order/);
+    expect(() => s.handlers.get('recent:set')!('width', '3')).toThrow(/unknown setting/);
   });
 });
 

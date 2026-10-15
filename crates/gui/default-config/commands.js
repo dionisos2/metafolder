@@ -30,6 +30,10 @@
 // A syntax error in this file stops the GUI from starting, with the error on
 // screen. `config:reload commands` re-reads it without a restart.
 
+// The shared panel helpers (doc "The metafolder API"): `frecency` is the
+// score of a recently-viewed entry, the same in the recent panel.
+import { frecency, formatScore } from '/__ui.js';
+
 /**
  * Every path of a TreeRef field in the active repository, sorted.
  * @param {MetafolderApi} mf
@@ -211,49 +215,24 @@ function firstFieldText(rec, name) {
 }
 
 /**
- * A rank or a score as shown: to one decimal, since ranks age (doc "Frecent
- * folders") — `3`, `2.7`.
- * @param {number} value
- */
-function formatRank(value) {
-  return String(Math.round(value * 10) / 10);
-}
-
-/**
  * One `recent` candidate line: the repo-relative `mfr_path`, the `label` and
  * the `name`, joined by an em dash, with the empty parts dropped — the uuid
- * when nothing else is known, so a candidate is never blank — then the rank.
+ * when nothing else is known, so a candidate is never blank — then the score
+ * (doc "Frecent folders").
  * @param {Metafolder.Metarecord | undefined} rec
  * @param {string} relPath
  * @param {string} [uuid]
- * @param {number} [rank]
+ * @param {number} [score]
  */
-function recentLine(rec, relPath, uuid = rec?.uuid, rank = 1) {
+function recentLine(rec, relPath, uuid = rec?.uuid, score = 0) {
   const parts = [relPath, firstFieldText(rec, 'label'), firstFieldText(rec, 'name')];
-  return `${parts.filter(Boolean).join(' — ') || uuid || ''} — rank ${formatRank(rank)}`;
+  return `${parts.filter(Boolean).join(' — ') || uuid || ''} — score ${formatScore(score)}`;
 }
 
 /** `folder:open`'s candidate display line ("<folder> — score <n>") →
  *  repo-relative folder path, rebuilt on each completion pass. */
 /** @type {Map<string, string>} */
 const folderChoices = new Map();
-
-/**
- * What a recently-viewed entry is worth now (doc "Frecent folders"): its rank —
- * one per view, aged by the GUI — weighted by how long ago it was last viewed,
- * with zoxide's weights. Change them here to change the order of `folder:open`.
- * @param {number} rank
- * @param {string} viewedAt ISO-8601
- * @param {number} now Unix ms
- */
-function frecency(rank, viewedAt, now) {
-  const age = now - Date.parse(viewedAt);
-  const hour = 3600 * 1000;
-  if (age < hour) return rank * 4;
-  if (age < 24 * hour) return rank * 2;
-  if (age < 7 * 24 * hour) return rank / 2;
-  return rank / 4;
-}
 
 /**
  * The folders of the recently-viewed metarecords, best first, each as its
@@ -503,7 +482,7 @@ export default {
           const repo = /** @type {string | null} */ (await mf.workspace.get('active_repo'));
           if (!repo) return [];
           for (const { path, score } of await frecentFolders(mf, repo)) {
-            folderChoices.set(`${path || '/'} — score ${formatRank(score)}`, path);
+            folderChoices.set(`${path || '/'} — score ${formatScore(score)}`, path);
           }
           return [...folderChoices.keys()];
         },
@@ -653,25 +632,36 @@ export default {
     },
   },
 
-  // Open a recently-viewed metarecord (keybindings.toml "g r"): the pick
-  // completes over the recently-viewed list (newest first), and the choice
-  // publishes the selection and opens the matching viewer at the target — the
-  // *other* slot by default, like a metarecord-list open (doc "Cross-panel selection")
-  // — the file panel when the metarecord has a file, the detail
-  // panel when it has none. The candidate lines are shaped by `recentLine`
-  // above: reshape it to reshape the pick.
+  // Open a recently-viewed metarecord (keybindings.toml "g r", "g m"): the
+  // pick completes over the recently-viewed list — newest first by `time`,
+  // best first by `score` (doc "Frecent folders") — and the choice publishes
+  // the selection and opens the matching viewer at the target — the *other*
+  // slot by default, like a metarecord-list open (doc "Cross-panel selection")
+  // — the file panel when the metarecord has a file, the detail panel when it
+  // has none. The candidate lines are shaped by `recentLine` above: reshape it
+  // to reshape the pick.
   'recent': {
-    label: 'Open a recently-viewed metarecord (here / other / new)',
+    label: 'Open a recently-viewed metarecord (here / other / new; by time / score)',
     args: [
       whereArg('other'),
       {
+        name: 'order',
+        prompt: () => 'Order? (time / score)',
+        initial: () => 'time',
+        complete: () => ['time', 'score'],
+      },
+      {
         name: 'metarecord',
         prompt: () => 'Recently viewed:',
-        complete: async (/** @type {MetafolderApi} */ mf) => {
+        complete: async (
+          /** @type {MetafolderApi} */ mf,
+          /** @type {string} */ _partial,
+          /** @type {string[]} */ prior = [],
+        ) => {
           recentChoices.clear();
           const repo = /** @type {string | null} */ (await mf.workspace.get('active_repo'));
           if (!repo) return [];
-          const entries = /** @type {{ uuid: string, rank: number }[]} */ (
+          const entries = /** @type {{ uuid: string, viewed_at: string, rank: number }[]} */ (
             await mf.recent.list(repo)
           );
           const uuids = entries.map((e) => e.uuid);
@@ -680,11 +670,15 @@ export default {
             mf.daemon.metarecords(repo, uuids),
             mf.daemon.treePaths(repo, 'mfr_path', uuids),
           ]);
+          const now = Date.now();
+          const scored = entries.map((e) => ({ ...e, score: frecency(e.rank, e.viewed_at, now) }));
+          // A stable sort: equal scores keep the newest first.
+          if (prior[1] === 'score') scored.sort((a, b) => b.score - a.score);
           /** @type {string[]} */
           const lines = [];
-          for (const { uuid, rank } of entries) {
-            const line = recentLine(records.get(uuid), paths[uuid]?.[0] ?? '', uuid, rank);
-            if (!recentChoices.has(line)) recentChoices.set(line, uuid); // newest wins on a collision
+          for (const { uuid, score } of scored) {
+            const line = recentLine(records.get(uuid), paths[uuid]?.[0] ?? '', uuid, score);
+            if (!recentChoices.has(line)) recentChoices.set(line, uuid); // first listed wins on a collision
             lines.push(line);
           }
           return lines;
@@ -694,6 +688,7 @@ export default {
     run: async (
       /** @type {MetafolderApi} */ mf,
       /** @type {string} */ where = 'other',
+      /** @type {string} */ _order = 'time',
       /** @type {string[]} */ ...words
     ) => {
       // The pick is the last argument: typed inline, its words arrive apart.

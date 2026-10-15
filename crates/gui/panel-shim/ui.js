@@ -504,3 +504,24 @@ export function formatAge(atMs, now = Date.now()) {
   if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
   return `${Math.floor(secs / 86400)}d ago`;
 }
+
+/** What a recently-viewed entry is worth now (doc "Frecent folders"): its rank —
+ *  one per view, aged by the GUI — weighted by how long ago it was last viewed,
+ *  with zoxide's weights: an hour ×4, a day ×2, a week ×½, older ×¼. Shared by
+ *  the recent panel and the shipped `commands.js` picks, so they agree.
+ *  @param {number} rank @param {string} viewedAt ISO-8601 @param {number} [now] unix ms
+ *  @returns {number} */
+export function frecency(rank, viewedAt, now = Date.now()) {
+  const age = now - Date.parse(viewedAt);
+  const hour = 3600 * 1000;
+  if (age < hour) return rank * 4;
+  if (age < 24 * hour) return rank * 2;
+  if (age < 7 * 24 * hour) return rank / 2;
+  return rank / 4;
+}
+
+/** A frecency score as shown: to one decimal (`4`, `3.3`).
+ *  @param {number} score @returns {string} */
+export function formatScore(score) {
+  return String(Math.round(score * 10) / 10);
+}
