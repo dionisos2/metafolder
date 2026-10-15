@@ -197,7 +197,7 @@ describe('widgetFor', () => {
     );
     const w = widgetFor('hierarchy_ref', { parent: 'pa', name: 'b' }, { path: { parse, through } });
     const inputs = w.element.querySelectorAll('input');
-    const input = (w.element instanceof HTMLInputElement ? w.element : inputs[0]) as HTMLInputElement;
+    const input = (w.element instanceof HTMLInputElement ? w.element : inputs[0]);
     expect(inputs.length <= 1).toBe(true);
     await new Promise((r) => setTimeout(r, 0));
     // The value reads as the path through its own parent.

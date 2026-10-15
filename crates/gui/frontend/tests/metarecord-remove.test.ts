@@ -85,7 +85,7 @@ function removeFile(how: string) {
   return shipped['metarecord:remove-file'].run(fakeMf() as never, how);
 }
 
-const howArg = () => shipped['metarecord:remove-file'].args![0];
+const howArg = () => shipped['metarecord:remove-file'].args[0];
 
 beforeEach(() => {
   for (const list of Object.values(calls)) list.length = 0;
@@ -150,7 +150,7 @@ describe('metarecord:remove', () => {
 
 describe('metarecord:remove-file', () => {
   test('the question names the file, and offers trashing it or deleting the metarecord', async () => {
-    const prompt = await howArg().prompt!(fakeMf() as never);
+    const prompt = await howArg().prompt(fakeMf() as never);
     expect(prompt).toContain('"song.mp3"');
     const items = (await (howArg().complete as (mf: never, p: string, prior: string[]) => unknown)(
       fakeMf() as never,
@@ -205,7 +205,7 @@ describe('metarecord:remove-file', () => {
   test('the repository root itself is the file when the path resolves to it', async () => {
     state.paths = [''];
 
-    expect(await howArg().prompt!(fakeMf() as never)).toContain('"/srv"');
+    expect(await howArg().prompt(fakeMf() as never)).toContain('"/srv"');
     await removeFile('trash');
 
     // `mfr_path` of '' is the repository root — named as itself in the
