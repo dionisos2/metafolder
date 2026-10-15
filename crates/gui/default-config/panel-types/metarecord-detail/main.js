@@ -24,7 +24,7 @@ import { createFieldCatalog, createValues } from './values.js';
  * @typedef {{name: string, value: Metafolder.Value}} FieldInput
  *
  * The value editor `widgetFor` builds.
- * @typedef {{element: HTMLElement, read: () => Metafolder.Value}} Widget
+ * @typedef {{element: HTMLElement, read: () => Metafolder.Value|Promise<Metafolder.Value>}} Widget
  *
  * The user schema, as the schema-template helpers read it.
  * @typedef {import('/__schema-template.js').Schema} Schema
@@ -93,9 +93,19 @@ export async function mount(root, metafolder) {
   // widget option that opens a picker seeded for the field being edited.
   const pickRunner = createPickRunner(metafolder);
   /** @param {() => string} nameOf */
+  // A position is typed as a path, the command input's vocabulary (doc
+  // "Field editor"), resolved in the field's own forest or hierarchy.
   const pickOpts = (nameOf) => ({
     /** @param {string} valueType */
     pick: (valueType) => pickRunner.run({ field: nameOf(), valueType }),
+    path: {
+      /** @param {string} type @param {string} raw */
+      parse: async (type, raw) =>
+        /** @type {Metafolder.Value} */ (await vocab.parse(await requireRepo(), nameOf(), type, raw)),
+      /** @param {string|null} parent @param {string} name */
+      through: async (parent, name) =>
+        vocab.pathThrough(await requireRepo(), nameOf(), parent, name),
+    },
   });
   const addPickOpts = pickOpts(() => addNameInput().value.trim());
 
@@ -120,6 +130,11 @@ export async function mount(root, metafolder) {
     return /** @type {string|null} */ (
       current?.repo ?? (await workspace.get('active_repo')) ?? null
     );
+  }
+  async function requireRepo() {
+    const repo = await repoForAdd();
+    if (!repo) throw new Error('no active repository');
+    return repo;
   }
   /** @param {string|null} type */
   function setTypeLock(type) {
@@ -321,6 +336,26 @@ export async function mount(root, metafolder) {
         ),
         el('button', { disabled: readonly, onclick: () => void deleteField(field) }, 'Delete'),
       );
+      // One more value of this field (doc "metarecord-detail panel"), on its
+      // last row: a field holds several values — a hierarchy node one per
+      // parent — and this is where a new one goes.
+      if (metarecord?.fields[index + 1]?.name !== field.name) {
+        ops.append(
+          el(
+            'button',
+            {
+              class: 'add-value',
+              title: `Add a value to "${field.name}"`,
+              disabled: readonly,
+              onclick: () => {
+                cursorIndex = index;
+                void openAddFor(field);
+              },
+            },
+            '+',
+          ),
+        );
+      }
     }
     return el(
       'tr',
@@ -382,6 +417,11 @@ export async function mount(root, metafolder) {
     if (!item || isRowReadonly(item)) return;
     editingField = item.id;
     render();
+  }
+  function addToCursorRow() {
+    const item = rowItems()[cursorIndex];
+    if (!item || isRowReadonly(item)) return;
+    return openAddFor(item);
   }
   function deleteCursorRow() {
     const item = rowItems()[cursorIndex];
@@ -446,13 +486,14 @@ export async function mount(root, metafolder) {
     currentPaths = paths;
   }
 
-  /** @param {Field} field @param {Metafolder.Value} newValue */
+  /** @param {Field} field @param {Metafolder.Value|Promise<Metafolder.Value>} newValue */
   async function saveField(field, newValue) {
     if (!current) return;
     try {
+      const value = await newValue;
       // A field row by its repo-global id (PATCH /repos/:repo/fields/:id).
       await daemon.call('PATCH', `/repos/${current.repo}/fields/${field.id}`, {
-        value: newValue,
+        value,
         ...forceFor(field.name),
       });
       editingField = null;
@@ -480,19 +521,19 @@ export async function mount(root, metafolder) {
     }
   }
 
-  /** @returns {FieldInput} */
-  function readAddForm() {
+  /** @returns {Promise<FieldInput>} */
+  async function readAddForm() {
     const name = addNameInput().value.trim();
     if (!name) throw new Error('field name is required');
     if (!addWidget) throw new Error('no value widget');
-    return { name, value: addWidget.read() };
+    return { name, value: await addWidget.read() };
   }
 
   /** @param {boolean} replace */
   async function addField(replace) {
     showError('');
     try {
-      const { name, value } = readAddForm();
+      const { name, value } = await readAddForm();
       if (!current) throw new Error('no metarecord selected');
       const force = forceFor(name);
       if (replace) {
@@ -719,6 +760,21 @@ export async function mount(root, metafolder) {
     ],
     handler: (watch) => (watch === 'watch' ? watchAndReconcile() : reconcileScoped()),
   });
+  /** Opens the add form on `field`'s name and type, for one more value of
+   *  it: the `+` of its row, `metarecord:row-add`. @param {Field} field */
+  async function openAddFor(field) {
+    render();
+    addForm.classList.add('open');
+    addNameInput().value = field.name;
+    const repo = await repoForAdd();
+    const known = repo ? (await catalog.read(repo)).get(field.name) : undefined;
+    const type = field.value.type !== 'nothing' ? field.value.type : (known ?? null);
+    setTypeLock(type);
+    // A fresh value of that type, even if the form was left on it.
+    if (type) typePicker.set(type);
+    if (addWidget) focusWidget(addWidget);
+  }
+
   void commands.register('metarecord:open-add-field', {
     label: 'Open the add-field form on the selected metarecord',
     reveal: true,
@@ -742,6 +798,10 @@ export async function mount(root, metafolder) {
   void commands.register('metarecord:row-edit', {
     label: 'Edit the field under the cursor',
     handler: editCursorRow,
+  });
+  void commands.register('metarecord:row-add', {
+    label: 'Add a value to the field under the cursor',
+    handler: addToCursorRow,
   });
   void commands.register('metarecord:row-delete', {
     label: 'Delete the field under the cursor',

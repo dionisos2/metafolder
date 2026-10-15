@@ -184,6 +184,42 @@ describe('widgetFor', () => {
     expect(fallback.read()).toEqual({ type: 'string', value: 'x' });
   });
 
+  test('a position with a path vocabulary is one path input, parsed by it', async () => {
+    const parse = vi.fn(
+      async (type: string, raw: string) =>
+        ({
+          type,
+          value: { parent: raw === 'a/b' ? 'pa' : null, name: raw.split('/').pop() },
+        }) as never,
+    );
+    const through = vi.fn(async (parent: string | null, name: string) =>
+      parent === 'pa' ? `a/${name}` : name,
+    );
+    const w = widgetFor('hierarchy_ref', { parent: 'pa', name: 'b' }, { path: { parse, through } });
+    const inputs = w.element.querySelectorAll('input');
+    const input = (w.element instanceof HTMLInputElement ? w.element : inputs[0]) as HTMLInputElement;
+    expect(inputs.length <= 1).toBe(true);
+    await new Promise((r) => setTimeout(r, 0));
+    // The value reads as the path through its own parent.
+    expect(input.value).toBe('a/b');
+    expect(through).toHaveBeenCalledWith('pa', 'b');
+    expect(await w.read()).toEqual({ type: 'hierarchy_ref', value: { parent: 'pa', name: 'b' } });
+    expect(parse).toHaveBeenCalledWith('hierarchy_ref', 'a/b');
+  });
+
+  test('a picked parent fills the path through it, keeping the name typed', async () => {
+    const through = vi.fn(async (parent: string | null, name: string) => `x/${parent}/${name}`);
+    const w = widgetFor('tree_ref', undefined, {
+      pick: async () => 'pu',
+      path: { parse: async () => ({ type: 'nothing' }), through },
+    });
+    const input = w.element.querySelector('input')!;
+    input.value = 'old/leaf';
+    w.element.querySelector<HTMLButtonElement>('button.pick-btn')!.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(input.value).toBe('x/pu/leaf');
+  });
+
   test('tree_ref reads parent (empty = root) and name', () => {
     const w = widgetFor('tree_ref', { parent: 'abcd', name: 'notes.txt' });
     expect(w.read()).toEqual({ type: 'tree_ref', value: { parent: 'abcd', name: 'notes.txt' } });

@@ -171,9 +171,13 @@ async function mountPanel(
     contextMenu: Object.assign(noop, { addDefaultItems: noop }),
   };
   const mod = await import('../../default-config/panel-types/metarecord-detail/main.js');
-  await mod.mount(shadowFor(), api as never);
+  const shadow = shadowFor();
+  await mod.mount(shadow, api as never);
   calls.length = 0; // drop the initial load
-  return { specs, calls };
+  /** Puts the field cursor on row `index`, as `cursor:next` would. */
+  const cursorTo = (index: number) =>
+    (api.provide.mock.calls[0][0] as { select: (i: number) => void }).select(index);
+  return { specs, calls, shadow, cursorTo };
 }
 
 /** Collects `invocation`'s missing arguments, answering each prompt in turn
@@ -205,6 +209,7 @@ beforeEach(() => {
     vi.fn(async () => new Response('[]', { status: 200 })),
   );
   document.body.replaceChildren();
+  Element.prototype.scrollIntoView = () => {}; // jsdom has none
 });
 
 /** Two `tag` refs, seeded against a `path` forest — the ref case the
@@ -483,5 +488,82 @@ describe('metarecord:field rename / retype — one revision', () => {
         },
       },
     ]);
+  });
+});
+
+/** Lets the panel's pending reads (a path read back, a catalogue) settle. */
+const settle = () => new Promise((r) => setTimeout(r, 0));
+
+/** A tag placed under `sport`, the hierarchy a second parent is added to. */
+const maratonFields = (): Field[] => [
+  { id: 7, name: 'path', value: { type: 'hierarchy_ref', value: { parent: U_PARENT, name: 'maraton' } } },
+];
+
+describe('adding a value to a field from its row (doc "metarecord-detail panel")', () => {
+  test('the row’s + opens the add form on that field, its type, and takes a path', async () => {
+    const { shadow, calls } = await mountPanel(maratonFields(), {
+      catalog: { path: 'hierarchy_ref' },
+      tree: { évènement: U_BLUES },
+      treePaths: ['sport'],
+    });
+    await settle();
+    const plus = shadow.querySelector<HTMLButtonElement>('button.add-value');
+    expect(plus).not.toBeNull();
+    plus!.click();
+    await settle();
+    expect(shadow.getElementById('add-form')!.classList.contains('open')).toBe(true);
+    expect((shadow.getElementById('add-name') as HTMLInputElement).value).toBe('path');
+    expect(shadow.getElementById('add-type')!.textContent).toContain('hierarchy_ref');
+    // The parent is typed by its path, as in the command input.
+    const input = shadow.querySelector<HTMLInputElement>('#add-value input')!;
+    input.value = 'évènement/maraton';
+    shadow.getElementById('add-append')!.click();
+    await settle();
+    await settle();
+    expect(calls).toContainEqual({
+      method: 'POST',
+      path: `/repos/${REPO}/metarecords/${UUID}/fields`,
+      body: {
+        name: 'path',
+        value: { type: 'hierarchy_ref', value: { parent: U_BLUES, name: 'maraton' } },
+      },
+    });
+  });
+
+  test('metarecord:row-add does the same for the row under the cursor', async () => {
+    const { shadow, specs, cursorTo } = await mountPanel(maratonFields(), {
+      catalog: { path: 'hierarchy_ref' },
+    });
+    cursorTo(0);
+    await specs.get('metarecord:row-add')!.handler();
+    await settle();
+    expect(shadow.getElementById('add-form')!.classList.contains('open')).toBe(true);
+    expect((shadow.getElementById('add-name') as HTMLInputElement).value).toBe('path');
+  });
+
+  test('editing a hierarchy row in place shows, and takes, the path through its parent', async () => {
+    const { shadow, specs, calls, cursorTo } = await mountPanel(maratonFields(), {
+      catalog: { path: 'hierarchy_ref' },
+      tree: { évènement: U_BLUES },
+      treePaths: ['sport'],
+    });
+    cursorTo(0);
+    await specs.get('metarecord:row-edit')!.handler();
+    await settle();
+    await settle();
+    const input = shadow.querySelector<HTMLInputElement>('td.value input')!;
+    expect(input.value).toBe('sport/maraton');
+    input.value = 'évènement/maraton';
+    const ok = [...shadow.querySelectorAll<HTMLButtonElement>('td.ops button')].find(
+      (b) => b.textContent === 'OK',
+    )!;
+    ok.click();
+    await settle();
+    await settle();
+    expect(calls).toContainEqual({
+      method: 'PATCH',
+      path: `/repos/${REPO}/fields/7`,
+      body: { value: { type: 'hierarchy_ref', value: { parent: U_BLUES, name: 'maraton' } } },
+    });
   });
 });

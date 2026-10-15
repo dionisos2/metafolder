@@ -632,8 +632,12 @@
 "y w" = { command = "sync:open", when = "sync" }
 "y r" = { command = "sync:run", when = "sync" }
 
-# file: image zoom controls.
-"plus" = { command = "file:zoom in", when = "file" }
+# file: image zoom controls. In metarecord-detail, + adds a value to the field
+# under the cursor (a hierarchy node: one more parent).
+"plus" = [
+  { command = "file:zoom in", when = "file" },
+  { command = "metarecord:row-add", when = "metarecord-detail" },
+]
 "-" = { command = "file:zoom out", when = "file" }
 "=" = { command = "file:zoom fit", when = "file" }
 "0" = { command = "file:zoom reset", when = "file" }

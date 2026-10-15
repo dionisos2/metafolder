@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/metarecord:row-add
+catalog: GUI command
+target: metarecord:row-add
+summary: Add a value to the field under the cursor
+
+!! Reference
+
+* Defined by the ``metarecord-detail`` panel
+
+!! Default keys
+
+* ``plus`` → ``metarecord:row-add`` (in the ``metarecord-detail`` panel)

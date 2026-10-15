@@ -177,21 +177,11 @@ export function createValues({ daemon, config, parseQuery }) {
         );
         return body.paths?.[0] ?? value.value.name;
       }
-      case 'hierarchy_ref': {
+      case 'hierarchy_ref':
         // One row per parent (doc "Hierarchy references"): the row reads as
         // the path through its own parent, which the node's first path may
         // not go through.
-        const { parent, name } = value.value;
-        if (!parent) return name;
-        const body = /** @type {{paths?: string[]}} */ (
-          await daemon.call(
-            'GET',
-            `/repos/${repo}/metarecords/${parent}/fields/${encodeURIComponent(field)}/resolve-tree`,
-          )
-        );
-        const above = body.paths?.[0];
-        return above === undefined ? name : above === '' ? `/${name}` : `${above}/${name}`;
-      }
+        return pathThrough(repo, field, value.value.parent, value.value.name);
       case 'externalref':
         // Same one-line form as formatValue (ui.js); the value is an object, so
         // the default String(...) would render "[object Object]".
@@ -200,6 +190,22 @@ export function createValues({ daemon, config, parseQuery }) {
         // Only primitive-valued types (string/int/float/datetime) reach here.
         return String(value.value);
     }
+  }
+
+  /** The path a position named `name` under `parent` reads as in `field` —
+   *  what `parse` takes back to that parent and name. A root is its bare name.
+   *  @param {string} repo @param {string} field @param {string|null} parent
+   *  @param {string} name @returns {Promise<string>} */
+  async function pathThrough(repo, field, parent, name) {
+    if (!parent) return name;
+    const body = /** @type {{paths?: string[]}} */ (
+      await daemon.call(
+        'GET',
+        `/repos/${repo}/metarecords/${parent}/fields/${encodeURIComponent(field)}/resolve-tree`,
+      )
+    );
+    const above = body.paths?.[0];
+    return above === undefined ? name : above === '' ? `/${name}` : `${above}/${name}`;
   }
 
   /** What a `ref` value reads back as under the value: its label in the
@@ -294,6 +300,7 @@ export function createValues({ daemon, config, parseQuery }) {
 
   return {
     rawOf,
+    pathThrough,
     refLabel,
     parse,
     views,

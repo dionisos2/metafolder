@@ -2,7 +2,7 @@ title: Field editor
 tags: GUI
 kind: reference
 aliases: field-editor value-widget widget
-summary: The input a form shows for a field's value follows the value's type: a number box, a checkbox, a uuid with a pick button, a parent and a name.
+summary: The input a form shows for a field's value follows the value's type: a number box, a checkbox, a uuid with a pick button, a path.
 
 The forms that write a value — adding or editing a field in [[metarecord-detail panel]],
 the bulk edit of [[metarecord-list panel]] — show the same editor: a ''type'' button, and
@@ -16,11 +16,15 @@ the input matching the type chosen.
 |`datetime` |a text field, in ISO-8601 (`2024-03-15T10:30:00Z`) |
 |`nothing` |no input: `∅`, the explicit absence |
 |`ref` |a uuid, with a 🔍 button opening the [[Value picker]] |
-|`tree_ref` |a parent uuid (empty for a root) with its 🔍 button, then the name |
+|`tree_ref`, `hierarchy_ref` |a path, `music/jazz`, as in the command input below; its 🔍 button picks the parent, keeping the name typed |
 |`refbase` |a uuid, with a 🔍 button |
 |`externalref` |a repository uuid and a metarecord uuid |
 
-The type button offers the first eight. `refbase` and `externalref` are not offered
+A position is shown, and edited, as the path through its own parent: a hierarchy node's
+second row reads `évènement/maraton`, not its first path. The bulk edit of
+[[metarecord-list panel]] still takes a parent uuid and a name.
+
+The type button offers every type but the last two. `refbase` and `externalref` are not offered
 for a new value; they are edited where a value of that type already exists.
 
 For a field name that already has a type in the repository, the button offers that
@@ -41,7 +45,7 @@ instead ([[Editing metarecords in the GUI]]):
 |`bool` |`true` or `false` (completed) |
 |`datetime` |the ISO-8601 text |
 |`ref` |a uuid — or a candidate of the completion, which names the target and stands for its uuid ([[Completion views]]) |
-|`tree_ref` |a path in the field's tree, `music/jazz`: the last piece is the name, what precedes names the parent |
+|`tree_ref`, `hierarchy_ref` |a path in the field's tree, `music/jazz`: the last piece is the name, what precedes names the parent |
 
 The editor is `panel-shim/value-widget.js`, served as `/__value-widget.js`
 (`createTypePicker`, `widgetFor`, `parseRawValue`).

@@ -11,7 +11,7 @@ import { createSelect } from '/__select.js';
 
 /**
  * The value editor `widgetFor` builds.
- * @typedef {{element: HTMLElement, read: () => Metafolder.Value}} Widget
+ * @typedef {{element: HTMLElement, read: () => Metafolder.Value|Promise<Metafolder.Value>}} Widget
  */
 
 // Each operation maps to its batch endpoint and a confirmation verb.
@@ -216,7 +216,7 @@ export function createBulkEdit({ root, metafolder, getRepo, effectiveQuery, stat
       const body =
         op.valueless || !widget
           ? { query: effQ ?? MATCH_ALL, name, ...(force ? { force: true } : {}) }
-          : bulkSetBody(effQ, name, widget.read(), force);
+          : bulkSetBody(effQ, name, await widget.read(), force);
       const resp = /** @type {{updated?: number}} */ (
         await daemon.call('POST', `/repos/${repo}/${op.path}`, body)
       );

@@ -47,9 +47,9 @@
 #
 # Usage:  scripts/gui-e2e.sh [--unsandboxed] [--keep-logs] [scenario...]
 #   with no scenario, runs them all: undo-redo duplicates orphans trash
-#   reconcile ignore sync repos list layout script errors picker refs prompt
-#   history keybindings open-with tab-close pick-button suggested-key walk
-#   slideshow devtools.
+#   reconcile ignore sync repos list layout script errors picker refs hierarchy
+#   hierarchy-form prompt history keybindings open-with tab-close pick-button
+#   suggested-key walk slideshow devtools.
 #   --unsandboxed  pass --allow-unsandboxed-webview to the GUI (a container
 #                  that forbids WebKit's sandbox; never on real data)
 #   --keep-logs    keep the work directory (daemon.log, gui.log) on exit
@@ -75,8 +75,8 @@ for arg in "$@"; do
 done
 [ ${#SCENARIOS[@]} -gt 0 ] \
     || SCENARIOS=(undo-redo duplicates orphans trash reconcile ignore sync repos list layout script
-        errors picker refs hierarchy prompt history keybindings open-with tab-close pick-button
-        suggested-key walk slideshow devtools)
+        errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close
+        pick-button suggested-key walk slideshow devtools)
 
 # shellcheck source=lib/daemon-fixture.sh
 . scripts/lib/daemon-fixture.sh
@@ -811,6 +811,35 @@ scenario_hierarchy() {
     assert_eq "hierarchy: and below the other" "$maraton" "$(df_mf metarecord -q 'path ->* "sport"' get)"
     run metarecord:field add path sport/marathon
     assert "hierarchy: a node keeps one name" [ "$LAST_RC" != 0 ]
+}
+
+# The same with the mouse (doc "metarecord-detail panel"): the + of the field's
+# row opens the add form on it, and the new parent is typed by its path.
+scenario_hierarchy_form() {
+    needs_clicks hierarchy-form || return 0
+    needs_keyboard hierarchy-form || return 0
+    new_repo hierarchy-form
+    local maraton
+    df_mf metarecord add mf_schema:string=tag path:hierarchy_ref=/sport >/dev/null
+    df_mf metarecord add mf_schema:string=tag path:hierarchy_ref=/évènement >/dev/null
+    show_panel left metarecord-detail metarecord:cancel
+    run metarecord:create tag
+    run metarecord:field set path hierarchy_ref sport/maraton
+    command_ok "hierarchy form: placed under a first parent"
+    maraton=$(df_mf metarecord -q 'path = "sport/maraton"' get)
+
+    assert "hierarchy form: the field's + is clicked" \
+        until_ok 10 click 'button.add-value[title*=path]'
+    assert "hierarchy form: the form is on that field" until_ok 10 reads path '#add-name'
+    # The value input has the focus.
+    typed "évènement/maraton"
+    assert "hierarchy form: added" click '#add-append'
+    assert "hierarchy form: the node has both parents" until_ok 10 paths_are "$maraton" \
+        "$(printf 'sport/maraton\névènement/maraton')"
+}
+# paths_are <uuid> <paths> — the node's paths, one a line, sorted.
+paths_are() {
+    [ "$(df_mf metarecord -i "$1" get --resolve-tree path --tsv | cut -f2 | LC_ALL=C sort)" = "$2" ]
 }
 
 scenario_prompt() {
