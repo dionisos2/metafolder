@@ -606,6 +606,17 @@ declare namespace Metafolder {
     list(): Promise<ShellEntry[]>;
     /** `entry` is null when the log was cleared. */
     onAppend(listener: (entry: ShellEntry | null) => void): void;
+    /** Tab-completes the word before `cursor` in a shell line, like bash: the
+     *  line as it becomes, its new cursor, and the candidates still open (empty
+     *  once one was inserted). */
+    complete(line: string, cursor: number): Promise<ShellCompletion>;
+  }
+
+  /** What `shell.complete` makes of a line. */
+  interface ShellCompletion {
+    text: string;
+    cursor: number;
+    candidates: string[];
   }
 
   /** One context-menu entry, a `{header}` category label, or the string `'-'`

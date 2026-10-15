@@ -5,7 +5,7 @@ aliases: terminal output
 summary: What the shell lines run in the workspace printed, read like a terminal: oldest first, one block per run, stderr in red, how a run ended.
 
 Open it with `panel:open here shell` (<<key "panel:open here shell" "t s">>). A shell
-line typed after `!` ([[Bash mode]]), a script started with `script:run`
+line typed in the panel itself (below) or after `!` ([[Bash mode]]), a script started with `script:run`
 ([[Running shipped scripts]]) and a program started with `file:open-with`
 ([[Opening a file with another program]]) write their output here, not to the
 [[message panel]].
@@ -21,6 +21,17 @@ printed it, not after whatever was printed last.
 
 While the view is at the bottom it follows the output; once you have scrolled up into
 older output, it does not move.
+
+!! Typing a line in the panel
+
+At the bottom of the panel, after `$`, is a line to type a shell command in, as in a
+console — no need to go through the command input. Click it, or press
+<<key "shell:focus line" "e l">> while the panel has the focus.
+
+* `Enter` runs it exactly as `!` followed by the line would ([[Bash mode]]): `sh -c` in the background, `%` standing for the selection, the run shown in the task bar. The field empties and keeps the keyboard, ready for the next line, and the view goes back to the bottom to show what it prints.
+* `Tab` completes the word before the caret by asking `bash`, as in [[Bash mode]]: a single candidate is inserted; several extend the word to their common start and are listed above the line, until the next edit.
+* `ctrl+p`, `ctrl+n` and `ctrl+r` recall what was run: the history is the one of the command input's bash mode, so a line run in either is recalled in both ([[Input history]]).
+* <<key "editing:unfocus" Escape>> gives the keyboard back to the panels; the line typed is kept.
 
 <<cmd "shell:clear">>, or the panel's ''Clear'' button, empties the log. Each workspace
 has its own, and none outlives the session.

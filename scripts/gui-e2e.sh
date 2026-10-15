@@ -76,7 +76,7 @@ done
 [ ${#SCENARIOS[@]} -gt 0 ] \
     || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list layout script script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close
-        pick-button suggested-key walk slideshow devtools)
+        pick-button suggested-key walk slideshow devtools shell-line)
 
 # shellcheck source=lib/daemon-fixture.sh
 . scripts/lib/daemon-fixture.sh
@@ -1068,6 +1068,28 @@ scenario_open_with() {
     command_ok "open with: a program given runs"
     assert "open with: the program runs" until_ok 10 test -s "$WORK/opened"
     assert_eq "open with: on the selected file" "$file" "$(cat "$WORK/opened" 2>/dev/null)"
+}
+
+scenario_shell_line() {
+    needs_keyboard shell-line || return 0
+    new_repo shell-line
+    local out="$WORK/shell-line.out" cut="$WORK/shell-line-cut.out"
+
+    # The line at the bottom of the shell panel runs what is typed in it, and
+    # keeps the keyboard for the next one (doc "shell panel").
+    run panel:open here shell
+    run shell:focus line
+    command_ok "shell line: focus reaches the panel's line"
+    typed "echo typed-in-panel > $out"
+    keys Return
+    assert "shell line: Enter runs the line" until_ok 10 grep -qx typed-in-panel "$out"
+
+    # ctrl+k (editing:clear line-end) drops what follows the caret: without
+    # it, echo would also print the trailing word. Typed without leaving the
+    # field — the line still has the keyboard after the run.
+    typed "echo kept > $cut dropped"
+    keys Left Left Left Left Left Left Left Left ctrl+k Return
+    assert "shell line: still focused, ctrl+k cuts the end" until_ok 10 grep -qx kept "$cut"
 }
 
 # has_ws <id> — the GUI holds that workspace.

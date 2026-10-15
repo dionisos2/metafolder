@@ -6,6 +6,7 @@
 
 import { createPathResolver } from '../../../../panel-shim/resolve.js';
 import { showMenu } from '../../../../panel-shim/menu.js';
+import { commonPrefix, insertCandidate } from '../bash';
 import { type ArgSpec, withTopLevelInvoke } from '../commands';
 import type { PanelFunctions } from '../panelFunctions';
 import { invoke as ipcInvoke } from '../ipc';
@@ -780,6 +781,22 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       list: () => invoke('get_shell_log', { wsId: ctx.wsId }) as Promise<Metafolder.ShellEntry[]>,
       onAppend(listener: (entry: Metafolder.ShellEntry | null) => void) {
         shellListeners.add(listener);
+      },
+      // Tab in a shell line, as the command input's bash mode does it (doc
+      // "Bash mode"): one candidate is inserted, several first extend the
+      // word to their common prefix and are returned to be listed.
+      async complete(line: string, cursor: number): Promise<Metafolder.ShellCompletion> {
+        const { word, candidates } = (await invoke('bash_complete', {
+          line: line.slice(0, cursor),
+        })) as { word: string; candidates: string[] };
+        if (candidates.length === 1) {
+          return { ...insertCandidate(line, cursor, word, candidates[0], true), candidates: [] };
+        }
+        const prefix = commonPrefix(candidates);
+        if (prefix.length > word.length) {
+          return { ...insertCandidate(line, cursor, word, prefix, false), candidates };
+        }
+        return { text: line, cursor, candidates };
       },
     },
     contextMenu,

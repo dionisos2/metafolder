@@ -1,0 +1,6 @@
+title: shell:focus
+tags: [[GUI command]] Commands
+kind: reference
+summary: Shell: focus the command line (line)
+
+`shell:focus line` gives the keyboard to the line at the bottom of the [[shell panel]], where a shell command is typed and run with `Enter`. `line` is the panel's only text zone.

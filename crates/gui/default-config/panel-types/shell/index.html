@@ -80,10 +80,49 @@
       .status::after {
         content: ']';
       }
+      #candidates {
+        padding: 2px 8px;
+        font-family: var(--mf-font-mono, monospace);
+        font-size: 0.9em;
+        color: var(--mf-fg-dim, #8a8a96);
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      #prompt {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 8px;
+        border-top: 1px solid var(--mf-border, #3a3a44);
+        font-family: var(--mf-font-mono, monospace);
+        font-size: 0.9em;
+      }
+      #prompt::before {
+        content: '$';
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      #line {
+        flex: 1;
+        min-width: 0;
+        font: inherit;
+        background: var(--mf-bg, #1e1e24);
+        color: var(--mf-fg, #d8d8e0);
+        border: 1px solid var(--mf-border, #3a3a44);
+        border-radius: 3px;
+        padding: 2px 6px;
+        outline: none;
+      }
+      #line:focus {
+        border-color: var(--mf-accent, #3d5a80);
+      }
     </style>
   </head>
   <body>
     <div id="toolbar"><button id="clear">Clear (shell:clear)</button></div>
-    <div id="log"><div id="empty">No shell line run yet: type ! in the command input.</div></div>
+    <div id="log"><div id="empty">No shell line run yet: type one below, or ! in the command input.</div></div>
+    <div id="candidates" hidden></div>
+    <div id="prompt">
+      <input id="line" type="text" spellcheck="false" autocomplete="off" aria-label="Shell line" placeholder="a shell line — Enter runs it, Tab completes" />
+    </div>
   </body>
 </html>

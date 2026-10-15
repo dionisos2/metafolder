@@ -516,6 +516,34 @@ describe('panel api — misc surface', () => {
     expect(messages).not.toHaveBeenCalled();
   });
 
+  test('shell.complete inserts a unique candidate, as bash does', async () => {
+    const { api, invoke } = setup();
+    invoke.mockResolvedValueOnce({ word: 'Doc', candidates: ['Documents/'] });
+    expect(await api.shell.complete('ls Doc x', 6)).toEqual({
+      text: 'ls Documents/ x',
+      cursor: 13,
+      candidates: [],
+    });
+    // Only what precedes the cursor is completed.
+    expect(invoke).toHaveBeenCalledWith('bash_complete', { line: 'ls Doc' });
+  });
+
+  test('shell.complete extends to the common prefix and lists several candidates', async () => {
+    const { api, invoke } = setup();
+    invoke.mockResolvedValueOnce({ word: 'f', candidates: ['foo', 'foobar'] });
+    expect(await api.shell.complete('cat f', 5)).toEqual({
+      text: 'cat foo',
+      cursor: 7,
+      candidates: ['foo', 'foobar'],
+    });
+  });
+
+  test('shell.complete with no candidate leaves the line as it is', async () => {
+    const { api, invoke } = setup();
+    invoke.mockResolvedValueOnce({ word: 'zz', candidates: [] });
+    expect(await api.shell.complete('zz', 2)).toEqual({ text: 'zz', cursor: 2, candidates: [] });
+  });
+
   test('bench.record forwards to bench_record', () => {
     const { api, invoke } = setup();
     api.bench.record('mf:list:render', 2.5);

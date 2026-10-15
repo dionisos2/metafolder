@@ -3,7 +3,7 @@
 // command line, stderr told apart, how it ended when worth saying — and two
 // runs at once each keep their own block.
 
-import { describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 
@@ -28,23 +28,59 @@ function shadowFor(): ShadowRoot {
 type Entry = { ts_ms: number; run: string; kind: string; text: string };
 const entry = (run: string, kind: string, text: string): Entry => ({ ts_ms: 0, run, kind, text });
 
-async function mounted(history: Entry[]) {
+type Completion = { text: string; cursor: number; candidates: string[] };
+
+async function mounted(history: Entry[], completion?: Completion) {
   const shadow = shadowFor();
   let push: (entry: unknown) => void = () => {};
-  const invoke = vi.fn(async () => {});
+  const invoke = vi.fn(async (_invocation: string) => {});
+  const top = vi.fn(async (_invocation: string) => {});
+  const complete = vi.fn(async (_line: string, _cursor: number) => completion);
+  const appended: string[] = [];
+  const handlers = new Map<string, (...args: string[]) => unknown>();
   const api = {
-    commands: { invoke },
+    invoke: top,
+    commands: {
+      invoke,
+      register: async (name: string, options: { handler: (...args: string[]) => unknown }) => {
+        handlers.set(name, options.handler);
+      },
+    },
+    workspace: { get: async () => 'repo-1' },
+    history: {
+      read: async () => ['older', 'newest'],
+      append: async (_repo: string, _zone: string, entry: string) => {
+        appended.push(entry);
+      },
+    },
     shell: {
       list: async () => history,
       onAppend: (listener: (entry: unknown) => void) => {
         push = listener;
       },
+      complete,
     },
   };
   const mod = await import('../../default-config/panel-types/shell/main.js');
   await mod.mount(shadow, api as never);
-  return { shadow, push: (e: unknown) => push(e), invoke };
+  const line = shadow.getElementById('line') as HTMLInputElement;
+  return { shadow, push: (e: unknown) => push(e), invoke, top, complete, appended, handlers, line };
 }
+
+function type(line: HTMLInputElement, text: string) {
+  line.focus();
+  line.value = text;
+  line.setSelectionRange(text.length, text.length);
+  line.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function press(line: HTMLInputElement, key: string, init: KeyboardEventInit = {}) {
+  const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init });
+  line.dispatchEvent(event);
+  return event;
+}
+
+const settle = () => new Promise((r) => setTimeout(r, 0));
 
 /** Each run as [command, ...lines], lines prefixed by their kind. */
 function blocks(shadow: ShadowRoot) {
@@ -94,5 +130,94 @@ describe('shell panel', () => {
     const { shadow, invoke } = await mounted([]);
     (shadow.getElementById('clear') as HTMLButtonElement).click();
     expect(invoke).toHaveBeenCalledWith('shell:clear');
+  });
+
+  describe('the command line', () => {
+    afterEach(() => document.body.replaceChildren());
+
+    test('Enter runs the typed line as a shell line, and empties the field', async () => {
+      const { line, top } = await mounted([]);
+      type(line, 'ls -l %');
+      expect(press(line, 'Enter').defaultPrevented).toBe(true);
+      // `!`: the same dispatch as the command input's bash mode, `%` expansion included.
+      expect(top).toHaveBeenCalledWith('!ls -l %');
+      expect(line.value).toBe('');
+    });
+
+    test('the field keeps the keyboard after a run, as in a terminal', async () => {
+      const { line, shadow } = await mounted([]);
+      type(line, 'ls');
+      press(line, 'Enter');
+      expect(shadow.activeElement).toBe(line);
+    });
+
+    test('a blank line runs nothing', async () => {
+      const { line, top } = await mounted([]);
+      type(line, '   ');
+      press(line, 'Enter');
+      expect(top).not.toHaveBeenCalled();
+    });
+
+    test('what ran goes into the bash history, shared with the command input', async () => {
+      const { line, appended } = await mounted([]);
+      type(line, 'echo hi');
+      press(line, 'Enter');
+      await settle();
+      expect(appended).toEqual(['echo hi']);
+    });
+
+    test('ctrl+p recalls the previous line', async () => {
+      const { line } = await mounted([]);
+      line.focus();
+      press(line, 'p', { ctrlKey: true });
+      await settle();
+      expect(line.value).toBe('newest');
+    });
+
+    test('running a line follows the output again, even after scrolling up', async () => {
+      const { line, shadow } = await mounted([]);
+      const log = shadow.getElementById('log') as HTMLElement;
+      Object.defineProperty(log, 'scrollHeight', { value: 500, configurable: true });
+      log.scrollTop = 0;
+      type(line, 'ls');
+      press(line, 'Enter');
+      expect(log.scrollTop).toBe(500);
+    });
+
+    test('Tab completes the word before the cursor', async () => {
+      const { line, complete } = await mounted([], {
+        text: 'ls Documents/',
+        cursor: 13,
+        candidates: [],
+      });
+      type(line, 'ls Doc');
+      expect(press(line, 'Tab').defaultPrevented).toBe(true);
+      await settle();
+      expect(complete).toHaveBeenCalledWith('ls Doc', 6);
+      expect(line.value).toBe('ls Documents/');
+      expect(line.selectionStart).toBe(13);
+    });
+
+    test('several candidates are listed under the output, until the next edit', async () => {
+      const { line, shadow } = await mounted([], {
+        text: 'cat foo',
+        cursor: 7,
+        candidates: ['foo', 'foobar'],
+      });
+      type(line, 'cat f');
+      press(line, 'Tab');
+      await settle();
+      const candidates = shadow.getElementById('candidates') as HTMLElement;
+      expect(candidates.hidden).toBe(false);
+      expect(candidates.textContent).toContain('foobar');
+      type(line, 'cat foob');
+      expect(candidates.hidden).toBe(true);
+    });
+
+    test('shell:focus line gives the field the keyboard', async () => {
+      const { line, shadow, handlers } = await mounted([]);
+      await handlers.get('shell:focus')!('line');
+      expect(shadow.activeElement).toBe(line);
+    });
   });
 });

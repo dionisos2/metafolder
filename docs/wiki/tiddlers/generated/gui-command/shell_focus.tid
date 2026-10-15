@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/shell:focus
+catalog: GUI command
+target: shell:focus
+summary: Shell: focus the command line (line)
+
+!! Reference
+
+* Defined by the ``shell`` panel
+
+!! Default keys
+
+* ``e l`` → ``shell:focus line`` (in the ``shell`` panel)

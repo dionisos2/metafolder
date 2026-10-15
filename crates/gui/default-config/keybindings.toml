@@ -464,6 +464,7 @@
 "e f" = { command = "metarecord-list:focus finder", when = "metarecord-list" }
 "e s" = { command = "metarecord-list:focus simplified", when = "metarecord-list" }
 "e q" = { command = "metarecord-list:focus normal", when = "metarecord-list" }
+"e l" = { command = "shell:focus line", when = "shell" }
 # "f" = find. In the list panels it jumps to a row by name, completing over
 # what the panel displays and filtered by ordered substring like every other
 # picker (doc "Jumping to an entry"); in metarecord-list — whose rows come from

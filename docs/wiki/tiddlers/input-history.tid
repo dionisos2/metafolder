@@ -7,7 +7,7 @@ summary: Each text zone remembers what was submitted in it, per repository: `ctr
 The text zones keep what was submitted in them, ''per repository and per zone''.
 Four zones have a history:
 
-* the command input in command mode, and in bash mode — two separate histories ([[The command input]], [[Bash mode]]);
+* the command input in command mode, and in bash mode — two separate histories ([[The command input]], [[Bash mode]]) — the line of the [[shell panel]] sharing the bash mode's;
 * the finder and the query of `metarecord-list`.
 
 !! Recalling

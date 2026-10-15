@@ -5,7 +5,7 @@ summary: The shell panel type
 
 !! Commands
 
-None of its own.
+* ``shell:focus`` — Shell: focus the command line (line)
 
 !! Generic commands
 
