@@ -571,7 +571,9 @@ impl RepoState {
     /// directory, and the watch set is placed again — the mount table read
     /// afresh, a drive plugged in is live and one unplugged frozen.
     pub fn mounts_changed(&self, points: &[std::path::PathBuf]) {
-        let conn = self.conn.lock_recover();
+        // Not a request: it names itself (doc "What the slow log records").
+        let _timed = metafolder_core::slowlog::begin(self.slowlog.clone(), "watcher.remount");
+        let conn = metafolder_core::slowlog::timed("wait:conn", || self.conn.lock_recover());
         let Some(watcher) = self.handles.lock_recover().as_ref().map(|h| h.watcher.clone()) else {
             return;
         };
@@ -734,7 +736,14 @@ impl RepoState {
                 dest
             }
         };
-        crate::backup::write_backup(&**conn, &self.metafolder_dir, &dest)
+        let copied = {
+            let _phase = metafolder_core::slowlog::phase("backup.copy");
+            crate::backup::copy_store(&**conn, &self.metafolder_dir, &dest)
+        };
+        drop(conn);
+        let _phase = metafolder_core::slowlog::phase("backup.check");
+        copied
+            .and_then(crate::backup::finish_backup)
             .map_err(|e| ApiError::internal(format!("backup failed: {e:#}")))
     }
 
@@ -757,8 +766,17 @@ impl RepoState {
                 return Ok(None);
             }
         }
-        let conn = self.conn.lock_recover();
-        crate::backup::write_backup(&**conn, &self.metafolder_dir, &dest)
+        // Not a request: it names itself (doc "What the slow log records").
+        // Only the copy holds the store; the check runs on the copy.
+        let _timed = metafolder_core::slowlog::begin(self.slowlog.clone(), "backup.auto");
+        let copied = {
+            let conn = metafolder_core::slowlog::timed("wait:conn", || self.conn.lock_recover());
+            let _phase = metafolder_core::slowlog::phase("backup.copy");
+            crate::backup::copy_store(&**conn, &self.metafolder_dir, &dest)
+        };
+        let _phase = metafolder_core::slowlog::phase("backup.check");
+        copied
+            .and_then(crate::backup::finish_backup)
             .map(Some)
             .map_err(|e| ApiError::internal(format!("automatic backup failed: {e:#}")))
     }

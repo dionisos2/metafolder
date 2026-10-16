@@ -65,6 +65,8 @@ synonym:
 |`refresh` |a reconcile comparing one path's stat fields with the disk, and writing what changed |
 |`mime` |a reconcile checking one file's MIME type, and detecting it when it has none |
 |`metadata` |a reconcile checking one file's embedded metadata, and extracting it when not yet done |
+|`backup.copy` |a backup copying the store, under the store handle |
+|`backup.check` |a backup opening and checking its copy — after the store handle is released |
 
 A `wait:*` phase is the one that distinguishes "this is expensive" from "this was
 fine and something else held the repository".
@@ -87,7 +89,17 @@ task ten seconds after it ends, and it says how far the task went, not where its
 time went. And a long task is usually the other half of a slow entry — the
 reconcile that every reader's `wait:conn` was waiting for.
 
+!! Other work that is not a request
+
+Whatever else holds the store handle off a request names itself too, since a
+holder that writes no entry leaves its victims' `wait:conn` unexplained — every
+blocked reader ending at the same instant, and nothing logged that ran then:
+
+* `watcher.flush`, the watcher's flush of its buffered events;
+* `backup.auto`, the [[automatic backup|Backups and restore]], about once a day;
+* `watcher.remount`, the watches placed again after a mount point under the root came or went ([[Mount points]]).
+
 !! What is left out
 
-* The `query` task, which is a request already logged under its route, and the watcher's flush, logged as `watcher.flush`.
+* The `query` task, which is a request already logged under its route.
 * Operations that name no repository (`GET /health`, `POST /repos/load`): the log lives in a repository, and these have none.

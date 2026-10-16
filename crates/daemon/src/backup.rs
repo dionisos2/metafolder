@@ -59,6 +59,22 @@ fn remove(path: &Path) -> Result<()> {
 /// Writes a verified backup of an open repository to `dest`, replacing what
 /// is there only once the new one checks clean.
 pub fn write_backup(store: &dyn Database, metafolder: &Path, dest: &Path) -> Result<BackupInfo> {
+    let copied = copy_store(store, metafolder, dest)?;
+    finish_backup(copied)
+}
+
+/// A copy of the store not yet checked: what [`finish_backup`] turns into a
+/// backup, or throws away.
+pub struct Copied {
+    temp: PathBuf,
+    dest: PathBuf,
+}
+
+/// The half of a backup that needs the store: its copy, written beside `dest`
+/// under a temporary name, with the repository's `config.json` and
+/// `schema.json`. The caller holds the store only for this — the check that
+/// follows runs on the copy, and on a large store it is the longer half.
+pub fn copy_store(store: &dyn Database, metafolder: &Path, dest: &Path) -> Result<Copied> {
     let name = dest.file_name().context("a backup needs a directory name")?.to_string_lossy();
     let parent = dest.parent().context("a backup needs a parent directory")?;
     std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
@@ -74,8 +90,17 @@ pub fn write_backup(store: &dyn Database, metafolder: &Path, dest: &Path) -> Res
                 .with_context(|| format!("copy {}", from.display()))?;
         }
     }
+    Ok(Copied { temp, dest: dest.to_path_buf() })
+}
 
-    // The copy is only a backup once it opens and checks clean.
+/// The half of a backup that needs only the copy: it is a backup once it
+/// opens and checks clean, and then it takes the place of the previous one.
+pub fn finish_backup(copied: Copied) -> Result<BackupInfo> {
+    let Copied { temp, dest } = copied;
+    let dest = dest.as_path();
+    let name = dest.file_name().context("a backup needs a directory name")?.to_string_lossy();
+    let parent = dest.parent().context("a backup needs a parent directory")?;
+
     let metarecords = {
         let copy = crate::repo::open_store(&temp.join(KV_DIR)).context("open the backup")?;
         let problems = copy.check().context("check the backup")?;

@@ -32,6 +32,7 @@ indented by nesting:
 
 * ''Read the phases, not the total.'' The total says it was slow, which you knew.
 * A `wait:conn` phase is time spent waiting for the repository, which something else was holding — a reconcile, a watcher flush. The operation itself was fine.
+* To find the holder, add each waiting entry's `ms` to its start: they all end at the instant the holder let go, and the holder is the entry that started after the last one that did not wait and lasted until then. If there is none, the holder is not instrumented — a bug to fix, every holder off a request names itself ([[What the slow log records]]).
 * A phase that took long and read few keys ''waited'' — for a lock, a cold disk cache, a loaded machine. One that read many keys did the work.
 * Time not covered by any phase is code that is not instrumented: that is where to look.
 * A GUI entry and a daemon entry with the same id are one request seen from both sides: 4.9 s in the GUI against 0.2 s in the daemon means the time went to the client ([[Correlating the GUI and the daemon]]).

@@ -576,3 +576,65 @@ async fn test_a_load_warmup_is_logged() {
     let entry = f.entry("task load");
     assert!(phase(&entry, "mounts").is_some(), "{entry:?}");
 }
+
+/// The automatic backup is not a request either, and it is a long holder of
+/// the repository: a copy of the whole store. It names itself, with the copy
+/// (under the store handle) apart from the check of the copy (on the copy).
+#[test]
+fn test_the_automatic_backup_names_itself() {
+    use metafolder_daemon::repo;
+    use metafolder_daemon::state::RepoState;
+
+    let root = TempDir::new("slowlog_backup");
+    let opened = repo::init_repository(&root, None, None, false).unwrap();
+    let settings = DaemonSettings { slow_operation_threshold_ms: 1, ..Default::default() };
+    let repo_state = Arc::new(RepoState::from_opened_with(opened, &settings));
+
+    let busy = repo_state.clone();
+    let holder = std::thread::spawn(move || {
+        let _held = busy.conn.lock().unwrap();
+        std::thread::sleep(HELD);
+    });
+    std::thread::sleep(Duration::from_millis(20));
+    repo_state.auto_backup_if_due(metafolder_core::date::now_ms(), 1).unwrap().expect("due");
+    holder.join().unwrap();
+
+    let entries = slowlog::read(&slowlog::slow_dir(&repo_state.internal_dir()), 100, None).0;
+    let entry = entries
+        .iter()
+        .find(|e| e.op == "backup.auto")
+        .unwrap_or_else(|| panic!("the backup must be logged: {entries:?}"));
+    assert!(phase(entry, "wait:conn").is_some_and(|p| p.ms >= 100), "{entry:?}");
+    assert!(phase(entry, "backup.copy").is_some(), "{entry:?}");
+    assert!(phase(entry, "backup.check").is_some(), "{entry:?}");
+}
+
+/// A drive plugged in or unplugged under the root places the watches again —
+/// a walk of every eligible directory, under the store handle, from a thread
+/// of its own: it names itself.
+#[test]
+fn test_a_remount_names_itself() {
+    use metafolder_daemon::repo;
+    use metafolder_daemon::state::RepoState;
+
+    let root = TempDir::new("slowlog_remount");
+    let opened = repo::init_repository(&root, None, None, false).unwrap();
+    let settings = DaemonSettings { slow_operation_threshold_ms: 1, ..Default::default() };
+    let repo_state = Arc::new(RepoState::from_opened_with(opened, &settings));
+
+    let busy = repo_state.clone();
+    let holder = std::thread::spawn(move || {
+        let _held = busy.conn.lock().unwrap();
+        std::thread::sleep(HELD);
+    });
+    std::thread::sleep(Duration::from_millis(20));
+    repo_state.mounts_changed(&[root.join("usb")]);
+    holder.join().unwrap();
+
+    let entries = slowlog::read(&slowlog::slow_dir(&repo_state.internal_dir()), 100, None).0;
+    let entry = entries
+        .iter()
+        .find(|e| e.op == "watcher.remount")
+        .unwrap_or_else(|| panic!("the remount must be logged: {entries:?}"));
+    assert!(phase(entry, "wait:conn").is_some_and(|p| p.ms >= 100), "{entry:?}");
+}
