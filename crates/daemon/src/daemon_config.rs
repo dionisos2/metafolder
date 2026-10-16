@@ -40,9 +40,9 @@ pub const DEFAULT_LOG_RETENTION_WATCHER_OPS: u64 = 50_000;
 pub const DEFAULT_LOG_RETENTION_USER_OPS: u64 = 1_000_000;
 
 /// Default threshold for the slow-operation log (doc "Slow log"): an operation
-/// past it is written to the repository's log with its phase breakdown. Two
-/// seconds is well above anything the daemon does routinely, so what lands in
-/// the log is what someone waited on.
+/// past it is written to the repository's log with its phase breakdown. A
+/// second and a half is well above anything the daemon does routinely, so what
+/// lands in the log is what someone waited on.
 pub const DEFAULT_SLOW_OPERATION_THRESHOLD_MS: u64 = metafolder_core::slowlog::DEFAULT_THRESHOLD_MS;
 
 /// Default keys-read threshold for the slow-operation log: an operation that
@@ -52,9 +52,10 @@ pub const DEFAULT_SLOW_OPERATION_THRESHOLD_MS: u64 = metafolder_core::slowlog::D
 pub const DEFAULT_SLOW_OPERATION_READS_THRESHOLD: u64 = 100_000;
 
 /// Default time threshold for an operation that wrote nothing: a query is
-/// felt at a tenth of a second — the GUI's finder sends one per keystroke —
-/// long before a write or a watcher flush is.
-pub const DEFAULT_SLOW_READ_THRESHOLD_MS: u64 = 100;
+/// felt long before a write or a watcher flush is — the GUI's finder sends one
+/// per keystroke. Half a second: at a tenth, the log filled with reads that
+/// were only a little slow and buried the ones someone waited on.
+pub const DEFAULT_SLOW_READ_THRESHOLD_MS: u64 = 500;
 
 /// Default mass-orphan circuit breaker: the largest cascade of
 /// `mfr_path = Nothing` a single watcher batch may apply (doc "Orphan scan").

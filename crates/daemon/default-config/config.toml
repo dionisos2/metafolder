@@ -80,14 +80,14 @@ log-retention-user-ops = 1000000
 # keys each part read, not just the total, which is the part you already knew.
 # Queries and field writes are occasionally seconds slow for reasons that are
 # over by the time you notice, and this is what is left behind to explain
-# them. 0 turns the log off; set it to 1 to record everything. Default: 2000.
-slow-operation-threshold-ms = 2000
+# them. 0 turns the log off; set it to 1 to record everything. Default: 1500.
+slow-operation-threshold-ms = 1500
 
 # The same, for an operation that wrote nothing — a query, a listing, a read of
 # the log. What you wait for at every keystroke (the GUI's finder sends a query
 # per key) is slow long before a write or a watcher flush is. 0: the threshold
-# above. Default: 100.
-slow-read-threshold-ms = 100
+# above. Default: 500.
+slow-read-threshold-ms = 500
 
 # How many keys an operation must read before it is logged however quick it
 # was. A duration depends on the machine and its load; a count of keys does

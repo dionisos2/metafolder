@@ -54,8 +54,8 @@ repo-list-cache-ttl-secs = 3
 # with `mf slow`). This records what *you* waited for; the daemon separately
 # records what it spent, and the two entries carry the same op-id — a 5 s wait
 # against a 200 ms daemon entry says the time went to the client, not the
-# daemon. 0 turns the GUI's side of the log off. Default: 2000.
-slow-operation-threshold-ms = 2000
+# daemon. 0 turns the GUI's side of the log off. Default: 1500.
+slow-operation-threshold-ms = 1500
 
 # Where a video's thumbnail is taken, in percent of its duration (0–100): far
 # enough in to pass a black lead-in or a title card. A video whose duration

@@ -587,7 +587,11 @@ fn test_the_automatic_backup_names_itself() {
 
     let root = TempDir::new("slowlog_backup");
     let opened = repo::init_repository(&root, None, None, false).unwrap();
-    let settings = DaemonSettings { slow_operation_threshold_ms: 1, ..Default::default() };
+    let settings = DaemonSettings {
+        slow_operation_threshold_ms: 1,
+        slow_read_threshold_ms: 0,
+        ..Default::default()
+    };
     let repo_state = Arc::new(RepoState::from_opened_with(opened, &settings));
 
     let busy = repo_state.clone();
@@ -619,7 +623,11 @@ fn test_a_remount_names_itself() {
 
     let root = TempDir::new("slowlog_remount");
     let opened = repo::init_repository(&root, None, None, false).unwrap();
-    let settings = DaemonSettings { slow_operation_threshold_ms: 1, ..Default::default() };
+    let settings = DaemonSettings {
+        slow_operation_threshold_ms: 1,
+        slow_read_threshold_ms: 0,
+        ..Default::default()
+    };
     let repo_state = Arc::new(RepoState::from_opened_with(opened, &settings));
 
     let busy = repo_state.clone();

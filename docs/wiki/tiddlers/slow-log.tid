@@ -6,7 +6,7 @@ summary: Every repository keeps a log of the operations that took too long, with
 Some operations occasionally take seconds when they usually take milliseconds —
 a query, a field write, a flush of the watcher's buffered events — and by the time
 you notice, nothing recorded why. So every repository keeps a ''slow-operation
-log'': one entry per operation that took longer than a threshold (2 s, or 100 ms
+log'': one entry per operation that took longer than a threshold (1.5 s, or 500 ms
 for one that only read), or that read an unusually large number of keys.
 
 An entry records ''phases, not just a total'': not that a query was slow, but that

@@ -204,3 +204,13 @@ fn test_auto_backup_days_setting() {
         daemon_config::read_config(&write_config(&dir, "[settings]\nauto-backup-days = 2\n"));
     assert_eq!(every_two.unwrap().settings.auto_backup_days, 2);
 }
+
+/// The slow log's time thresholds by default (doc "Slow log configuration"):
+/// 1.5 s for what writes, 500 ms for what only reads.
+#[test]
+fn test_slow_log_thresholds_by_default() {
+    let dir = temp_dir("slowthresholds");
+    let default = daemon_config::read_config(&write_config(&dir, "")).unwrap();
+    assert_eq!(default.settings.slow_operation_threshold_ms, 1500);
+    assert_eq!(default.settings.slow_read_threshold_ms, 500);
+}

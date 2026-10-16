@@ -31,7 +31,7 @@ repository's store in memory, as `mf repo load --in-memory` does ([[Holding a re
 |`orphan-cascade-limit` |`10000` |the largest number of metarecords one watcher batch may orphan; beyond, the cascade is skipped with a warning (`0`: no limit; [[Orphan scan]]) |
 |`log-retention-watcher-ops` |`50000` |operations of the watcher the event log keeps (`0`: all); a repository can override it ([[Automatic retention]]) |
 |`log-retention-user-ops` |`1000000` |operations of every other origin the event log keeps (`0`: all); a repository can override it |
-|`slow-operation-threshold-ms`, `slow-read-threshold-ms`, `slow-operation-reads-threshold` |`2000`, `100`, `100000` |[[Slow log configuration]] |
+|`slow-operation-threshold-ms`, `slow-read-threshold-ms`, `slow-operation-reads-threshold` |`1500`, `500`, `100000` |[[Slow log configuration]] |
 |`auto-backup-days` |`1` |every how many days each loaded repository gets its automatic backup, into `internal/backups/auto/` — one slot, replaced only by a backup that checks clean (`0`: off; [[Backups and restore]]) |
 
 A missing file is an empty one. A malformed one — invalid TOML, an unknown key

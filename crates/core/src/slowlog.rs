@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 /// How long an operation must take before it earns an entry (doc "Slow log"
 /// "Threshold and configuration"). Both the daemon and the GUI default to it.
-pub const DEFAULT_THRESHOLD_MS: u64 = 2000;
+pub const DEFAULT_THRESHOLD_MS: u64 = 1500;
 
 /// Size at which a source's file is rotated over its single `.old` generation,
 /// so one repository's log costs at most 8 MiB per source.
