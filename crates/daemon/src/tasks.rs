@@ -110,6 +110,11 @@ pub enum TaskKind {
     /// connection lock synchronously (potentially long on a large log), so other
     /// clients can see why their work is queued.
     Prune,
+    /// A backup of the store (`mf repo backup`, or the automatic one; doc
+    /// "Backups and restore"). Observation-only, like `prune`: registered
+    /// because its copy holds the connection lock, so the task bar says why
+    /// everything else waits. Not cancellable: the copy is one LMDB call.
+    Backup,
 }
 
 impl TaskKind {
@@ -123,6 +128,7 @@ impl TaskKind {
             TaskKind::Load => "load",
             TaskKind::Relink => "relink",
             TaskKind::Prune => "prune",
+            TaskKind::Backup => "backup",
         }
     }
 
@@ -134,7 +140,7 @@ impl TaskKind {
     /// with no cooperative cancellation point (interrupting it would only roll
     /// it back).
     pub fn is_cancellable(self) -> bool {
-        !matches!(self, TaskKind::Load | TaskKind::Prune)
+        !matches!(self, TaskKind::Load | TaskKind::Prune | TaskKind::Backup)
     }
 }
 

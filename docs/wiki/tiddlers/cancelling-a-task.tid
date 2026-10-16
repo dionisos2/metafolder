@@ -18,7 +18,7 @@ after the request.
 |`relink` |keeps the pairings it already committed |
 |`query` |stops within a few hundred keys read, whatever it was doing; the waiting client gets a `409` (`query cancelled`) instead of results |
 |`flush` |stops at the next event and drops the half-applied group (groups already committed stay). Nothing is lost — the events go back to the buffer — and the repository's tracking is left ''paused'', or the next event would restart the flush you just stopped: resume it with `mf watch resume` ([[Pausing the watcher]]) |
-|`load`, `prune` |cannot be stopped: a load leaves the repository unusable until it ends, and a prune is a single atomic transaction, with nothing to stop but a rollback of itself |
+|`load`, `prune`, `backup` |cannot be stopped: a load leaves the repository unusable until it ends, a prune is a single atomic transaction, with nothing to stop but a rollback of itself, and a backup's copy is one call of the store |
 
 Stopping a flush ([[Pausing the watcher]]) is how a mistaken copy or a huge move is kept out of the
 database.

@@ -736,15 +736,39 @@ impl RepoState {
                 dest
             }
         };
-        let copied = {
-            let _phase = metafolder_core::slowlog::phase("backup.copy");
-            crate::backup::copy_store(&**conn, &self.metafolder_dir, &dest)
-        };
-        drop(conn);
-        let _phase = metafolder_core::slowlog::phase("backup.check");
-        copied
-            .and_then(crate::backup::finish_backup)
+        self.backup_task(Some(conn), &dest)
             .map_err(|e| ApiError::internal(format!("backup failed: {e:#}")))
+    }
+
+    /// Writes the backup at `dest` as a `backup` task (doc "Tasks"), so the
+    /// task bar shows it: the copy under the store handle — `conn` when the
+    /// caller holds it already — then the check of the copy without it.
+    fn backup_task(
+        &self,
+        conn: Option<std::sync::MutexGuard<'_, crate::store::Handle>>,
+        dest: &std::path::Path,
+    ) -> anyhow::Result<crate::backup::BackupInfo> {
+        use crate::tasks::TaskKind;
+        let task = self.tasks.start(TaskKind::Backup);
+        self.tasks.mark_running(task);
+        self.tasks.set_progress(task, "copying the store", None, None);
+        let copied = {
+            let conn = conn.unwrap_or_else(|| {
+                metafolder_core::slowlog::timed("wait:conn", || self.conn.lock_recover())
+            });
+            let _phase = metafolder_core::slowlog::phase("backup.copy");
+            crate::backup::copy_store(&**conn, &self.metafolder_dir, dest)
+        };
+        self.tasks.set_progress(task, "checking the copy", None, None);
+        let outcome = {
+            let _phase = metafolder_core::slowlog::phase("backup.check");
+            copied.and_then(crate::backup::finish_backup)
+        };
+        match &outcome {
+            Ok(_) => self.tasks.finish(task, None),
+            Err(e) => self.tasks.fail(task, &format!("{e:#}")),
+        }
+        outcome
     }
 
     /// Takes the automatic backup when it is due: when the one in
@@ -769,14 +793,7 @@ impl RepoState {
         // Not a request: it names itself (doc "What the slow log records").
         // Only the copy holds the store; the check runs on the copy.
         let _timed = metafolder_core::slowlog::begin(self.slowlog.clone(), "backup.auto");
-        let copied = {
-            let conn = metafolder_core::slowlog::timed("wait:conn", || self.conn.lock_recover());
-            let _phase = metafolder_core::slowlog::phase("backup.copy");
-            crate::backup::copy_store(&**conn, &self.metafolder_dir, &dest)
-        };
-        let _phase = metafolder_core::slowlog::phase("backup.check");
-        copied
-            .and_then(crate::backup::finish_backup)
+        self.backup_task(None, &dest)
             .map(Some)
             .map_err(|e| ApiError::internal(format!("automatic backup failed: {e:#}")))
     }

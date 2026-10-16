@@ -23,7 +23,8 @@ The daemon also backs up each loaded repository ''automatically'', every
 into one slot, `internal/backups/auto/`, looking at startup and then every hour. A
 failure is a warning in the repository's diagnostics. A backup holds the repository
 only while it copies the store — every other request waits meanwhile — and checks the
-copy after letting go of it; the automatic one is logged as `backup.auto` when slow
+copy after letting go of it. Either is a `backup` task while it runs, so the GUI's
+task bar shows it ([[Task kinds]]); the automatic one is logged as `backup.auto` when slow
 ([[What the slow log records]]).
 
 !! Restoring

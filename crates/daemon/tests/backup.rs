@@ -290,3 +290,39 @@ fn two_restores_in_a_row_keep_both_old_stores() {
     assert_ne!(first, second);
     assert!(first.exists() && second.exists());
 }
+
+/// A backup holds the repository while it copies the store, so every client
+/// waits meanwhile: it is a task, which the GUI's task bar shows (doc
+/// "Tasks") — like a prune, observation-only and not cancellable.
+#[test]
+fn a_backup_in_progress_is_a_task() {
+    use metafolder_daemon::tasks::{TaskKind, TaskStatus};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    let (opened, _root) = repository();
+    let state = Arc::new(RepoState::from_opened(opened));
+    let held = state.conn.lock().unwrap();
+    let backing_up = state.clone();
+    let backup = std::thread::spawn(move || {
+        backing_up.auto_backup_if_due(metafolder_core::date::now_ms(), 1).unwrap()
+    });
+
+    // The backup waits for the store handle held here: it is listed meanwhile.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let task = loop {
+        if let Some(t) = state.tasks.list().into_iter().find(|t| t.kind == TaskKind::Backup) {
+            break t;
+        }
+        assert!(Instant::now() < deadline, "no backup task while it runs");
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert_eq!(task.status, TaskStatus::Running);
+    assert!(!task.cancellable);
+    assert!(!task.phase.is_empty(), "the task bar says what it is doing");
+    drop(held);
+    backup.join().unwrap().expect("due");
+
+    let done = state.tasks.get(task.id).unwrap();
+    assert_eq!(done.status, TaskStatus::Done);
+}
