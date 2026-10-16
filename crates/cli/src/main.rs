@@ -323,13 +323,16 @@ enum RepoCommand {
         /// The new name, unique among the loaded repositories
         name: String,
     },
-    /// Check that the selected repository's store holds together
+    /// Check that the selected repository's indexes agree with its data
     ///
-    /// Its indexes against a rebuild from its data. Exits 1 when a problem is
-    /// found — `mf repo reindex` repairs what is derived.
+    /// Prints "ok", or one problem per line and exits 1. An index problem is
+    /// repaired by `mf repo reindex`; a metarecord holding several positions
+    /// in one forest, by setting that field to one value. Changes nothing.
     Check,
-    /// Rebuild what the selected repository derives from its data (its
-    /// indexes)
+    /// Rebuild the selected repository's indexes from its data
+    ///
+    /// The repair for the index problems `mf repo check` reports; nothing can
+    /// be lost by it. The repository waits for it to finish.
     Reindex,
     /// Take a backup of the selected repository and print where it went
     ///

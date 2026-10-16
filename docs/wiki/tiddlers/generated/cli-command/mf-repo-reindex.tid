@@ -1,16 +1,18 @@
 title: $:/mf/gen/CLI command/mf repo reindex
 catalog: CLI command
 target: mf repo reindex
-summary: Rebuild what the selected repository derives from its data (its indexes)
+summary: Rebuild the selected repository's indexes from its data
 
 !! Reference
 
 ```
-Rebuild what the selected repository derives from its data (its indexes)
+Rebuild the selected repository's indexes from its data
+
+The repair for the index problems `mf repo check` reports; nothing can be lost by it. The repository waits for it to finish.
 
 Usage: mf repo reindex
 
 Options:
   -h, --help
-          Print help
+          Print help (see a summary with '-h')
 ```

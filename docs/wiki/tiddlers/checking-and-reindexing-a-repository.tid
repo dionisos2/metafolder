@@ -1,31 +1,69 @@
 title: Checking and reindexing a repository
 tags: Storage
 kind: guide
-summary: mf repo check compares what the store derives with a rebuild; mf repo reindex derives it again.
+summary: mf repo check tells whether a repository's store is consistent; mf repo reindex rebuilds its indexes, which repairs most of what check finds.
 
 ```
-mf -n music repo check       # what no longer holds together; exit code 1 on a problem
-mf -n music repo reindex     # derive again what the store derives
+mf -n music repo check       # prints "ok", or one problem per line and exits 1
+mf -n music repo reindex     # rebuilds the indexes; prints "reindexed"
 ```
 
-`check` compares the store's derived key spaces — ids, sets, partitions, the
-forest, trigrams, postings — with a rebuild from the primary data, and lists the
-differences, one line each (nothing when the store is healthy; a hundred lines at
-most). It also names the
-metarecords an older daemon let hold several positions in one forest: the data is
-not damaged, but the daemon no longer means anything by it ([[One position per forest]]).
+!! What they look at
 
-`reindex` rebuilds all the derived data from the primary data. Derived data is a
-function of the primary data, so reindexing never loses anything; it is the repair
-for what `check` reports.
+A repository's store holds two kinds of data ([[Storage]]):
 
-The comparison holds neither side in memory: the derived data of a large
-repository — every trigram of every text, per holder — is larger than the machine
-that checks it, and the check also runs inside the daemon, on each automatic backup
+* the ''primary'' data — the metarecords, their field rows, the operation log. It
+  is what you wrote, the source of truth;
+* the ''indexes'' (the code calls them the derived key spaces: ids, sets,
+  partitions, the forest, trigrams, postings) — computed from the primary data,
+  and used to answer queries quickly.
+
+Every write updates both in one transaction, so they should always agree. If they
+ever do not (a daemon bug, a crash the store did not survive cleanly), queries give
+''wrong answers'' — a metarecord a query misses, a path that resolves to the wrong
+thing — but nothing is lost: the primary data is intact.
+
+!! When to use them
+
+Run `check` when queries answer something the data contradicts, after a crash, or
+before trusting a store you restored by hand. It changes nothing.
+
+Run `reindex` when `check` reports an index problem. You do not need it after an
+upgrade: a store whose indexes are of an older format is reindexed automatically
+when it is opened ([[Persisted format changes]]).
+
+!! What check reports, and the repair
+
+`check` prints `ok` on a healthy store. Otherwise it prints one line per problem (a
+hundred at most), a summary on stderr, and exits 1. A problem is one of:
+
+|!Kind |!Example line |!Repair |
+|an index disagrees with the data |`ids: map 1203 metarecords, the store holds 1204` |`mf repo reindex` |
+|a metarecord has several positions in one forest |`metarecord <uuid> holds 2 positions in the 'mfr_path' forest (one per forest): set the field to the one to keep` |set the field to a single value yourself |
+
+The second kind is not damage: an older daemon allowed it, the current one gives it
+no meaning ([[One position per forest]]). It lives in the primary data, so
+`reindex` cannot choose for you which position to keep — after it, `check` still
+reports it.
+
+`reindex` discards the indexes and computes them again from the primary data. It
+never loses anything, writes nothing to the operation log, and leaves nothing to
+undo. Run `check` again afterwards: it should print `ok` (or only the
+several-positions lines).
+
+!! Cost
+
+Both read the whole store, and both hold the repository while they run: queries,
+writes and the watcher's flushes on it wait until they finish (other repositories
+are unaffected). On a large repository this takes a while.
+
+!! How the check stays within memory
+
+The comparison holds neither side in memory: the indexes of a large repository —
+every trigram of every text, per holder — can be larger than the machine's memory,
+and the same check runs inside the daemon on every backup, automatic ones included
 ([[Backups and restore]]). Both sides are streamed into fingerprints (a sum of entry
-hashes per key space, cut in buckets), and only the buckets whose fingerprints differ
-are read again to name their entries. What stays resident is a parent per forest
-node. A check that listed everything it compared was killed for lack of memory on a
-3 GB store, taking the daemon with it at every start.
-
-Both hold the repository while they run: other work on it waits.
+hashes per index, cut in buckets), and only the buckets whose fingerprints differ
+are read a second time, to name the entries that differ. What stays resident is a
+parent per forest node. An earlier check that collected everything it compared was
+killed for lack of memory on a 3 GB store, taking the daemon with it at every start.

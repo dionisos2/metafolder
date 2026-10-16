@@ -2,7 +2,7 @@ title: POST /repos/:repo/reindex
 tags: [[HTTP endpoint]] [[Repository endpoints]]
 kind: reference
 audience: dev
-summary: Derives again everything the store derives.
+summary: Rebuilds a repository's indexes from its data.
 
 [[Checking and reindexing a repository]].
 
