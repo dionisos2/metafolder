@@ -128,12 +128,12 @@ option {
 }
 
 /* A row's open button (/__ui.js openButton, doc "Opening a row"): an icon big
- * enough to aim at. `.mf-open-show` (shows the row in another panel) is dim
- * until its row is hovered or under the cursor; `.mf-open-enter` (goes into the
- * row: a folder, a tree node) is always drawn in green and never dimmed,
- * ringed in the same green, since it is the one way in: the colour sets it
- * apart from `↗`, which shares its arrow shape, and the ring gives a bare
- * arrow the weight of a button. */
+ * enough to aim at. The two arrows are ringed buttons, each in its own colour,
+ * never dimmed: `.mf-open-enter` (`↘`, goes into the row: a folder, a tree
+ * node — the one way in) in green, `.mf-open-show` (`↗`, shows the row in the
+ * file panel) in blue. The colour tells apart two arrows of the same shape;
+ * the ring gives a bare arrow the weight of a button. `ⓘ` stays dim until its
+ * row is hovered or under the cursor. */
 button.mf-open {
   flex: none;
   width: 1.7em;
@@ -159,6 +159,13 @@ button.mf-open-enter {
   background: color-mix(in srgb, var(--mf-ok) 15%, transparent);
   opacity: 0.85;
 }
+button.mf-open-show {
+  /* The accent lightened: the bare accent is too dark to read as an arrow. */
+  color: color-mix(in srgb, var(--mf-accent) 60%, white);
+  border-color: var(--mf-accent);
+  background: color-mix(in srgb, var(--mf-accent) 20%, transparent);
+  opacity: 0.85;
+}
 :hover > button.mf-open,
 :hover > * > button.mf-open,
 .cursor button.mf-open {
@@ -172,6 +179,9 @@ button.mf-open-enter:hover {
   color: var(--mf-ok);
   border-color: var(--mf-ok);
 }
+button.mf-open-show:hover {
+  color: color-mix(in srgb, var(--mf-accent) 60%, white);
+}
 /* Nothing to open in that viewer (no file, or no metarecord): greyed, whether
  * its row is hovered or not — the colour alone says it. */
 button.mf-open.mf-open-disabled,
@@ -179,7 +189,9 @@ button.mf-open.mf-open-disabled,
 :hover > * > button.mf-open.mf-open-disabled,
 .cursor button.mf-open.mf-open-disabled {
   opacity: 0.2;
+  color: var(--mf-fg-dim);
   border-color: transparent;
+  background: transparent;
   cursor: default;
 }
 

@@ -8,7 +8,7 @@ A click on a row of a panel ''selects'' it, and does nothing else. ''Opening'' i
 button at the start of the row, drawn larger than the text so it is easy to aim at:
 
 * `↘` — go ''into'' the row: the listing then shows what it holds (a folder). Always drawn in green (`--mf-ok`), never dimmed to the other buttons' faintness: it is the one way in, and must not be missed. Ringed in the same green: the colour tells it from `↗`, whose arrow it shares, and the ring makes a bare arrow look like a button. The arrows are drawn as text, never as emoji (an emoji font's coloured square ignores the stylesheet's colour).
-* `↗` — ''show'' the row in the [[file panel]] of the other slot: the file, or the folder as a grid.
+* `↗` — ''show'' the row in the [[file panel]] of the other slot: the file, or the folder as a grid. Ringed in blue, like `↘` in green: two arrows of one shape, told apart by their colour.
 * `ⓘ` — show the row in the [[metarecord-detail panel]] of the other slot: its fields.
 
 `↗` and `ⓘ` are dim until the row is hovered or under the cursor. A row with nothing
