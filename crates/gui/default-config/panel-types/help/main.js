@@ -6,7 +6,7 @@
 // the `help` / `help:open` builtins and the help-cursor click resolution).
 
 import { byId, el } from '/__ui.js';
-import { resolvePage, filterPages } from '/__help.js';
+import { resolvePage, filterPages, parentPage } from '/__help.js';
 import { applyKeyHints } from '/__keyhints.js';
 
 /**
@@ -26,6 +26,12 @@ export async function mount(root, metafolder) {
   const includeDev = byId(root, 'help-dev', HTMLInputElement);
 
   const wikiBase = `${metafolder.guiServer}/docs`;
+  // The box is a text zone of the keybindings (`focus = "search"`): Enter
+  // applies it and leaves it, Shift+Enter applies it and stays.
+  searchInput.dataset.mfFocus = 'search';
+  /** The page shown, for `cursor:parent`; null while a search lists results.
+   *  @type {string|null} */
+  let shownPage = null;
 
   // The key hints of the pages (`<kbd data-mf-key="command">`) are filled in
   // from the live keybinding table, never written into the HTML: a page states
@@ -89,6 +95,7 @@ export async function mount(root, metafolder) {
       showGrep(id);
       return;
     }
+    shownPage = id;
     results.hidden = true;
     results.replaceChildren();
     content.hidden = false;
@@ -146,6 +153,7 @@ export async function mount(root, metafolder) {
 
   /** @param {string} term */
   function showGrep(term) {
+    shownPage = null;
     content.hidden = true;
     content.replaceChildren();
     pageInfo.hidden = true;
@@ -194,8 +202,53 @@ export async function mount(root, metafolder) {
   includeDev.addEventListener('change', () => {
     if (!results.hidden) runSearch(searchInput.value);
   });
-  searchInput.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') runSearch(searchInput.value);
+
+  // The box's commands, with the verbs and modifier of the list's zones (doc
+  // "help panel"): Enter and Shift+Enter, `c`, `s` and `e s` are bound to them.
+  const zoneArg = {
+    name: 'zone',
+    prompt: () => 'Which zone? (search)',
+    complete: () => ['search'],
+  };
+  const stayArg = { name: 'stay', optional: true, prompt: () => 'Leave the focus where it is? (stay)' };
+  /** @param {string} name */
+  function checkZone(name) {
+    if (name !== 'search') throw new Error(`unknown zone: "${name ?? ''}" (expected search)`);
+  }
+  void metafolder.commands.register('help:apply', {
+    label: 'Help: search for the box text, leaving the box (stay: keep the focus)',
+    args: [zoneArg, stayArg],
+    handler: (/** @type {string} */ name, /** @type {string|undefined} */ stay) => {
+      checkZone(name);
+      runSearch(searchInput.value);
+      if (stay !== 'stay' && root.activeElement === searchInput) searchInput.blur();
+    },
+  });
+  void metafolder.commands.register('help:clear', {
+    label: 'Help: empty the search box and focus it (stay: leave the focus)',
+    args: [zoneArg, stayArg],
+    handler: (/** @type {string} */ name, /** @type {string|undefined} */ stay) => {
+      checkZone(name);
+      searchInput.value = '';
+      runSearch('');
+      if (stay !== 'stay') searchInput.focus();
+    },
+  });
+  void metafolder.commands.register('help:focus', {
+    label: 'Help: focus the search box',
+    args: [zoneArg],
+    handler: (/** @type {string} */ name) => {
+      checkZone(name);
+      searchInput.focus();
+    },
+  });
+
+  // Backspace (`cursor:parent self`): up to the topic the page belongs to.
+  metafolder.provide({
+    parent: () => {
+      const parent = shownPage === null ? null : parentPage(manifest, shownPage);
+      if (parent) open(parent.id);
+    },
   });
 
   hint.textContent = 'Type a topic (e.g. queries, file-manager) or a search term; prefix with # to force search.';

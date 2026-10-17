@@ -1,0 +1,6 @@
+title: help:focus
+tags: [[GUI command]]
+kind: reference
+summary: Help: focus the search box
+
+`help:focus search` — <<key "help:focus search" "e s">>: gives the search box of the [[help panel]] the focus, its text kept.

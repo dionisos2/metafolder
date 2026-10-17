@@ -429,7 +429,7 @@ mod tests {
         let note = panel_note("trash", &[]);
         assert!(note.contains("!! Generic commands"), "{note}");
         assert!(note.contains("``index``, ``count``, ``select``, ``entries``"), "{note}");
-        assert!(panel_note("help", &[]).contains("Provides nothing"));
+        assert!(panel_note("hello", &[]).contains("Provides nothing"));
     }
 
     /// The wiki's generated notes for the `GUI command` and `Panel` catalogs

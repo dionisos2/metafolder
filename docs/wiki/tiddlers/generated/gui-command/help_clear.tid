@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/help:clear
+catalog: GUI command
+target: help:clear
+summary: Help: empty the search box and focus it (stay: leave the focus)
+
+!! Reference
+
+* Defined by the ``help`` panel
+
+!! Default keys
+
+* ``c`` → ``help:clear search stay`` (in the ``help`` panel)
+* ``s`` → ``help:clear search`` (in the ``help`` panel)

@@ -8,6 +8,8 @@
 //    hits), used when no exact name matches or `#` forced grep.
 //  - resolveClickTopic: the help-cursor click resolution — the nearest tagged
 //    element's topic, else the clicked slot's panel type.
+//  - parentPage: the topic a page belongs to — the page of its first tag —
+//    where the help panel's `cursor:parent` goes.
 
 /**
  * One entry of the help manifest, the wiki's `/docs/index.json`: a note's id,
@@ -155,4 +157,19 @@ export function resolveClickTopic(descriptors, slotPanelType) {
     }
   }
   return null;
+}
+
+/**
+ * The page one level up from page `id`: the page of its first tag (its topic),
+ * or null when it has none — the entry page, a tagless page, a tag with no page
+ * of its own.
+ *
+ * @param {Page[]} manifest
+ * @param {string} id
+ * @returns {Page|null}
+ */
+export function parentPage(manifest, id) {
+  const tag = manifest.find((page) => page.id === id)?.tags?.[0];
+  if (tag === undefined) return null;
+  return manifest.find((page) => page.title === tag) ?? null;
 }

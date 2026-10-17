@@ -76,7 +76,8 @@ done
 [ ${#SCENARIOS[@]} -gt 0 ] \
     || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list layout script script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close
-        pick-button suggested-key walk open-viewers slideshow devtools shell-line repos-memory)
+        pick-button suggested-key walk open-viewers slideshow devtools shell-line repos-memory
+        help-keys)
 
 # shellcheck source=lib/daemon-fixture.sh
 . scripts/lib/daemon-fixture.sh
@@ -1280,6 +1281,28 @@ scenario_open_viewers() {
 # doc "Jumping to an entry": `cursor:find file-manager walk` enters each directory
 # named and asks again from inside; a file ends the walk, selected, and
 # shift+Return stops on a directory, selected.
+# The help panel's search box is a text zone like the list's (doc "help
+# panel"): Enter searches and leaves it, so Backspace then goes up a topic
+# instead of deleting a character; s empties it and goes back in.
+scenario_help_keys() {
+    needs_keyboard help-keys || return 0
+    needs_clicks help-keys || return 0
+    new_repo help-keys
+    show_panel left help help:focus search
+    keys ctrl+a
+    typed "help panel"
+    keys Return
+    assert "help-keys: Enter opens the page" until_ok 10 reads "help panel" "#help-search"
+    keys BackSpace
+    assert "help-keys: Backspace, out of the box, goes up to the topic" \
+        until_ok 10 reads "panel" "#help-search"
+    keys s
+    typed "trash"
+    assert "help-keys: s empties the box and goes into it" until_ok 10 reads "trash" "#help-search"
+    keys Return c
+    assert "help-keys: c empties the box" until_ok 10 reads "" "#help-search"
+}
+
 scenario_walk() {
     needs_keyboard walk || return 0
     new_repo walk

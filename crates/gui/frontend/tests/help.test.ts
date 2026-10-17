@@ -2,7 +2,12 @@
 // and click-target -> topic resolution. No DOM, no fetch.
 
 import { describe, expect, test } from 'vitest';
-import { resolvePage, filterPages, resolveClickTopic } from '../../panel-shim/help.js';
+import {
+  resolvePage,
+  filterPages,
+  resolveClickTopic,
+  parentPage,
+} from '../../panel-shim/help.js';
 
 // A miniature manifest mirroring /docs/index.json.
 const MANIFEST = [
@@ -175,5 +180,26 @@ describe('resolveClickTopic', () => {
 
   test('returns null when neither a topic nor a slot is present', () => {
     expect(resolveClickTopic([{}, {}], slotPanelType)).toBeNull();
+  });
+});
+
+describe('parentPage', () => {
+  const PAGES = [
+    { id: 'documentation', title: 'Documentation', file: 'documentation.html' },
+    { id: 'gui', title: 'GUI', file: 'gui.html', tags: ['Documentation'] },
+    { id: 'panel', title: 'Panel', file: 'panel.html', tags: ['GUI', 'Documentation'] },
+    { id: 'help-panel', title: 'help panel', file: 'help-panel.html', tags: ['Panel', 'In-app help'] },
+    { id: 'orphan', title: 'Orphan page', file: 'orphan.html', tags: ['No such topic'] },
+  ];
+
+  test("a page's parent is the page of its first tag", () => {
+    expect(parentPage(PAGES, 'help-panel')?.id).toBe('panel');
+    expect(parentPage(PAGES, 'panel')?.id).toBe('gui');
+  });
+
+  test('the entry page, a tagless page and a missing tag page have no parent', () => {
+    expect(parentPage(PAGES, 'documentation')).toBeNull();
+    expect(parentPage(PAGES, 'orphan')).toBeNull();
+    expect(parentPage(PAGES, 'nowhere')).toBeNull();
   });
 });

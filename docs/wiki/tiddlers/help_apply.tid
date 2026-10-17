@@ -1,0 +1,6 @@
+title: help:apply
+tags: [[GUI command]]
+kind: reference
+summary: Help: search for the box text, leaving the box (stay: keep the focus)
+
+`help:apply search [stay]` — <<key "help:apply search" Enter>> in the search box of the [[help panel]]: opens the page the box names, or lists the pages that match, and leaves the box so the panel's keys work again. A final `stay` (<<key "help:apply search stay" Shift+Enter>>) keeps the focus in it; a focus held elsewhere is never taken away. `search` is the panel's one zone, named like the zones of the [[metarecord-list panel]].

@@ -5,8 +5,10 @@ summary: The help panel type
 
 !! Commands
 
-None of its own.
+* ``help:apply`` — Help: search for the box text, leaving the box (stay: keep the focus)
+* ``help:clear`` — Help: empty the search box and focus it (stay: leave the focus)
+* ``help:focus`` — Help: focus the search box
 
 !! Generic commands
 
-Provides nothing to [[Generic panel commands]].
+Provides ``parent`` to [[Generic panel commands]].

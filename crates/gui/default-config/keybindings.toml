@@ -281,6 +281,8 @@
   # panel accelerators work again without a separate Escape. Shift+Enter (below)
   # re-runs but keeps the focus for another edit.
   { command = "metarecord-list:apply finder", focus = "finder" },
+  # The help panel's search box, the same way (doc "help panel").
+  { command = "help:apply search", focus = "search" },
   # In the find bar, Enter walks to the next match (shift+Enter the previous),
   # the way a browser's find behaves.
   { command = "find:next", focus = "find" },
@@ -478,6 +480,7 @@
 # keeps the focus.
 "shift+enter" = [
   { command = "metarecord-list:apply finder stay", focus = "finder" },
+  { command = "help:apply search stay", focus = "search" },
   { command = "find:prev", focus = "find" },
   # The row under the cursor in the detail panel of the other slot (doc
   # "Opening a row"); Enter shows it in the file panel.
@@ -487,7 +490,11 @@
   { command = "panel:open other metarecord-detail", when = "duplicates" },
 ]
 "e f" = { command = "metarecord-list:focus finder", when = "metarecord-list" }
-"e s" = { command = "metarecord-list:focus simplified", when = "metarecord-list" }
+"e s" = [
+  { command = "metarecord-list:focus simplified", when = "metarecord-list" },
+  # help: s = the search box, as in the list (doc "help panel").
+  { command = "help:focus search", when = "help" },
+]
 "e q" = { command = "metarecord-list:focus normal", when = "metarecord-list" }
 "e l" = { command = "shell:focus line", when = "shell" }
 # "f" = find. In the list panels it jumps to a row by name, completing over
@@ -519,6 +526,7 @@
   { command = "treeref:toggle scope", when = "treeref" },
   # recent: newest first ⇄ best score first (doc "Frecent folders").
   { command = "recent:set sort", when = "recent" },
+  { command = "help:clear search", when = "help" },
 ]
 
 # treeref: build the "what points at this node?" query and run it in a
@@ -530,7 +538,11 @@
 "i l" = { command = "treeref:list-refs here", when = "treeref" }
 "e" = { command = "treeref:set ref-field", when = "treeref" }
 "q" = { command = "metarecord-list:clear normal", when = "metarecord-list" }
-"c" = { command = "metarecord-list:clear all", when = "metarecord-list" }
+"c" = [
+  { command = "metarecord-list:clear all", when = "metarecord-list" },
+  # help: empties the search box, the focus staying on the page.
+  { command = "help:clear search stay", when = "help" },
+]
 
 # metarecord-detail: field actions and record creation.
 "a" = { command = "metarecord:open-add-field", when = "metarecord-detail" }

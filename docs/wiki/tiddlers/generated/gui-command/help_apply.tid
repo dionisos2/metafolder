@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/help:apply
+catalog: GUI command
+target: help:apply
+summary: Help: search for the box text, leaving the box (stay: keep the focus)
+
+!! Reference
+
+* Defined by the ``help`` panel
+
+!! Default keys
+
+* ``enter`` → ``help:apply search`` (while ``search`` is focused)
+* ``shift+enter`` → ``help:apply search stay`` (while ``search`` is focused)
