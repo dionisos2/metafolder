@@ -1,0 +1,51 @@
+title: Moving the cursor
+tags: [[Writing a panel type]]
+kind: reference
+summary: A list panel moves its cursor by retargeting a class, never by rebuilding its rows, and publishes the selection coalesced — or a held arrow key replays after it is released.
+audience: dev
+aliases: list-cursor key-repeat held-arrow
+
+A held arrow key repeats about thirty times a second, and each repeat runs
+`cursor:next` on the focused panel ([[Generic panel commands]]). Whatever a move
+costs beyond that rate piles up: the key events wait their turn and keep moving the
+cursor after the key is released. Two things were slower than the repeat:
+
+* ''rebuilding the rows to move one highlight.'' The [[log panel]] rebuilt its
+  whole table, up to a thousand rows, on every key; the recent, trash, treeref,
+  duplicates and detail panels did the same on shorter lists.
+* ''publishing the selection once per key.'' Two `workspace.set` round-trips, each
+  fanning out to the other panels of the workspace — a file panel loading a
+  preview per row passed over.
+
+`/__list-cursor.js` holds the rule, and every list panel goes through it:
+
+```js
+import { createListCursor } from '/__list-cursor.js';
+
+const cursor = createListCursor({
+  containers: () => [entriesList],   // whose children are the rows
+  publish: async () => { /* workspace.set(...) */ },
+});
+
+async function select(index) {
+  cursorIndex = index;
+  await cursor.move(index);          // highlight, scroll into view, publish
+}
+```
+
+* `move` only moves the class (`cursor` by default, `className` otherwise) onto
+  the row at the index: the rows must be ''index-aligned'' with the panel's list.
+  A move to another level of a tree, or past the rendered window of a paged list,
+  is a render, then `highlight`/`reveal`.
+* `publish` is wrapped in `latestOnly` (`/__coalesce.js`): one run in flight, one
+  trailing with the final position, so a burst publishes twice, whatever its
+  length. Awaiting `move` still means "the selection has caught up with this move";
+  `publish(index)` alone re-publishes in the same coalescing.
+* Several containers are kept in step: the table and the grid of
+  `metarecord-list` are the same rows in two layouts.
+
+A panel with a list must also let it scroll: the list's container takes the room
+left (`flex: 1; min-height: 0`) and scrolls (`overflow-y: auto`). Without
+`min-height: 0` a flex child does not shrink below its content, and the list
+overflows the panel with neither scrollbar nor wheel — the log panel's state when
+its stylesheet still named a container that no longer existed.

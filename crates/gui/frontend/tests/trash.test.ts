@@ -3,6 +3,7 @@
 // mount path (Shadow root + index.html markup) so the id lookups are real.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { sameNodes } from './support/nodes';
 import { cursor, findCandidates } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -163,6 +164,20 @@ describe('trash panel actions', () => {
     expect(shadow.querySelector('li.cursor .name')?.textContent).toBe('x.txt');
     await expect(cursor(api.provide, 'find', 'select', 'zzz')).rejects.toThrow(/no entry/);
     expect(shadow.querySelector('li.cursor .name')?.textContent).toBe('x.txt');
+  });
+
+  // A held arrow key: the rows stay, only the highlight moves (doc "Moving
+  // the cursor").
+  test('moving the cursor keeps the rows', async () => {
+    const { api } = stub();
+    const shadow = shadowForTrash();
+    mount(shadow, api as never);
+    await new Promise((r) => setTimeout(r, 0));
+    const before = [...shadow.querySelectorAll('#entries > li')];
+    await cursor(api.provide, 'next');
+    await cursor(api.provide, 'next');
+    expect(sameNodes([...shadow.querySelectorAll('#entries > li')], before)).toBe(true);
+    expect(shadow.querySelector('li.cursor .name')?.textContent).toBe('dir');
   });
 
   test('destructive actions are cancelled when unconfirmed', async () => {

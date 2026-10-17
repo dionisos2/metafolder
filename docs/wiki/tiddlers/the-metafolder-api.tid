@@ -204,6 +204,7 @@ absolute path: `import { el, byId } from '/__ui.js'`. Their sources are in
 |`/__multi-select.js` |the checked selection ([[Cross-panel selection]]) |
 |`/__history.js` |`attachHistory` on a text field |
 |`/__paged-list.js`, `/__coalesce.js` |loading a long list by pages; `latestOnly`, for an effect asked for faster than it runs |
+|`/__list-cursor.js` |`createListCursor`: moving a list's cursor without rebuilding its rows, the selection published coalesced ([[Moving the cursor]]) |
 |`/__value-widget.js`, `/__schema-template.js`, `/__completions.js` |typed value inputs and the picker runner; the user schema, read once per repository; the candidate rules of a completion |
 |`/__columns.js`, `/__finder.js` |the column and finder syntaxes of `metarecord-list` |
 |`/__orphan.js`, `/__mounts.js`, `/__watched.js`, `/__activity.js`, `/__ignore.js` |what a row says about its file: orphaned, on an unmounted volume, watched or not, how noisy, ignored |

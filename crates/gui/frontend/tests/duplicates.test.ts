@@ -5,6 +5,7 @@
 // spot — dissolving it when a single copy is left, exactly as the daemon does.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { sameNodes } from './support/nodes';
 import { generic } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
@@ -222,6 +223,18 @@ describe('duplicates panel', () => {
     p.rows()[1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await new Promise((r) => setTimeout(r, 0));
     expect(p.setVar).toHaveBeenCalledWith('selected_metarecord', { uuid: 'm1', repo: 'r' });
+  });
+
+  // A held arrow key: the rows stay, only the highlight moves (doc "Moving
+  // the cursor").
+  test('moving the cursor keeps the rows', async () => {
+    const p = await mountPanel([group('g1', 10, 3, 20), group('g2', 5, 2, 5)], []);
+    const before = p.rows();
+    await p.invoke('cursor:next');
+    await p.invoke('cursor:next');
+    expect(sameNodes(p.rows(), before)).toBe(true);
+    expect(p.cursorRow()).toBe(before[1]);
+    expect(p.setVar).toHaveBeenLastCalledWith('selected_paths', []);
   });
 
   test('keep-this trashes the other copies and the group goes with them', async () => {

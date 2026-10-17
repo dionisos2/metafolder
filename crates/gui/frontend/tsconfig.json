@@ -25,6 +25,7 @@
       "/__history.js": ["../panel-shim/history.js"],
       "/__help.js": ["../panel-shim/help.js"],
       "/__coalesce.js": ["../panel-shim/coalesce.js"],
+      "/__list-cursor.js": ["../panel-shim/list-cursor.js"],
       "/__select.js": ["../panel-shim/select.js"],
       "/__multi-select.js": ["../panel-shim/multi-select.js"],
       "/__file-actions.js": ["../panel-shim/file-actions.js"],

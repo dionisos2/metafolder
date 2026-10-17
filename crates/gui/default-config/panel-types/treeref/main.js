@@ -15,6 +15,7 @@
 
 import { byId, el, openButton, whereArg } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
+import { createListCursor } from '/__list-cursor.js';
 import { createSelect } from '/__select.js';
 import { fileActionsProvider, metarecordMenuItems } from '/__file-actions.js';
 import { loadSchema as loadSharedSchema, schemaTypes, templateFields } from '/__schema-template.js';
@@ -393,18 +394,26 @@ export async function mount(root, metafolder) {
     void fetchChildren(true);
   }
 
+  // The rows are index-aligned with `children`: moving the cursor retargets
+  // the highlight, and the selection is published coalesced (doc "Moving the
+  // cursor").
+  const cursor = createListCursor({
+    containers: () => [entriesList],
+    publish: async () => {
+      const child = children[cursorIndex];
+      if (!child) return;
+      // Publish the path in the daemon's convention (see treeRefPath).
+      const path = treeRefPath([...stack.map((c) => c.name), child.name]);
+      await workspace.set('selected_metarecord', { uuid: child.uuid, repo });
+      await workspace.set('selected_treeref', { repo, field, uuid: child.uuid, path });
+      renderQueryPreview();
+    },
+  });
+
   /** @param {number} index */
   async function select(index) {
     cursorIndex = Math.max(0, Math.min(index, children.length - 1));
-    render();
-    const child = children[cursorIndex];
-    if (!child) return;
-    root.querySelector('li.cursor')?.scrollIntoView({ block: 'nearest' });
-    // Publish the path in the daemon's convention (see treeRefPath).
-    const path = treeRefPath([...stack.map((c) => c.name), child.name]);
-    await workspace.set('selected_metarecord', { uuid: child.uuid, repo });
-    await workspace.set('selected_treeref', { repo, field, uuid: child.uuid, path });
-    renderQueryPreview();
+    await cursor.move(cursorIndex);
   }
 
   // ── Rendering ─────────────────────────────────────────────────────────────

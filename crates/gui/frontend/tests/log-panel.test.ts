@@ -4,6 +4,7 @@
 // out. A row's ↘ button goes into it; a click only selects; no double click.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { sameNodes } from './support/nodes';
 import { generic } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -186,6 +187,29 @@ describe('log panel: going into a label', () => {
     await p.run('cursor:parent');
     expect(p.shadow.getElementById('op-detail')!.hidden).toBe(true);
     expect(p.selected()).toBe('op 12: set_field tag');
+  });
+
+  // A held arrow key: the rows stay, only the highlight moves — the log
+  // rebuilt its whole table (up to a thousand rows) on every key, and the
+  // events piled up (doc "Moving the cursor").
+  test('moving the cursor keeps the rows', async () => {
+    const p = await mountPanel();
+    const before = [...p.shadow.querySelectorAll('#rows tr')];
+    await p.run('cursor:next');
+    await p.run('cursor:next');
+    expect(sameNodes([...p.shadow.querySelectorAll('#rows tr')], before)).toBe(true);
+    expect(p.selected()).toBe('#1 run');
+    expect(p.shadow.querySelectorAll('#rows tr.selected')).toHaveLength(1);
+  });
+
+  // The list scrolls inside the panel (with the wheel and a scrollbar) rather
+  // than overflowing it: its container takes the room left and scrolls.
+  test('the list container scrolls', () => {
+    const html = readFileSync(resolve(PANEL_DIR, 'index.html'), 'utf8');
+    const rule = /#revisions\s*\{([^}]*)\}/.exec(html)?.[1] ?? '';
+    expect(rule).toMatch(/overflow-y:\s*auto/);
+    expect(rule).toMatch(/flex:\s*1/);
+    expect(rule).toMatch(/min-height:\s*0/);
   });
 
   test('reverting while an operation is shown reverts that operation', async () => {

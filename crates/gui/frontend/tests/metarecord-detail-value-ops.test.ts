@@ -14,6 +14,7 @@
 // recorded daemon calls are the assertion.
 
 import { describe, expect, test, vi, beforeEach } from 'vitest';
+import { sameNodes } from './support/nodes';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { collectArgs } from '../src/lib/commands';
@@ -704,5 +705,25 @@ describe('a hierarchy node shown as one field: its name once, a line per parent'
     const { shadow } = await mountPanel(fields, opts);
     await settle();
     expect(rows(shadow)[0].querySelector('td.value')!.textContent).toContain('(root)');
+  });
+});
+
+// A held arrow key over the field rows: the rows stay, only the highlight
+// moves (doc "Moving the cursor").
+describe('moving the field cursor', () => {
+  test('keeps the rows', async () => {
+    const fields: Field[] = [
+      { id: 1, name: 'a', value: { type: 'string', value: 'x' } },
+      { id: 2, name: 'b', value: { type: 'string', value: 'y' } },
+      { id: 3, name: 'c', value: { type: 'string', value: 'z' } },
+    ];
+    const { shadow, cursorTo } = await mountPanel(fields);
+    await settle();
+    const before = [...shadow.querySelectorAll('#field-rows > tr')];
+    expect(before).toHaveLength(3);
+    cursorTo(1);
+    cursorTo(2);
+    expect(sameNodes([...shadow.querySelectorAll('#field-rows > tr')], before)).toBe(true);
+    expect(shadow.querySelector('#field-rows > tr.cursor')).toBe(before[2]);
   });
 });

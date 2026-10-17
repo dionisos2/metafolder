@@ -2,6 +2,7 @@
 // (doc "metarecord-detail panel").
 
 import { byId, el, messageOf, valueEl } from '/__ui.js';
+import { createListCursor } from '/__list-cursor.js';
 import { createTypePicker, widgetFor, createPickRunner } from '/__value-widget.js';
 import { loadSchema as loadSharedSchema, schemaTypes, templateFields } from '/__schema-template.js';
 import { fileMenuItems, metarecordMenuItems } from '/__file-actions.js';
@@ -66,6 +67,9 @@ export async function mount(root, metafolder) {
   const placeholder = byId(root, 'placeholder');
   const content = byId(root, 'content');
   const fieldRows = byId(root, 'field-rows');
+  // The rows are index-aligned with `rowItems()`: moving the cursor retargets
+  // the highlight instead of rebuilding the rows (doc "Moving the cursor").
+  const fieldCursor = createListCursor({ containers: () => [fieldRows] });
   const metarecordHead = byId(root, 'metarecord-head');
   // The lines under the head: orphan, unplugged volume, watch, activity.
   const notes = createNotes({
@@ -493,8 +497,7 @@ export async function mount(root, metafolder) {
   /** Puts the field cursor on row `index`. @param {number} index */
   function selectRow(index) {
     cursorIndex = index;
-    render();
-    root.querySelector('tr.cursor')?.scrollIntoView({ block: 'nearest' });
+    void fieldCursor.move(index);
   }
   /** @param {Field} item */
   function isRowReadonly(item) {

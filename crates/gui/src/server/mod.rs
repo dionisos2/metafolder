@@ -42,6 +42,7 @@ const FINDER_JS: &str = include_str!("../../panel-shim/finder.js");
 const HISTORY_JS: &str = include_str!("../../panel-shim/history.js");
 const HELP_JS: &str = include_str!("../../panel-shim/help.js");
 const COALESCE_JS: &str = include_str!("../../panel-shim/coalesce.js");
+const LIST_CURSOR_JS: &str = include_str!("../../panel-shim/list-cursor.js");
 const SELECT_JS: &str = include_str!("../../panel-shim/select.js");
 const MULTI_SELECT_JS: &str = include_str!("../../panel-shim/multi-select.js");
 const FILE_ACTIONS_JS: &str = include_str!("../../panel-shim/file-actions.js");
@@ -88,6 +89,7 @@ pub fn build_router(state: ServerState) -> Router {
         .route("/__history.js", get(|| async { javascript(HISTORY_JS) }))
         .route("/__help.js", get(|| async { javascript(HELP_JS) }))
         .route("/__coalesce.js", get(|| async { javascript(COALESCE_JS) }))
+        .route("/__list-cursor.js", get(|| async { javascript(LIST_CURSOR_JS) }))
         .route("/__select.js", get(|| async { javascript(SELECT_JS) }))
         .route("/__multi-select.js", get(|| async { javascript(MULTI_SELECT_JS) }))
         .route("/__file-actions.js", get(|| async { javascript(FILE_ACTIONS_JS) }))

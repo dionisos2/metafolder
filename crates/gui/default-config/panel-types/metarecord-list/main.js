@@ -15,7 +15,7 @@ import {
 } from '/__finder.js';
 import { fileMenuItems, metarecordMenuItems } from '/__file-actions.js';
 import { attachHistory } from '/__history.js';
-import { latestOnly } from '/__coalesce.js';
+import { createListCursor } from '/__list-cursor.js';
 import { createCatchup } from '/__watcher-settle.js';
 import { createBulkEdit } from './bulk-edit.js';
 import { createDisplayData } from './display-data.js';
@@ -538,19 +538,6 @@ export async function mount(root, metafolder) {
 
   // ── Selection (workspace variables) ─────────────────────────────────────
 
-  // Held-arrow navigation must stay cheaper than the key-repeat rate, or key
-  // events accumulate and keep replaying after release: moving the cursor only
-  // retargets the `.cursor` class (the rows are index-aligned with
-  // `metarecords`, no re-render), and the selection propagation (two
-  // workspace.set IPC round-trips fanning out to the other panels) is
-  // coalesced — one in flight, one trailing with the final position.
-  function moveCursorHighlight() {
-    for (const container of [rows, grid]) {
-      container.querySelector('.cursor')?.classList.remove('cursor');
-      container.children[cursorIndex]?.classList.add('cursor');
-    }
-  }
-
   // The selections this list wrote whose echo has not come back yet (uuid →
   // how many). Every write comes back to every listener, the writer's
   // included, and possibly after the cursor has moved on: an echo is not
@@ -558,12 +545,18 @@ export async function mount(root, metafolder) {
   /** @type {Map<string, number>} */
   const pendingEchoes = new Map();
 
-  const propagateSelection = latestOnly(async () => {
-    const metarecord = metarecords[cursorIndex];
-    if (!metarecord) return;
-    pendingEchoes.set(metarecord.uuid, (pendingEchoes.get(metarecord.uuid) ?? 0) + 1);
-    await workspace.set('selected_metarecord', { uuid: metarecord.uuid, repo });
-    await workspace.set('selected_paths', pathsOf(metarecord));
+  // The table rows and the grid cards are index-aligned with `metarecords`:
+  // moving the cursor retargets the highlight, and the selection is published
+  // coalesced (doc "Moving the cursor").
+  const cursor = createListCursor({
+    containers: () => [rows, grid],
+    publish: async () => {
+      const metarecord = metarecords[cursorIndex];
+      if (!metarecord) return;
+      pendingEchoes.set(metarecord.uuid, (pendingEchoes.get(metarecord.uuid) ?? 0) + 1);
+      await workspace.set('selected_metarecord', { uuid: metarecord.uuid, repo });
+      await workspace.set('selected_paths', pathsOf(metarecord));
+    },
   });
 
   /** @param {number} index */
@@ -573,9 +566,7 @@ export async function mount(root, metafolder) {
       render();
       return;
     }
-    moveCursorHighlight();
-    root.querySelector('tr.cursor')?.scrollIntoView({ block: 'nearest' });
-    await propagateSelection();
+    await cursor.move(cursorIndex);
   }
 
   async function toggleChecked() {
@@ -1125,8 +1116,8 @@ export async function mount(root, metafolder) {
     const index = metarecords.findIndex((m) => m.uuid === uuid);
     if (index < 0) return;
     cursorIndex = index;
-    moveCursorHighlight();
-    root.querySelector('tr.cursor')?.scrollIntoView({ block: 'nearest' });
+    cursor.highlight(index);
+    cursor.reveal();
   });
   workspace.onChange('metarecords:dirty', () => {
     metafolder.whenVisible(deferredStart);

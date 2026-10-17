@@ -4,6 +4,7 @@
 // new field name, not an edit of the current one).
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { sameNodes } from './support/nodes';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { cursor, findCandidates } from './support/cursor';
@@ -151,6 +152,18 @@ describe('cursor:find in the tree explorer', () => {
     await cursor(s.api.provide, 'find', 'select', 'music');
     await expect(cursor(s.api.provide, 'find', 'select', 'zzz')).rejects.toThrow(/no entry/);
     expect(cursorName(s.root)).toBe('music');
+  });
+
+  // A held arrow key: the rows stay, only the highlight moves (doc "Moving
+  // the cursor").
+  test('moving the cursor keeps the rows', async () => {
+    const s = stub();
+    await mount(s);
+    const before = [...s.root.querySelectorAll('#entries > li')];
+    await cursor(s.api.provide, 'next');
+    await cursor(s.api.provide, 'next');
+    expect(sameNodes([...s.root.querySelectorAll('#entries > li')], before)).toBe(true);
+    expect(cursorName(s.root)).toBe('movies');
   });
 });
 

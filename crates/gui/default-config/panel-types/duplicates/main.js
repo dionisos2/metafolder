@@ -20,6 +20,7 @@
 
 import { byId, el, field, formatSize, formatValue, viewerButtons, whereArg } from '/__ui.js';
 import { createCatchup } from '/__watcher-settle.js';
+import { createListCursor } from '/__list-cursor.js';
 import { rowActionsProvider, baseName } from '/__file-actions.js';
 
 const GROUP_QUERY = { type: 'eq', field: 'mf_schema', value: { type: 'string', value: 'duplicate_group' } };
@@ -180,22 +181,31 @@ export function mount(root, metafolder) {
         : `${groups.length} group(s), ${formatSize(total)} reclaimable`;
   }
 
+  // The rows are index-aligned with `rows`: moving the cursor retargets the
+  // highlight, and the selection is published coalesced (doc "Moving the
+  // cursor").
+  const cursor = createListCursor({
+    containers: () => [entriesList],
+    // A member row is an ordinary metarecord selection, which is what makes
+    // the shared file actions apply without this panel implementing any of
+    // them. A group row publishes the *group* metarecord — it is one too
+    // (hash, size, counters), and the detail panel is where its fields can be
+    // read. Its paths too, so a file panel follows the cursor and `panel:open
+    // … file` knows a group has none (doc "Opening a row").
+    publish: async () => {
+      const row = rows[cursorIndex];
+      if (row && repo !== null) {
+        await workspace.set('selected_metarecord', { uuid: row.member?.uuid ?? row.group.uuid, repo });
+        await workspace.set('selected_paths', row.member?.absPath ? [row.member.absPath] : []);
+      }
+    },
+  });
+
   /** @param {number} index */
   async function select(index) {
     if (rows.length === 0) return;
     cursorIndex = Math.max(0, Math.min(index, rows.length - 1));
-    render();
-    // A member row is an ordinary metarecord selection, which is what makes the
-    // shared file actions apply without this panel implementing any of them. A
-    // group row publishes the *group* metarecord — it is one too (hash, size,
-    // counters), and the detail panel is where its fields can be read.
-    // Its paths too, so a file panel follows the cursor and `panel:open … file`
-    // knows a group has none (doc "Opening a row").
-    const row = rows[cursorIndex];
-    if (row && repo !== null) {
-      await workspace.set('selected_metarecord', { uuid: row.member?.uuid ?? row.group.uuid, repo });
-      await workspace.set('selected_paths', row.member?.absPath ? [row.member.absPath] : []);
-    }
+    await cursor.move(cursorIndex);
   }
 
   /** Enter: unfold or fold the group under the cursor; on a copy, show it in the

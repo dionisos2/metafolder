@@ -5,6 +5,7 @@
 // field; revert and prune (doc "log panel", doc "Labels and contexts").
 
 import { byId, el, formatValue, openButton, qs } from '/__ui.js';
+import { createListCursor } from '/__list-cursor.js';
 import { fieldChanges } from './snapshots.js';
 import { buildTree, keyOf, marksOf, nodesAlong, pathTo, revertTarget, rowsAt } from './tree.js';
 
@@ -186,12 +187,24 @@ export async function mount(root, metafolder) {
     statusLine.textContent = line;
   }
 
-  /** Moves the cursor to `key`. @param {string|null} key */
+  // The rows are index-aligned with `visible()`: moving the cursor retargets
+  // the highlight instead of rebuilding the table (doc "Moving the cursor").
+  const cursor = createListCursor({ containers: () => [rowsElement], className: 'selected' });
+
+  /** Moves the cursor to `key`, a row of the level on screen.
+   *  @param {string|null} key */
   function select(key) {
     if (key === null) return;
     selection = key;
+    void cursor.move(visible().findIndex((row) => row.key === key));
+    renderActions();
+  }
+
+  /** Lists the level `path` names, the cursor on `key`. @param {string} key */
+  function showAt(key) {
+    selection = key;
     render();
-    root.querySelector('tr.selected')?.scrollIntoView({ block: 'nearest' });
+    cursor.reveal();
   }
 
   /** Goes into the row `key` (the selected one by default), and says whether
@@ -212,9 +225,9 @@ export async function mount(root, metafolder) {
    *  cursor on the node it came out of. @param {number} depth */
   function backTo(depth) {
     if (depth < 0 || depth >= path.length) return;
-    selection = path[depth];
+    const key = path[depth];
     path = path.slice(0, depth);
-    select(selection);
+    showAt(key);
   }
 
   /** Goes to where `key` is listed, and selects it. @param {string} key */
@@ -222,7 +235,7 @@ export async function mount(root, metafolder) {
     const above = pathTo(tree, key);
     if (above === null) return;
     path = above;
-    select(key);
+    showAt(key);
   }
 
   /** What a node is, as the badges of the status column: HEAD, whose write it
@@ -480,6 +493,15 @@ export async function mount(root, metafolder) {
     // Offer "Show older" while the list fills the requested window: older
     // operations may lie beyond it.
     moreBox.hidden = inOp || operations.length < limit;
+    renderActions();
+    watcherCheckbox.checked = showWatcher;
+    renderBreadcrumb();
+    rowsElement.replaceChildren(...visible().map(rowElement));
+    renderStatusLine();
+  }
+
+  /** The buttons acting on what is selected. */
+  function renderActions() {
     const target = revertTarget(focusKey());
     revertButton.disabled = target === null;
     pruneButton.disabled = target === null;
@@ -488,10 +510,6 @@ export async function mount(root, metafolder) {
       target !== null && 'op_ids' in target
         ? `Revert op ${target.op_ids[0]} (log:revert)`
         : 'Revert selected (log:revert)';
-    watcherCheckbox.checked = showWatcher;
-    renderBreadcrumb();
-    rowsElement.replaceChildren(...visible().map(rowElement));
-    renderStatusLine();
   }
 
   /** Where the list is: the units of work, then each node gone into — each a

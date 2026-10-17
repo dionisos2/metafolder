@@ -19,6 +19,7 @@ import {
   viewerButtons,
 } from '/__ui.js';
 import { createSelect } from '/__select.js';
+import { createListCursor } from '/__list-cursor.js';
 import { rowActionsProvider, baseName } from '/__file-actions.js';
 
 /** The first field named `name` on `rec` as text, or '' when absent.
@@ -115,17 +116,25 @@ export function mount(root, metafolder) {
     statusLine.textContent = rows.length === 1 ? '1 metarecord' : `${rows.length} metarecords`;
   }
 
+  // The rows are index-aligned with `rows`: moving the cursor retargets the
+  // highlight, and the selection is published coalesced (doc "Moving the
+  // cursor").
+  const cursor = createListCursor({
+    containers: () => [entriesList],
+    publish: async () => {
+      const row = selected();
+      if (!row || !repo) return;
+      await workspace.set('selected_metarecord', { uuid: row.uuid, repo });
+      await workspace.set('selected_paths', row.absPaths);
+    },
+  });
+
   /** Moves the cursor and publishes the selection so a paired detail/file panel
    *  follows (the same live-preview the metarecord list does).
    *  @param {number} index */
   async function select(index) {
     cursorIndex = Math.max(0, Math.min(index, rows.length - 1));
-    render();
-    root.querySelector('li.cursor')?.scrollIntoView({ block: 'nearest' });
-    const row = selected();
-    if (!row || !repo) return;
-    await workspace.set('selected_metarecord', { uuid: row.uuid, repo });
-    await workspace.set('selected_paths', row.absPaths);
+    await cursor.move(cursorIndex);
   }
 
   async function load() {

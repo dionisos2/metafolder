@@ -33,8 +33,12 @@
         padding: 1px 8px;
         cursor: pointer;
       }
-      #writes {
+      /* The list scrolls inside the panel — scrollbar and wheel — instead of
+         overflowing it; min-height lets a flex child shrink below its
+         content. */
+      #revisions {
         flex: 1;
+        min-height: 0;
         overflow-y: auto;
       }
       table {

@@ -4,6 +4,7 @@
 // the path that tells them apart.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { sameNodes } from './support/nodes';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { cursor, findCandidates } from './support/cursor';
@@ -120,6 +121,22 @@ describe('cursor:find in the recent list', () => {
     await cursor(s.api.provide, 'find', 'select', 'jazz');
     await expect(cursor(s.api.provide, 'find', 'select', 'zzz')).rejects.toThrow(/no entry/);
     expect(cursorName(s.root)).toBe('jazz.mp3');
+  });
+
+  // A held arrow key: the rows stay, only the highlight moves, and a burst
+  // publishes once in flight plus once at the end (doc "Moving the cursor").
+  test('moving the cursor keeps the rows and coalesces the publication', async () => {
+    const s = stub();
+    await mount(s);
+    const before = [...s.root.querySelectorAll('#entries > li')];
+    s.api.workspace.set.mockClear();
+    await Promise.all([cursor(s.api.provide, 'next'), cursor(s.api.provide, 'next'), cursor(s.api.provide, 'next')]);
+    expect(sameNodes([...s.root.querySelectorAll('#entries > li')], before)).toBe(true);
+    expect(cursorName(s.root)).toBe('rock.mp3');
+    const calls = s.api.workspace.set.mock.calls as unknown[][];
+    const published = calls.filter((c) => c[0] === 'selected_metarecord');
+    expect(published.length).toBeLessThanOrEqual(2);
+    expect(published.at(-1)).toEqual(['selected_metarecord', { uuid: 'u2', repo: 'r' }]);
   });
 });
 

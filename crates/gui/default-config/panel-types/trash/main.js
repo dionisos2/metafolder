@@ -4,6 +4,7 @@
 // no daemon endpoint).
 
 import { byId, el, formatAge, formatSize } from '/__ui.js';
+import { createListCursor } from '/__list-cursor.js';
 
 /**
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder
@@ -59,18 +60,26 @@ export function mount(root, metafolder) {
       ),
     );
 
+    renderButtons();
+    statusLine.textContent = entries.length === 1 ? '1 entry' : `${entries.length} entries`;
+  }
+
+  function renderButtons() {
     const hasSelection = selected() !== null;
     restoreButton.disabled = !hasSelection;
     deleteButton.disabled = !hasSelection;
     emptyButton.disabled = entries.length === 0;
-    statusLine.textContent = entries.length === 1 ? '1 entry' : `${entries.length} entries`;
   }
+
+  // The rows are index-aligned with `entries`: moving the cursor retargets the
+  // highlight instead of rebuilding the list (doc "Moving the cursor").
+  const cursor = createListCursor({ containers: () => [entriesList] });
 
   /** @param {number} index */
   function select(index) {
     cursorIndex = Math.max(0, Math.min(index, entries.length - 1));
-    render();
-    root.querySelector('li.cursor')?.scrollIntoView({ block: 'nearest' });
+    void cursor.move(cursorIndex);
+    renderButtons();
   }
 
   async function load() {

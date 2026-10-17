@@ -6,7 +6,7 @@ import { byId, el, fileTypeGlyph, viewerButtons, whereArg } from '/__ui.js';
 import { copyText } from '/__menu.js';
 import { createPagedList } from '/__paged-list.js';
 import { createMultiSelect } from '/__multi-select.js';
-import { latestOnly } from '/__coalesce.js';
+import { createListCursor } from '/__list-cursor.js';
 import { createCatchup } from '/__watcher-settle.js';
 import {
   relPath,
@@ -210,7 +210,7 @@ export async function mount(root, metafolder) {
     ]);
     const ours = Array.isArray(paths) && paths.length === 1 && paths[0] === item.path;
     const known = /** @type {{uuid?: string} | null} */ (selected)?.uuid === uuid;
-    if (ours && !known) await propagateSelection();
+    if (ours && !known) await listCursor.publish(cursorIndex);
   }
 
   // Which listed entries an ignore pattern excludes (doc "Setting ignore patterns"): one daemon
@@ -514,33 +514,33 @@ export async function mount(root, metafolder) {
       (selection.count() > 0 ? ` — ${selection.count()} selected` : '');
   }
 
-  // Held-arrow navigation must stay cheaper than the key-repeat rate, or key
-  // events accumulate and keep replaying after release: inside the rendered
-  // window moving the cursor only retargets the `.cursor` class (the rows are
-  // index-aligned with `listing`) and refreshes the add button; the selection
-  // propagation (two workspace.set IPC round-trips fanning out to the other
-  // panels) is coalesced — one in flight, one trailing with the final position.
-  function moveCursorHighlight() {
-    entriesList.querySelector('.cursor')?.classList.remove('cursor');
-    entriesList.children[cursorIndex]?.classList.add('cursor');
-    const selected = listing[cursorIndex];
-    addButton.disabled =
-      !repo || !selected || trackedPaths.has(selected.path) || !trackable(selected.path);
-  }
-
+  // Inside the rendered window the rows are index-aligned with `listing`:
+  // moving the cursor retargets the highlight, and the selection is published
+  // coalesced (doc "Moving the cursor").
+  //
   // The metarecord goes FIRST, then the paths: the pair is one selection, and
   // a consumer reacting to `selected_paths` reads `selected_metarecord` right
   // then (the `file` panel, for the playback position of the file it is about
   // to show). Publishing the paths first handed it the PREVIOUS row's
   // metarecord — the preview showing one file while the position was read from
   // and written to another.
-  const propagateSelection = latestOnly(async () => {
-    const item = listing[cursorIndex];
-    if (!item) return;
-    const uuid = trackedPaths.get(item.path);
-    await workspace.set('selected_metarecord', uuid ? { uuid, repo } : null);
-    await workspace.set('selected_paths', [item.path]);
+  const listCursor = createListCursor({
+    containers: () => [entriesList],
+    publish: async () => {
+      const item = listing[cursorIndex];
+      if (!item) return;
+      const uuid = trackedPaths.get(item.path);
+      await workspace.set('selected_metarecord', uuid ? { uuid, repo } : null);
+      await workspace.set('selected_paths', [item.path]);
+    },
   });
+
+  /** The add button follows the row under the cursor. */
+  function renderAddButton() {
+    const selected = listing[cursorIndex];
+    addButton.disabled =
+      !repo || !selected || trackedPaths.has(selected.path) || !trackable(selected.path);
+  }
 
   /** @param {number} index */
   async function select(index) {
@@ -552,13 +552,13 @@ export async function mount(root, metafolder) {
       rendered = cursorIndex + 1;
       render();
     } else {
-      moveCursorHighlight();
+      listCursor.highlight(cursorIndex);
+      renderAddButton();
     }
     if (!listing[cursorIndex]) return;
-    root.querySelector('li.cursor')?.scrollIntoView({ block: 'nearest' });
-    const cursor = listing[cursorIndex].name;
-    await writeLocation({ ...appliedLocation, cursor }, ['cursor']);
-    await propagateSelection();
+    listCursor.reveal();
+    await writeLocation({ ...appliedLocation, cursor: listing[cursorIndex].name }, ['cursor']);
+    await listCursor.publish(cursorIndex);
   }
 
   /** @param {{name: string, is_dir: boolean}} item */
