@@ -128,7 +128,7 @@ describe('panel defaults come from the GUI config', () => {
       stubApi('metarecord-list', { columns: 'label:nonsense' }) as unknown as Metafolder.Api,
     );
     expect((root.getElementById('columns-input') as HTMLInputElement).value).toBe(
-      'mfr_path:path mfr_type &version',
+      '(mfr_path:path|path:path) (mfr_type|mf_schema) mfr_mtime order_file',
     );
   });
 

@@ -35,7 +35,7 @@ What a panel opens on is configuration, not a constant of its code. Each
 
 ```
 [panel-defaults.metarecord-list]
-columns       = "mfr_path:path mfr_type &version"
+columns       = "(mfr_path:path|path:path) (mfr_type|mf_schema) mfr_mtime order_file"
 finder-fields = ["mfr_path:path", "label:value", "name:value"]
 
 [panel-defaults.treeref]

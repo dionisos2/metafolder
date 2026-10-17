@@ -103,6 +103,24 @@ describe('parseColumns', () => {
     );
   });
 
+  test('the shipped default columns parse: two fallbacks, then two fields', () => {
+    const cols = parseColumns('(mfr_path:path|path:path) (mfr_type|mf_schema) mfr_mtime order_file');
+    expect(cols.map((c: { name: string }) => c.name)).toEqual([
+      'mfr_path',
+      'mfr_type',
+      'mfr_mtime',
+      'order_file',
+    ]);
+    expect(fieldCol('(mfr_path:path|path:path)').alternatives).toEqual([
+      { field: 'mfr_path', follow: null, mode: 'path' },
+      { field: 'path', follow: null, mode: 'path' },
+    ]);
+    expect(fieldCol('(mfr_type|mf_schema)').alternatives).toEqual([
+      { field: 'mfr_type', follow: null, mode: 'raw' },
+      { field: 'mf_schema', follow: null, mode: 'raw' },
+    ]);
+  });
+
   test('&uuid and &version are metadata columns', () => {
     expect(parseColumns('&uuid &version')).toEqual([
       { spec: '&uuid', kind: 'meta', name: 'uuid' },

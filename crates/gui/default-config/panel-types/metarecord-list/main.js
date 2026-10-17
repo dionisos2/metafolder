@@ -38,7 +38,7 @@ const DEFAULT_PAGE_SIZE_FALLBACK = 100;
 // Initial table columns. The effective value comes from the GUI config
 // (`[panel-defaults.metarecord-list].columns`), overridden in turn by the
 // per-workspace `metarecord-list:columns` variable; this is only the fallback.
-const DEFAULT_COLUMNS = 'mfr_path:path mfr_type &version';
+const DEFAULT_COLUMNS = '(mfr_path:path|path:path) (mfr_type|mf_schema) mfr_mtime order_file';
 // Fields the finder (quick OSM filter) searches by default, each with an
 // explicit aspect (`field:path` for the tree_ref path, `field:value` for a plain
 // value) so it never depends on the async field catalog. A bare `field` (no

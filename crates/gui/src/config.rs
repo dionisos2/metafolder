@@ -840,7 +840,7 @@ mod tests {
         let list = parsed.panel_defaults.get("metarecord-list").unwrap();
         assert_eq!(
             list["columns"],
-            serde_json::json!("mfr_path:path mfr_type &version order_file")
+            serde_json::json!("(mfr_path:path|path:path) (mfr_type|mf_schema) mfr_mtime order_file")
         );
         assert_eq!(
             list["finder-fields"],
