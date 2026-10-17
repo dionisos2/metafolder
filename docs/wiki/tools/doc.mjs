@@ -82,21 +82,28 @@ function scanCode() {
 
 /**
  * The shipped-script catalog: generated/shipped-script/ made to match
- * scripts/shipped/ (`update`), or the differences named (the Rust catalogs do
- * the same from their golden tests, metafolder_core::doc_gen).
+ * scripts/shipped/ and scripts/templates/ (`update`), or the differences named
+ * (the Rust catalogs do the same from their golden tests,
+ * metafolder_core::doc_gen). A script is named by its installed path under
+ * ~/.config/metafolder/scripts/: a template's is `templates/<name>`.
  * @param {boolean} update @returns {string[]} problems
  */
 function syncScripts(update) {
-  const shipped = path.join(REPO, 'scripts', 'shipped');
+  const sources = [
+    { root: path.join(REPO, 'scripts', 'shipped'), prefix: '' },
+    { root: path.join(REPO, 'scripts', 'templates'), prefix: 'templates/' },
+  ];
   const dir = path.join(TIDDLERS, 'generated', 'shipped-script');
   /** @type {Map<string, string>} */
   const want = new Map(
-    walk(shipped)
-      .filter((p) => p.endsWith('.sh'))
-      .map((p) => {
-        const rel = path.relative(shipped, p);
-        return [`${slugify(rel)}.tid`, serializeTid(scriptTiddler(rel, fs.readFileSync(p, 'utf8')))];
-      }),
+    sources.flatMap(({ root, prefix }) =>
+      (fs.existsSync(root) ? walk(root) : [])
+        .filter((p) => p.endsWith('.sh'))
+        .map((p) => {
+          const rel = prefix + path.relative(root, p);
+          return [`${slugify(rel)}.tid`, serializeTid(scriptTiddler(rel, fs.readFileSync(p, 'utf8')))];
+        }),
+    ),
   );
   const have = new Map(
     walk(dir)
@@ -117,7 +124,7 @@ function syncScripts(update) {
   for (const name of have.keys()) if (!want.has(name)) problems.push(`obsolete ${name}`);
   return problems.length === 0
     ? []
-    : [`generated/shipped-script is out of date with scripts/shipped (${problems.join(', ')}); run scripts/dev/doc gen`];
+    : [`generated/shipped-script is out of date with scripts/shipped and scripts/templates (${problems.join(', ')}); run scripts/dev/doc gen`];
 }
 
 /** A note by title, alias or id. @param {Tiddler[]} wiki @param {string} name */

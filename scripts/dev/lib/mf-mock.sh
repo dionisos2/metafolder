@@ -2,7 +2,7 @@
 # A fake `mf` CLI for the shipped-script tests.
 #
 # The launchable scripts under `scripts/shipped/` (gui-tag-pair.sh,
-# gui-tag-folder.sh, gui-tag-classify.sh, example-gui-sort-folder.sh) are
+# gui-tag-folder.sh, gui-tag-classify.sh, templates/sort-folder.sh) are
 # orchestrators: every side effect goes through the real `mf` binary — the
 # tag/metarecord/path CLI *and* the `mf gui …` scripting API. Driving them
 # end-to-end would need a running daemon AND a running GUI (bwrap + WebKit),

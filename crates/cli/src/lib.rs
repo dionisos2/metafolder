@@ -9,6 +9,7 @@ pub mod fieldspec;
 pub mod gui;
 pub mod label;
 pub mod log;
+pub mod script;
 pub mod slow;
 pub mod sync;
 pub mod tag;

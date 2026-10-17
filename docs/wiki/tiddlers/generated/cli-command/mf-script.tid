@@ -1,0 +1,21 @@
+title: $:/mf/gen/CLI command/mf script
+catalog: CLI command
+target: mf script
+summary: Your scripts, in ~/.config/metafolder/scripts/, and the templates to start one from (default: list)
+
+!! Reference
+
+```
+Your scripts, in ~/.config/metafolder/scripts/, and the templates to start one from (default: list)
+
+Usage: mf script [COMMAND]
+
+Commands:
+  list  Print the scripts directory, the scripts the GUI offers, and the templates
+  new   Copy a template into the scripts directory, to adapt it (asks which one when none is named, on a terminal)
+  help  Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help
+          Print help
+```

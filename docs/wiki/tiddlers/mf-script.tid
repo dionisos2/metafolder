@@ -1,0 +1,24 @@
+title: mf script
+tags: [[CLI command]] [[Scripting the GUI]]
+kind: reference
+summary: Your scripts, in ~/.config/metafolder/scripts/, and the templates to start one from (default: list)
+
+Where your scripts are, and how to start one. The scripts are files of the
+configuration, in `~/.config/metafolder/scripts/` ([[The configuration repository]]);
+this command needs no daemon.
+
+```
+mf script                      # the directory, its scripts, the templates
+mf script new sort-folder      # copy a template there, to adapt it
+```
+
+There are two kinds of shipped scripts. The ''scripts'' run as they are: the GUI
+offers them (<<key "script:run" "g s">>, [[Running shipped scripts]]). The
+''templates'', in `scripts/templates/`, are examples to copy and rewrite — not
+offered to run, since a template's rules are yours to write
+([[Writing a GUI script]]). <<cmd "mf script new">> copies one among the scripts,
+where it runs beside the helpers it uses (`lib/`, `gui-tag-classify.sh`), and the GUI
+offers it at once.
+
+The development scripts of the source tree (`scripts/dev/`) are not shipped
+([[Shipped defaults in the source tree]]).

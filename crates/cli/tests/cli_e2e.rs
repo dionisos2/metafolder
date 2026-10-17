@@ -6915,3 +6915,46 @@ fn test_watch_status_reports_a_starved_or_unlimited_budget() {
     assert!(out.stdout.contains("2 subtree(s) left unwatched"), "{}", out.stdout);
     assert!(!out.stdout.contains("STARVED"), "{}", out.stdout);
 }
+
+/// `mf script` needs no daemon: it lists the scripts directory of the config
+/// and copies a template into it (doc "mf script").
+#[test]
+fn script_lists_the_scripts_and_copies_a_template() {
+    let cfg = common::TempDir::new("cli-script");
+    let scripts = cfg.path().join("metafolder").join("scripts");
+    std::fs::create_dir_all(scripts.join("templates")).unwrap();
+    let shipped = concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts");
+    std::fs::copy(
+        format!("{shipped}/shipped/gui-tag-folder.sh"),
+        scripts.join("gui-tag-folder.sh"),
+    )
+    .unwrap();
+    std::fs::copy(
+        format!("{shipped}/templates/sort-folder.sh"),
+        scripts.join("templates/sort-folder.sh"),
+    )
+    .unwrap();
+    let xdg = cfg.path().to_str().unwrap();
+    let env = [("XDG_CONFIG_HOME", xdg)];
+
+    let out = mf_full(&["--no-config", "script"], None, &env, false);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert!(out.stdout.starts_with(scripts.to_str().unwrap()), "{}", out.stdout);
+    assert!(out.stdout.contains("gui-tag-folder.sh"), "{}", out.stdout);
+    assert!(out.stdout.contains("sort-folder"), "{}", out.stdout);
+
+    // Not on a terminal: naming the template is required.
+    let out = mf_full(&["--no-config", "script", "new"], None, &env, false);
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert!(out.stderr.contains("sort-folder"), "{}", out.stderr);
+
+    let out = mf_full(&["--no-config", "script", "new", "sort-folder"], None, &env, false);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(out.stdout.trim(), scripts.join("sort-folder.sh").to_str().unwrap());
+    // Copied in, it is offered to run like any script.
+    let out = mf_full(&["--no-config", "script"], None, &env, false);
+    assert!(out.stdout.contains("sort-folder.sh"), "{}", out.stdout);
+
+    let out = mf_full(&["--no-config", "script", "new", "sort-folder"], None, &env, false);
+    assert_eq!(out.code, 1, "a second copy must not overwrite the first");
+}

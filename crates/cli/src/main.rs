@@ -254,6 +254,12 @@ enum Command {
         #[command(subcommand)]
         command: SchemaCommand,
     },
+    /// Your scripts, in ~/.config/metafolder/scripts/, and the templates to
+    /// start one from (default: list)
+    Script {
+        #[command(subcommand)]
+        command: Option<ScriptCommand>,
+    },
     /// Drive the GUI through its scripting HTTP API
     Gui {
         /// GUI base URL (default: gui-port from the GUI config.toml)
@@ -267,6 +273,21 @@ enum Command {
     Sync {
         #[command(subcommand)]
         command: SyncCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum ScriptCommand {
+    /// Print the scripts directory, the scripts the GUI offers, and the templates
+    List,
+    /// Copy a template into the scripts directory, to adapt it (asks which one
+    /// when none is named, on a terminal)
+    New {
+        /// The template, with or without `.sh` (`mf script` lists them)
+        template: Option<String>,
+        /// The new script's name (default: the template's)
+        #[arg(long)]
+        name: Option<String>,
     },
 }
 
@@ -1271,6 +1292,25 @@ fn command_headers() -> Result<metafolder_cli::client::CommandHeaders, String> {
 
 type CmdResult = Result<i32, metafolder_cli::client::CliError>;
 
+fn dispatch_script(command: ScriptCommand) -> CmdResult {
+    use metafolder_cli::script;
+    use std::io::IsTerminal;
+    let dir = metafolder_core::config::scripts_dir().ok_or_else(|| {
+        metafolder_cli::client::CliError::Op("no configuration directory ($HOME unset)".into())
+    })?;
+    let mut out = std::io::stdout().lock();
+    match command {
+        ScriptCommand::List => script::list(&dir, &mut out),
+        ScriptCommand::New { template, name } => {
+            let stdin = std::io::stdin();
+            let mut lock = stdin.lock();
+            let answer: Option<&mut dyn std::io::BufRead> =
+                if stdin.is_terminal() { Some(&mut lock) } else { None };
+            script::new(&dir, template.as_deref(), name.as_deref(), answer, &mut out)
+        }
+    }
+}
+
 fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
     match command {
         Command::Repo { command } => match command.unwrap_or(RepoCommand::List { all: false }) {
@@ -1394,6 +1434,7 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
             SchemaCommand::Reload => commands::schema_reload(ctx),
             SchemaCommand::Show => commands::schema_show(ctx),
         },
+        Command::Script { command } => dispatch_script(command.unwrap_or(ScriptCommand::List)),
         Command::Gui { gui_url, command } => dispatch_gui(gui_url, command),
         Command::Sync { command } => dispatch_sync(ctx, command),
     }

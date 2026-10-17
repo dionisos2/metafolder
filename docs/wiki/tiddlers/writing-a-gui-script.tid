@@ -9,6 +9,8 @@ A GUI script is a bash script that calls `mf` for the data and `mf gui` for the 
 holds what every one of them needs and what each used to get wrong on its own. Put
 your script next to them, in `~/.config/metafolder/scripts/`, and give it a
 `# Summary:` line to have it offered by `script:run` ([[Running shipped scripts]]).
+To start from a working example rather than from the skeleton below,
+`mf script new` copies a template there ([[mf script]]).
 
 !! The skeleton
 

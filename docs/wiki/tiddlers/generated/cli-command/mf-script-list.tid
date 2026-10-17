@@ -1,0 +1,16 @@
+title: $:/mf/gen/CLI command/mf script list
+catalog: CLI command
+target: mf script list
+summary: Print the scripts directory, the scripts the GUI offers, and the templates
+
+!! Reference
+
+```
+Print the scripts directory, the scripts the GUI offers, and the templates
+
+Usage: mf script list
+
+Options:
+  -h, --help
+          Print help
+```

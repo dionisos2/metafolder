@@ -1,0 +1,23 @@
+title: $:/mf/gen/CLI command/mf script new
+catalog: CLI command
+target: mf script new
+summary: Copy a template into the scripts directory, to adapt it (asks which one when none is named, on a terminal)
+
+!! Reference
+
+```
+Copy a template into the scripts directory, to adapt it (asks which one when none is named, on a terminal)
+
+Usage: mf script new [OPTIONS] [TEMPLATE]
+
+Arguments:
+  [TEMPLATE]
+          The template, with or without `.sh` (`mf script` lists them)
+
+Options:
+      --name <NAME>
+          The new script's name (default: the template's)
+
+  -h, --help
+          Print help
+```

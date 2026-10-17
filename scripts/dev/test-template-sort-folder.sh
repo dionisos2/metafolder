@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for scripts/shipped/example-gui-sort-folder.sh — the copy-and-adapt
+# Tests for scripts/templates/sort-folder.sh — the copy-and-adapt
 # TEMPLATE that classifies each file in a folder then moves it to a destination
 # computed from its metadata. It is not a finished tool, but its routing +
 # move logic and its integration with gui-tag-classify.sh are worth pinning.
@@ -11,7 +11,6 @@
 set -uo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-SCRIPT="$HERE/../shipped/example-gui-sort-folder.sh"
 # shellcheck source=lib/mf-mock.sh
 source "$HERE/lib/mf-mock.sh"
 mock_init
@@ -20,6 +19,14 @@ source "$HERE/lib/assert.sh"
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/mf-sort.XXXXXX")
 trap 'rm -rf "$work"' EXIT
+
+# A template runs once copied among the installed scripts (`mf script new`):
+# beside gui-tag-classify.sh and lib/. Rebuild that layout from the source tree.
+installed="$work/scripts"
+mkdir -p "$installed"
+cp -r "$HERE/../shipped/." "$installed/"
+cp "$HERE/../templates/sort-folder.sh" "$installed/"
+SCRIPT="$installed/sort-folder.sh"
 
 # Vocabulary uses the French tag paths the template's routing rules expect.
 UNIVERSE=$'musique\nmusique/jazz'

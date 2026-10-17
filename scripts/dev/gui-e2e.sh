@@ -767,7 +767,7 @@ scenario_script() {
 
     run script:run no-such-script
     status_is "script run: an unknown script is refused" error \
-        'no installed script matches "no-such-script"'
+        'no installed script matches "no-such-script" (mf script lists them*'
 }
 
 # A question belongs to the workspace it is asked in, one per workspace (doc

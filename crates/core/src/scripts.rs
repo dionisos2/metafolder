@@ -87,6 +87,61 @@ pub fn list_scripts() -> Vec<ScriptInfo> {
     }
 }
 
+/// The subdirectory of the scripts directory holding the templates: scripts
+/// to copy and adapt (`mf script new`), not to run — one level down, so the
+/// launcher, which lists the top level only, does not offer them.
+pub const TEMPLATES: &str = "templates";
+
+/// Lists the templates under `scripts_dir`'s `templates/`, as
+/// [`list_scripts_in`] lists scripts (those with a `# Summary:`).
+pub fn list_templates_in(scripts_dir: &Path) -> Vec<ScriptInfo> {
+    list_scripts_in(&scripts_dir.join(TEMPLATES))
+}
+
+/// A script file name: `name` with `.sh`, refused when it is not a plain name
+/// (a path separator, `..`, empty), so nothing lands outside the directory.
+fn script_file_name(name: &str) -> Result<String, String> {
+    let base = name.strip_suffix(".sh").unwrap_or(name);
+    if base.is_empty() || base.contains('/') || base.contains('\\') || base.starts_with('.') {
+        return Err(format!("\"{name}\" is not a script name (a plain file name, no path)"));
+    }
+    Ok(format!("{base}.sh"))
+}
+
+/// Copies the template `template` (with or without `.sh`) into `scripts_dir`,
+/// as `name` or under the template's own name, and returns the new script's
+/// path. Never overwrites: a script of that name is an error, left untouched.
+pub fn new_from_template(
+    scripts_dir: &Path,
+    template: &str,
+    name: Option<&str>,
+) -> Result<PathBuf, String> {
+    let template_file = script_file_name(template)?;
+    let source = scripts_dir.join(TEMPLATES).join(&template_file);
+    if !source.is_file() {
+        let known: Vec<_> = list_templates_in(scripts_dir).into_iter().map(|t| t.name).collect();
+        return Err(format!(
+            "no template \"{template}\" (templates: {})",
+            if known.is_empty() { "none installed".to_string() } else { known.join(", ") }
+        ));
+    }
+    let target = scripts_dir.join(script_file_name(name.unwrap_or(&template_file))?);
+    let body =
+        std::fs::read(&source).map_err(|e| format!("cannot read {}: {e}", source.display()))?;
+    // `create_new`: the existence check and the write are one step.
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&target).map_err(
+        |e| match e.kind() {
+            std::io::ErrorKind::AlreadyExists => {
+                format!("{} already exists (choose another name with --name)", target.display())
+            }
+            _ => format!("cannot create {}: {e}", target.display()),
+        },
+    )?;
+    file.write_all(&body).map_err(|e| format!("cannot write {}: {e}", target.display()))?;
+    Ok(target)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,5 +214,64 @@ mod tests {
         let dir = scratch();
         let missing = dir.join("does-not-exist");
         assert!(list_scripts_in(&missing).is_empty());
+    }
+
+    #[test]
+    fn templates_live_one_level_down_and_are_not_offered_to_run() {
+        let dir = scratch();
+        std::fs::create_dir_all(dir.join(TEMPLATES)).unwrap();
+        std::fs::write(dir.join("templates/sort-folder.sh"), "#!/bin/sh\n# Summary: S.\n").unwrap();
+        assert!(list_scripts_in(&dir).is_empty());
+        let got = list_templates_in(&dir);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "sort-folder.sh");
+        assert_eq!(got[0].summary, "S.");
+    }
+
+    #[test]
+    fn a_new_script_is_a_copy_of_its_template() {
+        let dir = scratch();
+        std::fs::create_dir_all(dir.join(TEMPLATES)).unwrap();
+        let body = "#!/bin/sh\n# Summary: S.\necho sort\n";
+        std::fs::write(dir.join("templates/sort-folder.sh"), body).unwrap();
+
+        // The name works with or without `.sh`; the copy keeps it by default.
+        let made = new_from_template(&dir, "sort-folder", None).unwrap();
+        assert_eq!(made, dir.join("sort-folder.sh"));
+        assert_eq!(std::fs::read_to_string(&made).unwrap(), body);
+
+        // Another name, given with or without `.sh`.
+        let mine = new_from_template(&dir, "sort-folder.sh", Some("my-sort")).unwrap();
+        assert_eq!(mine, dir.join("my-sort.sh"));
+        assert!(list_scripts_in(&dir).iter().any(|s| s.name == "my-sort.sh"));
+    }
+
+    #[test]
+    fn a_new_script_never_overwrites_one() {
+        let dir = scratch();
+        std::fs::create_dir_all(dir.join(TEMPLATES)).unwrap();
+        std::fs::write(dir.join("templates/sort-folder.sh"), "#!/bin/sh\n").unwrap();
+        std::fs::write(dir.join("sort-folder.sh"), "mine\n").unwrap();
+        let err = new_from_template(&dir, "sort-folder", None).unwrap_err();
+        assert!(err.contains("already exists"), "{err}");
+        assert_eq!(std::fs::read_to_string(dir.join("sort-folder.sh")).unwrap(), "mine\n");
+    }
+
+    #[test]
+    fn an_unknown_template_names_the_ones_there_are() {
+        let dir = scratch();
+        std::fs::create_dir_all(dir.join(TEMPLATES)).unwrap();
+        std::fs::write(dir.join("templates/sort-folder.sh"), "#!/bin/sh\n# Summary: S.\n").unwrap();
+        let err = new_from_template(&dir, "nope", None).unwrap_err();
+        assert!(err.contains("no template \"nope\"") && err.contains("sort-folder"), "{err}");
+    }
+
+    #[test]
+    fn a_name_cannot_leave_the_scripts_directory() {
+        let dir = scratch();
+        std::fs::create_dir_all(dir.join(TEMPLATES)).unwrap();
+        std::fs::write(dir.join("templates/sort-folder.sh"), "#!/bin/sh\n").unwrap();
+        assert!(new_from_template(&dir, "sort-folder", Some("../evil")).is_err());
+        assert!(new_from_template(&dir, "../templates/sort-folder", None).is_err());
     }
 }

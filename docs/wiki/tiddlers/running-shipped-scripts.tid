@@ -29,7 +29,9 @@ helper the others source — `gui-tag-next.sh`, everything under `lib/` — and 
 listed. The directory is read at each launch: a script of your own, dropped there with
 a `# Summary:` line, is offered at once, with no restart ([[Writing a GUI script]]).
 
-The shipped ones are listed in [[Shipped script]].
+The shipped ones are listed in [[Shipped script]]. The templates, under
+`templates/`, are not offered: they are copied first, with <<cmd "mf script new">>.
+`mf script` prints the directory and what it holds ([[mf script]]).
 
 !! While it runs
 

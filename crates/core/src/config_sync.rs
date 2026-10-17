@@ -292,6 +292,12 @@ fn gather_defaults(source_root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>, Str
     if shipped.is_dir() {
         collect_files(&shipped, &PathBuf::from("scripts"), &mut out)?;
     }
+    // The script templates, to copy rather than run (`mf script new`): one
+    // level down, under `scripts/templates/`, out of what script:run lists.
+    let templates = source_root.join("scripts").join("templates");
+    if templates.is_dir() {
+        collect_files(&templates, &Path::new("scripts").join("templates"), &mut out)?;
+    }
 
     // Crate-agnostic, and the one category that is a build product: the
     // documentation rendered from docs/wiki/ installs to `docs/`, outside any
@@ -406,6 +412,29 @@ mod tests {
         sync(&source, &config).unwrap();
         assert_eq!(read(&config, "scripts/gui-tag-classify.sh").as_deref(), Some("#!/bin/sh\n"));
         assert_eq!(read(&config, "scripts/lib/mf-gui.sh").as_deref(), Some("helpers\n"));
+    }
+
+    #[test]
+    fn gathers_the_script_templates_beside_the_scripts() {
+        let area = scratch();
+        let (source, config) = (area.join("src"), area.join("cfg"));
+        make_source(&source, &[("gui/style.css", "body{}")]);
+        // Templates are scripts to copy, not to run (`mf script new`): they
+        // install one level down, out of the directory script:run lists.
+        let templates = source.join("scripts").join("templates");
+        fs::create_dir_all(&templates).unwrap();
+        fs::write(
+            templates.join("sort-folder.sh"),
+            "#!/bin/sh
+",
+        )
+        .unwrap();
+
+        sync(&source, &config).unwrap();
+        assert_eq!(
+            read(&config, "scripts/templates/sort-folder.sh").as_deref(),
+            Some("#!/bin/sh\n")
+        );
     }
 
     #[test]

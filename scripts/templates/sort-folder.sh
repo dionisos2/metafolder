@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Summary: Example/template — classify then sort a folder's files by metadata.
-# EXAMPLE — a *template* to copy and adapt, not a finished tool. It walks a
+# Summary: Classify then sort a folder's files by metadata.
+# A TEMPLATE to copy and adapt (`mf script new sort-folder`), not a finished
+# tool: it runs from ~/.config/metafolder/scripts/, beside gui-tag-classify.sh
+# and lib/, where `mf script new` puts the copy. It walks a
 # folder, and for each entry: (1) fully classifies its tags with
 # gui-tag-classify.sh, (2) asks a few extra field questions, then (3) moves the
 # file to a destination computed from the resulting metadata.
@@ -14,7 +16,7 @@
 # the metarecord (and the tags you set) is kept — only the file becomes
 # untracked at its new home. Adapt the paths/rules below to your own tree.
 #
-# Usage: example-gui-sort-folder.sh [SORT_DIR]      (default: ~/a_trier)
+# Usage: sort-folder.sh [SORT_DIR]      (default: ~/a_trier)
 #   DEST_ROOT (env) — where sorted files go         (default: ~/divertissement)
 
 set -euo pipefail

@@ -1920,7 +1920,11 @@ async function runCommand(name: string, args: string[], context: ExecContext): P
       if (!choice) return true;
       const path = await resolveScriptPath(choice);
       if (!path) {
-        await status(`no installed script matches "${choice}"`);
+        // Where to look, and how to start one, for whoever tried a name
+        // (doc "mf script").
+        await status(
+          `no installed script matches "${choice}" (mf script lists them; mf script new starts one from a template)`,
+        );
         return true;
       }
       await runScript(path, ws);

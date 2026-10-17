@@ -1,0 +1,15 @@
+title: mf script new
+tags: [[CLI command]] [[Scripting the GUI]]
+kind: reference
+summary: Copy a template into the scripts directory, to adapt it (asks which one when none is named, on a terminal)
+
+`mf script new [TEMPLATE] [--name NAME]` copies a template from
+`~/.config/metafolder/scripts/templates/` into `~/.config/metafolder/scripts/` and
+prints the new file's path, ready to edit. The template is named with or without
+`.sh`; the copy keeps its name unless `--name` gives another.
+
+* Without a template, on a terminal, it lists them, numbered, and asks which one — a number or a name. Not on a terminal (a script, a pipe), that is a usage error naming them (exit 2).
+* It never overwrites: a script of that name already there is an error (exit 1), the file left untouched.
+
+The copy is an ordinary file of the configuration: `metafolder-sync-config` keeps it,
+and a later version of the template does not change it ([[Updating the configuration]]).
