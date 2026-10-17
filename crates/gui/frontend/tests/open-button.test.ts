@@ -6,21 +6,31 @@
 import { describe, expect, test, vi } from 'vitest';
 import { el, openButton, viewerButtons } from '../../panel-shim/ui.js';
 
+/** U+FE0E, text presentation: an emoji font would otherwise draw an arrow as a
+ *  coloured square, on which the stylesheet's `color` does nothing. */
+const TEXT = '\uFE0E';
+
 describe('openButton', () => {
   test('is a small icon button, its action named for hover and screen readers', () => {
     const button = openButton('enter', 'Open the folder', () => {});
     expect(button.tagName).toBe('BUTTON');
     expect(button.type).toBe('button');
     expect(button.classList.contains('mf-open')).toBe(true);
-    expect(button.textContent).toBe('↘');
+    expect(button.textContent).toBe('↘' + TEXT);
     expect(button.title).toBe('Open the folder');
     expect(button.getAttribute('aria-label')).toBe('Open the folder');
   });
 
   test('each kind has its own icon: going into a thing is not showing it elsewhere', () => {
-    expect(openButton('enter', '', () => {}).textContent).toBe('↘');
-    expect(openButton('show', '', () => {}).textContent).toBe('↗');
-    expect(openButton('detail', '', () => {}).textContent).toBe('ⓘ');
+    expect(openButton('enter', '', () => {}).textContent).toBe('↘' + TEXT);
+    expect(openButton('show', '', () => {}).textContent).toBe('↗' + TEXT);
+    expect(openButton('detail', '', () => {}).textContent).toBe('ⓘ' + TEXT);
+  });
+
+  test('each icon is drawn as text, never as an emoji, so it takes its colour', () => {
+    for (const kind of /** @type {const} */ (['enter', 'show', 'detail'])) {
+      expect(openButton(kind, '', () => {}).textContent?.endsWith(TEXT)).toBe(true);
+    }
   });
 
   test('a disabled button is greyed, says why, and opens nothing', () => {
@@ -58,8 +68,8 @@ describe('viewerButtons', () => {
   test('a row shown in the file panel (↗) and the detail panel (ⓘ)', () => {
     const open = vi.fn();
     const [file, detail] = viewerButtons({ hasFile: true, hasMetarecord: true, open });
-    expect(file.textContent).toBe('↗');
-    expect(detail.textContent).toBe('ⓘ');
+    expect(file.textContent).toBe('↗' + TEXT);
+    expect(detail.textContent).toBe('ⓘ' + TEXT);
     file.click();
     detail.click();
     expect(open.mock.calls).toEqual([['file'], ['metarecord-detail']]);
@@ -77,7 +87,7 @@ describe('viewerButtons', () => {
   test('a folder goes in (›) rather than being shown', () => {
     const open = vi.fn();
     const [enter] = viewerButtons({ hasFile: true, hasMetarecord: true, enter: true, open });
-    expect(enter.textContent).toBe('↘');
+    expect(enter.textContent).toBe('↘' + TEXT);
     enter.click();
     expect(open).toHaveBeenCalledWith('enter');
   });

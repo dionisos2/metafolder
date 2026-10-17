@@ -429,6 +429,12 @@ export function valueEl(value, onOpen) {
  *  the file panel (the row's content) is not the detail panel (its fields). */
 const OPEN_GLYPHS = { enter: '↘', show: '↗', detail: 'ⓘ' };
 
+/** U+FE0E asks for each glyph's text presentation: where the panel's font has
+ *  no arrow, the fallback could otherwise be the emoji font, which draws `↘` as
+ *  a blue square that the stylesheet's colour cannot recolour — and `↘` would
+ *  then look exactly like `↗`. */
+const TEXT_PRESENTATION = '\uFE0E';
+
 /**
  * A row's open button (doc "Opening a row"). Opening is one click on it; a click
  * on the row itself only selects, so the row's text can be selected and the row
@@ -460,7 +466,7 @@ export function openButton(kind, title, onOpen, { disabled } = {}) {
         if (!disabled) void onOpen();
       },
     },
-    OPEN_GLYPHS[kind],
+    OPEN_GLYPHS[kind] + TEXT_PRESENTATION,
   );
 }
 
