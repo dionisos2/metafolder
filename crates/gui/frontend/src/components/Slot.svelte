@@ -4,6 +4,7 @@
   import { focusedWs, slotPayload, store, workspaceById } from '../lib/store.svelte';
   import type { SlotId } from '../lib/types';
   import { showMenu } from '../../../panel-shim/menu.js';
+  import { contextIndicator } from '../lib/workContext';
 
   // `chrome` is false in fullscreen, where only the panel body is shown.
   let { id, chrome = true }: { id: SlotId; chrome?: boolean } = $props();
@@ -16,6 +17,7 @@
 
   const payload = $derived(slotPayload(id));
   const workspace = $derived(workspaceById(payload.workspace_id));
+  const context = $derived(contextIndicator(workspace?.work_context));
   const isFocused = $derived(store.layout.focused === id);
   const otherVisible = $derived(store.layout[id === 'left' ? 'right' : 'left'].visible);
 
@@ -84,6 +86,11 @@
           no repo
         {/if}
       </span>
+      {#if context}
+        <!-- The work context in force on the repository (doc "The GUI's
+             work context"): every change is written in it. -->
+        <span class="context-indicator" title={context.title}>⟨{context.text}⟩</span>
+      {/if}
       {#if otherVisible}
         <button
           class="slot-button"
@@ -179,6 +186,15 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
+  }
+  .context-indicator {
+    color: var(--mf-accent, #4c56c4);
+    font-family: var(--mf-font-mono, monospace);
+    font-size: 0.85em;
+    max-width: 16em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .repo-indicator {
     color: var(--mf-fg-dim, #8a8a96);

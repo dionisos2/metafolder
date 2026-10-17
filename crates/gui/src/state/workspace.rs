@@ -101,4 +101,7 @@ pub struct WorkspaceInfo {
     /// The repository's name as captured when the workspace adopted it (see
     /// [`Workspace::repo_name`]) — what the slot header's repo indicator shows.
     pub repo_name: Option<String>,
+    /// The work context in force on the repository (doc "The GUI's work
+    /// context") — what the slot header's context indicator shows.
+    pub work_context: Option<crate::work_context::WorkContext>,
 }

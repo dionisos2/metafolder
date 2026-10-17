@@ -2,7 +2,7 @@ title: The GUI's work context
 tags: [[Labels and contexts]]
 kind: reference
 audience: dev
-summary: A label opened on a repository with context:set, which every later write the GUI makes there carries until context:unset — remembered in .metafolder/gui/context, and offered back when the repository is opened again.
+summary: A label (name, description) opened on a repository with context:set, shown in the slot headers, which every later write the GUI makes there carries until context:unset — remembered in .metafolder/gui/context, and offered back when the repository is opened again.
 
 What replaced the "labelled revision is a retention floor" rule ([[The operation log]]): to
 name a stretch of work, the user opens a context in the GUI, and every later operation of
@@ -12,7 +12,7 @@ October 2026); built on 17 October 2026, where the user settled the questions le
 
 !! The commands
 
-* <<cmd "context:set">> `<name>` opens a label named `name` on the active repository — at the root, not inside another — and puts it in force there. ''One at a time'' (user): setting one while another is in force closes the first.
+* <<cmd "context:set">> `<name> [description]` opens a label named `name`, described by the rest of the line, on the active repository — at the root, not inside another — and puts it in force there. A name with spaces is quoted (`context:set "sorting photos" the 2024 trip`); typed bare, the command asks the name, then the description, which may be left empty. ''One at a time'' (user): setting one while another is in force closes the first.
 * <<cmd "context:unset">> closes it.
 
 Closing writes nothing: a context is a label id the GUI sends, and leaving it is ceasing to
@@ -29,16 +29,24 @@ edits, undo — so a command's own label opens inside it. What runs from the GUI
 label inside it. An `mf` started from a terminal outside the GUI is not in it: the context
 is the GUI's.
 
+!! The indicator
+
+Each slot header shows, beside its repository's name, the context in force on it —
+`⟨name⟩`, its label, description and how to close it on hover. The workspaces the GUI
+sends the shell carry it (`work_context` in each workspace's info), and are sent again
+whenever a context is put in force or closed, by a command, the question below or a
+prune.
+
 Undo, inside a context, has two candidates — the command and the context — and asks which
 ([[Undo and redo by label]]).
 
 !! Surviving a restart
 
 The context in force is remembered in the repository's `.metafolder/gui/context` (JSON:
-`{"label", "name"}`), beside the input histories ([[Repository layout on disk]]) — trackable
+`{"label", "name", "description"}`, the description left out when there is none), beside the input histories ([[Repository layout on disk]]) — trackable
 content like them, so it follows the repository, not the machine. When a workspace opens
 a repository that has one and the GUI has not put it in force yet, the command input asks
-whether to ''stay'' in it or to ''end'' it — once per repository and session, in the
+— naming it, with its description — whether to ''stay'' in it or to ''end'' it — once per repository and session, in the
 workspace that opened it ([[GUI design decisions]]: a question belongs to its workspace).
 Escape leaves things as they were: the context stays in force. A repository still loading
 is asked again a second later, for up to thirty seconds.

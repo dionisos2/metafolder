@@ -49,7 +49,7 @@ import {
   ZOOM_DIRECTIONS,
 } from './panelFunctions';
 import { changeFeed } from './panels/changes';
-import type { CommandDef, ExecContext, LayoutView, WorkspaceInfo } from './types';
+import type { CommandDef, ExecContext, LayoutView, WorkContext, WorkspaceInfo } from './types';
 
 export type ParsedInvocation = { name: string; args: string[] } | { shell: string } | null;
 
@@ -994,12 +994,6 @@ registerArgs('file:open-with', [
   },
 ]);
 
-/** A work context, as the Rust side answers it (doc "The GUI's work context"). */
-interface WorkContext {
-  label: number;
-  name: string;
-}
-
 registerArgs('context:set', [
   {
     name: 'name',
@@ -1013,14 +1007,23 @@ registerArgs('context:set', [
         : 'Work context name?';
     },
   },
+  {
+    name: 'description',
+    prompt: () => 'Description? (what the work is; empty for none)',
+  },
 ]);
 
-/** `context:set <name>`: opens a work context on the workspace's repository —
- *  every later change the GUI makes there is written in it — closing the one
- *  in force, if any (one at a time). */
-async function setWorkContext(ws: string, name: string): Promise<void> {
+/** `context:set <name> [description]`: opens a work context on the
+ *  workspace's repository — every later change the GUI makes there is written
+ *  in it — closing the one in force, if any (one at a time). A name with
+ *  spaces is quoted on the command line; the description is the rest. */
+async function setWorkContext(ws: string, name: string, description: string): Promise<void> {
   if (!name) return;
-  const opened = await invoke<WorkContext>('context_set', { wsId: ws, name });
+  const opened = await invoke<WorkContext>('context_set', {
+    wsId: ws,
+    name,
+    description: description || null,
+  });
   await status(`in work context "${opened.name}" (label ${opened.label})`, 'info');
 }
 
@@ -1057,7 +1060,12 @@ export async function offerWorkContexts(workspaces: WorkspaceInfo[]): Promise<vo
 }
 
 async function offerWorkContext(ws: string, repoName: string): Promise<void> {
-  type Pending = { state: 'none' | 'open' | 'gone'; label?: number; name?: string };
+  type Pending = {
+    state: 'none' | 'open' | 'gone';
+    label?: number;
+    name?: string;
+    description?: string | null;
+  };
   let pending: Pending | null = null;
   for (let attempt = 1; pending === null; attempt++) {
     try {
@@ -1084,7 +1092,7 @@ async function offerWorkContext(ws: string, repoName: string): Promise<void> {
       {
         name: 'answer',
         prompt: () =>
-          `Work context "${pending.name}" is still open in ${repoName}: stay in it or end it? (stay / end)`,
+          `Work context "${pending.name}"${pending.description ? ` (${pending.description})` : ''} is still open in ${repoName}: stay in it or end it? (stay / end)`,
         complete: () => ['stay', 'end'],
       },
     ],
@@ -2070,8 +2078,8 @@ async function runCommand(name: string, args: string[], context: ExecContext): P
       return true;
     }
     case 'context:set':
-      // The name was collected by dispatch, all its words.
-      if (ws) await setWorkContext(ws, args.join(' ').trim());
+      // Both were collected by dispatch, the description with all its words.
+      if (ws) await setWorkContext(ws, (args[0] ?? '').trim(), args.slice(1).join(' ').trim());
       return true;
     case 'context:unset':
       if (ws) await unsetWorkContext(ws);

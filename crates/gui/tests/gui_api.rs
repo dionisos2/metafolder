@@ -130,7 +130,8 @@ async fn test_workspaces_list_create_delete() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         body,
-        json!([{"id": "ws-1", "name": "Workspace 1", "active_repo": null, "repo_name": null}])
+        json!([{"id": "ws-1", "name": "Workspace 1", "active_repo": null, "repo_name": null,
+                "work_context": null}])
     );
 
     // Explicit repo.

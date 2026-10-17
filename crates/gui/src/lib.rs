@@ -454,6 +454,14 @@ pub fn run(options: Options) {
         .setup(move |tauri_app| {
             let notifier = Arc::new(TauriNotifier(tauri_app.handle().clone()));
             let gui = Arc::new(GuiState::new(notifier));
+            // The slot headers show the work context in force on their
+            // repository (doc "The GUI's work context").
+            let weak = Arc::downgrade(&gui);
+            work_context::on_change(move || {
+                if let Some(gui) = weak.upgrade() {
+                    gui.refresh_workspaces();
+                }
+            });
             let keybindings = Arc::new(Mutex::new(keybindings));
             let input = Arc::new(server::input_wait::InputWait::new());
             let command_wait = Arc::new(server::command_wait::CommandWait::new());

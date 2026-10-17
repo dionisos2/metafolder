@@ -303,7 +303,8 @@ mod tests {
         let repo = uuid::Uuid::new_v4();
         gui.adopt_repo("ws-1", &repo.simple().to_string()).unwrap();
         assert_eq!(plain_line_context(&gui, "ws-1"), None);
-        let context = crate::work_context::WorkContext { label: 9, name: "w".into() };
+        let context =
+            crate::work_context::WorkContext { label: 9, name: "w".into(), description: None };
         crate::work_context::activate(&repo.simple().to_string(), context, "/nowhere".into());
         assert_eq!(
             plain_line_context(&gui, "ws-1"),

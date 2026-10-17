@@ -31,6 +31,9 @@ use metafolder_core::sync::MutexExt;
 pub struct WorkContext {
     pub label: i64,
     pub name: String,
+    /// What the work is, when the user said (the label's description).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 /// What a repository being opened has to offer back ([`pending`]).
@@ -55,6 +58,27 @@ static ACTIVE: Mutex<Option<HashMap<Uuid, Active>>> = Mutex::new(None);
 
 fn with_active<T>(f: impl FnOnce(&mut HashMap<Uuid, Active>) -> T) -> T {
     f(ACTIVE.lock_recover().get_or_insert_with(HashMap::new))
+}
+
+/// Who is told that a context was put in force or closed: the GUI, which
+/// re-sends the workspaces so the slot headers' indicator follows.
+type Listener = Box<dyn Fn() + Send + Sync>;
+static LISTENER: Mutex<Option<Listener>> = Mutex::new(None);
+
+/// Calls `listener` after every change of the contexts in force (one listener:
+/// one GUI; a second replaces the first).
+pub fn on_change(listener: impl Fn() + Send + Sync + 'static) {
+    *LISTENER.lock_recover() = Some(Box::new(listener));
+}
+
+/// [`with_active`] for a change: the listener is told once the contexts are
+/// unlocked, since it reads them back.
+fn change<T>(f: impl FnOnce(&mut HashMap<Uuid, Active>) -> T) -> T {
+    let out = with_active(f);
+    if let Some(listener) = LISTENER.lock_recover().as_ref() {
+        listener();
+    }
+    out
 }
 
 fn repo_key(repo: &str) -> Result<Uuid, String> {
@@ -100,7 +124,7 @@ pub(crate) fn forget_if_gone(path: &str, status: u16, body: &Value) -> bool {
         return false;
     }
     let Some(key) = repo_of_path(path) else { return false };
-    let removed = with_active(|map| {
+    let removed = change(|map| {
         let gone = map.get(&key).is_some_and(|a| {
             body["error"].as_str() == Some(&format!("no label {}", a.context.label))
         });
@@ -126,7 +150,7 @@ pub(crate) fn forget_if_gone(path: &str, status: u16, body: &Value) -> bool {
 /// Puts `context` in force on `repo`, remembered in `metafolder`.
 pub(crate) fn activate(repo: &str, context: WorkContext, metafolder: PathBuf) {
     if let Ok(key) = Uuid::parse_str(repo) {
-        with_active(|map| map.insert(key, Active { context, metafolder }));
+        change(|map| map.insert(key, Active { context, metafolder }));
     }
 }
 
@@ -134,7 +158,7 @@ pub(crate) fn activate(repo: &str, context: WorkContext, metafolder: PathBuf) {
 /// GUI that exits does. Tests use it to stand for a restart.
 pub fn forget(repo: &str) {
     if let Ok(key) = Uuid::parse_str(repo) {
-        with_active(|map| map.remove(&key));
+        change(|map| map.remove(&key));
     }
 }
 
@@ -149,7 +173,7 @@ pub async fn set(
 ) -> Result<WorkContext, String> {
     let key = repo_key(repo)?;
     let metafolder = crate::history::metafolder_dir_of(daemon, repo).await?;
-    let previous = with_active(|map| map.remove(&key));
+    let previous = change(|map| map.remove(&key));
     let opened = async {
         let body = json!({"name": name, "description": description});
         let response = daemon.request("POST", &format!("/repos/{repo}/labels"), Some(body)).await?;
@@ -159,14 +183,18 @@ pub async fn set(
             }));
         }
         let label = response.body["id"].as_i64().ok_or("the daemon answered no label id")?;
-        let context = WorkContext { label, name: name.to_string() };
+        let context = WorkContext {
+            label,
+            name: name.to_string(),
+            description: description.map(str::to_string),
+        };
         write_file(&metafolder, &context)?;
         Ok(context)
     }
     .await;
     match opened {
         Ok(context) => {
-            with_active(|map| {
+            change(|map| {
                 map.insert(key, Active { context: context.clone(), metafolder });
             });
             Ok(context)
@@ -174,7 +202,7 @@ pub async fn set(
         Err(error) => {
             // Nothing replaced it: the previous context stays in force.
             if let Some(previous) = previous {
-                with_active(|map| map.insert(key, previous));
+                change(|map| map.insert(key, previous));
             }
             Err(error)
         }
@@ -185,7 +213,7 @@ pub async fn set(
 /// not resumed — and forgets its file. The context closed, if there was one.
 pub async fn unset(daemon: &DaemonProxy, repo: &str) -> Result<Option<WorkContext>, String> {
     let key = repo_key(repo)?;
-    if let Some(active) = with_active(|map| map.remove(&key)) {
+    if let Some(active) = change(|map| map.remove(&key)) {
         remove_file(&active.metafolder)?;
         return Ok(Some(active.context));
     }
@@ -309,7 +337,8 @@ pub async fn context_pending(
     let repo = app.gui.active_repo(&ws_id)?;
     Ok(match pending(&app.daemon, &repo).await? {
         Pending::None => json!({"state": "none"}),
-        Pending::Open(c) => json!({"state": "open", "label": c.label, "name": c.name}),
+        Pending::Open(c) => json!({"state": "open", "label": c.label, "name": c.name,
+            "description": c.description}),
         Pending::Gone(c) => json!({"state": "gone", "label": c.label, "name": c.name}),
     })
 }

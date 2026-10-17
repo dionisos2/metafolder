@@ -68,6 +68,7 @@ Each slot has a thin header bar:
 
 * the ''panel menu'', naming the panel type shown; choosing another one is `panel:open here <name>` ([[Panel types]]);
 * the ''repository indicator'': the name of the workspace's repository, or ''no repo'' (its uuid is in the tooltip). It only informs: a workspace's repository never changes ([[Workspaces]]);
+* the ''work context indicator'', `⟨name⟩`, when a work context is in force on that repository — every change is written in it; its label and description are in the tooltip ([[The GUI's work context]]);
 * the mouse's layout commands: ◫ to split when the slot is alone; ⇄ to swap and × to hide ''this'' slot when both are shown; ⛶ to focus this slot and go fullscreen.
 
 !! Fullscreen

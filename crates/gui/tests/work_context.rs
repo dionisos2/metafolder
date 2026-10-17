@@ -114,7 +114,7 @@ async fn a_context_set_is_carried_by_every_write_to_its_repository_until_unset()
     let (repo, metafolder, _root, proxy, stub) = setup("work_context_set").await;
 
     let opened = work_context::set(&proxy, &repo, "sorting photos", None).await.unwrap();
-    assert_eq!(opened, WorkContext { label: 1, name: "sorting photos".into() });
+    assert_eq!(opened, WorkContext { label: 1, name: "sorting photos".into(), description: None });
     assert!(file(&metafolder).exists(), "remembered in .metafolder/gui/context");
     assert_eq!(work_context::active(&repo), Some(opened.clone()));
 
@@ -127,6 +127,8 @@ async fn a_context_set_is_carried_by_every_write_to_its_repository_until_unset()
     // not opened inside it.
     let second = work_context::set(&proxy, &repo, "tagging", Some("the 2024 trip")).await.unwrap();
     assert_eq!(second.label, 2);
+    assert_eq!(second.description.as_deref(), Some("the 2024 trip"), "the description is kept");
+    assert_eq!(work_context::read_file(&metafolder).unwrap(), Some(second.clone()));
     assert_eq!(write(&proxy, &repo).await, 200);
 
     let closed = work_context::unset(&proxy, &repo).await.unwrap();
@@ -153,7 +155,7 @@ async fn a_remembered_context_is_offered_back_and_resumed() {
     assert_eq!(work_context::active(&repo), None);
     assert!(file(&metafolder).exists());
 
-    let expected = WorkContext { label: 1, name: "sorting photos".into() };
+    let expected = WorkContext { label: 1, name: "sorting photos".into(), description: None };
     assert_eq!(
         work_context::pending(&proxy, &repo).await.unwrap(),
         Pending::Open(expected.clone())
@@ -181,7 +183,7 @@ async fn a_remembered_context_whose_label_was_pruned_is_dropped() {
     work_context::forget(&repo);
     stub.lock().unwrap().labels.clear();
 
-    let gone = WorkContext { label: 1, name: "old work".into() };
+    let gone = WorkContext { label: 1, name: "old work".into(), description: None };
     assert_eq!(work_context::pending(&proxy, &repo).await.unwrap(), Pending::Gone(gone));
     assert!(!file(&metafolder).exists(), "nothing to offer next time");
 }
@@ -199,10 +201,37 @@ async fn a_write_whose_context_was_pruned_meanwhile_is_made_outside_it() {
     assert_eq!(stub.lock().unwrap().writes_in, [Some("1".to_string()), None]);
 }
 
+#[tokio::test]
+async fn every_change_of_a_context_is_signalled() {
+    let (repo, _metafolder, _root, proxy, _stub) = setup("work_context_signal").await;
+    let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = count.clone();
+    work_context::on_change(move || {
+        seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    });
+    let changes = || count.load(std::sync::atomic::Ordering::SeqCst);
+    // Other tests change contexts meanwhile: only "it grew" can be asserted.
+    let before = changes();
+    work_context::set(&proxy, &repo, "a", None).await.unwrap();
+    let after_set = changes();
+    assert!(after_set > before, "set is signalled");
+    work_context::unset(&proxy, &repo).await.unwrap();
+    assert!(changes() > after_set, "unset is signalled");
+}
+
+#[test]
+fn a_file_without_a_description_is_still_read() {
+    let root = common::TempDir::new("work_context_old_file");
+    std::fs::create_dir_all(root.join("gui")).unwrap();
+    std::fs::write(root.join("gui/context"), r#"{"label": 3, "name": "n"}"#).unwrap();
+    let expected = WorkContext { label: 3, name: "n".into(), description: None };
+    assert_eq!(work_context::read_file(&root).unwrap(), Some(expected));
+}
+
 #[test]
 fn the_file_holds_the_label_and_its_name() {
     let root = common::TempDir::new("work_context_file");
-    let context = WorkContext { label: 42, name: "a name".into() };
+    let context = WorkContext { label: 42, name: "a name".into(), description: Some("why".into()) };
     work_context::write_file(&root, &context).unwrap();
     assert_eq!(work_context::read_file(&root).unwrap(), Some(context));
     std::fs::write(root.join("gui/context"), "not json").unwrap();

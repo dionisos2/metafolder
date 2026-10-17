@@ -46,12 +46,15 @@ error — the request then belongs to nobody — so the same script runs from a 
 `GET /gui/workspaces` answers an array:
 
 ```
-[{"id": "ws-1", "name": "music 1", "active_repo": "<uuid>", "repo_name": "music"},
- {"id": "ws-2", "name": "Workspace 1", "active_repo": null, "repo_name": null}]
+[{"id": "ws-1", "name": "music 1", "active_repo": "<uuid>", "repo_name": "music",
+  "work_context": {"label": 12, "name": "tagging", "description": "the 2024 trip"}},
+ {"id": "ws-2", "name": "Workspace 1", "active_repo": null, "repo_name": null,
+  "work_context": null}]
 ```
 
 `repo_name` is the repository's name as it was when the workspace adopted it
-([[Workspaces]]).
+([[Workspaces]]); `work_context` the work context in force on that repository, `null`
+without one (`description` left out when there is none — [[The GUI's work context]]).
 
 `POST /gui/workspaces` takes
 `{"active_repo": "<uuid>", "task": "script-3", "panels": {"left": "file"}}`, all

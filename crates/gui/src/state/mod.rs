@@ -292,6 +292,7 @@ impl Inner {
                 name: w.name.clone(),
                 active_repo: w.active_repo.clone(),
                 repo_name: w.repo_name.clone(),
+                work_context: w.active_repo.as_deref().and_then(crate::work_context::active),
             })
             .collect()
     }
@@ -615,6 +616,13 @@ impl GuiState {
     /// engine helpers outside this module, e.g. keybinding pushes).
     pub fn notify(&self, event: &str, payload: Value) {
         self.notifier.emit(event, payload);
+    }
+
+    /// Re-sends the workspaces: what they show changed outside this state —
+    /// the work context in force on a repository.
+    pub fn refresh_workspaces(&self) {
+        let inner = self.lock();
+        self.emit_workspaces(&inner);
     }
 
     fn emit_workspaces(&self, inner: &Inner) {
@@ -2164,6 +2172,30 @@ mod tests {
         assert!(vars.iter().any(|p| p["key"] == "active_repo" && p["value"] == json!("repo-1")));
         // Second adoption: refused (immutable once set).
         assert!(state.adopt_repo("ws-1", "repo-2").is_err());
+    }
+
+    /// The slot header's work context indicator (doc "The GUI's work
+    /// context"): a workspace's info carries the context in force on its
+    /// repository, and a refresh tells the shell.
+    #[test]
+    fn test_workspace_info_carries_the_work_context_of_its_repo() {
+        let (notifier, state) = state();
+        let repo = uuid::Uuid::new_v4().simple().to_string();
+        state.adopt_repo("ws-1", &repo).unwrap();
+        assert_eq!(state.workspaces()[0].work_context, None);
+
+        let context = crate::work_context::WorkContext {
+            label: 4,
+            name: "tagging".into(),
+            description: Some("the 2024 trip".into()),
+        };
+        crate::work_context::activate(&repo, context.clone(), "/nowhere".into());
+        notifier.clear();
+        state.refresh_workspaces();
+        assert_eq!(state.workspaces()[0].work_context, Some(context));
+        let emitted = notifier.payloads(events::WORKSPACES_CHANGED);
+        assert_eq!(emitted.last().unwrap()["workspaces"][0]["work_context"]["name"], "tagging");
+        crate::work_context::forget(&repo);
     }
 
     #[test]

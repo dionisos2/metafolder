@@ -5,6 +5,7 @@
 
 import { describe, expect, test, vi } from 'vitest';
 import { dispatch, offerWorkContexts } from '../src/lib/commands';
+import { contextIndicator } from '../src/lib/workContext';
 import { store } from '../src/lib/store.svelte';
 import type { WorkspaceInfo } from '../src/lib/types';
 
@@ -42,10 +43,26 @@ function workspace(id: string, repo: string | null): WorkspaceInfo {
 }
 
 describe('context:set / context:unset', () => {
-  test('set opens a context named by the whole rest of the line', async () => {
+  test('set takes the name, then the rest of the line as its description', async () => {
     invoked.length = 0;
-    await dispatch('context:set sorting the photos', { ws: 'ws-1', slot: 'left' });
-    expect(calls('context_set')).toEqual([{ wsId: 'ws-1', name: 'sorting the photos' }]);
+    await dispatch('context:set "sorting photos" the 2024 trip', { ws: 'ws-1', slot: 'left' });
+    expect(calls('context_set')).toEqual([
+      { wsId: 'ws-1', name: 'sorting photos', description: 'the 2024 trip' },
+    ]);
+  });
+
+  test('typed bare, it asks the name, then the description, which may be left empty', async () => {
+    invoked.length = 0;
+    const done = dispatch('context:set', { ws: 'ws-1', slot: 'left' });
+    await settle();
+    expect(store.ui.promptText).toContain('Work context name?');
+    await answer('sorting photos');
+    expect(store.ui.promptText).toContain('Description?');
+    await answer('');
+    await done;
+    expect(calls('context_set')).toEqual([
+      { wsId: 'ws-1', name: 'sorting photos', description: null },
+    ]);
   });
 
   test('unset closes it', async () => {
@@ -106,5 +123,17 @@ describe('a repository opened with a context left open', () => {
     await offerWorkContexts([workspace('ws-1', 'repo-e'), workspace('ws-2', null)]);
     expect(calls('context_pending')).toEqual([{ wsId: 'ws-1' }]);
     expect(store.ui.promptText).toBeNull();
+  });
+});
+
+describe('the slot header indicator', () => {
+  test('shows the context name, and its label and description on hover', () => {
+    expect(contextIndicator(null)).toBeNull();
+    const shown = contextIndicator({ label: 4, name: 'tagging', description: 'the 2024 trip' });
+    expect(shown?.text).toBe('tagging');
+    expect(shown?.title).toContain('work context "tagging" (label 4)');
+    expect(shown?.title).toContain('the 2024 trip');
+    expect(shown?.title).toContain('context:unset');
+    expect(contextIndicator({ label: 5, name: 'x' })?.title).not.toContain('undefined');
   });
 });

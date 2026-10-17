@@ -15,6 +15,15 @@ export interface WorkspaceInfo {
   active_repo: string | null;
   /** The repository's name, captured when the workspace adopted it. */
   repo_name: string | null;
+  /** The work context in force on the repository (doc "The GUI's work context"). */
+  work_context?: WorkContext | null;
+}
+
+/** A work context: the label its writes go in, its name and description. */
+export interface WorkContext {
+  label: number;
+  name: string;
+  description?: string | null;
 }
 
 export interface SlotPayload {
