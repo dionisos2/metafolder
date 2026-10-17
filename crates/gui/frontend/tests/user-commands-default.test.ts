@@ -11,7 +11,7 @@ import { describe, expect, test } from 'vitest';
 
 // An argument as the tests call it: the module's own types are inferred
 // from JavaScript, one signature per argument, too narrow for a stub `mf`.
-type Arg = { complete: (...args: unknown[]) => Promise<unknown> | unknown };
+type Arg = { complete: (...args: unknown[]) => unknown };
 
 describe('the shipped user commands', () => {
   test('user:tag-query inserts the filter with `stay` and runs the search', async () => {
@@ -88,6 +88,38 @@ describe('the shipped user commands', () => {
         },
       ],
     ]);
+  });
+
+  test('user:tag-add answers through mf:tag, the kind naming the answer', async () => {
+    const mod = await import('../../default-config/commands.js');
+    const invocations: string[] = [];
+    const mf = { invoke: (i: string) => (invocations.push(i), Promise.resolve({ ok: true })) };
+
+    await mod.default['user:tag-add'].run(mf as never, 'tag', 'music/jazz');
+    await mod.default['user:tag-add'].run(mf as never, 'negative_tag', 'jeux video');
+    await mod.default['user:tag-add'].run(mf as never, 'mixed_tag', 'music');
+
+    expect(invocations).toEqual([
+      'mf:tag add music/jazz',
+      // The tag is the last argument: its words need no quotes.
+      'mf:tag deny jeux video',
+      'mf:tag mixed music',
+    ]);
+    await expect(mod.default['user:tag-add'].run(mf as never, 'tags', 'x')).rejects.toThrow(
+      /tag, negative_tag or mixed_tag/,
+    );
+  });
+
+  test('user:tag-add completes the kind, then every tag path', async () => {
+    const mod = await import('../../default-config/commands.js');
+    const mf = {
+      workspace: { get: (k: string) => Promise.resolve(k === 'active_repo' ? 'r1' : null) },
+      daemon: { call: () => Promise.resolve({ a: ['music/jazz'], b: ['music'] }) },
+    };
+    const [kind, tag] = mod.default['user:tag-add'].args as unknown as Arg[];
+
+    expect(await kind.complete(mf)).toEqual(['tag', 'negative_tag', 'mixed_tag']);
+    expect(await tag.complete(mf, '', ['tag'])).toEqual(['music', 'music/jazz']);
   });
 
   test('user:tag-remove takes a tag off the selected metarecord', async () => {

@@ -769,6 +769,32 @@ export default {
     },
   },
 
+  // Give the selected metarecord a tag — or deny it, or mark it mixed — by the
+  // rules of `mf tag` (doc "Tag subsumption"): `mf:tag` drops the broader tags
+  // the new one says, the answers it contradicts, and creates a tag that does
+  // not exist yet. The kind names the field, and so the answer.
+  'user:tag-add': {
+    label: 'Add a tag to the selected metarecord',
+    args: [
+      tagKindArg('Which tags? (tag / negative_tag / mixed_tag)'),
+      {
+        name: 'tag',
+        prompt: () => 'Tag? (a new path creates it)',
+        complete: (/** @type {MetafolderApi} */ mf) => tagPaths(mf),
+      },
+    ],
+    // The tag is the last argument, so a path's words need no quotes.
+    run: async (
+      /** @type {MetafolderApi} */ mf,
+      /** @type {string} */ kind,
+      /** @type {string} */ tag,
+    ) => {
+      requireTagKind(kind);
+      const answer = { tag: 'add', negative_tag: 'deny', mixed_tag: 'mixed' }[kind];
+      await mf.invoke(`mf:tag ${answer} ${tag}`);
+    },
+  },
+
   // Take a tag off the selected metarecord, completing over the tags of that
   // kind it has. The value is the tag entry's uuid, which a `ref` takes as
   // itself; a path typed instead is read through the field's `[ref-seeds]`

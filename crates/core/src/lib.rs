@@ -21,6 +21,7 @@ pub mod scripts;
 pub mod simplified;
 pub mod slowlog;
 pub mod sync;
+pub mod tag;
 pub mod trash;
 pub mod undo;
 

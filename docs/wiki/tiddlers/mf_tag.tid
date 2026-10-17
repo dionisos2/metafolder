@@ -1,0 +1,6 @@
+title: mf:tag
+tags: [[GUI command]] [[Hierarchical tags]]
+kind: reference
+summary: Answer about a tag on the selected metarecord: add / deny / mixed / remove (mf tag)
+
+The GUI's `mf tag`: `mf:tag <add|deny|mixed|remove> <tag>` on the selected metarecord, completing the answer and the paths of the existing tags. It rewrites the record by the same code as the command line — the broader tags it drops, the answers it contradicts, a missing tag created, all in one write ([[Tag subsumption]]) — and the status bar says what it did ([[Tagging from the GUI]]).

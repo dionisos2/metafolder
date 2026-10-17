@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/mf:tag
+catalog: GUI command
+target: mf:tag
+summary: Answer about a tag on the selected metarecord: add / deny / mixed / remove (mf tag)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

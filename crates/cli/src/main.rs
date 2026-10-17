@@ -1473,16 +1473,17 @@ fn dispatch_tag(
     verb: TagVerb,
 ) -> CmdResult {
     use metafolder_cli::client::CliError::Usage;
+    use metafolder_core::tag::Answer;
     if let TagVerb::List = verb {
         return commands::tag_list(ctx);
     }
     let selector = commands::resolve_selector(query.as_deref(), id.as_deref(), &eq, simplified)?
         .ok_or_else(|| Usage("mf tag needs a selector: -i, -q or --eq".into()))?;
     match verb {
-        TagVerb::Add { path } => commands::tag_add(ctx, &selector, &path),
-        TagVerb::Deny { path } => commands::tag_deny(ctx, &selector, &path),
-        TagVerb::Mixed { path } => commands::tag_mixed(ctx, &selector, &path),
-        TagVerb::Remove { path } => commands::tag_remove(ctx, &selector, &path),
+        TagVerb::Add { path } => commands::tag_answer(ctx, &selector, Answer::Add, &path),
+        TagVerb::Deny { path } => commands::tag_answer(ctx, &selector, Answer::Deny, &path),
+        TagVerb::Mixed { path } => commands::tag_answer(ctx, &selector, Answer::Mixed, &path),
+        TagVerb::Remove { path } => commands::tag_answer(ctx, &selector, Answer::Remove, &path),
         TagVerb::List => unreachable!("handled above"),
     }
 }

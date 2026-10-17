@@ -238,13 +238,17 @@
 # the workspace's, whichever panel published it.
 "m o" = { command = "mf:order" }
 
-# Tags ("#" = the tag sigil of the simplified language; doc "User commands").
-# "# t/n/m" searches the records having / denying / partly having a tag, "# d"
-# then t/n/m takes one off the selected metarecord. Each asks for the tag,
-# with completion. Global, like the "g" family.
+# Tags ("#" = the tag sigil of the simplified language; doc "Tagging from the
+# GUI"). "# t/n/m" searches the records having / denying / partly having a tag;
+# "# a" then t/n/m gives the selected metarecord the tag, denies it, or marks it
+# mixed (by the rules of `mf tag`); "# d" then t/n/m takes one off. Each asks
+# for the tag, with completion. Global, like the "g" family.
 "# t" = { command = "user:tag-query tag" }
 "# n" = { command = "user:tag-query negative_tag" }
 "# m" = { command = "user:tag-query mixed_tag" }
+"# a t" = { command = "user:tag-add tag" }
+"# a n" = { command = "user:tag-add negative_tag" }
+"# a m" = { command = "user:tag-add mixed_tag" }
 "# d t" = { command = "user:tag-remove tag" }
 "# d n" = { command = "user:tag-remove negative_tag" }
 "# d m" = { command = "user:tag-remove mixed_tag" }

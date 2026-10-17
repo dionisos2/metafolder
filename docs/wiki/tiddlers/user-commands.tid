@@ -55,8 +55,8 @@ An error thrown by `run` is shown in the status bar, like any command's failure.
 
 !! The shipped entries
 
-The shipped file holds three examples, `user:rate`, [[user:tag-query]] and
-[[user:tag-remove]], and eight
+The shipped file holds four examples, `user:rate`, [[user:tag-query]],
+[[user:tag-add]] and [[user:tag-remove]], and eight
 commands of the GUI itself that are written here so that their questions and what
 their answers run can be edited:
 

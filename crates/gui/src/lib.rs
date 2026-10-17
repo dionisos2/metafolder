@@ -39,6 +39,7 @@ pub mod shell_exec;
 pub mod slow;
 pub mod state;
 pub mod sync;
+pub mod tag;
 pub mod thumbnails;
 pub mod trash;
 pub mod undo;
@@ -139,6 +140,11 @@ fn register_builtins(registry: &CommandRegistry) {
         (
             "mf:order",
             "Number the selected folder's (or selected file's folder's) direct children",
+            true,
+        ),
+        (
+            "mf:tag",
+            "Answer about a tag on the selected metarecord: add / deny / mixed / remove (mf tag)",
             true,
         ),
         ("ignore:list", "Show the ignore presets and the target directory's patterns", true),
@@ -580,6 +586,7 @@ pub fn run(options: Options) {
             sync::sync_show,
             repo_init::repo_init,
             order::order_run,
+            tag::tag_answer,
             ignore::ignore_presets,
             ignore::ignore_current,
             ignore::ignore_apply,

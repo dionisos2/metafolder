@@ -1,0 +1,14 @@
+title: $:/mf/gen/GUI command/user:tag-add
+catalog: GUI command
+target: user:tag-add
+summary: Add a tag to the selected metarecord
+
+!! Reference
+
+* Defined by the shipped ``commands.js``
+
+!! Default keys
+
+* ``# a m`` → ``user:tag-add mixed_tag``
+* ``# a n`` → ``user:tag-add negative_tag``
+* ``# a t`` → ``user:tag-add tag``

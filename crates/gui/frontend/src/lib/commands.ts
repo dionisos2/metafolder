@@ -829,6 +829,64 @@ async function runOrder(ws: string | null): Promise<void> {
   await status(report.message, 'info');
 }
 
+// ── Answer about a tag (the `mf:tag` builtin) ──────────────────────────────
+// The GUI half of `mf tag` (doc "Tagging from the GUI"): the rewrite an answer
+// makes — subsumption, contradictions, missing entries created — is shared
+// Rust (`metafolder_core::tag`, behind the `tag_answer` command); the shell
+// names the selected metarecord. The panels follow through the change feed.
+
+const TAG_ANSWERS = ['add', 'deny', 'mixed', 'remove'];
+
+/** Every path of every tag entry of `repo`, sorted — a tag under several
+ *  parents has one per parent. */
+async function tagPathCandidates(repo: string | null): Promise<string[]> {
+  if (!repo) return [];
+  const body = (await daemonJson('POST', `/repos/${repo}/query/fields/resolve-tree`, {
+    query: { type: 'eq', field: 'mf_schema', value: { type: 'string', value: 'tag' } },
+    field: 'path',
+  })) as Record<string, string[]> | null;
+  const paths = new Set<string>();
+  for (const list of Object.values(body ?? {})) for (const p of list) paths.add(p);
+  return [...paths].sort();
+}
+
+registerArgs('mf:tag', [
+  {
+    name: 'answer',
+    prompt: () => `Answer? (${TAG_ANSWERS.join(' / ')})`,
+    complete: () => TAG_ANSWERS,
+  },
+  {
+    name: 'tag',
+    prompt: (p) => `Tag to ${p[0] ?? 'answer about'}?`,
+    complete: () => tagPathCandidates(repoOf(focusedWs())),
+  },
+]);
+
+/** `mf:tag <answer> <tag>`: one answer about a tag on the selected metarecord. */
+async function runTag(ws: string | null, verb: string, path: string): Promise<void> {
+  if (!ws) return;
+  const selected = await invoke<{ uuid?: unknown; repo?: unknown } | null>('ws_get_var', {
+    wsId: ws,
+    key: 'selected_metarecord',
+  });
+  if (!selected || typeof selected.uuid !== 'string' || typeof selected.repo !== 'string') {
+    await status('no metarecord is selected');
+    return;
+  }
+  try {
+    const report = await invoke<{ message: string }>('tag_answer', {
+      repo: selected.repo,
+      uuid: selected.uuid,
+      verb,
+      path,
+    });
+    await status(report.message, 'info');
+  } catch (e) {
+    await status(e instanceof Error ? e.message : String(e));
+  }
+}
+
 // ── Watch activity (the `mf:watch-activity` builtin) ────────────────────────────────
 
 /** `mf:watch-activity reset`: the GUI half of `mf watch activity --reset` (doc
@@ -1853,6 +1911,11 @@ async function runCommand(name: string, args: string[], context: ExecContext): P
       return true;
     case 'mf:order':
       await runOrder(ws);
+      return true;
+    case 'mf:tag':
+      // Both arguments were collected by dispatch (the tag, last, with all
+      // its words).
+      await runTag(ws, args[0] ?? '', args.slice(1).join(' ').trim());
       return true;
     case 'reconcile:run':
       if (ws) await invoke('reconcile_run', { wsId: ws });

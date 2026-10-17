@@ -1277,184 +1277,6 @@ pub fn order(
 
 // ── mf tag (doc "Tag subsumption") ───────────────────────────────────────────
 
-/// The tag vocabulary loaded once per `mf tag` run. A tag in a hierarchy has
-/// one path per way up (doc "Hierarchy references"), and every path is
-/// listed, so the string ancestors of all its paths are exactly its ancestors
-/// by every parent, and the same for its descendants.
-struct Vocab {
-    /// Tag path → entry uuid (hex). Several paths may name one entry.
-    name2uuid: std::collections::HashMap<String, String>,
-    /// Entry uuid → all its paths.
-    paths: std::collections::HashMap<String, Vec<String>>,
-    /// All tag paths (for descendant scans).
-    names: Vec<String>,
-    /// The value type entries are placed with: the field's own, else
-    /// `hierarchy_ref` for a vocabulary not begun yet.
-    path_type: String,
-}
-
-impl Vocab {
-    /// The paths of the tag at `path` — all of them when it exists, else the
-    /// one it is named by.
-    fn paths_of(&self, path: &str) -> Vec<String> {
-        self.name2uuid
-            .get(path)
-            .and_then(|u| self.paths.get(u))
-            .cloned()
-            .unwrap_or_else(|| vec![path.to_string()])
-    }
-
-    /// The tags strictly above the tag at `path`, by every parent.
-    fn ancestors(&self, path: &str) -> Vec<String> {
-        let mut out: Vec<String> = Vec::new();
-        for p in self.paths_of(path) {
-            for a in crate::tag::ancestors(&p) {
-                if !out.contains(&a) {
-                    out.push(a);
-                }
-            }
-        }
-        out
-    }
-
-    /// The tags strictly below the tag at `path`, by every parent.
-    fn descendants(&self, path: &str) -> Vec<String> {
-        let mut out: Vec<String> = Vec::new();
-        for p in self.paths_of(path) {
-            for d in crate::tag::descendants(&p, &self.names) {
-                if !out.contains(&d) {
-                    out.push(d);
-                }
-            }
-        }
-        out
-    }
-}
-
-/// Loads the tag vocabulary (`<type_field> = <entry_type>`). A tag's identity is
-/// its entry, named by the resolved paths of its `path_field` (a `tree_ref` or a
-/// `hierarchy_ref`), all fetched in one `resolve-tree` round-trip (uuid →
-/// paths); an entry with no resolvable path is not part of the vocabulary.
-fn load_vocab(ctx: &Ctx, base: &str) -> Result<Vocab, CliError> {
-    let cfg = &ctx.tag;
-    let query = json!({
-        "type": "eq", "field": cfg.type_field,
-        "value": {"type": "string", "value": cfg.entry_type},
-    });
-    let resolved = ctx.client.post(
-        &format!("{base}/query/fields/resolve-tree"),
-        &json!({"query": query, "field": cfg.path_field}),
-    )?;
-    let fields = ctx.client.get(&format!("{base}/fields"), &[])?;
-    let path_type = fields
-        .as_array()
-        .into_iter()
-        .flatten()
-        .find(|f| f["name"].as_str() == Some(cfg.path_field.as_str()))
-        .and_then(|f| f["type"].as_str())
-        .filter(|t| metafolder_core::metarecord::is_position_type(t))
-        .unwrap_or("hierarchy_ref")
-        .to_string();
-    let mut vocab = Vocab {
-        name2uuid: std::collections::HashMap::new(),
-        paths: std::collections::HashMap::new(),
-        names: Vec::new(),
-        path_type,
-    };
-    for (uuid, paths) in resolved.as_object().into_iter().flatten() {
-        let paths: Vec<String> = paths
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|p| p.as_str())
-            .map(String::from)
-            .collect();
-        for path in &paths {
-            vocab.name2uuid.insert(path.clone(), uuid.to_string());
-            vocab.names.push(path.clone());
-        }
-        if !paths.is_empty() {
-            vocab.paths.insert(uuid.to_string(), paths);
-        }
-    }
-    Ok(vocab)
-}
-
-/// The writes one `mf tag` command makes, sent as a single
-/// `POST /query/fields/batch` so the command is one write — undone by one
-/// `mf log undo`, rewrites and created entries included (doc "Tag subsumption
-/// and exclusivity"). Every op reads the selection as it stood before the
-/// batch.
-struct TagBatch<'a> {
-    cfg: &'a crate::tag::TagConfig,
-    query: Json,
-    ops: Vec<Json>,
-}
-
-impl<'a> TagBatch<'a> {
-    fn new(cfg: &'a crate::tag::TagConfig, query: Json) -> Self {
-        TagBatch { cfg, query, ops: Vec::new() }
-    }
-
-    /// The entry uuid for `path`, planning the creation of the tag entry (and
-    /// of any missing ancestor) when the vocabulary lacks it. The tag's position
-    /// is a `path_field` TreeRef, so a nested path `a/b/c` is a chain of nodes:
-    /// the parent `a/b` is ensured first, then `c` is created under it. The
-    /// uuid is allocated here, so the refs of the same batch can point at it.
-    fn ensure_entry(&mut self, vocab: &mut Vocab, path: &str) -> String {
-        if let Some(uuid) = vocab.name2uuid.get(path) {
-            return uuid.clone();
-        }
-        let (parent, leaf) = match crate::tag::parent(path) {
-            Some(parent_path) => {
-                (json!(self.ensure_entry(vocab, parent_path)), &path[parent_path.len() + 1..])
-            }
-            None => (Json::Null, path),
-        };
-        let uuid = Uuid::new_v4().as_simple().to_string();
-        self.ops.push(json!({"op": "create", "uuid": uuid, "fields": [
-            {"name": self.cfg.type_field, "value": {"type": "string", "value": self.cfg.entry_type}},
-            {"name": self.cfg.path_field, "value": {"type": vocab.path_type,
-                "value": {"parent": parent, "name": leaf}}},
-        ]}));
-        vocab.name2uuid.insert(path.to_string(), uuid.clone());
-        vocab.paths.insert(uuid.clone(), vec![path.to_string()]);
-        vocab.names.push(path.to_string());
-        uuid
-    }
-
-    /// Plans `field:ref=<tag>` onto the selection; returns the op's index.
-    fn add(&mut self, field: &str, tag_uuid: &str) -> usize {
-        self.ops.push(json!({"op": "add", "query": self.query, "name": field,
-            "value": {"type": "ref", "value": tag_uuid}}));
-        self.ops.len() - 1
-    }
-
-    /// Plans the removal of `field:ref=<tag>` from the selection, for each tag
-    /// of `paths` present in the vocabulary — once per tag, however many of
-    /// its paths are given.
-    fn remove<'p>(&mut self, vocab: &Vocab, field: &str, paths: impl IntoIterator<Item = &'p str>) {
-        let mut done: Vec<&String> = Vec::new();
-        for path in paths {
-            if let Some(uuid) = vocab.name2uuid.get(path) {
-                if done.contains(&uuid) {
-                    continue;
-                }
-                done.push(uuid);
-                self.ops.push(json!({"op": "remove", "query": self.query, "name": field,
-                    "value": {"type": "ref", "value": uuid}}));
-            }
-        }
-    }
-
-    /// Sends the batch; returns the `updated` count of the op at `counted`.
-    fn send(self, ctx: &Ctx, base: &str, counted: usize) -> Result<u64, CliError> {
-        let resp =
-            ctx.client.post(&format!("{base}/query/fields/batch"), &json!({"ops": self.ops}))?;
-        Ok(resp["results"][counted]["updated"].as_u64().unwrap_or(0))
-    }
-}
-
 /// The Query IR (as JSON) selecting the tag command's target set: a `uuid_in`
 /// for `-i`, else the given query.
 fn target_query(selector: &str) -> Result<Json, CliError> {
@@ -1464,98 +1286,20 @@ fn target_query(selector: &str) -> Result<Json, CliError> {
     })
 }
 
-/// The tag at `path` and its proper ancestors, by every parent.
-fn with_ancestors(path: &str, vocab: &Vocab) -> Vec<String> {
-    std::iter::once(path.to_string()).chain(vocab.ancestors(path)).collect()
-}
-
-/// The tag at `path` and its descendants in the vocabulary, by every parent.
-fn with_descendants(path: &str, vocab: &Vocab) -> Vec<String> {
-    std::iter::once(path.to_string()).chain(vocab.descendants(path)).collect()
-}
-
-/// `mf tag [sel] add <path>` — the record(s) *have* the tag: (idempotently) add
-/// the positive ref, drop the more general ancestor tags, the negatives and
-/// mixed marks it contradicts (on the tag and its ancestors). One write. The idempotence is the daemon's:
-/// appending a ref a record already carries is a no-op (doc "No duplicate
-/// rows"), so the row that is already there is left alone, id included.
-pub fn tag_add(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> {
-    let base = ctx.repo_base()?;
-    let cfg = ctx.tag.clone();
-    let mut vocab = load_vocab(ctx, &base)?;
-    let mut batch = TagBatch::new(&cfg, target_query(selector)?);
-    let tag_uuid = batch.ensure_entry(&mut vocab, path);
-    let counted = batch.add(&cfg.positive, &tag_uuid);
-    let ancestors = vocab.ancestors(path);
-    batch.remove(&vocab, &cfg.positive, ancestors.iter().map(String::as_str));
-    // Having the tag means wholly having every ancestor: a negative on any of
-    // them, or on the tag itself, is now false, and so is a mixed mark.
-    let contradicted = with_ancestors(path, &vocab);
-    batch.remove(&vocab, &cfg.negative, contradicted.iter().map(String::as_str));
-    batch.remove(&vocab, &cfg.mixed, contradicted.iter().map(String::as_str));
-    let n = batch.send(ctx, &base, counted)?;
-    println!("{n}");
-    Ok(0)
-}
-
-/// `mf tag [sel] deny <path>` — the record(s) do *not* have the tag: add the
-/// negative ref, drop the more specific descendant negatives it subsumes and the
-/// positives and mixed marks it contradicts (on the tag and its descendants).
-/// One write.
-pub fn tag_deny(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> {
-    let base = ctx.repo_base()?;
-    let cfg = ctx.tag.clone();
-    let mut vocab = load_vocab(ctx, &base)?;
-    let mut batch = TagBatch::new(&cfg, target_query(selector)?);
-    let tag_uuid = batch.ensure_entry(&mut vocab, path);
-    let counted = batch.add(&cfg.negative, &tag_uuid);
-    let descendants = vocab.descendants(path);
-    batch.remove(&vocab, &cfg.negative, descendants.iter().map(String::as_str));
-    // Not having the tag means having none of its descendants: a positive on
-    // any of them, or on the tag itself, is now false, and so is a mixed mark.
-    let contradicted = with_descendants(path, &vocab);
-    batch.remove(&vocab, &cfg.positive, contradicted.iter().map(String::as_str));
-    batch.remove(&vocab, &cfg.mixed, contradicted.iter().map(String::as_str));
-    let n = batch.send(ctx, &base, counted)?;
-    println!("{n}");
-    Ok(0)
-}
-
-/// `mf tag [sel] mixed <path>` — mark the folder(s) mixed w.r.t. the tag, and
-/// drop the whole answers that contradicts: "partly X" is false once the
-/// folder wholly has X or a descendant of X (a positive on the tag or below),
-/// or wholly lacks X or an ancestor of X (a negative on the tag or above). The
-/// descend logic lives in the scripts. One write.
-pub fn tag_mixed(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> {
-    let base = ctx.repo_base()?;
-    let cfg = ctx.tag.clone();
-    let mut vocab = load_vocab(ctx, &base)?;
-    let mut batch = TagBatch::new(&cfg, target_query(selector)?);
-    let tag_uuid = batch.ensure_entry(&mut vocab, path);
-    let counted = batch.add(&cfg.mixed, &tag_uuid);
-    let positives = with_descendants(path, &vocab);
-    batch.remove(&vocab, &cfg.positive, positives.iter().map(String::as_str));
-    let negatives = with_ancestors(path, &vocab);
-    batch.remove(&vocab, &cfg.negative, negatives.iter().map(String::as_str));
-    let n = batch.send(ctx, &base, counted)?;
-    println!("{n}");
-    Ok(0)
-}
-
-/// `mf tag [sel] remove <path>` — drop the positive ref (symmetric undo of add);
-/// a no-op when the tag entry does not exist. Prints how many records lost it,
-/// as the other verbs print how many gained theirs.
-pub fn tag_remove(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> {
-    let base = ctx.repo_base()?;
-    let cfg = ctx.tag.clone();
-    let vocab = load_vocab(ctx, &base)?;
-    if !vocab.name2uuid.contains_key(path) {
-        println!("0");
-        return Ok(0);
-    }
-    let mut batch = TagBatch::new(&cfg, target_query(selector)?);
-    batch.remove(&vocab, &cfg.positive, [path]);
-    let n = batch.send(ctx, &base, 0)?;
+/// `mf tag [sel] <add|deny|mixed|remove> <path>`: one answer about a tag,
+/// written by `metafolder_core::tag::apply` (doc "Tag subsumption") — the
+/// rewrite the GUI's `mf:tag` shares. Prints how many records gained the
+/// answer (lost the tag, for `remove`).
+pub fn tag_answer(
+    ctx: &Ctx,
+    selector: &str,
+    answer: metafolder_core::tag::Answer,
+    path: &str,
+) -> Result<i32, CliError> {
+    let repo = repo_id(ctx)?;
+    let query = target_query(selector)?;
+    let n = metafolder_core::tag::apply(&ctx.client, &repo, &ctx.tag, &query, answer, path)
+        .map_err(trash_daemon_err)?;
     println!("{n}");
     Ok(0)
 }
@@ -1565,11 +1309,11 @@ pub fn tag_remove(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError
 /// universe format the tagging scripts consume: the uuid tells them which
 /// paths are one tag.
 pub fn tag_list(ctx: &Ctx) -> Result<i32, CliError> {
-    let base = ctx.repo_base()?;
-    let mut vocab = load_vocab(ctx, &base)?;
-    vocab.names.sort();
-    for name in &vocab.names {
-        println!("{name}\t{}", vocab.name2uuid[name]);
+    let repo = repo_id(ctx)?;
+    let vocab = metafolder_core::tag::Vocab::load(&ctx.client, &repo, &ctx.tag)
+        .map_err(trash_daemon_err)?;
+    for (name, uuid) in vocab.entries() {
+        println!("{name}\t{uuid}");
     }
     Ok(0)
 }

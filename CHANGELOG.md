@@ -17,8 +17,11 @@ than breaking them.
 - **Tag commands for every tag field.** `user:tag-query <tag|negative_tag|
   mixed_tag> <tag>` completes over the tag paths again (it read the `tag` ref
   as a tree, and offered nothing), and `user:tag-remove` takes a tag off the
-  selected metarecord, completing over the ones it has. Keys: `# t/n/m` to
-  search, `# d t/n/m` to remove. The simplified language reads a tag form of
+  selected metarecord, completing over the ones it has; `user:tag-add` gives
+  it one (or denies it, or marks it mixed) through the new builtin `mf:tag`,
+  which applies the rules of `mf tag` — the rewrite moved to
+  `metafolder_core::tag`, shared by both (doc "Tagging from the GUI"). Keys:
+  `# t/n/m` to search, `# a t/n/m` to add, `# d t/n/m` to remove. The simplified language reads a tag form of
   another field when that field precedes it: `negative_tag #=musique`
   (doc "Tag syntax in simplified queries").
 - **Generic panel commands: one `cursor:next` for every list panel.** A panel

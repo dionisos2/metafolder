@@ -1,0 +1,24 @@
+title: Tagging from the GUI
+tags: [[Hierarchical tags]] GUI
+kind: guide
+summary: Keys under # search by a tag, give the selected metarecord one, or take one off — for each of the three tag fields.
+
+Three commands of the shipped `commands.js` ([[User commands]]) tag one metarecord at a
+time from the command input, each taking first the field of the tag model it works on —
+`tag`, `negative_tag` or `mixed_tag` ([[Hierarchical tags]]) — then the tag, completed
+over the paths of the existing ones:
+
+|!Keys |!Command |!Does |
+|`# t` `# n` `# m` |[[user:tag-query]] |searches the records having, denying, partly having the tag and what is under it |
+|`# a t` `# a n` `# a m` |[[user:tag-add]] |gives the selected metarecord the tag, denies it, marks it mixed |
+|`# d t` `# d n` `# d m` |[[user:tag-remove]] |takes a tag of that field off the selected metarecord |
+
+''Adding'' goes through [[mf:tag]], which applies the rules of `mf tag` with the same
+code: the tag replaces the broader ones it implies, takes back the answers it makes
+false, and is created — with any missing parent — when its path names no tag yet
+([[Tag subsumption]]). ''Removing'' takes back one ref and rewrites nothing else, in
+whichever field.
+
+The GUI uses the field names of the convention; the `[tag]` table of
+[[CLI configuration]] does not apply to it. To answer many records or a whole folder,
+the tagging scripts ask the questions for you ([[Classifying with tags]]).
