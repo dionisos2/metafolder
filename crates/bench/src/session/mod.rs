@@ -81,7 +81,7 @@ const STEPS: &[Step] = &[
     step("fm.open", 1_500, Some(20_000), "open the file manager at the root"),
     step("fm.descend", 2_000, Some(20_000), "down to the largest folder, one level at a time"),
     step("fm.root", 1_000, Some(20_000), "back to the root"),
-    step("treeref.open", 1_500, Some(20_000), "open the tree explorer"),
+    step("path-ref.open", 1_500, Some(20_000), "open the tree explorer"),
     // Writing in bulk, and taking it back.
     step("bulk.add", 10_000, None, "add a field to every metarecord of the list"),
     step("log.undo", 10_000, None, "undo the bulk write"),
@@ -480,9 +480,9 @@ async fn run_step(id: &str, s: &mut Session, quiet: Duration) -> Result<Option<I
             s.command("cursor:root file-manager", None).await?;
             drawn(s, quiet).await
         }
-        "treeref.open" => {
-            s.show("left", "treeref", None).await?;
-            s.command("view:refresh treeref", None).await?;
+        "path-ref.open" => {
+            s.show("left", "path-ref", None).await?;
+            s.command("view:refresh path-ref", None).await?;
             drawn(s, quiet).await
         }
         "bulk.add" => {

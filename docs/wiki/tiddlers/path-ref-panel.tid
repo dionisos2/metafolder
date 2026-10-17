@@ -1,19 +1,22 @@
-title: treeref panel
-tags: Panel [[TreeRef forest]]
+title: path-ref panel
+tags: Panel [[TreeRef forest]] [[Hierarchy references]]
 kind: reference
 summary: Walks a tree of metarecords — the files, or a tag hierarchy — from its roots down; adds nodes to it, and lists what points at a node.
 
-Open it with `panel:open here treeref` (<<key "panel:open here treeref" "t t">>). It
+Open it with `panel:open here path-ref` (<<key "panel:open here path-ref" "t t">>). It
 walks one [[TreeRef forest]] — the tree a `tree_ref` field draws — the way the file
 manager walks the disk, for any such field: `mfr_path`, the files, or a hierarchy of
 tags ([[Hierarchical tags]]). A `hierarchy_ref` field is walked the same way, a node
 of several parents appearing under each ([[Hierarchy references]]); a node added
 there is placed with a `hierarchy_ref`.
 
+Its name says what the two types have in common, and the plain `ref` lacks: a node
+is reached by a path. It was called `treeref` until it walked hierarchies too.
+
 The ''field'' button chooses the tree, among the repository's `tree_ref` and
 `hierarchy_ref` fields;
-<<key "treeref:set field" Shift+f>> (`treeref:set field`) asks for it in the command
-input. It starts on `mfr_path` (`[panel-defaults.treeref]`, [[GUI configuration]]),
+<<key "path-ref:set field" Shift+f>> (`path-ref:set field`) asks for it in the command
+input. It starts on `mfr_path` (`[panel-defaults.path-ref]`, [[GUI configuration]]),
 and changing it goes back to the roots.
 
 !! Walking
@@ -32,7 +35,7 @@ is not known beforehand: going into a leaf shows an empty list.
 |<<key "view:refresh self" r>> |read the fields and the children again |
 
 The node under the cursor is the workspace's selection, so [[metarecord-detail panel]]
-beside it shows it; its field, uuid and path are also published as `selected_treeref`
+beside it shows it; its field, uuid and path are also published as `selected_path_ref`
 ([[Workspace variables]]). Children are loaded 200 at a time (`[page-size]`), more as
 the list scrolls; the roots come all at once.
 
@@ -43,7 +46,7 @@ and its right-click menu has the file's actions too ([[Context menus]]).
 
 !! Adding a node
 
-<<key "treeref:add" Ctrl+n>> (`treeref:add`, the ''+ add'' button) creates a
+<<key "path-ref:add" Ctrl+n>> (`path-ref:add`, the ''+ add'' button) creates a
 metarecord placed under the node the panel is ''in'' — next to the rows shown, not
 under the cursor; at the roots, it is a new root. It asks two things:
 
@@ -57,8 +60,8 @@ The new node gets the cursor.
 A tree raises the question at once — what is tagged with this? The second row of the
 toolbar answers it by writing a query:
 
-* ''ref'' — the `ref` field to follow back into the tree: `tag` unless configured otherwise (<<key "treeref:set ref-field" e>>, `treeref:set ref-field`);
-* ''scope'' — `exact`, the node itself, or `+ descendants`, the node and everything below it (<<key "treeref:toggle scope" s>>);
+* ''ref'' — the `ref` field to follow back into the tree: `tag` unless configured otherwise (<<key "path-ref:set ref-field" e>>, `path-ref:set ref-field`);
+* ''scope'' — `exact`, the node itself, or `+ descendants`, the node and everything below it (<<key "path-ref:toggle scope" s>>);
 * and the query the two make for the node under the cursor:
 
 ```
@@ -66,10 +69,10 @@ tag -> (path = "music/jazz")      the node itself
 tag -> (path =>* "music/jazz")    the node and every tag below it
 ```
 
-<<key "treeref:list-refs" l>> (`treeref:list-refs`, or ''List what tag points at here''
+<<key "path-ref:list-refs" l>> (`path-ref:list-refs`, or ''List what tag points at here''
 in the right-click menu) runs it in a [[metarecord-list panel]] opened in the
-''other'' slot: the tree stays in view for the next node. <<key "treeref:list-refs new" "b l">>
-runs it in a new workspace instead, <<key "treeref:list-refs here" "i l">> in place of the
+''other'' slot: the tree stays in view for the next node. <<key "path-ref:list-refs new" "b l">>
+runs it in a new workspace instead, <<key "path-ref:list-refs here" "i l">> in place of the
 tree ([[open targets|Panel slots and layout]]). The query lands in the
 list's normal DSL, shown and frozen, where it can be narrowed or combined with
 anything else ([[Following references]]).

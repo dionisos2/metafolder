@@ -6,7 +6,7 @@ summary: Selecting a metarecord in one panel shows it in the others of the works
 
 !! The highlighted metarecord
 
-Moving the cursor in [[metarecord-list panel]], [[file-manager panel]], [[treeref panel]] or
+Moving the cursor in [[metarecord-list panel]], [[file-manager panel]], [[path-ref panel]] or
 [[recent panel]] sets the
 workspace's selection ([[Workspace variables]]). Every panel of the ''same'' workspace
 that follows it — [[metarecord-detail panel]], [[file panel]], [[workspace-info panel]] — updates at once, in

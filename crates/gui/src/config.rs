@@ -23,12 +23,12 @@ pub struct PageSizes {
     pub metarecord_list: u32,
     pub file: u32,
     pub file_manager: u32,
-    pub treeref: u32,
+    pub path_ref: u32,
 }
 
 impl Default for PageSizes {
     fn default() -> Self {
-        PageSizes { metarecord_list: 100, file: 150, file_manager: 200, treeref: 200 }
+        PageSizes { metarecord_list: 100, file: 150, file_manager: 200, path_ref: 200 }
     }
 }
 
@@ -683,7 +683,7 @@ mod tests {
         assert_eq!(json["file"], 150);
         assert_eq!(json["file-manager"], 200);
         // The keys must match the panel directory names exactly.
-        assert_eq!(json["treeref"], 200);
+        assert_eq!(json["path-ref"], 200);
     }
 
     #[test]
@@ -814,7 +814,7 @@ mod tests {
             parsed.panel_defaults.get("my-custom-panel").unwrap()["whatever"],
             serde_json::json!(3)
         );
-        assert!(!parsed.panel_defaults.contains_key("treeref"));
+        assert!(!parsed.panel_defaults.contains_key("path-ref"));
     }
 
     #[test]
@@ -850,7 +850,7 @@ mod tests {
         );
         assert_eq!(list["grid-name-column"], serde_json::json!("mfr_path:path"));
         assert_eq!(
-            parsed.panel_defaults.get("treeref").unwrap()["field"],
+            parsed.panel_defaults.get("path-ref").unwrap()["field"],
             serde_json::json!("mfr_path")
         );
         let file = parsed.panel_defaults.get("file").unwrap();
@@ -1036,12 +1036,12 @@ mod tests {
         assert!(added.text_input);
 
         // A new scope of an existing combo joins its array, one per line.
-        config.set_user_keybinding("j", "treeref:next", Some("treeref"), None, false).unwrap();
+        config.set_user_keybinding("j", "path-ref:next", Some("path-ref"), None, false).unwrap();
         let written = std::fs::read_to_string(config.keybindings_path()).unwrap();
         assert!(written.contains("# Navigation.") && written.contains("  # the list\n"));
         assert!(written.contains("# new tab"));
         assert!(
-            written.contains("\n  { command = \"treeref:next\", when = \"treeref\" },\n]"),
+            written.contains("\n  { command = \"path-ref:next\", when = \"path-ref\" },\n]"),
             "{written}"
         );
         assert_eq!(scopes_of(&config.load_keybindings().unwrap(), &["j"]).len(), 3);
@@ -1099,11 +1099,11 @@ mod tests {
 
         config.set_user_keybinding("a", "second", None, None, false).unwrap();
         config.set_user_keybinding("a", "third", Some("log"), None, false).unwrap();
-        config.set_user_keybinding("j", "treeref:next", Some("treeref"), None, false).unwrap();
+        config.set_user_keybinding("j", "path-ref:next", Some("path-ref"), None, false).unwrap();
         let set = config.remove_user_keybinding("j", Some("file-manager"), None).unwrap();
         assert_eq!(
             scopes_of(&set, &["j"]),
-            vec![Some("metarecord-list".into()), Some("treeref".into())]
+            vec![Some("metarecord-list".into()), Some("path-ref".into())]
         );
         assert_eq!(scopes_of(&set, &["a"]), vec![None, Some("log".into())]);
         let a = set.compiled().into_iter().find(|b| b.keys == ["a"] && b.when.is_none()).unwrap();

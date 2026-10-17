@@ -27,7 +27,7 @@ an environment variable); `gui-tag-folder.sh` reads nothing ahead and has no cap
 vocabulary: it asks about top-level tags, and only goes down into a tag's children once
 you have said yes to it; a no closes the whole subtree below it. The file shows in the left panel, its metadata in the
 right one. It only asks about tags that exist: grow the vocabulary with `mf tag add` or
-in the [[treeref panel]].
+in the [[path-ref panel]].
 
 !! One tag, file by file
 

@@ -132,12 +132,12 @@ describe('panel defaults come from the GUI config', () => {
     );
   });
 
-  test('treeref opens on the configured tree_ref field', async () => {
-    const mod = await import('../../default-config/panel-types/treeref/main.js');
-    const root = shadowFor('treeref');
+  test('path-ref opens on the configured tree_ref field', async () => {
+    const mod = await import('../../default-config/panel-types/path-ref/main.js');
+    const root = shadowFor('path-ref');
     await mod.mount(
       root,
-      stubApi('treeref', { field: 'path' }) as unknown as Metafolder.Api,
+      stubApi('path-ref', { field: 'path' }) as unknown as Metafolder.Api,
     );
     // The button carries the select widget's caret after the field name, and
     // `toContain` would pass on the `mfr_path` fallback too — strip and compare.

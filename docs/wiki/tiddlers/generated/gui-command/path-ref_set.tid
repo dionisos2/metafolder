@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/path-ref:set
+catalog: GUI command
+target: path-ref:set
+summary: Path-ref explorer: change a view setting
+
+!! Reference
+
+* Defined by the ``path-ref`` panel
+
+!! Default keys
+
+* ``e`` → ``path-ref:set ref-field`` (in the ``path-ref`` panel)
+* ``shift+f`` → ``path-ref:set field`` (in the ``path-ref`` panel)

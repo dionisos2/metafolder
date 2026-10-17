@@ -69,7 +69,7 @@ describe('resolvePage', () => {
   });
 
   test('an invocation with arguments opens the note of its command', () => {
-    expect(resolvePage(WIKI_NOTES, 'panel:open here treeref')?.id).toBe('panel_open');
+    expect(resolvePage(WIKI_NOTES, 'panel:open here path-ref')?.id).toBe('panel_open');
   });
 
   test('a command without a note still falls back to its verb, then its panel', () => {

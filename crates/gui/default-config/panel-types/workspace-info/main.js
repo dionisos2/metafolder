@@ -9,7 +9,7 @@ const STANDARD = [
   'selected_paths',
   'selected_metarecord',
   'selected_metarecords',
-  'selected_treeref',
+  'selected_path_ref',
 ];
 
 /** @param {ShadowRoot} root @param {MetafolderApi} metafolder */

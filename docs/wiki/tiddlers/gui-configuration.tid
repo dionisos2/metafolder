@@ -15,12 +15,12 @@ panels.
 |`daemon-port` |the daemon to connect to, on `127.0.0.1` (default 7523, the daemon's own); `--daemon-port` overrides it |
 |`gui-port` |the port the GUI's own server binds (default 7524); `--gui-port` overrides it, and `mf gui` reads this same value — there is no port file to discover |
 |`open-with` |the programs `file:open-with` offers to open a file with (completion candidates, not a whitelist; default: the desktop's handler) |
-|`[page-size]` |how many rows or tiles each list panel loads per window, by panel type: `metarecord-list` 100, `file` 150, `file-manager` and `treeref` 200 |
+|`[page-size]` |how many rows or tiles each list panel loads per window, by panel type: `metarecord-list` 100, `file` 150, `file-manager` and `path-ref` 200 |
 |`[settings]` |timings of the GUI itself: the daemon health poll, a reconcile's completion poll, the repository-list cache, the GUI's slow-log threshold ([[Slow log configuration]]), and where a video's thumbnail is taken (`video-thumbnail-percent`, [[GUI file endpoints]]) |
 |`[panels]` |timings shared by every panel: the finder's and the live preview's debounce, the repos panel's task poll; `status-message-ms` and `status-error-ms` are left without effect since status messages stopped clearing themselves ([[Status bar and task bar]]) |
 |`[ref-seeds]` |how the targets of a `ref` field are named where a value is typed or shown: which metarecords (a query) and by which columns, per field, `*` being the default rule ([[Ref value seeds]]) |
 |`[completion]` |the separator joining the columns of a multi-column completion label |
-|`[panel-defaults.<panel>]` |each panel type's initial values — the columns `metarecord-list` opens on, the fields its finder searches, the field `treeref` opens on, the text extensions and the zoom of `file`… — handed to that panel as `metafolder.defaults`. A custom panel type gets its own table the same way; the GUI knows nothing of the keys. Where a panel keeps a setting per workspace, the stored value wins |
+|`[panel-defaults.<panel>]` |each panel type's initial values — the columns `metarecord-list` opens on, the fields its finder searches, the field `path-ref` opens on, the text extensions and the zoom of `file`… — handed to that panel as `metafolder.defaults`. A custom panel type gets its own table the same way; the GUI knows nothing of the keys. Where a panel keeps a setting per workspace, the stored value wins |
 
 Every key is optional: a key, or a whole table, left out keeps its default. The
 file itself must exist ([[No runtime fallback]]).
@@ -38,13 +38,13 @@ What a panel opens on is configuration, not a constant of its code. Each
 columns       = "(mfr_path:path|path:path) (mfr_type|mf_schema) mfr_mtime order_file"
 finder-fields = ["mfr_path:path", "label:value", "name:value"]
 
-[panel-defaults.treeref]
+[panel-defaults.path-ref]
 field = "mfr_path"
 ```
 
 * A key left out keeps the value built into the panel.
 * A value the panel cannot use — a columns text that does not parse, a size that is not a number — is ignored in favour of the built-in one; it never breaks the panel.
-* These are ''initial'' values. Where a panel keeps the setting per workspace — the columns and the finder fields of the list, the field of `treeref` — the configured value is only what a workspace starts with ([[Workspace variables]]).
+* These are ''initial'' values. Where a panel keeps the setting per workspace — the columns and the finder fields of the list, the field of `path-ref` — the configured value is only what a workspace starts with ([[Workspace variables]]).
 
 What every panel shares stays in its own table: `[panels]` for the timings,
 `[page-size]` for the page sizes.

@@ -6,7 +6,7 @@ summary: Hand the selected file or folder to another program — the desktop's d
 
 What the GUI cannot show itself goes to another program. Select the file or folder
 in any panel carrying the selection — the list, the detail, the [[file panel]], the [[file manager|file-manager panel]],
-`recent`, `treeref` — and run `file:open-with` (<<key "file:open-with" "g w">>), or
+`recent`, `path-ref` — and run `file:open-with` (<<key "file:open-with" "g w">>), or
 choose ''Open with…'' in the right-click menu of a file row, which selects that row
 first.
 

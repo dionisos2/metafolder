@@ -63,21 +63,21 @@ describe('workspace-info', () => {
   });
 
   test('the standard variables come first, unset ones as null', async () => {
-    const { keys, rows } = await mountWith({ 'treeref:scope': 'exact', active_repo: 'r' });
+    const { keys, rows } = await mountWith({ 'path-ref:scope': 'exact', active_repo: 'r' });
     expect(keys().slice(0, 5)).toEqual([
       'active_repo',
       'selected_paths',
       'selected_metarecord',
       'selected_metarecords',
-      'selected_treeref',
+      'selected_path_ref',
     ]);
     expect(rows()['selected_metarecord']).toBe('null');
-    expect(keys().at(-1)).toBe('treeref:scope');
+    expect(keys().at(-1)).toBe('path-ref:scope');
   });
 
   test('a later change updates its row', async () => {
-    const { rows, push } = await mountWith({ 'treeref:scope': 'exact' });
-    push('treeref:scope', 'subtree');
-    expect(rows()['treeref:scope']).toBe('"subtree"');
+    const { rows, push } = await mountWith({ 'path-ref:scope': 'exact' });
+    push('path-ref:scope', 'subtree');
+    expect(rows()['path-ref:scope']).toBe('"subtree"');
   });
 });

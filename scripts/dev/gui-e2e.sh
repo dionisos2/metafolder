@@ -1366,9 +1366,9 @@ scenario_walk() {
     # with children is gone into, a leaf is selected.
     record "$REPO_DIR/a" >/dev/null && record "$REPO_DIR/a/b" >/dev/null &&
         record "$REPO_DIR/a/b/c.txt" >/dev/null || die "record a/b/c.txt"
-    show_panel left treeref view:refresh treeref
-    run treeref:set field mfr_path
-    run cursor:find treeref walk /
+    show_panel left path-ref view:refresh path-ref
+    run path-ref:set field mfr_path
+    run cursor:find path-ref walk /
     for name in a b; do
         sleep 1
         typed "$name"
@@ -1377,17 +1377,17 @@ scenario_walk() {
     sleep 1
     typed "c.txt"
     keys Return
-    assert "walk (treeref): a leaf named is selected" until_ok 10 tree_at /a/b/c.txt
+    assert "walk (path-ref): a leaf named is selected" until_ok 10 tree_at /a/b/c.txt
 
-    run cursor:root treeref
-    run cursor:find treeref walk /
+    run cursor:root path-ref
+    run cursor:find path-ref walk /
     sleep 1
     typed "a"
     keys Return
     sleep 1
     typed "b"
     keys shift+Return
-    assert "walk (treeref): shift+return stops on the node, selected" until_ok 10 tree_at /a/b
+    assert "walk (path-ref): shift+return stops on the node, selected" until_ok 10 tree_at /a/b
 }
 
 # The slideshow (doc "Slideshow"): `file:play query` walks what the list
@@ -1429,7 +1429,7 @@ scenario_slideshow() {
 
 # tree_at <path> — the tree explorer's selected node is <path>.
 tree_at() {
-    [ "$(ws_var selected_treeref | python3 -c 'import json, sys
+    [ "$(ws_var selected_path_ref | python3 -c 'import json, sys
 print((json.load(sys.stdin) or {}).get("path"))')" = "$1" ]
 }
 

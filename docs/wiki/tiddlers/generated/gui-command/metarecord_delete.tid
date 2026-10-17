@@ -11,4 +11,4 @@ summary: Delete the selected metarecord
 
 * ``shift+delete`` → ``metarecord:delete`` (in the ``metarecord-detail`` panel)
 * ``shift+delete`` → ``metarecord:delete`` (in the ``metarecord-list`` panel)
-* ``shift+delete`` → ``metarecord:delete`` (in the ``treeref`` panel)
+* ``shift+delete`` → ``metarecord:delete`` (in the ``path-ref`` panel)

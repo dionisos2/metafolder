@@ -1,5 +1,5 @@
-// treeref panel: the keyboard pickers of the toolbar — `cursor:find treeref`
-// (jump to a child by name, the generic list-panel find) and `treeref:set field` (choose
+// path-ref panel: the keyboard pickers of the toolbar — `cursor:find path-ref`
+// (jump to a child by name, the generic list-panel find) and `path-ref:set field` (choose
 // the explored forest, which must NOT pre-fill the minibuffer: the answer is a
 // new field name, not an edit of the current one).
 
@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { cursor, findCandidates } from './support/cursor';
 
-const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/treeref');
+const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/path-ref');
 
 /** The shell's mount path: the panel's markup into a Shadow root. */
 function shadowRoot(): ShadowRoot {
@@ -50,7 +50,7 @@ function stub() {
   const api = {
     ready: Promise.resolve(),
     workspaceId: 'ws-1',
-    panelType: 'treeref',
+    panelType: 'path-ref',
     pageSize: 200,
     settings: { statusMessageMs: 1000, statusErrorMs: 2000 },
     defaults: {},
@@ -105,7 +105,7 @@ function stub() {
 }
 
 async function mount(s: ReturnType<typeof stub>) {
-  const mod = await import('../../default-config/panel-types/treeref/main.js');
+  const mod = await import('../../default-config/panel-types/path-ref/main.js');
   await mod.mount(s.root, s.api as never);
   await new Promise((r) => setTimeout(r, 0));
 }
@@ -194,13 +194,13 @@ describe('cursor:find walk in the tree explorer', () => {
   });
 });
 
-describe('treeref:set field', () => {
+describe('path-ref:set field', () => {
   test('completes over the TreeRef fields with an empty minibuffer', async () => {
     const s = stub();
     await mount(s);
     // The setting is the first argument now, its value the second — so the
     // field completion is asked for with `field` already collected.
-    const args = s.specs.get('treeref:set');
+    const args = s.specs.get('path-ref:set');
     expect(args).toHaveLength(2);
     expect(await args![0].complete!('', [])).toEqual(['field', 'ref-field']);
     expect(await args![1].complete!('', ['field'])).toEqual(['mfr_path', 'tag']);
@@ -212,10 +212,10 @@ describe('treeref:set field', () => {
   test('the chosen field is stored, like the ref field and the scope', async () => {
     const s = stub();
     await mount(s);
-    await s.handlers.get('treeref:set')!('field', 'tag');
-    // `treeref:field` is what a script reads and what `start` restores from; a
+    await s.handlers.get('path-ref:set')!('field', 'tag');
+    // `path-ref:field` is what a script reads and what `start` restores from; a
     // choice that stayed in the panel's memory was invisible to both.
-    expect(s.api.workspace.set).toHaveBeenCalledWith('treeref:field', 'tag');
+    expect(s.api.workspace.set).toHaveBeenCalledWith('path-ref:field', 'tag');
   });
 });
 
@@ -225,7 +225,7 @@ describe('listing what refers to the selected node', () => {
     await mount(s);
     await cursor(s.api.provide, 'find', 'select', 'music');
     s.api.workspace.set.mockClear();
-    await s.handlers.get('treeref:list-refs')!('new');
+    await s.handlers.get('path-ref:list-refs')!('new');
     // At the target: in a new workspace, the list here stays as it was.
     expect(s.api.targets).toEqual(['new']);
     // The list's query variables are its state: the normal zone, shown and
@@ -245,7 +245,7 @@ describe('listing what refers to the selected node', () => {
   test('the target is its first argument, the other slot by default', async () => {
     const s = stub();
     await mount(s);
-    const [where] = s.specs.get('treeref:list-refs')!;
+    const [where] = s.specs.get('path-ref:list-refs')!;
     expect(where.name).toBe('where');
     expect(where.initial!([])).toBe('other');
     expect(await where.complete!('', [])).toEqual(['here', 'other', 'new']);
@@ -254,14 +254,14 @@ describe('listing what refers to the selected node', () => {
   test('nothing selected: says so, and moves nowhere', async () => {
     const s = stub();
     await mount(s);
-    await s.handlers.get('treeref:list-refs')!('new');
+    await s.handlers.get('path-ref:list-refs')!('new');
     expect(s.api.targets).toEqual([]);
     expect(s.statusBar.message).toHaveBeenCalledWith('select a node first');
   });
 });
 
 // Going into a node is its › button (doc "Opening a row"), not a double click.
-describe('treeref open buttons', () => {
+describe('path-ref open buttons', () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = () => {};
   });

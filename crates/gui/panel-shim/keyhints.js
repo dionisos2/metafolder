@@ -66,7 +66,7 @@ export function formatCombo(keys) {
 
 /**
  * Whether `binding` runs `command`. A binding's invocation may carry arguments
- * (`panel:open here treeref`), so a bare command name matches every invocation
+ * (`panel:open here path-ref`), so a bare command name matches every invocation
  * of it while a fuller query matches only that exact one — the same rule the
  * command input's shortcut display uses (lib/commands.ts `shortcutsFor`).
  *

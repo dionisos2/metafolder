@@ -2,17 +2,17 @@ title: Why there is no ref-list panel
 tags: [[Panel types]]
 kind: rationale
 audience: dev
-summary: "What points at this node?" used to be a panel type of its own; it is now a query the treeref panel writes, because an answer whose query is hidden can neither be narrowed nor combined.
+summary: "What points at this node?" used to be a panel type of its own; it is now a query the path-ref panel writes, because an answer whose query is hidden can neither be narrowed nor combined.
 
 Until September 2026 a `ref-list` panel listed the metarecords pointing at the node
-selected in `treeref`. It was removed (`b4755563`) for two reasons:
+selected in `path-ref`. It was removed (`b4755563`) for two reasons:
 
 * it cost a whole panel type — its own display, its own keys — for one question about another panel's selection;
 * its answer was a dead end: the query behind it was never shown, so the user could not narrow it, sort it by a column of their choice, or combine it with another condition.
 
-The [[treeref panel]] writes the query instead, and says which before running it: its
+The [[path-ref panel]] writes the query instead, and says which before running it: its
 ref bar shows `tag -> (path = "music/jazz")` for the node under the cursor.
-`treeref:list-refs` writes that text into the query variables of
+`path-ref:list-refs` writes that text into the query variables of
 [[metarecord-list panel]] and opens the list in the ''other'' slot — the pairing
 `ref-list` provided. It lands in the normal DSL, shown and frozen: a starting point,
 not a mode. The same choice is made by `metarecord-list:folder` and

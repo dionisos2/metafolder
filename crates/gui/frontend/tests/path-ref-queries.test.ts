@@ -1,4 +1,4 @@
-// treeref panel query builders (tree-explorer): navigation is by parent UUID
+// path-ref panel query builders (tree-explorer): navigation is by parent UUID
 // (robust to names containing "/"). The forest roots are not reachable through
 // Follows (their parent is the root sentinel, not a real metarecord) — the
 // panel fetches them from GET …/tree/roots instead.
@@ -10,7 +10,7 @@ import {
   refQueryDsl,
   treeNameOf,
   treeRefPath,
-} from '../../default-config/panel-types/treeref/queries.js';
+} from '../../default-config/panel-types/path-ref/queries.js';
 
 describe('childrenQuery', () => {
   test('a node uses a uuid_in sub-query (direct parent = node)', () => {
@@ -100,7 +100,7 @@ describe('refQueryDsl', () => {
   });
 });
 
-describe('nodeFields (treeref:add: a metarecord at a new node)', () => {
+describe('nodeFields (path-ref:add: a metarecord at a new node)', () => {
   const position = { type: 'tree_ref', value: { parent: 'p1', name: 'jazz' } };
 
   test('with no schema template the record carries only the tree position', () => {

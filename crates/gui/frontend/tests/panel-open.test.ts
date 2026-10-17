@@ -153,7 +153,7 @@ describe('a panel’s atTarget', () => {
       },
       {
         wsId: 'ws-5',
-        panelType: 'treeref',
+        panelType: 'path-ref',
         guiServer: 'http://127.0.0.1:7524',
         sessionToken: 'token',
         root: null as unknown as ShadowRoot,

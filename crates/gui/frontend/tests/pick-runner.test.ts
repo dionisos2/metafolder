@@ -48,7 +48,7 @@ describe('createPickRunner', () => {
     expect(await promise).toBe('abc');
   });
 
-  it('opens the treeref explorer on the edited field for a tree_ref', async () => {
+  it('opens the path-ref explorer on the edited field for a tree_ref', async () => {
     const stub = stubMetafolder();
     stub.metafolder.pick.start = stub.start;
     const runner = createPickRunner(stub.metafolder);
@@ -57,8 +57,8 @@ describe('createPickRunner', () => {
     await tick();
 
     const spec = stub.start.mock.calls[0][0];
-    expect(spec.panel.type).toBe('treeref');
-    expect(spec.panel.vars['treeref:field']).toBe('plop');
+    expect(spec.panel.type).toBe('path-ref');
+    expect(spec.panel.vars['path-ref:field']).toBe('plop');
   });
 
   it('request() opens an arbitrary panel and resolves a path result', async () => {

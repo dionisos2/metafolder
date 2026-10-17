@@ -45,7 +45,7 @@ A node has one path per way up to a root: the marathon is `sport/courir/maraton`
 `field ->* …` and `field =>* …` read a hierarchy ([[Following references]]): the
 descendants of a node are everything below it by any path, counted once.
 `tag -> (path =>* "évènement")` finds what is tagged with a marathon. So subsumption,
-the tag queries (`#=évènement`) and the [[treeref panel]] get the second parent from
+the tag queries (`#=évènement`) and the [[path-ref panel]] get the second parent from
 the type, with no convention of their own.
 
 !! In the store

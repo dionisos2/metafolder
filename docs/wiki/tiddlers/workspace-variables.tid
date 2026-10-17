@@ -19,14 +19,14 @@ live.
 |`selected_metarecord` |`{uuid, repo}` or `null` |the highlighted metarecord; `null` for an untracked file |
 |`selected_paths` |list of absolute paths |the highlighted file — at most one entry, one position of the metarecord's `mfr_path` (a list, as scripts read it) |
 |`selected_metarecords` |list of uuids |the ''checked'' metarecords, for a bulk operation ([[Cross-panel selection]]) |
-|`selected_treeref` |`{repo, field, uuid, path}` or `null` |the node selected in `treeref` |
+|`selected_path_ref` |`{repo, field, uuid, path}` or `null` |the node selected in `path-ref` |
 |`metarecords:dirty` |a time in ms |set whenever something the metarecord panels show may have changed (a write from the GUI, a reconcile…); they re-read on it |
 |`pick_request` |object or `null` |marks a workspace as a [[value picker|Value picker]], with who asked and what to restore |
 |`pick_result` |object or `null` |the picker's answer, delivered to the workspace that asked |
 |`view.zoom.<panel type>` |a number, 1 = 100 % |the zoom of that panel in the workspace ([[view:zoom]]); the panel follows a write |
 
 A panel keeps its own variables under its name — `metarecord-list:query`,
-`file-manager:dir`, `treeref:scope`. Some of them are its ''state'': the panel shows
+`file-manager:dir`, `path-ref:scope`. Some of them are its ''state'': the panel shows
 what they hold, so another panel or a command shows something there by writing them,
 and a workspace holding the same variables shows the same thing — the list's query
 variables are ([[metarecord-list panel]]), and the file manager's location

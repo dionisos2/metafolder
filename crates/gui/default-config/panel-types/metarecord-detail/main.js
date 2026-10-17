@@ -50,7 +50,7 @@ export async function mount(root, metafolder) {
   /** @type {string[]} the DISPLAYED record's own file path(s), resolved from
    *  its `mfr_path` — deliberately NOT mirrored from `selected_paths`. The two
    *  are independent variables and a panel may move `selected_metarecord`
-   *  alone (a reference followed here, a treeref node, a duplicates row), so
+   *  alone (a reference followed here, a path-ref node, a duplicates row), so
    *  the mirror kept naming the record we came FROM: the right-click menu said
    *  one record in its "Metarecord" half and renamed/trashed another in its
    *  "File" half. Emptied on every load and refilled from the loaded record,
@@ -827,7 +827,7 @@ export async function mount(root, metafolder) {
       const repo = await repoForAdd();
       const loaded = repo ? await loadSchema(repo) : null;
       // A blank answer is an empty record; a name the schema does not declare
-      // is a mistake to report, not a blank (as `treeref:add` does).
+      // is a mistake to report, not a blank (as `path-ref:add` does).
       const wanted = (schema ?? '').trim();
       if (wanted !== '' && !schemaTypes(loaded).includes(wanted)) {
         throw new Error(`unknown schema type: "${wanted}"`);

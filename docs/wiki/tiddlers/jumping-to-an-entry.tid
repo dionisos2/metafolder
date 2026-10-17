@@ -16,7 +16,7 @@ the focus ([[Generic panel commands]]). What a row is depends on the panel:
 
 |!Panel |!Finds |!A candidate reads |
 |[[file-manager panel]] |an entry of the directory shown |its name, with a final `/` for a directory |
-|[[treeref panel]] |a child of the current node |its name |
+|[[path-ref panel]] |a child of the current node |its name |
 |[[log panel]] |a write listed |`#12`, followed by its label when it has one |
 |[[trash panel]] |an entry of the trash |its name, then the path it was trashed from |
 |[[recent panel]] |a metarecord seen recently |its name, then its path |
@@ -38,7 +38,7 @@ The second argument is the mode: `select` is the find above, and `walk`
 A directory found — a node with children — is entered and the same question asked
 again from inside, so a path is walked down one name at a time; a file found — a
 leaf — is selected, and the walk stops. Whether a node has children is not known
-beforehand, so the [[treeref panel]] asks the daemon for one before going in. To
+beforehand, so the [[path-ref panel]] asks the daemon for one before going in. To
 stop on a directory, selected rather than entered, answer with `shift+Enter` — the
 alternate answer of [[Interactive command arguments]], which runs the step as
 `cursor:find self select`. `Escape` stops where the walk is.

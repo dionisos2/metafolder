@@ -11,4 +11,4 @@ summary: Remove the selected metarecord (its file: trash it, or keep it)
 
 * ``delete`` → ``metarecord:remove`` (in the ``metarecord-detail`` panel)
 * ``delete`` → ``metarecord:remove`` (in the ``metarecord-list`` panel)
-* ``delete`` → ``metarecord:remove`` (in the ``treeref`` panel)
+* ``delete`` → ``metarecord:remove`` (in the ``path-ref`` panel)

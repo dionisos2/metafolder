@@ -1,0 +1,15 @@
+title: $:/mf/gen/GUI command/path-ref:list-refs
+catalog: GUI command
+target: path-ref:list-refs
+summary: Path-ref explorer: list the metarecords pointing at the selected node (here / other / new)
+
+!! Reference
+
+* Defined by the ``path-ref`` panel
+
+!! Default keys
+
+* ``b l`` → ``path-ref:list-refs new`` (in the ``path-ref`` panel)
+* ``i l`` → ``path-ref:list-refs here`` (in the ``path-ref`` panel)
+* ``l`` → ``path-ref:list-refs other`` (in the ``path-ref`` panel)
+* ``w l`` → ``path-ref:list-refs other`` (in the ``path-ref`` panel)

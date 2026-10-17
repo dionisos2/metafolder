@@ -646,12 +646,9 @@ mod tests {
         // `enter` mixes a global text-input binding with per-panel actions.
         let enter: Vec<_> = table.iter().filter(|b| b.keys == ["enter"]).collect();
         assert!(enter.iter().any(|b| b.when.is_none() && b.text_input));
-        assert!(
-            enter
-                .iter()
-                .any(|b| b.when.as_deref() == Some("treeref")
-                    && b.invocation == "cursor:descend self")
-        );
+        assert!(enter.iter().any(
+            |b| b.when.as_deref() == Some("path-ref") && b.invocation == "cursor:descend self"
+        ));
 
         // The finder's in-input shortcuts are focus-scoped (doc "Keybindings").
         assert!(down.iter().any(|b| b.focus.as_deref() == Some("finder")));
@@ -845,9 +842,11 @@ mod tests {
         assert!(table.iter().any(|b| b.keys == ["d"]
             && b.when.is_none()
             && b.invocation == "cursor:find self walk"));
-        // The treeref field picker moved off `f` to make room for it.
-        assert!(table.iter().any(|b| b.keys == ["shift+f"] && b.invocation == "treeref:set field"));
-        assert!(!f.iter().any(|b| b.invocation == "treeref:set field"));
+        // The path-ref field picker moved off `f` to make room for it.
+        assert!(table
+            .iter()
+            .any(|b| b.keys == ["shift+f"] && b.invocation == "path-ref:set field"));
+        assert!(!f.iter().any(|b| b.invocation == "path-ref:set field"));
 
         // `r` is "do the view again" in every panel that has a view: the list
         // panels re-read their rows, the file panel plays the media from the

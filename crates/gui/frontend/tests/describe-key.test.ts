@@ -21,7 +21,7 @@ const b = (
 
 const table: Binding[] = [
   b(['f'], 'file-manager:find', 'file-manager'),
-  b(['f'], 'treeref:find', 'treeref'),
+  b(['f'], 'path-ref:find', 'path-ref'),
   b(['f'], 'trash:find', 'trash'),
   b(['f'], 'recent:find', 'recent'),
   b(['t', 'l'], 'panel:open here metarecord-list'),
@@ -98,7 +98,7 @@ describe('describeKeyStep — a key that runs nothing', () => {
       reported: true,
       message:
         'f is not bound to any command here ' +
-        '(elsewhere: file-manager:find in file-manager, treeref:find in treeref, ' +
+        '(elsewhere: file-manager:find in file-manager, path-ref:find in path-ref, ' +
         'trash:find in trash, recent:find in recent)',
     });
   });

@@ -25,12 +25,12 @@ open-with = ["xdg-open"]
 # "loaded/total"). Smallest for metarecord-list (each row needs several daemon
 # round-trips and parsing), largest for file-manager (a plain text row is the
 # cheapest to build); file sits in between (each tile is a lazy <img>).
-# treeref is keyed by its panel-type name too.
+# path-ref is keyed by its panel-type name too.
 [page-size]
 metarecord-list = 100
 file = 150
 file-manager = 200
-treeref = 200
+path-ref = 200
 
 # Miscellaneous runtime settings. Every key is optional: omit the table (or any
 # key) to keep the default shown below.
@@ -114,7 +114,7 @@ label-separator = ' | '
 # so a custom panel type gets its own table the same way — the GUI knows
 # nothing about the keys. Omit a key (or the whole table) and the panel falls
 # back to the built-in value shown below. These are *initial* values: where a
-# panel persists the setting per workspace (columns, finder fields, the treeref
+# panel persists the setting per workspace (columns, finder fields, the path-ref
 # field), the stored workspace value still wins.
 
 [panel-defaults.metarecord-list]
@@ -128,11 +128,11 @@ finder-fields = ["mfr_path:path", "label:value", "name:value"]
 # The column shown as each tile's name in grid mode.
 grid-name-column = "mfr_path:path"
 
-[panel-defaults.treeref]
+[panel-defaults.path-ref]
 # The tree_ref field whose forest the panel opens on.
 field = "mfr_path"
 # The Ref field the "what points at this node?" query follows back into the
-# forest (`treeref:list-refs`). Tags are by far the common case.
+# forest (`path-ref:list-refs`). Tags are by far the common case.
 ref-field = "tag"
 
 [panel-defaults.file]

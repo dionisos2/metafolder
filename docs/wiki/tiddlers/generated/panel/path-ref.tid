@@ -1,0 +1,15 @@
+title: $:/mf/gen/Panel/path-ref panel
+catalog: Panel
+target: path-ref panel
+summary: The path-ref panel type
+
+!! Commands
+
+* ``path-ref:add`` — Path-ref explorer: add an element under the current node
+* ``path-ref:list-refs`` — Path-ref explorer: list the metarecords pointing at the selected node (here / other / new)
+* ``path-ref:set`` — Path-ref explorer: change a view setting
+* ``path-ref:toggle`` — Path-ref explorer: toggle a view flag (scope: the exact node ⇄ its whole subtree)
+
+!! Generic commands
+
+Provides ``parent``, ``root``, ``refresh``, ``index``, ``count``, ``select``, ``entries``, ``descend``, ``leaf`` to [[Generic panel commands]].

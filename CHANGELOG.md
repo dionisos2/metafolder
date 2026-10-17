@@ -203,6 +203,13 @@ than breaking them.
     `mf_watch = true` no longer reads as unwatched.
 
 ### Changed
+- **The `treeref` panel is now `path-ref`**, since it walks `hierarchy_ref`
+  fields as well as `tree_ref` ones — the two references reached by a path.
+  Its commands follow (`path-ref:add`, `path-ref:set`, `path-ref:toggle`,
+  `path-ref:list-refs`), as do the workspace variables (`selected_path_ref`,
+  `path-ref:field`, …) and the configuration keys (`[panel-defaults.path-ref]`,
+  `[page-size] path-ref`); `metafolder-sync-config` merges the new keys into
+  an unedited configuration (doc "path-ref panel").
 - **"Revision" is gone from the vocabulary.** What one request writes is a
   *write*; what groups writes is a *label*. The watcher's flush report says
   `-> 2 writes`, the notes and messages say the same, and the notes "Reverting

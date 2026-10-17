@@ -25,7 +25,7 @@ summary: Open a panel type here, in the other slot, or in a new workspace
 * ``b t o`` → ``panel:open new log``
 * ``b t r`` → ``panel:open new repos``
 * ``b t s`` → ``panel:open new shell``
-* ``b t t`` → ``panel:open new treeref``
+* ``b t t`` → ``panel:open new path-ref``
 * ``b t u`` → ``panel:open new duplicates``
 * ``b t v`` → ``panel:open new recent``
 * ``b t w`` → ``panel:open new workspace-info``
@@ -48,7 +48,7 @@ summary: Open a panel type here, in the other slot, or in a new workspace
 * ``i t o`` → ``panel:open here log``
 * ``i t r`` → ``panel:open here repos``
 * ``i t s`` → ``panel:open here shell``
-* ``i t t`` → ``panel:open here treeref``
+* ``i t t`` → ``panel:open here path-ref``
 * ``i t u`` → ``panel:open here duplicates``
 * ``i t v`` → ``panel:open here recent``
 * ``i t w`` → ``panel:open here workspace-info``
@@ -69,7 +69,7 @@ summary: Open a panel type here, in the other slot, or in a new workspace
 * ``t o`` → ``panel:open here log``
 * ``t r`` → ``panel:open here repos``
 * ``t s`` → ``panel:open here shell``
-* ``t t`` → ``panel:open here treeref``
+* ``t t`` → ``panel:open here path-ref``
 * ``t u`` → ``panel:open here duplicates``
 * ``t v`` → ``panel:open here recent``
 * ``t w`` → ``panel:open here workspace-info``
@@ -84,7 +84,7 @@ summary: Open a panel type here, in the other slot, or in a new workspace
 * ``w t o`` → ``panel:open other log``
 * ``w t r`` → ``panel:open other repos``
 * ``w t s`` → ``panel:open other shell``
-* ``w t t`` → ``panel:open other treeref``
+* ``w t t`` → ``panel:open other path-ref``
 * ``w t u`` → ``panel:open other duplicates``
 * ``w t v`` → ``panel:open other recent``
 * ``w t w`` → ``panel:open other workspace-info``

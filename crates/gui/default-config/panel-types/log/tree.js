@@ -5,7 +5,7 @@
 // outermost label — a script's run, a command —; for one of the watcher, its
 // flush. Going into a unit lists the labels nested in it, and so on down to the
 // operations, and into an operation for what it changed: the panel shows one
-// level at a time, like the treeref panel (doc "Opening a row").
+// level at a time, like the path-ref panel (doc "Opening a row").
 // Consecutive flushes of the watcher fold into one row, or they would drown
 // the rest. Everything is newest first, by the newest operation under it.
 //

@@ -55,7 +55,7 @@ describe('formatCombo', () => {
 
 describe('bindingMatches', () => {
   test('an exact invocation matches', () => {
-    expect(bindingMatches(bind(['f'], 'treeref:find'), 'treeref:find')).toBe(true);
+    expect(bindingMatches(bind(['f'], 'path-ref:find'), 'path-ref:find')).toBe(true);
   });
 
   test('a parameterised invocation matches its bare command name', () => {
@@ -67,11 +67,11 @@ describe('bindingMatches', () => {
   test('a fuller query matches only that exact invocation', () => {
     const b = bind(['t', 'l'], 'panel:open here metarecord-list');
     expect(bindingMatches(b, 'panel:open here metarecord-list')).toBe(true);
-    expect(bindingMatches(b, 'panel:open here treeref')).toBe(false);
+    expect(bindingMatches(b, 'panel:open here path-ref')).toBe(false);
   });
 
   test('a command name is not a prefix of another command', () => {
-    expect(bindingMatches(bind(['f'], 'treeref:find-next'), 'treeref:find')).toBe(false);
+    expect(bindingMatches(bind(['f'], 'path-ref:find-next'), 'path-ref:find')).toBe(false);
   });
 });
 
@@ -79,7 +79,7 @@ describe('keysFor', () => {
   const table = [
     bind(['f'], 'metarecord-list:clear finder', 'metarecord-list'),
     bind(['f'], 'file-manager:find', 'file-manager'),
-    bind(['f'], 'treeref:find', 'treeref'),
+    bind(['f'], 'path-ref:find', 'path-ref'),
     bind(['/'], 'metarecord-list:focus finder', 'metarecord-list'),
     bind(['e', 'f'], 'metarecord-list:focus finder', 'metarecord-list'),
     bind(['ctrl+f'], 'find:open'),
@@ -92,16 +92,16 @@ describe('keysFor', () => {
   test('several commands are asked at once, their keys deduplicated', () => {
     // The navigation rows of the keybindings page mean "in any of these
     // panels", and all three panels share the key.
-    expect(keysFor(table, 'file-manager:find, treeref:find')).toEqual(['f']);
+    expect(keysFor(table, 'file-manager:find, path-ref:find')).toEqual(['f']);
   });
 
   test('an unbound command has no keys', () => {
-    expect(keysFor(table, 'treeref:root')).toEqual([]);
+    expect(keysFor(table, 'path-ref:root')).toEqual([]);
   });
 });
 
 describe('applyKeyHints', () => {
-  const table = [bind(['f'], 'treeref:find', 'treeref'), bind(['ctrl+f'], 'find:open')];
+  const table = [bind(['f'], 'path-ref:find', 'path-ref'), bind(['ctrl+f'], 'find:open')];
 
   function page(html: string) {
     const host = document.createElement('div');
@@ -110,21 +110,21 @@ describe('applyKeyHints', () => {
   }
 
   test('the shipped fallback is replaced by the bound key, in a <kbd>', () => {
-    const host = page('<span data-mf-key="treeref:find">x</span>');
+    const host = page('<span data-mf-key="path-ref:find">x</span>');
     applyKeyHints(host, table);
     expect(host.textContent).toBe('f');
     expect(host.querySelector('span > kbd')?.textContent).toBe('f');
   });
 
   test('several keys are one <kbd> each', () => {
-    const host = page('<span data-mf-key="treeref:find, find:open">?</span>');
+    const host = page('<span data-mf-key="path-ref:find, find:open">?</span>');
     applyKeyHints(host, table);
     expect(host.textContent).toBe('f or Ctrl+f');
     expect([...host.querySelectorAll('kbd')].map((k) => k.textContent)).toEqual(['f', 'Ctrl+f']);
   });
 
   test('an unbound command says so rather than showing a stale key', () => {
-    const host = page('<span data-mf-key="treeref:root">r</span>');
+    const host = page('<span data-mf-key="path-ref:root">r</span>');
     applyKeyHints(host, table);
     expect(host.textContent).toBe('unbound');
     expect(host.querySelector('span')!.classList.contains('unbound')).toBe(true);
@@ -132,7 +132,7 @@ describe('applyKeyHints', () => {
 
   test('every tagged element is filled, and untagged markup is untouched', () => {
     const host = page(
-      '<p><span data-mf-key="treeref:find">x</span> and <code>mfr_path</code> ' +
+      '<p><span data-mf-key="path-ref:find">x</span> and <code>mfr_path</code> ' +
         'and <span data-mf-key="find:open">y</span></p>',
     );
     applyKeyHints(host, table);
@@ -140,7 +140,7 @@ describe('applyKeyHints', () => {
   });
 
   test('applying twice is idempotent (a page can be re-rendered)', () => {
-    const host = page('<span data-mf-key="treeref:find">x</span>');
+    const host = page('<span data-mf-key="path-ref:find">x</span>');
     applyKeyHints(host, table);
     applyKeyHints(host, table);
     expect(host.textContent).toBe('f');
@@ -148,9 +148,9 @@ describe('applyKeyHints', () => {
   });
 
   test('a command bound again after being unbound loses the unbound mark', () => {
-    const host = page('<span data-mf-key="treeref:root">r</span>');
+    const host = page('<span data-mf-key="path-ref:root">r</span>');
     applyKeyHints(host, table);
-    applyKeyHints(host, [...table, bind(['g'], 'treeref:root', 'treeref')]);
+    applyKeyHints(host, [...table, bind(['g'], 'path-ref:root', 'path-ref')]);
     expect(host.textContent).toBe('g');
     expect(host.querySelector('span')!.classList.contains('unbound')).toBe(false);
   });

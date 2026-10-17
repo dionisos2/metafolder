@@ -1,7 +1,7 @@
 // log panel: the history as a tree of labels — the units of work newest
 // first (a command, a script's run, a flush of the watcher), each gone into
 // onto the labels nested in it, down to the operations, one level at a time
-// like the treeref panel, and into an operation for what it changed, field by
+// like the path-ref panel, and into an operation for what it changed, field by
 // field; revert and prune (doc "log panel", doc "Labels and contexts").
 
 import { byId, el, formatValue, openButton, qs } from '/__ui.js';

@@ -1,4 +1,4 @@
-// The log panel goes into a label, the way treeref goes into a node (doc "log
+// The log panel goes into a label, the way path-ref goes into a node (doc "log
 // panel", doc "Opening a row"): it lists one level at a time — the units of
 // work, then what one holds, down to the operations — with a breadcrumb back
 // out. A row's ↘ button goes into it; a click only selects; no double click.

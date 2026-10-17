@@ -89,9 +89,9 @@ declare namespace Metafolder {
     finderFields?: string[];
     /** metarecord-list: the column shown as a tile's name in grid mode. */
     gridNameColumn?: string;
-    /** treeref: the tree_ref field whose forest the panel opens on. */
+    /** path-ref: the tree_ref field whose forest the panel opens on. */
     field?: string;
-    /** treeref: the Ref field `treeref:list-refs` follows back into the forest. */
+    /** path-ref: the Ref field `path-ref:list-refs` follows back into the forest. */
     refField?: string;
     /** file: extensions taking the text-preview fast path. */
     textExtensions?: string[];

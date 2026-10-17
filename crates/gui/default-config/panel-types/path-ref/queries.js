@@ -1,5 +1,5 @@
-// Query builders for the treeref (tree-explorer) panel. Pure functions, no
-// daemon access — unit-tested in frontend/tests/treeref-queries.test.js.
+// Query builders for the path-ref (tree-explorer) panel. Pure functions, no
+// daemon access — unit-tested in frontend/tests/path-ref-queries.test.js.
 
 import { dslString } from '/__finder.js';
 
@@ -19,7 +19,7 @@ export function childrenQuery(field, parentUuid) {
 // (doc "TreeRef path conventions"): the filesystem forest's empty-named root makes the
 // path leading-"/"-rooted ("/a/b", the root itself "/"); a named-root forest
 // (e.g. tags) has no leading slash ("domaine", "domaine/sub"). An empty list is
-// the empty string (no node selected). This is why the treeref breadcrumb and
+// the empty string (no node selected). This is why the path-ref breadcrumb and
 // ref bar preview never prefix a slash of their own — doing so
 // double-slashed the filesystem forest ("///projets") and wrongly slashed a
 // named root ("/domaine").
@@ -46,8 +46,8 @@ export function treeNameOf(metarecord, field) {
 }
 
 // The DSL selecting the metarecords whose `refField` (a Ref field) points into
-// the tree node at `path` in `treeField`'s forest — the query the `treeref`
-// panel hands to `metarecord-list` (doc "treeref panel").
+// the tree node at `path` in `treeField`'s forest — the query the `path-ref`
+// panel hands to `metarecord-list` (doc "path-ref panel").
 //
 //   - scope 'exact'   : `tag -> (path = "music/jazz")`, the node itself. On a
 // TreeRef field `=` is the exact node at that path (doc "Field aspects"), so this pins one node at
@@ -71,7 +71,7 @@ export function refQueryDsl({ refField, treeField, path, scope }) {
   return `${refField} -> (${treeField} ${arrow} ${operand})`;
 }
 
-// The fields of the metarecord `treeref:add` creates: the schema type's
+// The fields of the metarecord `path-ref:add` creates: the schema type's
 // template (from /__schema-template.js, empty when no type was chosen) plus the
 // tree position — one row on the *explored* field, of the field's own type
 // (`tree_ref`, or `hierarchy_ref` in a hierarchy: doc "Hierarchy references"),

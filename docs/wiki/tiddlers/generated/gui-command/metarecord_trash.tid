@@ -11,4 +11,4 @@ summary: Send the selected metarecord's file to the trash
 
 * ``ctrl+delete`` → ``metarecord:trash`` (in the ``metarecord-detail`` panel)
 * ``ctrl+delete`` → ``metarecord:trash`` (in the ``metarecord-list`` panel)
-* ``ctrl+delete`` → ``metarecord:trash`` (in the ``treeref`` panel)
+* ``ctrl+delete`` → ``metarecord:trash`` (in the ``path-ref`` panel)

@@ -156,7 +156,7 @@ export function parseRawValue(type, raw) {
  * instance per panel; `run({field, valueType})` opens a linked picker workspace
  * and resolves to the chosen metarecord uuid (or null on cancel). The picker
  * opens in the other panel slot and reuses existing panels — `metarecord-list`
- * (seeded with the field's configured query) for a `ref`, the `treeref`
+ * (seeded with the field's configured query) for a `ref`, the `path-ref`
  * explorer for a `tree_ref` — so no selection UI is duplicated into the forms.
  *
  * Takes only the API methods it drives rather than the whole `MetafolderApi` —
@@ -222,7 +222,7 @@ export function createPickRunner(metafolder) {
   return {
     request,
     // Convenience for the ref/tree_ref field widgets: a uuid picker reusing the
-    // metarecord-list / treeref panels (doc "Value picker").
+    // metarecord-list / path-ref panels (doc "Value picker").
     /** @param {{field?: string|null, valueType: string}} target */
     async run({ field, valueType }) {
       let panel;
@@ -231,8 +231,8 @@ export function createPickRunner(metafolder) {
       if (valueType === 'tree_ref' || valueType === 'hierarchy_ref') {
         // The parent is any forest node; open the explorer on the edited
         // field's own forest as the natural starting point.
-        panel = 'treeref';
-        if (field) vars = { 'treeref:field': field };
+        panel = 'path-ref';
+        if (field) vars = { 'path-ref:field': field };
       } else {
         panel = 'metarecord-list';
         // The `[ref-seeds]` rule's selection is where its targets live (doc

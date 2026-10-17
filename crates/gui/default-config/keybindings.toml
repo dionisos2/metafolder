@@ -104,7 +104,7 @@
 "t g" = { command = "panel:open here message" }
 "t s" = { command = "panel:open here shell" }
 "t w" = { command = "panel:open here workspace-info" }
-"t t" = { command = "panel:open here treeref" }
+"t t" = { command = "panel:open here path-ref" }
 "t b" = { command = "panel:open here trash" }
 "t y" = { command = "panel:open here sync" }
 "t h" = { command = "panel:open here help" }
@@ -120,7 +120,7 @@
 "i t g" = { command = "panel:open here message" }
 "i t s" = { command = "panel:open here shell" }
 "i t w" = { command = "panel:open here workspace-info" }
-"i t t" = { command = "panel:open here treeref" }
+"i t t" = { command = "panel:open here path-ref" }
 "i t b" = { command = "panel:open here trash" }
 "i t y" = { command = "panel:open here sync" }
 "i t h" = { command = "panel:open here help" }
@@ -136,7 +136,7 @@
 "w t g" = { command = "panel:open other message" }
 "w t s" = { command = "panel:open other shell" }
 "w t w" = { command = "panel:open other workspace-info" }
-"w t t" = { command = "panel:open other treeref" }
+"w t t" = { command = "panel:open other path-ref" }
 "w t b" = { command = "panel:open other trash" }
 "w t y" = { command = "panel:open other sync" }
 "w t h" = { command = "panel:open other help" }
@@ -152,7 +152,7 @@
 "b t g" = { command = "panel:open new message" }
 "b t s" = { command = "panel:open new shell" }
 "b t w" = { command = "panel:open new workspace-info" }
-"b t t" = { command = "panel:open new treeref" }
+"b t t" = { command = "panel:open new path-ref" }
 "b t b" = { command = "panel:open new trash" }
 "b t y" = { command = "panel:open new sync" }
 "b t h" = { command = "panel:open new help" }
@@ -309,7 +309,7 @@
   # Go into the row (doc "Generic panel commands"). Scoped: `enter` already has
   # its global binding (editing:confirm), and the file manager's Enter is
   # `file-manager:activate`, which also shows a file.
-  { command = "cursor:descend self", when = "treeref" },
+  { command = "cursor:descend self", when = "path-ref" },
   { command = "cursor:descend self", when = "log" },
   { command = "trash:restore", when = "trash" },
   { command = "panel:open other file", when = "recent" },
@@ -397,7 +397,7 @@
   # (to the repo trash when a repo is active, else permanently), so untracked
   # entries can be deleted too — not just tracked metarecords.
   { command = "file-manager:delete", when = "file-manager" },
-  { command = "metarecord:remove", when = "treeref" },
+  { command = "metarecord:remove", when = "path-ref" },
   { command = "trash:delete", when = "trash" },
   # In the duplicates panel it is the copy under the cursor that goes, and the
   # panel re-counts the group it left (doc "duplicates panel") — which
@@ -414,12 +414,12 @@
 "ctrl+delete" = [
   { command = "metarecord:trash", when = "metarecord-list" },
   { command = "metarecord:trash", when = "metarecord-detail" },
-  { command = "metarecord:trash", when = "treeref" },
+  { command = "metarecord:trash", when = "path-ref" },
 ]
 "shift+delete" = [
   { command = "metarecord:delete", when = "metarecord-list" },
   { command = "metarecord:delete", when = "metarecord-detail" },
-  { command = "metarecord:delete", when = "treeref" },
+  { command = "metarecord:delete", when = "path-ref" },
 ]
 
 # duplicates: keep the copy under the cursor and trash the group's others. Plain
@@ -537,27 +537,27 @@
   # follows it, escape cancels (doc "help panel").
   { command = "help:open-hints", when = "help" },
 ]
-# treeref: pick which TreeRef field's forest the panel explores (the drop-down's
+# path-ref: pick which tree_ref / hierarchy_ref field the panel explores (the drop-down's
 # keyboard equivalent; the field name completes). It keeps the F key, shifted,
 # now that plain "f" finds a child.
-"shift+f" = { command = "treeref:set field", when = "treeref" }
+"shift+f" = { command = "path-ref:set field", when = "path-ref" }
 "s" = [
   { command = "metarecord-list:clear simplified", when = "metarecord-list" },
-  # treeref: exact node ⇄ the whole subtree, for the "what points here?" query.
-  { command = "treeref:toggle scope", when = "treeref" },
+  # path-ref: exact node ⇄ the whole subtree, for the "what points here?" query.
+  { command = "path-ref:toggle scope", when = "path-ref" },
   # recent: newest first ⇄ best score first (doc "Frecent folders").
   { command = "recent:set sort", when = "recent" },
   { command = "help:clear search", when = "help" },
 ]
 
-# treeref: build the "what points at this node?" query and run it in a
+# path-ref: build the "what points at this node?" query and run it in a
 # metarecord-list opened in the other slot ("l"), or pick the Ref field it
-# follows back ("e"). See doc "treeref panel".
-"l" = { command = "treeref:list-refs other", when = "treeref" }
-"w l" = { command = "treeref:list-refs other", when = "treeref" }
-"b l" = { command = "treeref:list-refs new", when = "treeref" }
-"i l" = { command = "treeref:list-refs here", when = "treeref" }
-"e" = { command = "treeref:set ref-field", when = "treeref" }
+# follows back ("e"). See doc "path-ref panel".
+"l" = { command = "path-ref:list-refs other", when = "path-ref" }
+"w l" = { command = "path-ref:list-refs other", when = "path-ref" }
+"b l" = { command = "path-ref:list-refs new", when = "path-ref" }
+"i l" = { command = "path-ref:list-refs here", when = "path-ref" }
+"e" = { command = "path-ref:set ref-field", when = "path-ref" }
 "q" = { command = "metarecord-list:clear normal", when = "metarecord-list" }
 "c" = [
   { command = "metarecord-list:clear all", when = "metarecord-list" },
@@ -572,9 +572,9 @@
   # New *file*, on the same combo the folder uses without its shift — the
   # sibling had a key and it did not.
   { command = "file-manager:new file", when = "file-manager" },
-  # treeref: a new element of the explored forest, under the current node —
+  # path-ref: a new element of the explored forest, under the current node —
   # the create family keeps its combo.
-  { command = "treeref:add", when = "treeref" },
+  { command = "path-ref:add", when = "path-ref" },
 ]
 
 # Command-input-driven field editing ("m" = metarecord edit; the status bar

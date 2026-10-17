@@ -24,7 +24,7 @@ the text is searched for. Without regard to case, and in this order:
 # a text starting with `#` is never a name;
 # the page with that `id`, else with that `title`, else with that alias. The title comes before the aliases so that a command's own note wins over a page that lists the command among its aliases;
 # for a text containing `:` — a command: the same lookup for the command without its arguments, then for what follows the colon (`metarecord-list:focus-query` reaches an alias `focus-query`), then for what precedes it (the panel type);
-# `<type> panel` and `<type>` stand for each other when nothing has the exact name: `treeref` finds a note titled `treeref panel`, and `trash panel` would find a note titled `trash` if the panel had no note of its own.
+# `<type> panel` and `<type>` stand for each other when nothing has the exact name: `path-ref` finds a note titled `path-ref panel`, and `trash panel` would find a note titled `trash` if the panel had no note of its own.
 
 `scripts/dev/doc check` keeps the three kinds of name apart: an alias may not be the
 title or the id of another note.
@@ -53,7 +53,7 @@ replaces the content of each such element with the keys bound to the command, re
 from `metafolder.commands.keybindings()` (`applyKeyHints`, `/__keyhints.js`):
 
 * the attribute holds one invocation, or several separated by commas — the keys of any of them, each once, in the order of the table. That is how a row common to several panels is written;
-* a bare command name matches every invocation of it (`panel:open` lists the keys of all its bindings), a fuller one only itself (`panel:open here treeref`) — the rule the command input uses to show a command's keys;
+* a bare command name matches every invocation of it (`panel:open` lists the keys of all its bindings), a fuller one only itself (`panel:open here path-ref`) — the rule the command input uses to show a command's keys;
 * modifiers are capitalised (`Ctrl+Shift+z`), arrows drawn as arrows, a sequence written as its keys in order (`t l`), several keys joined by ''or'';
 * a command nothing is bound to reads `unbound`;
 * the table is read again at each page shown.

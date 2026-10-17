@@ -3,4 +3,4 @@ tags: [[GUI command]] [[Generic panel commands]]
 kind: reference
 summary: Take a panel to its top level (self / a panel type)
 
-Takes a panel to its top level: the focused panel with `self`, the panel type named otherwise ([[Generic panel commands]]). In the [[file-manager panel]], the active repository's root — or the filesystem root `/` when the workspace has no repository, the toolbar button then reading ''root'' and not ''repo root''; in the [[treeref panel]], the roots of the tree it walks.
+Takes a panel to its top level: the focused panel with `self`, the panel type named otherwise ([[Generic panel commands]]). In the [[file-manager panel]], the active repository's root — or the filesystem root `/` when the workspace has no repository, the toolbar button then reading ''root'' and not ''repo root''; in the [[path-ref panel]], the roots of the tree it walks.

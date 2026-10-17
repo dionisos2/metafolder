@@ -27,7 +27,7 @@ under it is left out, and one rule separates two headers.
 
 The file actions are the same in every panel showing files — the file manager, the
 metarecord list and detail, the `file`, `recent` and `duplicates` panels, the
-`mfr_path` tree of `treeref` — and share one clipboard: what is cut or copied in one
+`mfr_path` tree of `path-ref` — and share one clipboard: what is cut or copied in one
 is pasted in another. ''Copy full path'' copies the file's absolute path as text.
 
 Right-clicking where no panel offers anything — the tab bar's empty space, a slot

@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/path-ref:add
+catalog: GUI command
+target: path-ref:add
+summary: Path-ref explorer: add an element under the current node
+
+!! Reference
+
+* Defined by the ``path-ref`` panel
+
+!! Default keys
+
+* ``ctrl+n`` → ``path-ref:add`` (in the ``path-ref`` panel)

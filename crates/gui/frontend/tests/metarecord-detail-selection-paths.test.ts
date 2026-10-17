@@ -4,7 +4,7 @@
 // to the right-click "File" menu (rename / duplicate / move to trash), while
 // the "Metarecord" half of the same menu used the loaded record. The two are
 // independent variables, and a panel is allowed to move `selected_metarecord`
-// ALONE — following a reference here, a treeref node, a duplicates row — so
+// ALONE — following a reference here, a path-ref node, a duplicates row — so
 // after such a move the File menu still named the *previously* selected file:
 // the menu said one record and renamed another. The paths are now resolved
 // from the loaded record's own `mfr_path`, so there is nothing left to diverge.

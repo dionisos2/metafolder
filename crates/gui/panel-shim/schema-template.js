@@ -2,7 +2,7 @@
 // shared by every panel (`loadSchema`), and the templates it gives new
 // metarecords. The schema (returned verbatim by GET /repos/:repo/schema)
 // declares metarecord types (the target names of its groups) and the fields
-// each type constrains; the metarecord-detail and treeref panels use these
+// each type constrains; the metarecord-detail and path-ref panels use these
 // helpers to offer a type picker on create and to pre-stage the chosen type's
 // fields. The template helpers are pure functions over the raw schema JSON.
 

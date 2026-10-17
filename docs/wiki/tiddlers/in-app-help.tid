@@ -15,7 +15,7 @@ the shell, so they work before the help panel was ever shown.
 ''exact name'' of one, and searches every page for it otherwise:
 
 * a page's title, such as `find in a panel` (case does not matter), or one of its other names: `ctrl-f`, `shortcuts`;
-* a command, with or without arguments: `panel:open here treeref` opens the note of `panel:open`. A command with no note of its own leads to its panel;
+* a command, with or without arguments: `panel:open here path-ref` opens the note of `panel:open`. A command with no note of its own leads to its panel;
 * a panel type, when no page has that very name: `file-manager` opens the note of the `file-manager` panel.
 
 A `#` in front always searches: `help #trash` lists the pages that mention the
@@ -43,7 +43,7 @@ the focus, and for the text field being typed in, if any. A key that is bound, b
 not here, says so:
 
 ```
-s is not bound to any command here (elsewhere: metarecord-list:clear simplified in metarecord-list, treeref:toggle scope in treeref)
+s is not bound to any command here (elsewhere: metarecord-list:clear simplified in metarecord-list, path-ref:toggle scope in path-ref)
 ```
 
 A sequence is followed to its end, its continuations listed above the status bar as
