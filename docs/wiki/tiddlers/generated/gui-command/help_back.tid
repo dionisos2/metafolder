@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/help:back
+catalog: GUI command
+target: help:back
+summary: Help: back to the page shown before
+
+!! Reference
+
+* Defined by the ``help`` panel
+
+!! Default keys
+
+* ``backspace`` → ``help:back`` (in the ``help`` panel)

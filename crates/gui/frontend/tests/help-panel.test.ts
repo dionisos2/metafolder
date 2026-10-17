@@ -12,7 +12,15 @@ const MANIFEST = [
   { id: 'documentation', title: 'Documentation', file: 'documentation.html' },
   { id: 'gui', title: 'GUI', file: 'gui.html', tags: ['Documentation'] },
   { id: 'help-panel', title: 'help panel', file: 'help-panel.html', tags: ['GUI'] },
+  { id: 'links', title: 'links', file: 'links.html' },
+  { id: 'many', title: 'many', file: 'many.html' },
 ];
+
+// Pages with links, for the hints: `links` has two, `many` thirty.
+const PAGES: Record<string, string> = {
+  links: '<p>see <a data-help-page="gui">gui</a> and <a data-help-page="help-panel">help</a></p>',
+  many: Array.from({ length: 30 }, () => '<a data-help-page="gui">gui</a>').join(' '),
+};
 
 function shadow(): ShadowRoot {
   const html = readFileSync(resolve(PANEL_DIR, 'index.html'), 'utf8');
@@ -48,6 +56,7 @@ async function mountHelp() {
       invoke: () => null,
     },
     query: { grammarSource: async () => '' },
+    statusBar: { message: async () => {} },
     workspace: { get: async () => null, onChange: () => {} },
   };
   const mod = await import('../../default-config/panel-types/help/main.js');
@@ -59,7 +68,12 @@ async function mountHelp() {
     if (!handler) throw new Error(`${name} is not registered`);
     return handler(...args);
   };
-  return { root, input, content, run, provided };
+  /** Show a page as typing its name and Enter would. */
+  const show = (name: string) => {
+    input.value = name;
+    return run('help:apply', 'search');
+  };
+  return { root, input, content, run, provided, show };
 }
 
 beforeEach(() => {
@@ -68,7 +82,7 @@ beforeEach(() => {
     vi.fn(async (url: string) => {
       if (url.endsWith('/index.json')) return new Response(JSON.stringify(MANIFEST));
       const id = url.split('/').pop()?.replace('.html', '');
-      return new Response(`<p>page ${id}</p>`);
+      return new Response(PAGES[id ?? ''] ?? `<p>page ${id}</p>`);
     }),
   );
 });
@@ -138,5 +152,149 @@ describe('cursor:parent', () => {
     await run('help:apply', 'search');
     await provided.parent();
     expect(content.textContent).toBe('page documentation');
+  });
+});
+
+describe('history', () => {
+  test('back and forward walk the pages shown, like a browser', async () => {
+    const { input, content, run, show } = await mountHelp();
+    await show('documentation');
+    await show('gui');
+    await show('help panel');
+    await run('help:back');
+    expect(content.textContent).toBe('page gui');
+    expect(input.value).toBe('gui');
+    await run('help:back');
+    expect(content.textContent).toBe('page documentation');
+    await run('help:back');
+    expect(content.textContent).toBe('page documentation');
+    await run('help:forward');
+    expect(content.textContent).toBe('page gui');
+    await run('help:forward');
+    expect(content.textContent).toBe('page help-panel');
+    await run('help:forward');
+    expect(content.textContent).toBe('page help-panel');
+  });
+
+  test('opening a page after going back drops the pages ahead', async () => {
+    const { content, run, show } = await mountHelp();
+    await show('documentation');
+    await show('gui');
+    await run('help:back');
+    await show('help panel');
+    await run('help:forward');
+    expect(content.textContent).toBe('page help-panel');
+    await run('help:back');
+    expect(content.textContent).toBe('page documentation');
+  });
+
+  test('back from a search goes to the page shown before it', async () => {
+    const { content, run, show, input } = await mountHelp();
+    await show('gui');
+    await show('#page');
+    expect(content.hidden).toBe(true);
+    await run('help:back');
+    expect(content.hidden).toBe(false);
+    expect(content.textContent).toBe('page gui');
+    expect(input.value).toBe('gui');
+  });
+
+  test('a page shown twice in a row is one step', async () => {
+    const { content, run, show } = await mountHelp();
+    await show('documentation');
+    await show('gui');
+    await show('gui');
+    await run('help:back');
+    expect(content.textContent).toBe('page documentation');
+  });
+});
+
+describe('link hints', () => {
+  /** The hint labels shown, in order. */
+  const labels = (root: ShadowRoot) =>
+    [...root.querySelectorAll<HTMLElement>('.link-hint')]
+      .filter((hint) => !hint.hidden)
+      .map((hint) => hint.textContent);
+  const type = (field: HTMLInputElement, text: string) => {
+    field.value = text;
+    field.dispatchEvent(new Event('input'));
+  };
+
+  test('label every link with a letter and take the keys in a text zone', async () => {
+    const { root, run, show } = await mountHelp();
+    await show('links');
+    await run('help:open-hints');
+    expect(labels(root)).toEqual(['a', 's']);
+    const field = root.activeElement as HTMLInputElement;
+    expect(field.dataset.mfFocus).toBe('hints');
+  });
+
+  test("typing a link's letter opens its page and ends the hints", async () => {
+    const { root, content, run, show } = await mountHelp();
+    await show('links');
+    await run('help:open-hints');
+    type(root.activeElement as HTMLInputElement, 's');
+    expect(content.textContent).toBe('page help-panel');
+    expect(labels(root)).toEqual([]);
+  });
+
+  test('the topic buttons above a page are labelled too, first', async () => {
+    const { root, content, run, show } = await mountHelp();
+    await show('help panel');
+    await run('help:open-hints');
+    expect(labels(root)).toEqual(['a']);
+    type(root.activeElement as HTMLInputElement, 'a');
+    expect(content.textContent).toBe('page gui');
+  });
+
+  test('search results are labelled', async () => {
+    const { root, content, run, show } = await mountHelp();
+    await show('#page');
+    await run('help:open-hints');
+    expect(labels(root).length).toBe(3);
+    type(root.activeElement as HTMLInputElement, labels(root)[0] ?? '');
+    expect(content.hidden).toBe(false);
+  });
+
+  test('more links than letters take two letters each, narrowed as they are typed', async () => {
+    const { root, content, run, show } = await mountHelp();
+    await show('many');
+    await run('help:open-hints');
+    expect(labels(root).length).toBe(30);
+    expect(labels(root).every((label) => label?.length === 2)).toBe(true);
+    const field = root.activeElement as HTMLInputElement;
+    type(field, 'a');
+    expect(labels(root).every((label) => label?.startsWith('a'))).toBe(true);
+    expect(content.textContent).not.toBe('page gui');
+    type(field, 'as');
+    expect(content.textContent).toBe('page gui');
+  });
+
+  test('a letter no label starts with is refused', async () => {
+    const { root, run, show } = await mountHelp();
+    await show('links');
+    await run('help:open-hints');
+    const field = root.activeElement as HTMLInputElement;
+    type(field, 'z');
+    expect(field.value).toBe('');
+    expect(labels(root)).toEqual(['a', 's']);
+  });
+
+  test('leaving the zone (escape) cancels, the page untouched', async () => {
+    const { root, content, run, show } = await mountHelp();
+    await show('links');
+    await run('help:open-hints');
+    (root.activeElement as HTMLInputElement).blur();
+    expect(labels(root)).toEqual([]);
+    expect(content.querySelectorAll('a').length).toBe(2);
+    expect(content.textContent).toBe('see gui and help');
+  });
+
+  test('a page without links says so and takes no keys', async () => {
+    const { root, run, show } = await mountHelp();
+    await show('documentation');
+    await run('help:open-hints');
+    expect(labels(root)).toEqual([]);
+    expect(root.activeElement).toBeNull();
   });
 });

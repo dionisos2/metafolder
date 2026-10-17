@@ -29,7 +29,10 @@ The box behaves like the query fields of the [[metarecord-list panel]]:
 |<<key "help:clear search stay" c>> |empty the box |
 |<<key "help:clear search" s>> |empty the box and go into it |
 |<<key "help:focus search" "e s">> |go into the box, its text kept |
-|<<key "cursor:parent self" Backspace>> |up to the page's topic — the page of its first tag ([[Generic panel commands]]) |
+|<<key "help:back" Backspace>> |back to the page shown before, as in a browser; a search is not a step: back from one is the page it was typed over |
+|<<key "help:forward" Shift+Backspace>> |forward again, after going back |
+|<<key "cursor:parent self" Left>> |up to the page's topic — the page of its first tag ([[Generic panel commands]]) |
+|<<key "help:open-hints" d>> |label the links in view with letters, to follow one (below) |
 
 !! A page
 
@@ -40,6 +43,19 @@ implemented (`deferred`, `proposed`) or no longer current (`record`).
 A link goes to another page. The keys are filled in from your bindings
 ([[In-app help]]). To search inside the page, use <<key "find:open" Ctrl+f>>
 ([[Find in a panel]]).
+
+!! Following a link from the keyboard
+
+<<key "help:open-hints" d>> puts a label of one or more letters on every link in
+view — the topics above the page, the links in it, or the results of a search —
+the way avy jumps in Emacs. Typing a label follows its link; while a label is half
+typed, only the ones it starts are shown, and a letter no label continues is
+ignored. Escape cancels and leaves the page as it was.
+
+The letters go to a small box under the search box (`focus = "hints"`), so no other
+key takes them while the labels are shown. Only what is in view is labelled, so the
+labels stay short: one letter for up to 26 links, two beyond. To reach a link
+further down, scroll to it first.
 
 !! When the documentation is not installed
 

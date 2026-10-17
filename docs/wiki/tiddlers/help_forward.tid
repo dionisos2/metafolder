@@ -1,0 +1,6 @@
+title: help:forward
+tags: [[GUI command]]
+kind: reference
+summary: Help: forward again, after going back
+
+`help:forward` — <<key "help:forward" Shift+Backspace>> in the [[help panel]]: undoes a [[help:back]]. Opening another page after going back drops the pages that were ahead, as in a browser.

@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/help:open-hints
+catalog: GUI command
+target: help:open-hints
+summary: Help: label the links in view with letters; typing a label follows it
+
+!! Reference
+
+* Defined by the ``help`` panel
+
+!! Default keys
+
+* ``d`` → ``help:open-hints`` (in the ``help`` panel)

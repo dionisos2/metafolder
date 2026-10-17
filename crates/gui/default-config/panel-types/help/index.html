@@ -76,7 +76,44 @@
         font-size: 0.8em;
         color: var(--mf-fg-dim, #8a8a96);
       }
+      #help-hint-bar {
+        margin-top: 4px;
+        font-size: 0.8em;
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      #help-hint-keys {
+        width: 6em;
+        font-family: var(--mf-font-mono, monospace);
+        color: var(--mf-fg, #d8d8e0);
+        background: var(--mf-bg, #1e1e24);
+        border: 1px solid var(--mf-accent, #6ea8fe);
+        border-radius: 3px;
+      }
+      /* The labels of the link hints, laid over the links. */
+      #help-hints {
+        position: absolute;
+        top: 0;
+        left: 0;
+        pointer-events: none;
+      }
+      #help-hints .link-hint {
+        position: absolute;
+        z-index: 1;
+        transform: translate(-4px, -4px);
+        padding: 0 3px;
+        border-radius: 3px;
+        font-family: var(--mf-font-mono, monospace);
+        font-size: 0.85em;
+        font-weight: bold;
+        color: var(--mf-warn-fg, #1e1e24);
+        background: var(--mf-warn, #e0b050);
+        white-space: nowrap;
+      }
+      #help-hints .link-hint .typed {
+        opacity: 0.45;
+      }
       #help-scroll {
+        position: relative;
         flex: 1;
         min-height: 0;
         overflow-y: auto;
@@ -166,10 +203,16 @@
     <div id="help-search-row">
       <input id="help-search" type="text" placeholder="search help (or a topic name; #text forces search)" />
       <div id="help-hint"></div>
+      <div id="help-hint-bar" hidden>
+        follow the link labelled
+        <input id="help-hint-keys" type="text" data-mf-focus="hints" autocomplete="off" spellcheck="false" />
+        — Escape cancels
+      </div>
       <label id="help-options"><input id="help-dev" type="checkbox" /> include developer documentation in the search</label>
     </div>
     <div id="help-warning" hidden></div>
     <div id="help-scroll">
+      <div id="help-hints"></div>
       <ul id="help-results" hidden></ul>
       <div id="help-page-info" hidden></div>
       <div id="help-content"></div>

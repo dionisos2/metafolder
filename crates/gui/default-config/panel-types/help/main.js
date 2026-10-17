@@ -24,6 +24,10 @@ export async function mount(root, metafolder) {
   const warning = byId(root, 'help-warning');
   const pageInfo = byId(root, 'help-page-info');
   const includeDev = byId(root, 'help-dev', HTMLInputElement);
+  const scroll = byId(root, 'help-scroll');
+  const hintLayer = byId(root, 'help-hints');
+  const hintBar = byId(root, 'help-hint-bar');
+  const hintKeys = byId(root, 'help-hint-keys', HTMLInputElement);
 
   const wikiBase = `${metafolder.guiServer}/docs`;
   // The box is a text zone of the keybindings (`focus = "search"`): Enter
@@ -88,13 +92,45 @@ export async function mount(root, metafolder) {
     return;
   }
 
+  // The pages shown, oldest first, and where the panel stands in them: Back
+  // and Forward walk it as a browser does (doc "help panel"). Only pages are
+  // remembered — a search is a way to a page, not a place to come back to.
+  /** @type {string[]} */
+  const visited = [];
+  let visitedAt = -1;
   /** @param {string} id */
-  function showPage(id) {
+  function remember(id) {
+    if (visited[visitedAt] === id) return;
+    visited.splice(visitedAt + 1);
+    visited.push(id);
+    visitedAt = visited.length - 1;
+  }
+  /** @param {number} at */
+  function revisit(at) {
+    visitedAt = at;
+    const id = visited[at] ?? '';
+    searchInput.value = id;
+    showPage(id, false);
+  }
+  function back() {
+    if (visitedAt < 0) return;
+    // From a search, back is the page it was typed over.
+    if (shownPage !== visited[visitedAt]) revisit(visitedAt);
+    else if (visitedAt > 0) revisit(visitedAt - 1);
+  }
+  function forward() {
+    if (visitedAt < visited.length - 1) revisit(visitedAt + 1);
+  }
+
+  /** @param {string} id @param {boolean} [record] false when walking the history */
+  function showPage(id, record = true) {
     const raw = html.get(id);
     if (raw === undefined) {
       showGrep(id);
       return;
     }
+    endHints();
+    if (record) remember(id);
     shownPage = id;
     results.hidden = true;
     results.replaceChildren();
@@ -153,6 +189,7 @@ export async function mount(root, metafolder) {
 
   /** @param {string} term */
   function showGrep(term) {
+    endHints();
     shownPage = null;
     content.hidden = true;
     content.replaceChildren();
@@ -243,7 +280,86 @@ export async function mount(root, metafolder) {
     },
   });
 
-  // Backspace (`cursor:parent self`): up to the topic the page belongs to.
+  void metafolder.commands.register('help:back', {
+    label: 'Help: back to the page shown before',
+    handler: back,
+  });
+  void metafolder.commands.register('help:forward', {
+    label: 'Help: forward again, after going back',
+    handler: forward,
+  });
+
+  // Link hints (doc "help panel"), the way avy jumps in Emacs: every link in
+  // view gets a label of one or more letters, and typing a label follows its
+  // link. The letters are typed into a text zone (`focus = "hints"`), so no
+  // panel or global key takes them first; leaving it (Escape) cancels.
+  /** @type {{label: string, target: HTMLElement, marker: HTMLElement}[]} */
+  let hints = [];
+  function endHints() {
+    if (hintBar.hidden) return;
+    hints = [];
+    hintLayer.replaceChildren();
+    hintBar.hidden = true;
+    hintKeys.value = '';
+    if (root.activeElement === hintKeys) hintKeys.blur();
+  }
+  /** What can be followed: the topics above a page and its links, or the results. */
+  function followable() {
+    if (!results.hidden) return [...results.querySelectorAll('li:not(.result-empty)')];
+    return [
+      ...(pageInfo.hidden ? [] : pageInfo.querySelectorAll('button.page-tag')),
+      ...content.querySelectorAll('a[data-help-page]'),
+    ];
+  }
+  function openHints() {
+    endHints();
+    const box = scroll.getBoundingClientRect();
+    // Only what is in view, as avy does: fewer links, shorter labels.
+    const targets = /** @type {HTMLElement[]} */ (followable()).filter((target) => {
+      const rect = target.getBoundingClientRect();
+      return rect.bottom >= box.top && rect.top <= box.bottom;
+    });
+    if (targets.length === 0) {
+      void metafolder.statusBar.message('no link in view to follow', 3000);
+      return;
+    }
+    const labels = hintLabels(targets.length);
+    hints = targets.map((target, i) => {
+      const rect = target.getBoundingClientRect();
+      const marker = el('span', { class: 'link-hint' }, labels[i] ?? '');
+      marker.style.top = `${rect.top - box.top + scroll.scrollTop}px`;
+      marker.style.left = `${rect.left - box.left + scroll.scrollLeft}px`;
+      return { label: labels[i] ?? '', target, marker };
+    });
+    hintLayer.replaceChildren(...hints.map((hint) => hint.marker));
+    hintBar.hidden = false;
+    hintKeys.focus();
+  }
+  hintKeys.addEventListener('input', () => {
+    let typed = hintKeys.value.toLowerCase();
+    // A letter no label continues is refused, so the prefix stays a live one.
+    while (typed !== '' && !hints.some((hint) => hint.label.startsWith(typed))) {
+      typed = typed.slice(0, -1);
+    }
+    hintKeys.value = typed;
+    const chosen = hints.find((hint) => hint.label === typed);
+    if (chosen) {
+      endHints();
+      chosen.target.click();
+      return;
+    }
+    for (const { label, marker } of hints) {
+      marker.hidden = !label.startsWith(typed);
+      marker.replaceChildren(el('span', { class: 'typed' }, typed), label.slice(typed.length));
+    }
+  });
+  hintKeys.addEventListener('blur', endHints);
+  void metafolder.commands.register('help:open-hints', {
+    label: 'Help: label the links in view with letters; typing a label follows it',
+    handler: openHints,
+  });
+
+  // Left (`cursor:parent self`): up to the topic the page belongs to.
   metafolder.provide({
     parent: () => {
       const parent = shownPage === null ? null : parentPage(manifest, shownPage);
@@ -274,4 +390,18 @@ export async function mount(root, metafolder) {
   // Focus the search box when shown even absent a request (e.g. picked from the
   // panel-type selector).
   metafolder.whenVisible(() => searchInput.focus());
+}
+
+// The letters of the hint labels, the home row first.
+const HINT_ALPHABET = 'asdfghjklqwertyuiopzxcvbnm';
+
+/** `count` distinct labels, all of the same length, so that none is the prefix
+ *  of another: one letter while the alphabet suffices, then two, and so on.
+ *  @param {number} count @returns {string[]} */
+export function hintLabels(count) {
+  let labels = [...HINT_ALPHABET];
+  while (labels.length < count) {
+    labels = labels.flatMap((prefix) => [...HINT_ALPHABET].map((letter) => prefix + letter));
+  }
+  return labels.slice(0, count);
 }

@@ -6,8 +6,11 @@ summary: The help panel type
 !! Commands
 
 * ``help:apply`` — Help: search for the box text, leaving the box (stay: keep the focus)
+* ``help:back`` — Help: back to the page shown before
 * ``help:clear`` — Help: empty the search box and focus it (stay: leave the focus)
 * ``help:focus`` — Help: focus the search box
+* ``help:forward`` — Help: forward again, after going back
+* ``help:open-hints`` — Help: label the links in view with letters; typing a label follows it
 
 !! Generic commands
 

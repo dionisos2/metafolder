@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/help:forward
+catalog: GUI command
+target: help:forward
+summary: Help: forward again, after going back
+
+!! Reference
+
+* Defined by the ``help`` panel
+
+!! Default keys
+
+* ``shift+backspace`` → ``help:forward`` (in the ``help`` panel)

@@ -1,0 +1,6 @@
+title: help:back
+tags: [[GUI command]]
+kind: reference
+summary: Help: back to the page shown before
+
+`help:back` — <<key "help:back" Backspace>> in the [[help panel]]: shows the page shown before this one, as a browser's Back does. Only pages are remembered: back from a search is the page it was typed over. On the first page shown it does nothing. [[help:forward]] walks the other way.

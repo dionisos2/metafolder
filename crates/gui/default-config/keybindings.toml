@@ -355,6 +355,9 @@
   # browses folders too, so it means the same there. mpv's "back to normal
   # speed" keeps the key with shift (see the transport section below).
   { command = "file:back", when = "file" },
+  # The help is browsed, not climbed: backspace goes back in the pages shown,
+  # as a browser does; left still goes up to the page's topic (doc "help panel").
+  { command = "help:back", when = "help" },
 ]
 
 # Refresh the current view: one generic command, for every panel that can
@@ -515,6 +518,9 @@
 "d" = [
   { command = "cursor:find self walk" },
   { command = "metarecord:row-delete", when = "metarecord-detail" },
+  # help: label every link in view with letters, avy-style; typing a label
+  # follows it, escape cancels (doc "help panel").
+  { command = "help:open-hints", when = "help" },
 ]
 # treeref: pick which TreeRef field's forest the panel explores (the drop-down's
 # keyboard equivalent; the field name completes). It keeps the F key, shifted,
@@ -700,7 +706,11 @@
 "ctrl+m" = { command = "file:mute", when = "file" }
 # mpv resets the speed with backspace; here plain backspace goes up a level
 # (above), so the reset keeps the key with shift.
-"shift+backspace" = { command = "file:speed reset", when = "file" }
+"shift+backspace" = [
+  { command = "file:speed reset", when = "file" },
+  # help: forward again, after a backspace (doc "help panel").
+  { command = "help:forward", when = "help" },
+]
 
 # Find in panel (doc "Find in a panel"): the browser's Ctrl-F over the text
 # the focused panel currently renders. `text-input = true` so it also works
