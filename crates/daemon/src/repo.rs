@@ -166,6 +166,16 @@ pub fn init_repository(
         ))
         .into());
     }
+    // Checked before anything is created: the daemon writes no configuration
+    // file, and a repository without one would not load.
+    if !metafolder_dir.join(CONFIG_DIR).join(REQUIRED_CONFIG).is_file() {
+        return Err(DomainError::BadRequest(format!(
+            "{} has no configuration ({CONFIG_DIR}/{REQUIRED_CONFIG}): create repositories \
+             with `mf repo init` or the GUI, which install it first",
+            metafolder_dir.display()
+        ))
+        .into());
+    }
     refuse_network_filesystem(&std::path::absolute(&metafolder_dir)?)?;
     std::fs::create_dir_all(&metafolder_dir)
         .with_context(|| format!("Failed to create {metafolder_dir:?}"))?;
@@ -198,21 +208,46 @@ pub fn init_repository(
     Ok(OpenedRepo { config, conn, metafolder_dir, case_insensitive })
 }
 
-/// Copies the shipped default schema `source` into `<metafolder_dir>/schema.json`
-/// when it exists. Best-effort convenience seeding (doc "Schema"): a missing
-/// source is silently ignored (schemas are optional) and a copy failure is
-/// logged but never fails repo init.
-pub fn seed_schema_file(metafolder_dir: &Path, source: &Path) {
-    if !source.exists() {
-        return;
+/// The repository's configuration, under `.metafolder/` (doc "Repository
+/// configuration"): a git repository the clients keep (`mf repo init`,
+/// `mf repo update-config`); the daemon only reads it.
+pub const CONFIG_DIR: &str = "config";
+
+/// What a repository needs in [`CONFIG_DIR`] to load. The schema is optional.
+const REQUIRED_CONFIG: &str = "metadata-map.toml";
+
+/// For the unit tests: installs under `<root>/.metafolder/` the configuration
+/// `mf repo init` would, before the daemon is asked to init.
+#[cfg(test)]
+pub(crate) fn seed_test_config(root: &Path) {
+    let config = root.join(".metafolder").join(CONFIG_DIR);
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(config.join(REQUIRED_CONFIG), crate::metadata_map::DEFAULT).unwrap();
+}
+
+/// Refuses a repository whose configuration predates [`CONFIG_DIR`] — a
+/// `schema.json` or `metadata-map.toml` directly in `.metafolder/` and no
+/// `config/` — rather than load it without them.
+pub fn refuse_legacy_config(metafolder_dir: &Path, config: &RepoConfig) -> Result<()> {
+    if metafolder_dir.join(CONFIG_DIR).exists() {
+        return Ok(());
     }
-    let dest = metafolder_dir.join("schema.json");
-    if let Err(e) = std::fs::copy(source, &dest) {
-        crate::diagnostics::warn(
-            "repo",
-            format!("failed to seed default schema from {source:?} into {dest:?}: {e}"),
-        );
+    let legacy: Vec<&str> = ["schema.json", "metadata-map.toml"]
+        .into_iter()
+        .filter(|name| !(*name == "schema.json" && config.schema.is_some()))
+        .filter(|name| metafolder_dir.join(name).is_file())
+        .collect();
+    if legacy.is_empty() {
+        return Ok(());
     }
+    Err(DomainError::BadRequest(format!(
+        "{} keeps its configuration ({}) directly in .metafolder/, from before \
+         .metafolder/config/: move it there with `mf repo update-config {}`",
+        metafolder_dir.display(),
+        legacy.join(", "),
+        metafolder_dir.display()
+    ))
+    .into())
 }
 
 /// Creates the filesystem root metarecord: `mfr_path` root TreeRef, directory

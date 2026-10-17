@@ -1,10 +1,10 @@
 title: Writing a schema
 tags: Schema
 kind: guide
-summary: Edit .metafolder/schema.json, give metarecords their types with mf_schema, reload, and check what the data already violates.
+summary: Edit .metafolder/config/schema.json, give metarecords their types with mf_schema, reload, and check what the data already violates.
 
-A new repository starts with a copy of the shipped default schema,
-`.metafolder/schema.json`, so that the GUI's type picker works at once. Edit it, or
+A new repository starts with a copy of the default schema,
+`.metafolder/config/schema.json` ([[Repository configuration]]), so that the GUI's type picker works at once. Edit it, or
 write your own ([[Schema file]]):
 
 ```

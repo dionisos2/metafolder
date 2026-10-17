@@ -1329,8 +1329,14 @@ pub fn recreate_plan_repo(ctx: &Ctx, a: Uuid, b: Uuid, host: Uuid) -> Result<Pla
         std::fs::remove_dir_all(&plan_dir)
             .map_err(|e| CliError::Op(format!("cannot remove old plan repo {plan_dir:?}: {e}")))?;
     }
-    std::fs::create_dir_all(&plan_dir)
-        .map_err(|e| CliError::Op(format!("cannot create plan repo dir {plan_dir:?}: {e}")))?;
+    // Its configuration, which the daemon needs and never writes (doc
+    // "Repository configuration"): a metadata map that maps nothing, since a
+    // plan repo holds no files; no schema.
+    let config = plan_dir.join(".metafolder").join("config");
+    std::fs::create_dir_all(&config)
+        .map_err(|e| CliError::Op(format!("cannot create plan repo dir {config:?}: {e}")))?;
+    std::fs::write(config.join("metadata-map.toml"), PLAN_METADATA_MAP)
+        .map_err(|e| CliError::Op(format!("cannot write the plan repo's metadata map: {e}")))?;
 
     let body = json!({
         "root": plan_dir.to_str(),
@@ -1344,6 +1350,9 @@ pub fn recreate_plan_repo(ctx: &Ctx, a: Uuid, b: Uuid, host: Uuid) -> Result<Pla
         .ok_or_else(|| CliError::Op("daemon returned no plan repo uuid".into()))?;
     Ok(PlanRepo { uuid, base: format!("/repos/{}", uuid.as_simple()) })
 }
+
+/// The metadata map of a plan repo: no field, so no extraction.
+const PLAN_METADATA_MAP: &str = "# A sync plan repository holds no files: nothing to extract.\n";
 
 fn plan_repo_name(a: Uuid, b: Uuid) -> String {
     format!("plan-{}-{}", a.as_simple(), b.as_simple())

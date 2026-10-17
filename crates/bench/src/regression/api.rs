@@ -546,6 +546,7 @@ pub async fn run(id: &str, c: &Ctx) -> Result<()> {
         "api.repo.init" => {
             let dir = c.dir.with_file_name(next_name("bench-init-"));
             std::fs::create_dir_all(&dir)?;
+            crate::seed_repo_config(&dir)?;
             let v = post(&format!("{url}/repos/init"), json!({"root": dir})).await?;
             let repo = v["repo_uuid"].as_str().context("a repo uuid")?;
             post(&format!("{url}/repos/{repo}/unload"), json!({})).await?;
@@ -681,6 +682,7 @@ pub async fn prepare(url: &str, dir: &Path, peer_dir: &Path) -> Result<Ctx> {
         std::fs::remove_dir_all(peer_dir)?;
     }
     std::fs::create_dir_all(peer_dir)?;
+    crate::seed_repo_config(peer_dir)?;
     let v = post(&format!("{url}/repos/init"), json!({"root": peer_dir})).await?;
     let peer: Uuid = v["repo_uuid"].as_str().context("a peer uuid")?.parse()?;
     let peer_base = format!("{url}/repos/{peer}");

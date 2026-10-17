@@ -13,7 +13,7 @@ the business of sync, outside the data model.
 `.metafolder/` usually sits inside the root, but can live anywhere — an
 ''external'' `.metafolder`, for a read-only data disk or to keep the metadata on a
 faster device. Its `internal/` part (the store and the daemon's own files) is
-never tracked; the rest (`config.json`, `schema.json`, the GUI's input histories)
+never tracked; the rest (`config.json`, the `config/` directory, the GUI's input histories)
 is ordinary content you may track like any file
 ([[Repository layout on disk]]).
 

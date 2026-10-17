@@ -191,7 +191,24 @@ fn name_matches(pattern: &str) -> serde_json::Value {
 
 // ─── HTTP helpers ─────────────────────────────────────────────────────────────
 
+/// The shipped metadata map: a repository needs one to load.
+const METADATA_MAP: &str =
+    include_str!("../../daemon/default-config/repo-default/metadata-map.toml");
+
+/// Installs what `mf repo init` installs before it asks the daemon: the
+/// repository's configuration under `<root>/.metafolder/config/` (doc
+/// "Repository configuration"), reduced to the metadata map — no schema, so
+/// nothing a bench writes is validated.
+pub(crate) fn seed_repo_config(root: &Path) -> Result<()> {
+    let config = root.join(".metafolder").join("config");
+    std::fs::create_dir_all(&config).with_context(|| format!("create {}", config.display()))?;
+    std::fs::write(config.join("metadata-map.toml"), METADATA_MAP)
+        .with_context(|| format!("write {}", config.display()))?;
+    Ok(())
+}
+
 pub(crate) async fn api_init_repo(url: &str, root: &Path) -> Result<Uuid> {
+    seed_repo_config(root)?;
     let v: serde_json::Value = daemon_client()
         .post(format!("{url}/repos/init"))
         .json(&json!({ "root": root }))

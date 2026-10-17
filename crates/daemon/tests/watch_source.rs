@@ -30,6 +30,7 @@ use common::TempDir;
 /// A repository with tracking enabled on the root, loaded with `settings`.
 fn setup(name: &str, settings: DaemonSettings) -> (Arc<RepoState>, TempDir) {
     let root = TempDir::new(&format!("wsrc_{name}"));
+    common::seed_config(&root);
     let opened = repo::init_repository(&root, None, None, false).unwrap();
     let repo_state = Arc::new(RepoState::from_opened_with(opened, &settings));
     {

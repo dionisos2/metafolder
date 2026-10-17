@@ -46,7 +46,7 @@ pub struct RepoConfig {
     #[serde(skip)]
     pub root_relative: Option<PathBuf>,
     /// Optional path of the user schema file, relative to `.metafolder/`
-    /// (or absolute). When absent, `.metafolder/schema.json` is probed.
+    /// (or absolute). When absent, `.metafolder/config/schema.json` is probed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<PathBuf>,
     /// Creation timestamp (Unix seconds).

@@ -13,7 +13,7 @@ summary: Listing, reading, renaming, creating, loading and unloading repositorie
 |<<cmd "POST /repos/:repo/unload">> |unloads it; answers `{"repo_uuid"}` |
 |<<cmd "POST /repos/:repo/check">> |where its indexes disagree with its data, and the metarecords holding several positions in one forest: `{"problems": [...]}`, empty when healthy |
 |<<cmd "POST /repos/:repo/reindex">> |rebuilds its indexes from its data; answers `{}` |
-|<<cmd "POST /repos/:repo/backup">> |a verified copy of its store, taken while it stays loaded, with its `config.json` and `schema.json`; optional `{"to": "<new dir>"}` (`400` when it exists), by default a new `internal/backups/manual-<time>/`; answers `{"path", "created_at_ms", "metarecords"}` |
+|<<cmd "POST /repos/:repo/backup">> |a verified copy of its store, taken while it stays loaded, with its `config.json` and its configuration's schema and metadata map; optional `{"to": "<new dir>"}` (`400` when it exists), by default a new `internal/backups/manual-<time>/`; answers `{"path", "created_at_ms", "metarecords"}` |
 |<<cmd "POST /repos/:repo/restore">> |puts a backup back — `{"from": "<dir>"}`, optional, else the most recent — and loads the repository again; answers `{"repo_uuid", "backup": {"path", "created_at_ms", "metarecords"}, "old_store"}` |
 |<<cmd "POST /repos/restore">> |the same for a repository named by its path, loaded or not: `{"root": …}` or `{"metafolder": …}`, and `from` |
 

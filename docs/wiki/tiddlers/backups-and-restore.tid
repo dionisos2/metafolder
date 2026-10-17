@@ -11,7 +11,8 @@ mf -n music repo backup --to /mnt/usb/music-backup
 ```
 
 A backup is a consistent copy of the store, taken while the daemon runs (LMDB's
-compacting hot copy), with the repository's `config.json` and `schema.json` and a
+compacting hot copy), with the repository's `config.json`, its configuration's
+`config/schema.json` and `config/metadata-map.toml`, and a
 `backup.json` (when, which store, how many metarecords). It is written under a
 temporary name, then opened and checked before it takes its place: a store damaged
 since the last backup fails its new one, which then never replaces a good one.
@@ -47,8 +48,8 @@ copied beside the current store, opened and checked (a backup that no longer che
 clean changes nothing); then the current store, if any, is set aside as
 `internal/pre-restore-<time>-<name>` — the daemon never deletes it — and the copy
 takes its place. An interruption leaves the old store set aside, and restoring again
-completes it. A lost `config.json` is replaced by the backup's; `schema.json` is not
-touched (it is ordinary content — the backup's copy is there to take by hand).
+completes it. A lost `config.json` is replaced by the backup's; `config/` is not
+touched (it is ordinary content — the backup's copies are there to take by hand).
 
 ''Everything written since the backup is lost'': your edits, and the file changes the
 watcher recorded. The command says when the backup was taken and advises

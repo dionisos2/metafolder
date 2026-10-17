@@ -4,6 +4,9 @@ kind: reference
 summary: Initialise a new repository and print its UUID
 
 Creates a repository and prints its uuid ([[Creating and loading a repository]]).
+Its configuration (`.metafolder/config/`) is installed first, from
+`daemon/repo-default/` ([[Repository configuration]]): a missing `repo-default/` fails
+the init before the daemon is asked, and a failed init takes back what was installed.
 The new root then gets the `default` ignore preset's patterns ([[Ignore presets]]) (`--ignore <names>`
 picks other presets, comma- or space-separated; `--no-ignore` leaves its ignore set
 empty). A missing `core/ignore-presets.toml` makes `init` fail rather than skip the

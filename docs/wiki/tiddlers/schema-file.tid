@@ -3,14 +3,14 @@ tags: Schema
 kind: reference
 summary: The JSON format — groups of targets and constraints — where it is found, and what makes it invalid.
 
-`.metafolder/schema.json`, unless the repository's `config.json` names another
+`.metafolder/config/schema.json`, unless the repository's `config.json` names another
 file in its `schema` key (relative to `.metafolder/`, or absolute). With neither,
 the repository has no schema and nothing is validated.
 
-At `init`, the daemon seeds `.metafolder/schema.json` with a copy of the shipped
-`~/.config/metafolder/daemon/schema.default.json`. That copy is a convenience: a
-missing default is silently skipped and never fails `init` (an exception to
-[[No runtime fallback]], since nothing is being read for the daemon's own use).
+A new repository starts with the schema of `~/.config/metafolder/daemon/repo-default/`,
+and later versions of it merge into the repository's own with `mf repo update-config`
+([[Repository configuration]]). A `repo-default/` without a schema gives repositories
+without one.
 
 !! Format
 

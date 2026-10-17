@@ -46,6 +46,7 @@ async fn setup(prefix: &str) -> (Router, String, TempDir, std::sync::Arc<AppStat
     let state = std::sync::Arc::new(AppState::new());
     let app = routes::build(state.clone());
     let root = temp_dir(prefix);
+    common::seed_config(&root);
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
     assert_eq!(status, StatusCode::OK, "init failed: {body}");
@@ -130,6 +131,7 @@ async fn two_backups_in_one_second_are_kept_apart() {
 /// Initialises a repository with a `kept` note, takes a backup of it, then
 /// writes a `lost` note.
 async fn backed_up(app: &Router, root: &TempDir) -> String {
+    common::seed_config(root);
     let (status, body) =
         request(app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -227,6 +229,7 @@ async fn a_restore_names_its_errors() {
     let state = std::sync::Arc::new(AppState::new());
     let app = routes::build(state.clone());
     let root = temp_dir("restore_errors");
+    common::seed_config(&root);
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
     assert_eq!(status, StatusCode::OK, "{body}");

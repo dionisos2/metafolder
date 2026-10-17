@@ -42,6 +42,7 @@ async fn request(
 async fn setup(prefix: &str) -> (Router, String, TempDir) {
     let app = routes::build(std::sync::Arc::new(AppState::new()));
     let root = TempDir::new(&format!("thttp_{prefix}"));
+    common::seed_config(&root);
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
     assert_eq!(status, StatusCode::OK, "init failed: {body}");

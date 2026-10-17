@@ -54,6 +54,7 @@ async fn request(
 /// Initialises a repository in a temp dir; returns (repo uuid, root path).
 async fn init_repo(app: &Router, prefix: &str) -> (String, TempDir) {
     let root = temp_dir(prefix);
+    common::seed_config(&root);
     let (status, body) =
         request(app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
     assert_eq!(status, StatusCode::OK, "init failed: {body}");

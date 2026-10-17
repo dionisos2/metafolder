@@ -46,6 +46,7 @@ async fn setup() -> (Router, String, TempDir) {
     let app = routes::build(std::sync::Arc::new(AppState::new()));
     let root = TempDir::new("ignhttp");
     std::fs::create_dir_all(root.join("work")).unwrap();
+    common::seed_config(&root);
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
     assert_eq!(status, StatusCode::OK, "init failed: {body}");

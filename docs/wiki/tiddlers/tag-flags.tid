@@ -6,7 +6,8 @@ summary: Three bool fields on a tag entry — partition makes its children exclu
 
 A tag entry may carry three `bool` fields; one not written is `false`. The shipped
 schema declares them with that default, so an entry created in the GUI shows them
-([[Schema file]]); `mf tag` creates entries without them. `mf tag list` prints them
+([[Schema file]]) — in a repository created before them once `mf repo update-config`
+merged the new default ([[Repository configuration]]); `mf tag` creates entries without them. `mf tag list` prints them
 as three `0`/`1` columns after the uuid. Their names come from the `[tag]` table of
 [[CLI configuration]].
 

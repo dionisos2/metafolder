@@ -59,6 +59,7 @@ fn app_with_repo(prefix: &str) -> (Router, Arc<AppState>, String, TempDir) {
     let state = Arc::new(AppState::new());
     let app = routes::build(state.clone());
     let root = temp_dir(prefix);
+    common::seed_config(&root);
     let repo = state.init_repo(&root, None, None, false).unwrap();
     (app, state, repo.as_simple().to_string(), root)
 }
@@ -335,6 +336,7 @@ async fn load_runs_an_observable_warmup_task() {
     let state = Arc::new(AppState::new());
     let app = routes::build(state.clone());
     let root = temp_dir("loadwarmup");
+    common::seed_config(&root);
     let repo = state.init_repo(&root, None, None, false).unwrap().as_simple().to_string();
     let (st, _) = post(&app, &format!("/repos/{repo}/unload"), Value::Null).await;
     assert_eq!(st, StatusCode::OK);
@@ -367,6 +369,7 @@ async fn load_response_carries_the_warmup_task_id() {
     let state = Arc::new(AppState::new());
     let app = routes::build(state.clone());
     let root = temp_dir("loadtaskid");
+    common::seed_config(&root);
     let repo = state.init_repo(&root, None, None, false).unwrap().as_simple().to_string();
     let (st, _) = post(&app, &format!("/repos/{repo}/unload"), Value::Null).await;
     assert_eq!(st, StatusCode::OK);
@@ -390,6 +393,7 @@ async fn redundant_load_of_a_warm_repo_returns_no_task_id() {
     let state = Arc::new(AppState::new());
     let app = routes::build(state.clone());
     let root = temp_dir("loadwarm");
+    common::seed_config(&root);
     let repo = state.init_repo(&root, None, None, false).unwrap().as_simple().to_string();
 
     let (st, body) = post(&app, "/repos/load", serde_json::json!({ "root": root.path() })).await;
@@ -444,6 +448,7 @@ async fn a_warming_repository_refuses_data_and_reports_its_state() {
     let state = Arc::new(AppState::new());
     let app = routes::build(state.clone());
     let root = temp_dir("warming");
+    common::seed_config(&root);
     let repo = state.init_repo(&root, None, None, false).unwrap().as_simple().to_string();
     let uuid = Uuid::parse_str(&repo).unwrap();
     let (st, _) = post(&app, &format!("/repos/{repo}/unload"), Value::Null).await;
@@ -497,6 +502,7 @@ async fn a_repository_loaded_in_memory_says_what_it_holds() {
     let state = Arc::new(AppState::new());
     let app = routes::build(state.clone());
     let root = temp_dir("inmemory");
+    common::seed_config(&root);
     let repo = state.init_repo(&root, None, None, false).unwrap().as_simple().to_string();
 
     // Loaded the ordinary way, nothing is said about memory.
@@ -555,6 +561,7 @@ async fn loading_in_memory_a_repository_already_loaded_otherwise_is_refused() {
     let state = Arc::new(AppState::new());
     let app = routes::build(state.clone());
     let root = temp_dir("inmemoryloaded");
+    common::seed_config(&root);
     let repo = state.init_repo(&root, None, None, false).unwrap().as_simple().to_string();
     let (st, body) =
         post(&app, "/repos/load", serde_json::json!({ "root": root.path(), "in_memory": true }))

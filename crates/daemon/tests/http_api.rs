@@ -51,6 +51,7 @@ async fn request(
 async fn app_with_repo(prefix: &str) -> (Router, String, TempDir) {
     let app = app();
     let root = temp_dir(prefix);
+    common::seed_config(&root);
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
     assert_eq!(status, StatusCode::OK, "init failed: {body}");
@@ -126,6 +127,67 @@ async fn test_diagnostics_feed_serves_what_the_daemon_warned_about() {
 }
 
 #[tokio::test]
+async fn test_init_without_a_configuration_is_refused_and_creates_nothing() {
+    // The configuration is installed by the client (`mf repo init`, the GUI)
+    // before it asks; the daemon writes no configuration file of its own.
+    let root = TempDir::new("http_init_noconfig");
+    let (status, body) =
+        request(&app(), "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body["error"].as_str().unwrap().contains("mf repo init"), "{body}");
+    assert!(!root.join(".metafolder/config.json").exists());
+    assert!(!root.join(".metafolder/internal").exists());
+}
+
+#[tokio::test]
+async fn test_a_repository_without_its_metadata_map_does_not_load() {
+    let (app, repo, root) = app_with_repo("nomap").await;
+    request(&app, "POST", &format!("/repos/{repo}/unload"), None).await;
+    let map = root.join(".metafolder/config/metadata-map.toml");
+    std::fs::remove_file(&map).unwrap();
+
+    let (status, body) =
+        request(&app, "POST", "/repos/load", Some(json!({"root": root.to_str().unwrap()}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body["error"].as_str().unwrap().contains("metadata-map.toml"), "{body}");
+    // Nothing seeded it back.
+    assert!(!map.exists());
+}
+
+#[tokio::test]
+async fn test_a_repository_with_the_old_layout_names_the_migration() {
+    let (app, repo, root) = app_with_repo("oldlayout").await;
+    request(&app, "POST", &format!("/repos/{repo}/unload"), None).await;
+    // Before `.metafolder/config/`, both files sat beside config.json.
+    let metafolder = root.join(".metafolder");
+    std::fs::rename(
+        metafolder.join("config/metadata-map.toml"),
+        metafolder.join("metadata-map.toml"),
+    )
+    .unwrap();
+    std::fs::write(metafolder.join("schema.json"), "{\"version\": 1, \"groups\": []}").unwrap();
+    std::fs::remove_dir_all(metafolder.join("config")).unwrap();
+
+    let (status, body) =
+        request(&app, "POST", "/repos/load", Some(json!({"root": root.to_str().unwrap()}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body["error"].as_str().unwrap().contains("mf repo update-config"), "{body}");
+}
+
+#[tokio::test]
+async fn test_the_schema_is_read_from_the_configuration_directory() {
+    let (app, repo, root) = app_with_repo("schemadir").await;
+    std::fs::write(
+        root.join(".metafolder/config/schema.json"),
+        r#"{"version": 1, "groups": [{"targets": "*", "constraints": [{"field": "n", "type": "int"}]}]}"#,
+    )
+    .unwrap();
+    let (status, body) = request(&app, "POST", &format!("/repos/{repo}/schema/reload"), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["groups"][0]["constraints"][0]["field"], "n", "{body}");
+}
+
+#[tokio::test]
 async fn test_init_load_and_list_repos() {
     let (app, repo, root) = app_with_repo("repos").await;
 
@@ -144,6 +206,7 @@ async fn test_init_load_and_list_repos() {
     );
 
     // Re-init → 409; re-load → same uuid (idempotent).
+    common::seed_config(&root);
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
     assert_eq!(status, StatusCode::CONFLICT);
@@ -161,6 +224,7 @@ async fn test_init_load_and_list_repos() {
 async fn test_init_with_explicit_name_is_reflected_in_the_repo_list() {
     let app = app();
     let root = temp_dir("init_named_http");
+    common::seed_config(&root);
     let (status, body) = request(
         &app,
         "POST",
@@ -182,6 +246,7 @@ async fn test_loading_a_duplicate_name_is_a_conflict() {
     // Two distinct repositories sharing one explicit name.
     let root_a = temp_dir("dupname_a");
     let root_b = temp_dir("dupname_b");
+    common::seed_config(&root_a);
     let (status, _) = request(
         &app,
         "POST",
@@ -193,6 +258,7 @@ async fn test_loading_a_duplicate_name_is_a_conflict() {
 
     // A second repo with the same name must be rejected (names are unique among
     // loaded repos, so `mf -n <name>` resolves to one UUID).
+    common::seed_config(&root_b);
     let (status, body) = request(
         &app,
         "POST",
@@ -948,6 +1014,7 @@ async fn test_repo_info_and_rename() {
 
     // A second repo cannot take the same name (409).
     let other = temp_dir("repoinfo_other");
+    common::seed_config(&other);
     let (_, ob) =
         request(&app, "POST", "/repos/init", Some(json!({"root": other.to_str().unwrap()}))).await;
     let other_repo = ob["repo_uuid"].as_str().unwrap().to_string();

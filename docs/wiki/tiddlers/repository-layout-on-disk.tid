@@ -1,12 +1,14 @@
 title: Repository layout on disk
 tags: Daemon
 kind: reference
-summary: What .metafolder/ holds — config.json and its fields, schema.json, and the internal/ directory nothing tracks.
+summary: What .metafolder/ holds — config.json and its fields, the config/ directory, and the internal/ directory nothing tracks.
 
 ```
 .metafolder/
   config.json          the repository's identity and settings
-  schema.json          the optional user schema
+  config/              the repository's configuration, a git repository ([[Repository configuration]])
+    schema.json        the optional user schema
+    metadata-map.toml  the metadata map
   gui/history/<zone>   the GUI's input histories (written by the GUI)
   gui/context          the GUI's work context in force, if any (written by the GUI)
   internal/            never tracked
@@ -30,7 +32,7 @@ store ([[Storage]]) is refused on a network filesystem ([[Storage safety]]). `in
 |`name` |string |its name, unique among loaded repositories (renamed with `mf repo rename`, `PATCH /repos/:repo`) |
 |`version` |integer |the version of this file's layout |
 |`root` |path |the watched directory: absolute, or relative to the directory holding `.metafolder/` — `.` for a repository created with `.metafolder/` inside its root, an absolute path for an external one ([[Moving a repository]]) |
-|`schema` |path |optional: the user schema, relative to `.metafolder/` or absolute (default `.metafolder/schema.json`) |
+|`schema` |path |optional: the user schema, relative to `.metafolder/` or absolute (default `.metafolder/config/schema.json`) |
 |`created_at` |integer |creation time, Unix seconds |
 |`log_retention_watcher_ops` |integer |optional: how many of the watcher's operations the log keeps, overriding the daemon's setting (`0`: all) ([[Automatic retention]]) |
 |`log_retention_user_ops` |integer |optional: how many of every other operation the log keeps, overriding the daemon's setting (`0`: all) |

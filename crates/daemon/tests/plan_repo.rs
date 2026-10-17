@@ -55,6 +55,7 @@ async fn request(
 /// keeping its root on disk (a repository whose root is gone answers nothing).
 async fn init_system_repo(app: &Router) -> (String, TempDir) {
     let root = temp_dir("root");
+    common::seed_config(&root);
     let (status, body) = request(
         app,
         "POST",

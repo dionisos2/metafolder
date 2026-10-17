@@ -19,6 +19,7 @@ use common::TempDir;
 /// directory removes itself when it goes out of scope, panic included.
 fn setup(prefix: &str) -> (Arc<RepoState>, TempDir, Uuid) {
     let root = TempDir::new(&format!("exec_{prefix}"));
+    common::seed_config(&root);
     let opened = repo::init_repository(&root, None, None, false).unwrap();
     let repo_state = Arc::new(RepoState::from_opened(opened));
 
@@ -1276,6 +1277,7 @@ fn test_a_cascade_larger_than_the_limit_is_refused() {
     // and `mf orphan clear` remains the deliberate way to confirm it
     // (doc "Orphan scan").
     let root = TempDir::new("exec_breaker");
+    common::seed_config(&root);
     let opened = repo::init_repository(&root, None, None, false).unwrap();
     let settings = metafolder_daemon::daemon_config::DaemonSettings {
         orphan_cascade_limit: 3,

@@ -1,0 +1,22 @@
+title: $:/mf/gen/CLI command/mf repo update-config
+catalog: CLI command
+target: mf repo update-config
+summary: Merge the repository defaults into one repository's configuration
+
+!! Reference
+
+```
+Merge the repository defaults into one repository's configuration
+
+Applies ~/.config/metafolder/daemon/repo-default/ to the repository's .metafolder/config/, a git repository (doc "Repository configuration"): later defaults merge into the repository's own edits. The first run creates it, moving a schema.json or metadata-map.toml left directly in .metafolder/ into it. A conflict leaves config/ untouched and lists the files (exit 1). Works on the files alone: no daemon is needed, and a loaded repository reads the merged files at its next load (`mf schema reload` for the schema alone).
+
+Usage: mf repo update-config <PATH>
+
+Arguments:
+  <PATH>
+          The repository's .metafolder directory, or the root holding it
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+```

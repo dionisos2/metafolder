@@ -51,6 +51,7 @@ async fn a_client_hanging_up_cancels_its_query() {
     let state = Arc::new(AppState::new());
     let app = routes::build(state.clone());
     let root = TempDir::new("hangup");
+    common::seed_config(&root);
     let (status, body) = call(&app, "/repos/init", json!({"root": root.to_str().unwrap()})).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let repo_uuid = body["repo_uuid"].as_str().unwrap().to_string();

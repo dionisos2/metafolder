@@ -305,6 +305,24 @@ pub fn tests_root() -> PathBuf {
     std::env::temp_dir().join("metafolder-tests")
 }
 
+/// The shipped metadata map: a repository does not load without one (doc
+/// "Repository configuration").
+pub const METADATA_MAP: &str = include_str!("../../default-config/repo-default/metadata-map.toml");
+
+/// What `mf repo init` installs before it asks the daemon: the repository's
+/// configuration under `<root>/.metafolder/config/` (its metadata map; no
+/// schema, so nothing is validated).
+pub fn seed_config(root: &Path) {
+    seed_config_at(&root.join(".metafolder"));
+}
+
+/// [`seed_config`] for a `.metafolder/` given directly (an external one).
+pub fn seed_config_at(metafolder: &Path) {
+    let config = metafolder.join("config");
+    std::fs::create_dir_all(&config).expect("create the configuration directory");
+    std::fs::write(config.join("metadata-map.toml"), METADATA_MAP).expect("seed the metadata map");
+}
+
 /// A directory that removes itself when dropped — at the end of the test, and
 /// just as much when the test panics halfway through.
 ///
@@ -322,6 +340,14 @@ impl TempDir {
         let path = tests_root().join(format!("{prefix}_{}", Uuid::new_v4()));
         std::fs::create_dir_all(&path).expect("create the test directory");
         Self { path }
+    }
+
+    /// [`TempDir::new`], holding the configuration a repository's root needs
+    /// ([`seed_config`]).
+    pub fn repo_root(prefix: &str) -> Self {
+        let dir = Self::new(prefix);
+        seed_config(&dir);
+        dir
     }
 
     pub fn path(&self) -> &Path {

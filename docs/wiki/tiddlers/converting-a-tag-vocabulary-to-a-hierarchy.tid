@@ -8,12 +8,13 @@ and its copy of the schema says so (`"type": "tree_ref", "max": 1` on `path`,
 [[Schema file]]). It keeps working as it is: `mf tag` writes the type the field has.
 To let a tag hang under several parents ([[Hierarchy references]]), convert it:
 
-# In the repository's `.metafolder/schema.json`, change the tag group's `path` constraint to `{"field": "path", "type": "hierarchy_ref", "min": 1}` — the new type, and no `max`.
+# In the repository's `.metafolder/config/schema.json`, change the tag group's `path` constraint to `{"field": "path", "type": "hierarchy_ref", "min": 1}` — the new type, and no `max`.
 # `mf -n <repo> schema reload`.
 # `mf -n <repo> retype path hierarchy_ref` — every tree is a hierarchy, so nothing falls back ([[Changing a field's type]]).
 
 It is one write, undone by `mf log undo` (the schema file is not: put the old
-constraint back by hand). Then a second parent is an added row:
+constraint back by hand, or `git checkout` it in `.metafolder/config/` —
+[[Repository configuration]]). Then a second parent is an added row:
 
 ```
 mf -n <repo> metarecord -q 'path = "sport/courir/maraton"' field add path:hierarchy_ref=<évènement's uuid>/maraton

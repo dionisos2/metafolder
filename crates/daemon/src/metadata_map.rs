@@ -2,11 +2,11 @@
 //!
 //! Each [`FieldMapping`] maps an ordered list of native source keys onto one
 //! reserved `mfr_meta_<name>` field of a given [`FieldType`]. The map lives at
-//! `.metafolder/metadata-map.toml` — ordinary trackable content, following the
-//! user-schema model, **not** the git-backed `~/.config/` configs. A default
-//! (baked into the daemon with `include_str!`) seeds the file at `mf init` and
-//! self-heals it if it is missing at load; a malformed file fails the load of
-//! *that* repository only.
+//! `.metafolder/config/metadata-map.toml`, in the repository's configuration
+//! (doc "Repository configuration"), which the daemon only reads: `mf repo
+//! init` installs it from the defaults. A missing or malformed file fails the
+//! load of *that* repository only — no copy of the default is built in (doc
+//! "No runtime fallback").
 
 use std::path::Path;
 
@@ -41,18 +41,18 @@ impl FieldMapping {
     }
 }
 
-/// The parsed extraction map.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The parsed extraction map. The empty one (`Default`) extracts nothing.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MetadataMap {
     pub fields: Vec<FieldMapping>,
 }
 
-/// The file name inside `.metafolder/`.
+/// The file name inside `.metafolder/config/`.
 const FILE_NAME: &str = "metadata-map.toml";
 
-/// The default map baked into the daemon; seeds new repos and self-heals a
-/// missing file.
-pub const DEFAULT: &str = include_str!("default-metadata-map.toml");
+/// The shipped default, for the tests that need a realistic map.
+#[cfg(test)]
+pub const DEFAULT: &str = include_str!("../default-config/repo-default/metadata-map.toml");
 
 #[derive(Deserialize)]
 struct RawMap {
@@ -76,19 +76,19 @@ impl MetadataMap {
         Ok(MetadataMap { fields: raw.field })
     }
 
-    /// Reads the map from `<metafolder_dir>/metadata-map.toml`, seeding the file
-    /// with [`DEFAULT`] when it is absent (self-heal — the file is
-    /// repository-owned data, not user config, so writing a default does not
-    /// break doc "Configuration"'s "No runtime fallback"). A malformed file is an error.
-    pub fn load_or_seed(metafolder_dir: &Path) -> Result<Self> {
-        let path = metafolder_dir.join(FILE_NAME);
+    /// Reads the map from `<metafolder_dir>/config/metadata-map.toml`. A
+    /// missing file is an error naming the cure: it is installed with the
+    /// repository's configuration, and nothing writes it back.
+    pub fn load(metafolder_dir: &Path) -> Result<Self> {
+        let path = metafolder_dir.join(crate::repo::CONFIG_DIR).join(FILE_NAME);
         let text = match std::fs::read_to_string(&path) {
             Ok(text) => text,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                std::fs::write(&path, DEFAULT)
-                    .with_context(|| format!("failed to seed {path:?}"))?;
-                DEFAULT.to_string()
-            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => bail!(
+                "{} is missing: a repository's configuration is installed by `mf repo init`, \
+                 and brought up to date by `mf repo update-config {}`",
+                path.display(),
+                metafolder_dir.display()
+            ),
             Err(e) => return Err(e).with_context(|| format!("failed to read {path:?}")),
         };
         Self::parse(&text).with_context(|| format!("in {path:?}"))
@@ -174,40 +174,49 @@ mod tests {
         }
     }
 
-    #[test]
-    fn load_or_seed_writes_default_when_absent_then_reads_it() {
-        let dir = std::env::temp_dir()
-            .join("metafolder-tests")
-            .join(format!("mf-metamap-seed-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join(FILE_NAME);
-        assert!(!path.exists());
+    /// A `.metafolder/` under the tests' parent, removed on drop.
+    struct Dir(std::path::PathBuf);
 
-        let map = MetadataMap::load_or_seed(&dir).unwrap();
-        assert!(path.exists(), "file should have been seeded");
-        assert_eq!(map, MetadataMap::parse(DEFAULT).unwrap());
+    impl Dir {
+        fn new(name: &str) -> Self {
+            let dir = std::env::temp_dir()
+                .join("metafolder-tests")
+                .join(format!("mf-metamap-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(dir.join(crate::repo::CONFIG_DIR)).unwrap();
+            Dir(dir)
+        }
+        fn write(&self, text: &str) {
+            std::fs::write(self.0.join(crate::repo::CONFIG_DIR).join(FILE_NAME), text).unwrap();
+        }
+    }
 
-        // Second call reads the existing file (does not error, same result).
-        let again = MetadataMap::load_or_seed(&dir).unwrap();
-        assert_eq!(again, map);
-
-        std::fs::remove_dir_all(&dir).ok();
+    impl Drop for Dir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 
     #[test]
-    fn load_or_seed_errors_on_malformed_file() {
-        let dir = std::env::temp_dir()
-            .join("metafolder-tests")
-            .join(format!("mf-metamap-bad-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join(FILE_NAME), "this is : not [ valid toml").unwrap();
+    fn load_reads_the_file_in_the_configuration_directory() {
+        let dir = Dir::new("read");
+        dir.write(DEFAULT);
+        assert_eq!(MetadataMap::load(&dir.0).unwrap(), MetadataMap::parse(DEFAULT).unwrap());
+    }
 
-        let err = MetadataMap::load_or_seed(&dir).unwrap_err();
-        assert!(
-            err.to_string().contains("metadata-map.toml") || format!("{err:#}").contains(FILE_NAME),
-            "{err:#}"
-        );
+    #[test]
+    fn load_of_a_missing_file_is_an_error_and_writes_nothing() {
+        let dir = Dir::new("missing");
+        let err = format!("{:#}", MetadataMap::load(&dir.0).unwrap_err());
+        assert!(err.contains("mf repo update-config"), "{err}");
+        assert!(!dir.0.join(crate::repo::CONFIG_DIR).join(FILE_NAME).exists());
+    }
 
-        std::fs::remove_dir_all(&dir).ok();
+    #[test]
+    fn load_errors_on_malformed_file() {
+        let dir = Dir::new("bad");
+        dir.write("this is : not [ valid toml");
+        let err = MetadataMap::load(&dir.0).unwrap_err();
+        assert!(format!("{err:#}").contains(FILE_NAME), "{err:#}");
     }
 }

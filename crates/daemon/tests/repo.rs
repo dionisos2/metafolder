@@ -15,39 +15,23 @@ fn temp_dir(prefix: &str) -> TempDir {
 }
 
 #[test]
-fn test_init_seeds_default_schema_when_configured() {
-    // With a shipped default schema configured, init copies it into the new
-    // repo's .metafolder/schema.json so the repo starts with a live schema.
-    let root = temp_dir("seed");
-    let cfg = temp_dir("seed_cfg");
-    let src = cfg.join("schema.default.json");
-    let schema = r#"{"version":1,"groups":[{"targets":["tag"],"constraints":[{"field":"name","type":"string","min":1,"max":1}]}]}"#;
-    std::fs::write(&src, schema).unwrap();
-
-    let state = AppState::new().with_seed_schema(Some(src));
-    state.init_repo(&root, None, None, false).unwrap();
-
-    let copied = root.join(".metafolder/schema.json");
-    assert!(copied.exists(), "schema.json must be seeded");
-    assert_eq!(std::fs::read_to_string(&copied).unwrap(), schema);
-
-    std::fs::remove_dir_all(&root).unwrap();
-    std::fs::remove_dir_all(&cfg).unwrap();
-}
-
-#[test]
-fn test_init_without_seed_has_no_schema() {
-    // Without a configured default schema, init leaves the repo schema-less.
+fn test_init_writes_no_configuration_file() {
+    // The configuration is the clients' (`mf repo init` installs it first,
+    // doc "Repository configuration"): the daemon only reads it.
     let root = temp_dir("noseed");
-    let state = AppState::new();
-    state.init_repo(&root, None, None, false).unwrap();
+    common::seed_config(&root);
+    let before: Vec<_> = std::fs::read_dir(root.join(".metafolder/config")).unwrap().collect();
+    AppState::new().init_repo(&root, None, None, false).unwrap();
+    let after: Vec<_> = std::fs::read_dir(root.join(".metafolder/config")).unwrap().collect();
+    assert_eq!(before.len(), after.len());
     assert!(!root.join(".metafolder/schema.json").exists());
-    std::fs::remove_dir_all(&root).unwrap();
+    assert!(!root.join(".metafolder/metadata-map.toml").exists());
 }
 
 #[test]
 fn test_init_creates_structure_and_root_metarecord() {
     let root = temp_dir("init");
+    common::seed_config(&root);
     let opened = repo::init_repository(&root, None, None, false).unwrap();
 
     assert!(root.join(".metafolder/config.json").exists());
@@ -81,6 +65,7 @@ fn test_init_creates_structure_and_root_metarecord() {
 #[test]
 fn test_init_with_explicit_name_overrides_the_derived_one() {
     let root = temp_dir("init_named");
+    common::seed_config(&root);
     let opened = repo::init_repository(&root, None, Some("My Music"), false).unwrap();
     assert_eq!(opened.config.name, "My Music");
     drop(opened);
@@ -90,6 +75,7 @@ fn test_init_with_explicit_name_overrides_the_derived_one() {
 #[test]
 fn test_init_fails_when_already_initialised() {
     let root = temp_dir("reinit");
+    common::seed_config(&root);
     let first = repo::init_repository(&root, None, None, false).unwrap();
     drop(first);
     let err = repo::init_repository(&root, None, None, false).unwrap_err();
@@ -108,6 +94,7 @@ fn test_init_with_external_metafolder() {
     let root = temp_dir("ext_root");
     let meta = temp_dir("ext_meta").join("meta");
 
+    common::seed_config_at(&meta);
     let opened = repo::init_repository(&root, Some(&meta), None, false).unwrap();
     assert!(meta.join("config.json").exists());
     assert!(meta.join("internal/kv").is_dir());
@@ -126,6 +113,7 @@ fn test_init_with_external_metafolder() {
 #[test]
 fn test_load_standard_form_restores_uuid() {
     let root = temp_dir("load");
+    common::seed_config(&root);
     let created = repo::init_repository(&root, None, None, false).unwrap();
     let uuid = created.config.repo_uuid;
     drop(created);
@@ -144,6 +132,7 @@ fn test_a_moved_repository_is_loaded_at_its_new_root() {
     let parent = temp_dir("moved");
     let old = parent.join("before");
     std::fs::create_dir(&old).unwrap();
+    common::seed_config(&old);
     drop(repo::init_repository(&old, None, None, false).unwrap());
     let new = parent.join("after");
     std::fs::rename(&old, &new).unwrap();
@@ -166,6 +155,7 @@ fn test_load_fails_when_no_repository() {
 #[test]
 fn test_case_sensitivity_probe() {
     let root = temp_dir("case");
+    common::seed_config(&root);
     let opened = repo::init_repository(&root, None, None, false).unwrap();
     // Standard Linux filesystems (ext4, tmpfs) are case-sensitive; on other
     // platforms the probe may legitimately return true.
@@ -195,6 +185,7 @@ fn test_the_case_probe_asks_the_root_filesystem_not_the_metafolder_one() {
     std::fs::write(root.join("Photo.jpg"), b"x").unwrap();
     std::fs::hard_link(root.join("Photo.jpg"), root.join("pHOTO.JPG")).unwrap();
 
+    common::seed_config_at(&meta.join("meta"));
     let opened = repo::init_repository(&root, Some(&meta.join("meta")), None, false).unwrap();
     assert!(opened.case_insensitive);
     drop(opened);
@@ -206,6 +197,7 @@ fn test_the_case_probe_asks_the_root_filesystem_not_the_metafolder_one() {
 fn test_config_exists_helper() {
     let root = temp_dir("exists");
     assert!(!RepoConfig::exists(&root.join(".metafolder")));
+    common::seed_config(&root);
     let opened = repo::init_repository(&root, None, None, false).unwrap();
     assert!(RepoConfig::exists(&root.join(".metafolder")));
     drop(opened);
@@ -219,6 +211,7 @@ fn test_unload_refused_while_a_task_is_in_flight() {
 
     let root = temp_dir("unload_task");
     let state = AppState::new();
+    common::seed_config(&root);
     let uuid = state.init_repo(&root, None, None, false).unwrap();
 
     // A running reconcile task blocks the unload.
@@ -244,6 +237,7 @@ fn test_unload_refused_during_a_coordinated_revert() {
 
     let root = temp_dir("unload_revert");
     let state = AppState::new();
+    common::seed_config(&root);
     let uuid = state.init_repo(&root, None, None, false).unwrap();
 
     // Simulate an in-progress coordinated revert.
@@ -275,6 +269,7 @@ fn a_repository_on_the_kv_backend_reloads_its_data() {
 
     let root = temp_dir("kv_backend");
     let written = {
+        common::seed_config(&root);
         let mut opened = repo::init_repository(root.path(), None, None, false).unwrap();
         assert_eq!(opened.config.storage, Storage::Kv);
         let mut w = Writer::begin(&mut opened.conn, None).unwrap();
@@ -303,6 +298,7 @@ fn a_repository_on_the_kv_backend_reloads_its_data() {
 #[test]
 fn a_kv_repository_cannot_be_opened_twice() {
     let root = temp_dir("kv_lock");
+    common::seed_config(&root);
     let opened = repo::init_repository(root.path(), None, None, false).unwrap();
     let second = repo::load_repository(RepoLocator::Root(root.path().to_path_buf()));
     assert!(second.is_err(), "a second opening must be refused");
@@ -316,6 +312,7 @@ fn a_kv_repository_cannot_be_opened_twice() {
 #[test]
 fn a_sqlite_repository_is_refused_at_load() {
     let root = temp_dir("sqlite_refused");
+    common::seed_config(&root);
     let opened = repo::init_repository(root.path(), None, None, false).unwrap();
     let meta = opened.metafolder_dir.clone();
     drop(opened);
@@ -356,6 +353,7 @@ fn test_standard_form_records_a_relative_root() {
     // The root is the directory holding `.metafolder/`: written as that, the
     // repository names no absolute path and can be moved as a whole.
     let root = temp_dir("relroot");
+    common::seed_config(&root);
     let opened = repo::init_repository(&root, None, None, false).unwrap();
     assert_eq!(opened.config.root, root.canonicalize().unwrap(), "absolute in memory");
     assert_eq!(root_on_disk(&root.join(".metafolder")), ".");
@@ -366,6 +364,7 @@ fn test_external_form_records_an_absolute_root() {
     let root = temp_dir("absroot");
     let meta_parent = temp_dir("absroot_meta");
     let meta = meta_parent.join("meta");
+    common::seed_config_at(&meta);
     drop(repo::init_repository(&root, Some(&meta), None, false).unwrap());
     assert_eq!(root_on_disk(&meta), root.canonicalize().unwrap().to_str().unwrap());
 }
@@ -377,6 +376,7 @@ fn test_a_moved_repository_loads_by_its_metafolder_too() {
     let parent = temp_dir("moved_meta");
     let old = parent.join("before");
     std::fs::create_dir(&old).unwrap();
+    common::seed_config(&old);
     drop(repo::init_repository(&old, None, None, false).unwrap());
     let new = parent.join("after");
     std::fs::rename(&old, &new).unwrap();
@@ -393,6 +393,7 @@ fn test_a_relative_root_resolves_against_the_metafolders_parent() {
     let data = base.join("data");
     std::fs::create_dir(&data).unwrap();
     let meta = base.join("meta");
+    common::seed_config_at(&meta);
     drop(repo::init_repository(&data, Some(&meta), None, false).unwrap());
     let raw = std::fs::read_to_string(meta.join("config.json")).unwrap();
     let mut json: serde_json::Value = serde_json::from_str(&raw).unwrap();
@@ -420,6 +421,7 @@ fn test_a_stale_absolute_root_is_corrected_to_the_relative_one() {
     let parent = temp_dir("stale");
     let root = parent.join("repo");
     std::fs::create_dir(&root).unwrap();
+    common::seed_config(&root);
     drop(repo::init_repository(&root, None, None, false).unwrap());
     let meta = root.join(".metafolder");
     let raw = std::fs::read_to_string(meta.join("config.json")).unwrap();

@@ -14,7 +14,8 @@ with one directory per program and two shared ones:
     ignore-presets.toml      the named mf_ignore presets (read by the clients)
   daemon/
     config.toml              the repositories to load at startup, [settings]
-    schema.default.json      the schema a new repository starts with
+    repo-default/            what a new repository's configuration starts from
+                             (schema.json, metadata-map.toml — [[Repository configuration]])
   gui/
     config.toml              ports, page sizes, panel defaults, …
     keybindings.toml         every keybinding
@@ -27,8 +28,10 @@ with one directory per program and two shared ones:
   docs/                      this documentation, rendered (the help panel reads it)
 ```
 
-The programs read `main`'s working tree, and only it; they never run git. Only
-`metafolder-sync-config` does ([[Updating the configuration]]).
+The programs read `main`'s working tree, and only it. Only
+`metafolder-sync-config` changes it ([[Updating the configuration]]); `mf` and the GUI
+use the same git model for a repository's own configuration, which `repo-default/`
+seeds ([[Repository configuration]]). The daemon never runs git.
 
 The per-program files: [[Daemon configuration]], [[GUI configuration]], [[CLI configuration]],
 [[Slow log configuration]] (daemon and GUI); the other files of `gui/` are in

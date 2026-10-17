@@ -79,7 +79,10 @@ fn mf(args: &[&str]) -> Out {
 /// `XDG_CONFIG_HOME` for a config dir with the shipped `core/` config
 /// installed: the query-grammar (so `mf query --simplified` can expand locally)
 /// and the ignore-presets (so `mf repo init` / `mf ignore` can apply the
-/// `default` preset — the daemon no longer ships ignore patterns).
+/// `default` preset — the daemon no longer ships ignore patterns); and the
+/// repository defaults `mf repo init` installs (doc "Repository
+/// configuration"), reduced to the metadata map — the shipped schema would
+/// constrain every test's metarecords.
 fn config_xdg() -> &'static str {
     use std::sync::OnceLock;
     static XDG: OnceLock<String> = OnceLock::new();
@@ -95,6 +98,16 @@ fn config_xdg() -> &'static str {
         std::fs::copy(
             concat!(env!("CARGO_MANIFEST_DIR"), "/../core/default-config/ignore-presets.toml"),
             core.join("ignore-presets.toml"),
+        )
+        .unwrap();
+        let defaults = dir.join("metafolder/daemon/repo-default");
+        std::fs::create_dir_all(&defaults).unwrap();
+        std::fs::copy(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../daemon/default-config/repo-default/metadata-map.toml"
+            ),
+            defaults.join("metadata-map.toml"),
         )
         .unwrap();
         dir.to_str().unwrap().to_string()
@@ -156,6 +169,80 @@ fn get_entries(repo: &str, target: &str) -> serde_json::Value {
 fn test_init_prints_uuid_and_creates_metafolder() {
     let (_, root) = init_repo("init");
     assert!(root.join(".metafolder").join("config.json").exists());
+}
+
+#[test]
+fn test_init_installs_the_configuration_as_a_git_repository() {
+    let (_, root) = init_repo("init_config");
+    let config = root.join(".metafolder/config");
+    assert!(config.join("metadata-map.toml").is_file());
+    assert!(config.join(".git").is_dir());
+    // Nothing new since: up to date.
+    let out = mf_cfg(&["repo", "update-config", root.join(".metafolder").to_str().unwrap()]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), "configuration already up to date");
+}
+
+#[test]
+fn test_update_config_merges_new_defaults_into_the_repository_edits() {
+    let (repo, root) = init_repo("update_config");
+    // This test's own defaults: the shared ones, plus a schema.
+    let xdg = temp_dir("update_config_xdg");
+    let defaults = xdg.join("metafolder/daemon/repo-default");
+    std::fs::create_dir_all(&defaults).unwrap();
+    let map = root.join(".metafolder/config/metadata-map.toml");
+    std::fs::copy(&map, defaults.join("metadata-map.toml")).unwrap();
+    // The repository edits its map (a line at its end).
+    let mine = format!("{}\n# mine\n", std::fs::read_to_string(&map).unwrap());
+    std::fs::write(&map, &mine).unwrap();
+    std::fs::write(defaults.join("schema.json"), FILM_SCHEMA).unwrap();
+
+    // No daemon involved: the files alone, by the root.
+    let out = mf_full(
+        &["repo", "update-config", root.to_str().unwrap()],
+        None,
+        &[("XDG_CONFIG_HOME", xdg.to_str().unwrap())],
+        false,
+    );
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), "configuration updated");
+    assert_eq!(std::fs::read_to_string(&map).unwrap(), mine);
+    let schema = root.join(".metafolder/config/schema.json");
+    assert_eq!(std::fs::read_to_string(schema).unwrap(), FILM_SCHEMA);
+    // The loaded repository reads it when asked.
+    assert_ok(&mf(&["-u", &repo, "schema", "reload"]));
+}
+
+#[test]
+fn test_update_config_moves_an_old_layout_into_config() {
+    let (repo, root) = init_repo("update_config_old");
+    assert_ok(&mf(&["-u", &repo, "repo", "unload"]));
+    // A repository from before `.metafolder/config/`.
+    let metafolder = root.join(".metafolder");
+    std::fs::rename(
+        metafolder.join("config/metadata-map.toml"),
+        metafolder.join("metadata-map.toml"),
+    )
+    .unwrap();
+    std::fs::remove_dir_all(metafolder.join("config")).unwrap();
+    let out = mf(&["repo", "load", root.to_str().unwrap()]);
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    assert!(out.stderr.contains("mf repo update-config"), "{}", out.stderr);
+
+    let out = mf_cfg(&["repo", "update-config", metafolder.to_str().unwrap()]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("moved metadata-map.toml into config/"), "{}", out.stdout);
+    assert!(metafolder.join("config/.git").is_dir());
+    assert!(!metafolder.join("metadata-map.toml").exists());
+    assert_ok(&mf(&["repo", "load", root.to_str().unwrap()]));
+}
+
+#[test]
+fn test_update_config_names_a_path_that_holds_no_repository() {
+    let dir = temp_dir("update_config_none");
+    let out = mf_cfg(&["repo", "update-config", dir.to_str().unwrap()]);
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert!(out.stderr.contains("no repository"), "{}", out.stderr);
 }
 
 #[test]
@@ -1746,7 +1833,7 @@ fn test_schema_workflow() {
     // would reject it afterwards).
     let bad = create_metarecord(&repo, &["mf_schema:string=film", "rating:string=oops"]);
 
-    std::fs::write(root.join(".metafolder/schema.json"), FILM_SCHEMA).unwrap();
+    std::fs::write(root.join(".metafolder/config/schema.json"), FILM_SCHEMA).unwrap();
     let out = mf(&["-u", &repo, "schema", "reload"]);
     assert_ok(&out);
 
@@ -1781,7 +1868,7 @@ fn test_schema_workflow() {
 fn test_schema_check_with_predicate() {
     let (repo, root) = init_repo("schema_pred");
     create_metarecord(&repo, &["mf_schema:string=film", "rating:string=bad"]);
-    std::fs::write(root.join(".metafolder/schema.json"), FILM_SCHEMA).unwrap();
+    std::fs::write(root.join(".metafolder/config/schema.json"), FILM_SCHEMA).unwrap();
     let out = mf(&["-u", &repo, "schema", "reload"]);
     assert_ok(&out);
 
@@ -1794,7 +1881,7 @@ fn test_schema_check_with_predicate() {
 #[test]
 fn test_schema_reload_invalid_file_fails() {
     let (repo, root) = init_repo("schema_invalid");
-    std::fs::write(root.join(".metafolder/schema.json"), "{not json").unwrap();
+    std::fs::write(root.join(".metafolder/config/schema.json"), "{not json").unwrap();
     let out = mf(&["-u", &repo, "schema", "reload"]);
     assert_eq!(out.code, 1, "stderr: {}", out.stderr);
     assert!(out.stderr.starts_with("error:"));
@@ -5170,7 +5257,7 @@ fn test_a_tree_vocabulary_converts_to_a_hierarchy() {
                 {{"field": "path", "type": "{ty}", "min": 1{max}}}]}}]}}"#
         )
     };
-    let file = root.join(".metafolder/schema.json");
+    let file = root.join(".metafolder/config/schema.json");
     std::fs::write(&file, schema("tree_ref", r#", "max": 1"#)).unwrap();
     assert_ok(&mf(&["-u", &repo, "schema", "reload"]));
     let rec = create_metarecord(&repo, &["note:string=target"]);

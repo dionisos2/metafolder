@@ -1,7 +1,7 @@
 //! Backups of a repository (doc "Backups and restore"): a
 //! consistent copy of its store, taken while the daemon runs, with the
-//! repository's `config.json` and `schema.json` beside it — everything a
-//! restore needs.
+//! repository's `config.json` and its configuration files (`config/`'s
+//! schema and metadata map) beside it — everything a restore needs.
 //!
 //! A backup is written under a temporary name, then *verified*: its store is
 //! opened and checked (`Begin::check`). Only a backup that checks clean takes
@@ -71,8 +71,8 @@ pub struct Copied {
 }
 
 /// The half of a backup that needs the store: its copy, written beside `dest`
-/// under a temporary name, with the repository's `config.json` and
-/// `schema.json`. The caller holds the store only for this — the check that
+/// under a temporary name, with the repository's `config.json` and its
+/// configuration files. The caller holds the store only for this — the check that
 /// follows runs on the copy, and on a large store it is the longer half.
 pub fn copy_store(store: &dyn Database, metafolder: &Path, dest: &Path) -> Result<Copied> {
     let name = dest.file_name().context("a backup needs a directory name")?.to_string_lossy();
@@ -83,7 +83,13 @@ pub fn copy_store(store: &dyn Database, metafolder: &Path, dest: &Path) -> Resul
     std::fs::create_dir_all(&temp).with_context(|| format!("create {}", temp.display()))?;
 
     store.backup_to(&temp).context("copy the store")?;
-    for file in ["config.json", "schema.json"] {
+    let config = Path::new(crate::repo::CONFIG_DIR);
+    if metafolder.join(config).is_dir() {
+        std::fs::create_dir_all(temp.join(config)).context("create the backup's config/")?;
+    }
+    for file in
+        [Path::new("config.json"), &config.join("schema.json"), &config.join("metadata-map.toml")]
+    {
         let from = metafolder.join(file);
         if from.exists() {
             std::fs::copy(&from, temp.join(file))

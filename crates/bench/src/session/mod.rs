@@ -392,6 +392,7 @@ async fn drawn(s: &Session, quiet: Duration) -> Result<Option<Instant>> {
 async fn run_step(id: &str, s: &mut Session, quiet: Duration) -> Result<Option<Instant>> {
     match id {
         "repo.init" => {
+            crate::seed_repo_config(&s.data)?;
             let v =
                 s.daemon_post("/repos/init", &json!({"root": s.data, "name": "session"})).await?;
             s.repo = Some(v["repo_uuid"].as_str().context("no repo_uuid")?.parse()?);

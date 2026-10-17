@@ -302,7 +302,9 @@ enum RepoCommand {
     },
     /// Initialise a new repository and print its UUID
     ///
-    /// Applies the `default` ignore preset to the new root (doc "Ignore presets");
+    /// Installs its configuration (.metafolder/config/) from the repository
+    /// defaults first (doc "Repository configuration"), then applies the
+    /// `default` ignore preset to the new root (doc "Ignore presets");
     /// use --ignore to pick a different preset set, or
     /// --no-ignore to leave the root's mf_ignore empty.
     Init {
@@ -320,6 +322,20 @@ enum RepoCommand {
         /// Leave the new root's mf_ignore set empty
         #[arg(long = "no-ignore")]
         no_ignore: bool,
+    },
+    /// Merge the repository defaults into one repository's configuration
+    ///
+    /// Applies ~/.config/metafolder/daemon/repo-default/ to the repository's
+    /// .metafolder/config/, a git repository (doc "Repository
+    /// configuration"): later defaults merge into the repository's own edits.
+    /// The first run creates it, moving a schema.json or metadata-map.toml
+    /// left directly in .metafolder/ into it. A conflict leaves config/
+    /// untouched and lists the files (exit 1). Works on the files alone: no
+    /// daemon is needed, and a loaded repository reads the merged files at its
+    /// next load (`mf schema reload` for the schema alone).
+    UpdateConfig {
+        /// The repository's .metafolder directory, or the root holding it
+        path: PathBuf,
     },
     /// Load an existing repository, wait for its warmup and print its UUID
     Load {
@@ -358,7 +374,7 @@ enum RepoCommand {
     /// Take a backup of the selected repository and print where it went
     ///
     /// A consistent copy of its store (taken while the daemon runs) with its
-    /// config.json and schema.json, verified before it is kept. By default
+    /// config.json and its configuration's schema and metadata map, verified before it is kept. By default
     /// under .metafolder/internal/backups/; `mf repo restore` puts it back.
     Backup {
         /// A new directory to write the backup to (on another disk, say)
@@ -1323,6 +1339,7 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
                 ignore,
                 no_ignore,
             ),
+            RepoCommand::UpdateConfig { path } => commands::update_repo_config(&path),
             RepoCommand::Rename { name } => commands::rename_repo(ctx, &name),
             RepoCommand::Load { root, metafolder, no_wait, in_memory } => {
                 commands::load(ctx, root.as_deref(), metafolder.as_deref(), no_wait, in_memory)

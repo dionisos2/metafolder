@@ -63,6 +63,7 @@ pub fn build(dir: &Path, shape: &Shape) -> Result<Uuid> {
 /// repositories a daemon has loaded.
 pub fn build_named(dir: &Path, shape: &Shape, name: &str) -> Result<Uuid> {
     std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+    crate::seed_repo_config(dir)?;
     let opened = repo::init_repository(dir, None, Some(name), false)
         .with_context(|| format!("init a repository at {}", dir.display()))?;
     let repo_uuid = opened.config.repo_uuid;

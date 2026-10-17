@@ -206,7 +206,8 @@ pub fn parse(content: &str) -> Result<CompiledSchema, String> {
 }
 
 /// Loads the repository's schema file: the `schema` config key (relative to
-/// `.metafolder/` or absolute), defaulting to `.metafolder/schema.json`.
+/// `.metafolder/` or absolute), defaulting to `.metafolder/config/schema.json`
+/// (doc "Repository configuration").
 /// A missing default file means "no schema"; a missing explicit file or an
 /// invalid document is an error (the load must fail with 400).
 pub fn load_for_repo(
@@ -216,7 +217,7 @@ pub fn load_for_repo(
     let (path, explicit) = match &config.schema {
         Some(p) if p.is_absolute() => (p.clone(), true),
         Some(p) => (metafolder_dir.join(p), true),
-        None => (metafolder_dir.join("schema.json"), false),
+        None => (metafolder_dir.join(crate::repo::CONFIG_DIR).join("schema.json"), false),
     };
     let content = match std::fs::read_to_string(&path) {
         Ok(content) => content,

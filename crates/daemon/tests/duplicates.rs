@@ -20,6 +20,7 @@ const DEFAULT_PATTERNS: &[&str] = &[r"\.metafolder(/.*)?$", r"(^|/)\.[^/]+"];
 
 fn setup(prefix: &str) -> (Arc<RepoState>, TempDir) {
     let root = TempDir::new(&format!("dup_{prefix}"));
+    common::seed_config(&root);
     let opened = repo::init_repository(&root, None, None, false).unwrap();
     let repo_state = Arc::new(RepoState::from_opened(opened));
     let root_uuid = {

@@ -119,6 +119,7 @@ fn test_a_repository_writes_with_its_configured_retention() {
     use metafolder_daemon::state::RepoState;
 
     let root = TempDir::new("log_retention_repo");
+    common::seed_config(&root);
     let mut opened = repo::init_repository(&root, None, None, false).unwrap();
     opened.config.log_retention_user_ops = Some(4);
     let settings = DaemonSettings {

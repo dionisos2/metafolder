@@ -1,9 +1,10 @@
 //! Git-backed installation of user configuration (doc "Configuration"
-//! "metafolder-sync-config"). This module is the *only* git actor: it gathers
+//! "metafolder-sync-config"). This module holds the only git code: it gathers
 //! every crate's `default-config/` from a source checkout and applies it to the
 //! user configuration repository through a `default` (shipped) / `main` (user)
-//! branch model. The daemon, GUI and CLI never link git; they only read the
-//! `main` working tree.
+//! branch model. The same model keeps each repository's own configuration
+//! ([`crate::repo_config`], run by `mf` and the GUI). The daemon never links
+//! git; it only reads `main` working trees.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -60,7 +61,10 @@ fn forced_checkout() -> git2::build::CheckoutBuilder<'static> {
 
 // ── First run ────────────────────────────────────────────────────────────
 
-fn init(config_dir: &Path, files: &BTreeMap<PathBuf, Vec<u8>>) -> Result<SyncOutcome, String> {
+pub(crate) fn init(
+    config_dir: &Path,
+    files: &BTreeMap<PathBuf, Vec<u8>>,
+) -> Result<SyncOutcome, String> {
     std::fs::create_dir_all(config_dir)
         .map_err(|e| format!("cannot create {}: {e}", config_dir.display()))?;
     let repo = git2::Repository::init(config_dir).map_err(gerr)?;
@@ -79,7 +83,10 @@ fn init(config_dir: &Path, files: &BTreeMap<PathBuf, Vec<u8>>) -> Result<SyncOut
 
 // ── Update ───────────────────────────────────────────────────────────────
 
-fn update(config_dir: &Path, files: &BTreeMap<PathBuf, Vec<u8>>) -> Result<SyncOutcome, String> {
+pub(crate) fn update(
+    config_dir: &Path,
+    files: &BTreeMap<PathBuf, Vec<u8>>,
+) -> Result<SyncOutcome, String> {
     let repo = git2::Repository::open(config_dir).map_err(gerr)?;
 
     let new_default_tree = build_tree(&repo, files)?;
@@ -316,7 +323,7 @@ fn gather_defaults(source_root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>, Str
     Ok(out)
 }
 
-fn collect_files(
+pub(crate) fn collect_files(
     dir: &Path,
     prefix: &Path,
     out: &mut BTreeMap<PathBuf, Vec<u8>>,

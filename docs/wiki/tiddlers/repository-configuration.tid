@@ -1,0 +1,59 @@
+title: Repository configuration
+tags: Configuration Daemon
+kind: reference
+aliases: repo-default update-config
+summary: .metafolder/config/ holds a repository's schema and metadata map in a git repository; new defaults merge into its own edits, as for the user configuration.
+
+A repository's own configuration — its [[schema|Schema file]] and its
+[[metadata map|The metadata map]] — lives in `.metafolder/config/`, a git repository
+with the two branches of [[The configuration repository]]: `default` holds the
+defaults it started from, `main` its own edits, and only `main`'s working tree is read.
+
+```
+~/.config/metafolder/daemon/repo-default/    the defaults of every repository (yours to edit)
+  schema.json
+  metadata-map.toml
+<root>/.metafolder/config/                   one repository's configuration
+  .git/
+  schema.json                                optional: none, nothing is validated
+  metadata-map.toml                          required: a repository without one does not load
+```
+
+Two merges carry a new default to a repository. `metafolder-sync-config` merges the
+shipped `repo-default/` into yours ([[Updating the configuration]]), so an edit there
+changes the defaults of every repository; then `mf repo update-config` merges yours into
+one repository's `config/`, in the same steps: uncommitted edits committed first, a
+fast-forward or a merge, and on a conflict nothing changed and the files listed, to
+resolve with `git merge default` in `config/`. The repository is never updated by
+itself.
+
+!! Who writes it
+
+The clients, never the daemon, which only reads the files
+([[No runtime fallback]]). `mf repo init` and the GUI's repository creation install
+`config/` from `repo-default/` ''before'' they ask the daemon for the repository — it
+refuses an init without a metadata map, before creating anything — and take it back
+if the init fails ([[mf repo init]]). `mf repo update-config` needs no daemon: it
+works on the files, whether the repository is loaded or not; a loaded one reads the
+merged files at its next load, or its schema at `mf schema reload`. A sync's plan
+repository gets a metadata map that maps nothing, and no schema.
+
+`config/` is ordinary trackable content, like the rest of `.metafolder/` but
+`internal/` ([[Repository layout on disk]]); the default ignore preset leaves `.git/`
+out.
+
+!! Repositories from before config/
+
+The files used to sit directly in `.metafolder/`, the daemon writing them: it seeded
+`schema.json` at init from `daemon/schema.default.json`, and wrote back a missing
+`metadata-map.toml` from a copy built into it. Such a repository is refused at load,
+with the command that moves it ([[Persisted format changes]]):
+
+```
+mf repo update-config ~/music            # its root, or its .metafolder/ directory
+```
+
+The files move into `config/`, and become the repository's own edits over an
+''empty'' base: nothing says which defaults they started from, so a file that differs
+from the default now is a conflict, kept as it is until resolved — never a silent pick
+of one side. A schema that `config.json` names (its `schema` key) stays where it is.

@@ -48,6 +48,7 @@ async fn fixture_with(prefix: &str, settings: DaemonSettings) -> Fixture {
     let state = Arc::new(AppState::new().with_settings(settings));
     let app = routes::build(state.clone());
     let root = TempDir::new(&format!("slowlog_{prefix}"));
+    common::seed_config(&root);
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()})), &[])
             .await;
@@ -155,6 +156,7 @@ async fn test_a_query_that_read_past_the_reads_threshold_is_logged_with_its_read
     let state = Arc::new(AppState::new().with_settings(settings));
     let app = routes::build(state.clone());
     let root = TempDir::new("slowlog_reads");
+    common::seed_config(&root);
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()})), &[])
             .await;
@@ -417,6 +419,7 @@ fn test_a_slow_watcher_flush_names_itself() {
     use metafolder_daemon::state::RepoState;
 
     let root = TempDir::new("slowlog_flush");
+    common::seed_config(&root);
     let opened = repo::init_repository(&root, None, None, false).unwrap();
     let settings = DaemonSettings { slow_operation_threshold_ms: 1, ..Default::default() };
     let repo_state = Arc::new(RepoState::from_opened_with(opened, &settings));
@@ -586,6 +589,7 @@ fn test_the_automatic_backup_names_itself() {
     use metafolder_daemon::state::RepoState;
 
     let root = TempDir::new("slowlog_backup");
+    common::seed_config(&root);
     let opened = repo::init_repository(&root, None, None, false).unwrap();
     let settings = DaemonSettings {
         slow_operation_threshold_ms: 1,
@@ -622,6 +626,7 @@ fn test_a_remount_names_itself() {
     use metafolder_daemon::state::RepoState;
 
     let root = TempDir::new("slowlog_remount");
+    common::seed_config(&root);
     let opened = repo::init_repository(&root, None, None, false).unwrap();
     let settings = DaemonSettings {
         slow_operation_threshold_ms: 1,

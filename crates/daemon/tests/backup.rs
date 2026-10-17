@@ -16,6 +16,7 @@ use common::TempDir;
 
 fn repository() -> (OpenedRepo, TempDir) {
     let root = TempDir::new("backup");
+    common::seed_config(&root);
     let mut opened = repo::init_repository(root.path(), None, None, false).unwrap();
     let mut w = Writer::begin(&mut opened.conn, Some("kept".into())).unwrap();
     w.create_metarecord(vec![Field::new("note", Value::String("kept".into()))]).unwrap();

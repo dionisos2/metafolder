@@ -3,7 +3,7 @@
 //! schema violations) and `CliError` on failure.
 
 use std::io::{IsTerminal as _, Write as _};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value as Json};
 use uuid::Uuid;
@@ -216,17 +216,83 @@ pub fn init(
     // is given. Loading the presets file is a hard error (doc "Configuration"); it is
     // only touched when we actually apply presets, so --no-ignore works without
     // a configured presets file.
+    let defaults = repo_defaults_dir()?;
     let outcome = if no_ignore {
-        init_repo(client, &body, InitIgnore::None).map_err(ignore_err)?
+        init_repo(client, &body, InitIgnore::None, &defaults).map_err(ignore_err)?
     } else {
         let names = split_presets(&ignore);
         let names: Vec<String> = if names.is_empty() { vec!["default".into()] } else { names };
         let presets = load_presets()?;
         let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
-        init_repo(client, &body, InitIgnore::Presets { presets: &presets, names: &name_refs })
-            .map_err(ignore_err)?
+        init_repo(
+            client,
+            &body,
+            InitIgnore::Presets { presets: &presets, names: &name_refs },
+            &defaults,
+        )
+        .map_err(ignore_err)?
     };
+    // Only a `config/` already there can conflict; the repository is created
+    // all the same, with that configuration.
+    report_config_conflict(&outcome.config.sync);
     println!("{}", outcome.repo_uuid);
+    Ok(0)
+}
+
+/// `<config>/daemon/repo-default/`, the defaults of a repository's
+/// configuration (doc "Repository configuration").
+fn repo_defaults_dir() -> Result<PathBuf, CliError> {
+    metafolder_core::repo_config::defaults_dir()
+        .ok_or_else(|| CliError::Usage("cannot determine the config directory".into()))
+}
+
+/// Says on stderr which files a configuration merge left alone; true when
+/// there were some.
+fn report_config_conflict(sync: &metafolder_core::config_sync::SyncOutcome) -> bool {
+    let Some(paths) = &sync.conflict else { return false };
+    eprintln!(
+        "conflict in {} configuration file(s): .metafolder/config/ was left as it was; \
+         resolve it with git (git merge default, in that directory)",
+        paths.len()
+    );
+    for p in paths {
+        eprintln!("  {}", p.display());
+    }
+    true
+}
+
+/// `mf repo update-config <path>`: merges the repository defaults into the
+/// configuration of the repository at `path` — its `.metafolder/`, or the
+/// root holding one. No daemon involved.
+pub fn update_repo_config(path: &Path) -> Result<i32, CliError> {
+    let metafolder = if path.join("config.json").is_file() {
+        path.to_path_buf()
+    } else if path.join(".metafolder").join("config.json").is_file() {
+        path.join(".metafolder")
+    } else {
+        return Err(CliError::Usage(format!(
+            "no repository at {}: name its .metafolder directory or its root",
+            path.display()
+        )));
+    };
+    let outcome = metafolder_core::repo_config::install(&metafolder, &repo_defaults_dir()?)
+        .map_err(CliError::Op)?;
+    for moved in &outcome.migrated {
+        println!("moved {} into config/", moved.display());
+    }
+    if report_config_conflict(&outcome.sync) {
+        return Ok(1);
+    }
+    println!(
+        "{}",
+        if outcome.sync.initialized {
+            "configuration created"
+        } else if outcome.sync.updated {
+            "configuration updated"
+        } else {
+            "configuration already up to date"
+        }
+    );
     Ok(0)
 }
 

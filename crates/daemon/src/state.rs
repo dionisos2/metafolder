@@ -56,10 +56,9 @@ pub struct RepoState {
     pub handles: Mutex<Option<RepoHandles>>,
     /// Loaded user schema; replaced atomically on reload (doc "Schema").
     pub schema: Mutex<Option<crate::schema::CompiledSchema>>,
-    /// The per-repo embedded-metadata extraction map (doc "The metadata map"). Loaded
-    /// (seeding/self-healing the on-disk file) in `activate`; initialised here to
-    /// the baked-in default so a `RepoState` built without `activate` (unit
-    /// tests) still extracts with sensible defaults.
+    /// The per-repo embedded-metadata extraction map (doc "The metadata map").
+    /// Read by `load_config`; empty until then, so a `RepoState` that never
+    /// loaded its configuration extracts nothing.
     pub metadata_map: Mutex<crate::metadata_map::MetadataMap>,
     /// Coordinated-revert lock (doc "Filesystem coordination"): `Some` while a
     /// coordinated revert is in progress, carrying the operations `start`
@@ -210,10 +209,7 @@ impl RepoState {
             case_insensitive: opened.case_insensitive,
             handles: Mutex::new(None),
             schema: Mutex::new(None),
-            metadata_map: Mutex::new(
-                crate::metadata_map::MetadataMap::parse(crate::metadata_map::DEFAULT)
-                    .expect("baked default metadata map is valid"),
-            ),
+            metadata_map: Mutex::new(crate::metadata_map::MetadataMap::default()),
             revert_lock: Mutex::new(None),
             tasks: crate::tasks::TaskRegistry::new(repo_uuid),
             declared_mounts: Mutex::new(Arc::new(Vec::new())),
@@ -685,6 +681,8 @@ impl RepoState {
     /// happens to have failed on a repository already registered.
     pub fn load_config(&self) -> Result<(), ApiError> {
         let who = self.name();
+        crate::repo::refuse_legacy_config(&self.metafolder_dir, &self.config)
+            .map_err(|e| ApiError::bad_request(format!("{e:#}")))?;
         {
             let _p = Phase::begin(&who, "load the schema");
             let schema = crate::schema::load_for_repo(&self.metafolder_dir, &self.config)
@@ -693,7 +691,7 @@ impl RepoState {
         }
         {
             let _p = Phase::begin(&who, "load the metadata map");
-            let metadata_map = crate::metadata_map::MetadataMap::load_or_seed(&self.metafolder_dir)
+            let metadata_map = crate::metadata_map::MetadataMap::load(&self.metafolder_dir)
                 .map_err(|e| ApiError::bad_request(format!("{e:#}")))?;
             *self.metadata_map.lock_recover() = metadata_map;
         }
@@ -1077,9 +1075,6 @@ pub struct AppState {
     repos: Arc<Mutex<HashMap<Uuid, Arc<RepoState>>>>,
     /// Repositories unloaded because their root went away, still listed.
     lost: Arc<Mutex<HashMap<Uuid, LostRepo>>>,
-    /// Shipped default schema copied into each new repo at init (doc "Schema").
-    /// `None` (the default, used by tests) disables seeding.
-    seed_schema_path: Option<PathBuf>,
     /// Tunable UX/performance settings from `config.toml`'s `[settings]`, applied
     /// to every repository this state opens (log retention, watcher quiet
     /// period, watch budget share). Defaults when unset (tests, no config file).
@@ -1123,13 +1118,6 @@ impl AppState {
         Self::default()
     }
 
-    /// Configures the shipped default schema seeded into each new repo at init
-    /// (`<config>/daemon/schema.default.json`). `None` disables seeding.
-    pub fn with_seed_schema(mut self, path: Option<PathBuf>) -> Self {
-        self.seed_schema_path = path;
-        self
-    }
-
     /// Sets the tunable settings (`config.toml` `[settings]`) applied to every
     /// repository this state opens.
     pub fn with_settings(mut self, settings: DaemonSettings) -> Self {
@@ -1148,11 +1136,6 @@ impl AppState {
         let opened = repo::init_repository(root, metafolder, name, system)?;
         let uuid = opened.config.repo_uuid;
         self.ensure_name_available(&opened.config.name)?;
-        // Seed the per-repo schema from the shipped default (best-effort),
-        // before activate() reads it.
-        if let Some(src) = self.seed_schema_path.as_deref() {
-            repo::seed_schema_file(&opened.metafolder_dir, src);
-        }
         let repo_state = Arc::new(RepoState::from_opened_with(opened, &self.settings));
         repo_state.load_config()?;
         // A fresh repository is tiny, so warm it synchronously (no progress bar):
@@ -1591,7 +1574,7 @@ mod tests {
         let root = std::env::temp_dir()
             .join("metafolder-tests")
             .join(format!("mf_state_watch_view_{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&root).unwrap();
+        crate::repo::seed_test_config(&root);
         let state = AppState::new();
         let uuid = state.init_repo(&root, None, None, false).unwrap();
         let repo = state.repo(uuid).unwrap();

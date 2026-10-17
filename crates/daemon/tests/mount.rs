@@ -32,6 +32,7 @@ const DEFAULT_PATTERNS: &[&str] = &[r"\.metafolder(/.*)?$", r"(^|/)\.[^/]+"];
 
 fn setup(prefix: &str) -> (Arc<RepoState>, TempDir) {
     let root = TempDir::new(&format!("mount_{prefix}"));
+    common::seed_config(&root);
     let opened = repo::init_repository(&root, None, None, false).unwrap();
     let repo_state = Arc::new(RepoState::from_opened(opened));
     let root_uuid = {
@@ -244,6 +245,7 @@ fn the_executor_drops_an_event_landing_in_an_offline_mount() {
 fn setup_app(prefix: &str) -> (Router, Arc<AppState>, Arc<RepoState>, String, TempDir) {
     let root = TempDir::new(&format!("mount_{prefix}"));
     let state = Arc::new(AppState::new());
+    common::seed_config(&root);
     let uuid = state.init_repo(&root, None, None, false).unwrap();
     let repo = state.repo(uuid).unwrap();
     let root_uuid = {

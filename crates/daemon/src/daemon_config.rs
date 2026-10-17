@@ -444,7 +444,7 @@ mod tests {
         let root = std::env::temp_dir()
             .join("metafolder-tests")
             .join(format!("mf_daemon_apply_{prefix}_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&root).unwrap();
+        crate::repo::seed_test_config(&root);
         let state = crate::state::AppState::new();
         let uuid = state.init_repo(&root, None, None, false).unwrap();
         state.unload_repo(uuid).unwrap();

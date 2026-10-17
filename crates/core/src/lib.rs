@@ -1,6 +1,6 @@
 pub mod auth;
 pub mod config;
-#[cfg(feature = "sync-config")]
+#[cfg(feature = "git")]
 pub mod config_sync;
 pub mod context;
 pub mod daemon_client;
@@ -16,6 +16,9 @@ pub mod navigation;
 pub mod order;
 pub mod progress;
 pub mod query;
+#[cfg(feature = "git")]
+pub mod repo_config;
+#[cfg(feature = "git")]
 pub mod repo_init;
 pub mod scripts;
 pub mod simplified;
@@ -39,4 +42,4 @@ pub mod undo;
 /// changes do not require a bump. It is a single monotonic integer on purpose:
 /// same number ⇒ compatible, different number ⇒ refuse/ warn — no range
 /// negotiation.
-pub const API_VERSION: u32 = 21;
+pub const API_VERSION: u32 = 22;

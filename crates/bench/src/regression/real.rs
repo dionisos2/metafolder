@@ -58,6 +58,7 @@ pub async fn ensure(url: &str, src: &Path, dest: &Path, name: &str) -> Result<bo
     std::io::stdout().flush().ok();
     let t = Instant::now();
     let files = link_tree(src, dest)?;
+    crate::seed_repo_config(dest)?;
     let v: serde_json::Value = crate::daemon_client()
         .post(format!("{url}/repos/init"))
         .json(&json!({"root": dest, "name": name}))

@@ -87,6 +87,7 @@ async fn wait_for_paths(app: &Router, repo: &str, expected: &[&str]) {
 async fn watched_repo(prefix: &str) -> (Router, String, TempDir) {
     let app = routes::build(std::sync::Arc::new(common::watching_state()));
     let root = TempDir::new(prefix);
+    common::seed_config(&root);
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
     assert_eq!(status, StatusCode::OK, "init failed: {body}");

@@ -41,6 +41,7 @@ async fn request(
 async fn mounts_lists_declared_mount_points_with_their_state() {
     let app = routes::build(std::sync::Arc::new(AppState::new()));
     let root = TempDir::new("mhttp_list");
+    common::seed_config(&root);
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
     assert_eq!(status, StatusCode::OK, "init failed: {body}");

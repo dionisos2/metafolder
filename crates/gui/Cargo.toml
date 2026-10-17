@@ -15,7 +15,7 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-metafolder-core = { path = "../core" }
+metafolder-core = { path = "../core", features = ["git"] }
 # Content-based file type detection (magic bytes, pure Rust): the detector
 # behind the daemon's `mfr_mime`, so the previews agree with the repository.
 infer = "0.19"

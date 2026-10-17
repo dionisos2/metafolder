@@ -65,6 +65,7 @@ async fn setup_with_schema(prefix: &str, schema: Value) -> (Router, String, Temp
     let root = TempDir::new(&format!("sch_{prefix}"));
     {
         let first = app();
+        common::seed_config(&root);
         let (status, body) =
             request(&first, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()})))
                 .await;
@@ -72,7 +73,7 @@ async fn setup_with_schema(prefix: &str, schema: Value) -> (Router, String, Temp
     } // First daemon dropped: exclusive lock released.
 
     std::fs::write(
-        root.join(".metafolder/schema.json"),
+        root.join(".metafolder/config/schema.json"),
         serde_json::to_string_pretty(&schema).unwrap(),
     )
     .unwrap();
@@ -247,6 +248,7 @@ async fn test_schema_with_default_loads_and_is_returned() {
 async fn test_repo_without_schema_returns_empty_schema() {
     let app = app();
     let root = TempDir::new("sch_none");
+    common::seed_config(&root);
     let (_, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
     let repo = body["repo_uuid"].as_str().unwrap();
@@ -301,10 +303,11 @@ async fn test_invalid_schema_makes_load_fail() {
         let root = TempDir::new("sch_bad");
         {
             let first = app();
+            common::seed_config(&root);
             request(&first, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()})))
                 .await;
         }
-        std::fs::write(root.join(".metafolder/schema.json"), schema.to_string()).unwrap();
+        std::fs::write(root.join(".metafolder/config/schema.json"), schema.to_string()).unwrap();
         let second = app();
         let (status, body) =
             request(&second, "POST", "/repos/load", Some(json!({"root": root.to_str().unwrap()})))
@@ -584,7 +587,7 @@ async fn test_schema_reload() {
     assert_eq!(status, StatusCode::OK);
 
     // Tighten the schema file and reload.
-    std::fs::write(root.join(".metafolder/schema.json"), film_schema().to_string()).unwrap();
+    std::fs::write(root.join(".metafolder/config/schema.json"), film_schema().to_string()).unwrap();
     let (status, body) = request(&app, "POST", &format!("/repos/{repo}/schema/reload"), None).await;
     assert_eq!(status, StatusCode::OK, "reload failed: {body}");
     assert_eq!(body, film_schema());
@@ -598,7 +601,7 @@ async fn test_schema_reload() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "new schema must be in effect");
 
     // Invalid edit: reload fails, the previous schema stays in effect.
-    std::fs::write(root.join(".metafolder/schema.json"), "{broken").unwrap();
+    std::fs::write(root.join(".metafolder/config/schema.json"), "{broken").unwrap();
     let (status, _) = request(&app, "POST", &format!("/repos/{repo}/schema/reload"), None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let (status, _) = create(
@@ -665,7 +668,8 @@ async fn test_the_shipped_schema_places_a_tag_under_several_parents() {
     // position as a hierarchy (doc "Hierarchy references"): a marathon is a
     // race and an event, two `path` rows of one name.
     let shipped = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("default-config/schema.default.json"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("default-config/repo-default/schema.json"),
     )
     .unwrap();
     let schema: Value = serde_json::from_str(&shipped).unwrap();

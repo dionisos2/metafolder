@@ -125,6 +125,7 @@ async fn wait_for_paths(app: &Router, repo: &str, expected: &[&str]) {
 async fn watched_repo(prefix: &str, regime: Regime) -> (Router, String, TempDir) {
     let app = routes::build(std::sync::Arc::new(common::watching_state_on(regime)));
     let root = TempDir::new(prefix);
+    common::seed_config(&root);
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
     assert_eq!(status, StatusCode::OK, "init failed: {body}");
@@ -162,6 +163,7 @@ async fn test_watcher_tracks_create_rename_delete(regime: Regime) {
     let app = routes::build(std::sync::Arc::new(common::watching_state_on(regime)));
     let root = TempDir::new("e2e");
 
+    common::seed_config(&root);
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
     assert_eq!(status, StatusCode::OK, "init failed: {body}");
@@ -232,6 +234,7 @@ async fn test_load_succeeds_with_symlink_to_unreadable_dir(regime: Regime) {
     fs.set_permissions(&locked, perm).unwrap();
 
     // Init: must succeed (a fresh repo is mf_watch=false — nothing watched).
+    common::seed_config(&root);
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
     assert_eq!(status, StatusCode::OK, "init must not fail on the symlink: {body}");
@@ -282,6 +285,7 @@ async fn test_new_directory_does_not_wedge_the_daemon(regime: Regime) {
     let app = routes::build(std::sync::Arc::new(common::watching_state_on(regime)));
     let root = TempDir::new("newdir");
 
+    common::seed_config(&root);
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
     assert_eq!(status, StatusCode::OK, "init failed: {body}");

@@ -38,6 +38,7 @@ struct Repo {
 
 fn build(label: &str, dirs: usize, files: usize, revisions: usize) -> (TempDir, Uuid) {
     let root = TempDir::new(&format!("api-cost-{label}"));
+    common::seed_config(&root);
     let opened = repo::init_repository(root.path(), None, Some(label), false).unwrap();
     let store = opened.metafolder_dir.join(repo::INTERNAL_DIR).join(repo::KV_DIR);
     let uuid = opened.config.repo_uuid;

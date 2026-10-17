@@ -1,7 +1,7 @@
 title: The metadata map
 tags: [[Embedded metadata]]
 kind: reference
-summary: .metafolder/metadata-map.toml maps native tag names to mfr_meta_* fields with a type — per repository, seeded at init, repaired if deleted.
+summary: .metafolder/config/metadata-map.toml maps native tag names to mfr_meta_* fields with a type — per repository, installed with its configuration, required to load.
 
 The same meaning is spelled differently across formats (a performer is ID3 `TPE1`,
 Vorbis `ARTIST`, MP4 `©ART`), and which keys are worth keeping is a matter of taste. So
@@ -31,7 +31,7 @@ A `datetime` is stored as its instant: a bare year (Vorbis `DATE 1998`) becomes 
 provides are written; the others stay unknown. All `mfr_meta_*` names are reserved
 ([[Reserved fields]]).
 
-''The default map'' (`crates/daemon/src/default-metadata-map.toml`) has twenty fields:
+''The default map'' (`crates/daemon/default-config/repo-default/metadata-map.toml`) has twenty fields:
 `title`, `artist`, `album_artist` (kept distinct from `artist`, to group compilations —
 merge them by adding its sources to `artist`), `album`, `genre`, `track`, `disc`, `date`
 (`DateTimeOriginal`, `RecordingDate`, `Year`), `comment`, `duration`, `bitrate`,
@@ -40,13 +40,12 @@ merge them by adding its sources to `artist`), `album`, `genre`, `track`, `disc`
 
 !! Where it lives
 
-`.metafolder/metadata-map.toml`, per repository, beside `config.json` and `schema.json` —
-ordinary trackable content, on the schema's model rather than the configuration
-repository's: repositories in different languages or conventions want different maps, and
-the map belongs with what it describes ([[Repository layout on disk]]).
+`.metafolder/config/metadata-map.toml`, per repository, with its schema in its
+configuration ([[Repository configuration]]) — repositories in different languages or
+conventions want different maps, and the map belongs with what it describes.
 
-* `mf repo init` seeds it from the default baked into the daemon; editing the shipped default affects new repositories only.
-* At load, a ''missing'' file is written from the default, then read — repository data, not user configuration, so this is no runtime fallback. A ''malformed'' one fails that repository's load alone, never the daemon, like an invalid `schema.json`.
+* `mf repo init` installs it from `~/.config/metafolder/daemon/repo-default/`; later versions of that default merge into the repository's map with `mf repo update-config`.
+* A ''missing'' file fails that repository's load, naming the command that brings it back — nothing writes it from a built-in copy ([[No runtime fallback]]); an empty map, with no `[[field]]`, extracts nothing. A ''malformed'' one fails that repository's load alone, never the daemon, like an invalid schema.
 
 A newly mapped field is picked up by a file's ''next'' extraction, which needs its marker
 cleared ([[When metadata is extracted]]).
