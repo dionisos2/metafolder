@@ -771,9 +771,9 @@ export default {
   },
 
   // Give the selected metarecord a tag — or deny it, or mark it mixed — by the
-  // rules of `mf tag` (doc "Tag subsumption"): `mf:tag` drops the broader tags
-  // the new one says, the answers it contradicts, and creates a tag that does
-  // not exist yet. The kind names the field, and so the answer.
+  // rules of `mf tag` (doc "Tag subsumption"): `mf.tag.answer` drops the
+  // broader tags the new one says, the answers it contradicts, and creates a
+  // tag that does not exist yet. The kind names the field, and so the answer.
   'tag:add': {
     label: 'Add a tag to the selected metarecord',
     args: [
@@ -791,8 +791,18 @@ export default {
       /** @type {string} */ tag,
     ) => {
       requireTagKind(kind);
-      const answer = { tag: 'add', negative_tag: 'deny', mixed_tag: 'mixed' }[kind];
-      await mf.invoke(`mf:tag ${answer} ${tag}`);
+      const selection = await selectedMetarecord(mf);
+      if (!selection) {
+        await mf.statusBar.error('no metarecord is selected');
+        return;
+      }
+      const answer = /** @type {Record<string, string>} */ ({
+        tag: 'add',
+        negative_tag: 'deny',
+        mixed_tag: 'mixed',
+      })[kind];
+      const report = await mf.tag.answer(selection.repo, selection.uuid, answer, tag);
+      await mf.statusBar.message(report.message);
     },
   },
 

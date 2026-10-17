@@ -1,6 +1,6 @@
 //! The hierarchical-tag model (doc "Hierarchical tags"): the field-name
 //! convention, the pure subsumption helpers, and the rewrite one tag answer
-//! makes (doc "Tag subsumption") — shared by `mf tag` and the GUI's `mf:tag`,
+//! makes (doc "Tag subsumption") — shared by `mf tag` and the GUI's `tag:add` (`mf.tag.answer`),
 //! like `crate::order`, so a record is rewritten by the same rules whichever
 //! front end answered.
 //!

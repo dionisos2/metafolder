@@ -90,24 +90,52 @@ describe('the shipped user commands', () => {
     ]);
   });
 
-  test('tag:add answers through mf:tag, the kind naming the answer', async () => {
+  test('tag:add answers about the tag on the selected metarecord, the kind naming the answer', async () => {
     const mod = await import('../../default-config/commands.js');
-    const invocations: string[] = [];
-    const mf = { invoke: (i: string) => (invocations.push(i), Promise.resolve({ ok: true })) };
+    const answers: unknown[][] = [];
+    const statuses: string[] = [];
+    const mf = {
+      workspace: {
+        get: (k: string) =>
+          Promise.resolve(k === 'selected_metarecord' ? { uuid: 'u1', repo: 'r1' } : null),
+      },
+      tag: {
+        answer: (...a: unknown[]) => (
+          answers.push(a), Promise.resolve({ written: 1, message: `Tag: ${String(a[3])} done` })
+        ),
+      },
+      statusBar: { message: (t: string) => (statuses.push(t), Promise.resolve()) },
+    };
 
     await mod.default['tag:add'].run(mf as never, 'tag', 'music/jazz');
     await mod.default['tag:add'].run(mf as never, 'negative_tag', 'jeux video');
     await mod.default['tag:add'].run(mf as never, 'mixed_tag', 'music');
 
-    expect(invocations).toEqual([
-      'mf:tag add music/jazz',
-      // The tag is the last argument: its words need no quotes.
-      'mf:tag deny jeux video',
-      'mf:tag mixed music',
+    expect(answers).toEqual([
+      ['r1', 'u1', 'add', 'music/jazz'],
+      ['r1', 'u1', 'deny', 'jeux video'],
+      ['r1', 'u1', 'mixed', 'music'],
     ]);
+    expect(statuses).toEqual(['Tag: music/jazz done', 'Tag: jeux video done', 'Tag: music done']);
     await expect(mod.default['tag:add'].run(mf as never, 'tags', 'x')).rejects.toThrow(
       /tag, negative_tag or mixed_tag/,
     );
+  });
+
+  test('tag:add with nothing selected says so and answers nothing', async () => {
+    const mod = await import('../../default-config/commands.js');
+    const answers: unknown[] = [];
+    const errors: string[] = [];
+    const mf = {
+      workspace: { get: () => Promise.resolve(null) },
+      tag: { answer: (...a: unknown[]) => (answers.push(a), Promise.resolve({})) },
+      statusBar: { error: (t: string) => (errors.push(t), Promise.resolve()) },
+    };
+
+    await mod.default['tag:add'].run(mf as never, 'tag', 'music');
+
+    expect(answers).toEqual([]);
+    expect(errors).toEqual(['no metarecord is selected']);
   });
 
   test('tag:add completes the kind, then every tag path', async () => {

@@ -13,8 +13,8 @@ over the paths of the existing ones:
 |`# a t` `# a n` `# a m` |[[tag:add]] |gives the selected metarecord the tag, denies it, marks it mixed |
 |`# d t` `# d n` `# d m` |[[tag:remove]] |takes a tag of that field off the selected metarecord |
 
-''Adding'' goes through [[mf:tag]], which applies the rules of `mf tag` with the same
-code: the tag replaces the broader ones it implies, takes back the answers it makes
+''Adding'' goes through `mf.tag.answer` ([[The metafolder API]]), which applies the
+rules of `mf tag` with the same code: the tag replaces the broader ones it implies, takes back the answers it makes
 false, and is created — with any missing parent — when its path names no tag yet
 ([[Tag subsumption]]). ''Removing'' takes back one ref and rewrites nothing else, in
 whichever field.

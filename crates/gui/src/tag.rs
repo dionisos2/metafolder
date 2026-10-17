@@ -1,5 +1,5 @@
-//! `mf:tag` (doc "Tagging from the GUI"): one answer about a tag on the
-//! selected metarecord — the GUI's half of `mf tag`. The rewrite the answer
+//! `mf.tag.answer` (doc "Tagging from the GUI"): one answer about a tag on
+//! one metarecord — the GUI's half of `mf tag`. The rewrite the answer
 //! makes (subsumption, contradictions, missing entries created) is shared with
 //! the CLI ([`metafolder_core::tag`]); this module phrases the result for the
 //! status bar.

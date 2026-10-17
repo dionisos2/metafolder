@@ -360,6 +360,9 @@ than breaking them.
   "Command names (non-exhaustive default set)", "User commands").
 
 ### Removed
+- **The `mf:tag` command.** `tag:add` was its one use; the rewrite it ran is now
+  `mf.tag.answer(repo, uuid, verb, path)` on the API a panel or a user command
+  gets (doc "The metafolder API"), and `tag:add` calls it.
 - **The `log-detail` panel.** What an operation changed is shown by the log
   panel itself: an operation row has a `›` button (or Enter/→), and going into
   it shows its before/after table in place of the list, the breadcrumb leading

@@ -490,6 +490,19 @@ describe('panel api — misc surface', () => {
     expect(invoke).toHaveBeenCalledWith('recent_touch', { repo: 'r1', uuid: 'u1' });
   });
 
+  test('tag.answer runs the shared tag rewrite on one metarecord', async () => {
+    const { api, invoke } = setup();
+    invoke.mockResolvedValueOnce({ written: 1, message: 'Tag: music/jazz added' });
+    const report = await api.tag.answer('r1', 'u1', 'add', 'music/jazz');
+    expect(invoke).toHaveBeenCalledWith('tag_answer', {
+      repo: 'r1',
+      uuid: 'u1',
+      verb: 'add',
+      path: 'music/jazz',
+    });
+    expect(report).toEqual({ written: 1, message: 'Tag: music/jazz added' });
+  });
+
   test('messages.onAppend fires on pushMessageAppended', () => {
     const { api, instance } = setup();
     const listener = vi.fn();

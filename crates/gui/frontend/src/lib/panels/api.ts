@@ -754,6 +754,14 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         invoke('recent_touch', { repo, uuid }) as Promise<void>,
     },
 
+    /** Tag answers (doc "Tagging from the GUI"): `mf tag`'s rewrite — the
+     *  broader tags dropped, the contradicted answers, a missing tag created —
+     *  on one metarecord, by the Rust the CLI shares (`core::tag`). */
+    tag: {
+      answer: (repo: string, uuid: string, verb: string, path: string) =>
+        invoke('tag_answer', { repo, uuid, verb, path }) as Promise<Metafolder.TagReport>,
+    },
+
     statusBar: {
       message: (text: string, timeoutMs: number | null = null) =>
         invoke('post_status', { wsId: ctx.wsId, text, kind: 'info', timeoutMs }) as Promise<void>,

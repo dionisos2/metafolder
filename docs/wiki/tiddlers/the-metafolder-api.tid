@@ -180,6 +180,7 @@ literally, so creating `new%file.txt` creates exactly that. `readDir` marks with
 |`config.refSeed(field)`, `config.labelSeparator()` |the `[ref-seeds]` rule of a field and the separator of a completion label ([[Ref value seeds]]) |
 |`history.read(repo, zone)`, `history.append(repo, zone, entry)` |the store behind `attachHistory` of `/__history.js` ([[Input history]]) |
 |`recent.list(repo, limit?)`, `recent.touch(repo, uuid)` |the recently viewed metarecords |
+|`tag.answer(repo, uuid, verb, path)` |`add`, `deny`, `mixed` or `remove` about a tag on one metarecord, by the rules of `mf tag`: `{written, message}` ([[Tagging from the GUI]]) |
 |`trash.list`, `restore`, `remove`, `empty`, `trashPath` |the repository's trash ([[Trash]]) |
 |`log.revert(repo, target)` |a revert, files included ([[Filesystem coordination]]) |
 |`orphans.detect()`, `count()`, `delete()` |the orphaned metarecords of the workspace's repository ([[Orphans in the GUI]]) |

@@ -516,6 +516,21 @@ declare namespace Metafolder {
     touch(repo: string, uuid: string): Promise<void>;
   }
 
+  /** What a tag answer wrote: the records that gained it (lost the tag, for
+   *  `remove`), and the status-bar line saying so. */
+  interface TagReport {
+    written: number;
+    message: string;
+  }
+
+  /** Tag answers (doc "Tagging from the GUI"): `answer` says `add`, `deny`,
+   *  `mixed` or `remove` about the tag at `path` on one metarecord, by the
+   *  rules of `mf tag` (doc "Tag subsumption"); a path that names no tag yet
+   *  creates it. Rejects with the reason when the answer is refused. */
+  interface Tag {
+    answer(repo: string, uuid: string, verb: string, path: string): Promise<TagReport>;
+  }
+
   /** Cross-repo synchronisation (doc "Sync"): the shared `core::sync`
    *  orchestration, driven through the sync Tauri commands. Repos are named
    *  positionally (name or UUID), order-independent. `plan`/`run` run
@@ -711,6 +726,7 @@ declare namespace Metafolder {
     readonly ignore: Ignore;
     readonly history: History;
     readonly recent: Recent;
+    readonly tag: Tag;
     readonly statusBar: StatusBar;
     readonly messages: Messages;
     readonly shell: Shell;

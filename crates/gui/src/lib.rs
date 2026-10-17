@@ -143,11 +143,6 @@ fn register_builtins(registry: &CommandRegistry) {
             "Number the selected folder's (or selected file's folder's) direct children",
             true,
         ),
-        (
-            "mf:tag",
-            "Answer about a tag on the selected metarecord: add / deny / mixed / remove (mf tag)",
-            true,
-        ),
         ("ignore:list", "Show the ignore presets and the target directory's patterns", true),
         ("ignore:add", "Append an ignore preset's patterns to the target directory", true),
         ("ignore:remove", "Remove an ignore preset's patterns from the target directory", true),

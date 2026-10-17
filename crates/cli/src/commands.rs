@@ -1354,7 +1354,7 @@ fn target_query(selector: &str) -> Result<Json, CliError> {
 
 /// `mf tag [sel] <add|deny|mixed|remove> <path>`: one answer about a tag,
 /// written by `metafolder_core::tag::apply` (doc "Tag subsumption") — the
-/// rewrite the GUI's `mf:tag` shares. Prints how many records gained the
+/// rewrite the GUI's `tag:add` (`mf.tag.answer`) shares. Prints how many records gained the
 /// answer (lost the tag, for `remove`).
 pub fn tag_answer(
     ctx: &Ctx,
