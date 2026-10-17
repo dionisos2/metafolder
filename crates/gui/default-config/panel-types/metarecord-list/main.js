@@ -253,7 +253,7 @@ export async function mount(root, metafolder) {
   }
 
   // Whether a metarecord's mfr_type is a directory (picks the paste target for
-  // the file-actions menu).
+  // the file-actions menu, and the folder glyph of a grid card).
   /** @param {Metafolder.Metarecord} metarecord */
   function isDirMetarecord(metarecord) {
     const typeValue = fields(metarecord, 'mfr_type')[0]?.value;
@@ -495,6 +495,7 @@ export async function mount(root, metafolder) {
             onclick: () => setCursor(index),
           },
           thumbnail(metafolder.guiServer, pathsOf(metarecord)[0], {
+            isDir: isDirMetarecord(metarecord),
             glyphClass: 'glyph',
             token: metafolder.sessionToken,
           }),

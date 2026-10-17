@@ -36,6 +36,14 @@ const RECORDS = [
     ],
   },
   { uuid: 'bbbb', version: 1, fields: [{ id: 2, name: 'title', value: { type: 'string', value: 'second' } }] },
+  {
+    uuid: 'cccc',
+    version: 1,
+    fields: [
+      { id: 4, name: 'mfr_type', value: { type: 'string', value: 'dir' } },
+      { id: 5, name: 'mfr_path', value: { type: 'tree_ref', value: { parent: null, name: 'photos' } } },
+    ],
+  },
 ];
 
 type Call = { method: string; path: string; body: unknown };
@@ -70,7 +78,9 @@ function stubApi(vars: Record<string, unknown>, calls: Call[]) {
                 },
         // `aaaa` is a file, `bbbb` has none.
         treePaths: async (_repo: string, _field: string, uuids: string[]) =>
-          Object.fromEntries(uuids.map((uuid) => [uuid, uuid === 'aaaa' ? ['/a.txt'] : []])),
+          Object.fromEntries(
+            uuids.map((uuid) => [uuid, uuid === 'aaaa' ? ['/a.txt'] : uuid === 'cccc' ? ['/photos'] : []]),
+          ),
         metarecords: async () => new Map(),
         fields: async () => [],
         request: async () => ({ status: 200, body: null }),
@@ -185,6 +195,12 @@ describe('metarecord-list open buttons', () => {
     card.querySelector<HTMLButtonElement>('button.mf-open-detail')!.click();
     await settle();
     expect(p.order).toEqual(['select bbbb', 'panel:open other metarecord-detail']);
+  });
+
+  test("a directory's card shows the folder glyph, not the file one", async () => {
+    const p = await mountPanel();
+    const card = p.shadow.querySelectorAll('.card')[2];
+    expect(card.querySelector('.glyph')!.textContent).toBe('📁');
   });
 
   test('opening is panel:open: the list registers no open command of its own', async () => {
