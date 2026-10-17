@@ -1,0 +1,29 @@
+title: Tag flags
+tags: [[Hierarchical tags]]
+kind: reference
+aliases: partition always sparse
+summary: Three bool fields on a tag entry — partition makes its children exclude one another, always and sparse steer the classification script.
+
+A tag entry may carry three `bool` fields; one not written is `false`. The shipped
+schema declares them with that default, so an entry created in the GUI shows them
+([[Schema file]]); `mf tag` creates entries without them. `mf tag list` prints them
+as three `0`/`1` columns after the uuid. Their names come from the `[tag]` table of
+[[CLI configuration]].
+
+|!Field |!On |!Effect |
+|`partition` |a parent |its children exclude one another: `mf tag add` of one drops the others |
+|`always` |any tag |`gui-tag-classify.sh` adds it without asking ([[Classifying with tags]]) |
+|`sparse` |a parent |`gui-tag-classify.sh` picks its children by completion, one after another ([[Classifying with tags]]) |
+
+!! Partition
+
+`add P` drops, besides what subsumption drops ([[Tag subsumption]]), the `tag` refs to
+the other children of every partition P is under, and to everything below them —
+along each path of P, and for P's ancestors too: `musique/jazz/bebop` is jazz, so
+under a partition `musique` it excludes `musique/rock` and `musique/rock/punk`. What P
+implies is never dropped: a `fusion` under both `musique/jazz` and `musique/rock`
+excludes neither. Only `add` excludes; `deny` and `mixed` are unchanged, and nothing
+is written as a negative.
+
+The flag is the parent's, so "its other children" names one set even when a child
+has several parents ([[Why there is no exclusive flag]]).

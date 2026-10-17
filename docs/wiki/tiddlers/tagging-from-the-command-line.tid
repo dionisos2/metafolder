@@ -34,6 +34,7 @@ it created included ([[Undo and redo]]).
 mf tag list
 ```
 
-prints the vocabulary as `path<TAB>uuid`, one line per path, sorted by path: a tag of
-several parents ([[Hierarchy references]]) has several lines and one uuid. It takes no
+prints the vocabulary as `path<TAB>uuid<TAB>always<TAB>partition<TAB>sparse` (flags
+`0`/`1`, [[Tag flags]]), one line per path, sorted by path: a tag of several parents
+([[Hierarchy references]]) has several lines and one uuid. It takes no
 selector; it is the format the tagging scripts read ([[Classifying with tags]]).

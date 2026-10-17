@@ -99,6 +99,8 @@ mod tests {
                 ("POST", "/repos/r/query/fields/resolve-tree") => {
                     Ok(json!({"m": ["musique"], "j": ["musique/jazz"]}))
                 }
+                // The flags: none set.
+                ("POST", "/repos/r/query") => Ok(json!({"results": []})),
                 ("GET", "/repos/r/fields") => {
                     Ok(json!([{"name": "path", "type": "hierarchy_ref"}]))
                 }

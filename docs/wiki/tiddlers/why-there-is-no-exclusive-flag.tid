@@ -1,0 +1,18 @@
+title: Why there is no exclusive flag
+tags: [[Hierarchical tags]]
+kind: rationale
+summary: A child tag once could exclude its siblings by a flag of its own; that flag was removed in October 2026, being ambiguous once a tag has several parents. The parent's partition stays.
+
+Until October 2026 two `bool` fields on the tag entries made tags exclude one another:
+`partition` on a parent (its direct children exclude one another) and `exclusive` on a
+child (it excludes its siblings). Both were removed on 14 October 2026; only
+`exclusive` was meant to go, and `partition` came back on 17 October 2026 (user), with
+the meaning it had ([[Tag flags]]).
+
+`exclusive` is ambiguous once a tag may have several parents ([[Hierarchy references]]):
+a marathon under both `sport/courir` and `évènement` would exclude the
+children of which parent? `partition` has no such problem — it is set on the parent,
+so "its other children" names one set whatever else they hang under.
+
+An `exclusive` flag written before stays as an ordinary field with no effect; nothing
+converts it.

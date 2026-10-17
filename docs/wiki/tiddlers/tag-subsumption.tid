@@ -9,7 +9,7 @@ is each of them, and everything above any of its paths ([[Hierarchy references]]
 ancestors and descendants below are taken through every path. So a record carries the
 most specific thing known about it, and `mf tag` rewrites it to stay so:
 
-* `add P` — the record gains `tag` → P and loses its `tag` refs to P's ''ancestors'', which P already says. It keeps the ones to P's descendants (`musique/jazz/bebop` says more than `musique/jazz`).
+* `add P` — the record gains `tag` → P and loses its `tag` refs to P's ''ancestors'', which P already says. It keeps the ones to P's descendants (`musique/jazz/bebop` says more than `musique/jazz`). Under a partition it also loses P's excluded siblings (below).
 * `deny P` — the record gains `negative_tag` → P and loses its `negative_tag` refs to P's ''descendants'', which "not P" already says.
 * ''Contradictions'' — each answer also takes back the opposite answers it makes false. Having P means wholly having every ancestor of P, so `add P` removes the `negative_tag` and `mixed_tag` refs to P and to its ancestors. Not having P means having none of its descendants, so `deny P` removes the `tag` and `mixed_tag` refs to P and to its descendants (a mixed mark is "partly", which a whole answer settles). Conversely `mixed P` — partly P, partly not — removes the `tag` refs to P and to its descendants (wholly jazz would be wholly music) and the `negative_tag` refs to P and to its ancestors (wholly not music would be wholly not jazz). The rest is compatible and stays: "not bebop" beside jazz, "music" beside "not jazz".
 * `remove P` rewrites nothing else.
@@ -30,5 +30,6 @@ The classification flow asks its questions in the same terms: a question is not 
 about a tag already implied by a more specific positive, about anything under a general
 negative (`gui-tag-next.sh`, [[Classifying with tags]]).
 
-Siblings never exclude each other: `musique/jazz` and `musique/rock` go together. Tags
-used to be able to exclude their siblings ([[Why tags have no exclusivity]]).
+Siblings go together — `musique/jazz` and `musique/rock` — unless their parent is a
+''partition'': then `add P` also drops the `tag` refs to the other children of every
+partition above P, and to what lies under them ([[Tag flags]]).

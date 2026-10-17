@@ -68,8 +68,10 @@ ancestors of every path of a tag are its ancestors by every parent. Subsumption 
 the contradictions keep their meaning ([[Tag subsumption]]): having the marathon
 drops the event and the race tags, not being an event takes back the marathon
 whichever path named it. `gui-tag-next.sh` sets a tag aside once any of its paths is
-under a negative. Exclusivity was removed first: siblings are ambiguous once a node
-has several parents ([[Why tags have no exclusivity]]).
+under a negative. A child's `exclusive` flag was removed first: its siblings are
+ambiguous once a node has several parents ([[Why there is no exclusive flag]]); a
+parent's `partition` is not, and excludes its children by every path of the tag added
+([[Tag flags]]).
 
 A repository whose vocabulary is still a forest keeps it, and `mf tag` keeps writing
 `tree_ref` there; [[Converting a tag vocabulary to a hierarchy]] says how to change it.

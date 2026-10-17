@@ -10,7 +10,9 @@
 //! a `hierarchy_ref`) — its resolved paths (`"musique/jazz"`) name the tag, and
 //! an optional `label` may name it. Records reference entries through the
 //! multi-map Ref fields `<positive>` / `<negative>` / `<mixed>`
-//! (`tag`/`negative_tag`/`mixed_tag`). Siblings never exclude each other.
+//! (`tag`/`negative_tag`/`mixed_tag`). Three `bool` flags on an entry
+//! (doc "Tag flags"): `<partition>` makes its children exclude one another,
+//! and `<always>`/`<sparse>` only steer the classification script.
 
 use std::collections::HashMap;
 
@@ -38,6 +40,12 @@ pub struct TagConfig {
     pub negative: String,
     /// Multi-map Ref field: a folder is *mixed* w.r.t. the tag.
     pub mixed: String,
+    /// Bool flag: the classification adds the tag without asking.
+    pub always: String,
+    /// Bool flag: the entry's children exclude one another.
+    pub partition: String,
+    /// Bool flag: the classification picks the entry's children one by one.
+    pub sparse: String,
 }
 
 impl Default for TagConfig {
@@ -49,6 +57,9 @@ impl Default for TagConfig {
             positive: "tag".into(),
             negative: "negative_tag".into(),
             mixed: "mixed_tag".into(),
+            always: "always".into(),
+            partition: "partition".into(),
+            sparse: "sparse".into(),
         }
     }
 }
@@ -105,6 +116,14 @@ impl Answer {
     }
 }
 
+/// The flags of a tag entry (doc "Tag flags"); a flag not written is false.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Flags {
+    pub always: bool,
+    pub partition: bool,
+    pub sparse: bool,
+}
+
 /// The tag vocabulary, loaded once per answer. A tag in a hierarchy has one
 /// path per way up (doc "Hierarchy references"), and every path is listed, so
 /// the string ancestors of all its paths are exactly its ancestors by every
@@ -117,6 +136,8 @@ pub struct Vocab {
     paths: HashMap<String, Vec<String>>,
     /// All tag paths (for descendant scans).
     names: Vec<String>,
+    /// Entry uuid → its flags, for the entries with one set.
+    flags: HashMap<String, Flags>,
     /// The value type entries are placed with: the field's own, else
     /// `hierarchy_ref` for a vocabulary not begun yet.
     path_type: String,
@@ -125,7 +146,9 @@ pub struct Vocab {
 impl Vocab {
     /// Loads the vocabulary (`<type_field> = <entry_type>`): the resolved paths
     /// of every entry's `path_field`, in one `resolve-tree` round-trip (uuid →
-    /// paths); an entry with no resolvable path is not part of it.
+    /// paths); an entry with no resolvable path is not part of it. The flags
+    /// cost one query each, answered by the uuids of the few entries they are
+    /// set on.
     pub fn load(
         client: &dyn DaemonClient,
         repo: &str,
@@ -153,8 +176,37 @@ impl Vocab {
             name2uuid: HashMap::new(),
             paths: HashMap::new(),
             names: Vec::new(),
+            flags: HashMap::new(),
             path_type,
         };
+        for flag in [&cfg.always, &cfg.partition, &cfg.sparse] {
+            let flagged = json!({"type": "and", "operands": [query, {
+                "type": "eq", "field": flag, "value": {"type": "bool", "value": true},
+            }]});
+            let mut cursor: Option<String> = None;
+            loop {
+                let mut body = json!({"query": flagged, "limit": 500});
+                if let Some(c) = &cursor {
+                    body["cursor"] = json!(c);
+                }
+                let resp = client.post(&format!("/repos/{repo}/query"), &body)?;
+                for uuid in resp["results"].as_array().into_iter().flatten() {
+                    let Some(uuid) = uuid.as_str() else { continue };
+                    let flags = vocab.flags.entry(uuid.to_string()).or_default();
+                    if flag == &cfg.always {
+                        flags.always = true;
+                    } else if flag == &cfg.partition {
+                        flags.partition = true;
+                    } else {
+                        flags.sparse = true;
+                    }
+                }
+                match resp["next_cursor"].as_str() {
+                    Some(c) => cursor = Some(c.to_string()),
+                    None => break,
+                }
+            }
+        }
         for (uuid, paths) in resolved.as_object().into_iter().flatten() {
             let paths: Vec<String> = paths
                 .as_array()
@@ -174,17 +226,58 @@ impl Vocab {
         Ok(vocab)
     }
 
-    /// Every tag path with its entry uuid, path-sorted (`mf tag list`).
-    pub fn entries(&self) -> Vec<(String, String)> {
+    /// Every tag path with its entry uuid and flags, path-sorted (`mf tag list`).
+    pub fn entries(&self) -> Vec<(String, String, Flags)> {
         let mut names = self.names.clone();
         names.sort();
         names
             .into_iter()
             .map(|name| {
                 let uuid = self.name2uuid[&name].clone();
-                (name, uuid)
+                let flags = self.flags_of(&uuid);
+                (name, uuid, flags)
             })
             .collect()
+    }
+
+    /// The flags of the entry `uuid`.
+    fn flags_of(&self, uuid: &str) -> Flags {
+        self.flags.get(uuid).copied().unwrap_or_default()
+    }
+
+    /// The tags a partition excludes once the tag at `path` is had: for the
+    /// tag and each of its ancestors, by every path, whose parent is a
+    /// partition, the parent's other children and everything under them —
+    /// never the tag itself nor one of its ancestors, which it implies.
+    fn excluded_by_partitions(&self, path: &str) -> Vec<String> {
+        let implied: Vec<&String> =
+            self.with_ancestors(path).iter().filter_map(|p| self.name2uuid.get(p)).collect();
+        let mut out: Vec<String> = Vec::new();
+        for p in self.paths_of(path) {
+            let mut node = p.as_str();
+            while let Some(par) = parent(node) {
+                let is_partition =
+                    self.name2uuid.get(par).is_some_and(|u| self.flags_of(u).partition);
+                if is_partition {
+                    for sibling in &self.names {
+                        if parent(sibling) != Some(par) || sibling == node {
+                            continue;
+                        }
+                        for excluded in self.with_descendants(sibling) {
+                            let uuid = self.name2uuid.get(&excluded);
+                            if uuid.is_some_and(|u| implied.contains(&u)) {
+                                continue;
+                            }
+                            if !out.contains(&excluded) {
+                                out.push(excluded);
+                            }
+                        }
+                    }
+                }
+                node = par;
+            }
+        }
+        out
     }
 
     /// Whether a tag is named `path`.
@@ -322,8 +415,8 @@ impl<'a> TagBatch<'a> {
 /// `Remove`). The tag entry, and any missing ancestor, is created by an answer
 /// other than `Remove`, which writes nothing for a tag that does not exist.
 ///
-/// * `Add` drops the positives on the tag's ancestors, and the negatives and
-///   mixed marks on the tag and its ancestors;
+/// * `Add` drops the positives on the tag's ancestors and on what a partition
+///   excludes, and the negatives and mixed marks on the tag and its ancestors;
 /// * `Deny` drops the negatives on its descendants, and the positives and mixed
 ///   marks on the tag and its descendants;
 /// * `Mixed` drops the positives on the tag and its descendants, and the
@@ -354,6 +447,8 @@ pub fn apply(
             let uuid = batch.ensure_entry(&mut vocab, path);
             let counted = batch.add(&cfg.positive, &uuid);
             batch.remove(&vocab, &cfg.positive, &vocab.ancestors(path));
+            // Under a partition, having the tag is not having its siblings.
+            batch.remove(&vocab, &cfg.positive, &vocab.excluded_by_partitions(path));
             // Having the tag means wholly having every ancestor: a negative on
             // any of them, or on the tag itself, is now false, and so is a
             // mixed mark.
@@ -426,16 +521,20 @@ mod tests {
         assert!(descendants("administratif", &vocab()).is_empty());
     }
 
-    /// Answers the vocabulary reads from a fixed table (uuid → paths) and
-    /// records the batch it is sent.
+    /// Answers the vocabulary reads from a fixed table (uuid → paths, flag
+    /// name → the uuids it is true on) and records the batch it is sent.
     struct Stub {
         entries: Json,
+        flags: Json,
         batches: RefCell<Vec<Json>>,
     }
 
     impl Stub {
         fn new(entries: Json) -> Self {
-            Stub { entries, batches: RefCell::new(Vec::new()) }
+            Stub::flagged(entries, json!({}))
+        }
+        fn flagged(entries: Json, flags: Json) -> Self {
+            Stub { entries, flags, batches: RefCell::new(Vec::new()) }
         }
         fn ops(&self) -> Vec<Json> {
             let batches = self.batches.borrow();
@@ -455,6 +554,15 @@ mod tests {
                 ("POST", "/repos/r/query/fields/resolve-tree") => {
                     assert_eq!(body.unwrap()["field"], "path");
                     Ok(self.entries.clone())
+                }
+                ("POST", "/repos/r/query") => {
+                    // `mf_schema = "tag" AND <flag> = true`: the uuids it is true on.
+                    let q = &body.unwrap()["query"];
+                    assert_eq!(q["type"], "and");
+                    assert_eq!(q["operands"][0]["field"], "mf_schema");
+                    assert_eq!(q["operands"][1]["value"], json!({"type": "bool", "value": true}));
+                    let flag = q["operands"][1]["field"].as_str().unwrap();
+                    Ok(json!({"results": self.flags.get(flag).cloned().unwrap_or(json!([]))}))
                 }
                 ("GET", "/repos/r/fields") => {
                     Ok(json!([{"name": "path", "type": "hierarchy_ref"}]))
@@ -600,5 +708,111 @@ mod tests {
         for uuid in [MARATON, SPORT, EVENT] {
             assert!(negatives.iter().any(|n| n == uuid), "{uuid} in {negatives:?}");
         }
+    }
+
+    const ROCK: &str = "77777777777777777777777777777777";
+    const PUNK: &str = "88888888888888888888888888888888";
+
+    /// musique is a partition: its children exclude one another.
+    fn partitioned_music() -> Stub {
+        Stub::flagged(
+            json!({
+                MUSIQUE: ["musique"],
+                JAZZ: ["musique/jazz"],
+                BEBOP: ["musique/jazz/bebop"],
+                ROCK: ["musique/rock"],
+                PUNK: ["musique/rock/punk"],
+            }),
+            json!({"partition": [MUSIQUE]}),
+        )
+    }
+
+    fn removed_positives(ops: &[Json]) -> Vec<String> {
+        summary(ops)
+            .into_iter()
+            .filter(|(op, f, _)| op == "remove" && f == "tag")
+            .map(|(_, _, target)| target)
+            .collect()
+    }
+
+    #[test]
+    fn the_vocabulary_reads_the_flags_of_its_entries() {
+        let stub = Stub::flagged(
+            json!({MUSIQUE: ["musique"], JAZZ: ["musique/jazz"], ROCK: ["musique/rock"]}),
+            json!({"always": [JAZZ], "partition": [MUSIQUE], "sparse": [MUSIQUE, ROCK]}),
+        );
+        let vocab = Vocab::load(&stub, "r", &TagConfig::default()).unwrap();
+        let flags: Vec<(String, Flags)> =
+            vocab.entries().into_iter().map(|(path, _, flags)| (path, flags)).collect();
+        assert_eq!(
+            flags,
+            vec![
+                ("musique".into(), Flags { always: false, partition: true, sparse: true }),
+                ("musique/jazz".into(), Flags { always: true, partition: false, sparse: false }),
+                ("musique/rock".into(), Flags { always: false, partition: false, sparse: true }),
+            ]
+        );
+    }
+
+    #[test]
+    fn add_under_a_partition_drops_the_siblings_and_what_they_imply() {
+        let stub = partitioned_music();
+        apply(&stub, "r", &TagConfig::default(), &sel(), Answer::Add, "musique/jazz").unwrap();
+        let removed = removed_positives(&stub.ops());
+        // rock, and punk under it (punk is rock), besides the ancestor musique.
+        for uuid in [MUSIQUE, ROCK, PUNK] {
+            assert!(removed.iter().any(|r| r == uuid), "{uuid} in {removed:?}");
+        }
+        assert!(!removed.iter().any(|r| r == JAZZ || r == BEBOP), "{removed:?}");
+    }
+
+    #[test]
+    fn add_below_a_partition_child_excludes_that_childs_siblings() {
+        // bebop is jazz, so it excludes rock as jazz does.
+        let stub = partitioned_music();
+        apply(&stub, "r", &TagConfig::default(), &sel(), Answer::Add, "musique/jazz/bebop")
+            .unwrap();
+        let removed = removed_positives(&stub.ops());
+        for uuid in [ROCK, PUNK] {
+            assert!(removed.iter().any(|r| r == uuid), "{uuid} in {removed:?}");
+        }
+        assert!(!removed.iter().any(|r| r == BEBOP), "{removed:?}");
+    }
+
+    #[test]
+    fn a_partition_never_drops_the_tag_added_nor_what_it_implies() {
+        // fusion is both jazz and rock: adding it excludes neither of them.
+        const FUSION: &str = "99999999999999999999999999999999";
+        const POP: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let stub = Stub::flagged(
+            json!({
+                MUSIQUE: ["musique"],
+                JAZZ: ["musique/jazz"],
+                ROCK: ["musique/rock"],
+                POP: ["musique/pop"],
+                FUSION: ["musique/jazz/fusion", "musique/rock/fusion"],
+            }),
+            json!({"partition": [MUSIQUE]}),
+        );
+        apply(&stub, "r", &TagConfig::default(), &sel(), Answer::Add, "musique/jazz/fusion")
+            .unwrap();
+        let ops = stub.ops();
+        let removed = removed_positives(&ops);
+        assert!(removed.iter().any(|r| r == POP), "{removed:?}");
+        assert!(!removed.iter().any(|r| r == FUSION), "{removed:?}");
+        // Each tag is removed once, whichever sibling reached it.
+        let mut unique = removed.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), removed.len(), "{removed:?}");
+    }
+
+    #[test]
+    fn without_a_partition_siblings_go_together() {
+        let stub = Stub::new(json!({
+            MUSIQUE: ["musique"], JAZZ: ["musique/jazz"], ROCK: ["musique/rock"],
+        }));
+        apply(&stub, "r", &TagConfig::default(), &sel(), Answer::Add, "musique/jazz").unwrap();
+        assert_eq!(removed_positives(&stub.ops()), vec![MUSIQUE.to_string()]);
     }
 }

@@ -1304,16 +1304,18 @@ pub fn tag_answer(
     Ok(0)
 }
 
-/// `mf tag list` — the vocabulary as TSV `path<TAB>uuid`, one line per path
-/// (a tag of several parents has several), path-sorted. This is exactly the
-/// universe format the tagging scripts consume: the uuid tells them which
-/// paths are one tag.
+/// `mf tag list` — the vocabulary as TSV
+/// `path<TAB>uuid<TAB>always<TAB>partition<TAB>sparse` (flags 0/1), one line
+/// per path (a tag of several parents has several), path-sorted. This is
+/// exactly the universe format the tagging scripts consume: the uuid tells them
+/// which paths are one tag, the flags how to ask about it (doc "Tag flags").
 pub fn tag_list(ctx: &Ctx) -> Result<i32, CliError> {
     let repo = repo_id(ctx)?;
     let vocab = metafolder_core::tag::Vocab::load(&ctx.client, &repo, &ctx.tag)
         .map_err(trash_daemon_err)?;
-    for (name, uuid) in vocab.entries() {
-        println!("{name}\t{uuid}");
+    for (name, uuid, flags) in vocab.entries() {
+        let (a, p, s) = (flags.always as u8, flags.partition as u8, flags.sparse as u8);
+        println!("{name}\t{uuid}\t{a}\t{p}\t{s}");
     }
     Ok(0)
 }

@@ -5020,15 +5020,76 @@ fn test_mf_tag_subsumption_deny_list() {
     tag(&["-i", &rec, "deny", "administratif"]);
     assert_eq!(names("negative_tag"), vec!["administratif"]);
 
-    // list = the vocabulary, path<TAB>uuid (auto-created cinema tags present).
+    // list = the vocabulary, path<TAB>uuid<TAB>always<TAB>partition<TAB>sparse
+    // (auto-created cinema tags present; the retired `exclusive` is no flag).
     let out = mf(&["-u", &repo, "tag", "list"]);
     assert_ok(&out);
     let listed: Vec<&str> = out.stdout.lines().filter_map(|l| l.split('\t').next()).collect();
     for path in ["musique/jazz", "administratif", "cinema/thriller"] {
         assert!(listed.contains(&path), "{path} in list:\n{}", out.stdout);
     }
-    let jazz_line = format!("musique/jazz\t{jazz}");
+    let jazz_line = format!("musique/jazz\t{jazz}\t0\t0\t0");
     assert!(out.stdout.lines().any(|l| l == jazz_line), "list:\n{}", out.stdout);
+}
+
+/// A partition's children exclude one another (doc "Tag flags"): adding one
+/// drops the others, and what is under them; the flags show in the list.
+#[test]
+fn test_mf_tag_partition_excludes_the_siblings() {
+    let (repo, _root) = init_repo("tag-partition");
+    let rec = create_metarecord(&repo, &["note:string=target"]);
+    let mk_tag = |specs: &[&str]| create_metarecord(&repo, specs);
+    let saison = mk_tag(&[
+        "mf_schema:string=tag",
+        "path:hierarchy_ref=/saison",
+        "partition:bool=true",
+        "sparse:bool=false",
+    ]);
+    let ete = mk_tag(&["mf_schema:string=tag", &format!("path:hierarchy_ref={saison}/été")]);
+    let _hiver = mk_tag(&[
+        "mf_schema:string=tag",
+        &format!("path:hierarchy_ref={saison}/hiver"),
+        "always:bool=true",
+    ]);
+    let _canicule =
+        mk_tag(&["mf_schema:string=tag", &format!("path:hierarchy_ref={ete}/canicule")]);
+    let tag = |args: &[&str]| {
+        let mut v: Vec<&str> = vec!["-u", repo.as_str(), "tag", "-i", rec.as_str()];
+        v.extend_from_slice(args);
+        assert_ok(&mf(&v));
+    };
+    let positives = || {
+        let out = mf(&[
+            "-u",
+            &repo,
+            "metarecord",
+            "-i",
+            &rec,
+            "field",
+            "get",
+            "tag",
+            "--resolve",
+            "path",
+        ]);
+        assert_ok(&out);
+        out.stdout.lines().map(String::from).collect::<Vec<_>>()
+    };
+
+    tag(&["add", "saison/été/canicule"]);
+    tag(&["add", "saison/hiver"]);
+    assert_eq!(positives(), vec!["saison/hiver"], "canicule is été, which hiver excludes");
+    tag(&["add", "saison/été"]);
+    assert_eq!(positives(), vec!["saison/été"]);
+
+    let out = mf(&["-u", &repo, "tag", "list"]);
+    assert_ok(&out);
+    for line in [format!("saison\t{saison}\t0\t1\t0"), format!("saison/été\t{ete}\t0\t0\t0")] {
+        assert!(out.stdout.lines().any(|l| l == line), "{line} in:\n{}", out.stdout);
+    }
+    assert!(out
+        .stdout
+        .lines()
+        .any(|l| l.starts_with("saison/hiver\t") && l.ends_with("\t1\t0\t0")));
 }
 
 /// A tag vocabulary that is a hierarchy (doc "Hierarchy references"): a tag
@@ -5091,7 +5152,7 @@ fn test_mf_tag_follows_every_parent_of_a_hierarchy() {
     let out = mf(&["-u", &repo, "tag", "list"]);
     assert_ok(&out);
     for path in ["sport/courir/maraton", "évènement/maraton"] {
-        let line = format!("{path}\t{maraton}");
+        let line = format!("{path}\t{maraton}\t0\t0\t0");
         assert!(out.stdout.lines().any(|l| l == line), "{line} in:\n{}", out.stdout);
     }
 }

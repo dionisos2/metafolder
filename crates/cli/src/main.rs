@@ -224,8 +224,8 @@ enum Command {
     },
     /// Hierarchical tags: add/deny/mixed/remove a tag on the selected
     /// metarecord(s), or list the vocabulary. Encapsulates the subsumption and
-    /// exclusivity rules (drop ancestors on add, descendants on deny, and
-    /// whatever the new answer contradicts). The field-name convention is configurable via the `[tag]` config table.
+    /// partition rules (drop ancestors on add, and the siblings under a
+    /// partition; descendants on deny; whatever the new answer contradicts). The field-name convention is configurable via the `[tag]` config table.
     Tag {
         /// DSL query selector (use -s for the simplified language)
         #[arg(short = 'q', long = "query")]
@@ -566,7 +566,7 @@ enum TagVerb {
     Mixed { path: String },
     /// Drop the tag from the record(s) (undo of add)
     Remove { path: String },
-    /// List the tag vocabulary as TSV: path<TAB>uuid, one line per path
+    /// List the tag vocabulary as TSV: path<TAB>uuid<TAB>always<TAB>partition<TAB>sparse
     List,
 }
 

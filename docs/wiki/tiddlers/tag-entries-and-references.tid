@@ -10,11 +10,13 @@ summary: What a tag entry holds, how records point at one, and the [tag] table t
 |`mf_schema` |`string` = `tag` |marks the metarecord as a tag entry |
 |`path` |`hierarchy_ref`, one row per parent (`tree_ref` in a repository created before October 2026) |its positions: parent entry and name, the same name on every row ([[Hierarchy references]]). A top-level tag is a root, so paths have no leading `/` ([[TreeRef path conventions]]) |
 |`label` |`string` |optional display name |
+|`always`, `partition`, `sparse` |`bool` |how the tag is asked about and what it excludes — absent is false ([[Tag flags]]) |
 
 An entry with no resolvable `path` is not part of the vocabulary. `mf tag` creates
 entries as it needs them — a missing `cinema/thriller` is created with the missing
-`cinema` above it — with `mf_schema` and `path` only. The `partition` and `exclusive`
-flags of older vocabularies have no effect ([[Why tags have no exclusivity]]).
+`cinema` above it — with `mf_schema` and `path` only; the shipped schema declares the
+three flags with the default `false`, so an entry made in the GUI shows them. The
+`exclusive` flag of older vocabularies has no effect ([[Why there is no exclusive flag]]).
 
 !! On a record
 
@@ -28,7 +30,8 @@ The shipped schema declares `tag` on `note` and `bookmark` ([[Schema file]]).
 !! Field names
 
 Every name above except `label` comes from the `[tag]` table of the CLI configuration
-(`type-field`, `entry-type`, `path-field`, `positive`, `negative`, `mixed`); the
+(`type-field`, `entry-type`, `path-field`, `positive`, `negative`, `mixed`, `always`,
+`partition`, `sparse`); the
 defaults are the names shown ([[CLI configuration]]).
 The shipped scripts, the simplified grammar's tag forms and the GUI's ref pickers use
 the defaults.

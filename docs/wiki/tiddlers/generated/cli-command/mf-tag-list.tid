@@ -1,12 +1,12 @@
 title: $:/mf/gen/CLI command/mf tag list
 catalog: CLI command
 target: mf tag list
-summary: List the tag vocabulary as TSV: path<TAB>uuid, one line per path
+summary: List the tag vocabulary as TSV: path<TAB>uuid<TAB>always<TAB>partition<TAB>sparse
 
 !! Reference
 
 ```
-List the tag vocabulary as TSV: path<TAB>uuid, one line per path
+List the tag vocabulary as TSV: path<TAB>uuid<TAB>always<TAB>partition<TAB>sparse
 
 Usage: mf tag list
 
