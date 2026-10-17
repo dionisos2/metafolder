@@ -59,6 +59,11 @@ daemon sorts the field's stored values, so a `tag>label` column sorts by the `ta
 uuids; `&` columns do not sort ([[Pagination and sorting]]). Dragging a header's right
 edge resizes the column.
 
+''Order by'', beside the columns, orders the list by an `int` field instead: it numbers
+the rows that have no position, sorts by it, and
+<<key "metarecord-list:order move up" Alt+↑>> / <<key "metarecord-list:order move down" Alt+↓>>
+move the row under the cursor by rewriting it ([[Ordering a list]]).
+
 !! Rows
 
 The list loads a page of 100 rows (`[page-size]`, [[GUI configuration]];
@@ -120,6 +125,7 @@ script can read and set.
 |`metarecord-list:normal-query`, `:normal-shown`, `:normal-frozen` |the normal DSL field, whether it is shown (yes unless `false`), whether it is frozen |
 |`metarecord-list:columns`, `:column-widths` |the columns, as a list, and their widths |
 |`metarecord-list:page-size` |the page size, when changed |
+|`metarecord-list:order-field` |the `int` field the list is ordered by, or `null` ([[Ordering a list]]) |
 |`metarecord-list:mode` |`table` or `grid` ([[Display modes]]) |
 |`metarecord-list:effective-query` |what was last run, finder included, as [[Query IR]] — what `metarecord:bulk` acts on |
 |`metarecord-list:effective-query-text` |the same as DSL text (empty for everything), which [[mf gui query]] prints |

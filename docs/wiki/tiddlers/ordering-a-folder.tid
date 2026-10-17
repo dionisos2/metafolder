@@ -20,7 +20,8 @@ folder itself gets `order_numbered = true` (once), so `order_numbered = true` fi
 folders done and `order_numbered IS UNKNOWN` those still to do.
 
 The three fields are ordinary ''user'' fields (no reserved prefix), sharing `order_` so
-that typing `order` in a completion shows the family; edit them freely.
+that typing `order` in a completion shows the family; edit them freely. To move a child by hand, order a
+[[metarecord-list panel]] by the field and move its rows ([[Ordering a list]]).
 
 !! How positions are chosen
 

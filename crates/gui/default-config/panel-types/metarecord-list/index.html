@@ -355,6 +355,13 @@
         <button id="columns-apply">Apply</button>
       </div>
       <div id="columns-error" class="editor-error"></div>
+      <div class="editor-row">
+        <label class="freeze-label" title="Order the list by an int field: rows without a position are numbered, the list sorts by it, and Alt+↑ / Alt+↓ move the row under the cursor (doc &quot;Ordering a list&quot;).">
+          <input id="order-on" type="checkbox" /> Order by
+        </label>
+        <input id="order-field" list="order-fields" value="order_file" placeholder="int field, e.g. order_file" />
+        <datalist id="order-fields"></datalist>
+      </div>
     </div>
     <div id="scroll">
       <p class="placeholder" id="no-repo" hidden>No active repository — use the repos panel.</p>

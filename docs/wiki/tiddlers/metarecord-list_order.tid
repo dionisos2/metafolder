@@ -1,0 +1,9 @@
+title: metarecord-list:order
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Metarecord list: order by an int field (on <field> / off / move <up/down/top/bottom>)
+
+`metarecord-list:order on <field>` numbers the rows of the [[metarecord-list panel]] that have
+no position in the `int` field `<field>` and sorts the list by it; `order move up`, `down`,
+`top`, `bottom` move the row under the cursor by rewriting it; `order off` sorts as before and
+writes nothing. The whole of it: [[Ordering a list]].

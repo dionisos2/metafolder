@@ -436,6 +436,10 @@
 "shift+v" = { command = "log:revert label", when = "log" }
 # metarecord-list: the table ⇄ the grid of thumbnails (g = grid).
 "shift+g" = { command = "metarecord-list:toggle mode", when = "metarecord-list" }
+# metarecord-list ordered by an int field: move the row under the cursor
+# (doc "Ordering a list").
+"alt+up" = { command = "metarecord-list:order move up", when = "metarecord-list" }
+"alt+down" = { command = "metarecord-list:order move down", when = "metarecord-list" }
 "shift+w" = { command = "log:toggle watcher", when = "log" }
 
 # file-manager: filesystem operations (clipboard, rename, duplicate, create).

@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/metarecord-list:order
+catalog: GUI command
+target: metarecord-list:order
+summary: Metarecord list: order by an int field (on <field> / off / move <up/down/top/bottom>)
+
+!! Reference
+
+* Defined by the ``metarecord-list`` panel
+
+!! Default keys
+
+* ``alt+down`` → ``metarecord-list:order move down`` (in the ``metarecord-list`` panel)
+* ``alt+up`` → ``metarecord-list:order move up`` (in the ``metarecord-list`` panel)

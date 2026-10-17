@@ -48,7 +48,7 @@ Grouped by what they touch, which is what a name must make obvious:
 |the cursor or the selection |`cursor:next/prev/first/last <panel>`, `cursor:find <panel> <mode>`, `page <which>`, `select <toggle/all/none>`, and the `row-X` family (the row under the cursor) |
 |a view setting |`set <setting> [value]` |
 |the media player |`play-pause`, `play <what> [options]` (a [[Slideshow]]), `restart`, `mute`, `seek <±s>`, `speed <up/down/reset>`, `volume <up/down>`, `zoom <in/out/fit/reset>` |
-|the repository |`<noun> <op>` with `op` among `set`, `add`, `remove`, `unset`, `delete`, and the plain verbs `create`, `delete`, `rename`, `record`, `trash`, `restore`, `prune`, `reconcile`, `rollback`, `undo`, `redo`, `revert [what]`, `mark`, `run`, `load`, `unload`, `stop` |
+|the repository |`<noun> <op>` with `op` among `set`, `add`, `remove`, `unset`, `delete`, and the plain verbs `create`, `delete`, `rename`, `record`, `trash`, `restore`, `prune`, `reconcile`, `rollback`, `undo`, `redo`, `revert [what]`, `mark`, `run`, `load`, `unload`, `stop`, `order <on/off/move>` |
 
 ''A command that writes to the repository carries either `<noun> <op>` or a plain
 verb of the last row; everything else only moves the view.'' Nothing that writes can
@@ -57,6 +57,11 @@ be mistaken for something that scrolls.
 The five operations are those of the daemon and of the CLI ([[The verb pattern]]):
 `set` replaces a field's values, `add` and `remove` put one in and take one out,
 `unset` removes the field, and `delete` destroys a thing that has an id.
+
+`order` writes positions ([[Ordering a list]]); its `off` writes nothing but stays under
+the same name, so that typing `order` shows the three. The first argument is always one
+of `on`, `off`, `move` and the field comes after, so no field name can be mistaken for
+`off`.
 
 !! Two forms kept on purpose
 

@@ -21,6 +21,7 @@ import { createBulkEdit } from './bulk-edit.js';
 import { createDisplayData } from './display-data.js';
 import { asText, createQueryEditor } from './query-editor.js';
 import { registerZoneCommands } from './zone-commands.js';
+import { MOVES, createOrderMode, positionOf } from './order-mode.js';
 import {
   parseColumns,
   isSortable,
@@ -161,6 +162,10 @@ export async function mount(root, metafolder) {
   let fetchError = null;
   /** @type {SortKey[]} */
   let sort = [];
+  /** The int field the list is ordered by (doc "Ordering a list"), or null:
+   *  while set, the sort is that field ascending and the headers do not sort.
+   *  @type {string|null} */
+  let orderField = null;
   let cursorIndex = -1;
   // The checked multi-selection (workspace `selected_metarecords`, doc
   // "Cross-panel selection"): workspace-wide and shared with the file manager,
@@ -215,7 +220,7 @@ export async function mount(root, metafolder) {
     // one read as gone and coloured a file that is right there as an orphan.
     exists: (path) => metafolder.fs.exists(path),
     getRepo: () => repo,
-    getColumns: () => columns,
+    getColumns: () => shownColumns(),
     render,
   });
   const pathsOf = display.pathsOf;
@@ -434,7 +439,7 @@ export async function mount(root, metafolder) {
   function renderHeader() {
     byId(root, 'header-row').replaceChildren(
       el('th', { class: 'open-col' }), // the rows' open buttons
-      ...columns.map((column) => {
+      ...shownColumns().map((column) => {
         const active = isSortable(column) ? sort.find((s) => s.field === column.name) : undefined;
         const th = el(
           'th',
@@ -471,7 +476,7 @@ export async function mount(root, metafolder) {
             onclick: () => setCursor(index),
           },
           el('td', { class: 'open-cell' }, rowOpenButtons(index)),
-          columns.map((column) => el('td', {}, cellText(column, metarecord))),
+          shownColumns().map((column) => el('td', {}, cellText(column, metarecord))),
         );
         display.mark(tr, metarecord);
         return tr;
@@ -685,9 +690,24 @@ export async function mount(root, metafolder) {
     return Number.isFinite(n) && n >= 1 ? n : defaultPageSize;
   }
 
+  /** The columns drawn: the chosen ones, and the ordering field after them
+   *  when the list is ordered by a field that is not one of them. */
+  function shownColumns() {
+    if (orderField === null || columns.some((c) => c.spec === orderField)) return columns;
+    return [...columns, ...parseColumns(orderField)];
+  }
+
   /** @param {Column} column */
   function toggleSort(column) {
     if (!isSortable(column)) return; // metarecord meta, not a sortable field
+    if (orderField !== null) {
+      // Ordered: the order is the field's, and a header must not hide it.
+      void statusBar.message(
+        `ordered by ${orderField} — metarecord-list:order off to sort by a column`,
+        statusMessageMs,
+      );
+      return;
+    }
     const current = sort.find((s) => s.field === column.name);
     sort = current
       ? current.order === 'asc'
@@ -697,6 +717,135 @@ export async function mount(root, metafolder) {
     queryRan = true;
     void fetchPage(true);
   }
+
+  // ── Ordering by an int field (doc "Ordering a list", ./order-mode.js) ──
+
+  const orderMode = createOrderMode({
+    daemon,
+    getRepo: () => repo,
+    effectiveQuery,
+    effectiveQueryText,
+    getSort: () => sort,
+  });
+  const orderOnInput = byId(root, 'order-on', HTMLInputElement);
+  const orderFieldInput = byId(root, 'order-field', HTMLInputElement);
+  const orderFieldList = byId(root, 'order-fields');
+
+  /** The box and the field beside it say what the list is ordered by. */
+  function syncOrderControls() {
+    orderOnInput.checked = orderField !== null;
+    if (orderField !== null) orderFieldInput.value = orderField;
+  }
+
+  /** The repository's int fields, the ones that can order a list. */
+  async function intFields() {
+    if (!repo) return [];
+    try {
+      return (await daemon.fields(repo)).filter((f) => f.type === 'int').map((f) => f.name);
+    } catch {
+      return [];
+    }
+  }
+
+  /** `order on <field>`: numbers what has no position, then sorts by it.
+   *  @param {string} field */
+  async function orderOn(field) {
+    const name = (field ?? '').trim();
+    const written = await orderMode.activate(name);
+    if (written === null) return; // declined: nothing written, nothing changed
+    orderField = name;
+    sort = [{ field: name, order: 'asc' }];
+    syncOrderControls();
+    await workspace.set('metarecord-list:order-field', name);
+    void statusBar.message(
+      `ordered by ${name}` +
+        (written > 0 ? ` — ${written} position${written === 1 ? '' : 's'} written` : ''),
+      statusMessageMs,
+    );
+    queryRan = true;
+    await fetchPage(true);
+  }
+
+  /** `order off`: the ordinary sort again; the positions stay. */
+  async function orderOff() {
+    if (orderField === null) return;
+    orderField = null;
+    sort = [];
+    syncOrderControls();
+    await workspace.set('metarecord-list:order-field', null);
+    queryRan = true;
+    await fetchPage(true);
+  }
+
+  /** Moves are applied one after the other: each reads the rows the previous
+   *  one left. */
+  let moveChain = Promise.resolve();
+
+  /** `order move <where>` on the row under the cursor, which stays on it.
+   *  @param {string} where */
+  async function orderMove(where) {
+    const field = orderField;
+    if (field === null) {
+      throw new Error('the list is not ordered: metarecord-list:order on <field> first');
+    }
+    if (!MOVES.includes(where)) {
+      throw new Error(`unknown move: "${where ?? ''}" (expected ${MOVES.join(' / ')})`);
+    }
+    const moved = metarecords[cursorIndex];
+    if (!moved) return;
+    const rowsNow = metarecords.map((m) => ({ uuid: m.uuid, value: positionOf(m, field) }));
+    const out = await orderMode.move(
+      field,
+      rowsNow,
+      cursorIndex,
+      /** @type {'up'|'down'|'top'|'bottom'} */ (where),
+      nextCursor !== null,
+    );
+    if (out === null) {
+      void statusBar.message(`nothing to move ${where}`, statusMessageMs);
+      return;
+    }
+    // The loaded rows, in their new order, with their new positions: no read
+    // again, so a move deep in a long list keeps the pages loaded.
+    const before = new Map(rowsNow.map((r) => [r.uuid, r.value]));
+    const byUuid = new Map(metarecords.map((m) => [m.uuid, m]));
+    metarecords = out.map(({ uuid, value }) => {
+      const m = /** @type {Metafolder.Metarecord} */ (byUuid.get(uuid));
+      if (before.get(uuid) === value || value === null) return m;
+      return {
+        ...m,
+        fields: [
+          ...(m.fields ?? []).filter((f) => f.name !== field),
+          { name: field, value: { type: 'int', value } },
+        ],
+      };
+    });
+    const index = metarecords.findIndex((m) => m.uuid === moved.uuid);
+    render();
+    await setCursor(index >= 0 ? index : cursorIndex);
+  }
+
+  /** @type {Record<string, (arg: string) => Promise<unknown>>} */
+  const ORDER_ACTIONS = {
+    on: (field) => orderOn(field),
+    off: () => orderOff(),
+    move: (where) => {
+      const run = moveChain.then(() => orderMove(where));
+      moveChain = run.catch(() => {});
+      return run;
+    },
+  };
+
+  orderOnInput.addEventListener('change', () => {
+    const run = orderOnInput.checked ? orderOn(orderFieldInput.value) : orderOff();
+    run.catch((error) => void statusBar.error(error)).finally(syncOrderControls);
+  });
+  // The completion of the field box: the int fields, read when it is entered.
+  orderFieldInput.addEventListener('focus', () => {
+    void intFields().then((names) =>
+      orderFieldList.replaceChildren(...names.map((name) => el('option', { value: name }))),
+    );
+  });
 
   // ── Bulk edit (set/add/remove a field over the whole query result) ────
 
@@ -878,6 +1027,35 @@ export async function mount(root, metafolder) {
       const run = CANNED_QUERIES[what];
       if (!run) throw new Error(`unknown query: "${what ?? ''}"`);
       return run();
+    },
+  });
+
+  // One command, the action as its first argument (doc "Command naming"): the
+  // field always comes second, so no field name can be mistaken for `off`.
+  void commands.register('metarecord-list:order', {
+    label: 'Metarecord list: order by an int field (on <field> / off / move <up/down/top/bottom>)',
+    args: [
+      {
+        name: 'action',
+        prompt: () => `Order: ${Object.keys(ORDER_ACTIONS).join(' / ')}?`,
+        complete: () => Object.keys(ORDER_ACTIONS),
+      },
+      {
+        name: 'arg',
+        when: (p) => p[0] !== 'off',
+        prompt: (p) =>
+          p[0] === 'move' ? `Move where? (${MOVES.join(' / ')})` : 'Order by which int field?',
+        complete: async (_partial, p) => (p[0] === 'move' ? MOVES : await intFields()),
+      },
+    ],
+    handler: (action, arg) => {
+      const run = ORDER_ACTIONS[action];
+      if (!run) {
+        throw new Error(
+          `unknown order action: "${action ?? ''}" (expected ${Object.keys(ORDER_ACTIONS).join(' / ')})`,
+        );
+      }
+      return run(arg);
     },
   });
 
@@ -1179,6 +1357,14 @@ export async function mount(root, metafolder) {
   updateFinderFieldsLabel();
 
   await editor.restore();
+
+  // An ordered list comes back ordered — sorted, nothing written.
+  const storedOrder = await workspace.get('metarecord-list:order-field');
+  if (typeof storedOrder === 'string' && storedOrder) {
+    orderField = storedOrder;
+    sort = [{ field: storedOrder, order: 'asc' }];
+  }
+  syncOrderControls();
 
   metafolder.whenVisible(deferredStart);
 
