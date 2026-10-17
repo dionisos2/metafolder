@@ -131,8 +131,9 @@ option {
  * enough to aim at. `.mf-open-show` (shows the row in another panel) is dim
  * until its row is hovered or under the cursor; `.mf-open-enter` (goes into the
  * row: a folder, a tree node) is always drawn in green and never dimmed,
- * since it is the one way in — no ring: the colour alone sets it apart from
- * `↗`, which shares its arrow shape. */
+ * ringed in the same green, since it is the one way in: the colour sets it
+ * apart from `↗`, which shares its arrow shape, and the ring gives a bare
+ * arrow the weight of a button. */
 button.mf-open {
   flex: none;
   width: 1.7em;
@@ -154,6 +155,8 @@ button.mf-open {
 }
 button.mf-open-enter {
   color: var(--mf-ok);
+  border-color: var(--mf-ok);
+  background: color-mix(in srgb, var(--mf-ok) 15%, transparent);
   opacity: 0.85;
 }
 :hover > button.mf-open,
@@ -167,6 +170,7 @@ button.mf-open:hover {
 }
 button.mf-open-enter:hover {
   color: var(--mf-ok);
+  border-color: var(--mf-ok);
 }
 /* Nothing to open in that viewer (no file, or no metarecord): greyed, whether
  * its row is hovered or not — the colour alone says it. */
