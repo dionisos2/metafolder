@@ -10,4 +10,4 @@ Goes into the row under the cursor: of the focused panel with `self`, of the pan
 |[[treeref panel]] |any node, showing its children — a leaf shows an empty list, where children can be added |
 |[[log panel]] |a label, or a fold of the watcher's flushes, the cursor on its first row; an operation holds nothing |
 
-A row's `›` button does the same ([[Opening a row]]).
+A row's `↘` button does the same ([[Opening a row]]).

@@ -427,7 +427,7 @@ export function valueEl(value, onOpen) {
 /** The icon of each kind of opening (doc "Opening a row"): going into the row
  *  (a folder, a tree node, a label) is not showing it in another panel, and
  *  the file panel (the row's content) is not the detail panel (its fields). */
-const OPEN_GLYPHS = { enter: '›', show: '↗', detail: 'ⓘ' };
+const OPEN_GLYPHS = { enter: '↘', show: '↗', detail: 'ⓘ' };
 
 /**
  * A row's open button (doc "Opening a row"). Opening is one click on it; a click
@@ -466,7 +466,7 @@ export function openButton(kind, title, onOpen, { disabled } = {}) {
 
 /**
  * The two open buttons of a row showing a metarecord or a path (doc "Opening a
- * row"): its content in the file panel (`↗` — or `›`, going into it, for a
+ * row"): its content in the file panel (`↗` — or `↘`, going into it, for a
  * folder the panel lists itself), then its fields in the detail panel (`ⓘ`).
  * Each is greyed when the row has nothing for that viewer: no file or folder,
  * or no metarecord (an untracked entry). `open` receives what was asked —

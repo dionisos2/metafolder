@@ -1,7 +1,7 @@
 // The log panel goes into a label, the way treeref goes into a node (doc "log
 // panel", doc "Opening a row"): it lists one level at a time — the units of
 // work, then what one holds, down to the operations — with a breadcrumb back
-// out. A row's › button goes into it; a click only selects; no double click.
+// out. A row's ↘ button goes into it; a click only selects; no double click.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { generic } from './support/cursor';
@@ -153,7 +153,7 @@ describe('log panel: going into a label', () => {
     expect(p.rows()).toEqual(['#9 edit', '#1 run']);
   });
 
-  test("a label's › button lists what it holds, and the breadcrumb says where", async () => {
+  test("a label's ↘ button lists what it holds, and the breadcrumb says where", async () => {
     const p = await mountPanel();
     p.rowWith('run').querySelector<HTMLButtonElement>('button.mf-open-enter')!.click();
     await settle();
@@ -161,7 +161,7 @@ describe('log panel: going into a label', () => {
     expect(p.crumbs()).toContain('#1 run');
   });
 
-  test("down to an operation, whose › button shows what it changed, field by field", async () => {
+  test("down to an operation, whose ↘ button shows what it changed, field by field", async () => {
     const p = await mountPanel();
     for (const name of ['run', 'answer', 'mf tag add', 'op 10']) {
       p.rowWith(name).querySelector<HTMLButtonElement>('button.mf-open-enter')!.click();

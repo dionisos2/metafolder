@@ -12,13 +12,13 @@ describe('openButton', () => {
     expect(button.tagName).toBe('BUTTON');
     expect(button.type).toBe('button');
     expect(button.classList.contains('mf-open')).toBe(true);
-    expect(button.textContent).toBe('›');
+    expect(button.textContent).toBe('↘');
     expect(button.title).toBe('Open the folder');
     expect(button.getAttribute('aria-label')).toBe('Open the folder');
   });
 
   test('each kind has its own icon: going into a thing is not showing it elsewhere', () => {
-    expect(openButton('enter', '', () => {}).textContent).toBe('›');
+    expect(openButton('enter', '', () => {}).textContent).toBe('↘');
     expect(openButton('show', '', () => {}).textContent).toBe('↗');
     expect(openButton('detail', '', () => {}).textContent).toBe('ⓘ');
   });
@@ -77,7 +77,7 @@ describe('viewerButtons', () => {
   test('a folder goes in (›) rather than being shown', () => {
     const open = vi.fn();
     const [enter] = viewerButtons({ hasFile: true, hasMetarecord: true, enter: true, open });
-    expect(enter.textContent).toBe('›');
+    expect(enter.textContent).toBe('↘');
     enter.click();
     expect(open).toHaveBeenCalledWith('enter');
   });
