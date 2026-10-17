@@ -287,3 +287,30 @@ describe('path-ref open buttons', () => {
     expect(crumbs(s.root)).not.toContain('notes');
   });
 });
+
+// The two kinds of tree the panel walks differ (a hierarchy_ref node may have
+// several parents), so the toolbar says which one the chosen field is.
+describe('the type of the explored field', () => {
+  const typeBadge = (root: ShadowRoot) => root.getElementById('field-type')?.textContent ?? '';
+
+  test('is shown beside the field button, and follows a change of field', async () => {
+    const s = stub();
+    const call = s.api.daemon.call.getMockImplementation()!;
+    s.api.daemon.call.mockImplementation(async (method: string, path: string) =>
+      path.includes('/fields?type=hierarchy_ref') ? [{ name: 'genre' }] : call(method, path),
+    );
+    await mount(s);
+    expect(typeBadge(s.root)).toBe('tree_ref');
+    await s.handlers.get('path-ref:set')!('field', 'genre');
+    expect(typeBadge(s.root)).toBe('hierarchy_ref');
+  });
+
+  test('a field the catalog does not list shows no type', async () => {
+    const s = stub();
+    s.api.workspace.get.mockImplementation(async (key: string) =>
+      key === 'active_repo' ? 'r' : key === 'path-ref:field' ? ('gone' as 'r') : null,
+    );
+    await mount(s);
+    expect(typeBadge(s.root)).toBe('');
+  });
+});

@@ -104,6 +104,7 @@ export async function mount(root, metafolder) {
   const statusLine = byId(root, 'status-line');
   const listingElement = byId(root, 'listing');
   const addButton = byId(root, 'add');
+  const fieldTypeBadge = byId(root, 'field-type');
 
   // Current node = the last breadcrumb entry; null UUID = the forest roots.
   const currentUuid = () => (stack.length > 0 ? stack[stack.length - 1].uuid : null);
@@ -120,6 +121,7 @@ export async function mount(root, metafolder) {
   async function treeRefFieldNames() {
     /** @type {{name: string}[]} */
     const list = [];
+    positionTypes.clear(); // another repo's catalog must not leak in
     for (const type of /** @type {const} */ (['tree_ref', 'hierarchy_ref'])) {
       try {
         const got = /** @type {{name: string}[]} */ (
@@ -144,6 +146,7 @@ export async function mount(root, metafolder) {
     field = name;
     stack = [];
     fieldSelect.setValue(name); // mirror the command into the drop-down
+    renderFieldType();
     await workspace.set('path-ref:field', name);
     renderQueryPreview();
     await fetchChildren(true);
@@ -155,6 +158,13 @@ export async function mount(root, metafolder) {
       names.map((name) => ({ value: name })),
       field,
     );
+    renderFieldType();
+  }
+
+  /** Says whether the explored field is a forest or a hierarchy — blank for a
+   *  field the catalog does not list (yet). */
+  function renderFieldType() {
+    fieldTypeBadge.textContent = positionTypes.get(field) ?? '';
   }
 
 

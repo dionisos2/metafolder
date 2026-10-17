@@ -39,6 +39,17 @@
         color: var(--mf-fg-dim, #8a8a96);
         font-size: 0.9em;
       }
+      #field-type {
+        font-family: var(--mf-font-mono, monospace);
+        font-size: 0.8em;
+        color: var(--mf-fg-dim, #8a8a96);
+        border: 1px solid var(--mf-fg-dim, #8a8a96);
+        border-radius: 3px;
+        padding: 0 4px;
+      }
+      #field-type:empty {
+        display: none;
+      }
       #breadcrumb {
         flex: 1;
         font-family: var(--mf-font-mono, monospace);
@@ -122,6 +133,7 @@
   <body>
     <div id="toolbar">
       <label>field <button id="field" type="button"></button></label>
+      <span id="field-type" title="the type of the explored field"></span>
       <button id="root">⌂ root</button>
       <button id="up">↑ up</button>
       <button id="refresh">⟳ refresh</button>

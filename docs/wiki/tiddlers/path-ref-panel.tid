@@ -14,7 +14,8 @@ Its name says what the two types have in common, and the plain `ref` lacks: a no
 is reached by a path. It was called `treeref` until it walked hierarchies too.
 
 The ''field'' button chooses the tree, among the repository's `tree_ref` and
-`hierarchy_ref` fields;
+`hierarchy_ref` fields, and the badge beside it says which of the two types the
+chosen one is;
 <<key "path-ref:set field" Shift+f>> (`path-ref:set field`) asks for it in the command
 input. It starts on `mfr_path` (`[panel-defaults.path-ref]`, [[GUI configuration]]),
 and changing it goes back to the roots.
