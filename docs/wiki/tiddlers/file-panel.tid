@@ -68,7 +68,8 @@ has the same four as buttons.
 A manual zoom sizes the picture from its own pixels, between 5 % and 4000 %, and the
 panel scrolls when it overflows; the first step starts from what ''fit'' was showing.
 The zoom is kept from one file to the next. In `keybindings.toml` the `+` key is
-written `plus`, `+` being what joins the keys of a combination ([[Keybindings]]).
+written `plus`, `+` being what joins the keys of a combination ([[Keybindings]]). The same keys zoom
+every other panel as a whole ([[view:zoom]]).
 
 !! Walking a list from the preview
 

@@ -15,7 +15,12 @@
   import { createPanelApi, type PanelApiInstance } from './api';
   import { createPanelArgSource } from './argSource';
   import { setFindRootProvider } from './roots';
-  import { providedNames, setFunctionProvider, type PanelFunctions } from '../panelFunctions';
+  import {
+    nextZoom,
+    providedNames,
+    setFunctionProvider,
+    type PanelFunctions,
+  } from '../panelFunctions';
   import { helpCursorSheet } from '../cursor';
   import type { CommandDef, ExecContext, SlotId } from '../types';
   import { createVisibilityGate } from '../../../../panel-shim/visibility.js';
@@ -35,6 +40,9 @@
     apiInst: PanelApiInstance;
     cleanup: (() => void) | null;
     mounted: Promise<void>;
+    /** The panel's zoom (`view:zoom`), applied by `zoomSheet`. */
+    zoom: number;
+    zoomSheet: CSSStyleSheet;
   }
   const instances = new Map<string, PanelInstance>();
   // Panel command handlers, keyed `${wsId}|${panelType}|${name}`.
@@ -76,6 +84,16 @@
   );
 
   const instanceKey = (wsId: string, panelType: string) => `${wsId}|${panelType}`;
+
+  // The zoom of a panel (doc "Generic panel commands"): kept per workspace and
+  // panel type in a workspace variable, and drawn by a CSS zoom of the panel's
+  // body — percentages are not zoomed, so the body still fills its slot.
+  const zoomVar = (panelType: string) => `view.zoom.${panelType}`;
+  function applyZoom(instance: PanelInstance, value: unknown) {
+    const zoom = typeof value === 'number' && value > 0 ? value : 1;
+    instance.zoom = zoom;
+    instance.zoomSheet.replaceSync(zoom === 1 ? '' : `.mf-panel-body{zoom:${zoom}}`);
+  }
 
   function ensureInstance(wsId: string, panelType: string): PanelInstance {
     const key = instanceKey(wsId, panelType);
@@ -159,8 +177,33 @@
     host.addEventListener('focusin', focusSlot);
     host.addEventListener('pointerdown', focusSlot);
 
-    const instance: PanelInstance = { wsId, panelType, host, shadow, apiInst, cleanup: null, mounted: undefined! };
+    const instance: PanelInstance = {
+      wsId,
+      panelType,
+      host,
+      shadow,
+      apiInst,
+      cleanup: null,
+      mounted: undefined!,
+      zoom: 1,
+      zoomSheet: new CSSStyleSheet(),
+    };
     instances.set(key, instance);
+    // Every panel can be zoomed: the host provides `zoom` before the panel
+    // provides anything, and a panel's own `provide` merges over it.
+    const zoom = async (direction: string) => {
+      const value = nextZoom(instance.zoom, direction);
+      applyZoom(instance, value);
+      await invoke('ws_set_var', { wsId, key: zoomVar(panelType), value });
+    };
+    panelFunctions.set(key, { ...panelFunctions.get(key), zoom });
+    providedByType.set(
+      panelType,
+      new Set([...(providedByType.get(panelType) ?? []), 'zoom']),
+    );
+    void invoke('ws_get_var', { wsId, key: zoomVar(panelType) }).then((value) =>
+      applyZoom(instance, value),
+    );
     instance.mounted = mountPanel(instance);
     return instance;
   }
@@ -182,7 +225,13 @@
       }
       // helpCursorSheet is last so its `!important` `?` cursor wins while the
       // help-cursor mode is armed (empty otherwise).
-      shadow.adoptedStyleSheets = [baseSheet, userSheet, panelSheet, helpCursorSheet];
+      shadow.adoptedStyleSheets = [
+        baseSheet,
+        userSheet,
+        panelSheet,
+        instance.zoomSheet,
+        helpCursorSheet,
+      ];
       const body = document.createElement('div');
       body.className = 'mf-panel-body';
       for (const child of [...doc.body.childNodes]) {
@@ -325,6 +374,10 @@
           for (const instance of instances.values()) {
             if (instance.wsId === event.payload.workspace_id) {
               instance.apiInst.pushVarChanged(event.payload.key, event.payload.value);
+              // A zoom set from elsewhere (a script, `workspace:set`) shows too.
+              if (event.payload.key === zoomVar(instance.panelType)) {
+                applyZoom(instance, event.payload.value);
+              }
             }
           }
         },

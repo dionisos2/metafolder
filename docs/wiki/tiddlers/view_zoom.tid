@@ -1,0 +1,11 @@
+title: view:zoom
+tags: [[GUI command]] [[Generic panel commands]]
+kind: reference
+summary: Zoom a panel in, out or back to 100 % (self / a panel type)
+
+`view:zoom <panel> <in|out|reset>` — zooms a whole panel: the focused one with `self`, the panel type named otherwise ([[Generic panel commands]]). <<key "view:zoom self in" "+">> and <<key "view:zoom self out" "-">> make it 10 % larger or smaller, between 50 % and 300 %; <<key "view:zoom self reset" "0">> brings it back to 100 %.
+
+Everything in the panel is drawn larger — text, icons, thumbnails — and the panel still fills its slot. The zoom is kept per workspace and per panel type, in the workspace variable `view.zoom.<panel type>` ([[Workspace variables]]): a list zoomed in one tab is not in another, and it is still zoomed after a restart. A script may set the variable; the panel follows.
+
+Every panel has it, provided by the shell rather than by the panel's code. In the [[file panel]] the same keys zoom the previewed image instead (`file:zoom`); the panel as a whole is zoomed there with the command alone. In the [[metarecord-detail panel]], one more value of a field moved from `+` to <<key "metarecord:row-add" "Shift+A">> for it.
+

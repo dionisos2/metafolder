@@ -1,0 +1,14 @@
+title: $:/mf/gen/GUI command/view:zoom
+catalog: GUI command
+target: view:zoom
+summary: Zoom a panel in, out or back to 100 % (self / a panel type)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``-`` → ``view:zoom self out``
+* ``0`` → ``view:zoom self reset``
+* ``plus`` → ``view:zoom self in``

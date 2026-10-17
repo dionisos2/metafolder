@@ -858,6 +858,19 @@ mod tests {
             .iter()
             .any(|b| b.when.as_deref() == Some("file") && b.invocation == "file:restart"));
 
+        // + - 0 zoom every panel; the file panel zooms its image instead, and
+        // the detail panel's "one more value" moved to shift+a for it.
+        for (key, direction) in [("plus", "in"), ("-", "out"), ("0", "reset")] {
+            let bound: Vec<_> = table.iter().filter(|b| b.keys == [key]).collect();
+            let generic = format!("view:zoom self {direction}");
+            assert!(bound.iter().any(|b| b.when.is_none() && b.invocation == generic), "{key}");
+            assert!(bound.iter().any(|b| b.when.as_deref() == Some("file")), "{key}");
+            assert!(!bound.iter().any(|b| b.invocation == "metarecord:row-add"), "{key}");
+        }
+        assert!(table
+            .iter()
+            .any(|b| b.keys == ["shift+a"] && b.invocation == "metarecord:row-add"));
+
         // Fullscreen is a builtin toggle, and now has a key of its own.
         assert!(table.iter().any(|b| b.keys == ["z"] && b.invocation == "panel:toggle fullscreen"));
         let registry = crate::command_registry::CommandRegistry::default();

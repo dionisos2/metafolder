@@ -48,6 +48,9 @@ export interface PanelFunctions {
   leaf?: (index: number) => boolean | Promise<boolean>;
   /** Reads what the panel shows again. */
   refresh?: () => unknown;
+  /** Zooms the panel: `in`, `out` or `reset`. Every panel has it — the shell's
+   *  panel host provides it (a CSS zoom of the panel), not the panel's code. */
+  zoom?: (direction: string) => unknown;
   /** Goes up one level: the parent directory, node or label. */
   parent?: () => unknown;
   /** Goes to the top: the root directory, the roots of a forest. */
@@ -57,6 +60,21 @@ export type FunctionName = keyof PanelFunctions;
 
 export const SELF = 'self';
 export const FIND_MODES = ['select', 'walk'];
+export const ZOOM_DIRECTIONS = ['in', 'out', 'reset'];
+
+const ZOOM_STEP = 1.1;
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 3;
+
+/** The zoom after one `view:zoom` step from `current`: ×1.1 in, ÷1.1 out, 1 on
+ *  reset, kept between 50 % and 300 % and rounded to the percent so that in
+ *  then out comes back to where it started. */
+export function nextZoom(current: number, direction: string): number {
+  if (direction === 'reset') return 1;
+  const raw = direction === 'in' ? current * ZOOM_STEP : current / ZOOM_STEP;
+  const clamped = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, raw));
+  return Math.round(clamped * 100) / 100;
+}
 
 /** The functions each generic command needs, given its arguments after the
  *  panel. The keys are every generic command there is. */
@@ -71,6 +89,7 @@ const NEEDS: Record<string, (rest: string[]) => FunctionName[]> = {
   'cursor:parent': () => ['parent'],
   'cursor:root': () => ['root'],
   'view:refresh': () => ['refresh'],
+  'view:zoom': () => ['zoom'],
 };
 
 export const GENERIC_COMMANDS = Object.keys(NEEDS);
@@ -169,6 +188,9 @@ export async function runGeneric(
   if (name === 'cursor:find' && !FIND_MODES.includes(rest[0] ?? '')) {
     throw new Error(`unknown find mode "${rest[0] ?? ''}" (${FIND_MODES.join(' / ')})`);
   }
+  if (name === 'view:zoom' && !ZOOM_DIRECTIONS.includes(rest[0] ?? '')) {
+    throw new Error(`unknown zoom "${rest[0] ?? ''}" (${ZOOM_DIRECTIONS.join(' / ')})`);
+  }
   if (missingFunctions(providedNames(functions), needed).length > 0) {
     const what = name === 'cursor:find' && rest[0] === 'walk' ? `${name} walk` : name;
     throw new Error(`${what} is not implemented for the ${panelType} panel`);
@@ -211,6 +233,9 @@ export async function runGeneric(
       return;
     case 'view:refresh':
       await fns.refresh();
+      return;
+    case 'view:zoom':
+      await fns.zoom(rest[0]);
       return;
     case 'cursor:find': {
       const [mode, ...words] = rest;

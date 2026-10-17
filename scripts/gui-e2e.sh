@@ -77,7 +77,7 @@ done
     || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list layout script script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close
         pick-button suggested-key walk open-viewers slideshow devtools shell-line repos-memory
-        help-keys)
+        help-keys zoom)
 
 # shellcheck source=lib/daemon-fixture.sh
 . scripts/lib/daemon-fixture.sh
@@ -1301,6 +1301,28 @@ scenario_help_keys() {
     assert "help-keys: s empties the box and goes into it" until_ok 10 reads "trash" "#help-search"
     keys Return c
     assert "help-keys: c empties the box" until_ok 10 reads "" "#help-search"
+}
+
+# + - 0 zoom the focused panel as a whole (doc "view:zoom"), and the zoom is
+# the workspace's: it is still there once the panel is shown again.
+scenario_zoom() {
+    needs_keyboard zoom || return 0
+    needs_clicks zoom || return 0
+    new_repo zoom
+    show_panel left metarecord-list view:refresh metarecord-list
+    zoom_is() { [ "$(webview zoom "#columns-input" 2>/dev/null)" = "$1" ]; }
+    assert "zoom: a panel starts at 100 %" until_ok 10 zoom_is 1
+    run panel:focus left
+    keys plus plus
+    assert "zoom: + + zooms the list in twice" until_ok 10 zoom_is 1.21
+    keys minus
+    assert "zoom: - zooms it out" until_ok 10 zoom_is 1.1
+    show_panel left help help:focus search
+    keys Escape
+    show_panel left metarecord-list view:refresh metarecord-list
+    assert "zoom: kept by the workspace" until_ok 10 zoom_is 1.1
+    keys 0
+    assert "zoom: 0 goes back to 100 %" until_ok 10 zoom_is 1
 }
 
 scenario_walk() {

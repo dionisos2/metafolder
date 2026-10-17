@@ -9,6 +9,7 @@ import {
   matchEntry,
   missingFunctions,
   neededFunctions,
+  nextZoom,
   resolvePanel,
   runGeneric,
   type PanelFunctions,
@@ -248,6 +249,45 @@ describe('runGeneric — the view', () => {
     await expect(run('view:refresh', {})).rejects.toThrow(
       'view:refresh is not implemented for the trash panel',
     );
+  });
+});
+
+describe('runGeneric — the zoom', () => {
+  test('view:zoom needs the zoom every panel host provides', () => {
+    expect(neededFunctions('view:zoom', ['in'])).toEqual(['zoom']);
+    expect(appliesHere('view:zoom self in', 'help', () => new Set(['zoom']))).toBe(true);
+  });
+
+  test('view:zoom hands the direction to the panel', async () => {
+    const zoom = vi.fn();
+    await run('view:zoom', { zoom }, ['out']);
+    expect(zoom).toHaveBeenCalledWith('out');
+  });
+
+  test('an unknown direction is an error, and zooms nothing', async () => {
+    const zoom = vi.fn();
+    await expect(run('view:zoom', { zoom }, ['sideways'])).rejects.toThrow(
+      'unknown zoom "sideways" (in / out / reset)',
+    );
+    expect(zoom).not.toHaveBeenCalled();
+  });
+});
+
+describe('nextZoom', () => {
+  test('in and out step by 10 %, reset goes back to 1', () => {
+    expect(nextZoom(1, 'in')).toBe(1.1);
+    expect(nextZoom(1, 'out')).toBe(0.91);
+    expect(nextZoom(1.5, 'reset')).toBe(1);
+  });
+
+  test('in then out comes back where it started', () => {
+    expect(nextZoom(nextZoom(1, 'in'), 'out')).toBe(1);
+  });
+
+  test('the zoom stays between 50 % and 300 %', () => {
+    expect(nextZoom(0.52, 'out')).toBe(0.5);
+    expect(nextZoom(2.9, 'in')).toBe(3);
+    expect(nextZoom(0.5, 'out')).toBe(0.5);
   });
 });
 

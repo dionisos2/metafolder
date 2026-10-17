@@ -171,6 +171,7 @@ fn register_builtins(registry: &CommandRegistry) {
         ("cursor:parent", "Take a panel up one level (self / a panel type)", true),
         ("cursor:root", "Take a panel to its top level (self / a panel type)", true),
         ("view:refresh", "Read what a panel shows again (self / a panel type)", true),
+        ("view:zoom", "Zoom a panel in, out or back to 100 % (self / a panel type)", false),
         // Find in panel (doc "Find in a panel"). `log=false`: stepping
         // through matches is a keystroke-level action, not a command worth a
         // message-log line.

@@ -20,6 +20,7 @@ the shell runs on a few functions the panel provides:
 |<<cmd "cursor:parent">> |up one level: the parent directory, node or label |`parent` |
 |<<cmd "cursor:root">> |to the top: the root directory, a forest's roots |`root` |
 |<<cmd "view:refresh">> |reads what the panel shows again |`refresh` |
+|<<cmd "view:zoom">> `in`/`out`/`reset` |zooms the whole panel, kept per workspace |`zoom` — every panel has it: the shell provides it |
 
 With no row under the cursor, `next` and `prev` both land on the first row, and
 none of them moves past either end. An empty list is left alone.

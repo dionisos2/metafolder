@@ -16,6 +16,8 @@
 //       matched in the document and in every shadow root (the panels').
 //   text <selector> [<text> [<inner selector> [<inner text>]]]
 //       prints that element's text (an input's: its value)
+//   zoom <selector> [<text> [<inner selector> [<inner text>]]]
+//       prints the CSS zoom of the panel body holding that element
 // Exit status: 0 done, 1 not exactly one element matches (nothing clicked),
 // 2 no page or a protocol error.
 
@@ -49,6 +51,9 @@ function inPage(action, args) {
     return 'clicked';
   }
   const hit = hits[0];
+  if (action === 'zoom') {
+    return getComputedStyle(hit.closest('.mf-panel-body') ?? hit).zoom;
+  }
   if (hit instanceof HTMLInputElement || hit instanceof HTMLTextAreaElement) return hit.value;
   return (hit.textContent ?? '').trim();
 }
@@ -58,7 +63,7 @@ function fail(code, message) {
   process.exit(code);
 }
 
-if (!['ready', 'click', 'text'].includes(action)) fail(2, `unknown action ${action}`);
+if (!['ready', 'click', 'text', 'zoom'].includes(action)) fail(2, `unknown action ${action}`);
 if (action !== 'ready' && !args[0]) fail(2, `${action} needs a selector`);
 
 const timer = setTimeout(() => fail(2, `no answer from the page within ${TIMEOUT_MS} ms`), TIMEOUT_MS);

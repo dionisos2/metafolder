@@ -46,6 +46,7 @@ import {
   resolvePanel,
   runGeneric,
   SELF,
+  ZOOM_DIRECTIONS,
 } from './panelFunctions';
 import { changeFeed } from './panels/changes';
 import type { CommandDef, ExecContext, LayoutView } from './types';
@@ -1215,8 +1216,18 @@ function genericPanel(arg: string | undefined, context: ExecContext): string {
 }
 
 for (const command of GENERIC_COMMANDS) {
-  if (command !== 'cursor:find') registerArgs(command, [panelArg(command)]);
+  if (command !== 'cursor:find' && command !== 'view:zoom') {
+    registerArgs(command, [panelArg(command)]);
+  }
 }
+registerArgs('view:zoom', [
+  panelArg('view:zoom'),
+  {
+    name: 'direction',
+    prompt: () => `Zoom how? (${ZOOM_DIRECTIONS.join(' / ')})`,
+    complete: () => [...ZOOM_DIRECTIONS],
+  },
+]);
 registerArgs('cursor:find', [
   panelArg('cursor:find'),
   {

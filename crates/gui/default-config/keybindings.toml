@@ -658,15 +658,25 @@
 "y w" = { command = "sync:open", when = "sync" }
 "y r" = { command = "sync:run", when = "sync" }
 
-# file: image zoom controls. In metarecord-detail, + adds a value to the field
-# under the cursor (a hierarchy node: one more parent).
+# Zoom: the file panel zooms its image; every other panel zooms as a whole
+# (`view:zoom`, doc "Generic panel commands"), its zoom kept per workspace.
 "plus" = [
   { command = "file:zoom in", when = "file" },
-  { command = "metarecord:row-add", when = "metarecord-detail" },
+  { command = "view:zoom self in" },
 ]
-"-" = { command = "file:zoom out", when = "file" }
+"-" = [
+  { command = "file:zoom out", when = "file" },
+  { command = "view:zoom self out" },
+]
 "=" = { command = "file:zoom fit", when = "file" }
-"0" = { command = "file:zoom reset", when = "file" }
+"0" = [
+  { command = "file:zoom reset", when = "file" },
+  { command = "view:zoom self reset" },
+]
+# metarecord-detail: one more value of the field under the cursor (a hierarchy
+# node: one more parent), beside `a` which adds a field. It was `+` until `+`
+# became the zoom.
+"shift+a" = { command = "metarecord:row-add", when = "metarecord-detail" }
 
 # file: document paging (a PDF preview). No-ops in front of anything else, so
 # the keys stay free for the rest of the panel.
