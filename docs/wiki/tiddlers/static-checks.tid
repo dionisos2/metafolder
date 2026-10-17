@@ -3,12 +3,12 @@ tags: Development
 kind: reference
 audience: dev
 aliases: check.sh lint clippy semgrep
-summary: scripts/check.sh runs every check the project has in one pass — format, lints, tests, the wiki, types, dependencies, the invariants — and a missing tool is a loud skip, not a pass.
+summary: scripts/dev/check.sh runs every check the project has in one pass — format, lints, tests, the wiki, types, dependencies, the invariants — and a missing tool is a loud skip, not a pass.
 
 ```
-scripts/check.sh              # the standard pass, about ten minutes
-scripts/check.sh --lax        # clippy warnings stay warnings, for work in progress
-scripts/check.sh --coverage   # also measures test coverage (slow, ~9 GiB in target/)
+scripts/dev/check.sh              # the standard pass, about ten minutes
+scripts/dev/check.sh --lax        # clippy warnings stay warnings, for work in progress
+scripts/dev/check.sh --coverage   # also measures test coverage (slow, ~9 GiB in target/)
 ```
 
 One line per check, in increasing order of cost; every check runs even after one
@@ -18,10 +18,10 @@ status is 1 when a check failed.
 |!Check |!Runs |!What it is for |
 |`fmt` |`cargo fmt --all --check` |the workspace is rustfmt-formatted (`rustfmt.toml`); enforcing it stops a stray `cargo fmt` from burying a real change under a reformatting diff |
 |`clippy` |`cargo clippy --workspace --all-targets -- -D warnings` |the tree is clean, and stays so only if the first new warning fails |
-|`test` |`scripts/run-tests.sh` |the Rust suites, with the global total cargo never prints ([[Testing conventions]]) |
-|`scripts` |`scripts/test-shipped-scripts.sh` |the shipped GUI scripts against a scripted `mf` and a throwaway daemon ([[Testing shipped scripts]]) |
-|`tooling` |`scripts/test-tooling.sh` |the project's own build, check and prune scripts, and the wiki's tools |
-|`wiki` |`scripts/doc check` |this documentation: links, fields, catalogs, the notes the code cites ([[Writing documentation]]) |
+|`test` |`scripts/dev/run-tests.sh` |the Rust suites, with the global total cargo never prints ([[Testing conventions]]) |
+|`scripts` |`scripts/dev/test-shipped-scripts.sh` |the shipped GUI scripts against a scripted `mf` and a throwaway daemon ([[Testing shipped scripts]]) |
+|`tooling` |`scripts/dev/test-tooling.sh` |the project's own build, check and prune scripts, and the wiki's tools |
+|`wiki` |`scripts/dev/doc check` |this documentation: links, fields, catalogs, the notes the code cites ([[Writing documentation]]) |
 |`types` |`tsc --noEmit`, then `svelte-check --fail-on-warnings` |nothing else compiles the frontend's types — vite strips them unchecked — and `svelte-check` alone reads the `.svelte` files |
 |`frontend` |vitest with coverage |the JavaScript suites; the coverage thresholds are a ratchet at the measured floor, to raise and never to lower |
 |`lint` |`npx eslint .` |type-aware rules: a floating promise, an async handler where a void return is expected |

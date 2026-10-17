@@ -7,7 +7,7 @@
 //!   cargo run -p metafolder-bench -- gui        # + GUI scenarios (a window opens)
 //!   cargo run -p metafolder-bench -- attach     # drive an already-running GUI
 //!   cargo run -p metafolder-bench -- --small DIR --big DIR
-//!   scripts/bench.sh                            # the timed regression suite
+//!   scripts/dev/bench.sh                            # the timed regression suite
 //!
 //!   cargo build --release              # or release for more realistic numbers
 //!

@@ -3,7 +3,7 @@
 
 La liste de toutes les pages du wiki (=docs/wiki/=) et d'où vient leur contenu.
 On la complète item par item. La conception est dans
-la note =Why a wiki= (=scripts/doc show "Why a wiki"=) ; l'outil est =scripts/doc=.
+la note =Why a wiki= (=scripts/dev/doc show "Why a wiki"=) ; l'outil est =scripts/dev/doc=.
 
 * Mode d'emploi
 
@@ -15,7 +15,7 @@ Tous les items sont faits ; l'ancienne documentation est retirée (items 43 et
      la liste est une proposition, que l'item précise ou corrige ;
   2. chaque affirmation a été *vérifiée dans le code*, pas recopiée de la spec
      (un écart se corrige dans le code ou dans la doc, et se signale) ;
-  3. les commandes, panels et scripts qu'il couvre ont leur note (=scripts/doc
+  3. les commandes, panels et scripts qu'il couvre ont leur note (=scripts/dev/doc
      new --from-gen …=), à la place de la liste « Not documented yet » ;
   4. les citations =spec-x "Section"= du code vers les sections couvertes
      deviennent =doc "Titre"= ;
@@ -25,9 +25,9 @@ Tous les items sont faits ; l'ancienne documentation est retirée (items 43 et
   6. les décisions de conception de la mémoire qui relèvent du sujet deviennent
      des notes =rationale= =audience: dev= (la mémoire ne garde que les pièges
      d'environnement et les méthodes) ;
-  7. =scripts/doc check= est vert.
+  7. =scripts/dev/doc check= est vert.
   8. les mentions du sujet déjà écrites ailleurs dans le wiki (en texte, faute
-     de note à l'époque) deviennent des liens : =scripts/doc find <nom>=.
+     de note à l'époque) deviennent des liens : =scripts/dev/doc find <nom>=.
 - Notation des notes : =Titre= — /kind/ (/dev/ si =audience: dev=, /deferred/ ou
   /proposed/ ou /record/ si ce n'est pas =implemented=).
 - Chaque sujet a sa note d'ensemble (/overview/) portant le titre du sujet, qui
@@ -46,7 +46,7 @@ Tous les items sont faits ; l'ancienne documentation est retirée (items 43 et
   CLI s'écrit toujours entre accents graves ; les liens CamelCase sont coupés
   (=$:/config/WikiParserRules/Inline/wikilink=).
 - =<<key "commande" repli>>= : le repli est la touche par défaut, lue dans la
-  note générée de la commande ; =scripts/doc check= refuse une commande inconnue.
+  note générée de la commande ; =scripts/dev/doc check= refuse une commande inconnue.
 - Une section retirée d'une spec qui reste en place (spec-gui…) devient un
   paragraphe-pointeur (« Moved to the wiki: doc "…" ») : d'autres passages de la
   spec y renvoient encore.
@@ -78,7 +78,7 @@ transversaux, la GUI en dernier (elle cite tous les autres) :
 
 * FAIT 0. Infrastructure
 
-Commits =8b811ef= à =f592c68= : le wiki, =scripts/doc=, le rendu, l'installation,
+Commits =8b811ef= à =f592c68= : le wiki, =scripts/dev/doc=, le rendu, l'installation,
 le panel help, les catalogues générés.
 
 * Entrée
@@ -984,7 +984,7 @@ keybindings= suffit) et donnait =s l= en exemple de séquence. Ignorés par la
 spec : =log:find= et =duplicates:find= (six panels, pas quatre), la recherche
 insensible à la casse, la recherche qui suit le focus, =F1=, =t e=, la touche =+=
 écrite =plus=, « une touche qui lance une commande ne commence jamais une
-séquence ». =scripts/doc check= accepte maintenant =<<key "a, b">>= (plusieurs
+séquence ». =scripts/dev/doc check= accepte maintenant =<<key "a, b">>= (plusieurs
 commandes, chacune vérifiée). *Tranché par l'utilisateur*, corrigé test d'abord : (1) une
 combinaison liée deux fois dans la même portée — y compris écrite de deux façons
 (="shift+ctrl+a"= et ="ctrl+shift+a"=) — est refusée à la lecture du fichier, au
@@ -1197,7 +1197,7 @@ Vérification contre le code. *Corrigé, test d'abord* (deux commits à part) : 
 menu contextuel du panel =file= prenait sa cible dans la /sélection/ et non dans ce
 que le panel montre : après un clic sur une tuile, ou un =file:back=, « Rename… » ou
 « Move to trash » agissaient sur un fichier qui n'était pas à l'écran ; (2)
-=scripts/check-deps.sh= listait toutes les dépendances optionnelles de la GUI sauf
+=scripts/dev/check-deps.sh= listait toutes les dépendances optionnelles de la GUI sauf
 poppler.
 Écarts de la spec et des pages help, corrigés dans les notes : le statut « suivi »
 du file manager n'est pas demandé /par fenêtre/ par une requête =Follows AND
@@ -1265,7 +1265,7 @@ la méthode de mesure, =pdf-document-preview= et =gui-runtime-deps= à un pointe
 Vérification contre le code. L'exemple de la spec ne pouvait pas tourner : il
 appelait =/gui/*= avec =curl=, sans le jeton de session, et aurait reçu =401= à
 chaque requête. Il est réécrit avec =mf gui= et la bibliothèque, puis /exécuté/ :
-contre un daemon jetable (=scripts/lib/daemon-fixture.sh=, seul =mf gui= étant
+contre un daemon jetable (=scripts/dev/lib/daemon-fixture.sh=, seul =mf gui= étant
 simulé), sur un dépôt de deux images, avec ses écritures relues — et passé à
 =shellcheck=. Le reste est lu dans =gui_api.rs=, =input_wait.rs=, =keybindings.rs=,
 =shell_exec.rs=, =cli/src/gui.rs=, le shell Svelte et =lib/mf-gui.sh=.
@@ -1347,7 +1347,7 @@ méthode.
 - [X] =Benchmarks= — guide (=metafolder-bench= : modes, dossiers persistants, scénarios GUI, le harnais de profilage des panels)
 - [X] =The wire protocol version= — reference (=API_VERSION=, qui la lit, quand l'incrémenter)
 - [X] =Persisted format changes= — reference (la règle, l'inventaire des formats et comment chacun migre)
-- [X] =Writing documentation= — guide (ce wiki, =scripts/doc=, les conventions du pilote reprises en anglais)
+- [X] =Writing documentation= — guide (ce wiki, =scripts/dev/doc=, les conventions du pilote reprises en anglais)
 
 Vérification contre le code. *Corrigé dans le code*, dans un commit à part
 (=d0dc63e=), test d'abord : =metafolder-bench= ne tournait plus dans ses modes
@@ -1406,7 +1406,7 @@ panel =sync=, et côté HTTP les 6 routes =/sync/…= et =GET …/mf-sync=. Choi
 une *exemption temporaire*, =$:/mf/config/catalog-exemptions= (préfixes de cibles
 qu'un catalogue obligatoire peut laisser sans note ; elles restent listées « Not
 documented yet »). Une exemption qui ne couvre plus rien de non documenté fait
-échouer =scripts/doc check= : *l'item 29 doit la vider*. Les six catalogues sont
+échouer =scripts/dev/doc check= : *l'item 29 doit la vider*. Les six catalogues sont
 obligatoires (commit =6428bdf= pour les quatre premiers).
 =Reserved field= (=3c111d1=) : =reserved.rs= gagne le registre =RESERVED_FIELDS=
 (nom, type, résumé) ; =check_writable= y lit les =mf_*= connus ; un test exige que
@@ -1453,7 +1453,7 @@ obligatoire) et la partie doublons de « Reconcile » (couverte par =Finding
 duplicates=, =duplicates panel=, =Deleting duplicate copies=). =hello.html= : la
 note =hello panel= existait (alias =example= repris). Le test vitest
 =help-keys.test.ts= ne lisait que les anciennes pages : sa règle « un raccourci
-annoncé est lié par les keybindings livrées » passe dans =scripts/doc check=
+annoncé est lié par les keybindings livrées » passe dans =scripts/dev/doc check=
 (=<<key>>=, lu dans les notes générées ; aucune violation), le reste y était déjà.
 Citations : 60 réécrites vers =doc "…"= ; =CHANGELOG.md= et
 =benchmarks/bench_result/= gardent les leurs (historiques). =README.md= renvoie

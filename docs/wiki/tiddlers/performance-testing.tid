@@ -30,7 +30,7 @@ to catch a threefold slowdown fails on a loaded machine
 
 So this layer measures a ''counter'': the number of keys the store reads, for a
 query and for a write alike (`KvStore::reads()`). It is exact, reproducible and the
-same on every machine, so it runs in `cargo test` and in `scripts/check.sh`, and a
+same on every machine, so it runs in `cargo test` and in `scripts/dev/check.sh`, and a
 regression fails like any broken test.
 
 ```
@@ -63,7 +63,7 @@ generated repositories, records each number with its machine, profile and commit
 and compares the run to the history of the same machine:
 
 ```
-scripts/bench.sh
+scripts/dev/bench.sh
 ```
 
 It takes minutes, so it is run on purpose, before and after a change that could
@@ -78,7 +78,7 @@ steps over it — the polling, the lock waited for, the request a panel should n
 send:
 
 ```
-scripts/session.sh
+scripts/dev/session.sh
 ```
 
 !! What is deliberately not here

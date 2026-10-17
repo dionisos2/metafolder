@@ -58,14 +58,14 @@ help:
 	@echo '  run-daemon         run the daemon from the build tree'
 	@echo '  run-gui            build frontend + run the GUI from the build tree'
 	@echo '  test / check       run the suite (+ a global total)  /  all static checks'
-	@echo '  clean / prune      cargo clean  /  scripts/prune-target.sh'
+	@echo '  clean / prune      cargo clean  /  scripts/dev/prune-target.sh'
 	@echo ''
 	@echo '  PREFIX=$(PREFIX)  BINDIR=$(BINDIR)'
 
 # ── dependency check ─────────────────────────────────────────────────────────
 .PHONY: check-deps
 check-deps:
-	@scripts/check-deps.sh
+	@scripts/dev/check-deps.sh
 
 # ── build ────────────────────────────────────────────────────────────────────
 # The GUI frontend (Tauri embeds crates/gui/frontend/dist at compile time) must
@@ -129,9 +129,9 @@ install: check-deps build install-config | $(BINDIR)
 .PHONY: install-watchd
 install-watchd: build-watchd
 	sudo install -D -m 0755 $(TARGET)/metafolder-watchd $(WATCHD_BIN)
-	sudo install -D -m 0644 scripts/metafolder-watchd.sysusers $(WATCHD_USER)
+	sudo install -D -m 0644 scripts/dev/metafolder-watchd.sysusers $(WATCHD_USER)
 	sudo systemd-sysusers $(WATCHD_USER)
-	sudo install -D -m 0644 scripts/metafolder-watchd.service $(WATCHD_UNIT)
+	sudo install -D -m 0644 scripts/dev/metafolder-watchd.service $(WATCHD_UNIT)
 	sudo systemctl daemon-reload
 	sudo systemctl enable metafolder-watchd
 	sudo systemctl restart metafolder-watchd
@@ -167,18 +167,18 @@ run-gui: frontend
 	$(CARGO) run --release -p metafolder-gui
 
 .PHONY: test
-# scripts/run-tests.sh is `cargo test --workspace` plus the report cargo never
+# scripts/dev/run-tests.sh is `cargo test --workspace` plus the report cargo never
 # prints: the totals across every test binary, and which tests failed where.
 test:
-	@CARGO='$(CARGO)' scripts/run-tests.sh
+	@CARGO='$(CARGO)' scripts/dev/run-tests.sh
 
 .PHONY: check
 check:
-	@scripts/check.sh
+	@scripts/dev/check.sh
 
 .PHONY: prune
 prune:
-	@scripts/prune-target.sh
+	@scripts/dev/prune-target.sh
 
 .PHONY: clean
 clean:

@@ -13,13 +13,13 @@ land in:
 |`crates/gui/default-config/…` (config, keybindings, style, `commands.js`, `panel-types/`) |`gui/…` |
 |`crates/cli/default-config/…` |`cli/…` |
 |`scripts/shipped/…` |`scripts/…` |
-|`docs/wiki/dist/…` (rendered by `scripts/doc build`, not committed) |`docs/…` |
+|`docs/wiki/dist/…` (rendered by `scripts/dev/doc build`, not committed) |`docs/…` |
 
 No binary embeds these files ([[No runtime fallback]]).
 
 ''Scripts.'' The user-facing helper scripts are shared by no single program — a
 script may drive the GUI, the CLI or both — hence their own top-level directory.
-The build and check scripts stay in `scripts/` and are not shipped. Living under
+The build, check and test scripts live apart, in `scripts/dev/`, and are not shipped. Living under
 `main`, a shipped script can be edited or joined by your own, and a new shipped
 version merges in. A launchable script carries a one-line `# Summary:` comment
 right after its shebang: the GUI's `script:run` lists exactly those ([[Running shipped scripts]]). Libraries

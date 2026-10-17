@@ -26,7 +26,7 @@ the text is searched for. Without regard to case, and in this order:
 # for a text containing `:` — a command: the same lookup for the command without its arguments, then for what follows the colon (`metarecord-list:focus-query` reaches an alias `focus-query`), then for what precedes it (the panel type);
 # `<type> panel` and `<type>` stand for each other when nothing has the exact name: `treeref` finds a note titled `treeref panel`, and `trash panel` would find a note titled `trash` if the panel had no note of its own.
 
-`scripts/doc check` keeps the three kinds of name apart: an alias may not be the
+`scripts/dev/doc check` keeps the three kinds of name apart: an alias may not be the
 title or the id of another note.
 
 !! What the shell sends
@@ -59,7 +59,7 @@ from `metafolder.commands.keybindings()` (`applyKeyHints`, `/__keyhints.js`):
 * the table is read again at each page shown.
 
 The fallback is only what the page's source and the search index contain; it is
-never displayed once the panel has the table. `scripts/doc check` refuses a hint
+never displayed once the panel has the table. `scripts/dev/doc check` refuses a hint
 naming a command the GUI does not have.
 
 A `data-mf-live="grammar"` element is filled the same way, with the current

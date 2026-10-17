@@ -7,8 +7,8 @@ use std::path::PathBuf;
 
 /// `key → values` of the `[Service]` section (a key may repeat).
 fn service() -> HashMap<String, Vec<String>> {
-    let path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/metafolder-watchd.service");
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../scripts/dev/metafolder-watchd.service");
     let text = std::fs::read_to_string(path).expect("the unit file");
     let mut section = String::new();
     let mut out: HashMap<String, Vec<String>> = HashMap::new();

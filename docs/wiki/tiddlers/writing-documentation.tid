@@ -2,8 +2,8 @@ title: Writing documentation
 tags: Development
 kind: guide
 audience: dev
-aliases: wiki scripts/doc
-summary: The documentation is this wiki — one note per question, plain .tid files under docs/wiki/tiddlers — read, created, renamed and checked with scripts/doc, cited from the code as doc "Title".
+aliases: wiki scripts/dev/doc
+summary: The documentation is this wiki — one note per question, plain .tid files under docs/wiki/tiddlers — read, created, renamed and checked with scripts/dev/doc, cited from the code as doc "Title".
 
 The documentation is one wiki, `docs/wiki/`: hand-written notes in
 `tiddlers/*.tid`, notes generated from the code in `tiddlers/generated/`, and the
@@ -32,7 +32,7 @@ Restores the entry …
 |`status` |`implemented` (default), `deferred`, `proposed`, `record` |what is not built says so; `record` is a design document kept for its reasoning |
 |`aliases` |a list of titles |other names the help resolves to this note |
 
-The file is named after the title's identifier (`scripts/doc new` picks it).
+The file is named after the title's identifier (`scripts/dev/doc new` picks it).
 
 !! What goes in a note
 
@@ -47,7 +47,7 @@ The file is named after the title's identifier (`scripts/doc new` picks it).
 
 Headings (`!!`), paragraphs, lists, tables, code blocks, inline code, `''bold''`,
 `//italic//`, `[[links]]`, and the project's procedures. No widget, no raw HTML, no
-definition: `scripts/doc check` refuses them outside `system/`.
+definition: `scripts/dev/doc check` refuses them outside `system/`.
 
 |!Procedure |!Gives |
 |`<<cmd "name">>` |a link to a command's note, in code form |
@@ -65,27 +65,27 @@ Traps:
 * a link goes to a note that exists — the check refuses the others. Name what has no note yet in plain text or in code;
 * two titles cannot differ by case or punctuation only: they would share an identifier.
 
-!! `scripts/doc`
+!! `scripts/dev/doc`
 
 ```
-scripts/doc ls [--tag T] [--kind K] [--audience A] [--status S]
-scripts/doc show NAME          # a note, by title, alias or identifier
-scripts/doc find TEXT          # search, grouped by note
-scripts/doc topic NAME         # a topic's note, then every note tagged with it
-scripts/doc links NAME         # what it links to, and what links to it
-scripts/doc refs NAME          # where the code cites it
-scripts/doc new TITLE [--tags L] [--kind K] [--summary S] [--audience A] [--from-gen]
-scripts/doc rename OLD NEW     # the note, every link, every tag, every citation in the code
-scripts/doc check
-scripts/doc gen
-scripts/doc build [OUT]
+scripts/dev/doc ls [--tag T] [--kind K] [--audience A] [--status S]
+scripts/dev/doc show NAME          # a note, by title, alias or identifier
+scripts/dev/doc find TEXT          # search, grouped by note
+scripts/dev/doc topic NAME         # a topic's note, then every note tagged with it
+scripts/dev/doc links NAME         # what it links to, and what links to it
+scripts/dev/doc refs NAME          # where the code cites it
+scripts/dev/doc new TITLE [--tags L] [--kind K] [--summary S] [--audience A] [--from-gen]
+scripts/dev/doc rename OLD NEW     # the note, every link, every tag, every citation in the code
+scripts/dev/doc check
+scripts/dev/doc gen
+scripts/dev/doc build [OUT]
 ```
 
 Prefer it to grepping the files: `find` and `topic` read titles, tags and aliases.
 
 !! What `check` holds
 
-It runs in `scripts/check.sh` as `wiki` ([[Static checks]]):
+It runs in `scripts/dev/check.sh` as `wiki` ([[Static checks]]):
 
 * every note has a `kind` and a `summary`, with allowed values, in a file named after its title;
 * every link and every tag names a note; no alias collides with a title, an identifier or another alias;
@@ -100,7 +100,7 @@ It runs in `scripts/check.sh` as `wiki` ([[Static checks]]):
 
 A comment points at the note that owns the behaviour with `doc "Title"` — the
 title, in double quotes. Any such sequence under `crates/` or `scripts/` counts,
-comment or not, and `scripts/doc rename` rewrites them with the note.
+comment or not, and `scripts/dev/doc rename` rewrites them with the note.
 
 !! The generated catalogs
 
@@ -110,14 +110,14 @@ under `tiddlers/generated/`, holding what the code knows: the usage and options 
 command, its default keys, a field's type, a route's handler. The
 hand-written note of the same name says the rest.
 
-`scripts/doc gen` rewrites them. The Rust ones are golden tests: a stale generated
+`scripts/dev/doc gen` rewrites them. The Rust ones are golden tests: a stale generated
 note fails `cargo test` (`doc_gen` in the `cli` and `gui` crates,
 `the_wiki_catalog_matches_the_code` in the daemon's — `reserved.rs`, whose registry
 `RESERVED_FIELDS` a test holds every `mfr_*` name of the daemon to, and the router). The
 endpoints are read from the routers' source, `.route("path", get(handler)…)` by
 `.route(…)`, the JavaScript modules at `/__*.js` counted as one, and a `///`
 comment on a clap argument ''is'' the help text, so editing one changes a generated
-note. `scripts/doc new --from-gen "mf trash restore"` starts a hand-written note
+note. `scripts/dev/doc new --from-gen "mf trash restore"` starts a hand-written note
 from a generated one: every catalog is enforced, so `check` fails until the note
 exists. The one exception is a deferred topic: `$:/mf/config/catalog-exemptions`
 lists target prefixes left without a note for now (none today), shown under "Not
@@ -126,8 +126,8 @@ undocumented fails `check`.
 
 !! Rendering
 
-`scripts/doc build` renders every hand-written note into `docs/wiki/dist/` — one
+`scripts/dev/doc build` renders every hand-written note into `docs/wiki/dist/` — one
 HTML fragment per note plus `index.json` — which is not committed.
 `metafolder-sync-config` installs it under `~/.config/metafolder/docs/`, and refuses
-to run before it exists; `scripts/complete-build.sh` does both ([[Building]]). The
-GUI serves it at `/docs/`. The tools are tested by `scripts/test-doc-tools.sh`.
+to run before it exists; `scripts/dev/complete-build.sh` does both ([[Building]]). The
+GUI serves it at `/docs/`. The tools are tested by `scripts/dev/test-doc-tools.sh`.

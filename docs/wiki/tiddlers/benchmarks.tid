@@ -7,7 +7,7 @@ summary: metafolder-bench on real folders — the daemon through mf and HTTP, th
 
 `metafolder-bench` (`crates/bench`) has four modes. Three of them run on ''real''
 folders and print numbers to read; the fourth, `regression`, is the suite with a
-history that `scripts/bench.sh` wraps ([[The timed regression suite]]). To know
+history that `scripts/dev/bench.sh` wraps ([[The timed regression suite]]). To know
 whether a change made something slower, use that one; to see how the programs behave
 on real files, or where a panel spends its time, use the ones below.
 
@@ -44,7 +44,7 @@ end; the folders are left as found.
 `gui` launches a GUI on port 7611 against the bench daemon and runs the scenarios on
 both repositories; `attach` runs them on the repository of the focused workspace of
 a GUI you started (found by `gui-port` and `daemon-port` of [[GUI configuration]], or
-`METAFOLDER_GUI_URL` and `METAFOLDER_DAEMON_PORT`). `scripts/bench-gui.sh
+`METAFOLDER_GUI_URL` and `METAFOLDER_DAEMON_PORT`). `scripts/dev/bench-gui.sh
 [scenario...]` is the same thing in shell, through `mf gui` alone.
 
 |!Scenario |!Does |

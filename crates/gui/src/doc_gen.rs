@@ -433,7 +433,7 @@ mod tests {
     }
 
     /// The wiki's generated notes for the `GUI command` and `Panel` catalogs
-    /// are what the code has (`MF_DOC_UPDATE=1` rewrites them: scripts/doc gen).
+    /// are what the code has (`MF_DOC_UPDATE=1` rewrites them: scripts/dev/doc gen).
     #[test]
     fn the_wiki_catalogs_match_the_code() {
         let all = commands();

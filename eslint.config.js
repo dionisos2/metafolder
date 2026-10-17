@@ -111,7 +111,7 @@ export default [
     rules: js.configs.recommended.rules,
   },
 
-  // The documentation wiki's tooling (scripts/doc): plain Node modules.
+  // The documentation wiki's tooling (scripts/dev/doc): plain Node modules.
   {
     files: ['docs/wiki/tools/**/*.mjs'],
     languageOptions: { ecmaVersion: 2023, sourceType: 'module', globals: globals.node },

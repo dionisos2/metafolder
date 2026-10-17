@@ -5,7 +5,7 @@
 # the formatted result close to the hand-written style this codebase had
 # before rustfmt was adopted — it cut the adoption diff from 2252 hunks to 877.
 #
-# Enforced by scripts/check.sh (`fmt`), so an accidental `cargo fmt` can no
+# Enforced by scripts/dev/check.sh (`fmt`), so an accidental `cargo fmt` can no
 # longer produce a reformatting diff on top of a real change.
 max_width = 100
 use_small_heuristics = "Max"

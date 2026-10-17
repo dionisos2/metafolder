@@ -17,16 +17,16 @@ cargo test                                   # everything
 cargo test -p metafolder-daemon              # one crate
 cargo test -p metafolder-daemon --test storage      # one integration file
 cargo test -p metafolder-daemon test_reconcile_creates_records_for_new_files
-scripts/run-tests.sh [cargo test arguments]  # the same, with a global total
+scripts/dev/run-tests.sh [cargo test arguments]  # the same, with a global total
 npm --prefix crates/gui/frontend test        # the frontend (vitest)
-scripts/test-shipped-scripts.sh              # the shipped scripts
-scripts/test-tooling.sh                      # the project's own scripts, and this wiki's tools
+scripts/dev/test-shipped-scripts.sh              # the shipped scripts
+scripts/dev/test-tooling.sh                      # the project's own scripts, and this wiki's tools
 ```
 
 Cargo prints one result line per test binary and no total, so a run of dozens of suites
-ends on the count of the last one. `scripts/run-tests.sh` passes the output through
+ends on the count of the last one. `scripts/dev/run-tests.sh` passes the output through
 and adds the totals and the failing tests with the suite each belongs to; "no suite
-reported" is a failure, not zero failures. `scripts/check.sh` runs all of the above
+reported" is a failure, not zero failures. `scripts/dev/check.sh` runs all of the above
 ([[Static checks]]).
 
 !! Where tests live
@@ -37,8 +37,8 @@ reported" is a failure, not zero failures. `scripts/check.sh` runs all of the ab
 |CLI |`crates/cli/tests/cli_e2e.rs` |the real `mf` binary against one in-process daemon on an ephemeral port, shared by the file |
 |GUI, Rust |`crates/gui/tests/*.rs`, unit tests in `src/` |the GUI's router with `oneshot` and a stub daemon on an ephemeral port; state, keybindings and the registry as unit tests, events caught by a `RecordingNotifier` |
 |GUI, JavaScript |`crates/gui/frontend/tests/` |vitest under jsdom: the key matcher, command parsing, the panel API, the panels' own modules |
-|GUI, end to end |`scripts/gui-e2e.sh` |a real GUI against a throwaway daemon, its commands typed through `mf gui command` and their messages read back; needs a display, not in `check.sh` ([[Testing the GUI end to end]]) |
-|broker |`crates/watchd/tests/`, `scripts/watchd-live-test.sh` |[[Testing the watcher]] |
+|GUI, end to end |`scripts/dev/gui-e2e.sh` |a real GUI against a throwaway daemon, its commands typed through `mf gui command` and their messages read back; needs a display, not in `check.sh` ([[Testing the GUI end to end]]) |
+|broker |`crates/watchd/tests/`, `scripts/dev/watchd-live-test.sh` |[[Testing the watcher]] |
 |shipped scripts |`scripts/test-*.sh` |[[Testing shipped scripts]] |
 |tooling |`scripts/test-{check,check-deps,complete-build,prune-target,run-tests}.sh`, `docs/wiki/tools/*.test.mjs` |each script against stubbed probes |
 

@@ -7,14 +7,15 @@ summary: Working on metafolder itself — building it, testing it, the static ch
 
 metafolder is a Cargo workspace of seven crates plus a Svelte frontend and this
 wiki ([[Architecture]]). Everything needed to work on it is a script under
-`scripts/` or a plain `cargo` command.
+`scripts/dev/` or a plain `cargo` command. (`scripts/` holds the development
+scripts apart from the ones shipped to users, `scripts/shipped/`.)
 
 A change goes through the same steps whatever it touches:
 
 # ''The test first.'' Write it, see it fail, then write the code ([[Testing conventions]]).
-# ''Build'' — `cargo build` for one crate's work, `scripts/complete-build.sh` when the frontend, the documentation or the installed configuration are involved ([[Building]]).
-# ''Check'' — `scripts/check.sh` runs the formatter, the lints, every test suite and the project's own invariants in one pass ([[Static checks]]).
-# ''Measure'', when the change could cost something — `scripts/bench.sh` compares against what this machine measured before ([[Performance testing]]).
+# ''Build'' — `cargo build` for one crate's work, `scripts/dev/complete-build.sh` when the frontend, the documentation or the installed configuration are involved ([[Building]]).
+# ''Check'' — `scripts/dev/check.sh` runs the formatter, the lints, every test suite and the project's own invariants in one pass ([[Static checks]]).
+# ''Measure'', when the change could cost something — `scripts/dev/bench.sh` compares against what this machine measured before ([[Performance testing]]).
 # ''Say it'' — the note that describes the behaviour changes with the code ([[Writing documentation]]), the wire version moves if an older client would misbehave ([[The wire protocol version]]), and data already on disk is converted, never broken ([[Persisted format changes]]).
 # ''Commit'' — one feature, one commit, once it is built, green and formatted (`cargo fmt --all`).
 

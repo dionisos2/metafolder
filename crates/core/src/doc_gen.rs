@@ -4,7 +4,7 @@
 //! `.tid` data notes under `docs/wiki/tiddlers/generated/<catalog>/`, through
 //! [`sync_generated`]. Normally they only *compare* — a stale file fails the
 //! test, which is how `cargo test` keeps the wiki in step with the code — and
-//! with `MF_DOC_UPDATE=1` (what `scripts/doc gen` sets) they rewrite it.
+//! with `MF_DOC_UPDATE=1` (what `scripts/dev/doc gen` sets) they rewrite it.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -109,7 +109,7 @@ fn sync_generated_with(
         Ok(())
     } else {
         Err(format!(
-            "{} is out of date with the code ({}); run scripts/doc gen",
+            "{} is out of date with the code ({}); run scripts/dev/doc gen",
             dir.display(),
             problems.join(", ")
         ))
@@ -350,7 +350,7 @@ mod tests {
         assert!(err.contains("stale a.tid"), "{err}");
         assert!(err.contains("missing b.tid"), "{err}");
         assert!(err.contains("obsolete gone.tid"), "{err}");
-        assert!(err.contains("scripts/doc gen"), "{err}");
+        assert!(err.contains("scripts/dev/doc gen"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

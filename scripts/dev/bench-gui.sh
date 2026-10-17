@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+# JS profiling harness for the metafolder GUI (doc "Benchmarks").
+#
+# Drives the running GUI entirely through the mf CLI (mf gui command / view /
+# bench) and prints, per scenario, the panel phase timings the panels record
+# via performance.measure: mf:list:* / mf:detail:* / mf:fm:* and the
+# auto-instrumented daemon round-trips (mf:daemon …). The same measures also
+# show up, labelled, in the WebKit inspector Timeline (devtools:open) if you
+# want a flame chart alongside these numbers.
+#
+# Prerequisites:
+#   - the GUI is running with a repository loaded in the focused workspace;
+#   - the panels in ~/.config/metafolder/gui/ are up to date — after editing the
+#     shipped panel sources, run metafolder-sync-config so the instrumentation
+#     reaches the config repo's `main` branch the GUI actually serves.
+#
+# Usage:  scripts/dev/bench-gui.sh [scenario...]
+#   with no arguments, runs every scenario. Names: open-list open-detail
+#   open-fm list-detail-nav fm-nav paging.
+#
+# Tunables (env):  MF (cli command, default "mf"), STEP (per-navigation sleep,
+#   default 0.25s), SETTLE (post-action settle, default 0.5s), STEPS (navigation
+#   / paging iterations, default 10).
+
+set -euo pipefail
+
+MF=${MF:-mf}
+STEP=${STEP:-0.25}
+SETTLE=${SETTLE:-0.5}
+STEPS=${STEPS:-10}
+
+die() { echo "error: $*" >&2; exit 1; }
+mfg() { $MF gui "$@"; }
+
+REPO=$(mfg repo) || die "no GUI running, or no repository in the focused workspace"
+
+# Save the current layout so the harness leaves the GUI as it found it.
+SAVED_LEFT=$(mfg layout left)
+SAVED_RIGHT=$(mfg layout right)
+cleanup() {
+    mfg layout left "$SAVED_LEFT" >/dev/null 2>&1 || true
+    mfg layout right "$SAVED_RIGHT" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+# A fresh workspace gives every "open" scenario a first, uncached panel load
+# (PanelHost keeps one live host per workspace×panel-type, so re-showing a
+# type in the same workspace does not reload it). Each scenario drops its own
+# workspace when done (drop_ws) so only its panels are ever alive — otherwise a
+# panel command like metarecord-list:page next is ambiguous across the leftover
+# list panels of earlier scenarios.
+new_ws() { mfg workspace new --repo "$REPO"; }
+drop_ws() { mfg workspace rm "$1" >/dev/null 2>&1 || true; }
+
+clear_bench() { mfg bench --clear; }
+
+# Per-name aggregation (count / total / mean / max), sorted by total time.
+# Uses jq when present, else python3 (a benchmarks dependency), else raw JSON.
+report() {
+    echo "── $1 ──"
+    if command -v jq >/dev/null 2>&1; then
+        mfg bench | jq -r '
+          .records
+          | group_by(.name)
+          | map({
+              name: .[0].name,
+              n: length,
+              total: (map(.duration_ms) | add),
+              mean:  ((map(.duration_ms) | add) / length),
+              max:   (map(.duration_ms) | max),
+            })
+          | sort_by(-.total)[]
+          | "  \(.name)\tn=\(.n)\ttotal=\((.total*100|round)/100)ms\tmean=\((.mean*100|round)/100)ms\tmax=\((.max*100|round)/100)ms"
+        ' | { column -t -s "$(printf '\t')" 2>/dev/null || cat; }
+    elif command -v python3 >/dev/null 2>&1; then
+        mfg bench | python3 -c '
+import json, sys
+from collections import defaultdict
+records = json.load(sys.stdin).get("records", [])
+agg = defaultdict(list)
+for r in records:
+    agg[r["name"]].append(r["duration_ms"])
+rows = [(n, len(v), sum(v), sum(v)/len(v), max(v)) for n, v in agg.items()]
+rows.sort(key=lambda r: -r[2])
+if not rows:
+    print("  (no measures recorded)")
+for n, c, total, mean, mx in rows:
+    print(f"  {n:<34} n={c:<3} total={total:8.2f}ms  mean={mean:7.2f}ms  max={mx:7.2f}ms")
+'
+    else
+        mfg bench
+    fi
+    echo
+}
+
+settle() { sleep "$SETTLE"; }
+
+# ── Scenarios ─────────────────────────────────────────────────────────────
+
+scenario_open_list() {
+    local ws; ws=$(new_ws)
+    clear_bench
+    mfg layout left "$ws" >/dev/null
+    mfg view left metarecord-list >/dev/null
+    # The list no longer runs its query on display: refresh loads it.
+    mfg command view:refresh metarecord-list >/dev/null 2>&1 || true
+    settle
+    report "open metarecord-list"
+    drop_ws "$ws"
+}
+
+scenario_open_detail() {
+    # Detail loads `selected_metarecord`: pick a row in a list first, then
+    # measure only the detail panel's first load of that metarecord.
+    local ws; ws=$(new_ws)
+    mfg layout left "$ws" >/dev/null
+    mfg view left metarecord-list >/dev/null
+    mfg command view:refresh metarecord-list >/dev/null 2>&1 || true # no auto-load on display
+    settle
+    mfg command cursor:first metarecord-list >/dev/null 2>&1 || true # sets selected_metarecord
+    settle
+    clear_bench
+    mfg layout right "$ws" >/dev/null
+    mfg view right metarecord-detail >/dev/null
+    settle
+    report "open metarecord-detail (selected row)"
+    drop_ws "$ws"
+}
+
+scenario_open_fm() {
+    local ws; ws=$(new_ws)
+    clear_bench
+    mfg layout left "$ws" >/dev/null
+    mfg view left file-manager >/dev/null
+    settle
+    report "open file-manager"
+    drop_ws "$ws"
+}
+
+scenario_list_detail_nav() {
+    local ws; ws=$(new_ws)
+    mfg layout left "$ws" >/dev/null
+    mfg layout right "$ws" >/dev/null
+    mfg view left metarecord-list >/dev/null
+    mfg view right metarecord-detail >/dev/null
+    mfg command view:refresh metarecord-list >/dev/null 2>&1 || true # no auto-load on display
+    settle
+    mfg command cursor:first metarecord-list >/dev/null 2>&1 || true
+    settle
+    clear_bench
+    for ((i = 0; i < STEPS; i++)); do
+        mfg command cursor:next metarecord-list >/dev/null 2>&1 || true
+        sleep "$STEP" # let the detail panel's async load settle before the next move
+    done
+    settle
+    report "list+detail: ${STEPS}× selection down"
+    drop_ws "$ws"
+}
+
+scenario_fm_nav() {
+    # The file-manager drives the `file` viewer (not metarecord-detail);
+    # this measures the file-manager's own re-render and directory loads.
+    local ws; ws=$(new_ws)
+    mfg layout left "$ws" >/dev/null
+    mfg layout right "$ws" >/dev/null
+    mfg view left file-manager >/dev/null
+    mfg view right file >/dev/null
+    settle
+    clear_bench
+    for ((i = 0; i < STEPS; i++)); do
+        mfg command cursor:next file-manager >/dev/null 2>&1 || true
+        sleep "$STEP"
+    done
+    settle
+    report "file-manager: ${STEPS}× selection down"
+    drop_ws "$ws"
+}
+
+scenario_paging() {
+    local ws; ws=$(new_ws)
+    mfg layout left "$ws" >/dev/null
+    mfg view left metarecord-list >/dev/null
+    mfg command view:refresh metarecord-list >/dev/null 2>&1 || true # no auto-load on display
+    settle
+    clear_bench
+    for ((i = 0; i < STEPS; i++)); do
+        mfg command metarecord-list:page next >/dev/null 2>&1 || true
+        sleep "$STEP"
+    done
+    settle
+    report "paging: ${STEPS}× load next page"
+    drop_ws "$ws"
+}
+
+ALL=(open-list open-detail open-fm list-detail-nav fm-nav paging)
+declare -A FN=(
+    [open-list]=scenario_open_list
+    [open-detail]=scenario_open_detail
+    [open-fm]=scenario_open_fm
+    [list-detail-nav]=scenario_list_detail_nav
+    [fm-nav]=scenario_fm_nav
+    [paging]=scenario_paging
+)
+
+selected=("$@")
+[ ${#selected[@]} -eq 0 ] && selected=("${ALL[@]}")
+for name in "${selected[@]}"; do
+    fn=${FN[$name]:-} || true
+    [ -n "$fn" ] || die "unknown scenario '$name' (one of: ${ALL[*]})"
+    "$fn"
+done

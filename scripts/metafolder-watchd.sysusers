@@ -1,3 +1,0 @@
-# The system user the fanotify broker runs as (scripts/metafolder-watchd.service).
-# Installed as /etc/sysusers.d/metafolder-watchd.conf by `make install-watchd`.
-u metafolder-watchd - "metafolder fanotify broker" - -

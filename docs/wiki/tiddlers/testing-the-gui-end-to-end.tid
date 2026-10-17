@@ -3,16 +3,16 @@ tags: Development
 kind: guide
 audience: dev
 aliases: gui-e2e
-summary: scripts/gui-e2e.sh runs the GUI's commands in a real window against a throwaway daemon, and checks what they said — never what they look like.
+summary: scripts/dev/gui-e2e.sh runs the GUI's commands in a real window against a throwaway daemon, and checks what they said — never what they look like.
 
 The Rust tests of the GUI drive its orchestration against a stub daemon, and the vitest
 suites its JavaScript under jsdom ([[Testing conventions]]). Neither reaches the chain
 between them: the shell's dispatcher, the Tauri `invoke`, the `#[tauri::command]`
 wrapper. A command misnamed in the shell, or an argument the wrapper never receives,
-passes both. `scripts/gui-e2e.sh` runs that chain for real:
+passes both. `scripts/dev/gui-e2e.sh` runs that chain for real:
 
 ```
-scripts/gui-e2e.sh [--unsandboxed] [--keep-logs] [scenario...]
+scripts/dev/gui-e2e.sh [--unsandboxed] [--keep-logs] [scenario...]
 ```
 
 It boots an isolated daemon — the fixture the shipped scripts' integration tests use:
@@ -58,7 +58,7 @@ hold the focus.
 What only a mouse reaches — a tab's close button, the value picker's button in a field
 editor, the settings view's `Remove` — is clicked through WebKit's remote inspector, never
 at coordinates: a click aimed at a place moves with every change of style. The GUI runs with
-`WEBKIT_INSPECTOR_HTTP_SERVER` on a loopback port of its own, and `scripts/lib/webview.mjs`
+`WEBKIT_INSPECTOR_HTTP_SERVER` on a loopback port of its own, and `scripts/dev/lib/webview.mjs`
 (`node`) evaluates in the shell's page a search for the element, in the document and in
 every panel's shadow root: `click <selector> <text> <inner selector> <inner text>` clicks
 the one ''visible'' element matching the selector whose text contains the text (a hidden
@@ -105,7 +105,7 @@ It needs the binaries and the frontend built ([[Building]]), the configuration
 installed (the GUI reads its panels from it — [[Updating the configuration]]), and
 `Xvfb` or a display; the keyboard scenarios need `Xvfb` and `xdotool`. `--unsandboxed` passes `--allow-unsandboxed-webview`, for a container that
 forbids WebKit's sandbox ([[Sandboxing the media decoders]]). A run takes about ten
-seconds, most of it the GUI starting. It is not part of `scripts/check.sh`, which runs
+seconds, most of it the GUI starting. It is not part of `scripts/dev/check.sh`, which runs
 without a display. `METAFOLDER_BIN_DIR` (default `target/debug`) names the directory of
 the binaries; [[Measuring coverage]] points it at instrumented ones, and the run ends
 by quitting the GUI through its `quit` command — never a kill — so that their profiles
@@ -124,7 +124,7 @@ answers blocks the shell's dispatcher, and every command after it would time out
 A `scenario_<name>` function: `new_repo <name>` for the repository and the workspace,
 `df_mf` to prepare data through the daemon, `run` or `answering` to type a command,
 then `status_is <name> <kind> <glob>`, `command_ok`, or the `assert_*` of
-`scripts/lib/assert.sh`. `gui_status <python expression>` evaluates one over [[mf gui status]] (`ws_count`, `slot_ws <slot>` are built on it). `select_path <abs path>` makes a path's metarecord the
+`scripts/dev/lib/assert.sh`. `gui_status <python expression>` evaluates one over [[mf gui status]] (`ws_count`, `slot_ws <slot>` are built on it). `select_path <abs path>` makes a path's metarecord the
 selection (through the `file` panel); `show_panel <slot> <type> <command>` shows a
 panel and waits until one of its commands answers. A keyboard scenario starts with
 `needs_keyboard <name> || return 0`, then presses keys with `keys` (`xdotool` names:

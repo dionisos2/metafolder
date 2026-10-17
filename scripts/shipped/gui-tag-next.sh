@@ -3,7 +3,7 @@
 # the tag universe and a metarecord's current positive/negative tags, print the
 # single next tag to ask "add tag <path> ?" about, or nothing (exit 1) when no
 # question remains. No daemon/GUI dependency, so it is unit-testable
-# (scripts/test-gui-tag-next.sh) and is *sourced* by scripts/gui-tag-classify.sh
+# (scripts/dev/test-gui-tag-next.sh) and is *sourced* by scripts/gui-tag-classify.sh
 # to share the hierarchy helpers.
 #
 # Usage: gui-tag-next.sh <universe_file> <pos_file> <neg_file>

@@ -1,4 +1,4 @@
-// scripts/doc — read, search, edit and check the documentation wiki from the
+// scripts/dev/doc — read, search, edit and check the documentation wiki from the
 // command line (wiki: Writing documentation). The logic is
 // in tid.mjs; this file only reads and writes files.
 
@@ -31,7 +31,7 @@ const CODE_DIRS = ['crates', 'scripts'];
 const CODE_EXT = new Set(['.rs', '.js', '.mjs', '.ts', '.svelte', '.sh', '.toml', '.html']);
 const SKIP_DIRS = new Set(['node_modules', 'target', 'dist', 'coverage', '.git', 'gen']);
 
-const USAGE = `usage: scripts/doc <command> [args]
+const USAGE = `usage: scripts/dev/doc <command> [args]
 
   ls [--tag T]... [--kind K] [--audience A] [--status S] [--all]
                           list notes (title — summary); --all adds generated/system
@@ -117,7 +117,7 @@ function syncScripts(update) {
   for (const name of have.keys()) if (!want.has(name)) problems.push(`obsolete ${name}`);
   return problems.length === 0
     ? []
-    : [`generated/shipped-script is out of date with scripts/shipped (${problems.join(', ')}); run scripts/doc gen`];
+    : [`generated/shipped-script is out of date with scripts/shipped (${problems.join(', ')}); run scripts/dev/doc gen`];
 }
 
 /** A note by title, alias or id. @param {Tiddler[]} wiki @param {string} name */

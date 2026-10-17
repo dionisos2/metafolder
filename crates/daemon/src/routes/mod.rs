@@ -508,7 +508,7 @@ mod doc_gen {
     //! The daemon's half of the `HTTP endpoint` catalog of the documentation
     //! wiki: one generated note per method and route of [`super::build`], read
     //! from this file's source (`metafolder_core::doc_gen::routes`; rewritten by
-    //! `scripts/doc gen`, checked here otherwise).
+    //! `scripts/dev/doc gen`, checked here otherwise).
 
     use metafolder_core::doc_gen::{endpoint_notes, generated_dir, routes, sync_generated};
 

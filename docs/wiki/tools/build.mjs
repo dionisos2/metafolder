@@ -1,4 +1,4 @@
-// Renders the wiki into the help pages (scripts/doc build): one HTML fragment
+// Renders the wiki into the help pages (scripts/dev/doc build): one HTML fragment
 // per hand-written note, named by its slug, plus index.json describing them.
 // The fragments are plain HTML — every list already expanded, links written as
 // `<a data-help-page="<slug>">` — so the help panel that reads them knows
@@ -20,7 +20,7 @@ const PAGE_TEMPLATE = '$:/mf/templates/help-page';
 
 /**
  * TiddlyWiki's internal links, as the help panel wants them. A link to a
- * missing note stays a dead one: `scripts/doc check` is what refuses those.
+ * missing note stays a dead one: `scripts/dev/doc check` is what refuses those.
  * @param {string} html
  */
 export function rewriteLinks(html) {

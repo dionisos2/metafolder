@@ -23,7 +23,7 @@ The project is a Cargo workspace:
 - **`gui`** — the `metafolder-gui` desktop app (Tauri v2 + Svelte 5): workspaces (tabs) with two panel slots, a keybinding system, a command input with autocomplete, and a local scripting HTTP API (`/gui/*`). Panel types are plain HTML/JS directories mounted in Shadow DOM roots (no iframes) and can be customized or added by the user.
 - **`bench`** — benchmarking harness running against two persistent data folders (`data`, `gui`, `attach` modes).
 
-The documentation is a wiki under `docs/wiki/`, read with `scripts/doc` (`scripts/doc show Documentation`) or in the GUI's help panel; start from the note `Documentation`.
+The documentation is a wiki under `docs/wiki/`, read with `scripts/dev/doc` (`scripts/dev/doc show Documentation`) or in the GUI's help panel; start from the note `Documentation`.
 
 ## Quick start (make)
 
@@ -45,7 +45,7 @@ The individual commands each target runs are documented below.
 ## Dependencies
 
 Package names below are for Arch Linux; map them to your distribution.
-`make check-deps` (or `scripts/check-deps.sh`) reports which of these are
+`make check-deps` (or `scripts/dev/check-deps.sh`) reports which of these are
 present and prints the `pacman` line for whatever is missing.
 
 ### Build
@@ -136,7 +136,7 @@ cargo test
 
 # The same suite plus a global report — cargo prints one result line per test
 # binary and no total, this adds the totals and which tests failed where:
-make test          # or: scripts/run-tests.sh [extra cargo test args]
+make test          # or: scripts/dev/run-tests.sh [extra cargo test args]
 
 # GUI frontend tests (vitest). Install the npm dependencies first — vitest and
 # the other test tools live in devDependencies, so `npm test` fails without it:
@@ -148,9 +148,9 @@ npm --prefix crates/gui/frontend test
 # a clock, so they catch an N+1 or a new scan without flaking. The
 # timed benchmarks are separate, slow, and keep a per-machine history in
 # benchmarks/history/ that every run is compared against:
-scripts/bench.sh            # the standard suite (generated repositories)
-scripts/bench.sh --quick    # the small size only
-scripts/bench.sh --report   # what the history holds, no measurement
+scripts/dev/bench.sh            # the standard suite (generated repositories)
+scripts/dev/bench.sh --quick    # the small size only
+scripts/dev/bench.sh --report   # what the history holds, no measurement
 ```
 
 ## Running the daemon

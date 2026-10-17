@@ -13,7 +13,7 @@ with one mark — but not unprivileged: since 5.13 an unprivileged group may mar
 `FAN_MARK_FILESYSTEM` needs `CAP_SYS_ADMIN`. Hence a broker.
 
 `crates/watchd` (`metafolder-watchd`) runs as its own `metafolder-watchd` user
-(`scripts/metafolder-watchd.sysusers`, unit `scripts/metafolder-watchd.service`) holding
+(`scripts/dev/metafolder-watchd.sysusers`, unit `scripts/dev/metafolder-watchd.service`) holding
 `CAP_SYS_ADMIN` and `CAP_DAC_READ_SEARCH` and nothing else: no network, a read-only
 filesystem, kernel interfaces fenced off, a syscall filter, memory, task and descriptor
 ceilings, no `PrivateTmp` (it must name paths as the host does);

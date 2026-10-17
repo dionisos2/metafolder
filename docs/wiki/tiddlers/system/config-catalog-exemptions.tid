@@ -4,5 +4,5 @@ list:
 Target prefixes an enforced catalog may leave without a note, while the topic
 they belong to is deferred. The catalog page still lists them as "Not documented
 yet". An exemption that no longer covers anything undocumented fails
-`scripts/doc check`, so the list empties as the notes come. Empty: every catalog
+`scripts/dev/doc check`, so the list empties as the notes come. Empty: every catalog
 is complete.

@@ -9,7 +9,7 @@ The examples use a music folder, `~/music`, holding `albums/one.flac` and
 
 !! Before anything
 
-From a checkout, `scripts/complete-build.sh` builds the programs into
+From a checkout, `scripts/dev/complete-build.sh` builds the programs into
 `target/debug/` and installs the configuration under `~/.config/metafolder/`
 ([[Building]], [[Updating the configuration]]). Then start the daemon and leave it running:
 

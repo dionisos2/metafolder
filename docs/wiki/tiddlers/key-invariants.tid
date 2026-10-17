@@ -8,7 +8,7 @@ summary: What must stay true across every change — in the data, the forests, t
 An invariant here is a rule the rest of the code relies on without checking it
 again. Each line states one, names the note that owns it, and says what guards
 it when something does. The static guards are the rules of
-`.semgrep/invariants.yml`, run by `scripts/check.sh` ([[Static checks]]): they catch what neither the
+`.semgrep/invariants.yml`, run by `scripts/dev/check.sh` ([[Static checks]]): they catch what neither the
 compiler nor a test of today's code can see — a future write placed in the wrong
 layer.
 

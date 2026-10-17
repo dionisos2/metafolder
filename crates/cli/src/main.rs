@@ -1803,7 +1803,7 @@ fn dispatch_gui(gui_url: Option<String>, command: GuiCommand) -> CmdResult {
 mod doc_gen {
     //! The `CLI command` catalog of the documentation wiki: one generated note
     //! per command of the clap tree (`metafolder_core::doc_gen`; rewritten by
-    //! `scripts/doc gen`, checked here otherwise).
+    //! `scripts/dev/doc gen`, checked here otherwise).
 
     use super::Cli;
     use clap::CommandFactory;

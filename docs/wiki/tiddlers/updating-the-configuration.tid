@@ -6,7 +6,7 @@ summary: metafolder-sync-config installs the shipped defaults, then merges each 
 After pulling a new version of metafolder, apply its defaults:
 
 ```
-scripts/complete-build.sh                 # builds everything, then syncs
+scripts/dev/complete-build.sh                 # builds everything, then syncs
 target/debug/metafolder-sync-config       # the sync alone, from the checkout root
 ```
 
@@ -15,7 +15,7 @@ history; it is an install step, never run by a long-lived process. `--source <di
 is the checkout to read the defaults from (default: the current directory),
 `--config-dir <dir>` the configuration to update (default: `~/.config/metafolder/`).
 It refuses a checkout whose documentation has not been rendered
-(`scripts/doc build`, which `complete-build.sh` runs first — [[Building]]).
+(`scripts/dev/doc build`, which `complete-build.sh` runs first — [[Building]]).
 
 !! What it does
 

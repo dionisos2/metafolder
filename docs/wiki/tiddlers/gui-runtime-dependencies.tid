@@ -6,7 +6,7 @@ summary: The programs and fonts the GUI uses when it runs — bubblewrap, requir
 
 None of these is needed to build or to test. One is required to run; the others each
 switch a feature off when missing — never a crash, but the feature ''looks broken''
-with nothing on screen to say why. `scripts/check-deps.sh` (`make check-deps`) lists
+with nothing on screen to say why. `scripts/dev/check-deps.sh` (`make check-deps`) lists
 what is missing. Package names are Arch Linux's.
 
 |!Needed |!Package |!For |!Without it |

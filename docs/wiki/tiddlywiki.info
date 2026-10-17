@@ -1,5 +1,5 @@
 {
-  "description": "The metafolder documentation. Rendered by scripts/doc build (docs/wiki/tools/build.mjs), never served by TiddlyWiki itself.",
+  "description": "The metafolder documentation. Rendered by scripts/dev/doc build (docs/wiki/tools/build.mjs), never served by TiddlyWiki itself.",
   "plugins": [],
   "themes": []
 }

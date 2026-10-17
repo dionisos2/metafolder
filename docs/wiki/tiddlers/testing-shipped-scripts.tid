@@ -7,12 +7,12 @@ audience: dev
 
 A shipped script is an orchestrator: everything it does goes through the `mf`
 command — the daemon for the data, `mf gui` for the screen. Testing one end to end
-would take a daemon and a GUI. Two harnesses under `scripts/` replace them; both run
+would take a daemon and a GUI. Two harnesses under `scripts/dev/` replace them; both run
 the ''real'' scripts.
 
 !! The scripted `mf`
 
-`scripts/lib/mf-mock.sh` puts an `mf` of its own first in `PATH`. It logs every call,
+`scripts/dev/lib/mf-mock.sh` puts an `mf` of its own first in `PATH`. It logs every call,
 answers `mf gui input` and `mf gui prompt` from queues, and serves reads from a table
 of responses (a glob on the arguments, first match wins). It keeps a small store of
 tags per metarecord, so the loop of `gui-tag-classify.sh` runs for real.
@@ -25,7 +25,7 @@ tags per metarecord, so the loop of `gui-tag-classify.sh` runs for real.
 |`mock_queue <name> <value>...` |successive answers to the same call |
 |`mock_count <glob>`, `mock_calls_matching <glob>` |what the script called |
 
-`scripts/lib/assert.sh` has `assert`, `assert_not`, `assert_eq`, `assert_contains` and
+`scripts/dev/lib/assert.sh` has `assert`, `assert_not`, `assert_eq`, `assert_contains` and
 `assert_summary`; they take the command to test as arguments.
 
 The mock is ''strict''. It used to end with ''anything unmatched succeeds'', so the
@@ -42,11 +42,11 @@ not once per entry'' is `mock_count 'metarecord -i * field get *'` being 0
 
 !! The real daemon
 
-The mock cannot know what a query means. `scripts/lib/daemon-fixture.sh` starts an
+The mock cannot know what a query means. `scripts/dev/lib/daemon-fixture.sh` starts an
 isolated daemon — a private `XDG_RUNTIME_DIR`, hence its own token, an empty
 `--config` so that nothing is loaded, a free port — and an `mf` that stubs ''only''
 `mf gui`; the rest reaches the real `mf` against that daemon.
-`scripts/test-scripts-integration.sh` runs the scripts over a small repository and
+`scripts/dev/test-scripts-integration.sh` runs the scripts over a small repository and
 asserts what the repository holds afterwards, and their exit codes. It is skipped,
 loudly, when the binaries are not built.
 
@@ -63,8 +63,8 @@ files, each phase timed apart.
 
 !! The suites
 
-One per script, `scripts/test-<script>.sh`, run by `scripts/test-shipped-scripts.sh`,
-which is the `scripts` check of `scripts/check.sh` ([[Static checks]]). `gui-tag-next.sh`, a pure
+One per script, `scripts/test-<script>.sh`, run by `scripts/dev/test-shipped-scripts.sh`,
+which is the `scripts` check of `scripts/dev/check.sh` ([[Static checks]]). `gui-tag-next.sh`, a pure
 selector, needs no mock. Lint a script with `shellcheck -x -P SCRIPTDIR`.
 
 For a new script, write a suite that sources the two libraries. In the response

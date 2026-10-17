@@ -1,15 +1,15 @@
 title: Measuring coverage
 tags: Development
 kind: guide
-summary: scripts/coverage.sh measures the Rust line coverage of the tests and of the GUI end-to-end run together, so the Tauri wrappers only a real window reaches count too.
+summary: scripts/dev/coverage.sh measures the Rust line coverage of the tests and of the GUI end-to-end run together, so the Tauri wrappers only a real window reaches count too.
 audience: dev
 aliases: coverage.sh llvm-cov
 
 ```
-scripts/coverage.sh [--no-gui] [--unsandboxed] [--html]
+scripts/dev/coverage.sh [--no-gui] [--unsandboxed] [--html]
 ```
 
-`scripts/check.sh --coverage` ([[Static checks]]) counts what `cargo test` reaches. That
+`scripts/dev/check.sh --coverage` ([[Static checks]]) counts what `cargo test` reaches. That
 leaves out the code only a running WebView calls: the `#[tauri::command]` wrappers and
 the start-up in `gui/src/lib.rs`. [[Testing the GUI end to end]] runs that code in a
 real window; this script makes it count.
@@ -22,7 +22,7 @@ share their build. Then, under that one instrumentation:
 
 # `cargo llvm-cov clean --workspace` — the profiles of an earlier run would be merged into this one;
 # `cargo test --workspace`;
-# the daemon, `mf` and the GUI built instrumented, and `scripts/gui-e2e.sh` pointed at them through `METAFOLDER_BIN_DIR` (which `scripts/lib/daemon-fixture.sh` reads too);
+# the daemon, `mf` and the GUI built instrumented, and `scripts/dev/gui-e2e.sh` pointed at them through `METAFOLDER_BIN_DIR` (which `scripts/dev/lib/daemon-fixture.sh` reads too);
 # one report, `cargo llvm-cov report --summary-only`, or `--html` under `target/llvm-cov-target/llvm-cov/html`.
 
 A failing test or scenario fails the run, and the report is still written. The

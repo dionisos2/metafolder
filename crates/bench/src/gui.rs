@@ -1,4 +1,4 @@
-//! GUI benchmark scenarios — a Rust port of `scripts/bench-gui.sh`.
+//! GUI benchmark scenarios — a Rust port of `scripts/dev/bench-gui.sh`.
 //!
 //! These drive an **already-running** GUI through its `/gui/*` scripting HTTP
 //! API (the same one `mf gui` uses) and read back the panel phase timings the

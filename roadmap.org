@@ -2,7 +2,7 @@
 
 What is left to do, most urgent first. Done work is not kept here: it is in
 the git history and the CHANGELOG. Deferred work is a wiki note with
-=status: deferred= or =proposed= (=scripts/doc ls --status deferred=; doc
+=status: deferred= or =proposed= (=scripts/dev/doc ls --status deferred=; doc
 "Version scope and non-goals"); the ones worth keeping in view are listed at
 the end.
 

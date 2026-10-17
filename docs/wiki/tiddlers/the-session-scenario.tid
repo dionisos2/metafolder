@@ -3,14 +3,14 @@ tags: Development
 kind: reference
 audience: dev
 aliases: session.sh session
-summary: scripts/session.sh drives a real GUI through a day's worth of use on a 50 000-file repository, each step against its own budget, with the slow log at its floor saying where the time and the keys went — a report, run on purpose.
+summary: scripts/dev/session.sh drives a real GUI through a day's worth of use on a 50 000-file repository, each step against its own budget, with the slow log at its floor saying where the time and the keys went — a report, run on purpose.
 
 ```
-scripts/session.sh --unsandboxed           # the whole session (a container: no WebKit sandbox)
-scripts/session.sh --data benchmarks/bench_data   # the 5 000-file folder, for a fast run
-scripts/session.sh --keep                  # keep target/bench-data/session: logs, report, repository
-scripts/session.sh --calibrate             # measure the machine's neutral load (30 s)
-scripts/session.sh --record                # append the run to benchmarks/session/<machine>.jsonl
+scripts/dev/session.sh --unsandboxed           # the whole session (a container: no WebKit sandbox)
+scripts/dev/session.sh --data benchmarks/bench_data   # the 5 000-file folder, for a fast run
+scripts/dev/session.sh --keep                  # keep target/bench-data/session: logs, report, repository
+scripts/dev/session.sh --calibrate             # measure the machine's neutral load (30 s)
+scripts/dev/session.sh --record                # append the run to benchmarks/session/<machine>.jsonl
 ```
 
 [[The timed regression suite]] times a list of daemon calls someone wrote down. What
@@ -80,4 +80,4 @@ first: the user is the one who has to keep the machine quiet meanwhile.
 !! Limits
 
 * It never writes into an existing file: a hard link shares its bytes with the original folder.
-* It needs a display and a built frontend, so it is not part of `scripts/check.sh`.
+* It needs a display and a built frontend, so it is not part of `scripts/dev/check.sh`.

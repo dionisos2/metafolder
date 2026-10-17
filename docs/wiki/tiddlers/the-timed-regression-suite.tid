@@ -3,19 +3,19 @@ tags: Development
 kind: reference
 audience: dev
 aliases: bench.sh regression
-summary: scripts/bench.sh times a fixed list of scenarios on generated repositories and compares each to the median of this machine's last five runs, kept in benchmarks/history/ — non-zero exit on a regression.
+summary: scripts/dev/bench.sh times a fixed list of scenarios on generated repositories and compares each to the median of this machine's last five runs, kept in benchmarks/history/ — non-zero exit on a regression.
 
 ```
-scripts/bench.sh                  # the standard suite: generated data, release build
-scripts/bench.sh --quick          # the small size only, for a fast answer
-scripts/bench.sh --big            # also the large size (minutes to generate)
-scripts/bench.sh --real           # also copies of the benchmarks/bench_data* folders
-scripts/bench.sh --api            # also a scenario per route of the daemon (the API sweep)
-scripts/bench.sh --filter log.    # only the scenarios whose name starts with log.
-scripts/bench.sh --tolerance 0.5  # the threshold, as a fraction (default 0.30)
-scripts/bench.sh --no-history     # measure and compare, record nothing
-scripts/bench.sh --report         # print the recorded history, measure nothing
-scripts/bench.sh --debug          # measure the debug build (a history of its own)
+scripts/dev/bench.sh                  # the standard suite: generated data, release build
+scripts/dev/bench.sh --quick          # the small size only, for a fast answer
+scripts/dev/bench.sh --big            # also the large size (minutes to generate)
+scripts/dev/bench.sh --real           # also copies of the benchmarks/bench_data* folders
+scripts/dev/bench.sh --api            # also a scenario per route of the daemon (the API sweep)
+scripts/dev/bench.sh --filter log.    # only the scenarios whose name starts with log.
+scripts/dev/bench.sh --tolerance 0.5  # the threshold, as a fraction (default 0.30)
+scripts/dev/bench.sh --no-history     # measure and compare, record nothing
+scripts/dev/bench.sh --report         # print the recorded history, measure nothing
+scripts/dev/bench.sh --debug          # measure the debug build (a history of its own)
 ```
 
 The script builds the daemon and the harness in the same profile, then runs
@@ -24,7 +24,7 @@ empty configuration, loads each generated repository, runs every scenario once t
 warm up and five times timed, prints a table — median, baseline, difference,
 verdict — and appends the measurements to the history. The exit status is 1 when a
 scenario regressed, so a release can gate on it. It is the second layer of
-[[Performance testing]], and never part of `scripts/check.sh`.
+[[Performance testing]], and never part of `scripts/dev/check.sh`.
 
 !! Scenarios
 

@@ -51,11 +51,11 @@ trivial GUI command), because the generated part only knows what the code knows.
 The notes use a small subset of TiddlyWiki's wikitext, refused otherwise by the
 check, and every list and procedure is expanded when rendering. So a `.tid` file
 reads almost as text, the panel stays a small reader of HTML fragments that knows
-nothing of TiddlyWiki, and `scripts/doc` reads the files directly — no TiddlyWiki
+nothing of TiddlyWiki, and `scripts/dev/doc` reads the files directly — no TiddlyWiki
 started, answers at once — for a person or an agent working from the command line.
 
 !! Decided along the way
 
-* No `mf doc` for now: the help panel and `scripts/doc` are the readers.
-* A citation from the code is `doc "Title"`, anywhere under `crates/` or `scripts/`, comment or not — hence the check's name in `scripts/check.sh` is `wiki`, not `doc` (a `skip doc "install node"` line was itself a citation).
+* No `mf doc` for now: the help panel and `scripts/dev/doc` are the readers.
+* A citation from the code is `doc "Title"`, anywhere under `crates/` or `scripts/`, comment or not — hence the check's name in `scripts/dev/check.sh` is `wiki`, not `doc` (a `skip doc "install node"` line was itself a citation).
 * Design decisions kept in an agent's memory files became `rationale` notes for developers, topic by topic; the memory keeps only environment traps and methods.

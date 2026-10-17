@@ -55,4 +55,4 @@ by keypresses and restored by `back`.
 
 The unit suite drives the hermetic `mf` mock ([[Testing shipped scripts]]) by declaring the walk as the ''successive
 answers'' to the step queries (queues that empty as the real set would); the semantics
-against a real daemon stay pinned by `scripts/test-scripts-integration.sh`.
+against a real daemon stay pinned by `scripts/dev/test-scripts-integration.sh`.

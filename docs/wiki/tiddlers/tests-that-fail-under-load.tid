@@ -5,7 +5,7 @@ audience: dev
 summary: A few tests measure time and fall when the machine is busy — a different one at each run, which is how to tell them from a regression — and how to check without touching the working tree.
 
 A handful of tests depend on real time, and fail now and then in a full
-`cargo test --workspace` or `scripts/check.sh` on a busy machine while passing alone:
+`cargo test --workspace` or `scripts/dev/check.sh` on a busy machine while passing alone:
 
 * `crates/daemon/tests/slow_log.rs` — its fixtures set the slow log's threshold very low, so a watcher flush that happens to take a millisecond adds an entry nobody expected;
 * `correlate_is_linear_when_nothing_pairs` (`crates/daemon/src/executor.rs`) — compares two measured times to show that pairing is not quadratic;

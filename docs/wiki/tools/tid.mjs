@@ -253,7 +253,7 @@ export function checkWiki(tiddlers, codeRefs) {
     if (enforced.has(catalog) && !handTitles.has(target)) {
       const exemption = exemptions.find((prefix) => target.startsWith(prefix));
       if (exemption !== undefined) usedExemptions.add(exemption);
-      else errors.push(`"${target}" (${catalog}) has no note — scripts/doc new --from-gen "${target}"`);
+      else errors.push(`"${target}" (${catalog}) has no note — scripts/dev/doc new --from-gen "${target}"`);
     }
   }
   for (const prefix of exemptions) {
