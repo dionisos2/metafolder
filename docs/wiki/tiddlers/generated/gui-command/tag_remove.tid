@@ -1,0 +1,14 @@
+title: $:/mf/gen/GUI command/tag:remove
+catalog: GUI command
+target: tag:remove
+summary: Remove a tag from the selected metarecord
+
+!! Reference
+
+* Defined by the shipped ``commands.js``
+
+!! Default keys
+
+* ``# d m`` → ``tag:remove mixed_tag``
+* ``# d n`` → ``tag:remove negative_tag``
+* ``# d t`` → ``tag:remove tag``

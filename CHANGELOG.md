@@ -203,6 +203,10 @@ than breaking them.
     `mf_watch = true` no longer reads as unwatched.
 
 ### Changed
+- **The tag commands are `tag:query`, `tag:add` and `tag:remove`** (were
+  `user:tag-query`, `user:tag-add`, `user:tag-remove`): commands of the GUI
+  itself, written in `commands.js` so they stay editable; `user:` is left to
+  the user's own. `query` joins the verbs of doc "Command naming".
 - **The `treeref` panel is now `path-ref`**, since it walks `hierarchy_ref`
   fields as well as `tree_ref` ones — the two references reached by a path.
   Its commands follow (`path-ref:add`, `path-ref:set`, `path-ref:toggle`,

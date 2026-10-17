@@ -86,7 +86,7 @@ export function registerZoneCommands({ commands, root, zones: ZONES, clearAll })
       // `stay` is the modifier `apply` takes and means the same: the focus
       // stays where it is. A plain insert lands in the zone, caret after the
       // text, ready for the follow-up edit; a caller that writes and then runs
-      // the query (`user:tag-query`) must not yank the focus out of whatever
+      // the query (`tag:query`) must not yank the focus out of whatever
       // the user is doing.
       { name: 'stay', optional: true, prompt: () => 'Leave the focus where it is? (stay)' },
     ],

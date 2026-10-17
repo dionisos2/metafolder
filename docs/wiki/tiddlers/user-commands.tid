@@ -55,11 +55,11 @@ An error thrown by `run` is shown in the status bar, like any command's failure.
 
 !! The shipped entries
 
-The shipped file holds four examples, `user:rate`, [[user:tag-query]],
-[[user:tag-add]] and [[user:tag-remove]], and eight
-commands of the GUI itself that are written here so that their questions and what
-their answers run can be edited:
+The shipped file holds one example, `user:rate`, and eleven commands of the GUI
+itself that are written here so that their questions and what their answers run can
+be edited:
 
+* [[tag:query]], [[tag:add]] and [[tag:remove]] ([[Tagging from the GUI]]);
 * `metarecord:remove` and `metarecord:remove-file` ([[Sending files to the trash]]);
 * `file-manager:reveal` and `metarecord-list:folder` ([[Cross-panel selection]]);
 * `orphan:delete` and `orphan:detect-delete` ([[Orphans in the GUI]]);

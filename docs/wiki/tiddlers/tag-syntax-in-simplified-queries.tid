@@ -17,7 +17,7 @@ that one instead: `negative_tag #=music` holds the records denying `music` or a 
 it, `mixed_tag ##=music/jazz` the folders partly tagged `music/jazz`. Only `tag`,
 `negative_tag` and `mixed_tag` qualify a form this way — a field position, no new sigil
 ([[Choosing DSL syntax]]) — so a keyword is never taken for a field and `#=a OR #=b`
-stays an `OR`. [[user:tag-query]] writes these forms.
+stays an `OR`. [[tag:query]] writes these forms.
 
 In `#X`, a `/` separates ordered-substring terms rather than anchoring a path:
 `#mu/ja` matches a path holding `mu` then `ja`, in order, not necessarily contiguous nor

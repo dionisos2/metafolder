@@ -20,7 +20,8 @@
 // rather than a reason to reach into the daemon from here.
 //
 // The shipped entries are as much yours as any other. The Delete key's
-// `metarecord:remove`, the cross-panel `file-manager:reveal` and
+// `metarecord:remove`, the tag commands `tag:query` / `tag:add` /
+// `tag:remove`, the cross-panel `file-manager:reveal` and
 // `metarecord-list:folder`, the orphan cleanup `orphan:delete` /
 // `orphan:detect-delete`, and the picks `repos:switch` / `recent` /
 // `folder:open` are defined here rather than compiled into the shell exactly
@@ -734,7 +735,7 @@ export default {
   // "this tag and every tag under it"; the kind names the field it is asked
   // of — `negative_tag #=P`, the records that deny it (doc "Tag syntax in
   // simplified queries").
-  'user:tag-query': {
+  'tag:query': {
     label: 'Insert a tag filter in the simplified query and search',
     args: [
       tagKindArg('Which tags? (tag / negative_tag / mixed_tag)'),
@@ -773,7 +774,7 @@ export default {
   // rules of `mf tag` (doc "Tag subsumption"): `mf:tag` drops the broader tags
   // the new one says, the answers it contradicts, and creates a tag that does
   // not exist yet. The kind names the field, and so the answer.
-  'user:tag-add': {
+  'tag:add': {
     label: 'Add a tag to the selected metarecord',
     args: [
       tagKindArg('Which tags? (tag / negative_tag / mixed_tag)'),
@@ -799,7 +800,7 @@ export default {
   // kind it has. The value is the tag entry's uuid, which a `ref` takes as
   // itself; a path typed instead is read through the field's `[ref-seeds]`
   // rule, as `metarecord:field remove` reads any value.
-  'user:tag-remove': {
+  'tag:remove': {
     label: 'Remove a tag from the selected metarecord',
     args: [
       tagKindArg('From which tags? (tag / negative_tag / mixed_tag)'),

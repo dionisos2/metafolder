@@ -341,7 +341,7 @@ describe('zone commands', () => {
 
   test('insert `stay` leaves the focus where it is', async () => {
     // A caller that writes and then runs the query must not yank the caret
-    // out of what the user is doing — `user:tag-query` composes this.
+    // out of what the user is doing — `tag:query` composes this.
     const p = await mountPanel();
     p.finder.focus();
 
@@ -377,7 +377,7 @@ describe('zone commands', () => {
   });
 
   test('insert `stay` then apply runs the search without touching the focus', async () => {
-    // The pair `user:tag-query` is built from: the filter lands, the query
+    // The pair `tag:query` is built from: the filter lands, the query
     // runs (`apply` persists it), and the focus is never in the query zone
     // along the way.
     const p = await mountPanel();

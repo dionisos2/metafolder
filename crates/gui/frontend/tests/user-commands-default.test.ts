@@ -1,6 +1,6 @@
 // The shipped ~/.config/metafolder/gui/commands.js (doc "User commands").
 //
-// The default file is executable documentation: `user:tag-query` is the
+// The default file is executable documentation: `tag:query` is the
 // example the spec teaches with, and its *composition* is the whole point —
 // the filter lands, the search runs, and the focus is never dragged into the
 // simplified query zone on the way. What is pinned here is the pair of
@@ -14,7 +14,7 @@ import { describe, expect, test } from 'vitest';
 type Arg = { complete: (...args: unknown[]) => unknown };
 
 describe('the shipped user commands', () => {
-  test('user:tag-query inserts the filter with `stay` and runs the search', async () => {
+  test('tag:query inserts the filter with `stay` and runs the search', async () => {
     const mod = await import('../../default-config/commands.js');
     const invocations: string[] = [];
     const mf = {
@@ -24,7 +24,7 @@ describe('the shipped user commands', () => {
       },
     };
 
-    await mod.default['user:tag-query'].run(mf as never, 'tag', 'music/jazz');
+    await mod.default['tag:query'].run(mf as never, 'tag', 'music/jazz');
 
     expect(invocations).toEqual([
       // Quoted: a tag path may hold spaces, and `stay` trails the text.
@@ -34,13 +34,13 @@ describe('the shipped user commands', () => {
     ]);
   });
 
-  test('user:tag-query asks the other fields of the tag model by naming them', async () => {
+  test('tag:query asks the other fields of the tag model by naming them', async () => {
     const mod = await import('../../default-config/commands.js');
     const invocations: string[] = [];
     const mf = { invoke: (i: string) => (invocations.push(i), Promise.resolve({ ok: true })) };
 
-    await mod.default['user:tag-query'].run(mf as never, 'negative_tag', 'music/jazz');
-    await mod.default['user:tag-query'].run(mf as never, 'mixed_tag', 'jeux video');
+    await mod.default['tag:query'].run(mf as never, 'negative_tag', 'music/jazz');
+    await mod.default['tag:query'].run(mf as never, 'mixed_tag', 'jeux video');
 
     expect(invocations).toEqual([
       'metarecord-list:insert simplified "negative_tag #=music/jazz" stay',
@@ -52,11 +52,11 @@ describe('the shipped user commands', () => {
       'metarecord-list:apply simplified',
     ]);
     await expect(
-      mod.default['user:tag-query'].run(mf as never, 'tags', 'music'),
+      mod.default['tag:query'].run(mf as never, 'tags', 'music'),
     ).rejects.toThrow(/tag, negative_tag or mixed_tag/);
   });
 
-  test('user:tag-query completes the kind, then every tag path', async () => {
+  test('tag:query completes the kind, then every tag path', async () => {
     const mod = await import('../../default-config/commands.js');
     const calls: unknown[][] = [];
     const mf = {
@@ -69,7 +69,7 @@ describe('the shipped user commands', () => {
         },
       },
     };
-    const [kind, tag] = mod.default['user:tag-query'].args as unknown as Arg[];
+    const [kind, tag] = mod.default['tag:query'].args as unknown as Arg[];
 
     expect(await kind.complete(mf)).toEqual(['tag', 'negative_tag', 'mixed_tag']);
     expect(await tag.complete(mf, '', ['tag'])).toEqual([
@@ -90,14 +90,14 @@ describe('the shipped user commands', () => {
     ]);
   });
 
-  test('user:tag-add answers through mf:tag, the kind naming the answer', async () => {
+  test('tag:add answers through mf:tag, the kind naming the answer', async () => {
     const mod = await import('../../default-config/commands.js');
     const invocations: string[] = [];
     const mf = { invoke: (i: string) => (invocations.push(i), Promise.resolve({ ok: true })) };
 
-    await mod.default['user:tag-add'].run(mf as never, 'tag', 'music/jazz');
-    await mod.default['user:tag-add'].run(mf as never, 'negative_tag', 'jeux video');
-    await mod.default['user:tag-add'].run(mf as never, 'mixed_tag', 'music');
+    await mod.default['tag:add'].run(mf as never, 'tag', 'music/jazz');
+    await mod.default['tag:add'].run(mf as never, 'negative_tag', 'jeux video');
+    await mod.default['tag:add'].run(mf as never, 'mixed_tag', 'music');
 
     expect(invocations).toEqual([
       'mf:tag add music/jazz',
@@ -105,34 +105,34 @@ describe('the shipped user commands', () => {
       'mf:tag deny jeux video',
       'mf:tag mixed music',
     ]);
-    await expect(mod.default['user:tag-add'].run(mf as never, 'tags', 'x')).rejects.toThrow(
+    await expect(mod.default['tag:add'].run(mf as never, 'tags', 'x')).rejects.toThrow(
       /tag, negative_tag or mixed_tag/,
     );
   });
 
-  test('user:tag-add completes the kind, then every tag path', async () => {
+  test('tag:add completes the kind, then every tag path', async () => {
     const mod = await import('../../default-config/commands.js');
     const mf = {
       workspace: { get: (k: string) => Promise.resolve(k === 'active_repo' ? 'r1' : null) },
       daemon: { call: () => Promise.resolve({ a: ['music/jazz'], b: ['music'] }) },
     };
-    const [kind, tag] = mod.default['user:tag-add'].args as unknown as Arg[];
+    const [kind, tag] = mod.default['tag:add'].args as unknown as Arg[];
 
     expect(await kind.complete(mf)).toEqual(['tag', 'negative_tag', 'mixed_tag']);
     expect(await tag.complete(mf, '', ['tag'])).toEqual(['music', 'music/jazz']);
   });
 
-  test('user:tag-remove takes a tag off the selected metarecord', async () => {
+  test('tag:remove takes a tag off the selected metarecord', async () => {
     const mod = await import('../../default-config/commands.js');
     const invocations: string[] = [];
     const mf = { invoke: (i: string) => (invocations.push(i), Promise.resolve({ ok: true })) };
     const jazz = 'a'.repeat(32);
 
     // The value is the tag entry's uuid, which a ref takes as itself.
-    await mod.default['user:tag-remove'].run(mf as never, 'negative_tag', jazz);
+    await mod.default['tag:remove'].run(mf as never, 'negative_tag', jazz);
     // A path typed rather than picked goes through as typed: the value is
     // the last argument, so its words need no quotes.
-    await mod.default['user:tag-remove'].run(mf as never, 'tag', 'jeux video');
+    await mod.default['tag:remove'].run(mf as never, 'tag', 'jeux video');
 
     expect(invocations).toEqual([
       `metarecord:field remove negative_tag ${jazz}`,
@@ -140,7 +140,7 @@ describe('the shipped user commands', () => {
     ]);
   });
 
-  test("user:tag-remove completes over the selected metarecord's tags of that kind", async () => {
+  test("tag:remove completes over the selected metarecord's tags of that kind", async () => {
     const mod = await import('../../default-config/commands.js');
     const jazz = 'a'.repeat(32);
     const marathon = 'b'.repeat(32);
@@ -174,7 +174,7 @@ describe('the shipped user commands', () => {
         },
       },
     };
-    const [kind, tag] = mod.default['user:tag-remove'].args as unknown as Arg[];
+    const [kind, tag] = mod.default['tag:remove'].args as unknown as Arg[];
 
     expect(await kind.complete(mf)).toEqual(['tag', 'negative_tag', 'mixed_tag']);
     expect(await tag.complete(mf, '', ['negative_tag'])).toEqual([
