@@ -1,0 +1,46 @@
+title: Why there is no atime or ctime
+tags: [[File tracking]]
+kind: rationale
+summary: Of a file's four timestamps the daemon records mtime and btime: atime moves with the daemon's own reads and the mount options, and ctime only says that something it already records changed — and does not survive a copy.
+
+
+A file has four timestamps; the watcher and reconcile record two of them
+([[File metadata fields]]).
+
+|!Timestamp |!Moves when |!Field |
+|mtime (modification) |the content is written |`mfr_mtime` |
+|btime (birth) |never: when the inode was created |`mfr_btime`, where the filesystem keeps it |
+|ctime (//change//, not creation) |the inode changes: content, mode, owner, a rename, a new hard link |none |
+|atime (access) |the file is read |none |
+
+`touch`, `cp -p`, `rsync -t` and archive extractors can set mtime and atime to any
+value; ctime cannot be set, and is always "now" at the last change.
+
+!! Not atime
+
+* ''It does not say how the file is used.'' Most Linux filesystems are mounted
+  `relatime`: atime moves on a read only once a day, or when it is older than mtime;
+  under `noatime` it never moves. Its value depends on the mount options more than
+  on the reads.
+* ''The daemon would move it itself.'' Fingerprinting ([[File fingerprint]]),
+  embedded-metadata extraction ([[Embedded metadata]]), MIME detection and the
+  GUI's thumbnails all read files: recording atime would record the daemon's own
+  work, and each recorded read would be followed by another.
+* ''A read is not a write.'' Every write is an operation in the log
+  ([[The operation log]]); one per file read would bury the changes worth undoing
+  — the reason recently viewed metarecords are not a field either
+  ([[Why recently viewed is kept by the GUI]]).
+
+!! Not ctime
+
+* ''It is redundant.'' Everything that moves it is already recorded, by name: the
+  content (`mfr_mtime`, `mfr_size`, the hashes), the mode (`mfr_permissions`), the
+  owner (`mfr_uid`, `mfr_gid`), the place (`mfr_path`), the hard links
+  (`mfr_inode`). ctime says that one of them changed, not which.
+* ''It survives nothing.'' A copy, a backup restored, a file synced from another
+  repository gets a ctime of "now". Compared between two sides, it would report
+  every copied file as changed — sync compares mtime, size and type instead
+  ([[Change detection in sync]]).
+* ''The log is a better one.'' Each change of a tracked file's metadata is an
+  operation with its time, what changed, and who wrote it — the watcher, a
+  command, the trash ([[Operations and their origin]]).
