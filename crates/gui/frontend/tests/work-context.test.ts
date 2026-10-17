@@ -9,10 +9,10 @@ import { contextIndicator } from '../src/lib/workContext';
 import { store } from '../src/lib/store.svelte';
 import type { WorkspaceInfo } from '../src/lib/types';
 
-const { invoked, pending } = vi.hoisted(() => ({
-  invoked: [] as { cmd: string; args: unknown }[],
-  pending: { value: { state: 'none' } as Record<string, unknown> },
-}));
+const { invoked, pending } = vi.hoisted(() => {
+  const value: Record<string, unknown> = { state: 'none' };
+  return { invoked: [] as { cmd: string; args: unknown }[], pending: { value } };
+});
 
 vi.mock('../src/lib/ipc', () => ({
   invoke: vi.fn(async (cmd: string, args: unknown) => {

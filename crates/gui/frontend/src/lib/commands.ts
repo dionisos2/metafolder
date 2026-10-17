@@ -1073,7 +1073,7 @@ async function offerWorkContext(ws: string, repoName: string): Promise<void> {
     } catch (error) {
       // A repository still loading answers 503 for a while.
       if (attempt >= PENDING_ATTEMPTS) {
-        await status(`work context of ${repoName}: ${error}`);
+        await status(`work context of ${repoName}: ${String(error)}`);
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, 1000));
