@@ -14,6 +14,13 @@ than breaking them.
 ## [Unreleased]
 
 ### Added
+- **Tag commands for every tag field.** `user:tag-query <tag|negative_tag|
+  mixed_tag> <tag>` completes over the tag paths again (it read the `tag` ref
+  as a tree, and offered nothing), and `user:tag-remove` takes a tag off the
+  selected metarecord, completing over the ones it has. Keys: `# t/n/m` to
+  search, `# d t/n/m` to remove. The simplified language reads a tag form of
+  another field when that field precedes it: `negative_tag #=musique`
+  (doc "Tag syntax in simplified queries").
 - **Generic panel commands: one `cursor:next` for every list panel.** A panel
   hands the shell a few functions (`metafolder.provide({index, count, select,
   more, entries, enter})`) and `cursor:next`, `cursor:prev`, `cursor:first`,

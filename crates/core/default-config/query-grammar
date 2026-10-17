@@ -62,6 +62,13 @@ predicate =
   | "#="  v:tagpath         => tag -> (mf_schema = "tag" AND path =>* {str($v)})
   | "#"   v:tagosm          => tag -> (mf_schema = "tag" AND osm(path, {str($v)}))
   | "#!"  v:tagosm          => negative_tag -> (mf_schema = "tag" AND osm(path, {str($v)}))
+  # The same forms asked of another field of the tag model: a field name
+  # before them — `negative_tag #=musique` (denies musique or a tag under it),
+  # `mixed_tag ##=musique/jazz`. Only these three names qualify a tag form, so
+  # a keyword is never taken for a field (`#=a OR #=b` stays an OR).
+  | f:tagfield "##=" v:tagpath => $f -> (mf_schema = "tag" AND path = {str($v)})
+  | f:tagfield "#="  v:tagpath => $f -> (mf_schema = "tag" AND path =>* {str($v)})
+  | f:tagfield "#"   v:tagosm  => $f -> (mf_schema = "tag" AND osm(path, {str($v)}))
   # A pasted UUID — 32 hex characters, what the GUI's `Copy UUID` puts on the
   # clipboard — selects that one metarecord. `tag->UUID` selects the records
   # whose `tag` (or any ref field) points *at* it instead.
@@ -75,6 +82,11 @@ field  = "p"    => mfr_path
        | "size" => mfr_size
        | w:WORD => $w
 value  = STRING | WORD
+
+# The fields of the tag model (doc "Hierarchical tags").
+tagfield = "tag"          => tag
+         | "negative_tag" => negative_tag
+         | "mixed_tag"    => mixed_tag
 
 # Tag path values. `tagpath` keeps the slashes (a real path); `tagosm` turns
 # them into osm term separators (spaces). A quoted string is passed through

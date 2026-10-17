@@ -1,7 +1,7 @@
 title: Tag syntax in simplified queries
 tags: [[Simplified query language]]
 kind: reference
-summary: #X finds a tag by fuzzy path, #=P a tag and its subtree by full path, ##=P exactly one tag, #!X the records that deny a tag.
+summary: #X finds a tag by fuzzy path, #=P a tag and its subtree by full path, ##=P exactly one tag, #!X the records that deny a tag; negative_tag #=P asks another tag field.
 
 The default grammar has three tag forms. All select the records whose `tag` ref points
 at a tag entry (`mf_schema = "tag"`) chosen by its `path` ([[Hierarchical tags]]):
@@ -11,6 +11,13 @@ at a tag entry (`mf_schema = "tag"`) chosen by its `path` ([[Hierarchical tags]]
 |`#=music/jazz` |that tag ''and every tag below it'', by full path from the root |`… path =>* "music/jazz"` |
 |`##=music/jazz` |''exactly'' that tag |`… path = "music/jazz"` |
 |`#!jazz` |the records that ''deny'' a tag found fuzzily, like `#jazz` (a `negative_tag` ref) |`negative_tag -> (mf_schema = "tag" AND osm(path, "jazz"))` |
+
+The three forms read the `tag` field. Preceded by a field of the tag model, they read
+that one instead: `negative_tag #=music` holds the records denying `music` or a tag under
+it, `mixed_tag ##=music/jazz` the folders partly tagged `music/jazz`. Only `tag`,
+`negative_tag` and `mixed_tag` qualify a form this way — a field position, no new sigil
+([[Choosing DSL syntax]]) — so a keyword is never taken for a field and `#=a OR #=b`
+stays an `OR`. [[user:tag-query]] writes these forms.
 
 In `#X`, a `/` separates ordered-substring terms rather than anchoring a path:
 `#mu/ja` matches a path holding `mu` then `ja`, in order, not necessarily contiguous nor

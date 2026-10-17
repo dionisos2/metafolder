@@ -201,6 +201,43 @@ mod tests {
     }
 
     #[test]
+    fn default_grammar_names_the_tag_field_before_a_tag_form() {
+        let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
+        // A tag form preceded by one of the three fields of the tag model asks
+        // it of that field: `negative_tag #=P` = the records denying P or a tag
+        // under it, `mixed_tag ##=P` = the folders partly tagged with P.
+        assert_eq!(
+            expand(&g, "negative_tag #=musique/jazz").unwrap(),
+            r#"negative_tag -> (mf_schema = "tag" AND path =>* "musique/jazz")"#
+        );
+        assert_eq!(
+            expand(&g, "mixed_tag ##=musique/jazz").unwrap(),
+            r#"mixed_tag -> (mf_schema = "tag" AND path = "musique/jazz")"#
+        );
+        assert_eq!(
+            expand(&g, "negative_tag #jazz").unwrap(),
+            r#"negative_tag -> (mf_schema = "tag" AND osm(path, "jazz"))"#
+        );
+        assert_eq!(
+            expand(&g, "tag #=musique").unwrap(),
+            r#"tag -> (mf_schema = "tag" AND path =>* "musique")"#
+        );
+        // Only those three names qualify a tag form: a keyword is never read
+        // as a field, so `OR` still separates two tag forms.
+        assert_eq!(
+            expand(&g, "#=musique OR #=livre").unwrap(),
+            r#"tag -> (mf_schema = "tag" AND path =>* "musique") OR tag -> (mf_schema = "tag" AND path =>* "livre")"#
+        );
+        assert_eq!(
+            expand(&g, "fav #=musique").unwrap(),
+            r#"rating >= 4 AND tag -> (mf_schema = "tag" AND path =>* "musique")"#
+        );
+        for input in ["negative_tag #=a/b", "mixed_tag ##=a", "negative_tag #a"] {
+            crate::dsl::parse_query(&expand(&g, input).unwrap()).expect("valid DSL");
+        }
+    }
+
+    #[test]
     fn default_grammar_accepts_explicit_and() {
         let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
         let expected = "a = \"x\" AND b = \"y\"";

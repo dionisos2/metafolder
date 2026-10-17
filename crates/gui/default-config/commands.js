@@ -34,20 +34,39 @@
 // score of a recently-viewed entry, the same in the recent panel.
 import { frecency, formatScore } from '/__ui.js';
 
+/** The fields of the tag model (doc "Hierarchical tags"): what a record has,
+ *  what it has not, and what a folder partly has. */
+const TAG_KINDS = ['tag', 'negative_tag', 'mixed_tag'];
+
+/** The first argument of the tag commands: which of the three fields.
+ *  @param {string} prompt */
+function tagKindArg(prompt) {
+  return { name: 'kind', prompt: () => prompt, initial: () => 'tag', complete: () => TAG_KINDS };
+}
+
+/** Refuses a kind that names none of the tag fields — a typo must not reach a
+ *  query or a write under a field of its own. @param {string} kind */
+function requireTagKind(kind) {
+  if (!TAG_KINDS.includes(kind)) {
+    throw new Error(`"${kind}" is not a tag field: tag, negative_tag or mixed_tag`);
+  }
+}
+
 /**
- * Every path of a TreeRef field in the active repository, sorted.
+ * Every path of every tag entry in the active repository, sorted — a tag
+ * under several parents has one per parent. Read from the entries' `path`,
+ * since the `tag` field itself is a `ref`, not a tree.
  * @param {MetafolderApi} mf
- * @param {string} field
  */
-async function treePaths(mf, field) {
+async function tagPaths(mf) {
   const repo = await mf.workspace.get('active_repo');
   if (!repo) return [];
   // `daemon.call` is untyped on purpose — the daemon's JSON is not a
   // TypeScript type — so the shape is asserted at the one place it is read.
   const body = /** @type {Record<string, string[]>} */ (
     await mf.daemon.call('POST', `/repos/${repo}/query/fields/resolve-tree`, {
-      query: { type: 'is_present', field },
-      field,
+      query: { type: 'eq', field: 'mf_schema', value: { type: 'string', value: 'tag' } },
+      field: 'path',
     })
   );
   const paths = new Set();
@@ -712,24 +731,92 @@ export default {
 
   // Insert a tag filter into the simplified query zone and run the search,
   // completing over the tags that exist. `#=` is the simplified language's
-  // "this exact tag path".
+  // "this tag and every tag under it"; the kind names the field it is asked
+  // of — `negative_tag #=P`, the records that deny it (doc "Tag syntax in
+  // simplified queries").
   'user:tag-query': {
     label: 'Insert a tag filter in the simplified query and search',
     args: [
+      tagKindArg('Which tags? (tag / negative_tag / mixed_tag)'),
       {
         name: 'tag',
         prompt: () => 'Tag?',
-        complete: (/** @type {MetafolderApi} */ mf) => treePaths(mf, 'tag'),
+        complete: (/** @type {MetafolderApi} */ mf) => tagPaths(mf),
       },
     ],
     // Two composed commands, and the pair is the point: `insert`'s `stay`
     // keeps the focus where it is (the search is this command's job, not an
     // edit session in the query zone), and `apply` is the Enter nobody
-    // presses — it runs the query and, holding no focus, drops none. The text
-    // is quoted so a tag whose path holds spaces still splices as one value.
-    run: async (/** @type {MetafolderApi} */ mf, /** @type {string} */ tag) => {
-      await mf.invoke(`metarecord-list:insert simplified "#=${tag}" stay`);
+    // presses — it runs the query and, holding no focus, drops none.
+    run: async (
+      /** @type {MetafolderApi} */ mf,
+      /** @type {string} */ kind,
+      /** @type {string} */ tag,
+    ) => {
+      requireTagKind(kind);
+      // A path of plain words takes no quotes; any other is a quoted string.
+      const path = /^[\p{L}\p{N}_]+(\/[\p{L}\p{N}_]+)*$/u.test(tag) ? tag : `"${tag}"`;
+      const text = `${kind === 'tag' ? '' : `${kind} `}#=${path}`;
+      // An invocation has no escapes, so text holding quotes cannot ride in a
+      // quoted argument: it goes as the last argument's words instead, and
+      // gives `stay` up — the zone takes the focus, and `apply` drops it.
+      await mf.invoke(
+        text.includes('"')
+          ? `metarecord-list:insert simplified ${text}`
+          : `metarecord-list:insert simplified "${text}" stay`,
+      );
       await mf.invoke('metarecord-list:apply simplified');
+    },
+  },
+
+  // Take a tag off the selected metarecord, completing over the tags of that
+  // kind it has. The value is the tag entry's uuid, which a `ref` takes as
+  // itself; a path typed instead is read through the field's `[ref-seeds]`
+  // rule, as `metarecord:field remove` reads any value.
+  'user:tag-remove': {
+    label: 'Remove a tag from the selected metarecord',
+    args: [
+      tagKindArg('From which tags? (tag / negative_tag / mixed_tag)'),
+      {
+        name: 'tag',
+        prompt: (
+          /** @type {MetafolderApi} */ _mf,
+          /** @type {string[]} */ prior,
+        ) => `Tag to remove from "${prior[0]}"?`,
+        complete: async (
+          /** @type {MetafolderApi} */ mf,
+          /** @type {string} */ _partial,
+          /** @type {string[]} */ prior = [],
+        ) => {
+          const selection = await selectedMetarecord(mf);
+          if (!selection) return [];
+          const record = (await mf.daemon.metarecords(selection.repo, [selection.uuid])).get(
+            selection.uuid,
+          );
+          const uuids = [
+            ...new Set(
+              (record?.fields ?? []).flatMap((f) =>
+                f.name === prior[0] && f.value.type === 'ref' ? [String(f.value.value)] : [],
+              ),
+            ),
+          ];
+          const paths = await mf.daemon.treePaths(selection.repo, 'path', uuids);
+          // One candidate per path, each valued with its tag: a tag under two
+          // parents is found by either.
+          return uuids
+            .flatMap((uuid) => (paths[uuid] ?? []).map((label) => ({ label, value: uuid })))
+            .sort((a, b) => a.label.localeCompare(b.label));
+        },
+      },
+    ],
+    // The value is the last argument, so a path's words need no quotes.
+    run: async (
+      /** @type {MetafolderApi} */ mf,
+      /** @type {string} */ kind,
+      /** @type {string} */ tag,
+    ) => {
+      requireTagKind(kind);
+      await mf.invoke(`metarecord:field remove ${kind} ${tag}`);
     },
   },
 
