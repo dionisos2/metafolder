@@ -46,10 +46,12 @@
 # a killed process writes no coverage profile.
 #
 # Usage:  scripts/dev/gui-e2e.sh [--unsandboxed] [--keep-logs] [scenario...]
-#   with no scenario, runs them all: undo-redo duplicates orphans trash
-#   reconcile ignore sync repos list layout script errors picker refs hierarchy
-#   hierarchy-form prompt history keybindings open-with tab-close pick-button
-#   suggested-key walk open-viewers slideshow devtools.
+#   with no scenario, runs them all: undo-redo duplicates orphans trash remove
+#   field-keys reconcile ignore sync repos list layout script script-workspaces
+#   errors picker refs hierarchy hierarchy-form prompt history keybindings
+#   open-with tab-close pick-button suggested-key walk open-viewers slideshow
+#   shell-line repos-memory help-keys zoom, and devtools last (it takes the
+#   inspector the clicking scenarios drive).
 #   --unsandboxed  pass --allow-unsandboxed-webview to the GUI (a container
 #                  that forbids WebKit's sandbox; never on real data)
 #   --keep-logs    keep the work directory (daemon.log, gui.log) on exit
@@ -73,11 +75,14 @@ for arg in "$@"; do
         *) SCENARIOS+=("$arg") ;;
     esac
 done
+# devtools runs last: opening the inspector inside the GUI takes the WebKit
+# inspector the clicking scenarios drive (webview.mjs), and every click after it
+# fails — forty tries of four seconds each.
 [ ${#SCENARIOS[@]} -gt 0 ] \
     || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list layout script script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close
-        pick-button suggested-key walk open-viewers slideshow devtools shell-line repos-memory
-        help-keys zoom)
+        pick-button suggested-key walk open-viewers slideshow shell-line repos-memory
+        help-keys zoom devtools)
 
 # shellcheck source=lib/daemon-fixture.sh
 . scripts/dev/lib/daemon-fixture.sh
