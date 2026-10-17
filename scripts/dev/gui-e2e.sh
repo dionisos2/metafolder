@@ -1293,8 +1293,16 @@ scenario_help_keys() {
     typed "help panel"
     keys Return
     assert "help-keys: Enter opens the page" until_ok 10 reads "help panel" "#help-search"
+    keys Left
+    assert "help-keys: Left, out of the box, goes up to the topic" \
+        until_ok 10 reads "panel" "#help-search"
+    # The pages shown are a history, as in a browser (doc "help panel"). A page
+    # revisited is named in the box by its id, as a page opened by a link is.
     keys BackSpace
-    assert "help-keys: Backspace, out of the box, goes up to the topic" \
+    assert "help-keys: Backspace goes back to the page shown before" \
+        until_ok 10 reads "help-panel" "#help-search"
+    keys shift+BackSpace
+    assert "help-keys: Shift+Backspace goes forward again" \
         until_ok 10 reads "panel" "#help-search"
     keys s
     typed "trash"
