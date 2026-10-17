@@ -130,8 +130,9 @@ option {
 /* A row's open button (/__ui.js openButton, doc "Opening a row"): an icon big
  * enough to aim at. `.mf-open-show` (shows the row in another panel) is dim
  * until its row is hovered or under the cursor; `.mf-open-enter` (goes into the
- * row: a folder, a tree node) is always ringed in the accent colour, since it
- * is the one way in. */
+ * row: a folder, a tree node) is always drawn in green and never dimmed,
+ * since it is the one way in — no ring: the colour alone sets it apart from
+ * `↗`, which shares its arrow shape. */
 button.mf-open {
   flex: none;
   width: 1.7em;
@@ -148,9 +149,7 @@ button.mf-open {
   opacity: 0.45;
 }
 button.mf-open-enter {
-  color: var(--mf-fg);
-  border-color: var(--mf-accent);
-  background: color-mix(in srgb, var(--mf-accent) 30%, transparent);
+  color: var(--mf-ok);
   opacity: 0.85;
 }
 :hover > button.mf-open,
@@ -161,6 +160,9 @@ button.mf-open-enter {
 button.mf-open:hover {
   border-color: var(--mf-accent);
   color: var(--mf-fg);
+}
+button.mf-open-enter:hover {
+  color: var(--mf-ok);
 }
 /* Nothing to open in that viewer (no file, or no metarecord): greyed, whether
  * its row is hovered or not — the colour alone says it. */
