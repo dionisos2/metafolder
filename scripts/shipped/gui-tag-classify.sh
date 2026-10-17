@@ -10,6 +10,13 @@
 #   n / ←  -> the file does NOT have it  (mf tag deny)
 #   Escape -> stop
 #
+# The tag flags (doc "Tag flags") change the questions: an `always` tag is
+# added without one, unless it is answered or under a negative; the children of
+# a `partition` or `sparse` tag are not asked one by one but PICKED, by
+# completion over the candidates, once the tag is had — one for a partition,
+# one after another for a sparse tag, until "(rien de plus)", which denies the
+# candidates left.
+#
 # The question ORDER (descend into a tag's children only once it is accepted,
 # skip subtrees under a generic negative) is the pure
 # selector in gui-tag-next.sh. The tag MODEL — creating entries, adding the
@@ -17,7 +24,7 @@
 # deny, contradicted answers) — is `mf tag`, so this driver no
 # longer re-implements any of it.
 #
-# The vocabulary comes from `mf tag list` (one path per line), the
+# The vocabulary comes from `mf tag list` (path, uuid and flags), the
 # metarecord's current tags from
 # `mf … field get <field> --resolve path` — one round-trip each, no per-entry
 # loops. Resumable: answered questions are skipped, so re-run until nothing is
@@ -110,6 +117,45 @@ NEG="$TMP/neg"
 mf_into "$UNIVERSE" tag list
 [ -s "$UNIVERSE" ] || mf_die "no tag entries (mf_schema = \"tag\") in repository $REPO"
 
+# The completion entry that ends a pick, denying the candidates left.
+NOTHING_MORE="(rien de plus)"
+
+# read_answers — the record's current answers into $POS / $NEG.
+read_answers() {
+    mf metarecord -i "$UUID" field get tag --resolve path >"$POS"
+    mf metarecord -i "$UUID" field get negative_tag --resolve path >"$NEG"
+}
+
+# pick <tag> — one child of <tag>, by completion over the candidates; or
+# nothing more, which denies them all. Fails when the user stopped the run.
+pick() {
+    local at=$1 chosen c
+    local -a candidates=()
+    local -A by_name=()
+    mapfile -t candidates < <(gui_tag_children "$UNIVERSE" "$POS" "$NEG" "$at")
+    for c in ${candidates+"${candidates[@]}"}; do by_name[${c##*/}]=$c; done
+    while :; do
+        chosen=$( { for c in ${candidates+"${candidates[@]}"}; do printf '%s\n' "${c##*/}"; done
+                    printf '%s\n' "$NOTHING_MORE"; } \
+            | mf_gui_prompt "Tag sous '$at' :") || return 1
+        if [ "$chosen" = "$NOTHING_MORE" ]; then
+            for c in ${candidates+"${candidates[@]}"}; do
+                # Explicit: `pick` runs under `||`, where set -e is off.
+                mf tag -i "$UUID" deny "$c" >/dev/null || mf_die "cannot deny $c"
+                no=$((no + 1))
+            done
+            return 0
+        fi
+        if [ -n "${by_name[$chosen]+set}" ]; then
+            mf tag -i "$UUID" add "${by_name[$chosen]}" >/dev/null \
+                || mf_die "cannot add ${by_name[$chosen]}"
+            yes=$((yes + 1))
+            return 0
+        fi
+        mf_gui_report "'$chosen' n'est pas un tag sous '$at'"
+    done
+}
+
 yes=0 no=0 done_n=0 STOP=""
 for UUID in ${UUIDS+"${UUIDS[@]}"}; do
     [ -z "$STOP" ] || break
@@ -126,11 +172,26 @@ for UUID in ${UUIDS+"${UUIDS[@]}"}; do
     # record with no file behind it is classified all the same, without preview.
     mf_gui_show_file "$abs"
 
-    while :; do
-        mf metarecord -i "$UUID" field get tag --resolve path >"$POS"
-        mf metarecord -i "$UUID" field get negative_tag --resolve path >"$NEG"
+    # The always tags first: added without a question, so the questions below
+    # already see them.
+    read_answers
+    while IFS= read -r T; do
+        [ -n "$T" ] || continue
+        mf tag -i "$UUID" add "$T" >/dev/null
+        yes=$((yes + 1))
+    done < <(gui_tag_always "$UNIVERSE" "$POS" "$NEG" || :)
 
-        T=$(gui_tag_next "$UNIVERSE" "$POS" "$NEG") || break # no question left
+    while :; do
+        read_answers
+
+        Q=$(gui_tag_next "$UNIVERSE" "$POS" "$NEG") || break # no question left
+        KIND=${Q%%$'\t'*}
+        T=${Q#*$'\t'}
+
+        if [ "$KIND" = pick ]; then
+            pick "$T" || { STOP=user; break; }
+            continue
+        fi
 
         case "$(mf_gui_ask_answer "add tag '$T' ?   [y →] oui   [n ←] non   [q] stop" y n q)" in
             y) mf tag -i "$UUID" add "$T" >/dev/null; yes=$((yes + 1)) ;;

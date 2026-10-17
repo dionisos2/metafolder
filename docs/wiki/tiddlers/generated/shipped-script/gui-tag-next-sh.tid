@@ -8,13 +8,21 @@ summary: (no Summary: header — a helper, not offered by script:run)
 ```
 Pure selector ("specify") for the hierarchical-tag classification flow: given
 the tag universe and a metarecord's current positive/negative tags, print the
-single next tag to ask "add tag <path> ?" about, or nothing (exit 1) when no
-question remains. No daemon/GUI dependency, so it is unit-testable
-(scripts/dev/test-gui-tag-next.sh) and is *sourced* by scripts/gui-tag-classify.sh
-to share the hierarchy helpers.
+single next question, or nothing (exit 1) when no question remains:
+
+  ask<TAB><path>   "add tag <path> ?", answered yes/no;
+  pick<TAB><path>  pick one of the tag's children by completion — the tag is
+                   a `partition` or `sparse` one, and is had (doc "Tag flags").
+
+Sourced, it also offers `gui_tag_children` (the candidates of a pick) and
+`gui_tag_always` (the `always` tags to add without asking). No daemon/GUI
+dependency, so it is unit-testable (scripts/dev/test-gui-tag-next.sh) and is
+*sourced* by scripts/gui-tag-classify.sh to share the hierarchy helpers.
 
 Usage: gui-tag-next.sh <universe_file> <pos_file> <neg_file>
-  universe_file : one line per tag path (`mf tag list`): "path <TAB> uuid".
+  universe_file : one line per tag path (`mf tag list`):
+                  "path <TAB> uuid <TAB> always <TAB> partition <TAB> sparse",
+                  flags 1 for true, anything else (or missing) false.
                   A tag of several parents has several paths, one uuid; a
                   line without the uuid is a tag of its own. Further columns
                   are ignored. Line order breaks depth ties.
@@ -24,5 +32,7 @@ Usage: gui-tag-next.sh <universe_file> <pos_file> <neg_file>
 A tag path is "/"-separated (e.g. musique/jazz). Semantics: adding a specific
 tag drops its more general ancestors; a generic negative blocks its whole
 subtree — under every path of the tags in it; a specific positive implies
-(and hides) its ancestors. Siblings never exclude each other.
+(and hides) its ancestors. The children of a partition or sparse tag are
+never asked one by one: they are picked, once the tag is had; a partition is
+settled once one child is had (by itself or a descendant).
 ```

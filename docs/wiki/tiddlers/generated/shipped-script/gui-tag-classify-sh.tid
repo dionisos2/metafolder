@@ -17,6 +17,13 @@ scripts/gui-tag-next.sh:
   n / ←  -> the file does NOT have it  (mf tag deny)
   Escape -> stop
 
+The tag flags (doc "Tag flags") change the questions: an `always` tag is
+added without one, unless it is answered or under a negative; the children of
+a `partition` or `sparse` tag are not asked one by one but PICKED, by
+completion over the candidates, once the tag is had — one for a partition,
+one after another for a sparse tag, until "(rien de plus)", which denies the
+candidates left.
+
 The question ORDER (descend into a tag's children only once it is accepted,
 skip subtrees under a generic negative) is the pure
 selector in gui-tag-next.sh. The tag MODEL — creating entries, adding the
@@ -24,7 +31,7 @@ ref, and the subsumption rewrites (drop ancestors on add, descendants on
 deny, contradicted answers) — is `mf tag`, so this driver no
 longer re-implements any of it.
 
-The vocabulary comes from `mf tag list` (one path per line), the
+The vocabulary comes from `mf tag list` (path, uuid and flags), the
 metarecord's current tags from
 `mf … field get <field> --resolve path` — one round-trip each, no per-entry
 loops. Resumable: answered questions are skipped, so re-run until nothing is

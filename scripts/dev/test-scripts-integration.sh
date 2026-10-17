@@ -332,4 +332,29 @@ assert_eq "unwatch race: nothing inside the folder was re-created" 0 \
     "$(df_mf metarecord -q 'mfr_path ->* "/gone"' get --count 2>/dev/null)"
 rm -rf "$RACE"
 
+# ── gui-tag-classify: the tag flags on the real daemon (doc "Tag flags") ─────
+# A fresh repository, so the vocabulary is exactly: toujours (always), and
+# saison (partition) over été and hiver. The always tag is added unasked; saison
+# is asked yes/no, then été is picked by completion, and hiver never asked.
+FLAGS=$(mktemp -d "${TMPDIR:-/tmp}/mf-it-flags.XXXXXX")
+df_init_repo "$FLAGS"
+export HYBRID_REPO="$DF_REPO"
+df_mf metarecord add mf_schema:string=tag path:hierarchy_ref=/toujours always:bool=true >/dev/null
+SAISON=$(df_mf metarecord add mf_schema:string=tag path:hierarchy_ref=/saison partition:bool=true)
+df_mf metarecord add mf_schema:string=tag "path:hierarchy_ref=$SAISON/été" >/dev/null
+df_mf metarecord add mf_schema:string=tag "path:hierarchy_ref=$SAISON/hiver" >/dev/null
+NOTE=$(df_mf metarecord add note:string=photo)
+hy_reset
+hy_input y
+hy_prompt été
+cout=$(bash "$CLASSIFY" "$NOTE" 2>&1)
+assert_contains "flags: completes" "$cout" "terminée"
+assert "flags: the always tag is added" has_tag "$NOTE" toujours
+assert "flags: the picked child is added" has_tag "$NOTE" saison/été
+assert "flags: the other child is never asked" \
+    [ "$(grep -c "add tag 'saison/hiver'" "$HY_DIR/log")" -eq 0 ]
+assert "flags: never asked about the always tag" \
+    [ "$(grep -c "add tag 'toujours'" "$HY_DIR/log")" -eq 0 ]
+rm -rf "$FLAGS"
+
 assert_summary

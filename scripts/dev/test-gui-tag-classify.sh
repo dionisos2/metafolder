@@ -186,4 +186,74 @@ assert "quit: no tag op at all" [ "$(mock_count 'tag -i *')" -eq 0 ]
 assert "quit: the second record is never shown" \
     [ "$(mock_count 'gui progress*--phase /file2')" -eq 0 ]
 
+# ── Flags (doc "Tag flags"): columns always, partition, sparse after the uuid ──
+FLAGGED_BASE=$UNIVERSE
+
+# Case 10: a partition is asked yes/no, then one child is picked by completion.
+mock_reset
+UNIVERSE=$'admin\tA\nmusic\tM\t0\t1\t0\nmusic/jazz\tJ\nmusic/rock\tR'
+setup_common
+mock_input n y
+mock_prompt jazz
+out=$(bash "$SCRIPT" rec-1); code=$?
+assert "partition: exits 0" [ "$code" -eq 0 ]
+assert_eq "partition: only the parent is asked yes/no" "admin,music" "$(asked_order)"
+assert "partition: the children are offered in one prompt" \
+    [ "$(mock_count "gui prompt*music*--completions-stdin")" -eq 1 ]
+assert "partition: the picked child is added" [ "$(mock_count 'tag -i rec-1 add music/jazz')" -eq 1 ]
+assert "partition: the others are left alone" [ "$(mock_count 'tag -i rec-1 * music/rock')" -eq 0 ]
+assert_contains "partition: a pick counts as a yes" "$out" "2 oui, 1 non"
+
+# Case 11: nothing more, on a partition, denies the children still offered.
+mock_reset
+setup_common
+mock_input n y
+mock_prompt '(rien de plus)'
+bash "$SCRIPT" rec-1 >/dev/null; code=$?
+assert "nothing more: exits 0" [ "$code" -eq 0 ]
+assert "nothing more: jazz denied" [ "$(mock_count 'tag -i rec-1 deny music/jazz')" -eq 1 ]
+assert "nothing more: rock denied" [ "$(mock_count 'tag -i rec-1 deny music/rock')" -eq 1 ]
+assert "nothing more: one prompt" [ "$(mock_count 'gui prompt*')" -eq 1 ]
+
+# Case 12: a sparse tag is picked from until nothing more is chosen.
+mock_reset
+UNIVERSE=$'music\tM\t0\t0\t1\nmusic/jazz\tJ\nmusic/pop\tP\nmusic/rock\tR'
+setup_common
+mock_input y
+mock_prompt jazz rock '(rien de plus)'
+bash "$SCRIPT" rec-1 >/dev/null; code=$?
+assert "sparse: exits 0" [ "$code" -eq 0 ]
+assert "sparse: three prompts" [ "$(mock_count 'gui prompt*')" -eq 3 ]
+assert "sparse: jazz added" [ "$(mock_count 'tag -i rec-1 add music/jazz')" -eq 1 ]
+assert "sparse: rock added" [ "$(mock_count 'tag -i rec-1 add music/rock')" -eq 1 ]
+assert "sparse: pop denied by nothing more" [ "$(mock_count 'tag -i rec-1 deny music/pop')" -eq 1 ]
+
+# Case 13: a value that is no candidate is asked again; Escape stops the run.
+mock_reset
+setup_common
+mock_input y
+mock_prompt nope @cancel
+out=$(bash "$SCRIPT" rec-1); code=$?
+assert "pick cancel: exits 0" [ "$code" -eq 0 ]
+assert "pick cancel: asked again after an unknown value" [ "$(mock_count 'gui prompt*')" -eq 2 ]
+assert "pick cancel: nothing written under music" [ "$(mock_count 'tag -i rec-1 * music/*')" -eq 0 ]
+
+# Case 14: an always tag is added without a question, unless already answered.
+mock_reset
+UNIVERSE=$'admin\tA\t1\nmusic\tM\nmusic/jazz\tJ'
+setup_common
+mock_input n
+bash "$SCRIPT" rec-1 >/dev/null; code=$?
+assert "always: exits 0" [ "$code" -eq 0 ]
+assert "always: added unasked" [ "$(mock_count 'tag -i rec-1 add admin')" -eq 1 ]
+assert_eq "always: never asked" "music" "$(asked_order)"
+
+mock_reset
+setup_common
+mock_respond 'metarecord -i rec-1 field get negative_tag*' 'admin'
+mock_input n
+bash "$SCRIPT" rec-1 >/dev/null
+assert "always: a denied tag stays denied" [ "$(mock_count 'tag -i rec-1 add admin')" -eq 0 ]
+UNIVERSE=$FLAGGED_BASE
+
 assert_summary
