@@ -8,6 +8,7 @@ summary: What .metafolder/ holds — config.json and its fields, schema.json, an
   config.json          the repository's identity and settings
   schema.json          the optional user schema
   gui/history/<zone>   the GUI's input histories (written by the GUI)
+  gui/context          the GUI's work context in force, if any (written by the GUI)
   internal/            never tracked
     kv/                the key-value store (LMDB data.mdb, daemon.lock)
     trash/             the trash-bin (blobs and their index)

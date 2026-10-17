@@ -8,8 +8,8 @@ the end.
 
 * Deferred in the specs
 Named where they are, kept here so they are not forgotten:
-- doc "The GUI's work context", doc "Reverting everything since a time": the
-  two parts of the event log's redesign the user left for later.
+- doc "Reverting everything since a time": the part of the event log's
+  redesign the user left for later.
 - doc "Storage open questions": readers that never block on KV (operations
   stay sequential — decided September 2026); a KV bit-sliced index.
 - doc "Sync open questions", doc "Cross-machine sync" (the remote

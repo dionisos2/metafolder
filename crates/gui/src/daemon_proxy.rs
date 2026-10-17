@@ -270,6 +270,11 @@ impl DaemonProxy {
                 return self.send(method, path, body, Some(token), timing).await;
             }
         }
+        // The work context's label was pruned meanwhile: the daemon wrote
+        // nothing, the context is closed, and the request goes again outside it.
+        if crate::work_context::forget_if_gone(path, response.status, &response.body) {
+            return self.send(method, path, body, self.token(), timing).await;
+        }
         Ok(response)
     }
 
@@ -322,6 +327,9 @@ impl DaemonProxy {
         let mut request = self.client.request(method, &url);
         if let Some(token) = token {
             request = request.bearer_auth(token);
+        }
+        if let Some(label) = crate::work_context::label_for(path) {
+            request = request.header(metafolder_core::context::LABEL_HEADER, label.to_string());
         }
         if let Some((key, name)) = current_command() {
             use metafolder_core::context;

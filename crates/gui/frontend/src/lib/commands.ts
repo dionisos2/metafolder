@@ -49,7 +49,7 @@ import {
   ZOOM_DIRECTIONS,
 } from './panelFunctions';
 import { changeFeed } from './panels/changes';
-import type { CommandDef, ExecContext, LayoutView } from './types';
+import type { CommandDef, ExecContext, LayoutView, WorkspaceInfo } from './types';
 
 export type ParsedInvocation = { name: string; args: string[] } | { shell: string } | null;
 
@@ -993,6 +993,112 @@ registerArgs('file:open-with', [
     complete: () => openWithPrograms(),
   },
 ]);
+
+/** A work context, as the Rust side answers it (doc "The GUI's work context"). */
+interface WorkContext {
+  label: number;
+  name: string;
+}
+
+registerArgs('context:set', [
+  {
+    name: 'name',
+    prompt: async () => {
+      const ws = focusedWs();
+      const current = ws
+        ? await invoke<WorkContext | null>('context_active', { wsId: ws }).catch(() => null)
+        : null;
+      return current
+        ? `Work context name? (closes "${current.name}")`
+        : 'Work context name?';
+    },
+  },
+]);
+
+/** `context:set <name>`: opens a work context on the workspace's repository —
+ *  every later change the GUI makes there is written in it — closing the one
+ *  in force, if any (one at a time). */
+async function setWorkContext(ws: string, name: string): Promise<void> {
+  if (!name) return;
+  const opened = await invoke<WorkContext>('context_set', { wsId: ws, name });
+  await status(`in work context "${opened.name}" (label ${opened.label})`, 'info');
+}
+
+/** `context:unset`: closes the workspace's repository's work context. */
+async function unsetWorkContext(ws: string): Promise<void> {
+  const closed = await invoke<WorkContext | null>('context_unset', { wsId: ws });
+  await status(
+    closed ? `work context "${closed.name}" closed` : 'no work context is open',
+    'info',
+  );
+}
+
+/** The repositories already asked about this session: a context is the
+ *  repository's, so a second workspace on it is not asked again. */
+const offeredRepos = new Set<string>();
+
+/** How many times, a second apart, a repository still loading is asked what
+ *  it remembers before giving up. */
+const PENDING_ATTEMPTS = 30;
+
+/**
+ * Asks, for each repository newly opened in a workspace, whether to stay in
+ * the work context it was left in or to end it (doc "The GUI's work context").
+ * Once per repository and session; Escape leaves things as they were — the
+ * context stays in force.
+ */
+export async function offerWorkContexts(workspaces: WorkspaceInfo[]): Promise<void> {
+  for (const w of workspaces) {
+    const repo = w.active_repo;
+    if (!repo || offeredRepos.has(repo)) continue;
+    offeredRepos.add(repo);
+    await offerWorkContext(w.id, w.repo_name ?? repo.slice(0, 8));
+  }
+}
+
+async function offerWorkContext(ws: string, repoName: string): Promise<void> {
+  type Pending = { state: 'none' | 'open' | 'gone'; label?: number; name?: string };
+  let pending: Pending | null = null;
+  for (let attempt = 1; pending === null; attempt++) {
+    try {
+      pending = await invoke<Pending>('context_pending', { wsId: ws });
+    } catch (error) {
+      // A repository still loading answers 503 for a while.
+      if (attempt >= PENDING_ATTEMPTS) {
+        await status(`work context of ${repoName}: ${error}`);
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  }
+  if (pending.state === 'gone') {
+    await status(
+      `work context "${pending.name}" of ${repoName} no longer exists (label ${pending.label} pruned): closed`,
+      'info',
+    );
+    return;
+  }
+  if (pending.state !== 'open') return;
+  const chosen = await collectArgs(
+    [
+      {
+        name: 'answer',
+        prompt: () =>
+          `Work context "${pending.name}" is still open in ${repoName}: stay in it or end it? (stay / end)`,
+        complete: () => ['stay', 'end'],
+      },
+    ],
+    [],
+    promptForArg,
+  );
+  if (chosen?.[0] === 'end') {
+    await invoke('context_unset', { wsId: ws });
+    await status(`work context "${pending.name}" closed`, 'info');
+  } else {
+    await invoke('context_resume', { wsId: ws });
+    await status(`in work context "${pending.name}"`, 'info');
+  }
+}
 
 /** Runs an installed script, surfacing its output in the shell panel exactly
  *  as a `!` command does. */
@@ -1963,6 +2069,13 @@ async function runCommand(name: string, args: string[], context: ExecContext): P
       }
       return true;
     }
+    case 'context:set':
+      // The name was collected by dispatch, all its words.
+      if (ws) await setWorkContext(ws, args.join(' ').trim());
+      return true;
+    case 'context:unset':
+      if (ws) await unsetWorkContext(ws);
+      return true;
     case 'log:undo':
     case 'log:redo':
       if (ws) await undoOrRedo(ws, name === 'log:redo', args[0]);

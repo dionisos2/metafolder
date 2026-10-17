@@ -2,15 +2,55 @@ title: The GUI's work context
 tags: [[Labels and contexts]]
 kind: reference
 audience: dev
-status: deferred
-summary: A GUI command opening a context that every later user operation carries until it is closed — naming the work under way; deferred (user, October 2026).
+summary: A label opened on a repository with context:set, which every later write the GUI makes there carries until context:unset — remembered in .metafolder/gui/context, and offered back when the repository is opened again.
 
 What replaced the "labelled revision is a retention floor" rule ([[The operation log]]): to
 name a stretch of work, the user opens a context in the GUI, and every later operation of
 theirs — not the watcher's — is written inside it until it is closed, so the work can be
-looked at, or undone, whole ([[Undo and redo by label]]).
+looked at, or undone, whole ([[Undo and redo by label]]). Deferred at first (user, 12
+October 2026); built on 17 October 2026, where the user settled the questions left open.
 
-Deferred by the user (12 October 2026): secondary. Undecided until it is built: whether it
-belongs to a workspace or to the whole GUI, and whether it survives a restart. The pieces
-exist — the proxy already sends the command's key with every request, and a context is a
-label id ([[Labels and contexts]]).
+!! The commands
+
+* <<cmd "context:set">> `<name>` opens a label named `name` on the active repository — at the root, not inside another — and puts it in force there. ''One at a time'' (user): setting one while another is in force closes the first.
+* <<cmd "context:unset">> closes it.
+
+Closing writes nothing: a context is a label id the GUI sends, and leaving it is ceasing to
+send it ([[Labels and contexts]]). The label stays in the log with what was written in it.
+
+!! The repository's, not the workspace's
+
+A context belongs to ''the repository'' (user): every workspace on it writes in it, and a
+label id means nothing in another repository. The daemon proxy and the blocking client
+send it as `X-Metafolder-Label` with every request to that repository — commands, panel
+edits, undo — so a command's own label opens inside it. What runs from the GUI follows
+([[Labels and contexts]]): a `script:run` run's label is opened inside it, and a plain
+`!` line is passed it as `METAFOLDER_LABEL`, each `mf` it runs opening its command's
+label inside it. An `mf` started from a terminal outside the GUI is not in it: the context
+is the GUI's.
+
+Undo, inside a context, has two candidates — the command and the context — and asks which
+([[Undo and redo by label]]).
+
+!! Surviving a restart
+
+The context in force is remembered in the repository's `.metafolder/gui/context` (JSON:
+`{"label", "name"}`), beside the input histories ([[Repository layout on disk]]) — trackable
+content like them, so it follows the repository, not the machine. When a workspace opens
+a repository that has one and the GUI has not put it in force yet, the command input asks
+whether to ''stay'' in it or to ''end'' it — once per repository and session, in the
+workspace that opened it ([[GUI design decisions]]: a question belongs to its workspace).
+Escape leaves things as they were: the context stays in force. A repository still loading
+is asked again a second later, for up to thirty seconds.
+
+!! A label that is gone
+
+A label disappears with a prune ([[Pruning the log]]), and the daemon refuses a write
+naming one that does not exist, writing nothing ([[Log endpoints]]). So:
+
+* a remembered context is checked (`GET /repos/:repo/labels/:id`) before it is offered; a gone one is forgotten, and the user told;
+* a context pruned while in force — `mf log prune` from a terminal — is closed at the first write the daemon refuses for it, and that write is sent again, outside it. The GUI says so on its standard error only: the write itself succeeds.
+
+Code: `crates/gui/src/work_context.rs` (the contexts in force, the file, the Tauri
+commands); the shell's half is `offerWorkContexts` in `frontend/src/lib/commands.ts`.
+Tests: `crates/gui/tests/work_context.rs`, `frontend/tests/work-context.test.ts`.

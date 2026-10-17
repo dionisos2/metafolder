@@ -160,8 +160,9 @@ async fn forward(
 
 /// `label`: run it in a label of its own, so what a script writes is one
 /// piece of work in the log — opened in the workspace's active repository,
-/// and passed on as `METAFOLDER_LABEL`. A plain `!` line names none: each `mf`
-/// it runs is a command with a label of its own anyway.
+/// inside the work context in force there (the proxy sends it), and passed on
+/// as `METAFOLDER_LABEL`. A plain `!` line is passed the work context alone:
+/// each `mf` it runs is a command with a label of its own anyway.
 #[tauri::command]
 pub fn run_shell(
     app: tauri::State<'_, Arc<crate::commands::App>>,
@@ -175,13 +176,20 @@ pub fn run_shell(
     tauri::async_runtime::spawn(async move {
         let context = match label {
             Some(name) => open_context(&gui, &daemon, &ws_id, &name).await,
-            None => None,
+            None => plain_line_context(&gui, &ws_id),
         };
         if let Err(error) = run_in(gui.clone(), ws_id.clone(), command_line, context).await {
             let _ = gui.post_status(&ws_id, &error, "error", Some(message_ms));
         }
     });
     Ok(())
+}
+
+/// The context a plain `!` line runs in: the work context in force on the
+/// workspace's repository (doc "The GUI's work context"), if any — each `mf`
+/// it runs then opens its command's label inside it.
+fn plain_line_context(gui: &GuiState, ws_id: &str) -> Option<metafolder_core::context::Context> {
+    crate::work_context::context_of(&gui.active_repo(ws_id).ok()?)
 }
 
 /// Opens a label named `name` in the workspace's active repository: the
@@ -285,6 +293,23 @@ mod tests {
         let out: Vec<&str> =
             log.iter().filter(|e| e.kind == ShellLine::Stdout).map(|e| e.text.as_str()).collect();
         assert_eq!(out, [format!("in:{context}").as_str(), "in:none"]);
+    }
+
+    /// A plain `!` line runs in the work context in force on the workspace's
+    /// repository, if any (doc "The GUI's work context").
+    #[test]
+    fn test_a_plain_line_runs_in_the_work_context() {
+        let gui = gui();
+        let repo = uuid::Uuid::new_v4();
+        gui.adopt_repo("ws-1", &repo.simple().to_string()).unwrap();
+        assert_eq!(plain_line_context(&gui, "ws-1"), None);
+        let context = crate::work_context::WorkContext { label: 9, name: "w".into() };
+        crate::work_context::activate(&repo.simple().to_string(), context, "/nowhere".into());
+        assert_eq!(
+            plain_line_context(&gui, "ws-1"),
+            Some(metafolder_core::context::Context { repo, label: 9 })
+        );
+        crate::work_context::forget(&repo.simple().to_string());
     }
 
     #[tokio::test]

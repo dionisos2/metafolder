@@ -43,6 +43,7 @@ pub mod tag;
 pub mod thumbnails;
 pub mod trash;
 pub mod undo;
+pub mod work_context;
 
 use command_registry::CommandRegistry;
 use config::ConfigDir;
@@ -154,6 +155,12 @@ fn register_builtins(registry: &CommandRegistry) {
         ("metarecord:trash", "Send the selected metarecord's file to the trash", true),
         ("log:undo", "Undo a label of the newest change you made (asked when there are several)", true),
         ("log:redo", "Take back a label of the newest undo (asked when there are several)", true),
+        (
+            "context:set",
+            "Open a work context on the active repository: every later change is written in it",
+            true,
+        ),
+        ("context:unset", "Close the active repository's work context", true),
         ("answer:send", "Resolve the pending script input wait", true),
         ("script-keys:toggle", "Give the script's keys back to the GUI, or take them again", true),
         ("script:stop", "Ask the running script to stop (the one asking, by default)", true),
@@ -599,6 +606,11 @@ pub fn run(options: Options) {
             trash::trash_remove,
             trash::trash_empty,
             undo::log_navigate,
+            work_context::context_set,
+            work_context::context_unset,
+            work_context::context_active,
+            work_context::context_pending,
+            work_context::context_resume,
             undo::log_candidates,
             undo::log_revert,
             commands::answer_send,

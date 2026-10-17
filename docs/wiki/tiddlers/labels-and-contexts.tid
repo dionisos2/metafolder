@@ -5,7 +5,7 @@ audience: dev
 summary: Operations are grouped by nested labels (name, description, parent) opened as contexts by scripts, commands and the GUI — passed along as an id, so leaving a context is just not passing it on.
 
 Built in October 2026 ([[The operation log]]): labels, contexts and commands are in place in the daemon,
-the CLI, the GUI and the shipped scripts ([[Log endpoints]]), undo and redo offer them
+the CLI, the GUI (its work context included) and the shipped scripts ([[Log endpoints]]), undo and redo offer them
 ([[Undo and redo by label]]), and the [[log panel]] shows their tree.
 
 A ''label'' is `{id, name, description, parent, created}`. Each operation carries its
@@ -34,8 +34,8 @@ requests write.
 !! Who opens which
 
 * A shipped tagging script: one label for the run, one per answer (its going back is reverting the last answer's label — no head noted by hand, no rollback), one per command inside ([[Writing a GUI script]]).
-* The GUI: one label per command. The shell tells the daemon proxy when a command starts and ends, and every request in between carries its key; a command run from inside another is part of it. The proxy knows which command runs, not which call each made: two commands running at once — a long reconcile and a field edited meanwhile — share a label. A script launched from the GUI (`script:run`) runs in a label of its own, passed on as `METAFOLDER_LABEL`; a plain `!` line in none, each `mf` it runs being a command anyway.
-* The GUI's ''work context'': a command opens a context that every later user operation carries until it is closed — naming the work under way, so it can be looked at or reverted whole. The watcher's operations do not carry it.
+* The GUI: one label per command. The shell tells the daemon proxy when a command starts and ends, and every request in between carries its key; a command run from inside another is part of it. The proxy knows which command runs, not which call each made: two commands running at once — a long reconcile and a field edited meanwhile — share a label. A script launched from the GUI (`script:run`) runs in a label of its own, passed on as `METAFOLDER_LABEL`; a plain `!` line is passed the work context alone (none without one), each `mf` it runs being a command anyway.
+* The GUI's ''work context'' ([[The GUI's work context]]): `context:set` opens a context on a repository that every later write the GUI sends there carries until `context:unset` — naming the work under way, so it can be looked at or reverted whole. The script runs' labels and the `!` lines' commands open inside it. The watcher's operations do not carry it.
 * The watcher: one label per flush ("watcher flush"), under a ''watcher root'' ("watcher") that only the daemon can write under: a client naming it, or a label inside it, as its context or as a new label's parent is refused. The ''origin'' stays on each operation, set by the daemon ([[Operations and their origin]]) — not read off the root as first proposed: a trashing's `trash` origin must survive inside any context, and undo and retention read the operation.
 
 !! The log panel
@@ -46,6 +46,4 @@ one line, or they would drown the rest.
 
 !! Deferred
 
-The GUI's work context is secondary (user, 12 October 2026), and not part of the first
-build ([[The GUI's work context]]): whether it belongs to a workspace or to the whole GUI, and whether it survives a
-restart, is decided when it is built. So is renaming or describing a label after the fact.
+Renaming or describing a label after the fact.

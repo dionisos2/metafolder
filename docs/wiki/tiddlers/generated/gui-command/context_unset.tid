@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/context:unset
+catalog: GUI command
+target: context:unset
+summary: Close the active repository's work context
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

@@ -14,9 +14,9 @@ panel as a tree of labels ([[log panel]]). Each step that changed the store's la
 which the user chose ([[Persisted format changes]]).
 
 Two things were left for later, by the user's decision: the GUI's ''work context''
-([[The GUI's work context]]), and ''"rollback" as "revert everything since T"''
-([[Reverting everything since a time]]). Renaming or describing a label after the
-fact is not built either.
+([[The GUI's work context]], built since, 17 October 2026), and ''"rollback" as "revert
+everything since T"'' ([[Reverting everything since a time]]). Renaming or describing a
+label after the fact is not built either.
 
 !! The model
 

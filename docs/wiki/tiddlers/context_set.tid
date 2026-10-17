@@ -1,0 +1,10 @@
+title: context:set
+tags: [[GUI command]] [[Event log]]
+kind: reference
+summary: Open a work context on the active repository: every later change is written in it
+
+`context:set <name>` opens a label named `name` on the active repository, and every
+change the GUI makes there afterwards — in any workspace on it — is written inside it,
+until <<cmd "context:unset">>. One at a time: setting another closes the first. It
+survives a restart: opening the repository again asks whether to stay in it or end it
+([[The GUI's work context]]).

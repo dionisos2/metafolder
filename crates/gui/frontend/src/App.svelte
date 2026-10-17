@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { initStore, store } from './lib/store.svelte';
   import { installKeys } from './lib/keys';
+  import { offerWorkContexts } from './lib/commands';
   import { loadUserCommands } from './lib/userCommands';
   import { installHelpCursorSheet } from './lib/cursor';
   import TabBar from './components/TabBar.svelte';
@@ -30,6 +31,12 @@
     } catch (error) {
       failure = String(error);
     }
+  });
+
+  // A repository opened with a work context left open asks whether to stay in
+  // it (doc "The GUI's work context"); once per repository and session.
+  $effect(() => {
+    if (store.ready) void offerWorkContexts(store.workspaces);
   });
 
   function onDividerDown(event: PointerEvent) {

@@ -32,10 +32,14 @@ impl DaemonClient for BlockingClient {
         path: &str,
         body: Option<&Value>,
     ) -> Result<Value, DaemonError> {
+        let body_in = body;
         let url = format!("{}{}", self.base, path);
         let mut req = self.agent.request(method, &url);
         if let Some(token) = &self.token {
             req = req.set("Authorization", &format!("Bearer {token}"));
+        }
+        if let Some(label) = crate::work_context::label_for(path) {
+            req = req.set(metafolder_core::context::LABEL_HEADER, &label.to_string());
         }
         if let Some((key, name)) = crate::daemon_proxy::current_command() {
             use metafolder_core::context;
@@ -51,6 +55,11 @@ impl DaemonClient for BlockingClient {
             Ok(response) => Ok(response.into_json().unwrap_or(Value::Null)),
             Err(ureq::Error::Status(code, response)) => {
                 let body: Value = response.into_json().unwrap_or(Value::Null);
+                // The work context's label was pruned meanwhile: nothing was
+                // written, and the request goes again outside the context.
+                if crate::work_context::forget_if_gone(path, code, &body) {
+                    return self.request(method, path, body_in);
+                }
                 let message = crate::daemon_proxy::error_message(&body, || {
                     format!("daemon returned HTTP {code}")
                 });
