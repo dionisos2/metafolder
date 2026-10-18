@@ -350,7 +350,7 @@
     element?.blur();
   }
 
-  /** editing:clear line-end — drop the draft from the caret on (the command
+  /** editing:clear-line-end — drop the draft from the caret on (the command
    *  input is a single line). */
   function clearToLineEnd() {
     const caret = element?.selectionStart ?? draft.length;

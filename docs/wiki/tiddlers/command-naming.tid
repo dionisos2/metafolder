@@ -44,11 +44,11 @@ Grouped by what they touch, which is what a name must make obvious:
 |!Touches |!Verbs |
 |a text zone |`focus <zone>`, `clear <zone>`, `apply <zone> [stay]`, `insert <zone> <text> [stay]` |
 |a form, an overlay, a panel |`open [what]`, `open-X` (a form of this panel), `close`, `cancel`, `reveal <type>` |
-|a view flag |`toggle <flag>` |
+|a view flag |`toggle <flag>`, `toggle-X` (the panel's one flag) |
 |a macro ([[Macros]]) |`toggle-recording`, `ask`, `run`, `save <name>` |
-|the cursor or the selection |`cursor:next/prev/first/last <panel>`, `cursor:find <panel> <mode>`, `page <which>`, `select <toggle/all/none>`, and the `row-X` family (the row under the cursor) |
+|the cursor or the selection |`cursor:next/prev/first/last <panel>`, `cursor:find <panel> <mode>`, `page-next`, `select <toggle/all/none>`, and the `row-X` family (the row under the cursor) |
 |a search |`query <what>` (adds a filter to the query shown and runs it: [[tag:query]]) |
-|a view setting |`set <setting> [value]` |
+|a view setting |`set <setting> [value]`, `set-X <value>` (the panel's one setting) |
 |the media player |`play-pause`, `play <what> [options]` (a [[Slideshow]]), `restart`, `mute`, `seek <±s>`, `speed <up/down/reset>`, `volume <up/down>`, `zoom <in/out/fit/reset>` |
 |the repository |`<noun> <op>` with `op` among `set`, `add`, `remove`, `unset`, `delete`, and the plain verbs `create`, `delete`, `rename`, `record`, `trash`, `restore`, `prune`, `reconcile`, `rollback`, `undo`, `redo`, `revert [what]`, `mark`, `run`, `load`, `unload`, `stop`, `order <on/off/move>` |
 
@@ -71,8 +71,19 @@ An argument is for a choice. When there is only one thing to do, it is part of t
 name, joined by a hyphen: `macro:toggle-recording`, not `macro:toggle recording`. An
 argument with a single value would be asked for when left out — a question with one
 answer — and, without a key bound to show it, `macro:toggle` in the command list
-would not say what it toggles. The older `x:toggle <flag>` commands, where one panel
-has several flags, keep their argument.
+would not say what it toggles. So `metarecord:toggle-force`, `path-ref:toggle-scope`,
+`recent:set-sort <time/score>`, `daemon:set-url <url>`, `editing:clear-line-end`,
+`metarecord-list:page-next`: the value that follows is still an argument when there is
+a choice to make. Where one panel has several flags (`file-manager:toggle <flag>`), the
+flag stays an argument.
+
+Two families keep a single-valued argument, on purpose:
+
+* The text zones — `focus <zone>`, `clear <zone>`, `apply <zone> [stay]` — are one form across the panels, so a key does the same thing everywhere: `help:focus search` and `shell:focus line`, beside `metarecord-list:focus finder`.
+* An `mf:` command takes the CLI's words: `mf:duplicate scan` is `mf duplicate scan`.
+
+An optional argument with one value (`metarecord:reconcile [watch]`, `repos:load
+[in-memory]`, `[stay]`) is a choice between giving it and not, and stays an argument.
 
 !! Two forms kept on purpose
 

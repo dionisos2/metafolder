@@ -1,0 +1,6 @@
+title: file:toggle-gif-animation
+tags: [[GUI command]] [[file panel]]
+kind: reference
+summary: File: play or stop the animation of a GIF
+
+Plays a GIF previewed in the [[file panel]] instead of showing its first frame, or goes back to the first frame — the ''animate'' box of its toolbar.

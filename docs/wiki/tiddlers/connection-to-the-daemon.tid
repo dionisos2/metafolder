@@ -7,7 +7,7 @@ summary: Which daemon the GUI talks to, the banners when it cannot or should not
 The GUI talks to a daemon it does not start: on `127.0.0.1`, at `daemon-port` of
 [[GUI configuration]] (default 7523, the daemon's own default, so a fresh install
 connects without any flag), or at `--daemon-port` given at launch.
-`daemon:set url <url>` points it elsewhere for the rest of the session. Every request carries the
+`daemon:set-url <url>` points it elsewhere for the rest of the session. Every request carries the
 daemon's session token ([[Session tokens]]).
 
 Everything goes through the GUI's Rust side — the web view cannot reach the daemon
@@ -15,7 +15,7 @@ itself — and the panels read nothing from a cache: each read is a request.
 
 !! Health and the banners
 
-Every five seconds (`daemon-health-poll-secs`), and at once after `daemon:set`, the
+Every five seconds (`daemon-health-poll-secs`), and at once after `daemon:set-url`, the
 GUI asks `GET /health` ([[Health and diagnostics]]).
 
 * ''Daemon unreachable'' — no answer, or not a 200: a red banner says so above the tabs. The GUI itself keeps working — panels, command input, keys, the scripting API — but whatever needs the daemon fails, with its error, until it answers again. Nothing is disabled beforehand.

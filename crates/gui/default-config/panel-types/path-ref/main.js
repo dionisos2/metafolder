@@ -576,11 +576,9 @@ export async function mount(root, metafolder) {
     },
   });
 
-  void commands.register('path-ref:toggle', {
-    label: 'Path-ref explorer: toggle a view flag (scope: the exact node ⇄ its whole subtree)',
-    args: [{ name: 'flag', prompt: () => 'Which flag? (scope)', complete: () => ['scope'] }],
-    handler: (flag) => {
-      if (flag !== 'scope') throw new Error(`unknown flag: "${flag ?? ''}" (expected scope)`);
+  void commands.register('path-ref:toggle-scope', {
+    label: 'Path-ref explorer: toggle the scope (the exact node ⇄ its whole subtree)',
+    handler: () => {
       scope = scope === 'subtree' ? 'exact' : 'subtree';
       scopeSelect.setValue(scope);
       void workspace.set('path-ref:scope', scope);

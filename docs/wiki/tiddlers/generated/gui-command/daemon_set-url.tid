@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/daemon:set-url
+catalog: GUI command
+target: daemon:set-url
+summary: Point the GUI at another daemon URL
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

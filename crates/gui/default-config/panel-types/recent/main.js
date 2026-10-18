@@ -1,5 +1,5 @@
 // recent panel: the repository's recently-viewed metarecords (crate::recent),
-// newest first — or best first by score, `recent:set sort` (doc "Frecent
+// newest first — or best first by score, `recent:set-sort` (doc "Frecent
 // folders") — one row "<name>  <mfr_path>  <score>  <viewed N ago>". A GUI-side
 // concern — the list comes from metafolder.recent (no daemon endpoint); the
 // display fields (label/name/mfr_path) are read from the daemon. Opening
@@ -224,10 +224,9 @@ export function mount(root, metafolder) {
         ...(row.relPath && { label: `${rowName(row)} — ${row.relPath}` }),
       })),
   });
-  void commands.register('recent:set', {
-    label: 'Recent: change a view setting (sort: time / score)',
+  void commands.register('recent:set-sort', {
+    label: 'Recent: change the order (time / score)',
     args: [
-      { name: 'setting', prompt: () => 'Which setting? (sort)', complete: () => ['sort'] },
       {
         name: 'value',
         prompt: () => 'Order? (time / score)',
@@ -236,10 +235,7 @@ export function mount(root, metafolder) {
         complete: () => SORTS,
       },
     ],
-    handler: (setting, value) => {
-      if (setting !== 'sort') throw new Error(`unknown setting: "${setting ?? ''}" (sort)`);
-      return setSort(value);
-    },
+    handler: (value) => setSort(value),
   });
   // Keybindings for this panel live in keybindings.toml (when = "recent").
 

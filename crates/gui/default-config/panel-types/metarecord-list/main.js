@@ -929,14 +929,10 @@ export async function mount(root, metafolder) {
     select: setCursor,
     more: () => (nextCursor ? fetchPage(false) : undefined),
   });
-  void commands.register('metarecord-list:page', {
-    label: 'Metarecord list: load a page (next)',
-    args: [{ name: 'which', prompt: () => 'Which page? (next)', complete: () => ['next'] }],
-    handler: (which) => {
-      // Only forward: the list grows as it scrolls, it does not paginate back.
-      if (which !== 'next') throw new Error(`unknown page: "${which ?? ''}" (expected next)`);
-      return nextCursor ? fetchPage(false) : undefined;
-    },
+  // Only forward: the list grows as it scrolls, it does not paginate back.
+  void commands.register('metarecord-list:page-next', {
+    label: 'Metarecord list: load the next page',
+    handler: () => (nextCursor ? fetchPage(false) : undefined),
   });
 
   /** @type {Record<string, () => unknown>} */

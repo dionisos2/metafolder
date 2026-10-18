@@ -712,9 +712,9 @@ scenario_layout() {
         "reloaded keybindings, style, grammar, commands"
     run config:reload nothing
     status_is "config reload: an unknown target is refused" error 'unknown reload target: "nothing"*'
-    run daemon:set url "http://127.0.0.1:$DF_PORT"
-    command_ok "daemon set url: the same daemon"
-    assert_eq "daemon set url: still connected" True "$(gui_status "s['daemon_connected']")"
+    run daemon:set-url "http://127.0.0.1:$DF_PORT"
+    command_ok "daemon set-url: the same daemon"
+    assert_eq "daemon set-url: still connected" True "$(gui_status "s['daemon_connected']")"
 
     mfg layout left "$forked" >/dev/null
     run workspace:close
@@ -1142,7 +1142,7 @@ scenario_shell_line() {
     keys Return
     assert "shell line: Enter runs the line" until_ok 10 grep -qx typed-in-panel "$out"
 
-    # ctrl+k (editing:clear line-end) drops what follows the caret: without
+    # ctrl+k (editing:clear-line-end) drops what follows the caret: without
     # it, echo would also print the trailing word. Typed without leaving the
     # field — the line still has the keyboard after the run.
     typed "echo kept > $cut dropped"

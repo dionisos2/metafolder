@@ -109,7 +109,7 @@ An `mfr_*` field is the daemon's: it may overwrite what you put there, and writi
 one needs force ([[Reserved fields]]). Nothing here forces by itself — naming the
 field is not the acknowledgement.
 
-* In [[metarecord-detail panel]], the ''force (mfr_*)'' box unlocks the rows of such fields and lets its add form, `metarecord:field` and `metarecord:bulk` write them. `metarecord:toggle force` checks it from the keyboard.
+* In [[metarecord-detail panel]], the ''force (mfr_*)'' box unlocks the rows of such fields and lets its add form, `metarecord:field` and `metarecord:bulk` write them. `metarecord:toggle-force` checks it from the keyboard.
 * The list's bulk form has its own ''Force'' box.
 
 Without it the write is refused, saying which box to check. An ordinary field never

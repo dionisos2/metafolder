@@ -218,7 +218,7 @@ export function mount(root, metafolder) {
     else await commands.invoke(['panel:open', where, 'file']);
   }
 
-  /** `duplicates:toggle` (→, the twisty): expand or collapse the group under
+  /** `duplicates:toggle-group` (→, the twisty): expand or collapse the group under
    *  the cursor (on a member row, collapse its group — the way back out). */
   async function activate() {
     const row = rows[cursorIndex];
@@ -455,7 +455,7 @@ export function mount(root, metafolder) {
       ),
   });
 
-  void commands.register('duplicates:toggle', {
+  void commands.register('duplicates:toggle-group', {
     label: 'Duplicates: expand or collapse the group under the cursor',
     handler: () => activate(),
   });

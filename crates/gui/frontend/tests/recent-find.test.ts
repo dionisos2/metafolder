@@ -162,11 +162,11 @@ describe('recent rows', () => {
     await mount(s);
     expect(names(s.root)).toEqual(['jazz.mp3', 'rock.mp3']);
 
-    await s.handlers.get('recent:set')!('sort', 'score');
+    await s.handlers.get('recent:set-sort')!('score');
     expect(names(s.root)).toEqual(['rock.mp3', 'jazz.mp3']);
     expect(s.api.workspace.set).toHaveBeenCalledWith('recent:sort', 'score');
 
-    await s.handlers.get('recent:set')!('sort', 'time');
+    await s.handlers.get('recent:set-sort')!('time');
     expect(names(s.root)).toEqual(['jazz.mp3', 'rock.mp3']);
   });
 
@@ -179,11 +179,10 @@ describe('recent rows', () => {
     expect(names(s.root)).toEqual(['rock.mp3', 'jazz.mp3']);
   });
 
-  test('an unknown setting or order is refused', async () => {
+  test('an unknown order is refused', async () => {
     const s = stub();
     await mount(s);
-    expect(() => s.handlers.get('recent:set')!('sort', 'size')).toThrow(/unknown order/);
-    expect(() => s.handlers.get('recent:set')!('width', '3')).toThrow(/unknown setting/);
+    expect(() => s.handlers.get('recent:set-sort')!('size')).toThrow(/unknown order/);
   });
 });
 

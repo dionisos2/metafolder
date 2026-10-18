@@ -16,7 +16,7 @@ summary: The metarecord-detail panel type
 * ``metarecord:row-add`` — Add a value to the field under the cursor
 * ``metarecord:row-delete`` — Delete the field under the cursor
 * ``metarecord:row-edit`` — Edit the field under the cursor
-* ``metarecord:toggle`` — Metarecord: toggle a flag (force: allow writing the reserved mfr_* fields)
+* ``metarecord:toggle-force`` — Metarecord: toggle force (allow writing the reserved mfr_* fields)
 
 !! Generic commands
 

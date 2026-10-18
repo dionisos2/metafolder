@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/recent:set-sort
+catalog: GUI command
+target: recent:set-sort
+summary: Recent: change the order (time / score)
+
+!! Reference
+
+* Defined by the ``recent`` panel
+
+!! Default keys
+
+* ``s`` → ``recent:set-sort`` (in the ``recent`` panel)

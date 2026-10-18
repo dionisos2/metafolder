@@ -492,9 +492,9 @@ describe('reserved fields — force is asked for, never assumed', () => {
     expect(writes(calls)).toEqual([]);
   });
 
-  test('metarecord:toggle force lets it through, with force sent', async () => {
+  test('metarecord:toggle-force lets it through, with force sent', async () => {
     const { specs, calls } = await mountPanel([], { mfr_mime: 'string' });
-    await specs.get('metarecord:toggle')!.handler('force');
+    await specs.get('metarecord:toggle-force')!.handler();
     await specs.get('metarecord:field')!.handler('set', 'mfr_mime', 'text/plain');
     expect(writes(calls)).toEqual([
       {
@@ -507,7 +507,7 @@ describe('reserved fields — force is asked for, never assumed', () => {
 
   test('an ordinary field never carries force, the box checked or not', async () => {
     const { specs, calls } = await mountPanel([], { rating: 'int' });
-    await specs.get('metarecord:toggle')!.handler('force');
+    await specs.get('metarecord:toggle-force')!.handler();
     await specs.get('metarecord:field')!.handler('set', 'rating', '5');
     expect(writes(calls)[0].body).toEqual({ value: { type: 'int', value: 5 } });
   });

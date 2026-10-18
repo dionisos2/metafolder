@@ -1,0 +1,6 @@
+title: editing:clear-line-end
+tags: [[GUI command]] Commands
+kind: reference
+summary: Clear the focused text input from the cursor to the line end
+
+`editing:clear-line-end` removes, from the text field that has the keyboard — the command input or a field of a panel — what follows the caret up to the end of its line, as Emacs' `kill-line` does: with a selection, from its start; at the end of a line of a multi-line field, the line break, which joins the next line. A panel's field sees the deletion as if it had been typed, and keeps the keyboard. Nothing is copied to the clipboard. See [[The command input]].

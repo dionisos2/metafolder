@@ -218,7 +218,7 @@ describe('duplicates panel', () => {
     ];
     const p = await mountPanel([group('g1', 10, 2, 10)], members);
     await p.invoke('cursor:next'); // onto the group row
-    await p.invoke('duplicates:toggle'); // expand it
+    await p.invoke('duplicates:toggle-group'); // expand it
     await new Promise((r) => setTimeout(r, 0));
     p.rows()[1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await new Promise((r) => setTimeout(r, 0));
@@ -245,7 +245,7 @@ describe('duplicates panel', () => {
     ];
     const p = await mountPanel([group('g1', 10, 3, 20)], members);
     await p.invoke('cursor:next');
-    await p.invoke('duplicates:toggle');
+    await p.invoke('duplicates:toggle-group');
     await new Promise((r) => setTimeout(r, 0));
     await p.invoke('cursor:next'); // onto the first member, the one to keep
     await p.invoke('duplicates:keep');
@@ -277,7 +277,7 @@ describe('duplicates panel', () => {
     ];
     const p = await mountPanel([group('g1', 10, 3, 20)], members);
     await p.invoke('cursor:next');
-    await p.invoke('duplicates:toggle');
+    await p.invoke('duplicates:toggle-group');
     await new Promise((r) => setTimeout(r, 0));
     await p.invoke('cursor:next');
     await p.invoke('duplicates:trash');
@@ -295,7 +295,7 @@ describe('duplicates panel', () => {
     ];
     const p = await mountPanel([group('g1', 10, 2, 10)], members);
     await p.invoke('cursor:next');
-    await p.invoke('duplicates:toggle');
+    await p.invoke('duplicates:toggle-group');
     await new Promise((r) => setTimeout(r, 0));
     await p.invoke('cursor:next');
     await p.invoke('duplicates:trash');
@@ -310,7 +310,7 @@ describe('duplicates panel', () => {
     ];
     const p = await mountPanel([group('g1', 10, 2, 10)], members);
     await p.invoke('cursor:next');
-    await p.invoke('duplicates:toggle');
+    await p.invoke('duplicates:toggle-group');
     await new Promise((r) => setTimeout(r, 0));
     await p.invoke('cursor:next');
     await p.invoke('duplicates:keep');
@@ -406,7 +406,7 @@ describe('duplicates panel, the harder paths', () => {
     ];
     const p = await mountPanel([group('g1', 10, 2, 10)], members);
     await p.invoke('cursor:next');
-    await p.invoke('duplicates:toggle');
+    await p.invoke('duplicates:toggle-group');
     await new Promise((r) => setTimeout(r, 0));
     await p.invoke('cursor:next'); // onto /a.bin
     await p.invoke('view:refresh');
@@ -424,7 +424,7 @@ describe('duplicates panel, the harder paths', () => {
     const p = await mountPanel([group('g1', 10, 2, 10)], members);
     await p.invoke('cursor:next');
     expect(p.setVar).toHaveBeenLastCalledWith('selected_paths', []); // a group is no file
-    await p.invoke('duplicates:toggle');
+    await p.invoke('duplicates:toggle-group');
     await new Promise((r) => setTimeout(r, 0));
     await p.invoke('cursor:next');
     expect(p.setVar).toHaveBeenLastCalledWith('selected_paths', ['/repo/a.bin']);
@@ -454,10 +454,10 @@ describe('duplicates panel, the harder paths', () => {
     ];
     const p = await mountPanel([group('g1', 10, 2, 10)], members);
     await p.invoke('cursor:next');
-    await p.invoke('duplicates:toggle');
+    await p.invoke('duplicates:toggle-group');
     await new Promise((r) => setTimeout(r, 0));
     await p.invoke('cursor:next');
-    await p.invoke('duplicates:toggle'); // from a member row: collapse
+    await p.invoke('duplicates:toggle-group'); // from a member row: collapse
 
     expect(p.rows()).toHaveLength(1);
     expect(p.cursorRow()?.textContent).toContain('g1-hash');
@@ -479,7 +479,7 @@ describe('duplicates panel, the harder paths', () => {
     ];
     const p = await mountPanel([group('g1', 10, 3, 20)], members);
     await p.invoke('cursor:next');
-    await p.invoke('duplicates:toggle');
+    await p.invoke('duplicates:toggle-group');
     await new Promise((r) => setTimeout(r, 0));
     expect(p.rows()[1].textContent).toContain('(no path)');
     await p.invoke('cursor:next');
@@ -497,7 +497,7 @@ describe('duplicates panel, the harder paths', () => {
     ];
     const p = await mountPanel([group('g1', 16, 3, 16)], members);
     await p.invoke('cursor:next');
-    await p.invoke('duplicates:toggle');
+    await p.invoke('duplicates:toggle-group');
     await new Promise((r) => setTimeout(r, 0));
     expect(p.rows()[1].textContent).toContain('+');
 
@@ -521,7 +521,7 @@ describe('duplicates panel, the harder paths', () => {
       trashFails: ['/repo/copy2.bin'],
     });
     await p.invoke('cursor:next');
-    await p.invoke('duplicates:toggle');
+    await p.invoke('duplicates:toggle-group');
     await new Promise((r) => setTimeout(r, 0));
     await p.invoke('cursor:next'); // /keep.bin
     await p.invoke('duplicates:keep');

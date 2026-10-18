@@ -11,7 +11,7 @@ summary: The metarecord-list panel type
 * ``metarecord-list:insert`` — Metarecord list: insert text into a zone
 * ``metarecord-list:open-bulk-edit`` — Metarecord list: open the bulk edit / delete form (set/add/remove/unset/delete)
 * ``metarecord-list:order`` — Metarecord list: order by an int field (on <field> / off / move <up/down/top/bottom>)
-* ``metarecord-list:page`` — Metarecord list: load a page (next)
+* ``metarecord-list:page-next`` — Metarecord list: load the next page
 * ``metarecord-list:query`` — Metarecord list: run a canned query (duplicates / orphans)
 * ``metarecord-list:select`` — Metarecord list: change the multi-selection (toggle / all / none)
 * ``metarecord-list:set`` — Metarecord list: change a view setting

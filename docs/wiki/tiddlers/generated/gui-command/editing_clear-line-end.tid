@@ -1,6 +1,6 @@
-title: $:/mf/gen/GUI command/editing:clear
+title: $:/mf/gen/GUI command/editing:clear-line-end
 catalog: GUI command
-target: editing:clear
+target: editing:clear-line-end
 summary: Clear the focused text input from the cursor to the line end
 
 !! Reference
@@ -9,4 +9,4 @@ summary: Clear the focused text input from the cursor to the line end
 
 !! Default keys
 
-* ``ctrl+k`` → ``editing:clear line-end`` (also in a text input)
+* ``ctrl+k`` → ``editing:clear-line-end`` (also in a text input)

@@ -1118,10 +1118,6 @@ export async function mount(root, metafolder) {
     up: () => changeVolume(VOLUME_STEP),
     down: () => changeVolume(-VOLUME_STEP),
   };
-  /** @type {Record<string, () => unknown>} */
-  const FILE_FLAGS = {
-    'gif-animation': () => setAnimateGifs(!animateGifs),
-  };
 
   /** Builds the registration options for a one-of-these command. It returns
    *  the options rather than registering, so every command name stays a
@@ -1154,7 +1150,10 @@ export async function mount(root, metafolder) {
   void commands.register('file:page', variant('page', PAGES, 'File: go to a page of the document'));
   void commands.register('file:speed', variant('speed', SPEEDS, 'File: step the playback rate'));
   void commands.register('file:volume', variant('volume', VOLUMES, 'File: step the volume'));
-  void commands.register('file:toggle', variant('flag', FILE_FLAGS, 'File: toggle a view flag'));
+  void commands.register('file:toggle-gif-animation', {
+    label: 'File: play or stop the animation of a GIF',
+    handler: () => setAnimateGifs(!animateGifs),
+  });
 
   void commands.register('file:seek', {
     label: `File: seek the previewed media by a signed number of seconds (e.g. +${SEEK_STEP}, -${SEEK_STEP_LONG})`,

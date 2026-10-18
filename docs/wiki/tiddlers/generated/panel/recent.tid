@@ -5,7 +5,7 @@ summary: The recent panel type
 
 !! Commands
 
-* ``recent:set`` — Recent: change a view setting (sort: time / score)
+* ``recent:set-sort`` — Recent: change the order (time / score)
 
 !! Generic commands
 

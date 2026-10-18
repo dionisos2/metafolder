@@ -170,14 +170,11 @@ describe('the other builtins that take arguments', () => {
     store.workspaces = [];
   });
 
-  test('daemon:set asks the setting and the URL, pre-filled with the current one', async () => {
+  test('daemon:set-url asks the URL, pre-filled with the current one', async () => {
     store.daemonUrl = 'http://127.0.0.1:7523';
-    const done = dispatch('daemon:set');
+    const done = dispatch('daemon:set-url');
 
     await settle();
-    expect(store.ui.promptText).toBe('Which setting? (url)');
-    await answer('url');
-
     expect(store.ui.promptText).toBe('New daemon URL:');
     expect(store.ui.promptDraft).toBe('http://127.0.0.1:7523');
     await answer('http://127.0.0.1:9999');
@@ -189,10 +186,19 @@ describe('the other builtins that take arguments', () => {
     });
   });
 
-  test('daemon:set with its arguments inline runs at once', async () => {
-    // The documented invocation spells the setting out; it used to be read as
-    // a command *name* of "daemon:set url" and reach no handler at all.
-    expect(await dispatch('daemon:set url http://127.0.0.1:4242')).toEqual({ ok: true });
+  test('editing:clear-line-end clears the focused input from the caret', async () => {
+    const input = document.createElement('input');
+    input.value = 'rating>3 tag';
+    document.body.append(input);
+    input.focus();
+    input.setSelectionRange(8, 8);
+    expect(await dispatch('editing:clear-line-end')).toEqual({ ok: true });
+    expect(input.value).toBe('rating>3');
+    input.remove();
+  });
+
+  test('daemon:set-url with its URL inline runs at once', async () => {
+    expect(await dispatch('daemon:set-url http://127.0.0.1:4242')).toEqual({ ok: true });
     expect(store.ui.promptText).toBeNull();
     expect(invoked).toContainEqual({
       cmd: 'daemon_set_url',

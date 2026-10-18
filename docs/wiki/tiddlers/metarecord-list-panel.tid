@@ -68,7 +68,7 @@ move the row under the cursor by rewriting it ([[Ordering a list]]).
 
 The list loads a page of 100 rows (`[page-size]`, [[GUI configuration]];
 `metarecord-list:set page-size <n>` for this workspace) and the next one when the
-scroll or the cursor reaches the end; `metarecord-list:page next` asks for it. The
+scroll or the cursor reaches the end; `metarecord-list:page-next` asks for it. The
 footer gives `loaded/total` — the total is asked from the daemon apart, after the
 first page ([[Sorting and postings]]) — and how many metarecords are checked.
 

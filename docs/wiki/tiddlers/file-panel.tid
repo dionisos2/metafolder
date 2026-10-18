@@ -21,7 +21,7 @@ transport stream is a video and `main.ts` holding TypeScript is text.
 
 |!File |!Shown as |
 |image (PNG, JPEG, WebP, BMP, AVIF, ICO, SVG) |the image |
-|GIF |its first frame; ''animate'' in the toolbar (`file:toggle gif-animation`) plays it |
+|GIF |its first frame; ''animate'' in the toolbar (`file:toggle-gif-animation`) plays it |
 |video |its poster frame, until you ask to play it ([[Media preview]]) |
 |audio |a type glyph, until you ask to play it ([[Media preview]]) |
 |PDF |one page at a time ([[Document preview]]) |

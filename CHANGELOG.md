@@ -209,6 +209,13 @@ than breaking them.
     `mf_watch = true` no longer reads as unwatched.
 
 ### Changed
+- **A GUI command whose argument had one possible value carries it in its
+  name.** `metarecord:toggle-force`, `path-ref:toggle-scope`,
+  `file:toggle-gif-animation`, `metarecord-list:page-next`, `recent:set-sort
+  <time/score>`, `daemon:set-url <url>`, `editing:clear-line-end`, and
+  `duplicates:toggle-group` (which took none, but did not say what it
+  toggles). A key bound to an old name in your `keybindings.toml` must be
+  renamed by hand; the shipped bindings are (doc "Command naming").
 - **The tag commands are `tag:query`, `tag:add` and `tag:remove`** (were
   `user:tag-query`, `user:tag-add`, `user:tag-remove`): commands of the GUI
   itself, written in `commands.js` so they stay editable; `user:` is left to

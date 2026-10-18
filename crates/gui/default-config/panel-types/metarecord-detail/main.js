@@ -243,7 +243,7 @@ export async function mount(root, metafolder) {
     if (forceBox.checked) return { force: true };
     throw new Error(
       `"${reserved}" is a reserved field (mfr_*) — turn force on to write it ` +
-        '(the "force (mfr_*)" box, or metarecord:toggle force)',
+        '(the "force (mfr_*)" box, or metarecord:toggle-force)',
     );
   }
   /** The same as a DELETE body, which is null when it carries nothing.
@@ -898,11 +898,9 @@ export async function mount(root, metafolder) {
     label: 'Delete the field under the cursor',
     handler: deleteCursorRow,
   });
-  void commands.register('metarecord:toggle', {
-    label: 'Metarecord: toggle a flag (force: allow writing the reserved mfr_* fields)',
-    args: [{ name: 'flag', prompt: () => 'Which flag? (force)', complete: () => ['force'] }],
-    handler: (flag) => {
-      if (flag !== 'force') throw new Error(`unknown flag: "${flag ?? ''}" (expected force)`);
+  void commands.register('metarecord:toggle-force', {
+    label: 'Metarecord: toggle force (allow writing the reserved mfr_* fields)',
+    handler: () => {
       forceBox.checked = !forceBox.checked;
       render();
       void statusBar.message(

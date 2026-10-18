@@ -39,7 +39,7 @@
 "ctrl+q" = { command = "editing:discard", text-input = true }
 "ctrl+a" = { command = "editing:goto line-start", text-input = true }
 "ctrl+e" = { command = "editing:goto line-end", text-input = true }
-"ctrl+k" = { command = "editing:clear line-end", text-input = true }
+"ctrl+k" = { command = "editing:clear-line-end", text-input = true }
 
 # Completion views (doc "Completion views"): walk the views of the prompt's
 # candidates, next/previous. A prompt with a single view (the common case)
@@ -357,7 +357,7 @@
   # Go into the row: a node, a label, a directory (doc "Generic panel commands").
   { command = "cursor:descend self" },
   { command = "panel:open other file", when = "recent" },
-  { command = "duplicates:toggle", when = "duplicates" },
+  { command = "duplicates:toggle-group", when = "duplicates" },
   # In the file panel left/right seek the previewed media (see the transport
   # section below); with no media shown they do nothing.
   { command = "file:seek +10", when = "file" },
@@ -555,9 +555,9 @@
 "s" = [
   { command = "metarecord-list:clear simplified", when = "metarecord-list" },
   # path-ref: exact node ⇄ the whole subtree, for the "what points here?" query.
-  { command = "path-ref:toggle scope", when = "path-ref" },
+  { command = "path-ref:toggle-scope", when = "path-ref" },
   # recent: newest first ⇄ best score first (doc "Frecent folders").
-  { command = "recent:set sort", when = "recent" },
+  { command = "recent:set-sort", when = "recent" },
   { command = "help:clear search", when = "help" },
 ]
 

@@ -3,4 +3,4 @@ tags: [[GUI command]] Duplicates
 kind: reference
 summary: Duplicates: unfold the group / show the copy (here / other / new)
 
-`duplicates:activate <here|other|new>` — Enter in the [[duplicates panel]]. On a group row it unfolds or folds the group, like [[duplicates:toggle]]; on a copy it shows it in a [[file panel]] at the [[open target|Panel slots and layout]] — `panel:open <target> file`, as the copy's `↗` does ([[Opening a row]]).
+`duplicates:activate <here|other|new>` — Enter in the [[duplicates panel]]. On a group row it unfolds or folds the group, like [[duplicates:toggle-group]]; on a copy it shows it in a [[file panel]] at the [[open target|Panel slots and layout]] — `panel:open <target> file`, as the copy's `↗` does ([[Opening a row]]).

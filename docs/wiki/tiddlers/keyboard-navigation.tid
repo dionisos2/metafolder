@@ -76,7 +76,7 @@ Most keys are left to the text field that has the focus. These still apply:
 |<<key "editing:confirm" Enter>> |submit the command input |
 |<<key "editing:discard" Ctrl+q>> |leave the field and discard what was typed |
 |<<key "editing:goto line-start" Ctrl+a>> / <<key "editing:goto line-end" Ctrl+e>> |the start / the end of the line |
-|<<key "editing:clear line-end" Ctrl+k>> |remove from the caret to the end of the line |
+|<<key "editing:clear-line-end" Ctrl+k>> |remove from the caret to the end of the line |
 |<<key "completion:cycle forward" "Ctrl+,">> / <<key "completion:cycle back" "Ctrl+.">> |the next / the previous view of the candidates ([[Completion views]]) |
 |<<key "pick:confirm" Ctrl+Enter>> / <<key "pick:cancel" Ctrl+Escape>> |confirm / cancel a [[Value picker]] |
 |<<key "help:cursor" F1>>, <<key "find:open" Ctrl+f>>, <<key "status:clear" Ctrl+l>> |as everywhere |

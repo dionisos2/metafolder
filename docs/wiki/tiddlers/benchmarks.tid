@@ -53,7 +53,7 @@ a GUI you started (found by `gui-port` and `daemon-port` of [[GUI configuration]
 |`open-fm` |shows a `file-manager` |
 |`list-detail-nav` |moves the selection down ten times, list and detail side by side |
 |`fm-nav` |moves the selection down ten times in the file manager |
-|`paging` |loads ten more pages with `metarecord-list:page next` |
+|`paging` |loads ten more pages with `metarecord-list:page-next` |
 
 Each scenario empties the timings, acts, waits half a second, and prints the
 recorded phases by name — count, total, mean, maximum — next to the same calls made
@@ -77,5 +77,5 @@ their own:
 
 A panel renders after its command has returned, so the time of the command says
 nothing about the render: the recorded phases are the source of truth.
-<<cmd "metarecord-list:page">> exists so that paging — scrolling to the bottom, for
+<<cmd "metarecord-list:page-next">> exists so that paging — scrolling to the bottom, for
 a user — can be driven reproducibly.

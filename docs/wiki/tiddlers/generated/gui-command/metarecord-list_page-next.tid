@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/metarecord-list:page-next
+catalog: GUI command
+target: metarecord-list:page-next
+summary: Metarecord list: load the next page
+
+!! Reference
+
+* Defined by the ``metarecord-list`` panel
+* No default key

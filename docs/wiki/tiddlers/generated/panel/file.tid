@@ -13,7 +13,7 @@ summary: The file panel type
 * ``file:restart`` — File: play the media from the start
 * ``file:seek`` — File: seek the previewed media by a signed number of seconds
 * ``file:speed`` — File: step the playback rate
-* ``file:toggle`` — File: toggle a view flag
+* ``file:toggle-gif-animation`` — File: play or stop the animation of a GIF
 * ``file:volume`` — File: step the volume
 * ``file:zoom`` — File: zoom the previewed image/video
 

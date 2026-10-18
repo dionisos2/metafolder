@@ -150,7 +150,7 @@ describe('discardActiveInput', () => {
   });
 });
 
-// `editing:clear line-end` (ctrl+k) on a PANEL input: what follows the caret
+// `editing:clear-line-end` (ctrl+k) on a PANEL input: what follows the caret
 // on its line goes, as Emacs' kill-line does — and the panel sees it as typed.
 describe('clearToLineEnd', () => {
   afterEach(() => document.body.replaceChildren());

@@ -1298,7 +1298,7 @@ export interface EditingTarget {
   discard(): void;
   lineStart(): void;
   lineEnd(): void;
-  /** Remove what follows the caret on its line (`editing:clear line-end`). */
+  /** Remove what follows the caret on its line (`editing:clear-line-end`). */
   clearToLineEnd(): void;
   /** Cycles the prompt's completion views (`completion:cycle`) by `delta`
    *  (1 forward, -1 back). Absent on an input whose prompt offers a single
@@ -1340,7 +1340,7 @@ export function discardActiveInput(el: Element | null): boolean {
   return cleared;
 }
 
-/** `editing:clear line-end` on an element with no registered editing target —
+/** `editing:clear-line-end` on an element with no registered editing target —
  *  a panel's own input: removes what follows the caret (or the selection's
  *  start) up to the end of its line, as Emacs' kill-line does — so at the end
  *  of a textarea line, the line break, joining the next one. Fires `input` so
@@ -1393,14 +1393,6 @@ registerArgs('editing:goto', [
     name: 'target',
     prompt: () => 'Move the cursor where? (line-start / line-end)',
     complete: () => ['line-start', 'line-end'],
-  },
-]);
-
-registerArgs('editing:clear', [
-  {
-    name: 'range',
-    prompt: () => 'Clear what? (line-end)',
-    complete: () => ['line-end'],
   },
 ]);
 
@@ -1543,11 +1535,9 @@ registerArgs('mf:watch-activity', [
   },
 ]);
 
-registerArgs('daemon:set', [
-  { name: 'setting', prompt: () => 'Which setting? (url)', complete: () => ['url'] },
+registerArgs('daemon:set-url', [
   {
-    name: 'value',
-    when: (prior) => prior[0] === 'url',
+    name: 'url',
     prompt: () => 'New daemon URL:',
     initial: () => store.daemonUrl,
   },
@@ -2008,11 +1998,7 @@ async function runCommand(name: string, args: string[], context: ExecContext): P
     case 'editing:confirm':
       editingTarget?.confirm();
       return true;
-    case 'editing:clear':
-      if (args[0] !== 'line-end') {
-        await status(`unknown range: "${args[0] ?? ''}" (expected line-end)`);
-        return true;
-      }
+    case 'editing:clear-line-end':
       if (editingTarget) editingTarget.clearToLineEnd();
       else clearToLineEnd(deepActiveElement());
       return true;
@@ -2306,16 +2292,9 @@ async function runCommand(name: string, args: string[], context: ExecContext): P
       store.ui.pendingKeys = null;
       flashStatus('Describe which key? (escape cancels)');
       return true;
-    case 'daemon:set': {
-      // `setting` and `value` were collected by dispatch (inline or in the
-      // minibuffer). `url` is the only setting there is, but `set <setting>
-      // <value>` is the naming convention (doc "Command naming"), so
-      // the shape matches `panel:open`.
-      if (args[0] !== 'url') {
-        await status(`unknown setting: "${args[0] ?? ''}" (expected url)`);
-        return true;
-      }
-      const url = args[1] ?? '';
+    case 'daemon:set-url': {
+      // The URL was collected by dispatch (inline or in the minibuffer).
+      const url = args[0] ?? '';
       if (url === '') {
         await status('no daemon URL given');
         return true;

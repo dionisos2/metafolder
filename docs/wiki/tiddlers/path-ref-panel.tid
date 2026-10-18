@@ -62,7 +62,7 @@ A tree raises the question at once — what is tagged with this? The second row 
 toolbar answers it by writing a query:
 
 * ''ref'' — the `ref` field to follow back into the tree: `tag` unless configured otherwise (<<key "path-ref:set ref-field" e>>, `path-ref:set ref-field`);
-* ''scope'' — `exact`, the node itself, or `+ descendants`, the node and everything below it (<<key "path-ref:toggle scope" s>>);
+* ''scope'' — `exact`, the node itself, or `+ descendants`, the node and everything below it (<<key "path-ref:toggle-scope" s>>);
 * and the query the two make for the node under the cursor:
 
 ```

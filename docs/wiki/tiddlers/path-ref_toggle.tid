@@ -1,6 +1,0 @@
-title: path-ref:toggle
-tags: [[GUI command]] [[TreeRef forest]]
-kind: reference
-summary: Path-ref explorer: toggle a view flag (scope: the exact node ⇄ its whole subtree)
-
-`path-ref:toggle scope` switches the query of the [[path-ref panel]]'s ref bar between the node itself and the node with everything below it.

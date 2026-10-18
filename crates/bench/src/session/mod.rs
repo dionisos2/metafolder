@@ -435,7 +435,7 @@ async fn run_step(id: &str, s: &mut Session, quiet: Duration) -> Result<Option<I
         }
         "list.page" => {
             for _ in 0..5 {
-                s.command("metarecord-list:page next", None).await?;
+                s.command("metarecord-list:page-next", None).await?;
             }
             drawn(s, quiet).await
         }
