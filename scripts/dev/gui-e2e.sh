@@ -50,7 +50,7 @@
 #   field-keys reconcile ignore sync repos list layout script script-workspaces
 #   errors picker refs hierarchy hierarchy-form prompt history keybindings
 #   open-with tab-close pick-button suggested-key walk open-viewers slideshow
-#   shell-line repos-memory help-keys zoom order user-commands settle, and
+#   shell-line repos-memory help-keys zoom order user-commands settle macro, and
 #   devtools last (it takes the inspector the clicking scenarios drive).
 #   --unsandboxed  pass --allow-unsandboxed-webview to the GUI (a container
 #                  that forbids WebKit's sandbox; never on real data)
@@ -82,7 +82,7 @@ done
     || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list layout script script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close
         pick-button suggested-key walk open-viewers slideshow shell-line repos-memory
-        help-keys zoom order user-commands settle devtools)
+        help-keys zoom order user-commands settle macro devtools)
 
 # shellcheck source=lib/daemon-fixture.sh
 . scripts/dev/lib/daemon-fixture.sh
@@ -1006,6 +1006,58 @@ scenario_history() {
     assert "history: ctrl+p recalls it" until_ok 10 named "Typed name"
 }
 
+# Macros (doc "Macros"): F3 records what the keyboard runs, `macro:run`
+# replays it, ctrl+g marks a question to ask again, `macro:save` writes the
+# macro into macros.js as a user command, loaded at once.
+scenario_macro() {
+    needs_keyboard macro || return 0
+    new_repo macro
+    local file="$CONFIG_HOME/metafolder/gui/macros.js"
+
+    keys Escape F3
+    keys colon
+    typed "workspace:rename Recorded"
+    keys Return
+    assert "macro: the typed command runs while recording" until_ok 10 named "Recorded"
+    keys Escape F3
+    status_is "macro: stopping keeps one command" info "macro recorded: 1 command"
+
+    run workspace:rename Other
+    run macro:run
+    command_ok "macro: macro:run runs"
+    assert_eq "macro: the macro renamed the workspace again" "Recorded" "$(ws_name)"
+
+    run macro:save e2e-rename
+    command_ok "macro: macro:save saves"
+    assert "macro: the entry is in macros.js" \
+        grep -q "await mf.invoke(\['workspace:rename', 'Recorded'\]);" "$file"
+    run workspace:rename Other
+    run user:e2e-rename
+    command_ok "macro: the saved macro is a command"
+    assert_eq "macro: the saved macro runs" "Recorded" "$(ws_name)"
+    run macro:save e2e-rename
+    assert_eq "macro: a name taken is refused" "1" "$LAST_RC"
+
+    # Marked with ctrl+g, the new name is asked at each run.
+    keys Escape F3 colon
+    typed "workspace:rename"
+    keys Return
+    # The question opens in the command input, which takes the keys.
+    sleep 1
+    keys ctrl+g ctrl+a ctrl+k
+    typed "First"
+    keys Return
+    assert "macro: the marked rename ran" until_ok 10 named "First"
+    keys Escape F3
+    mfg command --timeout-ms 20000 macro:run >/dev/null 2>&1 &
+    local runner=$!
+    sleep 1
+    keys ctrl+a ctrl+k
+    typed "Second"
+    keys Return
+    wait "$runner"
+    assert_eq "macro: the run took the new answer" "Second" "$(ws_name)"
+}
 # bound <combo> — keybindings.toml has an entry for the combo.
 bound() { grep -q "^\"$1\" =" "$CONFIG_HOME/metafolder/gui/keybindings.toml"; }
 unbound() { ! bound "$1"; }

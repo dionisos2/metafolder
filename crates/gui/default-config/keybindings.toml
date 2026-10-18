@@ -22,6 +22,13 @@
 # whatever activates the command input, can be awaited by a script.
 "tab" = { command = "script-keys:toggle" }
 
+# Macros (doc "Macros"), on Emacs's keys: F3 starts recording and stops it, F4
+# runs the macro. Ctrl+G, in a question asked while recording, makes that
+# argument asked again each time the macro runs (press it again to undo).
+"f3" = { command = "macro:toggle-recording" }
+"f4" = { command = "macro:run" }
+"ctrl+g" = { command = "macro:ask", text-input = true }
+
 # Text editing (fire even while a text input is focused).
 "escape" = [
   { command = "editing:unfocus", text-input = true },

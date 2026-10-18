@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/macro:run
+catalog: GUI command
+target: macro:run
+summary: Run the last recorded macro
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``f4`` → ``macro:run``

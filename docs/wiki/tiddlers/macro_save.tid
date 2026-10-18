@@ -1,0 +1,6 @@
+title: macro:save
+tags: [[GUI command]] Macros
+kind: reference
+summary: Save the last recorded macro as a user command, user:<name>
+
+Saves the last recorded [[macro|Macros]] as the user command `user:<name>`: written at the end of `gui/macros.js`, and loaded at once. `user:` may be given or left out. A name already a command, or already in the file, is refused, and so is a file the GUI cannot add to (one no longer ending with the `};` of its export).

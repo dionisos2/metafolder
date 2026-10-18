@@ -55,7 +55,7 @@ describe('dispatch settles', () => {
     setSettler(settler);
     expect(await dispatch('user:x', { ws: 'ws-1', slot: 'left' })).toEqual({
       ok: false,
-      error: 'Error: nope',
+      error: 'nope',
     });
     expect(settler).not.toHaveBeenCalled();
   });

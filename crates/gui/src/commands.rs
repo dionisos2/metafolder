@@ -715,6 +715,13 @@ pub fn event_barrier(app: AppHandle, id: u64) {
     app.gui.event_barrier(id);
 }
 
+/// `macro:save` (doc "Macros"): adds the shell's `entry` for `name` at the end
+/// of `gui/macros.js`, refusing a name the file holds.
+#[tauri::command]
+pub fn macro_save(app: AppHandle, name: String, entry: String) -> Result<(), String> {
+    crate::macros::save(&app.config.macros_js_path(), &name, &entry)
+}
+
 /// `devtools:open` — the WebKit inspector; replaces the Inspect Element
 /// metarecord of the suppressed native context menu.
 #[tauri::command]
@@ -865,6 +872,7 @@ pub fn config_reload(app: AppHandle, what: String) -> Result<String, String> {
             "commands" => {
                 app.config.load_commands_js()?;
                 app.config.load_user_commands_js()?;
+                app.config.load_macros_js()?;
             }
             _ => unreachable!("reload_targets only yields known targets"),
         }

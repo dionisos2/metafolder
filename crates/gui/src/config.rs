@@ -464,6 +464,17 @@ impl ConfigDir {
         metafolder_core::config::read_required(&self.user_commands_js_path())
     }
 
+    pub fn macros_js_path(&self) -> PathBuf {
+        self.root.join("macros.js")
+    }
+
+    /// The macros `macro:save` wrote (doc "Macros"), user commands like those
+    /// of `user-commands.js`. Required like it: the shipped file, empty, is
+    /// installed by `metafolder-sync-config`.
+    pub fn load_macros_js(&self) -> Result<String, String> {
+        metafolder_core::config::read_required(&self.macros_js_path())
+    }
+
     // ── Documentation ────────────────────────────────────────────────────
 
     /// The rendered documentation, a crate-agnostic category beside the

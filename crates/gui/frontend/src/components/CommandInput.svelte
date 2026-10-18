@@ -399,13 +399,14 @@
       // (%-placeholder expansion, message-panel switch, run_shell). Enter
       // always runs the typed line, as in bash — candidates insert with Tab.
       history?.push(input);
-      await dispatch('!' + input);
+      await dispatch('!' + input, undefined, { record: true });
       return;
     }
     // The history records what actually ran (the resolved suggestion), not
     // the abbreviation that was typed.
     history?.push(picked);
-    await dispatch(picked);
+    // Typed: a macro being recorded takes it (doc "Macros").
+    await dispatch(picked, undefined, { record: true });
   }
 
   function onKeydown(event: KeyboardEvent) {

@@ -234,7 +234,8 @@ export function installKeys() {
       // the key; only a fired one dispatches.
       event.preventDefault();
       event.stopPropagation();
-      if ('invocation' in result) void dispatch(result.invocation);
+      // From the keyboard: a macro being recorded takes it (doc "Macros").
+      if ('invocation' in result) void dispatch(result.invocation, undefined, { record: true });
     },
     { capture: true },
   );

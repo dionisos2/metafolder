@@ -36,6 +36,7 @@ import {
   workspaceById,
 } from './store.svelte';
 import { isTarget, resolveTarget, TARGETS } from './targets';
+import { macroEntry, macros } from './macro';
 import { daemonWork } from './working';
 import {
   FIND_MODES,
@@ -334,6 +335,8 @@ export interface ArgSpec {
  *  re-asks when the page it handed over was not the whole set. */
 export interface ArgPromptRequest {
   argName: string;
+  /** Where the answer goes among the arguments collected (0 for the first). */
+  position: number;
   prompt: string;
   initial: string;
   completions: CompletionItem[] | Promise<CompletionItem[]>;
@@ -564,12 +567,19 @@ export function validateUserCommands(
 export function mergeCommandModules(
   shipped: unknown,
   own: unknown,
-): { module: Record<string, UserCommand>; shadowed: string[] } {
+  saved: unknown = {},
+): { module: Record<string, UserCommand>; shadowed: { file: string; name: string }[] } {
   const module = Object.fromEntries(validateUserCommands(shipped, 'commands.js'));
-  const shadowed: string[] = [];
-  for (const [name, command] of validateUserCommands(own, 'user-commands.js')) {
-    if (Object.hasOwn(module, name)) shadowed.push(name);
-    else module[name] = command;
+  const shadowed: { file: string; name: string }[] = [];
+  // In order: an entry of a later file never replaces one of an earlier.
+  for (const [file, source] of [
+    ['user-commands.js', own],
+    ['macros.js', saved],
+  ] as const) {
+    for (const [name, command] of validateUserCommands(source, file)) {
+      if (Object.hasOwn(module, name)) shadowed.push({ file, name });
+      else module[name] = command;
+    }
   }
   return { module, shadowed };
 }
@@ -1250,6 +1260,7 @@ export async function collectArgs(
       : null;
     const answer = await promptFn({
       argName: spec.name,
+      position: result.length,
       prompt: await spec.prompt(result),
       initial:
         asked?.initial !== undefined
@@ -1405,6 +1416,10 @@ registerArgs('workspace:send', [
   },
   { name: 'variable', prompt: () => 'Which variable?' },
   { name: 'value', prompt: () => 'Its value (JSON, or text):' },
+]);
+
+registerArgs('macro:save', [
+  { name: 'name', prompt: () => 'Save the macro as user:…? (a name)' },
 ]);
 
 registerArgs('workspace:rename', [
@@ -1768,6 +1783,12 @@ export function setSettler(fn: (() => Promise<void>) | null): void {
   settler = fn;
 }
 
+/** How a dispatch came about. `record`: run from the keyboard — a key or the
+ *  command input — so a macro being recorded records it (doc "Macros"). */
+export interface DispatchOptions {
+  record?: boolean;
+}
+
 /** Outcome of a dispatch, reported back to `POST /gui/command` waiters.
  *  `cancelled`: abandoned at one of its questions — nothing ran, and nothing
  *  failed either. */
@@ -1794,9 +1815,17 @@ function fromParts(
 export async function dispatch(
   invocation: string | InvocationParts,
   context: ExecContext = focusedContext(),
+  options: DispatchOptions = {},
 ): Promise<DispatchResult> {
   const parsed = typeof invocation === 'string' ? parseInvocation(invocation) : fromParts(invocation);
   if (parsed === null) return { ok: true };
+  // A macro records what the keyboard runs (doc "Macros"), as it ran — and
+  // neither the macro commands themselves nor the keystroke-level ones.
+  const recorded =
+    options.record === true &&
+    macros.recording() &&
+    ('shell' in parsed ||
+      (!parsed.name.startsWith('macro:') && shouldLogCommand(store.commands, parsed.name)));
   if ('shell' in parsed) {
     const ws = focusedWs();
     const expanded = await expandShellPlaceholders(parsed.shell, shellExpandDeps(ws));
@@ -1811,6 +1840,7 @@ export async function dispatch(
     }
     await runShell(expanded.value);
     if (settler) await settler();
+    if (recorded) macros.record(`!${parsed.shell}`, [], new Set());
     return { ok: true };
   }
 
@@ -1828,10 +1858,18 @@ export async function dispatch(
   // the rest of the dispatch by a microtask for nothing.)
   if (panelArgs) await panelArgs.prepare(name, ws);
   const specs = argSpecFor(name, ws);
+  // The arguments `macro:ask` marked while this command asked for them.
+  const marks = new Set<number>();
   if (specs) {
     let collected: string[] | null;
     try {
-      collected = await collectArgs(specs, given, promptForArg);
+      collected = await collectArgs(
+        specs,
+        given,
+        recorded
+          ? (request) => macros.asking(marks, request.position, () => promptForArg(request))
+          : promptForArg,
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await status(message);
@@ -1868,9 +1906,11 @@ export async function dispatch(
     }
     // Resolved when its effect is visible, not when its handler returned.
     if (settler) await settler();
+    if (recorded) macros.record(name, args, marks);
     return { ok: true };
   } catch (error) {
-    const message = String(error);
+    // An Error says its message; the "Error: " of its String() is noise.
+    const message = error instanceof Error ? error.message : String(error);
     await status(message);
     return { ok: false, error: message };
   } finally {
@@ -2290,6 +2330,58 @@ async function runCommand(name: string, args: string[], context: ExecContext): P
       // (doc "Script sessions").
       await invoke('answer_send', { value: args.join(' '), id: activeQuestion()?.id ?? null });
       return true;
+    // Macros (doc "Macros").
+    case 'macro:toggle-recording': {
+      const done = macros.toggle();
+      if (done === null) {
+        await status('recording a macro: macro:toggle-recording again to stop', 'info');
+      } else if (done.length === 0) {
+        await status('nothing recorded: the macro recorded before stays', 'info');
+      } else {
+        await status(`macro recorded: ${done.length} command${done.length === 1 ? '' : 's'}`, 'info');
+      }
+      return true;
+    }
+    case 'macro:ask': {
+      const marked = macros.mark();
+      if (marked === null) throw new Error('macro:ask marks the question on screen, while recording');
+      await status(marked ? 'asked again each time the macro runs' : 'answered once for all, as recorded', 'info');
+      return true;
+    }
+    case 'macro:run': {
+      if (macros.recording()) {
+        throw new Error('a macro is being recorded: stop it first (macro:toggle-recording)');
+      }
+      const steps = macros.last();
+      if (steps === null) throw new Error('no macro recorded yet');
+      for (const [i, step] of steps.entries()) {
+        // Each step from the focus as it is then, like a typed command.
+        const result = await dispatch(step);
+        const where = `step ${i + 1} of ${steps.length} (${step[0]})`;
+        if (!result.ok) throw new Error(`macro stopped at ${where}: ${result.error}`);
+        if (result.cancelled) {
+          await status(`macro abandoned at ${where}`, 'info');
+          return true;
+        }
+      }
+      return true;
+    }
+    case 'macro:save': {
+      const steps = macros.last();
+      if (steps === null) throw new Error('no macro recorded yet');
+      const given = args.join(' ').trim();
+      const name = given.startsWith('user:') ? given : `user:${given}`;
+      if (!/^user:[A-Za-z0-9_][A-Za-z0-9_-]*$/.test(name)) {
+        throw new Error(`"${given}" is not a command name: one word, letters, digits, - and _`);
+      }
+      if (store.commands.some((command) => command.name === name)) {
+        throw new Error(`${name} is already a command: pick another name`);
+      }
+      await invoke('macro_save', { name, entry: macroEntry(name, steps) });
+      await reloadUserCommands();
+      await status(`macro saved as ${name}, in macros.js`, 'info');
+      return true;
+    }
     case 'script-keys:toggle': {
       // The question bar's checkbox: hand the script's keys back to the panels,
       // or take them again. Rust owns the flag and re-broadcasts the questions

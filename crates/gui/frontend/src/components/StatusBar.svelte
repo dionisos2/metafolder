@@ -72,6 +72,13 @@
         {#if status}{status.text}{/if}
       </span>
       {#if status?.kind === 'busy'}<span class="spinner"></span>{/if}
+      <!-- A recording is the session's, not a workspace's: every bar says it
+           (doc "Macros"). -->
+      {#if store.ui.macroRecording}
+        <span class="macro-recording" title="Recording a macro: macro:toggle-recording stops it"
+          >● recording</span
+        >
+      {/if}
       <span class="last-command">{store.lastCommand[wsId] ?? ''}</span>
     </div>
   {:else}
@@ -188,6 +195,11 @@
   }
   .status-bar.error .text {
     color: var(--mf-error, #c44c56);
+  }
+  .macro-recording {
+    color: var(--mf-error, #e06c75);
+    font-size: 0.85em;
+    font-weight: bold;
   }
   .last-command {
     color: var(--mf-fg-dim, #8a8a96);

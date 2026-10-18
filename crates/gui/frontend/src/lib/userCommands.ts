@@ -47,12 +47,20 @@ export async function loadUserCommands(): Promise<string[]> {
   const own = (await import(/* @vite-ignore */ `${dir}/user-commands.js`)) as {
     default?: unknown;
   };
+  // The macros `macro:save` wrote (doc "Macros"): user commands too.
+  const saved = (await import(/* @vite-ignore */ `${dir}/macros.js`)) as {
+    default?: unknown;
+  };
 
   // Validated before anything is torn down, for the same reason the import is:
   // a malformed entry must cost the reload, not the commands you already had.
-  const { module, shadowed } = mergeCommandModules(shipped.default, own.default);
+  const { module, shadowed } = mergeCommandModules(shipped.default, own.default, saved.default);
   const fileOf = (name: string) =>
-    Object.hasOwn(shipped.default as object, name) ? 'commands.js' : 'user-commands.js';
+    Object.hasOwn(shipped.default as object, name)
+      ? 'commands.js'
+      : Object.hasOwn(own.default as object, name)
+        ? 'user-commands.js'
+        : 'macros.js';
 
   const previous = clearUserCommands();
   if (previous.length > 0) await invoke('forget_user_commands', { names: previous });
@@ -88,7 +96,9 @@ export async function loadUserCommands(): Promise<string[]> {
   // Said rather than swallowed: the entry is in the file and does nothing.
   if (shadowed.length > 0) {
     await status(
-      `user-commands.js: ${shadowed.join(', ')} ${shadowed.length > 1 ? 'are' : 'is'} already a command of commands.js — left out, the shipped one stands`,
+      `${shadowed.map(({ file, name }) => `${file}: ${name}`).join(', ')} — already ${
+        shadowed.length > 1 ? 'commands' : 'a command'
+      } of a file loaded before, left out; the first one stands`,
     );
   }
   if (refused.length > 0) {

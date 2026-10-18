@@ -112,6 +112,7 @@ pub fn build_router(state: ServerState) -> Router {
                     let source = match file.as_str() {
                         "commands.js" => state.config.load_commands_js(),
                         "user-commands.js" => state.config.load_user_commands_js(),
+                        "macros.js" => state.config.load_macros_js(),
                         _ => return axum::http::StatusCode::NOT_FOUND.into_response(),
                     };
                     match source {

@@ -140,6 +140,9 @@ export const store = $state({
     /// `script-keys:toggle`; Rust owns the value and pushes it here, so the
     /// temporary answer bindings and this flag can never disagree.
     scriptKeys: true,
+    /// Whether a macro is being recorded (doc "Macros"): the status bar says
+    /// so for as long as it lasts.
+    macroRecording: false,
     /// The find bar (doc "Find in a panel"): a browser-style Ctrl-F over
     /// the focused panel's rendered text. `open` shows the bar (and the
     /// focus tick re-focuses its input when Ctrl-F is pressed again),

@@ -1,0 +1,6 @@
+title: macro:ask
+tags: [[GUI command]] Macros
+kind: reference
+summary: In a question while recording: ask it again each time the macro runs
+
+While a macro is being recorded and a command asks a question: the answer about to be given is recorded as a question instead, asked again each time the macro runs ([[Macros]]). Run twice on the same question, it takes the mark back. Anywhere else it fails, saying so.

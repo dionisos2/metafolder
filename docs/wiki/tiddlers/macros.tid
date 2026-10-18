@@ -1,0 +1,81 @@
+title: Macros
+tags: Commands
+kind: guide
+summary: F3 records the commands you run from the keyboard, F4 runs them again; macro:ask makes an answer asked at each run, and macro:save keeps the macro as a user command in macros.js.
+
+
+A macro is a sequence of commands recorded as you run them, to run again in one go —
+as in Emacs, and on the same keys.
+
+|!Key |!Command |!Does |
+|<<key "macro:toggle-recording" f3>> |`macro:toggle-recording` |starts recording; pressed again, stops and keeps what was recorded as ''the'' macro |
+|<<key "macro:run" f4>> |`macro:run` |runs the macro |
+|<<key "macro:ask" "ctrl+g">> |`macro:ask` |in a question, while recording: that argument is asked again at each run |
+| |`macro:save <name>` |keeps the macro as the command `user:<name>`, in `macros.js` |
+
+While recording, every status bar shows ''● recording''.
+
+!! What is recorded
+
+The commands you run ''from the keyboard'' — a key, or a line of the command input,
+`!` shell lines included — each with the arguments it ran with, those it asked for
+too. Nothing else:
+
+* not a click: a button runs a command, but it often does something first that is no command (the ↗ of a list row selects the row, then opens it), so recording some clicks and not others would make what a macro holds a guess. To record what a button does, run its command (every control has one: [[Commands]]);
+* not what you type into a panel's own text field — the list's finder, a form: the typing is no command;
+* not what a script sends ([[mf gui command]]), nor what a command runs itself (a user command's `mf.invoke`): those are its doing, and run again with it;
+* not a command that failed, nor one abandoned at a question with `Escape`;
+* not the keystroke-level commands, those kept out of the message log (`editing:*`, `completion:cycle`, `find:*`, `help*`…), nor the `macro:*` ones.
+
+What a step acts on is decided when it runs, as when you type it: the focused
+workspace and slot, the selection (`metarecord:bulk selection …`), the panel the
+cursor is in. A macro recorded on one row runs on the row you are on.
+
+A recording that recorded nothing leaves the macro of before in place. The macro
+lasts for the session; `macro:save` keeps it.
+
+!! Asked again at each run
+
+A question answered while recording is answered the same way at each run. Press
+<<key "macro:ask" "ctrl+g">> while the question is on screen, then answer it: that
+argument will be asked at each run instead — its own question, its own candidates. A
+second press takes it back. Recording `metarecord:bulk selection set` and marking the
+value gives a macro that asks for a new value and sets it.
+
+!! Running
+
+`macro:run` runs the steps in order, each once the one before has finished — what it
+opened shown and loaded ([[When a command has finished]]). It stops at the first step
+that fails, saying which (''macro stopped at step 2 of 3 (…)''), and at a question
+abandoned with `Escape`. Everything the macro writes to the repository is one label
+of the log, under which each step's is nested: `log:undo` undoes it all, or offers
+the step ([[Undo and redo by label]]).
+
+!! Saving
+
+`macro:save rate-all` writes the macro at the end of `gui/macros.js` as the user
+command `user:rate-all`, and loads it: it is a command like any other, listed,
+bindable to a key, runnable by a script. A name taken by a command, or already in
+the file, is refused.
+
+```
+  'user:rate-all': {
+    label: 'Macro user:rate-all',
+    run: async (mf) => {
+      await mf.invoke(['metarecord-list:select', 'all']);
+      await mf.invoke(['metarecord:bulk', 'selection', 'set', 'rating', mf.ask]);
+    },
+  },
+```
+
+The entry is what one would write by hand in `user-commands.js` ([[User commands]]):
+read it to see how, and edit it as you like — a condition, a loop, a step removed.
+The GUI never rewrites the file: it adds each new entry before the `};` that closes
+it, and refuses to save when the file no longer ends that way. After editing it by
+hand, `config:reload commands`. An entry named like one of `user-commands.js` is left
+out, the first one standing.
+
+!! Repeating
+
+There is no count: running a macro N times, or until it fails, would be a repetition
+of any command, not of macros alone, and is left to that.

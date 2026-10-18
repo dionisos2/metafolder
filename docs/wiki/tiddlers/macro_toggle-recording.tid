@@ -1,0 +1,6 @@
+title: macro:toggle-recording
+tags: [[GUI command]] Macros
+kind: reference
+summary: Start recording a macro, or stop and keep it
+
+Starts recording a [[macro|Macros]]: from then on, the commands run from the keyboard are recorded, with their arguments, and every status bar shows ''● recording''. Run again, it stops and keeps what was recorded as the macro `macro:run` runs; a recording that recorded nothing leaves the macro of before in place.

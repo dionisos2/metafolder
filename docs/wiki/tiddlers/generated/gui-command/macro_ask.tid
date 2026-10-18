@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/macro:ask
+catalog: GUI command
+target: macro:ask
+summary: In a question while recording: ask it again each time the macro runs
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``ctrl+g`` → ``macro:ask`` (also in a text input)

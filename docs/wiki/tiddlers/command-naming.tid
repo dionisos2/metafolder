@@ -45,6 +45,7 @@ Grouped by what they touch, which is what a name must make obvious:
 |a text zone |`focus <zone>`, `clear <zone>`, `apply <zone> [stay]`, `insert <zone> <text> [stay]` |
 |a form, an overlay, a panel |`open [what]`, `open-X` (a form of this panel), `close`, `cancel`, `reveal <type>` |
 |a view flag |`toggle <flag>` |
+|a macro ([[Macros]]) |`toggle-recording`, `ask`, `run`, `save <name>` |
 |the cursor or the selection |`cursor:next/prev/first/last <panel>`, `cursor:find <panel> <mode>`, `page <which>`, `select <toggle/all/none>`, and the `row-X` family (the row under the cursor) |
 |a search |`query <what>` (adds a filter to the query shown and runs it: [[tag:query]]) |
 |a view setting |`set <setting> [value]` |
@@ -63,6 +64,15 @@ The five operations are those of the daemon and of the CLI ([[The verb pattern]]
 the same name, so that typing `order` shows the three. The first argument is always one
 of `on`, `off`, `move` and the field comes after, so no field name can be mistaken for
 `off`.
+
+!! A single choice is a name
+
+An argument is for a choice. When there is only one thing to do, it is part of the
+name, joined by a hyphen: `macro:toggle-recording`, not `macro:toggle recording`. An
+argument with a single value would be asked for when left out — a question with one
+answer — and, without a key bound to show it, `macro:toggle` in the command list
+would not say what it toggles. The older `x:toggle <flag>` commands, where one panel
+has several flags, keep their argument.
 
 !! Two forms kept on purpose
 

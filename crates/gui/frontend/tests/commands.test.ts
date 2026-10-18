@@ -473,7 +473,19 @@ describe('mergeCommandModules', () => {
     );
     expect(module.recent).toBe(shipped);
     expect(Object.keys(module)).toEqual(['recent', 'user:x']);
-    expect(shadowed).toEqual(['recent']);
+    expect(shadowed).toEqual([{ file: 'user-commands.js', name: 'recent' }]);
+  });
+
+  test('the saved macros join last, and one named like an entry before is left out', () => {
+    const mine = { run: () => 'mine' };
+    const { module, shadowed } = mergeCommandModules(
+      { 'tag:add': { run } },
+      { 'user:x': mine },
+      { 'user:x': { run: () => 'macro' }, 'user:m': { run } },
+    );
+    expect(Object.keys(module)).toEqual(['tag:add', 'user:x', 'user:m']);
+    expect(module['user:x']).toBe(mine);
+    expect(shadowed).toEqual([{ file: 'macros.js', name: 'user:x' }]);
   });
 
   test('a malformed module is refused naming its file', () => {
@@ -1024,7 +1036,7 @@ describe('collectArgs', () => {
     const bare: ArgSpec = { name: 'x', prompt: () => 'X?' };
     const { fn, requests } = scriptedPrompt(['v']);
     await collectArgs([bare], [], fn);
-    expect(requests[0]).toEqual({ argName: 'x', prompt: 'X?', initial: '', completions: [] });
+    expect(requests[0]).toEqual({ argName: 'x', position: 0, prompt: 'X?', initial: '', completions: [] });
   });
 
   // The alternate confirmation (Shift-Enter): an argument may declare what

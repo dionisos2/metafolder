@@ -1,0 +1,6 @@
+title: macro:run
+tags: [[GUI command]] Macros
+kind: reference
+summary: Run the last recorded macro
+
+Runs the last recorded [[macro|Macros]], step by step, each once the one before has finished; stops at the first step that fails, naming it, and at a question abandoned with `Escape`. Refused while a macro is being recorded, and before any was.

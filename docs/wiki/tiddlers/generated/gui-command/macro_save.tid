@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/macro:save
+catalog: GUI command
+target: macro:save
+summary: Save the last recorded macro as a user command, user:<name>
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

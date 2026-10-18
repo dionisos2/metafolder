@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/macro:toggle-recording
+catalog: GUI command
+target: macro:toggle-recording
+summary: Start recording a macro, or stop and keep it
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``f3`` → ``macro:toggle-recording``

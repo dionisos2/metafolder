@@ -23,6 +23,7 @@ pub mod fs_path;
 pub mod history;
 pub mod ignore;
 pub mod keybindings;
+pub mod macros;
 pub mod media_brands;
 pub mod media_support;
 pub mod notifier;
@@ -158,6 +159,12 @@ fn register_builtins(registry: &CommandRegistry) {
         ("context:unset", "Close the active repository's work context", true),
         ("answer:send", "Resolve the pending script input wait", true),
         ("script-keys:toggle", "Give the script's keys back to the GUI, or take them again", true),
+        // Macros (doc "Macros"): kept out of the message log, and out of the
+        // macro being recorded, so a recording replays what it recorded.
+        ("macro:toggle-recording", "Start recording a macro, or stop and keep it", false),
+        ("macro:ask", "In a question while recording: ask it again each time the macro runs", false),
+        ("macro:run", "Run the last recorded macro", false),
+        ("macro:save", "Save the last recorded macro as a user command, user:<name>", false),
         ("script:stop", "Ask the running script to stop (the one asking, by default)", true),
         ("script:kill", "Kill the running script outright (the one asking, by default)", true),
         ("pick:confirm", "Confirm the value picker's selection", true),
@@ -416,6 +423,7 @@ pub fn run(options: Options) {
     // finish booting and shows the JavaScript error (doc "User commands").
     or_exit(config.load_commands_js());
     or_exit(config.load_user_commands_js());
+    or_exit(config.load_macros_js());
 
     // GUI settings (config.toml), with the CLI flags as optional overrides.
     // A missing config file is fatal (doc "No runtime fallback").
@@ -629,6 +637,7 @@ pub fn run(options: Options) {
             commands::prompt_resolve,
             commands::panel_ready,
             commands::event_barrier,
+            commands::macro_save,
             commands::post_status,
             commands::get_messages,
             commands::clear_messages,
