@@ -28,7 +28,7 @@ describe('openButton', () => {
   });
 
   test('each icon is drawn as text, never as an emoji, so it takes its colour', () => {
-    for (const kind of /** @type {const} */ (['enter', 'show', 'detail'])) {
+    for (const kind of ['enter', 'show', 'detail'] as const) {
       expect(openButton(kind, '', () => {}).textContent?.endsWith(TEXT)).toBe(true);
     }
   });
