@@ -12,13 +12,18 @@
 //! (doc "Event batching"). The *first* connection is different:
 //! it is made synchronously, so a load that wanted fanotify either knows it is
 //! covered or falls back (or fails) with the reason.
+//!
+//! A filesystem mounted beneath the root that the broker cannot mark — most
+//! FUSE filesystems report a zero fsid (gocryptfs) — is named by the broker,
+//! and watched by an inotify source of its own, inside it only
+//! (doc "Uncovered mounts").
 
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -30,7 +35,7 @@ use metafolder_watchd::proto::{self, ClientMsg, Event, ServerMsg};
 use crate::executor::FsEvent;
 use crate::state::RepoState;
 use crate::tree_cache::TreeCache;
-use crate::watcher::{relative, Placement, Regime};
+use crate::watcher::{inotify, relative, Gap, Placement, Regime};
 
 /// How long the first connection waits for the broker's handshake before the
 /// load decides the broker is not there. Generous for a local socket, short
@@ -54,6 +59,52 @@ pub(crate) struct Source {
     // (.semgrep/invariants.yml `mf-repostate-arc-in-background-task`). What the
     // source keeps is the way to end that thread when it is dropped.
     stop: Arc<Stop>,
+    uncovered: Arc<Uncovered>,
+}
+
+/// The mounts beneath the root the broker cannot cover, and the inotify
+/// source watching inside them (doc "Uncovered mounts"). Shared with the
+/// client thread, which is told of them by the broker.
+struct Uncovered {
+    inotify: Arc<inotify::Source>,
+    gaps: Mutex<Vec<Gap>>,
+    /// The root as the broker names it (canonical), and as the repository does.
+    canonical: PathBuf,
+    root: PathBuf,
+    repo: Weak<RepoState>,
+}
+
+impl Uncovered {
+    /// Records what the broker said is uncovered now; whether that changed.
+    fn set(&self, gaps: &[proto::Gap]) -> bool {
+        let mut gaps: Vec<Gap> = gaps
+            .iter()
+            .filter_map(|g| {
+                let rest = g.mount.as_path().strip_prefix(&self.canonical).ok()?;
+                Some(Gap { path: self.root.join(rest), reason: g.reason.clone() })
+            })
+            .collect();
+        gaps.sort_by(|a, b| a.path.cmp(&b.path));
+        let mounts = gaps.iter().map(|g| g.path.clone()).collect();
+        *self.gaps.lock_recover() = gaps;
+        self.inotify.set_within(mounts)
+    }
+
+    /// [`set`](Self::set), and the watches placed again when it changed —
+    /// on a thread of its own: placing waits for the store's lock, and the
+    /// stream must go on being read meanwhile.
+    fn told(&self, gaps: &[proto::Gap]) {
+        if !self.set(gaps) {
+            return;
+        }
+        let repo = self.repo.clone();
+        std::thread::spawn(move || {
+            if let Some(repo) = repo.upgrade() {
+                let conn = repo.conn.lock_recover();
+                repo.refresh_watches(&conn);
+            }
+        });
+    }
 }
 
 /// How a dropped [`Source`] ends its client thread: the flag says "do not
@@ -131,7 +182,16 @@ impl Source {
 
         // The handshake is synchronous: a load that wanted fanotify either
         // knows it is covered, or falls back (or fails) with the reason.
-        let reader = subscribe(socket, &root)?;
+        let (reader, gaps) = subscribe(socket, &root)?;
+        let uncovered = Arc::new(Uncovered {
+            inotify: inotify::Source::start_within(repo, tx.clone())?,
+            gaps: Mutex::new(Vec::new()),
+            canonical: root.clone(),
+            root: repo.config.root.clone(),
+            repo: Arc::downgrade(repo),
+        });
+        // Before the load's placement, which watches inside them at once.
+        uncovered.set(&gaps);
 
         // From here on the stream *is* the source. The thread owns every later
         // (re)connection; the handshake one is handed over as-is.
@@ -139,14 +199,17 @@ impl Source {
         let socket = socket.to_path_buf();
         let stop = Arc::new(Stop::default());
         let thread_stop = stop.clone();
+        let thread_uncovered = uncovered.clone();
         std::thread::spawn(move || {
+            let uncovered = thread_uncovered;
             let stop = thread_stop;
             let mut reader = Some(reader);
             loop {
                 let current = match reader.take() {
                     Some(current) => current,
                     None => match subscribe(&socket, &root) {
-                        Ok(current) => {
+                        Ok((current, gaps)) => {
+                            uncovered.told(&gaps);
                             if stop.is_stopped() {
                                 return;
                             }
@@ -176,7 +239,10 @@ impl Source {
                 if !stop.attach(&current) {
                     return; // Dropped while connecting: the repository is gone.
                 }
-                if let Ended::Unloaded = pump(current, &root, &internal_dir, &repo_uuid, &tx) {
+                let on_gaps = |gaps: &[proto::Gap]| uncovered.told(gaps);
+                if let Ended::Unloaded =
+                    pump(current, &root, &internal_dir, &repo_uuid, &tx, &on_gaps)
+                {
                     return;
                 }
                 if stop.is_stopped() {
@@ -198,7 +264,7 @@ impl Source {
             }
         });
 
-        Ok(Arc::new(Source { stop }))
+        Ok(Arc::new(Source { stop, uncovered }))
     }
 }
 
@@ -207,8 +273,9 @@ impl Source {
 ///
 /// Returns the *reader*, never a fresh stream: the handshake's `BufReader` may
 /// already hold the first events behind the answer (the broker sends them at
-/// once), and reading from anything else would lose exactly those.
-fn subscribe(socket: &Path, root: &Path) -> Result<BufReader<UnixStream>> {
+/// once), and reading from anything else would lose exactly those — and the
+/// mounts beneath the root the broker cannot cover.
+fn subscribe(socket: &Path, root: &Path) -> Result<(BufReader<UnixStream>, Vec<proto::Gap>)> {
     let stream = UnixStream::connect(socket)
         .with_context(|| format!("no broker at {}", socket.display()))?;
     stream.set_read_timeout(Some(HANDSHAKE_TIMEOUT))?;
@@ -218,8 +285,12 @@ fn subscribe(socket: &Path, root: &Path) -> Result<BufReader<UnixStream>> {
         .write_all(proto::encode(&ClientMsg::Subscribe { roots: vec![root.into()] }).as_bytes())?;
     let mut line = String::new();
     reader.read_line(&mut line).context("the broker did not answer the subscription")?;
-    match proto::decode::<ServerMsg>(&line).context("the broker sent an unparsable answer")? {
-        ServerMsg::Subscribed { roots, denied } if roots.len() == 1 && denied.is_empty() => {}
+    let gaps = match proto::decode::<ServerMsg>(&line)
+        .context("the broker sent an unparsable answer")?
+    {
+        ServerMsg::Subscribed { roots, denied, gaps } if roots.len() == 1 && denied.is_empty() => {
+            gaps
+        }
         ServerMsg::Subscribed { denied, .. } => {
             let why = denied
                 .first()
@@ -228,19 +299,21 @@ fn subscribe(socket: &Path, root: &Path) -> Result<BufReader<UnixStream>> {
             bail!("the broker refused {}: {why}", root.display());
         }
         other => bail!("unexpected answer from the broker: {other:?}"),
-    }
+    };
     reader.get_ref().set_read_timeout(None)?;
-    Ok(reader)
+    Ok((reader, gaps))
 }
 
 /// Reads one stream to its end, handing every event to the ingest thread as a
-/// batch. Returns when the stream ends or the repository is unloaded.
+/// batch, and every new list of uncovered mounts to `on_gaps`. Returns when the
+/// stream ends or the repository is unloaded.
 fn pump(
     reader: BufReader<UnixStream>,
     root: &Path,
     internal_dir: &Path,
     repo: &Uuid,
     tx: &Sender<Vec<(FsEvent, Option<i64>)>>,
+    on_gaps: &dyn Fn(&[proto::Gap]),
 ) -> Ended {
     let mut lines = reader.lines();
     while let Ok(Some(line)) = lines.next().transpose() {
@@ -261,6 +334,7 @@ fn pump(
                     *repo,
                 );
             }
+            Ok(ServerMsg::Gaps { gaps }) => on_gaps(&gaps),
             Ok(ServerMsg::Error { message }) => {
                 crate::diagnostics::warn_for("watcher", format!("broker: {message}"), *repo);
             }
@@ -323,38 +397,55 @@ impl crate::watcher::Source for Source {
 
     fn refresh(
         &self,
-        _conn: &dyn crate::store::Store,
-        _cache: &TreeCache,
-        _root: &Path,
-        _internal_dir: &Path,
-        _cap: Option<usize>,
+        conn: &dyn crate::store::Store,
+        cache: &TreeCache,
+        root: &Path,
+        internal_dir: &Path,
+        cap: Option<usize>,
     ) -> Placement {
-        // Coverage is the kernel's: one mark per mount holds the whole tree,
-        // whatever eligibility says. Nothing to place, nothing to run out of —
-        // `mfr_watch_exceeded` is honoured by the event filter instead
-        // (doc "Watch sources and regimes").
-        Placement { watched: 0, starved: 0, frontier: Vec::new() }
+        // Coverage is the kernel's: one mark per filesystem holds the tree,
+        // whatever eligibility says — `mfr_watch_exceeded` is honoured by the
+        // event filter instead (doc "Watch sources and regimes"). What is left
+        // to place is inside the mounts the broker cannot cover.
+        crate::watcher::Source::refresh(
+            &*self.uncovered.inotify,
+            conn,
+            cache,
+            root,
+            internal_dir,
+            cap,
+        )
     }
 
     fn watched(&self) -> usize {
-        0 // No per-directory state to count.
+        // Only the watches inside uncovered mounts are counted.
+        crate::watcher::Source::watched(&*self.uncovered.inotify)
     }
 
     fn watched_set(&self) -> HashSet<PathBuf> {
-        // Meaningless under coverage — `explain_watched` is answered from
-        // `Coverage::Tree`, which asks the *reasons* a path could be uncovered
-        // instead of a set of directories.
-        HashSet::new()
+        // The watches inside uncovered mounts; everywhere else
+        // `explain_watched` asks the *reasons* a path could be uncovered.
+        crate::watcher::Source::watched_set(&*self.uncovered.inotify)
+    }
+
+    fn remounted(&self, points: &[PathBuf]) {
+        crate::watcher::Source::remounted(&*self.uncovered.inotify, points)
+    }
+
+    fn gaps(&self) -> Vec<Gap> {
+        self.uncovered.gaps.lock_recover().clone()
     }
 
     fn maintain(
         &self,
-        _repo: &RepoState,
-        _root: &Path,
-        _internal_dir: &Path,
-        _events: &[(FsEvent, Option<i64>)],
+        repo: &RepoState,
+        root: &Path,
+        internal_dir: &Path,
+        events: &[(FsEvent, Option<i64>)],
     ) {
-        // Nothing to maintain: coverage does not follow the tree's shape.
+        // Coverage does not follow the tree's shape; the watches inside the
+        // uncovered mounts do.
+        crate::watcher::Source::maintain(&*self.uncovered.inotify, repo, root, internal_dir, events)
     }
 }
 
@@ -390,8 +481,12 @@ mod tests {
                     };
                     stream
                         .write_all(
-                            proto::encode(&ServerMsg::Subscribed { roots, denied: Vec::new() })
-                                .as_bytes(),
+                            proto::encode(&ServerMsg::Subscribed {
+                                roots,
+                                denied: Vec::new(),
+                                gaps: Vec::new(),
+                            })
+                            .as_bytes(),
                         )
                         .unwrap();
                     for msg in &script {
@@ -424,13 +519,13 @@ mod tests {
         // The handshake, then the scripted stream, go through the client's own
         // pieces — driven here without a repository.
         let broker = FakeBroker::start(script(&root));
-        let reader = subscribe(&broker.socket, &root).unwrap();
+        let (reader, _) = subscribe(&broker.socket, &root).unwrap();
         let (tx, rx) = mpsc::channel();
         {
             let root = root.clone();
             let internal = internal.clone();
             std::thread::spawn(move || {
-                pump(reader, &root, &internal, &Uuid::nil(), &tx);
+                pump(reader, &root, &internal, &Uuid::nil(), &tx, &|_| {});
             });
         }
         let mut out = Vec::new();

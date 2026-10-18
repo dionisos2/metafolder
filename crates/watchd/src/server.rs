@@ -60,6 +60,19 @@ pub trait RootSink: Send + Sync {
     /// while its daemon still subscribes is a root no mark can cover, and the
     /// next subscriber has nothing to do with it.
     fn set_roots(&self, roots: Vec<PathBuf>) -> Vec<Uncovered>;
+
+    /// The filesystems mounted beneath the roots that the last placement
+    /// could not cover (doc "Uncovered mounts"). None by default.
+    fn gaps(&self) -> Vec<Gap> {
+        Vec::new()
+    }
+}
+
+/// A filesystem mounted beneath a root that no mark covers, and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Gap {
+    pub mount: PathBuf,
+    pub reason: String,
 }
 
 /// A root the event source could not cover, and why.
@@ -91,6 +104,8 @@ struct Client {
     /// Set when a message was dropped for this subscriber; the writer thread
     /// turns it into an in-order `Overflow` marker before the next message.
     overflow: AtomicBool,
+    /// The uncovered mounts it was last told of, so a change is sent once.
+    gaps: Mutex<Vec<proto::Gap>>,
 }
 
 /// What a subscriber's writer thread is handed: a message to write, or the
@@ -189,6 +204,7 @@ impl<C: 'static + CredSource> Broker<C> {
             tx,
             conn,
             overflow: AtomicBool::new(false),
+            gaps: Mutex::new(Vec::new()),
         });
         lock(&self.inner.clients).push(Arc::clone(&client));
 
@@ -291,6 +307,13 @@ impl<C: 'static + CredSource> Broker<C> {
         }
     }
 
+    /// Tells every subscriber whose uncovered mounts changed the new list
+    /// (doc "Uncovered mounts") — after the marks were placed again for a
+    /// mount change.
+    pub fn announce_gaps(&self) {
+        announce_gaps(&self.inner);
+    }
+
     /// The kernel's own queue overflowed: everything since the last delivered
     /// event is gone for *every* subscriber.
     pub fn broadcast_overflow(&self) {
@@ -338,6 +361,7 @@ fn drop_client<C: CredSource>(inner: &Arc<Inner<C>>, id: u64) {
         let roots = union_roots(&clients);
         drop(clients);
         report_uncovered(inner.sink.set_roots(roots));
+        announce_gaps(inner);
     }
 }
 
@@ -390,10 +414,54 @@ fn apply_subscription<C: CredSource>(
             });
         }
     }
+    let gaps = gaps_for(inner, client);
+    *lock(&client.gaps) = gaps.clone();
     let _ = client.tx.try_send(Out::Msg(ServerMsg::Subscribed {
         roots: allowed.iter().map(|p| WirePath::from(p.as_path())).collect(),
         denied,
+        gaps,
     }));
+    // The marks were placed again: another subscriber's may have changed.
+    announce_gaps(inner);
+}
+
+/// The uncovered mounts `client` may know of: beneath one of its roots, and
+/// discoverable with its own credentials, as an event there would be.
+fn gaps_for<C: CredSource>(inner: &Arc<Inner<C>>, client: &Client) -> Vec<proto::Gap> {
+    let roots = lock(&client.roots).clone();
+    // Asked before the filter is taken: the sink takes the group's lock.
+    let all = inner.sink.gaps();
+    let mut filter = lock(&inner.filter);
+    all.into_iter()
+        .filter(|gap| {
+            roots.iter().any(|root| {
+                gap.mount.starts_with(root)
+                    && gap.mount != *root
+                    && filter.may_see(&client.peer, root, &gap.mount)
+            })
+        })
+        .map(|gap| proto::Gap { mount: WirePath::from(gap.mount.as_path()), reason: gap.reason })
+        .collect()
+}
+
+/// [`Broker::announce_gaps`].
+fn announce_gaps<C: CredSource>(inner: &Arc<Inner<C>>) {
+    let clients = lock(&inner.clients).clone();
+    for client in clients {
+        if lock(&client.roots).is_empty() {
+            continue;
+        }
+        let gaps = gaps_for(inner, &client);
+        let mut sent = lock(&client.gaps);
+        if *sent == gaps {
+            continue;
+        }
+        match client.tx.try_send(Out::Msg(ServerMsg::Gaps { gaps: gaps.clone() })) {
+            Ok(()) => *sent = gaps,
+            // Not recorded as sent: the next announcement tries again.
+            Err(_) => client.overflow.store(true, Ordering::Relaxed),
+        }
+    }
 }
 
 /// Roots no mark covers that no subscriber is being answered about: said in
@@ -529,6 +597,57 @@ mod tests {
         assert_eq!(got, ServerMsg::Event { event: Event::Create { path: "/repo/x".into() } });
     }
 
+    /// A sink whose uncovered mounts the test sets.
+    #[derive(Default)]
+    struct GapSink {
+        gaps: std::sync::Mutex<Vec<Gap>>,
+    }
+    impl RootSink for GapSink {
+        fn set_roots(&self, _roots: Vec<PathBuf>) -> Vec<Uncovered> {
+            Vec::new()
+        }
+        fn gaps(&self) -> Vec<Gap> {
+            self.gaps.lock().unwrap().clone()
+        }
+    }
+
+    fn gap(mount: &str) -> Gap {
+        Gap { mount: PathBuf::from(mount), reason: "no fsid".to_string() }
+    }
+
+    #[test]
+    fn test_a_subscriber_is_told_the_mounts_beneath_its_roots_that_are_not_covered() {
+        let sink = Arc::new(GapSink::default());
+        *sink.gaps.lock().unwrap() = vec![gap("/repo/enc"), gap("/elsewhere/enc")];
+        let broker = Broker::new(AccessFilter::new(AllowAll), sink.clone());
+        let (client, _writer) = attach_pair(&broker);
+        let mut r = reader(&client);
+        subscribe(&client, &["/repo"]);
+        let ServerMsg::Subscribed { gaps, .. } = next_msg(&mut r) else { panic!() };
+        assert_eq!(
+            gaps,
+            vec![proto::Gap { mount: "/repo/enc".into(), reason: "no fsid".to_string() }]
+        );
+
+        // A mount came: the new list is sent, once.
+        sink.gaps.lock().unwrap().push(gap("/repo/sshfs"));
+        broker.announce_gaps();
+        broker.announce_gaps();
+        let ServerMsg::Gaps { gaps } = next_msg(&mut r) else { panic!() };
+        let mounts: Vec<PathBuf> = gaps.iter().map(|g| g.mount.as_path().to_path_buf()).collect();
+        assert_eq!(mounts, [PathBuf::from("/repo/enc"), PathBuf::from("/repo/sshfs")]);
+        // Nothing changed for it: the next message is the next event.
+        sink.gaps.lock().unwrap().push(gap("/elsewhere/other"));
+        broker.announce_gaps();
+        broker.broadcast(&Event::Create { path: "/repo/x".into() });
+        assert!(matches!(next_msg(&mut r), ServerMsg::Event { .. }));
+
+        // They all went: an empty list.
+        sink.gaps.lock().unwrap().clear();
+        broker.announce_gaps();
+        assert_eq!(next_msg(&mut r), ServerMsg::Gaps { gaps: vec![] });
+    }
+
     #[test]
     fn test_a_rename_degrades_per_subscriber() {
         let broker = Broker::new(AccessFilter::new(AllowAll), Arc::new(NoRoots));
@@ -593,7 +712,7 @@ mod tests {
         subscribe(&client, &["/mine", "/root-owned", "/gone"]);
 
         match next_msg(&mut r) {
-            ServerMsg::Subscribed { roots, denied } => {
+            ServerMsg::Subscribed { roots, denied, .. } => {
                 assert_eq!(roots, vec!["/mine".into()]);
                 // The reason is identical whether the root exists or not.
                 assert_eq!(denied.len(), 2);
@@ -792,7 +911,7 @@ mod tests {
         let (client, _writer) = attach_pair(&broker);
         let mut r = reader(&client);
         subscribe(&client, &["/gone/repo", "/repo"]);
-        let ServerMsg::Subscribed { roots, denied } = next_msg(&mut r) else {
+        let ServerMsg::Subscribed { roots, denied, .. } = next_msg(&mut r) else {
             panic!("the answer, and nothing before it")
         };
         assert_eq!(roots, vec!["/repo".into()], "the other root is covered");
@@ -846,7 +965,7 @@ mod tests {
         subscribe(&second, &["/mine"]);
         assert_eq!(
             next_msg(&mut r2),
-            ServerMsg::Subscribed { roots: vec!["/mine".into()], denied: vec![] }
+            ServerMsg::Subscribed { roots: vec!["/mine".into()], denied: vec![], gaps: vec![] }
         );
     }
 

@@ -205,6 +205,16 @@ pub struct Denied {
     pub reason: String,
 }
 
+/// A filesystem mounted beneath a subscribed root that no mark covers — one
+/// with a zero fsid (most FUSE filesystems: gocryptfs, sshfs…), one the kernel
+/// refuses to mark — and why. Nothing is reported from inside it: the
+/// subscriber watches it some other way (doc "Uncovered mounts").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Gap {
+    pub mount: WirePath,
+    pub reason: String,
+}
+
 /// Subscriber → broker.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -225,6 +235,15 @@ pub enum ServerMsg {
     Subscribed {
         roots: Vec<WirePath>,
         denied: Vec<Denied>,
+        /// The mounts beneath `roots` no mark covers. Absent from an older
+        /// broker's answer: nothing is known to be uncovered.
+        #[serde(default)]
+        gaps: Vec<Gap>,
+    },
+    /// The mounts beneath the subscriber's roots that no mark covers changed
+    /// (a mount came or went): the whole new list, replacing the last one.
+    Gaps {
+        gaps: Vec<Gap>,
     },
     Event {
         event: Event,
@@ -267,7 +286,9 @@ mod tests {
         round_trip(&ServerMsg::Subscribed {
             roots: vec!["/repo".into()],
             denied: vec![Denied { root: "/other".into(), reason: "not accessible".into() }],
+            gaps: vec![Gap { mount: "/repo/enc".into(), reason: "no fsid".into() }],
         });
+        round_trip(&ServerMsg::Gaps { gaps: vec![] });
         round_trip(&ServerMsg::Event {
             event: Event::Rename { from: "/repo/a".into(), to: "/repo/b".into() },
         });
@@ -277,6 +298,16 @@ mod tests {
         assert_eq!(
             decode::<ClientMsg>(&line).unwrap(),
             ClientMsg::Subscribe { roots: vec!["/repo".into()] }
+        );
+    }
+
+    #[test]
+    fn test_an_answer_without_gaps_means_none_are_known() {
+        // What a broker from before the gaps answers.
+        let line = r#"{"op":"subscribed","roots":["/repo"],"denied":[]}"#;
+        assert_eq!(
+            decode::<ServerMsg>(line).unwrap(),
+            ServerMsg::Subscribed { roots: vec!["/repo".into()], denied: vec![], gaps: vec![] }
         );
     }
 

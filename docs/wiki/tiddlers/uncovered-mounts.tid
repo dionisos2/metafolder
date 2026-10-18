@@ -1,0 +1,35 @@
+title: Uncovered mounts
+tags: Watcher
+kind: reference
+summary: A filesystem mounted beneath the root that the fanotify broker cannot mark — most FUSE ones, gocryptfs — is named by the broker and watched with inotify, inside it only.
+audience: dev
+
+''Why.'' The broker covers a filesystem with one mark, and the kernel refuses that mark on
+a filesystem whose `statfs` reports a zero fsid — most FUSE filesystems do (gocryptfs,
+sshfs, encfs…) — or that cannot encode handles. Mounted ''beneath'' a repository root
+on an ordinary disk, such a filesystem was skipped with a line in the broker's own log:
+the daemon believed the whole tree covered, and nothing written inside it was ever
+recorded. (A root ''on'' such a filesystem is refused at subscription, and the repository
+falls back to inotify whole — [[Watch sources and regimes]].)
+
+!! What happens
+
+* The broker keeps, with each placement of its marks, the mounts beneath the roots it could not cover and why (`Fanotify::gaps`). Each subscriber is told those beneath its own roots that it could discover itself (the same rule as an event, [[The fanotify broker]]): in `Subscribed` (`gaps`, absent from an older broker: nothing known), then a `Gaps` message with the whole new list whenever it changes — a mount came or went.
+* The daemon's fanotify source holds an inotify source of its own, scoped to those mount points (`inotify::Source::start_within`). Its placement walks from each of them as the whole walk would reach it — every directory from the root down eligible and online, an excluded one entered only for an override — and never enters a mount beneath it that the broker ''does'' cover. Directories arriving inside are watched as they come, anything else is left to the broker.
+* So the two sources never see the same change: the broker's marks report nothing from inside an unmarked filesystem, and the watches stop where a marked one begins. The mount point's own entry (renamed, removed) is in its parent's filesystem — the broker's.
+* A new list re-places the watches, on a thread of its own (placing waits for the store's lock; the stream is read meanwhile). A mount the table says is gone is not watched even before the broker says so — its directory is the broker's again.
+
+!! What it shows
+
+`GET /watch` answers `uncovered`: `null`, or `{"mounts": [{"path", "reason"}], "watched_dirs"}`
+— the watches inside them, on the inotify budget like any ([[The watch budget]]: a frontier
+is recorded as `mfr_watch_exceeded`). `mf watch status` prints one line per mount.
+`POST /watch/check` answers a path inside one from those watches.
+
+!! Testing it
+
+`tests/watch_mounts.rs`, `a_filesystem_the_broker_cannot_cover`, under both sources: the
+simulated kernel's `SimFs::mount_uncoverable` mounts a real tmpfs that its table knows
+nothing of and its group reports as a gap — what is written there goes through `std::fs`
+and queues nothing, as on a filesystem nobody marked. The placement inside the mounts
+alone is unit-tested in `watcher/inotify.rs`.

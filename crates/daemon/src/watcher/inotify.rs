@@ -66,6 +66,10 @@ pub(crate) struct Source {
     watcher: Mutex<Option<notify::RecommendedWatcher>>,
     /// Absolute paths of the directories currently watched.
     watched: Mutex<HashSet<PathBuf>>,
+    /// Where watches may go: everywhere (`None`, the budget regime), or only
+    /// inside these mount points — the ones the fanotify broker cannot cover,
+    /// for the fanotify source this one serves (doc "Uncovered mounts").
+    within: Mutex<Option<Vec<PathBuf>>>,
     /// The repository these watches belong to. Carried so a warning about one
     /// repository is recorded against it, and not shown to every other one.
     repo: Uuid,
@@ -299,6 +303,7 @@ pub fn compute_watched_dirs_timed(
         internal_dir,
         offline: &offline,
         overrides: &overrides,
+        stop_at: &HashSet::new(),
         cap,
         out: &mut out,
         frontier: &mut frontier,
@@ -306,6 +311,108 @@ pub fn compute_watched_dirs_timed(
     };
     collect_eligible_dirs(root, &RelPath::root(), &rules, &mut walk);
     done!()
+}
+
+/// [`compute_watched_dirs_timed`] inside the mount points `within` only — the
+/// ones the fanotify broker cannot cover (doc "Uncovered mounts"). Each is
+/// walked from where it is, as the whole walk would reach it: through eligible,
+/// online directories, an excluded one entered only for an override. A mount
+/// beneath one that the broker does cover is not entered — its events come
+/// from the broker, and would be recorded twice.
+pub fn compute_watched_dirs_within(
+    conn: &dyn crate::store::Store,
+    cache: &TreeCache,
+    root: &Path,
+    internal_dir: &Path,
+    cap: Option<usize>,
+    within: &[PathBuf],
+) -> WatchPlan {
+    let start = std::time::Instant::now();
+    let mut out = HashSet::new();
+    let mut frontier = Vec::new();
+    let mut elig = std::time::Duration::ZERO;
+    let rules = match WatchRules::load(conn, cache.is_case_insensitive()) {
+        Ok(rules) => rules,
+        Err(err) => {
+            crate::diagnostics::warn("watcher", format!("reading the watch rules failed: {err:#}"));
+            return WatchPlan { dirs: out, frontier, total: start.elapsed(), eligibility: elig };
+        }
+    };
+    let overrides = watch_exceeded_overrides(conn, cache);
+    let offline = crate::mount::offline(conn, cache, root).unwrap_or_default();
+    let stop_at = covered_beneath(within);
+    let mut walk = Walk {
+        internal_dir,
+        offline: &offline,
+        overrides: &overrides,
+        stop_at: &stop_at,
+        cap,
+        out: &mut out,
+        frontier: &mut frontier,
+        elig: &mut elig,
+    };
+    for mount in within {
+        let Some(rel) = rel_of(root, mount) else { continue };
+        enter(root, &rel, &rules, &mut walk);
+    }
+    WatchPlan { dirs: out, frontier, total: start.elapsed(), eligibility: elig }
+}
+
+/// Those of `within` still mounted. The broker's word on a mount that just
+/// went comes a moment after the mount table's: until then, its directory is
+/// the broker's already, and a watch there would record each change twice.
+fn mounted(within: &[PathBuf]) -> Vec<PathBuf> {
+    within.iter().filter(|m| crate::mount::is_mount_point(m)).cloned().collect()
+}
+
+/// The mount points beneath those in `within` that are not in it: covered by
+/// the broker, never by a watch here.
+fn covered_beneath(within: &[PathBuf]) -> HashSet<PathBuf> {
+    let table = crate::mount::table::current();
+    within
+        .iter()
+        .flat_map(|mount| table.points_under(mount))
+        .map(|(point, _)| point)
+        .filter(|point| !within.contains(point))
+        .collect()
+}
+
+/// `abs` as a repo-root-relative path, `None` outside the root or at it.
+fn rel_of(root: &Path, abs: &Path) -> Option<RelPath> {
+    let rest = abs.strip_prefix(root).ok()?;
+    let mut rel = RelPath::root();
+    for name in rest.iter() {
+        rel = rel.child(TreeName::from_bytes(crate::relpath::file_name_bytes(name)));
+    }
+    (!rel.is_root()).then_some(rel)
+}
+
+/// Starts the placement walk at the directory `rel` rather than at the root:
+/// watched, and descended, iff the whole walk would have reached it so — every
+/// directory from the root's entries down to it eligible and online, and none
+/// excluded unless an override lies inside it.
+fn enter(root: &Path, rel: &RelPath, rules: &WatchRules, walk: &mut Walk) {
+    let mut at = RelPath::root();
+    let mut excluded = false;
+    for name in rel.components() {
+        at = at.child(name.clone());
+        let display = at.display();
+        if !matches!(rules.is_eligible(&at), Ok(true)) || walk.offline.contains(&display) {
+            return; // The walk prunes it, and what is below with it.
+        }
+        excluded = rules.exceeded_own(&at).unwrap_or(excluded);
+        if excluded && !walk.holds_override(&display) {
+            return;
+        }
+    }
+    if excluded {
+        collect_from(root, at, true, rules, walk);
+    } else if walk.has_room() {
+        walk.out.insert(at.to_abs(root));
+        collect_from(root, at, false, rules, walk);
+    } else {
+        walk.frontier.push(at.display());
+    }
 }
 
 /// The paths carrying `mfr_watch_exceeded = false` — the deliberate overrides
@@ -337,6 +444,9 @@ struct Walk<'a> {
     internal_dir: &'a Path,
     offline: &'a crate::mount::OfflineMounts,
     overrides: &'a HashSet<String>,
+    /// Directories never entered: the mount points beneath an uncovered one
+    /// that the broker covers itself (empty outside [`Source::within`]).
+    stop_at: &'a HashSet<PathBuf>,
     cap: Option<usize>,
     out: &'a mut HashSet<PathBuf>,
     frontier: &'a mut Vec<String>,
@@ -361,10 +471,15 @@ impl Walk<'_> {
 /// directory into `out`.
 #[allow(clippy::too_many_arguments)]
 fn collect_eligible_dirs(root: &Path, base: &RelPath, rules: &WatchRules, walk: &mut Walk) {
+    collect_from(root, base.clone(), false, rules, walk)
+}
+
+/// [`collect_eligible_dirs`] from `base`, whose own exclusion is `excluded`.
+fn collect_from(root: &Path, base: RelPath, excluded: bool, rules: &WatchRules, walk: &mut Walk) {
     // Each entry carries the exclusion inherited from its ancestors, so the
     // nearest-ancestor rule costs one field read per directory and not one
     // ancestor chain (doc "The watch budget").
-    let mut stack = vec![(base.clone(), false)];
+    let mut stack = vec![(base, excluded)];
     while let Some((dir, inherited_excluded)) = stack.pop() {
         let abs = dir.to_abs(root);
         let entries = match std::fs::read_dir(&abs) {
@@ -373,7 +488,7 @@ fn collect_eligible_dirs(root: &Path, base: &RelPath, rules: &WatchRules, walk: 
         };
         for entry in crate::reconcile::readable_entries(&abs, entries, "watcher") {
             let path = entry.path();
-            if path == *walk.internal_dir {
+            if path == *walk.internal_dir || walk.stop_at.contains(&path) {
                 continue;
             }
             // `file_type` comes from the dir entry (no stat, no symlink follow):
@@ -460,6 +575,16 @@ fn maintain_watches(
     let mut subtree = HashSet::new();
     let mut frontier: Vec<String> = Vec::new();
     let cap = budget_cap_for(repo.watch_budget_share());
+    // Serving the fanotify source, only what arrives inside an uncovered mount
+    // is watched here (doc "Uncovered mounts").
+    let within = source.within.lock_recover().as_deref().map(mounted);
+    let stop_at = within.as_deref().map(covered_beneath).unwrap_or_default();
+    let in_scope = |abs: &Path| match &within {
+        None => true,
+        Some(mounts) => {
+            mounts.iter().any(|m| abs.starts_with(m)) && !stop_at.iter().any(|s| abs.starts_with(s))
+        }
+    };
     {
         let conn = repo.conn.lock_recover();
         let cache = repo.tree();
@@ -477,6 +602,9 @@ fn maintain_watches(
         let overrides = watch_exceeded_overrides(&conn, &cache);
         for rel in arrivals {
             let abs = rel.to_abs(root);
+            if !in_scope(&abs) {
+                continue;
+            }
             // Only a real directory (not a symlink) that is eligible is watched.
             match std::fs::symlink_metadata(&abs) {
                 Ok(md) if md.file_type().is_dir() => {}
@@ -493,6 +621,7 @@ fn maintain_watches(
                 internal_dir,
                 offline: &offline,
                 overrides: &overrides,
+                stop_at: &stop_at,
                 // The ceiling counts the *whole* repository, not this subtree,
                 // so what is already watched is charged against it.
                 cap: cap.map(|cap| cap.saturating_sub(source.watched_count())),
@@ -522,12 +651,42 @@ impl Source {
         repo: &Arc<RepoState>,
         tx: std::sync::mpsc::Sender<Vec<(FsEvent, Option<i64>)>>,
     ) -> Result<Arc<Self>> {
+        Self::start_scoped(repo, tx, None)
+    }
+
+    /// [`start`](Self::start) for the fanotify source: watching nothing until
+    /// it is told the mounts the broker cannot cover ([`set_within`](Self::set_within)).
+    pub(crate) fn start_within(
+        repo: &Arc<RepoState>,
+        tx: std::sync::mpsc::Sender<Vec<(FsEvent, Option<i64>)>>,
+    ) -> Result<Arc<Self>> {
+        Self::start_scoped(repo, tx, Some(Vec::new()))
+    }
+
+    /// Where watches may go from now on: inside `mounts` only. Whether that
+    /// changed — the caller then places them again.
+    pub(crate) fn set_within(&self, mut mounts: Vec<PathBuf>) -> bool {
+        mounts.sort();
+        let mut within = self.within.lock_recover();
+        if within.as_ref() == Some(&mounts) {
+            return false;
+        }
+        *within = Some(mounts);
+        true
+    }
+
+    fn start_scoped(
+        repo: &Arc<RepoState>,
+        tx: std::sync::mpsc::Sender<Vec<(FsEvent, Option<i64>)>>,
+        within: Option<Vec<PathBuf>>,
+    ) -> Result<Arc<Self>> {
         let root = repo.config.root.clone();
         let internal_dir = repo.internal_dir();
 
         let inner = Arc::new(Source {
             watcher: Mutex::new(None),
             watched: Mutex::new(HashSet::new()),
+            within: Mutex::new(within),
             repo: repo.uuid(),
         });
 
@@ -569,7 +728,14 @@ impl crate::watcher::Source for Source {
         internal_dir: &Path,
         cap: Option<usize>,
     ) -> Placement {
-        let plan = compute_watched_dirs_timed(conn, cache, root, internal_dir, cap);
+        let within = self.within.lock_recover().clone();
+        let plan = match within {
+            None => compute_watched_dirs_timed(conn, cache, root, internal_dir, cap),
+            Some(mounts) => {
+                let mounts = mounted(&mounts);
+                compute_watched_dirs_within(conn, cache, root, internal_dir, cap, &mounts)
+            }
+        };
         // A persistent diagnostic for the initial (load-time) walk and any large
         // watch reconfiguration: the filesystem read_dir cost vs the per-directory
         // eligibility cost (a lookup in the rule index).
@@ -630,7 +796,10 @@ impl crate::watcher::Source for Source {
 
 #[cfg(test)]
 mod tests {
-    use super::{budget_cap, budget_report, compute_watched_dirs_timed, is_watch_budget_exhausted};
+    use super::{
+        budget_cap, budget_report, compute_watched_dirs_timed, compute_watched_dirs_within,
+        is_watch_budget_exhausted,
+    };
     use crate::log::Writer;
     use crate::tree_cache::TreeCache;
     use metafolder_core::metarecord::{Field, Value};
@@ -671,6 +840,22 @@ mod tests {
 
         fn watched(&mut self) -> HashSet<PathBuf> {
             self.plan(None).dirs
+        }
+
+        /// The watches inside `mounts` only (repo-root-relative, no leading
+        /// `/`), as the fanotify source places them (doc "Uncovered mounts").
+        fn watched_within(&self, mounts: &[&str]) -> HashSet<PathBuf> {
+            let within: Vec<PathBuf> = mounts.iter().map(|m| self.root.join(m)).collect();
+            let internal = self.internal_dir();
+            compute_watched_dirs_within(
+                &self.conn,
+                &self.cache,
+                &self.root,
+                &internal,
+                None,
+                &within,
+            )
+            .dirs
         }
 
         fn plan(&mut self, cap: Option<usize>) -> super::WatchPlan {
@@ -948,5 +1133,37 @@ mod tests {
             watched.contains(&f.root.join("big/inner/deep")),
             "and inheritance resumes below it"
         );
+    }
+
+    // ── Inside uncovered mounts only ─────────────────────────────────────────
+
+    #[test]
+    fn test_inside_uncovered_mounts_only_what_is_in_them_is_watched() {
+        let f = Fixture::new(true);
+        std::fs::create_dir_all(f.root.join("enc/inner")).unwrap();
+        std::fs::create_dir_all(f.root.join("plain/sub")).unwrap();
+        let want: HashSet<PathBuf> = [f.root.join("enc"), f.root.join("enc/inner")].into();
+        assert_eq!(f.watched_within(&["enc"]), want);
+        assert_eq!(f.watched_within(&[]), HashSet::new(), "nothing uncovered, nothing watched");
+    }
+
+    #[test]
+    fn test_an_uncovered_mount_the_walk_would_not_reach_is_not_watched() {
+        // The repository watched nowhere: the mount is not watched either.
+        let f = Fixture::new(false);
+        std::fs::create_dir_all(f.root.join("enc/inner")).unwrap();
+        assert_eq!(f.watched_within(&["enc"]), HashSet::new());
+    }
+
+    #[test]
+    fn test_an_uncovered_mount_in_an_excluded_subtree_follows_the_exclusion() {
+        let mut f = Fixture::new(true);
+        std::fs::create_dir_all(f.root.join("big/enc/inner")).unwrap();
+        f.mark_exceeded("/big", true);
+        assert_eq!(f.watched_within(&["big/enc"]), HashSet::new());
+        // An override on it brings it back, as the whole walk would.
+        f.mark_exceeded("/big/enc", false);
+        let want: HashSet<PathBuf> = [f.root.join("big/enc"), f.root.join("big/enc/inner")].into();
+        assert_eq!(f.watched_within(&["big/enc"]), want);
     }
 }

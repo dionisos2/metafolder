@@ -22,7 +22,8 @@ for the machine'':
 
 * marks every filesystem holding a subscribed root, and each mounted beneath one, following `/proc/self/mountinfo` as mounts come and go;
 * resolves each event's file handles to a path (`open_by_handle_at`);
-* filters per subscriber and streams events as NDJSON over a Unix socket (`Subscribe`, `Subscribed`, `Event`, `Overflow`, `Error`).
+* filters per subscriber and streams events as NDJSON over a Unix socket (`Subscribe`, `Subscribed`, `Event`, `Overflow`, `Gaps`, `Error`);
+* names to each subscriber the filesystems mounted beneath its roots that no mark covers (`Subscribed.gaps`, then `Gaps` on a change), which its daemon watches with inotify ([[Uncovered mounts]]).
 
 No business logic: no eligibility, no compaction — those stay in the daemon, which
 chooses the broker at load when `[settings] watchd-socket` answers. Paths on the wire are
@@ -57,7 +58,7 @@ hangs up is let go entirely.
 * ''The kernel merges unread events'' (`fanotify_should_merge`, up to 128 back): without `FAN_REPORT_TARGET_FID`, "`x` deleted" and a new "`x` created" merge into one `CREATE|DELETE`, order lost. With it, a repeated move `a→b, b→a, a→b` still merges; the broker checks each moved object's position at the end of a batch and puts back a hop that a merge made vanish (`restore_merged_moves`).
 * ''Info records are 4-aligned'': walking them by `len` rounded to 8 lost the new side of renames for some name lengths.
 * ''Versions'': `FAN_REPORT_FID` 5.1, `FAN_REPORT_DFID_NAME` 5.9, `FAN_REPORT_TARGET_FID` 5.17 (also 5.15.154, 5.10.220) — detected at startup.
-* ''Limits'': `max_user_groups`, `max_user_marks`, `max_queued_events`; an overflow is announced, never a silent gap. No events for `mmap` writes, none remote on network filesystems (inotify is the fallback), some FUSE report a zero fsid, a filesystem without export handles cannot be marked at all.
+* ''Limits'': `max_user_groups`, `max_user_marks`, `max_queued_events`; an overflow is announced, never a silent gap. No events for `mmap` writes, none remote on network filesystems (inotify is the fallback), some FUSE report a zero fsid, a filesystem without export handles cannot be marked at all — as a root, refused; mounted beneath one, a gap ([[Uncovered mounts]]).
 
 !! Busy directories outside the roots
 

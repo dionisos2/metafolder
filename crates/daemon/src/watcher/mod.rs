@@ -56,8 +56,11 @@ pub enum Regime {
 pub enum Coverage<'a> {
     /// The budget regime: the directories holding a watch right now.
     Watches(&'a HashSet<PathBuf>),
-    /// The coverage regime: one kernel registration reaches the whole tree.
-    Tree,
+    /// The coverage regime: one kernel registration reaches the whole tree —
+    /// but for the mounts beneath it the broker cannot cover (`gaps`,
+    /// absolute), where the directories holding a watch (`watches`) do
+    /// (doc "Uncovered mounts").
+    Tree { gaps: &'a [PathBuf], watches: &'a HashSet<PathBuf> },
 }
 
 /// What a watch source does to sit behind [`WatcherHandle`] (doc "Watch sources and regimes"):
@@ -92,6 +95,12 @@ pub(crate) trait Source: Send + Sync {
     /// covered at and under them is another directory now. Nothing to do for
     /// a source that does not cover directories one by one.
     fn remounted(&self, _points: &[PathBuf]) {}
+    /// The filesystems mounted beneath the root that the broker cannot cover,
+    /// watched one directory at a time instead (doc "Uncovered mounts").
+    /// None but under the fanotify source.
+    fn gaps(&self) -> Vec<Gap> {
+        Vec::new()
+    }
     /// Keeps coverage in step with the directory arrivals and departures in
     /// `events`.
     fn maintain(
@@ -108,6 +117,16 @@ pub(crate) trait Source: Send + Sync {
 /// event, small enough that the executor still sees the first events of a long
 /// stream without waiting for it to end.
 const MAX_INGEST_BATCH: usize = 4096;
+
+/// A filesystem mounted beneath the root that the fanotify broker cannot
+/// cover (doc "Uncovered mounts"): watched with inotify, inside it only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Gap {
+    /// The mount point, absolute, under the repository root.
+    pub path: PathBuf,
+    /// Why the broker cannot cover it.
+    pub reason: String,
+}
 
 /// What one placement achieved (doc "The watch budget").
 pub struct Placement {
@@ -167,6 +186,11 @@ impl WatcherHandle {
     /// placement's target: a starved directory is absent).
     pub fn watched_set(&self) -> HashSet<PathBuf> {
         self.source.watched_set()
+    }
+
+    /// See [`Source::gaps`].
+    pub fn gaps(&self) -> Vec<Gap> {
+        self.source.gaps()
     }
 
     /// See [`Source::remounted`].
@@ -417,7 +441,14 @@ fn explain_watched_one(
     let cover = if is_dir { rel_path.to_string() } else { parent_of(rel_path) };
     let covered = match coverage {
         Coverage::Watches(set) => set.contains(&abs_of(root, &cover)),
-        Coverage::Tree => covered_by_tree(conn, cache, rules, root, internal_dir, &cover, offline),
+        Coverage::Tree { gaps, watches }
+            if gaps.iter().any(|g| abs_of(root, &cover).starts_with(g)) =>
+        {
+            watches.contains(&abs_of(root, &cover))
+        }
+        Coverage::Tree { .. } => {
+            covered_by_tree(conn, cache, rules, root, internal_dir, &cover, offline)
+        }
     };
     let eligibility = rules.explain(&rules.rel_of_text(rel_path))?;
     let dir_eligibility =
@@ -876,10 +907,28 @@ mod tests {
         }
     }
 
+    /// The coverage regime with nothing uncovered.
+    fn tree(watches: &HashSet<PathBuf>) -> Coverage<'_> {
+        Coverage::Tree { gaps: &[], watches }
+    }
+
+    #[test]
+    fn test_inside_an_uncovered_mount_the_answer_comes_from_the_watches() {
+        let mut fx = Fixture::new();
+        let gaps = [fx.root.join("dir")];
+        let none = HashSet::new();
+        let got = fx.explain(Coverage::Tree { gaps: &gaps, watches: &none }, &["/dir/x"]);
+        assert!(!got[0].watched, "{:?}", got[0]);
+        assert_eq!(got[0].reason, WatchedReason::Unwatched);
+        let watches: HashSet<PathBuf> = [fx.root.join("dir")].into();
+        let got = fx.explain(Coverage::Tree { gaps: &gaps, watches: &watches }, &["/dir/x"]);
+        assert!(got[0].watched, "{:?}", got[0]);
+    }
+
     #[test]
     fn test_under_coverage_every_eligible_path_is_watched() {
         let mut fx = Fixture::new();
-        let got = fx.explain(Coverage::Tree, &["/dir/x"]);
+        let got = fx.explain(tree(&HashSet::new()), &["/dir/x"]);
         assert!(got[0].watched, "{:?}", got[0]);
         assert_eq!(got[0].reason, WatchedReason::Watched);
     }
@@ -891,7 +940,7 @@ mod tests {
         // *leave this subtree uncovered*, wherever the coverage comes from.
         let mut fx = Fixture::new();
         fx.mark_exceeded("/dir", true);
-        let got = fx.explain(Coverage::Tree, &["/dir/x"]);
+        let got = fx.explain(tree(&HashSet::new()), &["/dir/x"]);
         assert!(!got[0].watched, "{:?}", got[0]);
         assert_eq!(got[0].reason, WatchedReason::Excluded);
         assert_eq!(got[0].excluded_by.as_deref(), Some("/dir"));
@@ -901,7 +950,7 @@ mod tests {
     fn test_the_internal_directory_is_never_covered() {
         let mut fx = Fixture::new();
         std::fs::create_dir_all(fx.internal_dir().join("sub")).unwrap();
-        let got = fx.explain(Coverage::Tree, &["/.metafolder/internal/sub/db"]);
+        let got = fx.explain(tree(&HashSet::new()), &["/.metafolder/internal/sub/db"]);
         assert!(!got[0].watched, "{:?}", got[0]);
         assert_eq!(got[0].reason, WatchedReason::Internal);
     }

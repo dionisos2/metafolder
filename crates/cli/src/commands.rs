@@ -2056,6 +2056,9 @@ fn print_watch(resp: &serde_json::Value, raw_json: bool) -> Result<i32, CliError
     if let Some(reason) = resp["backend_reason"].as_str() {
         println!("fanotify broker not used: {reason}");
     }
+    for line in uncovered_lines(resp) {
+        println!("{line}");
+    }
     // A budget in trouble adds its own lines, so neither condition passes
     // unnoticed (doc "The watch budget").
     let budget = &resp["watch_budget"];
@@ -2076,6 +2079,30 @@ fn coverage(resp: &serde_json::Value) -> String {
         Some(watched) => format!("{watched} directory(ies) watched ({backend})"),
         None => format!("tree covered ({backend})"),
     }
+}
+
+/// One line per mount the fanotify broker cannot cover, watched with inotify
+/// inside it instead (doc "Uncovered mounts").
+fn uncovered_lines(resp: &serde_json::Value) -> Vec<String> {
+    let uncovered = &resp["uncovered"];
+    let mounts = uncovered["mounts"].as_array().cloned().unwrap_or_default();
+    if mounts.is_empty() {
+        return Vec::new();
+    }
+    let mut lines: Vec<String> = mounts
+        .iter()
+        .map(|m| {
+            format!(
+                "uncovered \t{}: watched with inotify ({})",
+                m["path"].as_str().unwrap_or("?"),
+                m["reason"].as_str().unwrap_or("no reason given"),
+            )
+        })
+        .collect();
+    if let Some(n) = uncovered["watched_dirs"].as_i64() {
+        lines.push(format!("          \t{n} directory(ies) watched inside them"));
+    }
+    lines
 }
 
 /// `mf watch exceeded` / `... list`: the subtrees the watch budget could not
@@ -2897,6 +2924,25 @@ mod residency_tests {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn watch_status_names_each_mount_the_broker_cannot_cover() {
+        let resp = json!({
+            "uncovered": {
+                "mounts": [{"path": "/enc", "reason": "the filesystem has no fsid"}],
+                "watched_dirs": 3,
+            },
+        });
+        assert_eq!(
+            uncovered_lines(&resp),
+            [
+                "uncovered \t/enc: watched with inotify (the filesystem has no fsid)",
+                "          \t3 directory(ies) watched inside them",
+            ]
+        );
+        assert!(uncovered_lines(&json!({"uncovered": null})).is_empty());
+        assert!(uncovered_lines(&json!({})).is_empty(), "an older daemon");
+    }
 
     #[test]
     fn watch_activity_names_the_path_and_ranks_its_children_against_the_total() {

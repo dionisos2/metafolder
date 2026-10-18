@@ -107,6 +107,22 @@ fn watch_view(repo_state: &RepoState) -> serde_json::Value {
     } else {
         (json!(null), json!(null))
     };
+    // The mounts the broker cannot cover, watched with inotify inside them
+    // (doc "Uncovered mounts"); `null` when there are none.
+    let gaps = repo_state.watch_gaps();
+    let uncovered = if gaps.is_empty() {
+        json!(null)
+    } else {
+        let root = &repo_state.config.root;
+        let mounts: Vec<serde_json::Value> = gaps
+            .iter()
+            .map(|g| {
+                let rel = g.path.strip_prefix(root).unwrap_or(&g.path);
+                json!({"path": format!("/{}", rel.to_string_lossy()), "reason": g.reason})
+            })
+            .collect();
+        json!({"mounts": mounts, "watched_dirs": repo_state.watched_dirs()})
+    };
     json!({
         "paused": repo_state.is_ingestion_paused(),
         "pending_events": crate::executor::pending_count(repo_state),
@@ -117,6 +133,7 @@ fn watch_view(repo_state: &RepoState) -> serde_json::Value {
         "backend_reason": repo_state.watch_backend_reason(),
         "watched_dirs": watched_dirs,
         "watch_budget": watch_budget,
+        "uncovered": uncovered,
     })
 }
 
@@ -315,10 +332,12 @@ pub(super) async fn watch_check(
         // watch set in the budget regime, the tree itself under coverage
         // (doc "Checking whether a path is watched").
         let watched = repo_state.watched_dir_set();
+        let gaps: Vec<std::path::PathBuf> =
+            repo_state.watch_gaps().into_iter().map(|g| g.path).collect();
         let coverage = if repo_state.watch_budget_regime() {
             crate::watcher::Coverage::Watches(&watched)
         } else {
-            crate::watcher::Coverage::Tree
+            crate::watcher::Coverage::Tree { gaps: &gaps, watches: &watched }
         };
         // The disk first, outside the connection: a stat per path is most of
         // a check on a cold disk, and every other request of the repository

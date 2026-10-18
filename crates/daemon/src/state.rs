@@ -633,6 +633,12 @@ impl RepoState {
             .is_none_or(|h| h.watcher.regime() == crate::watcher::Regime::Budget)
     }
 
+    /// The filesystems mounted beneath the root that the fanotify broker
+    /// cannot cover, watched with inotify instead (doc "Uncovered mounts").
+    pub fn watch_gaps(&self) -> Vec<crate::watcher::Gap> {
+        self.handles.lock_recover().as_ref().map_or_else(Vec::new, |h| h.watcher.gaps())
+    }
+
     /// The absolute paths of the directories currently watched, as a snapshot
     /// (what `POST /watch/check` answers against). Empty while the repository's
     /// watcher is not running.

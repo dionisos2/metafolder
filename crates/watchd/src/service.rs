@@ -15,7 +15,7 @@ use anyhow::{anyhow, Context, Result};
 use crate::fanotify::{self, Fanotify, MountWatch, ReadOutcome};
 use crate::filter::{AccessFilter, CredSource, SystemCreds};
 use crate::proto::Event;
-use crate::server::{Broker, RootSink, Uncovered};
+use crate::server::{Broker, Gap, RootSink, Uncovered};
 
 /// What the broker needs of the kernel side: marks that follow the
 /// subscriptions, and one read's bytes turned into wire events. [`Fanotify`]
@@ -25,6 +25,9 @@ pub trait Group: Send + 'static {
     /// Covers `roots` (the union of every subscriber's) and nothing else, and
     /// answers the roots it could not cover.
     fn cover(&mut self, roots: &[PathBuf]) -> Vec<Uncovered>;
+    /// The filesystems mounted beneath the roots that the last placement could
+    /// not cover (doc "Uncovered mounts").
+    fn gaps(&self) -> Vec<Gap>;
     /// One read's bytes, as wire events.
     fn translate(&mut self, buf: &[u8]) -> ReadOutcome;
 }
@@ -33,6 +36,10 @@ impl Group for Fanotify {
     fn cover(&mut self, roots: &[PathBuf]) -> Vec<Uncovered> {
         self.set_roots(roots);
         self.place_marks()
+    }
+
+    fn gaps(&self) -> Vec<Gap> {
+        Fanotify::gaps(self)
     }
 
     fn translate(&mut self, buf: &[u8]) -> ReadOutcome {
@@ -49,6 +56,10 @@ pub struct MarkSink<G: Group> {
 impl<G: Group> RootSink for MarkSink<G> {
     fn set_roots(&self, roots: Vec<PathBuf>) -> Vec<Uncovered> {
         lock(&self.group).cover(&roots)
+    }
+
+    fn gaps(&self) -> Vec<Gap> {
+        lock(&self.group).gaps()
     }
 }
 
@@ -71,28 +82,41 @@ pub fn run(socket: &Path) -> Result<()> {
     // The mount table: a filesystem mounted under a subscribed root (a drive
     // plugged in) is one more filesystem to mark, one unmounted is a mark to
     // lift. Without the watch, coverage follows only the subscriptions.
+    // Each placement after a mount change is told to the subscribers whose
+    // uncovered mounts it changed (doc "Uncovered mounts").
+    let (remarked, remarks) = std::sync::mpsc::channel();
     {
         let fanotify = Arc::clone(&fanotify);
         let watch = MountWatch::open().map(|mut w| move || w.wait());
         std::thread::spawn(move || {
-            eprintln!("[watchd] {:#}", follow_mounts(watch, || lock(&fanotify).resync()))
+            let resync = || {
+                let placed = lock(&fanotify).resync();
+                let _ = remarked.send(());
+                placed
+            };
+            eprintln!("[watchd] {:#}", follow_mounts(watch, resync))
         });
     }
 
     eprintln!("[watchd] listening on {}", socket.display());
     let reader = lock(&fanotify).reader();
-    Err(serve(listener, fanotify, AccessFilter::new(SystemCreds), move |buf| reader.read(buf)))
+    Err(serve(listener, fanotify, AccessFilter::new(SystemCreds), remarks, move |buf| {
+        reader.read(buf)
+    }))
 }
 
 /// The broker over any [`Group`]: subscribers accepted on `listener` and fed
 /// on their own thread, the kernel side pumped on this one — until nothing
 /// listens any more, which it returns. `read` happens *outside* the group's
 /// lock: it blocks until something happens, and a subscription must be able
-/// to place its marks meanwhile.
+/// to place its marks meanwhile. Each message on `remarks` says the marks were
+/// placed again outside a subscription (a mount change): the subscribers are
+/// told what is uncovered now.
 pub fn serve<G: Group, C: CredSource + 'static>(
     listener: UnixListener,
     group: Arc<Mutex<G>>,
     filter: AccessFilter<C>,
+    remarks: std::sync::mpsc::Receiver<()>,
     read: impl FnMut(&mut [u8]) -> Result<usize>,
 ) -> anyhow::Error {
     let sink = Arc::new(MarkSink { group: Arc::clone(&group) });
@@ -101,6 +125,14 @@ pub fn serve<G: Group, C: CredSource + 'static>(
     {
         let broker = Arc::clone(&broker);
         std::thread::spawn(move || broker.serve(listener, rx));
+    }
+    {
+        let broker = Arc::clone(&broker);
+        std::thread::spawn(move || {
+            for () in remarks {
+                broker.announce_gaps();
+            }
+        });
     }
     pump(
         read,

@@ -9,8 +9,10 @@ Two regimes, by how a source covers a tree:
 * ''Coverage'' — the fanotify source, through a privileged broker ([[The fanotify broker]]): one ''filesystem'' mark per filesystem the tree spans — the root's and each mounted beneath it, followed as drives come and go. Nothing to place, nothing to run out of.
 
 One source is active per repository — fanotify when `[settings] watchd-socket` answers
-at load, the `notify` backend otherwise, never both (every change would be recorded
-twice). A socket path where nothing listens is how to stay on inotify on purpose.
+at load, the `notify` backend otherwise, never both over the same directory (every change
+would be recorded twice). The one exception keeps that rule: a filesystem mounted beneath
+the root that the broker cannot mark (FUSE, gocryptfs) is watched with inotify inside it
+only ([[Uncovered mounts]]). A socket path where nothing listens is how to stay on inotify on purpose.
 `GET /watch` reports the active `backend` (`inotify`, `fanotify`, `fsevents`,
 `readdirectorychangesw`) and, when a repository is not on the broker, `backend_reason`
 — what the probe met; `mf watch status` prints it.

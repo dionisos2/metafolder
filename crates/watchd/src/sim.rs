@@ -61,7 +61,7 @@ use crate::fanotify::{
     INFO_TYPE_NEW_DFID_NAME, INFO_TYPE_OLD_DFID_NAME, METADATA_LEN,
 };
 use crate::filter::{AccessFilter, SystemCreds};
-use crate::server::Uncovered;
+use crate::server::{Gap, Uncovered};
 use crate::service::{self, Group};
 
 /// The simulated filesystem's id: every handle it hands out carries it — and
@@ -143,6 +143,9 @@ struct State {
     /// The mounts beneath `mount`, in the order they were made — an
     /// overmount after what it covers.
     mounts: Vec<Mounted>,
+    /// Where a drive no mark can cover is mounted ([`SimFs::mount_uncoverable`]),
+    /// on disk: the table knows nothing of what is in it.
+    uncoverable: Vec<PathBuf>,
     /// The roots covered ([`Group::cover`]): which filesystems are marked,
     /// and through which mount a drive's handles resolve.
     roots: Vec<PathBuf>,
@@ -606,6 +609,7 @@ impl SimFs {
                     objects: vec![root],
                     filesystems: vec![Filesystem { root: 0, fsid: SIM_FSID, marked: false }],
                     mounts: Vec::new(),
+                    uncoverable: Vec::new(),
                     roots: Vec::new(),
                     queue: VecDeque::new(),
                     max_events: DEFAULT_MAX_QUEUED_EVENTS,
@@ -832,6 +836,20 @@ impl SimFs {
         })
     }
 
+    /// `mount -t tmpfs` over `at`, a drive no mark can cover — as fanotify
+    /// cannot mark a FUSE filesystem with a zero fsid (gocryptfs). The table
+    /// learns nothing of it: what is done inside goes through `std::fs` and
+    /// queues nothing, and the group reports it as a gap ([`Group::gaps`])
+    /// while it is under a root.
+    pub fn mount_uncoverable(&self, at: impl AsRef<Path>) -> io::Result<()> {
+        self.remount(|st| {
+            let disk = st.disk(&st.components(at.as_ref())?);
+            sys_mount(Some(Path::new("tmpfs")), &disk, Some("tmpfs"), 0)?;
+            st.uncoverable.push(disk);
+            Ok(())
+        })
+    }
+
     /// `mount --bind`: the drive mounted at `from` (its root — a bind of one
     /// of its directories is not modelled) mounted at `at` too.
     pub fn bind_mount(&self, from: impl AsRef<Path>, at: impl AsRef<Path>) -> io::Result<()> {
@@ -861,6 +879,14 @@ impl SimFs {
         self.remount(|st| {
             let comps = st.components(at.as_ref())?;
             let disk = st.disk(&comps);
+            if let Some(n) = st.uncoverable.iter().rposition(|p| *p == disk) {
+                let c = std::ffi::CString::new(disk.as_os_str().as_bytes())?;
+                if unsafe { libc::umount2(c.as_ptr(), 0) } != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                st.uncoverable.remove(n);
+                return Ok(());
+            }
             let mut top = None;
             let mut id = st.lookup_beneath(&comps);
             while let Some(n) = st.mounts.iter().rposition(|m| m.over == id) {
@@ -1106,6 +1132,18 @@ impl Group for SimGroup {
             .collect()
     }
 
+    fn gaps(&self) -> Vec<Gap> {
+        let st = lock(&self.fs.shared.state);
+        st.uncoverable
+            .iter()
+            .filter(|at| st.under_root(at))
+            .map(|at| Gap {
+                mount: at.clone(),
+                reason: "the simulated broker cannot mark it".to_string(),
+            })
+            .collect()
+    }
+
     fn translate(&mut self, buf: &[u8]) -> ReadOutcome {
         self.translator.translate(buf)
     }
@@ -1119,6 +1157,7 @@ impl SimBroker {
             service::bind(socket).map_err(|e| io::Error::other(format!("{e:#}")))?;
         lock(&fs.shared.state).served = true;
         let group = Arc::new(Mutex::new(fs.group()));
+        let (remarked, remarks) = std::sync::mpsc::channel();
         {
             // Weak both: the kernel holds this, and must not hold itself.
             let (group, shared) = (Arc::downgrade(&group), Arc::downgrade(&fs.shared));
@@ -1126,14 +1165,14 @@ impl SimBroker {
                 if let (Some(group), Some(shared)) = (group.upgrade(), shared.upgrade()) {
                     let roots = lock(&shared.state).roots.clone();
                     lock(&group).cover(&roots);
+                    let _ = remarked.send(());
                 }
             }));
         }
         let reader = fs.clone();
         std::thread::spawn(move || {
-            let err = service::serve(listener, group, AccessFilter::new(SystemCreds), |buf| {
-                reader.read(buf)
-            });
+            let filter = AccessFilter::new(SystemCreds);
+            let err = service::serve(listener, group, filter, remarks, |buf| reader.read(buf));
             eprintln!("[watchd sim] {err:#}");
         });
         Ok(SimBroker { fs, socket: socket.to_path_buf() })
@@ -1373,7 +1412,11 @@ mod tests {
         let mut r = BufReader::new(stream);
         assert_eq!(
             next(&mut r),
-            Some(ServerMsg::Subscribed { roots: vec![other.as_path().into()], denied: vec![] })
+            Some(ServerMsg::Subscribed {
+                roots: vec![other.as_path().into()],
+                denied: vec![],
+                gaps: vec![]
+            })
         );
     }
 
@@ -1388,7 +1431,7 @@ mod tests {
         (&stream).write_all(proto::encode(&sub).as_bytes()).unwrap();
         let mut r = BufReader::new(stream);
         match next(&mut r) {
-            Some(ServerMsg::Subscribed { roots, denied }) => {
+            Some(ServerMsg::Subscribed { roots, denied, .. }) => {
                 assert!(roots.is_empty(), "{roots:?}");
                 assert_eq!(denied.len(), 1);
                 assert!(denied[0].reason.starts_with("cannot be watched"), "{:?}", denied[0]);

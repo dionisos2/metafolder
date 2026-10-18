@@ -79,9 +79,9 @@ impl FakeBroker {
                         .into_iter()
                         .map(|root| proto::Denied { root, reason: "not accessible".into() })
                         .collect();
-                    ServerMsg::Subscribed { roots: Vec::new(), denied }
+                    ServerMsg::Subscribed { roots: Vec::new(), denied, gaps: Vec::new() }
                 } else {
-                    ServerMsg::Subscribed { roots, denied: Vec::new() }
+                    ServerMsg::Subscribed { roots, denied: Vec::new(), gaps: Vec::new() }
                 };
                 stream.write_all(proto::encode(&answer).as_bytes()).unwrap();
                 for msg in &script {
@@ -302,8 +302,12 @@ impl CountingBroker {
                     };
                     stream
                         .write_all(
-                            proto::encode(&ServerMsg::Subscribed { roots, denied: Vec::new() })
-                                .as_bytes(),
+                            proto::encode(&ServerMsg::Subscribed {
+                                roots,
+                                denied: Vec::new(),
+                                gaps: Vec::new(),
+                            })
+                            .as_bytes(),
                         )
                         .unwrap();
                     // The client never writes again: EOF is the client leaving.

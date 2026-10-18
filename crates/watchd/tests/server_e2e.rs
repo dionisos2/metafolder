@@ -76,7 +76,7 @@ fn test_the_accept_path_identifies_the_peer_and_serves_the_filtered_stream() {
     // of this test only reads as written for a normal uid.
     let is_root = unsafe { libc::getuid() } == 0;
     match next_msg(&mut r) {
-        ServerMsg::Subscribed { roots, denied } => {
+        ServerMsg::Subscribed { roots, denied, .. } => {
             if is_root {
                 assert_eq!(roots.len(), 2);
             } else {

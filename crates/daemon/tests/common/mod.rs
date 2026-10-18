@@ -147,6 +147,16 @@ impl Fs {
         }
     }
 
+    /// `mount -t tmpfs` over `at`, a drive the simulated broker cannot mark —
+    /// as fanotify cannot mark a FUSE filesystem with a zero fsid. Under a
+    /// real source, an ordinary tmpfs.
+    pub fn mount_uncoverable(&self, at: impl AsRef<Path>) -> std::io::Result<()> {
+        match self {
+            Fs::Std => run_mount(&["-t", "tmpfs", "t"], &[at.as_ref()]),
+            Fs::Sim(sim) => sim.mount_uncoverable(at),
+        }
+    }
+
     /// `mount --bind`: the drive mounted at `from` mounted at `at` too.
     pub fn bind_mount(&self, from: impl AsRef<Path>, at: impl AsRef<Path>) -> std::io::Result<()> {
         match self {

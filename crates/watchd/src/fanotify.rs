@@ -47,7 +47,7 @@ use std::time::Instant;
 use anyhow::{bail, Context, Result};
 
 use crate::proto::{Event, WirePath};
-use crate::server::Uncovered;
+use crate::server::{Gap, Uncovered};
 
 // ── linux/fanotify.h ─────────────────────────────────────────────────────────
 // Copied, not guessed: these values are the uapi ABI.
@@ -463,9 +463,10 @@ struct Plan {
     roots_on: HashMap<[i32; 2], Vec<PathBuf>>,
     /// Roots that cannot be covered: an error for their subscribers.
     failed: Vec<Uncovered>,
-    /// Filesystems mounted beneath a root that cannot be covered: reported,
+    /// Filesystems mounted beneath a root that cannot be covered: told to the
+    /// subscribers, who watch them some other way (doc "Uncovered mounts");
     /// the rest of the tree still covered.
-    skipped: Vec<String>,
+    skipped: Vec<Gap>,
 }
 
 /// One mark for each distinct filesystem a root is on or has mounted beneath
@@ -494,9 +495,7 @@ fn plan_marks(
                     plan.paths.entry(f).or_default().push(at.clone());
                     plan.wanted.entry(f).or_insert((at, false));
                 }
-                Err(err) => {
-                    plan.skipped.push(format!("cannot cover the mount {}: {err:#}", at.display()))
-                }
+                Err(err) => plan.skipped.push(Gap { mount: at, reason: format!("{err:#}") }),
             }
         }
     }
@@ -1254,6 +1253,8 @@ pub struct Fanotify {
     mask: u64,
     /// Parsing, scope and resolution of what is read.
     translator: Translator<PathResolver>,
+    /// The mounts beneath the roots the last placement could not cover.
+    gaps: Vec<Gap>,
 }
 
 impl Fanotify {
@@ -1270,6 +1271,7 @@ impl Fanotify {
         let fd = Arc::new(unsafe { OwnedFd::from_raw_fd(fd) });
         let resolver = PathResolver::with_group(Arc::clone(&fd));
         Ok(Self {
+            gaps: Vec::new(),
             fd,
             marks: HashMap::new(),
             roots: Vec::new(),
@@ -1328,9 +1330,7 @@ impl Fanotify {
         // Which directories are outside the roots, and the paths a drive's
         // objects are reached by, may have changed.
         self.translator.marks_placed();
-        for message in skipped {
-            eprintln!("[watchd] {message}");
-        }
+        let mut gaps = skipped;
         // Marks nothing needs any more are lifted.
         let stale: Vec<[i32; 2]> =
             self.marks.keys().copied().filter(|f| !wanted.contains_key(f)).collect();
@@ -1362,12 +1362,26 @@ impl Fanotify {
                         failed.push(Uncovered { root: root.clone(), reason: format!("{err:#}") });
                     }
                 }
-                Err(err) => {
-                    eprintln!("[watchd] cannot cover the mount {}: {err:#}", at.display())
-                }
+                Err(err) => gaps.push(Gap { mount: at, reason: format!("{err:#}") }),
             }
         }
+        for gap in &gaps {
+            if !self.gaps.contains(gap) {
+                eprintln!(
+                    "[watchd] cannot cover the mount {}: {}",
+                    gap.mount.display(),
+                    gap.reason
+                );
+            }
+        }
+        gaps.sort_by(|a, b| a.mount.cmp(&b.mount));
+        self.gaps = gaps;
         failed
+    }
+
+    /// The mounts beneath the roots the last placement could not cover.
+    pub fn gaps(&self) -> Vec<Gap> {
+        self.gaps.clone()
     }
 
     /// A handle that reads the group without holding it. The read blocks
@@ -2420,7 +2434,10 @@ mod tests {
             plan.failed,
             vec![Uncovered { root: PathBuf::from("/missing"), reason: "gone".to_string() }]
         );
-        assert_eq!(plan.skipped, vec!["cannot cover the mount /repo/nfs: gone".to_string()]);
+        assert_eq!(
+            plan.skipped,
+            vec![Gap { mount: PathBuf::from("/repo/nfs"), reason: "gone".to_string() }]
+        );
     }
 
     // ── Syscall wrappers that fail ────────────────────────────────────────────

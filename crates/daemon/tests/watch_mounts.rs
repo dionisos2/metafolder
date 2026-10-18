@@ -324,9 +324,75 @@ async fn a_drive_in_two_repositories(regime: Regime) {
     fs.unmount(&store).unwrap();
 }
 
+// ── A filesystem the broker cannot cover ─────────────────────────────────────
+
+/// What `GET /watch` lists as the mounts the broker could not cover, by path.
+async fn uncovered_mounts(app: &Router, repo: &str) -> Vec<String> {
+    let (_, body) = request(app, "GET", &format!("/repos/{repo}/watch"), None).await;
+    let Some(list) = body["uncovered"]["mounts"].as_array() else { return Vec::new() };
+    list.iter().map(|m| m["path"].as_str().unwrap_or("?").to_string()).collect()
+}
+
+/// Waits until a change at `path` would be recorded.
+async fn until_watched(app: &Router, repo: &str, path: &str) {
+    for _ in 0..100 {
+        if watch_check(app, repo, path).await.0 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("{path} is never watched: {:?}", watch_check(app, repo, path).await);
+}
+
+/// A filesystem mounted beneath the root that no fanotify mark can cover — a
+/// FUSE one with a zero fsid, gocryptfs — is watched with inotify, inside it
+/// only (doc "Uncovered mounts"). What is written there is written with
+/// `std::fs`: the kernel queues nothing for it, as for a filesystem nobody
+/// marked.
+async fn a_filesystem_the_broker_cannot_cover(regime: Regime) {
+    let fs = regime.fs();
+    let (app, repo, root) = journey_repo("uncovered", regime).await;
+    fs.create_dir(root.join("enc")).unwrap();
+    fs.write(root.join("top.txt"), b"t").unwrap();
+    settle_on(&app, &repo, &["", "enc", "top.txt"]).await;
+
+    fs.mount_uncoverable(root.join("enc")).unwrap();
+    mount_table_read_again().await;
+    if regime == Regime::Simulated {
+        assert_eq!(uncovered_mounts(&app, &repo).await, ["/enc"]);
+    }
+    until_watched(&app, &repo, "/enc/a.txt").await;
+
+    std::fs::write(root.join("enc/a.txt"), b"a").unwrap();
+    std::fs::create_dir(root.join("enc/sub")).unwrap();
+    std::fs::write(root.join("enc/sub/b.txt"), b"b").unwrap();
+    settle_on(&app, &repo, &["", "enc", "enc/a.txt", "enc/sub", "enc/sub/b.txt", "top.txt"]).await;
+    // A directory that arrived is watched in turn.
+    std::fs::rename(root.join("enc/a.txt"), root.join("enc/sub/c.txt")).unwrap();
+    fs.write(root.join("beside.txt"), b"s").unwrap();
+    let after = ["", "beside.txt", "enc", "enc/sub", "enc/sub/b.txt", "enc/sub/c.txt", "top.txt"];
+    settle_on(&app, &repo, &after).await;
+    reconcile_agrees(&app, &repo, "work in the uncovered mount").await;
+    assert_eq!(orphan_count(&app, &repo).await, 0);
+
+    // Unmounted: nothing left to watch with inotify.
+    fs.unmount(root.join("enc")).unwrap();
+    mount_table_read_again().await;
+    if regime == Regime::Simulated {
+        for _ in 0..50 {
+            if uncovered_mounts(&app, &repo).await.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert_eq!(uncovered_mounts(&app, &repo).await, Vec::<String>::new());
+    }
+}
+
 on_both_sources!(
     a_drive_plugged_in_and_out_with_work_going_on,
     a_drive_mounted_over_a_tracked_directory,
     a_drive_mounted_at_two_points,
     a_drive_in_two_repositories,
+    a_filesystem_the_broker_cannot_cover,
 );
