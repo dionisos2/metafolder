@@ -56,7 +56,6 @@ async function mountPanel(firstUuid: string) {
     ['selected_paths', [pathOf(firstUuid)]],
   ]);
   const subscriptions = new Map<string, (value: unknown) => void>();
-  /** @type {(() => unknown[])[]} */
   const menuBuilders: (() => unknown[])[] = [];
   const api = {
     ready: Promise.resolve(),

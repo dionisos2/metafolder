@@ -252,7 +252,7 @@ async function mountPanel(api: unknown, shadow: ShadowRoot) {
   if (typeof cleanup === 'function') mounted.push(cleanup);
 }
 
-/** @type {(() => void)[]} teardowns for the panels mounted by the current test */
+/** Teardowns for the panels mounted by the current test. */
 const mounted: (() => void)[] = [];
 
 /** The visible rows: their first cell (the `mfr_path:path` column) and orphan mark. */

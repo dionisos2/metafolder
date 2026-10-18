@@ -53,7 +53,6 @@ const ENTRIES = [
 /** A stub metafolder whose `whenVisible` fires immediately and whose command
  *  handlers are captured for the test to invoke. */
 function stub() {
-  /** @type {Map<string, (...a: string[]) => unknown>} */
   const handlers = new Map<string, (...a: string[]) => unknown>();
   type ArgSpec = { name: string; prompt: () => unknown; complete?: () => string[] | Promise<string[]> };
   const specs = new Map<string, ArgSpec[]>();
