@@ -31,6 +31,8 @@
 
 export default {
   // Rate the selection without going through the bulk operation picker.
+  // The type is named (`int`): on a repository with no `rating` yet, the
+  // bulk write would otherwise stop and ask for it.
   'user:rate': {
     label: 'Rate the selected metarecords',
     args: [
@@ -41,6 +43,6 @@ export default {
       },
     ],
     run: (/** @type {MetafolderApi} */ mf, /** @type {string} */ rating) =>
-      mf.invoke(`metarecord:bulk selection set rating ${rating}`),
+      mf.invoke(`metarecord:bulk selection set rating int ${rating}`),
   },
 };

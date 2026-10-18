@@ -13,7 +13,7 @@ export default {
   'user:rate': {
     label: 'Rate the selected metarecords',
     args: [{ name: 'rating', prompt: () => 'Rating? (1-5)', complete: () => ['1', '2', '3', '4', '5'] }],
-    run: (mf, rating) => mf.invoke(`metarecord:bulk selection set rating ${rating}`),
+    run: (mf, rating) => mf.invoke(`metarecord:bulk selection set rating int ${rating}`),
   },
 };
 ```

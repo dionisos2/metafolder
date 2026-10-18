@@ -224,7 +224,7 @@ describe('the shipped user-commands.js', () => {
     const invocations: string[] = [];
     const mf = { invoke: (i: string) => (invocations.push(i), Promise.resolve({ ok: true })) };
     await own.default['user:rate'].run(mf as never, '4');
-    expect(invocations).toEqual(['metarecord:bulk selection set rating 4']);
+    expect(invocations).toEqual(['metarecord:bulk selection set rating int 4']);
   });
 
   test('commands.js exports its helpers for the user file to import', async () => {

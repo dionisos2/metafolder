@@ -1498,18 +1498,23 @@ scenario_user_commands() {
     assert "tag:add: the selected metarecord has the tag" until_ok 10 has_tag "$f"
 
     # user:rate is an entry of user-commands.js: a command the GUI knows,
-    # where an unknown one is refused in the status bar. Not awaited: the bulk
-    # write it runs wants the detail panel and a checked selection, none of
-    # which is this scenario's subject.
+    # where an unknown one is refused in the status bar.
     mfg command --timeout-ms 2000 user:nope >/dev/null 2>&1
     status_is "an unknown command is refused" error 'unknown command: user:nope'
-    mfg message --workspace "$WS" "e2e: before user:rate" >/dev/null
-    mfg command --timeout-ms 2000 user:rate 4 >/dev/null 2>&1
-    assert "user:rate, of user-commands.js, is a known command" until_ok 10 logged '> user:rate 4'
-    assert_not "user:rate is not refused" refused user:rate
+
+    # ...and it writes: the bulk write it runs is the detail panel's, over
+    # the checked metarecords. The repo has no `rating` field yet, so nothing
+    # but the invocation can type it — asked for, it would wait in the input.
+    show_panel left metarecord-list view:refresh metarecord-list
+    run metarecord-list:select all
+    mfg layout right "$WS" >/dev/null || die "layout right $WS"
+    show_panel right metarecord-detail metarecord:cancel
+    answering yes user:rate 4
+    command_ok "user:rate runs, answering its one confirmation"
+    assert "user:rate: the checked metarecord is rated 4" until_ok 10 rated "$f" 4
+    mfg layout right - >/dev/null
 }
-logged() { mfg messages | grep -qxF "$1"; }
-refused() { mfg status-bar | grep -qF "unknown command: $1"; }
+rated() { [ "$(df_mf metarecord -i "$1" field get rating 2>/dev/null)" = "$2" ]; }
 
 scenario_devtools() {
     new_repo devtools
