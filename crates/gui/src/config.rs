@@ -453,6 +453,17 @@ impl ConfigDir {
         metafolder_core::config::read_required(&self.commands_js_path())
     }
 
+    pub fn user_commands_js_path(&self) -> PathBuf {
+        self.root.join("user-commands.js")
+    }
+
+    /// The user's own command module, beside the shipped one it may import
+    /// from (doc "User commands"). Required like `commands.js`: the shipped
+    /// file, nearly empty, is installed by `metafolder-sync-config`.
+    pub fn load_user_commands_js(&self) -> Result<String, String> {
+        metafolder_core::config::read_required(&self.user_commands_js_path())
+    }
+
     // ── Documentation ────────────────────────────────────────────────────
 
     /// The rendered documentation, a crate-agnostic category beside the

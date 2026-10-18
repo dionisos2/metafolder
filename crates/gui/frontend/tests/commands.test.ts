@@ -18,6 +18,7 @@ import {
   filterCommands,
   filterCompletionItems,
   installUserCommands,
+  mergeCommandModules,
   filterCompletions,
   listedCommands,
   needsPanel,
@@ -439,6 +440,41 @@ describe('installUserCommands', () => {
 
   test('runUserCommand reports an unknown name rather than pretending', async () => {
     expect(await runUserCommand('user:nope', [])).toBe(false);
+  });
+});
+
+describe('mergeCommandModules', () => {
+  const run = () => {};
+
+  test("the user's entries join the shipped ones", () => {
+    const { module, shadowed } = mergeCommandModules(
+      { 'tag:add': { run } },
+      { 'user:rate': { run } },
+    );
+    expect(Object.keys(module)).toEqual(['tag:add', 'user:rate']);
+    expect(shadowed).toEqual([]);
+  });
+
+  test('a user entry named like a shipped one is left out, and named', () => {
+    // The same rule as against a builtin: an entry adds to the command set,
+    // never replaces part of it unnoticed. A shipped entry is changed in
+    // commands.js itself.
+    const shipped = { run: () => 'shipped' };
+    const { module, shadowed } = mergeCommandModules(
+      { recent: shipped },
+      { recent: { run: () => 'mine' }, 'user:x': { run } },
+    );
+    expect(module.recent).toBe(shipped);
+    expect(Object.keys(module)).toEqual(['recent', 'user:x']);
+    expect(shadowed).toEqual(['recent']);
+  });
+
+  test('a malformed module is refused naming its file', () => {
+    expect(() => mergeCommandModules(null, {})).toThrow(/^commands\.js must/);
+    expect(() => mergeCommandModules({}, [])).toThrow(/^user-commands\.js must/);
+    expect(() => mergeCommandModules({}, { 'user:bad': {} })).toThrow(
+      /^user-commands\.js: "user:bad" has no `run`/,
+    );
   });
 });
 

@@ -14,6 +14,12 @@ than breaking them.
 ## [Unreleased]
 
 ### Added
+- **`gui/user-commands.js`, the file for your own GUI commands.** Loaded after
+  `commands.js`, which now holds only the GUI's commands written in JavaScript:
+  a shipped change to it merges without touching what you added. Its commands
+  are reachable through `mf.invoke`, its helpers by `import … from
+  './commands.js'`; an entry named like one of `commands.js` is left out and
+  reported. The example `user:rate` moved there (doc "User commands").
 - **Tag commands for every tag field.** `user:tag-query <tag|negative_tag|
   mixed_tag> <tag>` completes over the tag paths again (it read the `tag` ref
   as a tree, and offered nothing), and `user:tag-remove` takes a tag off the

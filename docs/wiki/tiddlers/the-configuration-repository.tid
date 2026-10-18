@@ -20,7 +20,8 @@ with one directory per program and two shared ones:
     config.toml              ports, page sizes, panel defaults, …
     keybindings.toml         every keybinding
     style.css                the style sheet
-    commands.js              your own GUI commands
+    commands.js              the GUI's commands written in JavaScript
+    user-commands.js         your own GUI commands
     panel-types/<name>/      the panel types, shipped and yours
   cli/
     config.toml              [settings], a default [repo], [tag]

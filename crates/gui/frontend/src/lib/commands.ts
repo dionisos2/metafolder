@@ -489,17 +489,40 @@ export function setUserCommandReloader(reload: () => Promise<unknown>): void {
  *
  * Throws naming the offending command; at boot the rejection stops the GUI.
  */
-export function validateUserCommands(module: unknown): [string, UserCommand][] {
+export function validateUserCommands(
+  module: unknown,
+  file = 'commands.js',
+): [string, UserCommand][] {
   if (typeof module !== 'object' || module === null || Array.isArray(module)) {
-    throw new Error('commands.js must default-export an object of command definitions');
+    throw new Error(`${file} must default-export an object of command definitions`);
   }
   const entries = Object.entries(module as Record<string, UserCommand>);
   for (const [name, command] of entries) {
     if (typeof (command as UserCommand | undefined)?.run !== 'function') {
-      throw new Error(`commands.js: "${name}" has no \`run\` function`);
+      throw new Error(`${file}: "${name}" has no \`run\` function`);
     }
   }
   return entries;
+}
+
+/**
+ * Joins the two command modules (doc "User commands"): the shipped
+ * `commands.js` and the user's `user-commands.js`, each validated under its
+ * own name. A user entry named like a shipped one is left out and returned in
+ * `shadowed` — an entry adds to the command set, never replaces part of it
+ * unnoticed; a shipped entry is changed in `commands.js` itself.
+ */
+export function mergeCommandModules(
+  shipped: unknown,
+  own: unknown,
+): { module: Record<string, UserCommand>; shadowed: string[] } {
+  const module = Object.fromEntries(validateUserCommands(shipped, 'commands.js'));
+  const shadowed: string[] = [];
+  for (const [name, command] of validateUserCommands(own, 'user-commands.js')) {
+    if (Object.hasOwn(module, name)) shadowed.push(name);
+    else module[name] = command;
+  }
+  return { module, shadowed };
 }
 
 export async function installUserCommands(

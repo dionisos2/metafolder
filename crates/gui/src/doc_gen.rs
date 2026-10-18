@@ -1,7 +1,7 @@
 //! The GUI's catalogs, read from the code for the documentation wiki (and for
 //! the shipped-keybindings check): every command — the builtins listed in
 //! Rust, the panel commands each panel type's JavaScript registers, the user
-//! commands of the shipped `commands.js` — and every panel type. The golden
+//! commands of the shipped `commands.js` and `user-commands.js` — and every panel type. The golden
 //! test writes them as the wiki's generated notes
 //! (`metafolder_core::doc_gen`); test-only, so nothing of it is in the binary.
 
@@ -15,7 +15,8 @@ use std::path::{Path, PathBuf};
 pub enum Owner {
     Shell,
     Panel(String),
-    UserCommands,
+    /// An entry of a shipped command module: `commands.js` or `user-commands.js`.
+    UserCommands(&'static str),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -168,29 +169,30 @@ pub fn commands() -> Vec<Command> {
         }
     }
 
-    // User commands: `commands.js` maps each name to its definition, the name
-    // written as the entry's quoted key (`'name': {`, a name holds a colon),
-    // outside the comments.
-    let source =
-        std::fs::read_to_string(default_config().join("commands.js")).expect("commands.js");
-    let mut rest = source.as_str();
-    let mut keys = Vec::new();
-    while let Some(at) = rest.find("': {") {
-        if let Some(start) = rest[..at].rfind('\'') {
-            let offset = source.len() - rest.len() + start + 1;
-            // A key on a comment line is an example (the file's header shows
-            // the shape of an entry), not a command.
-            let line_start = source[..offset].rfind('\n').map_or(0, |n| n + 1);
-            if !source[line_start..offset].trim_start().starts_with("//") {
-                keys.push((offset, rest[start + 1..at].to_string()));
+    // User commands: each command module maps a name to its definition, the
+    // name written as the entry's quoted key (`'name': {`, a name holds a
+    // colon), outside the comments.
+    for file in ["commands.js", "user-commands.js"] {
+        let source = std::fs::read_to_string(default_config().join(file)).expect(file);
+        let mut rest = source.as_str();
+        let mut keys = Vec::new();
+        while let Some(at) = rest.find("': {") {
+            if let Some(start) = rest[..at].rfind('\'') {
+                let offset = source.len() - rest.len() + start + 1;
+                // A key on a comment line is an example (the file's header
+                // shows the shape of an entry), not a command.
+                let line_start = source[..offset].rfind('\n').map_or(0, |n| n + 1);
+                if !source[line_start..offset].trim_start().starts_with("//") {
+                    keys.push((offset, rest[start + 1..at].to_string()));
+                }
             }
+            rest = &rest[at + 4..];
         }
-        rest = &rest[at + 4..];
-    }
-    for (i, (at, name)) in keys.iter().enumerate() {
-        let next = keys.get(i + 1).map_or(source.len(), |k| k.0);
-        let label = label_in(&source[*at..next]);
-        out.push(Command { name: name.clone(), label, owner: Owner::UserCommands });
+        for (i, (at, name)) in keys.iter().enumerate() {
+            let next = keys.get(i + 1).map_or(source.len(), |k| k.0);
+            let label = label_in(&source[*at..next]);
+            out.push(Command { name: name.clone(), label, owner: Owner::UserCommands(file) });
+        }
     }
 
     out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -228,7 +230,7 @@ fn command_note(c: &Command, bindings: &[CompiledBinding]) -> String {
     let owner = match &c.owner {
         Owner::Shell => "the shell (a builtin)".to_string(),
         Owner::Panel(p) => format!("the {} panel", code(p)),
-        Owner::UserCommands => format!("the shipped {}", code("commands.js")),
+        Owner::UserCommands(file) => format!("the shipped {}", code(file)),
     };
     let mut text = format!("!! Reference\n\n* Defined by {owner}\n");
     let keys: Vec<&CompiledBinding> = bindings
@@ -403,8 +405,9 @@ mod tests {
         let owner = |name: &str| all.iter().find(|c| c.name == name).map(|c| c.owner.clone());
         assert_eq!(owner("help:key"), Some(Owner::Shell));
         assert_eq!(owner("trash:restore"), Some(Owner::Panel("trash".into())));
-        assert_eq!(owner("metarecord:remove"), Some(Owner::UserCommands));
-        // The example in commands.js's header comment is not a command.
+        assert_eq!(owner("metarecord:remove"), Some(Owner::UserCommands("commands.js")));
+        assert_eq!(owner("user:rate"), Some(Owner::UserCommands("user-commands.js")));
+        // The example in a module's header comment is not a command.
         assert_eq!(owner("user:thing"), None);
         let restore = all.iter().find(|c| c.name == "trash:restore").unwrap();
         assert_eq!(restore.label, "Trash: restore the selected entry");

@@ -5,5 +5,5 @@ summary: Rate the selected metarecords
 
 !! Reference
 
-* Defined by the shipped ``commands.js``
+* Defined by the shipped ``user-commands.js``
 * No default key

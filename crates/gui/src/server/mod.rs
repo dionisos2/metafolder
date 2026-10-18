@@ -93,18 +93,35 @@ pub fn build_router(state: ServerState) -> Router {
         .route("/__select.js", get(|| async { javascript(SELECT_JS) }))
         .route("/__multi-select.js", get(|| async { javascript(MULTI_SELECT_JS) }))
         .route("/__file-actions.js", get(|| async { javascript(FILE_ACTIONS_JS) }))
-        // The user's command module, a file of the gui
-        // config directory. Unprotected on purpose: `import()` cannot send an
+        // The command modules (doc "User commands"), files of the gui config
+        // directory: the shipped `commands.js` and the user's
+        // `user-commands.js`, side by side so the second imports the first as
+        // `./commands.js`. The first segment is the shell's load generation,
+        // ignored here: a reload imports a new URL for both, and the relative
+        // import follows. Unprotected on purpose: `import()` cannot send an
         // Authorization header, which is why panel assets are exempt too.
         .route(
-            "/__commands.js",
-            get(|axum::extract::State(state): axum::extract::State<ServerState>| async move {
-                use axum::response::IntoResponse;
-                match state.config.load_commands_js() {
-                    Ok(source) => ([("content-type", "text/javascript")], source).into_response(),
-                    Err(_) => axum::http::StatusCode::NOT_FOUND.into_response(),
-                }
-            }),
+            "/__commands/:generation/:file",
+            get(
+                |axum::extract::State(state): axum::extract::State<ServerState>,
+                 axum::extract::Path((_generation, file)): axum::extract::Path<(
+                    String,
+                    String,
+                )>| async move {
+                    use axum::response::IntoResponse;
+                    let source = match file.as_str() {
+                        "commands.js" => state.config.load_commands_js(),
+                        "user-commands.js" => state.config.load_user_commands_js(),
+                        _ => return axum::http::StatusCode::NOT_FOUND.into_response(),
+                    };
+                    match source {
+                        Ok(source) => {
+                            ([("content-type", "text/javascript")], source).into_response()
+                        }
+                        Err(_) => axum::http::StatusCode::NOT_FOUND.into_response(),
+                    }
+                },
+            ),
         )
         .route(
             "/__media-support",

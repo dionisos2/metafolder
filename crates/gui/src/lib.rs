@@ -415,6 +415,7 @@ pub fn run(options: Options) {
     // but does not parse can only be caught by the shell, which refuses to
     // finish booting and shows the JavaScript error (doc "User commands").
     or_exit(config.load_commands_js());
+    or_exit(config.load_user_commands_js());
 
     // GUI settings (config.toml), with the CLI flags as optional overrides.
     // A missing config file is fatal (doc "No runtime fallback").

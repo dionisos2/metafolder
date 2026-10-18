@@ -82,7 +82,7 @@ done
     || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list layout script script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close
         pick-button suggested-key walk open-viewers slideshow shell-line repos-memory
-        help-keys zoom order devtools)
+        help-keys zoom order user-commands devtools)
 
 # shellcheck source=lib/daemon-fixture.sh
 . scripts/dev/lib/daemon-fixture.sh
@@ -1481,6 +1481,35 @@ scenario_order() {
     assert_eq "order: declined, nothing is written" "" \
         "$(df_mf metarecord -q 'rank IS PRESENT' get 2>/dev/null)"
 }
+
+# The two command modules (doc "User commands"): `tag:add`, of the shipped
+# commands.js, answers through `mf.tag.answer`; `user:rate`, of
+# user-commands.js, is a command of the running GUI too.
+has_tag() { df_mf metarecord -i "$1" field get tag 2>/dev/null | grep -q .; }
+scenario_user_commands() {
+    new_repo usercmds
+    printf 'x\n' >"$REPO_DIR/f.txt"
+    local f
+    f=$(record "$REPO_DIR/f.txt")
+
+    select_path "$REPO_DIR/f.txt"
+    run tag:add tag music/jazz
+    command_ok "tag:add runs"
+    assert "tag:add: the selected metarecord has the tag" until_ok 10 has_tag "$f"
+
+    # user:rate is an entry of user-commands.js: a command the GUI knows,
+    # where an unknown one is refused in the status bar. Not awaited: the bulk
+    # write it runs wants the detail panel and a checked selection, none of
+    # which is this scenario's subject.
+    mfg command --timeout-ms 2000 user:nope >/dev/null 2>&1
+    status_is "an unknown command is refused" error 'unknown command: user:nope'
+    mfg message --workspace "$WS" "e2e: before user:rate" >/dev/null
+    mfg command --timeout-ms 2000 user:rate 4 >/dev/null 2>&1
+    assert "user:rate, of user-commands.js, is a known command" until_ok 10 logged '> user:rate 4'
+    assert_not "user:rate is not refused" refused user:rate
+}
+logged() { mfg messages | grep -qxF "$1"; }
+refused() { mfg status-bar | grep -qF "unknown command: $1"; }
 
 scenario_devtools() {
     new_repo devtools

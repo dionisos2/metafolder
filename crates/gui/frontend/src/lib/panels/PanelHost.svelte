@@ -122,7 +122,7 @@
         claimCommand: (name) => {
           if (dropUserCommand(name)) {
             void status(
-              `commands.js: ${name} is already a command of the ${panelType} panel — left out, the panel's stands`,
+              `${name} (commands.js / user-commands.js) is already a command of the ${panelType} panel — left out, the panel's stands`,
             );
           }
         },

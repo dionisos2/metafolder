@@ -77,28 +77,51 @@ async fn test_the_stylesheet_is_not_served_over_http() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
-/// The user command module is served like the stylesheet: a file of the gui
-/// config directory, handed out verbatim so the shell can `import()` it.
+/// The command modules are served like the stylesheet: files of the gui config
+/// directory, handed out verbatim so the shell can `import()` them. Both under
+/// one directory whose first segment is the load's generation, so that
+/// `user-commands.js` importing `./commands.js` gets the very module the shell
+/// imported — and, after a reload, the new one rather than a cached copy.
 #[tokio::test]
-async fn test_user_commands_module_is_served() {
+async fn test_the_command_modules_are_served_side_by_side() {
     let (_guard, config, router) = setup();
     std::fs::write(config.commands_js_path(), "export default {};\n").unwrap();
+    std::fs::write(config.user_commands_js_path(), "export default { a: 1 };\n").unwrap();
 
-    let (status, content_type, body) = get(&router, "/__commands.js").await;
+    let (status, content_type, body) = get(&router, "/__commands/3/commands.js").await;
     assert_eq!(status, StatusCode::OK);
     assert!(content_type.starts_with("text/javascript"), "{content_type}");
     assert_eq!(String::from_utf8(body).unwrap(), "export default {};\n");
+
+    let (status, _, body) = get(&router, "/__commands/4/user-commands.js").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(String::from_utf8(body).unwrap(), "export default { a: 1 };\n");
+}
+
+/// Only those two files: the route is not a window onto the config directory.
+#[tokio::test]
+async fn test_the_command_route_serves_no_other_file() {
+    let (_guard, config, router) = setup();
+    std::fs::write(config.root().join("other.js"), "x").unwrap();
+
+    let (status, _, _) = get(&router, "/__commands/1/other.js").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _, _) = get(&router, "/__commands/1/style.css").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 /// A missing file is a 404 rather than an empty module: the shell imports it
 /// during boot and the rejection is what stops the GUI, so serving "" would
 /// turn a broken installation into a silently command-less GUI.
 #[tokio::test]
-async fn test_a_missing_user_commands_module_is_404() {
+async fn test_a_missing_command_module_is_404() {
     let (_guard, config, router) = setup();
     let _ = std::fs::remove_file(config.commands_js_path());
+    let _ = std::fs::remove_file(config.user_commands_js_path());
 
-    let (status, _, _) = get(&router, "/__commands.js").await;
+    let (status, _, _) = get(&router, "/__commands/1/commands.js").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _, _) = get(&router, "/__commands/1/user-commands.js").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 

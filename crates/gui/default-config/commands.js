@@ -1,32 +1,17 @@
-// Your own GUI commands.
+// The GUI's own commands written in JavaScript (doc "User commands").
 //
-// This module is imported into the shell when the GUI starts. Its default
-// export maps a command name to its definition — the key IS the name, so there
-// is no `register` call and no boilerplate around it:
-//
-//   'user:thing': {
-//     label: 'What the command input shows beside the name',
-//     args: [{ name: 'x', prompt: (mf) => 'X?', complete: (mf) => [...] }],
-//     run: (mf, x) => ...,
-//   }
-//
-// Every function is handed `mf` first: the same `metafolder` API panels get,
-// scoped to the *focused workspace* (a user command has no panel of its own,
-// so the panel-only parts are absent). `run` then receives the arguments that
-// were collected, inline or through the minibuffer.
-//
-// A command here composes existing commands through `mf.invoke`. If something
-// you want cannot be said that way, that is usually a base command missing
-// rather than a reason to reach into the daemon from here.
-//
-// The shipped entries are as much yours as any other. The Delete key's
-// `metarecord:remove`, the tag commands `tag:query` / `tag:add` /
-// `tag:remove`, the cross-panel `file-manager:reveal` and
+// The Delete key's `metarecord:remove`, the tag commands `tag:query` /
+// `tag:add` / `tag:remove`, the cross-panel `file-manager:reveal` and
 // `metarecord-list:folder`, the orphan cleanup `orphan:delete` /
 // `orphan:detect-delete`, and the picks `repos:switch` / `recent` /
 // `folder:open` are defined here rather than compiled into the shell exactly
-// so their questions, and the actions their answers run, stay editable (doc
-// "User commands").
+// so their questions, and the actions their answers run, stay editable.
+// Editing them is yours to do; your own commands go in `user-commands.js`,
+// beside this file, which shipped updates leave alone.
+//
+// The helpers this file exports (the selected metarecord, its file, the tag
+// paths…) are there for `user-commands.js` to import. The shape of an entry
+// is described at the top of that file.
 //
 // A syntax error in this file stops the GUI from starting, with the error on
 // screen. `config:reload commands` re-reads it without a restart.
@@ -37,17 +22,17 @@ import { frecency, formatScore } from '/__ui.js';
 
 /** The fields of the tag model (doc "Hierarchical tags"): what a record has,
  *  what it has not, and what a folder partly has. */
-const TAG_KINDS = ['tag', 'negative_tag', 'mixed_tag'];
+export const TAG_KINDS = ['tag', 'negative_tag', 'mixed_tag'];
 
 /** The first argument of the tag commands: which of the three fields.
  *  @param {string} prompt */
-function tagKindArg(prompt) {
+export function tagKindArg(prompt) {
   return { name: 'kind', prompt: () => prompt, initial: () => 'tag', complete: () => TAG_KINDS };
 }
 
 /** Refuses a kind that names none of the tag fields — a typo must not reach a
  *  query or a write under a field of its own. @param {string} kind */
-function requireTagKind(kind) {
+export function requireTagKind(kind) {
   if (!TAG_KINDS.includes(kind)) {
     throw new Error(`"${kind}" is not a tag field: tag, negative_tag or mixed_tag`);
   }
@@ -59,7 +44,7 @@ function requireTagKind(kind) {
  * since the `tag` field itself is a `ref`, not a tree.
  * @param {MetafolderApi} mf
  */
-async function tagPaths(mf) {
+export async function tagPaths(mf) {
   const repo = await mf.workspace.get('active_repo');
   if (!repo) return [];
   // `daemon.call` is untyped on purpose — the daemon's JSON is not a
@@ -80,7 +65,7 @@ async function tagPaths(mf) {
  * there is no selection to act on.
  * @param {MetafolderApi} mf
  */
-async function selectedMetarecord(mf) {
+export async function selectedMetarecord(mf) {
   // The shape is asserted where it is read: `workspace.get` returns the
   // variable as the daemon left it, untyped.
   const selection = /** @type {{ uuid?: unknown, repo?: unknown } | null} */ (
@@ -99,7 +84,7 @@ async function selectedMetarecord(mf) {
  * @param {string} repo
  * @param {string} uuid
  */
-async function metarecordFile(mf, repo, uuid) {
+export async function metarecordFile(mf, repo, uuid) {
   // `daemon.call` is untyped on purpose — the daemon's JSON is not a
   // TypeScript type — so the shape is asserted at the one place it is read.
   const resolved = /** @type {{ paths?: string[] }} */ (
@@ -149,7 +134,7 @@ function parentDir(path) {
  * where it is, then does the rest at the target with `mf.atTarget`.
  * @param {string} fallback the command's default target
  */
-function whereArg(fallback) {
+export function whereArg(fallback) {
   return {
     name: 'where',
     prompt: () => 'Open where? (here / other / new)',
@@ -164,7 +149,7 @@ function whereArg(fallback) {
  * so touching them would change the string.
  * @param {string} value
  */
-function dslString(value) {
+export function dslString(value) {
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
@@ -305,7 +290,7 @@ async function frecentFolders(mf, repo) {
  * @param {string} query
  * @param {string} folder the repo-relative folder, for the status bar
  */
-async function listAt(mf, where, query, folder) {
+export async function listAt(mf, where, query, folder) {
   await mf.atTarget(where, async (/** @type {MetafolderApi} */ mf) => {
     await mf.workspace.set('metarecord-list:normal-query', query);
     await mf.workspace.set('metarecord-list:normal-shown', true);
@@ -321,7 +306,7 @@ async function listAt(mf, where, query, folder) {
  * repository root itself is named by its path.
  * @param {MetafolderApi} mf
  */
-async function selectedFile(mf) {
+export async function selectedFile(mf) {
   const selection = await selectedMetarecord(mf);
   if (!selection) return null;
   const rel = await metarecordFile(mf, selection.repo, selection.uuid);
@@ -855,19 +840,5 @@ export default {
       requireTagKind(kind);
       await mf.invoke(`metarecord:field remove ${kind} ${tag}`);
     },
-  },
-
-  // Rate the selection without going through the bulk operation picker.
-  'user:rate': {
-    label: 'Rate the selected metarecords',
-    args: [
-      {
-        name: 'rating',
-        prompt: () => 'Rating? (1-5)',
-        complete: () => ['1', '2', '3', '4', '5'],
-      },
-    ],
-    run: (/** @type {MetafolderApi} */ mf, /** @type {string} */ rating) =>
-      mf.invoke(`metarecord:bulk selection set rating ${rating}`),
   },
 };

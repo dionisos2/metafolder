@@ -2,7 +2,7 @@ title: Reloading the configuration
 tags: [[Customising the GUI]] Configuration
 kind: reference
 aliases: reload config-reload hot-reload restart
-summary: config:reload re-reads the keybindings, the style sheet, the query grammar and commands.js while the GUI runs; the rest of the configuration is read at startup, and why.
+summary: config:reload re-reads the keybindings, the style sheet, the query grammar and the command modules while the GUI runs; the rest of the configuration is read at startup, and why.
 
 `config:reload <what>` reads a part of the configuration again, without a restart.
 
@@ -10,7 +10,7 @@ summary: config:reload re-reads the keybindings, the style sheet, the query gram
 |`keybindings` |`gui/keybindings.toml` |for a file edited outside the GUI: the settings view applies its own changes. Keys suggested by a panel or by `commands.js`, and the temporary keys of a running script, are kept ([[Changing keybindings]]) |
 |`style` |`gui/style.css` |the shell and every panel are restyled ([[Style and theming]]) |
 |`grammar` |`core/query-grammar` |the simplified query language ([[Editing the grammar]]) |
-|`commands` |`gui/commands.js` |the commands of the previous version are forgotten first ([[User commands]]) |
+|`commands` |`gui/commands.js`, `gui/user-commands.js` |the commands of the previous version are forgotten first ([[User commands]]) |
 |`all` |the four, in this order | |
 
 The status bar reports what was reloaded. A file that cannot be read or is malformed

@@ -213,3 +213,31 @@ describe('the shipped user commands', () => {
     expect(resolved).toEqual([['r1', 'path', [jazz, marathon]]]);
   });
 });
+
+describe('the shipped user-commands.js', () => {
+  test('holds the example user:rate, which commands.js no longer does', async () => {
+    const own = await import('../../default-config/user-commands.js');
+    const shipped = await import('../../default-config/commands.js');
+    expect(Object.keys(own.default)).toEqual(['user:rate']);
+    expect(Object.keys(shipped.default)).not.toContain('user:rate');
+
+    const invocations: string[] = [];
+    const mf = { invoke: (i: string) => (invocations.push(i), Promise.resolve({ ok: true })) };
+    await own.default['user:rate'].run(mf as never, '4');
+    expect(invocations).toEqual(['metarecord:bulk selection set rating 4']);
+  });
+
+  test('commands.js exports its helpers for the user file to import', async () => {
+    const shipped = await import('../../default-config/commands.js');
+    for (const helper of ['selectedMetarecord', 'tagPaths', 'tagKindArg', 'requireTagKind']) {
+      expect(typeof (shipped as Record<string, unknown>)[helper]).toBe('function');
+    }
+  });
+
+  test('the two shipped files name no command twice', async () => {
+    const { mergeCommandModules } = await import('../src/lib/commands');
+    const own = await import('../../default-config/user-commands.js');
+    const shipped = await import('../../default-config/commands.js');
+    expect(mergeCommandModules(shipped.default, own.default).shadowed).toEqual([]);
+  });
+});

@@ -857,6 +857,7 @@ pub fn config_reload(app: AppHandle, what: String) -> Result<String, String> {
             // frontend case for this command.
             "commands" => {
                 app.config.load_commands_js()?;
+                app.config.load_user_commands_js()?;
             }
             _ => unreachable!("reload_targets only yields known targets"),
         }

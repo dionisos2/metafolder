@@ -1,12 +1,12 @@
 title: User commands
 tags: [[Customising the GUI]] Commands
 kind: guide
-aliases: commands.js user-commands custom-commands mf.invoke user:
-summary: commands.js defines commands of your own in JavaScript — a name, the questions it asks, and what it runs, usually other commands through mf.invoke.
+aliases: commands.js user-commands.js user-commands custom-commands mf.invoke user:
+summary: user-commands.js defines commands of your own in JavaScript — a name, the questions it asks, and what it runs, usually other commands through mf.invoke.
 
-`~/.config/metafolder/gui/commands.js` is a JavaScript module. What it exports is a
-set of commands: each key is a command's name, each value its definition. There is
-nothing to register.
+`~/.config/metafolder/gui/user-commands.js` is a JavaScript module. What it exports
+is a set of commands: each key is a command's name, each value its definition. There
+is nothing to register.
 
 ```
 export default {
@@ -53,11 +53,28 @@ usually a base command that is missing.
 
 An error thrown by `run` is shown in the status bar, like any command's failure.
 
+!! Two files
+
+Beside it, `gui/commands.js` has the same shape and holds the commands of the GUI
+itself written in JavaScript. Both are loaded, `commands.js` first, and their
+commands are one set. They are kept apart for the updates: a shipped change to
+`commands.js` is merged into yours ([[Updating the configuration]]), and the merge
+cannot collide with commands you added to a file it does not touch. The shipped
+`user-commands.js` holds only the example `user:rate`.
+
+What `commands.js` defines is reachable from `user-commands.js` two ways: its
+commands through `mf.invoke` like any other, and its helpers — the selected
+metarecord (`selectedMetarecord`), its file, the tag paths (`tagPaths`), the tag
+kind question (`tagKindArg`)… — by importing them:
+
+```
+import { selectedMetarecord } from './commands.js';
+```
+
 !! The shipped entries
 
-The shipped file holds one example, `user:rate`, and eleven commands of the GUI
-itself that are written here so that their questions and what their answers run can
-be edited:
+`commands.js` holds eleven commands of the GUI, written there so that their
+questions and what their answers run can be edited:
 
 * [[tag:query]], [[tag:add]] and [[tag:remove]] ([[Tagging from the GUI]]);
 * `metarecord:remove` and `metarecord:remove-file` ([[Sending files to the trash]]);
@@ -71,18 +88,19 @@ then runs nothing ([[Changing keybindings]]).
 !! Names
 
 Any name will do; `user:` keeps yours apart from the shipped ones. A name that is
-already a command — of the shell (`quit`, `panel:open`…) or of a panel
-(`trash:restore`…) — is ''left out'': the existing command stays as it is, and the status
+already a command — of the shell (`quit`, `panel:open`…), of a panel
+(`trash:restore`…), or, for an entry of `user-commands.js`, of `commands.js` — is
+''left out'': the existing command stays as it is, and the status
 bar names the entry that was ignored. An entry can add to the command set, never
 replace part of it unnoticed.
 
 !! Applying a change
 
-`config:reload commands` reads the file again: the commands of the previous version
+`config:reload commands` reads both files again: the commands of the previous version
 are forgotten, so an entry deleted from the file leaves the command input
 ([[Reloading the configuration]]).
 
-A file that cannot be used — a syntax error, an export that is not an object, an
+A file — either one — that cannot be used — a syntax error, an export that is not an object, an
 entry without a `run` function — is refused as a whole:
 
 * on a reload, the error goes to the status bar and the commands already there stay;
