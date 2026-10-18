@@ -708,6 +708,13 @@ pub fn panel_ready(app: AppHandle, ws_id: String, panel_type: String) -> Result<
     app.gui.set_panel_ready(&ws_id, &panel_type)
 }
 
+/// The shell's event barrier (doc "When a command has finished"): answered by
+/// an `event-barrier` event behind every event emitted before it.
+#[tauri::command]
+pub fn event_barrier(app: AppHandle, id: u64) {
+    app.gui.event_barrier(id);
+}
+
 /// `devtools:open` — the WebKit inspector; replaces the Inspect Element
 /// metarecord of the suppressed native context menu.
 #[tauri::command]

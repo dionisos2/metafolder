@@ -618,6 +618,12 @@ impl GuiState {
         self.notifier.emit(event, payload);
     }
 
+    /// Emits the barrier `id` behind every event already emitted (one
+    /// emitter, delivered in order).
+    pub fn event_barrier(&self, id: u64) {
+        self.notifier.emit(events::EVENT_BARRIER, json!({ "id": id }));
+    }
+
     /// Re-sends the workspaces: what they show changed outside this state —
     /// the work context in force on a repository.
     pub fn refresh_workspaces(&self) {
@@ -2010,6 +2016,13 @@ mod tests {
         assert_eq!(layout.focused, SlotId::Left);
         // Workspace assignment is remembered while hidden.
         assert!(layout.right.workspace_id.is_some());
+    }
+
+    #[test]
+    fn test_event_barrier_is_emitted_with_its_id() {
+        let (notifier, state) = state();
+        state.event_barrier(7);
+        assert_eq!(notifier.payloads(events::EVENT_BARRIER), vec![serde_json::json!({ "id": 7 })]);
     }
 
     #[test]

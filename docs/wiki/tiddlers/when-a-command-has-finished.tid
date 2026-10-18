@@ -1,0 +1,44 @@
+title: When a command has finished
+tags: Commands
+kind: rationale
+summary: A command resolves when its effect is visible — the events it caused applied, the panels it shows mounted, the daemon reads it set off ended — so the next command of a sequence acts on what the user would see.
+
+
+A command is over when ''what it set off'' is over, not when its own code returns.
+`panel:open here metarecord-list` returns as soon as the layout is changed; the list
+is then built, told it is on screen, and runs its query — and a `cursor:next self`
+sent at that moment would move a cursor over the rows of before. Every sequence of
+commands meets this: a [[user command|User commands]] invoking several, a script's
+[[mf gui command]] calls, a macro.
+
+So a command resolves only once:
+
+# every event the GUI emitted for it is applied — the layout, the workspace variables (the selection a viewer follows);
+# a frame has passed, so the panels on screen are placed and told whether they are visible;
+# the panels on screen are mounted;
+# no daemon read a panel or a command made is in flight — and this stays true for two frames running, since a panel often starts its read a timer after the frame that shows it.
+
+Step 4 is repeated as long as a round finds a read in flight: the answer of one read
+may start the next (a list's page, then the viewer following its new cursor).
+
+!! Why one wait for every command
+
+No command says what it sets off, and none needs to: what a command causes on screen
+goes through the same places — the events the GUI emits, the panels' mounts, and the
+daemon calls, all of which a panel makes through `metafolder.daemon` and the shell
+counts (the "working" indicator's tracker). A wait per command would have to be
+written, and kept right, for each of some 135 commands; this one cannot forget any.
+
+It waits for ''every'' read in flight, the other workspace's included: it cannot tell
+which ones the command caused, and waiting a little too long is harmless where acting
+too early is not.
+
+!! Limits
+
+* A panel that reads without end — a poll — would never be quiet: after twenty rounds the command resolves anyway.
+* What does not go through `metafolder.daemon` is not waited for: an image or a video the panel is still decoding, a typed text a panel applies after a delay of its own (the [[metarecord-list panel]]'s finder waits for typing to pause).
+* The background polls — the change feed, the task list — are not foreground reads and are not waited for: a change written ''outside'' the GUI shows when the feed sees it ([[Daemon data in panels]]).
+* A key does not wait for the previous key's command: pressing `j` three times runs three commands at once, as before. Only a sequence that awaits each command — a user command's `mf.invoke`, a script — is ordered by this.
+
+The wait costs two frames at least (about 30 ms) per command, which a script driving
+hundreds of commands notices; a key press does not, since nothing waits for it.

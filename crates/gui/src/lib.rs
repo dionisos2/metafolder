@@ -628,6 +628,7 @@ pub fn run(options: Options) {
             commands::bench_record,
             commands::prompt_resolve,
             commands::panel_ready,
+            commands::event_barrier,
             commands::post_status,
             commands::get_messages,
             commands::clear_messages,

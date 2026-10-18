@@ -1654,6 +1654,15 @@ export async function loadPromptCompletions(partial: string): Promise<void> {
   store.ui.promptMore = page.more === true;
 }
 
+// What `dispatch` waits for once a command has run (lib/settle.ts): installed
+// by the shell at startup, absent in tests that do not ask for it.
+let settler: (() => Promise<void>) | null = null;
+
+/** Installs the wait a command ends with (doc "When a command has finished"). */
+export function setSettler(fn: (() => Promise<void>) | null): void {
+  settler = fn;
+}
+
 /** Outcome of a dispatch, reported back to `POST /gui/command` waiters. */
 export type DispatchResult = { ok: true } | { ok: false; error: string };
 
@@ -1681,6 +1690,7 @@ export async function dispatch(
       await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'shell' });
     }
     await runShell(expanded.value);
+    if (settler) await settler();
     return { ok: true };
   }
 
@@ -1725,6 +1735,8 @@ export async function dispatch(
       await status(message);
       return { ok: false, error: message };
     }
+    // Resolved when its effect is visible, not when its handler returned.
+    if (settler) await settler();
     return { ok: true };
   } catch (error) {
     const message = String(error);

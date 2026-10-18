@@ -81,6 +81,12 @@ A command may opt out (`log: false`): the keystroke-level ones do — `editing:*
 A command that fails says why in the status bar. An unknown name is ''unknown
 command: …''.
 
+!! When a command is over
+
+A command is over once what it set off has ended — the panel it showed loaded, the
+viewer following its new selection read — so the next command of a sequence acts on
+what is on screen ([[When a command has finished]]).
+
 !! Keys bound to nothing
 
 A key bound to a command that does not exist runs nothing. Once every panel is built,

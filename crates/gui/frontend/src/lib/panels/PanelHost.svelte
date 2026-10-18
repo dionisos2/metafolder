@@ -8,8 +8,10 @@
     registerArgs,
     setPanelArgs,
     setPanelDispatch,
+    setSettler,
     status,
   } from '../commands';
+  import { setMountsProvider, settleShell } from '../settle';
   import { addDefaultMenuItems } from '../keys';
   import { currentStyle, focusedWs, refreshCommands, slotPayload, store } from '../store.svelte';
   import { createPanelApi, type PanelApiInstance } from './api';
@@ -411,6 +413,15 @@
       provided: (panelType) => providedByType.get(panelType),
     });
 
+    // A command resolves once its effect is visible (doc "When a command has
+    // finished"): among what it waits for, the panels on screen mounted.
+    setMountsProvider(async () => {
+      await Promise.all(
+        [...visibleSlots.keys()].map((key) => instances.get(key)?.mounted.catch(() => {})),
+      );
+    });
+    setSettler(settleShell);
+
     // The focused workspace's instance answers for a panel command's declared
     // arguments — the same instance `setPanelDispatch` below runs the handler
     // on, so the prompts and the work are one panel's.
@@ -450,6 +461,8 @@
       for (const unlisten of unlisteners) void unlisten.then((fn) => fn());
       setPanelDispatch(null);
       setPanelArgs(null);
+      setSettler(null);
+      setMountsProvider(null);
       setFindRootProvider(null);
       setFunctionProvider(null);
     };

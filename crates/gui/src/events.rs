@@ -19,3 +19,6 @@ pub const COMMAND_REQUESTED: &str = "command-requested";
 /// The set of shell scripts currently running (doc "Script sessions" running
 /// indicator): `{ "tasks": [{ "workspace_id", "label" }] }`.
 pub const SCRIPT_TASK_CHANGED: &str = "script-task-changed";
+/// Emitted after every event emitted before it: `{ "id" }`. The shell waits
+/// for it to know those are applied (doc "When a command has finished").
+pub const EVENT_BARRIER: &str = "event-barrier";

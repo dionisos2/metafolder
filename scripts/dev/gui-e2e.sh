@@ -50,8 +50,8 @@
 #   field-keys reconcile ignore sync repos list layout script script-workspaces
 #   errors picker refs hierarchy hierarchy-form prompt history keybindings
 #   open-with tab-close pick-button suggested-key walk open-viewers slideshow
-#   shell-line repos-memory help-keys zoom order, and devtools last (it takes the
-#   inspector the clicking scenarios drive).
+#   shell-line repos-memory help-keys zoom order user-commands settle, and
+#   devtools last (it takes the inspector the clicking scenarios drive).
 #   --unsandboxed  pass --allow-unsandboxed-webview to the GUI (a container
 #                  that forbids WebKit's sandbox; never on real data)
 #   --keep-logs    keep the work directory (daemon.log, gui.log) on exit
@@ -82,7 +82,7 @@ done
     || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list layout script script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close
         pick-button suggested-key walk open-viewers slideshow shell-line repos-memory
-        help-keys zoom order user-commands devtools)
+        help-keys zoom order user-commands settle devtools)
 
 # shellcheck source=lib/daemon-fixture.sh
 . scripts/dev/lib/daemon-fixture.sh
@@ -1515,6 +1515,29 @@ scenario_user_commands() {
     mfg layout right - >/dev/null
 }
 rated() { [ "$(df_mf metarecord -i "$1" field get rating 2>/dev/null)" = "$2" ]; }
+
+# A command resolves when its effect is visible (doc "When a command has
+# finished"): what each step reads is read at once, never through until_ok —
+# a step that waited would hide the race this scenario is about.
+scenario_settle() {
+    new_repo settle
+    local first second
+    for n in 1 2 3; do df_mf metarecord add note:string="n$n" >/dev/null; done
+
+    # Opening the list builds it, shows it, and it runs its query: the row it
+    # selects once loaded is there when the command returns.
+    run panel:open here metarecord-list
+    command_ok "settle: panel:open runs"
+    first=$(ws_var selected_metarecord)
+    assert "settle: the list has selected a row when panel:open returns" \
+        test "$first" != null
+
+    # Moving the cursor selects the next row by the time the command returns.
+    run cursor:next metarecord-list
+    second=$(ws_var selected_metarecord)
+    assert "settle: cursor:next has moved the selection when it returns" \
+        test "$second" != null -a "$second" != "$first"
+}
 
 scenario_devtools() {
     new_repo devtools

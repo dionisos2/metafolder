@@ -24,6 +24,11 @@ export interface WorkingTracker {
   state(): WorkingState | null;
   /** Calls `listener` on every change; returns the unsubscribe function. */
   subscribe(listener: (state: WorkingState | null) => void): () => void;
+  /** How many calls are in flight, announced or not. */
+  pending(): number;
+  /** Resolves once no call is in flight (at once when none is) — what a
+   *  command waits for before it resolves (doc "When a command has finished"). */
+  idle(): Promise<void>;
 }
 
 /** The grace period a call must outlast before it is announced, in ms. */
@@ -34,6 +39,7 @@ export function createWorkingTracker(graceMs = WORKING_GRACE_MS): WorkingTracker
   // longest — the one worth naming.
   const running = new Map<number, string>();
   const listeners = new Set<(state: WorkingState | null) => void>();
+  let idleWaiters: (() => void)[] = [];
   let nextId = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let announced = false;
@@ -70,6 +76,9 @@ export function createWorkingTracker(graceMs = WORKING_GRACE_MS): WorkingTracker
           if (timer !== null) clearTimeout(timer);
           timer = null;
           announced = false;
+          const waiters = idleWaiters;
+          idleWaiters = [];
+          for (const wake of waiters) wake();
         }
         notify();
       });
@@ -78,6 +87,11 @@ export function createWorkingTracker(graceMs = WORKING_GRACE_MS): WorkingTracker
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
+    },
+    pending: () => running.size,
+    idle() {
+      if (running.size === 0) return Promise.resolve();
+      return new Promise<void>((resolve) => idleWaiters.push(resolve));
     },
   };
 }

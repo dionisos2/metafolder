@@ -113,4 +113,49 @@ describe('createWorkingTracker', () => {
     expect(seen).toEqual(['slow', null]);
     vi.useRealTimers();
   });
+
+  test('pending counts the calls in flight, announced or not', async () => {
+    const tracker = createWorkingTracker(300);
+    expect(tracker.pending()).toBe(0);
+    const a = deferred();
+    const b = deferred();
+    const ta = tracker.track(a.promise, 'a');
+    const tb = tracker.track(b.promise, 'b');
+    expect(tracker.pending()).toBe(2);
+    a.resolve();
+    await ta;
+    expect(tracker.pending()).toBe(1);
+    b.resolve();
+    await tb;
+    expect(tracker.pending()).toBe(0);
+  });
+
+  test('idle resolves at once with nothing in flight, else when the last call ends', async () => {
+    const tracker = createWorkingTracker(300);
+    await tracker.idle();
+
+    const a = deferred();
+    const b = deferred();
+    void tracker.track(a.promise, 'a');
+    void tracker.track(b.promise, 'b');
+    let idle = false;
+    const waiting = tracker.idle().then(() => (idle = true));
+    a.resolve();
+    await a.promise;
+    await Promise.resolve();
+    expect(idle).toBe(false);
+    b.resolve();
+    await waiting;
+    expect(idle).toBe(true);
+  });
+
+  test('a failed call counts as ended for idle', async () => {
+    const tracker = createWorkingTracker(300);
+    const a = deferred();
+    tracker.track(a.promise, 'a').catch(() => {});
+    const waiting = tracker.idle();
+    a.reject(new Error('boom'));
+    await waiting;
+    expect(tracker.pending()).toBe(0);
+  });
 });
