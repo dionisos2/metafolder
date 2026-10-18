@@ -23,7 +23,8 @@ falls back to inotify whole — [[Watch sources and regimes]].)
 
 `GET /watch` answers `uncovered`: `null`, or `{"mounts": [{"path", "reason"}], "watched_dirs"}`
 — the watches inside them, on the inotify budget like any ([[The watch budget]]: a frontier
-is recorded as `mfr_watch_exceeded`). `mf watch status` prints one line per mount.
+is recorded as `mfr_watch_exceeded`). `mf watch status` prints one line per mount; the [[repos panel]] names them on the
+repository's row.
 `POST /watch/check` answers a path inside one from those watches.
 
 !! Testing it

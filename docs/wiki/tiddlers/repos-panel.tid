@@ -46,7 +46,7 @@ shows the `load` task with its phase, and the repository answers once it is done
 !! Under each row
 
 * ''Tasks'' — every pending or running task of the repository, as `kind: phase done/total`, with a ''Stop'' button when the daemon says it can be stopped ([[Cancelling a task]]). `repos:stop` stops one of the active repository's, completing over them. Stopping a flush pauses the repository's tracking, and the status bar says so.
-* ''Tracking notices'' — what makes a repository record less than it seems to: `tracking paused — N event(s) waiting` with a ''Resume'' button (`repos:resume`, [[Pausing the watcher]]); `out of inotify watches`; and `N subtree(s) unwatched`, a button listing them in the message log (`repos:watch-exceeded`, [[The watch budget]]).
+* ''Tracking notices'' — what makes a repository record less than it seems to: `tracking paused — N event(s) waiting` with a ''Resume'' button (`repos:resume`, [[Pausing the watcher]]); `out of inotify watches`; and `N subtree(s) unwatched`, a button listing them in the message log (`repos:watch-exceeded`, [[The watch budget]]). Greyed, as information rather than fault: `watched with inotify` on a repository off the fanotify broker, why in its tooltip ([[Watch sources and regimes]]), and `inotify inside /enc` naming the mounts beneath the root the broker cannot cover, each one's reason in the tooltip ([[Uncovered mounts]]).
 
 Both are asked again every 1.5 s (`task-poll-ms`, [[GUI configuration]]).
 

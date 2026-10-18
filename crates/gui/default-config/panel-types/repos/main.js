@@ -374,12 +374,16 @@ export async function mount(root, metafolder) {
   // does, and each one makes it look broken if it is not said out loud: its
   // ingestion is paused, its watch budget could not cover the whole tree, or
   // the kernel is refusing watches to a daemon that has not reached its own
-  // ceiling. All three live on the repository's row.
+  // ceiling. All three live on the repository's row, next to which source
+  // watches it where that is not simply the broker (doc "Watch sources and
+  // regimes", doc "Uncovered mounts").
 
   /**
    * @typedef {{limit: number|null, share: number, cap: number|null,
    *            starved: boolean, exceeded_dirs: number}} WatchBudget
+   * @typedef {{mounts: {path: string, reason: string}[], watched_dirs: number}} Uncovered
    * @typedef {{paused?: boolean, pending_events?: number|null, backend?: string,
+   *            backend_reason?: string|null, uncovered?: Uncovered|null,
    *            watched_dirs?: number|null, watch_budget?: WatchBudget|null}} WatchStatus
    */
 
@@ -431,6 +435,41 @@ export async function mount(root, metafolder) {
             },
           },
           'Resume',
+        ),
+      );
+    }
+
+    // Off the broker: the whole tree is on inotify watches. Said quietly —
+    // without a broker installed, that is the normal state.
+    if (status.backend_reason) {
+      notices.push(
+        el(
+          'span',
+          {
+            class: 'watch-fallback',
+            title: `fanotify broker not used: ${status.backend_reason}`,
+          },
+          'watched with inotify',
+        ),
+      );
+    }
+
+    // Mounts beneath the root the broker cannot mark (gocryptfs, sshfs…):
+    // inotify watches them, inside them only.
+    const mounts = status.uncovered?.mounts ?? [];
+    if (mounts.length > 0) {
+      const dirs = status.uncovered?.watched_dirs ?? 0;
+      notices.push(
+        el(
+          'span',
+          {
+            class: 'watch-uncovered',
+            title:
+              'The fanotify broker cannot cover these mounts; they are watched with ' +
+              `inotify (${dirs} watch(es)):\n` +
+              mounts.map((m) => `${m.path}: ${m.reason}`).join('\n'),
+          },
+          `inotify inside ${mounts.map((m) => m.path).join(', ')}`,
         ),
       );
     }

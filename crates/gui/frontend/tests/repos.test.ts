@@ -50,7 +50,11 @@ function fakeDaemon() {
   const tasks: Record<string, unknown>[] = [];
   const cancelled: string[] = [];
   // Ingestion state of every repo of this fake daemon (doc "Watcher endpoints").
-  const watch = { paused: false, pending: 0 };
+  const watch: {
+    paused: boolean;
+    pending: number;
+    extra: Record<string, unknown>;
+  } = { paused: false, pending: 0, extra: {} };
   let nextUuid = 1;
   const uuid = () => String(nextUuid++).padStart(32, '0');
   const calls: { method: string; path: string; body: unknown }[] = [];
@@ -104,7 +108,10 @@ function fakeDaemon() {
       return { status: 200, body: { violations: [] } };
     }
     if (method === 'GET' && /^\/repos\/[^/]+\/watch$/.test(bare)) {
-      return { status: 200, body: { paused: watch.paused, pending_events: watch.pending } };
+      return {
+        status: 200,
+        body: { paused: watch.paused, pending_events: watch.pending, ...watch.extra },
+      };
     }
     if (method === 'POST' && /^\/repos\/[^/]+\/watch\/resume$/.test(bare)) {
       watch.paused = false;
@@ -498,6 +505,49 @@ describe('repos panel — paused tracking', () => {
     // Once resumed, the notice goes away.
     await settle();
     expect((shadow.querySelector('.repo-watch') as HTMLElement).textContent).toBe('');
+  });
+});
+
+describe('repos panel — watch sources', () => {
+  test('each mount the broker cannot cover is named, with why', async () => {
+    const { api, daemon } = setup({ activeRepo: 'r1' });
+    daemon.repos.push({ repo_uuid: 'r1', name: 'photos', root: '/tmp/photos' });
+    daemon.watch.extra = {
+      backend: 'fanotify',
+      uncovered: {
+        mounts: [{ path: '/enc', reason: 'the filesystem has no fsid' }],
+        watched_dirs: 3,
+      },
+    };
+
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    const notice = shadow.querySelector('.repo-watch .watch-uncovered') as HTMLElement;
+    expect(notice?.textContent).toContain('/enc');
+    expect(notice.textContent).toContain('inotify');
+    expect(notice.title).toContain('the filesystem has no fsid');
+    expect(notice.title).toContain('3');
+  });
+
+  test('a repository off the broker says it is on inotify, and why', async () => {
+    const { api, daemon } = setup({ activeRepo: 'r1' });
+    daemon.repos.push({ repo_uuid: 'r1', name: 'photos', root: '/tmp/photos' });
+    daemon.watch.extra = {
+      backend: 'inotify',
+      backend_reason: 'connecting to /run/watchd.sock: refused',
+      uncovered: null,
+    };
+
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    const notice = shadow.querySelector('.repo-watch .watch-fallback') as HTMLElement;
+    expect(notice?.textContent).toContain('inotify');
+    expect(notice.title).toContain('connecting to /run/watchd.sock: refused');
+    expect(shadow.querySelector('.watch-uncovered')).toBeNull();
   });
 });
 

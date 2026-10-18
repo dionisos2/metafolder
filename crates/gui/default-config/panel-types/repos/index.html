@@ -126,6 +126,12 @@
       .watch-starved {
         color: var(--mf-error, #c44c56);
       }
+      /* Which source watches the repository, where it is not the broker alone:
+         information, not a fault (doc "Uncovered mounts"). */
+      .watch-fallback,
+      .watch-uncovered {
+        color: var(--mf-fg-dim, #8a8a96);
+      }
       .memory {
         font-size: 0.8em;
         padding: 0 5px;
