@@ -76,7 +76,7 @@ export async function mount(root, metafolder) {
   }
 
   byId(root, 'clear').addEventListener('click', () => {
-    void commands.invoke('shell:clear');
+    void commands.invoke(['shell:clear']);
   });
 
   // ── The command line ────────────────────────────────────────────────
@@ -109,7 +109,7 @@ export async function mount(root, metafolder) {
     line.value = '';
     showCandidates([]);
     log.scrollTop = log.scrollHeight;
-    void metafolder.invoke('!' + text);
+    void metafolder.invoke(['!' + text]);
   }
 
   async function complete() {

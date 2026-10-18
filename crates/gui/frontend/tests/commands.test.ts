@@ -4,6 +4,7 @@
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
+  type InvocationParts,
   type ArgPromptRequest,
   type ArgSpec,
   argSpecFor,
@@ -431,11 +432,17 @@ describe('installUserCommands', () => {
   test('the api a user command gets can invoke other commands directly', async () => {
     // `mf.invoke` is the whole point of a user command — it composes existing
     // commands — so it must be on the object, not only under `mf.commands`.
-    const calls: string[] = [];
-    const api = { commands: { invoke: (i: string) => void calls.push(i) } };
+    const calls: unknown[] = [];
+    const api = {
+      commands: {
+        invoke: async (parts: InvocationParts) => {
+          calls.push(parts);
+        },
+      },
+    };
     const withInvoke = withTopLevelInvoke(api);
-    withInvoke.invoke('metarecord-list:apply simplified');
-    expect(calls).toEqual(['metarecord-list:apply simplified']);
+    await withInvoke.invoke(['metarecord-list:apply', 'simplified']);
+    expect(calls).toEqual([['metarecord-list:apply', 'simplified']]);
   });
 
   test('runUserCommand reports an unknown name rather than pretending', async () => {

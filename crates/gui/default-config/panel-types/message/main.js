@@ -39,7 +39,7 @@ export async function mount(root, metafolder) {
   }
 
   byId(root, 'clear').addEventListener('click', () => {
-    void commands.invoke('message:clear');
+    void commands.invoke(['message:clear']);
   });
 
   messages.onAppend(append);

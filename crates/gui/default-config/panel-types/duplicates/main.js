@@ -163,7 +163,7 @@ export function mount(root, metafolder) {
                   hasMetarecord: true,
                   open: async (what) => {
                     await select(i);
-                    await commands.invoke(`panel:open other ${what}`);
+                    await commands.invoke(['panel:open', 'other', what]);
                   },
                 }),
                 el('span', { class: 'linked' }, row.member.inode ? '+' : ' '),
@@ -215,7 +215,7 @@ export function mount(root, metafolder) {
     const row = rows[cursorIndex];
     if (!row) return;
     if (row.member === null) await activate();
-    else await commands.invoke(`panel:open ${where} file`);
+    else await commands.invoke(['panel:open', where, 'file']);
   }
 
   /** `duplicates:toggle` (→, the twisty): expand or collapse the group under
@@ -435,7 +435,7 @@ export function mount(root, metafolder) {
   }
 
   byId(root, 'refresh').addEventListener('click', () => void load());
-  byId(root, 'scan').addEventListener('click', () => void commands.invoke('mf:duplicate scan'));
+  byId(root, 'scan').addEventListener('click', () => void commands.invoke(['mf:duplicate', 'scan']));
 
   // Read again on `view:refresh` (doc "Generic panel commands").
   metafolder.provide({ refresh: () => load() });

@@ -16,9 +16,9 @@ type Arg = { complete: (...args: unknown[]) => unknown };
 describe('the shipped user commands', () => {
   test('tag:query inserts the filter with `stay` and runs the search', async () => {
     const mod = await import('../../default-config/commands.js');
-    const invocations: string[] = [];
+    const invocations: unknown[] = [];
     const mf = {
-      invoke: (invocation: string) => {
+      invoke: (invocation: unknown) => {
         invocations.push(invocation);
         return Promise.resolve({ ok: true });
       },
@@ -27,29 +27,28 @@ describe('the shipped user commands', () => {
     await mod.default['tag:query'].run(mf as never, 'tag', 'music/jazz');
 
     expect(invocations).toEqual([
-      // Quoted: a tag path may hold spaces, and `stay` trails the text.
-      'metarecord-list:insert simplified "#=music/jazz" stay',
+      // One element: the text, whatever it holds, then `stay`.
+      ['metarecord-list:insert', 'simplified', '#=music/jazz', 'stay'],
       // The Enter nobody presses — it runs the query.
-      'metarecord-list:apply simplified',
+      ['metarecord-list:apply', 'simplified'],
     ]);
   });
 
   test('tag:query asks the other fields of the tag model by naming them', async () => {
     const mod = await import('../../default-config/commands.js');
-    const invocations: string[] = [];
-    const mf = { invoke: (i: string) => (invocations.push(i), Promise.resolve({ ok: true })) };
+    const invocations: unknown[] = [];
+    const mf = { invoke: (i: unknown) => (invocations.push(i), Promise.resolve({ ok: true })) };
 
     await mod.default['tag:query'].run(mf as never, 'negative_tag', 'music/jazz');
     await mod.default['tag:query'].run(mf as never, 'mixed_tag', 'jeux video');
 
     expect(invocations).toEqual([
-      'metarecord-list:insert simplified "negative_tag #=music/jazz" stay',
-      'metarecord-list:apply simplified',
-      // A path the simplified language must quote cannot ride in a quoted
-      // argument (an invocation has no escapes): the text goes unquoted, as
-      // the last argument's words, and `stay` is given up for it.
-      'metarecord-list:insert simplified mixed_tag #="jeux video"',
-      'metarecord-list:apply simplified',
+      ['metarecord-list:insert', 'simplified', 'negative_tag #=music/jazz', 'stay'],
+      ['metarecord-list:apply', 'simplified'],
+      // A path the simplified language quotes rides as it is: an element is
+      // never split nor unquoted, so `stay` is kept.
+      ['metarecord-list:insert', 'simplified', 'mixed_tag #="jeux video"', 'stay'],
+      ['metarecord-list:apply', 'simplified'],
     ]);
     await expect(
       mod.default['tag:query'].run(mf as never, 'tags', 'music'),
@@ -152,19 +151,18 @@ describe('the shipped user commands', () => {
 
   test('tag:remove takes a tag off the selected metarecord', async () => {
     const mod = await import('../../default-config/commands.js');
-    const invocations: string[] = [];
-    const mf = { invoke: (i: string) => (invocations.push(i), Promise.resolve({ ok: true })) };
+    const invocations: unknown[] = [];
+    const mf = { invoke: (i: unknown) => (invocations.push(i), Promise.resolve({ ok: true })) };
     const jazz = 'a'.repeat(32);
 
     // The value is the tag entry's uuid, which a ref takes as itself.
     await mod.default['tag:remove'].run(mf as never, 'negative_tag', jazz);
-    // A path typed rather than picked goes through as typed: the value is
-    // the last argument, so its words need no quotes.
+    // A path typed rather than picked goes through as typed: one element.
     await mod.default['tag:remove'].run(mf as never, 'tag', 'jeux video');
 
     expect(invocations).toEqual([
-      `metarecord:field remove negative_tag ${jazz}`,
-      'metarecord:field remove tag jeux video',
+      ['metarecord:field', 'remove', 'negative_tag', jazz],
+      ['metarecord:field', 'remove', 'tag', 'jeux video'],
     ]);
   });
 
@@ -221,10 +219,10 @@ describe('the shipped user-commands.js', () => {
     expect(Object.keys(own.default)).toEqual(['user:rate']);
     expect(Object.keys(shipped.default)).not.toContain('user:rate');
 
-    const invocations: string[] = [];
-    const mf = { invoke: (i: string) => (invocations.push(i), Promise.resolve({ ok: true })) };
+    const invocations: unknown[] = [];
+    const mf = { invoke: (i: unknown) => (invocations.push(i), Promise.resolve({ ok: true })) };
     await own.default['user:rate'].run(mf as never, '4');
-    expect(invocations).toEqual(['metarecord:bulk selection set rating int 4']);
+    expect(invocations).toEqual([['metarecord:bulk', 'selection', 'set', 'rating', 'int', '4']]);
   });
 
   test('commands.js exports its helpers for the user file to import', async () => {

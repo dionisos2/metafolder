@@ -355,6 +355,50 @@ export interface PromptAnswer {
  *  (Escape). */
 export type ArgPromptFn = (request: ArgPromptRequest) => Promise<string | PromptAnswer | null>;
 
+// ── Invocations as arrays (doc "User commands") ──────────────────────────
+
+const ASK = Symbol('mf.ask');
+
+/** An argument to ask for in the command input, wherever it stands in an
+ *  invocation — `mf.ask`, or `mf.ask({initial})` to fill the line. */
+export interface AskMarker {
+  readonly [ASK]: true;
+  readonly initial?: string;
+}
+
+/** `mf.ask`: a marker by itself, and a function making one with options. */
+export const ask: AskMarker & ((options?: { initial?: string }) => AskMarker) = Object.assign(
+  (options: { initial?: string } = {}): AskMarker => ({
+    [ASK]: true as const,
+    ...(options.initial !== undefined ? { initial: options.initial } : {}),
+  }),
+  { [ASK]: true as const },
+);
+
+export function isAsk(value: unknown): value is AskMarker {
+  return (
+    (typeof value === 'object' || typeof value === 'function') &&
+    value !== null &&
+    (value as Record<symbol, unknown>)[ASK] === true
+  );
+}
+
+/** An invocation as `mf.invoke` takes it: the name — or a whole `!` shell
+ *  line — then one element per argument. */
+export type InvocationParts = [string, ...(string | AskMarker)[]];
+
+/** What `mf.invoke` throws when the command failed (`message` says why) or was
+ *  abandoned at one of its questions (`cancelled`). The status bar has already
+ *  said it: the shell keeps such an error, left uncaught, off the console. */
+export class CommandError extends Error {
+  readonly cancelled: boolean;
+  constructor(message: string, cancelled = false) {
+    super(message);
+    this.name = 'CommandError';
+    this.cancelled = cancelled;
+  }
+}
+
 // Frontend-side registry of declared argument specs, keyed by command name.
 // The Rust `CommandDef` only lists names/labels; the arg functions are live
 // JS and stay here (module-global, like `panelDispatch`/`editingTarget`).
@@ -587,12 +631,53 @@ export async function installUserCommands(
  * is the one call that should not need a path through the object. Panels keep
  * `commands.invoke` and get this too — one alias, not two APIs.
  */
-export function withTopLevelInvoke<T extends { commands: { invoke: (i: string) => unknown } }>(
-  api: T,
-): T & { invoke: (invocation: string) => unknown } {
+export function withTopLevelInvoke<
+  T extends { commands: { invoke: (parts: InvocationParts) => Promise<void> } },
+>(api: T): T & { invoke: (parts: InvocationParts) => Promise<void> } {
   return Object.assign(Object.create(Object.getPrototypeOf(api) as object) as T, api, {
-    invoke: (invocation: string) => api.commands.invoke(invocation),
+    invoke: (parts: InvocationParts) => api.commands.invoke(parts),
   });
+}
+
+/** Keeps an uncaught `CommandError` off the console: a panel's button runs
+ *  `void commands.invoke([...])`, and when the command fails the status bar
+ *  has already said why. Any other rejection is left alone. Returns the
+ *  function removing the filter. */
+export function ignoreUncaughtCommandErrors(target: EventTarget): () => void {
+  const filter = (event: Event) => {
+    if ((event as Event & { reason?: unknown }).reason instanceof CommandError) {
+      event.preventDefault();
+    }
+  };
+  target.addEventListener('unhandledrejection', filter);
+  return () => target.removeEventListener('unhandledrejection', filter);
+}
+
+/** How `invoke` is written as an array — for the error refusing a string. */
+function asParts(invocation: string): string {
+  const parsed = parseInvocation(invocation);
+  const parts = parsed === null ? [] : 'shell' in parsed ? [`!${parsed.shell}`] : [parsed.name, ...parsed.args];
+  return `[${parts.map((p) => `'${p.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`).join(', ')}]`;
+}
+
+/**
+ * `mf.invoke` over a dispatcher (doc "User commands"): takes the invocation as
+ * an array, resolves once the command has finished, and throws a
+ * `CommandError` when it failed or was abandoned — so a sequence of commands
+ * stops at the first that did not run.
+ */
+export function invokerOver(
+  dispatchFn: (parts: InvocationParts) => Promise<unknown>,
+): (parts: InvocationParts) => Promise<void> {
+  return async (parts: InvocationParts) => {
+    if (!Array.isArray(parts)) {
+      const shown = typeof parts === 'string' ? asParts(parts) : String(parts);
+      throw new TypeError(`invoke takes an array of the name and its arguments: ${shown}`);
+    }
+    const result = (await dispatchFn(parts)) as DispatchResult;
+    if (!result.ok) throw new CommandError(result.error);
+    if (result.cancelled) throw new CommandError(`${String(parts[0])}: abandoned`, true);
+  };
 }
 
 /** Runs a user command; false when no such command is installed. */
@@ -1099,7 +1184,7 @@ async function runScript(path: string, ws: string | null): Promise<void> {
  */
 export async function collectArgs(
   specs: ArgSpec[],
-  provided: string[],
+  provided: (string | AskMarker)[],
   promptFn: ArgPromptFn,
 ): Promise<string[] | null> {
   const result: string[] = [];
@@ -1111,15 +1196,30 @@ export async function collectArgs(
     const spec = specs[i];
     if (spec.when && !spec.when(result)) continue;
     const isLast = i === specs.length - 1;
+    // An argument given as `mf.ask` is asked, like one left out, whatever
+    // its place — an optional one too, since it was named.
+    let asked: AskMarker | null = null;
     if (used < provided.length) {
-      // Inline-provided: the last declared argument absorbs the remaining
-      // tokens so a value may contain spaces without quoting.
-      result.push(isLast ? provided.slice(used).join(' ') : provided[used]);
+      const rest = provided.slice(used);
+      if (isLast && rest.length > 1 && rest.some(isAsk)) {
+        throw new Error(
+          `the last argument (${spec.name}) takes every element left: it cannot ask for one of them`,
+        );
+      }
+      const given = provided[used];
       used += 1;
-      continue;
+      if (isAsk(given)) {
+        asked = given;
+      } else {
+        // Inline-provided: the last declared argument absorbs the remaining
+        // tokens so a value may contain spaces without quoting.
+        result.push(isLast ? (rest as string[]).join(' ') : given);
+        if (isLast) used = provided.length;
+        continue;
+      }
     }
     // Nothing left to fill it with: an optional argument is absent, not asked.
-    if (spec.optional) continue;
+    if (spec.optional && asked === null) continue;
     // `prompt` and `initial` are awaited — they are what the input shows and
     // pre-fills. The candidates are NOT: the first page is handed over as it
     // comes (an array, or a promise the driver resolves once the input is
@@ -1151,7 +1251,12 @@ export async function collectArgs(
     const answer = await promptFn({
       argName: spec.name,
       prompt: await spec.prompt(result),
-      initial: spec.initial ? await spec.initial(result) : '',
+      initial:
+        asked?.initial !== undefined
+          ? asked.initial
+          : spec.initial
+            ? await spec.initial(result)
+            : '',
       completions: source
         ? source.then(({ views }) => views[0]?.items('').then((page) => page.items) ?? [])
         : [],
@@ -1663,8 +1768,23 @@ export function setSettler(fn: (() => Promise<void>) | null): void {
   settler = fn;
 }
 
-/** Outcome of a dispatch, reported back to `POST /gui/command` waiters. */
-export type DispatchResult = { ok: true } | { ok: false; error: string };
+/** Outcome of a dispatch, reported back to `POST /gui/command` waiters.
+ *  `cancelled`: abandoned at one of its questions — nothing ran, and nothing
+ *  failed either. */
+export type DispatchResult = { ok: true; cancelled?: true } | { ok: false; error: string };
+
+/** An array invocation in the shape `parseInvocation` gives a string one. */
+function fromParts(
+  parts: InvocationParts,
+): { name: string; args: (string | AskMarker)[] } | { shell: string } | null {
+  const [head, ...args] = parts;
+  if (typeof head !== 'string' || head.trim() === '') return null;
+  if (head.startsWith('!')) {
+    const shell = head.slice(1).trim();
+    return shell === '' ? null : { shell };
+  }
+  return { name: head, args };
+}
 
 /**
  * Executes one invocation string (from a keybinding, the command input, or an
@@ -1672,10 +1792,10 @@ export type DispatchResult = { ok: true } | { ok: false; error: string };
  * success/failure; internal callers (keybindings, command input) ignore it.
  */
 export async function dispatch(
-  invocation: string,
+  invocation: string | InvocationParts,
   context: ExecContext = focusedContext(),
 ): Promise<DispatchResult> {
-  const parsed = parseInvocation(invocation);
+  const parsed = typeof invocation === 'string' ? parseInvocation(invocation) : fromParts(invocation);
   if (parsed === null) return { ok: true };
   if ('shell' in parsed) {
     const ws = focusedWs();
@@ -1694,8 +1814,8 @@ export async function dispatch(
     return { ok: true };
   }
 
-  const { name } = parsed;
-  let { args } = parsed;
+  const { name, args: given } = parsed;
+  let args = given as string[];
   const { ws } = context;
 
   // Interactive arguments (doc "Interactive command arguments"): a command declaring arguments
@@ -1709,9 +1829,20 @@ export async function dispatch(
   if (panelArgs) await panelArgs.prepare(name, ws);
   const specs = argSpecFor(name, ws);
   if (specs) {
-    const collected = await collectArgs(specs, args, promptForArg);
-    if (collected === null) return { ok: true };
+    let collected: string[] | null;
+    try {
+      collected = await collectArgs(specs, given, promptForArg);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await status(message);
+      return { ok: false, error: message };
+    }
+    if (collected === null) return { ok: true, cancelled: true };
     args = collected;
+  } else if (given.some(isAsk)) {
+    const message = `${name} declares no arguments to ask for`;
+    await status(message);
+    return { ok: false, error: message };
   }
 
   if (ws) store.lastCommand[ws] = name;

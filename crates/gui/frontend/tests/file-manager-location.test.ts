@@ -161,7 +161,7 @@ describe('file-manager open buttons', () => {
     button.click();
     await settle();
     expect(s.setVar).toHaveBeenCalledWith('selected_paths', ['/repo/top.txt']);
-    expect(s.api.commands.invoke).toHaveBeenCalledWith('panel:open other file');
+    expect(s.api.commands.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'file']);
     expect(cursorName(s.root)).toBe('top.txt');
   });
 
@@ -180,7 +180,7 @@ describe('file-manager open buttons', () => {
     rowOf(s.root, 'top.txt').click();
     await settle();
     await s.handlers.get('file-manager:activate')!();
-    expect(s.api.commands.invoke).toHaveBeenCalledWith('panel:open other file');
+    expect(s.api.commands.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'file']);
   });
 
   test('Enter takes a target: here, other or new', async () => {
@@ -189,7 +189,7 @@ describe('file-manager open buttons', () => {
     rowOf(s.root, 'top.txt').click();
     await settle();
     await s.handlers.get('file-manager:activate')!('new');
-    expect(s.api.commands.invoke).toHaveBeenCalledWith('panel:open new file');
+    expect(s.api.commands.invoke).toHaveBeenCalledWith(['panel:open', 'new', 'file']);
   });
 
   test('Enter on a folder goes into it, whatever the target', async () => {
@@ -398,7 +398,7 @@ describe('the file-manager:reveal command (shipped commands.js)', () => {
       { key: 'file-manager:dir', value: '/repo/sub' },
       { key: 'file-manager:cursor', value: 'song.mp3' },
     ]);
-    expect(calls.invoked).toEqual(['panel:open here file-manager']);
+    expect(calls.invoked).toEqual([['panel:open', 'here', 'file-manager']]);
   });
 
   test('the target is the first argument, and the location is written there', async () => {
@@ -406,7 +406,7 @@ describe('the file-manager:reveal command (shipped commands.js)', () => {
 
     expect(calls.targets).toEqual(['other']);
     expect(calls.sets[0]).toEqual({ key: 'file-manager:dir', value: '/repo/sub' });
-    expect(calls.invoked).toEqual(['panel:open here file-manager']);
+    expect(calls.invoked).toEqual([['panel:open', 'here', 'file-manager']]);
   });
 
   test('a folder: the folder itself, nothing highlighted', async () => {

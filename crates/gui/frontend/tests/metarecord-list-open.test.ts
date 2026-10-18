@@ -117,7 +117,7 @@ function stubApi(vars: Record<string, unknown>, calls: Call[]) {
           if (opts.args) specs.set(name, opts.args);
           return null;
         },
-        invoke: vi.fn((_line: string): null => null),
+        invoke: vi.fn((_parts: string[]): null => null),
       },
       addKeybinding: async () => null,
       fs: { readDir: async () => [], stat: async () => ({}), exists: async () => true, homeDir: async () => '/home/user' },
@@ -144,8 +144,8 @@ async function mountPanel() {
   api.workspace.set.mockImplementation(async (key: string, value: unknown) => {
     if (key === 'selected_metarecord') order.push(`select ${(value as { uuid: string }).uuid}`);
   });
-  api.commands.invoke.mockImplementation((line: string) => {
-    order.push(line);
+  api.commands.invoke.mockImplementation((parts: string[]) => {
+    order.push(parts.join(' '));
     return null;
   });
   const mod = await import('../../default-config/panel-types/metarecord-list/main.js');

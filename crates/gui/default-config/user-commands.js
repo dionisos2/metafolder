@@ -43,6 +43,6 @@ export default {
       },
     ],
     run: (/** @type {MetafolderApi} */ mf, /** @type {string} */ rating) =>
-      mf.invoke(`metarecord:bulk selection set rating int ${rating}`),
+      mf.invoke(['metarecord:bulk', 'selection', 'set', 'rating', 'int', rating]),
   },
 };

@@ -31,13 +31,13 @@ vi.mock('../src/lib/ipc', () => ({
  *  the dispatcher. */
 function recordingDeps() {
   const calls: Call[] = [];
-  const dispatched: { invocation: string; context: ExecContext | undefined }[] = [];
+  const dispatched: { invocation: unknown; context: ExecContext | undefined }[] = [];
   const deps: PanelApiDeps = {
     invoke: async (command: string, args?: Record<string, unknown>) => {
       calls.push({ command, args });
       return null;
     },
-    dispatch: async (invocation: string, context?: ExecContext) => {
+    dispatch: async (invocation: unknown, context?: ExecContext) => {
       dispatched.push({ invocation, context });
       return { ok: true };
     },
@@ -59,7 +59,7 @@ function api(deps: PanelApiDeps, context: () => ExecContext = () => FOCUSED) {
   }) as unknown as {
     context: ExecContext;
     workspace: { set(key: string, value: unknown): Promise<void> };
-    invoke(invocation: string): Promise<unknown>;
+    invoke(parts: string[]): Promise<unknown>;
     withContext<T>(context: ExecContext, body: (mf: never) => Promise<T>): Promise<T>;
   };
 }
@@ -75,9 +75,9 @@ describe('the API of a user command', () => {
     const mf = api(deps);
     expect(mf.context).toEqual(FOCUSED);
     await mf.workspace.set('k', 1);
-    await mf.invoke('panel:hide');
+    await mf.invoke(['panel:hide']);
     expect(setTargets(calls)).toEqual(['ws-1']);
-    expect(dispatched).toEqual([{ invocation: 'panel:hide', context: FOCUSED }]);
+    expect(dispatched).toEqual([{ invocation: ['panel:hide'], context: FOCUSED }]);
   });
 
   test('withContext runs a block in another context, and only that block', async () => {
@@ -88,7 +88,7 @@ describe('the API of a user command', () => {
       const m = inner as unknown as typeof mf;
       expect(m.context).toEqual(other);
       await m.workspace.set('k', 1);
-      await m.invoke('view:refresh metarecord-list');
+      await m.invoke(['view:refresh', 'metarecord-list']);
       return 'done';
     });
     expect(result).toBe('done');

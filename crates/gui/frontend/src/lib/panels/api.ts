@@ -7,7 +7,7 @@
 import { createPathResolver } from '../../../../panel-shim/resolve.js';
 import { showMenu } from '../../../../panel-shim/menu.js';
 import { commonPrefix, insertCandidate } from '../bash';
-import { type ArgSpec, withTopLevelInvoke } from '../commands';
+import { ask, type ArgSpec, type InvocationParts, invokerOver, withTopLevelInvoke } from '../commands';
 import type { PanelFunctions } from '../panelFunctions';
 import { invoke as ipcInvoke } from '../ipc';
 import { checkTarget, resolveTarget } from '../targets';
@@ -65,7 +65,7 @@ export interface PanelApiDeps {
   invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
   /** Runs a command invocation through the shell dispatcher (commands.ts), in
    *  `context` — the focused workspace and slot when none is given. */
-  dispatch: (invocation: string, context?: ExecContext) => Promise<unknown>;
+  dispatch: (invocation: string | InvocationParts, context?: ExecContext) => Promise<unknown>;
   /** Told a panel is about to register `name`, before its handler and
    *  arguments are recorded: the shell drops a `commands.js` entry of that
    *  name, which must not shadow a panel's command (doc "User commands"). */
@@ -148,7 +148,10 @@ export function createUserCommandApi(
 ): MetafolderApi {
   // Commands invoked from here run where this API acts.
   const { api } = createPanelApi(
-    { ...deps, dispatch: (invocation: string) => deps.dispatch(invocation, ctx.context()) },
+    {
+      ...deps,
+      dispatch: (invocation: string | InvocationParts) => deps.dispatch(invocation, ctx.context()),
+    },
     {
       // Read at every call: the API that follows the focus acts wherever the
       // user is when the command fires, not wherever they were when the file
@@ -186,7 +189,7 @@ export function createUserCommandApi(
     },
     ...contextMembers(deps, ctx, ctx.context),
     commands: {
-      invoke: (invocation: string) => api.commands.invoke(invocation),
+      invoke: (parts: InvocationParts) => api.commands.invoke(parts),
       keybindings: () => api.commands.keybindings(),
     },
     addKeybinding: (invocation: string, combo: string, options: { when?: string } = {}) =>
@@ -600,7 +603,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         deps.onCommandsChanged();
         return result;
       },
-      invoke: (invocation: string) => deps.dispatch(invocation),
+      invoke: invokerOver((parts) => deps.dispatch(parts)),
       // The live keybinding table, so a panel can *show* a shortcut rather than
       // restate it: the help pages fill their key hints from it (/__keyhints.js).
       keybindings: () => invoke('get_compiled_keybindings') as Promise<Metafolder.Binding[]>,
@@ -617,7 +620,11 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     // commands"): composing existing commands is what a command is *for*, so
     // the call it makes most should not need a path through the object. The
     // same alias the user-command API installs — one API to learn, not two.
-    invoke: (invocation: string) => deps.dispatch(invocation),
+    invoke: invokerOver((parts) => deps.dispatch(parts)),
+
+    /** An argument `invoke` asks for in the command input, wherever it stands:
+     *  `invoke(['metarecord:field', 'set', mf.ask, '4'])`. */
+    ask,
 
     /** Where this panel's commands run (doc "Commands"). */
     get context(): ExecContext {

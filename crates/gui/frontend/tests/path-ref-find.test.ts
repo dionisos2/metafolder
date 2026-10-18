@@ -239,7 +239,7 @@ describe('listing what refers to the selected node', () => {
     expect(written[0][1]).toEqual(expect.stringContaining('mfr_path'));
     expect(written[1][1]).toBe(true);
     expect(written[2][1]).toBe(true);
-    expect(s.api.commands.invoke).toHaveBeenCalledWith('panel:open here metarecord-list');
+    expect(s.api.commands.invoke).toHaveBeenCalledWith(['panel:open', 'here', 'metarecord-list']);
   });
 
   test('the target is its first argument, the other slot by default', async () => {

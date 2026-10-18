@@ -127,7 +127,7 @@ function fakeDaemon() {
 function setup(options: { activeRepo?: string | null } = {}) {
   const daemon = fakeDaemon();
   const vars = new Map<string, unknown>([['active_repo', options.activeRepo ?? null]]);
-  const dispatch = vi.fn(async (_invocation: string, _context?: unknown) => {});
+  const dispatch = vi.fn(async (_invocation: unknown, _context?: unknown) => ({ ok: true }));
   const created: string[] = [];
   const handlers = new Map<string, (...a: string[]) => unknown>();
   /** Every value-picker session the panel opened (doc "Value picker"). */
@@ -281,7 +281,7 @@ describe('repos panel', () => {
     expect((shadow.getElementById('init-error') as HTMLElement).textContent).toBe('');
     // A workspace with no repository adopts the new one and opens the list.
     expect(vars.get('active_repo')).toBe(daemon.repos[0].repo_uuid);
-    expect(dispatch).toHaveBeenCalledWith('panel:open here metarecord-list');
+    expect(dispatch).toHaveBeenCalledWith(['panel:open', 'here', 'metarecord-list']);
   });
 
   test('a failed load shows the daemon error in the form, not a blank panel', async () => {
@@ -317,7 +317,7 @@ describe('repos panel', () => {
     // An empty workspace on the repository, the list opened in it.
     expect(created).toEqual(['r1']);
     expect(dispatch).toHaveBeenCalledWith(
-      'panel:open here metarecord-list',
+      ['panel:open', 'here', 'metarecord-list'],
       expect.objectContaining({ ws: 'ws-new' }),
     );
     expect(vars.get('active_repo')).toBe('other-repo'); // unchanged
@@ -641,7 +641,7 @@ describe('repos panel — commands', () => {
     expect(daemon.repos.map((r) => r.name)).toEqual(['pics']);
     expect(shadow.querySelectorAll('#repo-list > li')).toHaveLength(1);
     expect(vars.get('active_repo')).toBe(daemon.repos[0].repo_uuid);
-    expect(dispatch).toHaveBeenCalledWith('panel:open here metarecord-list');
+    expect(dispatch).toHaveBeenCalledWith(['panel:open', 'here', 'metarecord-list']);
   });
 
   test('init without a name leaves it to the daemon, and announces the repository', async () => {

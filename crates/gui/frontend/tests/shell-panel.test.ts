@@ -129,7 +129,7 @@ describe('shell panel', () => {
   test('Clear runs shell:clear', async () => {
     const { shadow, invoke } = await mounted([]);
     (shadow.getElementById('clear') as HTMLButtonElement).click();
-    expect(invoke).toHaveBeenCalledWith('shell:clear');
+    expect(invoke).toHaveBeenCalledWith(['shell:clear']);
   });
 
   describe('the command line', () => {
@@ -140,7 +140,7 @@ describe('shell panel', () => {
       type(line, 'ls -l %');
       expect(press(line, 'Enter').defaultPrevented).toBe(true);
       // `!`: the same dispatch as the command input's bash mode, `%` expansion included.
-      expect(top).toHaveBeenCalledWith('!ls -l %');
+      expect(top).toHaveBeenCalledWith(['!ls -l %']);
       expect(line.value).toBe('');
     });
 

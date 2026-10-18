@@ -122,7 +122,7 @@ describe('metarecord:remove', () => {
 
     // No file, no question: `metarecord:delete` confirms its own action.
     expect(confirm).not.toHaveBeenCalled();
-    expect(calls.invoked).toEqual(['metarecord:delete']);
+    expect(calls.invoked).toEqual([['metarecord:delete']]);
     expect(calls.trash).toEqual([]);
   });
 
@@ -134,7 +134,7 @@ describe('metarecord:remove', () => {
     // An OK/Cancel dialog cannot say "neither": Cancel used to delete the
     // metarecord. The question is a prompt now, whose Escape cancels.
     expect(confirm).not.toHaveBeenCalled();
-    expect(calls.invoked).toEqual(['metarecord:remove-file']);
+    expect(calls.invoked).toEqual([['metarecord:remove-file']]);
     expect(calls.trash).toEqual([]);
   });
 
@@ -188,7 +188,7 @@ describe('metarecord:remove-file', () => {
     await removeFile('delete');
 
     expect(calls.trash).toEqual([]);
-    expect(calls.invoked).toEqual(['metarecord:delete']);
+    expect(calls.invoked).toEqual([['metarecord:delete']]);
     expect(calls.writes).toEqual([]);
   });
 

@@ -347,9 +347,17 @@ declare namespace Metafolder {
     args?: CommandArg[];
   }
 
+  /** An invocation as `invoke` takes it: `['panel:open', 'here', 'file']`,
+   *  or a shell line as one element, `['!ls -l']`. */
+  type Invocation = import('../src/lib/commands').InvocationParts;
+
   interface Commands {
     register(name: string, options?: CommandOptions): Promise<unknown>;
-    invoke(invocation: string): unknown;
+    /** Runs a command: its name, then one element per argument — `ask` in
+     *  place of one to ask for it (doc "User commands"). Resolves once the
+     *  command has finished; throws a `CommandError` when it failed or was
+     *  abandoned. */
+    invoke(parts: Invocation): Promise<void>;
     /** The compiled keybinding table as it stands now — what the user's
      *  `keybindings.toml` and the panel suggestions add up to. A snapshot: call
      *  it again to see a rebinding (doc "How the help panel finds a page"). */
@@ -691,7 +699,11 @@ declare namespace Metafolder {
      *  commands is what a command is *for*, so the call it makes most should
      *  not need a path through the object. Panels get the alias too — one API
      *  to learn, not two. */
-    invoke(invocation: string): unknown;
+    invoke(parts: Invocation): Promise<void>;
+    /** An argument `invoke` asks for in the command input, wherever it
+     *  stands; `ask({initial})` fills the line. */
+    ask: import('../src/lib/commands').AskMarker &
+      ((options?: { initial?: string }) => import('../src/lib/commands').AskMarker);
     /** Where this API acts (doc "Commands"): a workspace and a slot — for a
      *  user command the focused ones unless it moved, for a panel its own
      *  workspace in the slot showing it. */

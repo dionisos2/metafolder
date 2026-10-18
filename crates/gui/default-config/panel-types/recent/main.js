@@ -99,7 +99,7 @@ export function mount(root, metafolder) {
             hasMetarecord: true,
             open: async (what) => {
               await select(index);
-              await commands.invoke(`panel:open other ${what}`);
+              await commands.invoke(['panel:open', 'other', what]);
             },
           }),
           el('span', { class: 'name' }, rowName(row)),

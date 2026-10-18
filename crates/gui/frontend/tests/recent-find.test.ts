@@ -203,7 +203,7 @@ describe('recent open buttons', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(cursorName(s.root)).toBe('rock.mp3');
     expect(s.api.workspace.set).toHaveBeenCalledWith('selected_paths', ['/repo/other/rock.mp3']);
-    expect(s.api.commands.invoke).toHaveBeenCalledWith('panel:open other file');
+    expect(s.api.commands.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'file']);
   });
 
   test("a row's ⓘ shows it in the detail panel of the other slot", async () => {
@@ -215,7 +215,7 @@ describe('recent open buttons', () => {
     row.querySelector<HTMLButtonElement>('button.mf-open-detail')!.click();
     await new Promise((r) => setTimeout(r, 0));
     expect(cursorName(s.root)).toBe('rock.mp3');
-    expect(s.api.commands.invoke).toHaveBeenCalledWith('panel:open other metarecord-detail');
+    expect(s.api.commands.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'metarecord-detail']);
   });
 
   test('opening is panel:open: the panel registers no open command of its own', async () => {

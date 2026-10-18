@@ -200,7 +200,7 @@ describe('opening the pick', () => {
       { key: 'file-manager:dir', value: '/srv/music' },
       { key: 'file-manager:cursor', value: null },
     ]);
-    expect(calls.invoked).toEqual(['panel:open here file-manager']);
+    expect(calls.invoked).toEqual([['panel:open', 'here', 'file-manager']]);
   });
 
   test('the root opens the repository root', async () => {
@@ -229,7 +229,7 @@ describe('opening the pick', () => {
       { key: 'metarecord-list:normal-shown', value: true },
       { key: 'metarecord-list:normal-frozen', value: true },
     ]);
-    expect(calls.invoked).toEqual(['panel:open here metarecord-list']);
+    expect(calls.invoked).toEqual([['panel:open', 'here', 'metarecord-list']]);
   });
 
   test('subtree: the metarecord list, with every descendant of the folder', async () => {

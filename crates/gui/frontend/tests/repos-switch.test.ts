@@ -105,7 +105,7 @@ describe('opening the pick', () => {
 
     expect(calls.adopted).toEqual(['u-1']);
     // And shows it in the list, panel replaced in place.
-    expect(calls.invoked).toEqual(['panel:open here metarecord-list']);
+    expect(calls.invoked).toEqual([['panel:open', 'here', 'metarecord-list']]);
   });
 
   test('a workspace with a repository opens a new one on the pick', async () => {
@@ -117,7 +117,7 @@ describe('opening the pick', () => {
     // an empty one, the list opened in it.
     expect(calls.adopted).toEqual([]);
     expect(calls.created).toEqual(['u-1']);
-    expect(calls.invoked).toEqual(['panel:open here metarecord-list']);
+    expect(calls.invoked).toEqual([['panel:open', 'here', 'metarecord-list']]);
     expect(calls.ranIn).toEqual(['ws-new']);
   });
 

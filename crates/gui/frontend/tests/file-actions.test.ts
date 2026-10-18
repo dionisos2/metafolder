@@ -221,7 +221,7 @@ describe('file-actions shared operations', () => {
     await vi.waitFor(() =>
       expect(workspace.set).toHaveBeenCalledWith('selected_paths', ['/dir/a.txt']),
     );
-    await vi.waitFor(() => expect(commands.invoke).toHaveBeenCalledWith('file:open-with'));
+    await vi.waitFor(() => expect(commands.invoke).toHaveBeenCalledWith(['file:open-with']));
   });
 
   test('the default menu falls back to metarecords:dirty when no onChanged is given', async () => {
@@ -321,13 +321,13 @@ describe('metarecordMenuItems', () => {
       'Copy UUID',
     ]);
     item(items, 'Open in panel metarecord-detail').action!();
-    expect(commands.invoke).toHaveBeenCalledWith('panel:open other metarecord-detail');
+    expect(commands.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'metarecord-detail']);
     item(items, 'Open in panel file').action!();
-    expect(commands.invoke).toHaveBeenCalledWith('panel:open other file');
+    expect(commands.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'file']);
     item(items, 'Open folder in file manager').action!();
-    expect(commands.invoke).toHaveBeenCalledWith('file-manager:reveal here');
+    expect(commands.invoke).toHaveBeenCalledWith(['file-manager:reveal', 'here']);
     item(items, 'Open folder in metarecord-list').action!();
-    expect(commands.invoke).toHaveBeenCalledWith('metarecord-list:folder here');
+    expect(commands.invoke).toHaveBeenCalledWith(['metarecord-list:folder', 'here']);
   });
 
   test('a metarecord with no file offers only detail and Copy UUID', () => {

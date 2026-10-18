@@ -575,7 +575,7 @@ export async function mount(root, metafolder) {
       return;
     }
     await select(index);
-    await commands.invoke('panel:open other metarecord-detail');
+    await commands.invoke(['panel:open', 'other', 'metarecord-detail']);
   }
 
   /** @param {number} index */
@@ -591,7 +591,7 @@ export async function mount(root, metafolder) {
       return;
     }
     await select(index);
-    await commands.invoke(`panel:open ${where} file`);
+    await commands.invoke(['panel:open', where, 'file']);
   }
 
   // ── The checked multi-selection (doc "Cross-panel selection") ─────────
@@ -639,7 +639,7 @@ export async function mount(root, metafolder) {
   /** @param {string} path */
   async function pickThisFolder(path) {
     await workspace.set('selected_paths', [path]);
-    await commands.invoke('pick:confirm');
+    await commands.invoke(['pick:confirm']);
   }
 
   // Right-click on a row: move the cursor there, then offer the row's actions
@@ -864,7 +864,7 @@ export async function mount(root, metafolder) {
     // (completing over the installed presets) — no second picker here.
     items.push({
       label: 'Apply an ignore preset…',
-      action: () => void commands.invoke('ignore:add'),
+      action: () => void commands.invoke(['ignore:add']),
     });
     return items;
   }

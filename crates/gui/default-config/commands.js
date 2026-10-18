@@ -295,7 +295,7 @@ export async function listAt(mf, where, query, folder) {
     await mf.workspace.set('metarecord-list:normal-query', query);
     await mf.workspace.set('metarecord-list:normal-shown', true);
     await mf.workspace.set('metarecord-list:normal-frozen', true);
-    await mf.invoke('panel:open here metarecord-list');
+    await mf.invoke(['panel:open', 'here', 'metarecord-list']);
     await mf.statusBar.message(`Listing ${folder || '/'}`);
   });
 }
@@ -336,7 +336,7 @@ export default {
         return;
       }
       const rel = await metarecordFile(mf, selection.repo, selection.uuid);
-      await mf.invoke(rel === undefined ? 'metarecord:delete' : 'metarecord:remove-file');
+      await mf.invoke([rel === undefined ? 'metarecord:delete' : 'metarecord:remove-file']);
     },
   },
 
@@ -374,7 +374,7 @@ export default {
         return;
       }
       if (how === 'delete') {
-        await mf.invoke('metarecord:delete');
+        await mf.invoke(['metarecord:delete']);
         return;
       }
       // `mf.trash.trashPath` moves the bytes and returns the trashed name, but
@@ -420,7 +420,7 @@ export default {
       await mf.atTarget(where, async (/** @type {MetafolderApi} */ mf) => {
         await mf.workspace.set('file-manager:dir', dir);
         await mf.workspace.set('file-manager:cursor', cursor);
-        await mf.invoke('panel:open here file-manager');
+        await mf.invoke(['panel:open', 'here', 'file-manager']);
       });
     },
   },
@@ -515,7 +515,7 @@ export default {
         await mf.atTarget(where, async (/** @type {MetafolderApi} */ mf) => {
           await mf.workspace.set('file-manager:dir', dir || '/');
           await mf.workspace.set('file-manager:cursor', null);
-          await mf.invoke('panel:open here file-manager');
+          await mf.invoke(['panel:open', 'here', 'file-manager']);
         });
       } else if (view === 'children') {
         await listAt(mf, where, `mfr_path -> ${dslString(folder)}`, folder);
@@ -577,7 +577,7 @@ export default {
       } catch {
         return; /* already reported to the status bar */
       }
-      await mf.invoke('orphan:delete');
+      await mf.invoke(['orphan:delete']);
     },
   },
 
@@ -630,11 +630,11 @@ export default {
         // pick, the list opened in it (doc "Workspaces").
         const ws = await mf.workspace.create({ repo: uuid });
         await mf.withContext({ ws, slot: mf.context.slot }, (mf) =>
-          mf.invoke('panel:open here metarecord-list'),
+          mf.invoke(['panel:open', 'here', 'metarecord-list']),
         );
       } else {
         await mf.workspace.adoptRepo(uuid);
-        await mf.invoke('panel:open here metarecord-list');
+        await mf.invoke(['panel:open', 'here', 'metarecord-list']);
       }
     },
   },
@@ -710,7 +710,7 @@ export default {
       await mf.atTarget(where, async (/** @type {MetafolderApi} */ mf) => {
         await mf.workspace.set('selected_metarecord', { uuid, repo });
         await mf.workspace.set('selected_paths', paths);
-        await mf.invoke(`panel:open here ${paths.length > 0 ? 'file' : 'metarecord-detail'}`);
+        await mf.invoke(['panel:open', 'here', paths.length > 0 ? 'file' : 'metarecord-detail']);
       });
     },
   },
@@ -743,15 +743,8 @@ export default {
       // A path of plain words takes no quotes; any other is a quoted string.
       const path = /^[\p{L}\p{N}_]+(\/[\p{L}\p{N}_]+)*$/u.test(tag) ? tag : `"${tag}"`;
       const text = `${kind === 'tag' ? '' : `${kind} `}#=${path}`;
-      // An invocation has no escapes, so text holding quotes cannot ride in a
-      // quoted argument: it goes as the last argument's words instead, and
-      // gives `stay` up — the zone takes the focus, and `apply` drops it.
-      await mf.invoke(
-        text.includes('"')
-          ? `metarecord-list:insert simplified ${text}`
-          : `metarecord-list:insert simplified "${text}" stay`,
-      );
-      await mf.invoke('metarecord-list:apply simplified');
+      await mf.invoke(['metarecord-list:insert', 'simplified', text, 'stay']);
+      await mf.invoke(['metarecord-list:apply', 'simplified']);
     },
   },
 
@@ -838,7 +831,7 @@ export default {
       /** @type {string} */ tag,
     ) => {
       requireTagKind(kind);
-      await mf.invoke(`metarecord:field remove ${kind} ${tag}`);
+      await mf.invoke(['metarecord:field', 'remove', kind, tag]);
     },
   },
 };

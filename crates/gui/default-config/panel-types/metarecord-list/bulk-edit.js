@@ -235,7 +235,7 @@ export function createBulkEdit({ root, metafolder, getRepo, effectiveQuery, stat
   }
 
   byId(root, 'bulk-open').addEventListener('click', () => {
-    void metafolder.commands.invoke('metarecord-list:open-bulk-edit');
+    void metafolder.commands.invoke(['metarecord-list:open-bulk-edit']);
   });
   byId(root, 'bulk-apply').addEventListener('click', () => void applyBulkEdit());
   byId(root, 'bulk-cancel').addEventListener('click', () => bulkForm.classList.remove('open'));

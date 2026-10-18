@@ -776,12 +776,12 @@ export async function mount(root, metafolder) {
   // Buttons dispatch through their registered commands (so every control is
   // reachable from the palette/keyboard too).
   /** @param {string} name */
-  const invoke = (name) => () => void commands.invoke(name);
+  const invoke = (name) => () => void commands.invoke([name]);
   byId(root, 'new-metarecord').addEventListener('click', invoke('metarecord:create'));
   byId(root, 'new-metarecord-placeholder').addEventListener('click', invoke('metarecord:create'));
   byId(root, 'delete-metarecord').addEventListener('click', invoke('metarecord:delete'));
   byId(root, 'watch-reconcile').addEventListener('click', () => {
-    void commands.invoke(notes.needsWatch() ? 'metarecord:reconcile watch' : 'metarecord:reconcile');
+    void commands.invoke(notes.needsWatch() ? ['metarecord:reconcile', 'watch'] : ['metarecord:reconcile']);
   });
   byId(root, 'show-add').addEventListener('click', invoke('metarecord:open-add-field'));
   byId(root, 'add-append').addEventListener('click', () => void addField(false));
@@ -944,10 +944,10 @@ export async function mount(root, metafolder) {
           label: notes.needsWatch() ? 'Enable tracking & reconcile' : 'Reconcile',
           action: () =>
             void commands.invoke(
-              notes.needsWatch() ? 'metarecord:reconcile watch' : 'metarecord:reconcile',
+              notes.needsWatch() ? ['metarecord:reconcile', 'watch'] : ['metarecord:reconcile'],
             ),
         },
-        { label: 'Delete metarecord', action: () => void commands.invoke('metarecord:delete') },
+        { label: 'Delete metarecord', action: () => void commands.invoke(['metarecord:delete']) },
       ],
     });
     // The "File" category (cut/copy/paste/rename/duplicate/trash) when this

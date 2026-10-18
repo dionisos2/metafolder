@@ -94,7 +94,7 @@ metafolder.commands.register('my-panel:open-mode', {
 });
 metafolder.addKeybinding('my-panel:open-mode list', 'ctrl+l');
 metafolder.addKeybinding('my-panel:open-form', 'ctrl+e', { textInput: true });
-await metafolder.invoke('panel:split');
+await metafolder.invoke(['panel:split']);
 ```
 
 |!Option of `register` |!Meaning |
@@ -114,8 +114,9 @@ it is not written to the file ([[Changing keybindings]]). `when` defaults to the
 panel's type — the key applies while a panel of that type has the focus; the other
 two are those of [[Keybindings]]. `combo` may be a sequence (`g r`).
 
-`commands.invoke(invocation)` runs a command line as if typed, and
-`metafolder.invoke` is the same function. `commands.keybindings()` resolves to the
+`commands.invoke([name, ...arguments])` runs a command as if typed, and
+`metafolder.invoke` is the same function: the invocation is an array, one element
+per argument ([[User commands]] says why and how). `commands.keybindings()` resolves to the
 compiled key table as it stands — `[{keys, invocation, when, text_input, focus}]` —
 which is what the help fills its key hints from.
 

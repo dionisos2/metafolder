@@ -5,6 +5,7 @@
     deadInvocations,
     dispatch,
     dropUserCommand,
+    ignoreUncaughtCommandErrors,
     registerArgs,
     setPanelArgs,
     setPanelDispatch,
@@ -25,6 +26,7 @@
   } from '../panelFunctions';
   import { helpCursorSheet } from '../cursor';
   import type { CommandDef, ExecContext, SlotId } from '../types';
+  import type { InvocationParts } from '../commands';
   import { createVisibilityGate } from '../../../../panel-shim/visibility.js';
   import { scopedProvider } from '../../../../panel-shim/menu.js';
 
@@ -120,7 +122,7 @@
         invoke,
         // A panel's commands run in its own workspace, in the slot showing it
         // (the focused one while it is not on screen).
-        dispatch: (invocation: string) => dispatch(invocation, panelContext()),
+        dispatch: (invocation: string | InvocationParts) => dispatch(invocation, panelContext()),
         claimCommand: (name) => {
           if (dropUserCommand(name)) {
             void status(
@@ -421,6 +423,7 @@
       );
     });
     setSettler(settleShell);
+    const stopFilteringErrors = ignoreUncaughtCommandErrors(window);
 
     // The focused workspace's instance answers for a panel command's declared
     // arguments — the same instance `setPanelDispatch` below runs the handler
@@ -463,6 +466,7 @@
       setPanelArgs(null);
       setSettler(null);
       setMountsProvider(null);
+      stopFilteringErrors();
       setFindRootProvider(null);
       setFunctionProvider(null);
     };

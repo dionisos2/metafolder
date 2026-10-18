@@ -367,7 +367,7 @@ export async function mount(root, metafolder) {
         : [relPath === '' ? rootPath : `${rootPath}${relPath}`];
     await workspace.set('selected_metarecord', { uuid, repo: at });
     await workspace.set('selected_paths', paths);
-    await commands.invoke('panel:open other metarecord-detail');
+    await commands.invoke(['panel:open', 'other', 'metarecord-detail']);
   }
 
   /** A metarecord uuid, clickable, followed by its current path once known.
@@ -670,7 +670,7 @@ export async function mount(root, metafolder) {
           : `Reverted ${describeTarget(target)} in label #${result.label} (${count} operation(s)).`;
       void statusBar.message([summary, ...result.notes].join(' · '), statusMessageMs);
       await refresh();
-      void commands.invoke('metarecords:dirty');
+      void commands.invoke(['metarecords:dirty']);
     } catch (error) {
       await statusBar.error(error);
     }
@@ -703,8 +703,8 @@ export async function mount(root, metafolder) {
   byId(root, 'refresh').addEventListener('click', () => void refresh());
   upButton.addEventListener('click', () => backTo(path.length - 1));
   // Shell builtins (they work on the active repo, no selection needed).
-  byId(root, 'undo').addEventListener('click', () => void commands.invoke('log:undo'));
-  byId(root, 'redo').addEventListener('click', () => void commands.invoke('log:redo'));
+  byId(root, 'undo').addEventListener('click', () => void commands.invoke(['log:undo']));
+  byId(root, 'redo').addEventListener('click', () => void commands.invoke(['log:redo']));
   revertButton.addEventListener('click', () => void revert());
   pruneButton.addEventListener('click', () => void prune());
 

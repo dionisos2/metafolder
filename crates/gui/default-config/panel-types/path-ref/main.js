@@ -236,7 +236,7 @@ export async function mount(root, metafolder) {
       await mf.workspace.set('metarecord-list:normal-query', dsl);
       await mf.workspace.set('metarecord-list:normal-shown', true);
       await mf.workspace.set('metarecord-list:normal-frozen', true);
-      await mf.commands.invoke('panel:open here metarecord-list');
+      await mf.commands.invoke(['panel:open', 'here', 'metarecord-list']);
     });
   }
 
@@ -503,7 +503,7 @@ export async function mount(root, metafolder) {
   byId(root, 'root').addEventListener('click', gotoRoot);
   byId(root, 'up').addEventListener('click', goUp);
   byId(root, 'refresh').addEventListener('click', () => void refresh());
-  addButton.addEventListener('click', () => void commands.invoke('path-ref:add'));
+  addButton.addEventListener('click', () => void commands.invoke(['path-ref:add']));
 
   async function refresh() {
     await loadFields();
@@ -672,7 +672,7 @@ export async function mount(root, metafolder) {
           hasFile: false,
           leading: [
             ...(picking
-              ? [{ label: pickLabel, action: () => void commands.invoke('pick:confirm') }]
+              ? [{ label: pickLabel, action: () => void commands.invoke(['pick:confirm']) }]
               : []),
             { label: listLabel, action: () => void listRefs('other') },
           ],

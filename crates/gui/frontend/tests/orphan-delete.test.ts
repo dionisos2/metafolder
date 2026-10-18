@@ -155,10 +155,10 @@ describe('orphan:detect-delete', () => {
   test('detection runs first, then the deletion command', async () => {
     await run('orphan:detect-delete');
 
-    // `mf.invoke('orphan:delete')` is the pair's one confirmation between the
+    // `mf.invoke(['orphan:delete'])` is the pair's one confirmation between the
     // two: the deletion command asks its own question.
     expect(calls.orphans).toEqual(['detect']);
-    expect(calls.invoked).toEqual(['orphan:delete']);
+    expect(calls.invoked).toEqual([['orphan:delete']]);
   });
 
   test('a detection that fails stops there (it reported its own error)', async () => {

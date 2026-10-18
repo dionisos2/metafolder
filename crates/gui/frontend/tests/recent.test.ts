@@ -195,7 +195,7 @@ describe('opening the pick', () => {
       { key: 'selected_metarecord', value: { uuid: 'u1', repo: 'r' } },
       { key: 'selected_paths', value: ['/srv/music/jazz.mp3'] },
     ]);
-    expect(calls.invoked).toEqual(['panel:open here file']);
+    expect(calls.invoked).toEqual([['panel:open', 'here', 'file']]);
   });
 
   test('the target is the first argument: here, other or new', async () => {
@@ -222,7 +222,7 @@ describe('opening the pick', () => {
     await run(line);
 
     expect(calls.sets[1].value).toEqual([]);
-    expect(calls.invoked).toEqual(['panel:open here metarecord-detail']);
+    expect(calls.invoked).toEqual([['panel:open', 'here', 'metarecord-detail']]);
   });
 
   test('no line matches: the failure is thrown, for the shell to report', async () => {

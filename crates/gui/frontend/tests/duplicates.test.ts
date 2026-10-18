@@ -351,7 +351,7 @@ describe('duplicates panel, its buttons', () => {
     expect(p.cursorRow()).toBe(p.rows()[2]);
     expect(p.setVar).toHaveBeenCalledWith('selected_metarecord', { uuid: 'm2', repo: 'r' });
     expect(p.setVar).toHaveBeenCalledWith('selected_paths', ['/repo/b.bin']);
-    expect(p.api.commands.invoke).toHaveBeenCalledWith('panel:open other file');
+    expect(p.api.commands.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'file']);
   });
 
   test("a copy's ⓘ shows it in the detail panel of the other slot", async () => {
@@ -362,7 +362,7 @@ describe('duplicates panel, its buttons', () => {
     await tick();
     expect(p.cursorRow()).toBe(p.rows()[1]);
     expect(p.setVar).toHaveBeenCalledWith('selected_metarecord', { uuid: 'm1', repo: 'r' });
-    expect(p.api.commands.invoke).toHaveBeenCalledWith('panel:open other metarecord-detail');
+    expect(p.api.commands.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'metarecord-detail']);
   });
 
   test('a double click on a group row does not unfold it', async () => {
@@ -444,7 +444,7 @@ describe('duplicates panel, the harder paths', () => {
     await p.invoke('cursor:next');
     await p.invoke('duplicates:activate new');
     expect(p.rows()).toHaveLength(3); // still unfolded
-    expect(p.api.commands.invoke).toHaveBeenCalledWith('panel:open new file');
+    expect(p.api.commands.invoke).toHaveBeenCalledWith(['panel:open', 'new', 'file']);
   });
 
   test('toggle on a copy collapses its group and puts the cursor back on it', async () => {

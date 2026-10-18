@@ -233,7 +233,7 @@ describe('the request it lands', () => {
     ]);
     // Written at the target, before the panel switch that shows it.
     expect(calls.targets).toEqual(['here']);
-    expect(calls.invoked).toEqual(['panel:open here metarecord-list']);
+    expect(calls.invoked).toEqual([['panel:open', 'here', 'metarecord-list']]);
     expect(calls.status).toEqual([{ kind: 'info', text: 'Listing /live/2024' }]);
   });
 

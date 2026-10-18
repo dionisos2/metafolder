@@ -40,7 +40,7 @@ same panel type in both slots ([[Panel slots and layout]]).
 !! Panels are trusted
 
 `metafolder.fs` reads and writes any file the user can, `/fsraw` serves any local
-file, and `invoke('!…')` runs a shell command. The iframe was therefore never a
+file, and `invoke(['!…'])` runs a shell command. The iframe was therefore never a
 security boundary against a panel's code: the boundary is between the GUI and the
 operating system, and a panel is on the GUI's side of it. A panel type is code the
 user installed, like a shell script in their `PATH`.

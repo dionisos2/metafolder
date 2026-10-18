@@ -605,7 +605,7 @@ export async function mount(root, metafolder) {
       hasMetarecord: true,
       open: async (what) => {
         await setCursor(index);
-        await commands.invoke(`panel:open other ${what}`);
+        await commands.invoke(['panel:open', 'other', what]);
       },
     });
   }
@@ -872,10 +872,10 @@ export async function mount(root, metafolder) {
   const detachScroll = pager.attach(scroll);
 
   byId(root, 'query-apply').addEventListener('click', () => {
-    void commands.invoke('metarecord-list:apply simplified');
+    void commands.invoke(['metarecord-list:apply', 'simplified']);
   });
   byId(root, 'columns-apply').addEventListener('click', () => {
-    void commands.invoke('metarecord-list:apply columns');
+    void commands.invoke(['metarecord-list:apply', 'columns']);
   });
   // ── Finder (quick OSM filter) ─────────────────────────────────────────────
 
@@ -1191,7 +1191,7 @@ export async function mount(root, metafolder) {
       uuid: target.uuid,
       hasFile: paths.length > 0,
       leading: picking
-        ? [{ label: 'Pick this metarecord', action: () => void commands.invoke('pick:confirm') }]
+        ? [{ label: 'Pick this metarecord', action: () => void commands.invoke(['pick:confirm']) }]
         : [],
       // Checking from the menu, as Space does from the keyboard: the row joins
       // (or leaves) the checked selection the bulk operations act on.

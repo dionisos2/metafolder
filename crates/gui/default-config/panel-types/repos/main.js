@@ -576,13 +576,13 @@ export async function mount(root, metafolder) {
       const current = await workspace.get('active_repo');
       if (current === null) {
         await workspace.adoptRepo(repoUuid);
-        await commands.invoke('panel:open here metarecord-list');
+        await commands.invoke(['panel:open', 'here', 'metarecord-list']);
       } else {
         // A workspace's repository never changes: an empty workspace on it,
         // the list opened there (doc "Workspaces").
         const ws = await workspace.create({ repo: repoUuid });
         await metafolder.withContext({ ws, slot: metafolder.context.slot }, (mf) =>
-          mf.invoke('panel:open here metarecord-list'),
+          mf.invoke(['panel:open', 'here', 'metarecord-list']),
         );
       }
       void announceSchemaConflicts(repoUuid); // once-per-repo heads-up
@@ -600,7 +600,7 @@ export async function mount(root, metafolder) {
     const current = await workspace.get('active_repo');
     if (current === null) {
       await workspace.adoptRepo(repoUuid);
-      await commands.invoke('panel:open here metarecord-list');
+      await commands.invoke(['panel:open', 'here', 'metarecord-list']);
     } else {
       void statusBar.message(
         `Repository ready: ${repoUuid.slice(0, 8)}… (open it from the list)`,

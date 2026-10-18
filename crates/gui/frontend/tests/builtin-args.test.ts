@@ -91,7 +91,7 @@ describe('panel:open', () => {
     const done = dispatch('panel:open');
     await settle();
     await answer(null);
-    expect(await done).toEqual({ ok: true });
+    expect(await done).toEqual({ ok: true, cancelled: true });
     expect(store.ui.promptText).toBeNull();
   });
 });
