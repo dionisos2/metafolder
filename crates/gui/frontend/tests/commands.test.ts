@@ -573,6 +573,30 @@ describe('listedCommands', () => {
     expect(next[0].shortcuts).toEqual(['down', 'j']);
   });
 
+  test('a combo bound in several panel contexts is shown once', () => {
+    // `enter` runs `panel:open other file` in metarecord-list *and* in recent:
+    // two keytable rows (one per `when`), one key for the reader.
+    const scoped = (keys: string[], invocation: string, when: string) => ({
+      ...binding(keys, invocation),
+      when,
+    });
+    const listed = listedCommands(
+      [command('panel:open')],
+      [
+        scoped(['enter'], 'panel:open other file', 'metarecord-list'),
+        scoped(['enter'], 'panel:open other file', 'recent'),
+        scoped(['right'], 'panel:open other file', 'metarecord-list'),
+        scoped(['right'], 'panel:open other file', 'recent'),
+        binding(['w', 't', 'f'], 'panel:open other file'),
+      ],
+    );
+    expect(listed.find((c) => c.name === 'panel:open other file')?.shortcuts).toEqual([
+      'enter',
+      'right',
+      'w t f',
+    ]);
+  });
+
   test('an expanded entry inherits the base command label and owner', () => {
     const listed = listedCommands(commands, keytable);
     const entry = listed.find((c) => c.name === 'metarecord:bulk delete');
@@ -611,6 +635,14 @@ describe('shortcutsFor', () => {
 
   test('several bindings are all listed', () => {
     expect(shortcutsFor(table, 'metarecord-list:next')).toEqual(['down', 'j']);
+  });
+
+  test('a combo bound in several panel contexts is listed once', () => {
+    const twice = [
+      { ...binding(['enter'], 'panel:open other file'), when: 'metarecord-list' },
+      { ...binding(['enter'], 'panel:open other file'), when: 'recent' },
+    ];
+    expect(shortcutsFor(twice, 'panel:open')).toEqual(['enter']);
   });
 
   test('sequences are space-joined', () => {

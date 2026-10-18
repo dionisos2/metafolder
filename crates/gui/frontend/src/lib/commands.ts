@@ -76,9 +76,14 @@ export function shortcutsFor(
   keytable: { keys: string[]; invocation: string }[],
   commandName: string,
 ): string[] {
-  return keytable
-    .filter((binding) => bindingMatches(binding, commandName))
-    .map((binding) => binding.keys.join(' '));
+  return distinctCombos(keytable.filter((binding) => bindingMatches(binding, commandName)));
+}
+
+/** The combos of some bindings, each once and in table order. A key bound to
+ *  one invocation under several `when` contexts (`enter` in metarecord-list
+ *  and in recent) is one keytable row per context, but one key to the reader. */
+function distinctCombos(bindings: { keys: string[] }[]): string[] {
+  return [...new Set(bindings.map((binding) => binding.keys.join(' ')))];
 }
 
 /**
@@ -136,7 +141,7 @@ export function listedCommands(
   keytable: { keys: string[]; invocation: string }[],
 ): ListedCommand[] {
   const combosFor = (invocation: string) =>
-    keytable.filter((b) => b.invocation === invocation).map((b) => b.keys.join(' '));
+    distinctCombos(keytable.filter((b) => b.invocation === invocation));
 
   const listed = new Map<string, ListedCommand>();
   for (const command of commands) {
