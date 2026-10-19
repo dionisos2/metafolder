@@ -389,21 +389,20 @@ export async function mount(root, metafolder) {
   }
 
   function goUp() {
-    if (stack.length === 0) return;
-    stack = stack.slice(0, -1);
-    void fetchChildren(true);
+    gotoDepth(stack.length - 1);
   }
 
   function gotoRoot() {
-    if (stack.length === 0) return;
-    stack = [];
-    void fetchChildren(true);
+    gotoDepth(0);
   }
 
-  // Jump to breadcrumb depth `depth` (0 = root, 1 = first crumb, …).
+  // Jump to breadcrumb depth `depth` (0 = root, 1 = first crumb, …), the
+  // cursor on the node of the way left there (doc "path-ref panel"), so the
+  // way back down is one descend away.
   /** @param {number} depth */
   function gotoDepth(depth) {
-    if (depth >= stack.length) return;
+    if (depth < 0 || depth >= stack.length) return;
+    pendingSelectUuid = stack[depth].uuid;
     stack = stack.slice(0, depth);
     void fetchChildren(true);
   }

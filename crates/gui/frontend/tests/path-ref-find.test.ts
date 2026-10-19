@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { sameNodes } from './support/nodes';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { cursor, findCandidates } from './support/cursor';
+import { cursor, findCandidates, generic } from './support/cursor';
 import { withRuns } from './support/runs';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/path-ref');
@@ -61,7 +61,7 @@ function stub() {
       query: vi.fn(async (_repo: string, req: { query: { target?: { uuids?: string[] } } }) =>
         req.query.target?.uuids?.[0] === 'u-music'
           ? {
-              records: [{ uuid: 'u-jazz', fields: [{ name: 'tag', value: { type: 'tree_ref', value: { parent: 'u-music', name: 'jazz' } } }] }],
+              records: [{ uuid: 'u-jazz', fields: [{ name: 'mfr_path', value: { type: 'tree_ref', value: { parent: 'u-music', name: 'jazz' } } }] }],
               nextCursor: null,
             }
           : { records: [], nextCursor: null },
@@ -318,5 +318,54 @@ describe('the type of the explored field', () => {
     );
     await mount(s);
     expect(typeBadge(s.root)).toBe('');
+  });
+});
+
+// Going back up highlights the node left (doc "path-ref panel"), as the file
+// manager does with a folder: the way back down is one descend away.
+describe('going back up in the tree explorer', () => {
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = () => {};
+  });
+  const settle = async () => {
+    for (let i = 0; i < 5; i += 1) await new Promise((r) => setTimeout(r, 0));
+  };
+
+  /** Mounts the explorer and goes into music, then into jazz. */
+  async function intoJazz() {
+    const s = stub();
+    await mount(s);
+    await cursor(s.api.provide, 'find', 'select', 'music');
+    await generic(s.api.provide, 'cursor:descend');
+    await settle();
+    await cursor(s.api.provide, 'find', 'select', 'jazz');
+    await generic(s.api.provide, 'cursor:descend');
+    await settle();
+    expect(s.root.getElementById('breadcrumb')?.textContent).toContain('jazz');
+    return s;
+  }
+
+  test('cursor:parent highlights the node left', async () => {
+    const s = await intoJazz();
+    await generic(s.api.provide, 'cursor:parent');
+    await settle();
+    expect(cursorName(s.root)).toBe('jazz');
+  });
+
+  test('cursor:root highlights the top node of the way left', async () => {
+    const s = await intoJazz();
+    await generic(s.api.provide, 'cursor:root');
+    await settle();
+    expect(cursorName(s.root)).toBe('music');
+  });
+
+  test('a breadcrumb highlights the node of the way left below it', async () => {
+    const s = await intoJazz();
+    const crumb = [...s.root.querySelectorAll<HTMLElement>('#breadcrumb .crumb')].find(
+      (c) => c.textContent === 'music',
+    )!;
+    crumb.click();
+    await settle();
+    expect(cursorName(s.root)).toBe('jazz');
   });
 });

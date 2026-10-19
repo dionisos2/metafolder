@@ -66,8 +66,8 @@ metafolder.provide({
 |`descend(i)` |goes into row `i` — a directory, a node, a label — and says whether it could (a file, an operation, cannot be gone into) |
 |`leaf(i)` |whether row `i` has nothing below it, for a panel whose `descend` goes into a leaf too: the tree explorer, where an empty node is where children are added. A walk stops on a leaf — without `leaf`, on what `descend` refuses |
 |`refresh()` |reads what the panel shows again |
-|`parent()` |goes up one level |
-|`root()` |goes to the top level |
+|`parent()` |goes up one level, the cursor on what it came out of — so `cursor:descend` goes straight back down |
+|`root()` |goes to the top level, the cursor on the top row of the way it came from |
 
 Every function is optional; a panel provides what it can do, and a later call
 adds to what an earlier one provided. Each panel's note in the [[Panel]] catalog
