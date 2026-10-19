@@ -63,7 +63,7 @@ export async function mount(root, metafolder) {
   let picking = false; // true while this panel is open as a tree_ref value picker
   /** @type {string} the Ref field `path-ref:list-refs` follows */
   let refField = defaultRefField;
-  /** @type {string|null} a freshly created node to land the cursor on */
+  /** @type {string|null} a node to land the cursor on: freshly created, or gone back up from */
   let pendingSelectUuid = null;
   /** @type {'exact'|'subtree'} how much of the selected node the query covers */
   let scope = 'exact';
@@ -309,6 +309,7 @@ export async function mount(root, metafolder) {
     // narrow it inside the callbacks below.
     const r = repo;
     loading = true;
+    let more = false;
     // Warm the repo root once per repo so render() can build absolute paths.
     if (repoRootFor !== r) {
       repoRootFor = r;
@@ -355,17 +356,25 @@ export async function mount(root, metafolder) {
         return;
       }
       render();
-      // A freshly created element gets the cursor (and so the selection it
-      // publishes); when it is not in the loaded page, no jump happens.
+      // A freshly created element, or the node gone back up from, gets the
+      // cursor (and so the selection it publishes); pages are loaded until it
+      // is among the children.
       if (pendingSelectUuid !== null) {
         const wanted = pendingSelectUuid;
-        pendingSelectUuid = null;
         const index = children.findIndex((c) => c.uuid === wanted);
-        if (index >= 0) await select(metafolder, index);
+        if (index >= 0) {
+          pendingSelectUuid = null;
+          await select(metafolder, index);
+        } else if (nextCursor === null) {
+          pendingSelectUuid = null;
+        } else {
+          more = true;
+        }
       }
     } finally {
       loading = false;
     }
+    if (more) await fetchChildren(false);
   }
 
   /** @param {number} index */

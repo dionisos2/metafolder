@@ -26,7 +26,7 @@ The panel shows the roots, then the children of the node it was taken into; the 
 above them gives the path to it, each piece a link back. Whether a node has children
 is not known beforehand: going into a leaf shows an empty list. Going back up — a
 key below or a piece of the path — puts the cursor on the node of the way left,
-when it is among the children loaded.
+loading pages of children until it is among them.
 
 |!Key |!Does |
 |<<key "cursor:next self" "↓ or j">> / <<key "cursor:prev self" "↑ or k">>, <<key "cursor:first self" Home>> / <<key "cursor:last self" End>> |move the cursor (`End`: the last child loaded) |

@@ -359,6 +359,40 @@ describe('going back up in the tree explorer', () => {
     expect(cursorName(s.root)).toBe('music');
   });
 
+  test('the node left is found beyond the first page of children', async () => {
+    const s = stub();
+    s.api.pageSize = 2;
+    const node = (uuid: string, name: string) => ({
+      uuid,
+      fields: [{ name: 'mfr_path', value: { type: 'tree_ref', value: { parent: 'u-music', name } } }],
+    });
+    const all = [node('u-a', 'a'), node('u-b', 'b'), node('u-jazz', 'jazz')];
+    // The first listing of music is whole, to get into jazz; the next ones
+    // come two per page, jazz on the second.
+    let listings = 0;
+    s.api.daemon.query.mockImplementation((async (
+      _repo: string,
+      req: { query: { target?: { uuids?: string[] } }; cursor?: string },
+    ) => {
+      if (req.query.target?.uuids?.[0] !== 'u-music') return { records: [], nextCursor: null };
+      listings += 1;
+      if (listings === 1) return { records: all, nextCursor: null };
+      return req.cursor === 'p2'
+        ? { records: all.slice(2), nextCursor: null }
+        : { records: all.slice(0, 2), nextCursor: 'p2' };
+    }) as never);
+    await mount(s);
+    await cursor(s.api.provide, 'find', 'select', 'music');
+    await generic(s.api.provide, 'cursor:descend');
+    await settle();
+    await cursor(s.api.provide, 'find', 'select', 'jazz');
+    await generic(s.api.provide, 'cursor:descend');
+    await settle();
+    await generic(s.api.provide, 'cursor:parent');
+    await settle();
+    expect(cursorName(s.root)).toBe('jazz');
+  });
+
   test('a breadcrumb highlights the node of the way left below it', async () => {
     const s = await intoJazz();
     const crumb = [...s.root.querySelectorAll<HTMLElement>('#breadcrumb .crumb')].find(
