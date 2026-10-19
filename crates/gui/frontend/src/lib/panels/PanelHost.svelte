@@ -5,6 +5,7 @@
     deadInvocations,
     dispatch,
     dropUserCommand,
+    flushTransaction,
     ignoreUncaughtCommandErrors,
     registerArgs,
     setPanelArgs,
@@ -17,6 +18,8 @@
   import { currentStyle, focusedWs, refreshCommands, slotPayload, store } from '../store.svelte';
   import { createPanelApi, type PanelApiInstance } from './api';
   import { createPanelArgSource } from './argSource';
+  import { createRunScope, type RunScope } from './runScope';
+  import { transactional } from '../txn';
   import { setFindRootProvider } from './roots';
   import {
     nextZoom,
@@ -42,6 +45,8 @@
     host: HTMLDivElement;
     shadow: ShadowRoot;
     apiInst: PanelApiInstance;
+    /** The transaction its commands run in (doc "Command transactions"). */
+    scope: RunScope;
     cleanup: (() => void) | null;
     mounted: Promise<void>;
     /** The panel's zoom (`view:zoom`), applied by `zoomSheet`. */
@@ -113,13 +118,18 @@
     // theme, matching the old linked-theme-then-panel cascade order.
 
     const visibilityGate = createVisibilityGate();
-    const panelContext = (): ExecContext => ({
-      ws: wsId,
-      slot: visibleSlots.get(key) ?? store.layout.focused,
-    });
+    // While one of its commands runs, what the panel does is in that run's
+    // transaction, and so is a user command it invokes (doc "Command
+    // transactions").
+    const scope = createRunScope(invoke);
+    const panelContext = (): ExecContext => {
+      const txn = scope.txn();
+      const context = { ws: wsId, slot: visibleSlots.get(key) ?? store.layout.focused };
+      return txn === undefined ? context : { ...context, txn };
+    };
     const apiInst = createPanelApi(
       {
-        invoke,
+        invoke: transactional(invoke, scope.txn, flushTransaction),
         // A panel's commands run in its own workspace, in the slot showing it
         // (the focused one while it is not on screen).
         dispatch: (invocation: string | InvocationParts) => dispatch(invocation, panelContext()),
@@ -187,6 +197,7 @@
       host,
       shadow,
       apiInst,
+      scope,
       cleanup: null,
       mounted: undefined!,
       zoom: 1,
@@ -413,6 +424,10 @@
         return panelFunctions.get(instanceKey(wsId, panelType)) ?? null;
       },
       provided: (panelType) => providedByType.get(panelType),
+      within: (wsId, panelType, fn) => {
+        const instance = ensureInstance(wsId, panelType);
+        return instance ? instance.scope.run(fn) : fn();
+      },
     });
 
     // A command resolves once its effect is visible (doc "When a command has
@@ -454,7 +469,7 @@
       await instance.mounted;
       const handler = panelHandlers.get(`${key}|${command.name}`);
       if (!handler) throw `panel command ${command.name} has no handler`;
-      await handler(...args);
+      await instance.scope.run(() => handler(...args));
     });
 
     return () => {

@@ -47,7 +47,7 @@
 #
 # Usage:  scripts/dev/gui-e2e.sh [--unsandboxed] [--keep-logs] [scenario...]
 #   with no scenario, runs them all: undo-redo duplicates orphans trash remove
-#   field-keys reconcile ignore sync repos list folder-list reveal layout script
+#   field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script
 #   script-workspaces errors picker refs hierarchy hierarchy-form prompt history
 #   keybindings open-with tab-close pick-button suggested-key walk open-viewers
 #   slideshow shell-line repos-memory help-keys zoom order user-commands settle
@@ -80,7 +80,7 @@ done
 # inspector the clicking scenarios drive (webview.mjs), and every click after it
 # fails — forty tries of four seconds each.
 [ ${#SCENARIOS[@]} -gt 0 ] \
-    || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list folder-list reveal layout script script-workspaces
+    || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close
         pick-button suggested-key walk open-viewers slideshow shell-line repos-memory
         help-keys zoom order user-commands settle macro devtools)
@@ -167,7 +167,9 @@ else
 fi
 SCRIPT
 # A panel for the `keybindings` scenario: it suggests a key for a command of
-# its own, the way a panel's `addKeybinding` does.
+# its own, the way a panel's `addKeybinding` does. `e2e-keys:list` is the
+# `panel-txn` scenario's: a panel command writing the list's query variables
+# one by one.
 mkdir -p "$CONFIG_HOME/metafolder/gui/panel-types/e2e-keys"
 cat >"$CONFIG_HOME/metafolder/gui/panel-types/e2e-keys/index.html" <<'PANEL'
 <p>e2e: a panel that suggests a key</p>
@@ -179,6 +181,15 @@ export function mount(_root, metafolder) {
     handler: () => metafolder.statusBar.message('e2e: pinged', 60000),
   });
   void metafolder.addKeybinding('e2e-keys:ping', 'ctrl+alt+y');
+  void metafolder.commands.register('e2e-keys:list', {
+    label: 'e2e: list a folder, writing the variables one by one',
+    args: [{ name: 'dir', prompt: () => 'Folder?' }],
+    handler: async (dir) => {
+      await metafolder.workspace.set('metarecord-list:normal-query', `mfr_path -> "/${dir}"`);
+      await metafolder.workspace.set('metarecord-list:normal-shown', true);
+      await metafolder.workspace.set('metarecord-list:normal-frozen', true);
+    },
+  });
 }
 PANEL
 
@@ -674,6 +685,38 @@ scenario_folder_list() {
         fi
     done
     assert_eq "folder list: every try lists the folder" 0 "$missed"
+}
+
+# The folder-list race, from a panel's command (doc "Command transactions"):
+# the handler writes the list's three query variables one `set` after another,
+# through the API its panel was mounted with. The run's transaction delivers
+# them at once, so the list never runs the half-written state.
+scenario_panel_txn() {
+    new_repo panel-txn
+    mkdir -p "$REPO_DIR/a" "$REPO_DIR/b"
+    touch "$REPO_DIR/a/x" "$REPO_DIR/b/y"
+    local dir
+    for dir in a b; do record "$REPO_DIR/$dir" >/dev/null; done
+    record "$REPO_DIR/a/x" >/dev/null
+    record "$REPO_DIR/b/y" >/dev/null
+    # Mounted once, then hidden: its commands run on the hidden instance.
+    show_panel left e2e-keys e2e-keys:ping
+    run workspace:send "$WS" metarecord-list:query note=hello
+    show_panel left metarecord-list view:refresh metarecord-list
+
+    local i missed=0
+    for i in $(seq 1 20); do
+        if [ $((i % 2)) = 0 ]; then dir=a; else dir=b; fi
+        run workspace:send "$WS" metarecord-list:normal-frozen false
+        until_ok 5 query_is 'note = "hello"' || die "panel txn: the list never thawed"
+        run view:refresh metarecord-list
+        run e2e-keys:list "$dir"
+        if ! until_ok 5 query_is "mfr_path -> \"/$dir\""; then
+            missed=$((missed + 1))
+            printf '       try %s: the list runs %s\n' "$i" "$(mfg query)"
+        fi
+    done
+    assert_eq "panel txn: every try lists the folder" 0 "$missed"
 }
 
 # file-manager:reveal, the same race over the file manager's location: opening

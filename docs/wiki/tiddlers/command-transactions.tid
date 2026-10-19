@@ -2,10 +2,11 @@ title: Command transactions
 tags: Commands
 kind: reference
 aliases: transaction txn mf.flush txn_flush
-summary: A user command reads the workspace variables as they were when it began and its writes reach the workspaces all at once, when it ends — so no panel and no other command ever sees it half done.
+summary: A user command or a panel's command reads the workspace variables as they were when it began and its writes reach the workspaces all at once, when it ends — so no panel and no other command ever sees it half done.
 
-A [[user command|User commands]] runs in a ''transaction'' over the
-[[workspace variables|Workspace variables]]:
+A [[user command|User commands]], and a command a panel registers (or a generic
+command run on a panel's functions, [[Generic panel commands]]), runs in a
+''transaction'' over the [[workspace variables|Workspace variables]]:
 
 * ''it reads a snapshot'': what `mf.workspace.get` / `all` answer is what the variables held when the command first read that workspace, plus what the command itself wrote. Another command, a panel or a script writing meanwhile does not move what it sees;
 * ''its writes are held'' — `set`, `setMany`, `send` into any workspace — and reach the workspaces ''at once'' when it ends: every variable is in before any panel hears of one, and each is announced once.
@@ -39,6 +40,24 @@ transaction'': it sees what the caller wrote, and the caller sees what it writes
 step of a recorded [[macro|Macros]] being run is its own command, so each starts after
 the previous one is delivered.
 
+A panel's command invoked by a user command runs after the caller's writes are
+delivered, in the panel's transaction (below).
+
+!! A panel's commands
+
+A panel's command handler works through the `metafolder` object the panel was mounted
+with, and so do the functions it calls: that object cannot tell which run a call
+belongs to (JavaScript has no context that follows an `await`). The ''panel instance''
+can: while one of its commands runs, ''everything that instance does'' through its
+`metafolder` is in that run's transaction — the handler, the functions it calls, and
+a listener or a timer of the panel firing meanwhile. So no handler is written
+differently: `workspace.set` three times in a row reaches the workspace at once.
+
+* Commands running at once on one instance share one transaction, ended after the last of them.
+* A user command the panel invokes (`metafolder.invoke`) joins it, as from a user command.
+* What a handler sets off and does not wait for — a slideshow's timer, after `file:play` has returned — is outside: the run has ended.
+* A listener of the panel firing during a run reads the run's snapshot, not the value just announced to another key; it gets the announced value itself as its argument.
+
 !! Conflicts and failures
 
 When two transactions wrote the same variable, the one that ends last wins — for that
@@ -52,14 +71,15 @@ A write into a workspace closed meanwhile is dropped.
 
 !! Limits
 
-* Only user commands — `commands.js`, `user-commands.js`, the saved macros — run in a transaction. A builtin, or a command a panel registers, writes directly as before: a panel's handler uses the `metafolder` object it was mounted with, which cannot tell which run a call belongs to (JavaScript has no context that follows an `await`). Such a command writing several variables a panel follows still writes them with `setMany`. ''Deferred'': handing a panel's command handler an API bound to its run.
-* A panel's own writes (a click moving the selection) and a script's `mf gui var` are not in any transaction: they are delivered at once.
+* A builtin runs in no transaction: it writes directly, so one writing several variables a panel follows writes them with `setMany`.
+* A panel's own writes outside its commands (a click moving the selection) and a script's `mf gui var` are not in any transaction: they are delivered at once — `setMany` is for them too.
 * A snapshot is taken per workspace, at the first read of that workspace: a command reading two workspaces may see them at two moments.
 
 !! How it is built
 
 The transaction lives on the Rust side, which owns the variables (`GuiState`): a
-command's API carries its transaction id, and the variable calls made with it read the
-snapshot and add to the held writes. A snapshot costs no copy: a workspace's variables
+command's API carries its transaction id — a user command's in its execution context,
+a panel's in its instance's run scope (`lib/panels/runScope.ts`) — and the variable
+calls made with it read the snapshot and add to the held writes. A snapshot costs no copy: a workspace's variables
 are shared (`Arc`), and a write after a snapshot copies the table of pointers, not the
 values.

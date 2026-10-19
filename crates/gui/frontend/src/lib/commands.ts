@@ -1918,8 +1918,11 @@ export async function dispatch(
   // A user command not invoked by another runs in a transaction of its own.
   let own: number | null = null;
   if (txn === undefined && isUserCommand(name)) {
-    own = await invoke<number>('txn_begin');
-    context = { ...context, txn: own };
+    const begun = await invoke<unknown>('txn_begin');
+    if (typeof begun === 'number') {
+      own = begun;
+      context = { ...context, txn: own };
+    }
   }
   try {
     const handled = await runCommand(name, args, context);
@@ -2462,11 +2465,15 @@ async function runCommand(name: string, args: string[], context: ExecContext): P
     const [panel, ...rest] = args;
     const panelType = genericPanel(panel, context);
     if (!ws) throw new Error('no workspace in the focused slot');
-    const functions = await functionProvider()?.get(ws, panelType);
-    await runGeneric(name, functions ?? {}, rest, {
-      panelType,
-      reinvoke: (invocation) => void dispatch(invocation, context),
-    });
+    const provider = functionProvider();
+    const functions = await provider?.get(ws, panelType);
+    const generic = () =>
+      runGeneric(name, functions ?? {}, rest, {
+        panelType,
+        reinvoke: (invocation) => void dispatch(invocation, context),
+      });
+    // In the instance's transaction, like a command of its own.
+    await (provider?.within ? provider.within(ws, panelType, generic) : generic());
     return true;
   }
 

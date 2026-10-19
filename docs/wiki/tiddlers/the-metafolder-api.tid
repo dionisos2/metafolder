@@ -80,7 +80,7 @@ error.
 The [[workspace variables|Workspace variables]] of the instance's workspace.
 
 * `get(key)`, `set(key, value)` — both return promises.
-* `setMany(vars)` — writes several variables at once: every one is in before any `onChange` listener is told. (In a user command, every write already is: [[Command transactions]].) Use it for variables a panel follows *together*, such as the metarecord list's query zones ([[Cross-panel selection]]): written one `set` after another, the panel may read between two of them, run the half-written state and write it back over the rest.
+* `setMany(vars)` — writes several variables at once: every one is in before any `onChange` listener is told. (In a user command or a panel's command, every write already is: [[Command transactions]].) Use it for variables a panel follows *together*, such as the metarecord list's query zones ([[Cross-panel selection]]): written one `set` after another, the panel may read between two of them, run the half-written state and write it back over the rest.
 * `all()` — every variable the workspace holds now, as an object, `active_repo` included: what a panel built after some were set starts from, since `onChange` only reports what moves afterwards.
 * `onChange(key, listener)` — `listener(value)` at each change of `key`; with the key `'*'`, `listener(value, key)` for every variable.
 * `adoptRepo(repo)` — sets `active_repo` on a workspace that has none yet; a workspace never changes repository afterwards ([[Workspaces]]).

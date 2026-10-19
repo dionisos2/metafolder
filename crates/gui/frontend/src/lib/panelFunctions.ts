@@ -265,6 +265,10 @@ export interface FunctionProvider {
   /** What `panelType` provides (every instance provides the same), undefined
    *  when no instance has provided anything. Synchronous, for the key matcher. */
   provided(panelType: string): ReadonlySet<string> | undefined;
+  /** Runs `fn` — a generic command calling the instance's functions — in that
+   *  instance's run scope, so what they write is the command's transaction
+   *  (doc "Command transactions"). */
+  within?<T>(ws: string, panelType: string, fn: () => Promise<T>): Promise<T>;
 }
 
 let provider: FunctionProvider | null = null;

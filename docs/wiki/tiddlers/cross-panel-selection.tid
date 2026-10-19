@@ -53,9 +53,10 @@ Written one `set` after another, the panel may read between two of them and act 
 the half-written state, which also writes it back over the values still to come: the
 list ran its old query, the file manager cleared the cursor. Because it depends on
 timing, the command just seemed to do nothing once in a few tries (the `folder-list`
-scenario of [[Testing the GUI end to end]]). A user command is safe from this whatever
-it writes: its writes are delivered at once ([[Command transactions]]). A builtin or a
-panel writes such variables in one call, `workspace.setMany` ([[The metafolder API]]).
+scenario of [[Testing the GUI end to end]]). A user command or a panel's command is safe
+from this whatever it writes: its writes are delivered at once
+([[Command transactions]]). A builtin, or a panel outside its commands, writes such
+variables in one call, `workspace.setMany` ([[The metafolder API]]).
 
 !! The checked selection
 

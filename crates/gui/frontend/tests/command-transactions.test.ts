@@ -10,6 +10,7 @@ import {
   installUserCommands,
   setSettler,
 } from '../src/lib/commands';
+import { setFunctionProvider } from '../src/lib/panelFunctions';
 import { createUserCommandApi, type PanelApiDeps } from '../src/lib/panels/api';
 import { transactional } from '../src/lib/txn';
 import type { ExecContext } from '../src/lib/types';
@@ -229,5 +230,35 @@ describe('dispatch', () => {
   test('a builtin from the keyboard opens no transaction', async () => {
     expect(await dispatch('message:clear', context)).toEqual({ ok: true });
     expect(txnCalls()).toEqual([]);
+  });
+});
+
+describe('a generic command', () => {
+  afterEach(() => setFunctionProvider(null));
+
+  test('runs the panel functions in the run scope of the instance providing them', async () => {
+    const order: string[] = [];
+    let inScope = false;
+    setFunctionProvider({
+      get: async () => ({
+        index: () => 0,
+        count: () => 2,
+        select: async (index: number) => void order.push(`select ${index} in scope: ${inScope}`),
+      }),
+      provided: () => new Set(['index', 'count', 'select']),
+      within: async (ws, panelType, fn) => {
+        order.push(`scope of ${ws} ${panelType}`);
+        inScope = true;
+        try {
+          return await fn();
+        } finally {
+          inScope = false;
+        }
+      },
+    });
+    expect(await dispatch('cursor:next metarecord-list', { ws: 'ws-1', slot: 'left' })).toEqual({
+      ok: true,
+    });
+    expect(order).toEqual(['scope of ws-1 metarecord-list', 'select 1 in scope: true']);
   });
 });
