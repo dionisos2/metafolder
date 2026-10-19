@@ -971,7 +971,7 @@ mod tests {
             .and_then(|rest| rest.split(']').next())
             .expect("RELOAD_TARGETS is an array literal")
             .split(',')
-            .map(|t| t.trim().trim_matches('\''))
+            .map(|t| t.trim().trim_matches(['\'', '"']))
             .filter(|t| !t.is_empty())
             .collect();
         assert_eq!(offered, RELOAD_TARGETS.to_vec());
