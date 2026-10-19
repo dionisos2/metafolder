@@ -755,6 +755,22 @@ mod tests {
         assert!(dead.is_empty(), "keybindings name commands that do not exist: {dead:?}");
     }
 
+    /// The tag family sits under `,`, a key typed without a modifier on both
+    /// AZERTY and QWERTY — `#`, the tag sigil, needs AltGr or Shift.
+    #[test]
+    fn test_shipped_defaults_put_the_tag_family_under_comma() {
+        let defaults = include_str!("../default-config/keybindings.toml");
+        let table = KeybindingSet::from_sources(defaults, "").unwrap().compiled();
+        let tags: Vec<_> = table.iter().filter(|b| b.invocation.starts_with("tag:")).collect();
+        assert_eq!(tags.len(), 9, "the tag family: {tags:?}");
+        for b in &tags {
+            assert_eq!(b.keys[0], ",", "{:?} → {}", b.keys, b.invocation);
+        }
+        let query = tags.iter().find(|b| b.keys == [",", "t"]).unwrap();
+        assert_eq!(query.invocation, "tag:query tag");
+        assert!(table.iter().all(|b| b.keys[0] != "#"));
+    }
+
     /// The field-editing families are one command each, with the operation as
     /// the first argument; every `m` binding is that command with the
     /// operation pre-filled. The listing expands exactly these, so a binding
