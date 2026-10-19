@@ -249,9 +249,12 @@ export async function mount(root, metafolder) {
   /** The same as a DELETE body, which is null when it carries nothing.
    *  @param {string} name */
   const forceBodyFor = (name) => (isReserved(name) ? forceFor(name) : null);
-  const dirty = () => {
+  /** Tells the other panels the metarecords changed, through `mf`: a
+   *  command's run (doc "Command transactions"), or the panel's own API for a
+   *  form. @param {MetafolderApi} mf */
+  const dirty = (mf) => {
     vocab.forgetTreePaths(); // our own write may have moved a node in some forest
-    return workspace.set('metarecords:dirty', Date.now());
+    return mf.workspace.set('metarecords:dirty', Date.now());
   };
 
   /** @param {string|null} message */
@@ -415,7 +418,7 @@ export async function mount(root, metafolder) {
           },
           'Edit',
         ),
-        el('button', { disabled: readonly, onclick: () => void deleteField(field) }, 'Delete'),
+        el('button', { disabled: readonly, onclick: () => void deleteField(metafolder, field) }, 'Delete'),
       );
       // One more value of this field (doc "metarecord-detail panel"), on its
       // last row: a field holds several values — a hierarchy node one per
@@ -514,10 +517,11 @@ export async function mount(root, metafolder) {
     if (!item || isRowReadonly(item)) return;
     return openAddFor(item);
   }
-  function deleteCursorRow() {
+  /** @param {MetafolderApi} mf */
+  function deleteCursorRow(mf) {
     const item = rowItems()[cursorIndex];
     if (!item || isRowReadonly(item)) return;
-    void deleteField(item);
+    return deleteField(mf, item);
   }
 
   // ── Operations ────────────────────────────────────────────────────────
@@ -589,14 +593,14 @@ export async function mount(root, metafolder) {
       });
       editingField = null;
       await load();
-      await dirty();
+      await dirty(metafolder);
     } catch (error) {
       showError(messageOf(error));
     }
   }
 
-  /** @param {Field} field */
-  async function deleteField(field) {
+  /** @param {MetafolderApi} mf @param {Field} field */
+  async function deleteField(mf, field) {
     if (!current) return;
     if (!confirm(`Delete field "${field.name}"?`)) return;
     try {
@@ -606,7 +610,7 @@ export async function mount(root, metafolder) {
         forceBodyFor(field.name),
       );
       await load();
-      await dirty();
+      await dirty(mf);
     } catch (error) {
       showError(messageOf(error));
     }
@@ -634,7 +638,7 @@ export async function mount(root, metafolder) {
       }
       addForm.classList.remove('open');
       await load();
-      await dirty();
+      await dirty(metafolder);
     } catch (error) {
       showError(messageOf(error));
     }
@@ -650,8 +654,8 @@ export async function mount(root, metafolder) {
    *  and selects it, so every field-editing command applies to a live record
    *  from the start — there is no staged draft. A `type` seeds the schema's
    *  template fields; otherwise the record is created empty.
-   *  @param {string|null} type @param {Schema} schema */
-  async function createMetarecord(type, schema) {
+   *  @param {MetafolderApi} mf @param {string|null} type @param {Schema} schema */
+  async function createMetarecord(mf, type, schema) {
     try {
       const repo = await repoForAdd();
       if (!repo) throw new Error('no active repository');
@@ -661,28 +665,30 @@ export async function mount(root, metafolder) {
         await daemon.call('POST', `/repos/${repo}/metarecords`, { fields, ...force })
       );
       void statusBar.message(`Metarecord created: ${created.uuid.slice(0, 8)}…`, statusMessageMs);
-      await workspace.set('selected_metarecord', { uuid: created.uuid, repo });
-      await dirty();
+      await mf.workspace.set('selected_metarecord', { uuid: created.uuid, repo });
+      await dirty(mf);
     } catch (error) {
       showError(messageOf(error));
     }
   }
 
-  async function deleteEntry() {
+  /** @param {MetafolderApi} mf */
+  async function deleteEntry(mf) {
     if (!current || !confirm('Delete this metarecord (the file itself is kept)?')) return;
     try {
       await daemon.call('DELETE', api(''));
       void statusBar.message('Metarecord deleted.', statusMessageMs);
-      await workspace.set('selected_metarecord', null);
-      await dirty();
+      await mf.workspace.set('selected_metarecord', null);
+      await dirty(mf);
     } catch (error) {
       showError(messageOf(error));
     }
   }
 
   /** Runs a reconcile scoped to `current`'s subtree and refreshes the view.
-   *  Shared by watchAndReconcile and reconcileScoped. Throws on failure. */
-  async function runScopedReconcile() {
+   *  Shared by watchAndReconcile and reconcileScoped. Throws on failure.
+   *  @param {MetafolderApi} mf */
+  async function runScopedReconcile(mf) {
     if (!current) return;
     const { repo, uuid } = current;
     void statusBar.message('Reconciling…', null);
@@ -704,16 +710,17 @@ export async function mount(root, metafolder) {
     if (task.status === 'failed') throw new Error(task.error || 'reconcile failed');
     void statusBar.message(`Reconcile done: ${JSON.stringify(task.result)}`, statusMessageMs);
     await load();
-    await dirty();
+    await dirty(mf);
   }
 
   /** Enables tracking (`mf_watch = true`) on the selected metarecord, then runs
-   *  the initial scoped reconcile. Used while the record is not yet watched. */
-  async function watchAndReconcile() {
+   *  the initial scoped reconcile. Used while the record is not yet watched.
+   *  @param {MetafolderApi} mf */
+  async function watchAndReconcile(mf) {
     if (!current) return;
     try {
       await daemon.call('PUT', api('/fields/mf_watch'), { value: { type: 'bool', value: true } });
-      await runScopedReconcile();
+      await runScopedReconcile(mf);
     } catch (error) {
       await statusBar.error(error, statusErrorMs);
     }
@@ -721,11 +728,11 @@ export async function mount(root, metafolder) {
 
   /** Re-runs the scoped reconcile on an already-watched metarecord (no write to
    *  `mf_watch`), so the detail panel keeps a reconcile affordance after the
-   *  record is tracked. */
-  async function reconcileScoped() {
+   *  record is tracked. @param {MetafolderApi} mf */
+  async function reconcileScoped(mf) {
     if (!current) return;
     try {
-      await runScopedReconcile();
+      await runScopedReconcile(mf);
     } catch (error) {
       await statusBar.error(error, statusErrorMs);
     }
@@ -794,13 +801,13 @@ export async function mount(root, metafolder) {
   // every panel following `selected_metarecord` picks up.
   void commands.register('metarecord:back', {
     label: 'Metarecord: back to the previously shown metarecord',
-    handler: async () => {
+    handler: async (mf) => {
       const target = navHistory.back();
       if (target === null) {
         void statusBar.message('No previous metarecord.', statusMessageMs);
         return;
       }
-      await workspace.set('selected_metarecord', target);
+      await mf.workspace.set('selected_metarecord', target);
     },
   });
 
@@ -823,7 +830,7 @@ export async function mount(root, metafolder) {
         },
       },
     ],
-    handler: async (schema) => {
+    handler: async (mf, schema) => {
       const repo = await repoForAdd();
       const loaded = repo ? await loadSchema(repo) : null;
       // A blank answer is an empty record; a name the schema does not declare
@@ -832,12 +839,12 @@ export async function mount(root, metafolder) {
       if (wanted !== '' && !schemaTypes(loaded).includes(wanted)) {
         throw new Error(`unknown schema type: "${wanted}"`);
       }
-      await createMetarecord(wanted === '' ? null : wanted, loaded);
+      await createMetarecord(mf, wanted === '' ? null : wanted, loaded);
     },
   });
   void commands.register('metarecord:delete', {
     label: 'Delete the selected metarecord',
-    handler: deleteEntry,
+    handler: (mf) => deleteEntry(mf),
   });
   void commands.register('metarecord:reconcile', {
     label: "Reconcile the selected metarecord's subtree (`watch`: start tracking it first)",
@@ -849,7 +856,7 @@ export async function mount(root, metafolder) {
         complete: () => ['watch'],
       },
     ],
-    handler: (watch) => (watch === 'watch' ? watchAndReconcile() : reconcileScoped()),
+    handler: (mf, watch) => (watch === 'watch' ? watchAndReconcile(mf) : reconcileScoped(mf)),
   });
   /** Opens the add form on `field`'s name and type, for one more value of
    *  it: the `+` of its row, `metarecord:row-add`. @param {Field} field */
@@ -884,7 +891,7 @@ export async function mount(root, metafolder) {
   metafolder.provide({
     index: () => cursorIndex,
     count: () => rowItems().length,
-    select: selectRow,
+    select: (_mf, index) => selectRow(index),
   });
   void commands.register('metarecord:row-edit', {
     label: 'Edit the field under the cursor',
@@ -896,7 +903,7 @@ export async function mount(root, metafolder) {
   });
   void commands.register('metarecord:row-delete', {
     label: 'Delete the field under the cursor',
-    handler: deleteCursorRow,
+    handler: (mf) => deleteCursorRow(mf),
   });
   void commands.register('metarecord:toggle-force', {
     label: 'Metarecord: toggle force (allow writing the reserved mfr_* fields)',

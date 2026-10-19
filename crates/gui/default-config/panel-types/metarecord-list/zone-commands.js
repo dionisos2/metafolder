@@ -4,20 +4,22 @@
 // they need from the panel arrives through `ctx`:
 //   root       -> the panel's Shadow root (whose focus `apply` gives up)
 //   zones      -> the zone table: a new zone costs one entry, not four commands
-//   clearAll() -> `clear all`: reset every search field and re-run
+//   clearAll(mf) -> `clear all`: reset every search field and re-run
+// Each zone function takes first the API of the command's run (doc "Command
+// transactions").
 
 /**
  * @typedef {object} Zone
  * @property {HTMLInputElement} input       the element focus lands on
- * @property {() => unknown} apply          commit the zone's content
- * @property {() => unknown} [enter]        run before focusing it
- * @property {() => unknown} [clear]        empty it (focus follows)
+ * @property {(mf: MetafolderApi) => unknown} apply    commit the zone's content
+ * @property {(mf: MetafolderApi) => unknown} [enter]  run before focusing it
+ * @property {(mf: MetafolderApi) => unknown} [clear]  empty it (focus follows)
  *
  * @param {{
  *   commands: MetafolderApi['commands'],
  *   root: ShadowRoot,
  *   zones: Record<string, Zone>,
- *   clearAll: () => unknown,
+ *   clearAll: (mf: MetafolderApi) => unknown,
  * }} ctx
  */
 export function registerZoneCommands({ commands, root, zones: ZONES, clearAll }) {
@@ -40,9 +42,9 @@ export function registerZoneCommands({ commands, root, zones: ZONES, clearAll })
   void commands.register('metarecord-list:focus', {
     label: `Metarecord list: focus a zone (${ZONE_NAMES.join(' / ')})`,
     args: [zoneArg('focus')],
-    handler: async (name) => {
+    handler: async (mf, name) => {
       const z = zone(name);
-      await z.enter?.();
+      await z.enter?.(mf);
       z.input.focus();
     },
   });
@@ -50,12 +52,12 @@ export function registerZoneCommands({ commands, root, zones: ZONES, clearAll })
   void commands.register('metarecord-list:clear', {
     label: `Metarecord list: clear a zone (${ZONE_NAMES.join(' / ')} / all)`,
     args: [zoneArg('clear', ['all'])],
-    handler: async (name) => {
+    handler: async (mf, name) => {
       // `all` resets the three search fields at once and re-runs; an empty
       // query matches everything, so it goes back to the whole repository.
-      if (name === 'all') return clearAll();
+      if (name === 'all') return clearAll(mf);
       const z = zone(name);
-      await z.clear?.();
+      await z.clear?.(mf);
       z.input.focus();
     },
   });
@@ -69,9 +71,9 @@ export function registerZoneCommands({ commands, root, zones: ZONES, clearAll })
       // (Shift+Enter). One verb with a modifier, not two verbs.
       { name: 'stay', optional: true, prompt: () => 'Stay in the zone? (stay)' },
     ],
-    handler: async (name, stay) => {
+    handler: async (mf, name, stay) => {
       const z = zone(name);
-      await z.apply();
+      await z.apply(mf);
       // Only ever gives up a focus the zone itself holds: applying from a
       // button must not pull the caret out of whatever the user is typing in.
       if (stay !== 'stay' && root.activeElement === z.input) z.input.blur();
@@ -90,7 +92,7 @@ export function registerZoneCommands({ commands, root, zones: ZONES, clearAll })
       // the user is doing.
       { name: 'stay', optional: true, prompt: () => 'Leave the focus where it is? (stay)' },
     ],
-    handler: async (name, text, modifier) => {
+    handler: async (mf, name, text, modifier) => {
       // `text` is free text and is declared before `stay`, so a trailing run
       // of tokens lands in the modifier: `insert simplified #=jazz rock` must
       // splice the whole "#=jazz rock". Re-join it back into the text, and
@@ -101,7 +103,7 @@ export function registerZoneCommands({ commands, root, zones: ZONES, clearAll })
       const z = zone(name);
       // Same unfreeze as `focus`: inserting into a zone the query ignores
       // would look like a no-op.
-      await z.enter?.();
+      await z.enter?.(mf);
       const input = z.input;
       const from = input.selectionStart ?? input.value.length;
       const to = input.selectionEnd ?? from;

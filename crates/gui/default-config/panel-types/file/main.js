@@ -1136,8 +1136,8 @@ export async function mount(root, metafolder) {
           complete: () => names,
         },
       ],
-      /** @param {string} which */
-      handler: (which) => {
+      /** @param {MetafolderApi} _mf @param {string} which */
+      handler: (_mf, which) => {
         const run = table[which];
         if (!run)
           throw new Error(`unknown ${noun}: "${which ?? ''}" (expected ${names.join(' / ')})`);
@@ -1164,7 +1164,7 @@ export async function mount(root, metafolder) {
         complete: () => [`+${SEEK_STEP}`, `-${SEEK_STEP}`, `+${SEEK_STEP_LONG}`, `-${SEEK_STEP_LONG}`],
       },
     ],
-    handler: (raw) => {
+    handler: (_mf, raw) => {
       const seconds = Number(raw);
       if (!Number.isFinite(seconds)) throw new Error(`not a number of seconds: "${raw ?? ''}"`);
       return seekBy(seconds);
@@ -1347,8 +1347,11 @@ export async function mount(root, metafolder) {
   }
 
   /** Selects the next file of the list the slideshow can show, passing over
-   *  the others. */
-  async function advance() {
+   *  the others — through `mf`: the `file:play` run for the first file (doc
+   *  "Command transactions"), the panel's own API for the next ones, which
+   *  its timers select once the run is over.
+   *  @param {MetafolderApi} [mf] */
+  async function advance(mf = metafolder) {
     const s = show;
     if (!s) return;
     clearShowTimer();
@@ -1368,8 +1371,8 @@ export async function mount(root, metafolder) {
         continue;
       }
       s.expected = uuid;
-      await workspace.set('selected_metarecord', { uuid, repo: s.repo });
-      await workspace.set('selected_paths', found);
+      await mf.workspace.set('selected_metarecord', { uuid, repo: s.repo });
+      await mf.workspace.set('selected_paths', found);
       return;
     }
   }
@@ -1430,15 +1433,16 @@ export async function mount(root, metafolder) {
     media.addEventListener('error', next);
   }
 
-  /** @param {{target: 'selection'|'query', shuffle: boolean, loop: boolean}} request */
-  async function startShow({ target, shuffle, loop }) {
+  /** @param {MetafolderApi} mf the `file:play` run
+   *  @param {{target: 'selection'|'query', shuffle: boolean, loop: boolean}} request */
+  async function startShow(mf, { target, shuffle, loop }) {
     stopShow(null);
-    const repo = await workspace.get('active_repo');
+    const repo = await mf.workspace.get('active_repo');
     if (typeof repo !== 'string' || repo === '') throw new Error('no active repository');
     /** @type {string[]} */
     let uuids;
     if (target === 'selection') {
-      const checked = await workspace.get('selected_metarecords');
+      const checked = await mf.workspace.get('selected_metarecords');
       uuids = Array.isArray(checked) ? checked.filter((u) => typeof u === 'string') : [];
       if (uuids.length === 0) {
         void statusBar.message('No metarecords are checked — nothing to play.', statusMessageMs);
@@ -1446,12 +1450,12 @@ export async function mount(root, metafolder) {
       }
     } else {
       // What the metarecord list shows, in its order (both published by it).
-      const query = await workspace.get('metarecord-list:effective-query');
+      const query = await mf.workspace.get('metarecord-list:effective-query');
       if (!query) {
         void statusBar.message('The metarecord list shows no query — nothing to play.', statusMessageMs);
         return;
       }
-      const sort = await workspace.get('metarecord-list:sort');
+      const sort = await mf.workspace.get('metarecord-list:sort');
       const result = await daemon.call('POST', `/repos/${repo}/query`, {
         query,
         ...(Array.isArray(sort) && sort.length > 0 && { sort }),
@@ -1478,7 +1482,7 @@ export async function mount(root, metafolder) {
       `Slideshow: ${uuids.length} metarecord${uuids.length === 1 ? '' : 's'}${how ? ` (${how})` : ''}.`,
       statusMessageMs,
     );
-    await advance();
+    await advance(mf);
   }
 
   /** The option slots of `file:play`: either option, in either. */
@@ -1501,11 +1505,11 @@ export async function mount(root, metafolder) {
       playOption,
       playOption,
     ],
-    /** @param {...(string|undefined)} args */
-    handler: (...args) => {
+    /** @param {MetafolderApi} mf @param {...(string|undefined)} args */
+    handler: (mf, ...args) => {
       const request = parsePlayArgs(args);
       const { target, shuffle, loop } = request;
-      if (target !== 'stop') return startShow({ target, shuffle, loop });
+      if (target !== 'stop') return startShow(mf, { target, shuffle, loop });
       if (show) stopShow('Slideshow stopped.');
       else void statusBar.message('No slideshow is running.', statusMessageMs);
       return undefined;

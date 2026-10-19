@@ -12,6 +12,7 @@
 // whether a key bound to it applies here, and what it does with the functions.
 
 import { osmMatch, splitTerms } from '../../../panel-shim/finder.js';
+import type { ExecContext } from './types';
 
 /** One searchable row of `entries()`. `label` is what the completion offers and
  *  what typed terms are matched against (a panel whose rows are ambiguous by
@@ -57,6 +58,24 @@ export interface PanelFunctions {
   root?: () => unknown;
 }
 export type FunctionName = keyof PanelFunctions;
+
+/** What a panel provides (`metafolder.provide`, `Metafolder.PanelFunctions`)
+ *  and the host adds (`zoom`): each function takes first the API of the run
+ *  calling it, as a command handler does (doc "Command transactions"). */
+export type ProvidedFunctions = Metafolder.PanelFunctions & {
+  zoom?(mf: Metafolder.Api, direction: string): unknown;
+};
+
+/** `provided`, each function bound to the API `mf`. */
+export function bindFunctions(provided: ProvidedFunctions, mf: Metafolder.Api): PanelFunctions {
+  const bound: Record<string, unknown> = {};
+  for (const [name, fn] of Object.entries(provided)) {
+    if (typeof fn === 'function') {
+      bound[name] = (...args: unknown[]) => (fn as (...a: unknown[]) => unknown)(mf, ...args);
+    }
+  }
+  return bound;
+}
 
 export const SELF = 'self';
 export const FIND_MODES = ['select', 'walk'];
@@ -135,8 +154,10 @@ export function appliesHere(
 }
 
 /** The provided function names of `functions`. */
-export function providedNames(functions: PanelFunctions): Set<string> {
-  return new Set(Object.keys(functions).filter((k) => typeof functions[k as FunctionName] === 'function'));
+export function providedNames(functions: PanelFunctions | ProvidedFunctions): Set<string> {
+  return new Set(
+    Object.keys(functions).filter((k) => typeof functions[k as FunctionName] === 'function'),
+  );
 }
 
 const labelOf = (row: FindRow) => row.label ?? row.name;
@@ -260,15 +281,13 @@ export async function runGeneric(
 
 export interface FunctionProvider {
   /** The functions of the `panelType` instance of workspace `ws`, mounting it
-   *  first if needed; null when it provides none. */
-  get(ws: string, panelType: string): Promise<PanelFunctions | null>;
+   *  first if needed; null when it provides none. Each is bound to the API of
+   *  a run in `context` (doc "Command transactions") — or to the panel's own,
+   *  for a question asked outside any run (a completion). */
+  get(ws: string, panelType: string, context?: ExecContext): Promise<PanelFunctions | null>;
   /** What `panelType` provides (every instance provides the same), undefined
    *  when no instance has provided anything. Synchronous, for the key matcher. */
   provided(panelType: string): ReadonlySet<string> | undefined;
-  /** Runs `fn` — a generic command calling the instance's functions — in that
-   *  instance's run scope, so what they write is the command's transaction
-   *  (doc "Command transactions"). */
-  within?<T>(ws: string, panelType: string, fn: () => Promise<T>): Promise<T>;
 }
 
 let provider: FunctionProvider | null = null;

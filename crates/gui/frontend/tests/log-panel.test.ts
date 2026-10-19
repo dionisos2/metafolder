@@ -8,6 +8,7 @@ import { sameNodes } from './support/nodes';
 import { generic } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { withRuns } from './support/runs';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/log');
 
@@ -110,7 +111,7 @@ async function mountPanel() {
     log: { revert: vi.fn() },
   };
   const mod = await import('../../default-config/panel-types/log/main.js');
-  await mod.mount(shadow, api as never);
+  await mod.mount(shadow, withRuns(api) as never);
   await settle();
   const rowWith = (text: string) =>
     [...shadow.querySelectorAll<HTMLElement>('#rows tr')].find((tr) => tr.textContent?.includes(text))!;

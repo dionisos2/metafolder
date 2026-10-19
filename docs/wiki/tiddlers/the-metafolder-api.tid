@@ -91,7 +91,7 @@ The [[workspace variables|Workspace variables]] of the instance's workspace.
 metafolder.commands.register('my-panel:open-mode', {
   label: 'My panel: change the display mode',
   args: [{ name: 'mode', prompt: () => 'Mode?', complete: () => ['list', 'grid'] }],
-  handler: (mode) => setMode(mode),
+  handler: (mf, mode) => setMode(mf, mode),
 });
 metafolder.addKeybinding('my-panel:open-mode list', 'ctrl+l');
 metafolder.addKeybinding('my-panel:open-form', 'ctrl+e', { textInput: true });
@@ -100,10 +100,15 @@ await metafolder.invoke(['panel:split']);
 
 |!Option of `register` |!Meaning |
 |`label` |shown beside the name in the command input (default: the name) |
-|`handler` |receives the arguments, as strings; may be async; what it throws is shown in the status bar |
+|`handler` |receives first `mf`, the API of this run, then the arguments, as strings; may be async; what it throws is shown in the status bar |
 |`args` |the declared arguments, asked for when missing ([[Interactive command arguments]], [[Completion views]]) |
 |`reveal` |`true` puts the panel on screen before running ([[Writing a panel type]]) |
 |`log` |`false` keeps the invocations out of the message log — for a command run at each key press |
+
+`mf` is the object the run works through — this API, in the run's transaction
+([[Command transactions]]). Everything the command does goes through it, the
+functions it calls included: what goes through the `metafolder` the panel was
+mounted with is outside the run, written at once.
 
 A command of this name defined in `commands.js` is dropped in favour of the
 panel's ([[User commands]]). Where a key applies is said by the binding, not by
@@ -132,10 +137,13 @@ commands — `cursor:next self`, `cursor:find self select`… — run on them
 metafolder.provide({
   index: () => cursorIndex,
   count: () => rows.length,
-  select: (i) => moveCursorTo(i),
+  select: (mf, i) => moveCursorTo(mf, i),
   entries: () => rows.map((r) => ({ name: r.name })),
 });
 ```
+
+Each function takes first the API of the command run calling it, as a handler
+does.
 
 Each function is optional, and a command needing one the panel lacks is "not
 implemented" for it; a key bound to such a command passes through. The functions

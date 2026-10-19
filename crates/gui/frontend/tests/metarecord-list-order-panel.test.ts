@@ -7,6 +7,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { withRuns } from './support/runs';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/metarecord-list');
 
@@ -137,7 +138,7 @@ async function mountPanel(daemon: ReturnType<typeof memoryDaemon>, vars = new Ma
   };
   const shadow = shadowFor();
   const mod = await import('../../default-config/panel-types/metarecord-list/main.js');
-  await mod.mount(shadow, api as never);
+  await mod.mount(shadow, withRuns(api) as never);
   await settle();
   const invoke = async (name: string, ...args: unknown[]) => {
     const h = handlers.get(name);
@@ -180,7 +181,7 @@ describe('metarecord-list:order', () => {
     const provider = (p.api.provide).mock.calls
       .map((c) => c[0])
       .find((x) => x.select);
-    await provider.select(2);
+    await provider.select(p.api, 2);
     await settle();
     await p.invoke('metarecord-list:order', 'move', 'up');
     expect(Object.fromEntries(daemon.pos)).toEqual({ a: 1, b: 3, c: 2 });

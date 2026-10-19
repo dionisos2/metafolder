@@ -6,6 +6,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { registerFieldCommand } from '../../default-config/panel-types/metarecord-detail/field-commands.js';
 import { createFieldCatalog, createValues } from '../../default-config/panel-types/metarecord-detail/values.js';
+import { withRuns } from './support/runs';
 
 type Call = { method: string; path: string; body: unknown };
 type Spec = { handler: (...args: string[]) => Promise<unknown> };
@@ -33,7 +34,7 @@ function setup(fields: Row[], forced = false) {
   const load = vi.fn(async () => {});
   const dirty = vi.fn(async () => {});
   registerFieldCommand({
-    metafolder: metafolder as never,
+    metafolder: withRuns(metafolder) as never,
     vocab: createValues({
       daemon: daemon as never,
       config: { refSeed: async () => null, labelSeparator: async () => ' ' },

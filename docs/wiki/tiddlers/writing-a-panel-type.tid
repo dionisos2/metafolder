@@ -75,7 +75,8 @@ cannot show the same type in both slots ([[Panel slots and layout]]).
 Every instance of a type registers the ''same command names''. The registry holds
 one entry per name; the handler and the declared arguments are kept per instance,
 and a command runs on the instance of the focused workspace, which is created
-first if that workspace never showed the panel. A command registered with
+first if that workspace never showed the panel. The handler is given the API of
+that run first, and works through it ([[Command transactions]]). A command registered with
 `reveal: true` also puts its panel on screen first: in the other slot when that
 slot shows the same workspace, in the focused one otherwise.
 

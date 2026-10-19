@@ -207,15 +207,25 @@ export function createPickRunner(metafolder) {
    * @param {string} [spec.prompt] overrides the generated prompt
    * @param {string|null} [spec.repo] defaults to the active repo; pass null to
    *   override (e.g. the repos panel, which has none)
+   * @param {Pick<Metafolder.Api, 'pick'>} [mf] the API of the command run
+   *   asking, if one does: the picker opens through it, so what the run wrote
+   *   is delivered first (doc "Command transactions")
    * @returns {Promise<string|null>}
    */
-  async function request({ panel, vars = {}, result = 'uuid', name, prompt, repo }) {
+  async function request({ panel, vars = {}, result = 'uuid', name, prompt, repo }, mf) {
     ensureWired();
     const activeRepo = repo !== undefined ? repo : ((await workspace.get('active_repo')) ?? null);
     const token = `pick-${++seq}`;
     /** @type {Promise<string|null>} */
     const promise = new Promise((resolve) => pending.set(token, resolve));
-    await pick.start({ token, repo: activeRepo, name, prompt, result, panel: { type: panel, vars } });
+    await (mf?.pick ?? pick).start({
+      token,
+      repo: activeRepo,
+      name,
+      prompt,
+      result,
+      panel: { type: panel, vars },
+    });
     return promise;
   }
 

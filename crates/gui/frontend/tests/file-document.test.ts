@@ -13,6 +13,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { withRuns } from './support/runs';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/file');
 
@@ -110,7 +111,7 @@ describe('file panel — document preview', () => {
     const s = stub(path);
     const root = shadowRoot();
     const mod = await import('../../default-config/panel-types/file/main.js');
-    await mod.mount(root, s.api as never);
+    await mod.mount(root, withRuns(s.api) as never);
     await flush();
     return { ...s, root, viewer: root.getElementById('viewer')! };
   }

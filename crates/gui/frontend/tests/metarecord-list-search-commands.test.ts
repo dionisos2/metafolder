@@ -9,6 +9,7 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { withRuns } from './support/runs';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/metarecord-list');
 
@@ -96,7 +97,7 @@ async function mountPanel(initial: Record<string, unknown> = {}) {
   // what a command persisted (e.g. `metarecord-list:query`).
   const vars = new Map<string, unknown>(Object.entries(initial));
   const mod = await import('../../default-config/panel-types/metarecord-list/main.js');
-  await mod.mount(shadow, stubApi(handlers, vars) as never);
+  await mod.mount(shadow, withRuns(stubApi(handlers, vars)) as never);
   const el = <T extends HTMLElement = HTMLInputElement>(id: string) =>
     shadow.getElementById(id) as unknown as T;
   return {

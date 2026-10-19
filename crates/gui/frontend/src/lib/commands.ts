@@ -696,6 +696,13 @@ export function isUserCommand(name: string): boolean {
   return userHandlers.has(name);
 }
 
+/** Whether `name` runs in a transaction (doc "Command transactions"): a
+ *  user command, a panel's command, a generic one — not a builtin. */
+function runsInTransaction(name: string): boolean {
+  if (isUserCommand(name) || GENERIC_COMMANDS.includes(name)) return true;
+  return store.commands.some((command) => command.name === name && command.owner);
+}
+
 /** Runs a user command; false when no such command is installed. */
 export async function runUserCommand(
   name: string,
@@ -1915,9 +1922,10 @@ export async function dispatch(
   // What the command writes is one label in the log, named after it (doc
   // "Labels and contexts"): the proxy tells the daemon while it runs.
   const commandKey = await beginCommand([name, ...args].join(' ').trim());
-  // A user command not invoked by another runs in a transaction of its own.
+  // A user command not invoked by another, a panel's command and a generic
+  // one run in a transaction of their own.
   let own: number | null = null;
-  if (txn === undefined && isUserCommand(name)) {
+  if (txn === undefined && runsInTransaction(name)) {
     const begun = await invoke<unknown>('txn_begin');
     if (typeof begun === 'number') {
       own = begun;
@@ -2465,15 +2473,13 @@ async function runCommand(name: string, args: string[], context: ExecContext): P
     const [panel, ...rest] = args;
     const panelType = genericPanel(panel, context);
     if (!ws) throw new Error('no workspace in the focused slot');
-    const provider = functionProvider();
-    const functions = await provider?.get(ws, panelType);
-    const generic = () =>
-      runGeneric(name, functions ?? {}, rest, {
-        panelType,
-        reinvoke: (invocation) => void dispatch(invocation, context),
-      });
-    // In the instance's transaction, like a command of its own.
-    await (provider?.within ? provider.within(ws, panelType, generic) : generic());
+    // Bound to this run, like a panel command's handler: what they write is
+    // in its transaction.
+    const functions = await functionProvider()?.get(ws, panelType, context);
+    await runGeneric(name, functions ?? {}, rest, {
+      panelType,
+      reinvoke: (invocation) => void dispatch(invocation, context),
+    });
     return true;
   }
 

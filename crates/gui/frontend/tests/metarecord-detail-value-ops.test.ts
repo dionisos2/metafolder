@@ -19,6 +19,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { collectArgs } from '../src/lib/commands';
 import type { ArgSpec } from '../src/lib/commands';
+import { withRuns } from './support/runs';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/metarecord-detail');
 
@@ -177,11 +178,11 @@ async function mountPanel(
   };
   const mod = await import('../../default-config/panel-types/metarecord-detail/main.js');
   const shadow = shadowFor();
-  await mod.mount(shadow, api as never);
+  await mod.mount(shadow, withRuns(api) as never);
   calls.length = 0; // drop the initial load
   /** Puts the field cursor on row `index`, as `cursor:next` would. */
   const cursorTo = (index: number) =>
-    (api.provide.mock.calls[0][0] as { select: (i: number) => void }).select(index);
+    (api.provide.mock.calls[0][0] as { select: (mf: unknown, i: number) => void }).select(api, index);
   return { specs, calls, shadow, cursorTo, store };
 }
 

@@ -8,6 +8,7 @@ import { sameNodes } from './support/nodes';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { cursor, findCandidates } from './support/cursor';
+import { withRuns } from './support/runs';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/recent');
 
@@ -84,7 +85,7 @@ function stub() {
 
 async function mount(s: ReturnType<typeof stub>) {
   const mod = await import('../../default-config/panel-types/recent/main.js');
-  mod.mount(s.root, s.api as never);
+  mod.mount(s.root, withRuns(s.api) as never);
   await new Promise((r) => setTimeout(r, 0));
 }
 

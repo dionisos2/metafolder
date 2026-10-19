@@ -5,6 +5,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { registerBulkCommand } from '../../default-config/panel-types/metarecord-detail/bulk-commands.js';
 import { createFieldCatalog, createValues } from '../../default-config/panel-types/metarecord-detail/values.js';
+import { withRuns } from './support/runs';
 
 type Call = { method: string; path: string; body: unknown };
 type Spec = { handler: (...args: string[]) => Promise<unknown> };
@@ -36,7 +37,7 @@ function setup(vars: Record<string, unknown> = {}, forced = false) {
   };
   const dirty = vi.fn(async () => {});
   registerBulkCommand({
-    metafolder: metafolder as never,
+    metafolder: withRuns(metafolder) as never,
     vocab: createValues({
       daemon: daemon as never,
       config: { refSeed: async () => null, labelSeparator: async () => ' ' },

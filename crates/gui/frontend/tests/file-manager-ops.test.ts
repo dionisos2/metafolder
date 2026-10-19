@@ -11,6 +11,7 @@ import { cursor, generic } from './support/cursor';
 type ProvideMock = Parameters<typeof cursor>[0];
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { withRuns } from './support/runs';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/file-manager');
 
@@ -126,7 +127,7 @@ describe('file-manager filesystem operations', () => {
     if (!start) s.api.whenVisible = () => {};
     const root = shadowRoot();
     const mod = await import('../../default-config/panel-types/file-manager/main.js');
-    await mod.mount(root, s.api as never);
+    await mod.mount(root, withRuns(s.api) as never);
     // The mount's deferred start awaits an async open(); let it settle.
     await new Promise((r) => setTimeout(r, 0));
     return { ...s, root };
@@ -321,7 +322,7 @@ describe('file-manager filesystem operations', () => {
     (s.api as { settings: unknown }).settings = {};
     (s.api as { pageSize?: number }).pageSize = undefined;
     const mod = await import('../../default-config/panel-types/file-manager/main.js');
-    await mod.mount(shadowRoot(), s.api as never);
+    await mod.mount(shadowRoot(), withRuns(s.api) as never);
     await new Promise((r) => setTimeout(r, 0));
     // A create still works, falling back to the built-in message duration.
     promptSpy.mockReturnValueOnce('x');
@@ -388,7 +389,7 @@ describe('file-manager filesystem operations', () => {
     ) as never;
     const root = shadowRoot();
     const mod = await import('../../default-config/panel-types/file-manager/main.js');
-    await mod.mount(root, s.api as never);
+    await mod.mount(root, withRuns(s.api) as never);
     await new Promise((r) => setTimeout(r, 0));
     const dotRow = root.querySelectorAll('li')[0]; // the synthetic "." row
     dotRow.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
@@ -409,7 +410,7 @@ describe('file-manager filesystem operations', () => {
     ) as never;
     const root = shadowRoot();
     const mod = await import('../../default-config/panel-types/file-manager/main.js');
-    await mod.mount(root, s.api as never);
+    await mod.mount(root, withRuns(s.api) as never);
     await new Promise((r) => setTimeout(r, 0));
     const fileRow = [...root.querySelectorAll('li')].at(-1)!;
     fileRow.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));

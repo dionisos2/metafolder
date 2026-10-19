@@ -38,8 +38,13 @@ function sameQueryState(a, b) {
  *   metafolder: MetafolderApi,
  *   history: {push: (entry: string) => void},
  *   onApply: () => void,
- *   run: () => Promise<unknown>,
+ *   run: (mf: MetafolderApi) => Promise<unknown>,
  * }} ctx
+ *
+ * Every operation that writes the variables takes first the API it runs
+ * through: a command's run (doc "Command transactions"), or the panel's own
+ * (`metafolder`) for what the panel does by itself — a key in a zone, a click,
+ * following the variables.
  */
 export function createQueryEditor({ root, metafolder, history, onApply, run }) {
   const { daemon, workspace, query } = metafolder;
@@ -67,8 +72,9 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
   /** @type {ReturnType<typeof setTimeout>|undefined} */
   let livePreviewTimer;
 
-  /** Recomputes `queryIR` from the current editor state (no fetch). */
-  async function recomputeQuery() {
+  /** Recomputes `queryIR` from the current editor state (no fetch).
+   *  @param {MetafolderApi} mf */
+  async function recomputeQuery(mf) {
     queryError.textContent = '';
     normalError.textContent = '';
     /** @type {string} */
@@ -95,7 +101,7 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
     // normal-DSL parser does not read, and `metarecord-list:normal-query`
     // mirrors the B zone and is only written while that zone is shown. Both
     // expansion and the frozen-zone case are already settled here.
-    void workspace.set('metarecord-list:base-query-text', dsl);
+    void mf.workspace.set('metarecord-list:base-query-text', dsl);
     // Tell the slow-operation log what this panel is running, so an entry for a
     // slow query names the text the user typed and not just the IR
     // (doc "Correlating the GUI and the daemon").
@@ -115,28 +121,31 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
     return true;
   }
 
-  async function applyQuery() {
+  /** @param {MetafolderApi} mf */
+  async function applyQuery(mf) {
     onApply();
     history.push(queryInput.value.trim());
-    const ok = await recomputeQuery();
-    await persistQueryState();
-    if (ok) await run();
+    const ok = await recomputeQuery(mf);
+    await persistQueryState(mf);
+    if (ok) await run(mf);
   }
 
-  async function persistQueryState() {
-    await writeQueryState({ query: queryInput.value, normal: normalInput.value });
+  /** @param {MetafolderApi} mf */
+  async function persistQueryState(mf) {
+    await writeQueryState(mf, { query: queryInput.value, normal: normalInput.value });
   }
 
-  /** Empties both zones and compiles the result — match all — without running it. */
-  async function clearQueries() {
+  /** Empties both zones and compiles the result — match all — without running it.
+   *  @param {MetafolderApi} mf */
+  async function clearQueries(mf) {
     queryInput.value = '';
     normalInput.value = '';
     queryError.textContent = '';
     normalError.textContent = '';
     // Back to mirroring the (now empty) simplified query, so B shows empty too.
-    if (normalFrozen) await setNormalFrozen(false);
-    await recomputeQuery(); // queryIR = null (match all)
-    await persistQueryState();
+    if (normalFrozen) await setNormalFrozen(mf, false);
+    await recomputeQuery(mf); // queryIR = null (match all)
+    await persistQueryState(mf);
   }
 
   // ── The query variables are the state (doc "Cross-panel selection") ─────
@@ -165,14 +174,14 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
   let followDropped = false;
 
   /** Makes `change` part of the panel's state, writing its variables.
-   *  @param {Partial<QueryState>} change */
-  async function writeQueryState(change) {
+   *  @param {MetafolderApi} mf @param {Partial<QueryState>} change */
+  async function writeQueryState(mf, change) {
     appliedState = { ...appliedState, ...change };
     stateEpoch += 1;
     stateWrites += 1;
     try {
       for (const [key, value] of Object.entries(change)) {
-        await workspace.set(STATE_VARIABLES[/** @type {keyof QueryState} */ (key)], value);
+        await mf.workspace.set(STATE_VARIABLES[/** @type {keyof QueryState} */ (key)], value);
       }
     } finally {
       stateWrites -= 1;
@@ -211,12 +220,12 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
     }
     if (sameQueryState(next, appliedState)) return;
     queryInput.value = next.query;
-    if (next.shown !== normalShown) await setNormalShown(next.shown);
-    if (next.frozen !== normalFrozen) await setNormalFrozen(next.frozen);
+    if (next.shown !== normalShown) await setNormalShown(metafolder, next.shown);
+    if (next.frozen !== normalFrozen) await setNormalFrozen(metafolder, next.frozen);
     // After the setters: unfreezing refreshes B from A, which is what an
     // unfrozen B shows anyway; a frozen B is the variable's text.
     if (next.frozen) normalInput.value = next.normal;
-    await applyQuery();
+    await applyQuery(metafolder);
   }
 
   /** @type {ReturnType<typeof setTimeout> | undefined} */
@@ -231,12 +240,12 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
 
   /** Puts `dsl` in the normal zone — shown and frozen, so a query the GUI wrote
    *  stays visible, hand-editable and composable rather than being a hidden
-   *  override — and runs it. @param {string} dsl */
-  async function showQuery(dsl) {
+   *  override — and runs it. @param {MetafolderApi} mf @param {string} dsl */
+  async function showQuery(mf, dsl) {
     normalInput.value = dsl;
-    if (!normalShown) await setNormalShown(true);
-    if (!normalFrozen) await setNormalFrozen(true);
-    await applyQuery();
+    if (!normalShown) await setNormalShown(mf, true);
+    if (!normalFrozen) await setNormalFrozen(mf, true);
+    await applyQuery(mf);
   }
 
   /** Debounced live mirror of expand(A) into B (preview only — does not run). */
@@ -261,37 +270,37 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
     }
   }
 
-  /** @param {boolean} shown */
-  async function setNormalShown(shown) {
+  /** @param {MetafolderApi} mf @param {boolean} shown */
+  async function setNormalShown(mf, shown) {
     normalShown = shown;
     normalEditor.hidden = !shown;
     normalToggle.textContent = shown ? 'Hide normal DSL' : 'Show normal DSL';
     if (shown && !normalFrozen) await refreshPreview();
-    await writeQueryState({ shown });
+    await writeQueryState(mf, { shown });
   }
 
-  /** @param {boolean} frozen */
-  async function setNormalFrozen(frozen) {
+  /** @param {MetafolderApi} mf @param {boolean} frozen */
+  async function setNormalFrozen(mf, frozen) {
     normalFrozen = frozen;
     normalFreeze.checked = frozen;
     normalInput.readOnly = !frozen;
     if (!frozen && normalShown) await refreshPreview();
-    await writeQueryState({ frozen });
+    await writeQueryState(mf, { frozen });
   }
 
   // Enter applies AND leaves the field (blur) so the panel accelerators resume;
   // Shift+Enter applies but keeps the focus for another edit.
   queryInput.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter') return;
-    void applyQuery();
+    void applyQuery(metafolder);
     if (!event.shiftKey) queryInput.blur();
   });
   queryInput.addEventListener('input', scheduleLivePreview);
-  normalToggle.addEventListener('click', () => void setNormalShown(!normalShown));
-  normalFreeze.addEventListener('change', () => void setNormalFrozen(normalFreeze.checked));
+  normalToggle.addEventListener('click', () => void setNormalShown(metafolder, !normalShown));
+  normalFreeze.addEventListener('change', () => void setNormalFrozen(metafolder, normalFreeze.checked));
   normalInput.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter') return;
-    void applyQuery();
+    void applyQuery(metafolder);
     if (!event.shiftKey) normalInput.blur();
   });
   for (const key of Object.values(STATE_VARIABLES)) {
@@ -309,24 +318,29 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
     apply: applyQuery,
     show: showQuery,
     clear: clearQueries,
-    /** Hands the user zone A: a frozen B would be what runs, so it thaws. */
-    editSimplified: () => setNormalFrozen(false),
-    /** Hands the user zone B: shown and frozen, so what is typed there runs. */
-    async editNormal() {
-      await setNormalShown(true);
-      await setNormalFrozen(true);
+    /** Hands the user zone A: a frozen B would be what runs, so it thaws.
+     *  @param {MetafolderApi} mf */
+    editSimplified: (mf) => setNormalFrozen(mf, false),
+    /** Hands the user zone B: shown and frozen, so what is typed there runs.
+     *  @param {MetafolderApi} mf */
+    async editNormal(mf) {
+      await setNormalShown(mf, true);
+      await setNormalFrozen(mf, true);
     },
-    async clearSimplified() {
+    /** @param {MetafolderApi} mf */
+    async clearSimplified(mf) {
       queryInput.value = '';
       queryError.textContent = '';
-      await setNormalFrozen(false);
+      await setNormalFrozen(mf, false);
     },
-    async clearNormal() {
-      await this.editNormal();
+    /** @param {MetafolderApi} mf */
+    async clearNormal(mf) {
+      await this.editNormal(mf);
       normalInput.value = '';
       normalError.textContent = '';
     },
-    toggleNormal: () => setNormalShown(!normalShown),
+    /** @param {MetafolderApi} mf */
+    toggleNormal: (mf) => setNormalShown(mf, !normalShown),
 
     /** Restores the zones from the variables (values only — no daemon call).
      *  Zone B is revealed by default: the expanded DSL is what actually runs,

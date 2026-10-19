@@ -312,31 +312,33 @@ declare namespace Metafolder {
 
   /** What a panel provides to the generic commands (doc "Generic panel
    *  commands"), each optional: a command needs some of them, and is "not
-   *  implemented" for a panel lacking one. */
+   *  implemented" for a panel lacking one. Each takes first the API of the run
+   *  calling it, as a command handler does (doc "Command transactions"): what
+   *  it writes through `mf` is in that run's transaction. */
   interface PanelFunctions {
     /** The cursor's row, -1 when there is none. */
-    index?(): number;
+    index?(mf: Api): number;
     /** How many rows there are (loaded, for a paged list). */
-    count?(): number;
+    count?(mf: Api): number;
     /** Moves the cursor onto row `index`, always within `0..count()-1`. */
-    select?(index: number): unknown;
+    select?(mf: Api, index: number): unknown;
     /** Loads more rows; asked by `cursor:next` on the last row loaded. */
-    more?(): unknown;
+    more?(mf: Api): unknown;
     /** The rows `cursor:find` searches, as displayed now. */
-    entries?(): FindRow[] | Promise<FindRow[]>;
+    entries?(mf: Api): FindRow[] | Promise<FindRow[]>;
     /** Goes into row `index` — a directory, a node with children, a label —
      *  and says whether it could (`cursor:descend`; `cursor:find <panel> walk`
      *  then asks again from inside). */
-    descend?(index: number): boolean | Promise<boolean>;
+    descend?(mf: Api, index: number): boolean | Promise<boolean>;
     /** Whether row `index` has nothing below it — for a panel whose `descend`
      *  goes into a leaf too: a walk stops on a leaf. */
-    leaf?(index: number): boolean | Promise<boolean>;
+    leaf?(mf: Api, index: number): boolean | Promise<boolean>;
     /** Reads what the panel shows again (`view:refresh`). */
-    refresh?(): unknown;
+    refresh?(mf: Api): unknown;
     /** Goes up one level — the parent directory, node or label (`cursor:parent`). */
-    parent?(): unknown;
+    parent?(mf: Api): unknown;
     /** Goes to the top — the root directory, a forest's roots (`cursor:root`). */
-    root?(): unknown;
+    root?(mf: Api): unknown;
   }
 
   interface CommandOptions {
@@ -346,7 +348,10 @@ declare namespace Metafolder {
     reveal?: boolean;
     /** Append the invocation to the workspace message log (default true). */
     log?: boolean;
-    handler?: (...args: string[]) => unknown;
+    /** Runs the command: `mf` is the API of this run — in its transaction
+     *  (doc "Command transactions") — and everything the run does goes
+     *  through it, not through the panel's `mount` API. */
+    handler?: (mf: Api, ...args: string[]) => unknown;
     /** Declared arguments, collected interactively when missing. */
     args?: CommandArg[];
   }
@@ -711,11 +716,11 @@ declare namespace Metafolder {
     /** Where this API acts (doc "Commands"): a workspace and a slot — for a
      *  user command the focused ones unless it moved, for a panel its own
      *  workspace in the slot showing it. */
-    readonly context: { ws: string | null; slot: 'left' | 'right' };
-    /** A user command's only (doc "Command transactions"): delivers the
-     *  variables it wrote so far and waits until that shows; it reads afresh
-     *  from then on. A panel's API has none — it runs in no transaction. */
-    flush?(): Promise<void>;
+    readonly context: { ws: string | null; slot: 'left' | 'right'; txn?: number };
+    /** Delivers the variables the command's run wrote so far and waits until
+     *  that shows; it reads afresh from then on (doc "Command transactions").
+     *  Nothing to do on a panel's `mount` API, which runs in no transaction. */
+    flush(): Promise<void>;
     /** Runs `body` with an API acting in `context`, for that block alone —
      *  this API, and every other command, stay where they were. */
     withContext<T>(

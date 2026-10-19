@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { collectArgs } from '../src/lib/commands';
 import type { ArgSpec } from '../src/lib/commands';
+import { withRuns } from './support/runs';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/metarecord-detail');
 
@@ -131,7 +132,7 @@ async function mountPanel(fields: Field[], catalog: Record<string, string> = {},
     contextMenu: Object.assign(noop, { addDefaultItems: noop }),
   };
   const mod = await import('../../default-config/panel-types/metarecord-detail/main.js');
-  await mod.mount(shadowFor(), api as never);
+  await mod.mount(shadowFor(), withRuns(api) as never);
   calls.length = 0; // drop the initial load
   return { specs, calls };
 }

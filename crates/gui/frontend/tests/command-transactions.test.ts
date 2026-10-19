@@ -8,10 +8,12 @@ import {
   clearUserCommands,
   dispatch,
   installUserCommands,
+  setPanelDispatch,
   setSettler,
 } from '../src/lib/commands';
 import { setFunctionProvider } from '../src/lib/panelFunctions';
-import { createUserCommandApi, type PanelApiDeps } from '../src/lib/panels/api';
+import { createPanelApi, createUserCommandApi, type PanelApiDeps } from '../src/lib/panels/api';
+import { store } from '../src/lib/store.svelte';
 import { transactional } from '../src/lib/txn';
 import type { ExecContext } from '../src/lib/types';
 
@@ -116,7 +118,7 @@ function apiIn(d: PanelApiDeps, context: ExecContext): TestApi {
     guiServer: 'http://127.0.0.1:7524',
     sessionToken: 'token',
     context: () => context,
-  }) as unknown as TestApi;
+  });
 }
 
 describe('the API of a user command in a transaction', () => {
@@ -146,6 +148,54 @@ describe('the API of a user command in a transaction', () => {
     const mf = apiIn(deps([], flushed), { ws: 'ws-1', slot: 'left' });
     await mf.flush();
     expect(flushed).toEqual([]);
+  });
+});
+
+describe('the API of a panel command run', () => {
+  function panelApi(calls: Call[], dispatched: (ExecContext | undefined)[]) {
+    return createPanelApi(
+      {
+        ...deps(calls, []),
+        dispatch: async (_invocation, context) => {
+          dispatched.push(context);
+          return { ok: true };
+        },
+      },
+      {
+        wsId: 'ws-1',
+        panelType: 'p',
+        guiServer: 'http://127.0.0.1:7524',
+        sessionToken: 'token',
+        root: null as unknown as ShadowRoot,
+        visibilityGate: { set: () => {} } as never,
+        context: () => ({ ws: 'ws-1', slot: 'left' }),
+      },
+    );
+  }
+
+  test("writes in the run's transaction; the mount API writes directly", async () => {
+    const calls: Call[] = [];
+    const instance = panelApi(calls, []);
+    const run = instance.forRun({ ws: 'ws-1', slot: 'right', txn: 7 }) as unknown as TestApi;
+    await run.workspace.set('a', 1);
+    await (instance.api as unknown as TestApi).workspace.set('b', 2);
+    expect(calls).toEqual([
+      { command: 'ws_set_var', args: { wsId: 'ws-1', key: 'a', value: 1, txn: 7 } },
+      { command: 'ws_set_var', args: { wsId: 'ws-1', key: 'b', value: 2 } },
+    ]);
+  });
+
+  test("invokes a command from the run's context, its transaction with it", async () => {
+    const dispatched: (ExecContext | undefined)[] = [];
+    const instance = panelApi([], dispatched);
+    const run = instance.forRun({ ws: 'ws-1', slot: 'right', txn: 7 });
+    await run.invoke(['user:x']);
+    await instance.api.invoke(['user:x']);
+    expect(dispatched).toEqual([
+      { ws: 'ws-1', slot: 'right', txn: 7 },
+      { ws: 'ws-1', slot: 'left' },
+    ]);
+    expect(run.context).toEqual({ ws: 'ws-1', slot: 'right', txn: 7 });
   });
 });
 
@@ -231,34 +281,70 @@ describe('dispatch', () => {
     expect(await dispatch('message:clear', context)).toEqual({ ok: true });
     expect(txnCalls()).toEqual([]);
   });
+
+  describe('a panel command', () => {
+    const ran: ExecContext[] = [];
+    beforeEach(() => {
+      ran.length = 0;
+      store.commands = [{ name: 'p:x', label: 'p:x', owner: 'p', log: false }] as never;
+      setPanelDispatch(async (_command, _args, ctx) => void ran.push(ctx));
+    });
+    afterEach(() => {
+      setPanelDispatch(null);
+      store.commands = [];
+    });
+
+    test('runs in a transaction of its own, ended before the command settles', async () => {
+      const order: string[] = [];
+      setSettler(async () => {
+        order.push(`settle after ${tauri.filter((c) => c.cmd === 'txn_end').length} end`);
+      });
+      expect(await dispatch('p:x', context)).toEqual({ ok: true });
+      expect(ran).toEqual([{ ...context, txn: 7 }]);
+      expect(txnCalls()).toEqual([
+        ['txn_begin', undefined],
+        ['txn_end', 7],
+      ]);
+      expect(order).toEqual(['settle after 1 end']);
+    });
+
+    test('invoked by a user command, runs after its writes are delivered, in its own', async () => {
+      expect(await dispatch('p:x', { ...context, txn: 3 })).toEqual({ ok: true });
+      expect(ran).toEqual([{ ...context, txn: 7 }]);
+      expect(txnCalls()).toEqual([
+        ['txn_flush', 3],
+        ['txn_begin', undefined],
+        ['txn_end', 7],
+      ]);
+    });
+  });
 });
 
 describe('a generic command', () => {
   afterEach(() => setFunctionProvider(null));
 
-  test('runs the panel functions in the run scope of the instance providing them', async () => {
-    const order: string[] = [];
-    let inScope = false;
+  test('runs on the functions of the instance, bound to the run in its transaction', async () => {
+    const asked: (ExecContext | undefined)[] = [];
+    const selected: number[] = [];
     setFunctionProvider({
-      get: async () => ({
-        index: () => 0,
-        count: () => 2,
-        select: async (index: number) => void order.push(`select ${index} in scope: ${inScope}`),
-      }),
-      provided: () => new Set(['index', 'count', 'select']),
-      within: async (ws, panelType, fn) => {
-        order.push(`scope of ${ws} ${panelType}`);
-        inScope = true;
-        try {
-          return await fn();
-        } finally {
-          inScope = false;
-        }
+      get: async (_ws, _panelType, ctx) => {
+        asked.push(ctx);
+        return {
+          index: () => 0,
+          count: () => 2,
+          select: async (index: number) => void selected.push(index),
+        };
       },
+      provided: () => new Set(['index', 'count', 'select']),
     });
+    tauri.length = 0;
     expect(await dispatch('cursor:next metarecord-list', { ws: 'ws-1', slot: 'left' })).toEqual({
       ok: true,
     });
-    expect(order).toEqual(['scope of ws-1 metarecord-list', 'select 1 in scope: true']);
+    expect(asked).toEqual([{ ws: 'ws-1', slot: 'left', txn: 7 }]);
+    expect(selected).toEqual([1]);
+    expect(
+      tauri.filter((c) => c.cmd.startsWith('txn_')).map((c) => c.cmd),
+    ).toEqual(['txn_begin', 'txn_end']);
   });
 });

@@ -41,22 +41,24 @@ step of a recorded [[macro|Macros]] being run is its own command, so each starts
 the previous one is delivered.
 
 A panel's command invoked by a user command runs after the caller's writes are
-delivered, in the panel's transaction (below).
+delivered, in a transaction of its own: the panel's state has followed them by then.
 
 !! A panel's commands
 
-A panel's command handler works through the `metafolder` object the panel was mounted
-with, and so do the functions it calls: that object cannot tell which run a call
-belongs to (JavaScript has no context that follows an `await`). The ''panel instance''
-can: while one of its commands runs, ''everything that instance does'' through its
-`metafolder` is in that run's transaction — the handler, the functions it calls, and
-a listener or a timer of the panel firing meanwhile. So no handler is written
-differently: `workspace.set` three times in a row reaches the workspace at once.
+A panel's command is written like a user command: its handler gets first `mf`, the
+API of its run — the panel's API, in the run's transaction — and works through it,
+handing it to the functions it calls ([[The metafolder API]]). So do the functions a
+panel provides to the generic commands ([[Generic panel commands]]).
+`mf.workspace.set` three times in a row reaches the workspace at once.
 
-* Commands running at once on one instance share one transaction, ended after the last of them.
-* A user command the panel invokes (`metafolder.invoke`) joins it, as from a user command.
-* What a handler sets off and does not wait for — a slideshow's timer, after `file:play` has returned — is outside: the run has ended.
-* A listener of the panel firing during a run reads the run's snapshot, not the value just announced to another key; it gets the announced value itself as its argument.
+What goes through the `metafolder` the panel was mounted with is in no transaction:
+a click, a listener, a timer of the panel — and a handler using it by mistake, which
+writes at once, as before transactions. The API a call goes through is what says
+which run it belongs to: JavaScript has no context that follows an `await`, so
+nothing else can.
+
+* A user command the panel invokes (`mf.invoke`) joins the run's transaction, as from a user command.
+* Commands running at once on one panel have a transaction each.
 
 !! Conflicts and failures
 
@@ -66,6 +68,12 @@ a command that wrote to the daemon or ran a program cannot be run again.
 
 A command that fails or is abandoned still delivers what it wrote before, as a
 command did before transactions: its daemon writes are not undone either.
+
+What a command sets off and does not wait for — the slideshow's next file, selected
+by its timer once `file:play` has returned; a cursor's coalesced publication
+finishing after its run — may still hold the run's API when the transaction has
+ended. An ended transaction is no transaction: its calls read and write the
+workspaces directly.
 
 A write into a workspace closed meanwhile is dropped.
 
@@ -78,8 +86,9 @@ A write into a workspace closed meanwhile is dropped.
 !! How it is built
 
 The transaction lives on the Rust side, which owns the variables (`GuiState`): a
-command's API carries its transaction id — a user command's in its execution context,
-a panel's in its instance's run scope (`lib/panels/runScope.ts`) — and the variable
-calls made with it read the snapshot and add to the held writes. A snapshot costs no copy: a workspace's variables
+run's API carries its transaction id in its execution context — a user command's
+`mf` is built for it, a panel command's by its instance (`forRun`,
+`lib/panels/api.ts`) — and the variable calls made with it read the snapshot and add
+to the held writes. A snapshot costs no copy: a workspace's variables
 are shared (`Arc`), and a write after a snapshot copies the table of pointers, not the
 values.

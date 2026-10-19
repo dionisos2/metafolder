@@ -30,11 +30,13 @@
  *   has: (uuid: string) => boolean,
  *   count: () => number,
  *   values: () => string[],
- *   toggle: (uuid: string) => Promise<void>,
- *   add: (uuids: string[]) => Promise<void>,
- *   clear: () => Promise<void>,
- *   pruneVanished: () => Promise<void>,
+ *   toggle: (uuid: string, mf?: MetafolderApi) => Promise<void>,
+ *   add: (uuids: string[], mf?: MetafolderApi) => Promise<void>,
+ *   clear: (mf?: MetafolderApi) => Promise<void>,
+ *   pruneVanished: (mf?: MetafolderApi) => Promise<void>,
  * }}
+ *   Each change takes the API of the command run making it, if one does (doc
+ *   "Command transactions"), and writes through it.
  */
 export function createMultiSelect({ workspace, daemon, render = () => {} }) {
   /** @type {Set<string>} the checked uuids, in check order */
@@ -60,14 +62,15 @@ export function createMultiSelect({ workspace, daemon, render = () => {} }) {
     uuids = new Set(list);
   }
 
-  /** Publishes `list` as the new state. @param {string[]} list */
-  async function write(list) {
+  /** Publishes `list` as the new state, through `mf` when a command run
+   *  makes the change. @param {string[]} list @param {MetafolderApi} [mf] */
+  async function write(list, mf) {
     const json = JSON.stringify(list);
     pending.set(json, (pending.get(json) ?? 0) + 1);
     uuids = new Set(list);
     render();
     try {
-      await workspace.set('selected_metarecords', list);
+      await (mf?.workspace ?? workspace).set('selected_metarecords', list);
     } catch (error) {
       dropPending(json); // no echo is coming for a write that never landed
       throw error;
@@ -120,31 +123,31 @@ export function createMultiSelect({ workspace, daemon, render = () => {} }) {
     values: () => [...uuids],
 
     /** Checks one metarecord, or unchecks it when it already is. */
-    async toggle(uuid) {
+    async toggle(uuid, mf) {
       const next = [...uuids];
       const at = next.indexOf(uuid);
       if (at >= 0) next.splice(at, 1);
       else next.push(uuid);
-      await write(next);
+      await write(next, mf);
     },
 
     /** Checks these metarecords on top of what is already checked — the
      *  selection is gathered across lists, so "all" never drops earlier
      *  checks. */
-    async add(list) {
+    async add(list, mf) {
       const next = new Set(uuids);
       const before = next.size;
       for (const uuid of list) {
         if (typeof uuid === 'string') next.add(uuid);
       }
       if (next.size === before) return; // nothing new: publish nothing
-      await write([...next]);
+      await write([...next], mf);
     },
 
     /** Unchecks everything. */
-    async clear() {
+    async clear(mf) {
       if (uuids.size === 0) return; // already empty: publish nothing
-      await write([]);
+      await write([], mf);
     },
 
     /** Drops the checked metarecords that no longer exist. Nothing else is
@@ -153,7 +156,7 @@ export function createMultiSelect({ workspace, daemon, render = () => {} }) {
      *  could never be shown or unchecked again — one `uuid_in` query (a single
      *  node, one bitmap) says which of them are still
      *  there. No answer (the daemon down) keeps the selection as it is. */
-    async pruneVanished() {
+    async pruneVanished(mf) {
       const list = [...uuids];
       if (list.length === 0 || repo === null) return;
       /** @type {{results?: unknown[]}|null} */
@@ -178,7 +181,7 @@ export function createMultiSelect({ workspace, daemon, render = () => {} }) {
       );
       const kept = list.filter((uuid) => alive.has(uuid));
       if (kept.length === list.length) return;
-      await write(kept);
+      await write(kept, mf);
     },
   };
 }

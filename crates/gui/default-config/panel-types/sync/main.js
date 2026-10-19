@@ -194,14 +194,16 @@ export function mount(root, metafolder) {
     }
   }
 
-  async function doRun() {
+  /** @param {MetafolderApi} mf the API it runs through: a command's run (doc
+   *  "Command transactions"), or the panel's own for a click */
+  async function doRun(mf) {
     if (!pairOk()) return;
     if (!confirm(`Run the sync plan for ${label(repoA)} ⇄ ${label(repoB)}?`)) return;
     setBusy(true);
     setStatus('Running…');
     try {
       const report = /** @type {{ status: string, done: number, skipped: number, divergences: { subtree: string, count: number }[], warnings: string[] }} */ (
-        await sync.run(uuidOf(repoA), uuidOf(repoB))
+        await mf.sync.run(uuidOf(repoA), uuidOf(repoB))
       );
       renderRun(report);
       const summary =
@@ -213,7 +215,7 @@ export function mount(root, metafolder) {
       setStatus(summary);
       void statusBar.message(summary, statusMessageMs);
       // A run mutates both repos: nudge the other panels to refresh.
-      await workspace.set('metarecords:dirty', Date.now());
+      await mf.workspace.set('metarecords:dirty', Date.now());
     } catch (error) {
       await statusBar.error(error, 8000);
     } finally {
@@ -438,7 +440,7 @@ export function mount(root, metafolder) {
   statusBtn.addEventListener('click', () => void doStatus());
   planBtn.addEventListener('click', () => void doPlan());
   showBtn.addEventListener('click', () => void doShow());
-  runBtn.addEventListener('click', () => void doRun());
+  runBtn.addEventListener('click', () => void doRun(metafolder));
 
   async function onPairChange() {
     // Keep B different from A.
@@ -484,10 +486,10 @@ export function mount(root, metafolder) {
     await doPlan();
   }
 
-  /** @param {() => Promise<void>} action */
-  const withPair = (action) => () => {
+  /** @param {(mf: MetafolderApi) => Promise<void>} action */
+  const withPair = (action) => (/** @type {MetafolderApi} */ mf) => {
     requirePair();
-    return action();
+    return action(mf);
   };
 
   const repoArg = (/** @type {string} */ name) => ({
@@ -498,13 +500,13 @@ export function mount(root, metafolder) {
   void commands.register('sync:pair', {
     label: 'Sync: choose the two repositories',
     args: [repoArg('A'), repoArg('B')],
-    handler: choosePair,
+    handler: (_mf, a, b) => choosePair(a, b),
   });
   void commands.register('sync:status', { label: 'Sync: show the pair status', handler: withPair(doStatus) });
   void commands.register('sync:plan', {
     label: 'Sync: compute the plan (from the intents file given, else the toolbar\'s)',
     args: [{ name: 'intents', optional: true, prompt: () => 'Intents file?' }],
-    handler: planCommand,
+    handler: (_mf, intents) => planCommand(intents),
   });
   void commands.register('sync:open', { label: 'Sync: show the plan overlay', handler: withPair(doShow) });
   void commands.register('sync:run', { label: 'Sync: run the plan', handler: withPair(doRun) });

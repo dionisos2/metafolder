@@ -19,8 +19,10 @@ export function mount(root, metafolder) {
   void metafolder.workspace.get('active_repo').then(show);
   metafolder.workspace.onChange('active_repo', show);
 
+  // A handler gets the API of its run first (doc "Command transactions"):
+  // what the command does goes through it, then come its arguments.
   void metafolder.commands.register('hello:greet', {
     label: 'Hello: greet in the status bar',
-    handler: () => metafolder.statusBar.message('Hello!', 3000),
+    handler: (mf) => mf.statusBar.message('Hello!', 3000),
   });
 }

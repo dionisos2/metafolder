@@ -24,8 +24,10 @@ import { latestOnly } from '/__coalesce.js';
  *   are the rows, index-aligned with the panel's list (several when one list
  *   is shown in several layouts, e.g. a table and a grid)
  * @param {string} [spec.className] the class marking the cursor row
- * @param {(index: number) => unknown} [spec.publish] the selection's side
- *   effect, coalesced (only the final position of a burst matters)
+ * @param {(index: number, mf?: MetafolderApi) => unknown} [spec.publish] the
+ *   selection's side effect, coalesced (only the final position of a burst
+ *   matters); `mf` is the API of the command run moving the cursor, if one
+ *   does (doc "Command transactions")
  */
 export function createListCursor({ containers, className = 'cursor', publish }) {
   const propagate = publish ? latestOnly(publish) : null;
@@ -48,18 +50,21 @@ export function createListCursor({ containers, className = 'cursor', publish }) 
     }
   }
 
-  /** Highlights, reveals and publishes `index`; resolves once the publication
-   *  has caught up with this move. @param {number} index */
-  async function move(index) {
+  /** Highlights, reveals and publishes `index` — through `mf`, the API of
+   *  the command run moving the cursor, if one does; resolves once the
+   *  publication has caught up with this move.
+   *  @param {number} index @param {MetafolderApi} [mf] */
+  async function move(index, mf) {
     highlight(index);
     reveal();
-    if (propagate) await propagate(index);
+    if (propagate) await propagate(index, mf);
   }
 
   /** Publishes `index` without moving the highlight (a selection to catch
-   *  up), in the same coalescing as the moves. @param {number} index */
-  async function publishOnly(index) {
-    if (propagate) await propagate(index);
+   *  up), in the same coalescing as the moves.
+   *  @param {number} index @param {MetafolderApi} [mf] */
+  async function publishOnly(index, mf) {
+    if (propagate) await propagate(index, mf);
   }
 
   return { highlight, reveal, move, publish: publishOnly };

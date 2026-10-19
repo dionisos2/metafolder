@@ -255,7 +255,7 @@ export async function mount(root, metafolder) {
   void metafolder.commands.register('help:apply', {
     label: 'Help: search for the box text, leaving the box (stay: keep the focus)',
     args: [zoneArg, stayArg],
-    handler: (/** @type {string} */ name, /** @type {string|undefined} */ stay) => {
+    handler: (_mf, /** @type {string} */ name, /** @type {string|undefined} */ stay) => {
       checkZone(name);
       runSearch(searchInput.value);
       if (stay !== 'stay' && root.activeElement === searchInput) searchInput.blur();
@@ -264,7 +264,7 @@ export async function mount(root, metafolder) {
   void metafolder.commands.register('help:clear', {
     label: 'Help: empty the search box and focus it (stay: leave the focus)',
     args: [zoneArg, stayArg],
-    handler: (/** @type {string} */ name, /** @type {string|undefined} */ stay) => {
+    handler: (_mf, /** @type {string} */ name, /** @type {string|undefined} */ stay) => {
       checkZone(name);
       searchInput.value = '';
       runSearch('');
@@ -274,7 +274,7 @@ export async function mount(root, metafolder) {
   void metafolder.commands.register('help:focus', {
     label: 'Help: focus the search box',
     args: [zoneArg],
-    handler: (/** @type {string} */ name) => {
+    handler: (_mf, /** @type {string} */ name) => {
       checkZone(name);
       searchInput.focus();
     },

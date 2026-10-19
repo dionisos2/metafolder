@@ -6,6 +6,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
+import { withRuns } from './support/runs';
 
 const PANEL_DIR = resolvePath(process.cwd(), '../default-config/panel-types/shell');
 
@@ -62,7 +63,7 @@ async function mounted(history: Entry[], completion?: Completion) {
     },
   };
   const mod = await import('../../default-config/panel-types/shell/main.js');
-  await mod.mount(shadow, api as never);
+  await mod.mount(shadow, withRuns(api) as never);
   const line = shadow.getElementById('line') as HTMLInputElement;
   return { shadow, push: (e: unknown) => push(e), invoke, top, complete, appended, handlers, line };
 }

@@ -83,7 +83,7 @@ export function mount(root, metafolder) {
           'li',
           {
             class: [index === cursorIndex && 'cursor'],
-            onclick: () => select(index),
+            onclick: () => select(metafolder, index),
             'data-mf-uuid': row.uuid,
             ...(row.absPaths[0]
               ? {
@@ -98,7 +98,7 @@ export function mount(root, metafolder) {
             hasFile: row.absPaths.length > 0,
             hasMetarecord: true,
             open: async (what) => {
-              await select(index);
+              await select(metafolder, index);
               await commands.invoke(['panel:open', 'other', what]);
             },
           }),
@@ -121,20 +121,20 @@ export function mount(root, metafolder) {
   // cursor").
   const cursor = createListCursor({
     containers: () => [entriesList],
-    publish: async () => {
+    publish: async (_index, mf = metafolder) => {
       const row = selected();
       if (!row || !repo) return;
-      await workspace.set('selected_metarecord', { uuid: row.uuid, repo });
-      await workspace.set('selected_paths', row.absPaths);
+      await mf.workspace.set('selected_metarecord', { uuid: row.uuid, repo });
+      await mf.workspace.set('selected_paths', row.absPaths);
     },
   });
 
   /** Moves the cursor and publishes the selection so a paired detail/file panel
    *  follows (the same live-preview the metarecord list does).
-   *  @param {number} index */
-  async function select(index) {
+   *  @param {MetafolderApi} mf @param {number} index */
+  async function select(mf, index) {
     cursorIndex = Math.max(0, Math.min(index, rows.length - 1));
-    await cursor.move(cursorIndex);
+    await cursor.move(cursorIndex, mf);
   }
 
   async function load() {
@@ -195,16 +195,16 @@ export function mount(root, metafolder) {
       { value: 'time', label: 'newest first' },
       { value: 'score', label: 'best score first' },
     ],
-    onChange: (value) => void setSort(value),
+    onChange: (value) => void setSort(metafolder, value),
   });
 
-  /** @param {string} value */
-  function setSort(value) {
+  /** @param {MetafolderApi} mf @param {string} value */
+  function setSort(mf, value) {
     if (!SORTS.includes(value)) throw new Error(`unknown order: "${value}" (time / score)`);
     sort = value;
     sortSelect.setValue(sort);
     arrange();
-    return workspace.set('recent:sort', sort);
+    return mf.workspace.set('recent:sort', sort);
   }
 
   byId(root, 'refresh').addEventListener('click', () => void load());
@@ -235,7 +235,7 @@ export function mount(root, metafolder) {
         complete: () => SORTS,
       },
     ],
-    handler: (value) => setSort(value),
+    handler: (mf, value) => setSort(mf, value),
   });
   // Keybindings for this panel live in keybindings.toml (when = "recent").
 

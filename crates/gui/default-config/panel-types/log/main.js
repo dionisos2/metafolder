@@ -575,8 +575,10 @@ export async function mount(root, metafolder) {
   }
 
   /** Reverts whatever is selected: a label whole — what is nested in it
-   *  included — or one operation. */
-  async function revert() {
+   *  included — or one operation. Through `mf`: a command's run (doc "Command
+   *  transactions"), or the panel's own API for a click.
+   *  @param {MetafolderApi} mf */
+  async function revert(mf) {
     const target = revertTarget(focusKey());
     if (target === null) return;
     /** @type {RevertPlan} */
@@ -589,20 +591,21 @@ export async function mount(root, metafolder) {
       await statusBar.error(error);
       return;
     }
-    await runRevert(target, plan);
+    await runRevert(mf, target, plan);
   }
 
   /** Reverts one operation even when a label is selected: opens it down to
    *  its newest operation and asks for that, so "undo just this field" is
-   *  reachable from the keyboard as well as by clicking the row. */
-  async function revertOperation() {
+   *  reachable from the keyboard as well as by clicking the row.
+   *  @param {MetafolderApi} mf */
+  async function revertOperation(mf) {
     const key = focusKey();
     const node = key === null ? null : findNode(key);
     if (node === null) return;
-    if (node.kind === 'op') return revert();
+    if (node.kind === 'op') return revert(mf);
     if (node.ops.length === 1) {
       openTo(node.ops[0]);
-      return revert();
+      return revert(mf);
     }
     if (node.ops.length > 0) {
       openTo(node.ops[0]);
@@ -619,19 +622,20 @@ export async function mount(root, metafolder) {
   }
 
   /** The widening counterpart: reverts the label the operation under the
-   *  cursor was written in. */
-  async function revertLabel() {
+   *  cursor was written in. @param {MetafolderApi} mf */
+  async function revertLabel(mf) {
     const key = focusKey();
     const node = key === null ? null : findNode(key);
     if (node?.kind === 'op') reveal(`label:${node.op.label_id}`);
-    return revert();
+    return revert(mf);
   }
 
   /**
+   * @param {MetafolderApi} mf
    * @param {{label_id: number}|{op_ids: number[]}} target
    * @param {RevertPlan} plan
    */
-  async function runRevert(target, plan) {
+  async function runRevert(mf, target, plan) {
     if (repo === null) return;
     const ops = plan.operations ?? [];
     if (ops.length === 0) {
@@ -662,7 +666,7 @@ export async function mount(root, metafolder) {
       return;
     }
     try {
-      const result = await metafolder.log.revert(repo, target);
+      const result = await mf.log.revert(repo, target);
       const count = result.reverted_operations?.length ?? 0;
       const summary =
         result.label === null
@@ -670,7 +674,7 @@ export async function mount(root, metafolder) {
           : `Reverted ${describeTarget(target)} in label #${result.label} (${count} operation(s)).`;
       void statusBar.message([summary, ...result.notes].join(' · '), statusMessageMs);
       await refresh();
-      void commands.invoke(['metarecords:dirty']);
+      void mf.commands.invoke(['metarecords:dirty']);
     } catch (error) {
       await statusBar.error(error);
     }
@@ -705,16 +709,16 @@ export async function mount(root, metafolder) {
   // Shell builtins (they work on the active repo, no selection needed).
   byId(root, 'undo').addEventListener('click', () => void commands.invoke(['log:undo']));
   byId(root, 'redo').addEventListener('click', () => void commands.invoke(['log:redo']));
-  revertButton.addEventListener('click', () => void revert());
+  revertButton.addEventListener('click', () => void revert(metafolder));
   pruneButton.addEventListener('click', () => void prune());
 
   // Reverting: what is selected by default, or a named narrowing or widening
   // of it. The scope is an argument rather than sibling command names, so a
   // keybinding reads as what it does (`log:revert label`).
-  /** @type {Record<string, () => unknown>} */
+  /** @type {Record<string, (mf: MetafolderApi) => unknown>} */
   const REVERTS = {
-    op: () => revertOperation(),
-    label: () => revertLabel(),
+    op: (mf) => revertOperation(mf),
+    label: (mf) => revertLabel(mf),
   };
 
   void commands.register('log:revert', {
@@ -730,11 +734,11 @@ export async function mount(root, metafolder) {
     ],
     // No scope: revert exactly what the selection is — a label, or one
     // operation.
-    handler: (scope) => {
-      if (scope === undefined) return revert();
+    handler: (mf, scope) => {
+      if (scope === undefined) return revert(mf);
       const run = REVERTS[scope];
       if (!run) throw new Error(`unknown revert scope: "${scope}"`);
-      return run();
+      return run(mf);
     },
   });
 
@@ -753,7 +757,7 @@ export async function mount(root, metafolder) {
         complete: () => Object.keys(LOG_FLAGS),
       },
     ],
-    handler: (flag) => {
+    handler: (_mf, flag) => {
       const run = LOG_FLAGS[flag];
       if (!run) throw new Error(`unknown flag: "${flag ?? ''}"`);
       return run();
@@ -775,13 +779,13 @@ export async function mount(root, metafolder) {
   metafolder.provide({
     index: () => visible().findIndex((row) => row.key === selection),
     count: () => visible().length,
-    select: (index) => {
+    select: (_mf, index) => {
       const row = visible()[index];
       if (row) select(row.key);
     },
     // `cursor:descend` goes into a label or an operation (and so does a
     // walk, `cursor:find log walk`, label after label).
-    descend: (index) => descend(visible()[index]?.key ?? null),
+    descend: (_mf, index) => descend(visible()[index]?.key ?? null),
     entries: () =>
       visible().map(({ node }) => {
         if (node.kind === 'op') return { name: `op ${node.op.id}`, label: `op ${node.op.id}` };

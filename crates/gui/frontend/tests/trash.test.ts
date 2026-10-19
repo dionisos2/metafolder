@@ -8,6 +8,7 @@ import { cursor, findCandidates } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { mount } from '../../default-config/panel-types/trash/main.js';
+import { withRuns } from './support/runs';
 
 /** The shell's mount path: index.html body (minus scripts/styles) into a Shadow root. */
 function shadowForTrash(): ShadowRoot {
@@ -96,7 +97,7 @@ describe('trash panel actions', () => {
   test('mount lists entries and renders one row per entry', async () => {
     const { api, trash } = stub();
     const shadow = shadowForTrash();
-    mount(shadow, api as never);
+    mount(shadow, withRuns(api) as never);
     // `whenVisible` fired start(), but its load() is async: let it settle.
     await new Promise((r) => setTimeout(r, 0));
     expect(trash.list).toHaveBeenCalledWith('repo-1');
@@ -112,7 +113,7 @@ describe('trash panel actions', () => {
   test('a double click on an entry restores nothing', async () => {
     const { api, trash } = stub();
     const shadow = shadowForTrash();
-    mount(shadow, api as never);
+    mount(shadow, withRuns(api) as never);
     await new Promise((r) => setTimeout(r, 0));
     const row = () => shadow.querySelector('#entries > li') as HTMLElement;
     row().click();
@@ -124,7 +125,7 @@ describe('trash panel actions', () => {
 
   test('restore, delete and empty drive the trash API', async () => {
     const { api, handlers, trash, workspace, statusBar } = stub();
-    mount(shadowForTrash(), api as never);
+    mount(shadowForTrash(), withRuns(api) as never);
     // mount is synchronous, but its whenVisible→load() is async: let it settle
     // so the entries are present before the cursor/restore commands run.
     await new Promise((r) => setTimeout(r, 0));
@@ -148,7 +149,7 @@ describe('trash panel actions', () => {
   test('cursor:find completes over the entries and moves the cursor', async () => {
     const { api } = stub();
     const shadow = shadowForTrash();
-    mount(shadow, api as never);
+    mount(shadow, withRuns(api) as never);
     await new Promise((r) => setTimeout(r, 0));
 
     // Each candidate carries its original path: two entries can share a name,
@@ -170,7 +171,7 @@ describe('trash panel actions', () => {
   test('moving the cursor keeps the rows', async () => {
     const { api } = stub();
     const shadow = shadowForTrash();
-    mount(shadow, api as never);
+    mount(shadow, withRuns(api) as never);
     await new Promise((r) => setTimeout(r, 0));
     const before = [...shadow.querySelectorAll('#entries > li')];
     await cursor(api.provide, 'next');
@@ -182,7 +183,7 @@ describe('trash panel actions', () => {
   test('destructive actions are cancelled when unconfirmed', async () => {
     vi.stubGlobal('confirm', vi.fn(() => false));
     const { api, handlers, trash } = stub();
-    mount(shadowForTrash(), api as never);
+    mount(shadowForTrash(), withRuns(api) as never);
     await cursor(api.provide, 'next');
     await handlers.get('trash:delete')!();
     await handlers.get('trash:empty')!();

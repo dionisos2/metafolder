@@ -6,6 +6,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
+import { withRuns } from './support/runs';
 
 const PANEL_DIR = resolvePath(process.cwd(), '../default-config/panel-types/sync');
 
@@ -71,7 +72,7 @@ async function mountPanel() {
     statusBar,
   };
   const mod = await import('../../default-config/panel-types/sync/main.js');
-  mod.mount(shadow, api as never);
+  mod.mount(shadow, withRuns(api) as never);
   await new Promise((r) => setTimeout(r, 0)); // let the deferred start settle
   const invoke = async (name: string, ...args: string[]) => {
     const h = handlers.get(name);

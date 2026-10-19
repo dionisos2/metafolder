@@ -7,6 +7,8 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { withRuns } from './support/runs';
+import { provided as fromCursor } from './support/cursor';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/file-manager');
 
@@ -126,14 +128,14 @@ async function mount(repo: string | null) {
   const s = stub(repo);
   const root = shadowRoot();
   const mod = await import('../../default-config/panel-types/file-manager/main.js');
-  await mod.mount(root, s.api as never);
+  await mod.mount(root, withRuns(s.api) as never);
   await new Promise((r) => setTimeout(r, 0));
   return { ...s, root };
 }
 
 /** What the panel handed `metafolder.provide`, merged. */
-function provided(api: { provide: { mock: { calls: unknown[][] } } }) {
-  return Object.assign({}, ...api.provide.mock.calls.map((c) => c[0])) as {
+function provided(api: { provide: { mock: { calls: unknown[][]; contexts: unknown[] } } }) {
+  return fromCursor(api.provide) as unknown as {
     refresh: () => Promise<void>;
     descend: (index: number) => Promise<boolean>;
     entries: () => { name: string; index: number }[];
@@ -174,7 +176,7 @@ describe('file-manager records the folders it goes into', () => {
       path.includes('/tree/resolve-path') ? { uuid: null } : [],
     );
     const mod = await import('../../default-config/panel-types/file-manager/main.js');
-    await mod.mount(shadowRoot(), s.api as never);
+    await mod.mount(shadowRoot(), withRuns(s.api) as never);
     await new Promise((r) => setTimeout(r, 0));
     expect(s.api.recent.touch).not.toHaveBeenCalled();
   });

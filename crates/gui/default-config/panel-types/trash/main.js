@@ -99,12 +99,15 @@ export function mount(root, metafolder) {
     render();
   }
 
-  async function doRestore() {
+  // The actions take the API they run through: a command's run (doc "Command
+  // transactions"), or the panel's own for a click.
+  /** @param {MetafolderApi} mf */
+  async function doRestore(mf) {
     const entry = selected();
     if (!repo || !entry) return;
     let restored;
     try {
-      restored = await trash.restore(repo, entry.id);
+      restored = await mf.trash.restore(repo, entry.id);
     } catch (error) {
       await statusBar.error(error, 8000);
       return;
@@ -112,16 +115,17 @@ export function mount(root, metafolder) {
     void statusBar.message(`Restored ${restored}`, statusMessageMs);
     await load();
     // A restore re-links the metarecord and brings the file back: refresh lists.
-    await workspace.set('metarecords:dirty', Date.now());
+    await mf.workspace.set('metarecords:dirty', Date.now());
   }
 
-  async function doDelete() {
+  /** @param {MetafolderApi} mf */
+  async function doDelete(mf) {
     const entry = selected();
     if (!repo || !entry) return;
     const what = entry.is_dir ? `${entry.original_name}/` : entry.original_name;
     if (!confirm(`Permanently delete "${what}" from the trash? This cannot be undone.`)) return;
     try {
-      await trash.remove(repo, entry.id);
+      await mf.trash.remove(repo, entry.id);
     } catch (error) {
       await statusBar.error(error, 8000);
       return;
@@ -130,13 +134,14 @@ export function mount(root, metafolder) {
     await load();
   }
 
-  async function doEmpty() {
+  /** @param {MetafolderApi} mf */
+  async function doEmpty(mf) {
     if (!repo || entries.length === 0) return;
     if (!confirm(`Permanently delete all ${entries.length} trash entries? This cannot be undone.`))
       return;
     let count;
     try {
-      count = await trash.empty(repo);
+      count = await mf.trash.empty(repo);
     } catch (error) {
       await statusBar.error(error, 8000);
       return;
@@ -151,29 +156,29 @@ export function mount(root, metafolder) {
     select(index);
     metafolder.contextMenu(event, [
       { header: 'File' },
-      { label: 'Restore', action: () => void doRestore() },
-      { label: 'Delete permanently', action: () => void doDelete() },
+      { label: 'Restore', action: () => void doRestore(metafolder) },
+      { label: 'Delete permanently', action: () => void doDelete(metafolder) },
     ]);
   }
 
   byId(root, 'refresh').addEventListener('click', () => void load());
-  restoreButton.addEventListener('click', () => void doRestore());
-  deleteButton.addEventListener('click', () => void doDelete());
-  emptyButton.addEventListener('click', () => void doEmpty());
+  restoreButton.addEventListener('click', () => void doRestore(metafolder));
+  deleteButton.addEventListener('click', () => void doDelete(metafolder));
+  emptyButton.addEventListener('click', () => void doEmpty(metafolder));
 
   // Read again on `view:refresh` (doc "Generic panel commands").
   metafolder.provide({ refresh: () => load() });
   void commands.register('trash:restore', {
     label: 'Trash: restore the selected entry',
-    handler: () => doRestore(),
+    handler: (mf) => doRestore(mf),
   });
   void commands.register('trash:delete', {
     label: 'Trash: permanently delete the selected entry',
-    handler: () => doDelete(),
+    handler: (mf) => doDelete(mf),
   });
   void commands.register('trash:empty', {
     label: 'Trash: permanently delete every entry',
-    handler: () => doEmpty(),
+    handler: (mf) => doEmpty(mf),
   });
   // The cursor, for the generic commands (doc "Generic panel commands").
   // Two entries can share a name (the same file trashed twice), so each find
@@ -182,7 +187,7 @@ export function mount(root, metafolder) {
   metafolder.provide({
     index: () => cursorIndex,
     count: () => entries.length,
-    select,
+    select: (_mf, index) => select(index),
     entries: () =>
       entries.map((entry) => {
         const name = entry.original_name || entry.id;

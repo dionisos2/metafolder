@@ -9,6 +9,7 @@ import { sameNodes } from './support/nodes';
 import { generic } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
+import { withRuns } from './support/runs';
 
 const PANEL_DIR = resolvePath(process.cwd(), '../default-config/panel-types/duplicates');
 
@@ -168,7 +169,7 @@ async function mountPanel(groups: unknown[], members: Member[], options: Options
   const { api, statusBar, setVar, trashPath } = stubApi(handlers, calls, groups, members, options);
   const mod = await import('../../default-config/panel-types/duplicates/main.js');
   // `mount` is synchronous here and returns the panel's cleanup, not a promise.
-  mod.mount(shadow, api as never);
+  mod.mount(shadow, withRuns(api) as never);
   await new Promise((r) => setTimeout(r, 0)); // let the deferred start settle
   const invoke = async (name: string) => {
     // A generic command runs on what the panel provided (doc "Generic panel commands").

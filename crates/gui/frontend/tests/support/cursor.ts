@@ -1,14 +1,25 @@
 // Drives a mounted panel's cursor the way the shell does (doc "Generic panel
 // commands"): the panel's stub `metafolder.provide` is a `vi.fn()`, and the
-// generic command runs on what the panel handed it.
+// generic command runs on what the panel handed it — each function given first
+// the API of the run, as the shell does (doc "Command transactions"). Here
+// that is the stub API the panel provided it through: the mock's `this`.
 
-import { type PanelFunctions, runGeneric } from '../../src/lib/panelFunctions';
+import {
+  bindFunctions,
+  type PanelFunctions,
+  type ProvidedFunctions,
+  runGeneric,
+} from '../../src/lib/panelFunctions';
 
-type ProvideMock = { mock: { calls: unknown[][] } };
+type ProvideMock = { mock: { calls: unknown[][]; contexts: unknown[] } };
 
-/** Everything the panel provided, later calls overriding earlier ones. */
+/** Everything the panel provided, later calls overriding earlier ones, bound
+ *  to the API it was provided through. */
 export function provided(provide: ProvideMock): PanelFunctions {
-  return Object.assign({}, ...provide.mock.calls.map((call) => call[0] as PanelFunctions));
+  const bound = provide.mock.calls.map((call, i) =>
+    bindFunctions(call[0] as ProvidedFunctions, provide.mock.contexts[i] as Metafolder.Api),
+  );
+  return Object.assign({}, ...bound) as PanelFunctions;
 }
 
 /**

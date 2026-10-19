@@ -143,7 +143,7 @@ export async function mount(root, metafolder) {
   void commands.register('shell:focus', {
     label: 'Shell: focus the command line (line)',
     args: [{ name: 'zone', prompt: () => 'Which zone to focus? (line)', complete: () => ['line'] }],
-    handler: async (/** @type {string} */ zone) => {
+    handler: async (_mf, /** @type {string} */ zone) => {
       if (zone !== 'line') throw new Error(`unknown zone: "${zone ?? ''}" (expected line)`);
       line.focus();
     },

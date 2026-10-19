@@ -5,7 +5,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { registerZoneCommands } from '../../default-config/panel-types/metarecord-list/zone-commands.js';
 
-type Spec = { handler: (...args: string[]) => Promise<unknown> };
+type Spec = { handler: (mf: unknown, ...args: string[]) => Promise<unknown> };
 
 function setup() {
   const registered = new Map<string, Spec>();
@@ -31,7 +31,9 @@ function setup() {
     zones: { simplified: zone },
     clearAll,
   });
-  const run = (name: string, ...args: string[]) => registered.get(name)!.handler(...args);
+  // The API of the run, which the zone functions are handed.
+  const mf = {};
+  const run = (name: string, ...args: string[]) => registered.get(name)!.handler(mf, ...args);
   return { run, zone, input, root, clearAll };
 }
 

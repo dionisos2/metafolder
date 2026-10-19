@@ -134,8 +134,9 @@ export async function mount(root, metafolder) {
   // "g l"): no form to fill
   // in — the folder picker opens straight away and the pick is loaded. A
   // failure has no form to land in, so it is said in the status bar.
-  /** @param {string} [mode] `in-memory`, or nothing for an ordinary load */
-  async function loadPicked(mode) {
+  /** @param {MetafolderApi} mf the command's run (doc "Command transactions")
+   *  @param {string} [mode] `in-memory`, or nothing for an ordinary load */
+  async function loadPicked(mf, mode) {
     if (mode !== undefined && mode !== 'in-memory') {
       throw new Error(`unknown mode: "${mode}" (expected in-memory)`);
     }
@@ -148,13 +149,13 @@ export async function mount(root, metafolder) {
       prompt:
         'Highlight the repository folder (\u201c.\u201d = current directory) \u2014 ' +
         'Ctrl+Enter to confirm, Ctrl+Esc to cancel',
-    });
+    }, mf);
     if (!path) return; // cancelled
     try {
       const loaded = /** @type {{repo_uuid: string}} */ (
         await daemon.call('POST', '/repos/load', loadBody(path, mode === 'in-memory'))
       );
-      await onCreated(loadForm, loaded.repo_uuid);
+      await onCreated(mf, loadForm, loaded.repo_uuid);
     } catch (error) {
       await statusBar.error(messageOf(error), statusErrorMs);
     }
@@ -592,15 +593,16 @@ export async function mount(root, metafolder) {
   }
 
   // Shared post-creation flow: hide the form, refresh the list, and either adopt
-  // the new repo (if none is active) or announce it.
-  /** @param {HTMLElement} form @param {string} repoUuid */
-  async function onCreated(form, repoUuid) {
+  // the new repo (if none is active) or announce it — through `mf`, a
+  // command's run or the panel's own API for a form.
+  /** @param {MetafolderApi} mf @param {HTMLElement} form @param {string} repoUuid */
+  async function onCreated(mf, form, repoUuid) {
     toggleForm(form, false);
     await refresh();
-    const current = await workspace.get('active_repo');
+    const current = await mf.workspace.get('active_repo');
     if (current === null) {
-      await workspace.adoptRepo(repoUuid);
-      await commands.invoke(['panel:open', 'here', 'metarecord-list']);
+      await mf.workspace.adoptRepo(repoUuid);
+      await mf.commands.invoke(['panel:open', 'here', 'metarecord-list']);
     } else {
       void statusBar.message(
         `Repository ready: ${repoUuid.slice(0, 8)}… (open it from the list)`,
@@ -619,7 +621,7 @@ export async function mount(root, metafolder) {
       const created = /** @type {{repo_uuid: string}} */ (
         await daemon.call('POST', path, payload)
       );
-      await onCreated(form, created.repo_uuid);
+      await onCreated(metafolder, form, created.repo_uuid);
     } catch (error) {
       errorElement.textContent = messageOf(error);
     }
@@ -636,7 +638,7 @@ export async function mount(root, metafolder) {
     errorElement.textContent = '';
     try {
       const repoUuid = await daemon.initRepo(opts);
-      await onCreated(form, repoUuid);
+      await onCreated(metafolder, form, repoUuid);
     } catch (error) {
       errorElement.textContent = messageOf(error);
     }
@@ -746,10 +748,10 @@ export async function mount(root, metafolder) {
       { name: 'root', prompt: () => 'Create a repository in which folder?' },
       { name: 'name', optional: true, prompt: () => 'Name (empty: the folder name):' },
     ],
-    handler: async (root_, name) => {
+    handler: async (mf, root_, name) => {
       const trimmed = (name ?? '').trim();
       const opts = trimmed ? { root: root_.trim(), name: trimmed } : { root: root_.trim() };
-      await onCreated(initForm, await daemon.initRepo(opts));
+      await onCreated(mf, initForm, await mf.daemon.initRepo(opts));
     },
   });
   void commands.register('repos:load', {
@@ -796,7 +798,7 @@ export async function mount(root, metafolder) {
         complete: async () => (await loadedRepos()).map((r) => r.name),
       },
     ],
-    handler: async (name) => {
+    handler: async (_mf, name) => {
       const repos = await loadedRepos();
       const repo = repos.find((r) => r.name === name.trim());
       if (!repo) throw new Error(`no loaded repository named "${name}"`);
@@ -813,7 +815,7 @@ export async function mount(root, metafolder) {
         complete: async () => (await stoppableTasks()).map(taskChoice),
       },
     ],
-    handler: async (choice) => {
+    handler: async (_mf, choice) => {
       const tasks = await stoppableTasks();
       const task = tasks.find((t) => taskChoice(t) === choice.trim());
       if (!task) throw new Error(`no stoppable task matching "${choice}"`);

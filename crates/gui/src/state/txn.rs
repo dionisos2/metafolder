@@ -1,7 +1,9 @@
 //! Command transactions over the workspace variables (doc "Command
 //! transactions"): a command reads a snapshot of each workspace it reads, plus
 //! its own writes, and its writes are held until it flushes or ends — then
-//! they reach the workspaces all at once.
+//! they reach the workspaces all at once. A transaction that has ended is no
+//! transaction any more: work a command set off and did not wait for, still
+//! holding its id, reads and writes the workspaces directly.
 
 use super::workspace::Vars;
 use super::GuiState;
@@ -31,7 +33,7 @@ impl GuiState {
 
     /// `get_var` within transaction `txn`.
     pub fn txn_get_var(&self, txn: u64, ws_id: &str, key: &str) -> Result<Value, String> {
-        let view = self.txn_view(txn, ws_id)?;
+        let Some(view) = self.txn_view(txn, ws_id)? else { return self.get_var(ws_id, key) };
         if key == "active_repo" {
             return Ok(view.active_repo.map(Value::from).unwrap_or(Value::Null));
         }
@@ -43,7 +45,7 @@ impl GuiState {
 
     /// `vars` within transaction `txn`.
     pub fn txn_vars(&self, txn: u64, ws_id: &str) -> Result<Map<String, Value>, String> {
-        let view = self.txn_view(txn, ws_id)?;
+        let Some(view) = self.txn_view(txn, ws_id)? else { return self.vars(ws_id) };
         let mut vars: Map<String, Value> =
             view.snapshot.iter().map(|(key, value)| (key.clone(), value.clone())).collect();
         vars.extend(view.written);
@@ -61,7 +63,10 @@ impl GuiState {
         }
         self.lock().workspace(ws_id)?;
         let mut txns = self.txns.lock_recover();
-        let txn = open(&mut txns, txn)?;
+        let Some(txn) = self.open(&mut txns, txn)? else {
+            drop(txns);
+            return self.send_vars(ws_id, vars);
+        };
         let index = match txn.writes.iter().position(|(ws, _)| ws == ws_id) {
             Some(index) => index,
             None => {
@@ -84,7 +89,7 @@ impl GuiState {
     pub fn txn_flush(&self, txn: u64) -> Result<bool, String> {
         let writes = {
             let mut txns = self.txns.lock_recover();
-            let txn = open(&mut txns, txn)?;
+            let Some(txn) = self.open(&mut txns, txn)? else { return Ok(false) };
             txn.snapshots.clear();
             std::mem::take(&mut txn.writes)
         };
@@ -93,13 +98,17 @@ impl GuiState {
 
     /// Delivers what `txn` wrote and closes it.
     pub fn txn_end(&self, txn: u64) -> Result<bool, String> {
-        let txn = self.txns.lock_recover().remove(&txn).ok_or_else(|| unknown(txn))?;
-        Ok(self.deliver(txn.writes))
+        let removed = self.txns.lock_recover().remove(&txn);
+        match removed {
+            Some(txn) => Ok(self.deliver(txn.writes)),
+            None => self.ended(txn).map(|()| false),
+        }
     }
 
     /// What `txn` reads of `ws_id`: its snapshot (taken now if this is the
     /// first read), its own writes there, and the workspace's repository.
-    fn txn_view(&self, txn: u64, ws_id: &str) -> Result<View, String> {
+    /// None when `txn` has ended.
+    fn txn_view(&self, txn: u64, ws_id: &str) -> Result<Option<View>, String> {
         // The live variables, should this be the first read: a pointer copy.
         let (live, active_repo) = {
             let inner = self.lock();
@@ -107,7 +116,7 @@ impl GuiState {
             (ws.vars.clone(), ws.active_repo.clone())
         };
         let mut txns = self.txns.lock_recover();
-        let txn = open(&mut txns, txn)?;
+        let Some(txn) = self.open(&mut txns, txn)? else { return Ok(None) };
         let snapshot = txn.snapshots.entry(ws_id.to_string()).or_insert(live).clone();
         let written = txn
             .writes
@@ -115,7 +124,29 @@ impl GuiState {
             .find(|(ws, _)| ws == ws_id)
             .map(|(_, written)| written.clone())
             .unwrap_or_default();
-        Ok(View { snapshot, written, active_repo })
+        Ok(Some(View { snapshot, written, active_repo }))
+    }
+
+    /// Transaction `txn` while it is open; None once it has ended.
+    fn open<'a>(
+        &self,
+        txns: &'a mut HashMap<u64, Txn>,
+        txn: u64,
+    ) -> Result<Option<&'a mut Txn>, String> {
+        match txns.get_mut(&txn) {
+            Some(open) => Ok(Some(open)),
+            None => self.ended(txn).map(|()| None),
+        }
+    }
+
+    /// Ok when `txn` was begun (and, not being open, has ended); an error for
+    /// an id never handed out.
+    fn ended(&self, txn: u64) -> Result<(), String> {
+        if txn < self.next_txn.load(Ordering::Relaxed) {
+            Ok(())
+        } else {
+            Err(format!("unknown transaction: {txn} (never begun)"))
+        }
     }
 
     /// Writes `writes` into the workspaces, every one before any is announced.
@@ -144,14 +175,6 @@ struct View {
     snapshot: Vars,
     written: Vec<(String, Value)>,
     active_repo: Option<String>,
-}
-
-fn open(txns: &mut HashMap<u64, Txn>, txn: u64) -> Result<&mut Txn, String> {
-    txns.get_mut(&txn).ok_or_else(|| unknown(txn))
-}
-
-fn unknown(txn: u64) -> String {
-    format!("unknown transaction: {txn} (ended, or never begun)")
 }
 
 #[cfg(test)]
@@ -313,14 +336,35 @@ mod tests {
     }
 
     #[test]
-    fn test_txn_ended_or_unknown_is_an_error() {
+    fn test_txn_ended_acts_directly() {
+        // Work a command set off and did not wait for still holds its
+        // transaction when it runs: it reads and writes as with none.
+        let (notifier, state) = state();
+        state.set_var("ws-1", "a", json!(1)).unwrap();
+        let txn = state.txn_begin();
+        state.txn_end(txn).unwrap();
+        notifier.clear();
+        assert_eq!(state.txn_get_var(txn, "ws-1", "a").unwrap(), json!(1));
+        state.txn_send(txn, "ws-1", vars(&[("b", json!(2))])).unwrap();
+        assert_eq!(state.get_var("ws-1", "b").unwrap(), json!(2));
+        assert_eq!(changed(&notifier).len(), 1);
+        assert_eq!(state.txn_vars(txn, "ws-1").unwrap(), state.vars("ws-1").unwrap());
+        assert!(!state.txn_flush(txn).unwrap());
+        assert!(!state.txn_end(txn).unwrap());
+        // Still refused as a direct write would be.
+        assert!(state.txn_send(txn, "ws-1", vars(&[("active_repo", json!("r"))])).is_err());
+    }
+
+    #[test]
+    fn test_txn_never_begun_is_an_error() {
         let (_notifier, state) = state();
         let txn = state.txn_begin();
         assert_ne!(state.txn_begin(), txn);
-        state.txn_end(txn).unwrap();
-        assert!(state.txn_get_var(txn, "ws-1", "a").is_err());
-        assert!(state.txn_send(txn, "ws-1", vars(&[("a", json!(1))])).is_err());
-        assert!(state.txn_flush(txn).is_err());
-        assert!(state.txn_end(txn).is_err());
+        let never = txn + 100;
+        assert!(state.txn_get_var(never, "ws-1", "a").is_err());
+        assert!(state.txn_vars(never, "ws-1").is_err());
+        assert!(state.txn_send(never, "ws-1", vars(&[("a", json!(1))])).is_err());
+        assert!(state.txn_flush(never).is_err());
+        assert!(state.txn_end(never).is_err());
     }
 }

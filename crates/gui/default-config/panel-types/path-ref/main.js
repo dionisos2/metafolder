@@ -78,12 +78,12 @@ export async function mount(root, metafolder) {
   const fieldSelect = createSelect(byId(root, 'field'), {
     value: field,
     options: [{ value: field }],
-    onChange: (v) => void setField(v),
+    onChange: (v) => void setField(metafolder, v),
   });
   const refFieldSelect = createSelect(byId(root, 'ref-field'), {
     value: refField,
     options: [{ value: refField }],
-    onChange: (v) => void setRefField(v),
+    onChange: (v) => void setRefField(metafolder, v),
   });
   const scopeSelect = createSelect(byId(root, 'scope'), {
     value: scope,
@@ -139,15 +139,16 @@ export async function mount(root, metafolder) {
   }
 
   /** Switches the explored forest to `name` and reloads from its roots. Shared
-   *  by the drop-down's onChange and the `path-ref:set field` command.
-   *  @param {string} name */
-  async function setField(name) {
+   *  by the drop-down's onChange and the `path-ref:set field` command, each
+   *  passing the API it runs through (doc "Command transactions").
+   *  @param {MetafolderApi} mf @param {string} name */
+  async function setField(mf, name) {
     if (name === field) return;
     field = name;
     stack = [];
     fieldSelect.setValue(name); // mirror the command into the drop-down
     renderFieldType();
-    await workspace.set('path-ref:field', name);
+    await mf.workspace.set('path-ref:field', name);
     renderQueryPreview();
     await fetchChildren(true);
   }
@@ -186,12 +187,12 @@ export async function mount(root, metafolder) {
     return names;
   }
 
-  /** @param {string} name */
-  async function setRefField(name) {
+  /** @param {MetafolderApi} mf @param {string} name */
+  async function setRefField(mf, name) {
     if (name === refField) return;
     refField = name;
     refFieldSelect.setValue(name);
-    await workspace.set('path-ref:ref-field', name);
+    await mf.workspace.set('path-ref:ref-field', name);
     renderQueryPreview();
   }
 
@@ -223,8 +224,8 @@ export async function mount(root, metafolder) {
   /** Runs the query in metarecord-list, at the target — the *other* slot by
    *  default: the tree stays visible so the next node can be asked about
    *  straight away, the pairing the ref-list panel used to provide.
-   *  @param {string} where `here`, `other` or `new` */
-  async function listRefs(where = 'other') {
+   *  @param {MetafolderApi} mf @param {string} where `here`, `other` or `new` */
+  async function listRefs(mf, where = 'other') {
     if (selectedPath() === null) {
       await statusBar.message('select a node first');
       return;
@@ -232,14 +233,14 @@ export async function mount(root, metafolder) {
     const dsl = currentQueryDsl();
     // The list's query variables are its state (doc "Cross-panel selection"):
     // the normal zone, shown and frozen, so the query stays visible.
-    await metafolder.atTarget(where, async (mf) => {
+    await mf.atTarget(where, async (there) => {
       // At once (`setMany`): the list follows them together.
-      await mf.workspace.setMany({
+      await there.workspace.setMany({
         'metarecord-list:normal-query': dsl,
         'metarecord-list:normal-shown': true,
         'metarecord-list:normal-frozen': true,
       });
-      await mf.commands.invoke(['panel:open', 'here', 'metarecord-list']);
+      await there.commands.invoke(['panel:open', 'here', 'metarecord-list']);
     });
   }
 
@@ -258,8 +259,8 @@ export async function mount(root, metafolder) {
    *  creates a record carrying only its position. The new element joins the
    *  *displayed* list — its parent is the current node, not the cursor row —
    *  and the cursor lands on it.
-   *  @param {string} schemaType @param {string} name */
-  async function addNode(schemaType, name) {
+   *  @param {MetafolderApi} mf @param {string} schemaType @param {string} name */
+  async function addNode(mf, schemaType, name) {
     const r = repo;
     if (r === null) throw new Error('no active repository');
     const leaf = (name ?? '').trim();
@@ -294,7 +295,7 @@ export async function mount(root, metafolder) {
     pendingSelectUuid = created.uuid;
     void statusBar.message(`Element created: ${leaf}`);
     // The `metarecords:dirty` subscribers (this panel included) reload.
-    await workspace.set('metarecords:dirty', Date.now());
+    await mf.workspace.set('metarecords:dirty', Date.now());
   }
 
   // ── Navigation ──────────────────────────────────────────────────────────
@@ -360,7 +361,7 @@ export async function mount(root, metafolder) {
         const wanted = pendingSelectUuid;
         pendingSelectUuid = null;
         const index = children.findIndex((c) => c.uuid === wanted);
-        if (index >= 0) await select(index);
+        if (index >= 0) await select(metafolder, index);
       }
     } finally {
       loading = false;
@@ -412,21 +413,23 @@ export async function mount(root, metafolder) {
   // cursor").
   const cursor = createListCursor({
     containers: () => [entriesList],
-    publish: async () => {
+    publish: async (_index, mf = metafolder) => {
       const child = children[cursorIndex];
       if (!child) return;
       // Publish the path in the daemon's convention (see treeRefPath).
       const path = treeRefPath([...stack.map((c) => c.name), child.name]);
-      await workspace.set('selected_metarecord', { uuid: child.uuid, repo });
-      await workspace.set('selected_path_ref', { repo, field, uuid: child.uuid, path });
+      await mf.workspace.set('selected_metarecord', { uuid: child.uuid, repo });
+      await mf.workspace.set('selected_path_ref', { repo, field, uuid: child.uuid, path });
       renderQueryPreview();
     },
   });
 
-  /** @param {number} index */
-  async function select(index) {
+  /** Moves the cursor, publishing through `mf` — a command's run (doc
+   *  "Command transactions"), or the panel's own API for a click.
+   *  @param {MetafolderApi} mf @param {number} index */
+  async function select(mf, index) {
     cursorIndex = Math.max(0, Math.min(index, children.length - 1));
-    await cursor.move(cursorIndex);
+    await cursor.move(cursorIndex, mf);
   }
 
   // ── Rendering ─────────────────────────────────────────────────────────────
@@ -475,7 +478,7 @@ export async function mount(root, metafolder) {
           'li',
           {
             class: [index === cursorIndex && 'cursor'],
-            onclick: () => select(index),
+            onclick: () => select(metafolder, index),
             ...fileRowAttrs(child),
           },
           // doc "Opening a row"
@@ -532,14 +535,14 @@ export async function mount(root, metafolder) {
     entries: () => children.map((child) => ({ name: nodeLabel(child) })),
     // `cursor:descend` goes into any node; `cursor:find path-ref walk` goes
     // into a node that has children, and selects a leaf instead, like a file.
-    descend,
-    leaf,
+    descend: (_mf, index) => descend(index),
+    leaf: (_mf, index) => leaf(index),
   });
 
   // Which forest the explorer browses, and which Ref field it follows back:
   // two view settings, so one `set` command names the setting as its first
   // argument and the value as its second.
-  /** @type {Record<string, {prompt: string, initial?: () => string, complete: () => string[]|Promise<string[]>, apply: (v: string) => unknown}>} */
+  /** @type {Record<string, {prompt: string, initial?: () => string, complete: () => string[]|Promise<string[]>, apply: (mf: MetafolderApi, v: string) => unknown}>} */
   const SETTINGS = {
     field: {
       prompt: 'tree_ref or hierarchy_ref field to explore?',
@@ -547,13 +550,13 @@ export async function mount(root, metafolder) {
       // another forest, so a pre-fill would only have to be erased first (the
       // drop-down already shows which field is current).
       complete: () => treeRefFieldNames(),
-      apply: (name) => setField(name.trim()),
+      apply: (mf, name) => setField(mf, name.trim()),
     },
     'ref-field': {
       prompt: 'Ref field to follow back into the tree?',
       initial: () => refField,
       complete: () => refFieldNames(),
-      apply: (name) => setRefField(name.trim()),
+      apply: (mf, name) => setRefField(mf, name.trim()),
     },
   };
 
@@ -572,19 +575,19 @@ export async function mount(root, metafolder) {
         complete: (_partial, p) => SETTINGS[p[0]]?.complete() ?? [],
       },
     ],
-    handler: (setting, value) => {
+    handler: (mf, setting, value) => {
       const found = SETTINGS[setting];
       if (!found) throw new Error(`unknown setting: "${setting ?? ''}"`);
-      return found.apply(value);
+      return found.apply(mf, value);
     },
   });
 
   void commands.register('path-ref:toggle-scope', {
     label: 'Path-ref explorer: toggle the scope (the exact node ⇄ its whole subtree)',
-    handler: () => {
+    handler: async (mf) => {
       scope = scope === 'subtree' ? 'exact' : 'subtree';
       scopeSelect.setValue(scope);
-      void workspace.set('path-ref:scope', scope);
+      await mf.workspace.set('path-ref:scope', scope);
       renderQueryPreview();
     },
   });
@@ -592,7 +595,7 @@ export async function mount(root, metafolder) {
   void commands.register('path-ref:list-refs', {
     label: 'Path-ref explorer: list the metarecords pointing at the selected node (here / other / new)',
     args: [whereArg('other')],
-    handler: (where) => listRefs(where),
+    handler: (mf, where) => listRefs(mf, where),
   });
 
   // Adding an element to the forest (doc "path-ref panel"), on the
@@ -621,7 +624,7 @@ export async function mount(root, metafolder) {
         },
       },
     ],
-    handler: (schema, name) => addNode(schema, name),
+    handler: (mf, schema, name) => addNode(mf, schema, name),
   });
 
   // Keybindings for this panel live in keybindings.toml (when = "path-ref").
@@ -651,7 +654,7 @@ export async function mount(root, metafolder) {
     const index = liIndexFromEvent(event);
     // Make the clicked node the selection so `pick:confirm` and "Open in panel
     // metarecord-detail" read its uuid, not whatever the cursor last sat on.
-    if (index >= 0 && index !== cursorIndex) void select(index);
+    if (index >= 0 && index !== cursorIndex) void select(metafolder, index);
     const node = children[index >= 0 ? index : cursorIndex];
     /** @type {Metafolder.MenuItem[]} */
     const items = [];
@@ -675,7 +678,7 @@ export async function mount(root, metafolder) {
             ...(picking
               ? [{ label: pickLabel, action: () => void commands.invoke(['pick:confirm']) }]
               : []),
-            { label: listLabel, action: () => void listRefs('other') },
+            { label: listLabel, action: () => void listRefs(metafolder, 'other') },
           ],
         }),
       );

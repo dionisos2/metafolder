@@ -11,6 +11,7 @@ import { cursor } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import shipped from '../../default-config/commands.js';
+import { withRuns } from './support/runs';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/file-manager');
 
@@ -106,7 +107,7 @@ function stub(repo: string | null, vars: Record<string, unknown>, repoRoot = '/r
 
 async function mount(s: ReturnType<typeof stub>) {
   const mod = await import('../../default-config/panel-types/file-manager/main.js');
-  await mod.mount(s.root, s.api as never);
+  await mod.mount(s.root, withRuns(s.api) as never);
   await new Promise((r) => setTimeout(r, 0)); // let the deferred start settle
 }
 
@@ -135,6 +136,31 @@ function rowOf(root: ShadowRoot, name: string): HTMLLIElement {
     (li) => li.querySelector('.name')?.textContent === name,
   )!;
 }
+
+describe('file-manager command runs (doc "Command transactions")', () => {
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = () => {};
+  });
+
+  test("going into a folder writes the location through the run's API, not the panel's", async () => {
+    const s = stub('r', {});
+    const runSet = vi.fn(async () => {});
+    const run = {
+      ...s.api,
+      workspace: { ...s.api.workspace, set: runSet },
+      commands: { ...s.api.commands, invoke: vi.fn(async () => null) },
+    };
+    const mod = await import('../../default-config/panel-types/file-manager/main.js');
+    await mod.mount(s.root, withRuns(s.api, run) as never);
+    await settle();
+    rowOf(s.root, 'sub').click();
+    await settle();
+    s.setVar.mockClear();
+    await s.handlers.get('file-manager:activate')!();
+    expect(runSet).toHaveBeenCalledWith('file-manager:dir', '/repo/sub');
+    expect(s.setVar).not.toHaveBeenCalled();
+  });
+});
 
 // Opening is a button on the row (doc "Opening a row"): a click on the row
 // only selects it, so its text can be selected and it can be clicked at will.

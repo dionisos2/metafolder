@@ -8,7 +8,6 @@ import { createPathResolver } from '../../../../panel-shim/resolve.js';
 import { showMenu } from '../../../../panel-shim/menu.js';
 import { commonPrefix, insertCandidate } from '../bash';
 import { ask, type ArgSpec, type InvocationParts, invokerOver, withTopLevelInvoke } from '../commands';
-import type { PanelFunctions } from '../panelFunctions';
 import { invoke as ipcInvoke } from '../ipc';
 import { checkTarget, resolveTarget } from '../targets';
 import { transactional } from '../txn';
@@ -74,8 +73,12 @@ export interface PanelApiDeps {
    *  arguments are recorded: the shell drops a `commands.js` entry of that
    *  name, which must not shadow a panel's command (doc "User commands"). */
   claimCommand?: (name: string) => void;
-  /** Stores a panel command handler in the shell-side registry (per instance). */
-  registerHandler: (name: string, handler: (...args: string[]) => unknown) => void;
+  /** Stores a panel command handler in the shell-side registry (per instance):
+   *  it takes the API of the run first, then the command's arguments. */
+  registerHandler: (
+    name: string,
+    handler: (mf: MetafolderApi, ...args: string[]) => unknown,
+  ) => void;
   /** Stores a panel command's declared arguments, per instance like the
    *  handler: the spec's prompt/completion functions read this panel's state,
    *  and every workspace mounts its own instance under the same name. */
@@ -86,7 +89,7 @@ export interface PanelApiDeps {
   addDefaultMenuItems: (provider: (event: MouseEvent) => unknown[]) => void;
   /** Records the functions this instance provides to the generic commands
    *  (doc "Generic panel commands"); absent where none can run (a user command). */
-  provide?: (functions: PanelFunctions) => void;
+  provide?: (functions: Metafolder.PanelFunctions) => void;
 }
 
 export interface PanelApiCtx {
@@ -112,6 +115,11 @@ export interface PanelApiCtx {
 export interface PanelApiInstance {
   /** The object passed to the panel's `mount(root, api)`. */
   api: MetafolderApi;
+  /** The object one run of a panel command works through — handed to its
+   *  handler, and to the functions a generic command calls: in the run's
+   *  context, and in its transaction when it has one (doc "Command
+   *  transactions"). */
+  forRun(context: ExecContext): MetafolderApi;
   /** A subscribed workspace variable changed (from `workspace-var-changed`). */
   pushVarChanged(key: string, value: unknown): void;
   /** A message-log entry was appended (null = the log was cleared). */
@@ -417,433 +425,452 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     },
   );
 
-  const api: MetafolderApi = {
-    // `mount` runs after init, so nothing to wait for; kept for compatibility.
-    ready: Promise.resolve(),
+  /**
+   * The object a panel works through, calling Tauri with `invoke` and acting
+   * in `context`: once for the panel (`mount`'s, outside any transaction) and
+   * once per run of one of its commands (`forRun`, in the run's transaction —
+   * doc "Command transactions"). The per-instance state above is shared.
+   */
+  function build(invoke: PanelApiDeps['invoke'], context: () => ExecContext): MetafolderApi {
+    return {
+      // `mount` runs after init, so nothing to wait for; kept for compatibility.
+      ready: Promise.resolve(),
 
-    get workspaceId() {
-      return ctx.wsId;
-    },
-    get panelType() {
-      return ctx.panelType;
-    },
-    get guiServer() {
-      return ctx.guiServer;
-    },
-    // Session token for the GUI server's protected routes (`/fsraw`,
-    // `/thumbnail`, `/__media-probe`); appended as `?token=` to URLs loaded
-    // as `<img>/<video>` src or fetched directly (doc "Session tokens").
-    get sessionToken() {
-      return ctx.sessionToken;
-    },
-    // Configured progressive-loading page size for this panel type (config.toml
-    // `[page-size]`); undefined for panels without an entry.
-    get pageSize() {
-      return ctx.pageSize;
-    },
-    // Shared panel UX timing knobs (config.toml `[panels]`), as a frozen object
-    // with camelCase keys. Each value may be undefined if the config is minimal,
-    // so panels should read them as `metafolder.settings.xxx ?? <fallback>`.
-    get settings() {
-      return panelSettings;
-    },
-    // Configured defaults for this panel type (config.toml
-    // `[panel-defaults.<panel-type>]`), as a frozen camelCase object. A key the
-    // user did not configure is undefined, so panels read them as
-    // `metafolder.defaults.xxx ?? <fallback>`.
-    get defaults() {
-      return panelDefaults;
-    },
-
-    onVisibility(listener: (visible: boolean, slot: string | null) => void) {
-      visibilityListeners.add(listener);
-    },
-    get visible() {
-      return ctx.visibilityGate.visible;
-    },
-    whenVisible(fn: () => void) {
-      ctx.visibilityGate.whenVisible(fn);
-    },
-
-    bench: {
-      measure: <T>(name: string, fn: () => T) => benchMeasure(name, fn),
-      record: (name: string, durationMs: number) => recordBench(name, durationMs),
-    },
-
-    daemon: {
-      // Declares what the user asked for, for the slow-operation log (see
-      // `clientContext`). Cheap and local: it sets a string, it makes no call.
-      setContext: (text: string | null) => {
-        clientContext = text === null ? null : text.slice(0, 200);
+      get workspaceId() {
+        return ctx.wsId;
       },
-      request: (method: string, path: string, body: unknown = null, opts?: ReadOptions) =>
-        daemonRequest(method, path, body, opts),
-      call: async (method: string, path: string, body: unknown = null, opts?: ReadOptions) => {
-        const response = await daemonRequest(method, path, body, opts);
-        if (response.status >= 400) {
-          const err = (response.body as { error?: string })?.error;
-          throw new Error(err ?? `${method} ${path}: HTTP ${response.status}`);
-        }
-        return response.body;
+      get panelType() {
+        return ctx.panelType;
       },
-      // Creates a repository and applies its ignore preset (doc "Ignore presets"):
-      // POST /repos/init then the `default` preset on the new
-      // root, via core::repo_init — the same flow as `mf repo init`. Returns the
-      // new repo's uuid. `daemon.call('POST', '/repos/init', ...)` would skip
-      // the ignore step, so repo creation must go through here.
-      initRepo: (opts: {
-        root: string;
-        name?: string;
-        metafolder?: string;
-        noIgnore?: boolean;
-        ignore?: string[];
-      }) =>
-        invoke('repo_init', {
-          root: opts.root,
-          name: opts.name ?? null,
-          metafolder: opts.metafolder ?? null,
-          noIgnore: opts.noIgnore ?? false,
-          ignore: opts.ignore ?? null,
-        }) as Promise<string>,
-      resolvePath: (repo: string, uuid: string) => resolverFor(repo).resolveUuid(uuid),
-      resolveTreeRef: (
-        repo: string,
-        value: { parent: string | null; name: string },
-        field = 'mfr_path',
-      ) => resolverFor(repo).resolveTreeRef(value, field),
-      repoRoot: async (repo: string) => (await repoInfo(repo)).root as string,
-      repoInternalDir: async (repo: string) => (await repoInfo(repo)).internal_dir as string,
-      metarecordPaths: async (repo: string, metarecord: { uuid: string }) => {
-        const root = (await repoInfo(repo)).root as string;
-        const relatives = (await reads.treePaths(repo, 'mfr_path', [metarecord.uuid]))[metarecord.uuid];
-        return relatives.map((rel) => (rel === '' ? root : `${root}/${rel}`));
+      get guiServer() {
+        return ctx.guiServer;
       },
-      // Reads that return what they read (nothing is kept — lib/panels/reads.ts).
-      query: (repo: string, body: Record<string, unknown>, opts?: ReadOptions) =>
-        reads.query(repo, body, opts),
-      metarecords: (repo: string, uuids: string[]) => reads.metarecords(repo, uuids),
-      treePaths: (repo: string, field: string, uuids: string[]) => reads.treePaths(repo, field, uuids),
-      fields: (repo: string) => reads.fields(repo),
-    },
-
-    // The daemon change feed (GET /log/since): what changed that this panel
-    // did not write itself — a watcher-recorded rename, another panel, the CLI,
-    // a revert. `sync` polls it now (a deliberate freshness point: a refresh,
-    // a catch-up after a disk change), on top of the background timer;
-    // `subscribe` runs the callback with the touched uuids (`null` = the whole
-    // repository) and returns the unsubscribe fn for the panel's cleanup.
-    changes: {
-      sync: (repo: string) => changeFeed.sync(repo, rawFetch),
-      subscribe: (cb: (event: ChangeEvent) => void) => changeFeed.subscribe(cb),
-    },
-
-    // Pure query transformations — run locally in the GUI backend (core).
-    query: {
-      parse: (dsl: string) => invoke('parse_query', { dsl }),
-      expand: (text: string) => invoke('expand_query', { text }),
-      // The simplified-query grammar source as loaded at startup (help page).
-      grammarSource: () => invoke('grammar_source') as Promise<string>,
-    },
-
-    // Value picker (doc "Value picker"): open a linked picker workspace
-    // whose confirmed selection (a metarecord uuid) comes back as the
-    // `pick_result` workspace variable, matched by `token`. `callerWs` is
-    // injected so the result returns to this panel's own workspace.
-    pick: {
-      start: (spec: Record<string, unknown>) =>
-        invoke('pick_start', { spec: { ...spec, callerWs: ctx.wsId } }) as Promise<string>,
-    },
-
-    // Read-only GUI configuration a panel may need.
-    config: {
-      // The `[ref-seeds]` rule naming a `ref` field's targets —
-      // `{query, columns}` (doc "Ref value seeds"): which metarecords may
-      // be named, and how each is shown. The named rule wins, `"*"` is the
-      // default; null when neither exists.
-      refSeed: (field: string) =>
-        invoke('ref_seed', { field }) as Promise<{ query: string | null; columns: string } | null>,
-      // What joins the columns of a multi-column completion label
-      // (config.toml `[completion].label-separator`, doc "Completion
-      // views").
-      labelSeparator: () => invoke('label_separator') as Promise<string>,
-    },
-
-    workspace: {
-      get: (key: string) => invoke('ws_get_var', { wsId: ctx.wsId, key }),
-      set: (key: string, value: unknown) =>
-        invoke('ws_set_var', { wsId: ctx.wsId, key, value }) as Promise<void>,
-      // All in before any listener hears of one (`workspace_send` on this
-      // workspace): a panel following several variables never reads half.
-      setMany: (vars: Record<string, unknown>) =>
-        invoke('workspace_send', { wsId: ctx.wsId, vars }) as Promise<void>,
-      all: () => invoke('ws_vars', { wsId: ctx.wsId }) as Promise<Record<string, unknown>>,
-      adoptRepo: (repo: string) => invoke('adopt_repo', { wsId: ctx.wsId, repo }) as Promise<void>,
-      // The workspace primitives (doc "Workspaces"): an empty workspace, the
-      // one channel between workspaces, and a copy.
-      create: async (options: { repo?: string | null; slot?: 'left' | 'right' } = {}) =>
-        (await invoke('workspace_create', {
-          activeRepo:
-            options.repo === undefined
-              ? ((await invoke('ws_get_var', { wsId: ctx.wsId, key: 'active_repo' })) ?? null)
-              : options.repo,
-          slot: options.slot ?? null,
-        })) as string,
-      send: (id: string, vars: Record<string, unknown>) =>
-        invoke('workspace_send', { wsId: id, vars }) as Promise<void>,
-      fork: () => invoke('workspace_fork', { wsId: ctx.wsId }) as Promise<string>,
-      onChange(key: string, listener: (value: unknown, key?: string) => void) {
-        let set = varListeners.get(key);
-        if (!set) {
-          set = new Set();
-          varListeners.set(key, set);
-        }
-        set.add(listener);
+      // Session token for the GUI server's protected routes (`/fsraw`,
+      // `/thumbnail`, `/__media-probe`); appended as `?token=` to URLs loaded
+      // as `<img>/<video>` src or fetched directly (doc "Session tokens").
+      get sessionToken() {
+        return ctx.sessionToken;
       },
-    },
+      // Configured progressive-loading page size for this panel type (config.toml
+      // `[page-size]`); undefined for panels without an entry.
+      get pageSize() {
+        return ctx.pageSize;
+      },
+      // Shared panel UX timing knobs (config.toml `[panels]`), as a frozen object
+      // with camelCase keys. Each value may be undefined if the config is minimal,
+      // so panels should read them as `metafolder.settings.xxx ?? <fallback>`.
+      get settings() {
+        return panelSettings;
+      },
+      // Configured defaults for this panel type (config.toml
+      // `[panel-defaults.<panel-type>]`), as a frozen camelCase object. A key the
+      // user did not configure is undefined, so panels read them as
+      // `metafolder.defaults.xxx ?? <fallback>`.
+      get defaults() {
+        return panelDefaults;
+      },
 
-    commands: {
-      register(
-        name: string,
-        { label, reveal, log, handler, args }: {
-          label?: string;
-          reveal?: boolean;
-          log?: boolean;
-          handler?: (...args: string[]) => unknown;
-          args?: ArgSpec[];
-        } = {},
+      onVisibility(listener: (visible: boolean, slot: string | null) => void) {
+        visibilityListeners.add(listener);
+      },
+      get visible() {
+        return ctx.visibilityGate.visible;
+      },
+      whenVisible(fn: () => void) {
+        ctx.visibilityGate.whenVisible(fn);
+      },
+
+      bench: {
+        measure: <T>(name: string, fn: () => T) => benchMeasure(name, fn),
+        record: (name: string, durationMs: number) => recordBench(name, durationMs),
+      },
+
+      daemon: {
+        // Declares what the user asked for, for the slow-operation log (see
+        // `clientContext`). Cheap and local: it sets a string, it makes no call.
+        setContext: (text: string | null) => {
+          clientContext = text === null ? null : text.slice(0, 200);
+        },
+        request: (method: string, path: string, body: unknown = null, opts?: ReadOptions) =>
+          daemonRequest(method, path, body, opts),
+        call: async (method: string, path: string, body: unknown = null, opts?: ReadOptions) => {
+          const response = await daemonRequest(method, path, body, opts);
+          if (response.status >= 400) {
+            const err = (response.body as { error?: string })?.error;
+            throw new Error(err ?? `${method} ${path}: HTTP ${response.status}`);
+          }
+          return response.body;
+        },
+        // Creates a repository and applies its ignore preset (doc "Ignore presets"):
+        // POST /repos/init then the `default` preset on the new
+        // root, via core::repo_init — the same flow as `mf repo init`. Returns the
+        // new repo's uuid. `daemon.call('POST', '/repos/init', ...)` would skip
+        // the ignore step, so repo creation must go through here.
+        initRepo: (opts: {
+          root: string;
+          name?: string;
+          metafolder?: string;
+          noIgnore?: boolean;
+          ignore?: string[];
+        }) =>
+          invoke('repo_init', {
+            root: opts.root,
+            name: opts.name ?? null,
+            metafolder: opts.metafolder ?? null,
+            noIgnore: opts.noIgnore ?? false,
+            ignore: opts.ignore ?? null,
+          }) as Promise<string>,
+        resolvePath: (repo: string, uuid: string) => resolverFor(repo).resolveUuid(uuid),
+        resolveTreeRef: (
+          repo: string,
+          value: { parent: string | null; name: string },
+          field = 'mfr_path',
+        ) => resolverFor(repo).resolveTreeRef(value, field),
+        repoRoot: async (repo: string) => (await repoInfo(repo)).root as string,
+        repoInternalDir: async (repo: string) => (await repoInfo(repo)).internal_dir as string,
+        metarecordPaths: async (repo: string, metarecord: { uuid: string }) => {
+          const root = (await repoInfo(repo)).root as string;
+          const relatives = (await reads.treePaths(repo, 'mfr_path', [metarecord.uuid]))[metarecord.uuid];
+          return relatives.map((rel) => (rel === '' ? root : `${root}/${rel}`));
+        },
+        // Reads that return what they read (nothing is kept — lib/panels/reads.ts).
+        query: (repo: string, body: Record<string, unknown>, opts?: ReadOptions) =>
+          reads.query(repo, body, opts),
+        metarecords: (repo: string, uuids: string[]) => reads.metarecords(repo, uuids),
+        treePaths: (repo: string, field: string, uuids: string[]) => reads.treePaths(repo, field, uuids),
+        fields: (repo: string) => reads.fields(repo),
+      },
+
+      // The daemon change feed (GET /log/since): what changed that this panel
+      // did not write itself — a watcher-recorded rename, another panel, the CLI,
+      // a revert. `sync` polls it now (a deliberate freshness point: a refresh,
+      // a catch-up after a disk change), on top of the background timer;
+      // `subscribe` runs the callback with the touched uuids (`null` = the whole
+      // repository) and returns the unsubscribe fn for the panel's cleanup.
+      changes: {
+        sync: (repo: string) => changeFeed.sync(repo, rawFetch),
+        subscribe: (cb: (event: ChangeEvent) => void) => changeFeed.subscribe(cb),
+      },
+
+      // Pure query transformations — run locally in the GUI backend (core).
+      query: {
+        parse: (dsl: string) => invoke('parse_query', { dsl }),
+        expand: (text: string) => invoke('expand_query', { text }),
+        // The simplified-query grammar source as loaded at startup (help page).
+        grammarSource: () => invoke('grammar_source') as Promise<string>,
+      },
+
+      // Value picker (doc "Value picker"): open a linked picker workspace
+      // whose confirmed selection (a metarecord uuid) comes back as the
+      // `pick_result` workspace variable, matched by `token`. `callerWs` is
+      // injected so the result returns to this panel's own workspace.
+      pick: {
+        start: (spec: Record<string, unknown>) =>
+          invoke('pick_start', { spec: { ...spec, callerWs: ctx.wsId } }) as Promise<string>,
+      },
+
+      // Read-only GUI configuration a panel may need.
+      config: {
+        // The `[ref-seeds]` rule naming a `ref` field's targets —
+        // `{query, columns}` (doc "Ref value seeds"): which metarecords may
+        // be named, and how each is shown. The named rule wins, `"*"` is the
+        // default; null when neither exists.
+        refSeed: (field: string) =>
+          invoke('ref_seed', { field }) as Promise<{ query: string | null; columns: string } | null>,
+        // What joins the columns of a multi-column completion label
+        // (config.toml `[completion].label-separator`, doc "Completion
+        // views").
+        labelSeparator: () => invoke('label_separator') as Promise<string>,
+      },
+
+      workspace: {
+        get: (key: string) => invoke('ws_get_var', { wsId: ctx.wsId, key }),
+        set: (key: string, value: unknown) =>
+          invoke('ws_set_var', { wsId: ctx.wsId, key, value }) as Promise<void>,
+        // All in before any listener hears of one (`workspace_send` on this
+        // workspace): a panel following several variables never reads half.
+        setMany: (vars: Record<string, unknown>) =>
+          invoke('workspace_send', { wsId: ctx.wsId, vars }) as Promise<void>,
+        all: () => invoke('ws_vars', { wsId: ctx.wsId }) as Promise<Record<string, unknown>>,
+        adoptRepo: (repo: string) => invoke('adopt_repo', { wsId: ctx.wsId, repo }) as Promise<void>,
+        // The workspace primitives (doc "Workspaces"): an empty workspace, the
+        // one channel between workspaces, and a copy.
+        create: async (options: { repo?: string | null; slot?: 'left' | 'right' } = {}) =>
+          (await invoke('workspace_create', {
+            activeRepo:
+              options.repo === undefined
+                ? ((await invoke('ws_get_var', { wsId: ctx.wsId, key: 'active_repo' })) ?? null)
+                : options.repo,
+            slot: options.slot ?? null,
+          })) as string,
+        send: (id: string, vars: Record<string, unknown>) =>
+          invoke('workspace_send', { wsId: id, vars }) as Promise<void>,
+        fork: () => invoke('workspace_fork', { wsId: ctx.wsId }) as Promise<string>,
+        onChange(key: string, listener: (value: unknown, key?: string) => void) {
+          let set = varListeners.get(key);
+          if (!set) {
+            set = new Set();
+            varListeners.set(key, set);
+          }
+          set.add(listener);
+        },
+      },
+
+      commands: {
+        register(
+          name: string,
+          { label, reveal, log, handler, args }: {
+            label?: string;
+            reveal?: boolean;
+            log?: boolean;
+            handler?: (mf: MetafolderApi, ...args: string[]) => unknown;
+            args?: ArgSpec[];
+          } = {},
+        ) {
+          deps.claimCommand?.(name);
+          if (handler) deps.registerHandler(name, handler);
+          // Declared arguments are collected interactively by the command input
+          // when missing (doc "Interactive command arguments"); the spec functions stay in the
+          // shell realm alongside the panel.
+          if (args) deps.registerArgs(name, args);
+          const result = invoke('register_command', {
+            panelType: ctx.panelType,
+            name,
+            label: label ?? name,
+            reveal: reveal ?? false,
+            log: log ?? true,
+          });
+          deps.onCommandsChanged();
+          return result;
+        },
+        invoke: invokerOver((parts) => deps.dispatch(parts, context())),
+        // The live keybinding table, so a panel can *show* a shortcut rather than
+        // restate it: the help pages fill their key hints from it (/__keyhints.js).
+        keybindings: () => invoke('get_compiled_keybindings') as Promise<Metafolder.Binding[]>,
+      },
+
+      /** The functions behind the generic commands (doc "Generic panel
+       *  commands"): `cursor:next self` runs on what the focused panel provides
+       *  here. A later call adds to (and replaces) what an earlier one provided. */
+      provide(functions: Metafolder.PanelFunctions) {
+        deps.provide?.(functions);
+      },
+
+      // `commands.invoke` lifted to the top of the object (doc "User
+      // commands"): composing existing commands is what a command is *for*, so
+      // the call it makes most should not need a path through the object. The
+      // same alias the user-command API installs — one API to learn, not two.
+      invoke: invokerOver((parts) => deps.dispatch(parts, context())),
+
+      /** An argument `invoke` asks for in the command input, wherever it stands:
+       *  `invoke(['metarecord:field', 'set', mf.ask, '4'])`. */
+      ask,
+
+      /** Where this panel's commands run (doc "Commands"). */
+      get context(): ExecContext {
+        return context();
+      },
+      /** Delivers what the run wrote so far and waits until it shows; it reads
+       *  afresh from then on (doc "Command transactions"). Nothing to do
+       *  outside a run. */
+      flush: async () => {
+        const { txn } = context();
+        if (txn !== undefined) await flush(txn);
+      },
+      ...contextMembers(deps, ctx, context, invoke),
+
+      addKeybinding(
+        invocation: string,
+        combo: string,
+        options: { when?: string; textInput?: boolean; focus?: string } = {},
       ) {
-        deps.claimCommand?.(name);
-        if (handler) deps.registerHandler(name, handler);
-        // Declared arguments are collected interactively by the command input
-        // when missing (doc "Interactive command arguments"); the spec functions stay in the
-        // shell realm alongside the panel.
-        if (args) deps.registerArgs(name, args);
-        const result = invoke('register_command', {
-          panelType: ctx.panelType,
-          name,
-          label: label ?? name,
-          reveal: reveal ?? false,
-          log: log ?? true,
+        return invoke('suggest_keybinding', {
+          combo,
+          invocation,
+          when: options.when === undefined ? ctx.panelType : options.when,
+          textInput: options.textInput ?? false,
+          focus: options.focus ?? null,
         });
-        deps.onCommandsChanged();
-        return result;
       },
-      invoke: invokerOver((parts) => deps.dispatch(parts)),
-      // The live keybinding table, so a panel can *show* a shortcut rather than
-      // restate it: the help pages fill their key hints from it (/__keyhints.js).
-      keybindings: () => invoke('get_compiled_keybindings') as Promise<Metafolder.Binding[]>,
-    },
 
-    /** The functions behind the generic commands (doc "Generic panel
-     *  commands"): `cursor:next self` runs on what the focused panel provides
-     *  here. A later call adds to (and replaces) what an earlier one provided. */
-    provide(functions: PanelFunctions) {
-      deps.provide?.(functions);
-    },
-
-    // `commands.invoke` lifted to the top of the object (doc "User
-    // commands"): composing existing commands is what a command is *for*, so
-    // the call it makes most should not need a path through the object. The
-    // same alias the user-command API installs — one API to learn, not two.
-    invoke: invokerOver((parts) => deps.dispatch(parts)),
-
-    /** An argument `invoke` asks for in the command input, wherever it stands:
-     *  `invoke(['metarecord:field', 'set', mf.ask, '4'])`. */
-    ask,
-
-    /** Where this panel's commands run (doc "Commands"). */
-    get context(): ExecContext {
-      return panelContext();
-    },
-    ...contextMembers(deps, ctx, panelContext),
-
-    addKeybinding(
-      invocation: string,
-      combo: string,
-      options: { when?: string; textInput?: boolean; focus?: string } = {},
-    ) {
-      return invoke('suggest_keybinding', {
-        combo,
-        invocation,
-        when: options.when === undefined ? ctx.panelType : options.when,
-        textInput: options.textInput ?? false,
-        focus: options.focus ?? null,
-      });
-    },
-
-    fs: {
-      readDir: (path: string) => invoke('fs_read_dir', { path }) as Promise<Metafolder.FsEntry[]>,
-      stat: (path: string) => invoke('fs_stat', { path }),
-      exists: (path: string) => invoke('fs_exists', { path }) as Promise<boolean>,
-      homeDir: () => invoke('fs_home_dir') as Promise<string>,
-      mkdir: (path: string) => invoke('fs_mkdir', { path }) as Promise<void>,
-      createFile: (path: string) => invoke('fs_create_file', { path }) as Promise<void>,
-      move: (from: string, to: string) => invoke('fs_move', { from, to }) as Promise<void>,
-      copy: (from: string, to: string) => invoke('fs_copy', { from, to }) as Promise<void>,
-      remove: (path: string) => invoke('fs_delete', { path }) as Promise<void>,
-    },
-
-    /** Repository trash-bin (doc "Trash"): filesystem operations shared with
-     *  the CLI, driven through the trash Tauri commands (no daemon endpoint). */
-    trash: {
-      list: (repo: string) => invoke('trash_list', { repo }) as Promise<Metafolder.TrashEntry[]>,
-      restore: (repo: string, id: string) =>
-        invoke('trash_restore', { repo, id }) as Promise<string>,
-      remove: (repo: string, id: string) => invoke('trash_remove', { repo, id }) as Promise<void>,
-      empty: (repo: string) => invoke('trash_empty', { repo }) as Promise<number>,
-      trashPath: (repo: string, path: string) =>
-        invoke('trash_path', { repo, path }) as Promise<string>,
-      trashQuery: (repo: string, query: unknown) =>
-        invoke('trash_query_metarecords', {
-          wsId: ctx.wsId,
-          repo,
-          query,
-        }) as Promise<Metafolder.BulkTrashOutcome>,
-    },
-
-    /** Coordinated navigation of the event log, files included — the shared
-     *  `core::navigation` behind `mf log`, through the log Tauri commands. */
-    log: {
-      revert: (repo: string, target: Record<string, unknown>) =>
-        invoke('log_revert', { repo, target }) as Promise<Metafolder.Reverted>,
-    },
-
-    /** Orphaned metarecords (doc "Orphans in the GUI"): the shared layer behind
-     *  `mf orphan`, driven through the orphan Tauri commands. Each reports its
-     *  own outcome to the status bar (`delete` also to the message log) and
-     *  nudges the panels (`metarecords:dirty`), so a caller confirms in
-     *  between and says nothing after. */
-    orphans: {
-      detect: () => invoke('orphan_detect', { wsId: ctx.wsId }) as Promise<number>,
-      count: () => invoke('orphan_count', { wsId: ctx.wsId }) as Promise<number>,
-      delete: () => invoke('orphan_delete', { wsId: ctx.wsId }) as Promise<number>,
-    },
-
-    /** Ignore presets (doc "Setting ignore patterns"): preset expansion reads a
-     *  config file, so it goes through the backend; the eligibility/effective
-     *  introspection endpoints are plain `daemon.call`s. */
-    ignore: {
-      presets: () =>
-        invoke('ignore_presets') as Promise<
-          { name: string; description: string; patterns: string[] }[]
-        >,
-      current: (repo: string, target: string) =>
-        invoke('ignore_current', { repo, target }) as Promise<string[]>,
-      apply: (repo: string, target: string, presets: string[], mode: 'add' | 'remove' | 'set') =>
-        invoke('ignore_apply', { repo, target, presets, mode }) as Promise<string[]>,
-      write: (repo: string, target: string, patterns: string[]) =>
-        invoke('ignore_write', { repo, target, patterns }) as Promise<void>,
-    },
-
-    /** Cross-repo synchronisation (doc "Sync"): the shared `core::sync`
-     *  orchestration, driven through the sync Tauri commands. `plan`/`run` run
-     *  non-interactively (conflicts are left for `plan_resolve` editing). */
-    sync: {
-      status: (repoA: string, repoB: string) =>
-        invoke('sync_status', { repoA, repoB }) as Promise<Record<string, unknown>>,
-      link: (repoA: string, repoB: string, uuidA: string, uuidB: string, host?: string) =>
-        invoke('sync_link', { repoA, repoB, uuidA, uuidB, host }) as Promise<{ uuid: string }>,
-      unlink: (repoA: string, repoB: string, link: string, withEndpoint?: string) =>
-        invoke('sync_unlink', { repoA, repoB, link, withEndpoint }) as Promise<{ uuid: string }>,
-      plan: (
-        repoA: string,
-        repoB: string,
-        intentsPath: string,
-        host?: string,
-        onConflict?: string,
-      ) =>
-        invoke('sync_plan', { repoA, repoB, intentsPath, host, onConflict }) as Promise<{
-          plan_uuid: string;
-          operations: number;
-          warnings: string[];
-        }>,
-      run: (repoA: string, repoB: string) =>
-        invoke('sync_run', { repoA, repoB }) as Promise<Record<string, unknown>>,
-      show: (repoA: string, repoB: string, conflicts: boolean, files: boolean) =>
-        invoke('sync_show', { repoA, repoB, conflicts, files }) as Promise<Record<string, unknown>>,
-    },
-
-    /** Per-repo input history (doc "Input history") — GUI-side files
-     *  under `.metafolder/gui/history/<zone>`; the store behind the shared
-     *  `attachHistory` helper (`/__history.js`). */
-    history: {
-      read: (repo: string, zone: string) =>
-        invoke('history_read', { repo, zone }) as Promise<string[]>,
-      append: (repo: string, zone: string, entry: string) =>
-        invoke('history_append', { repo, zone, entry }) as Promise<void>,
-    },
-
-    /** Per-repo "recently viewed metarecords" — a GUI-side list under
-     *  `.metafolder/gui/recent` (crate::recent). `touch` records a view (the
-     *  timestamp is the GUI's clock); `list` returns entries newest first,
-     *  each with its rank (one per view, aged — doc "Frecent folders"). */
-    recent: {
-      list: (repo: string, limit?: number) =>
-        invoke('recent_read', { repo, limit }) as Promise<
-          { uuid: string; viewed_at: string; rank: number }[]
-        >,
-      touch: (repo: string, uuid: string) =>
-        invoke('recent_touch', { repo, uuid }) as Promise<void>,
-    },
-
-    /** Tag answers (doc "Tagging from the GUI"): `mf tag`'s rewrite — the
-     *  broader tags dropped, the contradicted answers, a missing tag created —
-     *  on one metarecord, by the Rust the CLI shares (`core::tag`). */
-    tag: {
-      answer: (repo: string, uuid: string, verb: string, path: string) =>
-        invoke('tag_answer', { repo, uuid, verb, path }) as Promise<Metafolder.TagReport>,
-    },
-
-    statusBar: {
-      message: (text: string, timeoutMs: number | null = null) =>
-        invoke('post_status', { wsId: ctx.wsId, text, kind: 'info', timeoutMs }) as Promise<void>,
-      error: (error: unknown, timeoutMs = 8000) =>
-        invoke('post_status', {
-          wsId: ctx.wsId,
-          text: String((error as { message?: unknown })?.message ?? error),
-          kind: 'error',
-          timeoutMs,
-        }) as Promise<void>,
-    },
-
-    messages: {
-      list: () => invoke('get_messages', { wsId: ctx.wsId }) as Promise<unknown[]>,
-      /** Appends a line to this workspace's persistent message log. */
-      append: (text: string) =>
-        invoke('append_message', { wsId: ctx.wsId, text }) as Promise<void>,
-      onAppend(listener: (entry: unknown) => void) {
-        messageListeners.add(listener);
+      fs: {
+        readDir: (path: string) => invoke('fs_read_dir', { path }) as Promise<Metafolder.FsEntry[]>,
+        stat: (path: string) => invoke('fs_stat', { path }),
+        exists: (path: string) => invoke('fs_exists', { path }) as Promise<boolean>,
+        homeDir: () => invoke('fs_home_dir') as Promise<string>,
+        mkdir: (path: string) => invoke('fs_mkdir', { path }) as Promise<void>,
+        createFile: (path: string) => invoke('fs_create_file', { path }) as Promise<void>,
+        move: (from: string, to: string) => invoke('fs_move', { from, to }) as Promise<void>,
+        copy: (from: string, to: string) => invoke('fs_copy', { from, to }) as Promise<void>,
+        remove: (path: string) => invoke('fs_delete', { path }) as Promise<void>,
       },
-    },
 
-    /** What the shell lines run in this workspace printed (doc "shell panel"). */
-    shell: {
-      list: () => invoke('get_shell_log', { wsId: ctx.wsId }) as Promise<Metafolder.ShellEntry[]>,
-      onAppend(listener: (entry: Metafolder.ShellEntry | null) => void) {
-        shellListeners.add(listener);
+      /** Repository trash-bin (doc "Trash"): filesystem operations shared with
+       *  the CLI, driven through the trash Tauri commands (no daemon endpoint). */
+      trash: {
+        list: (repo: string) => invoke('trash_list', { repo }) as Promise<Metafolder.TrashEntry[]>,
+        restore: (repo: string, id: string) =>
+          invoke('trash_restore', { repo, id }) as Promise<string>,
+        remove: (repo: string, id: string) => invoke('trash_remove', { repo, id }) as Promise<void>,
+        empty: (repo: string) => invoke('trash_empty', { repo }) as Promise<number>,
+        trashPath: (repo: string, path: string) =>
+          invoke('trash_path', { repo, path }) as Promise<string>,
+        trashQuery: (repo: string, query: unknown) =>
+          invoke('trash_query_metarecords', {
+            wsId: ctx.wsId,
+            repo,
+            query,
+          }) as Promise<Metafolder.BulkTrashOutcome>,
       },
-      // Tab in a shell line, as the command input's bash mode does it (doc
-      // "Bash mode"): one candidate is inserted, several first extend the
-      // word to their common prefix and are returned to be listed.
-      async complete(line: string, cursor: number): Promise<Metafolder.ShellCompletion> {
-        const { word, candidates } = (await invoke('bash_complete', {
-          line: line.slice(0, cursor),
-        })) as { word: string; candidates: string[] };
-        if (candidates.length === 1) {
-          return { ...insertCandidate(line, cursor, word, candidates[0], true), candidates: [] };
-        }
-        const prefix = commonPrefix(candidates);
-        if (prefix.length > word.length) {
-          return { ...insertCandidate(line, cursor, word, prefix, false), candidates };
-        }
-        return { text: line, cursor, candidates };
+
+      /** Coordinated navigation of the event log, files included — the shared
+       *  `core::navigation` behind `mf log`, through the log Tauri commands. */
+      log: {
+        revert: (repo: string, target: Record<string, unknown>) =>
+          invoke('log_revert', { repo, target }) as Promise<Metafolder.Reverted>,
       },
-    },
-    contextMenu,
-  };
+
+      /** Orphaned metarecords (doc "Orphans in the GUI"): the shared layer behind
+       *  `mf orphan`, driven through the orphan Tauri commands. Each reports its
+       *  own outcome to the status bar (`delete` also to the message log) and
+       *  nudges the panels (`metarecords:dirty`), so a caller confirms in
+       *  between and says nothing after. */
+      orphans: {
+        detect: () => invoke('orphan_detect', { wsId: ctx.wsId }) as Promise<number>,
+        count: () => invoke('orphan_count', { wsId: ctx.wsId }) as Promise<number>,
+        delete: () => invoke('orphan_delete', { wsId: ctx.wsId }) as Promise<number>,
+      },
+
+      /** Ignore presets (doc "Setting ignore patterns"): preset expansion reads a
+       *  config file, so it goes through the backend; the eligibility/effective
+       *  introspection endpoints are plain `daemon.call`s. */
+      ignore: {
+        presets: () =>
+          invoke('ignore_presets') as Promise<
+            { name: string; description: string; patterns: string[] }[]
+          >,
+        current: (repo: string, target: string) =>
+          invoke('ignore_current', { repo, target }) as Promise<string[]>,
+        apply: (repo: string, target: string, presets: string[], mode: 'add' | 'remove' | 'set') =>
+          invoke('ignore_apply', { repo, target, presets, mode }) as Promise<string[]>,
+        write: (repo: string, target: string, patterns: string[]) =>
+          invoke('ignore_write', { repo, target, patterns }) as Promise<void>,
+      },
+
+      /** Cross-repo synchronisation (doc "Sync"): the shared `core::sync`
+       *  orchestration, driven through the sync Tauri commands. `plan`/`run` run
+       *  non-interactively (conflicts are left for `plan_resolve` editing). */
+      sync: {
+        status: (repoA: string, repoB: string) =>
+          invoke('sync_status', { repoA, repoB }) as Promise<Record<string, unknown>>,
+        link: (repoA: string, repoB: string, uuidA: string, uuidB: string, host?: string) =>
+          invoke('sync_link', { repoA, repoB, uuidA, uuidB, host }) as Promise<{ uuid: string }>,
+        unlink: (repoA: string, repoB: string, link: string, withEndpoint?: string) =>
+          invoke('sync_unlink', { repoA, repoB, link, withEndpoint }) as Promise<{ uuid: string }>,
+        plan: (
+          repoA: string,
+          repoB: string,
+          intentsPath: string,
+          host?: string,
+          onConflict?: string,
+        ) =>
+          invoke('sync_plan', { repoA, repoB, intentsPath, host, onConflict }) as Promise<{
+            plan_uuid: string;
+            operations: number;
+            warnings: string[];
+          }>,
+        run: (repoA: string, repoB: string) =>
+          invoke('sync_run', { repoA, repoB }) as Promise<Record<string, unknown>>,
+        show: (repoA: string, repoB: string, conflicts: boolean, files: boolean) =>
+          invoke('sync_show', { repoA, repoB, conflicts, files }) as Promise<Record<string, unknown>>,
+      },
+
+      /** Per-repo input history (doc "Input history") — GUI-side files
+       *  under `.metafolder/gui/history/<zone>`; the store behind the shared
+       *  `attachHistory` helper (`/__history.js`). */
+      history: {
+        read: (repo: string, zone: string) =>
+          invoke('history_read', { repo, zone }) as Promise<string[]>,
+        append: (repo: string, zone: string, entry: string) =>
+          invoke('history_append', { repo, zone, entry }) as Promise<void>,
+      },
+
+      /** Per-repo "recently viewed metarecords" — a GUI-side list under
+       *  `.metafolder/gui/recent` (crate::recent). `touch` records a view (the
+       *  timestamp is the GUI's clock); `list` returns entries newest first,
+       *  each with its rank (one per view, aged — doc "Frecent folders"). */
+      recent: {
+        list: (repo: string, limit?: number) =>
+          invoke('recent_read', { repo, limit }) as Promise<
+            { uuid: string; viewed_at: string; rank: number }[]
+          >,
+        touch: (repo: string, uuid: string) =>
+          invoke('recent_touch', { repo, uuid }) as Promise<void>,
+      },
+
+      /** Tag answers (doc "Tagging from the GUI"): `mf tag`'s rewrite — the
+       *  broader tags dropped, the contradicted answers, a missing tag created —
+       *  on one metarecord, by the Rust the CLI shares (`core::tag`). */
+      tag: {
+        answer: (repo: string, uuid: string, verb: string, path: string) =>
+          invoke('tag_answer', { repo, uuid, verb, path }) as Promise<Metafolder.TagReport>,
+      },
+
+      statusBar: {
+        message: (text: string, timeoutMs: number | null = null) =>
+          invoke('post_status', { wsId: ctx.wsId, text, kind: 'info', timeoutMs }) as Promise<void>,
+        error: (error: unknown, timeoutMs = 8000) =>
+          invoke('post_status', {
+            wsId: ctx.wsId,
+            text: String((error as { message?: unknown })?.message ?? error),
+            kind: 'error',
+            timeoutMs,
+          }) as Promise<void>,
+      },
+
+      messages: {
+        list: () => invoke('get_messages', { wsId: ctx.wsId }) as Promise<unknown[]>,
+        /** Appends a line to this workspace's persistent message log. */
+        append: (text: string) =>
+          invoke('append_message', { wsId: ctx.wsId, text }) as Promise<void>,
+        onAppend(listener: (entry: unknown) => void) {
+          messageListeners.add(listener);
+        },
+      },
+
+      /** What the shell lines run in this workspace printed (doc "shell panel"). */
+      shell: {
+        list: () => invoke('get_shell_log', { wsId: ctx.wsId }) as Promise<Metafolder.ShellEntry[]>,
+        onAppend(listener: (entry: Metafolder.ShellEntry | null) => void) {
+          shellListeners.add(listener);
+        },
+        // Tab in a shell line, as the command input's bash mode does it (doc
+        // "Bash mode"): one candidate is inserted, several first extend the
+        // word to their common prefix and are returned to be listed.
+        async complete(line: string, cursor: number): Promise<Metafolder.ShellCompletion> {
+          const { word, candidates } = (await invoke('bash_complete', {
+            line: line.slice(0, cursor),
+          })) as { word: string; candidates: string[] };
+          if (candidates.length === 1) {
+            return { ...insertCandidate(line, cursor, word, candidates[0], true), candidates: [] };
+          }
+          const prefix = commonPrefix(candidates);
+          if (prefix.length > word.length) {
+            return { ...insertCandidate(line, cursor, word, prefix, false), candidates };
+          }
+          return { text: line, cursor, candidates };
+        },
+      },
+      contextMenu,
+    };
+  }
+
+  const flush = (txn: number) => deps.flush?.(txn) ?? Promise.resolve();
+  const api = build(deps.invoke, panelContext);
 
   return {
     api,
+    forRun: (run) => build(transactional(deps.invoke, () => run.txn, flush), () => run),
     pushVarChanged(key, value) {
       for (const l of varListeners.get(key) ?? []) l(value);
       for (const l of varListeners.get('*') ?? []) l(value, key);

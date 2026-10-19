@@ -44,13 +44,15 @@ and the help scrolls with the arrows as before ([[Keybindings]]).
 !! Providing the functions
 
 A panel type hands the shell its functions once, at mount
-([[Writing a panel type]]):
+([[Writing a panel type]]). Each takes first `mf`, the API of the command run
+calling it — what it writes through it is in the run's transaction, as a
+handler's ([[Command transactions]]) — then the arguments below:
 
 ```
 metafolder.provide({
-  index: () => cursorIndex,         // the cursor's row, -1 when there is none
-  count: () => rows.length,         // how many rows (loaded, for a paged list)
-  select: (i) => moveCursorTo(i),   // always called with 0 <= i < count()
+  index: () => cursorIndex,               // the cursor's row, -1 when there is none
+  count: () => rows.length,               // how many rows (loaded, for a paged list)
+  select: (mf, i) => moveCursorTo(mf, i), // always called with 0 <= i < count()
   entries: () => rows.map((r) => ({ name: r.name, label: `${r.name} — ${r.path}` })),
 });
 ```

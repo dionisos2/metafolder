@@ -7,6 +7,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { withRuns } from './support/runs';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/metarecord-list');
 
@@ -123,7 +124,7 @@ async function mountPanel() {
   const queryCalls: unknown[] = [];
   const { api, statusBar, setVar } = stubApi(handlers, calls, queryCalls);
   const mod = await import('../../default-config/panel-types/metarecord-list/main.js');
-  await mod.mount(shadow, api as never);
+  await mod.mount(shadow, withRuns(api) as never);
   await new Promise((r) => setTimeout(r, 0)); // let the deferred start settle
   return {
     shadow,

@@ -183,7 +183,11 @@ function setup(options: { activeRepo?: string | null } = {}) {
     {
       invoke,
       dispatch,
-      registerHandler: (name, handler) => handlers.set(name, handler),
+      // As the shell's dispatcher runs it: given the API of the run first.
+      registerHandler: (name, handler) =>
+        handlers.set(name, (...args: string[]) =>
+          handler(instance.forRun({ ws: 'ws-1', slot: 'left' }), ...args),
+        ),
       registerArgs: () => {},
       onCommandsChanged: () => {},
       addDefaultMenuItems: () => {},
@@ -281,7 +285,10 @@ describe('repos panel', () => {
     expect((shadow.getElementById('init-error') as HTMLElement).textContent).toBe('');
     // A workspace with no repository adopts the new one and opens the list.
     expect(vars.get('active_repo')).toBe(daemon.repos[0].repo_uuid);
-    expect(dispatch).toHaveBeenCalledWith(['panel:open', 'here', 'metarecord-list']);
+    expect(dispatch).toHaveBeenCalledWith(['panel:open', 'here', 'metarecord-list'], {
+      ws: 'ws-1',
+      slot: 'left',
+    });
   });
 
   test('a failed load shows the daemon error in the form, not a blank panel', async () => {
@@ -641,7 +648,10 @@ describe('repos panel — commands', () => {
     expect(daemon.repos.map((r) => r.name)).toEqual(['pics']);
     expect(shadow.querySelectorAll('#repo-list > li')).toHaveLength(1);
     expect(vars.get('active_repo')).toBe(daemon.repos[0].repo_uuid);
-    expect(dispatch).toHaveBeenCalledWith(['panel:open', 'here', 'metarecord-list']);
+    expect(dispatch).toHaveBeenCalledWith(['panel:open', 'here', 'metarecord-list'], {
+      ws: 'ws-1',
+      slot: 'left',
+    });
   });
 
   test('init without a name leaves it to the daemon, and announces the repository', async () => {

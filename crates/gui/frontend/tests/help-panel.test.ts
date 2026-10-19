@@ -5,6 +5,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { withRuns } from './support/runs';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/help');
 
@@ -60,7 +61,7 @@ async function mountHelp() {
     workspace: { get: async () => null, onChange: () => {} },
   };
   const mod = await import('../../default-config/panel-types/help/main.js');
-  await mod.mount(root, api as unknown as Metafolder.Api);
+  await mod.mount(root, withRuns(api) as unknown as Metafolder.Api);
   const input = root.getElementById('help-search') as HTMLInputElement;
   const content = root.getElementById('help-content') as HTMLElement;
   const run = (name: string, ...args: string[]) => {

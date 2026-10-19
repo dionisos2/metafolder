@@ -8,7 +8,8 @@
 //   load()          -> read the shown record again
 //   force(...names) -> the `force` a write to those fields carries (throws when refused)
 //   forceBody(name) -> the same as a DELETE body (null when it carries nothing)
-//   dirty()         -> tell the other panels the metarecords changed
+//   dirty(mf)       -> tell the other panels the metarecords changed, through
+//                      the API of the command's run (doc "Command transactions")
 
 import { TYPES } from '/__value-widget.js';
 import { settledType, splitTypeValue } from './field-args.js';
@@ -29,7 +30,7 @@ import { CONCRETE_TYPES, NOTHING, distinctValues, sameValue } from './values.js'
  *   load: () => Promise<unknown>,
  *   force: (...names: string[]) => {force?: true},
  *   forceBody: (name: string) => {force?: true}|null,
- *   dirty: () => Promise<unknown>,
+ *   dirty: (mf: MetafolderApi) => Promise<unknown>,
  * }} ctx
  */
 export function registerFieldCommand({
@@ -316,10 +317,10 @@ export function registerFieldCommand({
    *   the last argument, absent when the operation takes none — and, with its
    *   own `when`, taken only in some of its cases. `views` is the cycled
    *   candidate naming (doc "Completion views"), and wins over `complete`
-   * @property {(target: string, value: string, type: string, which?: string) => unknown} run
-   *   `type` is the collected or settled value type, empty for the operations
-   *   that write no value; `which` names the row to act on, empty when the
-   *   field names it already
+   * @property {(mf: MetafolderApi, target: string, value: string, type: string, which?: string) => unknown} run
+   *   `mf` is the API of the command's run; `type` is the collected or settled
+   *   value type, empty for the operations that write no value; `which` names
+   *   the row to act on, empty when the field names it already
    */
 
   /**
@@ -346,13 +347,13 @@ export function registerFieldCommand({
         },
         views: (p) => valueViewsFor(p[1], typeForPrior(p)),
       },
-      run: async (field, raw, type) => {
+      run: async (mf, field, raw, type) => {
         const cur = requireCurrent();
         const value = await vocab.parse(cur.repo, field, type, raw);
         const force = forceFor(field);
         await daemon.call('PUT', api(`/fields/${encodeURIComponent(field)}`), { value, ...force });
         await load();
-        await dirty();
+        await dirty(mf);
       },
     },
 
@@ -366,7 +367,7 @@ export function registerFieldCommand({
         },
         views: (p) => valueViewsFor(p[1], typeForPrior(p)),
       },
-      run: async (field, raw, type) => {
+      run: async (mf, field, raw, type) => {
         const cur = requireCurrent();
         const name = type === 'hierarchy_ref' ? hierarchyName(field) : null;
         const value =
@@ -376,7 +377,7 @@ export function registerFieldCommand({
         const force = forceFor(field);
         await daemon.call('POST', api('/fields'), { name: field, value, ...force });
         await load();
-        await dirty();
+        await dirty(mf);
       },
     },
 
@@ -418,7 +419,7 @@ export function registerFieldCommand({
           return row ? valueViewsFor(row.name, await editTypeIn(p, row)) : [];
         },
       },
-      run: async (field, raw, type, which) => {
+      run: async (mf, field, raw, type, which) => {
         const cur = requireCurrent();
         const rows = rowsOfName(field);
         if (rows.length === 0) throw new Error(`no field "${field}"`);
@@ -436,7 +437,7 @@ export function registerFieldCommand({
         const force = forceFor(field);
         await daemon.call('PATCH', `/repos/${cur.repo}/fields/${row.id}`, { value, ...force });
         await load();
-        await dirty();
+        await dirty(mf);
       },
     },
 
@@ -469,7 +470,7 @@ export function registerFieldCommand({
         },
         complete: (p) => rowValueChoices(p[1]),
       },
-      run: async (field, raw) => {
+      run: async (mf, field, raw) => {
         const cur = requireCurrent();
         const rows = rowsOfName(field);
         if (rows.length === 0) throw new Error(`no field "${field}"`);
@@ -497,7 +498,7 @@ export function registerFieldCommand({
           );
         }
         await load();
-        await dirty();
+        await dirty(mf);
       },
     },
 
@@ -506,7 +507,7 @@ export function registerFieldCommand({
       // per-record family was missing: every row of the name goes, and the
       // field becomes *unknown* — distinct from setting it to Nothing.
       target: { prompt: 'Field to remove entirely?', complete: () => editableFieldNames() },
-      run: async (field) => {
+      run: async (mf, field) => {
         requireCurrent(); // a guard: unset acts on the displayed record's panel state
         const rows = (record()?.fields ?? []).filter((f) => f.name === field);
         if (rows.length === 0) throw new Error(`no field "${field}"`);
@@ -516,14 +517,14 @@ export function registerFieldCommand({
           forceBodyFor(field),
         );
         await load();
-        await dirty();
+        await dirty(mf);
       },
     },
 
     rename: {
       target: { prompt: 'Field to rename?', complete: () => editableFieldNames() },
       value: { prompt: (p) => `Rename "${p[1]}" to?`, initial: (p) => p[1] },
-      run: async (field, newName) => {
+      run: async (mf, field, newName) => {
         const cur = requireCurrent();
         // Rename every row of this field, Nothing rows included — an explicit
         // absence should move with the field, not be orphaned under the old name.
@@ -539,7 +540,7 @@ export function registerFieldCommand({
           { op: 'set', name: newName, values, ...force },
         ]);
         await load();
-        await dirty();
+        await dirty(mf);
       },
     },
 
@@ -561,7 +562,7 @@ export function registerFieldCommand({
         prompt: (p) => `Value for "${p[1]}" (${p[2]})?`,
         views: (p) => valueViewsFor(p[1], p[2]),
       },
-      run: async (field, raw, type) => {
+      run: async (mf, field, raw, type) => {
         const cur = requireCurrent();
         if (!(/** @type {readonly string[]} */ (TYPES)).includes(type))
           throw new Error(`unknown value type "${type}"`);
@@ -596,7 +597,7 @@ export function registerFieldCommand({
           { op: 'set', name: field, values: distinctValues(values), ...force },
         ]);
         await load();
-        await dirty();
+        await dirty(mf);
       },
     },
   };
@@ -665,7 +666,7 @@ export function registerFieldCommand({
         views: (p) => FIELD_OPS[p[0]]?.value?.views?.(p) ?? [],
       },
     ],
-    handler: async (op, ...rest) => {
+    handler: async (mf, op, ...rest) => {
       const spec = FIELD_OPS[op];
       if (!spec) throw new Error(`unknown field operation: "${op}"`);
       const target = rest.shift() ?? '';
@@ -686,6 +687,7 @@ export function registerFieldCommand({
       // that carries none is one whose type must be read back from the record.
       const typed = spec.type !== undefined;
       return spec.run(
+        mf,
         target,
         value,
         typed ? (type ?? (await requireType(op, target))) : '',

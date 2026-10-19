@@ -5,7 +5,8 @@
 //   repo()          -> the repository to act in (the shown record's, else the active one)
 //   shownRepo()     -> the shown record's repository, or null
 //   force(...names) -> the `force` a write to those fields carries (throws when refused)
-//   dirty()         -> tell the other panels the metarecords changed
+//   dirty(mf)       -> tell the other panels the metarecords changed, through
+//                      the API of the command's run (doc "Command transactions")
 
 import { MATCH_ALL } from '/__value-widget.js';
 import { settledType, splitTypeValue } from './field-args.js';
@@ -19,7 +20,7 @@ import { CONCRETE_TYPES } from './values.js';
  *   repo: () => Promise<string|null>,
  *   shownRepo: () => string|null,
  *   force: (...names: string[]) => {force?: true},
- *   dirty: () => Promise<unknown>,
+ *   dirty: (mf: MetafolderApi) => Promise<unknown>,
  *   statusMessageMs: number,
  * }} ctx
  */
@@ -112,11 +113,13 @@ export function registerBulkCommand({
   /** The query the list actually shows, with its match count — the `query`
    *  target of a bulk command. `all` is the MATCH_ALL tautology, so prompts and
    *  confirmations can say "every metarecord" rather than a bare count.
-   *  @param {string} repo @returns {Promise<{query: unknown, count: number, all: boolean}>} */
-  async function bulkQueryTarget(repo) {
+   *  Read through `mf`: the command's run, or the panel's API for a prompt.
+   *  @param {MetafolderApi} mf @param {string} repo
+   *  @returns {Promise<{query: unknown, count: number, all: boolean}>} */
+  async function bulkQueryTarget(mf, repo) {
     // The query the list actually shows (finder narrowing included), else — if
     // the list has not published one yet — its base query text.
-    const effective = await workspace.get('metarecord-list:effective-query');
+    const effective = await mf.workspace.get('metarecord-list:effective-query');
     let query;
     let all;
     if (effective && typeof effective === 'object') {
@@ -128,7 +131,7 @@ export function registerBulkCommand({
       // that one holds the *simplified* text, and parsing it with the normal
       // DSL parser either threw or — worse — read `#jazz` as something else
       // entirely, so a bulk edit could target a set the user never asked for.
-      const raw = await workspace.get('metarecord-list:base-query-text');
+      const raw = await mf.workspace.get('metarecord-list:base-query-text');
       const dsl = typeof raw === 'string' ? raw.trim() : '';
       all = dsl === '';
       query = dsl === '' ? MATCH_ALL : await metafolder.query.parse(dsl);
@@ -142,13 +145,16 @@ export function registerBulkCommand({
    *  the number of metarecords the target holds (the selection size, or a
    *  COUNT of the query), so confirmations can name it. `explicit` tells the
    *  checkbox selection from the query — and an empty selection is nothing to
-   *  do, never a detour onto the query. @param {string} target
+   *  do, never a detour onto the query. Read through `mf`, the command's run.
+   *  @param {MetafolderApi} mf @param {string} target
    *  @returns {Promise<BulkTarget>} */
-  async function bulkTarget(target) {
+  async function bulkTarget(mf, target) {
     const repo = await activeRepo();
     if (!repo) throw new Error('no active repository');
     if (target === 'selection') {
-      const selected = /** @type {string[]} */ ((await workspace.get('selected_metarecords')) ?? []);
+      const selected = /** @type {string[]} */ (
+        (await mf.workspace.get('selected_metarecords')) ?? []
+      );
       return {
         repo,
         query: { type: 'uuid_in', uuids: selected },
@@ -157,7 +163,7 @@ export function registerBulkCommand({
         desc: `${selected.length} selected metarecord${selected.length === 1 ? '' : 's'}`,
       };
     }
-    const { query, count, all } = await bulkQueryTarget(repo);
+    const { query, count, all } = await bulkQueryTarget(mf, repo);
     return { repo, query, count, explicit: false, desc: all ? 'ALL metarecords' : 'the current query' };
   }
 
@@ -172,7 +178,7 @@ export function registerBulkCommand({
       if (!repo) return 'Target? (selection / query)';
       const selected = /** @type {string[]} */ ((await workspace.get('selected_metarecords')) ?? []);
       const checked = selected.length;
-      const { count, all } = await bulkQueryTarget(repo);
+      const { count, all } = await bulkQueryTarget(metafolder, repo);
       const matches = all ? `ALL metarecords (${count})` : `${count} matching`;
       return `Target? (selection = ${checked} checked · query = ${matches})`;
     } catch {
@@ -213,8 +219,8 @@ export function registerBulkCommand({
    * @property {(prior: string[]) => string} [valuePrompt]
    *   the third argument (absent for `unset` and `delete`)
    * @property {(field: string) => string} [confirm] what the confirmation says
-   * @property {(target: BulkTarget, field: string, raw: string,
-   *             type: string|null) => Promise<void>} run
+   * @property {(mf: MetafolderApi, target: BulkTarget, field: string, raw: string,
+   *             type: string|null) => Promise<void>} run `mf`: the command's run
    */
 
   /** Bulk operations, keyed by the second argument of `metarecord:bulk`.
@@ -227,9 +233,9 @@ export function registerBulkCommand({
       fieldPrompt: 'Field to set?',
       valuePrompt: (p) => `Value for "${p[2]}"?`,
       confirm: (field) => `Set "${field}"`,
-      run: async (t, field, raw, type) => {
+      run: async (mf, t, field, raw, type) => {
         const value = await bulkValue(t, field, raw, type);
-        const n = await bulkCall(t, 'set', { name: field, value }, field);
+        const n = await bulkCall(mf, t, 'set', { name: field, value }, field);
         void statusBar.message(
           `"${field}" set on ${n} metarecord${n === 1 ? '' : 's'}.`,
           statusMessageMs,
@@ -242,9 +248,9 @@ export function registerBulkCommand({
       fieldPrompt: 'Field to add a value to?',
       valuePrompt: (p) => `Value to add to "${p[2]}"?`,
       confirm: (field) => `Add a value to "${field}"`,
-      run: async (t, field, raw, type) => {
+      run: async (mf, t, field, raw, type) => {
         const value = await bulkValue(t, field, raw, type);
-        const n = await bulkCall(t, 'add', { name: field, value }, field);
+        const n = await bulkCall(mf, t, 'add', { name: field, value }, field);
         void statusBar.message(
           `Value added to "${field}" on ${n} metarecord${n === 1 ? '' : 's'}.`,
           statusMessageMs,
@@ -257,9 +263,9 @@ export function registerBulkCommand({
       fieldPrompt: 'Field to remove a value from?',
       valuePrompt: (p) => `Value to remove from "${p[2]}"?`,
       confirm: (field) => `Remove a value from "${field}"`,
-      run: async (t, field, raw, type) => {
+      run: async (mf, t, field, raw, type) => {
         const value = await bulkValue(t, field, raw, type);
-        const n = await bulkCall(t, 'remove', { name: field, value }, field);
+        const n = await bulkCall(mf, t, 'remove', { name: field, value }, field);
         void statusBar.message(
           `Value removed from "${field}" on ${n} metarecord${n === 1 ? '' : 's'}.`,
           statusMessageMs,
@@ -270,8 +276,8 @@ export function registerBulkCommand({
     unset: {
       fieldPrompt: 'Field to remove?',
       confirm: (field) => `Remove "${field}"`,
-      run: async (t, field) => {
-        const n = await bulkCall(t, 'unset', { name: field }, field);
+      run: async (mf, t, field) => {
+        const n = await bulkCall(mf, t, 'unset', { name: field }, field);
         void statusBar.message(
           `"${field}" removed from ${n} metarecord${n === 1 ? '' : 's'}.`,
           statusMessageMs,
@@ -283,7 +289,7 @@ export function registerBulkCommand({
       // No field, no value: this one destroys the metarecords. It confirms on
       // its own terms (never skipped, count named) rather than through
       // confirmBulk, because it is not undoable from the UI.
-      run: async (t) => {
+      run: async (mf, t) => {
         if (t.count === 0) {
           void statusBar.message(
             t.explicit
@@ -308,7 +314,7 @@ export function registerBulkCommand({
           `Deleted ${deleted} metarecord${deleted === 1 ? '' : 's'}.`,
           statusMessageMs,
         );
-        await dirty();
+        await dirty(mf);
       },
     },
 
@@ -318,7 +324,7 @@ export function registerBulkCommand({
       // value; confirmed on its own terms like `delete`, naming the count.
       // The Rust side posts the outcome (files trashed, metarecords without a
       // file kept) and marks the lists dirty.
-      run: async (t) => {
+      run: async (mf, t) => {
         if (t.count === 0) {
           void statusBar.message(
             t.explicit
@@ -336,7 +342,7 @@ export function registerBulkCommand({
           )
         )
           return;
-        await metafolder.trash.trashQuery(t.repo, t.query);
+        await mf.trash.trashQuery(t.repo, t.query);
       },
     },
   };
@@ -353,9 +359,9 @@ export function registerBulkCommand({
 
   /** One set-layer call over the target, returning the number of metarecords
    *  the daemon reports changed (falling back to the target count).
-   *  @param {BulkTarget} t @param {string} route @param {object} body
-   *  @param {string} field */
-  async function bulkCall(t, route, body, field) {
+   *  @param {MetafolderApi} mf @param {BulkTarget} t @param {string} route
+   *  @param {object} body @param {string} field */
+  async function bulkCall(mf, t, route, body, field) {
     const force = forceFor(field);
     const resp = /** @type {{updated?: number}} */ (
       await daemon.call('POST', `/repos/${t.repo}/query/fields/${route}`, {
@@ -364,7 +370,7 @@ export function registerBulkCommand({
         ...force,
       })
     );
-    await dirty();
+    await dirty(mf);
     return resp.updated ?? t.count;
   }
 
@@ -419,7 +425,7 @@ export function registerBulkCommand({
         views: (p) => bulkValueViews(p[2], p.length > 3 ? p[3] : null),
       },
     ],
-    handler: async (target, op, ...rest) => {
+    handler: async (mf, target, op, ...rest) => {
       if (target !== 'selection' && target !== 'query') {
         throw new Error(
           `unknown target "${target}" — metarecord:bulk <selection|query> <op> [field] [type] [value]`,
@@ -429,9 +435,9 @@ export function registerBulkCommand({
       if (!spec) throw new Error(`unknown bulk operation: "${op}"`);
       const field = rest.shift() ?? '';
       const { type, value } = splitTypeValue(rest);
-      const t = await bulkTarget(target);
+      const t = await bulkTarget(mf, target);
       if (spec.confirm && !(await confirmBulk(t, spec.confirm(field)))) return;
-      await spec.run(t, field, value, type);
+      await spec.run(mf, t, field, value, type);
     },
   });
 }

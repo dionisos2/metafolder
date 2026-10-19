@@ -209,7 +209,7 @@ export async function mount(root, metafolder) {
     onApply: () => {
       queryRan = true;
     },
-    run: () => fetchPage(true),
+    run: (mf) => fetchPage(true, mf),
   });
 
   // ── Display data (./display-data.js) ─────────────────────────────────
@@ -291,9 +291,12 @@ export async function mount(root, metafolder) {
   // query changed: what is in flight is aborted — the page and the count, which
   // the daemon then cancels instead of finishing for nobody — and the reset
   // runs once it has unwound, on the query as it is then. Returns false when
-  // the call did not run now (no repo, or another fetch in flight).
-  /** @param {boolean} reset @returns {Promise<boolean|undefined>} */
-  async function fetchPage(reset) {
+  // the call did not run now (no repo, or another fetch in flight). What it
+  // publishes goes through `mf`: the run of the command fetching (doc "Command
+  // transactions"), or the panel's own API.
+  /** @param {boolean} reset @param {MetafolderApi} [mf]
+   *  @returns {Promise<boolean|undefined>} */
+  async function fetchPage(reset, mf = metafolder) {
     const r = repo;
     if (!r) return false;
     if (loading) {
@@ -316,7 +319,7 @@ export async function mount(root, metafolder) {
         // nothing is dropped here for merely not matching the query — but a
         // metarecord that no longer exists is (it could never be shown or
         // unchecked again).
-        await selection.pruneVanished();
+        await selection.pruneVanished(mf);
       }
       /** @type {string|null} */
       let keepUuid = null;
@@ -324,7 +327,7 @@ export async function mount(root, metafolder) {
         // A refresh must not steal the selection: remember the highlighted
         // metarecord and restore it.
         const previous = /** @type {{uuid: string}|null} */ (
-          (await workspace.get('selected_metarecord')) ?? null
+          (await mf.workspace.get('selected_metarecord')) ?? null
         );
         keepUuid = metarecords[cursorIndex]?.uuid ?? previous?.uuid ?? null;
         metarecords = [];
@@ -340,14 +343,14 @@ export async function mount(root, metafolder) {
       // exactly what the list shows — the live finder narrowing included.
       const effQuery = effectiveQuery() ?? MATCH_ALL;
       if (reset) {
-        await workspace.set('metarecord-list:effective-query', effQuery);
+        await mf.workspace.set('metarecord-list:effective-query', effQuery);
         // ...and the same query as DSL text, for a script asking what the panel
         // is showing (`mf gui query`). '' = match all, the text counterpart of
         // MATCH_ALL.
-        await workspace.set('metarecord-list:effective-query-text', effectiveQueryText() ?? '');
+        await mf.workspace.set('metarecord-list:effective-query-text', effectiveQueryText() ?? '');
         // ...and its order, so whoever plays what the list shows plays it in
         // this order (the file panel's slideshow, doc "Slideshow").
-        await workspace.set('metarecord-list:sort', sort);
+        await mf.workspace.set('metarecord-list:sort', sort);
       }
       let result;
       try {
@@ -385,7 +388,7 @@ export async function mount(root, metafolder) {
           cursorIndex = keepIndex;
         } else if (metarecords.length > 0) {
           render();
-          await setCursor(0);
+          await setCursor(mf, 0);
           return;
         } else {
           cursorIndex = -1;
@@ -473,7 +476,7 @@ export async function mount(root, metafolder) {
               index === cursorIndex && 'cursor',
               selection.has(metarecord.uuid) && 'checked',
             ],
-            onclick: () => setCursor(index),
+            onclick: () => setCursor(metafolder, index),
           },
           el('td', { class: 'open-cell' }, rowOpenButtons(index)),
           shownColumns().map((column) => el('td', {}, cellText(column, metarecord))),
@@ -492,7 +495,7 @@ export async function mount(root, metafolder) {
               index === cursorIndex && 'cursor',
               selection.has(metarecord.uuid) && 'checked',
             ],
-            onclick: () => setCursor(index),
+            onclick: () => setCursor(metafolder, index),
           },
           thumbnail(metafolder.guiServer, pathsOf(metarecord)[0], {
             isDir: isDirMetarecord(metarecord),
@@ -556,42 +559,51 @@ export async function mount(root, metafolder) {
   // coalesced (doc "Moving the cursor").
   const cursor = createListCursor({
     containers: () => [rows, grid],
-    publish: async () => {
+    publish: async (_index, mf = metafolder) => {
       const metarecord = metarecords[cursorIndex];
       if (!metarecord) return;
       pendingEchoes.set(metarecord.uuid, (pendingEchoes.get(metarecord.uuid) ?? 0) + 1);
-      await workspace.set('selected_metarecord', { uuid: metarecord.uuid, repo });
-      await workspace.set('selected_paths', pathsOf(metarecord));
+      await mf.workspace.set('selected_metarecord', { uuid: metarecord.uuid, repo });
+      await mf.workspace.set('selected_paths', pathsOf(metarecord));
     },
   });
 
-  /** @param {number} index */
-  async function setCursor(index) {
+  // What moves the cursor or writes takes the API it runs through: a
+  // command's run (doc "Command transactions"), or the panel's own
+  // (`metafolder`) for a click, a key in a zone, a listener.
+
+  /** @param {MetafolderApi} mf @param {number} index */
+  async function setCursor(mf, index) {
     cursorIndex = Math.max(0, Math.min(index, metarecords.length - 1));
     if (!metarecords[cursorIndex]) {
       render();
       return;
     }
-    await cursor.move(cursorIndex);
+    await cursor.move(cursorIndex, mf);
   }
 
-  async function toggleChecked() {
+  /** @param {MetafolderApi} mf */
+  async function toggleChecked(mf) {
     const metarecord = metarecords[cursorIndex];
     if (!metarecord) return;
-    await selection.toggle(metarecord.uuid);
+    await selection.toggle(metarecord.uuid, mf);
   }
 
   /** Check every loaded row, on top of whatever is already checked: the
    *  selection is gathered across lists, so "all" means "all of this list" and
    *  never drops an earlier check. The bulk commands then act on an explicit
    *  set rather than on the query, which is what makes the confirmation
-   *  exact. */
-  async function checkAll() {
-    await selection.add(metarecords.map((e) => e.uuid));
+   *  exact. @param {MetafolderApi} mf */
+  async function checkAll(mf) {
+    await selection.add(
+      metarecords.map((e) => e.uuid),
+      mf,
+    );
   }
 
-  async function clearChecked() {
-    await selection.clear();
+  /** @param {MetafolderApi} mf */
+  async function clearChecked(mf) {
+    await selection.clear(mf);
   }
 
   /** A row's (or card's) open buttons (doc "Opening a row"): each selects the
@@ -604,20 +616,21 @@ export async function mount(root, metafolder) {
       hasFile: display.hasFile(metarecords[index]),
       hasMetarecord: true,
       open: async (what) => {
-        await setCursor(index);
+        await setCursor(metafolder, index);
         await commands.invoke(['panel:open', 'other', what]);
       },
     });
   }
 
-  /** Empties all three search fields and re-runs (empty query = match all). */
-  async function clearAllQueries() {
+  /** Empties all three search fields and re-runs (empty query = match all).
+   *  @param {MetafolderApi} mf */
+  async function clearAllQueries(mf) {
     finderInput.value = '';
     finderText = '';
-    await editor.clear();
-    await workspace.set('metarecord-list:finder', '');
+    await editor.clear(mf);
+    await mf.workspace.set('metarecord-list:finder', '');
     queryRan = true;
-    await fetchPage(true);
+    await fetchPage(true, mf);
   }
 
   // ── Orphans (doc "Finding and clearing orphans") ────────────────────────
@@ -625,9 +638,10 @@ export async function mount(root, metafolder) {
   /** Show the metarecords `orphan:detect` marked. No scan, no hidden override:
    *  the marker is an ordinary field, so this is the query `orphan = true`
    *  typed into the visible DSL zone — which is exactly the point of the
-   *  command, showing a new user what the detection wrote and where to edit it. */
-  async function showOrphans() {
-    await editor.show('orphan = true');
+   *  command, showing a new user what the detection wrote and where to edit it.
+   *  @param {MetafolderApi} mf */
+  async function showOrphans(mf) {
+    await editor.show(mf, 'orphan = true');
   }
 
   // ── Duplicates (doc "duplicates panel") ────────────────────────────────────
@@ -635,17 +649,17 @@ export async function mount(root, metafolder) {
   /** Show what else is byte-identical to the selected metarecord. The point of
    *  the group model is reaching a file's twins without the caller ever
    *  handling a hash, so this is just `same(...)` typed into the DSL zone —
-   *  visible, editable and composable. */
-  async function showDuplicates() {
+   *  visible, editable and composable. @param {MetafolderApi} mf */
+  async function showDuplicates(mf) {
     const selected = /** @type {{uuid?: string} | null} */ (
-      (await workspace.get('selected_metarecord')) ?? null
+      (await mf.workspace.get('selected_metarecord')) ?? null
     );
     const uuid = selected && typeof selected === 'object' ? selected.uuid : null;
     if (!uuid) {
       await statusBar.message('no metarecord is selected', statusMessageMs);
       return;
     }
-    await editor.show(`same(mfr_duplicate_group, ${uuid})`);
+    await editor.show(mf, `same(mfr_duplicate_group, ${uuid})`);
   }
 
   // ── Columns ─────────────────────────────────────────────────────────────
@@ -663,8 +677,9 @@ export async function mount(root, metafolder) {
     columnsInput.value = columns.map((c) => c.spec).join(' ');
   }
 
-  /** Applies the columns input (no daemon round-trip: select is always '*'). */
-  async function applyColumns() {
+  /** Applies the columns input (no daemon round-trip: select is always '*').
+   *  @param {MetafolderApi} mf */
+  async function applyColumns(mf) {
     columnsError.textContent = '';
     /** @type {Column[]} */
     let parsed;
@@ -678,7 +693,7 @@ export async function mount(root, metafolder) {
     columnsInput.value = columns.map((c) => c.spec).join(' ');
     await reresolveColumns();
     render();
-    await workspace.set(
+    await mf.workspace.set(
       'metarecord-list:columns',
       columns.map((c) => c.spec),
     );
@@ -749,33 +764,34 @@ export async function mount(root, metafolder) {
   }
 
   /** `order on <field>`: numbers what has no position, then sorts by it.
-   *  @param {string} field */
-  async function orderOn(field) {
+   *  @param {MetafolderApi} mf @param {string} field */
+  async function orderOn(mf, field) {
     const name = (field ?? '').trim();
     const written = await orderMode.activate(name);
     if (written === null) return; // declined: nothing written, nothing changed
     orderField = name;
     sort = [{ field: name, order: 'asc' }];
     syncOrderControls();
-    await workspace.set('metarecord-list:order-field', name);
+    await mf.workspace.set('metarecord-list:order-field', name);
     void statusBar.message(
       `ordered by ${name}` +
         (written > 0 ? ` — ${written} position${written === 1 ? '' : 's'} written` : ''),
       statusMessageMs,
     );
     queryRan = true;
-    await fetchPage(true);
+    await fetchPage(true, mf);
   }
 
-  /** `order off`: the ordinary sort again; the positions stay. */
-  async function orderOff() {
+  /** `order off`: the ordinary sort again; the positions stay.
+   *  @param {MetafolderApi} mf */
+  async function orderOff(mf) {
     if (orderField === null) return;
     orderField = null;
     sort = [];
     syncOrderControls();
-    await workspace.set('metarecord-list:order-field', null);
+    await mf.workspace.set('metarecord-list:order-field', null);
     queryRan = true;
-    await fetchPage(true);
+    await fetchPage(true, mf);
   }
 
   /** Moves are applied one after the other: each reads the rows the previous
@@ -783,8 +799,8 @@ export async function mount(root, metafolder) {
   let moveChain = Promise.resolve();
 
   /** `order move <where>` on the row under the cursor, which stays on it.
-   *  @param {string} where */
-  async function orderMove(where) {
+   *  @param {MetafolderApi} mf @param {string} where */
+  async function orderMove(mf, where) {
     const field = orderField;
     if (field === null) {
       throw new Error('the list is not ordered: metarecord-list:order on <field> first');
@@ -823,22 +839,24 @@ export async function mount(root, metafolder) {
     });
     const index = metarecords.findIndex((m) => m.uuid === moved.uuid);
     render();
-    await setCursor(index >= 0 ? index : cursorIndex);
+    await setCursor(mf, index >= 0 ? index : cursorIndex);
   }
 
-  /** @type {Record<string, (arg: string) => Promise<unknown>>} */
+  /** @type {Record<string, (mf: MetafolderApi, arg: string) => Promise<unknown>>} */
   const ORDER_ACTIONS = {
-    on: (field) => orderOn(field),
-    off: () => orderOff(),
-    move: (where) => {
-      const run = moveChain.then(() => orderMove(where));
+    on: (mf, field) => orderOn(mf, field),
+    off: (mf) => orderOff(mf),
+    move: (mf, where) => {
+      const run = moveChain.then(() => orderMove(mf, where));
       moveChain = run.catch(() => {});
       return run;
     },
   };
 
   orderOnInput.addEventListener('change', () => {
-    const run = orderOnInput.checked ? orderOn(orderFieldInput.value) : orderOff();
+    const run = orderOnInput.checked
+      ? orderOn(metafolder, orderFieldInput.value)
+      : orderOff(metafolder);
     run.catch((error) => void statusBar.error(error)).finally(syncOrderControls);
   });
   // The completion of the field box: the int fields, read when it is entered.
@@ -889,19 +907,19 @@ export async function mount(root, metafolder) {
    *  A fetch still in flight for an earlier term is aborted and the query
    *  re-run once it unwinds (`fetchPage`), so the list ends on the current
    *  input without polling for it. */
-  /** @param {{record?: boolean}} [options] */
-  async function applyFinder({ record = false } = {}) {
+  /** @param {MetafolderApi} mf @param {{record?: boolean}} [options] */
+  async function applyFinder(mf, { record = false } = {}) {
     clearTimeout(finderTimer);
     queryRan = true;
     if (record) finderHistory.push(finderInput.value.trim());
     finderText = finderInput.value;
-    await workspace.set('metarecord-list:finder', finderText);
-    await fetchPage(true);
+    await mf.workspace.set('metarecord-list:finder', finderText);
+    await fetchPage(true, mf);
   }
 
   function scheduleFinder() {
     clearTimeout(finderTimer);
-    finderTimer = setTimeout(() => void applyFinder(), finderDebounceMs);
+    finderTimer = setTimeout(() => void applyFinder(metafolder), finderDebounceMs);
   }
 
   finderInput.addEventListener('input', scheduleFinder);
@@ -912,7 +930,7 @@ export async function mount(root, metafolder) {
   finderInput.dataset.mfFocus = 'finder';
   columnsInput.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter') return;
-    void applyColumns();
+    void applyColumns(metafolder);
     if (!event.shiftKey) columnsInput.blur();
   });
 
@@ -927,19 +945,19 @@ export async function mount(root, metafolder) {
     index: () => cursorIndex,
     count: () => metarecords.length,
     select: setCursor,
-    more: () => (nextCursor ? fetchPage(false) : undefined),
+    more: (mf) => (nextCursor ? fetchPage(false, mf) : undefined),
   });
   // Only forward: the list grows as it scrolls, it does not paginate back.
   void commands.register('metarecord-list:page-next', {
     label: 'Metarecord list: load the next page',
-    handler: () => (nextCursor ? fetchPage(false) : undefined),
+    handler: (mf) => (nextCursor ? fetchPage(false, mf) : undefined),
   });
 
-  /** @type {Record<string, () => unknown>} */
+  /** @type {Record<string, (mf: MetafolderApi) => unknown>} */
   const SELECTIONS = {
-    toggle: () => toggleChecked(),
-    all: () => checkAll(),
-    none: () => clearChecked(),
+    toggle: (mf) => toggleChecked(mf),
+    all: (mf) => checkAll(mf),
+    none: (mf) => clearChecked(mf),
   };
 
   void commands.register('metarecord-list:select', {
@@ -951,10 +969,10 @@ export async function mount(root, metafolder) {
         complete: () => Object.keys(SELECTIONS),
       },
     ],
-    handler: (what) => {
+    handler: (mf, what) => {
       const run = SELECTIONS[what];
       if (!run) throw new Error(`unknown selection: "${what ?? ''}"`);
-      return run();
+      return run(mf);
     },
   });
   // ── Zones (commands in ./zone-commands.js) ──────────────────────────────
@@ -973,28 +991,28 @@ export async function mount(root, metafolder) {
       input: finderInput,
       // The explicit re-run also records the text in the finder's input
       // history; the debounced keystroke path does not.
-      apply: () => applyFinder({ record: true }),
-      clear: async () => {
+      apply: (mf) => applyFinder(mf, { record: true }),
+      clear: async (mf) => {
         finderInput.value = '';
         // A live filter: clearing it re-runs at once, widening the result.
-        await applyFinder();
+        await applyFinder(mf);
       },
     },
     simplified: {
       input: editor.simplifiedInput,
-      enter: () => editor.editSimplified(),
-      apply: () => editor.apply(),
-      clear: () => editor.clearSimplified(),
+      enter: (mf) => editor.editSimplified(mf),
+      apply: (mf) => editor.apply(mf),
+      clear: (mf) => editor.clearSimplified(mf),
     },
     normal: {
       input: editor.normalInput,
-      enter: () => editor.editNormal(),
-      apply: () => editor.apply(),
-      clear: () => editor.clearNormal(),
+      enter: (mf) => editor.editNormal(mf),
+      apply: (mf) => editor.apply(mf),
+      clear: (mf) => editor.clearNormal(mf),
     },
     columns: {
       input: columnsInput,
-      apply: () => applyColumns(),
+      apply: (mf) => applyColumns(mf),
       clear: () => {
         columnsInput.value = '';
       },
@@ -1005,10 +1023,10 @@ export async function mount(root, metafolder) {
 
   // Canned queries: each puts its DSL in the zone, shown and frozen, so it
   // stays visible, editable and composable rather than being a mode.
-  /** @type {Record<string, () => unknown>} */
+  /** @type {Record<string, (mf: MetafolderApi) => unknown>} */
   const CANNED_QUERIES = {
-    duplicates: () => showDuplicates(),
-    orphans: () => showOrphans(),
+    duplicates: (mf) => showDuplicates(mf),
+    orphans: (mf) => showOrphans(mf),
   };
 
   void commands.register('metarecord-list:query', {
@@ -1020,10 +1038,10 @@ export async function mount(root, metafolder) {
         complete: () => Object.keys(CANNED_QUERIES),
       },
     ],
-    handler: (what) => {
+    handler: (mf, what) => {
       const run = CANNED_QUERIES[what];
       if (!run) throw new Error(`unknown query: "${what ?? ''}"`);
-      return run();
+      return run(mf);
     },
   });
 
@@ -1045,23 +1063,23 @@ export async function mount(root, metafolder) {
         complete: async (_partial, p) => (p[0] === 'move' ? MOVES : await intFields()),
       },
     ],
-    handler: (action, arg) => {
+    handler: (mf, action, arg) => {
       const run = ORDER_ACTIONS[action];
       if (!run) {
         throw new Error(
           `unknown order action: "${action ?? ''}" (expected ${Object.keys(ORDER_ACTIONS).join(' / ')})`,
         );
       }
-      return run(arg);
+      return run(mf, arg);
     },
   });
 
   // `mode` flips the table ⇄ the grid through the `mode` setting, so the
   // toggle and `metarecord-list:set mode` persist the same variable.
-  /** @type {Record<string, () => unknown>} */
+  /** @type {Record<string, (mf: MetafolderApi) => unknown>} */
   const TOGGLES = {
-    normal: () => editor.toggleNormal(),
-    mode: () => SETTINGS.mode.apply(mode === 'grid' ? 'table' : 'grid'),
+    normal: (mf) => editor.toggleNormal(mf),
+    mode: (mf) => SETTINGS.mode.apply(mf, mode === 'grid' ? 'table' : 'grid'),
   };
 
   void commands.register('metarecord-list:toggle', {
@@ -1073,13 +1091,13 @@ export async function mount(root, metafolder) {
         complete: () => Object.keys(TOGGLES),
       },
     ],
-    handler: (flag) => {
+    handler: (mf, flag) => {
       const toggle = TOGGLES[flag];
       if (!toggle)
         throw new Error(
           `unknown flag: "${flag ?? ''}" (expected ${Object.keys(TOGGLES).join(' / ')})`,
         );
-      return toggle();
+      return toggle(mf);
     },
   });
 
@@ -1088,7 +1106,7 @@ export async function mount(root, metafolder) {
   // when it comes before the first display has started the panel (a script
   // showing the list then refreshing it), and it always loads — `start` arms
   // the query whenever there is a repository.
-  metafolder.provide({ refresh: () => start() });
+  metafolder.provide({ refresh: (mf) => start(mf) });
   // Two entry points to bulk editing (doc "Editing metarecords in the GUI"):
   // this one is the mouse-oriented half — the in-panel form (op picker + value
   // widget), opened by the footer button. The keyboard half is
@@ -1107,22 +1125,22 @@ export async function mount(root, metafolder) {
 
   // View settings: what is displayed, not what is stored. `set` names the
   // setting as its first argument, so a new one costs a table entry.
-  /** @type {Record<string, {values?: string[], apply: (value: string) => unknown}>} */
+  /** @type {Record<string, {values?: string[], apply: (mf: MetafolderApi, value: string) => unknown}>} */
   const SETTINGS = {
     mode: {
       values: ['table', 'grid'],
-      apply: (value) => {
+      apply: (mf, value) => {
         if (value !== 'table' && value !== 'grid')
           throw new Error(`unknown mode: "${value ?? ''}" (expected table / grid)`);
         applyMode(value);
-        return workspace.set('metarecord-list:mode', value);
+        return mf.workspace.set('metarecord-list:mode', value);
       },
     },
     'page-size': {
-      apply: async (raw) => {
+      apply: async (mf, raw) => {
         const n = Math.floor(Number(raw));
         if (!Number.isFinite(n) || n < 1) throw new Error(`invalid page size: "${raw ?? ''}"`);
-        await workspace.set('metarecord-list:page-size', n);
+        await mf.workspace.set('metarecord-list:page-size', n);
       },
     },
   };
@@ -1141,10 +1159,10 @@ export async function mount(root, metafolder) {
         complete: (_partial, p) => SETTINGS[p[0]]?.values ?? [],
       },
     ],
-    handler: (setting, value) => {
+    handler: (mf, setting, value) => {
       const found = SETTINGS[setting];
       if (!found) throw new Error(`unknown setting: "${setting ?? ''}"`);
-      return found.apply(value);
+      return found.apply(mf, value);
     },
   });
 
@@ -1174,7 +1192,7 @@ export async function mount(root, metafolder) {
   // All actions confirm where they mutate anything.
   metafolder.contextMenu.addDefaultItems((event) => {
     const index = rowIndexFromEvent(event);
-    if (index >= 0 && index !== cursorIndex) void setCursor(index);
+    if (index >= 0 && index !== cursorIndex) void setCursor(metafolder, index);
     const target = metarecords[index >= 0 ? index : cursorIndex];
     if (!target) return [];
     const paths = pathsOf(target);
@@ -1217,7 +1235,8 @@ export async function mount(root, metafolder) {
 
   let pickFocused = false; // focus the finder once when opened as a picker
 
-  async function start() {
+  /** @param {MetafolderApi} [mf] the command run refreshing, if one does */
+  async function start(mf = metafolder) {
     const activeRepo = /** @type {string|null} */ ((await workspace.get('active_repo')) ?? null);
     if (activeRepo !== repo) {
       // A new repo: empty the list and disarm the query; it is re-armed below
@@ -1239,7 +1258,7 @@ export async function mount(root, metafolder) {
     byId(root, 'no-repo').hidden = repo !== null;
     if (!queryInitialized) {
       queryInitialized = true;
-      await editor.recompute();
+      await editor.recompute(mf);
     }
     if (repo !== null) {
       // Read the field catalog so the finder can auto-detect osm/osmd per field.
@@ -1254,7 +1273,7 @@ export async function mount(root, metafolder) {
         finderInput.focus();
       }
     }
-    if (queryRan) await fetchPage(true);
+    if (queryRan) await fetchPage(true, mf);
     else render(); // no repo: empty list
   }
 

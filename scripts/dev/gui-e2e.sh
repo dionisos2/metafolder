@@ -178,16 +178,16 @@ cat >"$CONFIG_HOME/metafolder/gui/panel-types/e2e-keys/main.js" <<'PANEL'
 export function mount(_root, metafolder) {
   void metafolder.commands.register('e2e-keys:ping', {
     label: 'e2e: say pinged',
-    handler: () => metafolder.statusBar.message('e2e: pinged', 60000),
+    handler: (mf) => mf.statusBar.message('e2e: pinged', 60000),
   });
   void metafolder.addKeybinding('e2e-keys:ping', 'ctrl+alt+y');
   void metafolder.commands.register('e2e-keys:list', {
     label: 'e2e: list a folder, writing the variables one by one',
     args: [{ name: 'dir', prompt: () => 'Folder?' }],
-    handler: async (dir) => {
-      await metafolder.workspace.set('metarecord-list:normal-query', `mfr_path -> "/${dir}"`);
-      await metafolder.workspace.set('metarecord-list:normal-shown', true);
-      await metafolder.workspace.set('metarecord-list:normal-frozen', true);
+    handler: async (mf, dir) => {
+      await mf.workspace.set('metarecord-list:normal-query', `mfr_path -> "/${dir}"`);
+      await mf.workspace.set('metarecord-list:normal-shown', true);
+      await mf.workspace.set('metarecord-list:normal-frozen', true);
     },
   });
 }
@@ -689,8 +689,8 @@ scenario_folder_list() {
 
 # The folder-list race, from a panel's command (doc "Command transactions"):
 # the handler writes the list's three query variables one `set` after another,
-# through the API its panel was mounted with. The run's transaction delivers
-# them at once, so the list never runs the half-written state.
+# through the API of its run. The run's transaction delivers them at once, so
+# the list never runs the half-written state.
 scenario_panel_txn() {
     new_repo panel-txn
     mkdir -p "$REPO_DIR/a" "$REPO_DIR/b"

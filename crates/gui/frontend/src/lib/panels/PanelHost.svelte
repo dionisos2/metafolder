@@ -18,14 +18,13 @@
   import { currentStyle, focusedWs, refreshCommands, slotPayload, store } from '../store.svelte';
   import { createPanelApi, type PanelApiInstance } from './api';
   import { createPanelArgSource } from './argSource';
-  import { createRunScope, type RunScope } from './runScope';
-  import { transactional } from '../txn';
   import { setFindRootProvider } from './roots';
   import {
+    bindFunctions,
     nextZoom,
     providedNames,
     setFunctionProvider,
-    type PanelFunctions,
+    type ProvidedFunctions,
   } from '../panelFunctions';
   import { helpCursorSheet } from '../cursor';
   import type { CommandDef, ExecContext, SlotId } from '../types';
@@ -45,8 +44,6 @@
     host: HTMLDivElement;
     shadow: ShadowRoot;
     apiInst: PanelApiInstance;
-    /** The transaction its commands run in (doc "Command transactions"). */
-    scope: RunScope;
     cleanup: (() => void) | null;
     mounted: Promise<void>;
     /** The panel's zoom (`view:zoom`), applied by `zoomSheet`. */
@@ -55,11 +52,11 @@
   }
   const instances = new Map<string, PanelInstance>();
   // Panel command handlers, keyed `${wsId}|${panelType}|${name}`.
-  const panelHandlers = new Map<string, (...args: string[]) => unknown>();
+  const panelHandlers = new Map<string, (mf: MetafolderApi, ...args: string[]) => unknown>();
   // What each instance provides to the generic commands (doc "Generic panel
   // commands"), keyed like the instances, and what each panel *type* provides
   // — the same for every instance, and asked synchronously by the key matcher.
-  const panelFunctions = new Map<string, PanelFunctions>();
+  const panelFunctions = new Map<string, ProvidedFunctions>();
   const providedByType = new Map<string, Set<string>>();
   // A panel command's declared arguments, per instance like its handler —
   // the prompt/completion functions read the state of the panel that declared
@@ -118,21 +115,20 @@
     // theme, matching the old linked-theme-then-panel cascade order.
 
     const visibilityGate = createVisibilityGate();
-    // While one of its commands runs, what the panel does is in that run's
-    // transaction, and so is a user command it invokes (doc "Command
-    // transactions").
-    const scope = createRunScope(invoke);
-    const panelContext = (): ExecContext => {
-      const txn = scope.txn();
-      const context = { ws: wsId, slot: visibleSlots.get(key) ?? store.layout.focused };
-      return txn === undefined ? context : { ...context, txn };
-    };
+    // Outside its commands' runs: a run gets its own API (`forRun`).
+    const panelContext = (): ExecContext => ({
+      ws: wsId,
+      slot: visibleSlots.get(key) ?? store.layout.focused,
+    });
     const apiInst = createPanelApi(
       {
-        invoke: transactional(invoke, scope.txn, flushTransaction),
+        invoke,
+        flush: flushTransaction,
         // A panel's commands run in its own workspace, in the slot showing it
-        // (the focused one while it is not on screen).
-        dispatch: (invocation: string | InvocationParts) => dispatch(invocation, panelContext()),
+        // (the focused one while it is not on screen) — or where the run that
+        // invokes them is.
+        dispatch: (invocation: string | InvocationParts, context?: ExecContext) =>
+          dispatch(invocation, context ?? panelContext()),
         claimCommand: (name) => {
           if (dropUserCommand(name)) {
             void status(
@@ -197,7 +193,6 @@
       host,
       shadow,
       apiInst,
-      scope,
       cleanup: null,
       mounted: undefined!,
       zoom: 1,
@@ -206,10 +201,10 @@
     instances.set(key, instance);
     // Every panel can be zoomed: the host provides `zoom` before the panel
     // provides anything, and a panel's own `provide` merges over it.
-    const zoom = async (direction: string) => {
+    const zoom = async (mf: MetafolderApi, direction: string) => {
       const value = nextZoom(instance.zoom, direction);
       applyZoom(instance, value);
-      await invoke('ws_set_var', { wsId, key: zoomVar(panelType), value });
+      await mf.workspace.set(zoomVar(panelType), value);
     };
     panelFunctions.set(key, { ...panelFunctions.get(key), zoom });
     providedByType.set(
@@ -417,17 +412,16 @@
     // their workspace — mounted first, like a panel command's (doc "Generic
     // panel commands").
     setFunctionProvider({
-      get: async (wsId, panelType) => {
+      get: async (wsId, panelType, context) => {
         const instance = ensureInstance(wsId, panelType);
         if (!instance) return null;
         await instance.mounted.catch(() => {});
-        return panelFunctions.get(instanceKey(wsId, panelType)) ?? null;
+        const provided = panelFunctions.get(instanceKey(wsId, panelType));
+        if (!provided) return null;
+        const mf = context ? instance.apiInst.forRun(context) : instance.apiInst.api;
+        return bindFunctions(provided, mf);
       },
       provided: (panelType) => providedByType.get(panelType),
-      within: (wsId, panelType, fn) => {
-        const instance = ensureInstance(wsId, panelType);
-        return instance ? instance.scope.run(fn) : fn();
-      },
     });
 
     // A command resolves once its effect is visible (doc "When a command has
@@ -469,7 +463,7 @@
       await instance.mounted;
       const handler = panelHandlers.get(`${key}|${command.name}`);
       if (!handler) throw `panel command ${command.name} has no handler`;
-      await instance.scope.run(() => handler(...args));
+      await handler(instance.apiInst.forRun(context), ...args);
     });
 
     return () => {

@@ -69,7 +69,7 @@ export function reclaimableOf(size, members) {
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder
  */
 export function mount(root, metafolder) {
-  const { daemon, workspace, commands, statusBar, trash } = metafolder;
+  const { daemon, workspace, commands, statusBar } = metafolder;
   const statusMessageMs = metafolder.settings?.statusMessageMs ?? 5000;
 
   /** @type {string|null} */
@@ -130,7 +130,7 @@ export function mount(root, metafolder) {
                   onmousedown: (/** @type {MouseEvent} */ event) => event.preventDefault(),
                   onclick: async (/** @type {MouseEvent} */ event) => {
                     event.stopPropagation();
-                    await select(i);
+                    await select(metafolder, i);
                     await activate();
                   },
                 },
@@ -162,7 +162,7 @@ export function mount(root, metafolder) {
                   hasFile: Boolean(row.member.absPath),
                   hasMetarecord: true,
                   open: async (what) => {
-                    await select(i);
+                    await select(metafolder, i);
                     await commands.invoke(['panel:open', 'other', what]);
                   },
                 }),
@@ -171,7 +171,7 @@ export function mount(root, metafolder) {
               ],
             );
       li.dataset.mfRow = String(i);
-      li.addEventListener('click', () => void select(i));
+      li.addEventListener('click', () => void select(metafolder, i));
       entriesList.appendChild(li);
     });
     const total = groups.reduce((n, g) => n + g.reclaimable, 0);
@@ -192,30 +192,32 @@ export function mount(root, metafolder) {
     // (hash, size, counters), and the detail panel is where its fields can be
     // read. Its paths too, so a file panel follows the cursor and `panel:open
     // … file` knows a group has none (doc "Opening a row").
-    publish: async () => {
+    publish: async (_index, mf = metafolder) => {
       const row = rows[cursorIndex];
       if (row && repo !== null) {
-        await workspace.set('selected_metarecord', { uuid: row.member?.uuid ?? row.group.uuid, repo });
-        await workspace.set('selected_paths', row.member?.absPath ? [row.member.absPath] : []);
+        await mf.workspace.set('selected_metarecord', { uuid: row.member?.uuid ?? row.group.uuid, repo });
+        await mf.workspace.set('selected_paths', row.member?.absPath ? [row.member.absPath] : []);
       }
     },
   });
 
-  /** @param {number} index */
-  async function select(index) {
+  // What moves the cursor or acts takes the API it runs through: a command's
+  // run (doc "Command transactions"), or the panel's own for a click.
+  /** @param {MetafolderApi} mf @param {number} index */
+  async function select(mf, index) {
     if (rows.length === 0) return;
     cursorIndex = Math.max(0, Math.min(index, rows.length - 1));
-    await cursor.move(cursorIndex);
+    await cursor.move(cursorIndex, mf);
   }
 
   /** Enter: unfold or fold the group under the cursor; on a copy, show it in the
    *  file panel at `where` (doc "Opening a row").
-   *  @param {string} [where] `here`, `other` or `new` */
-  async function open(where = 'other') {
+   *  @param {MetafolderApi} mf @param {string} [where] `here`, `other` or `new` */
+  async function open(mf, where = 'other') {
     const row = rows[cursorIndex];
     if (!row) return;
     if (row.member === null) await activate();
-    else await commands.invoke(['panel:open', where, 'file']);
+    else await mf.commands.invoke(['panel:open', where, 'file']);
   }
 
   /** `duplicates:toggle-group` (→, the twisty): expand or collapse the group under
@@ -287,8 +289,8 @@ export function mount(root, metafolder) {
 
   /** `duplicates:keep` — keep the copy under the cursor, trash the group's
    *  others. The confirmation names them all: this is the one action here that
-   *  touches more than one file. */
-  async function keepThisOne() {
+   *  touches more than one file. @param {MetafolderApi} mf */
+  async function keepThisOne(mf) {
     const row = await memberUnderCursor();
     if (!row || row.member === null) return;
     const others = (row.group.members ?? []).filter((m) => m !== row.member);
@@ -304,24 +306,25 @@ export function mount(root, metafolder) {
     ) {
       return;
     }
-    await trashMembers(row.group, others);
+    await trashMembers(mf, row.group, others);
   }
 
-  /** `duplicates:trash` — the copy under the cursor, and only it. */
-  async function trashThisOne() {
+  /** `duplicates:trash` — the copy under the cursor, and only it.
+   *  @param {MetafolderApi} mf */
+  async function trashThisOne(mf) {
     const row = await memberUnderCursor();
     if (!row || row.member === null) return;
     const left = (row.group.members ?? []).length - 1;
     const consequence =
       left < 2 ? 'Its group then holds a single copy, and goes.' : `Its group keeps ${left} copies.`;
     if (!confirm(`Send ${row.member.path} to the trash?\n\n${consequence}`)) return;
-    await trashMembers(row.group, [row.member]);
+    await trashMembers(mf, row.group, [row.member]);
   }
 
   /** Trashes `victims` one by one, then re-counts what is left of their group.
    *  A failure stops the run — the ones already trashed still left the group.
-   *  @param {Group} group @param {Member[]} victims */
-  async function trashMembers(group, victims) {
+   *  @param {MetafolderApi} mf @param {Group} group @param {Member[]} victims */
+  async function trashMembers(mf, group, victims) {
     const r = repo;
     if (r === null) return;
     /** @type {Member[]} */
@@ -332,7 +335,7 @@ export function mount(root, metafolder) {
         continue;
       }
       try {
-        await trash.trashPath(r, victim.absPath);
+        await mf.trash.trashPath(r, victim.absPath);
         gone.push(victim);
       } catch (error) {
         await statusBar.error(error);
@@ -345,16 +348,17 @@ export function mount(root, metafolder) {
       `Trashed ${gone.length} cop${gone.length === 1 ? 'y' : 'ies'} — restore from the trash panel`,
       statusMessageMs,
     );
-    await notifyChanged();
+    await notifyChanged(mf);
   }
 
   /** Tells the other panels the repository changed, and schedules our own
    *  reloads for after the watcher has recorded it (the 7 s background poll is
-   *  the backstop; the metarecord list schedules its catch-up the same way). */
-  async function notifyChanged() {
+   *  the backstop; the metarecord list schedules its catch-up the same way).
+   *  @param {MetafolderApi} mf */
+  async function notifyChanged(mf) {
     if (repo !== null) catchup.schedule(repo, [400, 2000], () => void load());
     ownNudge = Date.now();
-    await workspace.set('metarecords:dirty', ownNudge);
+    await mf.workspace.set('metarecords:dirty', ownNudge);
   }
 
   /** The daemon re-counts the group the moment the watcher records the removal
@@ -462,15 +466,15 @@ export function mount(root, metafolder) {
   void commands.register('duplicates:activate', {
     label: 'Duplicates: unfold the group / show the copy (here / other / new)',
     args: [whereArg('other')],
-    handler: (where) => open(where),
+    handler: (mf, where) => open(mf, where),
   });
   void commands.register('duplicates:keep', {
     label: 'Duplicates: keep the copy under the cursor, trash the others',
-    handler: () => keepThisOne(),
+    handler: (mf) => keepThisOne(mf),
   });
   void commands.register('duplicates:trash', {
     label: 'Duplicates: send the copy under the cursor to the trash',
-    handler: () => trashThisOne(),
+    handler: (mf) => trashThisOne(mf),
   });
 
   // Right-click a member row: this panel's own choice of survivor first (it is
@@ -485,7 +489,7 @@ export function mount(root, metafolder) {
       .find((node) => /** @type {HTMLElement} */ (node)?.dataset?.mfRow !== undefined);
     if (!clicked) return shared;
     const index = Number(/** @type {HTMLElement} */ (clicked).dataset.mfRow);
-    void select(index);
+    void select(metafolder, index);
     const row = rows[index];
     if (!row?.member) return shared;
     const others = (row.group.members ?? []).length - 1;
@@ -494,7 +498,7 @@ export function mount(root, metafolder) {
     return [
       {
         label: `Keep this copy, trash the other ${others}`,
-        action: () => void keepThisOne(),
+        action: () => void keepThisOne(metafolder),
       },
       ...shared,
     ];

@@ -6,6 +6,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { withRuns } from './support/runs';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/file-manager');
 
@@ -159,7 +160,7 @@ async function mount(
   const s = stub(repo, activity, operations);
   const root = shadowRoot();
   const mod = await import('../../default-config/panel-types/file-manager/main.js');
-  await mod.mount(root, s.api as never);
+  await mod.mount(root, withRuns(s.api) as never);
   await new Promise((r) => setTimeout(r, 0));
   return { ...s, root };
 }

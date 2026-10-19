@@ -60,7 +60,7 @@ const PAGE_DEFAULT = 200;
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder
  */
 export async function mount(root, metafolder) {
-  const { fs, daemon, workspace, commands, statusBar, bench, changes, trash } = metafolder;
+  const { fs, daemon, workspace, commands, statusBar, bench, changes } = metafolder;
   // Standard status-message duration (config.toml `[panels]`), with the former
   // hard-coded fallback.
   const statusMessageMs = metafolder.settings.statusMessageMs ?? 5000;
@@ -180,8 +180,8 @@ export async function mount(root, metafolder) {
   // one `Follows` query the bitmap index serves (bounded to this directory's
   // children — not a per-window round-trip and not a full-repo scan). `dirUuid`
   // is the directory node resolved by `enrichSelfParent`.
-  /** @param {string|null} dirUuid */
-  async function enrichChildren(dirUuid) {
+  /** @param {string|null} dirUuid @param {MetafolderApi} [mf] the command run listing, if one does */
+  async function enrichChildren(dirUuid, mf = metafolder) {
     const dir = currentDir;
     if (dir === null) return;
     try {
@@ -190,7 +190,7 @@ export async function mount(root, metafolder) {
     } catch (error) {
       await statusBar.error(error);
     }
-    await catchUpSelection();
+    await catchUpSelection(mf);
   }
 
   // The tracked status lands after the rows, so a cursor put on an entry before
@@ -199,18 +199,19 @@ export async function mount(root, metafolder) {
   // one (doc "Opening a row"). Published again once known, but only while the
   // workspace's selection is still that path: one made elsewhere meanwhile is
   // not this panel's to take back.
-  async function catchUpSelection() {
+  /** @param {MetafolderApi} mf */
+  async function catchUpSelection(mf) {
     const item = listing[cursorIndex];
     if (!item) return;
     const uuid = trackedPaths.get(item.path);
     if (!uuid) return;
     const [selected, paths] = await Promise.all([
-      workspace.get('selected_metarecord'),
-      workspace.get('selected_paths'),
+      mf.workspace.get('selected_metarecord'),
+      mf.workspace.get('selected_paths'),
     ]);
     const ours = Array.isArray(paths) && paths.length === 1 && paths[0] === item.path;
     const known = /** @type {{uuid?: string} | null} */ (selected)?.uuid === uuid;
-    if (ours && !known) await listCursor.publish(cursorIndex);
+    if (ours && !known) await listCursor.publish(cursorIndex, mf);
   }
 
   // Which listed entries an ignore pattern excludes (doc "Setting ignore patterns"): one daemon
@@ -286,21 +287,26 @@ export async function mount(root, metafolder) {
 
   // Re-query the tracked status of the current directory (after a write, or an
   // external change): drop the stale map and refill it from the daemon.
-  async function reenrichVisible() {
+  /** @param {MetafolderApi} [mf] the command run asking, if one does */
+  async function reenrichVisible(mf = metafolder) {
     trackedPaths = new Map();
     const dirUuid = await enrichSelfParent();
-    await enrichChildren(dirUuid);
+    await enrichChildren(dirUuid, mf);
     await refreshEligibility();
     await refreshActivity();
   }
 
-  /** @param {string} dir @returns {Promise<void>} */
-  function open(dir) {
-    return bench.measure('mf:fm:load', () => openNow(dir));
+  // What moves the panel or writes takes first the API it runs through: a
+  // command's run (doc "Command transactions"), or the panel's own
+  // (`metafolder`) for a click, a menu, a listener.
+
+  /** @param {MetafolderApi} mf @param {string} dir @returns {Promise<void>} */
+  function open(mf, dir) {
+    return bench.measure('mf:fm:load', () => openNow(mf, dir));
   }
 
-  /** @param {string} dir */
-  async function openNow(dir) {
+  /** @param {MetafolderApi} mf @param {string} dir */
+  async function openNow(mf, dir) {
     if (constrainToRoot && repoRoot !== null && !insideRoot(dir)) {
       void statusBar.message('navigation is constrained to the repo root', 4000);
       return;
@@ -337,7 +343,7 @@ export async function mount(root, metafolder) {
     // folder, nothing highlighted in it yet. The shell's `ignore:*` commands
     // read it too, to know which directory the user is looking at (doc
     // "Setting ignore patterns").
-    await writeLocation({ dir, cursor: null }, ['dir', 'cursor']);
+    await writeLocation(mf, { dir, cursor: null }, ['dir', 'cursor']);
     const dirUuid = await enrichSelfParent();
     // Going into a folder is a view of it (doc "Frecent folders"), recorded
     // once per arrival: a refresh or a mutation listing it again is not one.
@@ -345,14 +351,14 @@ export async function mount(root, metafolder) {
       lastViewedDir = dirUuid;
       void metafolder.recent.touch(repo, dirUuid);
     }
-    await enrichChildren(dirUuid);
+    await enrichChildren(dirUuid, mf);
     await refreshEligibility();
     await refreshActivity();
     await refreshMounts();
     // The checked selection outlives the listings it was gathered in (checking
     // rows in several places is what it is for) — but a metarecord that no
     // longer exists is dropped, since it could never be shown or unchecked.
-    await selection.pruneVanished();
+    await selection.pruneVanished(mf);
     render();
   }
 
@@ -429,7 +435,7 @@ export async function mount(root, metafolder) {
               hot && 'hot',
               item.escaped && 'escaped-name',
             ],
-            onclick: () => select(index),
+            onclick: () => select(metafolder, index),
             oncontextmenu: (/** @type {MouseEvent} */ event) => rowMenu(event, index),
             ...(title && { title }),
           },
@@ -526,12 +532,12 @@ export async function mount(root, metafolder) {
   // and written to another.
   const listCursor = createListCursor({
     containers: () => [entriesList],
-    publish: async () => {
+    publish: async (_index, mf = metafolder) => {
       const item = listing[cursorIndex];
       if (!item) return;
       const uuid = trackedPaths.get(item.path);
-      await workspace.set('selected_metarecord', uuid ? { uuid, repo } : null);
-      await workspace.set('selected_paths', [item.path]);
+      await mf.workspace.set('selected_metarecord', uuid ? { uuid, repo } : null);
+      await mf.workspace.set('selected_paths', [item.path]);
     },
   });
 
@@ -542,8 +548,8 @@ export async function mount(root, metafolder) {
       !repo || !selected || trackedPaths.has(selected.path) || !trackable(selected.path);
   }
 
-  /** @param {number} index */
-  async function select(index) {
+  /** @param {MetafolderApi} mf @param {number} index */
+  async function select(mf, index) {
     cursorIndex = Math.max(0, Math.min(index, listing.length - 1));
     // Keep the cursor inside the rendered window (jumping to the last entry
     // expands it so the row exists in the DOM to scroll to). Tracked status is
@@ -557,8 +563,8 @@ export async function mount(root, metafolder) {
     }
     if (!listing[cursorIndex]) return;
     listCursor.reveal();
-    await writeLocation({ ...appliedLocation, cursor: listing[cursorIndex].name }, ['cursor']);
-    await listCursor.publish(cursorIndex);
+    await writeLocation(mf, { ...appliedLocation, cursor: listing[cursorIndex].name }, ['cursor']);
+    await listCursor.publish(cursorIndex, mf);
   }
 
   /** @param {{name: string, is_dir: boolean}} item */
@@ -571,10 +577,10 @@ export async function mount(root, metafolder) {
    *  @param {number} index @param {'enter'|'file'|'metarecord-detail'} what */
   async function openRow(index, what) {
     if (what !== 'metarecord-detail') {
-      await activate(index);
+      await activate(metafolder, index);
       return;
     }
-    await select(index);
+    await select(metafolder, index);
     await commands.invoke(['panel:open', 'other', 'metarecord-detail']);
   }
 
@@ -582,16 +588,17 @@ export async function mount(root, metafolder) {
   /** Enter (doc "Opening a row"): a folder is gone into; a file — or the folder
    *  shown, the "." row — is shown in the file panel at `where`, where the panel
    *  follows the selection the cursor published.
-   *  @param {number} index @param {string} [where] `here`, `other` or `new` */
-  async function activate(index, where = 'other') {
+   *  @param {MetafolderApi} mf @param {number} index
+   *  @param {string} [where] `here`, `other` or `new` */
+  async function activate(mf, index, where = 'other') {
     const item = listing[index];
     if (!item) return;
     if (entersOnOpen(item)) {
-      await open(item.path);
+      await open(mf, item.path);
       return;
     }
-    await select(index);
-    await commands.invoke(['panel:open', where, 'file']);
+    await select(mf, index);
+    await mf.commands.invoke(['panel:open', where, 'file']);
   }
 
   // ── The checked multi-selection (doc "Cross-panel selection") ─────────
@@ -600,7 +607,8 @@ export async function mount(root, metafolder) {
   // metarecord can join it: an untracked entry has none to check, and recording
   // it first is the way (its row then offers the Metarecord actions too).
 
-  async function toggleChecked() {
+  /** @param {MetafolderApi} mf */
+  async function toggleChecked(mf) {
     const item = listing[cursorIndex];
     if (!item) return;
     const uuid = trackedPaths.get(item.path);
@@ -608,14 +616,14 @@ export async function mount(root, metafolder) {
       void statusBar.message('no metarecord for this entry — record it first', statusMessageMs);
       return;
     }
-    await selection.toggle(uuid);
+    await selection.toggle(uuid, mf);
   }
 
   /** Check every tracked entry of the directory — "all" is the directory's
    *  entries, as the footer counts them (the synthetic "." / ".." rows are
    *  navigation), on top of whatever is already checked: the selection is
-   *  gathered across lists and panels. */
-  async function checkAll() {
+   *  gathered across lists and panels. @param {MetafolderApi} mf */
+  async function checkAll(mf) {
     /** @type {string[]} */
     const uuids = [];
     for (const item of listing.slice(syntheticCount)) {
@@ -626,11 +634,12 @@ export async function mount(root, metafolder) {
       void statusBar.message('no tracked entry here — nothing to check', statusMessageMs);
       return;
     }
-    await selection.add(uuids);
+    await selection.add(uuids, mf);
   }
 
-  async function clearChecked() {
-    await selection.clear();
+  /** @param {MetafolderApi} mf */
+  async function clearChecked(mf) {
+    await selection.clear(mf);
   }
 
   // Confirm a folder-path pick with `path` (doc "Value picker"): publish it
@@ -648,7 +657,7 @@ export async function mount(root, metafolder) {
   function rowMenu(event, index) {
     const item = listing[index];
     if (!item) return;
-    void select(index);
+    void select(metafolder, index);
     const isEntry = item.name !== '.' && item.name !== '..';
     /** @type {Metafolder.MenuItem[]} */
     const items = [];
@@ -666,7 +675,7 @@ export async function mount(root, metafolder) {
     // file manager" is dropped — this panel already IS the file manager. This
     // covers the synthetic "." / ".." rows as well: the current directory and its
     // parent are ordinary tracked metarecords (their tree nodes), so right-clicking
-    // "." (e.g. at the repo root) must offer this category too. The `select(index)`
+    // "." (e.g. at the repo root) must offer this category too. The `select(…, index)`
     // above published the row as `selected_metarecord`, which the reveal commands read.
     const uuid = trackedPaths.get(item.path);
     if (repo && uuid) {
@@ -695,18 +704,18 @@ export async function mount(root, metafolder) {
       {
         label: 'Record (mf_watch = false)',
         disabled: !repo || trackedPaths.has(item.path) || !trackable(item.path),
-        action: () => void addSelected(),
+        action: () => void addSelected(metafolder),
       },
       { header: 'File' },
     );
-    if (item.is_dir) items.push({ label: 'Open', action: () => void activate(index) });
+    if (item.is_dir) items.push({ label: 'Open', action: () => void activate(metafolder, index) });
     if (isEntry) {
       items.push(
         { label: 'Cut', action: () => clip('cut') },
         { label: 'Copy', action: () => clip('copy') },
-        { label: 'Paste', disabled: !hasClipboard(), action: () => void paste() },
-        { label: 'Rename…', action: () => void renameSelected() },
-        { label: 'Duplicate', action: () => void duplicateSelected() },
+        { label: 'Paste', disabled: !hasClipboard(), action: () => void paste(metafolder) },
+        { label: 'Rename…', action: () => void renameSelected(metafolder) },
+        { label: 'Duplicate', action: () => void duplicateSelected(metafolder) },
         {
           label: 'Copy full path',
           action: () => {
@@ -714,16 +723,16 @@ export async function mount(root, metafolder) {
             void statusBar.message(`Copied ${item.path}`, statusMessageMs);
           },
         },
-        { label: repo ? 'Move to trash' : 'Delete…', action: () => void deleteSelected() },
+        { label: repo ? 'Move to trash' : 'Delete…', action: () => void deleteSelected(metafolder) },
       );
     } else {
-      items.push({ label: 'Paste', disabled: !hasClipboard(), action: () => void paste() });
+      items.push({ label: 'Paste', disabled: !hasClipboard(), action: () => void paste(metafolder) });
     }
     if (isEntry) items.push(...ignoreMenuItems(item));
     items.push(
       { header: 'Directory' },
-      { label: 'New folder…', action: () => void newFolder() },
-      { label: 'New file…', action: () => void newFile() },
+      { label: 'New folder…', action: () => void newFolder(metafolder) },
+      { label: 'New file…', action: () => void newFile(metafolder) },
     );
     metafolder.contextMenu(event, items);
   }
@@ -736,10 +745,10 @@ export async function mount(root, metafolder) {
     /** @type {Metafolder.MenuItem[]} */
     const items = [
       { header: 'File' },
-      { label: 'Paste', disabled: !hasClipboard(), action: () => void paste() },
+      { label: 'Paste', disabled: !hasClipboard(), action: () => void paste(metafolder) },
       { header: 'Directory' },
-      { label: 'New folder…', action: () => void newFolder() },
-      { label: 'New file…', action: () => void newFile() },
+      { label: 'New folder…', action: () => void newFolder(metafolder) },
+      { label: 'New file…', action: () => void newFile(metafolder) },
     ];
     // In a folder pick, empty space chooses the current directory. It leads the
     // menu, above the categories (see /__menu.js: header-less items come first).
@@ -750,12 +759,14 @@ export async function mount(root, metafolder) {
     metafolder.contextMenu(event, items);
   }
 
-  async function goUp() {
+  /** @param {MetafolderApi} mf */
+  async function goUp(mf) {
     if (!currentDir || currentDir === '/') return;
-    await open(parentDir(currentDir));
+    await open(mf, parentDir(currentDir));
   }
 
-  async function addSelected() {
+  /** @param {MetafolderApi} mf */
+  async function addSelected(mf) {
     const item = listing[cursorIndex];
     if (!repo) {
       void statusBar.message('no active repository', 4000);
@@ -775,10 +786,10 @@ export async function mount(root, metafolder) {
       return;
     }
     void statusBar.message(`Recorded: ${item.name} (mf_watch = false)`, statusMessageMs);
-    await reenrichVisible();
+    await reenrichVisible(mf);
     render();
-    await select(cursorIndex);
-    await workspace.set('metarecords:dirty', Date.now());
+    await select(mf, cursorIndex);
+    await mf.workspace.set('metarecords:dirty', Date.now());
   }
 
   // ── Ignore patterns (doc "Setting ignore patterns") ───────────────────────────
@@ -872,8 +883,9 @@ export async function mount(root, metafolder) {
   // Jump to "the root": the repository's when one is active, the filesystem's
   // otherwise — with no repo there is no repo root to name, and the panel is
   // then a plain disk browser, where "/" is the only root there is.
-  async function gotoRoot() {
-    await open(repoRoot ?? '/');
+  /** @param {MetafolderApi} mf */
+  async function gotoRoot(mf) {
+    await open(mf, repoRoot ?? '/');
   }
 
   // Which root the button offers, so it never promises a repo root that the
@@ -904,14 +916,15 @@ export async function mount(root, metafolder) {
   let followDropped = false;
 
   /** Moves the panel's location to `location`, writing the named variables.
+   *  @param {MetafolderApi} mf
    *  @param {{dir: string|null, cursor: string|null}} location
    *  @param {('dir'|'cursor')[]} keys */
-  async function writeLocation(location, keys) {
+  async function writeLocation(mf, location, keys) {
     appliedLocation = location;
     locationEpoch += 1;
     locationWrites += 1;
     try {
-      for (const key of keys) await workspace.set(`file-manager:${key}`, location[key]);
+      for (const key of keys) await mf.workspace.set(`file-manager:${key}`, location[key]);
     } finally {
       locationWrites -= 1;
     }
@@ -942,8 +955,8 @@ export async function mount(root, metafolder) {
       constrainToRoot = false;
       constrainBox.checked = false;
     }
-    if (dir !== currentDir) await open(dir);
-    if (cursor) await selectByName(cursor);
+    if (dir !== currentDir) await open(metafolder, dir);
+    if (cursor) await selectByName(metafolder, cursor);
   }
 
   async function followLocationVariables() {
@@ -983,10 +996,10 @@ export async function mount(root, metafolder) {
   }
 
   /** Highlights the entry named `name` in the current listing, if present.
-   *  @param {string} name */
-  async function selectByName(name) {
+   *  @param {MetafolderApi} mf @param {string} name */
+  async function selectByName(mf, name) {
     const index = listing.findIndex((item) => item.name === name);
-    if (index >= 0) await select(index);
+    if (index >= 0) await select(mf, index);
   }
 
   // ── Filesystem operations (doc "file-manager panel") ─────────────
@@ -1018,74 +1031,78 @@ export async function mount(root, metafolder) {
   // Reload the current directory after a mutation and move the cursor to
   // `selectName` when given (the freshly created/renamed entry). Other panels
   // showing this repo refresh via the metarecords:dirty nudge.
-  /** @param {string|null} selectName */
-  async function afterMutation(selectName) {
-    await workspace.set('metarecords:dirty', Date.now());
+  /** @param {MetafolderApi} mf @param {string|null} selectName */
+  async function afterMutation(mf, selectName) {
+    await mf.workspace.set('metarecords:dirty', Date.now());
     if (currentDir === null) return;
-    await open(currentDir);
+    await open(mf, currentDir);
     if (selectName !== null) {
       const index = listing.findIndex((item) => item.name === selectName);
-      if (index >= 0) await select(index);
+      if (index >= 0) await select(mf, index);
     }
   }
 
-  async function newFolder() {
+  /** @param {MetafolderApi} mf */
+  async function newFolder(mf) {
     if (currentDir === null) return;
     const name = (prompt('New folder name:') ?? '').trim();
     if (!name) return;
     try {
-      await fs.mkdir(joinPath(currentDir, name));
+      await mf.fs.mkdir(joinPath(currentDir, name));
     } catch (error) {
       await statusBar.error(error, statusErrorMs);
       return;
     }
     void statusBar.message(`Created folder ${name}`, statusMessageMs);
-    await afterMutation(name);
+    await afterMutation(mf, name);
   }
 
-  async function newFile() {
+  /** @param {MetafolderApi} mf */
+  async function newFile(mf) {
     if (currentDir === null) return;
     const name = (prompt('New file name:') ?? '').trim();
     if (!name) return;
     try {
-      await fs.createFile(joinPath(currentDir, name));
+      await mf.fs.createFile(joinPath(currentDir, name));
     } catch (error) {
       await statusBar.error(error, statusErrorMs);
       return;
     }
     void statusBar.message(`Created file ${name}`, statusMessageMs);
-    await afterMutation(name);
+    await afterMutation(mf, name);
   }
 
-  async function renameSelected() {
+  /** @param {MetafolderApi} mf */
+  async function renameSelected(mf) {
     if (currentDir === null) return;
     const item = selectedEntry();
     if (!item) return;
     const next = (prompt('Rename to:', item.name) ?? '').trim();
     if (!next || next === item.name) return;
     try {
-      await fs.move(item.path, joinPath(currentDir, next));
+      await mf.fs.move(item.path, joinPath(currentDir, next));
     } catch (error) {
       await statusBar.error(error, statusErrorMs);
       return;
     }
     void statusBar.message(`Renamed to ${next}`, statusMessageMs);
-    await afterMutation(next);
+    await afterMutation(mf, next);
   }
 
-  async function duplicateSelected() {
+  /** @param {MetafolderApi} mf */
+  async function duplicateSelected(mf) {
     if (currentDir === null) return;
     const item = selectedEntry();
     if (!item) return;
     const name = dedupeName(item.name, takenNames());
     try {
-      await fs.copy(item.path, joinPath(currentDir, name));
+      await mf.fs.copy(item.path, joinPath(currentDir, name));
     } catch (error) {
       await statusBar.error(error, statusErrorMs);
       return;
     }
     void statusBar.message(`Duplicated to ${name}`, statusMessageMs);
-    await afterMutation(name);
+    await afterMutation(mf, name);
   }
 
   /** @param {'copy'|'cut'} mode */
@@ -1096,7 +1113,8 @@ export async function mount(root, metafolder) {
     void statusBar.message(`${mode === 'cut' ? 'Cut' : 'Copied'} ${item.name}`, statusMessageMs);
   }
 
-  async function paste() {
+  /** @param {MetafolderApi} mf */
+  async function paste(mf) {
     if (currentDir === null) return;
     const cb = getClipboard();
     if (!cb || cb.paths.length === 0) {
@@ -1115,8 +1133,8 @@ export async function mount(root, metafolder) {
       const name = dedupeName(baseName(src), taken);
       const target = joinPath(currentDir, name);
       try {
-        if (mode === 'cut') await fs.move(src, target);
-        else await fs.copy(src, target);
+        if (mode === 'cut') await mf.fs.move(src, target);
+        else await mf.fs.copy(src, target);
         taken.add(name);
         pasted += 1;
       } catch (error) {
@@ -1126,11 +1144,12 @@ export async function mount(root, metafolder) {
     if (mode === 'cut') setClipboard(null); // the sources have moved
     if (pasted > 0) {
       void statusBar.message(`Pasted ${pasted} item${pasted === 1 ? '' : 's'}`, statusMessageMs);
-      await afterMutation(paths.length === 1 ? baseName(paths[0]) : null);
+      await afterMutation(mf, paths.length === 1 ? baseName(paths[0]) : null);
     }
   }
 
-  async function deleteSelected() {
+  /** @param {MetafolderApi} mf */
+  async function deleteSelected(mf) {
     if (currentDir === null) return;
     const item = selectedEntry();
     if (!item) return;
@@ -1140,7 +1159,7 @@ export async function mount(root, metafolder) {
     if (repo) {
       if (!confirm(`Send "${item.name}" to the trash?`)) return;
       try {
-        await trash.trashPath(repo, item.path);
+        await mf.trash.trashPath(repo, item.path);
       } catch (error) {
         await statusBar.error(error, statusErrorMs);
         return;
@@ -1149,23 +1168,24 @@ export async function mount(root, metafolder) {
     } else {
       if (!confirm(`Permanently delete "${item.name}"? This cannot be undone.`)) return;
       try {
-        await fs.remove(item.path);
+        await mf.fs.remove(item.path);
       } catch (error) {
         await statusBar.error(error, statusErrorMs);
         return;
       }
       void statusBar.message(`Deleted ${item.name}`, statusMessageMs);
     }
-    await afterMutation(null);
+    await afterMutation(mf, null);
   }
 
   // Re-read the current directory and its tracked status from disk/daemon,
   // preserving the cursor position.
-  async function refresh() {
+  /** @param {MetafolderApi} mf */
+  async function refresh(mf) {
     if (currentDir === null) return;
     const keep = cursorIndex;
-    await open(currentDir);
-    if (keep >= 0) await select(keep);
+    await open(mf, currentDir);
+    if (keep >= 0) await select(mf, keep);
   }
 
   // Reveal the next window of rows as the listing is scrolled to its end — the
@@ -1186,21 +1206,21 @@ export async function mount(root, metafolder) {
 
   // Re-list the current directory so the ".." row (dis)appears immediately when
   // the constraint is toggled at the repo root.
-  /** @param {boolean} checked */
-  async function setConstrain(checked) {
+  /** @param {MetafolderApi} mf @param {boolean} checked */
+  async function setConstrain(mf, checked) {
     constrainToRoot = checked;
     constrainBox.checked = checked;
-    if (currentDir !== null) await open(currentDir);
+    if (currentDir !== null) await open(mf, currentDir);
   }
-  constrainBox.addEventListener('change', () => void setConstrain(constrainBox.checked));
+  constrainBox.addEventListener('change', () => void setConstrain(metafolder, constrainBox.checked));
   // Re-list the current directory so the dot-entries (dis)appear immediately.
-  /** @param {boolean} shown */
-  async function setShowHidden(shown) {
+  /** @param {MetafolderApi} mf @param {boolean} shown */
+  async function setShowHidden(mf, shown) {
     showHidden = shown;
     showHiddenBox.checked = shown;
-    if (currentDir !== null) await open(currentDir);
+    if (currentDir !== null) await open(mf, currentDir);
   }
-  showHiddenBox.addEventListener('change', () => void setShowHidden(showHiddenBox.checked));
+  showHiddenBox.addEventListener('change', () => void setShowHidden(metafolder, showHiddenBox.checked));
   // Re-order the listing in place: the counts and the order come from the
   // daemon, the directory is not re-read.
   // One order at a time: choosing a count leaves the other.
@@ -1221,20 +1241,20 @@ export async function mount(root, metafolder) {
     () => void setSortBy(sortOperationsBox.checked ? 'operations' : null),
   );
   const detachScroll = pager.attach(listingElement);
-  byId(root, 'up').addEventListener('click', () => void goUp());
-  gotoRootButton.addEventListener('click', () => void gotoRoot());
-  byId(root, 'refresh').addEventListener('click', () => void refresh());
-  addButton.addEventListener('click', () => void addSelected());
+  byId(root, 'up').addEventListener('click', () => void goUp(metafolder));
+  gotoRootButton.addEventListener('click', () => void gotoRoot(metafolder));
+  byId(root, 'refresh').addEventListener('click', () => void refresh(metafolder));
+  addButton.addEventListener('click', () => void addSelected(metafolder));
 
   void commands.register('file-manager:record', {
     label: 'File manager: record the selected path — its metarecord, mf_watch = false',
-    handler: addSelected,
+    handler: (mf) => addSelected(mf),
   });
 
-  /** @type {Record<string, () => unknown>} */
+  /** @type {Record<string, (mf: MetafolderApi) => unknown>} */
   const FM_FLAGS = {
-    root: () => setConstrain(!constrainToRoot),
-    hidden: () => setShowHidden(!showHidden),
+    root: (mf) => setConstrain(mf, !constrainToRoot),
+    hidden: (mf) => setShowHidden(mf, !showHidden),
     activity: () => setSortBy(sortBy === 'events' ? null : 'events'),
     operations: () => setSortBy(sortBy === 'operations' ? null : 'operations'),
   };
@@ -1250,15 +1270,15 @@ export async function mount(root, metafolder) {
         complete: () => Object.keys(FM_FLAGS),
       },
     ],
-    handler: (flag) => {
+    handler: (mf, flag) => {
       const run = FM_FLAGS[flag];
       if (!run) throw new Error(`unknown flag: "${flag ?? ''}"`);
-      return run();
+      return run(mf);
     },
   });
 
-  /** @type {Record<string, () => unknown>} */
-  const FM_NEW = { folder: () => newFolder(), file: () => newFile() };
+  /** @type {Record<string, (mf: MetafolderApi) => unknown>} */
+  const FM_NEW = { folder: (mf) => newFolder(mf), file: (mf) => newFile(mf) };
 
   void commands.register('file-manager:new', {
     label: 'File manager: create a new folder or empty file',
@@ -1269,10 +1289,10 @@ export async function mount(root, metafolder) {
         complete: () => Object.keys(FM_NEW),
       },
     ],
-    handler: (kind) => {
+    handler: (mf, kind) => {
       const run = FM_NEW[kind];
       if (!run) throw new Error(`unknown kind: "${kind ?? ''}" (expected folder / file)`);
-      return run();
+      return run(mf);
     },
   });
 
@@ -1287,28 +1307,28 @@ export async function mount(root, metafolder) {
     entries: findRows,
     // `cursor:descend` and `cursor:find file-manager walk` go into a
     // directory; a file is not gone into.
-    descend: async (index) => {
+    descend: async (mf, index) => {
       const item = listing[index];
       if (!item?.is_dir) return false;
-      await open(item.path);
+      await open(mf, item.path);
       return true;
     },
   });
   void commands.register('file-manager:activate', {
     label: 'File manager: go into the folder / show the file (here / other / new)',
     args: [whereArg('other')],
-    handler: (where) => activate(cursorIndex, where),
+    handler: (mf, where) => activate(mf, cursorIndex, where),
   });
   // Up one level, and to the top, on `cursor:parent` / `cursor:root` (doc
   // "Generic panel commands"): the root is the repo root, or / with no repo.
   metafolder.provide({ parent: goUp, root: gotoRoot });
   void commands.register('file-manager:rename', {
     label: 'File manager: rename the selected entry',
-    handler: renameSelected,
+    handler: (mf) => renameSelected(mf),
   });
   void commands.register('file-manager:duplicate', {
     label: 'File manager: duplicate the selected entry',
-    handler: duplicateSelected,
+    handler: (mf) => duplicateSelected(mf),
   });
   void commands.register('file-manager:copy', {
     label: 'File manager: copy the selected entry to the clipboard',
@@ -1320,18 +1340,18 @@ export async function mount(root, metafolder) {
   });
   void commands.register('file-manager:paste', {
     label: 'File manager: paste the clipboard into the current directory',
-    handler: paste,
+    handler: (mf) => paste(mf),
   });
   void commands.register('file-manager:delete', {
     label: 'File manager: delete the selected entry (trash when a repo is active)',
-    handler: deleteSelected,
+    handler: (mf) => deleteSelected(mf),
   });
 
-  /** @type {Record<string, () => unknown>} */
+  /** @type {Record<string, (mf: MetafolderApi) => unknown>} */
   const FM_SELECTIONS = {
-    toggle: () => toggleChecked(),
-    all: () => checkAll(),
-    none: () => clearChecked(),
+    toggle: (mf) => toggleChecked(mf),
+    all: (mf) => checkAll(mf),
+    none: (mf) => clearChecked(mf),
   };
 
   void commands.register('file-manager:select', {
@@ -1343,10 +1363,10 @@ export async function mount(root, metafolder) {
         complete: () => Object.keys(FM_SELECTIONS),
       },
     ],
-    handler: (what) => {
+    handler: (mf, what) => {
       const run = FM_SELECTIONS[what];
       if (!run) throw new Error(`unknown selection: "${what ?? ''}"`);
-      return run();
+      return run(mf);
     },
   });
 
@@ -1393,7 +1413,7 @@ export async function mount(root, metafolder) {
     // there — else the repo root, else /.
     const location = await variableLocation();
     if (location.dir !== null) await showLocation(location.dir, location.cursor);
-    else await open(repoRoot ?? '/');
+    else await open(metafolder, repoRoot ?? '/');
   }
 
   // The first directory listing waits for the first actual display.

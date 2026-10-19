@@ -8,7 +8,7 @@ import { createPanelApi } from '../src/lib/panels/api';
 
 function setup() {
   const invoke = vi.fn(async (_cmd: string, _args?: unknown) => ({ status: 200, body: null }) as unknown);
-  const dispatch = vi.fn(async (_invocation: unknown) => ({ ok: true }));
+  const dispatch = vi.fn(async (_invocation: unknown, _context?: unknown) => ({ ok: true }));
   const registerHandler = vi.fn();
   const registerArgs = vi.fn();
   const onCommandsChanged = vi.fn();
@@ -382,10 +382,10 @@ describe('panel api — commands & keybindings', () => {
     clearArgSpecs();
   });
 
-  test('invoke routes to dispatch', async () => {
+  test('invoke routes to dispatch, from where the panel acts', async () => {
     const { api, dispatch } = setup();
     await api.commands.invoke(['panel:split']);
-    expect(dispatch).toHaveBeenCalledWith(['panel:split']);
+    expect(dispatch).toHaveBeenCalledWith(['panel:split'], { ws: 'ws-1', slot: 'left' });
   });
 
   test('addKeybinding defaults when to the panel type', async () => {

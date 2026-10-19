@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { cursor } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { withRuns } from './support/runs';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/metarecord-list');
 
@@ -161,7 +162,7 @@ async function mountList(vars: Record<string, unknown>, existing = new Set(['u-a
   const harness = stub(vars, existing);
   const shadow = shadowFor();
   const mod = await import('../../default-config/panel-types/metarecord-list/main.js');
-  await mod.mount(shadow, harness.api as never);
+  await mod.mount(shadow, withRuns(harness.api) as never);
   await settle();
   return { ...harness, shadow };
 }
@@ -175,6 +176,49 @@ async function settle() {
 function rows(shadow: ShadowRoot): Element[] {
   return [...shadow.querySelectorAll('#rows tr.row')];
 }
+
+describe('a command run (doc "Command transactions")', () => {
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = () => {};
+  });
+
+  /** The list mounted on its stub API, its commands run on another — the API
+   *  of the run, recording what goes through it. */
+  async function mountWithRun() {
+    const harness = stub({}, new Set(['u-a', 'u-b', 'u-c']));
+    const through: { key: string; value: unknown }[] = [];
+    const run = {
+      ...harness.api,
+      workspace: {
+        ...harness.api.workspace,
+        set: async (key: string, value: unknown) => void through.push({ key, value }),
+      },
+    };
+    const mod = await import('../../default-config/panel-types/metarecord-list/main.js');
+    await mod.mount(shadowFor(), withRuns(harness.api, run) as never);
+    await settle();
+    return { ...harness, run, through };
+  }
+
+  test("a command writes through the API of its run, not the panel's", async () => {
+    const harness = await mountWithRun();
+    await harness.handlers.get('metarecord-list:select')!('toggle');
+    expect(harness.through).toEqual([{ key: 'selected_metarecords', value: ['u-a'] }]);
+    expect(harness.selected()).toEqual([]);
+  });
+
+  test("the cursor a generic command moves is published through the run's API", async () => {
+    const harness = await mountWithRun();
+    const functions = Object.assign({}, ...harness.api.provide.mock.calls.map((c) => c[0])) as {
+      select: (mf: unknown, index: number) => Promise<void>;
+    };
+    const before = harness.store.get('selected_metarecord');
+    await functions.select(harness.run, 1);
+    expect(harness.through.map((w) => w.key)).toEqual(['selected_metarecord', 'selected_paths']);
+    expect(harness.through[0].value).toMatchObject({ uuid: 'u-b' });
+    expect(harness.store.get('selected_metarecord')).toEqual(before);
+  });
+});
 
 describe('the checked selection across lists', () => {
   beforeEach(() => {

@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { cursor, findCandidates } from './support/cursor';
+import { withRuns } from './support/runs';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/file-manager');
 
@@ -103,7 +104,7 @@ function stub() {
 
 async function mount(s: ReturnType<typeof stub>) {
   const mod = await import('../../default-config/panel-types/file-manager/main.js');
-  await mod.mount(s.root, s.api as never);
+  await mod.mount(s.root, withRuns(s.api) as never);
   await new Promise((r) => setTimeout(r, 0)); // let the deferred start settle
 }
 

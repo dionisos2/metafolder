@@ -52,7 +52,9 @@ function setup(vars: Record<string, unknown> = {}) {
     run,
   });
   const input = (id: string) => shadow.getElementById(id) as HTMLInputElement;
-  return { editor, store, listeners, run, input };
+  // What the editor writes through: the panel's API, or a command's run.
+  const mf = metafolder as never;
+  return { editor, store, listeners, run, input, mf };
 }
 
 beforeEach(() => {
@@ -61,10 +63,10 @@ beforeEach(() => {
 
 describe('createQueryEditor', () => {
   test('applying the simplified zone compiles it, mirrors it in B, and runs it', async () => {
-    const { editor, store, run, input } = setup();
+    const { editor, store, run, input, mf } = setup();
     await editor.restore();
     input('query-input').value = 'jazz';
-    await editor.apply();
+    await editor.apply(mf);
     expect(input('normal-input').value).toBe('expanded(jazz)');
     expect(editor.ir()).toEqual({ dsl: 'expanded(jazz)' });
     expect(editor.text()).toBe('expanded(jazz)');
@@ -74,9 +76,9 @@ describe('createQueryEditor', () => {
   });
 
   test('a shown query is frozen in the normal zone and run as typed', async () => {
-    const { editor, store, run, input } = setup();
+    const { editor, store, run, input, mf } = setup();
     await editor.restore();
-    await editor.show('orphan = true');
+    await editor.show(mf, 'orphan = true');
     expect(input('normal-input').value).toBe('orphan = true');
     expect(input('normal-freeze').checked).toBe(true);
     expect(store.get('metarecord-list:normal-frozen')).toBe(true);
@@ -96,9 +98,9 @@ describe('createQueryEditor', () => {
   });
 
   test('an empty query matches everything', async () => {
-    const { editor } = setup({ 'metarecord-list:query': 'x' });
+    const { editor, mf } = setup({ 'metarecord-list:query': 'x' });
     await editor.restore();
-    await editor.clear();
+    await editor.clear(mf);
     expect(editor.ir()).toBeNull();
     expect(editor.text()).toBe('');
   });

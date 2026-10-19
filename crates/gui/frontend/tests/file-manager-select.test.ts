@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { cursor, generic } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { withRuns } from './support/runs';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/file-manager');
 
@@ -176,7 +177,7 @@ async function mountFileManager(vars: Record<string, unknown> = {}, existing?: S
   const harness = stub(vars, existing ?? new Set(['u-root', 'u-music', 'u-dir1', 'u-song']));
   const shadow = shadowRoot();
   const mod = await import('../../default-config/panel-types/file-manager/main.js');
-  await mod.mount(shadow, harness.api as never);
+  await mod.mount(shadow, withRuns(harness.api) as never);
   await settle();
   return { ...harness, shadow };
 }
@@ -280,7 +281,7 @@ describe('the selection when the tracked status arrives late', () => {
       const harness = stub({}, new Set(['u-root', 'u-music', 'u-dir1', 'u-song']));
       const shadow = shadowRoot();
       const mod = await import('../../default-config/panel-types/file-manager/main.js');
-      await mod.mount(shadow, harness.api as never);
+      await mod.mount(shadow, withRuns(harness.api) as never);
       await settle();
       await moveTo(harness.api, 3); // song.mp3, its tracked status not read yet
       expect(harness.store.get('selected_metarecord')).toBeNull();
@@ -300,7 +301,7 @@ describe('the selection when the tracked status arrives late', () => {
       const harness = stub({}, new Set(['u-root', 'u-music', 'u-dir1', 'u-song']));
       const shadow = shadowRoot();
       const mod = await import('../../default-config/panel-types/file-manager/main.js');
-      await mod.mount(shadow, harness.api as never);
+      await mod.mount(shadow, withRuns(harness.api) as never);
       await settle();
       await moveTo(harness.api, 3);
       // Another panel selects something else before the read lands.
