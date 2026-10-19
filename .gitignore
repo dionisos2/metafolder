@@ -10,7 +10,6 @@ crates/gui/gen/
 prompts.txt
 .#prompts.txt
 node_modules/
-benchmarks/bench_result
 benchmarks/A_B*
 benchmarks/real
 crates/gui/frontend/coverage/
