@@ -300,13 +300,17 @@ export async function mount(root, metafolder) {
   // command's run (doc "Command transactions"), or the panel's own
   // (`metafolder`) for a click, a menu, a listener.
 
-  /** @param {MetafolderApi} mf @param {string} dir @returns {Promise<void>} */
-  function open(mf, dir) {
-    return bench.measure('mf:fm:load', () => openNow(mf, dir));
+  /** Lists `dir` and highlights `cursor` in it — by default, when going back
+   *  up, the folder left (doc "file-manager panel"), so the way back down is
+   *  one Enter away.
+   *  @param {MetafolderApi} mf @param {string} dir @param {string|null} [cursor]
+   *  @returns {Promise<void>} */
+  function open(mf, dir, cursor) {
+    return bench.measure('mf:fm:load', () => openNow(mf, dir, cursor));
   }
 
-  /** @param {MetafolderApi} mf @param {string} dir */
-  async function openNow(mf, dir) {
+  /** @param {MetafolderApi} mf @param {string} dir @param {string|null} [cursor] */
+  async function openNow(mf, dir, cursor) {
     if (constrainToRoot && repoRoot !== null && !insideRoot(dir)) {
       void statusBar.message('navigation is constrained to the repo root', 4000);
       return;
@@ -327,6 +331,7 @@ export async function mount(root, metafolder) {
       return;
     }
     loadError = null; // a fresh listing arrived; clear any stale error state
+    const left = currentDir;
     const synthetic = syntheticRows(dir, repoRoot, constrainToRoot);
     syntheticCount = synthetic.length;
     dirEntries = filterHidden(items, showHidden);
@@ -344,6 +349,8 @@ export async function mount(root, metafolder) {
     // read it too, to know which directory the user is looking at (doc
     // "Setting ignore patterns").
     await writeLocation(mf, { dir, cursor: null }, ['dir', 'cursor']);
+    const highlight = cursor === undefined ? childOnTheWay(dir, left) : cursor;
+    if (highlight !== null) await selectByName(mf, highlight);
     const dirUuid = await enrichSelfParent();
     // Going into a folder is a view of it (doc "Frecent folders"), recorded
     // once per arrival: a refresh or a mutation listing it again is not one.
@@ -955,8 +962,8 @@ export async function mount(root, metafolder) {
       constrainToRoot = false;
       constrainBox.checked = false;
     }
-    if (dir !== currentDir) await open(metafolder, dir);
-    if (cursor) await selectByName(metafolder, cursor);
+    if (dir !== currentDir) await open(metafolder, dir, cursor);
+    else if (cursor) await selectByName(metafolder, cursor);
   }
 
   async function followLocationVariables() {
@@ -993,6 +1000,15 @@ export async function mount(root, metafolder) {
       index: i + syntheticCount,
       ...(e.is_dir && { label: `${e.name}/` }),
     }));
+  }
+
+  /** The name of `dir`'s child that `path` lies in, or null when `path` is not
+   *  strictly below `dir`.
+   *  @param {string} dir @param {string|null} path */
+  function childOnTheWay(dir, path) {
+    if (path === null || path === dir || !isWithin(path, dir)) return null;
+    const below = path.slice(dir.replace(/\/+$/, '').length + 1);
+    return below.split('/')[0] || null;
   }
 
   /** Highlights the entry named `name` in the current listing, if present.

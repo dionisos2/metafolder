@@ -7,7 +7,7 @@
 // change nothing.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { cursor } from './support/cursor';
+import { cursor, generic } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import shipped from '../../default-config/commands.js';
@@ -42,7 +42,11 @@ const DIRS: Record<string, Entry[]> = {
     { name: 'sub', path: '/repo/sub', is_dir: true },
     { name: 'top.txt', path: '/repo/top.txt', is_dir: false },
   ],
-  '/repo/sub': [{ name: 'song.mp3', path: '/repo/sub/song.mp3', is_dir: false }],
+  '/repo/sub': [
+    { name: 'song.mp3', path: '/repo/sub/song.mp3', is_dir: false },
+    { name: 'deep', path: '/repo/sub/deep', is_dir: true },
+  ],
+  '/repo/sub/deep': [],
   '/elsewhere': [{ name: 'far.txt', path: '/elsewhere/far.txt', is_dir: false }],
 };
 
@@ -235,6 +239,52 @@ describe('file-manager open buttons', () => {
     rowOf(s.root, 'sub').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     await settle();
     expect(s.root.getElementById('current-path')?.textContent).toBe('/repo');
+  });
+});
+
+// Going back up highlights the folder left (doc "file-manager panel"), as a
+// shell file manager does: the way back down is one Enter away.
+describe('file-manager going up', () => {
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = () => {};
+  });
+
+  test('the up button highlights the folder left', async () => {
+    const s = stub('r', { 'file-manager:dir': '/repo/sub' });
+    await mount(s);
+    s.root.getElementById('up')!.click();
+    await settle();
+    expect(s.root.getElementById('current-path')?.textContent).toBe('/repo');
+    expect(cursorName(s.root)).toBe('sub');
+    expect(s.setVar).toHaveBeenCalledWith('file-manager:cursor', 'sub');
+  });
+
+  test('cursor:parent highlights the folder left', async () => {
+    const s = stub('r', { 'file-manager:dir': '/repo/sub' });
+    await mount(s);
+    await generic(s.api.provide, 'cursor:parent');
+    await settle();
+    expect(cursorName(s.root)).toBe('sub');
+  });
+
+  test('entering the ".." row highlights the folder left', async () => {
+    const s = stub('r', { 'file-manager:dir': '/repo/sub' });
+    await mount(s);
+    rowOf(s.root, '..').click();
+    await settle();
+    await s.handlers.get('file-manager:activate')!();
+    await settle();
+    expect(s.root.getElementById('current-path')?.textContent).toBe('/repo');
+    expect(cursorName(s.root)).toBe('sub');
+  });
+
+  test('cursor:root highlights the top folder of the way left', async () => {
+    const s = stub('r', { 'file-manager:dir': '/repo/sub/deep' });
+    await mount(s);
+    await generic(s.api.provide, 'cursor:root');
+    await settle();
+    expect(s.root.getElementById('current-path')?.textContent).toBe('/repo');
+    expect(cursorName(s.root)).toBe('sub');
   });
 });
 

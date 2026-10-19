@@ -58,6 +58,11 @@ change. The ''entries'' are not watched — a file another program creates appea
 * <<key "cursor:find self walk" d>> — walk down by name: a directory found is entered and the question asked again, a file found is selected (`shift+Enter` stops on a directory).
 * <<key "folder:open files here" "g d">> — a folder you use often and lately, from anywhere ([[Frecent folders]]). Each folder the panel goes into counts as a view of it.
 
+Going back up — by ''↑ up'', the root button, their keys, or by entering `..` —
+highlights the folder left (from the root, the top folder of the way left), so
+the way back down is one Enter away. A command revealing a location says what to
+highlight instead.
+
 ''constrain to repo root'' (<<key "file-manager:toggle root" Ctrl+r>>, checked at
 first) keeps the browsing inside the repository: going above its root is refused, and
 the root has no `..` row. Unchecked, the whole disk is reachable. Without a
