@@ -1,0 +1,65 @@
+title: Command transactions
+tags: Commands
+kind: reference
+aliases: transaction txn mf.flush txn_flush
+summary: A user command reads the workspace variables as they were when it began and its writes reach the workspaces all at once, when it ends — so no panel and no other command ever sees it half done.
+
+A [[user command|User commands]] runs in a ''transaction'' over the
+[[workspace variables|Workspace variables]]:
+
+* ''it reads a snapshot'': what `mf.workspace.get` / `all` answer is what the variables held when the command first read that workspace, plus what the command itself wrote. Another command, a panel or a script writing meanwhile does not move what it sees;
+* ''its writes are held'' — `set`, `setMany`, `send` into any workspace — and reach the workspaces ''at once'' when it ends: every variable is in before any panel hears of one, and each is announced once.
+
+A panel following several variables can therefore not read a command half done —
+the race that made `metarecord-list:folder` run the old query and
+`file-manager:reveal` lose its cursor, once in a few tries ([[Cross-panel selection]]).
+Two commands running at once (two keys pressed quickly) do not see each other's
+writes before they end, and neither waits for the other: nothing is queued, so a long
+command holds up nothing.
+
+!! Delivering before the end
+
+What a transaction carries is the variables, the daemon calls, and the status bar and
+message log. ''Anything else'' needs the variables delivered first, since a panel will
+read them: opening or switching a panel, changing the layout or the focus, creating or
+forking a workspace, running a command that is not a user command (a builtin, a
+panel's command, a `!` shell line), asking the user. Before each of these the
+transaction is ''flushed'': its writes are delivered, the GUI waits until their effect
+is visible ([[When a command has finished]]), and the command reads a fresh snapshot
+from then on. `mf.workspace.setMany(…)` followed by `mf.invoke(['panel:open', …])`
+thus shows the panel on the new values.
+
+`mf.flush()` does the same on demand, for a command that wants the user to see a step
+before it goes on.
+
+!! Nested commands
+
+A user command invoked by another (`mf.invoke`) runs ''in the caller's
+transaction'': it sees what the caller wrote, and the caller sees what it writes. Each
+step of a recorded [[macro|Macros]] being run is its own command, so each starts after
+the previous one is delivered.
+
+!! Conflicts and failures
+
+When two transactions wrote the same variable, the one that ends last wins — for that
+variable only; the others it did not write are left as they are. Nothing is replayed:
+a command that wrote to the daemon or ran a program cannot be run again.
+
+A command that fails or is abandoned still delivers what it wrote before, as a
+command did before transactions: its daemon writes are not undone either.
+
+A write into a workspace closed meanwhile is dropped.
+
+!! Limits
+
+* Only user commands — `commands.js`, `user-commands.js`, the saved macros — run in a transaction. A builtin, or a command a panel registers, writes directly as before: a panel's handler uses the `metafolder` object it was mounted with, which cannot tell which run a call belongs to (JavaScript has no context that follows an `await`). Such a command writing several variables a panel follows still writes them with `setMany`. ''Deferred'': handing a panel's command handler an API bound to its run.
+* A panel's own writes (a click moving the selection) and a script's `mf gui var` are not in any transaction: they are delivered at once.
+* A snapshot is taken per workspace, at the first read of that workspace: a command reading two workspaces may see them at two moments.
+
+!! How it is built
+
+The transaction lives on the Rust side, which owns the variables (`GuiState`): a
+command's API carries its transaction id, and the variable calls made with it read the
+snapshot and add to the held writes. A snapshot costs no copy: a workspace's variables
+are shared (`Arc`), and a write after a snapshot copies the table of pointers, not the
+values.

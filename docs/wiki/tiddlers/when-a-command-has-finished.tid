@@ -13,7 +13,7 @@ commands meets this: a [[user command|User commands]] invoking several, a script
 
 So a command resolves only once:
 
-# every event the GUI emitted for it is applied — the layout, the workspace variables (the selection a viewer follows);
+# every event the GUI emitted for it is applied — the layout, the workspace variables (the selection a viewer follows), which a user command delivers when it ends ([[Command transactions]]);
 # a frame has passed, so the panels on screen are placed and told whether they are visible;
 # the panels on screen are mounted;
 # no daemon read a panel or a command made is in flight — and this stays true for two frames running, since a panel often starts its read a timer after the frame that shows it.

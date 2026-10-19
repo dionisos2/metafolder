@@ -6,8 +6,9 @@ export type SlotId = 'left' | 'right';
 
 /** Where a command runs (doc "Commands"): a workspace and a slot — the focused
  *  ones unless the command moved to another for a block of its own
- *  (`mf.withContext`). Lexical: a command's, never a global. */
-export type ExecContext = { ws: string | null; slot: SlotId };
+ *  (`mf.withContext`) — and the transaction it runs in, if any (doc "Command
+ *  transactions"). Lexical: a command's, never a global. */
+export type ExecContext = { ws: string | null; slot: SlotId; txn?: number };
 
 export interface WorkspaceInfo {
   id: string;

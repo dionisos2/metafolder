@@ -154,14 +154,19 @@ pub async fn workspace_create(
 }
 
 /// `workspace:send` / `mf.workspace.send` — writes variables into any
-/// workspace: the one channel between workspaces.
+/// workspace: the one channel between workspaces. Held by transaction `txn`
+/// when one is given (doc "Command transactions").
 #[tauri::command]
 pub fn workspace_send(
     app: AppHandle,
     ws_id: String,
     vars: Map<String, Value>,
+    txn: Option<u64>,
 ) -> Result<(), String> {
-    app.gui.send_vars(&ws_id, vars)
+    match txn {
+        Some(txn) => app.gui.txn_send(txn, &ws_id, vars),
+        None => app.gui.send_vars(&ws_id, vars),
+    }
 }
 
 /// `workspace:fork` / `mf.workspace.fork` — a new workspace identical to
@@ -264,20 +269,72 @@ pub fn panel_set_type(app: AppHandle, slot: SlotId, panel_type: String) -> Resul
 }
 
 // ── Workspace variables ──────────────────────────────────────────────────
+//
+// Each takes an optional `txn`: the command transaction the call belongs to,
+// whose snapshot it reads and whose held writes it adds to (doc "Command
+// transactions"). Without one, it reads and writes the workspace directly.
 
 #[tauri::command]
-pub fn ws_get_var(app: AppHandle, ws_id: String, key: String) -> Result<Value, String> {
-    app.gui.get_var(&ws_id, &key)
+pub fn ws_get_var(
+    app: AppHandle,
+    ws_id: String,
+    key: String,
+    txn: Option<u64>,
+) -> Result<Value, String> {
+    match txn {
+        Some(txn) => app.gui.txn_get_var(txn, &ws_id, &key),
+        None => app.gui.get_var(&ws_id, &key),
+    }
 }
 
 #[tauri::command]
-pub fn ws_vars(app: AppHandle, ws_id: String) -> Result<Map<String, Value>, String> {
-    app.gui.vars(&ws_id)
+pub fn ws_vars(
+    app: AppHandle,
+    ws_id: String,
+    txn: Option<u64>,
+) -> Result<Map<String, Value>, String> {
+    match txn {
+        Some(txn) => app.gui.txn_vars(txn, &ws_id),
+        None => app.gui.vars(&ws_id),
+    }
 }
 
 #[tauri::command]
-pub fn ws_set_var(app: AppHandle, ws_id: String, key: String, value: Value) -> Result<(), String> {
-    app.gui.set_var(&ws_id, &key, value)
+pub fn ws_set_var(
+    app: AppHandle,
+    ws_id: String,
+    key: String,
+    value: Value,
+    txn: Option<u64>,
+) -> Result<(), String> {
+    match txn {
+        Some(txn) => {
+            if key == "active_repo" {
+                return Err("active_repo is set at workspace creation and cannot change".into());
+            }
+            app.gui.txn_send(txn, &ws_id, Map::from_iter([(key, value)]))
+        }
+        None => app.gui.set_var(&ws_id, &key, value),
+    }
+}
+
+/// Opens a command transaction (doc "Command transactions").
+#[tauri::command]
+pub fn txn_begin(app: AppHandle) -> u64 {
+    app.gui.txn_begin()
+}
+
+/// Delivers what transaction `txn` wrote; it stays open, reading afresh. True
+/// when there was something to deliver.
+#[tauri::command]
+pub fn txn_flush(app: AppHandle, txn: u64) -> Result<bool, String> {
+    app.gui.txn_flush(txn)
+}
+
+/// Delivers what transaction `txn` wrote and closes it.
+#[tauri::command]
+pub fn txn_end(app: AppHandle, txn: u64) -> Result<bool, String> {
+    app.gui.txn_end(txn)
 }
 
 #[tauri::command]

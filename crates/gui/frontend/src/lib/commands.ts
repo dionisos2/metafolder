@@ -690,6 +690,12 @@ export function invokerOver(
   };
 }
 
+/** Whether `name` is an installed user command — never a builtin's name,
+ *  which the registry refuses (`installUserCommands`). */
+export function isUserCommand(name: string): boolean {
+  return userHandlers.has(name);
+}
+
 /** Runs a user command; false when no such command is installed. */
 export async function runUserCommand(
   name: string,
@@ -1773,6 +1779,12 @@ export function setSettler(fn: (() => Promise<void>) | null): void {
   settler = fn;
 }
 
+/** Delivers what command transaction `txn` wrote so far and, when there was
+ *  anything, waits until it shows (doc "Command transactions"). */
+export async function flushTransaction(txn: number): Promise<void> {
+  if ((await invoke<boolean>('txn_flush', { txn })) && settler) await settler();
+}
+
 /** How a dispatch came about. `record`: run from the keyboard — a key or the
  *  command input — so a macro being recorded records it (doc "Macros"). */
 export interface DispatchOptions {
@@ -1809,6 +1821,15 @@ export async function dispatch(
 ): Promise<DispatchResult> {
   const parsed = typeof invocation === 'string' ? parseInvocation(invocation) : fromParts(invocation);
   if (parsed === null) return { ok: true };
+  // Invoked by a user command, in its transaction (doc "Command
+  // transactions"): another user command joins it; anything else runs after
+  // the writes so far are delivered, and outside it.
+  let txn = context.txn;
+  if (txn !== undefined && ('shell' in parsed || !isUserCommand(parsed.name))) {
+    await flushTransaction(txn);
+    context = { ws: context.ws, slot: context.slot };
+    txn = undefined;
+  }
   // A macro records what the keyboard runs (doc "Macros"), as it ran — and
   // neither the macro commands themselves nor the keystroke-level ones.
   const recorded =
@@ -1851,14 +1872,21 @@ export async function dispatch(
   // The arguments `macro:ask` marked while this command asked for them.
   const marks = new Set<number>();
   if (specs) {
+    // Asking the user shows the screen: the caller's writes are delivered first.
+    const caller = txn;
+    const prompt: typeof promptForArg =
+      caller === undefined
+        ? promptForArg
+        : async (request) => {
+            await flushTransaction(caller);
+            return promptForArg(request);
+          };
     let collected: string[] | null;
     try {
       collected = await collectArgs(
         specs,
         given,
-        recorded
-          ? (request) => macros.asking(marks, request.position, () => promptForArg(request))
-          : promptForArg,
+        recorded ? (request) => macros.asking(marks, request.position, () => prompt(request)) : prompt,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1887,12 +1915,24 @@ export async function dispatch(
   // What the command writes is one label in the log, named after it (doc
   // "Labels and contexts"): the proxy tells the daemon while it runs.
   const commandKey = await beginCommand([name, ...args].join(' ').trim());
+  // A user command not invoked by another runs in a transaction of its own.
+  let own: number | null = null;
+  if (txn === undefined && isUserCommand(name)) {
+    own = await invoke<number>('txn_begin');
+    context = { ...context, txn: own };
+  }
   try {
     const handled = await runCommand(name, args, context);
     if (!handled) {
       const message = `unknown command: ${name}`;
       await status(message);
       return { ok: false, error: message };
+    }
+    // Delivered before the wait, which is for what the writes set off.
+    if (own !== null) {
+      const ending = own;
+      own = null;
+      await invoke('txn_end', { txn: ending });
     }
     // Resolved when its effect is visible, not when its handler returned.
     if (settler) await settler();
@@ -1904,6 +1944,8 @@ export async function dispatch(
     await status(message);
     return { ok: false, error: message };
   } finally {
+    // A failed command delivers what it wrote, as its daemon writes stay.
+    if (own !== null) await invoke('txn_end', { txn: own });
     await endCommand(commandKey);
   }
 }

@@ -9,6 +9,7 @@
 import {
   clearUserCommands,
   dispatch,
+  flushTransaction,
   installUserCommands,
   mergeCommandModules,
   setUserCommandReloader,
@@ -68,6 +69,7 @@ export async function loadUserCommands(): Promise<string[]> {
   const deps = {
     invoke,
     dispatch,
+    flush: flushTransaction,
     // A user command has no panel, so it registers no panel handler, no
     // per-instance arg spec (`commands.register` is not even offered to it —
     // its arguments are declared in the exported definition and land in the

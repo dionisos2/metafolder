@@ -4,6 +4,7 @@ use super::layout::SlotId;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 pub struct Workspace {
     pub id: String,
@@ -21,7 +22,7 @@ pub struct Workspace {
     /// the workspace from the auto-numbering of its base.
     pub auto_index: Option<u64>,
     /// Reactive per-workspace key-value store shared by panel types.
-    pub vars: HashMap<String, Value>,
+    pub vars: Vars,
     /// Append-only log shown by the `message` panel type.
     pub messages: Vec<MessageEntry>,
     /// The last status-bar message posted, whether or not the bar still shows
@@ -48,6 +49,34 @@ impl Workspace {
     /// Workspaces sharing a base share one auto-numbering sequence.
     pub fn base(&self) -> &str {
         self.repo_name.as_deref().unwrap_or("Workspace")
+    }
+}
+
+/// A workspace's variables, shared: a clone is a pointer copy, so a command
+/// transaction's snapshot costs nothing, and a write made while one is held
+/// copies the table of pointers, never the values (doc "Command
+/// transactions").
+#[derive(Clone, Debug, Default)]
+pub struct Vars(Arc<HashMap<String, Arc<Value>>>);
+
+impl Vars {
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        self.0.get(key).map(|value| &**value)
+    }
+
+    pub fn insert(&mut self, key: String, value: Value) {
+        Arc::make_mut(&mut self.0).insert(key, Arc::new(value));
+    }
+
+    pub fn extend(&mut self, vars: impl IntoIterator<Item = (String, Value)>) {
+        let map = Arc::make_mut(&mut self.0);
+        for (key, value) in vars {
+            map.insert(key, Arc::new(value));
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &Value)> {
+        self.0.iter().map(|(key, value)| (key, &**value))
     }
 }
 
@@ -104,4 +133,33 @@ pub struct WorkspaceInfo {
     /// The work context in force on the repository (doc "The GUI's work
     /// context") — what the slot header's context indicator shows.
     pub work_context: Option<crate::work_context::WorkContext>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_vars_snapshot_does_not_move_with_later_writes() {
+        let mut vars = Vars::default();
+        vars.insert("a".into(), json!(1));
+        let snapshot = vars.clone();
+        vars.insert("a".into(), json!(2));
+        vars.extend([("b".to_string(), json!(3))]);
+        assert_eq!(snapshot.get("a"), Some(&json!(1)));
+        assert_eq!(snapshot.get("b"), None);
+        assert_eq!(vars.get("a"), Some(&json!(2)));
+        assert_eq!(vars.get("b"), Some(&json!(3)));
+    }
+
+    #[test]
+    fn test_vars_write_after_snapshot_shares_the_untouched_values() {
+        let mut vars = Vars::default();
+        vars.insert("big".into(), json!(["a", "b", "c"]));
+        let snapshot = vars.clone();
+        vars.insert("small".into(), json!(1));
+        // The table was copied, the value it points to was not.
+        assert!(std::ptr::eq(snapshot.get("big").unwrap(), vars.get("big").unwrap()));
+    }
 }

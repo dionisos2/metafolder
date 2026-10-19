@@ -11,6 +11,7 @@ import { ask, type ArgSpec, type InvocationParts, invokerOver, withTopLevelInvok
 import type { PanelFunctions } from '../panelFunctions';
 import { invoke as ipcInvoke } from '../ipc';
 import { checkTarget, resolveTarget } from '../targets';
+import { transactional } from '../txn';
 import type { ExecContext } from '../types';
 import { daemonWork } from '../working';
 import { changeFeed, type ChangeEvent } from './changes';
@@ -66,6 +67,9 @@ export interface PanelApiDeps {
   /** Runs a command invocation through the shell dispatcher (commands.ts), in
    *  `context` — the focused workspace and slot when none is given. */
   dispatch: (invocation: string | InvocationParts, context?: ExecContext) => Promise<unknown>;
+  /** Delivers what command transaction `txn` wrote and waits until it shows
+   *  (doc "Command transactions"); absent where nothing runs in one. */
+  flush?: (txn: number) => Promise<void>;
   /** Told a panel is about to register `name`, before its handler and
    *  arguments are recorded: the shell drops a `commands.js` entry of that
    *  name, which must not shadow a panel's command (doc "User commands"). */
@@ -146,10 +150,16 @@ export function createUserCommandApi(
   deps: PanelApiDeps,
   ctx: { guiServer: string; sessionToken: string; context: () => ExecContext },
 ): MetafolderApi {
+  // Within the command's transaction, if it runs in one (doc "Command
+  // transactions"): its variable calls carry it, and what it does not carry
+  // is preceded by a flush.
+  const flush = (txn: number) => deps.flush?.(txn) ?? Promise.resolve();
+  const invoke = transactional(deps.invoke, () => ctx.context().txn, flush);
   // Commands invoked from here run where this API acts.
   const { api } = createPanelApi(
     {
       ...deps,
+      invoke,
       dispatch: (invocation: string | InvocationParts) => deps.dispatch(invocation, ctx.context()),
     },
     {
@@ -187,7 +197,13 @@ export function createUserCommandApi(
     get context() {
       return ctx.context();
     },
-    ...contextMembers(deps, ctx, ctx.context),
+    /** Delivers what the command wrote so far and waits until it shows; the
+     *  command reads afresh from then on (doc "Command transactions"). */
+    flush: async () => {
+      const txn = ctx.context().txn;
+      if (txn !== undefined) await flush(txn);
+    },
+    ...contextMembers(deps, ctx, ctx.context, invoke),
     commands: {
       invoke: (parts: InvocationParts) => api.commands.invoke(parts),
       keybindings: () => api.commands.keybindings(),
@@ -212,13 +228,18 @@ function contextMembers(
   deps: PanelApiDeps,
   server: { guiServer: string; sessionToken: string },
   context: () => ExecContext,
+  invoke: PanelApiDeps['invoke'] = deps.invoke,
 ) {
-  const elsewhere = (target: ExecContext) =>
-    createUserCommandApi(deps, {
+  // Elsewhere, but in the same transaction (doc "Command transactions").
+  const elsewhere = (target: ExecContext) => {
+    const { txn } = context();
+    const bound = txn === undefined ? target : { ...target, txn };
+    return createUserCommandApi(deps, {
       guiServer: server.guiServer,
       sessionToken: server.sessionToken,
-      context: () => target,
+      context: () => bound,
     });
+  };
   return {
     withContext: <T>(target: ExecContext, body: (mf: MetafolderApi) => Promise<T> | T) =>
       Promise.resolve(body(elsewhere(target))),
@@ -227,7 +248,7 @@ function contextMembers(
       body: (mf: MetafolderApi) => Promise<T> | T,
       options: { targets?: readonly string[] } = {},
     ) => {
-      const target = await resolveTarget(checkTarget(where, options.targets), context(), deps.invoke);
+      const target = await resolveTarget(checkTarget(where, options.targets), context(), invoke);
       return body(elsewhere(target));
     },
   };

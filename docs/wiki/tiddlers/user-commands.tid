@@ -44,6 +44,7 @@ command as if it were typed (below). A user command belongs to no panel, so:
 * it acts in its ''execution context'' ([[Commands]]): the focused workspace and slot when it runs — `mf.workspace.get('active_repo')` is the repository of where you are now — and `mf.context` says which (`{ws, slot}`);
 * `mf.withContext({ws, slot}, async (mf) => …)` runs a block elsewhere: inside it, `mf` and the commands it invokes act on that workspace and slot; outside, nothing has moved;
 * `mf.atTarget(where, async (mf) => …, {targets})` runs a block at an [[open target|Panel slots and layout]] — `here`, `other`, `new` — so a command that opens a panel is written once, for `here`, and takes the target as its first argument;
+* it runs in a ''transaction'' ([[Command transactions]]): it reads the variables as they were when it began, and what it writes reaches the workspaces at once when it ends — or at `mf.flush()`, and before it opens a panel or runs anything but a user command;
 * what only means something inside a panel is absent — the panel's type, page size, default values and visibility, and `commands.register`.
 
 A command here is meant to ''combine existing commands''. `mf.daemon` is there for
@@ -63,6 +64,7 @@ whatever `text` holds. A shell line is one element, as it is typed: `mf.invoke([
 * An argument left out at the end is asked for in the command input, as when the command is typed bare ([[Interactive command arguments]]).
 * `mf.ask` in place of an argument asks for that one, ''wherever it stands'': `mf.invoke(['metarecord:bulk', 'selection', 'set', mf.ask, 'int', '4'])` asks which field, and takes the rest as given. `mf.ask({initial: 'rating'})` fills the line first. An optional argument named so is asked too. The last argument, which takes every element left, cannot ask for one of them.
 * It resolves once the command has finished — what it opened shown and loaded ([[When a command has finished]]).
+* A user command invoked runs in the caller's transaction; anything else runs once the caller's writes so far are delivered ([[Command transactions]]).
 * It ''throws'' when the command fails (a `CommandError`, its message the status bar's) or is abandoned at a question with `Escape` (`error.cancelled` is then `true`). A sequence of invocations therefore stops at the first one that did not run; catch it to go on regardless. Left uncaught — `void mf.invoke([...])` behind a button — it stays off the console, since the status bar has said it.
 
 A string is refused, with its array form in the message. Keys, the command input and

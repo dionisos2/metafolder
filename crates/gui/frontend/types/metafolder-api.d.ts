@@ -712,6 +712,10 @@ declare namespace Metafolder {
      *  user command the focused ones unless it moved, for a panel its own
      *  workspace in the slot showing it. */
     readonly context: { ws: string | null; slot: 'left' | 'right' };
+    /** A user command's only (doc "Command transactions"): delivers the
+     *  variables it wrote so far and waits until that shows; it reads afresh
+     *  from then on. A panel's API has none — it runs in no transaction. */
+    flush?(): Promise<void>;
     /** Runs `body` with an API acting in `context`, for that block alone —
      *  this API, and every other command, stay where they were. */
     withContext<T>(

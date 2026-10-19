@@ -48,12 +48,14 @@ frozen ([[metarecord-list panel]]); `file-manager:reveal` stats the path, to tel
 folder from a file, and writes the file manager's location, `file-manager:dir` and
 `file-manager:cursor` ([[file-manager panel]]).
 
-A panel follows such variables ''together'', so whoever writes them writes them in
-one call, `workspace.setMany` ([[The metafolder API]]). Written one `set` after another,
-the panel may read between two of them and act on the half-written state, which also
-writes it back over the values still to come: the list ran its old query, the file
-manager cleared the cursor. Because it depends on timing, the command just seemed to
-do nothing once in a few tries (the `folder-list` scenario of [[Testing the GUI end to end]]).
+A panel follows such variables ''together'', so it must never see them half written.
+Written one `set` after another, the panel may read between two of them and act on
+the half-written state, which also writes it back over the values still to come: the
+list ran its old query, the file manager cleared the cursor. Because it depends on
+timing, the command just seemed to do nothing once in a few tries (the `folder-list`
+scenario of [[Testing the GUI end to end]]). A user command is safe from this whatever
+it writes: its writes are delivered at once ([[Command transactions]]). A builtin or a
+panel writes such variables in one call, `workspace.setMany` ([[The metafolder API]]).
 
 !! The checked selection
 

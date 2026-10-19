@@ -4,6 +4,7 @@
 //! through the [`FrontendNotifier`].
 
 pub mod layout;
+mod txn;
 pub mod workspace;
 
 use crate::events;
@@ -13,7 +14,7 @@ use metafolder_core::sync::MutexExt;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use workspace::{MessageEntry, ShellEntry, ShellLine, StatusEntry, Workspace, WorkspaceInfo};
@@ -79,6 +80,10 @@ pub struct GuiState {
     /// (doc "Script sessions") — kept so they can be re-broadcast when the
     /// checkbox flips. Empty when no input wait is up.
     questions: Mutex<Vec<Question>>,
+    /// The open command transactions, by id (doc "Command transactions").
+    /// Kept out of `Inner`, and never locked together with it.
+    txns: Mutex<HashMap<u64, txn::Txn>>,
+    next_txn: AtomicU64,
     notifier: Arc<dyn FrontendNotifier>,
 }
 
@@ -367,6 +372,8 @@ impl GuiState {
             scripts: Mutex::new(HashMap::new()),
             script_keys: AtomicBool::new(true),
             questions: Mutex::new(Vec::new()),
+            txns: Mutex::new(HashMap::new()),
+            next_txn: AtomicU64::new(1),
             notifier,
         }
     }
