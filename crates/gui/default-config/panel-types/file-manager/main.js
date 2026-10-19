@@ -888,7 +888,10 @@ export async function mount(root, metafolder) {
   // ARE it. A command shows a folder by writing them — `file-manager:reveal`
   // does — and a forked workspace opens where this one is. A write is compared
   // with the location this panel last showed or wrote, so its own writes coming
-  // back change nothing; the two of a command's writes are gathered.
+  // back change nothing. A writer must write both at once
+  // (`workspace.setMany`): the follow is only deferred to the next task, and
+  // opening the folder of a half-written location writes `cursor = null` over
+  // the cursor still to come.
 
   /** @type {{dir: string|null, cursor: string|null}} */
   let appliedLocation = { dir: null, cursor: null };

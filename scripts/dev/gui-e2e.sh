@@ -47,7 +47,7 @@
 #
 # Usage:  scripts/dev/gui-e2e.sh [--unsandboxed] [--keep-logs] [scenario...]
 #   with no scenario, runs them all: undo-redo duplicates orphans trash remove
-#   field-keys reconcile ignore sync repos list folder-list layout script
+#   field-keys reconcile ignore sync repos list folder-list reveal layout script
 #   script-workspaces errors picker refs hierarchy hierarchy-form prompt history
 #   keybindings open-with tab-close pick-button suggested-key walk open-viewers
 #   slideshow shell-line repos-memory help-keys zoom order user-commands settle
@@ -80,7 +80,7 @@ done
 # inspector the clicking scenarios drive (webview.mjs), and every click after it
 # fails — forty tries of four seconds each.
 [ ${#SCENARIOS[@]} -gt 0 ] \
-    || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list folder-list layout script script-workspaces
+    || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list folder-list reveal layout script script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close
         pick-button suggested-key walk open-viewers slideshow shell-line repos-memory
         help-keys zoom order user-commands settle macro devtools)
@@ -674,6 +674,30 @@ scenario_folder_list() {
         fi
     done
     assert_eq "folder list: every try lists the folder" 0 "$missed"
+}
+
+# file-manager:reveal, the same race over the file manager's location: opening
+# the folder of a half-written one (the new dir, the old cursor) writes
+# `cursor = null` over the cursor still to come — the folder opens, the file is
+# not highlighted. The panel stays on screen, as in folder-list.
+scenario_reveal() {
+    new_repo reveal
+    mkdir -p "$REPO_DIR/a" "$REPO_DIR/b"
+    touch "$REPO_DIR/a/x" "$REPO_DIR/b/y"
+    show_panel left file-manager view:refresh file-manager
+
+    local i missed=0 dir file
+    for i in $(seq 1 20); do
+        if [ $((i % 2)) = 0 ]; then dir=a file=x; else dir=b file=y; fi
+        run workspace:send "$WS" selected_paths "[\"$REPO_DIR/$dir/$file\"]"
+        run file-manager:reveal here
+        if ! until_ok 5 fm_at "/$dir" "$file"; then
+            missed=$((missed + 1))
+            printf '       try %s: at %s, cursor %s\n' "$i" \
+                "$(ws_var file-manager:dir)" "$(ws_var file-manager:cursor)"
+        fi
+    done
+    assert_eq "reveal: every try highlights the file" 0 "$missed"
 }
 
 scenario_layout() {

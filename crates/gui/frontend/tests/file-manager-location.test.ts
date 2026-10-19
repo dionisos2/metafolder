@@ -333,6 +333,8 @@ describe('file-manager location variables', () => {
 describe('the file-manager:reveal command (shipped commands.js)', () => {
   const calls = {
     sets: [] as { key: string; value: unknown }[],
+    /** The variables written together (`workspace.setMany`), one entry per call. */
+    batches: [] as Record<string, unknown>[],
     invoked: [] as string[],
     status: [] as string[],
     targets: [] as string[],
@@ -345,6 +347,9 @@ describe('the file-manager:reveal command (shipped commands.js)', () => {
         get: async (key: string) => (key === 'selected_paths' ? state.paths : null),
         set: async (key: string, value: unknown) => {
           calls.sets.push({ key, value });
+        },
+        setMany: async (vars: Record<string, unknown>) => {
+          calls.batches.push(vars);
         },
       },
       fs: {
@@ -372,6 +377,7 @@ describe('the file-manager:reveal command (shipped commands.js)', () => {
 
   beforeEach(() => {
     calls.sets.length = 0;
+    calls.batches.length = 0;
     calls.invoked.length = 0;
     calls.status.length = 0;
     calls.targets.length = 0;
@@ -388,16 +394,19 @@ describe('the file-manager:reveal command (shipped commands.js)', () => {
     expect(calls.status).toEqual(['no file or folder is selected']);
     expect(calls.targets).toEqual([]);
     expect(calls.sets).toEqual([]);
+    expect(calls.batches).toEqual([]);
     expect(calls.invoked).toEqual([]);
   });
 
   test('a file: its folder, with the file highlighted, then the panel switches', async () => {
     await reveal();
 
-    expect(calls.sets).toEqual([
-      { key: 'file-manager:dir', value: '/repo/sub' },
-      { key: 'file-manager:cursor', value: 'song.mp3' },
+    // Written together: the panel follows both, and opening the folder of a
+    // half-written location cleared the cursor over the new one.
+    expect(calls.batches).toEqual([
+      { 'file-manager:dir': '/repo/sub', 'file-manager:cursor': 'song.mp3' },
     ]);
+    expect(calls.sets).toEqual([]);
     expect(calls.invoked).toEqual([['panel:open', 'here', 'file-manager']]);
   });
 
@@ -405,7 +414,7 @@ describe('the file-manager:reveal command (shipped commands.js)', () => {
     await reveal('other');
 
     expect(calls.targets).toEqual(['other']);
-    expect(calls.sets[0]).toEqual({ key: 'file-manager:dir', value: '/repo/sub' });
+    expect(calls.batches[0]['file-manager:dir']).toBe('/repo/sub');
     expect(calls.invoked).toEqual([['panel:open', 'here', 'file-manager']]);
   });
 
@@ -414,10 +423,12 @@ describe('the file-manager:reveal command (shipped commands.js)', () => {
 
     await reveal();
 
-    expect(calls.sets).toEqual([
-      { key: 'file-manager:dir', value: '/repo/sub' },
-      { key: 'file-manager:cursor', value: null },
+    // Written together: the panel follows both, and opening the folder of a
+    // half-written location cleared the cursor over the new one.
+    expect(calls.batches).toEqual([
+      { 'file-manager:dir': '/repo/sub', 'file-manager:cursor': null },
     ]);
+    expect(calls.sets).toEqual([]);
   });
 
   test('a path that is gone is taken for a file: its folder opens', async () => {
@@ -425,10 +436,12 @@ describe('the file-manager:reveal command (shipped commands.js)', () => {
 
     await reveal();
 
-    expect(calls.sets).toEqual([
-      { key: 'file-manager:dir', value: '/repo/gone' },
-      { key: 'file-manager:cursor', value: 'old.txt' },
+    // Written together: the panel follows both, and opening the folder of a
+    // half-written location cleared the cursor over the new one.
+    expect(calls.batches).toEqual([
+      { 'file-manager:dir': '/repo/gone', 'file-manager:cursor': 'old.txt' },
     ]);
+    expect(calls.sets).toEqual([]);
   });
 
   test('the first *string* entry is taken (the selection carries metadata too)', async () => {
@@ -436,6 +449,6 @@ describe('the file-manager:reveal command (shipped commands.js)', () => {
 
     await reveal();
 
-    expect(calls.sets[0]).toEqual({ key: 'file-manager:dir', value: '/repo' });
+    expect(calls.batches[0]['file-manager:dir']).toBe('/repo');
   });
 });

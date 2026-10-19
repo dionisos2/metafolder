@@ -201,10 +201,12 @@ describe('opening the pick', () => {
     await run('files', 'here', '/music — score 4');
 
     expect(calls.targets).toEqual(['here']);
-    expect(calls.sets).toEqual([
-      { key: 'file-manager:dir', value: '/srv/music' },
-      { key: 'file-manager:cursor', value: null },
+    // Written together: the panel follows both, and opening the folder of a
+    // half-written location cleared the cursor over the new one.
+    expect(calls.batches).toEqual([
+      { 'file-manager:dir': '/srv/music', 'file-manager:cursor': null },
     ]);
+    expect(calls.sets).toEqual([]);
     expect(calls.invoked).toEqual([['panel:open', 'here', 'file-manager']]);
   });
 
@@ -214,14 +216,14 @@ describe('opening the pick', () => {
     await complete();
     await run('files', 'here', '/ — score 36');
 
-    expect(calls.sets[0]).toEqual({ key: 'file-manager:dir', value: '/srv' });
+    expect(calls.batches[0]['file-manager:dir']).toBe('/srv');
   });
 
   test('a bare folder path, typed inline, is a pick too', async () => {
     await complete();
     await run('files', 'here', '/music');
 
-    expect(calls.sets[0]).toEqual({ key: 'file-manager:dir', value: '/srv/music' });
+    expect(calls.batches[0]['file-manager:dir']).toBe('/srv/music');
   });
 
   test('children: the metarecord list, with the folder followed one step', async () => {

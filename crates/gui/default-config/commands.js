@@ -422,8 +422,9 @@ export default {
       const dir = isDir ? path : parentDir(path);
       const cursor = isDir ? null : path.slice(path.lastIndexOf('/') + 1);
       await mf.atTarget(where, async (/** @type {MetafolderApi} */ mf) => {
-        await mf.workspace.set('file-manager:dir', dir);
-        await mf.workspace.set('file-manager:cursor', cursor);
+        // At once: the panel follows both, and opening the folder of a
+        // half-written location clears the cursor over the one still to come.
+        await mf.workspace.setMany({ 'file-manager:dir': dir, 'file-manager:cursor': cursor });
         await mf.invoke(['panel:open', 'here', 'file-manager']);
       });
     },
@@ -517,8 +518,7 @@ export default {
       if (view === 'files') {
         const dir = (await mf.daemon.repoRoot(repo)).replace(/\/+$/, '') + folder;
         await mf.atTarget(where, async (/** @type {MetafolderApi} */ mf) => {
-          await mf.workspace.set('file-manager:dir', dir || '/');
-          await mf.workspace.set('file-manager:cursor', null);
+          await mf.workspace.setMany({ 'file-manager:dir': dir || '/', 'file-manager:cursor': null });
           await mf.invoke(['panel:open', 'here', 'file-manager']);
         });
       } else if (view === 'children') {
