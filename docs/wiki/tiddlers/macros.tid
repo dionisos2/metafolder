@@ -19,7 +19,9 @@ While recording, every status bar shows ''● recording''.
 
 The commands you run ''from the keyboard'' — a key, or a line of the command input,
 `!` shell lines included — each with the arguments it ran with, those it asked for
-too. Nothing else:
+too. A command is recorded as soon as it has run, not once its effect shows
+([[When a command has finished]]): stopping the recording when you see the result
+keeps it. Nothing else:
 
 * not a click: a button runs a command, but it often does something first that is no command (the ↗ of a list row selects the row, then opens it), so recording some clicks and not others would make what a macro holds a guess. To record what a button does, run its command (every control has one: [[Commands]]);
 * not what you type into a panel's own text field — the list's finder, a form: the typing is no command;

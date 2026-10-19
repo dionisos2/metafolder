@@ -2,18 +2,18 @@
 // (doc "The command input"). Parsing and filtering are pure and unit
 // tested; dispatch routes to Tauri commands and panel instances.
 
-import { osmMatch } from '../../../panel-shim/finder.js';
-import { bindingMatches } from '../../../panel-shim/keyhints.js';
-import { bindView, completionLabels } from './completions';
+import { osmMatch } from "../../../panel-shim/finder.js";
+import { bindingMatches } from "../../../panel-shim/keyhints.js";
+import { bindView, completionLabels } from "./completions";
 import type {
   CompletionFn,
   CompletionItem,
   CompletionResult,
   CompletionView,
   LoadedView,
-} from './completions';
-import { setHelpCursor } from './cursor';
-import { closeFind, openFind, stepFind } from './find';
+} from "./completions";
+import { setHelpCursor } from "./cursor";
+import { closeFind, openFind, stepFind } from "./find";
 import {
   ignorePresetCandidates,
   ignoreTarget,
@@ -21,9 +21,13 @@ import {
   resolvePresetName,
   targetDir,
   type TargetDirOptions,
-} from './ignore';
-import { invoke } from './ipc';
-import { type ExpandDeps, expandShellPlaceholders, shellQuote } from './placeholders';
+} from "./ignore";
+import { invoke } from "./ipc";
+import {
+  type ExpandDeps,
+  expandShellPlaceholders,
+  shellQuote,
+} from "./placeholders";
 import {
   activeQuestion,
   flashStatus,
@@ -34,10 +38,10 @@ import {
   slotPayload,
   store,
   workspaceById,
-} from './store.svelte';
-import { isTarget, resolveTarget, TARGETS } from './targets';
-import { macroEntry, macros } from './macro';
-import { daemonWork } from './working';
+} from "./store.svelte";
+import { isTarget, resolveTarget, TARGETS } from "./targets";
+import { macroEntry, macros } from "./macro";
+import { daemonWork } from "./working";
 import {
   FIND_MODES,
   findCandidates,
@@ -48,18 +52,25 @@ import {
   runGeneric,
   SELF,
   ZOOM_DIRECTIONS,
-} from './panelFunctions';
-import { changeFeed } from './panels/changes';
-import type { CommandDef, ExecContext, LayoutView, WorkContext, WorkspaceInfo } from './types';
+} from "./panelFunctions";
+import { changeFeed } from "./panels/changes";
+import type {
+  CommandDef,
+  ExecContext,
+  LayoutView,
+  WorkContext,
+  WorkspaceInfo,
+} from "./types";
 
-export type ParsedInvocation = { name: string; args: string[] } | { shell: string } | null;
+export type ParsedInvocation =
+  { name: string; args: string[] } | { shell: string } | null;
 
 export function parseInvocation(input: string): ParsedInvocation {
   const trimmed = input.trim();
-  if (trimmed === '') return null;
-  if (trimmed.startsWith('!')) {
+  if (trimmed === "") return null;
+  if (trimmed.startsWith("!")) {
     const shell = trimmed.slice(1).trim();
-    return shell === '' ? null : { shell };
+    return shell === "" ? null : { shell };
   }
   const tokens: string[] = [];
   for (const match of trimmed.matchAll(/"([^"]*)"|(\S+)/g)) {
@@ -77,14 +88,16 @@ export function shortcutsFor(
   keytable: { keys: string[]; invocation: string }[],
   commandName: string,
 ): string[] {
-  return distinctCombos(keytable.filter((binding) => bindingMatches(binding, commandName)));
+  return distinctCombos(
+    keytable.filter((binding) => bindingMatches(binding, commandName)),
+  );
 }
 
 /** The combos of some bindings, each once and in table order. A key bound to
  *  one invocation under several `when` contexts (`enter` in metarecord-list
  *  and in recent) is one keytable row per context, but one key to the reader. */
 function distinctCombos(bindings: { keys: string[] }[]): string[] {
-  return [...new Set(bindings.map((binding) => binding.keys.join(' ')))];
+  return [...new Set(bindings.map((binding) => binding.keys.join(" ")))];
 }
 
 /**
@@ -109,10 +122,10 @@ export function deadInvocations(
   return keytable
     .filter((b) => {
       const invocation = b.invocation.trim();
-      if (invocation === '' || invocation.startsWith('!')) return false;
+      if (invocation === "" || invocation.startsWith("!")) return false;
       return !known.has(invocation.split(/\s+/)[0]);
     })
-    .map((b) => ({ keys: b.keys.join(' '), invocation: b.invocation }));
+    .map((b) => ({ keys: b.keys.join(" "), invocation: b.invocation }));
 }
 
 /** A command as the input lists it: the registry entry plus the key combos
@@ -146,16 +159,23 @@ export function listedCommands(
 
   const listed = new Map<string, ListedCommand>();
   for (const command of commands) {
-    listed.set(command.name, { ...command, shortcuts: combosFor(command.name) });
+    listed.set(command.name, {
+      ...command,
+      shortcuts: combosFor(command.name),
+    });
   }
   for (const binding of keytable) {
     const invocation = binding.invocation.trim();
-    const space = invocation.indexOf(' ');
+    const space = invocation.indexOf(" ");
     if (space < 0) continue; // bare invocation: the registry already listed it
     if (listed.has(invocation)) continue; // a previous combo already added it
     const base = listed.get(invocation.slice(0, space));
     if (!base) continue; // bound to something no panel registered
-    listed.set(invocation, { ...base, name: invocation, shortcuts: combosFor(invocation) });
+    listed.set(invocation, {
+      ...base,
+      name: invocation,
+      shortcuts: combosFor(invocation),
+    });
   }
   return [...listed.values()];
 }
@@ -163,7 +183,10 @@ export function listedCommands(
 /** Whether an invocation of `name` should be echoed to the message panel.
  *  Looks the command up in the registry; commands not found default to
  *  logging. */
-export function shouldLogCommand(commands: { name: string; log: boolean }[], name: string): boolean {
+export function shouldLogCommand(
+  commands: { name: string; log: boolean }[],
+  name: string,
+): boolean {
   const command = commands.find((c) => c.name === name);
   return command ? command.log : true;
 }
@@ -173,13 +196,20 @@ export function shouldLogCommand(commands: { name: string; log: boolean }[], nam
  *  order, without overlapping — the ordered, literal variant of fzf's
  *  extended search, NOT character-level fuzzy. Names starting with the first
  *  term are ranked first; alphabetical within each group. */
-export function filterCommands<C extends { name: string }>(commands: C[], query: string): C[] {
+export function filterCommands<C extends { name: string }>(
+  commands: C[],
+  query: string,
+): C[] {
   const byName = (a: C, b: C) => a.name.localeCompare(b.name);
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (terms.length === 0) return [...commands].sort(byName);
   const matching = commands.filter((c) => osmMatch(c.name, terms));
-  const starts = matching.filter((c) => c.name.toLowerCase().startsWith(terms[0])).sort(byName);
-  const rest = matching.filter((c) => !c.name.toLowerCase().startsWith(terms[0])).sort(byName);
+  const starts = matching
+    .filter((c) => c.name.toLowerCase().startsWith(terms[0]))
+    .sort(byName);
+  const rest = matching
+    .filter((c) => !c.name.toLowerCase().startsWith(terms[0]))
+    .sort(byName);
   return [...starts, ...rest];
 }
 
@@ -356,11 +386,13 @@ export interface PromptAnswer {
  *  chosen candidate (or, for text no candidate names, the text itself) —
  *  bare, or with how it was confirmed — or null when the user cancels
  *  (Escape). */
-export type ArgPromptFn = (request: ArgPromptRequest) => Promise<string | PromptAnswer | null>;
+export type ArgPromptFn = (
+  request: ArgPromptRequest,
+) => Promise<string | PromptAnswer | null>;
 
 // ── Invocations as arrays (doc "User commands") ──────────────────────────
 
-const ASK = Symbol('mf.ask');
+const ASK = Symbol("mf.ask");
 
 /** An argument to ask for in the command input, wherever it stands in an
  *  invocation — `mf.ask`, or `mf.ask({initial})` to fill the line. */
@@ -370,17 +402,18 @@ export interface AskMarker {
 }
 
 /** `mf.ask`: a marker by itself, and a function making one with options. */
-export const ask: AskMarker & ((options?: { initial?: string }) => AskMarker) = Object.assign(
-  (options: { initial?: string } = {}): AskMarker => ({
-    [ASK]: true as const,
-    ...(options.initial !== undefined ? { initial: options.initial } : {}),
-  }),
-  { [ASK]: true as const },
-);
+export const ask: AskMarker & ((options?: { initial?: string }) => AskMarker) =
+  Object.assign(
+    (options: { initial?: string } = {}): AskMarker => ({
+      [ASK]: true as const,
+      ...(options.initial !== undefined ? { initial: options.initial } : {}),
+    }),
+    { [ASK]: true as const },
+  );
 
 export function isAsk(value: unknown): value is AskMarker {
   return (
-    (typeof value === 'object' || typeof value === 'function') &&
+    (typeof value === "object" || typeof value === "function") &&
     value !== null &&
     (value as Record<symbol, unknown>)[ASK] === true
   );
@@ -397,7 +430,7 @@ export class CommandError extends Error {
   readonly cancelled: boolean;
   constructor(message: string, cancelled = false) {
     super(message);
-    this.name = 'CommandError';
+    this.name = "CommandError";
     this.cancelled = cancelled;
   }
 }
@@ -451,7 +484,10 @@ export function registerArgs(name: string, args: ArgSpec[]): void {
  *  synchronous question — does this command prompt? — for a panel the focused
  *  workspace has not mounted. Anything that will actually run the functions
  *  awaits `prepare` first (see `dispatch`). */
-export function argSpecFor(name: string, wsId?: string | null): ArgSpec[] | undefined {
+export function argSpecFor(
+  name: string,
+  wsId?: string | null,
+): ArgSpec[] | undefined {
   return panelArgs?.resolve(name, wsId) ?? argSpecs.get(name);
 }
 
@@ -500,7 +536,10 @@ export interface UserCommand {
     complete?: UserCompletionFn | UserCompletionView[];
     /** The cycled views, when which ones exist depends on the prior answers
      *  (doc "Completion views"). Wins over `complete` unless empty. */
-    views?: (mf: unknown, prior: string[]) => CompletionView[] | Promise<CompletionView[]>;
+    views?: (
+      mf: unknown,
+      prior: string[],
+    ) => CompletionView[] | Promise<CompletionView[]>;
     when?: (mf: unknown, prior: string[]) => boolean;
   }[];
   run: (mf: unknown, ...args: string[]) => unknown;
@@ -521,7 +560,10 @@ export interface UserCompletionView {
   items: UserCompletionFn;
 }
 
-const userHandlers = new Map<string, (context: ExecContext, ...args: string[]) => unknown>();
+const userHandlers = new Map<
+  string,
+  (context: ExecContext, ...args: string[]) => unknown
+>();
 
 // Set by the loader at boot. Late-bound because the loader imports this module
 // (for installUserCommands), so importing it back would be a cycle.
@@ -543,14 +585,16 @@ export function setUserCommandReloader(reload: () => Promise<unknown>): void {
  */
 export function validateUserCommands(
   module: unknown,
-  file = 'commands.js',
+  file = "commands.js",
 ): [string, UserCommand][] {
-  if (typeof module !== 'object' || module === null || Array.isArray(module)) {
-    throw new Error(`${file} must default-export an object of command definitions`);
+  if (typeof module !== "object" || module === null || Array.isArray(module)) {
+    throw new Error(
+      `${file} must default-export an object of command definitions`,
+    );
   }
   const entries = Object.entries(module as Record<string, UserCommand>);
   for (const [name, command] of entries) {
-    if (typeof (command as UserCommand | undefined)?.run !== 'function') {
+    if (typeof (command as UserCommand | undefined)?.run !== "function") {
       throw new Error(`${file}: "${name}" has no \`run\` function`);
     }
   }
@@ -568,13 +612,18 @@ export function mergeCommandModules(
   shipped: unknown,
   own: unknown,
   saved: unknown = {},
-): { module: Record<string, UserCommand>; shadowed: { file: string; name: string }[] } {
-  const module = Object.fromEntries(validateUserCommands(shipped, 'commands.js'));
+): {
+  module: Record<string, UserCommand>;
+  shadowed: { file: string; name: string }[];
+} {
+  const module = Object.fromEntries(
+    validateUserCommands(shipped, "commands.js"),
+  );
   const shadowed: { file: string; name: string }[] = [];
   // In order: an entry of a later file never replaces one of an earlier.
   for (const [file, source] of [
-    ['user-commands.js', own],
-    ['macros.js', saved],
+    ["user-commands.js", own],
+    ["macros.js", saved],
   ] as const) {
     for (const [name, command] of validateUserCommands(source, file)) {
       if (Object.hasOwn(module, name)) shadowed.push({ file, name });
@@ -587,7 +636,11 @@ export function mergeCommandModules(
 export async function installUserCommands(
   module: unknown,
   mf: unknown,
-  register: (name: string, label: string, log: boolean) => Promise<boolean | void>,
+  register: (
+    name: string,
+    label: string,
+    log: boolean,
+  ) => Promise<boolean | void>,
   onRefused: (name: string) => void = () => {},
   // The API a command's `run` gets, for the context it runs in; `mf` (the one
   // following the focus) serves the argument prompts and completions.
@@ -598,7 +651,10 @@ export async function installUserCommands(
     // Registered first: a name the registry refuses is a builtin's, and the
     // entry must then install nothing at all — its argument spec would replace
     // the builtin's, and a reload would forget the builtin with it.
-    if ((await register(name, command.label ?? name, command.log ?? true)) === false) {
+    if (
+      (await register(name, command.label ?? name, command.log ?? true)) ===
+      false
+    ) {
       onRefused(name);
       continue;
     }
@@ -609,13 +665,16 @@ export async function installUserCommands(
           name: spec.name,
           optional: spec.optional,
           prompt: (prior: string[]) => spec.prompt?.(mf, prior) ?? spec.name,
-          ...(spec.initial ? { initial: (prior: string[]) => spec.initial!(mf, prior) } : {}),
+          ...(spec.initial
+            ? { initial: (prior: string[]) => spec.initial!(mf, prior) }
+            : {}),
           ...(spec.complete
             ? Array.isArray(spec.complete)
               ? {
                   complete: spec.complete.map((view) => ({
                     title: view.title,
-                    items: (partial: string, prior: string[]) => view.items(mf, partial, prior),
+                    items: (partial: string, prior: string[]) =>
+                      view.items(mf, partial, prior),
                   })),
                 }
               : {
@@ -623,12 +682,18 @@ export async function installUserCommands(
                     (spec.complete as UserCompletionFn)(mf, partial, prior),
                 }
             : {}),
-          ...(spec.views ? { views: (prior: string[]) => spec.views!(mf, prior) } : {}),
-          ...(spec.when ? { when: (prior: string[]) => spec.when!(mf, prior) } : {}),
+          ...(spec.views
+            ? { views: (prior: string[]) => spec.views!(mf, prior) }
+            : {}),
+          ...(spec.when
+            ? { when: (prior: string[]) => spec.when!(mf, prior) }
+            : {}),
         })),
       );
     }
-    userHandlers.set(name, (context, ...args: string[]) => command.run(mfFor(context), ...args));
+    userHandlers.set(name, (context, ...args: string[]) =>
+      command.run(mfFor(context), ...args),
+    );
     names.push(name);
   }
   return names;
@@ -644,9 +709,13 @@ export async function installUserCommands(
 export function withTopLevelInvoke<
   T extends { commands: { invoke: (parts: InvocationParts) => Promise<void> } },
 >(api: T): T & { invoke: (parts: InvocationParts) => Promise<void> } {
-  return Object.assign(Object.create(Object.getPrototypeOf(api) as object) as T, api, {
-    invoke: (parts: InvocationParts) => api.commands.invoke(parts),
-  });
+  return Object.assign(
+    Object.create(Object.getPrototypeOf(api) as object) as T,
+    api,
+    {
+      invoke: (parts: InvocationParts) => api.commands.invoke(parts),
+    },
+  );
 }
 
 /** Keeps an uncaught `CommandError` off the console: a panel's button runs
@@ -655,19 +724,26 @@ export function withTopLevelInvoke<
  *  function removing the filter. */
 export function ignoreUncaughtCommandErrors(target: EventTarget): () => void {
   const filter = (event: Event) => {
-    if ((event as Event & { reason?: unknown }).reason instanceof CommandError) {
+    if (
+      (event as Event & { reason?: unknown }).reason instanceof CommandError
+    ) {
       event.preventDefault();
     }
   };
-  target.addEventListener('unhandledrejection', filter);
-  return () => target.removeEventListener('unhandledrejection', filter);
+  target.addEventListener("unhandledrejection", filter);
+  return () => target.removeEventListener("unhandledrejection", filter);
 }
 
 /** How `invoke` is written as an array — for the error refusing a string. */
 function asParts(invocation: string): string {
   const parsed = parseInvocation(invocation);
-  const parts = parsed === null ? [] : 'shell' in parsed ? [`!${parsed.shell}`] : [parsed.name, ...parsed.args];
-  return `[${parts.map((p) => `'${p.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`).join(', ')}]`;
+  const parts =
+    parsed === null
+      ? []
+      : "shell" in parsed
+        ? [`!${parsed.shell}`]
+        : [parsed.name, ...parsed.args];
+  return `[${parts.map((p) => `'${p.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`).join(", ")}]`;
 }
 
 /**
@@ -681,12 +757,15 @@ export function invokerOver(
 ): (parts: InvocationParts) => Promise<void> {
   return async (parts: InvocationParts) => {
     if (!Array.isArray(parts)) {
-      const shown = typeof parts === 'string' ? asParts(parts) : String(parts);
-      throw new TypeError(`invoke takes an array of the name and its arguments: ${shown}`);
+      const shown = typeof parts === "string" ? asParts(parts) : String(parts);
+      throw new TypeError(
+        `invoke takes an array of the name and its arguments: ${shown}`,
+      );
     }
     const result = (await dispatchFn(parts)) as DispatchResult;
     if (!result.ok) throw new CommandError(result.error);
-    if (result.cancelled) throw new CommandError(`${String(parts[0])}: abandoned`, true);
+    if (result.cancelled)
+      throw new CommandError(`${String(parts[0])}: abandoned`, true);
   };
 }
 
@@ -700,7 +779,9 @@ export function isUserCommand(name: string): boolean {
  *  user command, a panel's command, a generic one — not a builtin. */
 function runsInTransaction(name: string): boolean {
   if (isUserCommand(name) || GENERIC_COMMANDS.includes(name)) return true;
-  return store.commands.some((command) => command.name === name && command.owner);
+  return store.commands.some(
+    (command) => command.name === name && command.owner,
+  );
 }
 
 /** Runs a user command; false when no such command is installed. */
@@ -744,14 +825,24 @@ export function clearArgSpecs(): void {
 // ── Installed helper scripts (the `script:run` builtin) ─────────────────────
 
 /** A daemon round-trip through the proxy, throwing the daemon's error on >=400. */
-async function daemonJson(method: string, path: string, body: unknown = null): Promise<unknown> {
+async function daemonJson(
+  method: string,
+  path: string,
+  body: unknown = null,
+): Promise<unknown> {
   const res = await daemonWork.track(
-    invoke<{ status: number; body: unknown }>('daemon_request', { method, path, body }),
-    `${method} ${path.split('?')[0]}`,
+    invoke<{ status: number; body: unknown }>("daemon_request", {
+      method,
+      path,
+      body,
+    }),
+    `${method} ${path.split("?")[0]}`,
   );
   if (res.status >= 400) {
     const err = (res.body as { error?: string })?.error;
-    throw new Error(err ?? `daemon ${method} ${path} failed (HTTP ${res.status})`);
+    throw new Error(
+      err ?? `daemon ${method} ${path} failed (HTTP ${res.status})`,
+    );
   }
   return res.body;
 }
@@ -763,9 +854,12 @@ function repoOf(ws: string | null): string | null {
 
 /** The repository's filesystem root (via GET /repos), or '' when not found. */
 async function repoRoot(repo: string): Promise<string> {
-  const repos = (await daemonJson('GET', '/repos')) as { repo_uuid: string; root: string }[];
-  const norm = repo.replace(/-/g, '');
-  return repos.find((r) => r.repo_uuid.replace(/-/g, '') === norm)?.root ?? '';
+  const repos = (await daemonJson("GET", "/repos")) as {
+    repo_uuid: string;
+    root: string;
+  }[];
+  const norm = repo.replace(/-/g, "");
+  return repos.find((r) => r.repo_uuid.replace(/-/g, "") === norm)?.root ?? "";
 }
 
 // ── Installed helper scripts (the `script:run` builtin) ─────────────────────
@@ -788,7 +882,7 @@ const scriptChoices = new Map<string, string>();
 
 /** The installed launchable scripts, newest listing each call. */
 function installedScripts(): Promise<ScriptInfo[]> {
-  return invoke<ScriptInfo[]>('list_scripts');
+  return invoke<ScriptInfo[]>("list_scripts");
 }
 
 /** One display line per installed script; also (re)builds `scriptChoices`. */
@@ -808,23 +902,37 @@ async function scriptCandidates(): Promise<string[]> {
 // copy-on-write prompt are shared with the file manager's Ignore menu
 // (`lib/ignore.ts`).
 
-registerArgs('ignore:add', [
-  { name: 'preset', prompt: () => 'Ignore preset to add:', complete: () => ignorePresetCandidates(invoke) },
+registerArgs("ignore:add", [
+  {
+    name: "preset",
+    prompt: () => "Ignore preset to add:",
+    complete: () => ignorePresetCandidates(invoke),
+  },
 ]);
-registerArgs('ignore:remove', [
-  { name: 'preset', prompt: () => 'Ignore preset to remove:', complete: () => ignorePresetCandidates(invoke) },
+registerArgs("ignore:remove", [
+  {
+    name: "preset",
+    prompt: () => "Ignore preset to remove:",
+    complete: () => ignorePresetCandidates(invoke),
+  },
 ]);
-registerArgs('ignore:set', [
-  { name: 'preset', prompt: () => 'Replace the ignore set with:', complete: () => ignorePresetCandidates(invoke) },
+registerArgs("ignore:set", [
+  {
+    name: "preset",
+    prompt: () => "Replace the ignore set with:",
+    complete: () => ignorePresetCandidates(invoke),
+  },
 ]);
 
 /** The directory the `ignore:*` commands act on, as a repo-root-relative path,
  *  plus the repo it belongs to. Null (with a status message) when there is no
  *  active repository. */
-async function ignoreContext(ws: string | null): Promise<{ repo: string; dir: string } | null> {
+async function ignoreContext(
+  ws: string | null,
+): Promise<{ repo: string; dir: string } | null> {
   const repo = repoOf(ws);
   if (!repo) {
-    await status('no active repository');
+    await status("no active repository");
     return null;
   }
   return { repo, dir: await defaultTargetDir(repo, ws) };
@@ -834,27 +942,36 @@ async function ignoreContext(ws: string | null): Promise<{ repo: string; dir: st
  *  current directory, else the selected metarecord's directory, else the
  *  repository root — as a repo-root-relative path (`''` is the root). Shared by
  *  the `ignore:*` commands. */
-async function defaultTargetDir(repo: string, ws: string | null): Promise<string> {
+async function defaultTargetDir(
+  repo: string,
+  ws: string | null,
+): Promise<string> {
   return await targetDir(await targetDirContext(repo, ws));
 }
 
 /** What the target-directory rules read: the file manager's current directory
  *  and the workspace's selected metarecord. */
-async function targetDirContext(repo: string, ws: string | null): Promise<TargetDirOptions> {
+async function targetDirContext(
+  repo: string,
+  ws: string | null,
+): Promise<TargetDirOptions> {
   const fmDir = ws
-    ? await invoke<string | null>('ws_get_var', { wsId: ws, key: 'file-manager:dir' })
+    ? await invoke<string | null>("ws_get_var", {
+        wsId: ws,
+        key: "file-manager:dir",
+      })
     : null;
   const selected = ws
-    ? await invoke<{ uuid: string } | null>('ws_get_var', {
+    ? await invoke<{ uuid: string } | null>("ws_get_var", {
         wsId: ws,
-        key: 'selected_metarecord',
+        key: "selected_metarecord",
       })
     : null;
   return {
     call: daemonJson,
     repo,
     repoRoot: await repoRoot(repo),
-    fmDir: typeof fmDir === 'string' ? fmDir : null,
+    fmDir: typeof fmDir === "string" ? fmDir : null,
     selected: selected?.uuid ? { uuid: selected.uuid } : null,
   };
 }
@@ -864,7 +981,7 @@ async function targetDirContext(repo: string, ws: string | null): Promise<Target
  *  silent otherwise. */
 async function runIgnore(
   choice: string,
-  mode: 'add' | 'remove' | 'set',
+  mode: "add" | "remove" | "set",
   ws: string | null,
 ): Promise<void> {
   const context = await ignoreContext(ws);
@@ -880,29 +997,31 @@ async function runIgnore(
     relPath: context.dir,
     confirm: (question) => window.confirm(question),
     // A whole-set replacement drops the inherited patterns on purpose.
-    copy: mode !== 'set',
+    copy: mode !== "set",
   });
   if (!target) {
-    await status(`${context.dir || '/'} is not tracked: nothing to write the patterns on`);
+    await status(
+      `${context.dir || "/"} is not tracked: nothing to write the patterns on`,
+    );
     return;
   }
   if (target.copied.length > 0) {
-    await invoke('ignore_write', {
+    await invoke("ignore_write", {
       repo: context.repo,
       target: target.uuid,
       patterns: target.copied,
     });
   }
-  const result = await invoke<string[]>('ignore_apply', {
+  const result = await invoke<string[]>("ignore_apply", {
     repo: context.repo,
     target: target.uuid,
     presets: [preset],
     mode,
   });
   await status(
-    `Ignore: ${preset} ${mode === 'remove' ? 'removed from' : 'applied to'} ` +
-      `${context.dir || '/'} — ${result.length} pattern(s)`,
-    'info',
+    `Ignore: ${preset} ${mode === "remove" ? "removed from" : "applied to"} ` +
+      `${context.dir || "/"} — ${result.length} pattern(s)`,
+    "info",
   );
 }
 
@@ -914,20 +1033,24 @@ async function listIgnore(ws: string | null): Promise<void> {
   if (!context) return;
   if (!ws) return;
   const presets =
-    await invoke<{ name: string; description: string; patterns: string[] }[]>('ignore_presets');
-  const lines = ['Ignore presets:'];
+    await invoke<{ name: string; description: string; patterns: string[] }[]>(
+      "ignore_presets",
+    );
+  const lines = ["Ignore presets:"];
   for (const preset of presets) {
-    lines.push(`  ${preset.name.padEnd(14)}${preset.description} (${preset.patterns.length})`);
+    lines.push(
+      `  ${preset.name.padEnd(14)}${preset.description} (${preset.patterns.length})`,
+    );
   }
   const effective = (await daemonJson(
-    'GET',
+    "GET",
     `/repos/${context.repo}/ignore/effective?path=${encodeURIComponent(context.dir)}`,
   )) as { source: string | null; direct: boolean; patterns: string[] };
 
-  const here = context.dir || '/';
-  const source = effective.source === '' ? '/' : effective.source;
+  const here = context.dir || "/";
+  const source = effective.source === "" ? "/" : effective.source;
   lines.push(
-    '',
+    "",
     effective.source === null
       ? `No ignore patterns govern ${here}.`
       : effective.direct
@@ -935,10 +1058,13 @@ async function listIgnore(ws: string | null): Promise<void> {
         : `Patterns governing ${here} (inherited from ${source}):`,
   );
   for (const pattern of effective.patterns) lines.push(`  ${pattern}`);
-  if (needsPanel(store.layout, ws, 'message')) {
-    await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'message' });
+  if (needsPanel(store.layout, ws, "message")) {
+    await invoke("panel_set_type", {
+      slot: store.layout.focused,
+      panelType: "message",
+    });
   }
-  await invoke('append_message', { wsId: ws, text: lines.join('\n') });
+  await invoke("append_message", { wsId: ws, text: lines.join("\n") });
 }
 
 // ── Order a folder's children (the `mf:order` builtin) ─────────────────────
@@ -953,16 +1079,16 @@ async function listIgnore(ws: string | null): Promise<void> {
 async function runOrder(ws: string | null): Promise<void> {
   const repo = repoOf(ws);
   if (!repo) {
-    await status('no active repository');
+    await status("no active repository");
     return;
   }
   const path = await orderTargetDir(await targetDirContext(repo, ws));
   if (path === null) {
-    await status('no folder or file is selected: nothing to number');
+    await status("no folder or file is selected: nothing to number");
     return;
   }
-  const report = await invoke<{ message: string }>('order_run', { repo, path });
-  await status(report.message, 'info');
+  const report = await invoke<{ message: string }>("order_run", { repo, path });
+  await status(report.message, "info");
 }
 
 // ── Watch activity (the `mf:watch-activity` builtin) ────────────────────────────────
@@ -975,45 +1101,49 @@ async function runOrder(ws: string | null): Promise<void> {
 async function resetWatchActivity(ws: string | null): Promise<void> {
   const repo = repoOf(ws);
   if (!repo) {
-    await status('no active repository');
+    await status("no active repository");
     return;
   }
   try {
-    await daemonJson('POST', `/repos/${repo}/watch/activity/reset`, {});
+    await daemonJson("POST", `/repos/${repo}/watch/activity/reset`, {});
   } catch (e) {
     await status(e instanceof Error ? e.message : String(e));
     return;
   }
   changeFeed.notify(repo);
-  await status('watch activity reset', 'info');
+  await status("watch activity reset", "info");
 }
 
 // ── Reloading the user configuration ───────────────────────────────────────
 // What the GUI can re-read without a restart. Kept in step with
 // `RELOAD_TARGETS` in crates/gui/src/commands.rs, which is where the
 // omissions (config.toml, panel-types, ignore-presets) are argued.
-const RELOAD_TARGETS = ['keybindings', 'style', 'grammar', 'commands'];
+const RELOAD_TARGETS = ["keybindings", "style", "grammar", "commands"];
 
-registerArgs('config:reload', [
+registerArgs("config:reload", [
   {
-    name: 'target',
-    prompt: () => `Reload what? (${[...RELOAD_TARGETS, 'all'].join(' / ')})`,
-    complete: () => [...RELOAD_TARGETS, 'all'],
+    name: "target",
+    prompt: () => `Reload what? (${[...RELOAD_TARGETS, "all"].join(" / ")})`,
+    complete: () => [...RELOAD_TARGETS, "all"],
   },
 ]);
 
-registerArgs('script:run', [
-  { name: 'script', prompt: () => 'Run script:', complete: () => scriptCandidates() },
+registerArgs("script:run", [
+  {
+    name: "script",
+    prompt: () => "Run script:",
+    complete: () => scriptCandidates(),
+  },
 ]);
 
-registerArgs('completion:cycle', [
+registerArgs("completion:cycle", [
   {
-    name: 'direction',
+    name: "direction",
     // Optional and never asked for: its absence *is* the forward cycle — the
     // point of the default binding (doc "Completion views").
     optional: true,
-    prompt: () => 'Cycle which way? (forward / back)',
-    complete: () => ['forward', 'back'],
+    prompt: () => "Cycle which way? (forward / back)",
+    complete: () => ["forward", "back"],
   },
 ]);
 
@@ -1026,7 +1156,10 @@ async function resolveScriptPath(choice: string): Promise<string | null> {
   const want = choice.trim();
   const scripts = await installedScripts();
   const hit = scripts.find(
-    (s) => `${s.name} — ${s.summary}` === want || s.name === want || s.name === `${want}.sh`,
+    (s) =>
+      `${s.name} — ${s.summary}` === want ||
+      s.name === want ||
+      s.name === `${want}.sh`,
   );
   return hit?.path ?? null;
 }
@@ -1041,7 +1174,7 @@ async function resolveScriptPath(choice: string): Promise<string | null> {
 /** The configured `open-with` candidates (config.toml), or none on failure. */
 async function openWithPrograms(): Promise<string[]> {
   try {
-    return await invoke<string[]>('open_with_programs');
+    return await invoke<string[]>("open_with_programs");
   } catch {
     return [];
   }
@@ -1053,41 +1186,43 @@ async function openWith(commandLine: string, ws: string | null): Promise<void> {
   const program = commandLine.trim();
   if (!program) return;
   if (!ws) return;
-  const paths = await invoke('ws_get_var', { wsId: ws, key: 'selected_paths' });
+  const paths = await invoke("ws_get_var", { wsId: ws, key: "selected_paths" });
   const files = (Array.isArray(paths) ? paths : []).filter(
-    (p): p is string => typeof p === 'string' && p !== '',
+    (p): p is string => typeof p === "string" && p !== "",
   );
   if (files.length === 0) {
-    await status('no file or folder is selected');
+    await status("no file or folder is selected");
     return;
   }
-  await runShell([program, ...files.map(shellQuote)].join(' '));
+  await runShell([program, ...files.map(shellQuote)].join(" "));
 }
 
-registerArgs('file:open-with', [
+registerArgs("file:open-with", [
   {
-    name: 'program',
-    prompt: () => 'Open with which program?',
+    name: "program",
+    prompt: () => "Open with which program?",
     complete: () => openWithPrograms(),
   },
 ]);
 
-registerArgs('context:set', [
+registerArgs("context:set", [
   {
-    name: 'name',
+    name: "name",
     prompt: async () => {
       const ws = focusedWs();
       const current = ws
-        ? await invoke<WorkContext | null>('context_active', { wsId: ws }).catch(() => null)
+        ? await invoke<WorkContext | null>("context_active", {
+            wsId: ws,
+          }).catch(() => null)
         : null;
       return current
         ? `Work context name? (closes "${current.name}")`
-        : 'Work context name?';
+        : "Work context name?";
     },
   },
   {
-    name: 'description',
-    prompt: () => 'Description? (what the work is; empty for none)',
+    name: "description",
+    prompt: () => "Description? (what the work is; empty for none)",
   },
 ]);
 
@@ -1095,22 +1230,31 @@ registerArgs('context:set', [
  *  workspace's repository — every later change the GUI makes there is written
  *  in it — closing the one in force, if any (one at a time). A name with
  *  spaces is quoted on the command line; the description is the rest. */
-async function setWorkContext(ws: string, name: string, description: string): Promise<void> {
+async function setWorkContext(
+  ws: string,
+  name: string,
+  description: string,
+): Promise<void> {
   if (!name) return;
-  const opened = await invoke<WorkContext>('context_set', {
+  const opened = await invoke<WorkContext>("context_set", {
     wsId: ws,
     name,
     description: description || null,
   });
-  await status(`in work context "${opened.name}" (label ${opened.label})`, 'info');
+  await status(
+    `in work context "${opened.name}" (label ${opened.label})`,
+    "info",
+  );
 }
 
 /** `context:unset`: closes the workspace's repository's work context. */
 async function unsetWorkContext(ws: string): Promise<void> {
-  const closed = await invoke<WorkContext | null>('context_unset', { wsId: ws });
+  const closed = await invoke<WorkContext | null>("context_unset", {
+    wsId: ws,
+  });
   await status(
-    closed ? `work context "${closed.name}" closed` : 'no work context is open',
-    'info',
+    closed ? `work context "${closed.name}" closed` : "no work context is open",
+    "info",
   );
 }
 
@@ -1128,7 +1272,9 @@ const PENDING_ATTEMPTS = 30;
  * Once per repository and session; Escape leaves things as they were — the
  * context stays in force.
  */
-export async function offerWorkContexts(workspaces: WorkspaceInfo[]): Promise<void> {
+export async function offerWorkContexts(
+  workspaces: WorkspaceInfo[],
+): Promise<void> {
   for (const w of workspaces) {
     const repo = w.active_repo;
     if (!repo || offeredRepos.has(repo)) continue;
@@ -1139,7 +1285,7 @@ export async function offerWorkContexts(workspaces: WorkspaceInfo[]): Promise<vo
 
 async function offerWorkContext(ws: string, repoName: string): Promise<void> {
   type Pending = {
-    state: 'none' | 'open' | 'gone';
+    state: "none" | "open" | "gone";
     label?: number;
     name?: string;
     description?: string | null;
@@ -1147,7 +1293,7 @@ async function offerWorkContext(ws: string, repoName: string): Promise<void> {
   let pending: Pending | null = null;
   for (let attempt = 1; pending === null; attempt++) {
     try {
-      pending = await invoke<Pending>('context_pending', { wsId: ws });
+      pending = await invoke<Pending>("context_pending", { wsId: ws });
     } catch (error) {
       // A repository still loading answers 503 for a while.
       if (attempt >= PENDING_ATTEMPTS) {
@@ -1157,44 +1303,50 @@ async function offerWorkContext(ws: string, repoName: string): Promise<void> {
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
   }
-  if (pending.state === 'gone') {
+  if (pending.state === "gone") {
     await status(
       `work context "${pending.name}" of ${repoName} no longer exists (label ${pending.label} pruned): closed`,
-      'info',
+      "info",
     );
     return;
   }
-  if (pending.state !== 'open') return;
+  if (pending.state !== "open") return;
   const chosen = await collectArgs(
     [
       {
-        name: 'answer',
+        name: "answer",
         prompt: () =>
-          `Work context "${pending.name}"${pending.description ? ` (${pending.description})` : ''} is still open in ${repoName}: stay in it or end it? (stay / end)`,
-        complete: () => ['stay', 'end'],
+          `Work context "${pending.name}"${pending.description ? ` (${pending.description})` : ""} is still open in ${repoName}: stay in it or end it? (stay / end)`,
+        complete: () => ["stay", "end"],
       },
     ],
     [],
     promptForArg,
   );
-  if (chosen?.[0] === 'end') {
-    await invoke('context_unset', { wsId: ws });
-    await status(`work context "${pending.name}" closed`, 'info');
+  if (chosen?.[0] === "end") {
+    await invoke("context_unset", { wsId: ws });
+    await status(`work context "${pending.name}" closed`, "info");
   } else {
-    await invoke('context_resume', { wsId: ws });
-    await status(`in work context "${pending.name}"`, 'info');
+    await invoke("context_resume", { wsId: ws });
+    await status(`in work context "${pending.name}"`, "info");
   }
 }
 
 /** Runs an installed script, surfacing its output in the shell panel exactly
  *  as a `!` command does. */
 async function runScript(path: string, ws: string | null): Promise<void> {
-  if (needsPanel(store.layout, ws, 'shell')) {
-    await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'shell' });
+  if (needsPanel(store.layout, ws, "shell")) {
+    await invoke("panel_set_type", {
+      slot: store.layout.focused,
+      panelType: "shell",
+    });
   }
   // A script's writes are one label in the log, its commands' nested in it
   // (doc "Labels and contexts").
-  await runShell(`bash ${shellQuote(path)}`, `script ${path.split('/').pop() ?? path}`);
+  await runShell(
+    `bash ${shellQuote(path)}`,
+    `script ${path.split("/").pop() ?? path}`,
+  );
 }
 
 /**
@@ -1236,7 +1388,7 @@ export async function collectArgs(
       } else {
         // Inline-provided: the last declared argument absorbs the remaining
         // tokens so a value may contain spaces without quoting.
-        result.push(isLast ? (rest as string[]).join(' ') : given);
+        result.push(isLast ? (rest as string[]).join(" ") : given);
         if (isLast) used = provided.length;
         continue;
       }
@@ -1269,7 +1421,9 @@ export async function collectArgs(
                   ? [{ items: spec.complete }]
                   : [],
           )
-          .then((list) => ({ views: list.map((view) => bindView(view, prior)) }))
+          .then((list) => ({
+            views: list.map((view) => bindView(view, prior)),
+          }))
       : null;
     const answer = await promptFn({
       argName: spec.name,
@@ -1280,15 +1434,17 @@ export async function collectArgs(
           ? asked.initial
           : spec.initial
             ? await spec.initial(result)
-            : '',
+            : "",
       completions: source
-        ? source.then(({ views }) => views[0]?.items('').then((page) => page.items) ?? [])
+        ? source.then(
+            ({ views }) => views[0]?.items("").then((page) => page.items) ?? [],
+          )
         : [],
       ...(source ? { source } : {}),
       ...(spec.alternate ? { alternate: spec.alternate.hint } : {}),
     });
     if (answer === null) return null;
-    if (typeof answer === 'string') {
+    if (typeof answer === "string") {
       result.push(answer);
       continue;
     }
@@ -1344,10 +1500,11 @@ export function deepActiveElement(): Element | null {
  *  was cleared. */
 export function discardActiveInput(el: Element | null): boolean {
   if (!el) return false;
-  const cleared = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
+  const cleared =
+    el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
   if (cleared) {
-    el.value = '';
-    el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    el.value = "";
+    el.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
   }
   (el as HTMLElement).blur?.();
   return cleared;
@@ -1360,17 +1517,18 @@ export function discardActiveInput(el: Element | null): boolean {
  *  the panel sees it as typed; the field keeps the keyboard. Returns whether
  *  anything was removed. */
 export function clearToLineEnd(el: Element | null): boolean {
-  if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) return false;
+  if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement))
+    return false;
   const start = el.selectionStart ?? el.value.length;
   let end = el.value.length;
   if (el instanceof HTMLTextAreaElement) {
-    const newline = el.value.indexOf('\n', start);
+    const newline = el.value.indexOf("\n", start);
     if (newline === start) end = start + 1;
     else if (newline !== -1) end = newline;
   }
   if (end <= start) return false;
-  el.setRangeText('', start, end, 'start');
-  el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+  el.setRangeText("", start, end, "start");
+  el.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
   return true;
 }
 
@@ -1397,65 +1555,81 @@ export function setPanelDispatch(fn: PanelDispatch | null) {
 // is itself the documented meaning (`workspace:next` moves both panels,
 // `workspace:next slot` the focused one only) and is never asked for.
 
-registerArgs('command-input:focus', [
-  { name: 'mode', prompt: () => 'Which mode? (command / bash)', complete: () => ['command', 'bash'] },
-]);
-
-registerArgs('editing:goto', [
+registerArgs("command-input:focus", [
   {
-    name: 'target',
-    prompt: () => 'Move the cursor where? (line-start / line-end)',
-    complete: () => ['line-start', 'line-end'],
+    name: "mode",
+    prompt: () => "Which mode? (command / bash)",
+    complete: () => ["command", "bash"],
   },
 ]);
 
-registerArgs('workspace:new', [
-  { name: 'repo', optional: true, prompt: () => 'On which repository? (empty: none)' },
+registerArgs("editing:goto", [
+  {
+    name: "target",
+    prompt: () => "Move the cursor where? (line-start / line-end)",
+    complete: () => ["line-start", "line-end"],
+  },
 ]);
 
-registerArgs('workspace:send', [
+registerArgs("workspace:new", [
   {
-    name: 'workspace',
-    prompt: () => 'To which workspace? (its id)',
+    name: "repo",
+    optional: true,
+    prompt: () => "On which repository? (empty: none)",
+  },
+]);
+
+registerArgs("workspace:send", [
+  {
+    name: "workspace",
+    prompt: () => "To which workspace? (its id)",
     complete: () => store.workspaces.map((w) => w.id),
   },
-  { name: 'variable', prompt: () => 'Which variable?' },
-  { name: 'value', prompt: () => 'Its value (JSON, or text):' },
+  { name: "variable", prompt: () => "Which variable?" },
+  { name: "value", prompt: () => "Its value (JSON, or text):" },
 ]);
 
-registerArgs('macro:save', [
-  { name: 'name', prompt: () => 'Save the macro as user:…? (a name)' },
+registerArgs("macro:save", [
+  { name: "name", prompt: () => "Save the macro as user:…? (a name)" },
 ]);
 
-registerArgs('workspace:rename', [
+registerArgs("workspace:rename", [
   {
-    name: 'name',
-    prompt: () => 'Rename the workspace to:',
-    initial: () => workspaceById(focusedWs())?.name ?? '',
+    name: "name",
+    prompt: () => "Rename the workspace to:",
+    initial: () => workspaceById(focusedWs())?.name ?? "",
   },
 ]);
 
-registerArgs('workspace:goto', [
+registerArgs("workspace:goto", [
   {
-    name: 'workspace',
-    prompt: () => 'Go to which workspace?',
+    name: "workspace",
+    prompt: () => "Go to which workspace?",
     complete: () => store.workspaces.map((_, index) => String(index + 1)),
   },
 ]);
 
-registerArgs('workspace:next', [
-  { name: 'slot', optional: true, prompt: () => 'Scope? (slot: the focused slot only)' },
-]);
-
-registerArgs('workspace:prev', [
-  { name: 'slot', optional: true, prompt: () => 'Scope? (slot: the focused slot only)' },
-]);
-
-registerArgs('panel:toggle', [
+registerArgs("workspace:next", [
   {
-    name: 'flag',
-    prompt: () => 'Which flag? (split / fullscreen)',
-    complete: () => ['split', 'fullscreen'],
+    name: "slot",
+    optional: true,
+    prompt: () => "Scope? (slot: the focused slot only)",
+  },
+]);
+
+registerArgs("workspace:prev", [
+  {
+    name: "slot",
+    optional: true,
+    prompt: () => "Scope? (slot: the focused slot only)",
+  },
+]);
+
+registerArgs("panel:toggle", [
+  {
+    name: "flag",
+    prompt: () => "Which flag? (split / fullscreen)",
+    complete: () => ["split", "fullscreen"],
   },
 ]);
 
@@ -1464,7 +1638,7 @@ registerArgs('panel:toggle', [
 // candidates are the panel types providing what the command needs.
 function panelArg(command: string): ArgSpec {
   return {
-    name: 'panel',
+    name: "panel",
     prompt: () => `Which panel? (${SELF}, or a panel type)`,
     complete: (_partial, prior) => {
       const needed = neededFunctions(command, prior.slice(1)) ?? [];
@@ -1479,32 +1653,35 @@ function panelArg(command: string): ArgSpec {
 
 /** The panel type a generic command's `panel` argument designates, in `context`. */
 function genericPanel(arg: string | undefined, context: ExecContext): string {
-  return resolvePanel(arg, context.slot ? slotPayload(context.slot).panel_type : null);
+  return resolvePanel(
+    arg,
+    context.slot ? slotPayload(context.slot).panel_type : null,
+  );
 }
 
 for (const command of GENERIC_COMMANDS) {
-  if (command !== 'cursor:find' && command !== 'view:zoom') {
+  if (command !== "cursor:find" && command !== "view:zoom") {
     registerArgs(command, [panelArg(command)]);
   }
 }
-registerArgs('view:zoom', [
-  panelArg('view:zoom'),
+registerArgs("view:zoom", [
+  panelArg("view:zoom"),
   {
-    name: 'direction',
-    prompt: () => `Zoom how? (${ZOOM_DIRECTIONS.join(' / ')})`,
+    name: "direction",
+    prompt: () => `Zoom how? (${ZOOM_DIRECTIONS.join(" / ")})`,
     complete: () => [...ZOOM_DIRECTIONS],
   },
 ]);
-registerArgs('cursor:find', [
-  panelArg('cursor:find'),
+registerArgs("cursor:find", [
+  panelArg("cursor:find"),
   {
-    name: 'mode',
-    prompt: () => `Find how? (${FIND_MODES.join(' / ')})`,
+    name: "mode",
+    prompt: () => `Find how? (${FIND_MODES.join(" / ")})`,
     complete: () => [...FIND_MODES],
   },
   {
-    name: 'entry',
-    prompt: () => 'Go to entry:',
+    name: "entry",
+    prompt: () => "Go to entry:",
     complete: async (_partial, prior) => {
       const ws = focusedWs();
       const provider = functionProvider();
@@ -1513,77 +1690,103 @@ registerArgs('cursor:find', [
       return findCandidates(await provider.get(ws, type));
     },
     // Shift-Enter stops on what is found, even a directory a walk would enter.
-    alternate: { hint: 'select', prior: (prior) => [prior[0] ?? SELF, 'select'] },
+    alternate: {
+      hint: "select",
+      prior: (prior) => [prior[0] ?? SELF, "select"],
+    },
   },
 ]);
 
-registerArgs('panel:focus', [
+registerArgs("panel:focus", [
   {
-    name: 'slot',
-    prompt: () => 'Focus which slot? (next / left / right)',
-    complete: () => ['next', 'left', 'right'],
+    name: "slot",
+    prompt: () => "Focus which slot? (next / left / right)",
+    complete: () => ["next", "left", "right"],
   },
 ]);
 
-registerArgs('panel:open', [
+registerArgs("panel:open", [
   {
-    name: 'target',
-    prompt: () => `Open where? (${TARGETS.join(' / ')})`,
+    name: "target",
+    prompt: () => `Open where? (${TARGETS.join(" / ")})`,
     complete: () => [...TARGETS],
   },
-  { name: 'type', prompt: () => 'Which panel type?', complete: () => [...store.panelTypes] },
-]);
-
-registerArgs('mf:duplicate', [
-  { name: 'operation', prompt: () => 'Which operation? (scan)', complete: () => ['scan'] },
-]);
-
-const WATCH_ACTIVITY_OPERATIONS = ['reset'];
-
-registerArgs('mf:watch-activity', [
   {
-    name: 'operation',
-    prompt: () => `Which operation? (${WATCH_ACTIVITY_OPERATIONS.join(' / ')})`,
+    name: "type",
+    prompt: () => "Which panel type?",
+    complete: () => [...store.panelTypes],
+  },
+]);
+
+registerArgs("mf:duplicate", [
+  {
+    name: "operation",
+    prompt: () => "Which operation? (scan)",
+    complete: () => ["scan"],
+  },
+]);
+
+const WATCH_ACTIVITY_OPERATIONS = ["reset"];
+
+registerArgs("mf:watch-activity", [
+  {
+    name: "operation",
+    prompt: () => `Which operation? (${WATCH_ACTIVITY_OPERATIONS.join(" / ")})`,
     complete: () => [...WATCH_ACTIVITY_OPERATIONS],
   },
 ]);
 
-registerArgs('daemon:set-url', [
+registerArgs("daemon:set-url", [
   {
-    name: 'url',
-    prompt: () => 'New daemon URL:',
+    name: "url",
+    prompt: () => "New daemon URL:",
     initial: () => store.daemonUrl,
   },
 ]);
 
-registerArgs('answer:send', [
+registerArgs("answer:send", [
   {
-    name: 'value',
-    prompt: () => 'Answer with:',
+    name: "value",
+    prompt: () => "Answer with:",
     complete: () => [...(activeQuestion()?.keys ?? [])],
   },
 ]);
 
-registerArgs('help', [{ name: 'topic', optional: true, prompt: () => 'Help on what?' }]);
-registerArgs('help:open', [{ name: 'topic', optional: true, prompt: () => 'Help on what?' }]);
-
-registerArgs('find:open', [{ name: 'text', optional: true, prompt: () => 'Find what?' }]);
-
-registerArgs('script:stop', [
-  { name: 'task', optional: true, prompt: () => 'Stop which script? (empty: the one asking)' },
+registerArgs("help", [
+  { name: "topic", optional: true, prompt: () => "Help on what?" },
+]);
+registerArgs("help:open", [
+  { name: "topic", optional: true, prompt: () => "Help on what?" },
 ]);
 
-registerArgs('script:kill', [
-  { name: 'task', optional: true, prompt: () => 'Kill which script? (empty: the one asking)' },
+registerArgs("find:open", [
+  { name: "text", optional: true, prompt: () => "Find what?" },
+]);
+
+registerArgs("script:stop", [
+  {
+    name: "task",
+    optional: true,
+    prompt: () => "Stop which script? (empty: the one asking)",
+  },
+]);
+
+registerArgs("script:kill", [
+  {
+    name: "task",
+    optional: true,
+    prompt: () => "Kill which script? (empty: the one asking)",
+  },
 ]);
 
 // ── Dispatch ───────────────────────────────────────────────────────────
 
 /** Posts a status message on the focused workspace's status bar (and so to
  *  its message log). `keys.ts` reports a `help:key` answer through it. */
-export async function status(text: string, kind = 'error') {
+export async function status(text: string, kind = "error") {
   const ws = focusedWs();
-  if (ws) await invoke('post_status', { wsId: ws, text, kind, timeoutMs: 5000 });
+  if (ws)
+    await invoke("post_status", { wsId: ws, text, kind, timeoutMs: 5000 });
 }
 
 /** Why `panelType`, a viewer of the selection, has nothing of `ws`'s selection
@@ -1591,19 +1794,23 @@ export async function status(text: string, kind = 'error') {
  *  metarecord without a file is nothing for the file panel, a path without a
  *  metarecord nothing for the detail panel; no selection at all is not refused,
  *  so a viewer can still be opened to set up a layout. */
-async function viewerHasNothing(panelType: string, ws: string | null): Promise<string | null> {
-  if (!ws || (panelType !== 'file' && panelType !== 'metarecord-detail')) return null;
+async function viewerHasNothing(
+  panelType: string,
+  ws: string | null,
+): Promise<string | null> {
+  if (!ws || (panelType !== "file" && panelType !== "metarecord-detail"))
+    return null;
   const [metarecord, paths] = await Promise.all([
-    invoke('ws_get_var', { wsId: ws, key: 'selected_metarecord' }),
-    invoke('ws_get_var', { wsId: ws, key: 'selected_paths' }),
+    invoke("ws_get_var", { wsId: ws, key: "selected_metarecord" }),
+    invoke("ws_get_var", { wsId: ws, key: "selected_paths" }),
   ]);
-  const hasMetarecord = metarecord !== null && typeof metarecord === 'object';
+  const hasMetarecord = metarecord !== null && typeof metarecord === "object";
   const hasPaths = Array.isArray(paths) && paths.length > 0;
-  if (panelType === 'file' && hasMetarecord && !hasPaths) {
-    return 'no file or folder for this metarecord — open it in metarecord-detail instead';
+  if (panelType === "file" && hasMetarecord && !hasPaths) {
+    return "no file or folder for this metarecord — open it in metarecord-detail instead";
   }
-  if (panelType === 'metarecord-detail' && hasPaths && !hasMetarecord) {
-    return 'no metarecord for this entry — record it first';
+  if (panelType === "metarecord-detail" && hasPaths && !hasMetarecord) {
+    return "no metarecord for this entry — record it first";
   }
   return null;
 }
@@ -1613,17 +1820,20 @@ async function viewerHasNothing(panelType: string, ws: string | null): Promise<s
 export async function setFullscreen(on: boolean): Promise<void> {
   store.ui.fullscreen = on;
   try {
-    await invoke('set_fullscreen', { on });
+    await invoke("set_fullscreen", { on });
   } catch (error) {
     await status(String(error));
   }
 }
 
-export async function runShell(commandLine: string, label?: string): Promise<void> {
+export async function runShell(
+  commandLine: string,
+  label?: string,
+): Promise<void> {
   const ws = focusedWs();
   if (!ws) return;
   try {
-    await invoke('run_shell', { wsId: ws, commandLine, label: label ?? null });
+    await invoke("run_shell", { wsId: ws, commandLine, label: label ?? null });
   } catch (error) {
     await status(String(error));
   }
@@ -1632,9 +1842,13 @@ export async function runShell(commandLine: string, label?: string): Promise<voi
 /** Whether surfacing output should switch the focused slot to `panelType`:
  *  true unless some visible slot of `ws` already shows it (which also avoids
  *  the "two visible slots, same type" rejection). */
-export function needsPanel(layout: LayoutView, ws: string | null, panelType: string): boolean {
+export function needsPanel(
+  layout: LayoutView,
+  ws: string | null,
+  panelType: string,
+): boolean {
   if (!ws) return false;
-  const shows = (slot: LayoutView['left']) =>
+  const shows = (slot: LayoutView["left"]) =>
     slot.visible && slot.workspace_id === ws && slot.panel_type === panelType;
   return !(shows(layout.left) || shows(layout.right));
 }
@@ -1645,23 +1859,31 @@ function shellExpandDeps(ws: string | null): ExpandDeps {
   const daemon = async (path: string) => {
     // Through invoke's type parameter, not an `as` cast: same result, but the
     // shape is asked for rather than asserted after the fact.
-    const res = await invoke<{ status: number; body: unknown }>('daemon_request', {
-      method: 'GET',
-      path,
-      body: null,
-    });
+    const res = await invoke<{ status: number; body: unknown }>(
+      "daemon_request",
+      {
+        method: "GET",
+        path,
+        body: null,
+      },
+    );
     if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
     return res.body;
   };
   const wsVar = async (key: string) =>
-    ws ? await invoke('ws_get_var', { wsId: ws, key }) : null;
+    ws ? await invoke("ws_get_var", { wsId: ws, key }) : null;
   return {
     async selected() {
-      const value = await wsVar('selected_metarecord');
-      return value && typeof value === 'object' ? (value as { uuid: string; repo: string }) : null;
+      const value = await wsVar("selected_metarecord");
+      return value && typeof value === "object"
+        ? (value as { uuid: string; repo: string })
+        : null;
     },
     metarecord: (repo, uuid) =>
-      daemon(`/repos/${repo}/metarecords/${uuid}`) as Promise<{ version?: number; fields?: never[] }>,
+      daemon(`/repos/${repo}/metarecords/${uuid}`) as Promise<{
+        version?: number;
+        fields?: never[];
+      }>,
     async treePaths(repo, uuid, field) {
       const body = (await daemon(
         `/repos/${repo}/metarecords/${uuid}/fields/${encodeURIComponent(field)}/resolve-tree`,
@@ -1669,12 +1891,14 @@ function shellExpandDeps(ws: string | null): ExpandDeps {
       return body.paths ?? [];
     },
     async selectedPaths() {
-      const value = await wsVar('selected_paths');
-      return Array.isArray(value) ? value.filter((p): p is string => typeof p === 'string') : [];
+      const value = await wsVar("selected_paths");
+      return Array.isArray(value)
+        ? value.filter((p): p is string => typeof p === "string")
+        : [];
     },
     async activeRepo() {
-      const value = await wsVar('active_repo');
-      return typeof value === 'string' ? value : null;
+      const value = await wsVar("active_repo");
+      return typeof value === "string" ? value : null;
     },
     async repoName(repo) {
       const body = (await daemon(`/repos/${repo}`)) as { name?: string };
@@ -1692,10 +1916,12 @@ function shellExpandDeps(ws: string | null): ExpandDeps {
  * has a prompt — an interactive collection or a script prompt: one per
  * workspace (doc "Script sessions").
  */
-async function promptForArg(request: ArgPromptRequest): Promise<string | PromptAnswer | null> {
+async function promptForArg(
+  request: ArgPromptRequest,
+): Promise<string | PromptAnswer | null> {
   const ws = focusedWs();
   if (hasPromptIn(ws)) {
-    await status('the command input is busy with another prompt');
+    await status("the command input is busy with another prompt");
     return null;
   }
   return new Promise<string | PromptAnswer | null>((resolve) => {
@@ -1728,7 +1954,7 @@ async function promptForArg(request: ArgPromptRequest): Promise<string | PromptA
         (source) => {
           if (store.ui.promptResolver !== resolver) return;
           store.ui.promptSource = source;
-          void loadPromptCompletions('');
+          void loadPromptCompletions("");
         },
         () => {
           /* a source that fails to build just means no completions */
@@ -1789,7 +2015,7 @@ export function setSettler(fn: (() => Promise<void>) | null): void {
 /** Delivers what command transaction `txn` wrote so far and, when there was
  *  anything, waits until it shows (doc "Command transactions"). */
 export async function flushTransaction(txn: number): Promise<void> {
-  if ((await invoke<boolean>('txn_flush', { txn })) && settler) await settler();
+  if ((await invoke<boolean>("txn_flush", { txn })) && settler) await settler();
 }
 
 /** How a dispatch came about. `record`: run from the keyboard — a key or the
@@ -1801,17 +2027,18 @@ export interface DispatchOptions {
 /** Outcome of a dispatch, reported back to `POST /gui/command` waiters.
  *  `cancelled`: abandoned at one of its questions — nothing ran, and nothing
  *  failed either. */
-export type DispatchResult = { ok: true; cancelled?: true } | { ok: false; error: string };
+export type DispatchResult =
+  { ok: true; cancelled?: true } | { ok: false; error: string };
 
 /** An array invocation in the shape `parseInvocation` gives a string one. */
 function fromParts(
   parts: InvocationParts,
 ): { name: string; args: (string | AskMarker)[] } | { shell: string } | null {
   const [head, ...args] = parts;
-  if (typeof head !== 'string' || head.trim() === '') return null;
-  if (head.startsWith('!')) {
+  if (typeof head !== "string" || head.trim() === "") return null;
+  if (head.startsWith("!")) {
     const shell = head.slice(1).trim();
-    return shell === '' ? null : { shell };
+    return shell === "" ? null : { shell };
   }
   return { name: head, args };
 }
@@ -1826,13 +2053,16 @@ export async function dispatch(
   context: ExecContext = focusedContext(),
   options: DispatchOptions = {},
 ): Promise<DispatchResult> {
-  const parsed = typeof invocation === 'string' ? parseInvocation(invocation) : fromParts(invocation);
+  const parsed =
+    typeof invocation === "string"
+      ? parseInvocation(invocation)
+      : fromParts(invocation);
   if (parsed === null) return { ok: true };
   // Invoked by a user command, in its transaction (doc "Command
   // transactions"): another user command joins it; anything else runs after
   // the writes so far are delivered, and outside it.
   let txn = context.txn;
-  if (txn !== undefined && ('shell' in parsed || !isUserCommand(parsed.name))) {
+  if (txn !== undefined && ("shell" in parsed || !isUserCommand(parsed.name))) {
     await flushTransaction(txn);
     context = { ws: context.ws, slot: context.slot };
     txn = undefined;
@@ -1842,23 +2072,32 @@ export async function dispatch(
   const recorded =
     options.record === true &&
     macros.recording() &&
-    ('shell' in parsed ||
-      (!parsed.name.startsWith('macro:') && shouldLogCommand(store.commands, parsed.name)));
-  if ('shell' in parsed) {
+    ("shell" in parsed ||
+      (!parsed.name.startsWith("macro:") &&
+        shouldLogCommand(store.commands, parsed.name)));
+  if ("shell" in parsed) {
     const ws = focusedWs();
-    const expanded = await expandShellPlaceholders(parsed.shell, shellExpandDeps(ws));
+    const expanded = await expandShellPlaceholders(
+      parsed.shell,
+      shellExpandDeps(ws),
+    );
     if (!expanded.ok) {
       await status(expanded.error);
       return { ok: false, error: expanded.error };
     }
     // Surface the output: switch the focused slot to the shell panel unless
     // one is already visible in this workspace.
-    if (needsPanel(store.layout, ws, 'shell')) {
-      await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'shell' });
+    if (needsPanel(store.layout, ws, "shell")) {
+      await invoke("panel_set_type", {
+        slot: store.layout.focused,
+        panelType: "shell",
+      });
     }
     await runShell(expanded.value);
-    if (settler) await settler();
+    // Recorded once it has run: the user who sees its effect may stop the
+    // recording while the settler still waits.
     if (recorded) macros.record(`!${parsed.shell}`, [], new Set());
+    if (settler) await settler();
     return { ok: true };
   }
 
@@ -1893,7 +2132,10 @@ export async function dispatch(
       collected = await collectArgs(
         specs,
         given,
-        recorded ? (request) => macros.asking(marks, request.position, () => prompt(request)) : prompt,
+        recorded
+          ? (request) =>
+              macros.asking(marks, request.position, () => prompt(request))
+          : prompt,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1915,19 +2157,19 @@ export async function dispatch(
   // output the command itself appends. Interactively-collected arguments are
   // reassembled so the echo reflects what actually ran.
   if (ws && shouldLogCommand(store.commands, name)) {
-    const echo = [name, ...args].join(' ').trim();
-    await invoke('append_message', { wsId: ws, text: `> ${echo}` });
+    const echo = [name, ...args].join(" ").trim();
+    await invoke("append_message", { wsId: ws, text: `> ${echo}` });
   }
 
   // What the command writes is one label in the log, named after it (doc
   // "Labels and contexts"): the proxy tells the daemon while it runs.
-  const commandKey = await beginCommand([name, ...args].join(' ').trim());
+  const commandKey = await beginCommand([name, ...args].join(" ").trim());
   // A user command not invoked by another, a panel's command and a generic
   // one run in a transaction of their own.
   let own: number | null = null;
   if (txn === undefined && runsInTransaction(name)) {
-    const begun = await invoke<unknown>('txn_begin');
-    if (typeof begun === 'number') {
+    const begun = await invoke<unknown>("txn_begin");
+    if (typeof begun === "number") {
       own = begun;
       context = { ...context, txn: own };
     }
@@ -1943,11 +2185,12 @@ export async function dispatch(
     if (own !== null) {
       const ending = own;
       own = null;
-      await invoke('txn_end', { txn: ending });
+      await invoke("txn_end", { txn: ending });
     }
+    // Recorded once it has run, as the shell line above.
+    if (recorded) macros.record(name, args, marks);
     // Resolved when its effect is visible, not when its handler returned.
     if (settler) await settler();
-    if (recorded) macros.record(name, args, marks);
     return { ok: true };
   } catch (error) {
     // An Error says its message; the "Error: " of its String() is noise.
@@ -1956,7 +2199,7 @@ export async function dispatch(
     return { ok: false, error: message };
   } finally {
     // A failed command delivers what it wrote, as its daemon writes stay.
-    if (own !== null) await invoke('txn_end', { txn: own });
+    if (own !== null) await invoke("txn_end", { txn: own });
     await endCommand(commandKey);
   }
 }
@@ -1964,7 +2207,11 @@ export async function dispatch(
 /** `log:undo` / `log:redo` (doc "Undo and redo by label"): the label named,
  *  or — none named — the one the newest change (undo) was written in; when it
  *  was written in several, which one is asked, innermost first. */
-async function undoOrRedo(ws: string, redo: boolean, named: string | undefined): Promise<void> {
+async function undoOrRedo(
+  ws: string,
+  redo: boolean,
+  named: string | undefined,
+): Promise<void> {
   let label: number | null = null;
   if (named !== undefined) {
     label = Number.parseInt(named, 10);
@@ -1973,16 +2220,19 @@ async function undoOrRedo(ws: string, redo: boolean, named: string | undefined):
       return;
     }
   } else {
-    const candidates = await invoke<{ id: number; name: string }[]>('log_candidates', {
-      wsId: ws,
-      redo,
-    });
+    const candidates = await invoke<{ id: number; name: string }[]>(
+      "log_candidates",
+      {
+        wsId: ws,
+        redo,
+      },
+    );
     if (candidates.length > 1) {
       const chosen = await collectArgs(
         [
           {
-            name: 'label',
-            prompt: () => `${redo ? 'Redo' : 'Undo'} which label?`,
+            name: "label",
+            prompt: () => `${redo ? "Redo" : "Undo"} which label?`,
             complete: () => candidates.map((c) => `${c.id} ${c.name}`),
           },
         ],
@@ -1990,18 +2240,18 @@ async function undoOrRedo(ws: string, redo: boolean, named: string | undefined):
         promptForArg,
       );
       if (chosen === null) return;
-      label = Number.parseInt(chosen[0] ?? '', 10);
+      label = Number.parseInt(chosen[0] ?? "", 10);
       if (!Number.isFinite(label)) return;
     }
   }
-  await invoke('log_navigate', { wsId: ws, redo, label });
+  await invoke("log_navigate", { wsId: ws, redo, label });
 }
 
 /** Tells the daemon proxy a command starts; its key, or null when the proxy
  *  cannot be told (a test without the Rust side). */
 async function beginCommand(name: string): Promise<string | null> {
   try {
-    return await invoke<string>('command_begin', { name });
+    return await invoke<string>("command_begin", { name });
   } catch {
     return null;
   }
@@ -2011,7 +2261,7 @@ async function beginCommand(name: string): Promise<string | null> {
 async function endCommand(key: string | null): Promise<void> {
   if (key === null) return;
   try {
-    await invoke('command_end', { key });
+    await invoke("command_end", { key });
   } catch {
     // The proxy keeps nothing that outlives the next command's begin.
   }
@@ -2022,15 +2272,20 @@ async function endCommand(key: string | null): Promise<void> {
  * recognised (a shell builtin, a goto-tab shortcut, or a panel command),
  * false for an unknown name. Throws on handler failure (caught by `dispatch`).
  */
-async function runCommand(name: string, args: string[], context: ExecContext): Promise<boolean> {
+async function runCommand(
+  name: string,
+  args: string[],
+  context: ExecContext,
+): Promise<boolean> {
   const { ws } = context;
   switch (name) {
-    case 'command-input:focus':
+    case "command-input:focus":
       // One widget, two modes: command (`:`) and bash (`!`, the line runs as a
       // shell command). It is always visible, so focusing is all there is to
       // do. Default to the command mode when nothing is named.
-      if (args[0] === 'bash') store.ui.bashInputFocusTick += 1;
-      else if (args[0] === undefined || args[0] === 'command') store.ui.commandInputFocusTick += 1;
+      if (args[0] === "bash") store.ui.bashInputFocusTick += 1;
+      else if (args[0] === undefined || args[0] === "command")
+        store.ui.commandInputFocusTick += 1;
       else {
         await status(`unknown mode: "${args[0]}" (expected command / bash)`);
         return true;
@@ -2040,41 +2295,53 @@ async function runCommand(name: string, args: string[], context: ExecContext): P
     // otherwise on the deep-focused panel input (replacing the old per-panel
     // shim handlers). Only `confirm` stays command-input-only — Enter must
     // reach a panel form's own keydown handler (see keys.ts).
-    case 'editing:unfocus':
+    case "editing:unfocus":
       if (editingTarget) editingTarget.unfocus();
       else (deepActiveElement() as HTMLElement | null)?.blur();
       return true;
-    case 'editing:discard':
+    case "editing:discard":
       if (editingTarget) editingTarget.discard();
       else discardActiveInput(deepActiveElement());
       return true;
-    case 'editing:confirm':
+    case "editing:confirm":
       editingTarget?.confirm();
       return true;
-    case 'editing:clear-line-end':
+    case "editing:clear-line-end":
       if (editingTarget) editingTarget.clearToLineEnd();
       else clearToLineEnd(deepActiveElement());
       return true;
-    case 'completion:cycle': {
+    case "completion:cycle": {
       // Walks the views of the prompt's completion (doc "Completion
       // views"): one builder is the common case and needs no cycling, so this
       // is a no-op — a keystroke on a plain prompt must not shout. The input
       // owns the cycle (it owns the draft the candidates narrow on).
-      if (args[0] !== undefined && args[0] !== 'forward' && args[0] !== 'back') {
-        await status(`unknown direction: "${args[0]}" (expected forward / back)`);
+      if (
+        args[0] !== undefined &&
+        args[0] !== "forward" &&
+        args[0] !== "back"
+      ) {
+        await status(
+          `unknown direction: "${args[0]}" (expected forward / back)`,
+        );
         return true;
       }
-      editingTarget?.cycleCompletion?.(args[0] === 'back' ? -1 : 1);
+      editingTarget?.cycleCompletion?.(args[0] === "back" ? -1 : 1);
       return true;
     }
-    case 'editing:goto': {
-      if (args[0] !== 'line-start' && args[0] !== 'line-end') {
-        await status(`unknown target: "${args[0] ?? ''}" (expected line-start / line-end)`);
+    case "editing:goto": {
+      if (args[0] !== "line-start" && args[0] !== "line-end") {
+        await status(
+          `unknown target: "${args[0] ?? ""}" (expected line-start / line-end)`,
+        );
         return true;
       }
-      if (args[0] === 'line-start') {
+      if (args[0] === "line-start") {
         if (editingTarget) editingTarget.lineStart();
-        else (deepActiveElement() as HTMLInputElement | null)?.setSelectionRange?.(0, 0);
+        else
+          (deepActiveElement() as HTMLInputElement | null)?.setSelectionRange?.(
+            0,
+            0,
+          );
         return true;
       }
       if (editingTarget) {
@@ -2086,208 +2353,249 @@ async function runCommand(name: string, args: string[], context: ExecContext): P
       }
       return true;
     }
-    case 'workspace:new':
+    case "workspace:new":
       // Optional parameter: the repo UUID of the new workspace
       // (used by the repos panel).
-      await invoke('workspace_new', { activeRepo: args[0] ?? null });
+      await invoke("workspace_new", { activeRepo: args[0] ?? null });
       return true;
-    case 'workspace:fork':
+    case "workspace:fork":
       // A copy of the context's workspace, in a new tab (doc "Workspaces").
-      if (ws) await invoke('workspace_fork', { wsId: ws });
+      if (ws) await invoke("workspace_fork", { wsId: ws });
       return true;
-    case 'workspace:send': {
+    case "workspace:send": {
       // `workspace:send <id> <key> <value…>`: the value is JSON when it parses,
       // the text otherwise — the last argument absorbs the remaining tokens,
       // so a query needs no quoting.
       const [target, key, ...rest] = args;
       if (!target || !key) return true;
-      const text = rest.join(' ');
+      const text = rest.join(" ");
       let value: unknown = text;
       try {
         value = JSON.parse(text);
       } catch {
         /* plain text */
       }
-      await invoke('workspace_send', { wsId: target, vars: { [key]: value } });
+      await invoke("workspace_send", { wsId: target, vars: { [key]: value } });
       return true;
     }
-    case 'workspace:close':
-      await invoke('workspace_close');
+    case "workspace:close":
+      await invoke("workspace_close");
       return true;
-    case 'workspace:rename': {
+    case "workspace:rename": {
       // The name was collected by dispatch (inline or in the minibuffer); as
       // the last argument it absorbs the remaining tokens, so a name may
       // contain spaces without quoting.
-      const name = args.join(' ');
-      if (ws) await invoke('workspace_rename', { wsId: ws, name });
+      const name = args.join(" ");
+      if (ws) await invoke("workspace_rename", { wsId: ws, name });
       return true;
     }
 
-    case 'workspace:goto': {
+    case "workspace:goto": {
       // The 1-based workspace position is the parameter (no longer baked
       // into the command name). Moves BOTH panels.
       const n = Number(args[0]);
-      if (Number.isInteger(n) && n > 0) await invoke('workspace_goto', { n });
-      else await status(`not a workspace number: "${args[0] ?? ''}"`);
+      if (Number.isInteger(n) && n > 0) await invoke("workspace_goto", { n });
+      else await status(`not a workspace number: "${args[0] ?? ""}"`);
       return true;
     }
     // Bare, both panels move together so the two slots never drift onto
     // different workspaces unnoticed; `slot` moves only the focused one.
-    case 'workspace:next':
-      await invoke(args[0] === 'slot' ? 'workspace_next_in_slot' : 'workspace_next');
+    case "workspace:next":
+      await invoke(
+        args[0] === "slot" ? "workspace_next_in_slot" : "workspace_next",
+      );
       return true;
-    case 'workspace:prev':
-      await invoke(args[0] === 'slot' ? 'workspace_prev_in_slot' : 'workspace_prev');
+    case "workspace:prev":
+      await invoke(
+        args[0] === "slot" ? "workspace_prev_in_slot" : "workspace_prev",
+      );
       return true;
-    case 'panel:split':
-      await invoke('panel_split');
+    case "panel:split":
+      await invoke("panel_split");
       return true;
-    case 'panel:unsplit':
-      await invoke('panel_unsplit');
+    case "panel:unsplit":
+      await invoke("panel_unsplit");
       return true;
-    case 'panel:hide':
-      await invoke('slot_hide', { slot: context.slot });
+    case "panel:hide":
+      await invoke("slot_hide", { slot: context.slot });
       return true;
-    case 'panel:toggle':
-      if (args[0] === 'split') await invoke('panel_split_toggle');
-      else if (args[0] === 'fullscreen') await setFullscreen(!store.ui.fullscreen);
-      else await status(`unknown flag: "${args[0] ?? ''}" (expected split / fullscreen)`);
+    case "panel:toggle":
+      if (args[0] === "split") await invoke("panel_split_toggle");
+      else if (args[0] === "fullscreen")
+        await setFullscreen(!store.ui.fullscreen);
+      else
+        await status(
+          `unknown flag: "${args[0] ?? ""}" (expected split / fullscreen)`,
+        );
       return true;
-    case 'panel:focus':
+    case "panel:focus":
       // `next` is the other slot; `left`/`right` name one outright, so a
       // keybinding can reach a slot without knowing which one holds the focus.
-      if (args[0] === undefined || args[0] === 'next') await invoke('panel_focus_next');
-      else if (args[0] === 'left' || args[0] === 'right')
-        await invoke('focus_slot', { slot: args[0] });
-      else await status(`unknown slot: "${args[0]}" (expected next / left / right)`);
+      if (args[0] === undefined || args[0] === "next")
+        await invoke("panel_focus_next");
+      else if (args[0] === "left" || args[0] === "right")
+        await invoke("focus_slot", { slot: args[0] });
+      else
+        await status(
+          `unknown slot: "${args[0]}" (expected next / left / right)`,
+        );
       return true;
-    case 'panel:open': {
+    case "panel:open": {
       // `panel:open <here|other|new> <type>` (doc "Panel slots and layout").
       const [where, panelType] = args;
       if (!isTarget(where)) {
-        await status(`unknown target: "${where ?? ''}" (expected ${TARGETS.join(' / ')})`);
+        await status(
+          `unknown target: "${where ?? ""}" (expected ${TARGETS.join(" / ")})`,
+        );
         return true;
       }
       if (!panelType) return true;
       const nothing = await viewerHasNothing(panelType, context.ws);
       if (nothing) {
         if (context.ws) {
-          await invoke('post_status', { wsId: context.ws, text: nothing, kind: 'error', timeoutMs: 5000 });
+          await invoke("post_status", {
+            wsId: context.ws,
+            text: nothing,
+            kind: "error",
+            timeoutMs: 5000,
+          });
         }
         return true;
       }
       const target = await resolveTarget(where, context, invoke);
       // A context's workspace need not be on screen: shown in its slot first.
-      if (target.ws && slotPayload(target.slot).workspace_id !== target.ws && where === 'here') {
-        await invoke('tab_assign', { wsId: target.ws, slot: target.slot });
+      if (
+        target.ws &&
+        slotPayload(target.slot).workspace_id !== target.ws &&
+        where === "here"
+      ) {
+        await invoke("tab_assign", { wsId: target.ws, slot: target.slot });
       }
-      await invoke('panel_set_type', { slot: target.slot, panelType });
+      await invoke("panel_set_type", { slot: target.slot, panelType });
       return true;
     }
-    case 'panel:swap':
-      await invoke('panel_swap');
+    case "panel:swap":
+      await invoke("panel_swap");
       return true;
-    case 'message:clear':
-      if (ws) await invoke('clear_messages', { wsId: ws });
+    case "message:clear":
+      if (ws) await invoke("clear_messages", { wsId: ws });
       return true;
-    case 'shell:clear':
-      if (ws) await invoke('clear_shell', { wsId: ws });
+    case "shell:clear":
+      if (ws) await invoke("clear_shell", { wsId: ws });
       return true;
-    case 'config:reload': {
-      const report = await invoke<string>('config_reload', { what: args[0] });
+    case "config:reload": {
+      const report = await invoke<string>("config_reload", { what: args[0] });
       // The command module is the shell's to re-import; Rust has only checked
       // that the file is readable.
-      if (args[0] === 'commands' || args[0] === 'all') await reloadUserCommands();
-      await status(report, 'info');
+      if (args[0] === "commands" || args[0] === "all")
+        await reloadUserCommands();
+      await status(report, "info");
       return true;
     }
-    case 'config:open':
+    case "config:open":
       store.ui.configOpen = true;
       return true;
-    case 'ignore:add':
-    case 'ignore:remove':
-    case 'ignore:set': {
+    case "ignore:add":
+    case "ignore:remove":
+    case "ignore:set": {
       // The `preset` argument was collected by dispatch (with completion).
-      const choice = args.join(' ').trim();
-      if (choice) await runIgnore(choice, name.slice('ignore:'.length) as 'add' | 'remove' | 'set', ws);
+      const choice = args.join(" ").trim();
+      if (choice)
+        await runIgnore(
+          choice,
+          name.slice("ignore:".length) as "add" | "remove" | "set",
+          ws,
+        );
       return true;
     }
-    case 'ignore:list':
+    case "ignore:list":
       await listIgnore(ws);
       return true;
-    case 'mf:order':
+    case "mf:order":
       await runOrder(ws);
       return true;
-    case 'reconcile:run':
-      if (ws) await invoke('reconcile_run', { wsId: ws });
+    case "reconcile:run":
+      if (ws) await invoke("reconcile_run", { wsId: ws });
       return true;
-    case 'mf:duplicate':
-      if (args[0] !== 'scan') {
-        await status(`unknown operation: "${args[0] ?? ''}" (expected scan)`);
+    case "mf:duplicate":
+      if (args[0] !== "scan") {
+        await status(`unknown operation: "${args[0] ?? ""}" (expected scan)`);
         return true;
       }
       // The GUI half of `mf duplicate scan` (doc "duplicates panel"). Options
       // stay CLI-only, as `mf trash prune`'s do: this runs the ordinary
       // whole-repository scan, and the Rust side posts its own status.
-      if (ws) await invoke('duplicate_scan', { wsId: ws });
+      if (ws) await invoke("duplicate_scan", { wsId: ws });
       return true;
-    case 'mf:watch-activity':
-      if (args[0] !== 'reset') {
-        await status(`unknown operation: "${args[0] ?? ''}" (expected reset)`);
+    case "mf:watch-activity":
+      if (args[0] !== "reset") {
+        await status(`unknown operation: "${args[0] ?? ""}" (expected reset)`);
         return true;
       }
       await resetWatchActivity(ws);
       return true;
-    case 'orphan:detect':
+    case "orphan:detect":
       // Mark the orphaned metarecords (doc "Finding and clearing orphans").
       // The Rust side posts its own status; swallow the rejection so an error
       // is not surfaced twice.
-      if (ws) await invoke('orphan_detect', { wsId: ws }).catch(() => 0);
+      if (ws) await invoke("orphan_detect", { wsId: ws }).catch(() => 0);
       return true;
-    case 'metarecord:trash': {
+    case "metarecord:trash": {
       // Send the selected metarecord's file to the trash (doc "Trash").
       // Reversible (restore from the trash panel), but confirmed anyway since
       // it is bound to a bare Delete key.
       if (!ws) return true;
-      const selected = await invoke('ws_get_var', { wsId: ws, key: 'selected_metarecord' });
-      if (!selected || typeof selected !== 'object') {
-        await status('no metarecord is selected');
+      const selected = await invoke("ws_get_var", {
+        wsId: ws,
+        key: "selected_metarecord",
+      });
+      if (!selected || typeof selected !== "object") {
+        await status("no metarecord is selected");
         return true;
       }
-      if (!window.confirm("Send the selected metarecord's file to the trash?")) return true;
+      if (!window.confirm("Send the selected metarecord's file to the trash?"))
+        return true;
       // The Rust command posts its own success/error status; swallow the
       // rejection so the error is not surfaced twice.
       try {
-        await invoke('trash_selected_metarecord', { wsId: ws });
+        await invoke("trash_selected_metarecord", { wsId: ws });
       } catch {
         /* already reported to the status bar */
       }
       return true;
     }
-    case 'context:set':
+    case "context:set":
       // Both were collected by dispatch, the description with all its words.
-      if (ws) await setWorkContext(ws, (args[0] ?? '').trim(), args.slice(1).join(' ').trim());
+      if (ws)
+        await setWorkContext(
+          ws,
+          (args[0] ?? "").trim(),
+          args.slice(1).join(" ").trim(),
+        );
       return true;
-    case 'context:unset':
+    case "context:unset":
       if (ws) await unsetWorkContext(ws);
       return true;
-    case 'log:undo':
-    case 'log:redo':
-      if (ws) await undoOrRedo(ws, name === 'log:redo', args[0]);
+    case "log:undo":
+    case "log:redo":
+      if (ws) await undoOrRedo(ws, name === "log:redo", args[0]);
       return true;
-    case 'repos:open':
-      await invoke('panel_set_type', { slot: context.slot, panelType: 'repos' });
+    case "repos:open":
+      await invoke("panel_set_type", {
+        slot: context.slot,
+        panelType: "repos",
+      });
       return true;
-    case 'file:open-with':
+    case "file:open-with":
       // The `program` argument was collected by dispatch (completing over the
       // configured list); the whole tail is the command line, so `gimp -n` and
       // any other flags survive.
-      await openWith(args.join(' '), ws);
+      await openWith(args.join(" "), ws);
       return true;
-    case 'script:run': {
+    case "script:run": {
       // The `script` argument was collected by dispatch (with completion);
       // args[0] is the picked "<name> — <summary>" line (or a bare name).
-      const choice = args.join(' ').trim();
+      const choice = args.join(" ").trim();
       if (!choice) return true;
       const path = await resolveScriptPath(choice);
       if (!path) {
@@ -2301,31 +2609,35 @@ async function runCommand(name: string, args: string[], context: ExecContext): P
       await runScript(path, ws);
       return true;
     }
-    case 'find:open':
+    case "find:open":
       openFind(args[0]);
       return true;
-    case 'find:next':
+    case "find:next":
       stepFind(1);
       return true;
-    case 'find:prev':
+    case "find:prev":
       stepFind(-1);
       return true;
-    case 'find:close':
+    case "find:close":
       closeFind();
       return true;
 
-    case 'help':
-    case 'help:open': {
+    case "help":
+    case "help:open": {
       // Open the help panel for an optional topic. The topic (raw arg text) is
       // handed to the panel through a workspace var; the `nonce` makes an
       // identical repeated topic still re-trigger the panel's onChange.
       if (!ws) return true;
-      const topic = args.join(' ');
-      await invoke('ws_set_var', { wsId: ws, key: 'help.request', value: { topic, nonce: Date.now() } });
-      await invoke('panel_set_type', { slot: context.slot, panelType: 'help' });
+      const topic = args.join(" ");
+      await invoke("ws_set_var", {
+        wsId: ws,
+        key: "help.request",
+        value: { topic, nonce: Date.now() },
+      });
+      await invoke("panel_set_type", { slot: context.slot, panelType: "help" });
       return true;
     }
-    case 'help:cursor':
+    case "help:cursor":
       // Arm the `?` cursor: the next click (or escape) is intercepted in keys.ts.
       // One help gesture at a time: arming it drops a pending describe-key wait.
       store.ui.describeKeys = null;
@@ -2333,7 +2645,7 @@ async function runCommand(name: string, args: string[], context: ExecContext): P
       store.ui.helpCursorActive = true;
       setHelpCursor(true);
       return true;
-    case 'help:key':
+    case "help:key":
       // Arm the describe-key wait (doc "In-app help"): the next key combo is
       // swallowed and reported on instead of dispatched. Like the help cursor
       // above, it takes over from the other help gesture.
@@ -2343,128 +2655,159 @@ async function runCommand(name: string, args: string[], context: ExecContext): P
       }
       store.ui.describeKeys = [];
       store.ui.pendingKeys = null;
-      flashStatus('Describe which key? (escape cancels)');
+      flashStatus("Describe which key? (escape cancels)");
       return true;
-    case 'daemon:set-url': {
+    case "daemon:set-url": {
       // The URL was collected by dispatch (inline or in the minibuffer).
-      const url = args[0] ?? '';
-      if (url === '') {
-        await status('no daemon URL given');
+      const url = args[0] ?? "";
+      if (url === "") {
+        await status("no daemon URL given");
         return true;
       }
-      const connected = await invoke<boolean>('daemon_set_url', { url });
+      const connected = await invoke<boolean>("daemon_set_url", { url });
       store.daemonUrl = url;
-      await status(`daemon URL set; ${connected ? 'connected' : 'unreachable'}`, 'info');
+      await status(
+        `daemon URL set; ${connected ? "connected" : "unreachable"}`,
+        "info",
+      );
       return true;
     }
-    case 'answer:send':
+    case "answer:send":
       // Resolves a script's POST /gui/input wait: the question on screen
       // (doc "Script sessions").
-      await invoke('answer_send', { value: args.join(' '), id: activeQuestion()?.id ?? null });
+      await invoke("answer_send", {
+        value: args.join(" "),
+        id: activeQuestion()?.id ?? null,
+      });
       return true;
     // Macros (doc "Macros").
-    case 'macro:toggle-recording': {
+    case "macro:toggle-recording": {
       const done = macros.toggle();
       if (done === null) {
-        await status('recording a macro: macro:toggle-recording again to stop', 'info');
+        await status(
+          "recording a macro: macro:toggle-recording again to stop",
+          "info",
+        );
       } else if (done.length === 0) {
-        await status('nothing recorded: the macro recorded before stays', 'info');
+        await status(
+          "nothing recorded: the macro recorded before stays",
+          "info",
+        );
       } else {
-        await status(`macro recorded: ${done.length} command${done.length === 1 ? '' : 's'}`, 'info');
+        await status(
+          `macro recorded: ${done.length} command${done.length === 1 ? "" : "s"}`,
+          "info",
+        );
       }
       return true;
     }
-    case 'macro:ask': {
+    case "macro:ask": {
       const marked = macros.mark();
-      if (marked === null) throw new Error('macro:ask marks the question on screen, while recording');
-      await status(marked ? 'asked again each time the macro runs' : 'answered once for all, as recorded', 'info');
+      if (marked === null)
+        throw new Error(
+          "macro:ask marks the question on screen, while recording",
+        );
+      await status(
+        marked
+          ? "asked again each time the macro runs"
+          : "answered once for all, as recorded",
+        "info",
+      );
       return true;
     }
-    case 'macro:run': {
+    case "macro:run": {
       if (macros.recording()) {
-        throw new Error('a macro is being recorded: stop it first (macro:toggle-recording)');
+        throw new Error(
+          "a macro is being recorded: stop it first (macro:toggle-recording)",
+        );
       }
       const steps = macros.last();
-      if (steps === null) throw new Error('no macro recorded yet');
+      if (steps === null) throw new Error("no macro recorded yet");
       for (const [i, step] of steps.entries()) {
         // Each step from the focus as it is then, like a typed command.
         const result = await dispatch(step);
         const where = `step ${i + 1} of ${steps.length} (${step[0]})`;
-        if (!result.ok) throw new Error(`macro stopped at ${where}: ${result.error}`);
+        if (!result.ok)
+          throw new Error(`macro stopped at ${where}: ${result.error}`);
         if (result.cancelled) {
-          await status(`macro abandoned at ${where}`, 'info');
+          await status(`macro abandoned at ${where}`, "info");
           return true;
         }
       }
       return true;
     }
-    case 'macro:save': {
+    case "macro:save": {
       const steps = macros.last();
-      if (steps === null) throw new Error('no macro recorded yet');
-      const given = args.join(' ').trim();
-      const name = given.startsWith('user:') ? given : `user:${given}`;
+      if (steps === null) throw new Error("no macro recorded yet");
+      const given = args.join(" ").trim();
+      const name = given.startsWith("user:") ? given : `user:${given}`;
       if (!/^user:[A-Za-z0-9_][A-Za-z0-9_-]*$/.test(name)) {
-        throw new Error(`"${given}" is not a command name: one word, letters, digits, - and _`);
+        throw new Error(
+          `"${given}" is not a command name: one word, letters, digits, - and _`,
+        );
       }
       if (store.commands.some((command) => command.name === name)) {
         throw new Error(`${name} is already a command: pick another name`);
       }
-      await invoke('macro_save', { name, entry: macroEntry(name, steps) });
+      await invoke("macro_save", { name, entry: macroEntry(name, steps) });
       await reloadUserCommands();
-      await status(`macro saved as ${name}, in macros.js`, 'info');
+      await status(`macro saved as ${name}, in macros.js`, "info");
       return true;
     }
-    case 'script-keys:toggle': {
+    case "script-keys:toggle": {
       // The question bar's checkbox: hand the script's keys back to the panels,
       // or take them again. Rust owns the flag and re-broadcasts the questions
       // with it (doc "Script sessions").
-      const enabled = await invoke<boolean>('script_keys_toggle');
-      await status(enabled ? 'script keys enabled' : 'script keys disabled', 'info');
+      const enabled = await invoke<boolean>("script_keys_toggle");
+      await status(
+        enabled ? "script keys enabled" : "script keys disabled",
+        "info",
+      );
       return true;
     }
-    case 'script:stop':
+    case "script:stop":
       // Escape during a question, or a manual invocation: end the run (and the
       // question with it). No argument = the script asking the question on
       // screen.
-      await invoke('script_stop', {
+      await invoke("script_stop", {
         task: args[0] ?? null,
         kill: false,
         question: activeQuestion()?.id ?? null,
       });
       return true;
-    case 'script:kill':
+    case "script:kill":
       // Ctrl+escape during a question: the same, with SIGKILL — for a script
       // that did not end on the stop.
-      await invoke('script_stop', {
+      await invoke("script_stop", {
         task: args[0] ?? null,
         kill: true,
         question: activeQuestion()?.id ?? null,
       });
       return true;
-    case 'status:clear': {
+    case "status:clear": {
       // Dismiss the transient status-bar message (and the last-command echo).
       if (ws) {
-        store.status[ws] = { text: '', kind: 'info', timeout_ms: null };
-        store.lastCommand[ws] = '';
+        store.status[ws] = { text: "", kind: "info", timeout_ms: null };
+        store.lastCommand[ws] = "";
       }
       return true;
     }
-    case 'pick:confirm':
-    case 'pick:cancel':
+    case "pick:confirm":
+    case "pick:cancel":
       // Hands the focused picker's selection back to the calling form (confirm)
       // or abandons it (cancel). Best-effort: a stray press outside a picker is
       // a silent no-op rather than an error toast.
       try {
-        await invoke(name === 'pick:confirm' ? 'pick_confirm' : 'pick_cancel');
+        await invoke(name === "pick:confirm" ? "pick_confirm" : "pick_cancel");
       } catch {
         /* no active value picker */
       }
       return true;
-    case 'devtools:open':
-      await invoke('open_devtools');
+    case "devtools:open":
+      await invoke("open_devtools");
       return true;
-    case 'quit':
-      await invoke('quit');
+    case "quit":
+      await invoke("quit");
       return true;
   }
 
@@ -2472,7 +2815,7 @@ async function runCommand(name: string, args: string[], context: ExecContext): P
   if (GENERIC_COMMANDS.includes(name)) {
     const [panel, ...rest] = args;
     const panelType = genericPanel(panel, context);
-    if (!ws) throw new Error('no workspace in the focused slot');
+    if (!ws) throw new Error("no workspace in the focused slot");
     // Bound to this run, like a panel command's handler: what they write is
     // in its transaction.
     const functions = await functionProvider()?.get(ws, panelType, context);
