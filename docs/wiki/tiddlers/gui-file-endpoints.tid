@@ -123,5 +123,5 @@ bytes and decodes nothing ([[Sandboxing the media decoders]]).
 `/__media-probe` runs `gst-discoverer-1.0` on the file, sandboxed, with a 15 s
 timeout, and remembers the answer per path and modification time. `missing` lists the
 descriptions under the tool's ''Missing plugins''. `slow` is set only when nothing is
-missing ([[Why only measured codecs warn as slow]]). No sandbox, no tool or a
+missing ([[Why a stream the processor decodes warns as slow]]). No sandbox, no tool or a
 timeout: an empty answer, and the player is tried.

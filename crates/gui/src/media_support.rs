@@ -174,66 +174,109 @@ pub fn parse_video_stream(output: &str) -> Option<VideoStream> {
     (!unusable).then_some(video)
 }
 
-/// A codec whose commonly packaged *fallback* GStreamer decoder is slow
-/// enough to matter, with the elements that decode it at a usable speed.
-struct SlowFallback {
-    /// Codec name as `gst-discoverer-1.0` prints it.
-    codec: &'static str,
-    /// Decoder elements that sustain real-time playback; any one present
-    /// clears the verdict.
-    fast: &'static [&'static str],
-    /// What GStreamer falls back to when none of `fast` is installed.
-    fallback: &'static str,
-    /// The package that provides a fast decoder.
-    package: &'static str,
+/// The hardware decoders GStreamer has for a codec — VA-API (`gst-plugin-va`,
+/// and the older `gstreamer-vaapi`), NVDEC, V4L2 — keyed by the codec name as
+/// `gst-discoverer-1.0` prints it (followed by the profile: `H.265 (Main
+/// Profile)`). Each plugin registers an element only for the codecs the GPU
+/// actually decodes, so an element present means a decoder that works.
+const HARDWARE_DECODERS: &[(&str, &[&str])] = &[
+    (
+        "H.264",
+        &[
+            "vah264dec",
+            "vah264lpdec",
+            "vaapih264dec",
+            "nvh264dec",
+            "nvh264sldec",
+            "v4l2slh264dec",
+            "v4l2h264dec",
+        ],
+    ),
+    (
+        "H.265",
+        &[
+            "vah265dec",
+            "vah265lpdec",
+            "vaapih265dec",
+            "nvh265dec",
+            "nvh265sldec",
+            "v4l2slh265dec",
+            "v4l2h265dec",
+        ],
+    ),
+    ("VP9", &["vavp9dec", "vaapivp9dec", "nvvp9dec", "nvvp9sldec", "v4l2slvp9dec", "v4l2vp9dec"]),
+    ("VP8", &["vavp8dec", "vaapivp8dec", "nvvp8dec", "nvvp8sldec", "v4l2slvp8dec", "v4l2vp8dec"]),
+    ("AV1", &["vaav1dec", "vaav1lpdec", "vaapiav1dec", "nvav1dec", "nvav1sldec", "v4l2slav1dec"]),
+    ("MPEG-2", &["vampeg2dec", "vaapimpeg2dec", "nvmpeg2videodec", "v4l2slmpeg2dec"]),
+];
+
+/// The software AV1 decoders that use every core. Without one GStreamer falls
+/// back to libaom's `av1dec`, single-threaded: 25 fps on a 4K stream where
+/// dav1d decodes 75.
+const THREADED_AV1_DECODERS: &[&str] = &["dav1ddec", "avdec_av1"];
+
+/// Whether the discoverer's `codec` (`H.265 (Main Profile)`) is `name` (`H.265`).
+fn codec_is(codec: &str, name: &str) -> bool {
+    codec.strip_prefix(name).is_some_and(|rest| rest.is_empty() || rest.starts_with(' '))
 }
 
-/// Only AV1 is listed, and only because it is measurably broken: on a 4-core
-/// reference box, libaom's `av1dec` — the sole AV1 decoder shipped by
-/// `gst-plugins-bad`, and single-threaded — decoded a 3840×2160 stream at
-/// 25 fps (≈207 Mpx/s) against dav1d's 75 fps through ffmpeg, which is why
-/// such a file stutters here while mpv (dav1d, no GStreamer) plays it
-/// cleanly. Codecs whose fallback is a threaded libav decoder do not belong
-/// here: a warning that fires on files that play fine is worse than none.
-const SLOW_FALLBACKS: &[SlowFallback] = &[SlowFallback {
-    codec: "AV1",
-    // dav1d (gst-plugins-rs), libav, and the VA-API / NVDEC hardware decoders.
-    fast: &["dav1ddec", "avdec_av1", "vaav1dec", "vaav1lpdec", "nvav1dec", "nvav1sldec"],
-    fallback: "libaom (av1dec, single-threaded)",
-    package: "gst-plugin-dav1d",
-}];
+/// The hardware decoders for `codec`, empty for a codec none is known for.
+fn hardware_decoders(codec: &str) -> &'static [&'static str] {
+    HARDWARE_DECODERS
+        .iter()
+        .find(|(name, _)| codec_is(codec, name))
+        .map_or(&[], |(_, elements)| elements)
+}
 
-/// Pixel rate above which a slow fallback decoder is assumed not to keep up.
-/// libaom sustained ≈207 Mpx/s on the reference box with nothing else
-/// running; inside the WebView the same frames are also converted to RGBA
-/// (33 MB per 4K frame) and composited, which roughly halves that. This
-/// budget therefore still warns late rather than early: 1080p60 (124 Mpx/s)
-/// stays silent, 1440p60 and 4K30 (221 and 248 Mpx/s) do not.
-const SLOW_FALLBACK_PIXEL_RATE: f64 = 150_000_000.0;
+/// Pixel rate above which a stream decoded by the CPU is assumed not to play
+/// smoothly in the WebView, whatever the codec: decoding is only part of the
+/// cost, every frame is then converted to RGBA (33 MB at 4K) and composited
+/// in software. Measured in the file panel on a 2-core i7-7500U: 1080p60
+/// (124 Mpx/s) played at full rate; 4K30 (248) rendered 21 images a second in
+/// H.264, about 20 in AV1 through dav1d; 3840×1920 at 60 (442) 10 in HEVC.
+/// A hardware decoder played all of them at full rate.
+const CPU_PIXEL_RATE: f64 = 150_000_000.0;
 
-/// A warning when `video` will decode too slowly to play smoothly, given
-/// which decoder elements are installed. `None` when the codec has no known
-/// slow fallback, when a fast decoder is installed, or when the stream is
-/// small enough that even the slow one keeps up.
+/// A warning when `video` will be decoded by the CPU — no hardware decoder
+/// for its codec is installed — at a pixel rate it does not sustain. `None`
+/// under the budget, or when a hardware decoder is present (an undeterminable
+/// probe answers present: a wrong warning on a file that plays is worse than
+/// none).
 ///
 /// This is deliberately *not* what [`parse_discoverer`] reports: a missing
 /// decoder makes the element fail outright, while a slow one leaves a file
 /// that plays — badly, and with nothing to tell the user why.
 pub fn decode_warning(video: &VideoStream, present: impl Fn(&str) -> bool) -> Option<String> {
-    let entry = SLOW_FALLBACKS.iter().find(|entry| entry.codec == video.codec)?;
-    if entry.fast.iter().any(|element| present(element)) {
+    if video.pixel_rate() < CPU_PIXEL_RATE {
         return None;
     }
-    if video.pixel_rate() < SLOW_FALLBACK_PIXEL_RATE {
+    let hardware = hardware_decoders(&video.codec);
+    if hardware.iter().any(|element| present(element)) {
         return None;
     }
     let fps = f64::from(video.fps_num) / f64::from(video.fps_den);
-    Some(format!(
-        "slow playback expected: {} {}×{} at {:.0} fps, and no fast {} decoder is installed \
-         — GStreamer falls back to {}, which cannot decode it in real time. Install {} for \
-         smooth playback (a player that does not use GStreamer, such as mpv, is unaffected).",
-        video.codec, video.width, video.height, fps, video.codec, entry.fallback, entry.package,
-    ))
+    let mut message = format!(
+        "slow playback expected: {} {}×{} at {:.0} fps is decoded by the processor, which \
+         cannot play it smoothly.",
+        video.codec, video.width, video.height, fps,
+    );
+    if !hardware.is_empty() {
+        message.push_str(
+            " If your graphics card decodes this format, install gst-plugin-va and its VA \
+             driver to decode it there.",
+        );
+    }
+    if codec_is(&video.codec, "AV1")
+        && !THREADED_AV1_DECODERS.iter().any(|element| present(element))
+    {
+        message.push_str(
+            " Otherwise install gst-plugin-dav1d: GStreamer's own AV1 decoder (libaom) is \
+             single-threaded.",
+        );
+    }
+    message
+        .push_str(" A player that does not go through the web view, such as mpv, is unaffected.");
+    Some(message)
 }
 
 /// Probes a single file for decodable streams, cached by `(path, mtime)`
@@ -572,40 +615,80 @@ Properties:
         VideoStream { codec: codec.to_string(), width, height, fps_num: fps, fps_den: 1 }
     }
 
-    /// 4K AV1 with only libaom's `av1dec` installed: measured at 25 fps
-    /// against a 30 fps stream. The panel must say so, rather than let the
-    /// user believe the file itself is broken.
+    /// 4K60 HEVC on the CPU: measured at 10 images a second in the WebView
+    /// against 60. The discoverer names the profile after the codec.
     #[test]
-    fn test_decode_warning_for_4k_av1_without_a_fast_decoder() {
+    fn test_decode_warning_for_4k_hevc_without_a_hardware_decoder() {
+        let warning = decode_warning(&stream("H.265 (Main Profile)", 3840, 1920, 60), |_| false)
+            .expect("4K60 HEVC on the CPU cannot keep up");
+        assert!(warning.contains("H.265"), "{warning}");
+        assert!(warning.contains("gst-plugin-va"), "{warning}");
+    }
+
+    #[test]
+    fn test_no_decode_warning_when_a_hardware_decoder_is_installed() {
+        let hevc = stream("H.265 (Main Profile)", 3840, 1920, 60);
+        assert!(decode_warning(&hevc, |e| e == "vah265dec").is_none());
+        assert!(decode_warning(&hevc, |e| e == "nvh265dec").is_none());
+    }
+
+    /// The rule is the same for every codec: 4K30 H.264 through gst-libav
+    /// rendered 21 images a second out of 30.
+    #[test]
+    fn test_decode_warning_for_4k_h264_on_the_cpu() {
+        assert!(
+            decode_warning(&stream("H.264 (High Profile)", 3840, 2160, 30), |_| false).is_some()
+        );
+    }
+
+    /// A hardware decoder for another codec does not help.
+    #[test]
+    fn test_another_codecs_hardware_decoder_does_not_count() {
+        let h264 = stream("H.264 (High Profile)", 3840, 2160, 30);
+        assert!(decode_warning(&h264, |e| e == "vah265dec").is_some());
+    }
+
+    /// dav1d is the fastest software AV1 decoder, but 4K30 still rendered
+    /// about 20 images a second: only hardware clears AV1 at that size.
+    #[test]
+    fn test_dav1d_alone_does_not_clear_4k_av1() {
+        let av1 = stream("AV1", 3840, 2160, 30);
+        let warning = decode_warning(&av1, |e| e == "dav1ddec").expect("dav1d on the CPU");
+        assert!(!warning.contains("gst-plugin-dav1d"), "dav1d is already installed: {warning}");
+        assert!(decode_warning(&av1, |e| e == "vaav1dec").is_none());
+    }
+
+    /// Without dav1d, GStreamer falls back to libaom, single-threaded: the
+    /// warning names the package that replaces it.
+    #[test]
+    fn test_decode_warning_for_4k_av1_names_dav1d_when_missing() {
         let warning = decode_warning(&stream("AV1", 3840, 2160, 30), |_| false)
             .expect("4K AV1 on libaom cannot keep up");
-        assert!(warning.contains("AV1"), "{warning}");
         assert!(warning.contains("gst-plugin-dav1d"), "{warning}");
     }
 
+    /// Below the budget the CPU keeps up: 1080p60 played at full rate.
     #[test]
-    fn test_no_decode_warning_when_a_fast_decoder_is_installed() {
-        assert!(decode_warning(&stream("AV1", 3840, 2160, 30), |e| e == "dav1ddec").is_none());
-    }
-
-    /// Below the budget even the slow fallback keeps up: a warning on every
-    /// AV1 file would be noise.
-    #[test]
-    fn test_no_decode_warning_for_a_small_av1_stream() {
+    fn test_no_decode_warning_under_the_cpu_budget() {
+        assert!(
+            decode_warning(&stream("H.264 (High Profile)", 1920, 1080, 60), |_| false).is_none()
+        );
         assert!(decode_warning(&stream("AV1", 1280, 720, 30), |_| false).is_none());
     }
 
-    /// Only codecs whose fallback decoder is known to be too slow are judged:
-    /// 4K H.264 decodes fine through gst-libav.
+    /// A codec no hardware decoder is known for is judged by the CPU budget
+    /// alone, without suggesting a package that would not help.
     #[test]
-    fn test_no_decode_warning_for_a_codec_with_no_known_slow_fallback() {
-        assert!(decode_warning(&stream("H.264", 3840, 2160, 30), |_| false).is_none());
+    fn test_decode_warning_for_a_codec_without_known_hardware_decoders() {
+        let wmv = stream("Windows Media Video 9", 3840, 2160, 30);
+        let warning = decode_warning(&wmv, |_| true).expect("decoded by the CPU");
+        assert!(!warning.contains("gst-plugin-va"), "{warning}");
     }
 
     /// An undeterminable decoder probe must not produce a warning: a wrong
     /// warning on a file that plays fine is worse than none.
     #[test]
     fn test_decoder_presence_is_assumed_when_undeterminable() {
-        assert!(decode_warning(&stream("AV1", 3840, 2160, 30), |_| true).is_none());
+        assert!(decode_warning(&stream("H.265 (Main Profile)", 3840, 2160, 60), |_| true).is_none());
     }
 }

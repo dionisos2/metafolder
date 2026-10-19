@@ -62,7 +62,7 @@ The checks happen when the player is asked for, not when the poster is shown.
 
 * ''media preview disabled: missing GStreamer elements…'' — the audio or video output the WebView needs is not installed (`gst-plugins-good`).
 * ''cannot play this file: missing GStreamer plugin(s)…'' — this file's format has no decoder installed; the message names it (`gst-libav`, `gst-plugins-bad`, `gst-plugins-ugly`).
-* An amber bar above a video that plays — ''slow playback expected…'' — every decoder is there, but the one that would be used cannot keep up with this stream. The video plays, badly. So far that is 4K-class AV1 without `gst-plugin-dav1d` ([[Why only measured codecs warn as slow]]).
+* An amber bar above a video that plays — ''slow playback expected…'' — every decoder is there, but the one that would be used cannot keep up with this stream. The video plays, badly. That is a stream over 150 Mpx/s (4K at 30 fps) the processor decodes, no hardware decoder for its codec being installed ([[Why a stream the processor decodes warns as slow]]).
 * ''cannot play this file (unsupported or corrupt media)'' — the player itself gave up.
 
 A video that stutters here and plays well in mpv is the third case, or one like it:

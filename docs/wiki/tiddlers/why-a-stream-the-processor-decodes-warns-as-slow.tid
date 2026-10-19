@@ -1,0 +1,53 @@
+title: Why a stream the processor decodes warns as slow
+tags: [[file panel]]
+kind: rationale
+audience: dev
+aliases: slow-decoder av1 dav1d why-only-measured-codecs-warn-as-slow
+summary: A large video the processor decodes plays at a fraction of its frame rate in the web view, whatever the codec — so the probe warns above a pixel-rate budget unless a hardware decoder for the codec is installed.
+
+A ''present'' decoder is not a ''usable'' one. `gst-discoverer-1.0` reports nothing
+missing, the element is created, the file plays — at a few frames per second. And the
+same file plays perfectly in mpv or smplayer, which decode on the graphics card and
+draw there, where the web view decodes with whatever GStreamer element WebKit picks,
+then converts every frame to RGBA and composites it in software. Nothing on screen
+explained it.
+
+So `GET /__media-probe` also answers `slow`: a message when the stream will be decoded
+by the processor — no hardware decoder for its codec is installed — and its pixel rate
+(width × height × frames per second) is over a budget of 150 Mpx/s. The [[file panel]]
+shows it above the video and plays the file anyway — the user may only want to look
+through it.
+
+!! What was measured
+
+Images actually rendered in the file panel (`getVideoPlaybackQuality`), on a 2-core
+i7-7500U:
+
+|!Stream |!Mpx/s |!Processor |!Graphics card (VA-API) |
+|H.264 1920×1080 at 60 |124 |60 |60 |
+|H.264 3840×2160 at 29.97 |248 |21 |30 |
+|AV1 3840×2160 at 29.97, through dav1d |248 |about 20 |— (no AV1 in this GPU) |
+|HEVC 3840×1920 at 59.94 |442 |10 |60 |
+
+The codec hardly matters: what the processor runs out of is the pixels, and the
+conversion and compositing cost the same for every codec. Hence one rule for all of
+them, where there used to be a table of codecs measured one by one (AV1 only, on the
+grounds that a threaded libav decoder keeps up — it decodes, but the web view does not
+keep up behind it). dav1d no longer silences the warning for 4K AV1; only a hardware
+decoder does.
+
+!! The hardware decoders
+
+`HARDWARE_DECODERS` (`crates/gui/src/media_support.rs`) lists, per codec, the elements
+of VA-API (`gst-plugin-va`, and the older `gstreamer-vaapi`), NVDEC and V4L2. Each
+plugin registers an element only for what the GPU actually decodes, so an element
+present is a decoder that works. The warning suggests `gst-plugin-va` for a codec that
+has some, and `gst-plugin-dav1d` besides for AV1 when no threaded software decoder is
+installed — GStreamer's own, libaom's `av1dec`, is single-threaded.
+
+!! What a wrong answer costs
+
+* the budget is one machine's; a faster processor may play a 4K30 stream it warns about. It warns late rather than early on this one: 1080p60 stays silent;
+* a decoder whose presence cannot be determined counts as ''present'' — no warning. For the output elements it is the reverse, since there a wrong ''present'' is a crash ([[Why a media file is not played on sight]]);
+* a hardware element can be present and still refuse a profile (10-bit HEVC on an older GPU): then the file stutters with no warning;
+* `slow` is never set when a decoder is missing: there is no playback to be slow.
