@@ -26,7 +26,7 @@ TARGET  := target/release
 BINS_HEADLESS := metafolder-daemon mf
 BINS_GUI      := metafolder-gui
 
-# metafolder-watchd, the privileged fanotify broker (docs/watcher-fanotify.md),
+# metafolder-watchd, the privileged fanotify broker (doc "The fanotify broker"),
 # is a system service, installed apart by `install-watchd`: root-owned, where
 # its unit runs it from — never under $(HOME), where a binary your user can
 # rewrite would run with CAP_SYS_ADMIN.

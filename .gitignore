@@ -13,12 +13,8 @@ node_modules/
 benchmarks/bench_result
 benchmarks/A_B*
 benchmarks/real
-corrections.txt
 crates/gui/frontend/coverage/
 crates/gui/frontend/package-lock.json
 .mypy_cache/
 docs/wiki/dist/
 
-# Scratch diagnostics script and its output
-/do.sh
-/do-out/
