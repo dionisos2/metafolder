@@ -35,6 +35,8 @@ describe('relativeToRoot', () => {
 
 const calls = {
   sets: [] as { key: string; value: unknown }[],
+  /** The variables written together (`workspace.setMany`), one entry per call. */
+  batches: [] as Record<string, unknown>[],
   invoked: [] as string[],
   status: [] as { kind: string; text: string }[],
   /** The open targets the command moved to (`mf.atTarget`). */
@@ -66,6 +68,9 @@ function fakeMf() {
       },
       set: async (key: string, value: unknown) => {
         calls.sets.push({ key, value });
+      },
+      setMany: async (vars: Record<string, unknown>) => {
+        calls.batches.push(vars);
       },
     },
     daemon: {
@@ -110,8 +115,8 @@ async function run(where = 'here') {
 
 /** The DSL that landed in the panel, or null when nothing was asked of it. */
 function landedDsl(): string | null {
-  const written = calls.sets.find((s) => s.key === 'metarecord-list:normal-query');
-  return written ? (written.value as string) : null;
+  const written = calls.batches.find((vars) => 'metarecord-list:normal-query' in vars);
+  return written ? (written['metarecord-list:normal-query'] as string) : null;
 }
 
 beforeEach(() => {
@@ -226,11 +231,16 @@ describe('the request it lands', () => {
     expect(landedDsl()).toBe('mfr_path -> "/live/2024"');
     // The normal zone, shown and frozen: the query stays visible and is what
     // runs. No nonce — the variables are the list's state, not a request.
-    expect(calls.sets).toEqual([
-      { key: 'metarecord-list:normal-query', value: 'mfr_path -> "/live/2024"' },
-      { key: 'metarecord-list:normal-shown', value: true },
-      { key: 'metarecord-list:normal-frozen', value: true },
+    // Written together: a list following them one at a time read a half-written
+    // state, ran the old query and wrote its expansion back over the new one.
+    expect(calls.batches).toEqual([
+      {
+        'metarecord-list:normal-query': 'mfr_path -> "/live/2024"',
+        'metarecord-list:normal-shown': true,
+        'metarecord-list:normal-frozen': true,
+      },
     ]);
+    expect(calls.sets).toEqual([]);
     // Written at the target, before the panel switch that shows it.
     expect(calls.targets).toEqual(['here']);
     expect(calls.invoked).toEqual([['panel:open', 'here', 'metarecord-list']]);
@@ -269,7 +279,7 @@ describe('the request it lands', () => {
     await run();
     expect(landedDsl()).toBe('mfr_path -> "/a\\"b"');
 
-    calls.sets.length = 0;
+    calls.batches.length = 0;
     state.treePaths = { u1: ['/a\\b'] };
     await run();
     expect(landedDsl()).toBe('mfr_path -> "/a\\\\b"');

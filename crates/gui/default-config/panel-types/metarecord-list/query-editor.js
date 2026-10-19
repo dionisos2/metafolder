@@ -147,8 +147,11 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
   // write is compared with is the state this panel last applied or wrote — not
   // the inputs, which hold a draft until it is applied — so its own writes
   // coming back, and a write of what it already shows, change nothing. A
-  // command writes several of them in a row: they are gathered and run once,
-  // on the final state.
+  // writer changing several of them must write them at once
+  // (`workspace.setMany`): the follow is only deferred to the next task, and a
+  // read between two separate writes applies the half-written state — and
+  // writes its expansion back over the variables still to come. The change
+  // events of one batch are gathered and run once, on the final state.
 
   /** @type {QueryState} the state last applied or written by this panel */
   let appliedState = { query: '', normal: '', frozen: false, shown: true };

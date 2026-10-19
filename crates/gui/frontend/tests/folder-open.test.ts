@@ -24,6 +24,8 @@ const state = {
 const calls = {
   invoked: [] as string[],
   sets: [] as { key: string; value: unknown }[],
+  /** The variables written together (`workspace.setMany`), one entry per call. */
+  batches: [] as Record<string, unknown>[],
   targets: [] as string[],
   messages: [] as string[],
 };
@@ -34,6 +36,9 @@ function fakeMf() {
       get: async (key: string) => (key === 'active_repo' ? state.repo : null),
       set: async (key: string, value: unknown) => {
         calls.sets.push({ key, value });
+      },
+      setMany: async (vars: Record<string, unknown>) => {
+        calls.batches.push(vars);
       },
     },
     recent: {
@@ -224,11 +229,14 @@ describe('opening the pick', () => {
     await run('children', 'other', '/music');
 
     expect(calls.targets).toEqual(['other']);
-    expect(calls.sets).toEqual([
-      { key: 'metarecord-list:normal-query', value: 'mfr_path -> "/music"' },
-      { key: 'metarecord-list:normal-shown', value: true },
-      { key: 'metarecord-list:normal-frozen', value: true },
+    expect(calls.batches).toEqual([
+      {
+        'metarecord-list:normal-query': 'mfr_path -> "/music"',
+        'metarecord-list:normal-shown': true,
+        'metarecord-list:normal-frozen': true,
+      },
     ]);
+    expect(calls.sets).toEqual([]);
     expect(calls.invoked).toEqual([['panel:open', 'here', 'metarecord-list']]);
   });
 
@@ -237,10 +245,7 @@ describe('opening the pick', () => {
     await run('subtree', 'new', '/music');
 
     expect(calls.targets).toEqual(['new']);
-    expect(calls.sets[0]).toEqual({
-      key: 'metarecord-list:normal-query',
-      value: 'mfr_path ->* "/music"',
-    });
+    expect(calls.batches[0]['metarecord-list:normal-query']).toBe('mfr_path ->* "/music"');
   });
 
   test('the arguments: the view (files by default), then where (here by default)', () => {

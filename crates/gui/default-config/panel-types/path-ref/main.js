@@ -233,9 +233,12 @@ export async function mount(root, metafolder) {
     // The list's query variables are its state (doc "Cross-panel selection"):
     // the normal zone, shown and frozen, so the query stays visible.
     await metafolder.atTarget(where, async (mf) => {
-      await mf.workspace.set('metarecord-list:normal-query', dsl);
-      await mf.workspace.set('metarecord-list:normal-shown', true);
-      await mf.workspace.set('metarecord-list:normal-frozen', true);
+      // At once (`setMany`): the list follows them together.
+      await mf.workspace.setMany({
+        'metarecord-list:normal-query': dsl,
+        'metarecord-list:normal-shown': true,
+        'metarecord-list:normal-frozen': true,
+      });
       await mf.commands.invoke(['panel:open', 'here', 'metarecord-list']);
     });
   }

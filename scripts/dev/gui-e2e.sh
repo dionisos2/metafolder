@@ -47,10 +47,11 @@
 #
 # Usage:  scripts/dev/gui-e2e.sh [--unsandboxed] [--keep-logs] [scenario...]
 #   with no scenario, runs them all: undo-redo duplicates orphans trash remove
-#   field-keys reconcile ignore sync repos list layout script script-workspaces
-#   errors picker refs hierarchy hierarchy-form prompt history keybindings
-#   open-with tab-close pick-button suggested-key walk open-viewers slideshow
-#   shell-line repos-memory help-keys zoom order user-commands settle macro, and
+#   field-keys reconcile ignore sync repos list folder-list layout script
+#   script-workspaces errors picker refs hierarchy hierarchy-form prompt history
+#   keybindings open-with tab-close pick-button suggested-key walk open-viewers
+#   slideshow shell-line repos-memory help-keys zoom order user-commands settle
+#   macro, and
 #   devtools last (it takes the inspector the clicking scenarios drive).
 #   --unsandboxed  pass --allow-unsandboxed-webview to the GUI (a container
 #                  that forbids WebKit's sandbox; never on real data)
@@ -79,7 +80,7 @@ done
 # inspector the clicking scenarios drive (webview.mjs), and every click after it
 # fails — forty tries of four seconds each.
 [ ${#SCENARIOS[@]} -gt 0 ] \
-    || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list layout script script-workspaces
+    || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list folder-list layout script script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close
         pick-button suggested-key walk open-viewers slideshow shell-line repos-memory
         help-keys zoom order user-commands settle macro devtools)
@@ -633,6 +634,46 @@ scenario_list() {
     run workspace:send "$WS" metarecord-list:query 'note = = ='
     run view:refresh metarecord-list
     assert_eq "list: an invalid query is not run" 'note = "hello"' "$(mfg query)"
+}
+
+# query_is <dsl> — the metarecord list runs <dsl> (`mf gui query`).
+query_is() { [ "$(mfg query)" = "$1" ]; }
+
+# metarecord-list:folder lands its query in three variables the list follows
+# together. Written one after another, a list that was not frozen could read
+# between two of them, run its old query and write it back over the new one —
+# "the command does nothing", once in a few tries. So: many tries, each from a
+# thawed list.
+scenario_folder_list() {
+    new_repo folder-list
+    mkdir -p "$REPO_DIR/a" "$REPO_DIR/b"
+    touch "$REPO_DIR/a/x" "$REPO_DIR/b/y"
+    local dir x y
+    for dir in a b; do record "$REPO_DIR/$dir" >/dev/null; done
+    x=$(record "$REPO_DIR/a/x")
+    y=$(record "$REPO_DIR/b/y")
+    run workspace:send "$WS" metarecord-list:query note=hello
+    show_panel left metarecord-list view:refresh metarecord-list
+
+    # The selection is written, not clicked: the list must stay on screen, or
+    # it only reads its variables once it is back, every write long done.
+    local i missed=0 uuid
+    for i in $(seq 1 20); do
+        if [ $((i % 2)) = 0 ]; then dir=a uuid=$x; else dir=b uuid=$y; fi
+        # Back to a thawed list running the simplified query.
+        run workspace:send "$WS" metarecord-list:normal-frozen false
+        until_ok 5 query_is 'note = "hello"' || die "folder list: the list never thawed"
+        # Settled: a run still in flight publishes its cursor as the selection,
+        # over the one written next.
+        run view:refresh metarecord-list
+        run workspace:send "$WS" selected_metarecord "{\"uuid\":\"$uuid\",\"repo\":\"$DF_REPO\"}"
+        run metarecord-list:folder here
+        if ! until_ok 5 query_is "mfr_path -> \"/$dir\""; then
+            missed=$((missed + 1))
+            printf '       try %s: the list runs %s\n' "$i" "$(mfg query)"
+        fi
+    done
+    assert_eq "folder list: every try lists the folder" 0 "$missed"
 }
 
 scenario_layout() {

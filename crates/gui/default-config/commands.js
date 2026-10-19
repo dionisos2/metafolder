@@ -292,9 +292,13 @@ async function frecentFolders(mf, repo) {
  */
 export async function listAt(mf, where, query, folder) {
   await mf.atTarget(where, async (/** @type {MetafolderApi} */ mf) => {
-    await mf.workspace.set('metarecord-list:normal-query', query);
-    await mf.workspace.set('metarecord-list:normal-shown', true);
-    await mf.workspace.set('metarecord-list:normal-frozen', true);
+    // At once: the list follows these together, and one read between two
+    // separate writes ran the old query and wrote it back over the new one.
+    await mf.workspace.setMany({
+      'metarecord-list:normal-query': query,
+      'metarecord-list:normal-shown': true,
+      'metarecord-list:normal-frozen': true,
+    });
     await mf.invoke(['panel:open', 'here', 'metarecord-list']);
     await mf.statusBar.message(`Listing ${folder || '/'}`);
   });

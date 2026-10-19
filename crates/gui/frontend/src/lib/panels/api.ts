@@ -551,6 +551,10 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       get: (key: string) => invoke('ws_get_var', { wsId: ctx.wsId, key }),
       set: (key: string, value: unknown) =>
         invoke('ws_set_var', { wsId: ctx.wsId, key, value }) as Promise<void>,
+      // All in before any listener hears of one (`workspace_send` on this
+      // workspace): a panel following several variables never reads half.
+      setMany: (vars: Record<string, unknown>) =>
+        invoke('workspace_send', { wsId: ctx.wsId, vars }) as Promise<void>,
       all: () => invoke('ws_vars', { wsId: ctx.wsId }) as Promise<Record<string, unknown>>,
       adoptRepo: (repo: string) => invoke('adopt_repo', { wsId: ctx.wsId, repo }) as Promise<void>,
       // The workspace primitives (doc "Workspaces"): an empty workspace, the

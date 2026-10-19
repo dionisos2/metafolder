@@ -39,6 +39,7 @@ function stubWorkspace(vars: Record<string, unknown> = {}) {
       all: async () => ({}),
       adoptRepo: async () => {},
       create: async () => '',
+      setMany: async () => {},
       send: async () => {},
       fork: async () => '',
       onChange: (key: string, listener: Listener) => {

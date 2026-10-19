@@ -215,6 +215,10 @@ declare namespace Metafolder {
   interface Workspace {
     get(key: string): Promise<unknown>;
     set(key: string, value: unknown): Promise<void>;
+    /** Writes several variables at once: every one is in before any listener
+     *  is told, so a panel following several of them never reads a
+     *  half-written state. */
+    setMany(vars: Record<string, unknown>): Promise<void>;
     /** Every variable the workspace holds now, `active_repo` included — what a
      *  panel built after some were set starts from (`onChange` only reports
      *  what moves afterwards). */

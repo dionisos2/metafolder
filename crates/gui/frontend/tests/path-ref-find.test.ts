@@ -81,6 +81,7 @@ function stub() {
     workspace: {
       get: vi.fn(async (key: string) => (key === 'active_repo' ? 'r' : null)),
       set: vi.fn(async () => {}),
+      setMany: vi.fn(async () => {}),
       onChange: noop,
     },
     provide: vi.fn(),
@@ -225,20 +226,24 @@ describe('listing what refers to the selected node', () => {
     await mount(s);
     await cursor(s.api.provide, 'find', 'select', 'music');
     s.api.workspace.set.mockClear();
+    s.api.workspace.setMany.mockClear();
     await s.handlers.get('path-ref:list-refs')!('new');
     // At the target: in a new workspace, the list here stays as it was.
     expect(s.api.targets).toEqual(['new']);
     // The list's query variables are its state: the normal zone, shown and
-    // frozen — no request, no nonce.
-    const written = s.api.workspace.set.mock.calls as unknown as [string, unknown][];
-    expect(written.map(([key]) => key)).toEqual([
-      'metarecord-list:normal-query',
-      'metarecord-list:normal-shown',
-      'metarecord-list:normal-frozen',
+    // frozen — no request, no nonce — written together, so the list never
+    // follows a half-written state.
+    expect(s.api.workspace.set).not.toHaveBeenCalled();
+    const batches = s.api.workspace.setMany.mock.calls as unknown as [Record<string, unknown>][];
+    expect(batches).toEqual([
+      [
+        {
+          'metarecord-list:normal-query': expect.stringContaining('mfr_path'),
+          'metarecord-list:normal-shown': true,
+          'metarecord-list:normal-frozen': true,
+        },
+      ],
     ]);
-    expect(written[0][1]).toEqual(expect.stringContaining('mfr_path'));
-    expect(written[1][1]).toBe(true);
-    expect(written[2][1]).toBe(true);
     expect(s.api.commands.invoke).toHaveBeenCalledWith(['panel:open', 'here', 'metarecord-list']);
   });
 
