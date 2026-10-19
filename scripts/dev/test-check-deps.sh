@@ -59,6 +59,11 @@ run_case "missing optional dep ⇒ exit 0"       0 "ffmpeg"      "$tmp/no-ffmpeg
 printf 'gst-av1=0\n' >"$tmp/no-dav1d"
 run_case "missing AV1 fast decoder ⇒ exit 0" 0 "gst-plugin-dav1d" "$tmp/no-dav1d"
 
+# 5b. Hardware decoding (VA-API) is optional as well: absent, a 4K HEVC or H.264
+#     stream falls back to the CPU decoders and stutters.
+printf 'gst-va=0\n' >"$tmp/no-va"
+run_case "missing VA-API decoders ⇒ exit 0"   0 "gst-plugin-va" "$tmp/no-va"
+
 # 6. Poppler renders the PDF previews and tiles: optional, named by its package.
 printf 'poppler=0\n' >"$tmp/no-poppler"
 run_case "missing poppler ⇒ exit 0"            0 "poppler"     "$tmp/no-poppler"

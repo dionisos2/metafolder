@@ -63,6 +63,7 @@ deps=(
     "gst-sink|optional|gst|autoaudiosink|gst-plugins-good|audio/video sinks WebKit needs"
     "gst-h264|optional|gst|avdec_h264|gst-libav|H.264 decode for inline preview"
     "gst-av1|optional|gst|dav1ddec|gst-plugin-dav1d|fast AV1 decode (else 4K AV1 stutters)"
+    "gst-va|optional|gst|vah265dec|gst-plugin-va|hardware video decode (else 4K HEVC/H.264 stutters)"
 )
 
 # present <probe> <arg> <name> — true if the dependency is available.
