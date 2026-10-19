@@ -13,7 +13,7 @@
 //! The reading rule is therefore: the last line of the report names the step
 //! that is running, and any step that cost something says so.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -146,7 +146,9 @@ impl Doing {
 /// interval, and says nothing at all when the steps are flowing.
 pub struct Watchdog {
     doing: Arc<Mutex<Doing>>,
-    stop: Arc<AtomicBool>,
+    /// Dropped to stop the thread: its wait wakes at once, where a sleep would
+    /// hold every load up for the rest of its tick.
+    stop: Option<std::sync::mpsc::Sender<()>>,
     handle: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -155,15 +157,14 @@ impl Watchdog {
     /// the load report.
     pub fn start(who: &str, every: Duration) -> Self {
         let doing = Arc::new(Mutex::new(Doing::new(String::new(), Instant::now())));
-        let stop = Arc::new(AtomicBool::new(false));
+        let (stop, stopped) = std::sync::mpsc::channel::<()>();
         let handle = {
-            let (doing, stop, who) = (doing.clone(), stop.clone(), who.to_string());
+            let (doing, who) = (doing.clone(), who.to_string());
             std::thread::spawn(move || {
                 // Ticks well under the interval: the point is to notice a stall
                 // promptly, not to sample it precisely.
                 let tick = every / 4;
-                while !stop.load(Ordering::Relaxed) {
-                    std::thread::sleep(tick);
+                while let Err(RecvTimeoutError::Timeout) = stopped.recv_timeout(tick) {
                     let mut doing = match doing.lock() {
                         Ok(doing) => doing,
                         Err(poisoned) => poisoned.into_inner(),
@@ -177,7 +178,7 @@ impl Watchdog {
                 }
             })
         };
-        Watchdog { doing, stop, handle: Some(handle) }
+        Watchdog { doing, stop: Some(stop), handle: Some(handle) }
     }
 
     /// Declares what the phase is doing now. Cheap and lock-only: it is called
@@ -194,7 +195,7 @@ impl Watchdog {
 
 impl Drop for Watchdog {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
+        self.stop.take();
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
@@ -204,6 +205,17 @@ impl Drop for Watchdog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_stopping_the_watchdog_does_not_wait_for_its_tick() {
+        // Every load stops one, so a stop that waits out the tick is a fixed
+        // cost on every load: a quarter of the interval, a full minute here.
+        let watchdog = Watchdog::start("repo", Duration::from_secs(240));
+        std::thread::sleep(Duration::from_millis(20));
+        let start = Instant::now();
+        drop(watchdog);
+        assert!(start.elapsed() < Duration::from_secs(30), "{:?}", start.elapsed());
+    }
 
     #[test]
     fn test_a_quick_phase_is_left_to_its_announcement() {
