@@ -1332,7 +1332,7 @@ export async function mount(root, metafolder) {
   });
   void commands.register('file-manager:activate', {
     label: 'File manager: go into the folder / show the file (here / other / new)',
-    args: [whereArg('other')],
+    args: [whereArg()],
     handler: (mf, where) => activate(mf, cursorIndex, where),
   });
   // Up one level, and to the top, on `cursor:parent` / `cursor:root` (doc

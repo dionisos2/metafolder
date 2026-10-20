@@ -248,12 +248,12 @@ describe('listing what refers to the selected node', () => {
     expect(s.api.commands.invoke).toHaveBeenCalledWith(['panel:open', 'here', 'metarecord-list']);
   });
 
-  test('the target is its first argument, the other slot by default', async () => {
+  test('the target is its first argument, never pre-filled', async () => {
     const s = stub();
     await mount(s);
     const [where] = s.specs.get('path-ref:list-refs')!;
     expect(where.name).toBe('where');
-    expect(where.initial!([])).toBe('other');
+    expect(where.initial).toBeUndefined();
     expect(await where.complete!('', [])).toEqual(['here', 'other', 'new']);
   });
 

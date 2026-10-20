@@ -60,6 +60,12 @@ For whoever writes a panel or a user command — for each argument, in order:
 |`when(prior)` |whether the argument applies at all |
 |`optional` |the argument may be left out, and is then never asked for |
 
+`initial` is for editing a value that already exists — a field's current value,
+a name being changed — never for a default answer. A command called by hand asks
+with an empty line; a default (open in the other slot, newest first, plain tags)
+belongs to the keybindings, which name every argument: <<key "recent other time" "g r">>
+is the bare form of `w g r`, and typing `recent` asks where.
+
 Every function is called when the argument is reached, never at registration, and
 receives the arguments collected so far — so `initial` reads the live state, and the
 candidates of a value depend on the field named before it. The question opens at

@@ -465,7 +465,7 @@ export function mount(root, metafolder) {
   });
   void commands.register('duplicates:activate', {
     label: 'Duplicates: unfold the group / show the copy (here / other / new)',
-    args: [whereArg('other')],
+    args: [whereArg()],
     handler: (mf, where) => open(mf, where),
   });
   void commands.register('duplicates:keep', {

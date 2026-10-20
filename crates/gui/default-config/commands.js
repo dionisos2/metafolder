@@ -27,7 +27,7 @@ export const TAG_KINDS = ['tag', 'negative_tag', 'mixed_tag'];
 /** The first argument of the tag commands: which of the three fields.
  *  @param {string} prompt */
 export function tagKindArg(prompt) {
-  return { name: 'kind', prompt: () => prompt, initial: () => 'tag', complete: () => TAG_KINDS };
+  return { name: 'kind', prompt: () => prompt, complete: () => TAG_KINDS };
 }
 
 /** Refuses a kind that names none of the tag fields — a typo must not reach a
@@ -129,16 +129,15 @@ function parentDir(path) {
 /**
  * The first argument of a command that opens a panel type: where (doc "Panel
  * slots and layout") — `here`, `other` (this workspace in the other slot) or
- * `new` (a copy of it). The command's default is offered for editing; its
- * keybindings name the target explicitly. The command reads what it needs
- * where it is, then does the rest at the target with `mf.atTarget`.
- * @param {string} fallback the command's default target
+ * `new` (a copy of it). Never pre-filled: the default target is the
+ * keybindings' (the bare "g r" is "w g r"), and a command called by hand asks
+ * with an empty line. The command reads what it needs where it is, then does
+ * the rest at the target with `mf.atTarget`.
  */
-export function whereArg(fallback) {
+export function whereArg() {
   return {
     name: 'where',
     prompt: () => 'Open where? (here / other / new)',
-    initial: () => fallback,
     complete: () => ['here', 'other', 'new'],
   };
 }
@@ -397,7 +396,7 @@ export default {
   },
 
   // Reveal folder (doc "Cross-panel selection"): open the folder of the
-  // current selection in the file manager, at the target (here by default) — the
+  // current selection in the file manager, at the target (here on the bare key) — the
   // folder itself when a directory is selected, or the folder containing the
   // selected file, highlighted. The path is statted to tell the two apart (a
   // path that is gone counts as a file, so its folder opens), and the answer is
@@ -405,7 +404,7 @@ export default {
   // `file-manager:cursor`, which ARE where it is.
   'file-manager:reveal': {
     label: "Open the selected metarecord's folder in the file manager (here / other / new)",
-    args: [whereArg('here')],
+    args: [whereArg()],
     run: async (/** @type {MetafolderApi} */ mf, /** @type {string} */ where = 'here') => {
       const paths = await mf.workspace.get('selected_paths');
       const path = Array.isArray(paths) ? paths.find((p) => typeof p === 'string') : undefined;
@@ -432,7 +431,7 @@ export default {
 
   // The mirror image of `file-manager:reveal` (keybindings.toml "g f"): show
   // the same folder's *metarecords* instead of its disk entries, at the target
-  // (here by default; doc "Cross-panel selection"). The folder becomes the DSL
+  // (here on the bare key; doc "Cross-panel selection"). The folder becomes the DSL
   // `mfr_path -> "<folder>"` (Follows: its files *and* its subdirectories, the
   // contents a file manager shows), landed in the DSL zone frozen so it stays
   // visible and editable. Repository-relative paths follow the `mfr_path`
@@ -440,7 +439,7 @@ export default {
   // leading-"/"-rooted.
   'metarecord-list:folder': {
     label: "List the selected metarecord's folder in the metarecord list (here / other / new)",
-    args: [whereArg('here')],
+    args: [whereArg()],
     run: async (/** @type {MetafolderApi} */ mf, /** @type {string} */ where = 'here') => {
       const repo = /** @type {string | null} */ (await mf.workspace.get('active_repo'));
       if (!repo) {
@@ -475,17 +474,16 @@ export default {
   // the recently-viewed metarecords, best first (`frecentFolders` above), and
   // opens the choice as `view` says — `files` in the file manager, `children`
   // (`mfr_path -> folder`) or `subtree` (`mfr_path ->* folder`) in the
-  // metarecord list — at the target, here by default.
+  // metarecord list — at the target, here on the bare key.
   'folder:open': {
     label: 'Open a frequently and recently used folder (files / children / subtree)',
     args: [
       {
         name: 'view',
         prompt: () => 'Open as? (files / children / subtree)',
-        initial: () => 'files',
         complete: () => ['files', 'children', 'subtree'],
       },
-      whereArg('here'),
+      whereArg(),
       {
         name: 'folder',
         prompt: () => 'Folder:',
@@ -647,18 +645,17 @@ export default {
   // pick completes over the recently-viewed list — newest first by `time`,
   // best first by `score` (doc "Frecent folders") — and the choice publishes
   // the selection and opens the matching viewer at the target — the *other*
-  // slot by default, like a metarecord-list open (doc "Cross-panel selection")
+  // slot on the bare key, like a metarecord-list open (doc "Cross-panel selection")
   // — the file panel when the metarecord has a file, the detail panel when it
   // has none. The candidate lines are shaped by `recentLine` above: reshape it
   // to reshape the pick.
   'recent': {
     label: 'Open a recently-viewed metarecord (here / other / new; by time / score)',
     args: [
-      whereArg('other'),
+      whereArg(),
       {
         name: 'order',
         prompt: () => 'Order? (time / score)',
-        initial: () => 'time',
         complete: () => ['time', 'score'],
       },
       {

@@ -232,6 +232,23 @@ describe('the shipped user-commands.js', () => {
     }
   });
 
+  // A pre-fill is a default answer, and defaults belong to the keybindings,
+  // which name every argument ("g r" = `recent other time`): typed by hand, a
+  // command asks with an empty line. Only an edit of an existing value (a
+  // field's value, a name) starts from that value.
+  test('no shipped command pre-fills a choice when called explicitly', async () => {
+    const shipped = await import('../../default-config/commands.js');
+    const prefilled: string[] = [];
+    for (const [name, spec] of Object.entries(shipped.default)) {
+      for (const arg of ((spec as { args?: { name: string; initial?: unknown }[] }).args ?? [])) {
+        if (arg.initial !== undefined) prefilled.push(`${name} ${arg.name}`);
+      }
+    }
+    expect(prefilled).toEqual([]);
+    expect(shipped.whereArg()).not.toHaveProperty('initial');
+    expect(shipped.tagKindArg('Which tags?')).not.toHaveProperty('initial');
+  });
+
   test('the two shipped files name no command twice', async () => {
     const { mergeCommandModules } = await import('../src/lib/commands');
     const own = await import('../../default-config/user-commands.js');

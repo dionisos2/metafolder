@@ -602,7 +602,7 @@ export async function mount(root, metafolder) {
 
   void commands.register('path-ref:list-refs', {
     label: 'Path-ref explorer: list the metarecords pointing at the selected node (here / other / new)',
-    args: [whereArg('other')],
+    args: [whereArg()],
     handler: (mf, where) => listRefs(mf, where),
   });
 

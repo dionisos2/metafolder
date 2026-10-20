@@ -497,16 +497,14 @@ export function viewerButtons({ hasFile, hasMetarecord, enter = false, open }) {
 
 /** The first argument of a command that opens a panel type (doc "Panel slots
  *  and layout"): where — `here`, `other` (this workspace in the other slot) or
- *  `new` (a copy of it). The command's default is offered for editing; its
- *  keybindings name the target explicitly. The command reads what it needs
- *  where it is, then does the rest at the target with `metafolder.atTarget`.
- *  (The shipped `commands.js` has the same helper.)
- *  @param {string} fallback the command's default target */
-export function whereArg(fallback) {
+ *  `new` (a copy of it). Never pre-filled: the default target is the
+ *  keybindings', and a command called by hand asks with an empty line. The
+ *  command reads what it needs where it is, then does the rest at the target
+ *  with `metafolder.atTarget`. (The shipped `commands.js` has the same helper.) */
+export function whereArg() {
   return {
     name: 'where',
     prompt: () => 'Open where? (here / other / new)',
-    initial: () => fallback,
     complete: () => ['here', 'other', 'new'],
   };
 }

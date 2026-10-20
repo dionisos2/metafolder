@@ -257,7 +257,7 @@ describe('the request it lands', () => {
     expect(calls.targets).toEqual(['new']);
     expect(landedDsl()).toBe('mfr_path -> "/live"');
     const [where] = shipped['metarecord-list:folder'].args;
-    expect(where.initial()).toBe('here');
+    expect(where).not.toHaveProperty('initial');
   });
 
   test('the repository root is the empty path', async () => {

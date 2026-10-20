@@ -250,17 +250,16 @@ describe('opening the pick', () => {
     expect(calls.batches[0]['metarecord-list:normal-query']).toBe('mfr_path ->* "/music"');
   });
 
-  test('the arguments: the view (files by default), then where (here by default)', () => {
+  test('the arguments: the view, then where — neither pre-filled', () => {
     const [view, where] = shipped['folder:open'].args as unknown as {
       name: string;
-      initial: () => string;
       complete: () => string[];
     }[];
     expect(view.name).toBe('view');
-    expect(view.initial()).toBe('files');
+    expect(view).not.toHaveProperty('initial');
     expect(view.complete()).toEqual(['files', 'children', 'subtree']);
     expect(where.name).toBe('where');
-    expect(where.initial()).toBe('here');
+    expect(where).not.toHaveProperty('initial');
   });
 
   test('an unknown view or folder is thrown before anything moved', async () => {

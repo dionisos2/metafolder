@@ -2,7 +2,16 @@
 // shared by the built-in panel types (doc "The metafolder API").
 
 import { describe, expect, test, vi } from 'vitest';
-import { el, field, fields, formatAge, frecency, formatScore, formatSize, formatValue, isPositionType, messageOf, valueEl, thumbnail, isThumbnailable, isVideoThumbnailable, fileTypeGlyph, looksLikeText } from '../../panel-shim/ui.js';
+import { el, field, fields, formatAge, frecency, formatScore, formatSize, formatValue, isPositionType, messageOf, valueEl, thumbnail, isThumbnailable, isVideoThumbnailable, fileTypeGlyph, looksLikeText, whereArg } from '../../panel-shim/ui.js';
+
+describe('whereArg', () => {
+  test('asks where with an empty line: the default is the keybinding\'s', () => {
+    const arg = whereArg();
+    expect(arg.name).toBe('where');
+    expect(arg.complete()).toEqual(['here', 'other', 'new']);
+    expect(arg).not.toHaveProperty('initial');
+  });
+});
 
 describe('thumbnail', () => {
   test('isThumbnailable: only image extensions, case-insensitive', () => {

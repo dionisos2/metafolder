@@ -141,14 +141,13 @@ describe('the candidate lines', () => {
     expect(await complete('score')).toEqual(['b — b — score 20', 'a — a — score 4']);
   });
 
-  test('the order is the second argument: time by default, or score', () => {
+  test('the order is the second argument: time or score, never pre-filled', () => {
     const order = shipped['recent'].args[1] as unknown as {
       name: string;
-      initial: () => string;
       complete: () => string[];
     };
     expect(order.name).toBe('order');
-    expect(order.initial()).toBe('time');
+    expect(order).not.toHaveProperty('initial');
     expect(order.complete()).toEqual(['time', 'score']);
   });
 
@@ -207,11 +206,10 @@ describe('opening the pick', () => {
     expect(calls.targets).toEqual(['new']);
     const where = shipped['recent'].args[0] as unknown as {
       name: string;
-      initial: () => string;
       complete: () => string[];
     };
     expect(where.name).toBe('where');
-    expect(where.initial()).toBe('other'); // the default, offered for editing
+    expect(where).not.toHaveProperty('initial'); // the default is the keybindings'
     expect(where.complete()).toEqual(['here', 'other', 'new']);
   });
 
