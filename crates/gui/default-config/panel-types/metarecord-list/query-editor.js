@@ -341,6 +341,13 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
     },
     /** @param {MetafolderApi} mf */
     toggleNormal: (mf) => setNormalShown(mf, !normalShown),
+    /** The Freeze checkbox, by command. Freezing a hidden zone B shows it:
+     *  hidden, it is never what runs, so the freeze would do nothing.
+     *  @param {MetafolderApi} mf */
+    async toggleFreeze(mf) {
+      if (!normalFrozen && !normalShown) await setNormalShown(mf, true);
+      await setNormalFrozen(mf, !normalFrozen);
+    },
 
     /** Restores the zones from the variables (values only — no daemon call).
      *  Zone B is revealed by default: the expanded DSL is what actually runs,

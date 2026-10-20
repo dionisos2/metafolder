@@ -1079,6 +1079,7 @@ export async function mount(root, metafolder) {
   /** @type {Record<string, (mf: MetafolderApi) => unknown>} */
   const TOGGLES = {
     normal: (mf) => editor.toggleNormal(mf),
+    freeze: (mf) => editor.toggleFreeze(mf),
     mode: (mf) => SETTINGS.mode.apply(mf, mode === 'grid' ? 'table' : 'grid'),
   };
 

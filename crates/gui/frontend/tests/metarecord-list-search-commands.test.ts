@@ -417,6 +417,33 @@ describe('display mode', () => {
     expect(isGrid(p.shadow)).toBe(false);
   });
 
+  test('toggle freeze flips the Freeze checkbox, and is persisted', async () => {
+    const p = await mountPanel();
+    p.normal.focus();
+    expect(p.normalFreeze.checked).toBe(false);
+
+    await p.invoke('metarecord-list:toggle', 'freeze');
+    expect(p.normalFreeze.checked).toBe(true);
+    expect(p.normal.readOnly).toBe(false);
+    expect(p.vars.get('metarecord-list:normal-frozen')).toBe(true);
+
+    await p.invoke('metarecord-list:toggle', 'freeze');
+    expect(p.normalFreeze.checked).toBe(false);
+    expect(p.normal.readOnly).toBe(true);
+    expect(p.vars.get('metarecord-list:normal-frozen')).toBe(false);
+    // Unlike `focus normal`, the toggle leaves the focus where it was.
+    expect(p.shadow.activeElement).toBe(p.normal);
+  });
+
+  test('toggle freeze on a hidden normal DSL shows it, since a hidden one is never run', async () => {
+    const p = await mountPanel({ 'metarecord-list:normal-shown': false });
+
+    await p.invoke('metarecord-list:toggle', 'freeze');
+
+    expect(p.normalEditor.hidden).toBe(false);
+    expect(p.normalFreeze.checked).toBe(true);
+  });
+
   test('toggle mode flips between the table and the grid, and is persisted', async () => {
     const p = await mountPanel();
     await p.invoke('metarecord-list:toggle', 'mode');

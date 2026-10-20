@@ -16,7 +16,7 @@ finder.
 
 * The ''finder'' (<<key "metarecord-list:focus finder" "/">>) narrows the list as you type, half a second after the last key. Each word must appear, in order, in one of the fields it searches ([[Ordered substring matching]]): `scien fic` finds `science-fiction`, `conf gui` a path `…/config/…/gui/…`. Those fields are named at the right of the box — `mfr_path`, `label` and `name` unless configured otherwise.
 * The ''simplified query'' (<<key "metarecord-list:focus simplified" "Ctrl+/">>) takes the [[Simplified query language]]. `Enter` or ''Apply'' runs it.
-* The ''normal DSL'' below shows what the simplified query expands to, as you type it: that text is the query sent to the daemon ([[Writing queries]]). It is read-only until ''Freeze'' is checked; frozen, it is edited by hand and it alone is run, whatever the simplified field holds. Unfreezing brings the expansion back and discards the hand edit. ''Hide normal DSL'' (`metarecord-list:toggle normal`) hides it.
+* The ''normal DSL'' below shows what the simplified query expands to, as you type it: that text is the query sent to the daemon ([[Writing queries]]). It is read-only until ''Freeze'' is checked; frozen, it is edited by hand and it alone is run, whatever the simplified field holds. Unfreezing brings the expansion back and discards the hand edit; `metarecord-list:toggle freeze` flips the box from the command line. ''Hide normal DSL'' (`metarecord-list:toggle normal`) hides it.
 
 `Enter` in any of them applies and leaves the field, so that the panel's keys work
 again; <<key "metarecord-list:apply finder stay" Shift+Enter>> applies and stays. An
