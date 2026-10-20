@@ -7,7 +7,7 @@ summary: Typing simplified queries in the GUI's query box and with -s on the com
 
 The query box of the [[metarecord-list panel]] takes simplified text; focus it with
 <<key "metarecord-list:focus simplified" Ctrl+/>> (or <<key "metarecord-list:focus simplified" "e s">>).
-''Show normal DSL'' reveals what it expands to, updated as you type. To edit the DSL
+The field below it shows what it expands to, updated as you type. To edit the DSL
 by hand, ''freeze'' it: the DSL box then drives the query and the simplified text no
 longer does, until you focus the simplified box again, which unfreezes it. An
 expansion error shows under the simplified box; a DSL error under the DSL box.

@@ -232,12 +232,11 @@ export async function mount(root, metafolder) {
     }
     const dsl = currentQueryDsl();
     // The list's query variables are its state (doc "Cross-panel selection"):
-    // the normal zone, shown and frozen, so the query stays visible.
+    // the normal zone, frozen, so the query stays visible and editable.
     await mf.atTarget(where, async (there) => {
       // At once (`setMany`): the list follows them together.
       await there.workspace.setMany({
         'metarecord-list:normal-query': dsl,
-        'metarecord-list:normal-shown': true,
         'metarecord-list:normal-frozen': true,
       });
       await there.commands.invoke(['panel:open', 'here', 'metarecord-list']);

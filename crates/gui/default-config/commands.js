@@ -295,7 +295,6 @@ export async function listAt(mf, where, query, folder) {
     // separate writes ran the old query and wrote it back over the new one.
     await mf.workspace.setMany({
       'metarecord-list:normal-query': query,
-      'metarecord-list:normal-shown': true,
       'metarecord-list:normal-frozen': true,
     });
     await mf.invoke(['panel:open', 'here', 'metarecord-list']);

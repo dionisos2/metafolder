@@ -21,7 +21,12 @@
         background: var(--mf-bg-raised, #26262e);
         border-bottom: 1px solid var(--mf-bg, #1e1e24);
       }
-      .finder-icon {
+      /* Every text zone opens with one of these, a fixed width, so that the
+         finder and the four editor fields start at the same column. */
+      .zone-icon {
+        flex: none;
+        width: 1.5em;
+        text-align: center;
         font-size: 0.9em;
         opacity: 0.75;
       }
@@ -45,12 +50,13 @@
       #query-editor {
         display: flex;
         flex-direction: column;
-        padding: 6px;
+        padding: 6px 8px;
         gap: 4px;
         background: var(--mf-bg-raised, #26262e);
       }
       .editor-row {
         display: flex;
+        align-items: center;
         gap: 6px;
       }
       .editor-row input {
@@ -71,10 +77,6 @@
       }
       .editor-row input[readonly] {
         opacity: 0.55;
-      }
-      #normal-toggle {
-        font-size: 11px;
-        white-space: nowrap;
       }
       .freeze-label {
         display: flex;
@@ -318,7 +320,7 @@
   </head>
   <body>
     <div id="finder-bar" data-help-topic="finder">
-      <span class="finder-icon" aria-hidden="true">🔎</span>
+      <span class="zone-icon" aria-hidden="true" title="finder">🔎</span>
       <input
         id="finder-input"
         placeholder="find… (ordered substring, e.g. scien fic)"
@@ -330,14 +332,14 @@
     </div>
     <div id="query-editor" data-help-topic="focus-query">
       <div class="editor-row">
+        <span class="zone-icon" aria-hidden="true" title="simplified query">✏️</span>
         <input id="query-input" placeholder='simplified query, e.g. fav genre=jazz (empty = all)' />
         <button id="query-apply">Apply</button>
-        <button id="normal-toggle" type="button">Hide normal DSL</button>
       </div>
       <div id="query-error" class="editor-error"></div>
-      <!-- Revealed by default (mount hides it only for a stored preference). -->
       <div id="normal-editor">
         <div class="editor-row">
+          <span class="zone-icon" aria-hidden="true" title="normal DSL">⚙️</span>
           <input id="normal-input" readonly placeholder="normal DSL" />
           <label class="freeze-label" title="Freeze to edit the normal DSL by hand; it then drives the query. Unfreeze to mirror the simplified query again.">
             <input id="normal-freeze" type="checkbox" /> Freeze
@@ -346,6 +348,7 @@
         <div id="normal-error" class="editor-error"></div>
       </div>
       <div class="editor-row">
+        <span class="zone-icon" aria-hidden="true" title="columns">📊</span>
         <input
           id="columns-input"
           data-help-topic="columns"
@@ -356,11 +359,12 @@
       </div>
       <div id="columns-error" class="editor-error"></div>
       <div class="editor-row">
+        <span class="zone-icon" aria-hidden="true" title="order">🔢</span>
+        <input id="order-field" list="order-fields" value="order_file" placeholder="int field, e.g. order_file" />
+        <datalist id="order-fields"></datalist>
         <label class="freeze-label" title="Order the list by an int field: rows without a position are numbered, the list sorts by it, and Alt+↑ / Alt+↓ move the row under the cursor (doc &quot;Ordering a list&quot;).">
           <input id="order-on" type="checkbox" /> Order by
         </label>
-        <input id="order-field" list="order-fields" value="order_file" placeholder="int field, e.g. order_file" />
-        <datalist id="order-fields"></datalist>
       </div>
     </div>
     <div id="scroll">

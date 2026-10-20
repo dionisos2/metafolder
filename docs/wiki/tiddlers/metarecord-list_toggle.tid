@@ -1,8 +1,6 @@
 title: metarecord-list:toggle
 tags: [[GUI command]] Metarecord
 kind: reference
-summary: Metarecord list: toggle a view flag (normal / freeze / mode)
+summary: Metarecord list: toggle a view flag (freeze / mode)
 
-`metarecord-list:toggle normal` shows or hides the normal DSL field of the [[metarecord-list panel]]. Hidden, the simplified query is expanded when it is applied.
-
-`metarecord-list:toggle freeze` checks or unchecks ''Freeze'', exactly as a click on the box would, and leaves the focus where it is. Freezing a hidden normal DSL also shows it: hidden, it is never what runs. (`metarecord-list:focus normal` freezes too, but moves the focus there; `metarecord-list:focus simplified` unfreezes.)
+`metarecord-list:toggle freeze` checks or unchecks ''Freeze'' on the normal DSL field of the [[metarecord-list panel]], exactly as a click on the box would, and leaves the focus where it is. (`metarecord-list:focus normal` freezes too, but moves the focus there; `metarecord-list:focus simplified` unfreezes.)

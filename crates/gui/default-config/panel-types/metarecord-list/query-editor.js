@@ -17,19 +17,18 @@ export function asText(value) {
   return typeof value === 'string' ? value : '';
 }
 
-/** @typedef {{query: string, normal: string, frozen: boolean, shown: boolean}} QueryState */
+/** @typedef {{query: string, normal: string, frozen: boolean}} QueryState */
 
 /** @type {Record<keyof QueryState, string>} */
 const STATE_VARIABLES = {
   query: 'metarecord-list:query',
   normal: 'metarecord-list:normal-query',
   frozen: 'metarecord-list:normal-frozen',
-  shown: 'metarecord-list:normal-shown',
 };
 
 /** @param {QueryState} a @param {QueryState} b */
 function sameQueryState(a, b) {
-  return a.query === b.query && a.normal === b.normal && a.frozen === b.frozen && a.shown === b.shown;
+  return a.query === b.query && a.normal === b.normal && a.frozen === b.frozen;
 }
 
 /**
@@ -52,8 +51,6 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
 
   const queryInput = byId(root, 'query-input', HTMLInputElement);
   const queryError = byId(root, 'query-error');
-  const normalToggle = byId(root, 'normal-toggle');
-  const normalEditor = byId(root, 'normal-editor');
   const normalInput = byId(root, 'normal-input', HTMLInputElement);
   const normalError = byId(root, 'normal-error');
   const normalFreeze = byId(root, 'normal-freeze', HTMLInputElement);
@@ -64,10 +61,9 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
   // assignment below. It is what a script receives (`mf gui query`,
   // doc "metarecord-list panel"): text is what `mf metarecord -q` takes and what a script composes
   // with. It must be this local and not `metarecord-list:normal-query`, which
-  // mirrors the B zone and is therefore only written while that zone is shown.
+  // mirrors the B zone and is only written when the zones are persisted.
   /** @type {string} '' = match all */
   let queryText = '';
-  let normalShown = true; // zone B (normal DSL) revealed? (default: yes)
   let normalFrozen = false; // zone B decoupled (hand-edited, authoritative)?
   /** @type {ReturnType<typeof setTimeout>|undefined} */
   let livePreviewTimer;
@@ -79,7 +75,7 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
     normalError.textContent = '';
     /** @type {string} */
     let dsl;
-    if (normalShown && normalFrozen) {
+    if (normalFrozen) {
       dsl = normalInput.value.trim(); // frozen normal DSL is authoritative
     } else {
       const simplified = queryInput.value.trim();
@@ -93,14 +89,14 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
           return false;
         }
       }
-      if (normalShown) normalInput.value = dsl; // reflect in B
+      normalInput.value = dsl; // reflect in B
     }
     // The base query as normal DSL, published for the panels that act on "the
     // current query" (metarecord-detail's bulk commands). It must be THIS
     // value: `metarecord-list:query` holds the *simplified* text, which the
     // normal-DSL parser does not read, and `metarecord-list:normal-query`
-    // mirrors the B zone and is only written while that zone is shown. Both
-    // expansion and the frozen-zone case are already settled here.
+    // mirrors the B zone and is only written when the zones are persisted.
+    // Both expansion and the frozen-zone case are already settled here.
     void mf.workspace.set('metarecord-list:base-query-text', dsl);
     // Tell the slow-operation log what this panel is running, so an entry for a
     // slow query names the text the user typed and not just the IR
@@ -114,7 +110,7 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
         queryIR = /** @type {Record<string, unknown>} */ (await query.parse(dsl));
         queryText = dsl; // only once the parse succeeded: the two stay in step
       } catch (error) {
-        (normalShown ? normalError : queryError).textContent = messageOf(error);
+        normalError.textContent = messageOf(error);
         return false;
       }
     }
@@ -149,8 +145,8 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
   }
 
   // ── The query variables are the state (doc "Cross-panel selection") ─────
-  // `metarecord-list:query`, `:normal-query`, `:normal-frozen` and
-  // `:normal-shown` are not a record of what the panel shows: they ARE it.
+  // `metarecord-list:query`, `:normal-query` and `:normal-frozen` are not a
+  // record of what the panel shows: they ARE it.
   // Another panel or a command shows a query by writing them, and a forked
   // workspace shows the same list because it has the same variables. What a
   // write is compared with is the state this panel last applied or wrote — not
@@ -163,7 +159,7 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
   // events of one batch are gathered and run once, on the final state.
 
   /** @type {QueryState} the state last applied or written by this panel */
-  let appliedState = { query: '', normal: '', frozen: false, shown: true };
+  let appliedState = { query: '', normal: '', frozen: false };
 
   // A read of the variables that overlaps the panel's own write is stale: begun
   // before it, it finds the state the panel HAD (and applying it put the old
@@ -194,19 +190,12 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
 
   /** @returns {Promise<QueryState>} the state the variables hold now */
   async function variableQueryState() {
-    const [query, normal, frozen, shown] = await Promise.all([
+    const [query, normal, frozen] = await Promise.all([
       workspace.get(STATE_VARIABLES.query),
       workspace.get(STATE_VARIABLES.normal),
       workspace.get(STATE_VARIABLES.frozen),
-      workspace.get(STATE_VARIABLES.shown),
     ]);
-    return {
-      query: asText(query),
-      normal: asText(normal),
-      frozen: frozen === true,
-      // Zone B is revealed by default: only an explicit stored `false` hides it.
-      shown: shown !== false,
-    };
+    return { query: asText(query), normal: asText(normal), frozen: frozen === true };
   }
 
   /** Brings the zones to what the variables say, and runs it when it differs
@@ -220,7 +209,6 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
     }
     if (sameQueryState(next, appliedState)) return;
     queryInput.value = next.query;
-    if (next.shown !== normalShown) await setNormalShown(metafolder, next.shown);
     if (next.frozen !== normalFrozen) await setNormalFrozen(metafolder, next.frozen);
     // After the setters: unfreezing refreshes B from A, which is what an
     // unfrozen B shows anyway; a frozen B is the variable's text.
@@ -238,25 +226,24 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
     );
   }
 
-  /** Puts `dsl` in the normal zone — shown and frozen, so a query the GUI wrote
-   *  stays visible, hand-editable and composable rather than being a hidden
-   *  override — and runs it. @param {MetafolderApi} mf @param {string} dsl */
+  /** Puts `dsl` in the normal zone — frozen, so a query the GUI wrote stays
+   *  hand-editable and composable rather than being overwritten by the
+   *  simplified zone — and runs it. @param {MetafolderApi} mf @param {string} dsl */
   async function showQuery(mf, dsl) {
     normalInput.value = dsl;
-    if (!normalShown) await setNormalShown(mf, true);
     if (!normalFrozen) await setNormalFrozen(mf, true);
     await applyQuery(mf);
   }
 
   /** Debounced live mirror of expand(A) into B (preview only — does not run). */
   function scheduleLivePreview() {
-    if (!normalShown || normalFrozen) return;
+    if (normalFrozen) return;
     clearTimeout(livePreviewTimer);
     livePreviewTimer = setTimeout(() => void refreshPreview(), livePreviewMs);
   }
 
   async function refreshPreview() {
-    if (!normalShown || normalFrozen) return;
+    if (normalFrozen) return;
     queryError.textContent = '';
     const simplified = queryInput.value.trim();
     if (simplified === '') {
@@ -270,21 +257,12 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
     }
   }
 
-  /** @param {MetafolderApi} mf @param {boolean} shown */
-  async function setNormalShown(mf, shown) {
-    normalShown = shown;
-    normalEditor.hidden = !shown;
-    normalToggle.textContent = shown ? 'Hide normal DSL' : 'Show normal DSL';
-    if (shown && !normalFrozen) await refreshPreview();
-    await writeQueryState(mf, { shown });
-  }
-
   /** @param {MetafolderApi} mf @param {boolean} frozen */
   async function setNormalFrozen(mf, frozen) {
     normalFrozen = frozen;
     normalFreeze.checked = frozen;
     normalInput.readOnly = !frozen;
-    if (!frozen && normalShown) await refreshPreview();
+    if (!frozen) await refreshPreview();
     await writeQueryState(mf, { frozen });
   }
 
@@ -296,7 +274,6 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
     if (!event.shiftKey) queryInput.blur();
   });
   queryInput.addEventListener('input', scheduleLivePreview);
-  normalToggle.addEventListener('click', () => void setNormalShown(metafolder, !normalShown));
   normalFreeze.addEventListener('change', () => void setNormalFrozen(metafolder, normalFreeze.checked));
   normalInput.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter') return;
@@ -321,12 +298,9 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
     /** Hands the user zone A: a frozen B would be what runs, so it thaws.
      *  @param {MetafolderApi} mf */
     editSimplified: (mf) => setNormalFrozen(mf, false),
-    /** Hands the user zone B: shown and frozen, so what is typed there runs.
+    /** Hands the user zone B: frozen, so what is typed there runs.
      *  @param {MetafolderApi} mf */
-    async editNormal(mf) {
-      await setNormalShown(mf, true);
-      await setNormalFrozen(mf, true);
-    },
+    editNormal: (mf) => setNormalFrozen(mf, true),
     /** @param {MetafolderApi} mf */
     async clearSimplified(mf) {
       queryInput.value = '';
@@ -339,19 +313,10 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
       normalInput.value = '';
       normalError.textContent = '';
     },
-    /** @param {MetafolderApi} mf */
-    toggleNormal: (mf) => setNormalShown(mf, !normalShown),
-    /** The Freeze checkbox, by command. Freezing a hidden zone B shows it:
-     *  hidden, it is never what runs, so the freeze would do nothing.
-     *  @param {MetafolderApi} mf */
-    async toggleFreeze(mf) {
-      if (!normalFrozen && !normalShown) await setNormalShown(mf, true);
-      await setNormalFrozen(mf, !normalFrozen);
-    },
+    /** The Freeze checkbox, by command. @param {MetafolderApi} mf */
+    toggleFreeze: (mf) => setNormalFrozen(mf, !normalFrozen),
 
-    /** Restores the zones from the variables (values only — no daemon call).
-     *  Zone B is revealed by default: the expanded DSL is what actually runs,
-     *  so showing it teaches the mapping. */
+    /** Restores the zones from the variables (values only — no daemon call). */
     async restore() {
       appliedState = await variableQueryState();
       queryInput.value = appliedState.query;
@@ -359,9 +324,6 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
       normalFrozen = appliedState.frozen;
       normalFreeze.checked = normalFrozen;
       normalInput.readOnly = !normalFrozen;
-      normalShown = appliedState.shown;
-      normalEditor.hidden = !normalShown;
-      normalToggle.textContent = normalShown ? 'Hide normal DSL' : 'Show normal DSL';
     },
 
     dispose() {

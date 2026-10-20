@@ -979,7 +979,7 @@ export async function mount(root, metafolder) {
   //
   // The table below is the single place a zone's quirks live.
   //
-  // The quirk that matters most: while zone B is *shown and frozen* it is what
+  // The quirk that matters most: while zone B is *frozen* it is what
   // the query runs (./query-editor.js), so anything that hands the user zone A
   // must unfreeze B first or the field it just focused feeds nothing.
   // Unfreezing discards a hand-edited B, which re-mirrors expand(A) — that is
@@ -1021,7 +1021,7 @@ export async function mount(root, metafolder) {
 
   registerZoneCommands({ commands, root, zones: ZONES, clearAll: clearAllQueries });
 
-  // Canned queries: each puts its DSL in the zone, shown and frozen, so it
+  // Canned queries: each puts its DSL in the zone, frozen, so it
   // stays visible, editable and composable rather than being a mode.
   /** @type {Record<string, (mf: MetafolderApi) => unknown>} */
   const CANNED_QUERIES = {
@@ -1078,7 +1078,6 @@ export async function mount(root, metafolder) {
   // toggle and `metarecord-list:set mode` persist the same variable.
   /** @type {Record<string, (mf: MetafolderApi) => unknown>} */
   const TOGGLES = {
-    normal: (mf) => editor.toggleNormal(mf),
     freeze: (mf) => editor.toggleFreeze(mf),
     mode: (mf) => SETTINGS.mode.apply(mf, mode === 'grid' ? 'table' : 'grid'),
   };

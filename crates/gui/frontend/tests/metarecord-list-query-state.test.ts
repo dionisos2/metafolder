@@ -1,8 +1,7 @@
 // metarecord-list follows its query variables (doc "Cross-panel selection"):
-// `metarecord-list:query`, `:normal-query`, `:normal-frozen` and
-// `:normal-shown` ARE the query state. Another panel or a command shows a
-// query by writing them; the panel puts them in its zones and runs them, at
-// mount and while mounted. What it compares against is the state it last
+// `metarecord-list:query`, `:normal-query` and `:normal-frozen` ARE the query
+// state. Another panel or a command shows a query by writing them; the panel
+// puts them in its zones and runs them, at mount and while mounted. What it compares against is the state it last
 // applied itself, so its own writes coming back and a draft being typed do not
 // re-run anything, and a burst of writes runs once, on the final state.
 
@@ -122,7 +121,6 @@ function showing(dsl: string): Record<string, unknown> {
   return {
     'metarecord-list:normal-query': dsl,
     'metarecord-list:normal-frozen': true,
-    'metarecord-list:normal-shown': true,
   };
 }
 
@@ -223,7 +221,7 @@ describe('metarecord-list query variables', () => {
     const p = await mountPanel({});
     p.calls.length = 0;
     p.queryInput.value = 'half typ'; // not applied
-    await p.push('metarecord-list:normal-shown', true); // what it already is
+    await p.push('metarecord-list:normal-frozen', false); // what it already is
     expect(p.queryInput.value).toBe('half typ');
     expect(ranQueries(p.calls)).toEqual([]);
   });

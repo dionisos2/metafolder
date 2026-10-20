@@ -16,7 +16,7 @@ finder.
 
 * The ''finder'' (<<key "metarecord-list:focus finder" "/">>) narrows the list as you type, half a second after the last key. Each word must appear, in order, in one of the fields it searches ([[Ordered substring matching]]): `scien fic` finds `science-fiction`, `conf gui` a path `…/config/…/gui/…`. Those fields are named at the right of the box — `mfr_path`, `label` and `name` unless configured otherwise.
 * The ''simplified query'' (<<key "metarecord-list:focus simplified" "Ctrl+/">>) takes the [[Simplified query language]]. `Enter` or ''Apply'' runs it.
-* The ''normal DSL'' below shows what the simplified query expands to, as you type it: that text is the query sent to the daemon ([[Writing queries]]). It is read-only until ''Freeze'' is checked; frozen, it is edited by hand and it alone is run, whatever the simplified field holds. Unfreezing brings the expansion back and discards the hand edit; `metarecord-list:toggle freeze` flips the box from the command line. ''Hide normal DSL'' (`metarecord-list:toggle normal`) hides it.
+* The ''normal DSL'' below shows what the simplified query expands to, as you type it: that text is the query sent to the daemon ([[Writing queries]]). It is read-only until ''Freeze'' is checked; frozen, it is edited by hand and it alone is run, whatever the simplified field holds. Unfreezing brings the expansion back and discards the hand edit; `metarecord-list:toggle freeze` flips the box from the command line.
 
 `Enter` in any of them applies and leaves the field, so that the panel's keys work
 again; <<key "metarecord-list:apply finder stay" Shift+Enter>> applies and stays. An
@@ -31,10 +31,10 @@ keep a history, recorded when you apply and not at each debounced run
 |<<key "metarecord-list:clear all" c>> |empty the three and list everything |
 
 Going to the simplified query unfreezes the normal DSL, and going to the normal DSL
-shows and freezes it: the field the key lands in is always one the query reads.
+freezes it: the field the key lands in is always one the query reads.
 
-A query written by a command arrives in the normal DSL, shown and frozen, so that it
-stays visible and can be edited or combined: `metarecord-list:folder`
+A query written by a command arrives in the normal DSL, frozen, so that it can be
+edited or combined: `metarecord-list:folder`
 (<<key "metarecord-list:folder" "g f">>, the selection's folder —
 [[Cross-panel selection]]), `path-ref:list-refs` ([[path-ref panel]]), and
 `metarecord-list:query`, which takes `duplicates` (the files byte-identical to the
@@ -122,7 +122,7 @@ script can read and set.
 |`metarecord-list:finder` |the finder's text |
 |`metarecord-list:finder-fields` |the fields the finder searches, as `field:path` or `field:value`; a bare `field` is searched as a path when it is a `tree_ref` |
 |`metarecord-list:query` |the simplified query |
-|`metarecord-list:normal-query`, `:normal-shown`, `:normal-frozen` |the normal DSL field, whether it is shown (yes unless `false`), whether it is frozen |
+|`metarecord-list:normal-query`, `:normal-frozen` |the normal DSL field, whether it is frozen |
 |`metarecord-list:columns`, `:column-widths` |the columns, as a list, and their widths |
 |`metarecord-list:page-size` |the page size, when changed |
 |`metarecord-list:order-field` |the `int` field the list is ordered by, or `null` ([[Ordering a list]]) |
@@ -132,8 +132,7 @@ script can read and set.
 |`metarecord-list:sort` |the order it was run in, as the query body's `sort` (empty for none) — what a [[Slideshow]] of `query` plays it in |
 |`metarecord-list:base-query-text` |the query without the finder, as DSL text |
 
-The four query variables (`:query`, `:normal-query`, `:normal-shown`,
-`:normal-frozen`) are the list's ''state'', not a record of it: written by another
+The three query variables (`:query`, `:normal-query`, `:normal-frozen`) are the list's ''state'', not a record of it: written by another
 panel, a command or a script, they are put in the zones and run — at once when the
 list is on screen, when it next is otherwise. A burst of writes runs once, on the final
 state; a write of what the list already shows, or of what it wrote itself, runs

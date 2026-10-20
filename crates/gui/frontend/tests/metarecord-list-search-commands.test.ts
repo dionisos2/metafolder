@@ -108,7 +108,6 @@ async function mountPanel(initial: Record<string, unknown> = {}) {
     query: el('query-input'),
     normal: el('normal-input'),
     normalEditor: el<HTMLElement>('normal-editor'),
-    normalToggle: el<HTMLButtonElement>('normal-toggle'),
     normalFreeze: el('normal-freeze'),
     columns: el('columns-input'),
     invoke: async (name: string, ...args: unknown[]) => {
@@ -128,30 +127,44 @@ describe('zone commands', () => {
     document.body.replaceChildren();
   });
 
-  test('the normal DSL editor is revealed by default (no stored preference)', async () => {
+  test('the normal DSL editor is always shown, with no button to hide it', async () => {
     const p = await mountPanel();
     expect(p.normalEditor.hidden).toBe(false);
-    expect(p.normalToggle.textContent).toBe('Hide normal DSL');
-    // Revealed, but still the read-only mirror of the simplified zone.
+    expect(p.shadow.getElementById('normal-toggle')).toBeNull();
+    // Shown, but still the read-only mirror of the simplified zone.
     expect(p.normalFreeze.checked).toBe(false);
     expect(p.normal.readOnly).toBe(true);
   });
 
-  test('a stored preference to hide it is honoured', async () => {
+  test('a stale stored preference to hide it is ignored', async () => {
     const p = await mountPanel({ 'metarecord-list:normal-shown': false });
-    expect(p.normalEditor.hidden).toBe(true);
-    expect(p.normalToggle.textContent).toBe('Show normal DSL');
+    expect(p.normalEditor.hidden).toBe(false);
+  });
+
+  test('there is no toggle normal any more', async () => {
+    const p = await mountPanel();
+    await expect(p.invoke('metarecord-list:toggle', 'normal')).rejects.toThrow(/unknown flag/);
+  });
+
+  test('every text zone starts with an icon, and the order checkbox sits at the right', async () => {
+    const p = await mountPanel();
+    for (const id of ['finder-input', 'query-input', 'normal-input', 'columns-input', 'order-field']) {
+      const row = p.shadow.getElementById(id)!.parentElement!;
+      expect(row.firstElementChild?.classList.contains('zone-icon'), id).toBe(true);
+      expect(row.firstElementChild?.nextElementSibling?.id, id).toBe(id);
+    }
+    const order = p.shadow.getElementById('order-field')!;
+    const box = p.shadow.getElementById('order-on')!;
+    expect(order.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   // ── focus ───────────────────────────────────────────────────────────────
 
-  test('focus normal opens + freezes + focuses the normal DSL editor', async () => {
-    const p = await mountPanel({ 'metarecord-list:normal-shown': false });
-    expect(p.normalEditor.hidden).toBe(true);
+  test('focus normal freezes + focuses the normal DSL editor', async () => {
+    const p = await mountPanel();
 
     await p.invoke('metarecord-list:focus', 'normal');
 
-    expect(p.normalEditor.hidden).toBe(false);
     expect(p.normalFreeze.checked).toBe(true);
     expect(p.normal.readOnly).toBe(false);
     expect(p.shadow.activeElement).toBe(p.normal);
@@ -433,15 +446,6 @@ describe('display mode', () => {
     expect(p.vars.get('metarecord-list:normal-frozen')).toBe(false);
     // Unlike `focus normal`, the toggle leaves the focus where it was.
     expect(p.shadow.activeElement).toBe(p.normal);
-  });
-
-  test('toggle freeze on a hidden normal DSL shows it, since a hidden one is never run', async () => {
-    const p = await mountPanel({ 'metarecord-list:normal-shown': false });
-
-    await p.invoke('metarecord-list:toggle', 'freeze');
-
-    expect(p.normalEditor.hidden).toBe(false);
-    expect(p.normalFreeze.checked).toBe(true);
   });
 
   test('toggle mode flips between the table and the grid, and is persisted', async () => {

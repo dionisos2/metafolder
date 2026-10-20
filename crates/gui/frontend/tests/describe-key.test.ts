@@ -29,7 +29,7 @@ const table: Binding[] = [
   b(['ctrl+x'], '!echo hi'),
   b(['z'], 'panel:toggle fullscreen'),
   b(['ctrl+enter'], 'metarecord-list:apply finder', null, false, 'finder'),
-  b(['ctrl+g'], 'metarecord-list:toggle normal', 'metarecord-list', false, 'columns'),
+  b(['ctrl+g'], 'metarecord-list:toggle mode', 'metarecord-list', false, 'columns'),
   b(['e'], 'global:one'),
   b(['e'], 'panel:one', 'metarecord-list'),
 ];
@@ -140,7 +140,7 @@ describe('describeKeyStep — a key that runs nothing', () => {
       reported: true,
       message:
         'Ctrl+g is not bound to any command here ' +
-        '(elsewhere: metarecord-list:toggle normal in the columns widget of metarecord-list)',
+        '(elsewhere: metarecord-list:toggle mode in the columns widget of metarecord-list)',
     });
   });
 });

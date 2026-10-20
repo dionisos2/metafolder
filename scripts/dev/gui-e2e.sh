@@ -186,7 +186,6 @@ export function mount(_root, metafolder) {
     args: [{ name: 'dir', prompt: () => 'Folder?' }],
     handler: async (mf, dir) => {
       await mf.workspace.set('metarecord-list:normal-query', `mfr_path -> "/${dir}"`);
-      await mf.workspace.set('metarecord-list:normal-shown', true);
       await mf.workspace.set('metarecord-list:normal-frozen', true);
     },
   });

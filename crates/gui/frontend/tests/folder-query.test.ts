@@ -236,7 +236,6 @@ describe('the request it lands', () => {
     expect(calls.batches).toEqual([
       {
         'metarecord-list:normal-query': 'mfr_path -> "/live/2024"',
-        'metarecord-list:normal-shown': true,
         'metarecord-list:normal-frozen': true,
       },
     ]);

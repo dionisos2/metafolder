@@ -240,7 +240,6 @@ describe('listing what refers to the selected node', () => {
       [
         {
           'metarecord-list:normal-query': expect.stringContaining('mfr_path'),
-          'metarecord-list:normal-shown': true,
           'metarecord-list:normal-frozen': true,
         },
       ],
