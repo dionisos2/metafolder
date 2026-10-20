@@ -200,17 +200,27 @@ export function filterCommands<C extends { name: string }>(
   commands: C[],
   query: string,
 ): C[] {
-  const byName = (a: C, b: C) => a.name.localeCompare(b.name);
+  return rankMatches(commands, query, (a, b) => a.name.localeCompare(b.name));
+}
+
+/** `filterCommands`' matching and grouping, each group in the order `compare`
+ *  gives — or, without one, in the order the items came in. */
+function rankMatches<C extends { name: string }>(
+  items: C[],
+  query: string,
+  compare?: (a: C, b: C) => number,
+): C[] {
+  const ordered = (list: C[]) => (compare ? list.sort(compare) : list);
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-  if (terms.length === 0) return [...commands].sort(byName);
-  const matching = commands.filter((c) => osmMatch(c.name, terms));
-  const starts = matching
-    .filter((c) => c.name.toLowerCase().startsWith(terms[0]))
-    .sort(byName);
-  const rest = matching
-    .filter((c) => !c.name.toLowerCase().startsWith(terms[0]))
-    .sort(byName);
-  return [...starts, ...rest];
+  if (terms.length === 0) return ordered([...items]);
+  const matching = items.filter((c) => osmMatch(c.name, terms));
+  const starts = matching.filter((c) =>
+    c.name.toLowerCase().startsWith(terms[0]),
+  );
+  const rest = matching.filter(
+    (c) => !c.name.toLowerCase().startsWith(terms[0]),
+  );
+  return [...ordered(starts), ...ordered(rest)];
 }
 
 /** What the command input runs on Enter (command mode only): the
@@ -271,14 +281,16 @@ export function resolvePromptValue(
 export const MAX_COMPLETIONS = 200;
 
 /** Autocomplete filter for script prompt completions (POST /gui/prompt):
- *  same prefix-then-substring ranking as the command list, capped at `limit`
- *  best-ranked entries so a huge candidate set stays cheap to render. */
+ *  same prefix-then-substring ranking as the command list, but each group
+ *  keeps the order the source gave (a view's own order — newest first, best
+ *  score first — doc "Completion views"), capped at `limit` best-ranked
+ *  entries so a huge candidate set stays cheap to render. */
 export function filterCompletions(
   completions: string[],
   draft: string,
   limit: number = MAX_COMPLETIONS,
 ): string[] {
-  return filterCommands(
+  return rankMatches(
     completions.map((name) => ({ name })),
     draft,
   )
@@ -294,7 +306,7 @@ export function filterCompletionItems<T extends { label: string }>(
   draft: string,
   limit: number = MAX_COMPLETIONS,
 ): T[] {
-  return filterCommands(
+  return rankMatches(
     items.map((item, index) => ({ name: item.label, index })),
     draft,
   )

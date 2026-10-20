@@ -742,8 +742,15 @@ describe('filterCompletions', () => {
     expect(filterCompletions(tags, 'bop')).toEqual(['jazz/bebop']);
   });
 
-  test('empty draft lists every completion, sorted', () => {
-    expect(filterCompletions(tags, '')).toEqual(['classical', 'jazz', 'jazz/bebop', 'rock']);
+  test('empty draft lists every completion, in the order the source gave', () => {
+    expect(filterCompletions(tags, '')).toEqual(tags);
+  });
+
+  test("the source's order is kept within each group (recent by score, say)", () => {
+    const byScore = ['b/x', 'zeta', 'a/x', 'xylo'];
+    // Prefix matches first, then substring matches — each in source order.
+    expect(filterCompletions(byScore, 'x')).toEqual(['xylo', 'b/x', 'a/x']);
+    expect(filterCompletions(byScore, '')).toEqual(byScore);
   });
 
   test('no match yields an empty list', () => {
@@ -758,11 +765,11 @@ describe('filterCompletions', () => {
   test('caps the result so a huge completion set stays cheap to render', () => {
     const many = Array.from({ length: 5000 }, (_, i) => `dir/${String(i).padStart(4, '0')}`);
     expect(filterCompletions(many, '').length).toBe(200);
-    // The cap keeps the best (sorted-first) matches, not an arbitrary slice.
+    // The cap keeps the best (first-listed) matches, not an arbitrary slice.
     expect(filterCompletions(many, '')[0]).toBe('dir/0000');
     // An explicit smaller limit is honoured; a small set is unaffected.
     expect(filterCompletions(many, '', 10).length).toBe(10);
-    expect(filterCompletions(tags, '', 200)).toEqual(['classical', 'jazz', 'jazz/bebop', 'rock']);
+    expect(filterCompletions(tags, '', 200)).toEqual(tags);
   });
 });
 
@@ -1235,5 +1242,14 @@ describe('completion views (doc "Completion views")', () => {
     ];
     expect(filterCompletionItems(items, 'mus')).toEqual(items);
     expect(filterCompletionItems(items, 'jazz')).toEqual([items[1]]);
+  });
+
+  test('filterCompletionItems keeps the order the source gave', () => {
+    const items = [
+      { label: 'zz — score 9', value: 'u1' },
+      { label: 'aa — score 2', value: 'u2' },
+    ];
+    expect(filterCompletionItems(items, '')).toEqual(items);
+    expect(filterCompletionItems(items, 'score')).toEqual(items);
   });
 });

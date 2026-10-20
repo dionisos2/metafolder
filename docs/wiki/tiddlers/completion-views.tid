@@ -28,6 +28,15 @@ value, for every completion whatever it completes: no row is a coin flip between
 things, and each can still be reached by typing it whole. Exact duplicates — same
 label, same value — are merged first.
 
+!! The source's order is kept
+
+The typed text narrows the list without reordering it: the candidates that start
+with the first typed term come first, then the others that match, each group in the
+order the source gave. The source's order means something — `recent` lists newest
+first or best score first, `folder:open` best score first ([[Frecent folders]]) — so a
+source that wants an alphabetical list sorts it itself. Only the command list (no
+question asked) is alphabetical.
+
 !! Views
 
 A completion may offer several ''views'' of its candidates: the same things, named
