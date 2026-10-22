@@ -165,10 +165,7 @@ impl<C: 'static + CredSource> Broker<C> {
     /// it.
     pub fn attach_stream(&self, stream: UnixStream) {
         match peer_creds(&stream) {
-            Ok((uid, gid, pid)) => {
-                let peer = lock(&self.inner.filter).subscriber(uid, gid, pid);
-                self.attach(stream, peer);
-            }
+            Ok(peer) => self.attach(stream, peer),
             Err(err) => eprintln!("[watchd] rejected a connection: {err}"),
         }
     }
@@ -510,16 +507,18 @@ fn write_msg(out: &mut UnixStream, msg: &ServerMsg) -> std::io::Result<()> {
     out.write_all(proto::encode(msg).as_bytes())
 }
 
-/// The peer of a connection, straight from the kernel (`SO_PEERCRED`): uid and
-/// gid are all the socket gives — the group list comes from
-/// [`AccessFilter::subscriber`].
-fn peer_creds(stream: &UnixStream) -> std::io::Result<(u32, u32, i32)> {
+/// The peer of a connection, straight from the kernel: uid, gid and pid
+/// (`SO_PEERCRED`) and the supplementary groups (`SO_PEERGROUPS`), all as they
+/// were at `connect`. Never `/proc/<pid>`: the peer may have exited before the
+/// `accept`, and its pid been handed to another user's process since.
+fn peer_creds(stream: &UnixStream) -> std::io::Result<Subscriber> {
     use std::os::unix::io::AsRawFd;
+    let fd = stream.as_raw_fd();
     let mut cred = libc::ucred { pid: 0, uid: 0, gid: 0 };
     let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
     let rc = unsafe {
         libc::getsockopt(
-            stream.as_raw_fd(),
+            fd,
             libc::SOL_SOCKET,
             libc::SO_PEERCRED,
             &mut cred as *mut libc::ucred as *mut libc::c_void,
@@ -529,7 +528,38 @@ fn peer_creds(stream: &UnixStream) -> std::io::Result<(u32, u32, i32)> {
     if rc != 0 {
         return Err(std::io::Error::last_os_error());
     }
-    Ok((cred.uid, cred.gid, cred.pid))
+    Ok(Subscriber::new(cred.uid, cred.gid, cred.pid, peer_groups(fd)?))
+}
+
+/// The peer's supplementary groups (`SO_PEERGROUPS`, Linux 4.13). A kernel
+/// without it answers `ENOPROTOOPT`: the empty list, and the peer is judged
+/// on its primary gid alone — stricter than the filesystem, never looser.
+fn peer_groups(fd: std::os::unix::io::RawFd) -> std::io::Result<Vec<u32>> {
+    let mut groups: Vec<libc::gid_t> = vec![0; 64];
+    loop {
+        let mut len = std::mem::size_of_val(groups.as_slice()) as libc::socklen_t;
+        let rc = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_PEERGROUPS,
+                groups.as_mut_ptr().cast(),
+                &mut len,
+            )
+        };
+        let wanted = len as usize / std::mem::size_of::<libc::gid_t>();
+        if rc == 0 {
+            groups.truncate(wanted);
+            return Ok(groups);
+        }
+        let err = std::io::Error::last_os_error();
+        match err.raw_os_error() {
+            // Too small a buffer: the kernel says how large, and we ask again.
+            Some(libc::ERANGE) if wanted > groups.len() => groups.resize(wanted, 0),
+            Some(libc::ENOPROTOOPT) => return Ok(Vec::new()),
+            _ => return Err(err),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -542,9 +572,6 @@ mod tests {
     impl CredSource for AllowAll {
         fn dir_meta(&self, _path: &Path) -> Option<(u32, u32, u32)> {
             Some((0, 0, 0o777))
-        }
-        fn groups_of(&self, _pid: i32) -> Vec<u32> {
-            Vec::new()
         }
     }
 
@@ -701,9 +728,6 @@ mod tests {
                     p if p == Path::new("/mine") => Some((1000, 1000, 0o755)),
                     _ => Some((0, 0, 0o700)), // exists, but not for this uid
                 }
-            }
-            fn groups_of(&self, _pid: i32) -> Vec<u32> {
-                Vec::new()
             }
         }
         let broker = Broker::new(AccessFilter::new(OnlyRoot), Arc::new(NoRoots));
@@ -985,10 +1009,20 @@ mod tests {
     fn test_a_real_connection_is_identified_by_its_credentials() {
         let broker = Broker::new(AccessFilter::new(AllowAll), Arc::new(NoRoots));
         let (client, server) = UnixStream::pair().unwrap();
-        assert_eq!(
-            peer_creds(&server).unwrap(),
-            (unsafe { libc::geteuid() }, unsafe { libc::getegid() }, std::process::id() as i32)
-        );
+        let peer = peer_creds(&server).unwrap();
+        assert_eq!(peer.uid, unsafe { libc::geteuid() });
+        assert_eq!(peer.gid, unsafe { libc::getegid() });
+        assert_eq!(peer.pid, std::process::id() as i32);
+        // The group list comes with the socket (`SO_PEERGROUPS`, as of
+        // `connect`), not from `/proc/<pid>`, which a recycled pid could make
+        // another process's: the very list `getgroups` gives this process.
+        let n = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
+        let mut mine = vec![0 as libc::gid_t; n as usize];
+        unsafe { libc::getgroups(n, mine.as_mut_ptr()) };
+        mine.push(peer.gid);
+        mine.sort_unstable();
+        mine.dedup();
+        assert_eq!(peer.groups, mine);
         broker.attach_stream(server);
         assert_eq!(broker.client_count(), 1);
         drop(client);

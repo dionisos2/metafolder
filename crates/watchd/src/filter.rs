@@ -22,9 +22,6 @@ pub trait CredSource: Send + Sync {
     /// `(uid, gid, mode)` of the *directory* at `path`, or `None` when it does
     /// not exist or is not a directory.
     fn dir_meta(&self, path: &Path) -> Option<(u32, u32, u32)>;
-    /// The groups of the process `pid` — what `SO_PEERCRED` cannot carry (it
-    /// has only the primary gid).
-    fn groups_of(&self, pid: i32) -> Vec<u32>;
     /// What is at `path` itself, a symbolic link not followed (`lstat`,
     /// `readlink`). Defaults to what [`dir_meta`](Self::dir_meta) says — a
     /// fake filesystem without links.
@@ -51,7 +48,7 @@ pub enum Entry {
 /// own limit, `MAXSYMLINKS`).
 const MAX_LINKS: usize = 40;
 
-/// The real thing: `stat`, and `/proc/<pid>/status` for the group list.
+/// The real thing: `stat`.
 pub struct SystemCreds;
 
 impl CredSource for SystemCreds {
@@ -62,18 +59,6 @@ impl CredSource for SystemCreds {
             return None;
         }
         Some((md.uid(), md.gid(), md.mode() & 0o7777))
-    }
-
-    fn groups_of(&self, pid: i32) -> Vec<u32> {
-        // `/proc/<pid>/status` is the only place another process's *whole*
-        // group list is readable. Gone with the process (or unreadable): the
-        // empty list, and the subscriber is judged on its primary gid alone.
-        let status = std::fs::read_to_string(format!("/proc/{pid}/status")).unwrap_or_default();
-        status
-            .lines()
-            .find_map(|l| l.strip_prefix("Groups:"))
-            .map(|rest| rest.split_whitespace().filter_map(|g| g.parse().ok()).collect())
-            .unwrap_or_default()
     }
 
     fn entry(&self, path: &Path) -> Option<Entry> {
@@ -90,13 +75,26 @@ impl CredSource for SystemCreds {
     }
 }
 
-/// Who is asking — captured at accept time from `SO_PEERCRED`.
+/// Who is asking — what the kernel recorded at `connect` (`SO_PEERCRED`,
+/// `SO_PEERGROUPS`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Subscriber {
     pub uid: u32,
     pub gid: u32,
     pub pid: i32,
+    /// Every group, the primary gid included; sorted, no duplicate.
     pub groups: Vec<u32>,
+}
+
+impl Subscriber {
+    /// A subscriber from its credentials; `groups` is completed with the
+    /// primary gid.
+    pub fn new(uid: u32, gid: u32, pid: i32, mut groups: Vec<u32>) -> Self {
+        groups.push(gid);
+        groups.sort_unstable();
+        groups.dedup();
+        Subscriber { uid, gid, pid, groups }
+    }
 }
 
 /// A directory's `(uid, gid, mode)`.
@@ -118,16 +116,6 @@ const CACHE_MAX: usize = 8192;
 impl<C: CredSource> AccessFilter<C> {
     pub fn new(creds: C) -> Self {
         Self { creds, cache: HashMap::new(), ttl: Duration::from_secs(5) }
-    }
-
-    /// The group list the kernel does not hand out with `SO_PEERCRED`, for one
-    /// subscriber.
-    pub fn subscriber(&self, uid: u32, gid: u32, pid: i32) -> Subscriber {
-        let mut groups = self.creds.groups_of(pid);
-        groups.push(gid);
-        groups.sort_unstable();
-        groups.dedup();
-        Subscriber { uid, gid, pid, groups }
     }
 
     /// What the kernel would call the directory `path` (symlinks and `..`
@@ -294,7 +282,6 @@ mod tests {
         dirs: HashMap<PathBuf, (u32, u32, u32)>,
         links: HashMap<PathBuf, PathBuf>,
         files: std::collections::HashSet<PathBuf>,
-        groups: HashMap<i32, Vec<u32>>,
         stats: std::sync::atomic::AtomicUsize,
     }
 
@@ -306,7 +293,6 @@ mod tests {
                 dirs,
                 links: HashMap::new(),
                 files: std::collections::HashSet::new(),
-                groups: HashMap::new(),
                 stats: std::sync::atomic::AtomicUsize::new(0),
             }
         }
@@ -335,10 +321,6 @@ mod tests {
         fn dir_meta(&self, path: &Path) -> Option<(u32, u32, u32)> {
             self.stats.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             self.dirs.get(path).copied()
-        }
-
-        fn groups_of(&self, pid: i32) -> Vec<u32> {
-            self.groups.get(&pid).cloned().unwrap_or_default()
         }
 
         fn entry(&self, path: &Path) -> Option<Entry> {
@@ -537,12 +519,11 @@ mod tests {
 
     #[test]
     fn test_the_group_list_of_the_process_completes_the_primary_gid() {
-        let mut creds = FakeCreds::new().dir("/repo", 1000, 77, 0o750);
-        creds.groups.insert(42, vec![77]);
+        let creds = FakeCreds::new().dir("/repo", 1000, 77, 0o750);
         let mut f = AccessFilter::new(creds);
         // SO_PEERCRED gives uid/gid only; the group that opens /repo comes
-        // from /proc/<pid>/status.
-        let sub = f.subscriber(1001, 100, 42);
+        // from SO_PEERGROUPS.
+        let sub = Subscriber::new(1001, 100, 42, vec![77, 100, 77]);
         assert_eq!(sub.groups, vec![77, 100]);
         assert!(f.may_watch(&sub, Path::new("/repo")));
     }
@@ -629,18 +610,5 @@ mod tests {
         assert_eq!(entries[1], Some(Entry::Other));
         assert_eq!(entries[2], Some(Entry::Link(PathBuf::from("dir"))));
         assert_eq!(entries[3], None);
-    }
-
-    #[test]
-    fn test_the_system_source_reads_a_process_group_list() {
-        // What `/proc/<pid>/status` says of this very process: `getgroups`.
-        let n = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
-        let mut mine = vec![0 as libc::gid_t; n as usize];
-        unsafe { libc::getgroups(n, mine.as_mut_ptr()) };
-        let mut got = SystemCreds.groups_of(std::process::id() as i32);
-        got.sort_unstable();
-        mine.sort_unstable();
-        assert_eq!(got, mine);
-        assert_eq!(SystemCreds.groups_of(i32::MAX), Vec::<u32>::new(), "no such process");
     }
 }

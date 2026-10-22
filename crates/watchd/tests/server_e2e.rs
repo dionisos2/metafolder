@@ -26,10 +26,6 @@ impl CredSource for FakeCreds {
             Some((0, 0, 0o777))
         }
     }
-
-    fn groups_of(&self, _pid: i32) -> Vec<u32> {
-        Vec::new()
-    }
 }
 
 /// The union of roots, as the marks would see it.

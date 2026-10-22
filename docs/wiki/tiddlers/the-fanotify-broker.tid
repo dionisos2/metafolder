@@ -34,7 +34,9 @@ daemon's API ([[Tree names]]).
 
 The deployment is strictly single-user (a bearer token per service). The rule at every
 hop: ''no hop reveals more than the next hop's own credentials could discover by walking
-the filesystem''. The broker identifies each subscriber by `SO_PEERCRED` and sends an
+the filesystem''. The broker identifies each subscriber by `SO_PEERCRED` (uid, gid) and
+`SO_PEERGROUPS` (its other groups) — both as of `connect`, never read from
+`/proc/<pid>`, whose pid may belong to another user's process by the `accept` — and sends an
 event only if that uid, with its groups, could discover it walking down from its root —
 search every ancestor, ''list'' every directory from the root to the entry's parent.
 Subscribing to a root passes the same check, and so does resolving it (symlinks, `..`),
