@@ -356,7 +356,7 @@ fn spawn_health_polling(
 /// to move to, and nothing to write it down in.
 fn spawn_http_server(state: server::ServerState, token: Arc<str>, port: u16) {
     tauri::async_runtime::spawn(async move {
-        let router = server::build_router_authenticated(state, token);
+        let router = server::build_router_authenticated(state, token, port);
         let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
         match tokio::net::TcpListener::bind(address).await {
             Ok(listener) => {

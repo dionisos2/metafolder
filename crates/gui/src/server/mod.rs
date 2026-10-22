@@ -154,11 +154,11 @@ pub fn build_router(state: ServerState) -> Router {
         .route("/gui/status", get(gui_api::get_status))
         // Panels run in the Svelte shell's (Tauri) origin but fetch their
         // HTML and `import()` their modules from this server's origin, so the
-        // panel assets and helper modules must be CORS-readable. Permissive
-        // CORS is safe because the *sensitive* routes (file contents, the
-        // scripting API) are gated by the session token (doc "Session tokens"); the open
-        // routes only serve shipped panel code and styling.
-        .layer(tower_http::cors::CorsLayer::permissive())
+        // panel assets and helper modules must be CORS-readable — by the
+        // shell, and by no one else: the open routes include the user's own
+        // `user-commands.js` and `macros.js`, which a web page in the user's
+        // browser has no business reading (doc "Session tokens").
+        .layer(shell_cors())
         .with_state(state)
 }
 
@@ -168,8 +168,57 @@ pub fn build_router(state: ServerState) -> Router {
 /// carry an `Authorization` header (and they serve no private data).
 ///
 /// Used by the GUI binary; tests drive [`build_router`] directly (no token).
-pub fn build_router_authenticated(state: ServerState, token: Arc<str>) -> Router {
-    build_router(state).layer(axum::middleware::from_fn_with_state(token, require_token))
+///
+/// `port` is the one this server listens on: a request naming any other host
+/// is refused (see [`require_loopback_host`]).
+pub fn build_router_authenticated(state: ServerState, token: Arc<str>, port: u16) -> Router {
+    build_router(state)
+        .layer(axum::middleware::from_fn_with_state(token, require_token))
+        .layer(axum::middleware::from_fn_with_state(port, require_loopback_host))
+}
+
+/// The origins of the Svelte shell: Tauri's custom protocol (`tauri://localhost`
+/// on Linux and macOS, `http://tauri.localhost` on Windows).
+const SHELL_ORIGINS: [&str; 2] = ["tauri://localhost", "http://tauri.localhost"];
+
+/// CORS for the shell's origin only. Methods and request headers are mirrored
+/// (the `Authorization` header is never covered by a `*`).
+fn shell_cors() -> tower_http::cors::CorsLayer {
+    use axum::http::HeaderValue;
+    use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, Any, CorsLayer};
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::list(SHELL_ORIGINS.map(HeaderValue::from_static)))
+        .allow_methods(AllowMethods::mirror_request())
+        .allow_headers(AllowHeaders::mirror_request())
+        .expose_headers(Any)
+}
+
+/// Refuses a request whose `Host` is not this server on loopback
+/// (`127.0.0.1:<port>`, `localhost:<port>`). CORS cannot stop DNS rebinding —
+/// a page of `evil.example`, its name re-pointed at `127.0.0.1`, is
+/// same-origin with itself — but the `Host` it sends still names
+/// `evil.example`.
+async fn require_loopback_host(
+    axum::extract::State(port): axum::extract::State<u16>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let host = request.headers().get(axum::http::header::HOST).and_then(|v| v.to_str().ok());
+    let local = host.is_some_and(|host| {
+        host.rsplit_once(':').is_some_and(|(name, p)| {
+            matches!(name, "127.0.0.1" | "localhost") && p.parse::<u16>().ok() == Some(port)
+        })
+    });
+    if local {
+        next.run(request).await
+    } else {
+        (
+            axum::http::StatusCode::FORBIDDEN,
+            axum::Json(serde_json::json!({ "error": "not a request for this server" })),
+        )
+            .into_response()
+    }
 }
 
 /// Routes that expose file contents or drive the GUI, and so require the

@@ -6,9 +6,11 @@ summary: Loopback keeps other machines out, not the web pages in your browser; a
 
 Binding `127.0.0.1` keeps other ''machines'' out, not the ''browser on the same
 machine'': any web page you visit can send cross-origin requests to
-`127.0.0.1:<port>`. With the GUI server's permissive CORS — needed by the shell,
-which loads panel files across origins — a malicious page could read any local
-file through `/fsraw` and drive the scripting API. The daemon, with no permissive
+`127.0.0.1:<port>`. With the GUI server's permissive CORS — as it once was, for the
+shell, which loads panel files across origins — a malicious page could read any local
+file through `/fsraw` and drive the scripting API. (The CORS policy now names the
+shell's origin alone, and the GUI server checks `Host` ([[GUI asset endpoints]]); the
+token is what guards the sensitive routes either way.) The daemon, with no permissive
 CORS, was still open to blind writes, and to DNS rebinding (after the rebind the
 request is same-origin and CORS no longer applies).
 

@@ -12,8 +12,13 @@ summary: The open routes of the GUI's server that serve code and pages — panel
 
 They are the routes ''without'' the session token: they are loaded by `import()` or
 `<link>`, which cannot send a header, and they hold shipped or user-written code, no
-private data ([[Session tokens]]). The CORS policy is permissive for the same reason —
-panels run in the shell's origin and fetch from this one.
+private data ([[Session tokens]]). They are readable cross-origin by the ''shell's origin
+only'' (`tauri://localhost`, `http://tauri.localhost`) — panels run there and fetch from
+this one — and by no web page: `user-commands.js` and `macros.js` are the user's own
+code, recorded queries and paths included. A request whose `Host` is not
+`127.0.0.1:<port>` or `localhost:<port>` is refused with `403`, which closes DNS
+rebinding (after a rebind a page is same-origin with itself and CORS no longer
+applies).
 
 A file path is taken as plain name components only — no `..`, no absolute segment —
 so nothing outside the directory is reachable; anything unreadable is a `404`, a
