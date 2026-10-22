@@ -45,7 +45,9 @@ the broker's own capability made `/secret/x/../../tmp` an oracle for `/secret/x`
 bits only: stricter than an ACL would be, never looser. The daemon then never reports a
 path it could not stat itself.
 
-The socket is world-connectable, so what a peer can make the broker hold is bounded: a
+The socket is world-connectable (`0666`), made so inside a private directory and then
+renamed into place: a `chmod` by path, as root, in a directory others may write to would
+follow a link swapped in meanwhile. What a peer can make the broker hold is bounded: a
 message is at most 256 KiB, a uid 256 connections, the machine 1024, and a peer that
 hangs up is let go entirely.
 

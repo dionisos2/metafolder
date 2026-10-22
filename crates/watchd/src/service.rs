@@ -208,10 +208,21 @@ pub fn bind(socket: &Path) -> Result<UnixListener> {
 }
 
 /// [`bind`], with the opening-up step passed in.
+///
+/// The socket is bound and opened up inside a private (`0700`) directory beside
+/// its final place, then renamed there. Opening it up where it finally lives
+/// would `chmod` a *path*, as root, in a directory others may write to: one
+/// swapped for a link in between, and the broker would make the link's target
+/// world-writable. `rename` replaces whatever is at the final path, a link
+/// included, without following it.
 fn bind_with(
     socket: &Path,
     open_up: impl FnOnce(&Path) -> std::io::Result<()>,
 ) -> Result<UnixListener> {
+    use std::os::unix::fs::DirBuilderExt;
+    let Some(name) = socket.file_name() else {
+        anyhow::bail!("cannot bind {socket:?}: no file name");
+    };
     // `symlink_metadata`, never `exists()`: a stale socket left as a broken
     // symlink is a stale socket all the same, and `bind` would then fail with
     // EADDRINUSE instead of replacing it.
@@ -219,12 +230,28 @@ fn bind_with(
         std::fs::remove_file(socket)
             .with_context(|| format!("cannot remove the stale socket at {socket:?}"))?;
     }
-    if let Some(dir) = socket.parent() {
-        std::fs::create_dir_all(dir).with_context(|| format!("cannot create {dir:?}"))?;
-    }
-    let listener = UnixListener::bind(socket).with_context(|| format!("cannot bind {socket:?}"))?;
-    open_up(socket).with_context(|| format!("cannot open up {socket:?}"))?;
-    Ok(listener)
+    let dir = match socket.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir,
+        _ => Path::new("."),
+    };
+    std::fs::create_dir_all(dir).with_context(|| format!("cannot create {dir:?}"))?;
+    let staging = dir.join(format!(".watchd-bind-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&staging); // Left by a broker that died here.
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&staging)
+        .with_context(|| format!("cannot create {staging:?}"))?;
+    let staged = staging.join(name);
+    let bound = UnixListener::bind(&staged)
+        .with_context(|| format!("cannot bind {socket:?}"))
+        .and_then(|listener| {
+            open_up(&staged).with_context(|| format!("cannot open up {socket:?}"))?;
+            std::fs::rename(&staged, socket)
+                .with_context(|| format!("cannot move the socket to {socket:?}"))?;
+            Ok(listener)
+        });
+    let _ = std::fs::remove_dir_all(&staging);
+    bound
 }
 
 #[cfg(test)]
@@ -310,6 +337,11 @@ mod tests {
         let link = dir.join("link.sock");
         std::os::unix::fs::symlink(dir.join("nowhere"), &link).unwrap();
         bind(&link).expect("the broken link is replaced");
+        // Nothing but the sockets is left in their directory.
+        let mut left: Vec<_> =
+            std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name()).collect();
+        left.sort();
+        assert_eq!(left, ["link.sock", "run"].map(std::ffi::OsString::from));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -325,10 +357,9 @@ mod tests {
         std::fs::write(dir.join("file"), b"").unwrap();
         assert!(text(bind(&dir.join("file/sub/s.sock"))).starts_with("cannot create"));
 
-        // No path at all, so no parent: the kernel *autobinds* an empty name
-        // (an abstract address) — and opening up "" is what fails. A broker
-        // given `--socket ""` refuses to start either way.
-        assert!(text(bind(Path::new(""))).starts_with("cannot open up"));
+        // No path at all: nothing to bind (the kernel would *autobind* an
+        // abstract address). A broker given `--socket ""` refuses to start.
+        assert!(text(bind(Path::new(""))).starts_with("cannot bind"));
 
         let too_long = dir.join("x".repeat(200));
         assert!(text(bind(&too_long)).starts_with("cannot bind"));

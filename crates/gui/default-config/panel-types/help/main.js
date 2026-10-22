@@ -77,12 +77,13 @@ export async function mount(root, metafolder) {
       manifest.map(async (page) => {
         const raw = await (await fetch(`${wikiBase}/${page.file}`)).text();
         html.set(page.id, raw);
-        const probe = document.createElement('div');
-        probe.innerHTML = raw;
+        // Parsed in an inert document: an element of the live one starts
+        // loading its images, and an `onerror` there would run.
+        const probe = new DOMParser().parseFromString(raw, 'text/html');
         index.push({
           id: page.id,
           title: page.title,
-          text: probe.textContent ?? '',
+          text: probe.body.textContent ?? '',
           audience: page.audience,
         });
       }),

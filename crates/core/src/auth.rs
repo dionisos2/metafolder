@@ -39,13 +39,23 @@ fn runtime_base(xdg: Option<&OsStr>, uid: Option<u32>) -> Option<PathBuf> {
     uid.map(|uid| PathBuf::from(format!("/tmp/metafolder-{uid}")))
 }
 
-/// The current user's uid, derived from the owner of `$HOME` (no `libc`
-/// dependency). Used to name and verify the `/tmp` fallback directory.
+/// The current user's (effective) uid, without a `libc` dependency. Used to
+/// name and verify the `/tmp` fallback directory.
 #[cfg(unix)]
 fn current_uid() -> Option<u32> {
+    uid_of(std::env::var_os("HOME").as_deref())
+}
+
+/// The owner of `/proc/self` — the process's effective uid, whatever `$HOME`
+/// says (`sudo -E` keeps another user's) — and where there is no `/proc`
+/// (macOS), the owner of `home`.
+#[cfg(unix)]
+fn uid_of(home: Option<&OsStr>) -> Option<u32> {
     use std::os::unix::fs::MetadataExt;
-    let home = std::env::var_os("HOME")?;
-    std::fs::metadata(home).ok().map(|m| m.uid())
+    if let Ok(meta) = std::fs::metadata("/proc/self") {
+        return Some(meta.uid());
+    }
+    std::fs::metadata(home?).ok().map(|m| m.uid())
 }
 
 #[cfg(not(unix))]
@@ -255,6 +265,21 @@ mod tests {
     #[test]
     fn runtime_base_none_without_xdg_or_uid() {
         assert_eq!(runtime_base(None, None), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn current_uid_is_the_process_s_own_not_home_s_owner() {
+        // A file this process creates is owned by its effective uid — what the
+        // runtime directory must be owned by — whoever `$HOME` belongs to.
+        use std::os::unix::fs::MetadataExt;
+        let dir = temp_dir("uid");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("probe");
+        std::fs::write(&file, b"").unwrap();
+        let mine = std::fs::metadata(&file).unwrap().uid();
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(uid_of(Some(std::ffi::OsStr::new("/"))), Some(mine));
     }
 
     #[test]
