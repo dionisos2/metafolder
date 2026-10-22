@@ -104,6 +104,14 @@ function fakeDaemon() {
       repos.splice(at, 1);
       return { status: 200, body: {} };
     }
+    if (method === 'POST' && /^\/repos\/[^/]+\/memory$/.test(bare)) {
+      const repo = repos.find((r) => r.repo_uuid === bare.split('/')[2]);
+      if (!repo) return { status: 404, body: { error: 'Repository not found' } };
+      repo.in_memory = (body as { in_memory: boolean }).in_memory
+        ? { bytes: 2 << 20, pinned: true, reason: null }
+        : null;
+      return { status: 200, body: repo };
+    }
     if (method === 'POST' && /^\/repos\/[^/]+\/schema\/check$/.test(bare)) {
       return { status: 200, body: { violations: [] } };
     }
@@ -873,5 +881,58 @@ describe('repos panel — in memory', () => {
     expect(badges[1]?.title).toContain('the limit is 8 MiB');
     expect(badges[1]?.dataset.unpinned).toBe('');
     expect(badges[2]).toBeNull();
+  });
+
+  const memoryCalls = (daemon: ReturnType<typeof fakeDaemon>) =>
+    daemon.calls
+      .filter((c) => c.path.endsWith('/memory'))
+      .map((c) => [c.path, (c.body as { in_memory: boolean }).in_memory]);
+
+  test('repos:toggle-memory holds the active repository in memory, then lets it go', async () => {
+    const { api, daemon, handlers } = setup({ activeRepo: 'r1' });
+    daemon.repos.push({ repo_uuid: 'r1', name: 'photos', root: '/tmp/photos', in_memory: null });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    await command(handlers, 'repos:toggle-memory')();
+    await settle();
+    expect(shadow.querySelector('#repo-list .memory')?.textContent).toBe('in memory');
+    await command(handlers, 'repos:toggle-memory')();
+    await settle();
+    expect(shadow.querySelector('#repo-list .memory')).toBeNull();
+    expect(memoryCalls(daemon)).toEqual([
+      ['/repos/r1/memory', true],
+      ['/repos/r1/memory', false],
+    ]);
+  });
+
+  test('repos:toggle-memory takes a repository by name', async () => {
+    const { api, daemon, handlers } = setup({ activeRepo: 'r1' });
+    daemon.repos.push(
+      { repo_uuid: 'r1', name: 'photos', root: '/tmp/photos', in_memory: null },
+      {
+        repo_uuid: 'r2',
+        name: 'music',
+        root: '/tmp/music',
+        in_memory: { bytes: 1 << 20, pinned: true, reason: null },
+      },
+    );
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    await command(handlers, 'repos:toggle-memory')('music');
+    expect(memoryCalls(daemon)).toEqual([['/repos/r2/memory', false]]);
+    await expect(command(handlers, 'repos:toggle-memory')('nope')).rejects.toThrow('nope');
+  });
+
+  test('repos:toggle-memory without a repository is an error', async () => {
+    const { api, daemon, handlers } = setup({ activeRepo: null });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+    await expect(command(handlers, 'repos:toggle-memory')()).rejects.toThrow('no active');
+    expect(memoryCalls(daemon)).toEqual([]);
   });
 });

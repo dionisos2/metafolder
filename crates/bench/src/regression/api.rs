@@ -141,6 +141,8 @@ pub const SCENARIOS: &[Scenario] = &[
     s("api.orphans.clear", &[(P, "/repos/:repo/orphans/clear")]),
     whole("api.repo.check", &[(P, "/repos/:repo/check")]),
     whole("api.repo.reindex", &[(P, "/repos/:repo/reindex")]),
+    // Reads the whole store in, then lets go of it.
+    whole("api.repo.memory", &[(P, "/repos/:repo/memory")]),
     whole("api.repo.backup", &[(P, "/repos/:repo/backup")]),
     whole("api.repo.restore", &[(P, "/repos/:repo/restore")]),
     whole("api.repo.restore_by_root", &[(P, "/repos/restore")]),
@@ -526,6 +528,10 @@ pub async fn run(id: &str, c: &Ctx) -> Result<()> {
         }
         "api.repo.check" => drop(post(&format!("{base}/check"), json!({})).await?),
         "api.repo.reindex" => drop(post(&format!("{base}/reindex"), json!({})).await?),
+        "api.repo.memory" => {
+            post(&format!("{base}/memory"), json!({"in_memory": true})).await?;
+            post(&format!("{base}/memory"), json!({"in_memory": false})).await?;
+        }
         "api.repo.backup" => {
             let _ = std::fs::remove_dir_all(&c.backup);
             post(&format!("{base}/backup"), json!({"to": c.backup})).await?;

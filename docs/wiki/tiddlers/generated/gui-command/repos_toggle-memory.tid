@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/repos:toggle-memory
+catalog: GUI command
+target: repos:toggle-memory
+summary: Repos: hold a repository in memory, or let go of it (default: the active one)
+
+!! Reference
+
+* Defined by the ``repos`` panel
+* No default key

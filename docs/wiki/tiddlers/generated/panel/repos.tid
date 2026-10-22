@@ -11,6 +11,7 @@ summary: The repos panel type
 * ``repos:open-retype`` — Repos: open the field-type conversion form for the active repository
 * ``repos:resume`` — Repos: resume tracking on the active repository
 * ``repos:stop`` — Repos: stop one of the active repository's running tasks
+* ``repos:toggle-memory`` — Repos: hold a repository in memory, or let go of it (default: the active one)
 * ``repos:unload`` — Repos: unload a repository from the daemon
 * ``repos:watch-exceeded`` — Repos: list the subtrees left unwatched for want of watch budget
 

@@ -567,7 +567,8 @@ async fn loading_in_memory_a_repository_already_loaded_otherwise_is_refused() {
         post(&app, "/repos/load", serde_json::json!({ "root": root.path(), "in_memory": true }))
             .await;
     assert_eq!(st, StatusCode::CONFLICT, "{body}");
-    assert!(body["error"].as_str().unwrap().contains("unload"), "{body}");
+    // It names the switch that does it without unloading.
+    assert!(body["error"].as_str().unwrap().contains("/memory"), "{body}");
 
     // Loaded in memory, loading it in memory again is the ordinary idempotent load.
     let (st, _) = post(&app, &format!("/repos/{repo}/unload"), Value::Null).await;
@@ -577,4 +578,66 @@ async fn loading_in_memory_a_repository_already_loaded_otherwise_is_refused() {
         post(&app, "/repos/load", serde_json::json!({ "root": root.path(), "in_memory": true }))
             .await;
     assert_eq!(st, StatusCode::OK, "{body}");
+}
+
+/// `POST /repos/:repo/memory` with `in_memory`.
+async fn set_memory(app: &Router, repo: &str, on: bool) -> (StatusCode, Value) {
+    post(app, &format!("/repos/{repo}/memory"), serde_json::json!({ "in_memory": on })).await
+}
+
+#[tokio::test]
+async fn a_loaded_repository_is_held_in_memory_and_let_go_without_unloading() {
+    // doc "Holding a repository in memory": the switch reads the store in (or
+    // lets go of it) on the loaded repository, which keeps answering.
+    let state = Arc::new(AppState::new());
+    let app = routes::build(state.clone());
+    let root = temp_dir("memoryswitch");
+    common::seed_config(&root);
+    let repo = state.init_repo(&root, None, None, false).unwrap().as_simple().to_string();
+
+    let (st, info) = set_memory(&app, &repo, true).await;
+    assert_eq!(st, StatusCode::OK, "{info}");
+    assert!(info["in_memory"]["bytes"].as_u64().unwrap() > 0, "{info}");
+    assert_eq!(info["in_memory"]["pinned"], true, "{info}");
+    let (_, repos) = request(&app, "GET", "/repos").await;
+    assert!(repos[0]["in_memory"]["bytes"].as_u64().unwrap() > 0, "{repos}");
+    // Held, the load in memory is the ordinary idempotent one.
+    let (st, body) =
+        post(&app, "/repos/load", serde_json::json!({ "root": root.path(), "in_memory": true }))
+            .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    // Asked twice, the same.
+    let (st, again) = set_memory(&app, &repo, true).await;
+    assert_eq!(st, StatusCode::OK, "{again}");
+    assert_eq!(again["in_memory"], info["in_memory"]);
+
+    let (st, info) = set_memory(&app, &repo, false).await;
+    assert_eq!(st, StatusCode::OK, "{info}");
+    assert!(info["in_memory"].is_null(), "{info}");
+    let (_, repos) = request(&app, "GET", "/repos").await;
+    assert!(repos[0]["in_memory"].is_null(), "{repos}");
+    let (st, info) = set_memory(&app, &repo, false).await;
+    assert_eq!(st, StatusCode::OK, "{info}");
+
+    // It still answers, held or not.
+    let (st, body) = post(
+        &app,
+        &format!("/repos/{repo}/metarecords"),
+        serde_json::json!({"fields": [{"name": "note", "value": {"type": "string", "value": "x"}}]}),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+}
+
+#[tokio::test]
+async fn the_memory_switch_wants_a_known_repository_and_a_flag() {
+    let state = Arc::new(AppState::new());
+    let app = routes::build(state.clone());
+    let root = temp_dir("memoryswitchbad");
+    common::seed_config(&root);
+    let repo = state.init_repo(&root, None, None, false).unwrap().as_simple().to_string();
+    let (st, _) = set_memory(&app, &Uuid::new_v4().as_simple().to_string(), true).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, _) = post(&app, &format!("/repos/{repo}/memory"), serde_json::json!({})).await;
+    assert!(st.is_client_error(), "{st}");
 }

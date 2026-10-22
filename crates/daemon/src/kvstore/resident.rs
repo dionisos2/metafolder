@@ -126,6 +126,15 @@ impl Resident {
         self.reason = Some(reason);
     }
 
+    /// Lets go of the store (doc "Holding a repository in memory"): what was
+    /// locked is unlocked, and the kernel may evict it again, as for an
+    /// ordinary load. What was only read in has nothing to undo.
+    pub(crate) fn release(self, mem: &dyn Memory) {
+        if self.pinned && self.len > 0 {
+            mem.unlock(self.addr, self.len);
+        }
+    }
+
     pub(crate) fn addr(&self) -> usize {
         self.addr
     }
@@ -384,5 +393,23 @@ mod tests {
         let mut r = Resident::take(&mem, 0, MIB, &|_, _| {});
         r.follow(&mem, 0, 2 * MIB);
         assert_eq!(mem.calls().last().unwrap(), &format!("touch {MIB}+{MIB}"));
+    }
+
+    #[test]
+    fn test_letting_go_unlocks_what_was_locked() {
+        let mem = Fake::new(None);
+        let mut r = Resident::take(&mem, 0, MIB, &|_, _| {});
+        r.follow(&mem, 0, 2 * MIB);
+        r.release(&mem);
+        assert_eq!(mem.calls().last().unwrap(), &format!("unlock 0+{}", 2 * MIB));
+    }
+
+    #[test]
+    fn test_letting_go_of_what_was_only_read_in_unlocks_nothing() {
+        let mem = Fake::new(Some(0));
+        let r = Resident::take(&mem, 0, MIB, &|_, _| {});
+        let before = mem.calls();
+        r.release(&mem);
+        assert_eq!(mem.calls(), before);
     }
 }

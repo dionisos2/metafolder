@@ -806,6 +806,44 @@ export async function mount(root, metafolder) {
     },
   });
 
+  // Holds a loaded repository's store in memory, or lets go of it, without
+  // unloading it (doc "Holding a repository in memory").
+  void commands.register('repos:toggle-memory', {
+    label: 'Repos: hold a repository in memory, or let go of it (default: the active one)',
+    args: [
+      {
+        name: 'repo',
+        optional: true,
+        prompt: () => 'Which repository? (empty: the active one)',
+        complete: async () => (await loadedRepos()).map((r) => r.name),
+      },
+    ],
+    handler: async (_mf, name) => {
+      const repos = await loadedRepos();
+      const wanted = (name ?? '').trim();
+      const uuid = wanted ? null : (await activeRepo()).uuid;
+      const repo = repos.find((r) => (wanted ? r.name === wanted : r.repo_uuid === uuid));
+      if (!repo) throw new Error(`no loaded repository named "${wanted || uuid}"`);
+      const held = /** @type {Repo} */ (
+        await daemon.call('POST', `/repos/${repo.repo_uuid}/memory`, {
+          in_memory: !repo.in_memory,
+        })
+      );
+      const memory = held.in_memory;
+      if (!memory) {
+        void statusBar.message(`${repo.name}: no longer held in memory`, 3000);
+      } else if (memory.pinned) {
+        void statusBar.message(`${repo.name}: held in memory`, 3000);
+      } else {
+        void statusBar.message(
+          `${repo.name}: read into memory, not locked there: ${memory.reason ?? ''}`,
+          statusErrorMs,
+        );
+      }
+      await refresh();
+    },
+  });
+
   void commands.register('repos:stop', {
     label: "Repos: stop one of the active repository's running tasks",
     args: [

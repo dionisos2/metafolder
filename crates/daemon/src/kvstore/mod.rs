@@ -1359,6 +1359,15 @@ impl KvStore {
         Ok(slot.as_ref().expect("taken above").residency())
     }
 
+    /// Lets go of what [`Self::make_resident`] held: unlocked, and no longer
+    /// followed by the writes. Nothing held, nothing done.
+    pub fn release_resident(&self) {
+        let taken = self.resident.0.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(resident) = taken {
+            resident.release(&resident::Kernel);
+        }
+    }
+
     /// What is held in memory, `None` when nothing was asked.
     pub fn residency(&self) -> Option<resident::Residency> {
         self.resident.get()
@@ -1931,5 +1940,23 @@ mod resident_tests {
         let after = store.residency().unwrap();
         assert!(after.bytes > before, "{} then {}", before, after.bytes);
         assert_eq!(after.bytes, used(&store));
+    }
+
+    #[test]
+    fn test_a_store_held_in_memory_can_be_let_go_and_held_again() {
+        let (mut store, _dir) = test_store();
+        store.make_resident(&|_, _| {}).unwrap();
+        store.release_resident();
+        assert_eq!(store.residency(), None);
+        // Let go, it no longer follows the writes.
+        fill(&mut store, 10);
+        drop(store.begin_write().unwrap());
+        assert_eq!(store.residency(), None);
+        let again = store.make_resident(&|_, _| {}).unwrap();
+        assert_eq!(again.bytes, used(&store));
+        // Letting go of a store not held is nothing.
+        store.release_resident();
+        store.release_resident();
+        assert_eq!(store.residency(), None);
     }
 }

@@ -1,0 +1,6 @@
+title: repos:toggle-memory
+tags: [[GUI command]] Repository
+kind: reference
+summary: Repos: hold a repository in memory, or let go of it
+
+Holds the store of a loaded repository — the one named, else the active one — in memory, or lets go of it if it already is, without unloading it; the status bar says which, and why it is not locked when it is not ([[Holding a repository in memory]]).

@@ -293,6 +293,28 @@ pub(super) async fn reindex_repo(
     .await
 }
 
+#[derive(Deserialize)]
+pub(super) struct MemoryBody {
+    in_memory: bool,
+}
+
+/// `POST /repos/:repo/memory`: holds the loaded repository's store in memory,
+/// or lets go of it, without unloading it (doc "Holding a repository in
+/// memory"). Answers the repository's info, `in_memory` included.
+pub(super) async fn set_repo_memory(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<MemoryBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.set_in_memory(body.in_memory)?;
+        Ok(Json(serde_json::to_value(repo_state.info()).expect("repo info serialization")))
+    })
+    .await
+}
+
 #[derive(Deserialize, Default)]
 pub(super) struct RestoreBody {
     /// The repository, when it is named by its path (`POST /repos/restore`).

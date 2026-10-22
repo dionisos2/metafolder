@@ -58,6 +58,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/restore", post(restore_loaded_repo))
         .route("/repos/restore", post(restore_repo))
         .route("/repos/:repo/reindex", post(reindex_repo))
+        .route("/repos/:repo/memory", post(set_repo_memory))
         .route("/repos/load", post(load_repo))
         .route("/repos/:repo", get(get_repo).patch(rename_repo))
         .route("/repos/:repo/unload", post(unload_repo))

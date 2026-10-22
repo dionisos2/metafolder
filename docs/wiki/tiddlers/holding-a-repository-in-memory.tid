@@ -9,7 +9,7 @@ mf repo load --in-memory <root>
 ```
 
 or ''Load in memory'' in the [[repos panel]]'s load form, `repos:load in-memory` from
-the keyboard, `{"root": …, "in_memory": true}` for [[POST /repos/load]] — and, for a
+the keyboard (and `repos:toggle-memory` for one already loaded, below), `{"root": …, "in_memory": true}` for [[POST /repos/load]] — and, for a
 repository the daemon loads at startup, `in-memory = true` in its `[[load]]` entry
 ([[Daemon configuration]]).
 
@@ -54,11 +54,21 @@ cold, and a query that reads a few partitions took 10 to 30 ms either way, warm 
 (October 2026). A query reads a small part of the store, a reconcile or a large sort
 more; the gain is largest where the store is read wide and the disk is slow.
 
-!! Asking for it on a loaded repository
+!! Switching a loaded repository
 
-A repository already loaded the ordinary way is refused (`409`): its load would read
-nothing in. Unload it, then load it in memory. Loading in memory a repository already
-held in memory is the ordinary idempotent load.
+A loaded repository is held in memory, or let go of, without unloading it:
+`repos:toggle-memory [repo]` (the active repository by default) from the keyboard, or
+`{"in_memory": true}` / `false` for [[POST /repos/:repo/memory]]. Held, the store is
+read in as at a load — and, for that while, every other request to the repository
+waits, as it would for the load's `memory` phase. Let go, what was locked is unlocked
+and no longer followed by the writes: the pages stay in the page cache, and the kernel
+may evict them again, as for an ordinary load. Asked for what already is, nothing is
+done.
+
+`POST /repos/load` with `in_memory` on a repository already loaded the ordinary way is
+refused (`409`): a load of a loaded repository does nothing, so it would read nothing
+in — the error names the switch above. Loading in memory a repository already held in
+memory is the ordinary idempotent load.
 
 !! Why one store, and not a copy in memory
 

@@ -1,0 +1,9 @@
+title: POST /repos/:repo/memory
+tags: [[HTTP endpoint]] [[Repository endpoints]]
+kind: reference
+audience: dev
+summary: Holds a loaded repository's store in memory, or lets go of it.
+
+[[Holding a repository in memory]].
+
+Bodies, answers and errors: [[Repository endpoints]].

@@ -32,6 +32,7 @@ violations, and says how many it found in the message log ([[Schema]]).
 * ''Load repo…'' opens a form holding the root directory, typed or picked with ''Browse…'' — the [[file-manager panel]] as a [[Value picker]] on the whole disk, starting at the path already typed or at your home directory.
 * The form's ''Load in memory'' loads it with its store held in memory ([[Holding a repository in memory]]); its row then says ''in memory'' — or ''in memory, not locked'', the reason in its tooltip.
 * <<key "repos:load" "g l">> (`repos:load`) skips the form: the folder picker opens at once and the folder picked is loaded — held in memory with `repos:load in-memory`. Cancelling the picker loads nothing.
+* `repos:toggle-memory [repo]` holds a loaded repository (the active one by default) in memory, or lets go of it, without unloading it ([[Holding a repository in memory]]).
 * ''Init new repo…'' (`repos:open-init`) opens the form creating a repository: a root directory and an optional name, which defaults to the folder's — picking the folder fills it. `repos:init <folder> [name]` does the same without the form, for a keybinding or a script; a refusal is the command's error. The new root gets the `default` ignore preset ([[Ignore presets]]). A `.metafolder` kept outside the root is command-line only (`mf repo init --metafolder`).
 
 A repository loaded or created this way is adopted by a workspace that has none, and

@@ -661,19 +661,43 @@ impl RepoState {
         // A handful of rows off an indexed field — no phase of its own.
         self.set_declared_mounts(Arc::new(crate::mount::declared_set(&conn, &self.tree())?));
         if self.held_in_memory() {
-            // With the store held: a resize meanwhile would unmap what is read.
-            let _p = Phase::begin(&self.name(), "read the store into memory");
-            let kv = conn.as_kv().ok_or_else(|| {
-                ApiError::internal("only the key-value store can be held in memory")
-            })?;
-            let residency = kv
-                .make_resident(&|done, total| progress("memory", Some(done), Some(total)))
-                .map_err(|e| ApiError::internal(format!("{e:#}")))?;
-            if let Some(reason) = &residency.reason {
-                crate::diagnostics::warn_for("memory", reason.clone(), self.uuid());
-            }
-            let _ = self.residency.set(kv.residency_handle());
+            self.read_in(&conn, &|done, total| progress("memory", Some(done), Some(total)))?;
         }
+        Ok(())
+    }
+
+    /// Reads the store into memory (doc "Holding a repository in memory"),
+    /// `conn` held: a resize meanwhile would unmap what is read.
+    fn read_in(
+        &self,
+        conn: &crate::store::Handle,
+        progress: &dyn Fn(u64, u64),
+    ) -> Result<(), ApiError> {
+        let _p = Phase::begin(&self.name(), "read the store into memory");
+        let kv = conn
+            .as_kv()
+            .ok_or_else(|| ApiError::internal("only the key-value store can be held in memory"))?;
+        let residency =
+            kv.make_resident(progress).map_err(|e| ApiError::internal(format!("{e:#}")))?;
+        if let Some(reason) = &residency.reason {
+            crate::diagnostics::warn_for("memory", reason.clone(), self.uuid());
+        }
+        let _ = self.residency.set(kv.residency_handle());
+        Ok(())
+    }
+
+    /// Holds the loaded store in memory, or lets go of it, without unloading
+    /// (`POST /repos/:repo/memory`, doc "Holding a repository in memory").
+    /// Already so, nothing is done. Reading in holds the store — every other
+    /// request waits — for as long as the load's `memory` phase would.
+    pub fn set_in_memory(&self, on: bool) -> Result<(), ApiError> {
+        let conn = metafolder_core::slowlog::timed("wait:conn", || self.conn.lock_recover());
+        if on {
+            self.read_in(&conn, &|_, _| {})?;
+        } else if let Some(kv) = conn.as_kv() {
+            kv.release_resident();
+        }
+        self.in_memory.store(on, std::sync::atomic::Ordering::Release);
         Ok(())
     }
 
@@ -1181,9 +1205,10 @@ impl AppState {
                 if loaded.root_present() {
                     if in_memory && !loaded.held_in_memory() {
                         return Err(ApiError::conflict(format!(
-                            "'{}' is already loaded, not in memory: unload it, then load it in \
-                             memory",
-                            loaded.name()
+                            "'{}' is already loaded, not in memory: hold it in memory with \
+                             POST /repos/{}/memory",
+                            loaded.name(),
+                            config.repo_uuid.as_simple()
                         )));
                     }
                     return Ok(config.repo_uuid);

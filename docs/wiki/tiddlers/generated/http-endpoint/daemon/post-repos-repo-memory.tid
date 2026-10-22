@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/:repo/memory
+catalog: HTTP endpoint
+target: POST /repos/:repo/memory
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``set_repo_memory`` |
