@@ -706,7 +706,7 @@ describe('repos panel — commands', () => {
     await settle();
     daemon.calls.length = 0;
 
-    const running = command(handlers, 'repos:load')();
+    const running = command(handlers, 'repos:load')('on-disk');
     await settle();
     expect(picks).toHaveLength(1);
     expect((picks[0].panel as { type: string }).type).toBe('file-manager');
@@ -737,7 +737,7 @@ describe('repos panel — commands', () => {
     await settle();
     daemon.calls.length = 0;
 
-    const running = command(handlers, 'repos:load')();
+    const running = command(handlers, 'repos:load')('on-disk');
     await settle();
     pushVarChanged('pick_result', { token: picks[0].token, cancelled: true });
     await running;
@@ -752,7 +752,7 @@ describe('repos panel — commands', () => {
     await mount(shadow, api);
     await settle();
 
-    const running = command(handlers, 'repos:load')();
+    const running = command(handlers, 'repos:load')('on-disk');
     await settle();
     pushVarChanged('pick_result', { token: picks[0].token, path: '/tmp/not-a-repo' });
     await running;
@@ -840,6 +840,32 @@ describe('repos panel — in memory', () => {
     await settle();
 
     expect(loadedWithMemory(daemon)).toHaveLength(1);
+  });
+
+  test('repos:load on-disk does not ask for memory', async () => {
+    const { api, daemon, handlers, picks, pushVarChanged } = setup({ activeRepo: null });
+    daemon.repos.push({ repo_uuid: 'r1', name: 'photos', root: '/tmp/photos' });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    const running = command(handlers, 'repos:load')('on-disk');
+    await settle();
+    pushVarChanged('pick_result', { token: picks[0].token, path: '/tmp/photos' });
+    await running;
+    await settle();
+
+    expect(daemon.calls.some((c) => c.path === '/repos/load')).toBe(true);
+    expect(loadedWithMemory(daemon)).toHaveLength(0);
+  });
+
+  test('repos:load without a mode is an error, and picks nothing', async () => {
+    const { api, handlers, picks } = setup({ activeRepo: null });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+    await expect(command(handlers, 'repos:load')()).rejects.toThrow('on-disk');
+    expect(picks).toHaveLength(0);
   });
 
   test('repos:load with an unknown mode is an error, and picks nothing', async () => {

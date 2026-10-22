@@ -3,4 +3,4 @@ tags: [[GUI command]] Repository
 kind: reference
 summary: Repos: pick a folder and load the repository in it
 
-Opens a folder picker and loads the repository in the folder picked — the [[repos panel]]'s ''Load repo…'' without its form. Cancelling loads nothing; a folder that is no repository is said in the status bar ([[Creating and loading a repository]]).
+Asks how to load — `on-disk`, the ordinary load, or `in-memory`, its store held in memory ([[Holding a repository in memory]]) — then opens a folder picker and loads the repository in the folder picked — the [[repos panel]]'s ''Load repo…'' without its form. Cancelling loads nothing; a folder that is no repository is said in the status bar ([[Creating and loading a repository]]).

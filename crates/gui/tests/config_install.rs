@@ -271,7 +271,7 @@ fn test_go_family_load_and_folder_keybindings() {
             .map(|b| b.invocation.clone())
     };
 
-    assert_eq!(global(&["g", "l"]).as_deref(), Some("repos:load"));
+    assert_eq!(global(&["g", "l"]).as_deref(), Some("repos:load on-disk"));
     // A command opening a panel names its default target (doc "Panel slots and
     // layout"); the same sequence after `w` / `b` opens in the other slot / a
     // new workspace.

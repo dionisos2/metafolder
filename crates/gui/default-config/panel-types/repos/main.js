@@ -135,10 +135,10 @@ export async function mount(root, metafolder) {
   // in — the folder picker opens straight away and the pick is loaded. A
   // failure has no form to land in, so it is said in the status bar.
   /** @param {MetafolderApi} mf the command's run (doc "Command transactions")
-   *  @param {string} [mode] `in-memory`, or nothing for an ordinary load */
+   *  @param {string} mode `on-disk` (an ordinary load) or `in-memory` */
   async function loadPicked(mf, mode) {
-    if (mode !== undefined && mode !== 'in-memory') {
-      throw new Error(`unknown mode: "${mode}" (expected in-memory)`);
+    if (!LOAD_MODES.includes(mode)) {
+      throw new Error(`unknown mode: "${mode ?? ''}" (expected ${LOAD_MODES.join(' or ')})`);
     }
     const path = await pickRunner.request({
       panel: 'file-manager',
@@ -160,6 +160,9 @@ export async function mount(root, metafolder) {
       await statusBar.error(messageOf(error), statusErrorMs);
     }
   }
+
+  /** How `repos:load` loads (doc "Holding a repository in memory"). */
+  const LOAD_MODES = ['on-disk', 'in-memory'];
 
   /** @param {string} path @param {boolean} inMemory */
   function loadBody(path, inMemory) {
@@ -755,13 +758,12 @@ export async function mount(root, metafolder) {
     },
   });
   void commands.register('repos:load', {
-    label: 'Repos: pick a folder and load the repository in it (in-memory: held in memory)',
+    label: 'Repos: pick a folder and load the repository in it (on-disk, or in-memory: held in memory)',
     args: [
       {
         name: 'mode',
-        optional: true,
-        prompt: () => 'Hold it in memory? (in-memory)',
-        complete: () => ['in-memory'],
+        prompt: () => 'Load it on disk, or hold it in memory?',
+        complete: () => LOAD_MODES,
       },
     ],
     handler: loadPicked,

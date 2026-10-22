@@ -957,7 +957,7 @@ scenario_picker() {
     show_panel left repos view:refresh repos
 
     # repos:load resolves once the pick does: it runs beside the scenario.
-    mfg command --timeout-ms 60000 repos:load >/dev/null 2>&1 &
+    mfg command --timeout-ms 60000 repos:load on-disk >/dev/null 2>&1 &
     runner=$!
     assert "picker: repos load opens one" until_ok 10 picking
     run pick:cancel
@@ -965,7 +965,7 @@ scenario_picker() {
     assert_not "pick cancel: the picker closes" picking
     assert_eq "pick cancel: nothing is loaded" "" "$(repo_named picked)"
 
-    mfg command --timeout-ms 60000 repos:load >/dev/null 2>&1 &
+    mfg command --timeout-ms 60000 repos:load on-disk >/dev/null 2>&1 &
     runner=$!
     assert "picker: opens again" until_ok 10 picking
     # The picker's selection is what its panel shows: the folder, here.

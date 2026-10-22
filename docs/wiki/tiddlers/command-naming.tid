@@ -82,8 +82,7 @@ Two families keep a single-valued argument, on purpose:
 * The text zones — `focus <zone>`, `clear <zone>`, `apply <zone> [stay]` — are one form across the panels, so a key does the same thing everywhere: `help:focus search` and `shell:focus line`, beside `metarecord-list:focus finder`.
 * An `mf:` command takes the CLI's words: `mf:duplicate scan` is `mf duplicate scan`.
 
-An optional argument with one value (`metarecord:reconcile [watch]`, `repos:load
-[in-memory]`, `[stay]`) is a choice between giving it and not, and stays an argument.
+An optional argument with one value (`metarecord:reconcile [watch]`, `[stay]`) is a choice between giving it and not, and stays an argument.
 
 !! Two forms kept on purpose
 

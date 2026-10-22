@@ -1,7 +1,7 @@
 title: $:/mf/gen/GUI command/repos:load
 catalog: GUI command
 target: repos:load
-summary: Repos: pick a folder and load the repository in it (in-memory: held in memory)
+summary: Repos: pick a folder and load the repository in it (on-disk, or in-memory: held in memory)
 
 !! Reference
 
@@ -9,4 +9,4 @@ summary: Repos: pick a folder and load the repository in it (in-memory: held in 
 
 !! Default keys
 
-* ``g l`` → ``repos:load``
+* ``g l`` → ``repos:load on-disk``

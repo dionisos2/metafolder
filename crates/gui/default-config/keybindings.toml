@@ -207,8 +207,9 @@
 # form — the folder picker opens straight away and the pick is loaded (a folder
 # that is not a repository is said in the status bar, since there is no form to
 # land the error in). Global, like `g o`: the two are the pair "open one the
-# daemon knows" / "point at one on disk".
-"g l" = { command = "repos:load" }
+# daemon knows" / "point at one on disk". Loaded the ordinary way; typing
+# `repos:load` asks on-disk or in-memory.
+"g l" = { command = "repos:load on-disk" }
 
 # List the selection's folder as metarecords ("g f" = go → folder): the
 # keyboard form of the "Open folder in metarecord-list" menu item — the query
