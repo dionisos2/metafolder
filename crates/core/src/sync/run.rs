@@ -506,8 +506,12 @@ impl<'a> Run<'a> {
     /// Where `side`'s record's file is on disk, from its current position.
     fn abs_path(&self, op: &Op, side: Side) -> Result<Option<(String, PathBuf)>, CliError> {
         let key = self.key(op, side);
-        Ok(lookup::mfr_path_of(self.ctx, key.0, key.1)?
-            .map(|p| (p.clone(), self.roots[&key.0].join(p.trim_start_matches('/')))))
+        lookup::mfr_path_of(self.ctx, key.0, key.1)?
+            .map(|p| match crate::fsentry::join_rel(&self.roots[&key.0], &p) {
+                Some(abs) => Ok((p, abs)),
+                None => Err(CliError::Op(format!("{p:?} is not a path under the root"))),
+            })
+            .transpose()
     }
 
     fn trash(&self, side: Side) -> &TrashDir {

@@ -626,8 +626,12 @@ impl<'a> Planner<'a> {
     /// Where an endpoint's file is on disk.
     fn abs_path(&self, end: &End) -> Result<Option<PathBuf>, CliError> {
         let Some(root) = self.roots.get(&end.repo) else { return Ok(None) };
-        Ok(lookup::mfr_path_of(self.ctx, end.repo, end.record)?
-            .map(|p| root.join(p.trim_start_matches('/'))))
+        lookup::mfr_path_of(self.ctx, end.repo, end.record)?
+            .map(|p| {
+                crate::fsentry::join_rel(root, &p)
+                    .ok_or_else(|| CliError::Op(format!("{p:?} is not a path under the root")))
+            })
+            .transpose()
     }
 
     /// Whether the two endpoints' entries on disk hold the same content. One

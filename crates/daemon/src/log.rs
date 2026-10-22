@@ -1391,8 +1391,18 @@ impl<'c> Writer<'c> {
     /// carrying a TreeRef of the same field name; the write must not create a
     /// cycle nor exceed [`MAX_TREE_DEPTH`] (doc "TreeRef forest").
     fn validate_tree_ref(&self, metarecord: Uuid, field_name: &str, value: &Value) -> Result<()> {
-        if value.position().is_none() {
+        let Some((parent, name)) = value.position() else {
             return Ok(());
+        };
+        // Checked even when the forest checks are deferred: it needs nothing
+        // but the value.
+        if !name.is_component(parent.is_none()) {
+            return Err(DomainError::BadRequest(format!(
+                "invalid name {:?} on '{field_name}': a name is one path component \
+                 (no '/', no NUL, neither '.' nor '..', not empty)",
+                name.display()
+            ))
+            .into());
         }
         if let Some(deferred) = &self.deferred_trees {
             deferred.borrow_mut().push((metarecord, field_name.to_string(), value.clone()));

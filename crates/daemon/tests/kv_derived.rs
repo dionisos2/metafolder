@@ -145,7 +145,7 @@ fn long_texts_are_derived_too() {
         .create_metarecord(vec![
             Field::new("note", Value::String(format!("{long}1"))),
             Field::new("note", Value::String(format!("{long}2"))),
-            Field::new("loc", tree(Some(root), &"n\0".repeat(300))),
+            Field::new("loc", tree(Some(root), &"n\u{1}".repeat(300))),
         ])
         .unwrap()
         .uuid;

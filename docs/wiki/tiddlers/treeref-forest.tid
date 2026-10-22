@@ -2,7 +2,7 @@ title: TreeRef forest
 tags: [[Data model]]
 kind: overview
 aliases: tree forest treeref
-summary: tree_ref fields place metarecords in trees — one forest per field name, no cycle, at most 1000 deep, one position per metarecord.
+summary: tree_ref fields place metarecords in trees — one forest per field name, names that are path components, no cycle, at most 1000 deep, one position per metarecord.
 
 A `tree_ref` value places its metarecord in a tree: it names a ''parent'' (or none,
 for a root) and the metarecord's ''name'' under it ([[Value types]]). All the
@@ -12,8 +12,9 @@ collection could be another. Where a node must hang under several parents — a 
 that is a kind of two things — the field is a `hierarchy_ref` instead, which keeps
 the rules below but the single position ([[Hierarchy references]]).
 
-A forest is held to four rules on every write, each refused with `400`:
+A forest is held to five rules on every write, each refused with `400`:
 
+* ''a name is one path component'' — no `/`, no NUL, neither `.` nor `..`, and not empty except for a root (`invalid name "..": a name is one path component`; [[Tree names]]);
 * ''no cycle'' — a node is never its own ancestor (`TreeRef write would create a cycle on 'path'`);
 * ''at most 1000 levels'' (`TreeRef depth exceeds 1000`);
 * ''unique siblings'' — one node per (parent, name) (`tree position already occupied for field 'path'`), so a path names one node;

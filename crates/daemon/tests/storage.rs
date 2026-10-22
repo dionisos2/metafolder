@@ -717,6 +717,50 @@ fn test_the_same_name_twice_in_one_directory_is_still_rejected() {
 }
 
 #[test]
+fn test_a_name_that_is_not_one_path_component_is_rejected() {
+    // Clients join a node's path onto the repository root: `..` or `a/b`
+    // would reach outside it (doc "Tree names").
+    let (mut conn, _dir) = test_conn();
+    let root = create(
+        &mut conn,
+        vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })],
+    );
+    let file = create(
+        &mut conn,
+        vec![Field::new("mfr_path", Value::TreeRef { parent: Some(root.uuid), name: "f".into() })],
+    );
+    for bad in ["..", ".", "a/b", "x\0y", ""] {
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        let err = w
+            .create_metarecord(vec![Field::new(
+                "mfr_path",
+                Value::TreeRef { parent: Some(root.uuid), name: bad.into() },
+            )])
+            .unwrap_err();
+        assert!(err.to_string().contains("path component"), "{bad:?}: {err}");
+        let err = w
+            .set_field(
+                file.uuid,
+                "mfr_path",
+                Value::TreeRef { parent: Some(root.uuid), name: bad.into() },
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("path component"), "{bad:?}: {err}");
+        // Every forest, not only the filesystem's.
+        let err = w
+            .create_metarecord(vec![Field::new(
+                "tag",
+                Value::HierarchyRef {
+                    parent: None,
+                    name: if bad.is_empty() { "/" } else { bad }.into(),
+                },
+            )])
+            .unwrap_err();
+        assert!(err.to_string().contains("path component"), "{bad:?}: {err}");
+    }
+}
+
+#[test]
 fn test_tree_ref_cycle_rejected() {
     let (mut conn, _dir) = test_conn();
     let a = create(

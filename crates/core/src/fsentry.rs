@@ -27,6 +27,26 @@ pub fn is_real_dir(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_dir())
 }
 
+/// `root` joined with `rel`, a repository-relative path as `resolve-tree`
+/// returns it (leading `/` optional), or `None` when one of its pieces is not a
+/// path component — empty, `.`, `..`, or holding a NUL — so the result can
+/// never step outside `root`. The daemon refuses such names (doc "Tree
+/// names"); this is the clients' own guard, for a store written before it did.
+pub fn join_rel(root: &Path, rel: &str) -> Option<std::path::PathBuf> {
+    let rel = rel.trim_start_matches('/');
+    if rel.is_empty() {
+        return Some(root.to_path_buf());
+    }
+    let mut out = root.to_path_buf();
+    for piece in rel.split('/') {
+        if !crate::metarecord::TreeName::from(piece).is_component(false) {
+            return None;
+        }
+        out.push(piece);
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -37,6 +57,19 @@ mod tests {
             .join(format!("mf-fsentry-{}", uuid::Uuid::new_v4().as_simple()));
         std::fs::create_dir_all(&p).unwrap();
         p
+    }
+
+    #[test]
+    fn join_rel_stays_under_the_root() {
+        let root = Path::new("/repo");
+        assert_eq!(join_rel(root, "/a/b.txt"), Some(root.join("a/b.txt")));
+        assert_eq!(join_rel(root, "a/b.txt"), Some(root.join("a/b.txt")));
+        assert_eq!(join_rel(root, "/"), Some(root.to_path_buf()));
+        assert_eq!(join_rel(root, ""), Some(root.to_path_buf()));
+        assert_eq!(join_rel(root, "/.hidden/..."), Some(root.join(".hidden/...")));
+        for bad in ["/..", "/a/../../etc", "/a/./b", "/a//b", "/a/", "/a\0b"] {
+            assert_eq!(join_rel(root, bad), None, "{bad:?}");
+        }
     }
 
     #[test]

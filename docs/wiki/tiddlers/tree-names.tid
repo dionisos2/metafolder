@@ -16,6 +16,16 @@ The split is forced: an encoding that leaves every valid UTF-8 name unchanged
 nowhere free for an undecodable name. So identity lives in the bytes, and the text is
 not a bijection: a file really named `caf%E9.mp4` shows the same text.
 
+!! What a name may be
+
+A name is ''one path component'', in every forest: never `.` or `..`, never empty
+(but for a root — the filesystem root node is named `""`), and holding neither `/`
+nor NUL. The daemon refuses anything else on every write with `400`. The reason is
+the disk: the clients that move files — revert, sync, the trash — join a node's path
+onto the repository root, and `..` or `a/../..` there would reach outside it. Those
+clients join through `fsentry::join_rel`, which refuses such a path rather than
+follow it, so a store written before the check cannot steer them out either.
+
 Every path the daemon finds on disk carries the bytes end to end: the reconcile walk,
 the watcher and its buffered events, the executor. Where text is meant, text is used:
 `mf_ignore` patterns are regexes over displayed paths, and responses report the

@@ -148,6 +148,19 @@ impl TreeName {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+
+    /// Whether the name is one path component — what a file name on disk can
+    /// be: no `/`, no NUL, neither `.` nor `..`, and not empty, except for a
+    /// root (`is_root`: the filesystem root node is named `""`). Clients join a
+    /// node's path onto a repository root to reach the disk, so any other name
+    /// would step out of it (doc "Tree names").
+    pub fn is_component(&self, is_root: bool) -> bool {
+        match self.0.as_slice() {
+            b"" => is_root,
+            b"." | b".." => false,
+            bytes => !bytes.iter().any(|b| *b == b'/' || *b == 0),
+        }
+    }
 }
 
 /// Escapes only what cannot be text: every byte of an invalid UTF-8 sequence
@@ -655,6 +668,22 @@ mod tests {
         assert!(name.is_exact());
         assert_eq!(name.display(), "vidéo.mp4");
         assert_eq!(name.as_bytes(), "vidéo.mp4".as_bytes());
+    }
+
+    #[test]
+    fn test_a_name_is_one_path_component() {
+        // Clients join a node's path onto a repository root to reach the disk:
+        // a name that is not one component would step out of it.
+        for ok in ["a", "vidéo.mp4", "...", ".hidden", "a b", "100%.txt"] {
+            assert!(TreeName::from(ok).is_component(false), "{ok:?} must be accepted");
+        }
+        assert!(TreeName::from_bytes(LATIN1_CAFE.to_vec()).is_component(false));
+        for bad in ["", ".", "..", "a/b", "/", "x\0y"] {
+            assert!(!TreeName::from(bad).is_component(false), "{bad:?} must be refused");
+        }
+        // The filesystem root node is the one empty name: `{parent: None, name: ""}`.
+        assert!(TreeName::default().is_component(true));
+        assert!(!TreeName::from("..").is_component(true));
     }
 
     #[test]

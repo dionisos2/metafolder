@@ -301,7 +301,8 @@ fn retrash(
         Err(e) => return Err(e.into()),
     };
     let Some(rel) = path_of(repo, entity)? else { return Ok(()) };
-    let abs = repo.root.join(rel.trim_start_matches('/'));
+    let abs = crate::fsentry::join_rel(&repo.root, &rel)
+        .ok_or_else(|| NavError(format!("{rel:?} is not a path under the root")))?;
     if !crate::fsentry::path_present(&abs) {
         ui.note(&format!("{} is not on disk: nothing to send back to the trash", abs.display()));
         return Ok(());

@@ -43,8 +43,9 @@ fn trash_dir(internal: &str) -> TrashDir {
 /// Absolute path of a repo-root-relative path returned by `resolve-tree` (the
 /// [`paths_of`] shape — leading-`/`-rooted for the filesystem forest; the
 /// leading `/` is trimmed here so it joins onto `root`).
-fn abs_path(root: &str, rel: &str) -> PathBuf {
-    PathBuf::from(root).join(rel.trim_start_matches('/'))
+fn abs_path(root: &str, rel: &str) -> Result<PathBuf, String> {
+    metafolder_core::fsentry::join_rel(Path::new(root), rel)
+        .ok_or_else(|| format!("{rel:?} is not a path under the root"))
 }
 
 /// Parses a `selected_metarecord` workspace var (`{uuid, repo}` | null).
@@ -145,7 +146,7 @@ pub fn trash_selected_blocking(base: String, uuid: String, repo: String) -> Resu
 
     let rel = first_mfr_path(&client, &repo, &uuid)?
         .ok_or("the selected metarecord has no file (already deleted)")?;
-    let abs = abs_path(&root, &rel);
+    let abs = abs_path(&root, &rel)?;
     trash_tracked(&base, &repo, &internal, &abs, Some(Path::new(&root)), Some(uuid))
 }
 
@@ -219,6 +220,15 @@ pub fn trash_query(base: &str, repo: &str, query: &Value) -> Result<BulkTrashOut
     let mut doomed: Vec<metafolder_core::trash::TrashedNode> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for (uuid, rel) in &items {
+        // Checked before anything is deleted: a path that is not under the
+        // root is refused here, not after its metadata is gone.
+        let abs = match abs_path(&root, rel) {
+            Ok(abs) => abs,
+            Err(e) => {
+                outcome.failed.push(e);
+                continue;
+            }
+        };
         let record =
             client.get(&format!("/repos/{repo}/metarecords/{uuid}")).map_err(|e| e.message)?;
         let subtree = metafolder_core::trash::capture_nodes(&client, repo, &record, rel)
@@ -228,13 +238,12 @@ pub fn trash_query(base: &str, repo: &str, query: &Value) -> Result<BulkTrashOut
                 doomed.push(node.clone());
             }
         }
-        captured.push((uuid.clone(), rel.clone(), record["version"].as_u64(), subtree));
+        captured.push((uuid.clone(), rel.clone(), abs, record["version"].as_u64(), subtree));
     }
     metafolder_core::trash::delete_trashed(&client, repo, &doomed, false).map_err(|e| e.message)?;
 
     let dir = trash_dir(&internal);
-    for (uuid, rel, version, subtree) in captured {
-        let abs = abs_path(&root, &rel);
+    for (uuid, rel, abs, version, subtree) in captured {
         let moved =
             dir.trash_path(&abs, Reason::Manual, None, Some(uuid), version).and_then(|entry| {
                 if subtree.is_empty() {
@@ -472,10 +481,13 @@ mod tests {
 
     #[test]
     fn abs_path_joins_root_relative() {
-        assert_eq!(abs_path("/data", "music/song.mp3"), PathBuf::from("/data/music/song.mp3"));
+        let ok = |p: &str| Ok(PathBuf::from(p));
+        assert_eq!(abs_path("/data", "music/song.mp3"), ok("/data/music/song.mp3"));
         // Defensive against a leading slash.
-        assert_eq!(abs_path("/data", "/song.mp3"), PathBuf::from("/data/song.mp3"));
-        assert_eq!(abs_path("/data", "song.mp3"), PathBuf::from("/data/song.mp3"));
+        assert_eq!(abs_path("/data", "/song.mp3"), ok("/data/song.mp3"));
+        assert_eq!(abs_path("/data", "song.mp3"), ok("/data/song.mp3"));
+        // Never outside the root.
+        assert!(abs_path("/data", "/../etc/passwd").is_err());
     }
 
     #[test]
