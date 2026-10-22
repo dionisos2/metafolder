@@ -71,6 +71,20 @@ fn test_the_csp_allows_no_remote_origin() {
     );
 }
 
+/// The shell and the panels load no inline script: allowing one would turn
+/// the least HTML injection into code in the realm that holds the session
+/// token and runs shell commands.
+#[test]
+fn test_the_csp_runs_no_inline_script() {
+    let csp = csp();
+    let script = csp
+        .split(';')
+        .map(str::trim)
+        .find(|d| d.starts_with("script-src"))
+        .expect("a script-src directive");
+    assert!(!script.contains("'unsafe-inline'"), "{script}");
+}
+
 /// A missing directive falls back to `default-src`, so `default-src 'self'`
 /// must be there to close everything not spelled out.
 #[test]

@@ -221,9 +221,9 @@ fn register_builtins(registry: &CommandRegistry) {
 /// the shell loses nothing — but a second crash shortly after a reload means the
 /// reload re-triggers it, so we stop there rather than loop.
 #[cfg(target_os = "linux")]
-fn harden_webview(tauri_app: &tauri::App) {
+fn harden_webview(tauri_app: &tauri::App, gui_port: u16) {
     if let Some(window) = tauri::Manager::get_webview_window(tauri_app, "main") {
-        let _ = window.with_webview(|webview| {
+        let _ = window.with_webview(move |webview| {
             use webkit2gtk::glib::object::Cast;
             use webkit2gtk::{
                 NavigationPolicyDecisionExt, PolicyDecisionExt, PolicyDecisionType, URIRequestExt,
@@ -236,7 +236,7 @@ fn harden_webview(tauri_app: &tauri::App) {
             // leave, carrying the session token in the URL. Refuse any
             // navigation outside the app's own origins, so the WebView
             // has no route to the internet at all.
-            webview.inner().connect_decide_policy(|_webview, decision, kind| {
+            webview.inner().connect_decide_policy(move |_webview, decision, kind| {
                 if !matches!(
                     kind,
                     PolicyDecisionType::NavigationAction | PolicyDecisionType::NewWindowAction
@@ -252,7 +252,8 @@ fn harden_webview(tauri_app: &tauri::App) {
                     .and_then(|request| request.uri())
                     .map(|uri| uri.to_string());
                 // An unreadable target is refused, like a remote one.
-                let allowed = uri.as_deref().map(sandbox::is_local_navigation).unwrap_or(false);
+                let allowed =
+                    uri.as_deref().is_some_and(|uri| sandbox::is_local_navigation(uri, gui_port));
                 if !allowed {
                     eprintln!(
                         "metafolder-gui: blocked a navigation out of the app: {}",
@@ -454,6 +455,18 @@ pub fn run(options: Options) {
     )
     .into();
 
+    // The WebView's CSP, its loopback sources narrowed to the GUI server's
+    // port — known only now, from `config.toml` (`sandbox::csp_for_port`).
+    let mut context = tauri::generate_context!();
+    let narrowed = context
+        .config()
+        .app
+        .security
+        .csp
+        .as_ref()
+        .map(|csp| sandbox::csp_for_port(&csp.to_string(), gui_port));
+    context.config_mut().app.security.csp = narrowed.map(tauri::utils::config::Csp::Policy);
+
     tauri::Builder::default()
         .setup(move |tauri_app| {
             let notifier = Arc::new(TauriNotifier(tauri_app.handle().clone()));
@@ -496,7 +509,7 @@ pub fn run(options: Options) {
             // The WebView is not safe as handed to us: it can navigate out of the
             // app, and a web-process crash freezes the window.
             #[cfg(target_os = "linux")]
-            harden_webview(tauri_app);
+            harden_webview(tauri_app, gui_port);
 
             #[cfg(target_os = "linux")]
             spawn_confinement_probe(options.allow_unsandboxed_webview);
@@ -651,7 +664,7 @@ pub fn run(options: Options) {
             commands::set_fullscreen,
             commands::quit,
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running the metafolder GUI");
 }
 

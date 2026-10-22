@@ -459,7 +459,7 @@ pub fn preflight(allow_unsandboxed_webview: bool) -> Result<(), String> {
 ///
 /// `about:blank` and the Tauri/asset custom protocols are the app's own; a
 /// URI we cannot make sense of is refused (fail closed).
-pub fn is_local_navigation(uri: &str) -> bool {
+pub fn is_local_navigation(uri: &str, gui_port: u16) -> bool {
     // Parsed, never prefix-matched: `http://127.0.0.1:x@evil.example/` starts
     // like a loopback URL, but what precedes the `@` is a user name and a
     // password — its host is `evil.example`.
@@ -471,14 +471,26 @@ pub fn is_local_navigation(uri: &str) -> bool {
         // Tauri's own custom protocols: served by the app, whatever the host.
         "tauri" | "asset" | "ipc" => true,
         "http" => {
-            const LOCAL_HOSTS: &[&str] =
-                &["tauri.localhost", "ipc.localhost", "asset.localhost", "127.0.0.1", "localhost"];
+            const APP_HOSTS: &[&str] = &["tauri.localhost", "ipc.localhost", "asset.localhost"];
+            // Loopback is the GUI server alone, not whatever else listens there.
+            const LOOPBACK: &[&str] = &["127.0.0.1", "localhost"];
+            let host = url.host_str().unwrap_or_default();
             url.username().is_empty()
                 && url.password().is_none()
-                && url.host_str().is_some_and(|host| LOCAL_HOSTS.contains(&host))
+                && (APP_HOSTS.contains(&host)
+                    || (LOOPBACK.contains(&host) && url.port() == Some(gui_port)))
         }
         _ => false,
     }
+}
+
+/// The WebView's CSP (`base`, from `tauri.conf.json`) with every loopback
+/// source narrowed to the GUI server's port: `tauri.conf.json` cannot know the
+/// port, which `config.toml` sets, so it spells `http://127.0.0.1:*` — any local
+/// service. What the web realm talks to on loopback is the GUI server alone.
+pub fn csp_for_port(base: &str, gui_port: u16) -> String {
+    base.replace("http://127.0.0.1:*", &format!("http://127.0.0.1:{gui_port}"))
+        .replace("http://localhost:*", &format!("http://localhost:{gui_port}"))
 }
 
 /// Whether WebKit's web process — the one that decodes the images and video a
@@ -756,7 +768,7 @@ mod tests {
             "about:blank",
             "tauri://localhost",
         ] {
-            assert!(is_local_navigation(uri), "must stay navigable: {uri}");
+            assert!(is_local_navigation(uri, 7524), "must stay navigable: {uri}");
         }
     }
 
@@ -780,9 +792,28 @@ mod tests {
             "http://tauri.localhost@evil.example/",
             "http://tauri.localhost.evil.example/",
             "about:blankx",
+            // Loopback, but not the GUI server: another local service.
+            "http://127.0.0.1:8080/",
+            "http://localhost:7523/health",
+            "http://127.0.0.1/",
         ] {
-            assert!(!is_local_navigation(uri), "must be refused: {uri:?}");
+            assert!(!is_local_navigation(uri, 7524), "must be refused: {uri:?}");
         }
+    }
+
+    // --- The CSP: loopback narrowed to the GUI server's port.
+
+    #[test]
+    fn test_the_csp_names_the_gui_port_and_no_other() {
+        let base = "default-src 'self'; connect-src 'self' ipc: http://127.0.0.1:* \
+                    http://localhost:*; img-src 'self' data: http://127.0.0.1:*";
+        let csp = csp_for_port(base, 7524);
+        assert_eq!(
+            csp,
+            "default-src 'self'; connect-src 'self' ipc: http://127.0.0.1:7524 \
+             http://localhost:7524; img-src 'self' data: http://127.0.0.1:7524"
+        );
+        assert!(!csp.contains(":*"), "{csp}");
     }
 
     // --- The WebKit web-process check.
