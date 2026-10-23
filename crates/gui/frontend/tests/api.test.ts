@@ -5,6 +5,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { argSpecFor, clearArgSpecs } from '../src/lib/commands';
 import { createPanelApi } from '../src/lib/panels/api';
+import { globalMirror } from '../src/lib/globals';
 
 function setup() {
   const invoke = vi.fn(async (_cmd: string, _args?: unknown) => ({ status: 200, body: null }) as unknown);
@@ -317,6 +318,46 @@ describe('panel api — workspace', () => {
     instance.pushVarChanged('selected_metarecord', { uuid: 'x' });
     expect(direct).toHaveBeenCalledWith({ uuid: 'x' });
     expect(wildcard).toHaveBeenCalledWith({ uuid: 'x' }, 'selected_metarecord');
+  });
+});
+
+describe('panel api — global GUI variables', () => {
+  test('get/set/setMany/all route to the global commands, with no workspace', async () => {
+    const { api, invoke } = setup();
+    await api.global.get('clipboard');
+    expect(invoke).toHaveBeenCalledWith('global_get_var', { key: 'clipboard' });
+    await api.global.set('clipboard', null);
+    expect(invoke).toHaveBeenCalledWith('global_send', { vars: { clipboard: null } });
+    await api.global.setMany({ a: 1, b: 2 });
+    expect(invoke).toHaveBeenCalledWith('global_send', { vars: { a: 1, b: 2 } });
+    await api.global.all();
+    expect(invoke).toHaveBeenCalledWith('global_vars', {});
+  });
+
+  test('onChange listeners fire on pushGlobalChanged (and * receives the key)', () => {
+    const { api, instance } = setup();
+    const direct = vi.fn();
+    const wildcard = vi.fn();
+    api.global.onChange('clipboard', direct);
+    api.global.onChange('*', wildcard);
+    instance.pushGlobalChanged('clipboard', { paths: ['/a'], mode: 'cut' });
+    expect(direct).toHaveBeenCalledWith({ paths: ['/a'], mode: 'cut' });
+    expect(wildcard).toHaveBeenCalledWith({ paths: ['/a'], mode: 'cut' }, 'clipboard');
+  });
+
+  test('current reads the shell copy at once: the last value announced', () => {
+    const { api } = setup();
+    globalMirror.reset();
+    expect(api.global.current('clipboard')).toBeNull();
+    globalMirror.load({ clipboard: 1, other: 2 });
+    expect(api.global.current('clipboard')).toBe(1);
+    globalMirror.apply('clipboard', 3);
+    expect(api.global.current('clipboard')).toBe(3);
+    expect(api.global.current('other')).toBe(2);
+    // A late initial read does not undo what an event announced meanwhile.
+    globalMirror.load({ clipboard: 1 });
+    expect(api.global.current('clipboard')).toBe(3);
+    globalMirror.reset();
   });
 });
 

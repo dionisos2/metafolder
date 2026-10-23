@@ -10,6 +10,7 @@
 // from the loaded record's own `mfr_path`, so there is nothing left to diverge.
 
 import { describe, expect, test, vi, beforeEach } from 'vitest';
+import { globalStub } from './support/global';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -98,6 +99,7 @@ async function mountPanel(firstUuid: string) {
       labelSeparator: async () => ' | ',
     },
     recent: { touch: async () => {}, list: async () => [] },
+    global: globalStub(),
     workspace: {
       get: async (key: string) => store.get(key) ?? null,
       set: async (key: string, value: unknown) => void store.set(key, value),

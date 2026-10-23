@@ -21,6 +21,7 @@ through events, so a script and the window always agree ([[GUI]]).
 |<<cmd "POST /gui/workspaces">> |creates one |
 |<<cmd "DELETE /gui/workspaces/:id">> |closes one |
 |<<cmd "GET /gui/workspaces/:id/vars/:key">> |reads one workspace variable |
+|<<cmd "GET /gui/vars/:key">>, <<cmd "GET /gui/vars">> |reads the global GUI variables |
 |<<cmd "GET /gui/workspaces/:id/messages">> |its message log and last status message |
 |<<cmd "GET /gui/layout">>, <<cmd "PUT /gui/layout">> |which workspace each slot shows |
 |<<cmd "GET /gui/panels/:slot/view">>, <<cmd "PUT /gui/panels/:slot/view">> |the panel type of a slot |
@@ -70,6 +71,10 @@ workspace in tab order, or none when it was the last.
 reads as `null`, with `200`: ''nothing published yet'' is an answer a script falls back
 from, and only an unknown workspace is `404` ([[Workspace variables]]). `mf gui query`
 and `mf gui selected` are built on it.
+
+`GET /gui/vars/:key` answers the same `{"value": <json>}` for a
+[[global GUI variable|Global GUI variables]], `null` when never set, and
+`GET /gui/vars` all of them as `{"vars": {"clipboard": null, …}}`.
 
 !! Layout and views
 

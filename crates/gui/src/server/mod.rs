@@ -141,6 +141,8 @@ pub fn build_router(state: ServerState) -> Router {
         .route("/gui/workspaces", get(gui_api::list_workspaces).post(gui_api::create_workspace))
         .route("/gui/workspaces/:id", delete(gui_api::delete_workspace))
         .route("/gui/workspaces/:id/vars/:key", get(gui_api::get_workspace_var))
+        .route("/gui/vars", get(gui_api::list_global_vars))
+        .route("/gui/vars/:key", get(gui_api::get_global_var))
         .route("/gui/workspaces/:id/messages", get(gui_api::get_workspace_messages))
         .route("/gui/layout", get(gui_api::get_layout).put(gui_api::put_layout))
         .route("/gui/panels/:slot/view", put(gui_api::put_panel_view).get(gui_api::get_panel_view))

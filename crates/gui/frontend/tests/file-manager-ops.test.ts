@@ -12,6 +12,7 @@ type ProvideMock = Parameters<typeof cursor>[0];
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { withRuns } from './support/runs';
+import { globalStub } from './support/global';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/file-manager');
 
@@ -62,6 +63,7 @@ function stub(repo: string | null) {
     trashPath: vi.fn(async () => 'song.mp3'),
   };
   const statusBar = { message: vi.fn(async () => {}), error: vi.fn(async () => {}) };
+  const global = globalStub();
   const api = {
     ready: Promise.resolve(),
     workspaceId: 'ws-1',
@@ -85,6 +87,7 @@ function stub(repo: string | null) {
       set: vi.fn(async () => {}),
       onChange: noop,
     },
+    global,
     provide: vi.fn(),
     commands: {
       register: (name: string, opts: { handler?: Handler }) => {
@@ -99,7 +102,7 @@ function stub(repo: string | null) {
     statusBar,
     contextMenu: Object.assign(noop, { addDefaultItems: noop }),
   };
-  return { api, handlers, fs, trash, statusBar };
+  return { api, handlers, fs, trash, statusBar, global };
 }
 
 /** Moves the cursor onto `song.mp3` (index 3: '.', '..', dir1, song.mp3). */
@@ -198,6 +201,17 @@ describe('file-manager filesystem operations', () => {
     // Pasting song.mp3 back into its own directory dedupes to "song copy.mp3".
     expect(fs.copy).toHaveBeenCalledWith('/song.mp3', '/song copy.mp3');
     expect(fs.move).not.toHaveBeenCalled();
+  });
+
+  test('copy and cut fill the global clipboard, which paste empties after a cut', async () => {
+    const { api, handlers, global } = await mount(null);
+    await selectSong(api);
+    await handlers.get('file-manager:copy')!();
+    expect(global.current('clipboard')).toEqual({ paths: ['/song.mp3'], mode: 'copy' });
+    await handlers.get('file-manager:cut')!();
+    expect(global.current('clipboard')).toEqual({ paths: ['/song.mp3'], mode: 'cut' });
+    await handlers.get('file-manager:paste')!();
+    expect(global.current('clipboard')).toBeNull();
   });
 
   test('cut then paste moves into the current directory', async () => {

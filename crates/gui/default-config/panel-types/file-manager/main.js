@@ -41,9 +41,10 @@ import {
   metarecordMenuItems,
 } from '/__file-actions.js';
 
-// The clipboard is shared across the whole GUI JS realm (see /__file-actions.js)
-// — copy/cut here and paste in another file-manager, or in a metarecord panel's
-// right-click menu, and back. Cleared after a cut is pasted (sources are gone).
+// The clipboard is the global GUI variable `clipboard` (see /__file-actions.js,
+// doc "Global GUI variables") — copy/cut here and paste in the file manager of
+// another workspace, or in a metarecord panel's right-click menu, and back.
+// Cleared after a cut is pasted (sources are gone).
 
 // Render the directory in windows of this many rows (plus more on scroll), so
 // a directory with thousands of entries does not build a huge DOM — and, just
@@ -718,9 +719,9 @@ export async function mount(root, metafolder) {
     if (item.is_dir) items.push({ label: 'Open', action: () => void activate(metafolder, index) });
     if (isEntry) {
       items.push(
-        { label: 'Cut', action: () => clip('cut') },
-        { label: 'Copy', action: () => clip('copy') },
-        { label: 'Paste', disabled: !hasClipboard(), action: () => void paste(metafolder) },
+        { label: 'Cut', action: () => void clip(metafolder, 'cut') },
+        { label: 'Copy', action: () => void clip(metafolder, 'copy') },
+        { label: 'Paste', disabled: !hasClipboard(metafolder), action: () => void paste(metafolder) },
         { label: 'Rename…', action: () => void renameSelected(metafolder) },
         { label: 'Duplicate', action: () => void duplicateSelected(metafolder) },
         {
@@ -733,7 +734,7 @@ export async function mount(root, metafolder) {
         { label: repo ? 'Move to trash' : 'Delete…', action: () => void deleteSelected(metafolder) },
       );
     } else {
-      items.push({ label: 'Paste', disabled: !hasClipboard(), action: () => void paste(metafolder) });
+      items.push({ label: 'Paste', disabled: !hasClipboard(metafolder), action: () => void paste(metafolder) });
     }
     if (isEntry) items.push(...ignoreMenuItems(item));
     items.push(
@@ -752,7 +753,7 @@ export async function mount(root, metafolder) {
     /** @type {Metafolder.MenuItem[]} */
     const items = [
       { header: 'File' },
-      { label: 'Paste', disabled: !hasClipboard(), action: () => void paste(metafolder) },
+      { label: 'Paste', disabled: !hasClipboard(metafolder), action: () => void paste(metafolder) },
       { header: 'Directory' },
       { label: 'New folder…', action: () => void newFolder(metafolder) },
       { label: 'New file…', action: () => void newFile(metafolder) },
@@ -1121,18 +1122,18 @@ export async function mount(root, metafolder) {
     await afterMutation(mf, name);
   }
 
-  /** @param {'copy'|'cut'} mode */
-  function clip(mode) {
+  /** @param {MetafolderApi} mf @param {'copy'|'cut'} mode */
+  async function clip(mf, mode) {
     const item = selectedEntry();
     if (!item) return;
-    setClipboard({ paths: [item.path], mode });
+    await setClipboard(mf, { paths: [item.path], mode });
     void statusBar.message(`${mode === 'cut' ? 'Cut' : 'Copied'} ${item.name}`, statusMessageMs);
   }
 
   /** @param {MetafolderApi} mf */
   async function paste(mf) {
     if (currentDir === null) return;
-    const cb = getClipboard();
+    const cb = await getClipboard(mf);
     if (!cb || cb.paths.length === 0) {
       void statusBar.message('clipboard is empty', 3000);
       return;
@@ -1157,7 +1158,7 @@ export async function mount(root, metafolder) {
         await statusBar.error(error, statusErrorMs);
       }
     }
-    if (mode === 'cut') setClipboard(null); // the sources have moved
+    if (mode === 'cut') await setClipboard(mf, null); // the sources have moved
     if (pasted > 0) {
       void statusBar.message(`Pasted ${pasted} item${pasted === 1 ? '' : 's'}`, statusMessageMs);
       await afterMutation(mf, paths.length === 1 ? baseName(paths[0]) : null);
@@ -1348,11 +1349,11 @@ export async function mount(root, metafolder) {
   });
   void commands.register('file-manager:copy', {
     label: 'File manager: copy the selected entry to the clipboard',
-    handler: () => clip('copy'),
+    handler: (mf) => clip(mf, 'copy'),
   });
   void commands.register('file-manager:cut', {
     label: 'File manager: cut the selected entry to the clipboard',
-    handler: () => clip('cut'),
+    handler: (mf) => clip(mf, 'cut'),
   });
   void commands.register('file-manager:paste', {
     label: 'File manager: paste the clipboard into the current directory',

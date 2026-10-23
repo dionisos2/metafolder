@@ -3,6 +3,7 @@
 //! (doc "GUI"). Every mutation pushes an event to the frontend
 //! through the [`FrontendNotifier`].
 
+mod global;
 pub mod layout;
 mod txn;
 pub mod workspace;
@@ -111,6 +112,8 @@ struct Inner {
     left: Slot,
     right: Slot,
     focused: SlotId,
+    /// The global GUI variables (doc "Global GUI variables").
+    globals: workspace::Vars,
 }
 
 impl Inner {
@@ -368,6 +371,7 @@ impl GuiState {
             left: Slot::default(),
             right: Slot::default(),
             focused: SlotId::Left,
+            globals: Default::default(),
         };
         let id = inner.new_workspace(None, None);
         inner.assign(&id, SlotId::Left).expect("assigning the initial workspace cannot fail");

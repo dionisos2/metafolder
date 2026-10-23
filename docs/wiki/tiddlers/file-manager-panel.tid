@@ -108,7 +108,9 @@ a paste or a duplicate that would collide takes a ` copy` suffix (`foo copy.txt`
 
 The clipboard belongs to the GUI, not to the panel: cut here, paste in the file
 manager of another workspace, or from the right-click menu of a list
-([[Context menus]]). A cut is emptied by its paste.
+([[Context menus]]). A cut is emptied by its paste. It is the global GUI variable
+`clipboard` ([[Global GUI variables]]): the [[workspace-info panel]] shows what it
+holds.
 
 Deleting sends the entry to the repository's trash, tracked or not, together with its
 metarecords, and the [[trash panel]] restores it ([[Sending files to the trash]]).

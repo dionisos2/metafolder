@@ -8,15 +8,13 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
   fileActionsProvider,
   fileMenuItems,
-  getClipboard,
   metarecordMenuItems,
   revealFolder,
   rowActionsProvider,
-  setClipboard,
 } from '/__file-actions.js';
+import { globalStub } from './support/global';
 
 afterEach(() => {
-  setClipboard(null);
   vi.unstubAllGlobals();
 });
 
@@ -40,15 +38,17 @@ function mockMf(
   const trash = { trashPath: vi.fn(async () => {}) };
   const workspace = { set: vi.fn(async () => {}) };
   const commands = { invoke: vi.fn(async (_invocation?: string) => {}) };
+  const global = globalStub();
   const metafolder = {
     statusBar,
     fs,
     trash,
     workspace,
+    global,
     commands,
     settings,
   } as unknown as MetafolderApi;
-  return { metafolder, statusBar, fs, trash, workspace, commands };
+  return { metafolder, statusBar, fs, trash, workspace, global, commands };
 }
 
 /** The labels of the entries in a menu (skipping '-' separators and headers). */
@@ -71,37 +71,51 @@ describe('file-actions shared operations', () => {
     const onChanged = vi.fn();
     const src = fileMenuItems({ metafolder, repo: 'r', path: '/dir/a.txt', isDir: false, onChanged });
     item(src, 'Copy').action!();
-    expect(getClipboard()).toEqual({ paths: ['/dir/a.txt'], mode: 'copy' });
+    expect(metafolder.global.current('clipboard')).toEqual({ paths: ['/dir/a.txt'], mode: 'copy' });
 
     const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst', isDir: true, onChanged });
     item(dst, 'Paste').action!();
     await vi.waitFor(() => expect(fs.copy).toHaveBeenCalledWith('/dir/a.txt', '/dst/a.txt'));
     await vi.waitFor(() => expect(onChanged).toHaveBeenCalled());
-    setClipboard(null);
+  });
+
+  test('the clipboard is the global GUI variable, which every workspace shares', async () => {
+    // Another workspace's panel copied: the global variable holds it, and
+    // Paste is offered here at once, from the shell's copy.
+    const { metafolder } = mockMf();
+    const menuBefore = fileMenuItems({ metafolder, repo: 'r', path: '/dst', isDir: true });
+    expect(item(menuBefore, 'Paste').disabled).toBe(true);
+    await metafolder.global.set('clipboard', { paths: ['/a/one.txt'], mode: 'copy' });
+    const menuAfter = fileMenuItems({ metafolder, repo: 'r', path: '/dst', isDir: true });
+    expect(item(menuAfter, 'Paste').disabled).toBe(false);
+    item(menuAfter, 'Cut').action!();
+    expect(metafolder.global.set).toHaveBeenLastCalledWith('clipboard', {
+      paths: ['/dst'],
+      mode: 'cut',
+    });
   });
 
   test('Cut then Paste moves and clears the clipboard', async () => {
     const { metafolder, fs } = mockMf();
     const src = fileMenuItems({ metafolder, repo: 'r', path: '/dir/a.txt', isDir: false });
     item(src, 'Cut').action!();
-    expect(getClipboard()).toEqual({ paths: ['/dir/a.txt'], mode: 'cut' });
+    expect(metafolder.global.current('clipboard')).toEqual({ paths: ['/dir/a.txt'], mode: 'cut' });
 
     const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst', isDir: true });
     item(dst, 'Paste').action!();
     await vi.waitFor(() => expect(fs.move).toHaveBeenCalledWith('/dir/a.txt', '/dst/a.txt'));
-    await vi.waitFor(() => expect(getClipboard()).toBeNull());
+    await vi.waitFor(() => expect(metafolder.global.current('clipboard')).toBeNull());
   });
 
   test('Paste into itself is refused via statusBar.error with the error timeout', async () => {
     const { metafolder, statusBar, fs } = mockMf();
-    setClipboard({ paths: ['/dst'], mode: 'copy' });
+    void metafolder.global.set('clipboard', { paths: ['/dst'], mode: 'copy' });
     const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst', isDir: true });
     item(dst, 'Paste').action!();
     await vi.waitFor(() =>
       expect(statusBar.error).toHaveBeenCalledWith(expect.stringContaining('into itself'), 2000),
     );
     expect(fs.copy).not.toHaveBeenCalled();
-    setClipboard(null);
   });
 
   test('a readDir failure during paste surfaces via the error timeout', async () => {
@@ -110,11 +124,10 @@ describe('file-actions shared operations', () => {
         throw new Error('denied');
       }),
     });
-    setClipboard({ paths: ['/x/y.txt'], mode: 'copy' });
+    void metafolder.global.set('clipboard', { paths: ['/x/y.txt'], mode: 'copy' });
     const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst', isDir: true });
     item(dst, 'Paste').action!();
     await vi.waitFor(() => expect(statusBar.error).toHaveBeenCalledWith(expect.any(Error), 2000));
-    setClipboard(null);
   });
 
   test('Duplicate copies to a collision-free name in the same directory', async () => {
@@ -131,7 +144,7 @@ describe('file-actions shared operations', () => {
         throw new Error('denied');
       }),
     });
-    setClipboard({ paths: ['/x/y.txt'], mode: 'copy' });
+    void metafolder.global.set('clipboard', { paths: ['/x/y.txt'], mode: 'copy' });
     const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst', isDir: true });
     item(dst, 'Paste').action!();
     await vi.waitFor(() => expect(statusBar.error).toHaveBeenCalledWith(expect.any(Error), 8000));
@@ -139,7 +152,6 @@ describe('file-actions shared operations', () => {
 
   test('Paste with an empty clipboard reports it and does nothing', async () => {
     const { metafolder, statusBar, fs } = mockMf();
-    setClipboard(null);
     const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst', isDir: true });
     item(dst, 'Paste').action!();
     await vi.waitFor(() =>
@@ -150,7 +162,7 @@ describe('file-actions shared operations', () => {
 
   test('Paste of two entries reports the plural count', async () => {
     const { metafolder, statusBar, fs } = mockMf();
-    setClipboard({ paths: ['/a/one.txt', '/a/two.txt'], mode: 'copy' });
+    void metafolder.global.set('clipboard', { paths: ['/a/one.txt', '/a/two.txt'], mode: 'copy' });
     const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst', isDir: true });
     item(dst, 'Paste').action!();
     await vi.waitFor(() => expect(fs.copy).toHaveBeenCalledTimes(2));
@@ -159,7 +171,7 @@ describe('file-actions shared operations', () => {
 
   test('Paste onto a file target lands in the file’s parent directory', async () => {
     const { metafolder, fs } = mockMf();
-    setClipboard({ paths: ['/a/one.txt'], mode: 'copy' });
+    void metafolder.global.set('clipboard', { paths: ['/a/one.txt'], mode: 'copy' });
     // isDir=false → the paste target is the parent of the clicked file.
     const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst/here.txt', isDir: false });
     item(dst, 'Paste').action!();
@@ -226,7 +238,7 @@ describe('file-actions shared operations', () => {
 
   test('the default menu falls back to metarecords:dirty when no onChanged is given', async () => {
     const { metafolder, fs, workspace } = mockMf();
-    setClipboard({ paths: ['/a/one.txt'], mode: 'copy' });
+    void metafolder.global.set('clipboard', { paths: ['/a/one.txt'], mode: 'copy' });
     const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst', isDir: true });
     item(dst, 'Paste').action!();
     await vi.waitFor(() => expect(fs.copy).toHaveBeenCalled());

@@ -13,6 +13,7 @@ import { checkTarget, resolveTarget } from '../targets';
 import { transactional } from '../txn';
 import type { ExecContext } from '../types';
 import { daemonWork } from '../working';
+import { globalMirror } from '../globals';
 import { changeFeed, type ChangeEvent } from './changes';
 import {
   createReads,
@@ -122,6 +123,8 @@ export interface PanelApiInstance {
   forRun(context: ExecContext): MetafolderApi;
   /** A subscribed workspace variable changed (from `workspace-var-changed`). */
   pushVarChanged(key: string, value: unknown): void;
+  /** A global GUI variable changed (from `global-var-changed`). */
+  pushGlobalChanged(key: string, value: unknown): void;
   /** A message-log entry was appended (null = the log was cleared). */
   pushMessageAppended(entry: unknown): void;
   /** A shell-log entry was appended (null = the log was cleared). */
@@ -270,6 +273,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
 
   // Per-instance state (was module-global in the shim).
   const varListeners = new Map<string, Set<(value: unknown, key?: string) => void>>();
+  const globalListeners = new Map<string, Set<(value: unknown, key?: string) => void>>();
   const messageListeners = new Set<(entry: unknown) => void>();
   const shellListeners = new Set<(entry: Metafolder.ShellEntry | null) => void>();
   const cwdListeners = new Set<() => void>();
@@ -619,6 +623,28 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         },
       },
 
+      // The global GUI variables (doc "Global GUI variables"): one store for
+      // the whole GUI, read and written like the workspace's, in the same
+      // transaction. `current` is the shell's copy, for what must answer at
+      // once (a menu being built).
+      global: {
+        get: (key: string) => invoke('global_get_var', { key }),
+        set: (key: string, value: unknown) =>
+          invoke('global_send', { vars: { [key]: value } }) as Promise<void>,
+        setMany: (vars: Record<string, unknown>) =>
+          invoke('global_send', { vars }) as Promise<void>,
+        all: () => invoke('global_vars', {}) as Promise<Record<string, unknown>>,
+        current: (key: string) => globalMirror.current(key),
+        onChange(key: string, listener: (value: unknown, key?: string) => void) {
+          let set = globalListeners.get(key);
+          if (!set) {
+            set = new Set();
+            globalListeners.set(key, set);
+          }
+          set.add(listener);
+        },
+      },
+
       commands: {
         register(
           name: string,
@@ -882,6 +908,10 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     pushVarChanged(key, value) {
       for (const l of varListeners.get(key) ?? []) l(value);
       for (const l of varListeners.get('*') ?? []) l(value, key);
+    },
+    pushGlobalChanged(key, value) {
+      for (const l of globalListeners.get(key) ?? []) l(value);
+      for (const l of globalListeners.get('*') ?? []) l(value, key);
     },
     pushMessageAppended(entry) {
       for (const l of messageListeners) l(entry);

@@ -67,6 +67,17 @@ pub async fn get_workspace_var(
     }
 }
 
+/// `GET /gui/vars/:key` — one global GUI variable, by name (doc "Global GUI
+/// variables"); `null` when it was never set, like a workspace variable.
+pub async fn get_global_var(State(state): State<ServerState>, Path(key): Path<String>) -> Response {
+    Json(json!({ "value": state.gui.get_global(&key) })).into_response()
+}
+
+/// `GET /gui/vars` — every global GUI variable.
+pub async fn list_global_vars(State(state): State<ServerState>) -> Response {
+    Json(json!({ "vars": state.gui.globals() })).into_response()
+}
+
 /// `GET /gui/workspaces/:id/messages`: the workspace's message log and the
 /// last status-bar message posted — what a command *said*, without anything of
 /// how the shell draws it (doc "mf gui").

@@ -1251,6 +1251,33 @@ async fn test_reading_a_variable_of_an_unknown_workspace_is_a_404() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+// ── Reading the global GUI variables (doc "Global GUI variables") ─────────
+
+#[tokio::test]
+async fn test_a_global_variable_is_read_back_by_name() {
+    let ctx = setup().await;
+    let clip = json!({ "paths": ["/tmp/a"], "mode": "copy" });
+    ctx.gui.set_global("clipboard", clip.clone());
+
+    let (status, body) = request(&ctx.router, "GET", "/gui/vars/clipboard", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["value"], clip);
+    let (status, body) = request(&ctx.router, "GET", "/gui/vars/never-set", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["value"], Value::Null);
+}
+
+#[tokio::test]
+async fn test_every_global_variable_is_listed() {
+    let ctx = setup().await;
+    ctx.gui.set_global("clipboard", json!(null));
+    ctx.gui.set_global("other", json!(2));
+
+    let (status, body) = request(&ctx.router, "GET", "/gui/vars", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["vars"], json!({ "clipboard": null, "other": 2 }));
+}
+
 #[tokio::test]
 async fn test_a_variable_holding_a_list_survives_the_round_trip() {
     // `selected_metarecords` is a list of uuids — the other half of what

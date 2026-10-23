@@ -3,6 +3,8 @@
 pub const WORKSPACES_CHANGED: &str = "workspaces-changed";
 pub const LAYOUT_CHANGED: &str = "layout-changed";
 pub const WORKSPACE_VAR_CHANGED: &str = "workspace-var-changed";
+/// A global GUI variable changed (doc "Global GUI variables"): `{ "key", "value" }`.
+pub const GLOBAL_VAR_CHANGED: &str = "global-var-changed";
 pub const STATUS_MESSAGE: &str = "status-message";
 pub const MESSAGE_APPENDED: &str = "message-appended";
 /// A line of the shell log (doc "shell panel"), `entry` null when cleared.

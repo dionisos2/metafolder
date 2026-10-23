@@ -2,11 +2,13 @@ title: Command transactions
 tags: Commands
 kind: reference
 aliases: transaction txn mf.flush txn_flush
-summary: A user command or a panel's command reads the workspace variables as they were when it began and its writes reach the workspaces all at once, when it ends — so no panel and no other command ever sees it half done.
+summary: A user command or a panel's command reads the workspace variables and the global GUI variables as they were when it began and its writes reach them all at once, when it ends — so no panel and no other command ever sees it half done.
 
 A [[user command|User commands]], and a command a panel registers (or a generic
 command run on a panel's functions, [[Generic panel commands]]), runs in a
-''transaction'' over the [[workspace variables|Workspace variables]]:
+''transaction'' over the [[workspace variables|Workspace variables]] — and the
+[[global GUI variables|Global GUI variables]], which `mf.global` reads and writes under
+the same rules, as one more store:
 
 * ''it reads a snapshot'': what `mf.workspace.get` / `all` answer is what the variables held when the command first read that workspace, plus what the command itself wrote. Another command, a panel or a script writing meanwhile does not move what it sees;
 * ''its writes are held'' — `set`, `setMany`, `send` into any workspace — and reach the workspaces ''at once'' when it ends: every variable is in before any panel hears of one, and each is announced once.

@@ -2,7 +2,7 @@ title: workspace-info panel
 tags: Panel [[Panel types]]
 kind: reference
 aliases: workspace-info
-summary: Every variable of the workspace with its value, live — to see what the panels tell one another, and what a script would read.
+summary: Every variable of the workspace, and every global GUI variable, with its value, live — to see what the panels tell one another, and what a script would read.
 
 Open it with `panel:open here workspace-info`
 (<<key "panel:open here workspace-info" "t w">>). It shows the
@@ -12,6 +12,10 @@ as JSON, updated as it changes.
 The standard ones come first, `null` while unset — `active_repo`, `selected_paths`,
 `selected_metarecord`, `selected_metarecords`, `selected_path_ref` — then every other variable the workspace holds, by name: each
 panel's own (`metarecord-list:query`, `path-ref:scope`…) and whatever a script wrote.
+
+Below them, under ''Global GUI variables'', the variables every workspace shares
+([[Global GUI variables]]): `clipboard` first, `null` while empty, then the others by
+name.
 
 It is read-only, and has no command of its own. It is the place to look when a panel
 does not follow another, and to find the name of the variable a script should read

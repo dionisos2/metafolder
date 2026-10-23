@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/GET /gui/vars
+catalog: HTTP endpoint
+target: GET /gui/vars
+summary: Served by the GUI.
+
+!! Reference
+
+|!Server |GUI |
+|!Handler |``gui_api::list_global_vars`` |

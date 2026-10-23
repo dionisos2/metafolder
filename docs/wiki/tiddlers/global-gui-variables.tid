@@ -1,0 +1,48 @@
+title: Global GUI variables
+tags: GUI
+kind: reference
+audience: dev
+aliases: global-variables clipboard metafolder.global
+summary: One key-value store for the whole GUI, beside each workspace's own — what every workspace shares rather than one of them holds, the file clipboard first.
+
+The [[workspace variables|Workspace variables]] are one store per workspace: what a
+panel publishes there is told to the panels of that workspace only. Some state is
+the GUI's, not a workspace's — the file clipboard is cut in one workspace and pasted
+in another. It lives in the ''global GUI variables'': one store, held by the Rust side
+like the workspace's (`GuiState`), so a script reads the same values and the
+[[workspace-info panel]] shows them live, in a section of their own. They are not
+saved: they last as long as the GUI.
+
+!! The standard variables
+
+|!Key |!Value |!Meaning |
+|`clipboard` |`{paths, mode}` or `null` |the file clipboard: absolute paths, `mode` `copy` or `cut`; emptied by the paste of a cut, the sources having moved ([[Context menus]], [[file-manager panel]]) |
+
+Like a workspace variable, anything else a panel, a command or a script writes is
+kept under its own name — a panel's under its type (`file-manager:…`).
+
+!! Reading and writing them
+
+A panel or a [[user command|User commands]] goes through `metafolder.global`, which
+is `metafolder.workspace` without a workspace: `get`, `set`, `setMany`, `all`, and
+`onChange(key | '*', listener)`. Its calls belong to the
+[[command transaction|Command transactions]] the command runs in, like the
+workspace's: the command reads a snapshot of the global variables taken at its first
+read of one, and its writes reach the store, with its writes to the workspaces, when
+it ends or flushes.
+
+`metafolder.global.current(key)` answers at once from the shell's copy — the value
+last announced, outside any transaction. It is for what cannot wait for a call: a
+right-click menu is built synchronously, and greys ''Paste'' out on an empty
+clipboard with it.
+
+A script reads them with <<cmd "GET /gui/vars/:key">> and <<cmd "GET /gui/vars">>
+([[GUI scripting endpoints]]).
+
+!! Why not a workspace variable
+
+The clipboard was first a module variable of the panels' JavaScript: shared by every
+workspace, as the panels run in one page ([[GUI design decisions]]), but seen by
+nobody — no panel, no script, no `mf gui`. Making it a workspace variable would have
+shown it, and cost the paste in another workspace. Neither was wanted, so the GUI
+got a second store with the same rules.

@@ -26,8 +26,10 @@ in the shell's own page, each in a shadow root, and the API is an object whose
 methods call the Rust side directly.
 
 One page lets every panel share the shell's services — one change feed, one key
-matcher, one clipboard for the file actions, one context menu — with no bridge to
-maintain and no copy at each access. A shared data cache was the first reason
+matcher, one context menu — with no bridge to
+maintain and no copy at each access. (The file clipboard was one of these services; it
+became a [[global GUI variable|Global GUI variables]], so a script and the
+[[workspace-info panel]] see it.) A shared data cache was the first reason
 given; it was built, then removed ([[Daemon data in panels]]), and the others held.
 
 What was given up is isolation, and it was never real: see the next section. What

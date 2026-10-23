@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke, listen } from '../ipc';
+  import { globalMirror } from '../globals';
   import {
     deadInvocations,
     dispatch,
@@ -392,6 +393,14 @@
           }
         },
       ),
+      // The global GUI variables (doc "Global GUI variables"): the shell's
+      // copy first, then every panel of every workspace.
+      listen<{ key: string; value: unknown }>('global-var-changed', (event) => {
+        globalMirror.apply(event.payload.key, event.payload.value);
+        for (const instance of instances.values()) {
+          instance.apiInst.pushGlobalChanged(event.payload.key, event.payload.value);
+        }
+      }),
       listen<{ workspace_id: string; entry: unknown }>('message-appended', (event) => {
         for (const instance of instances.values()) {
           if (instance.wsId === event.payload.workspace_id) {
@@ -412,6 +421,11 @@
         }
       }),
     ];
+
+    // Listening first: a change announced after this read is applied over it.
+    void (invoke('global_vars', {}) as Promise<Record<string, unknown>>).then((vars) =>
+      globalMirror.load(vars),
+    );
 
     // The generic commands run on the functions of the instance they name, in
     // their workspace — mounted first, like a panel command's (doc "Generic

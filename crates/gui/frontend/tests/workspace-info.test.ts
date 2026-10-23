@@ -27,9 +27,17 @@ function shadowRoot(): ShadowRoot {
 
 type Listener = (value: unknown, key?: string) => void;
 
-async function mountWith(vars: Record<string, unknown>) {
+async function mountWith(vars: Record<string, unknown>, globals: Record<string, unknown> = {}) {
   const listeners: Listener[] = [];
+  const globalListeners: Listener[] = [];
   const api = {
+    global: {
+      get: async (key: string) => globals[key] ?? null,
+      all: async () => ({ ...globals }),
+      onChange: (key: string, listener: Listener) => {
+        if (key === '*') globalListeners.push(listener);
+      },
+    },
     workspace: {
       get: async (key: string) => vars[key] ?? null,
       all: async () => ({ ...vars }),
@@ -41,15 +49,21 @@ async function mountWith(vars: Record<string, unknown>) {
   const root = shadowRoot();
   const mod = await import('../../default-config/panel-types/workspace-info/main.js');
   await mod.mount(root, api as never);
-  const rows = () =>
+  const rows = (table = 'vars') =>
     Object.fromEntries(
-      [...root.querySelectorAll('tr')].map((tr) => [
+      [...root.getElementById(table)!.querySelectorAll('tr')].map((tr) => [
         tr.querySelector('.key')?.textContent ?? '',
         tr.querySelector('.value')?.textContent ?? '',
       ]),
     );
-  const keys = () => [...root.querySelectorAll('tr .key')].map((td) => td.textContent);
-  return { rows, keys, push: (key: string, value: unknown) => listeners.forEach((l) => l(value, key)) };
+  const keys = (table = 'vars') =>
+    [...root.getElementById(table)!.querySelectorAll('tr .key')].map((td) => td.textContent);
+  return {
+    rows,
+    keys,
+    push: (key: string, value: unknown) => listeners.forEach((l) => l(value, key)),
+    pushGlobal: (key: string, value: unknown) => globalListeners.forEach((l) => l(value, key)),
+  };
 }
 
 describe('workspace-info', () => {
@@ -79,5 +93,20 @@ describe('workspace-info', () => {
     const { rows, push } = await mountWith({ 'path-ref:scope': 'exact' });
     push('path-ref:scope', 'subtree');
     expect(rows()['path-ref:scope']).toBe('"subtree"');
+  });
+
+  test('the global GUI variables have their own section, the clipboard first', async () => {
+    const { keys, rows } = await mountWith({ active_repo: 'r' }, { 'my-script:state': 1 });
+    expect(keys('globals')).toEqual(['clipboard', 'my-script:state']);
+    expect(rows('globals')['clipboard']).toBe('null');
+    // Not a variable of the workspace.
+    expect(keys()).not.toContain('clipboard');
+  });
+
+  test('a global variable set from elsewhere updates its row', async () => {
+    const { rows, pushGlobal } = await mountWith({});
+    pushGlobal('clipboard', { paths: ['/a'], mode: 'cut' });
+    expect(JSON.parse(rows('globals')['clipboard'])).toEqual({ paths: ['/a'], mode: 'cut' });
+    expect(rows()['clipboard']).toBeUndefined();
   });
 });

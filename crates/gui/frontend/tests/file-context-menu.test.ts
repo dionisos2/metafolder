@@ -6,7 +6,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { getClipboard, setClipboard } from '../../panel-shim/file-actions.js';
+import { globalStub } from './support/global';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/file');
 
@@ -41,10 +41,13 @@ function stub(path: string, tracked = true) {
     ['selected_metarecord', tracked ? { uuid: 'u1', repo: 'r1' } : null],
     ['active_repo', 'r1'],
   ]);
+  const global = globalStub();
   return {
     handlers,
     providers,
+    global,
     api: {
+      global,
       guiServer: 'http://127.0.0.1:7524',
       sessionToken: 'test-token',
       pageSize: 10,
@@ -83,15 +86,17 @@ const flush = async () => {
 };
 
 /** Runs the menu's "Copy" and answers what landed in the shared clipboard. */
-function copiedBy(provider: Provider): string[] | undefined {
+function copiedBy(
+  provider: Provider,
+  global: ReturnType<typeof globalStub>,
+): string[] | undefined {
   const items = provider(new MouseEvent('contextmenu'));
   items.find((item) => item.label === 'Copy')?.action?.();
-  return getClipboard()?.paths;
+  return (global.current('clipboard') as { paths: string[] } | null)?.paths;
 }
 
 describe('file panel — context menu target', () => {
   beforeEach(() => {
-    setClipboard(null);
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => ({
@@ -113,26 +118,26 @@ describe('file panel — context menu target', () => {
   }
 
   test('following the selection, the menu acts on the selected file', async () => {
-    const { providers } = await mountPanel('/repo/album/notes.txt');
-    expect(copiedBy(providers[0])).toEqual(['/repo/album/notes.txt']);
+    const { providers, global } = await mountPanel('/repo/album/notes.txt');
+    expect(copiedBy(providers[0], global)).toEqual(['/repo/album/notes.txt']);
   });
 
   test('an untracked file has the file actions too, in the active repository', async () => {
-    const { providers } = await mountPanel('/repo/album/notes.txt', false);
-    expect(copiedBy(providers[0])).toEqual(['/repo/album/notes.txt']);
+    const { providers, global } = await mountPanel('/repo/album/notes.txt', false);
+    expect(copiedBy(providers[0], global)).toEqual(['/repo/album/notes.txt']);
   });
 
   test('after drilling into a listing, the menu acts on the file shown', async () => {
-    const { providers, viewer } = await mountPanel('/repo/album');
+    const { providers, global, viewer } = await mountPanel('/repo/album');
     (viewer.querySelector('.tile') as HTMLElement).click();
     await flush();
-    expect(copiedBy(providers[0])).toEqual(['/repo/album/notes.txt']);
+    expect(copiedBy(providers[0], global)).toEqual(['/repo/album/notes.txt']);
   });
 
   test('after file:back, the menu acts on the folder shown', async () => {
-    const { providers, handlers } = await mountPanel('/repo/album/notes.txt');
+    const { providers, global, handlers } = await mountPanel('/repo/album/notes.txt');
     await handlers.get('file:back')!();
     await flush();
-    expect(copiedBy(providers[0])).toEqual(['/repo/album']);
+    expect(copiedBy(providers[0], global)).toEqual(['/repo/album']);
   });
 });

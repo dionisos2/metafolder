@@ -85,6 +85,14 @@ The [[workspace variables|Workspace variables]] of the instance's workspace.
 * `onChange(key, listener)` — `listener(value)` at each change of `key`; with the key `'*'`, `listener(value, key)` for every variable.
 * `adoptRepo(repo)` — sets `active_repo` on a workspace that has none yet; a workspace never changes repository afterwards ([[Workspaces]]).
 
+!! `global`
+
+The [[global GUI variables|Global GUI variables]], one store for every workspace —
+the file clipboard is one. `get`, `set`, `setMany`, `all` and `onChange` are those of
+`workspace`, with no workspace, and belong to the same [[Command transactions]].
+
+* `current(key)` — the value last announced, at once, from the shell's copy (`null` when none): for what cannot wait for a promise, such as a menu being built. It is outside any transaction.
+
 !! `commands`, `invoke`, `addKeybinding`
 
 ```

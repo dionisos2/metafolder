@@ -7,7 +7,15 @@
 type Invoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 
 /** The variable calls: they take the transaction. */
-const VARIABLE_CALLS = new Set(['ws_get_var', 'ws_set_var', 'ws_vars', 'workspace_send']);
+const VARIABLE_CALLS = new Set([
+  'ws_get_var',
+  'ws_set_var',
+  'ws_vars',
+  'workspace_send',
+  'global_get_var',
+  'global_vars',
+  'global_send',
+]);
 
 /** The calls a transaction carries as they are: they change nothing a panel
  *  reads from the variables — the daemon (whose changes the panels follow

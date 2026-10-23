@@ -10,7 +10,8 @@ pushed at once to all of them. Panels talk through it without knowing one anothe
 the list writes the selection, the detail and the file panels follow it. The Rust side
 holds it, so a script reads the same values — `GET /gui/workspaces/:id/vars/:key`
 ([[GUI scripting endpoints]]), or [[mf gui selected]] for the checked set — and the [[workspace-info panel]] shows them
-live.
+live. What belongs to no workspace in particular — the file clipboard — is in the
+[[global GUI variables|Global GUI variables]] instead.
 
 !! The standard variables
 

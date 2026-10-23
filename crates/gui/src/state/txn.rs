@@ -1,5 +1,6 @@
-//! Command transactions over the workspace variables (doc "Command
-//! transactions"): a command reads a snapshot of each workspace it reads, plus
+//! Command transactions over the workspace variables and the global GUI
+//! variables (doc "Command transactions"): a command reads a snapshot of each
+//! workspace it reads (and of the global variables), plus
 //! its own writes, and its writes are held until it flushes or ends — then
 //! they reach the workspaces all at once. A transaction that has ended is no
 //! transaction any more: work a command set off and did not wait for, still
@@ -13,6 +14,9 @@ use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
+/// Held writes into one store, each variable in the order first written.
+type Held = Vec<(String, Value)>;
+
 /// One open transaction.
 #[derive(Default)]
 pub(super) struct Txn {
@@ -20,7 +24,11 @@ pub(super) struct Txn {
     snapshots: HashMap<String, Vars>,
     /// The held writes, per workspace in the order first written to, each
     /// variable in the order first written.
-    writes: Vec<(String, Vec<(String, Value)>)>,
+    writes: Vec<(String, Held)>,
+    /// The global GUI variables, as they were at the first read of one.
+    global_snapshot: Option<Vars>,
+    /// The held writes to the global GUI variables, in the order first written.
+    global_writes: Held,
 }
 
 impl GuiState {
@@ -74,13 +82,41 @@ impl GuiState {
                 txn.writes.len() - 1
             }
         };
-        let written = &mut txn.writes[index].1;
-        for (key, value) in vars {
-            match written.iter_mut().find(|(k, _)| *k == key) {
-                Some(slot) => slot.1 = value,
-                None => written.push((key, value)),
-            }
+        hold(&mut txn.writes[index].1, vars);
+        Ok(())
+    }
+
+    /// `get_global` within transaction `txn`.
+    pub fn txn_get_global(&self, txn: u64, key: &str) -> Result<Value, String> {
+        let Some((snapshot, written)) = self.txn_global_view(txn)? else {
+            return Ok(self.get_global(key));
+        };
+        if let Some((_, value)) = written.iter().find(|(k, _)| k == key) {
+            return Ok(value.clone());
         }
+        Ok(snapshot.get(key).cloned().unwrap_or(Value::Null))
+    }
+
+    /// `globals` within transaction `txn`.
+    pub fn txn_globals(&self, txn: u64) -> Result<Map<String, Value>, String> {
+        let Some((snapshot, written)) = self.txn_global_view(txn)? else {
+            return Ok(self.globals());
+        };
+        let mut vars: Map<String, Value> =
+            snapshot.iter().map(|(key, value)| (key.clone(), value.clone())).collect();
+        vars.extend(written);
+        Ok(vars)
+    }
+
+    /// `send_globals` within transaction `txn`: held until it flushes or ends.
+    pub fn txn_send_globals(&self, txn: u64, vars: Map<String, Value>) -> Result<(), String> {
+        let mut txns = self.txns.lock_recover();
+        let Some(txn) = self.open(&mut txns, txn)? else {
+            drop(txns);
+            self.send_globals(vars);
+            return Ok(());
+        };
+        hold(&mut txn.global_writes, vars);
         Ok(())
     }
 
@@ -91,7 +127,8 @@ impl GuiState {
             let mut txns = self.txns.lock_recover();
             let Some(txn) = self.open(&mut txns, txn)? else { return Ok(false) };
             txn.snapshots.clear();
-            std::mem::take(&mut txn.writes)
+            txn.global_snapshot = None;
+            (std::mem::take(&mut txn.writes), std::mem::take(&mut txn.global_writes))
         };
         Ok(self.deliver(writes))
     }
@@ -100,7 +137,7 @@ impl GuiState {
     pub fn txn_end(&self, txn: u64) -> Result<bool, String> {
         let removed = self.txns.lock_recover().remove(&txn);
         match removed {
-            Some(txn) => Ok(self.deliver(txn.writes)),
+            Some(txn) => Ok(self.deliver((txn.writes, txn.global_writes))),
             None => self.ended(txn).map(|()| false),
         }
     }
@@ -127,6 +164,16 @@ impl GuiState {
         Ok(Some(View { snapshot, written, active_repo }))
     }
 
+    /// What `txn` reads of the global GUI variables: its snapshot (taken now
+    /// if this is the first read) and its own writes. None when `txn` has ended.
+    fn txn_global_view(&self, txn: u64) -> Result<Option<(Vars, Held)>, String> {
+        let live = self.lock().globals.clone();
+        let mut txns = self.txns.lock_recover();
+        let Some(txn) = self.open(&mut txns, txn)? else { return Ok(None) };
+        let snapshot = txn.global_snapshot.get_or_insert(live).clone();
+        Ok(Some((snapshot, txn.global_writes.clone())))
+    }
+
     /// Transaction `txn` while it is open; None once it has ended.
     fn open<'a>(
         &self,
@@ -149,25 +196,44 @@ impl GuiState {
         }
     }
 
-    /// Writes `writes` into the workspaces, every one before any is announced.
-    /// A workspace closed meanwhile is skipped. True when there was any.
-    fn deliver(&self, writes: Vec<(String, Vec<(String, Value)>)>) -> bool {
-        if writes.is_empty() {
+    /// Writes `writes` into the workspaces and the global GUI variables, every
+    /// one before any is announced. A workspace closed meanwhile is skipped.
+    /// True when there was any.
+    fn deliver(&self, (writes, globals): (Vec<(String, Held)>, Held)) -> bool {
+        if writes.is_empty() && globals.is_empty() {
             return false;
         }
         let mut inner = self.lock();
         let mut announced = Vec::new();
+        for (key, value) in globals {
+            inner.globals.insert(key.clone(), value.clone());
+            announced.push((events::GLOBAL_VAR_CHANGED, json!({ "key": key, "value": value })));
+        }
         for (ws_id, vars) in writes {
             let Ok(ws) = inner.workspace_mut(&ws_id) else { continue };
             for (key, value) in vars {
                 ws.vars.insert(key.clone(), value.clone());
-                announced.push(json!({ "workspace_id": ws_id, "key": key, "value": value }));
+                announced.push((
+                    events::WORKSPACE_VAR_CHANGED,
+                    json!({ "workspace_id": ws_id, "key": key, "value": value }),
+                ));
             }
         }
-        for payload in announced {
-            self.notifier.emit(events::WORKSPACE_VAR_CHANGED, payload);
+        for (event, payload) in announced {
+            self.notifier.emit(event, payload);
         }
         true
+    }
+}
+
+/// Adds `vars` to the held writes `written`: a variable written again keeps
+/// its first place and takes the new value.
+fn hold(written: &mut Held, vars: Map<String, Value>) {
+    for (key, value) in vars {
+        match written.iter_mut().find(|(k, _)| *k == key) {
+            Some(slot) => slot.1 = value,
+            None => written.push((key, value)),
+        }
     }
 }
 

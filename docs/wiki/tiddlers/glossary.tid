@@ -85,5 +85,6 @@ summary: Every term of metafolder in one line, with the note that defines it.
 * ''Keybinding'' — a key, or a sequence of keys, running a command ([[Keybindings]]).
 * ''Selection'' — the metarecords a panel hands to the others ([[Cross-panel selection]]).
 * ''Workspace variable'' — a named value panels of a workspace share ([[Workspace variables]]).
+* ''Global GUI variable'' — a named value every workspace shares, the file clipboard among them ([[Global GUI variables]]).
 * ''Value picker'' — the completion that fills a reference field ([[Value picker]]).
 * ''Shipped script'' — a helper script installed with the configuration, run from the GUI ([[Shipped script]]).

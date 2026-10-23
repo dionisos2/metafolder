@@ -318,6 +318,42 @@ pub fn ws_set_var(
     }
 }
 
+// ── Global GUI variables (doc "Global GUI variables") ───────────────────
+//
+// The same calls as the workspace variables, with no workspace, and in the
+// same transaction when one is given.
+
+#[tauri::command]
+pub fn global_get_var(app: AppHandle, key: String, txn: Option<u64>) -> Result<Value, String> {
+    match txn {
+        Some(txn) => app.gui.txn_get_global(txn, &key),
+        None => Ok(app.gui.get_global(&key)),
+    }
+}
+
+#[tauri::command]
+pub fn global_vars(app: AppHandle, txn: Option<u64>) -> Result<Map<String, Value>, String> {
+    match txn {
+        Some(txn) => app.gui.txn_globals(txn),
+        None => Ok(app.gui.globals()),
+    }
+}
+
+#[tauri::command]
+pub fn global_send(
+    app: AppHandle,
+    vars: Map<String, Value>,
+    txn: Option<u64>,
+) -> Result<(), String> {
+    match txn {
+        Some(txn) => app.gui.txn_send_globals(txn, vars),
+        None => {
+            app.gui.send_globals(vars);
+            Ok(())
+        }
+    }
+}
+
 /// Opens a command transaction (doc "Command transactions").
 #[tauri::command]
 pub fn txn_begin(app: AppHandle) -> u64 {

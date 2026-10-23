@@ -1,9 +1,10 @@
 // Shared filesystem-action helpers (doc "Context menus"): the cut / copy /
 // paste / rename / duplicate / trash operations that any panel can offer on a
 // metarecord backed by a file or directory. Served at /__file-actions.js and
-// imported by the file-manager and every metarecord-bearing panel, so a single
-// clipboard is shared across the whole GUI JS realm — copy in the list, paste
-// in the file manager, and back.
+// imported by the file-manager and every metarecord-bearing panel. The
+// clipboard is the global GUI variable `clipboard` (doc "Global GUI
+// variables"), one for every workspace — copy in the list, paste in the file
+// manager of another workspace, and back.
 //
 // The operations act on absolute OS paths through `metafolder.fs`/`.trash`
 // (never the daemon directly); after a successful mutation they call the
@@ -19,24 +20,25 @@
 
 import { copyText } from '/__menu.js';
 
-/**
- * The shared clipboard, a module singleton (ES modules are cached per URL in
- * the realm, so every importer sees the same object). Cleared after a cut is
- * pasted — the sources have moved.
- * @type {{ paths: string[], mode: 'copy'|'cut' }|null}
- */
-let clipboard = null;
+/** The global GUI variable holding the file clipboard: `{ paths, mode }`, or
+ *  `null` — emptied after a cut is pasted, since the sources have moved. */
+export const CLIPBOARD = 'clipboard';
 
-/** @returns {{ paths: string[], mode: 'copy'|'cut' }|null} */
-export function getClipboard() {
-  return clipboard;
+/** @typedef {{ paths: string[], mode: 'copy'|'cut' }} Clipboard */
+
+/** What the clipboard holds, as `metafolder` reads it (in its transaction).
+ *  @param {MetafolderApi} metafolder @returns {Promise<Clipboard|null>} */
+export async function getClipboard(metafolder) {
+  return /** @type {Clipboard|null} */ ((await metafolder.global.get(CLIPBOARD)) ?? null);
 }
-/** @param {{ paths: string[], mode: 'copy'|'cut' }|null} value */
-export function setClipboard(value) {
-  clipboard = value;
+/** @param {MetafolderApi} metafolder @param {Clipboard|null} value */
+export function setClipboard(metafolder, value) {
+  return metafolder.global.set(CLIPBOARD, value);
 }
-/** Whether the clipboard holds at least one path. */
-export function hasClipboard() {
+/** Whether the clipboard holds at least one path — at once, from the shell's
+ *  copy: a menu is built synchronously. @param {MetafolderApi} metafolder */
+export function hasClipboard(metafolder) {
+  const clipboard = /** @type {Clipboard|null} */ (metafolder.global.current(CLIPBOARD));
   return clipboard !== null && clipboard.paths.length > 0;
 }
 
@@ -139,7 +141,7 @@ async function targetDirOf(fs, path, isDir) {
  */
 async function pasteInto(metafolder, targetPath, isDir, onChanged, statusMs) {
   const { fs, statusBar } = metafolder;
-  const cb = getClipboard();
+  const cb = await getClipboard(metafolder);
   if (!cb || cb.paths.length === 0) {
     void statusBar.message('clipboard is empty', 3000);
     return;
@@ -171,7 +173,7 @@ async function pasteInto(metafolder, targetPath, isDir, onChanged, statusMs) {
       await statusBar.error(error, errorMs(metafolder));
     }
   }
-  if (cb.mode === 'cut' && pasted > 0) setClipboard(null);
+  if (cb.mode === 'cut' && pasted > 0) await setClipboard(metafolder, null);
   if (pasted > 0) {
     void statusBar.message(`Pasted ${pasted} item${pasted === 1 ? '' : 's'}`, statusMs);
     await onChanged();
@@ -281,20 +283,20 @@ export function fileMenuItems({ metafolder, repo, path, name, isDir, onChanged }
     {
       label: 'Cut',
       action: () => {
-        setClipboard({ paths: [path], mode: 'cut' });
+        void setClipboard(metafolder, { paths: [path], mode: 'cut' });
         void statusBar.message(`Cut ${label}`, statusMs);
       },
     },
     {
       label: 'Copy',
       action: () => {
-        setClipboard({ paths: [path], mode: 'copy' });
+        void setClipboard(metafolder, { paths: [path], mode: 'copy' });
         void statusBar.message(`Copied ${label}`, statusMs);
       },
     },
     {
       label: 'Paste',
-      disabled: !hasClipboard(),
+      disabled: !hasClipboard(metafolder),
       action: () => void pasteInto(metafolder, path, isDir, nudge, statusMs),
     },
     { label: 'Rename…', action: () => void renamePath(metafolder, path, nudge, statusMs) },

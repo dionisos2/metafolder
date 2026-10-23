@@ -239,6 +239,22 @@ declare namespace Metafolder {
     onChange(key: string, listener: (value: unknown, key?: string) => void): void;
   }
 
+  /** The global GUI variables (doc "Global GUI variables"): one store for the
+   *  whole GUI, shared by every workspace — the file clipboard is one. */
+  interface Global {
+    get(key: string): Promise<unknown>;
+    set(key: string, value: unknown): Promise<void>;
+    /** Writes several at once: every one is in before any listener is told. */
+    setMany(vars: Record<string, unknown>): Promise<void>;
+    all(): Promise<Record<string, unknown>>;
+    /** The value last announced, at once (`null` when there is none): for
+     *  what cannot wait, a menu being built. Outside any transaction. */
+    current(key: string): unknown;
+    /** Subscribe to one variable, or to `'*'` for every change (the listener
+     *  then also receives the key). */
+    onChange(key: string, listener: (value: unknown, key?: string) => void): void;
+  }
+
   /** One completion candidate (doc "Completion views"): the label shown
    *  (and matched whole) and the value the command receives. A plain string is
    *  both. */
@@ -704,6 +720,7 @@ declare namespace Metafolder {
     readonly pick: Pick;
     readonly config: PanelConfig;
     readonly workspace: Workspace;
+    readonly global: Global;
     readonly commands: Commands;
     /** Provides functions to the generic commands (doc "Generic panel
      *  commands"): `cursor:next self` in this panel runs on them. A later call

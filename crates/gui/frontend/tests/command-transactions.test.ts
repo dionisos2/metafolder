@@ -49,11 +49,17 @@ describe('transactional invoke', () => {
     await call('ws_set_var', { wsId: 'ws-1', key: 'a', value: 1 });
     await call('ws_vars', { wsId: 'ws-1' });
     await call('workspace_send', { wsId: 'ws-2', vars: { b: 2 } });
+    await call('global_get_var', { key: 'clipboard' });
+    await call('global_vars', {});
+    await call('global_send', { vars: { clipboard: null } });
     expect(calls.map((c) => [c.command, c.args?.txn])).toEqual([
       ['ws_get_var', 7],
       ['ws_set_var', 7],
       ['ws_vars', 7],
       ['workspace_send', 7],
+      ['global_get_var', 7],
+      ['global_vars', 7],
+      ['global_send', 7],
     ]);
     expect(flush).not.toHaveBeenCalled();
   });
