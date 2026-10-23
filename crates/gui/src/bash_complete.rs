@@ -7,6 +7,7 @@
 //! pressing Tab in a terminal).
 
 use serde::Serialize;
+use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::process::Command;
@@ -30,10 +31,15 @@ pub struct Completion {
     pub candidates: Vec<String>,
 }
 
-/// Completes `line_to_cursor` (the command line truncated at the cursor).
+/// Completes `line_to_cursor` (the command line truncated at the cursor), a
+/// relative word in `cwd` — where the line would run (doc "shell panel").
 /// A missing `bash` or a timeout is an error; "no candidates" is not.
-pub async fn complete(line_to_cursor: &str) -> Result<Completion, String> {
-    let child = Command::new("bash")
+pub async fn complete(line_to_cursor: &str, cwd: Option<&Path>) -> Result<Completion, String> {
+    let mut command = Command::new("bash");
+    if let Some(dir) = cwd {
+        command.current_dir(dir).env("PWD", dir);
+    }
+    let child = command
         .arg("--noprofile")
         .arg("--norc")
         .arg("-c")
@@ -81,9 +87,19 @@ fn parse_output(stdout: &str) -> Completion {
     Completion { word, candidates }
 }
 
+/// `ws_id`: the workspace whose shell lines the line is for, to complete in
+/// the directory they run in.
 #[tauri::command]
-pub async fn bash_complete(line: String) -> Result<Completion, String> {
-    complete(&line).await
+pub async fn bash_complete(
+    app: tauri::State<'_, std::sync::Arc<crate::commands::App>>,
+    line: String,
+    ws_id: Option<String>,
+) -> Result<Completion, String> {
+    let cwd = match ws_id {
+        Some(ws_id) => crate::shell_exec::cwd_of(&app.gui, &app.daemon, &ws_id).await,
+        None => None,
+    };
+    complete(&line, cwd.as_deref()).await
 }
 
 #[cfg(test)]
@@ -99,7 +115,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_position_completes_command_names() {
-        let completion = complete("ech").await.unwrap();
+        let completion = complete("ech", None).await.unwrap();
         assert_eq!(completion.word, "ech");
         assert!(
             completion.candidates.iter().any(|c| c == "echo"),
@@ -110,7 +126,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_line_lists_commands() {
-        let completion = complete("").await.unwrap();
+        let completion = complete("", None).await.unwrap();
         assert_eq!(completion.word, "");
         assert!(!completion.candidates.is_empty());
     }
@@ -122,7 +138,7 @@ mod tests {
     /// which is what the next test pins down.
     #[tokio::test]
     async fn test_empty_word_does_not_enumerate_path() {
-        let completion = complete("").await.unwrap();
+        let completion = complete("", None).await.unwrap();
         assert!(
             completion.candidates.iter().any(|c| c == "if"),
             "shell keywords missing: {:?}",
@@ -144,7 +160,7 @@ mod tests {
     /// ...and a prefix — even one character — still searches all of PATH.
     #[tokio::test]
     async fn test_one_character_prefix_searches_path() {
-        let completion = complete("ba").await.unwrap();
+        let completion = complete("ba", None).await.unwrap();
         assert!(
             completion.candidates.iter().any(|c| c == "bash"),
             "PATH not searched for a prefixed word: {:?}",
@@ -159,7 +175,7 @@ mod tests {
         std::fs::write(dir.path().join("alpha2.txt"), "").unwrap();
         let base = dir.path().to_str().unwrap();
 
-        let completion = complete(&format!("cat {base}/alph")).await.unwrap();
+        let completion = complete(&format!("cat {base}/alph"), None).await.unwrap();
         assert_eq!(completion.word, format!("{base}/alph"));
         // Trailing-slash decoration differs between the two paths; compare
         // the bare names.
@@ -167,6 +183,16 @@ mod tests {
             completion.candidates.iter().map(|c| c.trim_end_matches('/')).collect();
         assert!(names.contains(&format!("{base}/alpha.txt").as_str()), "{names:?}");
         assert!(names.contains(&format!("{base}/alpha2.txt").as_str()), "{names:?}");
+    }
+
+    /// A relative word completes in the directory the shell lines run in
+    /// (doc "shell panel"), not the GUI's.
+    #[tokio::test]
+    async fn test_a_relative_word_completes_in_the_given_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("zeta-mf.txt"), "").unwrap();
+        let completion = complete("cat zeta-m", Some(dir.path())).await.unwrap();
+        assert_eq!(completion.candidates, ["zeta-mf.txt"]);
     }
 
     #[tokio::test]
@@ -178,7 +204,7 @@ mod tests {
         std::fs::create_dir(dir.path().join("alphadir")).unwrap();
         let base = dir.path().to_str().unwrap();
 
-        let completion = complete(&format!("cat {base}/alph")).await.unwrap();
+        let completion = complete(&format!("cat {base}/alph"), None).await.unwrap();
         assert!(
             completion.candidates.iter().any(|c| c == &format!("{base}/alphadir/")),
             "{:?}",
@@ -188,7 +214,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_trailing_space_starts_a_new_word() {
-        let completion = complete("ls ").await.unwrap();
+        let completion = complete("ls ", None).await.unwrap();
         assert_eq!(completion.word, "");
     }
 
@@ -198,7 +224,7 @@ mod tests {
         std::fs::write(dir.path().join("alpha.txt"), "").unwrap();
         let base = dir.path().to_str().unwrap();
 
-        let completion = complete(&format!("cat \"{base}/alph")).await.unwrap();
+        let completion = complete(&format!("cat \"{base}/alph"), None).await.unwrap();
         // The returned word excludes the quote, so the frontend replaces
         // only the text after it.
         assert_eq!(completion.word, format!("{base}/alph"));
@@ -211,7 +237,7 @@ mod tests {
     async fn test_tilde_word_is_returned_verbatim() {
         // Candidates may be $HOME-expanded, but the replaced word must be
         // exactly what is on screen.
-        let completion = complete("ls ~/").await.unwrap();
+        let completion = complete("ls ~/", None).await.unwrap();
         assert_eq!(completion.word, "~/");
     }
 
@@ -220,20 +246,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let marker = dir.path().join("executed");
         let line = format!("echo $(touch {} )x", marker.to_str().unwrap());
-        let completion = complete(&line).await;
+        let completion = complete(&line, None).await;
         assert!(completion.is_ok());
         assert!(!marker.exists(), "completion executed the command substitution");
     }
 
     #[tokio::test]
     async fn test_unclosed_quote_does_not_error() {
-        assert!(complete("echo \"unclosed").await.is_ok());
-        assert!(complete("echo 'unclosed").await.is_ok());
+        assert!(complete("echo \"unclosed", None).await.is_ok());
+        assert!(complete("echo 'unclosed", None).await.is_ok());
     }
 
     #[tokio::test]
     async fn test_no_match_yields_empty_candidates() {
-        let completion = complete("cat /no/such/dir-mf-test/x").await.unwrap();
+        let completion = complete("cat /no/such/dir-mf-test/x", None).await.unwrap();
         assert!(completion.candidates.is_empty());
     }
 

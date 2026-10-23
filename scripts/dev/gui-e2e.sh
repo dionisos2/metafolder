@@ -50,8 +50,8 @@
 #   field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script
 #   script-workspaces errors picker refs hierarchy hierarchy-form prompt history
 #   keybindings open-with tab-close pick-button suggested-key walk open-viewers
-#   slideshow shell-line repos-memory help-keys zoom order user-commands settle
-#   macro, and
+#   slideshow shell-line shell-cwd repos-memory help-keys zoom order user-commands
+#   settle macro, and
 #   devtools last (it takes the inspector the clicking scenarios drive).
 #   --unsandboxed  pass --allow-unsandboxed-webview to the GUI (a container
 #                  that forbids WebKit's sandbox; never on real data)
@@ -82,7 +82,7 @@ done
 [ ${#SCENARIOS[@]} -gt 0 ] \
     || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close
-        pick-button suggested-key walk open-viewers slideshow shell-line repos-memory
+        pick-button suggested-key walk open-viewers slideshow shell-line shell-cwd repos-memory
         help-keys zoom order user-commands settle macro devtools)
 
 # shellcheck source=lib/daemon-fixture.sh
@@ -1255,6 +1255,35 @@ scenario_shell_line() {
     typed "echo kept > $cut dropped"
     keys Left Left Left Left Left Left Left Left ctrl+k Return
     assert "shell line: still focused, ctrl+k cuts the end" until_ok 10 grep -qx kept "$cut"
+}
+
+# shell_pwd_is <dir> — a `!pwd` run now prints <dir>. Each line runs in the
+# background, so a `cd` is in force only once its line is over: asked again
+# until then (until_ok).
+shell_pwd_is() {
+    local out="$WORK/shell-cwd.out"
+    rm -f "$out"
+    mfg command "!pwd > $out" >/dev/null 2>&1 || return 1
+    for _ in $(seq 1 20); do [ -s "$out" ] && break; sleep 0.1; done
+    grep -qx "$1" "$out"
+}
+
+scenario_shell_cwd() {
+    new_repo shell-cwd
+    mkdir -p "$REPO_DIR/sub/deep"
+    echo x >"$REPO_DIR/sub/file.txt"
+
+    # A line runs in the selection's folder; a `cd` carries over to the next
+    # line, until the selection changes (doc "shell panel").
+    select_path "$REPO_DIR/sub/file.txt"
+    assert "shell cwd: a line runs in the selected file's folder" \
+        until_ok 10 shell_pwd_is "$REPO_DIR/sub"
+    run "!cd deep"
+    assert "shell cwd: a cd carries over to the next line" \
+        until_ok 10 shell_pwd_is "$REPO_DIR/sub/deep"
+    select_path "$REPO_DIR/sub"
+    assert "shell cwd: selecting something else moves the shell there" \
+        until_ok 10 shell_pwd_is "$REPO_DIR/sub"
 }
 
 # in_memory_of <name> — the repository's `in_memory` bytes, from GET /repos.

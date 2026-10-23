@@ -4,6 +4,7 @@ use super::layout::SlotId;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 pub struct Workspace {
@@ -32,6 +33,10 @@ pub struct Workspace {
     /// What the shell lines run in this workspace printed, shown by the
     /// `shell` panel type (doc "shell panel").
     pub shell: Vec<ShellEntry>,
+    /// Where the last shell line left the shell (its final `pwd`), with the
+    /// selection it ran under: it holds until the selection changes (doc
+    /// "shell panel").
+    pub shell_cd: Option<(PathBuf, Value)>,
     /// Last panel type displayed per slot, restored on re-assignment.
     pub last_panel: HashMap<SlotId, String>,
     /// Panel count remembered while this workspace owned the window: `true`
@@ -107,6 +112,18 @@ pub struct ShellEntry {
     pub run: String,
     pub kind: ShellLine,
     pub text: String,
+}
+
+/// What decides the directory a shell line runs in (doc "shell panel").
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShellPlace {
+    /// The selection now (`[selected_metarecord, selected_paths]`), to record
+    /// a `cd` under.
+    pub selection: Value,
+    /// Where a `cd` left the shell, if made under this very selection.
+    pub cd: Option<PathBuf>,
+    /// The first of `selected_paths`.
+    pub selected_path: Option<String>,
 }
 
 /// What a shell-log line is.

@@ -537,8 +537,19 @@ describe('panel api — misc surface', () => {
       cursor: 13,
       candidates: [],
     });
-    // Only what precedes the cursor is completed.
-    expect(invoke).toHaveBeenCalledWith('bash_complete', { line: 'ls Doc' });
+    // Only what precedes the cursor is completed, where the workspace's lines run.
+    expect(invoke).toHaveBeenCalledWith('bash_complete', { line: 'ls Doc', wsId: 'ws-1' });
+  });
+
+  test('shell.cwd asks where the workspace lines run; onCwd hears a cd', async () => {
+    const { api, invoke, instance } = setup();
+    invoke.mockResolvedValueOnce('/data/music');
+    expect(await api.shell.cwd()).toBe('/data/music');
+    expect(invoke).toHaveBeenCalledWith('shell_cwd', { wsId: 'ws-1' });
+    const listener = vi.fn();
+    api.shell.onCwd(listener);
+    instance.pushShellCwd();
+    expect(listener).toHaveBeenCalledTimes(1);
   });
 
   test('shell.complete extends to the common prefix and lists several candidates', async () => {

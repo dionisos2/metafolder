@@ -14,10 +14,13 @@ use metafolder_core::sync::MutexExt;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
-use workspace::{MessageEntry, ShellEntry, ShellLine, StatusEntry, Workspace, WorkspaceInfo};
+use workspace::{
+    MessageEntry, ShellEntry, ShellLine, ShellPlace, StatusEntry, Workspace, WorkspaceInfo,
+};
 
 /// Default panel type shown when a workspace is first displayed: `repos`
 /// when no repository is active (entry point), `metarecord-list` otherwise.
@@ -155,6 +158,7 @@ impl Inner {
             messages: Vec::new(),
             last_status: None,
             shell: Vec::new(),
+            shell_cd: None,
             last_panel: Default::default(),
             ready_panels: Default::default(),
             split: false,
@@ -1462,6 +1466,39 @@ impl GuiState {
         Ok(())
     }
 
+    /// What decides where the workspace's next shell line runs (doc "shell
+    /// panel"): a `cd` made under the current selection, else the selection.
+    pub fn shell_place(&self, ws_id: &str) -> Result<ShellPlace, String> {
+        let inner = self.lock();
+        let ws = inner.workspace(ws_id)?;
+        let selection = shell_selection(ws);
+        let cd = ws
+            .shell_cd
+            .as_ref()
+            .filter(|(_, under)| *under == selection)
+            .map(|(dir, _)| dir.clone());
+        let selected_path = ws
+            .vars
+            .get("selected_paths")
+            .and_then(|paths| paths.get(0))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        Ok(ShellPlace { selection, cd, selected_path })
+    }
+
+    /// Records where a shell line left the shell, under the selection it ran
+    /// with ([`ShellPlace::selection`]).
+    pub fn set_shell_cd(&self, ws_id: &str, dir: PathBuf, selection: Value) -> Result<(), String> {
+        let mut inner = self.lock();
+        let ws = inner.workspace_mut(ws_id)?;
+        let cd = Some((dir, selection));
+        if ws.shell_cd != cd {
+            ws.shell_cd = cd;
+            self.notifier.emit(events::SHELL_CWD_CHANGED, json!({ "workspace_id": ws_id }));
+        }
+        Ok(())
+    }
+
     pub fn clear_shell(&self, ws_id: &str) -> Result<(), String> {
         let mut inner = self.lock();
         inner.workspace_mut(ws_id)?.shell.clear();
@@ -1479,6 +1516,13 @@ impl GuiState {
             .emit(events::MESSAGE_APPENDED, json!({ "workspace_id": ws_id, "entry": Value::Null }));
         Ok(())
     }
+}
+
+/// The selection a `cd` is recorded under: both halves of it, since a panel
+/// may set the metarecord alone.
+fn shell_selection(ws: &Workspace) -> Value {
+    let var = |key| ws.vars.get(key).cloned().unwrap_or(Value::Null);
+    json!([var("selected_metarecord"), var("selected_paths")])
 }
 
 fn slot_name(slot: SlotId) -> &'static str {
@@ -2594,5 +2638,36 @@ mod tests {
         let appended = notifier.payloads(events::SHELL_APPENDED);
         assert_eq!(appended.len(), 3);
         assert_eq!(appended[2]["entry"], Value::Null);
+    }
+
+    /// A `cd` holds for as long as the selection it was made under (doc
+    /// "shell panel"): selecting something else moves the shell there again.
+    #[test]
+    fn test_a_shell_cd_holds_while_the_selection_stays() {
+        let (notifier, state) = state();
+        state.set_var("ws-1", "selected_paths", json!(["/data/a.txt"])).unwrap();
+        let place = state.shell_place("ws-1").unwrap();
+        assert_eq!(place.selected_path.as_deref(), Some("/data/a.txt"));
+        assert_eq!(place.cd, None);
+
+        notifier.clear();
+        state.set_shell_cd("ws-1", "/tmp/x".into(), place.selection).unwrap();
+        assert_eq!(notifier.payloads(events::SHELL_CWD_CHANGED).len(), 1);
+        assert_eq!(state.shell_place("ws-1").unwrap().cd, Some("/tmp/x".into()));
+
+        state.set_var("ws-1", "selected_paths", json!(["/data/b.txt"])).unwrap();
+        assert_eq!(state.shell_place("ws-1").unwrap().cd, None);
+        assert!(state.shell_place("ws-99").is_err());
+    }
+
+    /// A run that ends after the selection moved does not pin its `cd` onto
+    /// the new selection: it is recorded under the one the run started with.
+    #[test]
+    fn test_a_cd_made_under_an_older_selection_does_not_hold() {
+        let (_, state) = state();
+        let before = state.shell_place("ws-1").unwrap().selection;
+        state.set_var("ws-1", "selected_metarecord", json!({"uuid": "u", "repo": "r"})).unwrap();
+        state.set_shell_cd("ws-1", "/tmp/x".into(), before).unwrap();
+        assert_eq!(state.shell_place("ws-1").unwrap().cd, None);
     }
 }

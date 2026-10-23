@@ -406,6 +406,11 @@
           }
         }
       }),
+      listen<{ workspace_id: string }>('shell-cwd-changed', (event) => {
+        for (const instance of instances.values()) {
+          if (instance.wsId === event.payload.workspace_id) instance.apiInst.pushShellCwd();
+        }
+      }),
     ];
 
     // The generic commands run on the functions of the instance they name, in

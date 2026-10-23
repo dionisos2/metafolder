@@ -638,6 +638,12 @@ declare namespace Metafolder {
     list(): Promise<ShellEntry[]>;
     /** `entry` is null when the log was cleared. */
     onAppend(listener: (entry: ShellEntry | null) => void): void;
+    /** Where the workspace's next shell line runs; null is the GUI's own
+     *  directory. */
+    cwd(): Promise<string | null>;
+    /** A line's `cd` moved where the next one runs (a selection change is a
+     *  `workspace.onChange`). */
+    onCwd(listener: () => void): void;
     /** Tab-completes the word before `cursor` in a shell line, like bash: the
      *  line as it becomes, its new cursor, and the candidates still open (empty
      *  once one was inserted). */

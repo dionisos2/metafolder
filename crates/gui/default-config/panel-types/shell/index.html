@@ -97,8 +97,16 @@
         font-family: var(--mf-font-mono, monospace);
         font-size: 0.9em;
       }
-      #prompt::before {
-        content: '$';
+      #cwd {
+        /* A long path keeps its end, the part that says where you are. */
+        max-width: 40%;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        direction: rtl;
+        color: var(--mf-accent, #3d5a80);
+      }
+      #sigil {
         color: var(--mf-fg-dim, #8a8a96);
       }
       #line {
@@ -122,6 +130,7 @@
     <div id="log"><div id="empty">No shell line run yet: type one below, or ! in the command input.</div></div>
     <div id="candidates" hidden></div>
     <div id="prompt">
+      <span id="cwd"></span><span id="sigil">$</span>
       <input id="line" type="text" spellcheck="false" autocomplete="off" aria-label="Shell line" placeholder="a shell line — Enter runs it, Tab completes" />
     </div>
   </body>

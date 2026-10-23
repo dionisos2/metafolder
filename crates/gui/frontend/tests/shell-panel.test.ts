@@ -34,6 +34,9 @@ type Completion = { text: string; cursor: number; candidates: string[] };
 async function mounted(history: Entry[], completion?: Completion) {
   const shadow = shadowFor();
   let push: (entry: unknown) => void = () => {};
+  let cwdMoved: () => void = () => {};
+  const changes = new Map<string, () => void>();
+  const where = { dir: '/data/music' as string | null };
   const invoke = vi.fn(async (_invocation: string) => {});
   const top = vi.fn(async (_invocation: string) => {});
   const complete = vi.fn(async (_line: string, _cursor: number) => completion);
@@ -47,7 +50,10 @@ async function mounted(history: Entry[], completion?: Completion) {
         handlers.set(name, options.handler);
       },
     },
-    workspace: { get: async () => 'repo-1' },
+    workspace: {
+      get: async () => 'repo-1',
+      onChange: (key: string, listener: () => void) => changes.set(key, listener),
+    },
     history: {
       read: async () => ['older', 'newest'],
       append: async (_repo: string, _zone: string, entry: string) => {
@@ -60,12 +66,28 @@ async function mounted(history: Entry[], completion?: Completion) {
         push = listener;
       },
       complete,
+      cwd: async () => where.dir,
+      onCwd: (listener: () => void) => {
+        cwdMoved = listener;
+      },
     },
   };
   const mod = await import('../../default-config/panel-types/shell/main.js');
   await mod.mount(shadow, withRuns(api) as never);
   const line = shadow.getElementById('line') as HTMLInputElement;
-  return { shadow, push: (e: unknown) => push(e), invoke, top, complete, appended, handlers, line };
+  return {
+    shadow,
+    push: (e: unknown) => push(e),
+    invoke,
+    top,
+    complete,
+    appended,
+    handlers,
+    line,
+    where,
+    cwdMoved: () => cwdMoved(),
+    select: () => changes.get('selected_paths')?.(),
+  };
 }
 
 function type(line: HTMLInputElement, text: string) {
@@ -92,6 +114,25 @@ function blocks(shadow: ShadowRoot) {
 }
 
 describe('shell panel', () => {
+  test('the prompt shows where the next line runs, asked again when it may move', async () => {
+    const { shadow, where, cwdMoved, select } = await mounted([]);
+    await settle();
+    const cwd = () => shadow.getElementById('cwd')!.textContent.replace('\u200e', '');
+    expect(cwd()).toBe('/data/music');
+    where.dir = '/data';
+    cwdMoved();
+    await settle();
+    expect(cwd()).toBe('/data');
+    where.dir = '/data/films';
+    select();
+    await settle();
+    expect(cwd()).toBe('/data/films');
+    where.dir = null;
+    cwdMoved();
+    await settle();
+    expect(cwd()).toBe('');
+  });
+
   test('shows the history oldest first, one block per run', async () => {
     const { shadow } = await mounted([
       entry('script-1', 'command', 'ls'),

@@ -2,9 +2,13 @@
 //! run as a subprocess; stdout/stderr lines go to the workspace shell log
 //! (shell panel type) and to the terminal that launched the GUI. The message
 //! log only records that the line ran, as `$ command`.
+//!
+//! A line runs where the selection is, and where the previous line's `cd`
+//! left the shell for as long as the selection stays (doc "shell panel").
 
-use crate::state::workspace::ShellLine;
+use crate::state::workspace::{ShellLine, ShellPlace};
 use crate::state::GuiState;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -17,17 +21,19 @@ pub async fn run_to_completion(
     ws_id: String,
     command_line: String,
 ) -> Result<(), String> {
-    run_in(gui, ws_id, command_line, None).await
+    run_in(gui, ws_id, command_line, None, None).await
 }
 
 /// [`run_to_completion`], the subprocess passed `context` as
 /// `METAFOLDER_LABEL`: every `mf` it starts writes in that label (doc
-/// "Labels and contexts").
+/// "Labels and contexts"). `root` is the workspace repository's root, where
+/// a line runs with nothing selected ([`working_dir`]).
 pub async fn run_in(
     gui: Arc<GuiState>,
     ws_id: String,
     command_line: String,
     context: Option<metafolder_core::context::Context>,
+    root: Option<PathBuf>,
 ) -> Result<(), String> {
     // A per-run id the subprocess can address its own progress with
     // (`mf gui progress` reads it from METAFOLDER_GUI_TASK); session-unique.
@@ -39,10 +45,26 @@ pub async fn run_in(
     gui.append_message(&ws_id, &format!("$ {command_line}"))?;
     gui.append_shell(&ws_id, &task_id, ShellLine::Command, &command_line)?;
 
+    let place = gui.shell_place(&ws_id)?;
+    // Where the line leaves the shell, read back once it is over: every line
+    // is a `sh` of its own, so a `cd` would otherwise die with it. An EXIT
+    // trap writes it on every way out, `exit N` and a failing line included,
+    // and keeps the line's exit status.
+    let cwd_file = metafolder_core::auth::runtime_dir()
+        .ok()
+        .map(|dir| dir.join(format!("shell-cwd-{}-{task_id}", std::process::id())));
+    let script = match &cwd_file {
+        Some(file) => format!("trap 'pwd > {}' EXIT; {command_line}", shell_quote(file)),
+        None => command_line.clone(),
+    };
     let mut command = Command::new("sh");
+    if let Some(dir) = working_dir(&place, root.as_deref()) {
+        // `PWD` too, or `pwd` names the GUI's directory's resolution of it.
+        command.current_dir(&dir).env("PWD", &dir);
+    }
     command
         .arg("-c")
-        .arg(&command_line)
+        .arg(&script)
         .env("METAFOLDER_GUI_TASK", &task_id)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -78,6 +100,14 @@ pub async fn run_in(
     gui.script_set_pid(&task_id, None);
     let _ = out_task.await;
     let _ = err_task.await;
+    if let Some(file) = cwd_file {
+        let left = std::fs::read_to_string(&file).unwrap_or_default();
+        let _ = std::fs::remove_file(&file);
+        let left = left.strip_suffix('\n').unwrap_or(&left);
+        if !left.is_empty() {
+            gui.set_shell_cd(&ws_id, PathBuf::from(left), place.selection)?;
+        }
+    }
 
     if let Some(how) = gui.script_stopped(&task_id) {
         // Asked for by the user: neither a failure nor an exit code worth
@@ -104,6 +134,65 @@ pub async fn run_in(
         );
     }
     Ok(())
+}
+
+/// Where a shell line runs (doc "shell panel"): where the previous line's
+/// `cd` left the shell, if the selection has not changed since; else the
+/// selected folder, or the folder of the selected file — the nearest one still
+/// there for a path that is gone; else the repository root. `None` (the GUI's
+/// own directory) with none of them.
+pub fn working_dir(place: &ShellPlace, root: Option<&Path>) -> Option<PathBuf> {
+    if let Some(cd) = &place.cd {
+        return Some(cd.clone());
+    }
+    if let Some(path) = &place.selected_path {
+        let found = Path::new(path).ancestors().find(|dir| dir.is_dir());
+        if let Some(dir) = found.filter(|dir| dir.is_absolute()) {
+            return Some(dir.to_path_buf());
+        }
+    }
+    root.map(Path::to_path_buf)
+}
+
+/// The workspace repository's root, as the daemon reports it; `None` with no
+/// repository or no answer.
+pub async fn repo_root(
+    gui: &GuiState,
+    daemon: &crate::daemon_proxy::DaemonProxy,
+    ws_id: &str,
+) -> Option<PathBuf> {
+    let repo = gui.active_repo(ws_id).ok()?;
+    let info = daemon.request("GET", &format!("/repos/{repo}"), None).await.ok()?;
+    (info.status == 200).then_some(())?;
+    info.body["root"].as_str().map(PathBuf::from)
+}
+
+/// Where the workspace's next shell line would run ([`working_dir`]): what
+/// the shell panel shows after `$`, and where `Tab` completes.
+pub async fn cwd_of(
+    gui: &GuiState,
+    daemon: &crate::daemon_proxy::DaemonProxy,
+    ws_id: &str,
+) -> Option<PathBuf> {
+    let place = gui.shell_place(ws_id).ok()?;
+    match working_dir(&place, None) {
+        Some(dir) => Some(dir),
+        None => repo_root(gui, daemon, ws_id).await,
+    }
+}
+
+/// [`cwd_of`], for the shell panel's prompt; `None` is the GUI's directory.
+#[tauri::command]
+pub async fn shell_cwd(
+    app: tauri::State<'_, Arc<crate::commands::App>>,
+    ws_id: String,
+) -> Result<Option<String>, String> {
+    Ok(cwd_of(&app.gui, &app.daemon, &ws_id).await.map(|dir| dir.to_string_lossy().into_owned()))
+}
+
+/// `path` as one single-quoted `sh` word.
+fn shell_quote(path: &Path) -> String {
+    format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
 }
 
 /// Clears the running indicator for a workspace when dropped, so it is removed
@@ -178,7 +267,8 @@ pub fn run_shell(
             Some(name) => open_context(&gui, &daemon, &ws_id, &name).await,
             None => plain_line_context(&gui, &ws_id),
         };
-        if let Err(error) = run_in(gui.clone(), ws_id.clone(), command_line, context).await {
+        let root = repo_root(&gui, &daemon, &ws_id).await;
+        if let Err(error) = run_in(gui.clone(), ws_id.clone(), command_line, context, root).await {
             let _ = gui.post_status(&ws_id, &error, "error", Some(message_ms));
         }
     });
@@ -287,8 +377,8 @@ mod tests {
         let gui = gui();
         let context = metafolder_core::context::Context { repo: uuid::Uuid::nil(), label: 7 };
         let line = "echo \"in:${METAFOLDER_LABEL:-none}\"";
-        run_in(gui.clone(), "ws-1".into(), line.into(), Some(context)).await.unwrap();
-        run_in(gui.clone(), "ws-1".into(), line.into(), None).await.unwrap();
+        run_in(gui.clone(), "ws-1".into(), line.into(), Some(context), None).await.unwrap();
+        run_in(gui.clone(), "ws-1".into(), line.into(), None, None).await.unwrap();
         let log = gui.shell_log("ws-1").unwrap();
         let out: Vec<&str> =
             log.iter().filter(|e| e.kind == ShellLine::Stdout).map(|e| e.text.as_str()).collect();
@@ -346,6 +436,78 @@ mod tests {
         let log = gui.shell_log("ws-1").unwrap();
         let last = log.last().unwrap();
         assert_eq!((last.kind, last.text.as_str()), (ShellLine::Status, "exit 3"));
+    }
+
+    /// A disposable directory under `$TMPDIR/metafolder-tests/`, removed by
+    /// the caller.
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf-shell-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("sub/file.txt"), "x").unwrap();
+        dir
+    }
+
+    fn stdout(gui: &GuiState) -> Vec<String> {
+        let log = gui.shell_log("ws-1").unwrap();
+        log.into_iter().filter(|e| e.kind == ShellLine::Stdout).map(|e| e.text).collect()
+    }
+
+    /// A selected folder is where the shell goes; a selected file, its
+    /// folder; a selected path that is gone, its nearest folder still there;
+    /// nothing selected, the repository root (doc "shell panel").
+    #[test]
+    fn test_the_working_directory_follows_the_selection() {
+        let dir = scratch("follow");
+        let place = |path: Option<std::path::PathBuf>| crate::state::workspace::ShellPlace {
+            selection: serde_json::Value::Null,
+            cd: None,
+            selected_path: path.map(|p| p.to_string_lossy().into_owned()),
+        };
+        let root = Some(dir.as_path());
+        assert_eq!(working_dir(&place(Some(dir.join("sub"))), root), Some(dir.join("sub")));
+        assert_eq!(
+            working_dir(&place(Some(dir.join("sub/file.txt"))), root),
+            Some(dir.join("sub"))
+        );
+        assert_eq!(working_dir(&place(Some(dir.join("sub/gone/x"))), root), Some(dir.join("sub")));
+        assert_eq!(working_dir(&place(None), root), Some(dir.clone()));
+        assert_eq!(working_dir(&place(None), None), None);
+        let mut cd = place(Some(dir.join("sub")));
+        cd.cd = Some(dir.clone());
+        assert_eq!(working_dir(&cd, None), Some(dir.clone()));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A line runs where the selection is, and a `cd` carries over to the
+    /// next line — until the selection changes.
+    #[tokio::test]
+    async fn test_a_cd_carries_over_to_the_next_line() {
+        let dir = scratch("cd");
+        let gui = gui();
+        gui.set_var("ws-1", "selected_paths", json!([dir.join("sub/file.txt")])).unwrap();
+        run_in(gui.clone(), "ws-1".into(), "pwd; cd ..".into(), None, None).await.unwrap();
+        run_in(gui.clone(), "ws-1".into(), "pwd".into(), None, None).await.unwrap();
+        gui.set_var("ws-1", "selected_paths", json!([dir.join("sub")])).unwrap();
+        run_in(gui.clone(), "ws-1".into(), "pwd".into(), None, None).await.unwrap();
+        let sub = dir.join("sub").to_string_lossy().into_owned();
+        assert_eq!(stdout(&gui), [sub.clone(), dir.to_string_lossy().into_owned(), sub]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The `cd` takes nothing from the line's exit status.
+    #[tokio::test]
+    async fn test_a_failing_line_still_records_its_cd() {
+        let dir = scratch("fail");
+        let gui = gui();
+        let line = format!("cd '{}' && exit 4", dir.display());
+        run_in(gui.clone(), "ws-1".into(), line, None, None).await.unwrap();
+        let log = gui.shell_log("ws-1").unwrap();
+        assert_eq!(log.last().unwrap().text, "exit 4");
+        assert_eq!(gui.shell_place("ws-1").unwrap().cd, Some(dir.clone()));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[tokio::test]

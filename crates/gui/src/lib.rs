@@ -596,6 +596,7 @@ pub fn run(options: Options) {
             commands::recent_touch,
             commands::list_scripts,
             shell_exec::run_shell,
+            shell_exec::shell_cwd,
             bash_complete::bash_complete,
             commands::daemon_request,
             commands::command_begin,

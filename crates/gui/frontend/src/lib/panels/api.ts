@@ -126,6 +126,8 @@ export interface PanelApiInstance {
   pushMessageAppended(entry: unknown): void;
   /** A shell-log entry was appended (null = the log was cleared). */
   pushShellAppended(entry: unknown): void;
+  /** A line's `cd` moved where the workspace's shell lines run. */
+  pushShellCwd(): void;
   /** The panel's slot visibility changed. */
   pushVisibility(visible: boolean, slot: string | null): void;
 }
@@ -270,6 +272,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
   const varListeners = new Map<string, Set<(value: unknown, key?: string) => void>>();
   const messageListeners = new Set<(entry: unknown) => void>();
   const shellListeners = new Set<(entry: Metafolder.ShellEntry | null) => void>();
+  const cwdListeners = new Set<() => void>();
   const visibilityListeners = new Set<(visible: boolean, slot: string | null) => void>();
   const resolvers = new Map<string, ReturnType<typeof createPathResolver>>();
   const repoInfos = new Map<string, Record<string, unknown>>();
@@ -844,12 +847,17 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         onAppend(listener: (entry: Metafolder.ShellEntry | null) => void) {
           shellListeners.add(listener);
         },
+        cwd: () => invoke('shell_cwd', { wsId: ctx.wsId }) as Promise<string | null>,
+        onCwd(listener: () => void) {
+          cwdListeners.add(listener);
+        },
         // Tab in a shell line, as the command input's bash mode does it (doc
         // "Bash mode"): one candidate is inserted, several first extend the
         // word to their common prefix and are returned to be listed.
         async complete(line: string, cursor: number): Promise<Metafolder.ShellCompletion> {
           const { word, candidates } = (await invoke('bash_complete', {
             line: line.slice(0, cursor),
+            wsId: ctx.wsId,
           })) as { word: string; candidates: string[] };
           if (candidates.length === 1) {
             return { ...insertCandidate(line, cursor, word, candidates[0], true), candidates: [] };
@@ -880,6 +888,9 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     },
     pushShellAppended(entry) {
       for (const l of shellListeners) l(entry as Metafolder.ShellEntry | null);
+    },
+    pushShellCwd() {
+      for (const l of cwdListeners) l();
     },
     pushVisibility(visible, slot) {
       ctx.visibilityGate.set(visible);

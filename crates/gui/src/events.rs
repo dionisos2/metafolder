@@ -7,6 +7,9 @@ pub const STATUS_MESSAGE: &str = "status-message";
 pub const MESSAGE_APPENDED: &str = "message-appended";
 /// A line of the shell log (doc "shell panel"), `entry` null when cleared.
 pub const SHELL_APPENDED: &str = "shell-appended";
+/// Where the workspace's shell lines run moved after a `cd` (doc "shell
+/// panel"): `{ "workspace_id" }`.
+pub const SHELL_CWD_CHANGED: &str = "shell-cwd-changed";
 pub const KEYBINDINGS_CHANGED: &str = "keybindings-changed";
 pub const STYLE_CHANGED: &str = "style-changed";
 pub const DAEMON_HEALTH_CHANGED: &str = "daemon-health-changed";

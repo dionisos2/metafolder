@@ -18,6 +18,7 @@ export async function mount(root, metafolder) {
   const empty = byId(root, 'empty');
   const line = /** @type {HTMLInputElement} */ (byId(root, 'line'));
   const candidates = byId(root, 'candidates');
+  const cwd = byId(root, 'cwd');
   /** Each run's block, by run id: two runs at once interleave their lines,
    *  and each line goes back into its own run's block. */
   const runs = new Map();
@@ -148,6 +149,21 @@ export async function mount(root, metafolder) {
       line.focus();
     },
   });
+
+  // Where the next line runs, before the `$`: the selection's folder, or
+  // where the previous line's `cd` left the shell while the selection stays
+  // (doc "shell panel"). Asked again whenever either may have moved.
+  async function showCwd() {
+    const dir = await shell.cwd();
+    // The mark keeps the leading `/` on the left in the right-to-left box
+    // that trims a long path from its start.
+    cwd.textContent = dir === null ? '' : '\u200e' + dir;
+    cwd.title = dir ?? '';
+  }
+  shell.onCwd(() => void showCwd());
+  metafolder.workspace.onChange('selected_paths', () => void showCwd());
+  metafolder.workspace.onChange('selected_metarecord', () => void showCwd());
+  void showCwd();
 
   shell.onAppend(append);
   for (const entry of await shell.list()) add(/** @type {Entry} */ (entry));

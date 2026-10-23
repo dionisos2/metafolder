@@ -289,6 +289,7 @@
     try {
       completion = await invoke<{ word: string; candidates: string[] }>('bash_complete', {
         line: draft.slice(0, cursor),
+        wsId: focusedWs(),
       });
     } catch (error) {
       const ws = focusedWs();
