@@ -2753,14 +2753,22 @@ pub fn slow_list(
     }
     for (i, entry) in entries.iter().enumerate() {
         if json {
-            println!("{}", serde_json::to_string(entry).unwrap_or_default());
+            // The id is derived, not stored: added here so a script has it too.
+            let mut value = serde_json::to_value(entry).unwrap_or_default();
+            value["id"] = entry.id().into();
+            println!("{value}");
             continue;
         }
         if i > 0 {
             println!();
         }
-        for line in crate::slow::render(entry) {
-            println!("{line}");
+        for (n, line) in crate::slow::render(entry).into_iter().enumerate() {
+            // The id first, as `git log --oneline` puts it: what replay takes.
+            if n == 0 {
+                println!("{}  {line}", entry.id());
+            } else {
+                println!("{line}");
+            }
         }
     }
     if body["truncated"].as_bool() == Some(true) && !json {
@@ -2771,11 +2779,11 @@ pub fn slow_list(
 
 /// `mf slow replay` — runs a query again through `POST /query/profile` and
 /// prints its breakdown as `mf slow` prints an entry: the newest logged query,
-/// the one logged at `at`, or the one typed with `-q` (doc "Slow log"
+/// the one whose id starts with `id`, or the one typed with `-q` (doc "Slow log"
 /// "Replaying a query").
 pub fn slow_replay(
     ctx: &Ctx,
-    at: Option<i64>,
+    id: Option<&str>,
     query: Option<&str>,
     simplified: bool,
     json: bool,
@@ -2788,21 +2796,46 @@ pub fn slow_replay(
             serde_json::json!({ "query": parse_dsl(&text)?, "limit": 100, "count": true })
         }
         None => {
-            let limit = metafolder_core::slowlog::MAX_READ_LIMIT.to_string();
-            let listed = ctx.client.get(&format!("{base}/slow"), &[("limit", limit)])?;
+            let mut params = vec![("limit", metafolder_core::slowlog::MAX_READ_LIMIT.to_string())];
+            if let Some(prefix) = id {
+                // The daemon finds it however old it is.
+                params.push(("id", prefix.to_string()));
+            }
+            let listed = ctx.client.get(&format!("{base}/slow"), &params)?;
             let entries: Vec<metafolder_core::slowlog::Entry> =
                 serde_json::from_value(listed["entries"].clone())
                     .map_err(|e| CliError::Op(format!("unexpected slow-log response: {e}")))?;
-            let entry = entries
-                .iter()
-                .filter(|e| e.op.ends_with("/query"))
-                .find(|e| at.is_none_or(|at| e.at_ms == at))
-                .ok_or_else(|| {
-                    CliError::Op(match at {
-                        Some(at) => format!("no logged query started at {at}"),
-                        None => "no query in the slow-operation log".into(),
-                    })
-                })?;
+            let entry = match id {
+                Some(prefix) => {
+                    // Filtered again: a daemon older than `id` ignores it.
+                    let found: Vec<_> =
+                        entries.iter().filter(|e| e.id().starts_with(prefix)).collect();
+                    let entry = match found.as_slice() {
+                        [] => return Err(CliError::Op(format!("no slow-log entry {prefix}"))),
+                        [one] => *one,
+                        many => {
+                            let ids: Vec<String> = many.iter().map(|e| e.id()).collect();
+                            return Err(CliError::Op(format!(
+                                "{prefix} names {} entries ({}): give more of the id",
+                                ids.len(),
+                                ids.join(", ")
+                            )));
+                        }
+                    };
+                    if !entry.op.ends_with("/query") {
+                        return Err(CliError::Op(format!(
+                            "{} is not a query ({}): only a query can be replayed",
+                            entry.id(),
+                            entry.op
+                        )));
+                    }
+                    entry
+                }
+                None => entries
+                    .iter()
+                    .find(|e| e.op.ends_with("/query"))
+                    .ok_or_else(|| CliError::Op("no query in the slow-operation log".into()))?,
+            };
             crate::slow::replay_body(entry).map_err(CliError::Op)?
         }
     };

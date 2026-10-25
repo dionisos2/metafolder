@@ -761,12 +761,12 @@ enum SlowCommand {
     /// List the slow operations, newest first — the default
     List(SlowListArgs),
     /// Run a query again and show where its time goes, now: the newest logged
-    /// query, the one logged at --at, or one typed with -q. Not itself logged
+    /// query, the one with that id, or one typed with -q. Not itself logged
     Replay {
-        /// The logged query to replay, by its start time in Unix ms (`--json`
-        /// lists show it as `at_ms`); default the newest one
-        #[arg(long, conflicts_with = "query")]
-        at: Option<i64>,
+        /// The logged query to replay, by the id `mf slow` shows (or a prefix
+        /// of it); default the newest one
+        #[arg(conflicts_with = "query")]
+        id: Option<String>,
         /// A query to profile instead of a logged one (DSL)
         #[arg(short = 'q', long = "query")]
         query: Option<String>,
@@ -1763,8 +1763,8 @@ fn dispatch_slow(ctx: &Ctx, list: SlowListArgs, command: Option<SlowCommand>) ->
         SlowCommand::List(SlowListArgs { limit, since, op, min, json }) => {
             commands::slow_list(ctx, limit, since.as_deref(), op.as_deref(), min.as_deref(), json)
         }
-        SlowCommand::Replay { at, query, simplified, json } => {
-            commands::slow_replay(ctx, at, query.as_deref(), simplified, json)
+        SlowCommand::Replay { id, query, simplified, json } => {
+            commands::slow_replay(ctx, id.as_deref(), query.as_deref(), simplified, json)
         }
         SlowCommand::Clear { yes } => commands::slow_clear(ctx, yes),
     }

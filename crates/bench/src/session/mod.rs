@@ -842,7 +842,8 @@ pub async fn run(opts: &Options) -> Result<i32> {
     );
 
     let slow_dir = metafolder_core::slowlog::slow_dir(&data.join(".metafolder").join("internal"));
-    let (mut entries, _) = metafolder_core::slowlog::read(&slow_dir, usize::MAX, None, None);
+    let (mut entries, _) =
+        metafolder_core::slowlog::read(&slow_dir, usize::MAX, &Default::default());
     entries.reverse();
     let (per_step, between) = report::attribute(entries, &outcomes);
     let text = report::render(STEPS, &outcomes, &per_step, &between);

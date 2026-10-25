@@ -106,7 +106,7 @@ impl Fixture {
 
     fn entries(&self) -> Vec<slowlog::Entry> {
         let repo_state = self.state.ready_repo(self.repo.parse().unwrap()).unwrap();
-        slowlog::read(&slowlog::slow_dir(&repo_state.internal_dir()), 100, None, None).0
+        slowlog::read(&slowlog::slow_dir(&repo_state.internal_dir()), 100, &Default::default()).0
     }
 }
 
@@ -413,6 +413,21 @@ async fn test_the_endpoint_serves_the_log_newest_first_and_can_empty_it() {
         request(&f.app, "GET", &format!("/repos/{}/slow?min_ms=3000", f.repo), None, &[]).await;
     assert_eq!(body["entries"].as_array().unwrap().len(), 2, "min keeps the boundary");
 
+    // `id` finds an entry by (a prefix of) its id, however old it is.
+    let old_id = slowlog::Entry::new("daemon", "old", 1000, 3000).id();
+    let (status, body) = request(
+        &f.app,
+        "GET",
+        &format!("/repos/{}/slow?id={}&limit=1", f.repo, &old_id[..5]),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let ops: Vec<&str> =
+        body["entries"].as_array().unwrap().iter().map(|e| e["op"].as_str().unwrap()).collect();
+    assert_eq!(ops, vec!["old"]);
+
     let (status, body) =
         request(&f.app, "DELETE", &format!("/repos/{}/slow", f.repo), None, &[]).await;
     assert_eq!(status, StatusCode::OK);
@@ -459,7 +474,8 @@ fn test_a_slow_watcher_flush_names_itself() {
     executor::flush_pending(&repo_state).unwrap();
     holder.join().unwrap();
 
-    let entries = slowlog::read(&slowlog::slow_dir(&repo_state.internal_dir()), 100, None, None).0;
+    let entries =
+        slowlog::read(&slowlog::slow_dir(&repo_state.internal_dir()), 100, &Default::default()).0;
     let entry = entries
         .iter()
         .find(|e| e.op == "watcher.flush")
@@ -621,7 +637,8 @@ fn test_the_automatic_backup_names_itself() {
     repo_state.auto_backup_if_due(metafolder_core::date::now_ms(), 1).unwrap().expect("due");
     holder.join().unwrap();
 
-    let entries = slowlog::read(&slowlog::slow_dir(&repo_state.internal_dir()), 100, None, None).0;
+    let entries =
+        slowlog::read(&slowlog::slow_dir(&repo_state.internal_dir()), 100, &Default::default()).0;
     let entry = entries
         .iter()
         .find(|e| e.op == "backup.auto")
@@ -658,7 +675,8 @@ fn test_a_remount_names_itself() {
     repo_state.mounts_changed(&[root.join("usb")]);
     holder.join().unwrap();
 
-    let entries = slowlog::read(&slowlog::slow_dir(&repo_state.internal_dir()), 100, None, None).0;
+    let entries =
+        slowlog::read(&slowlog::slow_dir(&repo_state.internal_dir()), 100, &Default::default()).0;
     let entry = entries
         .iter()
         .find(|e| e.op == "watcher.remount")

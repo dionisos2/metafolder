@@ -89,6 +89,21 @@ pub struct Entry {
 }
 
 impl Entry {
+    /// A short name for the entry, what `mf slow` prints and `mf slow replay`
+    /// takes: 8 hex digits *derived* from what identifies it (its source, start,
+    /// operation and duration), so nothing is stored and every entry ever
+    /// written has one. FNV-1a, not `DefaultHasher`: the id must not change
+    /// with the Rust release.
+    pub fn id(&self) -> String {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let key = format!("{}\0{}\0{}\0{}", self.source, self.at_ms, self.op, self.ms);
+        for byte in key.bytes() {
+            h ^= u64::from(byte);
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+        format!("{:08x}", (h ^ (h >> 32)) as u32)
+    }
+
     pub fn new(source: &str, op: impl Into<String>, at_ms: i64, ms: u64) -> Entry {
         Entry {
             at_ms,
@@ -297,25 +312,38 @@ fn files(dir: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Reads the log: both sources merged, newest first, at most `limit` entries,
-/// keeping only those at or after `since_ms`. The bool says the limit cut the
-/// result short.
+/// Which entries [`read`] keeps, every condition AND-ed — applied before the
+/// limit, so an old entry that matches is found past any number of newer ones.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Filter {
+    /// Started at or after (Unix ms).
+    pub since_ms: Option<i64>,
+    /// Took at least.
+    pub min_ms: Option<u64>,
+    /// Whose [`Entry::id`] starts with this.
+    pub id: Option<String>,
+}
+
+impl Filter {
+    pub fn keeps(&self, e: &Entry) -> bool {
+        self.since_ms.is_none_or(|since| e.at_ms >= since)
+            && self.min_ms.is_none_or(|min| e.ms >= min)
+            && self.id.as_deref().is_none_or(|prefix| e.id().starts_with(prefix))
+    }
+}
+
+/// Reads the log: both sources merged, newest first, at most `limit` of the
+/// entries `filter` keeps. The bool says the limit cut the result short.
 ///
 /// A line that does not parse is skipped rather than failing the read.
-pub fn read(
-    dir: &Path,
-    limit: usize,
-    since_ms: Option<i64>,
-    min_ms: Option<u64>,
-) -> (Vec<Entry>, bool) {
+pub fn read(dir: &Path, limit: usize, filter: &Filter) -> (Vec<Entry>, bool) {
     let mut entries: Vec<Entry> = Vec::new();
     for path in files(dir) {
         let Ok(text) = fs::read_to_string(&path) else { continue };
         entries.extend(
             text.lines()
                 .filter_map(|line| serde_json::from_str::<Entry>(line).ok())
-                .filter(|e| since_ms.is_none_or(|since| e.at_ms >= since))
-                .filter(|e| min_ms.is_none_or(|min| e.ms >= min)),
+                .filter(|e| filter.keeps(e)),
         );
     }
     entries.sort_by_key(|e| std::cmp::Reverse(e.at_ms));
@@ -673,7 +701,7 @@ mod tests {
             let _op = begin(recorder(&dir, NEVER), "POST /repos/:repo/query");
             note("results", "3");
         }
-        assert_eq!(read(&dir, 10, None).0.len(), 0);
+        assert_eq!(read(&dir, 10, &Filter::default()).0.len(), 0);
     }
 
     #[test]
@@ -699,7 +727,7 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
-        let (entries, _) = read(&dir, 10, None);
+        let (entries, _) = read(&dir, 10, &Filter::default());
         let e = &entries[0];
         let names: Vec<(&str, u16, u32)> =
             e.phases.iter().map(|p| (p.name.as_str(), p.depth, p.count)).collect();
@@ -729,7 +757,7 @@ mod tests {
             step("next");
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
-        let (entries, _) = read(&dir, 10, None);
+        let (entries, _) = read(&dir, 10, &Filter::default());
         let names: Vec<(&str, u16)> =
             entries[0].phases.iter().map(|p| (p.name.as_str(), p.depth)).collect();
         assert_eq!(names, vec![("flush", 0), ("apply", 1), ("watcher", 0), ("next", 1)]);
@@ -754,7 +782,7 @@ mod tests {
             let _p = phase("sql.execute");
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        let (entries, _) = read(&dir, 10, None);
+        let (entries, _) = read(&dir, 10, &Filter::default());
         assert_eq!(entries.len(), 1);
         let e = &entries[0];
         assert_eq!(e.op, "POST /repos/:repo/query");
@@ -784,7 +812,7 @@ mod tests {
             count_reads(7);
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        let (entries, _) = read(&dir, 10, None);
+        let (entries, _) = read(&dir, 10, &Filter::default());
         let e = &entries[0];
         assert_eq!(e.reads, 17, "the entry's total: {e:?}");
         let reads = |name: &str| e.phases.iter().find(|p| p.name == name).unwrap().reads;
@@ -808,7 +836,8 @@ mod tests {
             let _op = begin(recorder.clone(), "heavy");
             count_reads(10);
         }
-        let ops: Vec<String> = read(&dir, 10, None).0.into_iter().map(|e| e.op).collect();
+        let ops: Vec<String> =
+            read(&dir, 10, &Filter::default()).0.into_iter().map(|e| e.op).collect();
         assert_eq!(ops, vec!["heavy".to_string()]);
     }
 
@@ -828,7 +857,8 @@ mod tests {
             mark_write();
             std::thread::sleep(std::time::Duration::from_millis(3));
         }
-        let ops: Vec<String> = read(&dir, 10, None).0.into_iter().map(|e| e.op).collect();
+        let ops: Vec<String> =
+            read(&dir, 10, &Filter::default()).0.into_iter().map(|e| e.op).collect();
         assert_eq!(ops, vec!["read".to_string()], "the write keeps the main threshold");
     }
 
@@ -839,7 +869,7 @@ mod tests {
             let _op = begin(recorder(&dir, NEVER), "read");
             std::thread::sleep(std::time::Duration::from_millis(3));
         }
-        assert!(read(&dir, 10, None).0.is_empty());
+        assert!(read(&dir, 10, &Filter::default()).0.is_empty());
     }
 
     #[test]
@@ -870,7 +900,7 @@ mod tests {
         assert_eq!(entry.phases.len(), 1, "only its own phases: {entry:?}");
         assert_eq!(entry.phases[0].reads, 12);
         assert_eq!(entry.context, vec![("results".to_string(), "3".to_string())]);
-        assert!(read(&dir, 10, None).0.is_empty(), "a capture is not logged");
+        assert!(read(&dir, 10, &Filter::default()).0.is_empty(), "a capture is not logged");
     }
 
     #[test]
@@ -882,7 +912,7 @@ mod tests {
             discard();
             std::thread::sleep(std::time::Duration::from_millis(3));
         }
-        assert!(read(&dir, 10, None).0.is_empty());
+        assert!(read(&dir, 10, &Filter::default()).0.is_empty());
     }
 
     #[test]
@@ -901,7 +931,7 @@ mod tests {
             let _op = begin(recorder(&dir, 1), "op");
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
-        assert_eq!(read(&dir, 10, None).0[0].reads, 0);
+        assert_eq!(read(&dir, 10, &Filter::default()).0[0].reads, 0);
     }
 
     #[test]
@@ -937,7 +967,7 @@ mod tests {
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
         }
-        let (entries, _) = read(&dir, 10, None);
+        let (entries, _) = read(&dir, 10, &Filter::default());
         assert_eq!(entries.len(), 1, "one operation, one entry");
         assert_eq!(entries[0].op, "outer");
         assert_eq!(entries[0].phases[0].name, "wait:conn", "the inner phases belong to it");
@@ -1039,7 +1069,7 @@ mod tests {
         e.context.push(("engine".into(), "sql".into()));
         e.phases.push(Phase { name: "wait:conn".into(), ms: 3100, count: 1, depth: 0, reads: 0 });
         sink.append(&e);
-        let (back, truncated) = read(&dir, 10, None);
+        let (back, truncated) = read(&dir, 10, &Filter::default());
         assert_eq!(back, vec![e]);
         assert!(!truncated);
     }
@@ -1073,7 +1103,7 @@ mod tests {
             format!("{}{{\"at_ms\": 20", std::fs::read_to_string(sink.path()).unwrap()),
         )
         .unwrap();
-        let (back, _) = read(&dir, 10, None);
+        let (back, _) = read(&dir, 10, &Filter::default());
         assert_eq!(back.len(), 1);
         assert_eq!(back[0].op, "first");
     }
@@ -1085,7 +1115,7 @@ mod tests {
         std::fs::write(&dir, b"not a directory").unwrap();
         let sink = Sink::new(&dir, "daemon");
         sink.append(&entry(1000, "daemon", "op", 3000));
-        assert_eq!(read(&dir, 10, None).0.len(), 0);
+        assert_eq!(read(&dir, 10, &Filter::default()).0.len(), 0);
     }
 
     #[test]
@@ -1104,7 +1134,7 @@ mod tests {
             "the live file must start over after a rotation"
         );
         // Both generations stay readable.
-        assert_eq!(read(&dir, 100, None).0.len(), 30);
+        assert_eq!(read(&dir, 100, &Filter::default()).0.len(), 30);
     }
 
     // ── Reading ─────────────────────────────────────────────────────────────
@@ -1115,7 +1145,8 @@ mod tests {
         Sink::new(&dir, "daemon").append(&entry(1000, "daemon", "early", 3000));
         Sink::new(&dir, "gui").append(&entry(3000, "gui", "late", 3000));
         Sink::new(&dir, "daemon").append(&entry(2000, "daemon", "middle", 3000));
-        let ops: Vec<String> = read(&dir, 10, None).0.into_iter().map(|e| e.op).collect();
+        let ops: Vec<String> =
+            read(&dir, 10, &Filter::default()).0.into_iter().map(|e| e.op).collect();
         assert_eq!(ops, vec!["late", "middle", "early"]);
     }
 
@@ -1126,10 +1157,10 @@ mod tests {
         for i in 0..5 {
             sink.append(&entry(i, "daemon", &format!("op{i}"), 3000));
         }
-        let (entries, truncated) = read(&dir, 2, None);
+        let (entries, truncated) = read(&dir, 2, &Filter::default());
         assert_eq!(entries.iter().map(|e| e.op.as_str()).collect::<Vec<_>>(), vec!["op4", "op3"]);
         assert!(truncated);
-        assert!(!read(&dir, 5, None).1, "an exact fit is not truncated");
+        assert!(!read(&dir, 5, &Filter::default()).1, "an exact fit is not truncated");
     }
 
     #[test]
@@ -1138,13 +1169,59 @@ mod tests {
         let sink = Sink::new(&dir, "daemon");
         sink.append(&entry(1000, "daemon", "old", 3000));
         sink.append(&entry(2000, "daemon", "new", 3000));
-        let ops: Vec<String> = read(&dir, 10, Some(2000)).0.into_iter().map(|e| e.op).collect();
+        let ops: Vec<String> =
+            read(&dir, 10, &Filter { since_ms: Some(2000), ..Filter::default() })
+                .0
+                .into_iter()
+                .map(|e| e.op)
+                .collect();
         assert_eq!(ops, vec!["new"]);
     }
 
     #[test]
+    fn test_min_keeps_the_boundary_entry() {
+        let dir = tmp();
+        let sink = Sink::new(&dir, "daemon");
+        sink.append(&entry(1000, "daemon", "short", 2999));
+        sink.append(&entry(2000, "daemon", "long", 3000));
+        let filter = Filter { min_ms: Some(3000), ..Filter::default() };
+        let ops: Vec<String> = read(&dir, 10, &filter).0.into_iter().map(|e| e.op).collect();
+        assert_eq!(ops, vec!["long"]);
+    }
+
+    #[test]
+    fn test_an_entry_id_is_short_stable_and_tells_entries_apart() {
+        // What `mf slow` prints and `mf slow replay <id>` takes: derived from
+        // the entry, so the same entry has it in every process and every run.
+        let a = entry(1_757_426_602_000, "daemon", "POST /repos/:repo/query", 4820);
+        assert_eq!(a.id().len(), 8);
+        assert!(a.id().chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert_eq!(a.id(), a.clone().id());
+        let mut b = a.clone();
+        b.at_ms += 1;
+        assert_ne!(a.id(), b.id());
+        let mut c = a.clone();
+        c.source = "gui".into();
+        assert_ne!(a.id(), c.id(), "a GUI entry of the same request is another entry");
+        // Pinned: a change of the hash would make every id a user noted stale.
+        assert_eq!(a.id(), "b57e137d");
+    }
+
+    #[test]
+    fn test_id_keeps_the_entries_it_prefixes() {
+        let dir = tmp();
+        let sink = Sink::new(&dir, "daemon");
+        let a = entry(1000, "daemon", "a", 3000);
+        sink.append(&a);
+        sink.append(&entry(2000, "daemon", "b", 3000));
+        let filter = Filter { id: Some(a.id()[..4].to_string()), ..Filter::default() };
+        let ops: Vec<String> = read(&dir, 10, &filter).0.into_iter().map(|e| e.op).collect();
+        assert_eq!(ops, vec!["a"]);
+    }
+
+    #[test]
     fn test_reading_a_repository_that_never_logged_anything_is_empty() {
-        assert_eq!(read(&tmp().join("slow"), 10, None).0.len(), 0);
+        assert_eq!(read(&tmp().join("slow"), 10, &Filter::default()).0.len(), 0);
     }
 
     #[test]
@@ -1153,7 +1230,7 @@ mod tests {
         Sink::new(&dir, "daemon").append(&entry(1000, "daemon", "a", 3000));
         Sink::new(&dir, "gui").append(&entry(2000, "gui", "b", 3000));
         assert_eq!(clear(&dir), 2);
-        assert_eq!(read(&dir, 10, None).0.len(), 0);
+        assert_eq!(read(&dir, 10, &Filter::default()).0.len(), 0);
         assert_eq!(clear(&dir), 0, "clearing an empty log is not an error");
     }
 }

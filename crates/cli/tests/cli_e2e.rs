@@ -5629,6 +5629,7 @@ fn test_slow_lists_the_log_newest_first_and_clears_it() {
 
     let out = mf(&["-u", &repo, "slow"]);
     assert_ok(&out);
+    assert!(out.stdout.starts_with(&format!("{}  ", slow.id())), "id first:\n{}", out.stdout);
     let query_at = out.stdout.find("POST /repos/:repo/query").expect(&out.stdout);
     let gui_at = out.stdout.find("GET /repos/:repo/metarecords/:uuid").expect(&out.stdout);
     assert!(query_at < gui_at, "newest first, both sources merged:\n{}", out.stdout);
@@ -5641,6 +5642,7 @@ fn test_slow_lists_the_log_newest_first_and_clears_it() {
     assert_ok(&out);
     assert_eq!(out.stdout.lines().count(), 1, "{}", out.stdout);
     assert!(out.stdout.contains("\"op\":\"POST /repos/:repo/query\""), "{}", out.stdout);
+    assert!(out.stdout.contains(&format!("\"id\":\"{}\"", slow.id())), "{}", out.stdout);
 
     // `--min` keeps what took at least that long — applied before `--limit`, so
     // an old long operation is found without scrolling past the short ones.
@@ -5675,12 +5677,13 @@ fn test_slow_shows_when_in_the_local_time() {
     let at = 1_757_426_602_000;
     slowlog::Sink::new(&dir, "daemon").append(&Entry::new("daemon", "POST /x", at, 4820));
 
+    let id = Entry::new("daemon", "POST /x", at, 4820).id();
     let out = mf_full(&["-u", &repo, "slow"], None, &[("TZ", "Europe/Paris")], true);
     assert_ok(&out);
-    assert!(out.stdout.starts_with("2025-09-09 16:03:22 "), "{}", out.stdout);
+    assert!(out.stdout.starts_with(&format!("{id}  2025-09-09 16:03:22 ")), "{}", out.stdout);
     let out = mf_full(&["-u", &repo, "slow"], None, &[("TZ", "UTC")], true);
     assert_ok(&out);
-    assert!(out.stdout.starts_with("2025-09-09 14:03:22 "), "{}", out.stdout);
+    assert!(out.stdout.starts_with(&format!("{id}  2025-09-09 14:03:22 ")), "{}", out.stdout);
 }
 
 #[test]
@@ -5708,10 +5711,14 @@ fn test_slow_replay_runs_a_logged_query_again_and_shows_where_it_goes() {
     assert!(out.stdout.contains("index.evaluate"), "{}", out.stdout);
     assert!(out.stdout.contains("results   0"), "the newest: {}", out.stdout);
 
-    // Another one by its start time, as `mf slow` lists it.
-    let out = mf(&["-u", &repo, "slow", "replay", "--at", "1757426600000"]);
+    // Another one by the id `mf slow` lists it with, or a prefix of it.
+    let older_id = logged(1_757_426_600_000, older).id();
+    let out = mf(&["-u", &repo, "slow", "replay", &older_id]);
     assert_ok(&out);
     assert!(out.stdout.contains("results   1"), "the older: {}", out.stdout);
+    let out = mf(&["-u", &repo, "slow", "replay", &older_id[..4]]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("results   1"), "by prefix: {}", out.stdout);
 
     // Or any query, typed.
     let out = mf(&["-u", &repo, "slow", "replay", "-q", "rating > 3", "--json"]);
@@ -5756,9 +5763,13 @@ fn test_slow_names_what_it_left_out() {
     let out = mf(&["-u", &repo, "slow", "replay"]);
     assert_eq!(out.code, 1, "{}", out.stdout);
     assert!(out.stderr.contains("no query in the slow-operation log"), "{}", out.stderr);
-    let out = mf(&["-u", &repo, "slow", "replay", "--at", "1757426600000"]);
+    let not_a_query = Entry::new("daemon", "GET /x", 1_757_426_600_000, 4820).id();
+    let out = mf(&["-u", &repo, "slow", "replay", &not_a_query]);
     assert_eq!(out.code, 1, "{}", out.stdout);
-    assert!(out.stderr.contains("no logged query started at 1757426600000"), "{}", out.stderr);
+    assert!(out.stderr.contains(&format!("{not_a_query} is not a query")), "{}", out.stderr);
+    let out = mf(&["-u", &repo, "slow", "replay", "ffffffff"]);
+    assert_eq!(out.code, 1, "{}", out.stdout);
+    assert!(out.stderr.contains("no slow-log entry ffffffff"), "{}", out.stderr);
 
     let out = mf_full(&["-u", &repo, "slow", "clear"], Some("n\n"), &[], true);
     assert_ok(&out);

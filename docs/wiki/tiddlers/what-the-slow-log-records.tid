@@ -25,6 +25,11 @@ One JSON object per line, written when the operation ends:
 |`phases` |the breakdown, below |
 |`context` |free-form pairs, in order: the query, the number of results, the field written, the events of a flush. A query is kept whole (up to 64 KiB) with its `sort`, `limit` and `count`, so the entry can be replayed |
 
+An entry's ''id'' (`b57e137d`) is not stored: it is 8 hex digits derived from its
+`source`, `at_ms`, `op` and `ms` (FNV-1a, `slowlog::Entry::id`), so every entry ever
+written has one, the same in every process. `mf slow` prints it first and `mf slow
+replay` takes it, or a prefix of it; `mf slow --json` adds it to each line.
+
 !! Phases
 
 A phase is a named span declared by the code that runs it. Durations are

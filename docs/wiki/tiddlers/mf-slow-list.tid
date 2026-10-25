@@ -4,8 +4,10 @@ kind: reference
 summary: List the slow operations, newest first — the default
 
 The newest entries first, both processes merged: [[Diagnosing a slow operation]].
-Times are in the local time zone (`TZ`, else the system's); `--json` keeps the
-logged Unix milliseconds (`at_ms`), which `mf slow replay --at` takes.
+Each entry starts with its id ([[What the slow log records]]), which `mf slow replay`
+takes. Times are in the local time zone (`TZ`, else the system's); `--json` keeps the
+logged Unix milliseconds (`at_ms`) and adds the `id`. `mf slow` alone takes the same
+options.
 `--since` takes the durations of `mf trash prune -d` (`30m`, `2h`, `7d`), `--min`
 the same durations for the entries that took at least that long (`mf slow --min 60s`:
 only what took a minute, however far back — the daemon filters before `--limit`
