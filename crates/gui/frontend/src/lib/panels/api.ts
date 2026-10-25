@@ -590,7 +590,8 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         labelSeparator: () => invoke('label_separator') as Promise<string>,
         // The settings panel (doc "Changing keybindings"): where the
         // configuration files are, and the editor of `keybindings.toml`.
-        info: () => invoke('config_info') as Promise<Metafolder.ConfigInfo>,
+        info: (repo?: string | null) =>
+          invoke('config_info', { repo: repo ?? null }) as Promise<Metafolder.ConfigInfo>,
         checkKeybinding: (binding: Metafolder.KeybindingDraft) =>
           invoke('check_user_keybinding', { ...binding }) as Promise<Metafolder.KeybindingCheck>,
         setKeybinding: (binding: Metafolder.KeybindingDraft & { textInput: boolean }) =>

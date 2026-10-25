@@ -10,6 +10,7 @@ mod blocking_client;
 pub mod command_registry;
 pub mod commands;
 pub mod config;
+pub mod config_files;
 pub mod daemon_proxy;
 pub mod diagnostics;
 #[cfg(test)]

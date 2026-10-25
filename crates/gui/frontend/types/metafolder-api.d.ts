@@ -210,8 +210,10 @@ declare namespace Metafolder {
     /** What joins the columns of a multi-column completion label (config.toml
      *  `[completion].label-separator`, doc "Completion views"). */
     labelSeparator(): Promise<string>;
-    /** Where the configuration files are (the settings panel). */
-    info(): Promise<ConfigInfo>;
+    /** The configuration files (the settings panel): every file of the
+     *  configuration repository, and of `repo`'s `.metafolder/config/` when
+     *  it is given and loaded. */
+    info(repo?: string | null): Promise<ConfigInfo>;
     /** What saving `binding` would refuse, field by field, without writing
      *  (doc "Changing keybindings"). */
     checkKeybinding(binding: KeybindingDraft): Promise<KeybindingCheck>;
@@ -225,15 +227,23 @@ declare namespace Metafolder {
   }
 
   interface ConfigInfo {
+    /** The configuration repository's root. */
     root: string;
-    style_css: string;
-    keybindings: string;
-    panel_types: string;
-    commands_js: string;
-    user_commands_js: string;
-    macros_js: string;
-    /** `core/query-grammar`, the simplified query language's words. */
-    grammar: string;
+    /** The repository's `.metafolder/config/`, when one was asked for and is loaded. */
+    repo_config: string | null;
+    files: ConfigFile[];
+  }
+
+  interface ConfigFile {
+    /** The block it is listed under: `gui`, `panel-types`, `daemon`, …, or
+     *  `repository` for the repository's own files. */
+    category: string;
+    /** Its path relative to the directory listed. */
+    name: string;
+    /** Its absolute path. */
+    path: string;
+    /** The `config:reload` target re-reading it, when there is one. */
+    reload: string | null;
   }
 
   /** Where a binding applies: its combo and its scope. */

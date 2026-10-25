@@ -62,6 +62,13 @@ const COMMANDS = [
   { name: 'metarecord-list:select', label: 'Select', owner: 'metarecord-list' },
 ];
 
+const file = (category: string, name: string, reload: string | null = null) => ({
+  category,
+  name,
+  path: `/cfg/${name}`,
+  reload,
+});
+
 const flush = async () => {
   for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0));
 };
@@ -71,24 +78,41 @@ async function mountPanel(
     check?: (draft: Record<string, unknown>) => { command: string | null; key: string | null };
     save?: (draft: Record<string, unknown>) => Binding[];
     visible?: boolean;
+    repo?: string | null;
   } = {},
 ) {
   let table = [...TABLE];
+  const vars: Record<string, unknown> = { active_repo: options.repo ?? null };
+  const varListeners: Record<string, (() => void)[]> = {};
   const api = {
     commands: {
       keybindings: vi.fn(async () => table),
       list: vi.fn(async () => COMMANDS),
     },
     config: {
-      info: vi.fn(async () => ({
-        root: '/cfg/gui',
-        style_css: '/cfg/gui/style.css',
-        keybindings: '/cfg/gui/keybindings.toml',
-        panel_types: '/cfg/gui/panel-types',
-        commands_js: '/cfg/gui/commands.js',
-        user_commands_js: '/cfg/gui/user-commands.js',
-        macros_js: '/cfg/gui/macros.js',
-        grammar: '/cfg/core/query-grammar',
+      info: vi.fn(async (repo?: string | null) => ({
+        root: '/cfg',
+        repo_config: repo ? '/music/.metafolder/config' : null,
+        files: [
+          file('cli', 'cli/config.toml'),
+          file('core', 'core/query-grammar', 'grammar'),
+          file('gui', 'gui/commands.js', 'commands'),
+          file('gui', 'gui/keybindings.toml', 'keybindings'),
+          file('gui', 'gui/macros.js', 'commands'),
+          file('gui', 'gui/style.css', 'style'),
+          file('gui', 'gui/user-commands.js', 'commands'),
+          file('panel-types', 'gui/panel-types/file/main.js'),
+          ...(repo
+            ? [
+                {
+                  category: 'repository',
+                  name: 'schema.json',
+                  path: '/music/.metafolder/config/schema.json',
+                  reload: null,
+                },
+              ]
+            : []),
+        ],
       })),
       checkKeybinding: vi.fn(async (draft: Record<string, unknown>) =>
         options.check ? options.check(draft) : { command: null, key: null },
@@ -100,6 +124,16 @@ async function mountPanel(
       removeKeybinding: vi.fn(async (place: Record<string, unknown>) => {
         table = table.filter((b) => b.keys.join(' ') !== place.combo);
         return table;
+      }),
+    },
+    workspace: {
+      get: vi.fn(async (key: string) => vars[key] ?? null),
+      set: vi.fn(async (key: string, value: unknown) => {
+        vars[key] = value;
+      }),
+      onChange: vi.fn((key: string, listener: () => void) => {
+        (varListeners[key] ??= []).push(listener);
+        return () => {};
       }),
     },
     invoke: vi.fn(async () => {}),
@@ -127,15 +161,64 @@ async function mountPanel(
   const button = (tr: Element, label: string) =>
     [...tr.querySelectorAll('button')].find((b) => b.textContent === label);
   const save = root.getElementById('save') as HTMLButtonElement;
-  return { api, root, field, type, rows, shown, button, save };
+  const fileRows = () =>
+    [...root.querySelectorAll('#files tr')].map((tr) => tr.textContent ?? '');
+  const changeVar = async (key: string, value: unknown) => {
+    vars[key] = value;
+    for (const listener of varListeners[key] ?? []) listener();
+    await flush();
+  };
+  return { api, root, field, type, rows, shown, button, save, fileRows, changeVar, vars };
 }
 
 describe('config panel', () => {
-  test('it shows where the configuration files are', async () => {
+  test('it lists every configuration file, under its category', async () => {
     const { root } = await mountPanel();
     const text = root.getElementById('files')!.textContent;
     expect(text).toContain('/cfg/gui/keybindings.toml');
-    expect(text).toContain('/cfg/gui/style.css');
+    expect(text).toContain('/cfg/cli/config.toml');
+    expect(text).toContain('/cfg/gui/panel-types/file/main.js');
+    const headings = [...root.querySelectorAll('#files th')].map((th) => th.textContent);
+    expect(headings).toEqual(['cli', 'core', 'gui', 'panel-types']);
+  });
+
+  test("the workspace's repository has a category of its own", async () => {
+    const { root, api, changeVar } = await mountPanel({ repo: 'abc' });
+    expect(api.config.info).toHaveBeenLastCalledWith('abc');
+    const headings = () => [...root.querySelectorAll('#files th')].map((th) => th.textContent);
+    expect(headings()).toContain('repository');
+    expect(root.getElementById('files')!.textContent).toContain(
+      '/music/.metafolder/config/schema.json',
+    );
+    // Another repository in the workspace: the list follows it.
+    await changeVar('active_repo', null);
+    expect(api.config.info).toHaveBeenLastCalledWith(null);
+    expect(headings()).not.toContain('repository');
+  });
+
+  test('the filter narrows the files to those whose path contains it', async () => {
+    const { type, fileRows, root } = await mountPanel();
+    await type('file-filter', 'TOML');
+    const rows = fileRows().filter((text) => text.includes('/cfg/'));
+    expect(rows).toHaveLength(2);
+    expect(rows.join(' ')).toContain('cli/config.toml');
+    expect(rows.join(' ')).toContain('gui/keybindings.toml');
+    // A category left empty is not shown.
+    const headings = [...root.querySelectorAll('#files th')].map((th) => th.textContent);
+    expect(headings).toEqual(['cli', 'gui']);
+    expect(root.getElementById('files-count')!.textContent).toBe('2 of 8 files');
+  });
+
+  test('Show selects the file and opens it in the file panel beside', async () => {
+    const { root, api, vars } = await mountPanel();
+    const row = [...root.querySelectorAll('#files tr')].find((tr) =>
+      tr.textContent!.includes('cli/config.toml'),
+    )!;
+    [...row.querySelectorAll('button')].find((b) => b.textContent === 'Show')!.click();
+    await flush();
+    expect(vars.selected_metarecord).toBeNull();
+    expect(vars.selected_paths).toEqual(['/cfg/cli/config.toml']);
+    expect(api.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'file']);
   });
 
   test('shown when it mounts, the key field takes the focus', async () => {
@@ -148,19 +231,22 @@ describe('config panel', () => {
 
   test('every reload target has its button, and all of them one more', async () => {
     const { root, api } = await mountPanel();
-    const text = root.getElementById('files')!.textContent;
-    expect(text).toContain('/cfg/gui/user-commands.js');
-    expect(text).toContain('/cfg/core/query-grammar');
-    const reloads = [...root.querySelectorAll<HTMLButtonElement>('#files button, #reload-all')];
+    const reloads = [
+      ...root.querySelectorAll<HTMLButtonElement>('#files button.reload, #reload-all'),
+    ];
     for (const button of reloads) button.click();
     await flush();
     const targets = api.invoke.mock.calls.map((call) => (call as unknown[])[0]);
-    expect(targets).toEqual(
-      expect.arrayContaining(
-        ['keybindings', 'style', 'commands', 'grammar', 'all'].map((what) => ['config:reload', what]),
+    expect(new Set(targets.map((t) => JSON.stringify(t)))).toEqual(
+      new Set(
+        ['keybindings', 'style', 'commands', 'grammar', 'all'].map((what) =>
+          JSON.stringify(['config:reload', what]),
+        ),
       ),
     );
-    expect(targets).toHaveLength(5);
+    // One per file it reloads — the three command files have one each — and
+    // Reload all.
+    expect(targets).toHaveLength(7);
   });
 
   test('every binding is listed, a suggested one without Remove', async () => {

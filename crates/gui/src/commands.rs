@@ -533,33 +533,48 @@ pub fn remove_user_keybinding(
     Ok(compiled)
 }
 
-/// Config paths shown in the settings panel.
+/// The configuration files the settings panel lists (doc "config panel").
 #[derive(Serialize)]
 pub struct ConfigInfo {
+    /// The configuration repository's root.
     pub root: String,
-    pub style_css: String,
-    pub keybindings: String,
-    pub panel_types: String,
-    pub commands_js: String,
-    pub user_commands_js: String,
-    pub macros_js: String,
-    pub grammar: String,
+    /// The `.metafolder/config/` of `repo`, when one was asked for.
+    pub repo_config: Option<String>,
+    /// Every file of both, the configuration repository's first.
+    pub files: Vec<crate::config_files::ConfigFile>,
 }
 
+/// `repo` is the workspace's repository: its own configuration is listed
+/// too. One that is not loaded only leaves it out.
 #[tauri::command]
-pub fn config_info(app: AppHandle) -> ConfigInfo {
-    ConfigInfo {
-        root: app.config.root().display().to_string(),
-        style_css: app.config.style_css_path().display().to_string(),
-        keybindings: app.config.root().join("keybindings.toml").display().to_string(),
-        panel_types: app.config.panel_types_dir().display().to_string(),
-        commands_js: app.config.commands_js_path().display().to_string(),
-        user_commands_js: app.config.user_commands_js_path().display().to_string(),
-        macros_js: app.config.macros_js_path().display().to_string(),
-        grammar: metafolder_core::simplified::load::grammar_path()
-            .map(|path| path.display().to_string())
-            .unwrap_or_default(),
-    }
+pub async fn config_info(app: AppHandle<'_>, repo: Option<String>) -> Result<ConfigInfo, String> {
+    let root = app
+        .config
+        .root()
+        .parent()
+        .ok_or("the GUI configuration directory has no parent")?
+        .to_path_buf();
+    let repo_config = match repo {
+        Some(repo) => crate::history::metafolder_dir_of(&app.daemon, &repo)
+            .await
+            .ok()
+            .map(|dir| dir.join("config")),
+        None => None,
+    };
+    let (root, repo_config, files) = tauri::async_runtime::spawn_blocking(move || {
+        let mut files = crate::config_files::global_files(&root);
+        if let Some(dir) = &repo_config {
+            files.extend(crate::config_files::repo_files(dir));
+        }
+        (root, repo_config, files)
+    })
+    .await
+    .map_err(|e| format!("blocking task failed: {e}"))?;
+    Ok(ConfigInfo {
+        root: root.display().to_string(),
+        repo_config: repo_config.map(|dir| dir.display().to_string()),
+        files,
+    })
 }
 
 // ── Status bar / messages ────────────────────────────────────────────────

@@ -1,5 +1,6 @@
-// config panel: where the configuration files are, and the keybinding editor
-// (doc "config panel", doc "Changing keybindings").
+// config panel: the configuration files — every one of the configuration
+// repository and of the workspace's repository, filtered as a path is typed —
+// and the keybinding editor (doc "config panel", doc "Changing keybindings").
 //
 // The form doubles as the table's filter: the key typed shows where that key
 // is bound already, the command typed shows the keys that run it. What saving
@@ -57,6 +58,9 @@ function scopeOf(binding) {
 /** @param {ShadowRoot} root @param {MetafolderApi} metafolder */
 export async function mount(root, metafolder) {
   const files = byId(root, 'files');
+  const fileFilter = byId(root, 'file-filter', HTMLInputElement);
+  const filesCount = byId(root, 'files-count');
+  const roots = byId(root, 'roots');
   const combo = byId(root, 'combo', HTMLInputElement);
   const command = byId(root, 'command', HTMLInputElement);
   const when = byId(root, 'when', HTMLInputElement);
@@ -71,6 +75,10 @@ export async function mount(root, metafolder) {
   const count = byId(root, 'count');
   const tbody = byId(root, 'bindings');
 
+  /** @type {Metafolder.ConfigFile[]} */
+  let configFiles = [];
+  // Only the latest list is shown: the repository may change while one is read.
+  let filesSeq = 0;
   /** @type {Metafolder.Binding[]} */
   let table = [];
   /** @type {Map<string, Metafolder.CommandDef>} */
@@ -287,6 +295,7 @@ export async function mount(root, metafolder) {
     el(
       'button',
       {
+        class: 'reload',
         title: `config:reload ${what}`,
         onclick: async () => {
           await metafolder.invoke(['config:reload', what]);
@@ -297,25 +306,65 @@ export async function mount(root, metafolder) {
       'Reload',
     );
 
-  async function showFiles() {
-    const info = await metafolder.config.info();
-    /** @param {string} name @param {string[]} paths @param {HTMLElement|null} [action] */
-    const row = (name, paths, action = null) => [
-      el('dt', {}, name),
-      el('dd', {}, el('span', { class: 'paths' }, paths.map((path) => el('code', {}, path))), action),
-    ];
+  /** The file panel follows the selection: the file becomes it — a path with
+   *  no metarecord, the metarecord written first as every panel publishes the
+   *  pair (doc "Cross-panel selection") — and the panel is opened beside.
+   *  @param {string} path */
+  async function showInFilePanel(path) {
+    await metafolder.workspace.set('selected_metarecord', null);
+    await metafolder.workspace.set('selected_paths', [path]);
+    await metafolder.invoke(['panel:open', 'other', 'file']);
+  }
+
+  function renderFiles() {
+    const typed = fileFilter.value.trim().toLowerCase();
+    const shown = configFiles.filter((file) => file.path.toLowerCase().includes(typed));
+    filesCount.textContent =
+      shown.length === configFiles.length
+        ? `${configFiles.length} files`
+        : `${shown.length} of ${configFiles.length} files`;
+    /** @type {Map<string, Metafolder.ConfigFile[]>} */
+    const byCategory = new Map();
+    for (const file of shown) {
+      byCategory.set(file.category, [...(byCategory.get(file.category) ?? []), file]);
+    }
     files.replaceChildren(
-      ...row('Config directory', [info.root]),
-      ...row('Keybindings', [info.keybindings], reloadButton('keybindings')),
-      ...row('Stylesheet', [info.style_css], reloadButton('style')),
-      ...row(
-        'Commands',
-        [info.user_commands_js, info.commands_js, info.macros_js],
-        reloadButton('commands'),
-      ),
-      ...row('Query grammar', [info.grammar], reloadButton('grammar')),
-      ...row('Panel types', [info.panel_types]),
+      ...[...byCategory].flatMap(([category, inCategory]) => [
+        el('tr', { class: 'category' }, el('th', { colspan: 2 }, category)),
+        ...inCategory.map((file) =>
+          el(
+            'tr',
+            {},
+            el('td', {}, el('code', {}, file.path)),
+            el(
+              'td',
+              { class: 'actions' },
+              el(
+                'button',
+                { title: 'Show it in the file panel', onclick: () => void showInFilePanel(file.path) },
+                'Show',
+              ),
+              file.reload ? reloadButton(file.reload) : null,
+            ),
+          ),
+        ),
+      ]),
     );
+  }
+
+  /** Reads the list again: a file may have been added, and the workspace's
+   *  repository changed. */
+  async function showFiles() {
+    const seq = ++filesSeq;
+    const repo = /** @type {string|null} */ ((await metafolder.workspace.get('active_repo')) ?? null);
+    const info = await metafolder.config.info(repo);
+    if (seq !== filesSeq) return;
+    configFiles = info.files;
+    roots.replaceChildren(
+      el('span', {}, 'Configuration ', el('code', {}, info.root)),
+      ...(info.repo_config ? [el('span', {}, 'Repository ', el('code', {}, info.repo_config))] : []),
+    );
+    renderFiles();
   }
 
   for (const input of [combo, command, when, focus]) {
@@ -327,17 +376,20 @@ export async function mount(root, metafolder) {
     });
   }
   textInput.addEventListener('change', onInput);
+  fileFilter.addEventListener('input', renderFiles);
   save.addEventListener('click', () => void submit());
   byId(root, 'reload-all', HTMLButtonElement).addEventListener('click', () => {
     void metafolder.invoke(['config:reload', 'all']).then(load);
   });
   cancel.addEventListener('click', () => clearForm());
 
-  metafolder.provide({ refresh: () => load() });
+  metafolder.workspace.onChange('active_repo', () => void showFiles());
+  metafolder.provide({ refresh: () => Promise.all([showFiles(), load()]) });
   // Shown again: what changed meanwhile is read, and the key field takes the
   // focus, so a key can be looked up or bound from the keyboard alone.
   metafolder.onVisibility((visible) => {
     if (!visible) return;
+    void showFiles();
     void load();
     combo.focus();
   });

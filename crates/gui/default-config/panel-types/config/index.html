@@ -26,14 +26,35 @@
         text-transform: uppercase;
         letter-spacing: 0.05em;
       }
-      dl {
-        display: grid;
-        grid-template-columns: auto 1fr;
-        gap: 4px 16px;
+      #roots {
         margin: 0;
-      }
-      dt {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 16px;
         color: var(--mf-fg-dim, #8a8a96);
+      }
+      #files-form {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      #files-count {
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      #files-block {
+        max-height: 40%;
+        flex-shrink: 0;
+        overflow-y: auto;
+        border-top: 1px solid var(--mf-bg-raised, #26262e);
+      }
+      tr.category th {
+        text-align: left;
+        padding: 6px 8px 2px;
+        color: var(--mf-fg-dim, #8a8a96);
+        font-weight: normal;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        background: var(--mf-bg, #1e1e24);
       }
       h2.with-action {
         display: flex;
@@ -43,18 +64,6 @@
       h2 button {
         text-transform: none;
         letter-spacing: normal;
-      }
-      .paths {
-        display: flex;
-        flex-direction: column;
-        min-width: 0;
-      }
-      dd {
-        margin: 0;
-        display: flex;
-        gap: 8px;
-        align-items: center;
-        min-width: 0;
       }
       code,
       .combo,
@@ -84,13 +93,17 @@
         gap: 6px;
         align-items: center;
       }
-      #form input:not([type]) {
+      #form input:not([type]),
+      #file-filter {
         background: var(--mf-bg, #1e1e24);
         color: var(--mf-fg, #d8d8e0);
         border: 1px solid var(--mf-fg-dim, #8a8a96);
         border-radius: 3px;
         padding: 2px 6px;
         min-width: 0;
+      }
+      #file-filter {
+        flex: 1;
       }
       #form input.invalid {
         border-color: var(--mf-error, #c44c56);
@@ -159,7 +172,16 @@
   </head>
   <body>
     <h2 class="with-action">Files <button id="reload-all" title="config:reload all">Reload all</button></h2>
-    <dl id="files"></dl>
+    <p id="roots"></p>
+    <div id="files-form">
+      <input id="file-filter" placeholder="filter (path)" autocomplete="off" />
+      <span id="files-count"></span>
+    </div>
+    <div id="files-block">
+      <table>
+        <tbody id="files"></tbody>
+      </table>
+    </div>
 
     <h2 data-help-topic="settings">Keybindings</h2>
     <div id="form" data-help-topic="settings">

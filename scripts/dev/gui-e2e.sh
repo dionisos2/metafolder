@@ -49,7 +49,7 @@
 #   with no scenario, runs them all: undo-redo duplicates orphans trash remove
 #   field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script
 #   script-workspaces errors picker refs hierarchy hierarchy-form prompt history
-#   keybindings open-with tab-close pick-button suggested-key walk open-viewers
+#   keybindings open-with tab-close pick-button suggested-key config-files walk open-viewers
 #   slideshow shell-line shell-cwd repos-memory help-keys zoom order user-commands
 #   settle macro, and
 #   devtools last (it takes the inspector the clicking scenarios drive).
@@ -1380,6 +1380,26 @@ scenario_pick_button() {
         until_ok 10 reads "$c" '#field-rows tr' friend input
     assert "pick button: the edit is confirmed" until_ok 10 click '#field-rows tr' friend button OK
     assert "pick button: the picked metarecord is written" until_ok 10 field_is "$a" friend "$c"
+}
+
+# right_is <panel type> — the right slot shows that panel.
+right_is() { [ "$(gui_status "(s['layout']['right'] or {}).get('panel_type')")" = "$1" ]; }
+
+scenario_config_files() {
+    needs_clicks config-files || return 0
+    new_repo config-files
+    local map="$REPO_DIR/.metafolder/config/metadata-map.toml"
+    run panel:open here config
+
+    # The repository's own files are listed beside the global ones.
+    assert "config files: the repository's files are listed" \
+        until_ok 10 shows '#files tr' "$map"
+    assert "config files: the global ones too" shows '#files tr' 'cli/config.toml'
+    # Show previews the file beside, as the selection.
+    assert "config files: Show is clicked" click '#files tr' "$map" button Show
+    assert "config files: the file panel opens beside" \
+        until_ok 10 right_is file
+    assert_eq "config files: the file is the selection" "[\"$map\"]" "$(ws_var selected_paths)"
 }
 
 scenario_suggested_key() {

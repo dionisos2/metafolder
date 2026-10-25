@@ -462,7 +462,9 @@ describe('panel api — misc surface', () => {
   test('the settings panel reads and writes keybindings through the backend', async () => {
     const { api, invoke } = setup();
     await api.config.info();
-    expect(invoke).toHaveBeenCalledWith('config_info');
+    expect(invoke).toHaveBeenCalledWith('config_info', { repo: null });
+    await api.config.info('abc');
+    expect(invoke).toHaveBeenCalledWith('config_info', { repo: 'abc' });
     await api.commands.list();
     expect(invoke).toHaveBeenCalledWith('list_commands');
     const replacing = { combo: 'g', when: null, focus: null };

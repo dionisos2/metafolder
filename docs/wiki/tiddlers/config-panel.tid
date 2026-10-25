@@ -2,7 +2,7 @@ title: config panel
 tags: Panel [[Panel types]] [[Customising the GUI]]
 kind: reference
 aliases: settings-panel settings-view
-summary: Where the GUI's configuration files are, and the keybinding editor: look up a key or a command as you type it, and bind it once the GUI has checked it.
+summary: Every configuration file, global and the repository's, filtered as a path is typed and shown in the file panel; and the keybinding editor: look up a key or a command as you type it, and bind it once the GUI has checked it.
 
 Open it with `panel:open here config` (<<key "panel:open here config" "t c">>). It used to be a
 dialog over the window, the ''settings view''; as a panel it sits beside the others,
@@ -10,13 +10,26 @@ so a key can be looked up while the panel it acts in stays on screen.
 
 !! Files
 
-The configuration directory and, in it, `keybindings.toml`, `style.css`, the command
-files — `user-commands.js`, `commands.js`, `macros.js` —, the simplified query
-language's `core/query-grammar` and `panel-types/` ([[Customising the GUI]]). Each
-file has a ''Reload'' button running `config:reload` on it — `keybindings`, `style`,
-`commands`, `grammar` — and ''Reload all'' runs `config:reload all`
-([[Reloading the configuration]]). `panel-types/` has none: a panel is read again only
-at the next start.
+Every file of the configuration repository ([[The configuration repository]]) — but
+its `.git/` and the rendered `docs/` —, and every file of the workspace's repository's
+`.metafolder/config/` ([[Repository configuration]]), read from disk: a file added there
+is listed the next time the panel is shown, or at `view:refresh`, and the list follows the workspace to another repository. They are grouped by
+directory — `cli`, `core`, `daemon`, `gui`, `scripts`, `panel-types` for
+`gui/panel-types/` and `repository` for the repository's own —, in a block of their own
+above the keybindings; the line over it gives the two directories. The field above the
+list keeps the files whose path contains what is typed, ignoring case.
+
+Each file has a ''Show'' button: it becomes the workspace's selection — a path, with no
+metarecord — and the [[file panel]] is opened in the other slot to preview it
+([[Cross-panel selection]]).
+
+The files the GUI can read again without a restart have a ''Reload'' button running
+`config:reload` on them — `keybindings.toml` (`keybindings`), `style.css` (`style`),
+`commands.js`, `user-commands.js` and `macros.js` (`commands`), `core/query-grammar`
+(`grammar`) — and ''Reload all'' runs `config:reload all`
+([[Reloading the configuration]]). The others have none: a panel type is read again
+only at the next start of the GUI, the daemon's and the CLI's files at theirs, a
+repository's at its next load (its schema at `mf schema reload`).
 
 !! Keybindings
 
