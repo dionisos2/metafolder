@@ -28,7 +28,8 @@ At the bottom of the panel, after `$`, is a line to type a shell command in, as 
 console — no need to go through the command input. Click it, or press
 <<key "shell:focus line" "e l">> while the panel has the focus.
 
-* `Enter` runs it exactly as `!` followed by the line would ([[Bash mode]]): in the background, with your shell configuration loaded (below), `%` standing for the selection, the run shown in the task bar.
+* `Enter` runs it exactly as `!` followed by the line would ([[Bash mode]]): in the workspace's shell (below), `%` standing for the selection, the run shown in the task bar.
+* While a line runs, `Enter` hands what is typed to it instead, as its input, as in a terminal: the answer to a `read`, to `rm -i`, a line for a program reading its input. It is shown in the run, and not kept in the history. `ctrl+d` on an empty field ends that input (a `cat` waiting for it ends), and `ctrl+c` with nothing selected in the field interrupts the line, as <<cmd "script:stop">> does.
 * The directory it runs in is shown on its own line above the `$`, so that the field keeps the panel's whole width (see below). The field empties and keeps the keyboard, ready for the next line, and the view goes back to the bottom to show what it prints.
 * `Tab` completes the word before the caret by asking `bash`, as in [[Bash mode]]: a single candidate is inserted; several extend the word to their common start and are listed above the line, until the next edit.
 * `ctrl+p`, `ctrl+n` and `ctrl+r` recall what was run: the history is the one of the command input's bash mode, so a line run in either is recalled in both ([[Input history]]).
@@ -40,35 +41,49 @@ Every shell line of a workspace — typed here or after `!` — runs in one dire
 the one shown above the panel's `$`:
 
 * where the previous line's `cd` left the shell, as long as the selection has not changed since: `cd photos`, then `ls`, lists `photos`. A `cd` counts however the line ends (`cd x && false` still moves);
-* otherwise the selection's folder: the selected folder itself, the folder holding a selected file — or, for a path that is gone, its nearest folder still there. Selecting something else moves the shell there, dropping the `cd`;
+* otherwise the selection's folder: the selected folder itself, the folder holding a selected file — or, for a path that is gone, its nearest folder still there. Selecting something else moves the shell there (it is sent a `cd` before the next line), dropping the `cd`;
 * with nothing selected, the root of the workspace's repository; with no repository, the directory the GUI was started from.
 
 `Tab` completes a relative word in that same directory.
 
-Each line is still a shell of its own: only the directory carries over, not a
-variable set or a function defined.
+!! The workspace's shell
+
+The lines you type — here or after `!` — run in one `bash` per workspace, started by
+the first of them and kept for the next, as a console keeps its shell: a variable
+set, a function or an alias defined, a `cd` made by one line are there for the next.
+
+* The lines run in turn: one typed while another runs (after `!`) waits for it, as a line typed ahead in a terminal.
+* `exit` ends the shell, as it would close a terminal: the next line starts a new one, in the directory the last one was left in — and without the variables it held. So does <<cmd "script:kill">>, which kills the shell with the line. <<cmd "script:stop">> only interrupts the line, as `ctrl+c` does, and the shell stays.
+* Closing the workspace ends its shell.
+
+A script (`script:run`) and a program opened on a file (`file:open-with`) do not run
+there: each runs in a plain `sh` of its own, so that a script behaves the same
+whatever your configuration and whatever an earlier line left in the shell, and two
+of them can run at once.
+
+The shell talks to the panel through pipes, not a terminal: a program sees that it
+has none. Hence no colours, no full-screen program (`vim`, `less`, `htop`), no
+pager (`git log` prints everything), and no job control (`ctrl+z`, `fg`). Output is
+read line by line.
 
 !! Your shell configuration
 
-Every shell line you type — here or after `!` — first loads `~/.bashrc`, so that
-your aliases, functions and variables (a `PATH` extended there) are at hand as in a
-terminal. A script (`script:run`) and a program opened on a file (`file:open-with`)
-do not: they run in a plain `sh`, so that a script behaves the same whatever your
-configuration, and prints nothing your `.bashrc` would. The file is set by
-`shell-rc` in the GUI's `config.toml` ([[GUI configuration]]); a missing file is
-skipped, and `shell-rc = ""` loads nothing and runs each line in a plain `sh`.
+The workspace's shell loads `~/.bashrc` when it starts — once, not for every line —
+so that your aliases, functions and variables (a `PATH` extended there) are at hand
+as in a terminal. The file is set by `shell-rc` in the GUI's `config.toml`
+([[GUI configuration]]); a missing file is skipped, and `shell-rc = ""` loads
+nothing.
 
-To load it as a terminal would, the line runs in an ''interactive'' `bash`: the guard
+To load it as a terminal would, the shell is an ''interactive'' `bash`: the guard
 that ends a distribution's `.bashrc` in any other shell (`[[ $- != *i* ]] && return`)
-lets it through, and its aliases expand. What a terminal-less interactive bash would
-add is left out:
+lets it through, and its aliases expand. What makes a terminal's shell is left out:
 
-* its complaint about having no terminal is not shown — the `.bashrc`'s own errors and output are, at the top of the run;
-* the line itself runs in a subshell: an `exit` prints no `exit`, keeps its status, and <<cmd "script:stop">> still ends the line (an interactive bash ignores the signal it sends);
+* its complaint about having no terminal is not shown — the `.bashrc`'s own errors and output are, at the top of the line that started the shell;
+* the prompts (`PS1`…), `PROMPT_COMMAND` and the history are dropped once the `.bashrc` is loaded: the panel is the prompt, a line run here goes into the GUI's history ([[Input history]]), not `~/.bash_history`, and `!` is not a history expansion;
 * it runs in a session of its own, without the terminal the GUI was started from, which an interactive bash would otherwise try to take over.
 
 Only `~/.bashrc` (or the file named) is loaded — not `/etc/bash.bashrc`, nor a login
-profile. A `.bashrc` that is slow to load makes every line as slow.
+profile.
 
 <<cmd "shell:clear">>, or the panel's ''Clear'' button, empties the log. Each workspace
 has its own, and none outlives the session.

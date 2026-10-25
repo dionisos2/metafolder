@@ -134,6 +134,8 @@ pub enum ShellLine {
     Command,
     Stdout,
     Stderr,
+    /// What the user typed to the run while it ran: its standard input.
+    Input,
     /// How the run ended, when worth saying: `exit N`, `stopped`, `killed`.
     Status,
 }

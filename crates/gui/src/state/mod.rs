@@ -88,6 +88,8 @@ pub struct GuiState {
     /// Kept out of `Inner`, and never locked together with it.
     txns: Mutex<HashMap<u64, txn::Txn>>,
     next_txn: AtomicU64,
+    /// The workspaces' persistent shells (doc "shell panel").
+    shells: crate::shell_session::ShellSessions,
     notifier: Arc<dyn FrontendNotifier>,
 }
 
@@ -382,8 +384,14 @@ impl GuiState {
             questions: Mutex::new(Vec::new()),
             txns: Mutex::new(HashMap::new()),
             next_txn: AtomicU64::new(1),
+            shells: Default::default(),
             notifier,
         }
+    }
+
+    /// The workspaces' persistent shells, where the lines the user types run.
+    pub fn shells(&self) -> &crate::shell_session::ShellSessions {
+        &self.shells
     }
 
     /// Marks a shell script (run id `task_id`, launched from `ws_id`) as running
@@ -900,6 +908,8 @@ impl GuiState {
         if is_picker && self.finish_pick(ws_id, false).is_ok() {
             return Ok(());
         }
+        // As closing a terminal ends its shell.
+        self.shells.close(ws_id);
         self.mutate(|inner| {
             let index = inner
                 .workspaces

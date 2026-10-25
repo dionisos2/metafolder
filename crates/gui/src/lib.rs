@@ -37,6 +37,7 @@ pub mod sandbox;
 pub mod seccomp;
 pub mod server;
 pub mod shell_exec;
+pub mod shell_session;
 pub mod slow;
 pub mod state;
 pub mod sync;
@@ -599,6 +600,8 @@ pub fn run(options: Options) {
             commands::recent_touch,
             commands::list_scripts,
             shell_exec::run_shell,
+            shell_exec::shell_input,
+            shell_exec::shell_interrupt,
             shell_exec::shell_cwd,
             bash_complete::bash_complete,
             commands::daemon_request,

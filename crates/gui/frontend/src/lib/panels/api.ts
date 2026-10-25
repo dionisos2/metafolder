@@ -885,6 +885,9 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
           shellListeners.add(listener);
         },
         cwd: () => invoke('shell_cwd', { wsId: ctx.wsId }) as Promise<string | null>,
+        input: (text: string | null) =>
+          invoke('shell_input', { wsId: ctx.wsId, text }) as Promise<boolean>,
+        interrupt: () => invoke('shell_interrupt', { wsId: ctx.wsId }) as Promise<boolean>,
         onCwd(listener: () => void) {
           cwdListeners.add(listener);
         },

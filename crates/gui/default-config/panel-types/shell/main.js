@@ -1,7 +1,8 @@
 // shell panel: what the shell lines run in the workspace printed (doc "shell
 // panel"). Unlike the message panel, it reads like a terminal: oldest at the
 // top, one block per run, the view following the output while at the bottom —
-// and a line at the bottom to type the next shell line in, as in a console.
+// and a line at the bottom to type the next shell line in, as in a console,
+// or the input of the one running.
 
 import { byId, el } from '/__ui.js';
 import { attachHistory } from '/__history.js';
@@ -100,16 +101,20 @@ export async function mount(root, metafolder) {
     candidates.hidden = list.length === 0;
   }
 
-  /** Runs the typed line through the shell dispatcher, as `!` + the line does
-   *  in the command input (`%` placeholders included). The field keeps the
-   *  keyboard, and the view goes back to the bottom to show what it prints. */
-  function run() {
+  /** Hands the typed text to the line running in the workspace's shell, as
+   *  its input, as a terminal does; with none running, runs it through the
+   *  shell dispatcher, as `!` + the line does in the command input (`%`
+   *  placeholders included). The field keeps the keyboard, and the view goes
+   *  back to the bottom to show what it prints. */
+  async function run() {
     const text = line.value;
-    if (text.trim() === '') return;
-    history.push(text);
     line.value = '';
     showCandidates([]);
     log.scrollTop = log.scrollHeight;
+    // An answer to a program is not a shell line: not in the history.
+    if (await shell.input(text)) return;
+    if (text.trim() === '') return;
+    history.push(text);
     void metafolder.invoke(['!' + text]);
   }
 
@@ -133,7 +138,15 @@ export async function mount(root, metafolder) {
   line.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.altKey) {
       event.preventDefault();
-      run();
+      void run();
+    } else if (event.ctrlKey && event.key === 'c' && line.selectionStart === line.selectionEnd) {
+      // As in a terminal, with nothing selected to copy: interrupt the line.
+      event.preventDefault();
+      void shell.interrupt();
+    } else if (event.ctrlKey && event.key === 'd' && line.value === '') {
+      // As in a terminal, on an empty line: the end of the running line's input.
+      event.preventDefault();
+      void shell.input(null);
     } else if (event.key === 'Tab' && !event.shiftKey) {
       event.preventDefault();
       void complete();

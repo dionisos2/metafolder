@@ -702,7 +702,8 @@ declare namespace Metafolder {
     ts_ms: number;
     /** The run it belongs to: every line of one shell line shares it. */
     run: string;
-    kind: 'command' | 'stdout' | 'stderr' | 'status';
+    /** `input`: what the user typed to the line while it ran. */
+    kind: 'command' | 'stdout' | 'stderr' | 'input' | 'status';
     text: string;
   }
 
@@ -717,6 +718,13 @@ declare namespace Metafolder {
     /** A line's `cd` moved where the next one runs (a selection change is a
      *  `workspace.onChange`). */
     onCwd(listener: () => void): void;
+    /** Hands a line typed by the user to the line running in the workspace's
+     *  shell, as its input (`null`: the end of it, `ctrl+d`). False when no
+     *  line runs: the text is then a new line to run. */
+    input(text: string | null): Promise<boolean>;
+    /** Interrupts the line running in the workspace's shell, as `ctrl+c`
+     *  does; false when none runs. */
+    interrupt(): Promise<boolean>;
     /** Tab-completes the word before `cursor` in a shell line, like bash: the
      *  line as it becomes, its new cursor, and the candidates still open (empty
      *  once one was inserted). */

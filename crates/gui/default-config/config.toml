@@ -63,11 +63,11 @@ slow-operation-threshold-ms = 1500
 # the GUI may show the ones it already fetched for up to a day. Default: 10.
 video-thumbnail-percent = 10
 
-# The bash rc file every shell line you type loads first (`!` lines, the shell
-# panel's line — not scripts nor open-with), so that your aliases, functions and
-# variables are there: the line runs in an interactive bash, as in a terminal. "~/" is your
-# home directory; a missing file is skipped. "" loads nothing and runs the line
-# in a plain sh. Default: "~/.bashrc".
+# The bash rc file the workspace's shell loads when it starts — the shell the
+# lines you type run in (`!` lines, the shell panel's line; not scripts nor
+# open-with), kept from line to line — so that your aliases, functions and
+# variables are there, as in a terminal. "~/" is your home directory; a missing
+# file is skipped; "" loads nothing. Default: "~/.bashrc".
 shell-rc = "~/.bashrc"
 
 # Shared panel UX timing knobs, handed to every panel. Every key optional.

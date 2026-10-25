@@ -41,6 +41,10 @@ async function mounted(history: Entry[], completion?: Completion) {
   const top = vi.fn(async (_invocation: string) => {});
   const complete = vi.fn(async (_line: string, _cursor: number) => completion);
   const appended: string[] = [];
+  // Whether a line runs in the workspace's shell: what is typed is then its input.
+  const shellState = { running: false };
+  const input = vi.fn(async (_text: string | null) => shellState.running);
+  const interrupt = vi.fn(async () => shellState.running);
   const handlers = new Map<string, (...args: string[]) => unknown>();
   const api = {
     invoke: top,
@@ -66,6 +70,8 @@ async function mounted(history: Entry[], completion?: Completion) {
         push = listener;
       },
       complete,
+      input,
+      interrupt,
       cwd: async () => where.dir,
       onCwd: (listener: () => void) => {
         cwdMoved = listener;
@@ -83,6 +89,9 @@ async function mounted(history: Entry[], completion?: Completion) {
     complete,
     appended,
     handlers,
+    shellState,
+    input,
+    interrupt,
     line,
     where,
     cwdMoved: () => cwdMoved(),
@@ -181,9 +190,42 @@ describe('shell panel', () => {
       const { line, top } = await mounted([]);
       type(line, 'ls -l %');
       expect(press(line, 'Enter').defaultPrevented).toBe(true);
+      await settle();
       // `!`: the same dispatch as the command input's bash mode, `%` expansion included.
       expect(top).toHaveBeenCalledWith(['!ls -l %']);
       expect(line.value).toBe('');
+    });
+
+    test('while a line runs, Enter hands the text to it, and runs nothing', async () => {
+      const { line, top, input, appended, shellState } = await mounted([]);
+      shellState.running = true;
+      type(line, 'yes');
+      press(line, 'Enter');
+      await settle();
+      expect(input).toHaveBeenCalledWith('yes');
+      expect(top).not.toHaveBeenCalled();
+      // An answer to a program is not a shell line: not in the history.
+      expect(appended).toEqual([]);
+      expect(line.value).toBe('');
+    });
+
+    test('ctrl+d on an empty field ends the running line\'s input', async () => {
+      const { line, input } = await mounted([]);
+      line.focus();
+      expect(press(line, 'd', { ctrlKey: true }).defaultPrevented).toBe(true);
+      expect(input).toHaveBeenCalledWith(null);
+      type(line, 'abc');
+      expect(press(line, 'd', { ctrlKey: true }).defaultPrevented).toBe(false);
+    });
+
+    test('ctrl+c interrupts the running line, unless text is selected to copy', async () => {
+      const { line, interrupt } = await mounted([]);
+      type(line, 'abc');
+      expect(press(line, 'c', { ctrlKey: true }).defaultPrevented).toBe(true);
+      expect(interrupt).toHaveBeenCalledTimes(1);
+      line.setSelectionRange(0, 2);
+      expect(press(line, 'c', { ctrlKey: true }).defaultPrevented).toBe(false);
+      expect(interrupt).toHaveBeenCalledTimes(1);
     });
 
     test('the field keeps the keyboard after a run, as in a terminal', async () => {

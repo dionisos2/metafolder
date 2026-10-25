@@ -54,9 +54,9 @@ pub struct Settings {
     /// Where a video's thumbnail frame is taken, in percent of its duration
     /// (0–100): far enough in to pass a black lead-in or a title card.
     pub video_thumbnail_percent: f64,
-    /// The bash rc file a shell line loads first, for the user's aliases,
-    /// functions and variables (doc "shell panel"); `~/` is the home
-    /// directory. Empty: no rc file, the line runs in a plain `sh`.
+    /// The bash rc file the workspace's shell loads when it starts, for the
+    /// user's aliases, functions and variables (doc "shell panel"); `~/` is
+    /// the home directory. Empty: none.
     pub shell_rc: String,
 }
 

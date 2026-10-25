@@ -632,6 +632,22 @@ describe('panel api — misc surface', () => {
     expect(listener).toHaveBeenCalledTimes(1);
   });
 
+  test('shell.input hands a line (or the end of file) to the line running', async () => {
+    const { api, invoke } = setup();
+    invoke.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    expect(await api.shell.input('yes')).toBe(true);
+    expect(invoke).toHaveBeenCalledWith('shell_input', { wsId: 'ws-1', text: 'yes' });
+    expect(await api.shell.input(null)).toBe(false);
+    expect(invoke).toHaveBeenCalledWith('shell_input', { wsId: 'ws-1', text: null });
+  });
+
+  test('shell.interrupt stops the line running in the workspace', async () => {
+    const { api, invoke } = setup();
+    invoke.mockResolvedValueOnce(true);
+    expect(await api.shell.interrupt()).toBe(true);
+    expect(invoke).toHaveBeenCalledWith('shell_interrupt', { wsId: 'ws-1' });
+  });
+
   test('shell.complete extends to the common prefix and lists several candidates', async () => {
     const { api, invoke } = setup();
     invoke.mockResolvedValueOnce({ word: 'f', candidates: ['foo', 'foobar'] });

@@ -67,6 +67,10 @@
       .stderr {
         color: var(--mf-error, #e06c75);
       }
+      /* What the user typed to the line, as a terminal echoes it. */
+      .input {
+        color: var(--mf-accent, #3d5a80);
+      }
       .status {
         color: var(--mf-fg-dim, #8a8a96);
         font-style: italic;
@@ -138,7 +142,7 @@
       <div id="cwd" hidden></div>
       <div id="entry">
         <span id="sigil">$</span>
-        <input id="line" type="text" spellcheck="false" autocomplete="off" aria-label="Shell line" placeholder="a shell line — Enter runs it, Tab completes" />
+        <input id="line" type="text" spellcheck="false" autocomplete="off" aria-label="Shell line" placeholder="a shell line — Enter runs it (or answers the one running), Tab completes" />
       </div>
     </div>
   </body>

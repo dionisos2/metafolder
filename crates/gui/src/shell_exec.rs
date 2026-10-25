@@ -1,7 +1,9 @@
-//! `!` shell commands from the command input (doc "Bash mode"):
-//! run as a subprocess; stdout/stderr lines go to the workspace shell log
-//! (shell panel type) and to the terminal that launched the GUI. The message
-//! log only records that the line ran, as `$ command`.
+//! Shell runs (doc "Bash mode"): a line the user typed runs in the
+//! workspace's persistent shell (`shell_session`); a script and a program
+//! opened on a file each run as a `sh` of their own, here. Either way,
+//! stdout/stderr lines go to the workspace shell log (shell panel type) and to
+//! the terminal that launched the GUI; the message log only records that the
+//! line ran, as `$ command`.
 //!
 //! A line runs where the selection is, and where the previous line's `cd`
 //! left the shell for as long as the selection stays (doc "shell panel").
@@ -21,28 +23,29 @@ pub async fn run_to_completion(
     ws_id: String,
     command_line: String,
 ) -> Result<(), String> {
-    run_in(gui, ws_id, command_line, None, None, None).await
+    run_in(gui, ws_id, command_line, None, None).await
+}
+
+/// A per-run id the subprocess can address its own progress with (`mf gui
+/// progress` reads it from `METAFOLDER_GUI_TASK`); session-unique. It also
+/// groups the run's lines in the shell log.
+pub(crate) fn next_task_id() -> String {
+    static RUN_SEQ: AtomicU64 = AtomicU64::new(1);
+    format!("script-{}", RUN_SEQ.fetch_add(1, Ordering::Relaxed))
 }
 
 /// [`run_to_completion`], the subprocess passed `context` as
 /// `METAFOLDER_LABEL`: every `mf` it starts writes in that label (doc
 /// "Labels and contexts"). `root` is the workspace repository's root, where
-/// a line runs with nothing selected ([`working_dir`]). With `rc`, the line
-/// runs in an interactive `bash` that has loaded that file first (config
-/// `shell-rc`, [`rc_path`]); without, in a plain `sh`.
+/// a line runs with nothing selected ([`working_dir`]).
 pub async fn run_in(
     gui: Arc<GuiState>,
     ws_id: String,
     command_line: String,
     context: Option<metafolder_core::context::Context>,
     root: Option<PathBuf>,
-    rc: Option<&Path>,
 ) -> Result<(), String> {
-    // A per-run id the subprocess can address its own progress with
-    // (`mf gui progress` reads it from METAFOLDER_GUI_TASK); session-unique.
-    // It also groups the run's lines in the shell log.
-    static RUN_SEQ: AtomicU64 = AtomicU64::new(1);
-    let task_id = format!("script-{}", RUN_SEQ.fetch_add(1, Ordering::Relaxed));
+    let task_id = next_task_id();
 
     // Fail fast on unknown workspaces (and log the invocation).
     gui.append_message(&ws_id, &format!("$ {command_line}"))?;
@@ -60,20 +63,13 @@ pub async fn run_in(
         Some(file) => format!("trap 'pwd > {}' EXIT; {command_line}", shell_quote(file)),
         None => command_line.clone(),
     };
-    let mut command = match rc {
-        None => {
-            let mut command = Command::new("sh");
-            command.arg("-c").arg(&line);
-            // Its own process group, so `script:stop` can signal the script
-            // *and* every child it spawned (the `mf gui input` blocked on a
-            // question above all) with one killpg — signalling the shell alone
-            // would leave those behind.
-            #[cfg(unix)]
-            command.process_group(0);
-            command
-        }
-        Some(rc) => interactive_bash(rc, &line),
-    };
+    let mut command = Command::new("sh");
+    command.arg("-c").arg(&line);
+    // Its own process group, so `script:stop` can signal the script *and* every
+    // child it spawned (the `mf gui input` blocked on a question above all) with
+    // one killpg — signalling the shell alone would leave those behind.
+    #[cfg(unix)]
+    command.process_group(0);
     if let Some(dir) = working_dir(&place, root.as_deref()) {
         // `PWD` too, or `pwd` names the GUI's directory's resolution of it.
         command.current_dir(&dir).env("PWD", &dir);
@@ -118,26 +114,35 @@ pub async fn run_in(
         }
     }
 
-    if let Some(how) = gui.script_stopped(&task_id) {
+    let failure =
+        (!status.success()).then(|| status.code().map_or("?".to_string(), |c| c.to_string()));
+    report_end(&gui, &ws_id, &task_id, &command_line, failure)
+}
+
+/// Says how run `task_id` ended, when worth saying: stopped or killed by the
+/// user, or failed with exit code `failure` (`None`: it succeeded).
+pub(crate) fn report_end(
+    gui: &GuiState,
+    ws_id: &str,
+    task_id: &str,
+    command_line: &str,
+    failure: Option<String>,
+) -> Result<(), String> {
+    if let Some(how) = gui.script_stopped(task_id) {
         // Asked for by the user: neither a failure nor an exit code worth
         // naming (a signal has none), and nothing in red.
-        gui.append_shell(&ws_id, &task_id, ShellLine::Status, how)?;
-        let _ = gui.post_status(
-            &ws_id,
-            &format!("{} {how}", script_label(&command_line)),
-            "info",
-            None,
-        );
-    } else if !status.success() {
-        let code = status.code().map_or("?".to_string(), |c| c.to_string());
-        gui.append_shell(&ws_id, &task_id, ShellLine::Status, &format!("exit {code}"))?;
+        gui.append_shell(ws_id, task_id, ShellLine::Status, how)?;
+        let _ =
+            gui.post_status(ws_id, &format!("{} {how}", script_label(command_line)), "info", None);
+    } else if let Some(code) = failure {
+        gui.append_shell(ws_id, task_id, ShellLine::Status, &format!("exit {code}"))?;
         // The shell log alone is not enough: a GUI script writes it into a
         // scratch workspace its own teardown removes, so a run killed by
         // `set -e` would vanish without a trace. Say so on the launching
         // workspace's status bar too (doc "Script sessions").
         let _ = gui.post_status(
-            &ws_id,
-            &format!("{} failed (exit {code})", script_label(&command_line)),
+            ws_id,
+            &format!("{} failed (exit {code})", script_label(command_line)),
             "error",
             None,
         );
@@ -146,7 +151,7 @@ pub async fn run_in(
 }
 
 /// The shell rc file a config `shell-rc` value names: `~/` is the home
-/// directory, and an empty value is none (the line runs in a plain `sh`).
+/// directory, and an empty value is none.
 pub fn rc_path(setting: &str) -> Option<PathBuf> {
     if setting.is_empty() {
         return None;
@@ -155,49 +160,6 @@ pub fn rc_path(setting: &str) -> Option<PathBuf> {
         (Some(rest), Some(home)) => Some(PathBuf::from(home).join(rest)),
         _ => Some(PathBuf::from(setting)),
     }
-}
-
-/// `bash` running `line` with the user's configuration (doc "shell panel").
-///
-/// The shell is interactive (`-i`), for a `.bashrc` stops at once in any other
-/// — the guard every distribution ships — and aliases expand only there; it
-/// loads `rc` itself (`--norc`, then `.`), so that the rest follows:
-///
-/// * an interactive bash with no terminal complains about it before reading
-///   anything, so it starts with its stderr on `/dev/null` and the real one
-///   on fd 3, given back first thing — the rc file's own errors still show;
-/// * the line runs in a subshell, which is not interactive: an `exit` there
-///   prints no `exit`, and dies of `SIGTERM`, which the interactive shell
-///   ignores — its exit status is then the shell's;
-/// * a new session with no controlling terminal (`setsid`, a process group of
-///   its own for `script:stop` too): with the terminal the GUI was started
-///   from, an interactive bash in a background group would stop itself trying
-///   to take it over.
-///
-/// Each step is on its own line: an alias the rc file defines applies only
-/// to the lines read after it.
-fn interactive_bash(rc: &Path, line: &str) -> Command {
-    let rc = shell_quote(rc);
-    let script = format!("exec 2>&3 3>&-\n[ -r {rc} ] && . {rc}\n(\n{line}\n)");
-    let mut command = Command::new("bash");
-    command.arg("--norc").arg("-i").arg("-c").arg(script);
-    #[cfg(unix)]
-    // SAFETY: only async-signal-safe calls between fork and exec, on a
-    // C string that needs no allocation.
-    unsafe {
-        command.pre_exec(|| {
-            if libc::setsid() == -1 || libc::dup2(2, 3) == -1 {
-                return Err(std::io::Error::last_os_error());
-            }
-            let null = libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY);
-            if null == -1 || libc::dup2(null, 2) == -1 {
-                return Err(std::io::Error::last_os_error());
-            }
-            libc::close(null);
-            Ok(())
-        });
-    }
-    command
 }
 
 /// Where a shell line runs (doc "shell panel"): where the previous line's
@@ -255,15 +217,15 @@ pub async fn shell_cwd(
 }
 
 /// `path` as one single-quoted `sh` word.
-fn shell_quote(path: &Path) -> String {
+pub(crate) fn shell_quote(path: &Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
 }
 
 /// Clears the running indicator for a workspace when dropped, so it is removed
 /// on every exit path of `run_to_completion` (including an early `?` return).
-struct RunningGuard {
-    gui: Arc<GuiState>,
-    task_id: String,
+pub(crate) struct RunningGuard {
+    pub(crate) gui: Arc<GuiState>,
+    pub(crate) task_id: String,
 }
 
 impl Drop for RunningGuard {
@@ -316,7 +278,7 @@ async fn forward(
 /// inside the work context in force there (the proxy sends it), and passed on
 /// as `METAFOLDER_LABEL`. A plain `!` line is passed the work context alone:
 /// each `mf` it runs is a command with a label of its own anyway. `typed`: a
-/// line the user typed, which alone loads their shell rc file.
+/// line the user typed, which runs in the workspace's persistent shell.
 #[tauri::command]
 pub fn run_shell(
     app: tauri::State<'_, Arc<crate::commands::App>>,
@@ -328,23 +290,48 @@ pub fn run_shell(
     let gui = app.gui.clone();
     let daemon = app.daemon.clone();
     let message_ms = app.status_timeouts().message_ms;
-    // Only a line the user typed has their configuration: a script must
-    // behave the same for everyone (doc "shell panel").
-    let rc = typed.then(|| rc_path(&app.settings.shell_rc)).flatten();
+    // A line the user typed runs in the workspace's persistent shell, with
+    // their configuration (`Some(None)`: none configured); anything else in
+    // a `sh` of its own, for a script must behave the same for everyone (doc
+    // "shell panel").
+    let rc = typed.then(|| rc_path(&app.settings.shell_rc));
     tauri::async_runtime::spawn(async move {
         let context = match label {
             Some(name) => open_context(&gui, &daemon, &ws_id, &name).await,
             None => plain_line_context(&gui, &ws_id),
         };
         let root = repo_root(&gui, &daemon, &ws_id).await;
-        let rc = rc.as_deref();
-        if let Err(error) =
-            run_in(gui.clone(), ws_id.clone(), command_line, context, root, rc).await
-        {
+        let ran = match rc {
+            Some(rc) => gui.shells().run(&gui, &ws_id, &command_line, context, root, rc).await,
+            None => run_in(gui.clone(), ws_id.clone(), command_line, context, root).await,
+        };
+        if let Err(error) = ran {
             let _ = gui.post_status(&ws_id, &error, "error", Some(message_ms));
         }
     });
     Ok(())
+}
+
+/// What the user types while a line runs in the workspace's shell: a line of
+/// its input (`None`: the end of it, `ctrl+d`). False when no line runs —
+/// what was typed is then a new line to run (doc "shell panel").
+#[tauri::command]
+pub fn shell_input(
+    app: tauri::State<'_, Arc<crate::commands::App>>,
+    ws_id: String,
+    text: Option<String>,
+) -> Result<bool, String> {
+    app.gui.shells().input(&app.gui, &ws_id, text.as_deref())
+}
+
+/// `ctrl+c` in the shell panel: interrupts the line running in the
+/// workspace's shell, if any (false: none).
+#[tauri::command]
+pub fn shell_interrupt(app: tauri::State<'_, Arc<crate::commands::App>>, ws_id: String) -> bool {
+    match app.gui.shells().running(&ws_id) {
+        Some(task) => stop_script(&app.gui, &task, Stop::Terminate),
+        None => false,
+    }
 }
 
 /// The context a plain `!` line runs in: the work context in force on the
@@ -394,6 +381,9 @@ pub enum Stop {
 pub fn stop_script(gui: &Arc<GuiState>, task_id: &str, how: Stop) -> bool {
     let Some(pid) = gui.script_pid(task_id) else { return false };
     let (signal, word) = match how {
+        // A line of a persistent shell is interrupted, as `ctrl+c` does: the
+        // line ends, the shell stays (it ignores the signal).
+        Stop::Terminate if gui.shells().holds(task_id) => (SIGINT, "stopped"),
         Stop::Terminate => (SIGTERM, "stopped"),
         Stop::Kill => (SIGKILL, "killed"),
     };
@@ -408,9 +398,13 @@ pub fn stop_script(gui: &Arc<GuiState>, task_id: &str, how: Stop) -> bool {
 }
 
 #[cfg(unix)]
+const SIGINT: i32 = libc::SIGINT;
+#[cfg(unix)]
 const SIGTERM: i32 = libc::SIGTERM;
 #[cfg(unix)]
 const SIGKILL: i32 = libc::SIGKILL;
+#[cfg(not(unix))]
+const SIGINT: i32 = 2;
 #[cfg(not(unix))]
 const SIGTERM: i32 = 15;
 #[cfg(not(unix))]
@@ -449,8 +443,8 @@ mod tests {
         let gui = gui();
         let context = metafolder_core::context::Context { repo: uuid::Uuid::nil(), label: 7 };
         let line = "echo \"in:${METAFOLDER_LABEL:-none}\"";
-        run_in(gui.clone(), "ws-1".into(), line.into(), Some(context), None, None).await.unwrap();
-        run_in(gui.clone(), "ws-1".into(), line.into(), None, None, None).await.unwrap();
+        run_in(gui.clone(), "ws-1".into(), line.into(), Some(context), None).await.unwrap();
+        run_in(gui.clone(), "ws-1".into(), line.into(), None, None).await.unwrap();
         let log = gui.shell_log("ws-1").unwrap();
         let out: Vec<&str> =
             log.iter().filter(|e| e.kind == ShellLine::Stdout).map(|e| e.text.as_str()).collect();
@@ -560,10 +554,10 @@ mod tests {
         let dir = scratch("cd");
         let gui = gui();
         gui.set_var("ws-1", "selected_paths", json!([dir.join("sub/file.txt")])).unwrap();
-        run_in(gui.clone(), "ws-1".into(), "pwd; cd ..".into(), None, None, None).await.unwrap();
-        run_in(gui.clone(), "ws-1".into(), "pwd".into(), None, None, None).await.unwrap();
+        run_in(gui.clone(), "ws-1".into(), "pwd; cd ..".into(), None, None).await.unwrap();
+        run_in(gui.clone(), "ws-1".into(), "pwd".into(), None, None).await.unwrap();
         gui.set_var("ws-1", "selected_paths", json!([dir.join("sub")])).unwrap();
-        run_in(gui.clone(), "ws-1".into(), "pwd".into(), None, None, None).await.unwrap();
+        run_in(gui.clone(), "ws-1".into(), "pwd".into(), None, None).await.unwrap();
         let sub = dir.join("sub").to_string_lossy().into_owned();
         assert_eq!(stdout(&gui), [sub.clone(), dir.to_string_lossy().into_owned(), sub]);
         std::fs::remove_dir_all(&dir).unwrap();
@@ -575,73 +569,10 @@ mod tests {
         let dir = scratch("fail");
         let gui = gui();
         let line = format!("cd '{}' && exit 4", dir.display());
-        run_in(gui.clone(), "ws-1".into(), line, None, None, None).await.unwrap();
+        run_in(gui.clone(), "ws-1".into(), line, None, None).await.unwrap();
         let log = gui.shell_log("ws-1").unwrap();
         assert_eq!(log.last().unwrap().text, "exit 4");
         assert_eq!(gui.shell_place("ws-1").unwrap().cd, Some(dir.clone()));
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    /// A shell rc file in a scratch directory, guarded the way a distribution's
-    /// `.bashrc` is: it loads only in an interactive shell.
-    fn rc_file(dir: &Path, body: &str) -> PathBuf {
-        let rc = dir.join("bashrc");
-        std::fs::write(&rc, format!("[[ $- != *i* ]] && return\n{body}\n")).unwrap();
-        rc
-    }
-
-    async fn run_rc(gui: &Arc<GuiState>, line: &str, rc: &Path) {
-        run_in(gui.clone(), "ws-1".into(), line.into(), None, None, Some(rc)).await.unwrap();
-    }
-
-    /// With a shell rc file, a line has the user's configuration — an alias, a
-    /// function, a variable — even behind the interactive guard, and bash's
-    /// complaints about having no terminal are not shown (doc "shell panel").
-    #[tokio::test]
-    async fn test_a_line_has_the_rc_files_configuration() {
-        let dir = scratch("rc");
-        let rc = rc_file(&dir, "alias hi='echo aliased'\nf() { echo func; }\nexport MF_RC=var");
-        let gui = gui();
-        run_rc(&gui, "hi; f; echo $MF_RC", &rc).await;
-        let log = gui.shell_log("ws-1").unwrap();
-        let lines: Vec<(ShellLine, &str)> =
-            log.iter().skip(1).map(|e| (e.kind, e.text.as_str())).collect();
-        assert_eq!(
-            lines,
-            [
-                (ShellLine::Stdout, "aliased"),
-                (ShellLine::Stdout, "func"),
-                (ShellLine::Stdout, "var")
-            ]
-        );
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    /// The rc file's own errors are shown; an `exit` keeps its status and adds
-    /// no `exit` line; a `cd` still carries over.
-    #[tokio::test]
-    async fn test_a_line_with_an_rc_file_keeps_errors_status_and_cd() {
-        let dir = scratch("rc-exit");
-        let rc = rc_file(&dir, "echo rc-says >&2");
-        let gui = gui();
-        run_rc(&gui, &format!("cd '{}' && exit 4", dir.display()), &rc).await;
-        let log = gui.shell_log("ws-1").unwrap();
-        let lines: Vec<(ShellLine, &str)> =
-            log.iter().skip(1).map(|e| (e.kind, e.text.as_str())).collect();
-        assert_eq!(lines, [(ShellLine::Stderr, "rc-says"), (ShellLine::Status, "exit 4")]);
-        assert_eq!(gui.shell_place("ws-1").unwrap().cd, Some(dir.clone()));
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    /// A missing rc file is skipped, as bash skips a missing `.bashrc`.
-    #[tokio::test]
-    async fn test_a_missing_rc_file_is_skipped() {
-        let dir = scratch("rc-missing");
-        let gui = gui();
-        run_rc(&gui, "echo ran", &dir.join("nowhere")).await;
-        let log = gui.shell_log("ws-1").unwrap();
-        let lines: Vec<&str> = log.iter().skip(1).map(|e| e.text.as_str()).collect();
-        assert_eq!(lines, ["ran"]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -726,20 +657,10 @@ mod tests {
         notifier: &Arc<RecordingNotifier>,
         command_line: &str,
     ) -> (String, tokio::task::JoinHandle<Result<(), String>>) {
-        started_with(gui, notifier, command_line, None).await
-    }
-
-    /// [`started`], the line run with the shell rc file `rc`.
-    async fn started_with(
-        gui: &Arc<GuiState>,
-        notifier: &Arc<RecordingNotifier>,
-        command_line: &str,
-        rc: Option<PathBuf>,
-    ) -> (String, tokio::task::JoinHandle<Result<(), String>>) {
         let running = tokio::spawn({
             let gui = gui.clone();
             let command_line = command_line.to_string();
-            async move { run_in(gui, "ws-1".into(), command_line, None, None, rc.as_deref()).await }
+            async move { run_to_completion(gui, "ws-1".into(), command_line).await }
         });
         for _ in 0..100 {
             let payloads = notifier.payloads(crate::events::SCRIPT_TASK_CHANGED);
@@ -775,23 +696,6 @@ mod tests {
         assert!(killed.is_ok(), "nothing survives the kill");
         let statuses = notifier.payloads(crate::events::STATUS_MESSAGE);
         assert_eq!(statuses.last().unwrap()["text"], json!("trap '' TERM; sleep 30 killed"));
-    }
-
-    /// The interactive shell that loads the rc file ignores `SIGTERM`, as
-    /// every interactive bash does: the stop must still end the line.
-    #[tokio::test]
-    async fn test_a_line_with_an_rc_file_is_stopped() {
-        let dir = scratch("rc-stop");
-        let rc = rc_file(&dir, "");
-        let notifier = Arc::new(RecordingNotifier::new());
-        let gui = Arc::new(GuiState::new(notifier.clone()));
-        let (task_id, running) =
-            started_with(&gui, &notifier, "sleep 30 & sleep 30", Some(rc)).await;
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        assert!(stop_script(&gui, &task_id, Stop::Terminate));
-        let stopped = tokio::time::timeout(Duration::from_secs(5), running).await;
-        assert!(stopped.is_ok(), "the stopped line must not outlive its stop");
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
