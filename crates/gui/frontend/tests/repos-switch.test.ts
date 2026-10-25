@@ -15,6 +15,8 @@ import shipped from '../../default-config/commands.js';
 const REPOS = [
   { repo_uuid: 'u-1', name: 'Music', root: '/srv/music' },
   { repo_uuid: 'a-b-c-d', name: 'Films', root: '/srv/films' },
+  // Still loading (`ready: false`): its data routes answer 503 until it is.
+  { repo_uuid: 'l-1', name: 'Books', root: '/srv/books', ready: false },
 ];
 
 const calls = {
@@ -85,7 +87,7 @@ beforeEach(() => {
 });
 
 describe('the repo pick', () => {
-  test('the loaded repositories are offered as "<name> — <root>" lines', async () => {
+  test('the loaded repositories are offered as "<name> — <root>" lines, not one still loading', async () => {
     expect(await complete()).toEqual(['Music — /srv/music', 'Films — /srv/films']);
     expect(calls.daemon).toEqual(['/repos']);
   });
@@ -145,6 +147,13 @@ describe('opening the pick', () => {
     // "Error: " prefix it carries is its doing, not this entry's).
     await expect(run('Nope')).rejects.toThrow('no loaded repository matches "Nope"');
     expect(calls.adopted).toEqual([]);
+    expect(calls.invoked).toEqual([]);
+  });
+
+  test('a repository still loading is refused, and nothing is opened', async () => {
+    await expect(run('Books')).rejects.toThrow('"Books" is still loading');
+    expect(calls.adopted).toEqual([]);
+    expect(calls.created).toEqual([]);
     expect(calls.invoked).toEqual([]);
   });
 });

@@ -7,7 +7,7 @@
 // and throws in the real GUI. Here the panel gets the real API object, with
 // only the Tauri `invoke` seam replaced by a router over an in-memory daemon.
 
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { generic } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -41,6 +41,7 @@ interface Repo {
   root: string;
   internal_dir?: string;
   lost?: boolean;
+  ready?: boolean;
   in_memory?: { bytes: number; pinned: boolean; reason: string | null } | null;
 }
 
@@ -392,6 +393,75 @@ describe('repos panel — a lost repository', () => {
     forget.click();
     await settle();
     expect(daemon.repos).toHaveLength(0);
+  });
+});
+
+describe('repos panel — a repository still loading', () => {
+  beforeEach(() => changeFeed._reset());
+  // Even when a test fails midway: fake timers would stall every later test.
+  afterEach(() => vi.useRealTimers());
+
+  test('is marked and cannot be opened until it is ready', async () => {
+    const { api, daemon, dispatch, created, provide } = setup({ activeRepo: 'other' });
+    daemon.repos.push({ repo_uuid: 'r1', name: 'photos', root: '/tmp/photos', ready: false });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    const row = shadow.querySelector('#repo-list > li') as HTMLElement;
+    expect(row.classList.contains('loading')).toBe(true);
+    expect(row.textContent).toContain('loading');
+    (row.querySelector('.repo-head') as HTMLElement).click();
+    await settle();
+    expect(created).toEqual([]);
+    expect(dispatch).not.toHaveBeenCalled();
+
+    // Once loaded, the same click opens it.
+    daemon.repos[0].ready = true;
+    await generic(provide, 'view:refresh');
+    await settle();
+    const ready = shadow.querySelector('#repo-list > li') as HTMLElement;
+    expect(ready.classList.contains('loading')).toBe(false);
+    (ready.querySelector('.repo-head') as HTMLElement).click();
+    await settle();
+    expect(created).toEqual(['r1']);
+  });
+
+  test('the row becomes openable by itself when the load finishes', async () => {
+    vi.useFakeTimers();
+    const { api, daemon } = setup({ activeRepo: 'other' });
+    daemon.repos.push({ repo_uuid: 'r1', name: 'photos', root: '/tmp/photos', ready: false });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(shadow.querySelector('#repo-list > li.loading')).not.toBeNull();
+
+    daemon.repos[0].ready = true;
+    await vi.advanceTimersByTimeAsync(1600); // one task poll
+    expect(shadow.querySelector('#repo-list > li.loading')).toBeNull();
+  });
+
+  test('a repository loaded from the form is adopted once it is ready, not before', async () => {
+    vi.useFakeTimers();
+    const { api, daemon, vars, dispatch } = setup({ activeRepo: null });
+    daemon.repos.push({ repo_uuid: 'r1', name: 'photos', root: '/tmp/photos', ready: false });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await vi.advanceTimersByTimeAsync(0);
+
+    openForm(shadow, 'show-load');
+    submitForm(shadow, 'load-form', { 'load-root': '/tmp/photos' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vars.get('active_repo')).toBeNull();
+    expect(dispatch).not.toHaveBeenCalled();
+
+    daemon.repos[0].ready = true;
+    await vi.advanceTimersByTimeAsync(1600);
+    expect(vars.get('active_repo')).toBe('r1');
+    expect(dispatch).toHaveBeenCalledWith(['panel:open', 'here', 'metarecord-list'], {
+      ws: 'ws-1',
+      slot: 'left',
+    });
   });
 });
 

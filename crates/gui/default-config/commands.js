@@ -598,10 +598,11 @@ export default {
           reposChoices.clear();
           // `daemon.call` is untyped on purpose — the daemon's JSON is not a
           // TypeScript type — so the shape is asserted at the one place it is read.
-          const repos = /** @type {{ repo_uuid: string, name: string, root: string }[]} */ (
+          const repos = /** @type {{ repo_uuid: string, name: string, root: string, ready?: boolean }[]} */ (
             await mf.daemon.call('GET', '/repos')
           );
-          return repos.map((repo) => {
+          // One still loading answers 503 until it is: not offered yet.
+          return repos.filter((repo) => repo.ready !== false).map((repo) => {
             const line = `${repo.name} — ${repo.root}`;
             if (!reposChoices.has(line)) reposChoices.set(line, repo.repo_uuid);
             return line;
@@ -615,15 +616,16 @@ export default {
       if (uuid === null) {
         const want = choice.trim();
         const norm = want.replace(/-/g, '');
-        const repos = /** @type {{ repo_uuid: string, name: string }[]} */ (
+        const repos = /** @type {{ repo_uuid: string, name: string, ready?: boolean }[]} */ (
           await mf.daemon.call('GET', '/repos')
         );
-        uuid =
-          repos.find(
-            (r) => r.name === want || r.repo_uuid === want || r.repo_uuid.replace(/-/g, '') === norm,
-          )?.repo_uuid ?? null;
+        const found = repos.find(
+          (r) => r.name === want || r.repo_uuid === want || r.repo_uuid.replace(/-/g, '') === norm,
+        );
+        // Thrown rather than reported: the shell posts a command's failure itself.
+        if (found?.ready === false) throw new Error(`"${found.name}" is still loading`);
+        uuid = found?.repo_uuid ?? null;
       }
-      // Thrown rather than reported: the shell posts a command's failure itself.
       if (uuid === null) throw new Error(`no loaded repository matches "${choice}"`);
       const current = await mf.workspace.get('active_repo');
       if (current) {

@@ -8,7 +8,7 @@ import { createSelect } from '/__select.js';
 /**
  * A loaded repository, as `GET /repos` lists it.
  * @typedef {{repo_uuid: string, name: string, root: string, lost?: boolean,
- *            in_memory?: Residency|null}} Repo
+ *            ready?: boolean, in_memory?: Residency|null}} Repo
  *
  * What of a repository's store is held in memory (doc "Holding a repository
  * in memory"), when it was loaded so.
@@ -233,6 +233,18 @@ export async function mount(root, metafolder) {
     );
   }
 
+  // A repository still loading answers its data routes with 503 (doc
+  // "Creating and loading a repository"): its row cannot be opened, and is
+  // repainted when the load is done. One the panel loaded itself into a
+  // workspace with none is adopted then, not before.
+  /** @type {Set<string>} */
+  let loading = new Set();
+  /** @type {{mf: MetafolderApi, uuid: string}|null} */
+  let pendingAdopt = null;
+
+  /** @param {Repo} repo */
+  const isLoading = (repo) => !repo.lost && repo.ready === false;
+
   async function refresh() {
     /** @type {Repo[]} */
     let repos;
@@ -244,6 +256,7 @@ export async function mount(root, metafolder) {
       await statusBar.error(error);
       return;
     }
+    loading = new Set(repos.filter(isLoading).map((r) => r.repo_uuid));
     empty.hidden = repos.length > 0;
     list.replaceChildren(
       ...repos.map((repo) =>
@@ -251,13 +264,22 @@ export async function mount(root, metafolder) {
           ? lostRow(repo)
           : el(
               'li',
-              { class: 'repo' },
+              { class: isLoading(repo) ? 'repo loading' : 'repo' },
               // Only the header opens the repo; the tasks block below it carries its
               // own (stop) buttons, so it must not share the row's click target.
               el(
                 'div',
-                { class: 'repo-head', onclick: () => openRepo(repo.repo_uuid) },
+                {
+                  class: 'repo-head',
+                  title: isLoading(repo) ? 'Still loading: it can be opened once loaded' : '',
+                  onclick: () => {
+                    if (loading.has(repo.repo_uuid)) {
+                      void statusBar.message(`${repo.name} is still loading`, 3000);
+                    } else void openRepo(repo.repo_uuid);
+                  },
+                },
                 el('strong', {}, repo.name),
+                isLoading(repo) ? el('span', { class: 'loading-badge' }, 'loading…') : null,
                 memoryBadge(repo),
                 el('span', { class: 'root' }, repo.root),
                 el('span', { class: 'uuid' }, repo.repo_uuid.slice(0, 8)),
@@ -298,6 +320,29 @@ export async function mount(root, metafolder) {
     // poll interval to appear.
     await pollTasks();
     await pollWatch();
+    if (pendingAdopt) {
+      const { mf, uuid } = pendingAdopt;
+      const listed = repos.some((r) => r.repo_uuid === uuid && !r.lost);
+      if (!listed) pendingAdopt = null; // unloaded meanwhile: nothing to adopt
+      else if (!loading.has(uuid)) {
+        pendingAdopt = null;
+        await adoptOrAnnounce(mf, uuid);
+      }
+    }
+  }
+
+  /** Repaints the list once a repository it shows as loading is done (or gone). */
+  async function pollLoading() {
+    if (loading.size === 0) return;
+    /** @type {Repo[]} */
+    let repos;
+    try {
+      repos = /** @type {Repo[]} */ ((await daemon.call('GET', '/repos?lost=true')) ?? []);
+    } catch {
+      return;
+    }
+    const still = new Set(repos.filter(isLoading).map((r) => r.repo_uuid));
+    if ([...loading].some((uuid) => !still.has(uuid))) await refresh();
   }
 
   // ── Running tasks ─────────────────────────────────────────────────────────
@@ -602,6 +647,16 @@ export async function mount(root, metafolder) {
   async function onCreated(mf, form, repoUuid) {
     toggleForm(form, false);
     await refresh();
+    if (loading.has(repoUuid)) {
+      pendingAdopt = { mf, uuid: repoUuid };
+      void statusBar.message(`Repository loading: ${repoUuid.slice(0, 8)}…`, 6000);
+      return;
+    }
+    await adoptOrAnnounce(mf, repoUuid);
+  }
+
+  /** @param {MetafolderApi} mf @param {string} repoUuid */
+  async function adoptOrAnnounce(mf, repoUuid) {
     const current = await mf.workspace.get('active_repo');
     if (current === null) {
       await mf.workspace.adoptRepo(repoUuid);
@@ -923,6 +978,7 @@ export async function mount(root, metafolder) {
   const taskTimer = setInterval(() => {
     void pollTasks();
     void pollWatch();
+    void pollLoading();
   }, taskPollMs);
   return () => clearInterval(taskTimer);
 }

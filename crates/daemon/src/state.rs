@@ -325,6 +325,7 @@ impl RepoState {
             system: self.config.system,
             lost: self.root_lost.load(std::sync::atomic::Ordering::Acquire),
             in_memory: self.residency.get().and_then(|handle| handle.get()),
+            ready: self.is_ready(),
         }
     }
 
@@ -1133,6 +1134,10 @@ pub struct RepoInfo {
     /// What of its store is held in memory — `null` unless it was loaded with
     /// `in_memory` (doc "Holding a repository in memory").
     pub in_memory: Option<crate::kvstore::resident::Residency>,
+    /// Its load is done (doc "Creating and loading a repository"): until then
+    /// its data endpoints answer `503`, so a client offers to open it only
+    /// once this is true.
+    pub ready: bool,
 }
 
 /// A repository unloaded because its root went away: what is still said about

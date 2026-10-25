@@ -42,7 +42,11 @@ that already holds one — is shown in the form, which stays open; `repos:load` 
 form, and says it in the status bar.
 
 Loading finishes in the background ([[Creating and loading a repository]]): the row
-shows the `load` task with its phase, and the repository answers once it is done.
+shows the `load` task with its phase, and the repository answers once it is done. Until
+then the row is greyed and says ''loading…'': clicking it opens nothing (the status bar
+says it is still loading), `repos:switch` neither offers nor accepts it, and a workspace
+that would adopt it does so once the load is done. The row turns openable by itself
+at the next poll after the load finishes.
 
 !! Under each row
 

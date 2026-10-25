@@ -641,3 +641,33 @@ async fn the_memory_switch_wants_a_known_repository_and_a_flag() {
     let (st, _) = post(&app, &format!("/repos/{repo}/memory"), serde_json::json!({})).await;
     assert!(st.is_client_error(), "{st}");
 }
+
+#[tokio::test]
+async fn the_repository_list_says_whether_each_repository_is_ready() {
+    // A loaded repository answers its data routes with 503 until its warmup is
+    // done; `GET /repos` says so, so a client offers to open it only once it
+    // can be used (doc "Repository endpoints").
+    let state = Arc::new(AppState::new());
+    let app = routes::build(state.clone());
+    let root = temp_dir("listready");
+    common::seed_config(&root);
+    let uuid = state.init_repo(&root, None, None, false).unwrap();
+
+    let ready = |list: &Value| list.as_array().unwrap()[0]["ready"].clone();
+    let (_, list) = request(&app, "GET", "/repos").await;
+    assert_eq!(ready(&list), Value::Bool(true), "init warms synchronously: {list}");
+
+    // Registered by a load, not yet warm: listed, but not ready.
+    state.unload_repo(uuid).unwrap();
+    let loaded = state
+        .load_repo(metafolder_daemon::repo::RepoLocator::Root(root.path().to_path_buf()))
+        .unwrap();
+    let (_, list) = request(&app, "GET", "/repos").await;
+    assert_eq!(ready(&list), Value::Bool(false), "{list}");
+    let (_, info) = request(&app, "GET", &format!("/repos/{}", loaded.as_simple())).await;
+    assert_eq!(info["ready"], Value::Bool(false), "{info}");
+
+    state.repo(loaded).unwrap().warm(&|_, _, _| {}).unwrap();
+    let (_, list) = request(&app, "GET", "/repos").await;
+    assert_eq!(ready(&list), Value::Bool(true), "{list}");
+}
