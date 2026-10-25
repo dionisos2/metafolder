@@ -41,6 +41,7 @@ indented by nesting:
 
 ```
 mf slow replay                  # the newest logged query, run again now
+mf slow show <id>               # that entry whole: its query, uncut
 mf slow replay <id>             # the one mf slow lists with that id
 mf slow replay -q '<query>'     # any query (-s for simplified text)
 ```

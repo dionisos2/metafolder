@@ -5720,15 +5720,28 @@ fn test_slow_replay_runs_a_logged_query_again_and_shows_where_it_goes() {
     assert_ok(&out);
     assert!(out.stdout.contains("results   1"), "by prefix: {}", out.stdout);
 
+    // `show` prints one entry whole: a long query is not cut.
+    let long = format!(r#"{{"type":"or","operands":[{}]}}"#, [older; 12].join(","));
+    let long_entry = logged(1_757_426_500_000, &long);
+    slowlog::Sink::new(&dir, "daemon").append(&long_entry);
+    let out = mf(&["-u", &repo, "slow", "show", &long_entry.id()[..6]]);
+    assert_ok(&out);
+    assert!(out.stdout.starts_with(&long_entry.id()), "{}", out.stdout);
+    assert_eq!(out.stdout.matches(r#""field": "rating""#).count(), 12, "{}", out.stdout);
+    assert!(!out.stdout.contains('…'), "{}", out.stdout);
+    let out = mf(&["-u", &repo, "slow", "show", "ffffffff"]);
+    assert_eq!(out.code, 1, "{}", out.stdout);
+    assert!(out.stderr.contains("no slow-log entry ffffffff"), "{}", out.stderr);
+
     // Or any query, typed.
     let out = mf(&["-u", &repo, "slow", "replay", "-q", "rating > 3", "--json"]);
     assert_ok(&out);
     let entry: Entry = serde_json::from_str(out.stdout.trim()).expect(&out.stdout);
     assert!(entry.phases.iter().any(|p| p.name == "index.evaluate"), "{entry:?}");
 
-    // The replays added nothing to the log.
+    // The replays added nothing to the log (the third entry is show's).
     let out = mf(&["-u", &repo, "slow", "list", "--json"]);
-    assert_eq!(out.stdout.lines().count(), 2, "{}", out.stdout);
+    assert_eq!(out.stdout.lines().count(), 3, "{}", out.stdout);
 }
 
 // What `mf slow` says when it shows less than the log holds: a filter that

@@ -777,6 +777,14 @@ enum SlowCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Show one entry whole, by the id `mf slow` shows (or a prefix of it):
+    /// its query laid out in full, nothing cut
+    Show {
+        id: String,
+        /// Print the entry as one JSON object
+        #[arg(long)]
+        json: bool,
+    },
     /// Empty the log (the clean slate a reproduction starts from)
     Clear {
         /// Do not ask for confirmation
@@ -1766,6 +1774,7 @@ fn dispatch_slow(ctx: &Ctx, list: SlowListArgs, command: Option<SlowCommand>) ->
         SlowCommand::Replay { id, query, simplified, json } => {
             commands::slow_replay(ctx, id.as_deref(), query.as_deref(), simplified, json)
         }
+        SlowCommand::Show { id, json } => commands::slow_show(ctx, &id, json),
         SlowCommand::Clear { yes } => commands::slow_clear(ctx, yes),
     }
 }

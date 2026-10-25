@@ -2807,21 +2807,7 @@ pub fn slow_replay(
                     .map_err(|e| CliError::Op(format!("unexpected slow-log response: {e}")))?;
             let entry = match id {
                 Some(prefix) => {
-                    // Filtered again: a daemon older than `id` ignores it.
-                    let found: Vec<_> =
-                        entries.iter().filter(|e| e.id().starts_with(prefix)).collect();
-                    let entry = match found.as_slice() {
-                        [] => return Err(CliError::Op(format!("no slow-log entry {prefix}"))),
-                        [one] => *one,
-                        many => {
-                            let ids: Vec<String> = many.iter().map(|e| e.id()).collect();
-                            return Err(CliError::Op(format!(
-                                "{prefix} names {} entries ({}): give more of the id",
-                                ids.len(),
-                                ids.join(", ")
-                            )));
-                        }
-                    };
+                    let entry = pick_slow_entry(&entries, prefix)?;
                     if !entry.op.ends_with("/query") {
                         return Err(CliError::Op(format!(
                             "{} is not a query ({}): only a query can be replayed",
@@ -2850,6 +2836,54 @@ pub fn slow_replay(
         }
     }
     Ok(0)
+}
+
+/// `mf slow show <id>` — one entry with nothing cut: its whole query, laid
+/// out, without `--json` (doc "mf slow show").
+pub fn slow_show(ctx: &Ctx, id: &str, json: bool) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let params =
+        [("limit", metafolder_core::slowlog::MAX_READ_LIMIT.to_string()), ("id", id.into())];
+    let listed = ctx.client.get(&format!("{base}/slow"), &params)?;
+    let entries: Vec<metafolder_core::slowlog::Entry> =
+        serde_json::from_value(listed["entries"].clone())
+            .map_err(|e| CliError::Op(format!("unexpected slow-log response: {e}")))?;
+    let entry = pick_slow_entry(&entries, id)?;
+    if json {
+        let mut value = serde_json::to_value(entry).unwrap_or_default();
+        value["id"] = entry.id().into();
+        println!("{value}");
+        return Ok(0);
+    }
+    for (n, line) in crate::slow::render_whole(entry).into_iter().enumerate() {
+        if n == 0 {
+            println!("{}  {line}", entry.id());
+        } else {
+            println!("{line}");
+        }
+    }
+    Ok(0)
+}
+
+/// The one entry whose id starts with `prefix`, or why there is none. Filtered
+/// here even though the daemon did: one older than `?id=` ignores it.
+fn pick_slow_entry<'a>(
+    entries: &'a [metafolder_core::slowlog::Entry],
+    prefix: &str,
+) -> Result<&'a metafolder_core::slowlog::Entry, CliError> {
+    let found: Vec<_> = entries.iter().filter(|e| e.id().starts_with(prefix)).collect();
+    match found.as_slice() {
+        [] => Err(CliError::Op(format!("no slow-log entry {prefix}"))),
+        [one] => Ok(one),
+        many => {
+            let ids: Vec<String> = many.iter().map(|e| e.id()).collect();
+            Err(CliError::Op(format!(
+                "{prefix} names {} entries ({}): give more of the id",
+                ids.len(),
+                ids.join(", ")
+            )))
+        }
+    }
 }
 
 /// `mf slow clear` — empties the log, so the next reproduction starts clean.

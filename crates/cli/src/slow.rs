@@ -8,6 +8,16 @@ use metafolder_core::slowlog::{Entry, Phase};
 
 /// One entry as printed lines: a header, its context, then its phases.
 pub fn render(entry: &Entry) -> Vec<String> {
+    render_with(entry, false)
+}
+
+/// The same, with nothing cut (`mf slow show`): every context value whole,
+/// and one that is JSON — a query, a sort — laid out a level per line.
+pub fn render_whole(entry: &Entry) -> Vec<String> {
+    render_with(entry, true)
+}
+
+fn render_with(entry: &Entry, whole: bool) -> Vec<String> {
     let mut lines = vec![format!(
         "{}  {:>7}  {:<6}  {}",
         timestamp(entry.at_ms, local_offset_secs(entry.at_ms)),
@@ -19,7 +29,23 @@ pub fn render(entry: &Entry) -> Vec<String> {
         lines.push(format!("    {:<10}{id}", "op-id"));
     }
     for (key, value) in &entry.context {
-        lines.push(format!("    {key:<10}{}", readable(value)));
+        if !whole {
+            lines.push(format!("    {key:<10}{}", readable(value)));
+            continue;
+        }
+        let laid_out = serde_json::from_str::<serde_json::Value>(value)
+            .ok()
+            .filter(|v| v.is_object() || v.is_array())
+            .map(|v| {
+                let mut out = String::new();
+                lay_out(&v, 0, &mut out);
+                out
+            })
+            .unwrap_or_else(|| value.clone());
+        for (i, line) in laid_out.lines().enumerate() {
+            let key = if i == 0 { key.as_str() } else { "" };
+            lines.push(format!("    {key:<10}{line}"));
+        }
     }
     if entry.reads > 0 {
         lines.push(format!("    {:<10}{}", "keys", format_count(entry.reads)));
@@ -28,6 +54,36 @@ pub fn render(entry: &Entry) -> Vec<String> {
         lines.push(render_phase(phase));
     }
     lines
+}
+
+/// `value` as indented JSON with an object's `type` first — what a query node
+/// *is* before what it holds (`serde_json` would sort it after `operands`).
+fn lay_out(value: &serde_json::Value, depth: usize, out: &mut String) {
+    use serde_json::Value as J;
+    let pad = |d: usize| "  ".repeat(d);
+    match value {
+        J::Object(map) if !map.is_empty() => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort_by_key(|k| *k != "type");
+            out.push_str("{\n");
+            for (i, key) in keys.iter().enumerate() {
+                out.push_str(&format!("{}{}: ", pad(depth + 1), J::String((*key).clone())));
+                lay_out(&map[*key], depth + 1, out);
+                out.push_str(if i + 1 < keys.len() { ",\n" } else { "\n" });
+            }
+            out.push_str(&format!("{}}}", pad(depth)));
+        }
+        J::Array(items) if !items.is_empty() => {
+            out.push_str("[\n");
+            for (i, item) in items.iter().enumerate() {
+                out.push_str(&pad(depth + 1));
+                lay_out(item, depth + 1, out);
+                out.push_str(if i + 1 < items.len() { ",\n" } else { "\n" });
+            }
+            out.push_str(&format!("{}]", pad(depth)));
+        }
+        scalar => out.push_str(&scalar.to_string()),
+    }
 }
 
 /// A context value as a person reads it: whole up to a line's worth, cut
@@ -268,6 +324,36 @@ mod tests {
         let line = render(&e).into_iter().find(|l| l.trim_start().starts_with("query")).unwrap();
         assert!(line.chars().count() < 300, "{} chars", line.chars().count());
         assert!(line.ends_with('…'), "{line}");
+    }
+
+    #[test]
+    fn test_a_whole_entry_keeps_its_query_and_lays_it_out() {
+        // `mf slow show`: the query read in full, one level per line, without
+        // `--json`; a value that is not JSON stays as it is.
+        let mut e = entry();
+        let long = format!(
+            r#"{{"type":"and","operands":[{}]}}"#,
+            r#"{"type":"is_present","field":"tag"},"#.repeat(20)
+                + r#"{"type":"is_present","field":"last"}"#
+        );
+        e.note("query", long.clone());
+        let lines = render_whole(&e);
+        let text = lines.join("\n");
+        assert!(text.contains(r#""field": "last""#), "nothing is cut:\n{text}");
+        assert!(!text.contains('…'), "{text}");
+        let at = lines.iter().position(|l| l.trim_start().starts_with("query")).unwrap();
+        assert_eq!(lines[at], "    query     {", "{text}");
+        let under = format!("{}\"type\"", " ".repeat(14 + 2));
+        assert!(lines[at + 1].starts_with(&under), "under it:\n{text}");
+        assert!(text.contains("    client    mfr_path ->* \"/2024\""), "{text}");
+        // The parsed layout says the same query.
+        let back: String = lines[at..]
+            .iter()
+            .take_while(|l| !l.contains("wait:conn"))
+            .map(|l| l.trim().trim_start_matches("query").trim())
+            .collect();
+        let reparsed: serde_json::Value = serde_json::from_str(&back).expect(&back);
+        assert_eq!(reparsed, serde_json::from_str::<serde_json::Value>(&long).unwrap());
     }
 
     #[test]

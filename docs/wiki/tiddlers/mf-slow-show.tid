@@ -1,0 +1,9 @@
+title: mf slow show
+tags: [[CLI command]] [[Slow log]]
+kind: reference
+summary: Show one entry whole, by the id `mf slow` shows (or a prefix of it): its query laid out in full, nothing cut
+
+One entry, by its id ([[What the slow log records]]) or a unique prefix of it, found
+however old. Where `mf slow` cuts a long context value to a line, `show` prints every
+value whole, and lays one that is JSON — a query, a sort — out a level per line, each
+object's `type` first. `--json` prints the entry as one object, with its `id`.

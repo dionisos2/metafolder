@@ -1,0 +1,23 @@
+title: $:/mf/gen/CLI command/mf slow show
+catalog: CLI command
+target: mf slow show
+summary: Show one entry whole, by the id `mf slow` shows (or a prefix of it): its query laid out in full, nothing cut
+
+!! Reference
+
+```
+Show one entry whole, by the id `mf slow` shows (or a prefix of it): its query laid out in full, nothing cut
+
+Usage: mf slow show [OPTIONS] <ID>
+
+Arguments:
+  <ID>
+          
+
+Options:
+      --json
+          Print the entry as one JSON object
+
+  -h, --help
+          Print help
+```

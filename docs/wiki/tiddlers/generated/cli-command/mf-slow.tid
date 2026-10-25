@@ -14,6 +14,7 @@ Usage: mf slow [OPTIONS]
 Commands:
   list    List the slow operations, newest first — the default
   replay  Run a query again and show where its time goes, now: the newest logged query, the one with that id, or one typed with -q. Not itself logged
+  show    Show one entry whole, by the id `mf slow` shows (or a prefix of it): its query laid out in full, nothing cut
   clear   Empty the log (the clean slate a reproduction starts from)
   help    Print this message or the help of the given subcommand(s)
 
