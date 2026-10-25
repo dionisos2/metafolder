@@ -68,6 +68,10 @@ export function mount(root, metafolder) {
   /** @type {string|null} */
   let planRepo = null;
   let busy = false;
+  /** What the view shows, for `view:refresh` to read it again: the pair's
+   *  status, or the stored plan (after Plan or Show). Null before either.
+   *  @type {'status'|'show'|null} */
+  let shown = null;
 
   function pairOk() {
     return Boolean(uuidOf(repoA) && uuidOf(repoB) && uuidOf(repoA) !== uuidOf(repoB));
@@ -99,15 +103,24 @@ export function mount(root, metafolder) {
 
   // ── repositories ────────────────────────────────────────────────────────
 
-  async function loadRepos() {
+  /** @param {boolean} [keepPair] keep the pair chosen when both are still
+   *  loaded (a refresh), rather than start again from the active repository */
+  async function loadRepos(keepPair = false) {
+    const [a, b] = [uuidOf(repoA), uuidOf(repoB)];
     const res = await daemon.call('GET', '/repos');
     repos = (Array.isArray(res) ? res : []).map(
       (/** @type {{ repo_uuid: string, name: string }} */ r) => ({ uuid: r.repo_uuid, name: r.name }),
     );
-    const active = /** @type {string|null} */ ((await workspace.get('active_repo')) ?? null);
-    fillSelect(repoA, active ?? (repos[0]?.uuid ?? null));
-    const other = repos.find((r) => r.uuid !== uuidOf(repoA))?.uuid ?? null;
-    fillSelect(repoB, other);
+    const loaded = (/** @type {string} */ uuid) => repos.some((r) => r.uuid === uuid);
+    if (keepPair && loaded(a) && loaded(b)) {
+      fillSelect(repoA, a);
+      fillSelect(repoB, b);
+    } else {
+      const active = /** @type {string|null} */ ((await workspace.get('active_repo')) ?? null);
+      fillSelect(repoA, active ?? (repos[0]?.uuid ?? null));
+      const other = repos.find((r) => r.uuid !== uuidOf(repoA))?.uuid ?? null;
+      fillSelect(repoB, other);
+    }
     await discoverPlanRepo();
     setBusy(false);
   }
@@ -150,6 +163,7 @@ export function mount(root, metafolder) {
       );
       const links = body.links ?? [];
       renderStatus(links);
+      shown = 'status';
       void statusBar.message(`Sync status: ${statusSummary(links)}`, statusMessageMs);
     } catch (error) {
       await statusBar.error(error, 8000);
@@ -170,6 +184,7 @@ export function mount(root, metafolder) {
       setStatus(summary);
       void statusBar.message(summary, statusMessageMs);
       await renderPlan(report);
+      shown = 'show';
     } catch (error) {
       await statusBar.error(error, 8000);
       setView(placeholder('Plan failed.'));
@@ -187,6 +202,7 @@ export function mount(root, metafolder) {
       );
       renderShow(report);
       await renderConflicts();
+      shown = 'show';
     } catch (error) {
       await statusBar.error(error, 8000);
     } finally {
@@ -214,6 +230,8 @@ export function mount(root, metafolder) {
             : 'Aborted';
       setStatus(summary);
       void statusBar.message(summary, statusMessageMs);
+      // The run's report is not read again: a refresh reads the pair's status.
+      shown = 'status';
       // A run mutates both repos: nudge the other panels to refresh.
       await mf.workspace.set('metarecords:dirty', Date.now());
     } catch (error) {
@@ -510,6 +528,18 @@ export function mount(root, metafolder) {
   });
   void commands.register('sync:open', { label: 'Sync: show the plan overlay', handler: withPair(doShow) });
   void commands.register('sync:run', { label: 'Sync: run the plan', handler: withPair(doRun) });
+
+  // Read again on `view:refresh` (doc "Generic panel commands"): the loaded
+  // repositories, the pair kept, then what the view shows — never a new plan
+  // or a run, which write.
+  metafolder.provide({
+    refresh: async () => {
+      await loadRepos(true);
+      if (!pairOk()) return;
+      if (shown === 'status') await doStatus();
+      else if (shown === 'show') await doShow();
+    },
+  });
 
   // Keybindings for this panel live in keybindings.toml (when = "sync").
 

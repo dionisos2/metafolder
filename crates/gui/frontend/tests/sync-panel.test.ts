@@ -52,11 +52,16 @@ async function mountPanel() {
     run: vi.fn(async () => ({ status: 'ran', done: 2, skipped: 0, divergences: [], warnings: [] })),
   };
   const noop = () => {};
+  const provided: { refresh?: (mf?: unknown) => unknown } = {};
+  const daemonCall = vi.fn(async (_m: string, path: string) =>
+    path.startsWith('/repos') ? REPOS : null,
+  );
   const api = {
     settings: {},
     whenVisible: (fn: () => void) => fn(),
+    provide: (fns: typeof provided) => Object.assign(provided, fns),
     sync,
-    daemon: { call: async (_m: string, path: string) => (path.startsWith('/repos') ? REPOS : null) },
+    daemon: { call: daemonCall },
     query: { parse: async () => null },
     workspace: {
       get: async (key: string) => (key === 'active_repo' ? 'aaa' : null),
@@ -79,7 +84,11 @@ async function mountPanel() {
     if (!h) throw new Error(`command not registered: ${name}`);
     await h(...args);
   };
-  return { shadow, sync, statusBar, invoke };
+  const refresh = async () => {
+    if (!provided.refresh) throw new Error('the panel provides no refresh');
+    await provided.refresh(api);
+  };
+  return { shadow, sync, statusBar, invoke, refresh, daemonCall };
 }
 
 describe('sync panel commands', () => {
@@ -138,5 +147,65 @@ describe('sync panel commands', () => {
     const p = await mountPanel();
     await expect(p.invoke('sync:plan')).rejects.toThrow('no intents file');
     expect(p.sync.plan).not.toHaveBeenCalled();
+  });
+});
+
+// `view:refresh sync` (doc "Generic panel commands"): the loaded repositories
+// again, the pair kept, and the view shown read again — the status, or the plan
+// as it is stored. It never plans or runs anything.
+describe('sync panel refresh', () => {
+  beforeEach(() => {
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    document.body.replaceChildren();
+  });
+
+  test('reads the repositories again and keeps the pair chosen', async () => {
+    const p = await mountPanel();
+    await p.invoke('sync:pair', 'nas', 'phone');
+    const reads = p.daemonCall.mock.calls.filter(([, path]) => path === '/repos').length;
+    await p.refresh();
+    expect(p.daemonCall.mock.calls.filter(([, path]) => path === '/repos').length).toBe(reads + 1);
+    await p.invoke('sync:status');
+    expect(p.sync.status).toHaveBeenLastCalledWith('bbb', 'ccc');
+  });
+
+  test('with nothing shown, it reads no status and no plan', async () => {
+    const p = await mountPanel();
+    await p.refresh();
+    expect(p.sync.status).not.toHaveBeenCalled();
+    expect(p.sync.show).not.toHaveBeenCalled();
+  });
+
+  test('after the status, it reads the status again', async () => {
+    const p = await mountPanel();
+    await p.invoke('sync:status');
+    await p.refresh();
+    expect(p.sync.status).toHaveBeenCalledTimes(2);
+    expect(p.sync.show).not.toHaveBeenCalled();
+  });
+
+  test('after the plan overlay, it reads the overlay again', async () => {
+    const p = await mountPanel();
+    await p.invoke('sync:open');
+    await p.refresh();
+    expect(p.sync.show).toHaveBeenCalledTimes(2);
+    expect(p.sync.status).not.toHaveBeenCalled();
+  });
+
+  test('after a plan, it shows the stored plan and does not plan again', async () => {
+    const p = await mountPanel();
+    await p.invoke('sync:plan', '/tmp/intents.toml');
+    const shows = p.sync.show.mock.calls.length;
+    await p.refresh();
+    expect(p.sync.plan).toHaveBeenCalledTimes(1);
+    expect(p.sync.show.mock.calls.length).toBe(shows + 1);
+  });
+
+  test('after a run, it shows the pair status, and runs nothing again', async () => {
+    const p = await mountPanel();
+    await p.invoke('sync:run');
+    await p.refresh();
+    expect(p.sync.run).toHaveBeenCalledTimes(1);
+    expect(p.sync.status).toHaveBeenCalledTimes(1);
   });
 });

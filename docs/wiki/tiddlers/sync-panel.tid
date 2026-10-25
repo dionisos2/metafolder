@@ -18,6 +18,10 @@ is computed from. Then, in order:
 
 Status and Plan also say what they found on the status bar, and Run what it did.
 
+<<key "view:refresh self" r>> reads the loaded repositories again, keeping the pair,
+then what the view shows: the status after Status or Run, the stored plan after Plan
+or Show ([[Generic panel commands]]). It never plans or runs: both write.
+
 !! From the command input, or a script
 
 Every step is a command, so a sync runs without the toolbar ([[mf gui command]]):

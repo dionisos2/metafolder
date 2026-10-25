@@ -13,4 +13,4 @@ summary: The sync panel type
 
 !! Generic commands
 
-Provides nothing to [[Generic panel commands]].
+Provides ``refresh`` to [[Generic panel commands]].

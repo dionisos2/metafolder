@@ -14,3 +14,4 @@ Reads what a panel shows again: the focused panel with `self`, the panel type na
 |[[repos panel]] |the loaded repositories, their tasks and their tracking notices |
 |[[file panel]] |the file or the folder, as it is on disk now; a medium goes back behind its poster, its position kept. Playing it from the start is <<key "file:restart" Shift+r>> |
 |[[metarecord-detail panel]] |the metarecord shown; while an edit is in progress, it asks first |
+|[[sync panel]] |the loaded repositories, the pair kept, then the status or the stored plan, whichever is shown — never a new plan or a run |
