@@ -32,7 +32,7 @@ repository's store in memory, as `mf repo load --in-memory` does ([[Holding a re
 |`log-retention-watcher-ops` |`50000` |operations of the watcher the event log keeps (`0`: all); a repository can override it ([[Automatic retention]]) |
 |`log-retention-user-ops` |`1000000` |operations of every other origin the event log keeps (`0`: all); a repository can override it |
 |`slow-operation-threshold-ms`, `slow-read-threshold-ms`, `slow-operation-reads-threshold` |`1500`, `500`, `100000` |[[Slow log configuration]] |
-|`auto-backup-days` |`1` |every how many days each loaded repository gets its automatic backup, into `internal/backups/auto/` — one slot, replaced only by a backup that checks clean (`0`: off; [[Backups and restore]]) |
+|`auto-backup-days` |`7` |every how many days each loaded repository gets its automatic backup, into `internal/backups/auto/` — one slot, replaced only by a backup that checks clean (`0`: off; [[Backups and restore]]) |
 
 A missing file is an empty one. A malformed one — invalid TOML, an unknown key
 anywhere in it, a `[[load]]` entry with both or neither of `root`/`metafolder` —

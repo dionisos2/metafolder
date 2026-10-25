@@ -20,7 +20,7 @@ since the last backup fails its new one, which then never replaces a good one.
 second backup within the same second is `manual-<time>-2`).
 
 The daemon also backs up each loaded repository ''automatically'', every
-`auto-backup-days` days (default 1; `0` turns it off — [[Daemon configuration]]),
+`auto-backup-days` days (default 7; `0` turns it off — [[Daemon configuration]]),
 into one slot, `internal/backups/auto/`, looking at startup and then every hour. A
 failure is a warning in the repository's diagnostics. A backup holds the repository
 only while it copies the store — every other request waits meanwhile — and checks the

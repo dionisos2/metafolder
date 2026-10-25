@@ -64,7 +64,7 @@ pub const DEFAULT_ORPHAN_CASCADE_LIMIT: usize = 10_000;
 
 /// Every how many days each repository's automatic backup is taken
 /// (doc "Backups and restore").
-pub const DEFAULT_AUTO_BACKUP_DAYS: u32 = 1;
+pub const DEFAULT_AUTO_BACKUP_DAYS: u32 = 7;
 
 /// Tunable daemon settings (the `[settings]` table of `config.toml`). These are
 /// UX/performance knobs, all optional: a missing table or key keeps the default
