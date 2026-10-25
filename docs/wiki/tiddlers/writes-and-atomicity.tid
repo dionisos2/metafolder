@@ -4,24 +4,43 @@ kind: reference
 audience: dev
 summary: One write is one transaction — rows, log, HEAD and every derived key space — and the map grows at the start of each write.
 
-One `log::Writer` write is one write transaction of the store: the field rows,
-the log's operations and snapshots, HEAD, ''and'' every derived key space. It commits
-entirely or not at all. There is no snapshot-plus-replay scheme and no "refresh to
-HEAD" on the read path: the derived data is consistent with HEAD by construction.
-Bulk writers (reconcile, a large watcher flush) accumulate their derived updates in
-memory, a chunk at a time, and write each chunk once. One writer at a time: the
-executor and the API already serialise writes.
+!! One write, one transaction
 
-!! The map
+One `log::Writer` write is one write transaction of the store, and it holds
+everything the write changes:
 
-LMDB reserves its whole map in the address space up front, one per loaded
-repository, and grows it only between transactions — so the room a write transaction
-starts with is the most it can write. That room is the ''free space of the disk'',
-capped at 128 GiB per store: granted at the start of a write transaction (the one
-moment LMDB allows a resize), and renewed when it falls below what must be
-guaranteed. A write of any size — a first reconcile of a large tree — therefore
-commits unless the disk is full (or past 64 GiB in one write); some 900
-repositories fit in the address space. A write that cannot fit fails whole
-(`MDB_MAP_FULL`), without corruption. (A fixed 1 TiB map ran out of address space at
-about 120 repositories; doubling the map when half full failed any write larger
-than the store already was.)
+* the field rows;
+* the log's operations and snapshots, and HEAD;
+* ''every'' index (derived key space).
+
+It commits entirely or not at all. So the indexes are consistent with HEAD by
+construction: there is no snapshot-plus-replay scheme, and nothing on the read path
+"catches up" to HEAD.
+
+Bulk writers (reconcile, a large watcher flush) accumulate their index updates in
+memory, a chunk at a time, and write each chunk once. There is one writer at a time:
+the executor and the API already serialise writes.
+
+!! The map, and how large a write can be
+
+LMDB reserves the whole ''map'' — the address range the file is mapped into — when
+it opens, and can enlarge it only while the process has no transaction open. A write
+transaction can therefore never write more than the room left in the map when it
+started (the map's size minus what the store already uses). Too large a write fails
+whole with `MDB_MAP_FULL`, without corruption.
+
+So, just before each write transaction (`KvStore::grow_map`, `map_to_grant`), the
+daemon gives it room:
+
+* the room granted is the ''free space of the disk'', capped at 128 GiB per store;
+* it is renewed only when it has fallen below what must be guaranteed — all of the free space on a disk with less than 128 GiB free (store and free space shrink together, so this is not a resize at every write), 64 GiB otherwise.
+
+Consequences:
+
+* a write of any size — the first reconcile of a large tree — commits, unless the disk is full or a single write exceeds 64 GiB;
+* the address space holds the maps of some 900 loaded repositories (a process has 128 TiB of it);
+* where the free space cannot be read, the room is at least what the store already holds.
+
+Two earlier rules failed: a fixed 1 TiB map ran out of address space at about 120
+repositories, and doubling the map when half full failed any write larger than the
+store already was.

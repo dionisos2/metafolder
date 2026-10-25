@@ -1,7 +1,7 @@
 title: Backups and restore
 tags: Storage
 kind: guide
-summary: A verified copy of a repository's store, taken while it stays loaded — daily and on demand — and how to put one back.
+summary: A verified copy of a repository's store, taken while it stays loaded — weekly by default, and on demand — and how to put one back.
 
 !! Taking a backup
 

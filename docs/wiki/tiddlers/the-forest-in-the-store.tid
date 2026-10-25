@@ -4,28 +4,64 @@ kind: reference
 audience: dev
 summary: Each tree_ref node keeps the bitmap of its descendants and of its children, so a subtree is one read and a move costs the depth, not the size.
 
-For every `tree_ref` field, each node with children keeps the bitmap of ''all'' its
-descendants, and each target the bitmap of the ids pointing at it (a folder's
-children, a `ref`'s referrers). A node holds one position per forest
-([[One position per forest]]), which is what makes this set
-arithmetic (a `hierarchy_ref` node of several parents is the exception, recomputed
-from its ancestors' children when it loses one: [[Hierarchy references]]):
+For every `tree_ref` field, the store keeps two bitmaps per node
+([[Store tables]], set kinds ''descendants'' and ''referrers''):
 
-* ''a node is created'' under a parent: its id joins each ancestor's bitmap — about depth chunk writes;
-* ''a subtree moves'': its descendants and itself leave each old ancestor's bitmap and join each new one's — about depth operations, ''independent of the subtree's size'' (a move of 750 000 records took 6 ms, measured);
-* ''a rename'' changes no bitmap: the node's forest key moves.
+* the ids of ''all'' its descendants;
+* the ids pointing at it — a folder's children, a `ref`'s referrers.
 
-What it buys:
+!! Keeping them up to date
 
-* `field ->* "/dir"` — a subtree ([[Following references]]) — is one bitmap read, as a tag subtree is (`tag ->* (path =>* "music")`).
-* A folder filter is the children bitmap: a key per 65 536 children.
-* ''Sorting by path'' below a bound (a folder, a subtree) walks the forest in key order — each folder's children read a page at a time, ordered by name bytes — and stops at the page's end, resuming a cursor by descending its key's components. It declines, and the page is fetched and sorted instead, on a name that is not plain UTF-8 above the separator or is keyed by hash, or without a bound.
-* An order-sensitive `osm` path ([[Text search in the store]]) finds its candidate ''anchors'' by trigrams, verifies each on its assembled path (its ancestors read once, shared between candidates), and takes the union of the verified anchors' subtrees. When an earlier term's rarest trigram names fewer folders than half the anchors, the anchors are first cut to those folders' subtrees (`dir4321 file` on 100 000 records: 210 008 keys read → 75).
-* A `:path` comparison seeks instead of walking: `field:path = "<p>"` goes down `p`'s names, one read per level; a pattern anchored on a literal prefix (`^/music/j`) seeks the folder of the prefix's last separator; an ordering enters only the subtrees that can fall on the right side. A pattern anchored at the end on a literal (`\.mp3$`, `jazz/a\.mp3$`) reads the names that literal's end lies in — they end with it, or are what follows its last separator — found by trigrams and each verified on its assembled path (`000123\.txt$` on 16 000 records: 32 326 keys read → 19); a prefix reaching below a forest's root is preferred to it, being narrower still. A pattern anchored nowhere on a literal (`mp3`, `(?i)MP3$`) still walks the whole forest.
-* The forest invariants (no cycle, depth ≤ 1000) need only the ancestor chain: about depth reads per checked write.
+A node holds one position per forest ([[One position per forest]]), so maintaining
+them is set arithmetic along the ancestor chain:
+
+* ''a node is created'' under a parent: its id joins each ancestor's descendants — about depth chunk writes;
+* ''a subtree moves'': its ids leave each old ancestor's descendants and join each new one's — about depth operations, ''independent of the subtree's size'' (a move of 750 000 records took 6 ms, measured);
+* ''a rename'' changes no bitmap: only the node's `forest` key moves.
+
+The exception is a `hierarchy_ref` node of several parents: when it loses one, its
+descendants are recomputed from its ancestors' children ([[Hierarchy references]]).
 
 The price is about depth times more chunks per tree write. Opening a folder — the
 GUI's central gesture — costs a handful of reads in return.
+
+!! What it buys
+
+* ''A subtree'' — `field ->* "/dir"` ([[Following references]]) — is one bitmap read; so is a tag subtree (`tag ->* (path =>* "music")`).
+* ''A folder'' is its children bitmap: a key per 65 536 children.
+* ''The forest invariants'' (no cycle, depth ≤ 1000) need only the ancestor chain: about depth reads per checked write.
+
+!! Sorting by path
+
+Below a bound (a folder, a subtree), a path sort walks the forest in key order — each
+folder's children read a page at a time, ordered by name bytes — and stops at the
+page's end; the next page resumes by descending its cursor key's components. It
+declines, and the page is fetched and sorted instead ([[Sorting and postings]]):
+
+* without a bound;
+* on a name that is not plain UTF-8 above the separator;
+* on a name keyed by hash (over 300 bytes).
+
+!! Order-sensitive `osm` paths
+
+An `osm` path ([[Text search in the store]]) finds its candidate ''anchors'' by
+trigrams, verifies each on its assembled path (ancestors read once, shared between
+candidates), and takes the union of the verified anchors' subtrees. When an earlier
+term's rarest trigram names fewer folders than half the anchors, the anchors are
+first cut to those folders' subtrees (`dir4321 file` on 100 000 records: 210 008 keys
+read → 75).
+
+!! `:path` comparisons
+
+A `:path` comparison seeks instead of walking, wherever the pattern allows:
+
+* `field:path = "<p>"` goes down `p`'s names, one read per level;
+* a pattern anchored on a literal prefix (`^/music/j`) seeks the folder of the prefix's last separator;
+* an ordering (`<`, `>`…) enters only the subtrees that can fall on the right side;
+* a pattern anchored at the end on a literal (`\.mp3$`, `jazz/a\.mp3$`) reads, by trigrams, the names that literal's end lies in, each verified on its assembled path (`000123\.txt$` on 16 000 records: 32 326 keys read → 19); when the pattern also has a prefix reaching below a forest's root, the prefix is used, being narrower still;
+* a pattern anchored nowhere on a literal (`mp3`, `(?i)MP3$`) still walks the whole forest.
+
+!! Tests
 
 `tests/kv_cost.rs` pins it: a page of a 16 000-entry folder sorted by path, a subtree
 by path, and a count over a subtree of 800 folders read what they read on an eighth
