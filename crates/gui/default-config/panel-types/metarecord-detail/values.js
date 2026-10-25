@@ -89,7 +89,7 @@ export function createFieldCatalog(daemon) {
 /**
  * @param {{
  *   daemon: MetafolderApi['daemon'],
- *   config: MetafolderApi['config'],
+ *   config: Pick<MetafolderApi['config'], 'refSeed' | 'labelSeparator'>,
  *   parseQuery: (dsl: string) => Promise<unknown>,
  * }} ctx
  */

@@ -15,12 +15,12 @@
 # The GUI runs on a private X server (Xvfb) when there is one, so its window
 # never shows on the user's desktop. The keyboard scenarios (prompt history
 # keybindings open-with) need it and xdotool: they press keys where no command
-# reaches — the settings view, the command input — and on a real display they
+# reaches — the config panel, the command input — and on a real display they
 # would type into whatever the user is doing, or into the desktop's own
 # shortcuts. Without both they are a loud SKIP.
 #
 # What only a mouse reaches (a tab's close button, the field editor's picker
-# button, the settings view's Remove) is clicked through WebKit's remote
+# button, the config panel's Edit) is clicked through WebKit's remote
 # inspector (scripts/dev/lib/webview.mjs, node): by selector and text, never by
 # coordinates. The inspector listens on loopback for the run's duration, open
 # to any local process — a throwaway daemon, but the GUI runs shell commands.
@@ -1176,26 +1176,38 @@ scenario_keybindings() {
 
     run config:open
     command_ok "settings: config open"
-    # The key field has the focus; tab walks the form — command, when, focus,
-    # text-input, Save — and runs no binding while the view is open.
+    # The key field has the focus; tab goes to the command, Enter saves.
+    typed "ctrl+alt+u"
+    keys Tab
+    typed "status:clear"
+    keys Return
+    assert "settings: Enter writes the binding" \
+        until_ok 10 grep -qx '"ctrl+alt+u" = { command = "status:clear" }' "$file"
+    # The form is empty again, the focus back on the key field. A key bound
+    # in the same place is refused — "!" opens the command input — and so is
+    # a command nobody registered: nothing is written.
     typed "!"
     keys Tab
     typed "status:clear"
-    keys Tab Tab Tab Tab Return
-    assert "settings: Save writes the binding" \
-        until_ok 10 grep -qx '"!" = { command = "status:clear" }' "$file"
-    # The focus is back on the key field; Save, disabled while it is empty, is
-    # skipped: the next stops are the first row's Edit and Remove, and "!"
-    # sorts first.
-    keys Tab Tab Tab Tab Tab Tab Return
-    assert "settings: Remove unbinds it" until_ok 10 unbound "!"
+    keys Return
+    sleep 1
+    assert "settings: a key bound already keeps its command" \
+        grep -qx '"!" = { command = "command-input:focus bash" }' "$file"
+    # The refused form stays as it was; a field reached with tab has its text
+    # selected, so typing replaces it.
+    keys shift+Tab
+    typed "ctrl+alt+j"
+    keys Tab
+    typed "status:nothing"
+    keys Return
+    sleep 1
+    assert_not "settings: an unknown command is not saved" grep -q '"ctrl+alt+j"' "$file"
     keys Escape
-    status_is "settings: tab ran no binding behind the view" info "e2e: before config:open"
 
     show_panel left e2e-keys e2e-keys:ping
     mfg message --workspace "$WS" "e2e: before ctrl+alt+y" >/dev/null
     keys ctrl+alt+y
-    assert "settings closed: a key a panel suggested runs its command" \
+    assert "settings: a key a panel suggested runs its command" \
         until_ok 10 says "e2e: pinged"
 }
 
@@ -1373,18 +1385,24 @@ scenario_pick_button() {
 scenario_suggested_key() {
     needs_clicks suggested-key || return 0
     new_repo suggested-key
+    local file="$CONFIG_HOME/metafolder/gui/keybindings.toml"
     # The panel suggests ctrl+alt+y when it mounts.
     show_panel left e2e-keys e2e-keys:ping
     run config:open
 
-    assert "suggested key: its Remove is clicked" \
-        until_ok 10 click '.binding-table tr' ctrl+alt+y button Remove
-    # The settings view says its errors itself, not on the status bar.
-    assert_contains "suggested key: the removal is refused, saying why" \
-        "$(until_ok 10 webview text '.dialog .error' 2>/dev/null)" \
-        "is suggested by a panel or by commands.js"
-    assert "suggested key: its row stays" shows '.binding-table tr' ctrl+alt+y
-    assert "settings: closed by its button" click '.dialog header button'
+    # The settings panel says it is suggested, and offers no Remove: it is not
+    # in the file.
+    assert_contains "suggested key: its row says so" \
+        "$(until_ok 10 webview text '#bindings tr' ctrl+alt+y 2>/dev/null)" "suggested"
+    assert_not "suggested key: no Remove" click '#bindings tr' ctrl+alt+y button Remove
+    # Typing its key shows where it is taken, before any save.
+    assert "suggested key: its Edit is clicked" click '#bindings tr' ctrl+alt+y button Edit
+    assert_contains "suggested key: the form edits it" \
+        "$(until_ok 10 webview text '#editing' 2>/dev/null)" "Editing ctrl+alt+y"
+    # Saved in its own place, it is written to the file, which overrides it.
+    assert "suggested key: Save is clicked" click '#save'
+    assert "suggested key: saving writes it to the file" \
+        until_ok 10 grep -q '^"ctrl+alt+y"' "$file"
 
     mfg message --workspace "$WS" "e2e: before ctrl+alt+y" >/dev/null
     run e2e-keys:ping

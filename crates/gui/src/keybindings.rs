@@ -39,6 +39,122 @@ pub struct CompiledBinding {
     pub text_input: bool,
     /// Named focus scope; `None` = not focus-scoped.
     pub focus: Option<String>,
+    /// Suggested by a panel or by `commands.js` (`addKeybinding`): in effect,
+    /// but not in `keybindings.toml`, so not something its editor can remove.
+    pub suggested: bool,
+}
+
+/// Where a binding applies: its combo and its scope — what the settings panel
+/// names when it writes or replaces one (doc "Changing keybindings").
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct BindingPlace {
+    pub combo: String,
+    pub when: Option<String>,
+    pub focus: Option<String>,
+}
+
+impl BindingPlace {
+    /// The same key in the same scope, however the combo is spelled.
+    pub fn is(&self, other: &BindingPlace) -> bool {
+        self.when == other.when
+            && self.focus == other.focus
+            && parse_combo(&self.combo).ok() == parse_combo(&other.combo).ok()
+    }
+}
+
+/// How a scope reads in a sentence: "globally", "in log", "at @find".
+fn describe_scope(when: Option<&str>, focus: Option<&str>) -> String {
+    match (when, focus) {
+        (None, None) => "globally".into(),
+        (Some(when), None) => format!("in {when}"),
+        (None, Some(focus)) => format!("at @{focus}"),
+        (Some(when), Some(focus)) => format!("at @{focus} in {when}"),
+    }
+}
+
+/// What stands in the way of binding a key at `new`, given the bindings in
+/// effect (`table`). The binding being edited (`replacing`) is left out: it is
+/// the one the new binding takes the place of.
+///
+/// Refused: a key already bound in the same place (to change it, edit that
+/// binding), and a key that starts — or is started by — a sequence bound in the
+/// same place: a key alone runs before any sequence it starts, so one of the two
+/// could never run there (`keymatch.js`).
+pub fn check_binding(
+    table: &[CompiledBinding],
+    new: &BindingPlace,
+    replacing: Option<&BindingPlace>,
+) -> Result<(), String> {
+    let keys = parse_combo(&new.combo)?;
+    let replaced = match replacing {
+        Some(place) => Some((parse_combo(&place.combo)?, place.when.clone(), place.focus.clone())),
+        None => None,
+    };
+    let starts = |long: &[String], short: &[String]| {
+        long.len() > short.len() && long[..short.len()] == *short
+    };
+    for binding in table {
+        if binding.when != new.when || binding.focus != new.focus {
+            continue;
+        }
+        if replaced.as_ref().is_some_and(|(keys, when, focus)| {
+            *keys == binding.keys && *when == binding.when && *focus == binding.focus
+        }) {
+            continue;
+        }
+        let (combo, other) = (keys.join(" "), binding.keys.join(" "));
+        let scope = describe_scope(new.when.as_deref(), new.focus.as_deref());
+        let invocation = &binding.invocation;
+        if binding.keys == keys {
+            return Err(format!("`{combo}` is already bound {scope} to `{invocation}`"));
+        }
+        if starts(&binding.keys, &keys) {
+            return Err(format!(
+                "`{combo}` would hide `{other}` (`{invocation}`) {scope}: \
+                 a key alone runs before any sequence it starts"
+            ));
+        }
+        if starts(&keys, &binding.keys) {
+            return Err(format!(
+                "`{combo}` could never run: `{other}` alone is bound {scope} to `{invocation}`"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Whether `invocation` runs a command that exists (`known`). Only its first
+/// word is a name — a binding may pre-fill arguments — and a shell line (`!…`)
+/// names none.
+pub fn check_command(invocation: &str, known: impl Fn(&str) -> bool) -> Result<(), String> {
+    let invocation = invocation.trim();
+    if invocation.starts_with('!') {
+        return Ok(());
+    }
+    let name = invocation.split_whitespace().next().ok_or("no command given")?;
+    if known(name) {
+        Ok(())
+    } else {
+        Err(format!("unknown command `{name}`"))
+    }
+}
+
+/// What would refuse a binding, field by field: the command, and the key in
+/// its place — `None` where nothing does. The settings panel shows it while the
+/// form is typed; its save refuses on the first one.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct BindingCheck {
+    pub command: Option<String>,
+    pub key: Option<String>,
+}
+
+impl BindingCheck {
+    pub fn into_result(self) -> Result<(), String> {
+        match self.command.or(self.key) {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
 }
 
 /// Parses and normalizes a combo sequence string: lowercased keys,
@@ -188,6 +304,7 @@ pub fn parse_toml(source: &str) -> Result<Vec<(Vec<String>, BindingSpec)>, Strin
 type BindingKey = (Vec<String>, Option<String>, Option<String>);
 
 /// The merged binding set.
+#[derive(Debug)]
 pub struct KeybindingSet {
     /// Keyed by (combo, scope); defaults overridden by the user per (combo,
     /// scope), so rebinding one panel's `down` leaves the others intact.
@@ -245,6 +362,7 @@ impl KeybindingSet {
             when: when.map(str::to_string),
             text_input,
             focus: focus.map(str::to_string),
+            suggested: true,
         });
         Ok(())
     }
@@ -274,6 +392,37 @@ impl KeybindingSet {
         })
     }
 
+    /// Checks binding `command` at `place` in this set (`check_command`,
+    /// `check_binding`), `replacing` the binding being edited. A suggested
+    /// binding can be overridden in its own place but not moved: it is not in
+    /// the file, and its panel would suggest it again.
+    pub fn check(
+        &self,
+        known: impl Fn(&str) -> bool,
+        place: &BindingPlace,
+        command: &str,
+        replacing: Option<&BindingPlace>,
+    ) -> BindingCheck {
+        let moves_a_suggestion = || {
+            let old = replacing?;
+            let suggested =
+                self.is_suggestion(&old.combo, old.when.as_deref(), old.focus.as_deref());
+            (!old.is(place) && suggested).then(|| {
+                format!(
+                    "{} is suggested by a panel or by commands.js, not set in keybindings.toml: \
+                     it cannot be moved, only overridden in its own place",
+                    old.combo
+                )
+            })
+        };
+        BindingCheck {
+            command: check_command(command, known).err(),
+            key: check_binding(&self.compiled(), place, replacing)
+                .err()
+                .or_else(moves_a_suggestion),
+        }
+    }
+
     /// Flat table for the frontend matcher, deterministically ordered.
     pub fn compiled(&self) -> Vec<CompiledBinding> {
         let mut table: Vec<CompiledBinding> = self
@@ -285,6 +434,7 @@ impl KeybindingSet {
                 when: spec.when.clone(),
                 text_input: spec.text_input,
                 focus: spec.focus.clone(),
+                suggested: false,
             })
             .chain(self.suggestions.iter().cloned())
             .collect();
@@ -907,6 +1057,123 @@ mod tests {
         crate::register_builtins(&registry);
         // The registry holds the command; the binding pre-fills its argument.
         assert!(registry.list().iter().any(|c| c.name == "panel:toggle"));
+    }
+
+    // ── Checking a new binding ───────────────────────────────────────────
+
+    fn place(combo: &str, when: Option<&str>, focus: Option<&str>) -> BindingPlace {
+        BindingPlace {
+            combo: combo.to_string(),
+            when: when.map(str::to_string),
+            focus: focus.map(str::to_string),
+        }
+    }
+
+    fn table(source: &str) -> Vec<CompiledBinding> {
+        KeybindingSet::from_source(source).unwrap().compiled()
+    }
+
+    #[test]
+    fn test_compiled_table_tells_suggestions_apart() {
+        let mut set = KeybindingSet::from_source(r#""x" = { command = "mine" }"#).unwrap();
+        set.add_suggestion("y", "my-panel:go", Some("my-panel"), false, None).unwrap();
+        let table = set.compiled();
+        assert!(!table.iter().find(|b| b.keys == ["x"]).unwrap().suggested);
+        assert!(table.iter().find(|b| b.keys == ["y"]).unwrap().suggested);
+    }
+
+    #[test]
+    fn test_a_key_bound_in_the_same_place_is_refused() {
+        let table = table(r#""ctrl+k" = { command = "workspace:new" }"#);
+        let error = check_binding(&table, &place("K+ctrl", None, None), None).unwrap_err();
+        assert!(error.contains("ctrl+k"), "{error}");
+        assert!(error.contains("workspace:new"), "{error}");
+        assert!(error.contains("globally"), "{error}");
+    }
+
+    #[test]
+    fn test_a_key_bound_elsewhere_is_free_here() {
+        let table = table(r#""ctrl+k" = { command = "workspace:new" }"#);
+        check_binding(&table, &place("ctrl+k", Some("metarecord-list"), None), None).unwrap();
+        check_binding(&table, &place("ctrl+k", None, Some("finder")), None).unwrap();
+    }
+
+    #[test]
+    fn test_the_binding_being_edited_is_no_conflict() {
+        let table = table(r#""ctrl+k" = { command = "workspace:new", when = "log" }"#);
+        let edited = place("ctrl+k", Some("log"), None);
+        check_binding(&table, &edited, Some(&edited)).unwrap();
+        // Another place than the edited one is still checked.
+        let other = place("ctrl+j", Some("log"), None);
+        assert!(check_binding(&table, &edited, Some(&other)).is_err());
+    }
+
+    #[test]
+    fn test_a_sequence_and_its_prefix_in_the_same_place_are_refused() {
+        let table = table(
+            r#""g g" = { command = "a" }
+"t" = { command = "b", when = "log" }"#,
+        );
+        // A key alone runs before any sequence it starts: `g g` would be dead.
+        let error = check_binding(&table, &place("g", None, None), None).unwrap_err();
+        assert!(error.contains("g g"), "{error}");
+        // And the other way round.
+        let error = check_binding(&table, &place("t x", Some("log"), None), None).unwrap_err();
+        assert!(error.contains("`t`"), "{error}");
+        // Elsewhere, both are free.
+        check_binding(&table, &place("g", Some("log"), None), None).unwrap();
+        check_binding(&table, &place("t x", None, None), None).unwrap();
+    }
+
+    #[test]
+    fn test_the_edited_binding_does_not_hide_its_own_replacement() {
+        let table = table(r#""g g" = { command = "a" }"#);
+        check_binding(&table, &place("g", None, None), Some(&place("g g", None, None))).unwrap();
+    }
+
+    #[test]
+    fn test_a_malformed_key_is_refused() {
+        assert!(check_binding(&[], &place("ctrl+", None, None), None).is_err());
+    }
+
+    #[test]
+    fn test_the_set_checks_a_binding_field_by_field() {
+        let mut set =
+            KeybindingSet::from_source(r#""ctrl+k" = { command = "workspace:new" }"#).unwrap();
+        set.add_suggestion("y", "my-panel:go", Some("my-panel"), false, None).unwrap();
+        let known = |name: &str| name == "workspace:new";
+
+        let check = set.check(known, &place("ctrl+k", None, None), "nope", None);
+        assert!(check.command.unwrap().contains("nope"));
+        assert!(check.key.unwrap().contains("workspace:new"));
+
+        let free = set.check(known, &place("ctrl+j", None, None), "workspace:new", None);
+        assert_eq!(free, BindingCheck::default());
+        assert!(free.into_result().is_ok());
+
+        // A suggestion cannot be moved: the panel would suggest it again.
+        let suggested = place("y", Some("my-panel"), None);
+        let moved = set.check(
+            known,
+            &place("u", Some("my-panel"), None),
+            "workspace:new",
+            Some(&suggested),
+        );
+        assert!(moved.key.unwrap().contains("suggested"));
+        let kept = set.check(known, &suggested, "workspace:new", Some(&suggested));
+        assert_eq!(kept, BindingCheck::default());
+    }
+
+    #[test]
+    fn test_a_command_must_exist() {
+        let known = |name: &str| name == "panel:open";
+        check_command("panel:open here file", known).unwrap();
+        check_command("  panel:open", known).unwrap();
+        // A shell line names no command.
+        check_command("!ls -l", known).unwrap();
+        let error = check_command("panel:opne here", known).unwrap_err();
+        assert!(error.contains("panel:opne"), "{error}");
+        assert!(check_command("  ", known).is_err());
     }
 
     // ── Compilation ──────────────────────────────────────────────────────

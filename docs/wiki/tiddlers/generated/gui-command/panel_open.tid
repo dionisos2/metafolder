@@ -16,6 +16,7 @@ summary: Open a panel type here, in the other slot, or in a new workspace
 * ``b shift+enter`` → ``panel:open new metarecord-detail`` (in the ``metarecord-list`` panel)
 * ``b shift+enter`` → ``panel:open new metarecord-detail`` (in the ``recent`` panel)
 * ``b t b`` → ``panel:open new trash``
+* ``b t c`` → ``panel:open new config``
 * ``b t d`` → ``panel:open new metarecord-detail``
 * ``b t f`` → ``panel:open new file``
 * ``b t g`` → ``panel:open new message``
@@ -39,6 +40,7 @@ summary: Open a panel type here, in the other slot, or in a new workspace
 * ``i shift+enter`` → ``panel:open here metarecord-detail`` (in the ``metarecord-list`` panel)
 * ``i shift+enter`` → ``panel:open here metarecord-detail`` (in the ``recent`` panel)
 * ``i t b`` → ``panel:open here trash``
+* ``i t c`` → ``panel:open here config``
 * ``i t d`` → ``panel:open here metarecord-detail``
 * ``i t f`` → ``panel:open here file``
 * ``i t g`` → ``panel:open here message``
@@ -60,6 +62,7 @@ summary: Open a panel type here, in the other slot, or in a new workspace
 * ``shift+enter`` → ``panel:open other metarecord-detail`` (in the ``metarecord-list`` panel)
 * ``shift+enter`` → ``panel:open other metarecord-detail`` (in the ``recent`` panel)
 * ``t b`` → ``panel:open here trash``
+* ``t c`` → ``panel:open here config``
 * ``t d`` → ``panel:open here metarecord-detail``
 * ``t f`` → ``panel:open here file``
 * ``t g`` → ``panel:open here message``
@@ -75,6 +78,7 @@ summary: Open a panel type here, in the other slot, or in a new workspace
 * ``t w`` → ``panel:open here workspace-info``
 * ``t y`` → ``panel:open here sync``
 * ``w t b`` → ``panel:open other trash``
+* ``w t c`` → ``panel:open other config``
 * ``w t d`` → ``panel:open other metarecord-detail``
 * ``w t f`` → ``panel:open other file``
 * ``w t g`` → ``panel:open other message``

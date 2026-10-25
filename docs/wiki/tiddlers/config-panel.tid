@@ -1,0 +1,42 @@
+title: config panel
+tags: Panel [[Panel types]] [[Customising the GUI]]
+kind: reference
+aliases: settings-panel settings-view
+summary: Where the GUI's configuration files are, and the keybinding editor: look up a key or a command as you type it, and bind it once the GUI has checked it.
+
+Open it with `config:open`, which shows it in the focused slot, or
+`panel:open here config` (<<key "panel:open here config" "t c">>). It used to be a
+dialog over the window, the ''settings view''; as a panel it sits beside the others,
+so a key can be looked up while the panel it acts in stays on screen.
+
+!! Files
+
+The configuration directory and, in it, `keybindings.toml`, `style.css` and
+`panel-types/` ([[Customising the GUI]]). The ''Reload'' buttons run
+`config:reload keybindings` and `config:reload style` ([[Reloading the configuration]]).
+
+!! Keybindings
+
+The form above the table — key, command, `when`, `focus`, `text-input` — both writes a
+binding and searches the table:
+
+* the ''key'' typed shows every binding of a key it starts, wherever it applies: `g` lists `g g` and `g t`, `ctrl` every ctrl chord, and `shift+ctrl+a` finds `ctrl+shift+a`;
+* the ''command'' typed shows the bindings whose invocation contains it, below those of the key — so the key's current use stays in sight while the command is typed. The field completes over every command, and the line under the form names the command it reads, with its description.
+
+As the form is typed, the panel asks the GUI what a save would refuse, and says it
+under the form: a command that does not exist, a key already bound in that place —
+whose row is marked —, or a key that would hide a sequence bound there or be hidden by
+it ([[Changing keybindings]]). ''Save'' stays disabled until nothing does. Enter in a
+field saves.
+
+Each row shows the key, the invocation, the command's description, and where it
+applies — `global`, a panel type, or `@name` for a text field, followed by `⌨` when
+it also applies while typing ([[Keybindings]]). A key suggested by a panel or by
+`commands.js` is marked ''suggested'' and has no ''Remove'': it is not in the file.
+
+* ''Edit'' copies a row into the form; ''Save'' then replaces that binding — under a new key or in a new place, the old one goes. ''Cancel'' leaves it untouched.
+* ''Remove'' unbinds the key.
+
+When the panel is shown, the key field takes the focus, and the table is read again:
+what was bound meanwhile, by `config:reload keybindings` or a panel, appears.
+`view:refresh` reads it again too.

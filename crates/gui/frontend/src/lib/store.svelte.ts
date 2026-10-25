@@ -11,7 +11,6 @@ import { startChangePolling } from './panels/api';
 import type {
   Binding,
   CommandDef,
-  ConfigInfo,
   ExecContext,
   InitialState,
   LayoutView,
@@ -71,8 +70,6 @@ export const store = $state({
     /// accumulates, its continuations in `pendingKeys`). The next key is
     /// reported on instead of dispatched; escape cancels the wait.
     describeKeys: null as string[] | null,
-    configOpen: false,
-    configInfo: null as ConfigInfo | null,
     /// Non-null while a prompt waits for the input — a script's
     /// POST /gui/prompt or an interactive command-argument collection.
     promptText: null as string | null,

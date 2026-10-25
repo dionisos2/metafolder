@@ -117,6 +117,7 @@
 "t h" = { command = "panel:open here help" }
 "t v" = { command = "panel:open here recent" }
 "t u" = { command = "panel:open here duplicates" }
+"t c" = { command = "panel:open here config" }
 
 "i t l" = { command = "panel:open here metarecord-list" }
 "i t d" = { command = "panel:open here metarecord-detail" }
@@ -133,6 +134,7 @@
 "i t h" = { command = "panel:open here help" }
 "i t v" = { command = "panel:open here recent" }
 "i t u" = { command = "panel:open here duplicates" }
+"i t c" = { command = "panel:open here config" }
 
 "w t l" = { command = "panel:open other metarecord-list" }
 "w t d" = { command = "panel:open other metarecord-detail" }
@@ -149,6 +151,7 @@
 "w t h" = { command = "panel:open other help" }
 "w t v" = { command = "panel:open other recent" }
 "w t u" = { command = "panel:open other duplicates" }
+"w t c" = { command = "panel:open other config" }
 
 "b t l" = { command = "panel:open new metarecord-list" }
 "b t d" = { command = "panel:open new metarecord-detail" }
@@ -165,6 +168,7 @@
 "b t h" = { command = "panel:open new help" }
 "b t v" = { command = "panel:open new recent" }
 "b t u" = { command = "panel:open new duplicates" }
+"b t c" = { command = "panel:open new config" }
 
 # Help (doc "In-app help"). "h" then a letter; F1 also arms the help cursor.
 "h h" = { command = "help:open" }

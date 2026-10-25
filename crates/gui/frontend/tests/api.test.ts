@@ -459,6 +459,45 @@ describe('panel api — misc surface', () => {
     expect(invoke).toHaveBeenCalledWith('label_separator');
   });
 
+  test('the settings panel reads and writes keybindings through the backend', async () => {
+    const { api, invoke } = setup();
+    await api.config.info();
+    expect(invoke).toHaveBeenCalledWith('config_info');
+    await api.commands.list();
+    expect(invoke).toHaveBeenCalledWith('list_commands');
+    const replacing = { combo: 'g', when: null, focus: null };
+    await api.config.checkKeybinding({ combo: 'g g', command: 'x', when: 'log', focus: null, replacing });
+    expect(invoke).toHaveBeenCalledWith('check_user_keybinding', {
+      combo: 'g g',
+      command: 'x',
+      when: 'log',
+      focus: null,
+      replacing,
+    });
+    await api.config.setKeybinding({
+      combo: 'g g',
+      command: 'x',
+      when: null,
+      focus: null,
+      textInput: true,
+      replacing: null,
+    });
+    expect(invoke).toHaveBeenCalledWith('set_user_keybinding', {
+      combo: 'g g',
+      command: 'x',
+      when: null,
+      focus: null,
+      textInput: true,
+      replacing: null,
+    });
+    await api.config.removeKeybinding({ combo: 'g g', when: null, focus: 'find' });
+    expect(invoke).toHaveBeenCalledWith('remove_user_keybinding', {
+      combo: 'g g',
+      when: null,
+      focus: 'find',
+    });
+  });
+
   test('fs and statusBar route to their commands', async () => {
     const { api, invoke } = setup();
     await api.fs.readDir('/tmp');

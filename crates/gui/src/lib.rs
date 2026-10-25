@@ -111,7 +111,7 @@ fn register_builtins(registry: &CommandRegistry) {
         ("message:clear", "Clear the workspace message log", true),
         ("shell:clear", "Clear the workspace shell log", true),
         ("status:clear", "Clear the status bar message", false),
-        ("config:open", "Open the settings view", true),
+        ("config:open", "Open the settings panel in the focused slot", true),
         (
             "config:reload",
             "Re-read user configuration without a restart (keybindings / style / grammar / commands / all)",
@@ -582,6 +582,7 @@ pub fn run(options: Options) {
             commands::suggest_keybinding,
             commands::get_compiled_keybindings,
             commands::set_user_keybinding,
+            commands::check_user_keybinding,
             commands::remove_user_keybinding,
             commands::config_info,
             fs_commands::fs_read_dir,

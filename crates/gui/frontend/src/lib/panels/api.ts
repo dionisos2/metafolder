@@ -588,6 +588,15 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         // (config.toml `[completion].label-separator`, doc "Completion
         // views").
         labelSeparator: () => invoke('label_separator') as Promise<string>,
+        // The settings panel (doc "Changing keybindings"): where the
+        // configuration files are, and the editor of `keybindings.toml`.
+        info: () => invoke('config_info') as Promise<Metafolder.ConfigInfo>,
+        checkKeybinding: (binding: Metafolder.KeybindingDraft) =>
+          invoke('check_user_keybinding', { ...binding }) as Promise<Metafolder.KeybindingCheck>,
+        setKeybinding: (binding: Metafolder.KeybindingDraft & { textInput: boolean }) =>
+          invoke('set_user_keybinding', { ...binding }) as Promise<Metafolder.Binding[]>,
+        removeKeybinding: (place: Metafolder.BindingPlace) =>
+          invoke('remove_user_keybinding', { ...place }) as Promise<Metafolder.Binding[]>,
       },
 
       workspace: {
@@ -676,6 +685,8 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         // The live keybinding table, so a panel can *show* a shortcut rather than
         // restate it: the help pages fill their key hints from it (/__keyhints.js).
         keybindings: () => invoke('get_compiled_keybindings') as Promise<Metafolder.Binding[]>,
+        // Every registered command — builtins, the panels', `commands.js`'s.
+        list: () => invoke('list_commands') as Promise<Metafolder.CommandDef[]>,
       },
 
       /** The functions behind the generic commands (doc "Generic panel

@@ -7,7 +7,7 @@
 //! at runtime a missing configuration file is an error, never a fall back to a
 //! shipped default (doc "No runtime fallback").
 
-use crate::keybindings::KeybindingSet;
+use crate::keybindings::{BindingPlace, KeybindingSet};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -407,6 +407,35 @@ impl ConfigDir {
         }
         self.write_keybindings_document(&doc)?;
         self.load_keybindings()
+    }
+
+    /// The settings panel's save (doc "Changing keybindings"): binds
+    /// `command` at `place` after checking that the command exists (`known`)
+    /// and that the key is free there in `current` — the set in effect — and,
+    /// when `replacing` names the binding being edited, takes its place: it is
+    /// no conflict, and it is removed when the new binding lands elsewhere.
+    /// Returns the new set, `current`'s suggestions kept.
+    pub fn save_user_keybinding(
+        &self,
+        current: &KeybindingSet,
+        known: impl Fn(&str) -> bool,
+        place: &BindingPlace,
+        command: &str,
+        text_input: bool,
+        replacing: Option<&BindingPlace>,
+    ) -> Result<KeybindingSet, String> {
+        current.check(known, place, command, replacing).into_result()?;
+        let (when, focus) = (place.when.as_deref(), place.focus.as_deref());
+        // The edited binding is removed when the new one lands elsewhere.
+        let moved = replacing.filter(|old| !old.is(place));
+        self.set_user_keybinding(&place.combo, command.trim(), when, focus, text_input)?;
+        let set = match moved {
+            Some(old) => {
+                self.remove_user_keybinding(&old.combo, old.when.as_deref(), old.focus.as_deref())?
+            }
+            None => self.load_keybindings()?,
+        };
+        Ok(set.with_suggestions_of(current))
     }
 
     fn read_keybindings_document(&self) -> Result<toml_edit::DocumentMut, String> {

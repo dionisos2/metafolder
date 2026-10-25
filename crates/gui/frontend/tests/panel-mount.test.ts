@@ -75,7 +75,12 @@ function stubApi(panelType: string, defaults: Record<string, unknown> = {}) {
     changes: { sync: async () => {}, subscribe: () => () => {} },
     query: { parse: async () => null, expand: async () => '', grammarSource: async () => '' },
     pick: { start: async () => '' },
-    config: {},
+    config: {
+      info: async () => ({ root: '', style_css: '', keybindings: '', panel_types: '' }),
+      checkKeybinding: async () => ({ command: null, key: null }),
+      setKeybinding: async () => [],
+      removeKeybinding: async () => [],
+    },
     workspace: {
       get: async () => null,
       set: async () => {},
@@ -92,7 +97,12 @@ function stubApi(panelType: string, defaults: Record<string, unknown> = {}) {
       onChange: noop,
     },
     provide: vi.fn(),
-    commands: { register: async () => null, invoke: () => null },
+    commands: {
+      register: async () => null,
+      invoke: () => null,
+      keybindings: async () => [],
+      list: async () => [],
+    },
     addKeybinding: async () => null,
     fs: { readDir: async () => [], stat: async () => ({}), exists: async () => true, homeDir: async () => '/home/user' },
     trash: { list: async () => [], restore: async () => '', remove: async () => {}, empty: async () => 0 },

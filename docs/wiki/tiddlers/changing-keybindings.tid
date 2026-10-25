@@ -2,7 +2,7 @@ title: Changing keybindings
 tags: Keybindings Configuration
 kind: guide
 aliases: rebind keybindings.toml keybinding-editor settings
-summary: Bind, rebind or unbind a key from the settings view or by editing gui/keybindings.toml, without restarting.
+summary: Bind, rebind or unbind a key from the config panel or by editing gui/keybindings.toml, without restarting.
 
 To find out what a key does now, press <<key "help:key" "h k">> then the key
 ([[In-app help]]). The command input also shows, next to each command, the keys
@@ -10,30 +10,31 @@ that run it.
 
 !! From the GUI
 
-`config:open` opens the settings view. Under the paths of the configuration files,
-it lists every binding in effect: the key, the invocation, and where it applies —
-`global`, a panel type, or `@name` for a text field — followed by `⌨` when it also
-applies while typing ([[Keybindings]]).
+`config:open` opens the [[config panel]]. It lists every binding in effect: the key,
+the invocation, and where it applies — `global`, a panel type, or `@name` for a text
+field — followed by `⌨` when it also applies while typing ([[Keybindings]]).
 
-* ''Add or change'': fill in the form above the list — key, command, and optionally `when`, `focus` and `text-input` — and press ''Save''. ''Edit'' on a row copies it into the form.
+* ''Look up'' a key or a command: type it in the form. The table narrows to the keys it starts and to the bindings of that command, so whether a key is free shows before anything is saved.
+* ''Add'': fill in the form — key, command, and optionally `when`, `focus` and `text-input` — and press ''Save'' (or Enter).
+* ''Change'': ''Edit'' on a row copies it into the form; ''Save'' replaces that binding, wherever the form now puts it. Moving a command to another key is one save.
 * ''Unbind'': ''Remove'' on the row.
 
 A change applies at once, in every panel, and is written to the file.
 
-The view is usable from the keyboard alone. It opens with the key field focused, and
-the focus goes back there after a save. While it is open it takes every key: no
-binding runs behind it, so Tab walks its fields and buttons and
-Enter presses the focused one. Escape closes it.
+!!! What a save refuses
 
-Saving replaces the binding of the ''same key in the same place'' (same `when`, same
-`focus`). So giving a command another key is two steps: save it under the new key,
-then remove the old row. And changing only the `when` of a row adds a second
-binding beside the first.
+The GUI checks a binding before writing it, and the panel shows the same check as
+the form is typed, field by field; ''Save'' waits until nothing stands in the way.
 
-A key suggested by a panel or by `commands.js` is listed too, but is not in the
-file: there is nothing to remove, and the suggestion would be made again at the next
-start. ''Remove'' says so. Bind the same key in the same place to what you want
-instead: the file wins over a suggestion.
+* ''A command that does not exist.'' Only the first word is a name — a binding may pre-fill arguments (`panel:open here file`) — and a shell line (`!…`) names none. The commands known are those the command input lists: the shell's, every panel's, and `commands.js`'s.
+* ''A key already bound in the same place'' (same `when`, same `focus`) — to change what it runs, ''Edit'' its row. The same key elsewhere is no conflict: the most specific place wins where both apply.
+* ''A key that starts a sequence bound in the same place, or a sequence one of whose first keys is bound there alone'': a key alone runs before any sequence it starts, so one of the two could never run. `g` cannot join `g g` in one place.
+
+A key suggested by a panel or by `commands.js` is listed too, marked ''suggested'',
+but is not in the file: there is nothing to remove, and the suggestion would be made
+again at the next start. It has no ''Remove''. ''Edit'' it and save it in the same
+place to override it — the file wins over a suggestion; moving it is refused, since
+the panel would suggest it again.
 
 !! In the file
 
@@ -66,7 +67,7 @@ refused with the reason, and the
 bindings in effect stay. At startup the same mistake stops the GUI
 ([[No runtime fallback]]).
 
-The settings view edits this same file, and only the entry concerned: comments,
+The config panel edits this same file, and only the entry concerned: comments,
 order and layout are kept. That matters beyond tidiness — an update of metafolder
 merges the newly shipped keys into this file ([[Updating the configuration]]), and a
 file rewritten from top to bottom would conflict with every one of them.

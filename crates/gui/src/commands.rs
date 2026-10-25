@@ -5,7 +5,7 @@
 use crate::command_registry::{CommandDef, CommandRegistry};
 use crate::config::ConfigDir;
 use crate::daemon_proxy::{DaemonProxy, ProxyResponse};
-use crate::keybindings::{CompiledBinding, KeybindingSet};
+use crate::keybindings::{BindingCheck, BindingPlace, CompiledBinding, KeybindingSet};
 use crate::state::layout::{LayoutView, SlotId};
 use crate::state::workspace::{MessageEntry, ShellEntry, WorkspaceInfo};
 use crate::state::GuiState;
@@ -456,8 +456,10 @@ pub fn get_compiled_keybindings(app: AppHandle) -> Vec<CompiledBinding> {
     app.keybindings.lock_recover().compiled()
 }
 
-/// Settings view: upserts a keybinding in keybindings.toml, swaps in the
-/// recompiled set and pushes it to every document.
+/// Settings panel: binds a key in keybindings.toml — refused when the command
+/// does not exist or the key is taken in that place; `replacing` names the
+/// binding being edited, which the new one takes the place of (doc "Changing
+/// keybindings") — swaps in the recompiled set and pushes it to every document.
 #[tauri::command]
 pub fn set_user_keybinding(
     app: AppHandle,
@@ -466,23 +468,45 @@ pub fn set_user_keybinding(
     when: Option<String>,
     focus: Option<String>,
     text_input: Option<bool>,
+    replacing: Option<BindingPlace>,
 ) -> Result<Vec<CompiledBinding>, String> {
-    let set = app.config.set_user_keybinding(
-        &combo,
-        &command,
-        when.as_deref(),
-        focus.as_deref(),
-        text_input.unwrap_or(false),
-    )?;
+    let place = BindingPlace { combo, when, focus };
     let mut keybindings = app.keybindings.lock_recover();
-    *keybindings = set.with_suggestions_of(&keybindings);
+    *keybindings = app.config.save_user_keybinding(
+        &keybindings,
+        |name| app.registry.get(name).is_some(),
+        &place,
+        &command,
+        text_input.unwrap_or(false),
+        replacing.as_ref(),
+    )?;
     let compiled = keybindings.compiled();
     drop(keybindings);
     crate::push_keybindings(&app.gui, &compiled);
     Ok(compiled)
 }
 
-/// Settings view: unbinds a combo in keybindings.toml (reverting to a shipped
+/// Settings panel: what `set_user_keybinding` would refuse, field by field,
+/// without writing anything — shown while the form is typed.
+#[tauri::command]
+pub fn check_user_keybinding(
+    app: AppHandle,
+    combo: String,
+    command: String,
+    when: Option<String>,
+    focus: Option<String>,
+    replacing: Option<BindingPlace>,
+) -> BindingCheck {
+    let place = BindingPlace { combo, when, focus };
+    app.keybindings.lock_recover().check(
+        |name| app.registry.get(name).is_some(),
+        &place,
+        &command,
+        replacing.as_ref(),
+    )
+}
+
+/// Settings panel: unbinds a combo in keybindings.toml (reverting to a shipped
 /// default is a git operation on the config repo, not done here).
 #[tauri::command]
 pub fn remove_user_keybinding(
@@ -509,7 +533,7 @@ pub fn remove_user_keybinding(
     Ok(compiled)
 }
 
-/// Config paths shown in the settings view.
+/// Config paths shown in the settings panel.
 #[derive(Serialize)]
 pub struct ConfigInfo {
     pub root: String,

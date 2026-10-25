@@ -11,7 +11,6 @@
   import FindBar from './components/FindBar.svelte';
   import StatusBar from './components/StatusBar.svelte';
   import TaskBar from './components/TaskBar.svelte';
-  import ConfigOverlay from './components/ConfigOverlay.svelte';
   import PanelHost from './lib/panels/PanelHost.svelte';
 
   let failure = $state<string | null>(null);
@@ -105,9 +104,6 @@
     {/if}
   </div>
   <PanelHost />
-  {#if store.ui.configOpen}
-    <ConfigOverlay />
-  {/if}
 {:else}
   <div class="loading">Loading…</div>
 {/if}

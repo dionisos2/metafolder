@@ -210,6 +210,54 @@ declare namespace Metafolder {
     /** What joins the columns of a multi-column completion label (config.toml
      *  `[completion].label-separator`, doc "Completion views"). */
     labelSeparator(): Promise<string>;
+    /** Where the configuration files are (the settings panel). */
+    info(): Promise<ConfigInfo>;
+    /** What saving `binding` would refuse, field by field, without writing
+     *  (doc "Changing keybindings"). */
+    checkKeybinding(binding: KeybindingDraft): Promise<KeybindingCheck>;
+    /** Binds a key in `keybindings.toml`: refused when the command does not
+     *  exist or the key is taken in that place. `replacing` is the binding
+     *  being edited, which the new one takes the place of. Resolves to the
+     *  table now in effect. */
+    setKeybinding(binding: KeybindingDraft & { textInput: boolean }): Promise<Binding[]>;
+    /** Unbinds a key of `keybindings.toml`; refused for a suggested one. */
+    removeKeybinding(place: BindingPlace): Promise<Binding[]>;
+  }
+
+  interface ConfigInfo {
+    root: string;
+    style_css: string;
+    keybindings: string;
+    panel_types: string;
+  }
+
+  /** Where a binding applies: its combo and its scope. */
+  interface BindingPlace {
+    combo: string;
+    when: string | null;
+    focus: string | null;
+  }
+
+  /** A binding as the settings panel's form holds it. */
+  interface KeybindingDraft extends BindingPlace {
+    command: string;
+    replacing: BindingPlace | null;
+  }
+
+  /** Why a binding would be refused: per field, null where nothing stands
+   *  in the way. */
+  interface KeybindingCheck {
+    command: string | null;
+    key: string | null;
+  }
+
+  /** A registered command (`CommandDef`). */
+  interface CommandDef {
+    name: string;
+    label: string;
+    /** The panel type that registered it; null for the shell's own and
+     *  `commands.js`'s. */
+    owner: string | null;
   }
 
   interface Workspace {
@@ -387,6 +435,8 @@ declare namespace Metafolder {
      *  `keybindings.toml` and the panel suggestions add up to. A snapshot: call
      *  it again to see a rebinding (doc "How the help panel finds a page"). */
     keybindings(): Promise<Binding[]>;
+    /** Every registered command, as the command input lists them. */
+    list(): Promise<CommandDef[]>;
   }
 
   /** One compiled keybinding (`CompiledBinding`): a combo *sequence*, the
@@ -397,6 +447,8 @@ declare namespace Metafolder {
     when: string | null;
     text_input: boolean;
     focus: string | null;
+    /** Suggested by a panel or `commands.js`: in effect, not in the file. */
+    suggested: boolean;
   }
 
   interface FsEntry {

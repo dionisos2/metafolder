@@ -2505,7 +2505,10 @@ async function runCommand(
       return true;
     }
     case "config:open":
-      store.ui.configOpen = true;
+      await invoke("panel_set_type", {
+        slot: context.slot,
+        panelType: "config",
+      });
       return true;
     case "ignore:add":
     case "ignore:remove":

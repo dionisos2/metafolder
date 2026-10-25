@@ -1,0 +1,12 @@
+title: $:/mf/gen/Panel/config panel
+catalog: Panel
+target: config panel
+summary: The config panel type
+
+!! Commands
+
+None of its own.
+
+!! Generic commands
+
+Provides ``refresh`` to [[Generic panel commands]].

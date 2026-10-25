@@ -62,13 +62,6 @@ export interface StatusMessage {
   timeout_ms: number | null;
 }
 
-export interface ConfigInfo {
-  root: string;
-  style_css: string;
-  keybindings: string;
-  panel_types: string;
-}
-
 export interface InitialState {
   workspaces: WorkspaceInfo[];
   layout: LayoutView;
