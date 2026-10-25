@@ -150,7 +150,7 @@ export async function mount(root, metafolder) {
     },
   });
 
-  // Where the next line runs, before the `$`: the selection's folder, or
+  // Where the next line runs, above the `$`: the selection's folder, or
   // where the previous line's `cd` left the shell while the selection stays
   // (doc "shell panel"). Asked again whenever either may have moved.
   async function showCwd() {
@@ -159,6 +159,7 @@ export async function mount(root, metafolder) {
     // that trims a long path from its start.
     cwd.textContent = dir === null ? '' : '\u200e' + dir;
     cwd.title = dir ?? '';
+    cwd.hidden = dir === null;
   }
   shell.onCwd(() => void showCwd());
   metafolder.workspace.onChange('selected_paths', () => void showCwd());

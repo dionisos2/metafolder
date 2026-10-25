@@ -54,6 +54,10 @@ pub struct Settings {
     /// Where a video's thumbnail frame is taken, in percent of its duration
     /// (0–100): far enough in to pass a black lead-in or a title card.
     pub video_thumbnail_percent: f64,
+    /// The bash rc file a shell line loads first, for the user's aliases,
+    /// functions and variables (doc "shell panel"); `~/` is the home
+    /// directory. Empty: no rc file, the line runs in a plain `sh`.
+    pub shell_rc: String,
 }
 
 impl Default for Settings {
@@ -64,6 +68,7 @@ impl Default for Settings {
             repo_list_cache_ttl_secs: 3,
             slow_operation_threshold_ms: metafolder_core::slowlog::DEFAULT_THRESHOLD_MS,
             video_thumbnail_percent: 10.0,
+            shell_rc: "~/.bashrc".into(),
         }
     }
 }

@@ -89,21 +89,26 @@
         word-break: break-all;
       }
       #prompt {
-        display: flex;
-        align-items: center;
-        gap: 6px;
         padding: 4px 8px;
         border-top: 1px solid var(--mf-border, #3a3a44);
         font-family: var(--mf-font-mono, monospace);
         font-size: 0.9em;
       }
+      #entry {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
       #cwd {
-        /* A long path keeps its end, the part that says where you are. */
-        max-width: 40%;
+        /* On a line of its own above the input, which keeps the whole width.
+           A long path keeps its end, the part that says where you are. */
+        margin-bottom: 2px;
         overflow: hidden;
         white-space: nowrap;
         text-overflow: ellipsis;
         direction: rtl;
+        /* rtl would push a path that fits to the right. */
+        text-align: left;
         color: var(--mf-accent, #3d5a80);
       }
       #sigil {
@@ -130,8 +135,11 @@
     <div id="log"><div id="empty">No shell line run yet: type one below, or ! in the command input.</div></div>
     <div id="candidates" hidden></div>
     <div id="prompt">
-      <span id="cwd"></span><span id="sigil">$</span>
-      <input id="line" type="text" spellcheck="false" autocomplete="off" aria-label="Shell line" placeholder="a shell line — Enter runs it, Tab completes" />
+      <div id="cwd" hidden></div>
+      <div id="entry">
+        <span id="sigil">$</span>
+        <input id="line" type="text" spellcheck="false" autocomplete="off" aria-label="Shell line" placeholder="a shell line — Enter runs it, Tab completes" />
+      </div>
     </div>
   </body>
 </html>

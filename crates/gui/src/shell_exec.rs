@@ -21,19 +21,22 @@ pub async fn run_to_completion(
     ws_id: String,
     command_line: String,
 ) -> Result<(), String> {
-    run_in(gui, ws_id, command_line, None, None).await
+    run_in(gui, ws_id, command_line, None, None, None).await
 }
 
 /// [`run_to_completion`], the subprocess passed `context` as
 /// `METAFOLDER_LABEL`: every `mf` it starts writes in that label (doc
 /// "Labels and contexts"). `root` is the workspace repository's root, where
-/// a line runs with nothing selected ([`working_dir`]).
+/// a line runs with nothing selected ([`working_dir`]). With `rc`, the line
+/// runs in an interactive `bash` that has loaded that file first (config
+/// `shell-rc`, [`rc_path`]); without, in a plain `sh`.
 pub async fn run_in(
     gui: Arc<GuiState>,
     ws_id: String,
     command_line: String,
     context: Option<metafolder_core::context::Context>,
     root: Option<PathBuf>,
+    rc: Option<&Path>,
 ) -> Result<(), String> {
     // A per-run id the subprocess can address its own progress with
     // (`mf gui progress` reads it from METAFOLDER_GUI_TASK); session-unique.
@@ -53,18 +56,29 @@ pub async fn run_in(
     let cwd_file = metafolder_core::auth::runtime_dir()
         .ok()
         .map(|dir| dir.join(format!("shell-cwd-{}-{task_id}", std::process::id())));
-    let script = match &cwd_file {
+    let line = match &cwd_file {
         Some(file) => format!("trap 'pwd > {}' EXIT; {command_line}", shell_quote(file)),
         None => command_line.clone(),
     };
-    let mut command = Command::new("sh");
+    let mut command = match rc {
+        None => {
+            let mut command = Command::new("sh");
+            command.arg("-c").arg(&line);
+            // Its own process group, so `script:stop` can signal the script
+            // *and* every child it spawned (the `mf gui input` blocked on a
+            // question above all) with one killpg — signalling the shell alone
+            // would leave those behind.
+            #[cfg(unix)]
+            command.process_group(0);
+            command
+        }
+        Some(rc) => interactive_bash(rc, &line),
+    };
     if let Some(dir) = working_dir(&place, root.as_deref()) {
         // `PWD` too, or `pwd` names the GUI's directory's resolution of it.
         command.current_dir(&dir).env("PWD", &dir);
     }
     command
-        .arg("-c")
-        .arg(&script)
         .env("METAFOLDER_GUI_TASK", &task_id)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -73,11 +87,6 @@ pub async fn run_in(
         // The GUI's own context, if it was started in one, is not the run's.
         None => command.env_remove(metafolder_core::context::LABEL_ENV),
     };
-    // Its own process group, so `script:stop` can signal the script *and* every
-    // child it spawned (the `mf gui input` blocked on a question above all) with
-    // one killpg — signalling the shell alone would leave those behind.
-    #[cfg(unix)]
-    command.process_group(0);
     let mut child = command.spawn().map_err(|e| format!("cannot run shell command: {e}"))?;
 
     // Show a running indicator until this function returns (doc
@@ -134,6 +143,61 @@ pub async fn run_in(
         );
     }
     Ok(())
+}
+
+/// The shell rc file a config `shell-rc` value names: `~/` is the home
+/// directory, and an empty value is none (the line runs in a plain `sh`).
+pub fn rc_path(setting: &str) -> Option<PathBuf> {
+    if setting.is_empty() {
+        return None;
+    }
+    match (setting.strip_prefix("~/"), std::env::var_os("HOME")) {
+        (Some(rest), Some(home)) => Some(PathBuf::from(home).join(rest)),
+        _ => Some(PathBuf::from(setting)),
+    }
+}
+
+/// `bash` running `line` with the user's configuration (doc "shell panel").
+///
+/// The shell is interactive (`-i`), for a `.bashrc` stops at once in any other
+/// — the guard every distribution ships — and aliases expand only there; it
+/// loads `rc` itself (`--norc`, then `.`), so that the rest follows:
+///
+/// * an interactive bash with no terminal complains about it before reading
+///   anything, so it starts with its stderr on `/dev/null` and the real one
+///   on fd 3, given back first thing — the rc file's own errors still show;
+/// * the line runs in a subshell, which is not interactive: an `exit` there
+///   prints no `exit`, and dies of `SIGTERM`, which the interactive shell
+///   ignores — its exit status is then the shell's;
+/// * a new session with no controlling terminal (`setsid`, a process group of
+///   its own for `script:stop` too): with the terminal the GUI was started
+///   from, an interactive bash in a background group would stop itself trying
+///   to take it over.
+///
+/// Each step is on its own line: an alias the rc file defines applies only
+/// to the lines read after it.
+fn interactive_bash(rc: &Path, line: &str) -> Command {
+    let rc = shell_quote(rc);
+    let script = format!("exec 2>&3 3>&-\n[ -r {rc} ] && . {rc}\n(\n{line}\n)");
+    let mut command = Command::new("bash");
+    command.arg("--norc").arg("-i").arg("-c").arg(script);
+    #[cfg(unix)]
+    // SAFETY: only async-signal-safe calls between fork and exec, on a
+    // C string that needs no allocation.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() == -1 || libc::dup2(2, 3) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            let null = libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY);
+            if null == -1 || libc::dup2(null, 2) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            libc::close(null);
+            Ok(())
+        });
+    }
+    command
 }
 
 /// Where a shell line runs (doc "shell panel"): where the previous line's
@@ -262,13 +326,17 @@ pub fn run_shell(
     let gui = app.gui.clone();
     let daemon = app.daemon.clone();
     let message_ms = app.status_timeouts().message_ms;
+    let rc = rc_path(&app.settings.shell_rc);
     tauri::async_runtime::spawn(async move {
         let context = match label {
             Some(name) => open_context(&gui, &daemon, &ws_id, &name).await,
             None => plain_line_context(&gui, &ws_id),
         };
         let root = repo_root(&gui, &daemon, &ws_id).await;
-        if let Err(error) = run_in(gui.clone(), ws_id.clone(), command_line, context, root).await {
+        let rc = rc.as_deref();
+        if let Err(error) =
+            run_in(gui.clone(), ws_id.clone(), command_line, context, root, rc).await
+        {
             let _ = gui.post_status(&ws_id, &error, "error", Some(message_ms));
         }
     });
@@ -377,8 +445,8 @@ mod tests {
         let gui = gui();
         let context = metafolder_core::context::Context { repo: uuid::Uuid::nil(), label: 7 };
         let line = "echo \"in:${METAFOLDER_LABEL:-none}\"";
-        run_in(gui.clone(), "ws-1".into(), line.into(), Some(context), None).await.unwrap();
-        run_in(gui.clone(), "ws-1".into(), line.into(), None, None).await.unwrap();
+        run_in(gui.clone(), "ws-1".into(), line.into(), Some(context), None, None).await.unwrap();
+        run_in(gui.clone(), "ws-1".into(), line.into(), None, None, None).await.unwrap();
         let log = gui.shell_log("ws-1").unwrap();
         let out: Vec<&str> =
             log.iter().filter(|e| e.kind == ShellLine::Stdout).map(|e| e.text.as_str()).collect();
@@ -488,10 +556,10 @@ mod tests {
         let dir = scratch("cd");
         let gui = gui();
         gui.set_var("ws-1", "selected_paths", json!([dir.join("sub/file.txt")])).unwrap();
-        run_in(gui.clone(), "ws-1".into(), "pwd; cd ..".into(), None, None).await.unwrap();
-        run_in(gui.clone(), "ws-1".into(), "pwd".into(), None, None).await.unwrap();
+        run_in(gui.clone(), "ws-1".into(), "pwd; cd ..".into(), None, None, None).await.unwrap();
+        run_in(gui.clone(), "ws-1".into(), "pwd".into(), None, None, None).await.unwrap();
         gui.set_var("ws-1", "selected_paths", json!([dir.join("sub")])).unwrap();
-        run_in(gui.clone(), "ws-1".into(), "pwd".into(), None, None).await.unwrap();
+        run_in(gui.clone(), "ws-1".into(), "pwd".into(), None, None, None).await.unwrap();
         let sub = dir.join("sub").to_string_lossy().into_owned();
         assert_eq!(stdout(&gui), [sub.clone(), dir.to_string_lossy().into_owned(), sub]);
         std::fs::remove_dir_all(&dir).unwrap();
@@ -503,11 +571,83 @@ mod tests {
         let dir = scratch("fail");
         let gui = gui();
         let line = format!("cd '{}' && exit 4", dir.display());
-        run_in(gui.clone(), "ws-1".into(), line, None, None).await.unwrap();
+        run_in(gui.clone(), "ws-1".into(), line, None, None, None).await.unwrap();
         let log = gui.shell_log("ws-1").unwrap();
         assert_eq!(log.last().unwrap().text, "exit 4");
         assert_eq!(gui.shell_place("ws-1").unwrap().cd, Some(dir.clone()));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A shell rc file in a scratch directory, guarded the way a distribution's
+    /// `.bashrc` is: it loads only in an interactive shell.
+    fn rc_file(dir: &Path, body: &str) -> PathBuf {
+        let rc = dir.join("bashrc");
+        std::fs::write(&rc, format!("[[ $- != *i* ]] && return\n{body}\n")).unwrap();
+        rc
+    }
+
+    async fn run_rc(gui: &Arc<GuiState>, line: &str, rc: &Path) {
+        run_in(gui.clone(), "ws-1".into(), line.into(), None, None, Some(rc)).await.unwrap();
+    }
+
+    /// With a shell rc file, a line has the user's configuration — an alias, a
+    /// function, a variable — even behind the interactive guard, and bash's
+    /// complaints about having no terminal are not shown (doc "shell panel").
+    #[tokio::test]
+    async fn test_a_line_has_the_rc_files_configuration() {
+        let dir = scratch("rc");
+        let rc = rc_file(&dir, "alias hi='echo aliased'\nf() { echo func; }\nexport MF_RC=var");
+        let gui = gui();
+        run_rc(&gui, "hi; f; echo $MF_RC", &rc).await;
+        let log = gui.shell_log("ws-1").unwrap();
+        let lines: Vec<(ShellLine, &str)> =
+            log.iter().skip(1).map(|e| (e.kind, e.text.as_str())).collect();
+        assert_eq!(
+            lines,
+            [
+                (ShellLine::Stdout, "aliased"),
+                (ShellLine::Stdout, "func"),
+                (ShellLine::Stdout, "var")
+            ]
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The rc file's own errors are shown; an `exit` keeps its status and adds
+    /// no `exit` line; a `cd` still carries over.
+    #[tokio::test]
+    async fn test_a_line_with_an_rc_file_keeps_errors_status_and_cd() {
+        let dir = scratch("rc-exit");
+        let rc = rc_file(&dir, "echo rc-says >&2");
+        let gui = gui();
+        run_rc(&gui, &format!("cd '{}' && exit 4", dir.display()), &rc).await;
+        let log = gui.shell_log("ws-1").unwrap();
+        let lines: Vec<(ShellLine, &str)> =
+            log.iter().skip(1).map(|e| (e.kind, e.text.as_str())).collect();
+        assert_eq!(lines, [(ShellLine::Stderr, "rc-says"), (ShellLine::Status, "exit 4")]);
+        assert_eq!(gui.shell_place("ws-1").unwrap().cd, Some(dir.clone()));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A missing rc file is skipped, as bash skips a missing `.bashrc`.
+    #[tokio::test]
+    async fn test_a_missing_rc_file_is_skipped() {
+        let dir = scratch("rc-missing");
+        let gui = gui();
+        run_rc(&gui, "echo ran", &dir.join("nowhere")).await;
+        let log = gui.shell_log("ws-1").unwrap();
+        let lines: Vec<&str> = log.iter().skip(1).map(|e| e.text.as_str()).collect();
+        assert_eq!(lines, ["ran"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// `~/` names the home directory, as in bash.
+    #[test]
+    fn test_the_rc_path_expands_the_home_directory() {
+        let home = std::env::var("HOME").unwrap();
+        assert_eq!(rc_path("~/.bashrc"), Some(PathBuf::from(home).join(".bashrc")));
+        assert_eq!(rc_path("/etc/rc"), Some(PathBuf::from("/etc/rc")));
+        assert_eq!(rc_path(""), None);
     }
 
     #[tokio::test]
@@ -582,10 +722,20 @@ mod tests {
         notifier: &Arc<RecordingNotifier>,
         command_line: &str,
     ) -> (String, tokio::task::JoinHandle<Result<(), String>>) {
+        started_with(gui, notifier, command_line, None).await
+    }
+
+    /// [`started`], the line run with the shell rc file `rc`.
+    async fn started_with(
+        gui: &Arc<GuiState>,
+        notifier: &Arc<RecordingNotifier>,
+        command_line: &str,
+        rc: Option<PathBuf>,
+    ) -> (String, tokio::task::JoinHandle<Result<(), String>>) {
         let running = tokio::spawn({
             let gui = gui.clone();
             let command_line = command_line.to_string();
-            async move { run_to_completion(gui, "ws-1".into(), command_line).await }
+            async move { run_in(gui, "ws-1".into(), command_line, None, None, rc.as_deref()).await }
         });
         for _ in 0..100 {
             let payloads = notifier.payloads(crate::events::SCRIPT_TASK_CHANGED);
@@ -621,6 +771,23 @@ mod tests {
         assert!(killed.is_ok(), "nothing survives the kill");
         let statuses = notifier.payloads(crate::events::STATUS_MESSAGE);
         assert_eq!(statuses.last().unwrap()["text"], json!("trap '' TERM; sleep 30 killed"));
+    }
+
+    /// The interactive shell that loads the rc file ignores `SIGTERM`, as
+    /// every interactive bash does: the stop must still end the line.
+    #[tokio::test]
+    async fn test_a_line_with_an_rc_file_is_stopped() {
+        let dir = scratch("rc-stop");
+        let rc = rc_file(&dir, "");
+        let notifier = Arc::new(RecordingNotifier::new());
+        let gui = Arc::new(GuiState::new(notifier.clone()));
+        let (task_id, running) =
+            started_with(&gui, &notifier, "sleep 30 & sleep 30", Some(rc)).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(stop_script(&gui, &task_id, Stop::Terminate));
+        let stopped = tokio::time::timeout(Duration::from_secs(5), running).await;
+        assert!(stopped.is_ok(), "the stopped line must not outlive its stop");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
