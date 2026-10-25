@@ -136,6 +136,11 @@
       #help-results li:hover {
         background: var(--mf-bg-raised, #26262e);
       }
+      /* The result under the cursor (the arrows move it, Enter opens it). */
+      #help-results li.selected {
+        background: var(--mf-bg-raised, #26262e);
+        box-shadow: inset 3px 0 0 var(--mf-accent, #6ea8fe);
+      }
       #help-results .result-title {
         font-weight: bold;
       }

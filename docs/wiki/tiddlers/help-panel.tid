@@ -34,6 +34,16 @@ The box behaves like the query fields of the [[metarecord-list panel]]:
 |<<key "cursor:parent self" Left>> |up to the page's topic — the page of its first tag ([[Generic panel commands]]) |
 |<<key "help:open-hints" d>> |label the links in view with letters, to follow one (below) |
 
+Out of the box, the panel has a cursor ([[Generic panel commands]]):
+
+|<<key "cursor:next self" "↓ or j">> / <<key "cursor:prev self" "↑ or k">> |over the results of a search: the next / previous result; over a page: scroll it down / up |
+|<<key "cursor:first self" Home>> / <<key "cursor:last self" End>> |the first / last result; the top / bottom of a page |
+|<<key "cursor:descend self" Enter>> |open the result under the cursor |
+
+It provides `index`, `count`, `select`, `descend` and `parent`. Over a page, the
+rows of the cursor are steps of its scrolling, about two lines each: a page has
+no rows to move between, and the arrows scroll it, as they do in a browser.
+
 !! A page
 
 A page starts with its title. Above the text are its topics, as buttons opening each topic's own page, and a badge

@@ -14,4 +14,4 @@ summary: The help panel type
 
 !! Generic commands
 
-Provides ``parent`` to [[Generic panel commands]].
+Provides ``index``, ``count``, ``select``, ``descend``, ``parent`` to [[Generic panel commands]].

@@ -272,8 +272,7 @@
 # ── Panel navigation and actions ─────────────────────────────────────────────
 # Moving a cursor is one generic command for every panel (doc "Generic panel
 # commands"): `cursor:next self` runs in the focused panel, and only in a panel
-# that has a cursor — elsewhere the key passes through (the help scrolls with
-# the arrows). Naming a panel type instead drives that one: in the `file`
+# that has a cursor — elsewhere the key passes through. Naming a panel type instead drives that one: in the `file`
 # panel the arrows still move the metarecord-list selection (the file panel
 # follows through selected_paths), and so do they while typing in its finder.
 
@@ -327,6 +326,8 @@
   # `file-manager:activate`, which also shows a file.
   { command = "cursor:descend self", when = "path-ref" },
   { command = "cursor:descend self", when = "log" },
+  # The help opens the result under its cursor (doc "help panel").
+  { command = "cursor:descend self", when = "help" },
   { command = "trash:restore", when = "trash" },
   { command = "panel:open other file", when = "recent" },
   { command = "duplicates:activate other", when = "duplicates" },

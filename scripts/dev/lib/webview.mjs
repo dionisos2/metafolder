@@ -18,6 +18,8 @@
 //       prints that element's text (an input's: its value)
 //   zoom <selector> [<text> [<inner selector> [<inner text>]]]
 //       prints the CSS zoom of the panel body holding that element
+//   scroll <selector> [<text> [<inner selector> [<inner text>]]]
+//       prints how far that element is scrolled down (its scrollTop, rounded)
 // Exit status: 0 done, 1 not exactly one element matches (nothing clicked),
 // 2 no page or a protocol error.
 
@@ -54,6 +56,7 @@ function inPage(action, args) {
   if (action === 'zoom') {
     return getComputedStyle(hit.closest('.mf-panel-body') ?? hit).zoom;
   }
+  if (action === 'scroll') return Math.round(hit.scrollTop);
   if (hit instanceof HTMLInputElement || hit instanceof HTMLTextAreaElement) return hit.value;
   return (hit.textContent ?? '').trim();
 }
@@ -63,7 +66,7 @@ function fail(code, message) {
   process.exit(code);
 }
 
-if (!['ready', 'click', 'text', 'zoom'].includes(action)) fail(2, `unknown action ${action}`);
+if (!['ready', 'click', 'text', 'zoom', 'scroll'].includes(action)) fail(2, `unknown action ${action}`);
 if (action !== 'ready' && !args[0]) fail(2, `${action} needs a selector`);
 
 const timer = setTimeout(() => fail(2, `no answer from the page within ${TIMEOUT_MS} ms`), TIMEOUT_MS);

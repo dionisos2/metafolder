@@ -36,10 +36,15 @@ A script names the panel it drives (`mf gui command "cursor:next trash"`), so
 what it does does not depend on where the focus happens to be.
 
 A panel that lacks a function the command needs answers with an error:
-`cursor:next is not implemented for the help panel`. A ''key'' bound to the
+`cursor:next is not implemented for the message panel`. A ''key'' bound to the
 command does not get that far: a binding fires only where its command applies,
-so in a panel without a cursor the key passes through as if it were not bound,
-and the help scrolls with the arrows as before ([[Keybindings]]).
+so in a panel without a cursor the key passes through as if it were not bound
+([[Keybindings]]).
+
+A panel whose rows are not always rows can still have a cursor at all times:
+the [[help panel]]'s rows are the results of a search while it lists some, and
+steps of the page's scrolling while it shows one, so the arrows scroll a page.
+What a panel provides is the same at every moment; what its rows are need not be.
 
 !! Providing the functions
 

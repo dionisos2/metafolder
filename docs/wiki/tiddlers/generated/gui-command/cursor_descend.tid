@@ -9,6 +9,7 @@ summary: Take a panel into the row under its cursor (self / a panel type)
 
 !! Default keys
 
+* ``enter`` → ``cursor:descend self`` (in the ``help`` panel)
 * ``enter`` → ``cursor:descend self`` (in the ``log`` panel)
 * ``enter`` → ``cursor:descend self`` (in the ``path-ref`` panel)
 * ``right`` → ``cursor:descend self``

@@ -191,10 +191,17 @@ export async function mount(root, metafolder) {
     pageInfo.hidden = items.length === 0;
   }
 
+  // The results listed, and the one under the cursor (-1: none yet).
+  /** @type {{id: string, row: HTMLElement}[]} */
+  let shownHits = [];
+  let resultCursor = -1;
+
   /** @param {string} term */
   function showGrep(term) {
     endHints();
     shownPage = null;
+    shownHits = [];
+    resultCursor = -1;
     content.hidden = true;
     content.replaceChildren();
     title.hidden = true;
@@ -205,16 +212,25 @@ export async function mount(root, metafolder) {
       results.replaceChildren(el('li', { class: 'result-empty' }, `No help page matches "${term}".`));
       return;
     }
-    results.replaceChildren(
-      ...hits.map((hit) =>
-        el(
-          'li',
-          { onclick: () => open(hit.id) },
-          el('span', { class: 'result-title' }, hit.title),
-          hit.snippet ? el('span', { class: 'result-snippet' }, hit.snippet) : '',
-        ),
+    shownHits = hits.map((hit) => ({
+      id: hit.id,
+      row: el(
+        'li',
+        { onclick: () => open(hit.id) },
+        el('span', { class: 'result-title' }, hit.title),
+        hit.snippet ? el('span', { class: 'result-snippet' }, hit.snippet) : '',
       ),
-    );
+    }));
+    results.replaceChildren(...shownHits.map((hit) => hit.row));
+  }
+
+  /** @param {number} i */
+  function selectResult(i) {
+    shownHits[resultCursor]?.row.classList.remove('selected');
+    resultCursor = i;
+    const row = shownHits[i]?.row;
+    row?.classList.add('selected');
+    row?.scrollIntoView({ block: 'nearest' });
   }
 
   // Open a page directly (used by result rows and in-page links): also reflect
@@ -364,8 +380,31 @@ export async function mount(root, metafolder) {
     handler: openHints,
   });
 
+  // The cursor (doc "help panel"): over a list of results, its rows are the
+  // results, and Enter (`cursor:descend self`) opens the one under it; over a
+  // page, its rows are steps of the page's scrolling, so the arrows scroll it
+  // and Home/End go to its top and bottom.
+  const maxScroll = () => Math.max(0, scroll.scrollHeight - scroll.clientHeight);
+  const pageSteps = () => Math.ceil(maxScroll() / SCROLL_STEP) + 1;
+  const onResults = () => !results.hidden;
   // Left (`cursor:parent self`): up to the topic the page belongs to.
   metafolder.provide({
+    index: () => {
+      if (onResults()) return resultCursor;
+      return scroll.scrollTop >= maxScroll()
+        ? pageSteps() - 1
+        : Math.floor(scroll.scrollTop / SCROLL_STEP);
+    },
+    count: () => (onResults() ? shownHits.length : pageSteps()),
+    select: (_mf, /** @type {number} */ i) => {
+      if (onResults()) selectResult(i);
+      else scroll.scrollTop = Math.min(i * SCROLL_STEP, maxScroll());
+    },
+    descend: (_mf, /** @type {number} */ i) => {
+      const hit = onResults() ? shownHits[i] : undefined;
+      if (hit) open(hit.id);
+      return hit !== undefined;
+    },
     parent: () => {
       const parent = shownPage === null ? null : parentPage(manifest, shownPage);
       if (parent) open(parent.id);
@@ -396,6 +435,9 @@ export async function mount(root, metafolder) {
   // panel-type selector).
   metafolder.whenVisible(() => searchInput.focus());
 }
+
+// How far one step of the cursor scrolls a page, in pixels: about two lines.
+const SCROLL_STEP = 40;
 
 // The letters of the hint labels, the home row first.
 const HINT_ALPHABET = 'asdfghjklqwertyuiopzxcvbnm';

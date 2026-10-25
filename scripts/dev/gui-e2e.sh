@@ -50,7 +50,7 @@
 #   field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script
 #   script-workspaces errors picker refs hierarchy hierarchy-form prompt history
 #   keybindings open-with tab-close pick-button suggested-key config-files walk open-viewers
-#   slideshow shell-line shell-cwd repos-memory help-keys zoom order user-commands
+#   slideshow shell-line shell-cwd repos-memory help-keys help-cursor zoom order user-commands
 #   settle macro, and
 #   devtools last (it takes the inspector the clicking scenarios drive).
 #   --unsandboxed  pass --allow-unsandboxed-webview to the GUI (a container
@@ -83,7 +83,7 @@ done
     || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close
         pick-button suggested-key walk open-viewers slideshow shell-line shell-cwd repos-memory
-        help-keys zoom refresh order user-commands settle macro devtools)
+        help-keys help-cursor zoom refresh order user-commands settle macro devtools)
 
 # shellcheck source=lib/daemon-fixture.sh
 . scripts/dev/lib/daemon-fixture.sh
@@ -366,6 +366,12 @@ reads() {
     local want=$1
     shift
     [ "$(webview text "$@" 2>/dev/null)" = "$want" ]
+}
+# not_reads <value> <selector…> — one such element is shown, its text is not <value>.
+not_reads() {
+    local want=$1 got
+    shift
+    got=$(webview text "$@" 2>/dev/null) && [ "$got" != "$want" ]
 }
 
 # ── scenarios ────────────────────────────────────────────────────────────────
@@ -1542,6 +1548,45 @@ scenario_help_keys() {
     assert "help-keys: s empties the box and goes into it" until_ok 10 reads "trash" "#help-search"
     keys Return c
     assert "help-keys: c empties the box" until_ok 10 reads "" "#help-search"
+}
+
+# The help's cursor (doc "help panel"): over a list of results, the arrows move
+# it and Enter opens the page under it; over a page, they scroll the page.
+scenario_help_cursor() {
+    needs_keyboard help-cursor || return 0
+    new_repo help-cursor
+    show_panel left help help:focus search
+    keys ctrl+a
+    typed "#trash"
+    assert "help-cursor: the search is typed" until_ok 10 reads "#trash" "#help-search"
+    # Leaves the box, once its effect is visible: a Return typed would race
+    # the Down after it, which the box would still take.
+    run help:apply search
+    keys Down
+    assert "help-cursor: Down puts the cursor on the first result" \
+        until_ok 10 shows "#help-results li.selected"
+    local first
+    first=$(webview text "#help-results li.selected" "" ".result-title")
+    # The first result's title, which some page has (an empty one never matches).
+    is_first() { [ -n "$first" ] && reads "$first" "$@"; }
+    keys Down
+    assert "help-cursor: Down again moves it to the next one" \
+        until_ok 10 not_reads "$first" "#help-results li.selected" "" ".result-title"
+    keys Up
+    assert "help-cursor: Up moves it back" \
+        until_ok 10 is_first "#help-results li.selected" "" ".result-title"
+    keys Return
+    assert "help-cursor: Enter opens the page under the cursor" \
+        until_ok 10 is_first "#help-title"
+    # A page long enough to scroll, the focus out of the box help:open puts it in.
+    run help:open the-metafolder-api
+    run help:apply search
+    assert "help-cursor: a long page is shown" until_ok 10 shows "#help-title" "The metafolder API"
+    scrolled() { [ "$(webview scroll "#help-scroll" 2>/dev/null)" "$1" 0 ]; }
+    keys Down Down
+    assert "help-cursor: on a page, Down scrolls it" until_ok 10 scrolled -gt
+    keys Home
+    assert "help-cursor: Home goes back to its top" until_ok 10 scrolled -eq
 }
 
 # + - 0 zoom the focused panel as a whole (doc "view:zoom"), and the zoom is
