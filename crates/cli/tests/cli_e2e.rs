@@ -5648,6 +5648,10 @@ fn test_slow_lists_the_log_newest_first_and_clears_it() {
     assert_ok(&out);
     assert_eq!(out.stdout.lines().count(), 1, "{}", out.stdout);
     assert!(out.stdout.contains("\"op\":\"POST /repos/:repo/query\""), "{}", out.stdout);
+    // `mf slow` is `mf slow list`, options included.
+    let out = mf(&["-u", &repo, "slow", "--min", "3s", "--json"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.lines().count(), 1, "{}", out.stdout);
     let out = mf(&["-u", &repo, "slow", "list", "--min", "1m"]);
     assert_ok(&out);
     assert!(out.stdout.contains("Nothing took 1m or more"), "{}", out.stdout);

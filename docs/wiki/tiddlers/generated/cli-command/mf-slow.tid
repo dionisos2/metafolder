@@ -8,7 +8,8 @@ summary: Slow-operation log: what took seconds, and where the time went
 ```
 Slow-operation log: what took seconds, and where the time went
 
-Usage: mf slow [COMMAND]
+Usage: mf slow [OPTIONS]
+       mf slow <COMMAND>
 
 Commands:
   list    List the slow operations, newest first — the default
@@ -17,6 +18,23 @@ Commands:
   help    Print this message or the help of the given subcommand(s)
 
 Options:
+      --limit <LIMIT>
+          How many entries to show (newest first)
+          
+          [default: 50]
+
+  -d, --since <SINCE>
+          Only entries from the last duration (e.g. 30m, 12h, 7d)
+
+      --op <OP>
+          Only entries whose operation contains this substring
+
+      --min <MIN>
+          Only entries that took at least this long (e.g. 30s, 2m, 1h)
+
+      --json
+          Print the raw entries, one JSON object per line
+
   -h, --help
           Print help
 ```

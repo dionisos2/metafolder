@@ -62,7 +62,11 @@ enum Command {
         command: Option<LogCommand>,
     },
     /// Slow-operation log: what took seconds, and where the time went
+    #[command(args_conflicts_with_subcommands = true)]
     Slow {
+        /// `mf slow` alone is `mf slow list`, options included
+        #[command(flatten)]
+        list: SlowListArgs,
         #[command(subcommand)]
         command: Option<SlowCommand>,
     },
@@ -733,26 +737,29 @@ enum FieldCommand {
     },
 }
 
+#[derive(clap::Args)]
+struct SlowListArgs {
+    /// How many entries to show (newest first)
+    #[arg(long, default_value_t = 50)]
+    limit: usize,
+    /// Only entries from the last duration (e.g. 30m, 12h, 7d)
+    #[arg(short = 'd', long = "since")]
+    since: Option<String>,
+    /// Only entries whose operation contains this substring
+    #[arg(long = "op")]
+    op: Option<String>,
+    /// Only entries that took at least this long (e.g. 30s, 2m, 1h)
+    #[arg(long = "min")]
+    min: Option<String>,
+    /// Print the raw entries, one JSON object per line
+    #[arg(long)]
+    json: bool,
+}
+
 #[derive(Subcommand)]
 enum SlowCommand {
     /// List the slow operations, newest first — the default
-    List {
-        /// How many entries to show (newest first)
-        #[arg(long, default_value_t = 50)]
-        limit: usize,
-        /// Only entries from the last duration (e.g. 30m, 12h, 7d)
-        #[arg(short = 'd', long = "since")]
-        since: Option<String>,
-        /// Only entries whose operation contains this substring
-        #[arg(long = "op")]
-        op: Option<String>,
-        /// Only entries that took at least this long (e.g. 30s, 2m, 1h)
-        #[arg(long = "min")]
-        min: Option<String>,
-        /// Print the raw entries, one JSON object per line
-        #[arg(long)]
-        json: bool,
-    },
+    List(SlowListArgs),
     /// Run a query again and show where its time goes, now: the newest logged
     /// query, the one logged at --at, or one typed with -q. Not itself logged
     Replay {
@@ -1369,7 +1376,7 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
             LabelCommand::Show { label } => metafolder_cli::label::show(ctx, label.as_deref()),
         },
         Command::Log { command } => dispatch_log(ctx, command),
-        Command::Slow { command } => dispatch_slow(ctx, command),
+        Command::Slow { list, command } => dispatch_slow(ctx, list, command),
         Command::Trash { file, force, command } => dispatch_trash(ctx, file, force, command),
         Command::Watch { command } => {
             match command.unwrap_or(WatchCommand::Status { json: false }) {
@@ -1751,15 +1758,9 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
     }
 }
 
-fn dispatch_slow(ctx: &Ctx, command: Option<SlowCommand>) -> CmdResult {
-    match command.unwrap_or(SlowCommand::List {
-        limit: 50,
-        since: None,
-        op: None,
-        min: None,
-        json: false,
-    }) {
-        SlowCommand::List { limit, since, op, min, json } => {
+fn dispatch_slow(ctx: &Ctx, list: SlowListArgs, command: Option<SlowCommand>) -> CmdResult {
+    match command.unwrap_or(SlowCommand::List(list)) {
+        SlowCommand::List(SlowListArgs { limit, since, op, min, json }) => {
             commands::slow_list(ctx, limit, since.as_deref(), op.as_deref(), min.as_deref(), json)
         }
         SlowCommand::Replay { at, query, simplified, json } => {

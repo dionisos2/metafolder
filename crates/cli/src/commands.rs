@@ -2713,10 +2713,11 @@ pub fn slow_list(
 ) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let mut query = vec![("limit", limit.to_string())];
-    if let Some(text) = min {
+    let min_ms = min.map(crate::trash::parse_duration).transpose()?;
+    if let Some(ms) = min_ms {
         // Filtered by the daemon, before the limit: an old long operation is
         // found without paging past every short one since.
-        query.push(("min_ms", crate::trash::parse_duration(text)?.to_string()));
+        query.push(("min_ms", ms.to_string()));
     }
     if let Some(text) = since {
         // The same durations `mf trash prune -d` takes (1y, 30d, 12h).
@@ -2727,8 +2728,12 @@ pub fn slow_list(
     let entries: Vec<metafolder_core::slowlog::Entry> =
         serde_json::from_value(body["entries"].clone())
             .map_err(|e| CliError::Op(format!("unexpected slow-log response: {e}")))?;
-    let entries: Vec<_> =
-        entries.into_iter().filter(|e| op.is_none_or(|needle| e.op.contains(needle))).collect();
+    let entries: Vec<_> = entries
+        .into_iter()
+        .filter(|e| op.is_none_or(|needle| e.op.contains(needle)))
+        // Again here: a daemon older than `min_ms` ignores it silently.
+        .filter(|e| min_ms.is_none_or(|ms| e.ms as i64 >= ms))
+        .collect();
     if entries.is_empty() {
         // Distinguish an empty log from a filter that matched nothing: "nothing
         // has been slow" about a log full of entries would be a lie.
