@@ -80,6 +80,7 @@ function stub(selectedPaths: string[]) {
       // The panel is never displayed: renderViewer is deferred, so a `back`
       // only moves the state and repaints the path bar.
       whenVisible: noop,
+      provide: () => {},
       workspace: {
         get: async (key: string) => vars.get(key) ?? null,
         set: vi.fn(async () => {}),

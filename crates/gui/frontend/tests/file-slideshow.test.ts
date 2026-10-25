@@ -89,6 +89,7 @@ function stub(vars: Record<string, unknown>) {
       settings: {},
       defaults: DEFAULTS,
       whenVisible: (fn: () => void) => fn(),
+      provide: () => {},
       workspace: {
         get: async (key: string) => state.get(key) ?? null,
         set,

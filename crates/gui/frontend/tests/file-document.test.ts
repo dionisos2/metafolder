@@ -54,6 +54,7 @@ function stub(path: string) {
       settings: {},
       defaults: {},
       whenVisible: (fn: () => void) => fn(),
+      provide: () => {},
       workspace: {
         get: async (key: string) => vars.get(key) ?? null,
         set: vi.fn(async () => {}),
