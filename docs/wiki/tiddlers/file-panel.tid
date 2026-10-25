@@ -55,6 +55,12 @@ is in, so the panel browses upwards from wherever it is. The panel follows the
 selection again once the walk is back on the selected path, or as soon as the
 selection changes.
 
+<<cmd "view:refresh">> (`view:refresh file`) reads the file or the folder again, as it
+is on disk now: the panel is not told when a file's content changes, only when the
+selection does ([[Generic panel commands]]). A medium goes back behind its poster, its
+position kept. It has no key here: <<key "file:restart" r>> plays the medium from the
+start again.
+
 !! Zoom
 
 For an image, a document page and a video once its player is loaded. The toolbar

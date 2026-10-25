@@ -49,7 +49,9 @@ lets the add form and the `m` commands write such a field.
 
 While a value is being edited or the add form holds a name, the panel does not
 reload, and it asks before showing another metarecord. Otherwise it reloads whenever
-something in the GUI changes metarecords.
+something in the GUI changes metarecords. A write made outside the GUI — `mf`, a
+script — shows at <<key "view:refresh self" r>>, which asks first too while an edit
+is in progress ([[Generic panel commands]]).
 
 !! The metarecord itself
 

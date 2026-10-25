@@ -893,6 +893,18 @@ export async function mount(root, metafolder) {
     count: () => rowItems().length,
     select: (_mf, index) => selectRow(index),
   });
+  // Read again on `view:refresh` (doc "Generic panel commands"): a write made
+  // outside the GUI (`mf`, a script) reaches this panel by no other way. An
+  // edit in progress is asked about first, as when the selection moves.
+  metafolder.provide({
+    refresh: () => {
+      if (!confirmDiscardIfEditing()) return;
+      addForm.classList.remove('open');
+      editingField = null;
+      vocab.forgetTreePaths();
+      return load();
+    },
+  });
   void commands.register('metarecord:row-edit', {
     label: 'Edit the field under the cursor',
     handler: editCursorRow,

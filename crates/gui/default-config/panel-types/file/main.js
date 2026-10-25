@@ -1543,6 +1543,11 @@ export async function mount(root, metafolder) {
   byId(root, 'page-prev').addEventListener('click', () => goToPage((document_?.page ?? 1) - 1));
   byId(root, 'page-next').addEventListener('click', () => goToPage((document_?.page ?? 1) + 1));
 
+  // Read again on `view:refresh` (doc "Generic panel commands"): the file as it
+  // is on disk now, or the folder's listing. A medium goes back behind its
+  // poster, its position kept for the next play — as when the selection moves.
+  metafolder.provide({ refresh: () => metafolder.whenVisible(rerender) });
+
   workspace.onChange('selected_paths', (value) => void update(value));
   await update(await workspace.get('selected_paths'));
 

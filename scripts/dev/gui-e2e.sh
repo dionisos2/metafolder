@@ -83,7 +83,7 @@ done
     || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close
         pick-button suggested-key walk open-viewers slideshow shell-line shell-cwd repos-memory
-        help-keys zoom order user-commands settle macro devtools)
+        help-keys zoom refresh order user-commands settle macro devtools)
 
 # shellcheck source=lib/daemon-fixture.sh
 . scripts/dev/lib/daemon-fixture.sh
@@ -1562,6 +1562,32 @@ scenario_zoom() {
     assert "zoom: kept by the workspace" until_ok 10 zoom_is 1.1
     keys 0
     assert "zoom: 0 goes back to 100 %" until_ok 10 zoom_is 1
+}
+
+# view:refresh in the panels that show one metarecord or one file: what changed
+# outside the GUI (an edit on disk, a write from `mf`) reaches neither panel by
+# itself — the refresh reads it again (doc "Generic panel commands").
+scenario_refresh() {
+    needs_clicks refresh || return 0
+    new_repo refresh
+    printf 'before\n' >"$REPO_DIR/f.txt"
+    local f
+    f=$(record "$REPO_DIR/f.txt")
+    select_path "$REPO_DIR/f.txt"
+    mfg layout right "$WS" >/dev/null || die "layout right $WS"
+    show_panel right metarecord-detail metarecord:cancel
+    assert "refresh: the file panel shows the text" until_ok 10 shows pre before
+
+    printf 'after\n' >"$REPO_DIR/f.txt"
+    df_mf metarecord -i "$f" field set e2e_note:string=fresh >/dev/null
+    run view:refresh file
+    command_ok "refresh: view:refresh file resolves"
+    assert "refresh: the file panel reads the file again" until_ok 10 shows pre after
+    run view:refresh metarecord-detail
+    command_ok "refresh: view:refresh metarecord-detail resolves"
+    assert "refresh: the detail reads the metarecord again" \
+        until_ok 10 shows '#field-rows td.value' fresh
+    mfg layout right - >/dev/null
 }
 
 scenario_walk() {
