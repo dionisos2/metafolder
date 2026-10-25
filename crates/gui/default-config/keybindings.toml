@@ -392,13 +392,9 @@
 ]
 
 # Refresh the current view: one generic command, for every panel that can
-# read its content again (doc "Generic panel commands").
-"r" = [
-  { command = "view:refresh self" },
-  # In the file panel there is nothing to re-list: "refresh" means play the
-  # media from the start again.
-  { command = "file:restart", when = "file" },
-]
+# read its content again (doc "Generic panel commands") — the file panel too,
+# which reads the file again; playing its media from the start is shift+r.
+"r" = { command = "view:refresh self" }
 
 # Delete: remove the selection, confirmed (doc "Trash"). On a
 # metarecord (`metarecord:remove`) the record always goes: without a file that
@@ -447,7 +443,11 @@
 # are the ones the fingers already know. "shift+r" reverts whatever the cursor
 # is on (a write, or one operation of an expanded one), which is the whole
 # point of being able to select an operation.
-"shift+r" = { command = "log:revert", when = "log" }
+"shift+r" = [
+  { command = "log:revert", when = "log" },
+  # file: play the media from the start (plain "r" refreshes, as everywhere).
+  { command = "file:restart", when = "file" },
+]
 "shift+o" = { command = "log:revert op", when = "log" }
 "shift+v" = { command = "log:revert label", when = "log" }
 # metarecord-list: the table ⇄ the grid of thumbnails (g = grid).

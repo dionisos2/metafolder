@@ -1029,14 +1029,15 @@ mod tests {
             .any(|b| b.keys == ["shift+f"] && b.invocation == "path-ref:set field"));
         assert!(!f.iter().any(|b| b.invocation == "path-ref:set field"));
 
-        // `r` is "do the view again" in every panel that has a view: the list
-        // panels re-read their rows, the file panel plays the media from the
-        // start (there is no list there to re-read).
+        // `r` is "read the view again" in every panel, the file panel included
+        // (it reads the file again); playing the media from the start moved to
+        // shift+r there.
         let r: Vec<_> = table.iter().filter(|b| b.keys == ["r"]).collect();
         assert!(r.iter().any(|b| b.when.is_none() && b.invocation == "view:refresh self"));
-        assert!(r
-            .iter()
-            .any(|b| b.when.as_deref() == Some("file") && b.invocation == "file:restart"));
+        assert!(r.iter().all(|b| b.invocation == "view:refresh self"));
+        assert!(table.iter().any(|b| b.keys == ["shift+r"]
+            && b.when.as_deref() == Some("file")
+            && b.invocation == "file:restart"));
 
         // + - 0 zoom every panel; the file panel zooms its image instead, and
         // the detail panel's "one more value" moved to shift+a for it.

@@ -46,8 +46,8 @@ binding, or a list of them when the key does different things in different place
 "ctrl+t" = { command = "workspace:new" }
 "ctrl+a" = { command = "editing:goto line-start", text-input = true }
 
-"r" = [
-  { command = "view:refresh self" },
+"shift+r" = [
+  { command = "log:revert", when = "log" },
   { command = "file:restart", when = "file" },
 ]
 

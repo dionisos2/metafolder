@@ -12,5 +12,5 @@ Reads what a panel shows again: the focused panel with `self`, the panel type na
 |[[log panel]] |the log, and the operation gone into |
 |[[trash panel]], [[recent panel]], [[duplicates panel]] |the entries, the recently viewed metarecords, the groups |
 |[[repos panel]] |the loaded repositories, their tasks and their tracking notices |
-
-In the [[file panel]] the same key, <<key "file:restart" r>>, plays the media from the start instead: there is nothing to list again.
+|[[file panel]] |the file or the folder, as it is on disk now; a medium goes back behind its poster, its position kept. Playing it from the start is <<key "file:restart" Shift+r>> |
+|[[metarecord-detail panel]] |the metarecord shown; while an edit is in progress, it asks first |

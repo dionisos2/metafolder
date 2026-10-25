@@ -19,7 +19,7 @@ type ([[Keybindings]]).
 |<<key "file:play-pause" Space>> |play or pause; in front of a poster, load the player and start |
 |<<key "file:seek -10" ←>> / <<key "file:seek +10" →>> |10 s back, forward |
 |<<key "file:seek -60" Shift+←>> / <<key "file:seek +60" Shift+→>> |60 s back, forward |
-|<<key "file:restart" r>> |from the start |
+|<<key "file:restart" Shift+r>> |from the start |
 |<<key "file:speed down" "[">> / <<key "file:speed up" "]">> |slower, faster: 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 3, 4 |
 |<<key "file:speed reset" Shift+Backspace>> |back to normal speed |
 |<<key "file:volume down" Shift+↓>> / <<key "file:volume up" Shift+↑>> |10 % quieter, louder; louder also unmutes |

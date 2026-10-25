@@ -9,4 +9,4 @@ summary: File: play the media from the start
 
 !! Default keys
 
-* ``r`` → ``file:restart`` (in the ``file`` panel)
+* ``shift+r`` → ``file:restart`` (in the ``file`` panel)
