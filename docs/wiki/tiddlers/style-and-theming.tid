@@ -37,7 +37,7 @@ Any CSS may be added. Two things decide whether a rule reaches its target:
 !! Applying a change
 
 After editing the file, `config:reload style` restyles the window, shell and panels
-alike; the ''Reload'' button of the [[config panel]] (`config:open`) runs the same
+alike; the ''Reload'' button of the [[config panel]] runs the same
 command ([[Reloading the configuration]]). The file is not watched: nothing changes
 until it is reloaded.
 

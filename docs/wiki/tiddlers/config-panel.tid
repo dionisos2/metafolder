@@ -4,8 +4,7 @@ kind: reference
 aliases: settings-panel settings-view
 summary: Where the GUI's configuration files are, and the keybinding editor: look up a key or a command as you type it, and bind it once the GUI has checked it.
 
-Open it with `config:open`, which shows it in the focused slot, or
-`panel:open here config` (<<key "panel:open here config" "t c">>). It used to be a
+Open it with `panel:open here config` (<<key "panel:open here config" "t c">>). It used to be a
 dialog over the window, the ''settings view''; as a panel it sits beside the others,
 so a key can be looked up while the panel it acts in stays on screen.
 

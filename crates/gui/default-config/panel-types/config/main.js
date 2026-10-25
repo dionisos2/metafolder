@@ -343,7 +343,7 @@ export async function mount(root, metafolder) {
   });
 
   renderForm();
-  // Already on screen — `config:open` built it there — no visibility change
+  // Already on screen — `panel:open` built it there — no visibility change
   // will follow.
   if (metafolder.visible) combo.focus();
   await Promise.all([showFiles(), load()]);

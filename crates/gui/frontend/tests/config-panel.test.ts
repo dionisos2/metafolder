@@ -139,7 +139,7 @@ describe('config panel', () => {
   });
 
   test('shown when it mounts, the key field takes the focus', async () => {
-    // `config:open` in a workspace that never showed the panel builds it on
+    // `panel:open here config` in a workspace that never showed the panel builds it on
     // screen: it is visible before its mount has run, so no visibility change
     // will follow.
     const { root, field } = await mountPanel({ visible: true });

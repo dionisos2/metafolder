@@ -2504,12 +2504,6 @@ async function runCommand(
       await status(report, "info");
       return true;
     }
-    case "config:open":
-      await invoke("panel_set_type", {
-        slot: context.slot,
-        panelType: "config",
-      });
-      return true;
     case "ignore:add":
     case "ignore:remove":
     case "ignore:set": {

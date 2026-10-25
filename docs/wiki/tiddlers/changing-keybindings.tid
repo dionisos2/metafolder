@@ -10,8 +10,9 @@ that run it.
 
 !! From the GUI
 
-`config:open` opens the [[config panel]]. It lists every binding in effect: the key,
-the invocation, and where it applies — `global`, a panel type, or `@name` for a text
+`panel:open here config` (<<key "panel:open here config" "t c">>) opens the
+[[config panel]]. It lists every binding in effect: the key, the invocation, and
+where it applies — `global`, a panel type, or `@name` for a text
 field — followed by `⌨` when it also applies while typing ([[Keybindings]]).
 
 * ''Look up'' a key or a command: type it in the form. The table narrows to the keys it starts and to the bindings of that command, so whether a key is free shows before anything is saved.

@@ -111,7 +111,6 @@ fn register_builtins(registry: &CommandRegistry) {
         ("message:clear", "Clear the workspace message log", true),
         ("shell:clear", "Clear the workspace shell log", true),
         ("status:clear", "Clear the status bar message", false),
-        ("config:open", "Open the settings panel in the focused slot", true),
         (
             "config:reload",
             "Re-read user configuration without a restart (keybindings / style / grammar / commands / all)",

@@ -24,8 +24,8 @@ of its own: a file that is missing or malformed stops it at startup
 
 [[Reloading the configuration]] says why some of these need a restart.
 
-`config:open` opens the [[config panel]]: the paths of these files, a button
-reloading each, and the keybinding editor.
+The [[config panel]] (<<key "panel:open here config" "t c">>) shows the paths of
+these files, a button reloading each, and the keybinding editor.
 
 <<tagged-with "GUI command">>
 

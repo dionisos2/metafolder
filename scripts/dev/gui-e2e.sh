@@ -1174,8 +1174,8 @@ scenario_keybindings() {
     new_repo keybindings
     local file="$CONFIG_HOME/metafolder/gui/keybindings.toml"
 
-    run config:open
-    command_ok "settings: config open"
+    run panel:open here config
+    command_ok "settings: config panel open"
     # The key field has the focus; tab goes to the command, Enter saves.
     typed "ctrl+alt+u"
     keys Tab
@@ -1388,7 +1388,7 @@ scenario_suggested_key() {
     local file="$CONFIG_HOME/metafolder/gui/keybindings.toml"
     # The panel suggests ctrl+alt+y when it mounts.
     show_panel left e2e-keys e2e-keys:ping
-    run config:open
+    run panel:open here config
 
     # The settings panel says it is suggested, and offers no Remove: it is not
     # in the file.
