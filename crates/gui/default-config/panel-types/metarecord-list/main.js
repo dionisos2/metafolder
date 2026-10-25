@@ -769,6 +769,9 @@ export async function mount(root, metafolder) {
     const name = (field ?? '').trim();
     const written = await orderMode.activate(name);
     if (written === null) return; // declined: nothing written, nothing changed
+    // The other panels showing a renumbered record (metarecord-detail) re-read
+    // it now rather than at the change feed's next poll.
+    if (written > 0 && repo) void changes.sync(repo);
     orderField = name;
     sort = [{ field: name, order: 'asc' }];
     syncOrderControls();
@@ -822,6 +825,7 @@ export async function mount(root, metafolder) {
       void statusBar.message(`nothing to move ${where}`, statusMessageMs);
       return;
     }
+    if (repo) void changes.sync(repo); // as after `order on`
     // The loaded rows, in their new order, with their new positions: no read
     // again, so a move deep in a long list keeps the pages loaded.
     const before = new Map(rowsNow.map((r) => [r.uuid, r.value]));

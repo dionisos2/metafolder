@@ -780,6 +780,9 @@ export default {
         mixed_tag: 'mixed',
       })[kind];
       const report = await mf.tag.answer(selection.repo, selection.uuid, answer, tag);
+      // The panels showing the record re-read it now rather than at the
+      // change feed's next poll.
+      void mf.changes.sync(selection.repo);
       await mf.statusBar.message(report.message);
     },
   },

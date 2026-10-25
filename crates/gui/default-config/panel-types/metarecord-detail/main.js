@@ -531,7 +531,13 @@ export async function mount(root, metafolder) {
     return bench.measure('mf:detail:load', loadNow);
   }
 
+  /** Bumped per load: an answer applies only if its load is still the last,
+   *  so a re-read overtaken by a move of the selection cannot put the record
+   *  it read back on screen. */
+  let loadSeq = 0;
+
   async function loadNow() {
+    const seq = ++loadSeq;
     showError('');
     cursorIndex = -1;
     // The previous record's paths are wrong from here on: drop them before
@@ -544,7 +550,9 @@ export async function mount(root, metafolder) {
       return;
     }
     try {
-      metarecord = /** @type {Loaded} */ (await daemon.call('GET', api('')));
+      const loaded = /** @type {Loaded} */ (await daemon.call('GET', api('')));
+      if (seq !== loadSeq) return;
+      metarecord = loaded;
       annotator = createAnnotator({
         resolvePaths: (field, uuids) => daemon.treePaths(selection.repo, field, uuids),
         getMetarecords: async (uuids) =>
@@ -552,6 +560,7 @@ export async function mount(root, metafolder) {
         refLabel: (field, uuid) => vocab.refLabel(selection.repo, field, uuid),
       });
     } catch (error) {
+      if (seq !== loadSeq) return;
       metarecord = null;
       showError(messageOf(error));
     }
@@ -1010,10 +1019,20 @@ export async function mount(root, metafolder) {
   }
   workspace.onChange('metarecords:dirty', () => onMetarecordsDirty());
 
-  // A daemon-side change nobody in the GUI raised (a rename made outside it,
-  // picked up by the change feed) must drop the memoized forest paths too, or
-  // the value completion would keep offering positions that no longer exist.
-  const unsubscribeChanges = changes.subscribe(() => vocab.forgetTreePaths());
+  // A daemon-side change nobody nudged the panels about (an ordered list's
+  // move, a tag answer, a script, `mf`, the watcher) re-reads the record as
+  // the nudge does. Any change of its repository, not only one naming it: the
+  // record shows paths and reference labels, which spell other records'
+  // names (doc "Daemon data in panels"). A change elsewhere still drops the
+  // memoized forest paths, or the value completion would keep offering
+  // positions that no longer exist.
+  const unsubscribeChanges = changes.subscribe(({ repo: changedRepo }) => {
+    if (current && changedRepo === current.repo) {
+      metafolder.whenVisible(onMetarecordsDirty);
+    } else {
+      vocab.forgetTreePaths();
+    }
+  });
 
   current = /** @type {Selection|null} */ ((await workspace.get('selected_metarecord')) ?? null);
   await load();

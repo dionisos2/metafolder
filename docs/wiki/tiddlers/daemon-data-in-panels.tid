@@ -39,6 +39,7 @@ the daemon `GET /repos/:repo/log/since?op=<head>` ([[Log endpoints]]):
 
 * in the background, every 7 seconds, for each repository a panel has read;
 * on demand, with `metafolder.changes.sync(repo)` — after the GUI changed the disk itself, once the watcher's quiet period has passed (`createCatchup`, [[Event batching]]).
+* on demand, right after a write, by the writers that do not nudge the panels with `metarecords:dirty` — a move in an ordered list, `order on`, a `tag:add` answer — so a metarecord-detail showing the record re-reads it at once rather than up to 7 seconds later.
 
 Subscribers receive `{repo, uuids}`: the metarecords touched, or `null` for the
 whole repository — a list the daemon truncated, a repository that was
@@ -57,4 +58,5 @@ never hear of it.
 * It reads again what it shows, when a change names a metarecord it shows or names the whole repository.
 * A panel that shows ''paths'' reads them again at ''any'' change of its repository — the directory rename above: the feed names the directory, the screen shows its contents. That is one `treePaths` call for the rows loaded.
 * A read that has not landed, or failed, is ''unknown'', never ''absent''. A path not read yet says nothing about where the file is; reading it as "no path" is how a healthy row was shown as an orphaned metarecord.
+* An answer that lands after a newer read of the same view was sent is dropped. Two reads overlap as soon as a change arrives while the selection moves; without the guard, metarecord-detail showed the record it had just left.
 * It unsubscribes in the function `mount` returns.

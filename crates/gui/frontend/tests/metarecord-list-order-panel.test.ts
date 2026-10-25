@@ -110,7 +110,7 @@ async function mountPanel(daemon: ReturnType<typeof memoryDaemon>, vars = new Ma
     whenVisible: (fn: () => void) => fn(),
     bench: { measure: (_n: string, fn: () => unknown) => fn(), record: noop },
     daemon,
-    changes: { sync: async () => {}, subscribe: () => () => {} },
+    changes: { sync: vi.fn(async () => {}), subscribe: () => () => {} },
     query: { parse: async () => null, expand: async () => '', grammarSource: async () => '' },
     pick: { start: async () => '' },
     config: {},
@@ -187,6 +187,20 @@ describe('metarecord-list:order', () => {
     expect(Object.fromEntries(daemon.pos)).toEqual({ a: 1, b: 3, c: 2 });
     expect(p.cursorRow()).toBe(1);
     expect(p.rowUuids()).toEqual(['1', '2', '3']); // the pos column, top to bottom
+  });
+
+  test('a write tells the change feed at once, so metarecord-detail re-reads', async () => {
+    const daemon = memoryDaemon({ a: null, b: 2 });
+    const p = await mountPanel(daemon, new Map([['metarecord-list:columns', ['pos']]]));
+    await p.invoke('metarecord-list:order', 'on', 'pos');
+    expect(p.api.changes.sync).toHaveBeenCalledTimes(1);
+    const provider = (p.api.provide).mock.calls
+      .map((c) => c[0])
+      .find((x) => x.select);
+    await provider.select(p.api, 1);
+    await settle();
+    await p.invoke('metarecord-list:order', 'move', 'up');
+    expect(p.api.changes.sync).toHaveBeenCalledTimes(2);
   });
 
   test('a header click does not sort while ordered', async () => {

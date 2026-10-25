@@ -7,7 +7,7 @@
 // invocations it composes; what those two do to the panel is
 // metarecord-list-search-commands.test.ts.
 
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 
 // An argument as the tests call it: the module's own types are inferred
 // from JavaScript, one signature per argument, too narrow for a stub `mf`.
@@ -104,6 +104,7 @@ describe('the shipped user commands', () => {
         ),
       },
       statusBar: { message: (t: string) => (statuses.push(t), Promise.resolve()) },
+      changes: { sync: vi.fn(() => Promise.resolve()) },
     };
 
     await mod.default['tag:add'].run(mf as never, 'tag', 'music/jazz');
@@ -116,6 +117,8 @@ describe('the shipped user commands', () => {
       ['r1', 'u1', 'mixed', 'music'],
     ]);
     expect(statuses).toEqual(['Tag: music/jazz done', 'Tag: jeux video done', 'Tag: music done']);
+    // The panels showing the record hear of the answer now, not at the next poll.
+    expect(mf.changes.sync.mock.calls).toEqual([['r1'], ['r1'], ['r1']]);
     await expect(mod.default['tag:add'].run(mf as never, 'tags', 'x')).rejects.toThrow(
       /tag, negative_tag or mixed_tag/,
     );
