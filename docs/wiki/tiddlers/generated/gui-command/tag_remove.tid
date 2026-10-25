@@ -9,6 +9,6 @@ summary: Remove a tag from the selected metarecord
 
 !! Default keys
 
-* ``, d m`` → ``tag:remove mixed_tag``
-* ``, d n`` → ``tag:remove negative_tag``
-* ``, d t`` → ``tag:remove tag``
+* ``, d`` → ``tag:remove tag``
+* ``, m d`` → ``tag:remove mixed_tag``
+* ``, n d`` → ``tag:remove negative_tag``

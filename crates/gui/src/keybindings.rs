@@ -766,8 +766,23 @@ mod tests {
         for b in &tags {
             assert_eq!(b.keys[0], ",", "{:?} → {}", b.keys, b.invocation);
         }
-        let query = tags.iter().find(|b| b.keys == [",", "t"]).unwrap();
-        assert_eq!(query.invocation, "tag:query tag");
+        // The plain tag gets the short forms, the other two fields a prefix each
+        // (`, n` / `, m`) followed by the verb.
+        for (keys, invocation) in [
+            (vec![",", "t"], "tag:add tag"),
+            (vec![",", "d"], "tag:remove tag"),
+            (vec![",", "q"], "tag:query tag"),
+            (vec![",", "n", "a"], "tag:add negative_tag"),
+            (vec![",", "n", "d"], "tag:remove negative_tag"),
+            (vec![",", "n", "q"], "tag:query negative_tag"),
+            (vec![",", "m", "a"], "tag:add mixed_tag"),
+            (vec![",", "m", "d"], "tag:remove mixed_tag"),
+            (vec![",", "m", "q"], "tag:query mixed_tag"),
+        ] {
+            let found: Vec<_> = tags.iter().filter(|b| b.keys == keys).collect();
+            assert_eq!(found.len(), 1, "{keys:?}: {found:?}");
+            assert_eq!(found[0].invocation, invocation, "{keys:?}");
+        }
         assert!(table.iter().all(|b| b.keys[0] != "#"));
     }
 

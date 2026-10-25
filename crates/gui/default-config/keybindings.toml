@@ -247,20 +247,22 @@
 "m o" = { command = "mf:order" }
 
 # Tags (doc "Tagging from the GUI"), under "," — typed without a modifier on
-# AZERTY and QWERTY alike, where "#", the tag sigil, is not. ", t/n/m" searches
-# the records having / denying / partly having a tag; ", a" then t/n/m gives
-# the selected metarecord the tag, denies it, or marks it mixed (by the rules of
-# `mf tag`); ", d" then t/n/m takes one off. Each asks for the tag, with
-# completion. Global, like the "g" family.
-", t" = { command = "tag:query tag" }
-", n" = { command = "tag:query negative_tag" }
-", m" = { command = "tag:query mixed_tag" }
-", a t" = { command = "tag:add tag" }
-", a n" = { command = "tag:add negative_tag" }
-", a m" = { command = "tag:add mixed_tag" }
-", d t" = { command = "tag:remove tag" }
-", d n" = { command = "tag:remove negative_tag" }
-", d m" = { command = "tag:remove mixed_tag" }
+# AZERTY and QWERTY alike, where "#", the tag sigil, is not. The field comes
+# first, then the verb: ", n" (negative_tag) and ", m" (mixed_tag) are followed
+# by a (add: deny it / mark it mixed, by the rules of `mf tag`), d (take one
+# off) or q (search the records answering so). The plain tag, the most used,
+# has the short forms instead: ", t" adds it, ", d" takes it off, ", q"
+# searches it. Each asks for the tag, with completion. Global, like the "g"
+# family.
+", t" = { command = "tag:add tag" }
+", d" = { command = "tag:remove tag" }
+", q" = { command = "tag:query tag" }
+", n a" = { command = "tag:add negative_tag" }
+", n d" = { command = "tag:remove negative_tag" }
+", n q" = { command = "tag:query negative_tag" }
+", m a" = { command = "tag:add mixed_tag" }
+", m d" = { command = "tag:remove mixed_tag" }
+", m q" = { command = "tag:query mixed_tag" }
 
 # ── Panel navigation and actions ─────────────────────────────────────────────
 # Moving a cursor is one generic command for every panel (doc "Generic panel

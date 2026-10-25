@@ -9,9 +9,15 @@ time from the command input, each taking first the field of the tag model it wor
 over the paths of the existing ones:
 
 |!Keys |!Command |!Does |
-|`, t` `, n` `, m` |[[tag:query]] |searches the records having, denying, partly having the tag and what is under it |
-|`, a t` `, a n` `, a m` |[[tag:add]] |gives the selected metarecord the tag, denies it, marks it mixed |
-|`, d t` `, d n` `, d m` |[[tag:remove]] |takes a tag of that field off the selected metarecord |
+|`, q` `, n q` `, m q` |[[tag:query]] |searches the records having, denying, partly having the tag and what is under it |
+|`, t` `, n a` `, m a` |[[tag:add]] |gives the selected metarecord the tag, denies it, marks it mixed |
+|`, d` `, n d` `, m d` |[[tag:remove]] |takes a tag of that field off the selected metarecord |
+
+The keys name the field first, then the verb (`a`dd, `d`elete, `q`uery): `, n` and
+`, m` are the prefixes of `negative_tag` and `mixed_tag`. The plain `tag`, the one used
+most, has the short forms instead of a prefix — `, t` adds it, `, d` takes it off,
+`, q` searches it; a prefix `, t` would have shadowed them, since an exact binding wins
+over every longer sequence ([[Keybindings]]).
 
 ''Adding'' goes through `mf.tag.answer` ([[The metafolder API]]), which applies the
 rules of `mf tag` with the same code: the tag replaces the broader ones it implies, takes back the answers it makes
