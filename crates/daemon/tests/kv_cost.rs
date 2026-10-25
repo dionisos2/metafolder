@@ -340,6 +340,78 @@ fn nested(field: &str, n: usize) -> (KvStore, TempDir) {
     (kv, dir)
 }
 
+/// `folders` folders under `/top` in `field` (a `tree_ref`, or a
+/// `hierarchy_ref` when `hierarchy`), `per_folder` files each, every file
+/// `tagged` but those of the last folder: matches all at the end of the path
+/// order — the files a user has not classified yet, when they classify in order.
+fn tagged_in_path_order(
+    field: &str,
+    hierarchy: bool,
+    folders: usize,
+    per_folder: usize,
+) -> (KvStore, TempDir) {
+    let dir = TempDir::new("kv-cost-tagged");
+    let mut kv = KvStore::open(dir.path()).unwrap();
+    let mut w = Writer::begin(&mut kv, None).unwrap();
+    let node = |parent: Option<Uuid>, name: &str| {
+        let name = name.into();
+        Field::new(
+            field,
+            if hierarchy {
+                Value::HierarchyRef { parent, name }
+            } else {
+                Value::TreeRef { parent, name }
+            },
+        )
+    };
+    let root = w.create_metarecord(vec![node(None, "")]).unwrap().uuid;
+    let top = w.create_metarecord(vec![node(Some(root), "top")]).unwrap().uuid;
+    for f in 0..folders {
+        let folder = w.create_metarecord(vec![node(Some(top), &format!("d{f:03}"))]).unwrap().uuid;
+        for i in 0..per_folder {
+            let mut fields = vec![
+                node(Some(folder), &format!("file{i:05}")),
+                Field::new("name", Value::String(format!("file{i:05}"))),
+            ];
+            if f + 1 < folders {
+                fields.push(Field::new("tagged", Value::Bool(true)));
+            }
+            w.create_metarecord(fields).unwrap();
+        }
+    }
+    w.commit().unwrap();
+    (kv, dir)
+}
+
+/// "The next files to classify", sorted by path: the walk skips every folder
+/// whose descendants hold no match, so the files classified before the first
+/// match cost nothing — eight times more of them read no more keys
+/// (doc "Sorting and postings").
+#[test]
+fn a_path_page_skips_the_folders_holding_no_match() {
+    for (field, hierarchy) in [("loc", false), ("path", true)] {
+        let todo = and(vec![
+            Query::FollowsTransitive {
+                field: field.into(),
+                target: FollowTarget::Path("/top".into()),
+                inclusive: false,
+            },
+            present("name"),
+            Query::Not { operand: Box::new(present("tagged")) },
+        ]);
+        // Folders large enough that both sizes walk rather than fetch.
+        let (small, _s) = tagged_in_path_order(field, hierarchy, 10, 150);
+        let (large, _l) = tagged_in_path_order(field, hierarchy, 10, 1_200);
+        let (found_small, cost_small) = reads(&small, &todo, &[(field, true)], false);
+        let (found_large, cost_large) = reads(&large, &todo, &[(field, true)], false);
+        assert_eq!((found_small, found_large), (50, 50), "{field}: a page of the last folder");
+        assert!(
+            cost_large <= cost_small + cost_small / 2 + 20,
+            "{field}: {cost_small} keys behind 1 350 classified files, {cost_large} behind 10 800"
+        );
+    }
+}
+
 /// A subtree is one descendant bitmap on every forest — the file tree's and
 /// a tag tree's alike (`tag ->* (path =>* "music")` reads the second).
 #[test]

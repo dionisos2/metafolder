@@ -150,6 +150,37 @@ fn queries(conn: &KvStore, cache: &TreeCache) -> Vec<Query> {
         // comes without a count.
         matches(P, "^f[0-4]"),
         Query::Osm { field: P.into(), terms: vec!["f1".into()], mode: OsmMode::Direct },
+        // Matches a walk finds only in some subtrees: it skips the others
+        // whole, which must not change a page (doc "Sorting and postings").
+        Query::And {
+            operands: vec![
+                Query::FollowsTransitive {
+                    field: P.into(),
+                    target: FollowTarget::Path("/d00".into()),
+                    inclusive: false,
+                },
+                eq("kind", s("dir")),
+            ],
+        },
+        Query::And {
+            operands: vec![
+                Query::FollowsTransitive {
+                    field: P.into(),
+                    target: FollowTarget::Path("".into()),
+                    inclusive: false,
+                },
+                Query::Or {
+                    operands: vec![
+                        eq("kind", s("dir")),
+                        Query::FollowsTransitive {
+                            field: P.into(),
+                            target: FollowTarget::Path("/d00".into()),
+                            inclusive: true,
+                        },
+                    ],
+                },
+            ],
+        },
         Query::And {
             operands: vec![
                 Query::FollowsTransitive {

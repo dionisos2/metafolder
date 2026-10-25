@@ -677,12 +677,15 @@ impl<'a> SortKeys<'a> {
     /// `resume = (uuid, key)` starts strictly after the node of `uuid` whose
     /// key is `key` (a keyset cursor). The page strategies of the query index
     /// use this to stop at the page's end (doc "Sorting and postings").
+    /// `descend` says whether anything below a node met can matter: on
+    /// `false` its subtree is skipped — not read — and the node visited alone.
     pub fn walk_sorted(
         &self,
         field: &str,
         descending: bool,
         within: Option<Uuid>,
         resume: Option<(Uuid, &str)>,
+        descend: &mut dyn FnMut(Uuid) -> bool,
         visit: &mut dyn FnMut(Uuid) -> bool,
     ) -> WalkEnd {
         // The store is walked below a bound only: a whole-forest walk would
@@ -690,7 +693,8 @@ impl<'a> SortKeys<'a> {
         // fetches the keys instead.
         match within {
             Some(within) => {
-                self.walk_stored_sorted(self.store, field, descending, within, resume, visit)
+                let store = self.store;
+                self.walk_stored_sorted(store, field, descending, within, resume, descend, visit)
             }
             None => WalkEnd::Refused,
         }
@@ -710,6 +714,7 @@ impl<'a> SortKeys<'a> {
     /// short enough to be keyed whole — and as long as every node met holds
     /// one position (a node at two could sort on the other, outside the
     /// bound). Anything else refuses, and the caller fetches the keys.
+    #[allow(clippy::too_many_arguments)]
     fn walk_stored_sorted(
         &self,
         store: &dyn Rows,
@@ -717,6 +722,7 @@ impl<'a> SortKeys<'a> {
         descending: bool,
         within: Uuid,
         resume: Option<(Uuid, &str)>,
+        descend: &mut dyn FnMut(Uuid) -> bool,
         visit: &mut dyn FnMut(Uuid) -> bool,
     ) -> WalkEnd {
         let mut stack: Vec<StoredFrame> = Vec::new();
@@ -791,14 +797,22 @@ impl<'a> SortKeys<'a> {
                 Some(positions) if positions.len() == 1 => {}
                 _ => return WalkEnd::Refused,
             }
+            // A subtree that cannot matter is not read: matches gathered at
+            // the end of the order cost the folders met, not every node before.
             if descending {
-                // Its descendants first; itself when they are done.
-                stack.push(StoredFrame::new(uuid, None, Some(uuid)));
+                if descend(uuid) {
+                    // Its descendants first; itself when they are done.
+                    stack.push(StoredFrame::new(uuid, None, Some(uuid)));
+                } else if !visit(uuid) {
+                    return WalkEnd::Stopped;
+                }
             } else {
                 if !visit(uuid) {
                     return WalkEnd::Stopped;
                 }
-                stack.push(StoredFrame::new(uuid, None, None));
+                if descend(uuid) {
+                    stack.push(StoredFrame::new(uuid, None, None));
+                }
             }
         }
         WalkEnd::Completed

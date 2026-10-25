@@ -15,7 +15,13 @@ exact, and the holders are the field's presence count (or the walk's subtree). T
 count alone is not enough: a 2 500-file folder is "large", yet walking the date index
 of a 5-million-file repository for a hundred of its files reads some 200 000 keys. A
 path walk starts at the lowest node whose descendants hold every match, not at the
-forest's root. Keyset pagination is the same for both: the cursor carries the last
+forest's root, and does not go down into a node whose descendants hold none: a node
+with no child costs no read, a folder its descendant bitmap. The estimate assumes the
+matches spread along the index, and "the files not yet classified" — when they are
+classified in path order — all sit at its end; a walk that read every node before
+them read three keys each, every one at a random place of the store (140 000 keys,
+minutes on a cold disk, for one result). It now reads the folders it meets. What is
+left is one flat folder of many non-matching files before the first match. Keyset pagination is the same for both: the cursor carries the last
 sort key and uuid, and each strategy resumes strictly after it.
 
 !! Postings

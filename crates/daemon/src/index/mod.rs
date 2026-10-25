@@ -804,17 +804,40 @@ impl Eval<'_> {
         if walk {
             let mut steps = 0usize;
             let mut over = false;
-            let end = keys.walk_sorted(field, descending, within, resume, &mut |uuid| {
-                steps += 1;
-                if steps > budget {
-                    over = true;
+            // The node a walk step met, both its checks asking its id once.
+            let met: std::cell::Cell<Option<(Uuid, Option<u32>)>> = std::cell::Cell::new(None);
+            let id_of = |uuid: Uuid| match met.get() {
+                Some((u, id)) if u == uuid => id,
+                _ => {
+                    let id = self.src.id(uuid);
+                    met.set(Some((uuid, id)));
+                    id
+                }
+            };
+            // Below a node, a match only where its descendants meet `matched`
+            // (doc "Sorting and postings"): a node with no child is a leaf
+            // without a read, the others cost their descendant bitmap.
+            let parents = self.src.parents(field);
+            let mut descend = |uuid: Uuid| {
+                let Some(id) = id_of(uuid) else { return true };
+                if !parents.contains(id) {
                     return false;
                 }
-                if let Some(id) = self.src.id(uuid).filter(|&id| accepts(id, uuid)) {
-                    out.push(id);
-                }
-                out.len() < want
-            });
+                let node = RoaringBitmap::from_iter([id]);
+                self.src.descendants(field, &node).is_none_or(|d| !d.is_disjoint(matched))
+            };
+            let end =
+                keys.walk_sorted(field, descending, within, resume, &mut descend, &mut |uuid| {
+                    steps += 1;
+                    if steps > budget {
+                        over = true;
+                        return false;
+                    }
+                    if let Some(id) = id_of(uuid).filter(|&id| accepts(id, uuid)) {
+                        out.push(id);
+                    }
+                    out.len() < want
+                });
             if over || end == crate::tree_cache::WalkEnd::Refused {
                 return None;
             }
