@@ -1649,3 +1649,60 @@ async fn test_in_values_are_validated_like_eq() {
         );
     }
 }
+
+/// A query holds its repository's connection for its whole evaluation; the
+/// lock is the repository's own, so a long query on one repository must not
+/// hold back a query on another one served by the same daemon.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_a_query_running_on_one_repo_does_not_block_another_repo() {
+    use std::time::Duration;
+    let state = std::sync::Arc::new(AppState::new());
+    let app = routes::build(state.clone());
+    let init = |prefix: &'static str| {
+        let app = app.clone();
+        async move {
+            let root = temp_dir(prefix);
+            common::seed_config(&root);
+            let (status, body) =
+                request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()})))
+                    .await;
+            assert_eq!(status, StatusCode::OK, "init failed: {body}");
+            (body["repo_uuid"].as_str().unwrap().to_string(), root)
+        }
+    };
+    let (busy, _busy_root) = init("busy_repo").await;
+    let (free, _free_root) = init("free_repo").await;
+    let query =
+        json!({"query": {"type": "is_present", "field": "mfr_path"}, "limit": 10, "count": true});
+
+    // Stand in for a long query on `busy`: hold its connection, as a query does.
+    let busy_state = state.repo(busy.parse().unwrap()).unwrap();
+    let (held_tx, held_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        let _conn = busy_state.conn.lock().unwrap();
+        held_tx.send(()).unwrap();
+        release_rx.recv().unwrap();
+    });
+    held_rx.recv().unwrap();
+
+    // The instrument works: a query on `busy` waits for its connection.
+    let on_busy = tokio::time::timeout(
+        Duration::from_millis(300),
+        request(&app, "POST", &format!("/repos/{busy}/query"), Some(query.clone())),
+    )
+    .await;
+    assert!(on_busy.is_err(), "the held connection holds back its own repository: {on_busy:?}");
+
+    // A query on `free` answers meanwhile.
+    let on_free = tokio::time::timeout(
+        Duration::from_secs(10),
+        request(&app, "POST", &format!("/repos/{free}/query"), Some(query.clone())),
+    )
+    .await
+    .expect("a query on another repository is not held back");
+    assert_eq!(on_free.0, StatusCode::OK, "{}", on_free.1);
+
+    release_tx.send(()).unwrap();
+    holder.join().unwrap();
+}
