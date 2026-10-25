@@ -10,7 +10,7 @@ A handful of tests depend on real time, and fail now and then in a full
 * `crates/daemon/tests/slow_log.rs` — its fixtures set the slow log's threshold very low, so a watcher flush that happens to take a millisecond adds an entry nobody expected;
 * `correlate_is_linear_when_nothing_pairs` (`crates/daemon/src/executor.rs`) — compares two measured times to show that pairing is not quadratic;
 * the tests that drive the real watcher — their waits are budgets (`early_journey.rs`, `watcher_e2e.rs`, the `sync` tests of `cli_e2e.rs`, where the target's watcher may ingest the file just written after the sync counted);
-* the `bash_complete` tests of the `gui` crate, which run `bash`.
+* the `bash_complete` tests of the `gui` crate ran `bash` under the 3-second guard a person waiting on Tab gets, and a dozen of them loading bash-completion at once, beside the rest of the suite, missed it at every `check.sh` (October 2026); they now take a minute, the guard staying in `complete`.
 
 !! Telling it from a regression
 

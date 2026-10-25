@@ -35,6 +35,15 @@ pub struct Completion {
 /// relative word in `cwd` — where the line would run (doc "shell panel").
 /// A missing `bash` or a timeout is an error; "no candidates" is not.
 pub async fn complete(line_to_cursor: &str, cwd: Option<&Path>) -> Result<Completion, String> {
+    complete_within(line_to_cursor, cwd, TIMEOUT).await
+}
+
+/// [`complete`] giving up after `timeout`.
+async fn complete_within(
+    line_to_cursor: &str,
+    cwd: Option<&Path>,
+    timeout: Duration,
+) -> Result<Completion, String> {
     let mut command = Command::new("bash");
     if let Some(dir) = cwd {
         command.current_dir(dir).env("PWD", dir);
@@ -53,7 +62,7 @@ pub async fn complete(line_to_cursor: &str, cwd: Option<&Path>) -> Result<Comple
         .spawn()
         .map_err(|e| format!("cannot run bash: {e}"))?;
 
-    let output = tokio::time::timeout(TIMEOUT, child.wait_with_output())
+    let output = tokio::time::timeout(timeout, child.wait_with_output())
         .await
         .map_err(|_| "bash completion timed out".to_string())?
         .map_err(|e| format!("bash completion failed: {e}"))?;
@@ -105,6 +114,14 @@ pub async fn bash_complete(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [`super::complete`] without its 3-second guard, which is for a person
+    /// waiting on Tab: these tests check what bash answers, and a dozen bash
+    /// processes loading bash-completion at once, beside the rest of the
+    /// suite, took longer (doc "Tests that fail under load").
+    async fn complete(line: &str, cwd: Option<&Path>) -> Result<Completion, String> {
+        complete_within(line, cwd, Duration::from_secs(60)).await
+    }
 
     /// The programmable-completion path needs the bash-completion package;
     /// without it the harness must use the compgen fallback, whose exact
