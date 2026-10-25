@@ -212,7 +212,7 @@ describe('config panel', () => {
   test('Show selects the file and opens it in the file panel beside', async () => {
     const { root, api, vars } = await mountPanel();
     const row = [...root.querySelectorAll('#files tr')].find((tr) =>
-      tr.textContent!.includes('cli/config.toml'),
+      tr.textContent.includes('cli/config.toml'),
     )!;
     [...row.querySelectorAll('button')].find((b) => b.textContent === 'Show')!.click();
     await flush();
