@@ -2708,10 +2708,16 @@ pub fn slow_list(
     limit: usize,
     since: Option<&str>,
     op: Option<&str>,
+    min: Option<&str>,
     json: bool,
 ) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let mut query = vec![("limit", limit.to_string())];
+    if let Some(text) = min {
+        // Filtered by the daemon, before the limit: an old long operation is
+        // found without paging past every short one since.
+        query.push(("min_ms", crate::trash::parse_duration(text)?.to_string()));
+    }
     if let Some(text) = since {
         // The same durations `mf trash prune -d` takes (1y, 30d, 12h).
         let ms = metafolder_core::date::now_ms() - crate::trash::parse_duration(text)?;
@@ -2728,6 +2734,11 @@ pub fn slow_list(
         // has been slow" about a log full of entries would be a lie.
         match op {
             Some(needle) => println!("No slow operation matches '{needle}'."),
+            None if min.is_some() => println!(
+                "Nothing took {} or more{}.",
+                min.unwrap_or_default(),
+                if since.is_some() { " in that window" } else { "" }
+            ),
             None => println!(
                 "Nothing has been slow{}.",
                 if since.is_some() { " in that window" } else { "" }

@@ -175,7 +175,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let log = SlowLog::new(1);
         log.record(UUID, &dir, "POST /repos/:repo/query".into(), 4200, "abc", Some("rating > 3"));
-        let (entries, _) = slowlog::read(&slowlog::slow_dir(&dir), 10, None);
+        let (entries, _) = slowlog::read(&slowlog::slow_dir(&dir), 10, None, None);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].source, "gui");
         assert_eq!(entries[0].op_id.as_deref(), Some("abc"));

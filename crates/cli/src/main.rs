@@ -746,6 +746,9 @@ enum SlowCommand {
         /// Only entries whose operation contains this substring
         #[arg(long = "op")]
         op: Option<String>,
+        /// Only entries that took at least this long (e.g. 30s, 2m, 1h)
+        #[arg(long = "min")]
+        min: Option<String>,
         /// Print the raw entries, one JSON object per line
         #[arg(long)]
         json: bool,
@@ -1749,9 +1752,15 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
 }
 
 fn dispatch_slow(ctx: &Ctx, command: Option<SlowCommand>) -> CmdResult {
-    match command.unwrap_or(SlowCommand::List { limit: 50, since: None, op: None, json: false }) {
-        SlowCommand::List { limit, since, op, json } => {
-            commands::slow_list(ctx, limit, since.as_deref(), op.as_deref(), json)
+    match command.unwrap_or(SlowCommand::List {
+        limit: 50,
+        since: None,
+        op: None,
+        min: None,
+        json: false,
+    }) {
+        SlowCommand::List { limit, since, op, min, json } => {
+            commands::slow_list(ctx, limit, since.as_deref(), op.as_deref(), min.as_deref(), json)
         }
         SlowCommand::Replay { at, query, simplified, json } => {
             commands::slow_replay(ctx, at, query.as_deref(), simplified, json)

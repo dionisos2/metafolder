@@ -22,6 +22,9 @@ Options:
       --op <OP>
           Only entries whose operation contains this substring
 
+      --min <MIN>
+          Only entries that took at least this long (e.g. 30s, 2m, 1h)
+
       --json
           Print the raw entries, one JSON object per line
 

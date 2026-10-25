@@ -302,14 +302,20 @@ fn files(dir: &Path) -> Vec<PathBuf> {
 /// result short.
 ///
 /// A line that does not parse is skipped rather than failing the read.
-pub fn read(dir: &Path, limit: usize, since_ms: Option<i64>) -> (Vec<Entry>, bool) {
+pub fn read(
+    dir: &Path,
+    limit: usize,
+    since_ms: Option<i64>,
+    min_ms: Option<u64>,
+) -> (Vec<Entry>, bool) {
     let mut entries: Vec<Entry> = Vec::new();
     for path in files(dir) {
         let Ok(text) = fs::read_to_string(&path) else { continue };
         entries.extend(
             text.lines()
                 .filter_map(|line| serde_json::from_str::<Entry>(line).ok())
-                .filter(|e| since_ms.is_none_or(|since| e.at_ms >= since)),
+                .filter(|e| since_ms.is_none_or(|since| e.at_ms >= since))
+                .filter(|e| min_ms.is_none_or(|min| e.ms >= min)),
         );
     }
     entries.sort_by_key(|e| std::cmp::Reverse(e.at_ms));
