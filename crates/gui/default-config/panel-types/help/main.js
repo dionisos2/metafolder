@@ -22,6 +22,7 @@ export async function mount(root, metafolder) {
   const results = byId(root, 'help-results');
   const content = byId(root, 'help-content');
   const warning = byId(root, 'help-warning');
+  const title = byId(root, 'help-title');
   const pageInfo = byId(root, 'help-page-info');
   const includeDev = byId(root, 'help-dev', HTMLInputElement);
   const scroll = byId(root, 'help-scroll');
@@ -165,11 +166,13 @@ export async function mount(root, metafolder) {
     }
   }
 
-  // Above a wiki page: its tags, each opening the tag's own note, and what
-  // kind of page it is when that is worth saying (developer documentation, a
-  // feature not implemented yet).
+  // Above a wiki page: its title, then its tags, each opening the tag's own
+  // note, and what kind of page it is when that is worth saying (developer
+  // documentation, a feature not implemented yet).
   /** @param {Page | undefined} page */
   function showPageInfo(page) {
+    title.textContent = page?.title ?? '';
+    title.hidden = !page;
     /** @type {(HTMLElement|string)[]} */
     const items = [];
     if (page?.audience === 'dev') items.push(el('span', { class: 'page-badge' }, 'developer documentation'));
@@ -194,6 +197,7 @@ export async function mount(root, metafolder) {
     shownPage = null;
     content.hidden = true;
     content.replaceChildren();
+    title.hidden = true;
     pageInfo.hidden = true;
     results.hidden = false;
     const hits = filterPages(index, term, { includeDev: includeDev.checked });

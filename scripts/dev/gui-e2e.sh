@@ -1514,7 +1514,8 @@ scenario_open_viewers() {
 # shift+Return stops on a directory, selected.
 # The help panel's search box is a text zone like the list's (doc "help
 # panel"): Enter searches and leaves it, so Backspace then goes up a topic
-# instead of deleting a character; s empties it and goes back in.
+# instead of deleting a character; s empties it and goes back in. A page
+# starts with its title.
 scenario_help_keys() {
     needs_keyboard help-keys || return 0
     needs_clicks help-keys || return 0
@@ -1524,6 +1525,7 @@ scenario_help_keys() {
     typed "help panel"
     keys Return
     assert "help-keys: Enter opens the page" until_ok 10 reads "help panel" "#help-search"
+    assert "help-keys: the page starts with its title" until_ok 10 reads "help panel" "#help-title"
     keys Left
     assert "help-keys: Left, out of the box, goes up to the topic" \
         until_ok 10 reads "panel" "#help-search"
