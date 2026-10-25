@@ -1770,6 +1770,14 @@ registerArgs("help:open", [
   { name: "topic", optional: true, prompt: () => "Help on what?" },
 ]);
 
+registerArgs("help:command", [
+  {
+    name: "command",
+    prompt: () => "Help on which command?",
+    complete: () => [...new Set(store.commands.map((c) => c.name))].sort(),
+  },
+]);
+
 registerArgs("find:open", [
   { name: "text", optional: true, prompt: () => "Find what?" },
 ]);
@@ -1824,6 +1832,22 @@ async function viewerHasNothing(
     return "no metarecord for this entry — record it first";
   }
   return null;
+}
+
+/** Opens the help panel in `slot` on `topic` (empty: its index). The topic is
+ *  handed to the panel through a workspace var; the `nonce` makes an
+ *  identical repeated topic still re-trigger the panel's onChange. */
+async function openHelp(
+  ws: string,
+  slot: ExecContext["slot"],
+  topic: string,
+): Promise<void> {
+  await invoke("ws_set_var", {
+    wsId: ws,
+    key: "help.request",
+    value: { topic, nonce: Date.now() },
+  });
+  await invoke("panel_set_type", { slot, panelType: "help" });
 }
 
 /** Immersive mode: mirror the flag into the store (the shell hides all
@@ -2640,18 +2664,19 @@ async function runCommand(
       return true;
 
     case "help":
-    case "help:open": {
-      // Open the help panel for an optional topic. The topic (raw arg text) is
-      // handed to the panel through a workspace var; the `nonce` makes an
-      // identical repeated topic still re-trigger the panel's onChange.
-      if (!ws) return true;
-      const topic = args.join(" ");
-      await invoke("ws_set_var", {
-        wsId: ws,
-        key: "help.request",
-        value: { topic, nonce: Date.now() },
-      });
-      await invoke("panel_set_type", { slot: context.slot, panelType: "help" });
+    case "help:open":
+      if (ws) await openHelp(ws, context.slot, args.join(" "));
+      return true;
+    case "help:command": {
+      // The command's page (doc "In-app help"): what `help:open <name>` finds,
+      // asked with the registered commands as completions. A name nothing
+      // registered is refused rather than searched for.
+      const name = args[0] ?? "";
+      if (!store.commands.some((c) => c.name === name)) {
+        await status(`no command named ${name}`);
+        return true;
+      }
+      if (ws) await openHelp(ws, context.slot, name);
       return true;
     }
     case "help:cursor":

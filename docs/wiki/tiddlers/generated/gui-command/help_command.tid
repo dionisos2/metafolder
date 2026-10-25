@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/help:command
+catalog: GUI command
+target: help:command
+summary: Open help for a command (asks which)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``h x`` → ``help:command``

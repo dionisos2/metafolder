@@ -5,7 +5,7 @@ aliases: help-cursor click-to-help describe-key documentation-panel
 summary: This documentation inside the GUI: open a page by name, click something to get its page, or press a key to learn what it runs.
 
 The documentation is shipped with metafolder and read in the GUI, in the
-[[help panel]]. Three commands lead to it or answer on the spot. They are part of
+[[help panel]]. Four commands lead to it or answer on the spot. They are part of
 the shell, so they work before the help panel was ever shown.
 
 !! Opening a page: `help:open`
@@ -20,6 +20,12 @@ the shell, so they work before the help panel was ever shown.
 
 A `#` in front always searches: `help #trash` lists the pages that mention the
 trash.
+
+!! Asking about a command: `help:command`
+
+<<key "help:command" "h x">> asks which command, completing over the commands
+registered now, and opens its page — `help:open` with that name, without having to
+remember how it is spelled. A name no command has is refused instead of searched for.
 
 !! Asking about something on screen: `help:cursor`
 

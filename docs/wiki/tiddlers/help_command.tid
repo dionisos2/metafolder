@@ -1,0 +1,6 @@
+title: help:command
+tags: [[GUI command]] [[In-app help]]
+kind: reference
+summary: Open help for a command (asks which)
+
+Asks for a command in the command input, completing over every command registered now — the shell's, the panels' and yours — and opens its page in the help panel, as `help:open <command>` would. A name no command has is refused in the status bar. See [[In-app help]].

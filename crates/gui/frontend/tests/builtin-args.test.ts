@@ -222,6 +222,52 @@ describe('the other builtins that take arguments', () => {
 });
 
 describe('an optional trailing argument is never asked for', () => {
+  test('help:command asks for a command, completing over the registered ones, and opens its page', async () => {
+    store.commands = [
+      { name: 'trash:restore', label: 'Restore', owner: 'trash' },
+      { name: 'help:key', label: 'Describe a key', owner: null },
+    ] as typeof store.commands;
+    store.workspaces = [{ id: 'ws-1', name: 'music', active_repo: null, repo_name: null }];
+    store.layout.left = { visible: true, workspace_id: 'ws-1', panel_type: 'message' };
+    invoked.length = 0;
+    const done = dispatch('help:command');
+
+    await settle();
+    expect(store.ui.promptText).toBe('Help on which command?');
+    expect(store.ui.promptCompletions).toEqual(['help:key', 'trash:restore']);
+    await answer('trash:restore');
+
+    expect(await done).toEqual({ ok: true });
+    const request = invoked.find((c) => c.cmd === 'ws_set_var');
+    expect(request?.args).toMatchObject({
+      wsId: 'ws-1',
+      key: 'help.request',
+      value: { topic: 'trash:restore' },
+    });
+    expect(invoked).toContainEqual({
+      cmd: 'panel_set_type',
+      args: { slot: 'left', panelType: 'help' },
+    });
+    store.layout.left = { visible: false, workspace_id: null, panel_type: null };
+    store.workspaces = [];
+    store.commands = [];
+  });
+
+  test('help:command on a name no command has says so and opens nothing', async () => {
+    store.commands = [{ name: 'help:key', label: 'Describe a key', owner: null }] as typeof store.commands;
+    store.workspaces = [{ id: 'ws-1', name: 'music', active_repo: null, repo_name: null }];
+    store.layout.left = { visible: true, workspace_id: 'ws-1', panel_type: 'message' };
+    invoked.length = 0;
+
+    expect(await dispatch('help:command nope:nothing')).toEqual({ ok: true });
+    expect(invoked.map((c) => c.cmd)).not.toContain('panel_set_type');
+    const posted = invoked.find((c) => c.cmd === 'post_status');
+    expect(posted?.args).toMatchObject({ text: 'no command named nope:nothing' });
+    store.layout.left = { visible: false, workspace_id: null, panel_type: null };
+    store.workspaces = [];
+    store.commands = [];
+  });
+
   test('the builtins with a documented bare form act immediately', async () => {
     for (const invocation of ['workspace:next', 'workspace:prev', 'workspace:new', 'script:stop']) {
       const done = dispatch(invocation);
@@ -241,6 +287,7 @@ describe('an optional trailing argument is never asked for', () => {
     expect(promptsForInput('workspace:next slot')).toBe(false);
     expect(promptsForInput('find:open')).toBe(false);
     expect(promptsForInput('help:open')).toBe(false);
+    expect(promptsForInput('help:command')).toBe(true);
     expect(promptsForInput('script:stop')).toBe(false);
   });
 });

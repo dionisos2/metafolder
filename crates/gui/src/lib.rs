@@ -198,6 +198,7 @@ fn register_builtins(registry: &CommandRegistry) {
         // every click, which would otherwise flood the message log.
         ("help", "Open the help panel (optional topic)", false),
         ("help:open", "Open help for a topic", false),
+        ("help:command", "Open help for a command (asks which)", false),
         ("help:cursor", "Click an element to open its help", false),
         ("help:key", "Describe the command a key runs (press the key)", false),
     ] {
@@ -711,7 +712,7 @@ mod tests {
         // (panel commands only register at mount), so they are shell builtins.
         let registry = CommandRegistry::new();
         register_builtins(&registry);
-        for name in ["help", "help:open", "help:cursor", "help:key"] {
+        for name in ["help", "help:open", "help:command", "help:cursor", "help:key"] {
             let def = registry.get(name).unwrap_or_else(|| panic!("{name} registered"));
             assert_eq!(def.owner, None, "{name} is a builtin");
         }
