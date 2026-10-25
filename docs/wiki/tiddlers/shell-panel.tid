@@ -50,9 +50,11 @@ variable set or a function defined.
 
 !! Your shell configuration
 
-Every shell line — typed here, after `!`, and the runs of `script:run` and
-`file:open-with` — first loads `~/.bashrc`, so that your aliases, functions and
-variables (a `PATH` extended there) are at hand as in a terminal. The file is set by
+Every shell line you type — here or after `!` — first loads `~/.bashrc`, so that
+your aliases, functions and variables (a `PATH` extended there) are at hand as in a
+terminal. A script (`script:run`) and a program opened on a file (`file:open-with`)
+do not: they run in a plain `sh`, so that a script behaves the same whatever your
+configuration, and prints nothing your `.bashrc` would. The file is set by
 `shell-rc` in the GUI's `config.toml` ([[GUI configuration]]); a missing file is
 skipped, and `shell-rc = ""` loads nothing and runs each line in a plain `sh`.
 

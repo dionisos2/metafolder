@@ -1355,10 +1355,9 @@ async function runScript(path: string, ws: string | null): Promise<void> {
   }
   // A script's writes are one label in the log, its commands' nested in it
   // (doc "Labels and contexts").
-  await runShell(
-    `bash ${shellQuote(path)}`,
-    `script ${path.split("/").pop() ?? path}`,
-  );
+  await runShell(`bash ${shellQuote(path)}`, {
+    label: `script ${path.split("/").pop() ?? path}`,
+  });
 }
 
 /**
@@ -1838,14 +1837,23 @@ export async function setFullscreen(on: boolean): Promise<void> {
   }
 }
 
+/** Runs a shell line in the focused workspace. `typed`: a line the user typed
+ *  (after `!` or in the shell panel), run with their shell configuration;
+ *  anything else — a script, a program opened on a file — runs in a plain
+ *  `sh`, whatever that configuration says (doc "shell panel"). */
 export async function runShell(
   commandLine: string,
-  label?: string,
+  { label, typed = false }: { label?: string; typed?: boolean } = {},
 ): Promise<void> {
   const ws = focusedWs();
   if (!ws) return;
   try {
-    await invoke("run_shell", { wsId: ws, commandLine, label: label ?? null });
+    await invoke("run_shell", {
+      wsId: ws,
+      commandLine,
+      label: label ?? null,
+      typed,
+    });
   } catch (error) {
     await status(String(error));
   }
@@ -2105,7 +2113,7 @@ export async function dispatch(
         panelType: "shell",
       });
     }
-    await runShell(expanded.value);
+    await runShell(expanded.value, { typed: true });
     // Recorded once it has run: the user who sees its effect may stop the
     // recording while the settler still waits.
     if (recorded) macros.record(`!${parsed.shell}`, [], new Set());

@@ -315,18 +315,22 @@ async fn forward(
 /// piece of work in the log — opened in the workspace's active repository,
 /// inside the work context in force there (the proxy sends it), and passed on
 /// as `METAFOLDER_LABEL`. A plain `!` line is passed the work context alone:
-/// each `mf` it runs is a command with a label of its own anyway.
+/// each `mf` it runs is a command with a label of its own anyway. `typed`: a
+/// line the user typed, which alone loads their shell rc file.
 #[tauri::command]
 pub fn run_shell(
     app: tauri::State<'_, Arc<crate::commands::App>>,
     ws_id: String,
     command_line: String,
     label: Option<String>,
+    typed: bool,
 ) -> Result<(), String> {
     let gui = app.gui.clone();
     let daemon = app.daemon.clone();
     let message_ms = app.status_timeouts().message_ms;
-    let rc = rc_path(&app.settings.shell_rc);
+    // Only a line the user typed has their configuration: a script must
+    // behave the same for everyone (doc "shell panel").
+    let rc = typed.then(|| rc_path(&app.settings.shell_rc)).flatten();
     tauri::async_runtime::spawn(async move {
         let context = match label {
             Some(name) => open_context(&gui, &daemon, &ws_id, &name).await,
