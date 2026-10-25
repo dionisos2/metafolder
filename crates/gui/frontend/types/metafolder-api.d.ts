@@ -229,6 +229,11 @@ declare namespace Metafolder {
     style_css: string;
     keybindings: string;
     panel_types: string;
+    commands_js: string;
+    user_commands_js: string;
+    macros_js: string;
+    /** `core/query-grammar`, the simplified query language's words. */
+    grammar: string;
   }
 
   /** Where a binding applies: its combo and its scope. */

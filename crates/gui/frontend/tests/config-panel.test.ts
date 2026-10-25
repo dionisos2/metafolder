@@ -85,6 +85,10 @@ async function mountPanel(
         style_css: '/cfg/gui/style.css',
         keybindings: '/cfg/gui/keybindings.toml',
         panel_types: '/cfg/gui/panel-types',
+        commands_js: '/cfg/gui/commands.js',
+        user_commands_js: '/cfg/gui/user-commands.js',
+        macros_js: '/cfg/gui/macros.js',
+        grammar: '/cfg/core/query-grammar',
       })),
       checkKeybinding: vi.fn(async (draft: Record<string, unknown>) =>
         options.check ? options.check(draft) : { command: null, key: null },
@@ -140,6 +144,23 @@ describe('config panel', () => {
     // will follow.
     const { root, field } = await mountPanel({ visible: true });
     expect(root.activeElement).toBe(field('combo'));
+  });
+
+  test('every reload target has its button, and all of them one more', async () => {
+    const { root, api } = await mountPanel();
+    const text = root.getElementById('files')!.textContent;
+    expect(text).toContain('/cfg/gui/user-commands.js');
+    expect(text).toContain('/cfg/core/query-grammar');
+    const reloads = [...root.querySelectorAll<HTMLButtonElement>('#files button, #reload-all')];
+    for (const button of reloads) button.click();
+    await flush();
+    const targets = api.invoke.mock.calls.map((call) => (call as unknown[])[0]);
+    expect(targets).toEqual(
+      expect.arrayContaining(
+        ['keybindings', 'style', 'commands', 'grammar', 'all'].map((what) => ['config:reload', what]),
+      ),
+    );
+    expect(targets).toHaveLength(5);
   });
 
   test('every binding is listed, a suggested one without Remove', async () => {

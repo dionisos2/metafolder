@@ -290,7 +290,8 @@ export async function mount(root, metafolder) {
         title: `config:reload ${what}`,
         onclick: async () => {
           await metafolder.invoke(['config:reload', what]);
-          if (what === 'keybindings') await load();
+          // What the table shows: the keys, and the commands they name.
+          if (what !== 'style' && what !== 'grammar') await load();
         },
       },
       'Reload',
@@ -298,16 +299,22 @@ export async function mount(root, metafolder) {
 
   async function showFiles() {
     const info = await metafolder.config.info();
-    /** @param {string} name @param {string} path @param {HTMLElement|null} [action] */
-    const row = (name, path, action = null) => [
+    /** @param {string} name @param {string[]} paths @param {HTMLElement|null} [action] */
+    const row = (name, paths, action = null) => [
       el('dt', {}, name),
-      el('dd', {}, el('code', {}, path), action),
+      el('dd', {}, el('span', { class: 'paths' }, paths.map((path) => el('code', {}, path))), action),
     ];
     files.replaceChildren(
-      ...row('Config directory', info.root),
-      ...row('Keybindings', info.keybindings, reloadButton('keybindings')),
-      ...row('Stylesheet', info.style_css, reloadButton('style')),
-      ...row('Panel types', info.panel_types),
+      ...row('Config directory', [info.root]),
+      ...row('Keybindings', [info.keybindings], reloadButton('keybindings')),
+      ...row('Stylesheet', [info.style_css], reloadButton('style')),
+      ...row(
+        'Commands',
+        [info.user_commands_js, info.commands_js, info.macros_js],
+        reloadButton('commands'),
+      ),
+      ...row('Query grammar', [info.grammar], reloadButton('grammar')),
+      ...row('Panel types', [info.panel_types]),
     );
   }
 
@@ -321,6 +328,9 @@ export async function mount(root, metafolder) {
   }
   textInput.addEventListener('change', onInput);
   save.addEventListener('click', () => void submit());
+  byId(root, 'reload-all', HTMLButtonElement).addEventListener('click', () => {
+    void metafolder.invoke(['config:reload', 'all']).then(load);
+  });
   cancel.addEventListener('click', () => clearForm());
 
   metafolder.provide({ refresh: () => load() });

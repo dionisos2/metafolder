@@ -11,9 +11,13 @@ so a key can be looked up while the panel it acts in stays on screen.
 
 !! Files
 
-The configuration directory and, in it, `keybindings.toml`, `style.css` and
-`panel-types/` ([[Customising the GUI]]). The ''Reload'' buttons run
-`config:reload keybindings` and `config:reload style` ([[Reloading the configuration]]).
+The configuration directory and, in it, `keybindings.toml`, `style.css`, the command
+files — `user-commands.js`, `commands.js`, `macros.js` —, the simplified query
+language's `core/query-grammar` and `panel-types/` ([[Customising the GUI]]). Each
+file has a ''Reload'' button running `config:reload` on it — `keybindings`, `style`,
+`commands`, `grammar` — and ''Reload all'' runs `config:reload all`
+([[Reloading the configuration]]). `panel-types/` has none: a panel is read again only
+at the next start.
 
 !! Keybindings
 

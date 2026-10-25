@@ -35,6 +35,20 @@
       dt {
         color: var(--mf-fg-dim, #8a8a96);
       }
+      h2.with-action {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+      }
+      h2 button {
+        text-transform: none;
+        letter-spacing: normal;
+      }
+      .paths {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
       dd {
         margin: 0;
         display: flex;
@@ -144,7 +158,7 @@
     </style>
   </head>
   <body>
-    <h2>Files</h2>
+    <h2 class="with-action">Files <button id="reload-all" title="config:reload all">Reload all</button></h2>
     <dl id="files"></dl>
 
     <h2 data-help-topic="settings">Keybindings</h2>

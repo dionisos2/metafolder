@@ -3,4 +3,4 @@ tags: [[GUI command]] [[Customising the GUI]]
 kind: reference
 summary: Open the settings panel in the focused slot
 
-Shows the [[config panel]] in the focused slot, like `panel:open here config`: the paths of the configuration files, with buttons that reload the keybindings and the style sheet, and the keybinding editor ([[Changing keybindings]]). See [[Customising the GUI]].
+Shows the [[config panel]] in the focused slot, like `panel:open here config`: the paths of the configuration files, with a button reloading each, and the keybinding editor ([[Changing keybindings]]). See [[Customising the GUI]].

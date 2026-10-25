@@ -540,6 +540,10 @@ pub struct ConfigInfo {
     pub style_css: String,
     pub keybindings: String,
     pub panel_types: String,
+    pub commands_js: String,
+    pub user_commands_js: String,
+    pub macros_js: String,
+    pub grammar: String,
 }
 
 #[tauri::command]
@@ -549,6 +553,12 @@ pub fn config_info(app: AppHandle) -> ConfigInfo {
         style_css: app.config.style_css_path().display().to_string(),
         keybindings: app.config.root().join("keybindings.toml").display().to_string(),
         panel_types: app.config.panel_types_dir().display().to_string(),
+        commands_js: app.config.commands_js_path().display().to_string(),
+        user_commands_js: app.config.user_commands_js_path().display().to_string(),
+        macros_js: app.config.macros_js_path().display().to_string(),
+        grammar: metafolder_core::simplified::load::grammar_path()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default(),
     }
 }
 

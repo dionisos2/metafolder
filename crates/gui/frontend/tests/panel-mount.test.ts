@@ -76,7 +76,16 @@ function stubApi(panelType: string, defaults: Record<string, unknown> = {}) {
     query: { parse: async () => null, expand: async () => '', grammarSource: async () => '' },
     pick: { start: async () => '' },
     config: {
-      info: async () => ({ root: '', style_css: '', keybindings: '', panel_types: '' }),
+      info: async () => ({
+        root: '',
+        style_css: '',
+        keybindings: '',
+        panel_types: '',
+        commands_js: '',
+        user_commands_js: '',
+        macros_js: '',
+        grammar: '',
+      }),
       checkKeybinding: async () => ({ command: null, key: null }),
       setKeybinding: async () => [],
       removeKeybinding: async () => [],
