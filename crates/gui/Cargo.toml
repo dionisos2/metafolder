@@ -18,7 +18,7 @@ tauri-build = { version = "2", features = [] }
 metafolder-core = { path = "../core", features = ["git"] }
 # Content-based file type detection (magic bytes, pure Rust): the detector
 # behind the daemon's `mfr_mime`, so the previews agree with the repository.
-infer = "0.19"
+infer = "0.22"
 # devtools: the WebKit inspector stays available in release builds via
 # the devtools:open command (the native context menu is disabled).
 tauri = { version = "2", features = ["devtools"] }
@@ -36,7 +36,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1.0"
 # Editing keybindings.toml in place: the file keeps its comments and layout.
-toml_edit = "0.22"
+toml_edit = "0.25"
 uuid = { version = "1", features = ["v4", "serde"] }
 clap = { version = "4", features = ["derive"] }
 # The navigation gate parses URLs rather than prefix-matching them (sandbox.rs).

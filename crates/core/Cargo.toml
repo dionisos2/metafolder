@@ -17,7 +17,7 @@ toml = "1.0"
 # Only the programs that apply configuration link libgit2 (the config-sync
 # command, and `mf`/the GUI for a repository's own configuration); reading
 # configuration never does, and the daemon never links it.
-git2 = { version = "0.19", default-features = false, optional = true }
+git2 = { version = "0.21", default-features = false, optional = true }
 
 [features]
 # The git-backed modules: `config_sync` and `repo_config` (doc "Repository
