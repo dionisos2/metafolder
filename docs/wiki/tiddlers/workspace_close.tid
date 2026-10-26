@@ -3,4 +3,4 @@ tags: [[GUI command]] Workspaces
 kind: reference
 summary: Close the focused slot's workspace
 
-Closes the focused slot's workspace: its tab goes, and every slot that showed it moves to the previous tab (the next one when the first tab closes), or is left empty when no workspace remains. The tab's × does the same for the tab clicked. See [[Workspaces]].
+Closes the focused slot's workspace: its tab goes, and the window moves to the previous tab (the next one when the first tab closes), or is left empty when no workspace remains. When the closed workspace had the window to itself, both slots move, as with `workspace:next`: the previous workspace comes back with as many panels as it was left with ([[Panel slots and layout]]). In a mixed layout — two workspaces side by side — only the slot that showed it moves. The tab's × does the same for the tab clicked. See [[Workspaces]].

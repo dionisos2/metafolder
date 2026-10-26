@@ -17,7 +17,9 @@ then asking for one.
 
 The ''focused'' slot has a coloured border (the theme's `--mf-focus-border`) and
 receives the keys. <<key "panel:focus next" o>> moves the focus to the other slot; a
-click in a slot focuses it.
+click in a slot focuses it. The focus is always on a shown slot: whatever hides the
+focused slot, or shows the other one while the focused one is hidden, moves the focus
+to the shown one — otherwise the keys would act on a panel nobody sees.
 
 !! Open targets
 
@@ -55,7 +57,8 @@ both slots. The divider between the slots can be dragged; its position belongs t
 the window, not to a workspace.
 
 ''Each workspace remembers how many panels it had.'' Coming back to a workspace
-through `workspace:goto`, `workspace:next`/`workspace:prev` or `workspace:new` shows
+through `workspace:goto`, `workspace:next`/`workspace:prev`, `workspace:new` or the
+closing of the workspace after it (`workspace:close`) shows
 it with one panel or two, as it was left. The count is recorded only while the
 workspace has the window to itself — in the focused slot, the other slot hidden or
 showing the same workspace — so that splitting, unsplitting or hiding a slot there

@@ -49,7 +49,7 @@
 #   with no scenario, runs them all: undo-redo duplicates orphans trash remove
 #   field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script
 #   script-workspaces errors picker refs hierarchy hierarchy-form prompt history
-#   keybindings open-with tab-close pick-button suggested-key config-files walk open-viewers
+#   keybindings open-with tab-close close-layout pick-button suggested-key config-files walk open-viewers
 #   slideshow shell-line shell-cwd repos-memory help-keys help-cursor zoom order user-commands
 #   settle macro, and
 #   devtools last (it takes the inspector the clicking scenarios drive).
@@ -81,7 +81,7 @@ done
 # fails — forty tries of four seconds each.
 [ ${#SCENARIOS[@]} -gt 0 ] \
     || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script script-workspaces
-        errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close
+        errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close close-layout
         pick-button suggested-key walk open-viewers slideshow shell-line shell-cwd repos-memory
         help-keys help-cursor zoom refresh order user-commands settle macro devtools)
 
@@ -1336,6 +1336,39 @@ scenario_repos_memory() {
 # has_ws <id> — the GUI holds that workspace.
 has_ws() { [ "$(gui_status "any(w['id'] == '$1' for w in s['workspaces'])")" = True ]; }
 lacks_ws() { ! has_ws "$1"; }
+
+# focused_shows <ws> — the focused slot is shown and shows that workspace.
+focused_shows() {
+    [ "$(gui_status "next(v['workspace_id'] for v in s['layout'].values() if v and v['focused'])")" = "$1" ]
+}
+
+# Closing a workspace moves the window to the tab before it, which comes back
+# with as many panels as it was left with, and the keys stay on a shown slot.
+scenario_close_layout() {
+    new_repo close-layout
+    local single split
+    single=$WS
+    run panel:unsplit
+    run workspace:new
+    split=$(slot_ws left)
+    run panel:split
+    run panel:focus right
+    run workspace:close
+    assert "close layout: the closed workspace goes" lacks_ws "$split"
+    assert_eq "close layout: the previous workspace comes back with one panel" \
+        "None $single" "$(slot_ws left) $(slot_ws right)"
+    assert "close layout: the focus is on the shown slot" focused_shows "$single"
+
+    run panel:split
+    run workspace:new
+    split=$(slot_ws left)
+    run workspace:close
+    assert_eq "close layout: a split one comes back split" \
+        "$single $single" "$(slot_ws left) $(slot_ws right)"
+    # Leave the window as the next scenario expects it: one panel, on the left.
+    run panel:focus left
+    run panel:unsplit
+}
 
 scenario_tab_close() {
     needs_clicks tab-close || return 0

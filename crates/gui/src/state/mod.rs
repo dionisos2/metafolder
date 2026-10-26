@@ -289,6 +289,19 @@ impl Inner {
         }
     }
 
+    /// Keeps the focus on a shown slot: the keys go to the focused slot, so a
+    /// focus left on a hidden one beside a shown one would make every key act
+    /// on a panel nobody sees. Run after every mutation, whatever it did; a
+    /// focus it moves is a layout change to announce.
+    fn settle_focus(&mut self, emit: Emit) -> Emit {
+        let focused = self.focused;
+        if self.slot(focused).visible || !self.slot(focused.other()).visible {
+            return emit;
+        }
+        self.focused = focused.other();
+        Emit { layout: true, ..emit }
+    }
+
     fn layout_view(&self) -> LayoutView {
         let payload = |slot: &Slot| SlotPayload {
             visible: slot.visible,
@@ -685,6 +698,7 @@ impl GuiState {
     ) -> Result<T, String> {
         let mut inner = self.lock();
         let (value, emit) = f(&mut inner)?;
+        let emit = inner.settle_focus(emit);
         self.dispatch(&inner, emit);
         Ok(value)
     }
@@ -693,6 +707,7 @@ impl GuiState {
     fn update<T>(&self, f: impl FnOnce(&mut Inner) -> (T, Emit)) -> T {
         let mut inner = self.lock();
         let (value, emit) = f(&mut inner);
+        let emit = inner.settle_focus(emit);
         self.dispatch(&inner, emit);
         value
     }
@@ -892,10 +907,13 @@ impl GuiState {
         })
     }
 
-    /// Closes a workspace: removes its tab; every slot showing it switches
-    /// to the previous workspace in tab order (the next one when the first
-    /// tab was closed), or becomes unassigned (but stays visible) when no
-    /// workspace remains.
+    /// Closes a workspace: removes its tab, and the window moves to the
+    /// previous workspace in tab order (the next one when the first tab was
+    /// closed). When the closed workspace had the window to itself, both slots
+    /// move, as [`assign_both`](Inner::assign_both) does, so the replacement
+    /// shows the panel count it was left with; in a mixed layout only the
+    /// slot showing it switches. With no workspace left, every slot showing it
+    /// becomes unassigned (but stays visible).
     pub fn close_workspace(&self, ws_id: &str) -> Result<(), String> {
         // A value picker closed by hand is a cancel (doc "Value picker"): the
         // form that opened it is waiting for an answer, and the slot it took
@@ -916,9 +934,24 @@ impl GuiState {
                 .iter()
                 .position(|w| w.id == ws_id)
                 .ok_or_else(|| format!("unknown workspace: {ws_id}"))?;
+            // Whether the closed workspace had the window to itself (as
+            // `record_split` defines it), read before it goes.
+            let owned = {
+                let (focused, other) =
+                    (inner.slot(inner.focused), inner.slot(inner.focused.other()));
+                focused.visible
+                    && focused.workspace.as_deref() == Some(ws_id)
+                    && (!other.visible || other.workspace.as_deref() == Some(ws_id))
+            };
             inner.workspaces.remove(index);
             let replacement = (!inner.workspaces.is_empty())
                 .then(|| inner.workspaces[index.saturating_sub(1)].id.clone());
+            if let (true, Some(id)) = (owned, &replacement) {
+                // Like the navigation commands: both panels move, and the
+                // workspace comes back with as many panels as it was left with.
+                inner.assign_both(id)?;
+                return Ok(((), Emit::BOTH));
+            }
             for slot_id in [SlotId::Left, SlotId::Right] {
                 if inner.slot(slot_id).workspace.as_deref() != Some(ws_id) {
                     continue;
@@ -1414,8 +1447,14 @@ impl GuiState {
             slot.workspace = restore["workspace"].as_str().map(str::to_string);
             slot.panel_type = restore["panel_type"].as_str().map(str::to_string);
             slot.visible = restore["visible"].as_bool().unwrap_or(false);
-            // Focus returns to the caller's slot.
-            inner.focused = picker_slot.other();
+            // Focus returns to the caller's slot — shown again if it was hidden
+            // while picking and the restored slot is hidden too: the window
+            // would show nothing.
+            let caller_slot = picker_slot.other();
+            inner.focused = caller_slot;
+            if !inner.slot(picker_slot).visible && inner.slot(caller_slot).workspace.is_some() {
+                inner.slot_mut(caller_slot).visible = true;
+            }
             Ok(((), Emit::BOTH))
         })?;
 
@@ -1775,6 +1814,144 @@ mod tests {
         // The hidden slot moves off the closed workspace but stays hidden.
         assert_eq!(layout.right.workspace_id.as_deref(), Some("ws-1"));
         assert!(!layout.right.visible);
+    }
+
+    #[test]
+    fn test_close_workspace_brings_back_the_previous_with_its_own_panel_count() {
+        // A workspace left alone, then a split one: closing the split one from
+        // its right slot must not leave the previous one split.
+        let (_, state) = state();
+        let id2 = state.workspace_new(None); // ws-2, one panel
+        state.panel_split().unwrap();
+        state.focus_slot(SlotId::Right);
+        state.close_workspace(&id2).unwrap();
+
+        let layout = state.layout();
+        assert_eq!(layout.focused, SlotId::Right);
+        assert_eq!(layout.right.workspace_id.as_deref(), Some("ws-1"));
+        assert!(layout.right.visible);
+        assert!(!layout.left.visible, "ws-1 had one panel: the other slot hides");
+    }
+
+    #[test]
+    fn test_close_workspace_brings_back_a_split_previous_split() {
+        let (_, state) = state();
+        state.panel_split().unwrap(); // ws-1 split
+        let id2 = state.workspace_new(None); // ws-2, one panel
+        state.close_workspace(&id2).unwrap();
+
+        let layout = state.layout();
+        assert_eq!(layout.left.workspace_id.as_deref(), Some("ws-1"));
+        assert_eq!(layout.right.workspace_id.as_deref(), Some("ws-1"));
+        assert!(layout.left.visible && layout.right.visible);
+    }
+
+    #[test]
+    fn test_close_workspace_in_a_mixed_layout_moves_only_its_slot() {
+        let (_, state) = state();
+        let id2 = state.workspace_new(None); // ws-2 in the left slot
+        let id3 = state.workspace_new(None); // ws-3 in the left slot
+        state.tab_assign(&id2, SlotId::Right).unwrap(); // right: ws-2, shown
+        state.close_workspace(&id3).unwrap();
+
+        let layout = state.layout();
+        // The left slot moves to the tab before ws-3; the right one is untouched.
+        assert_eq!(layout.left.workspace_id.as_deref(), Some(id2.as_str()));
+        assert_eq!(layout.right.workspace_id.as_deref(), Some(id2.as_str()));
+        assert!(layout.left.visible && layout.right.visible);
+    }
+
+    #[test]
+    fn test_split_after_hiding_the_only_slot_focuses_the_shown_one() {
+        // panel:hide on the only shown slot hides everything; the next split
+        // shows the other slot, which must take the focus.
+        let (_, state) = state();
+        state.hide_slot(SlotId::Left);
+        state.panel_split().unwrap();
+
+        let layout = state.layout();
+        assert!(layout.right.visible);
+        assert_eq!(layout.focused, SlotId::Right);
+    }
+
+    #[test]
+    fn test_closing_a_picker_never_leaves_the_focus_on_a_hidden_slot() {
+        let (_, state) = state();
+        state.panel_split().unwrap();
+        state.panel_unsplit().unwrap(); // left alone, right remembers ws-1
+        let picker = state.pick_start(pick_spec("ws-1")).unwrap(); // right, focused
+        state.panel_unsplit().unwrap(); // the caller's slot hides
+        state.close_workspace(&picker).unwrap();
+
+        let layout = state.layout();
+        let focused = if layout.focused == SlotId::Left { &layout.left } else { &layout.right };
+        assert!(focused.visible, "the focus is on a shown slot: {layout:?}");
+    }
+
+    /// Whatever the user does, the keys never go to a slot they cannot see
+    /// while another one is shown. A seeded walk through the layout commands.
+    #[test]
+    fn test_the_focus_is_always_on_a_shown_slot() {
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut rnd = |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        for _ in 0..500 {
+            let (_, state) = state();
+            let mut trace = vec![];
+            for _ in 0..20 {
+                let workspaces = state.workspaces();
+                let some_ws = workspaces
+                    .get(rnd(5) as usize % workspaces.len().max(1))
+                    .map(|w| w.id.clone())
+                    .unwrap_or_default();
+                let side = if rnd(2) == 0 { SlotId::Left } else { SlotId::Right };
+                let op = rnd(14);
+                let _ = match op {
+                    0 => {
+                        state.workspace_new(None);
+                        Ok(())
+                    }
+                    1 => state.close_workspace(&some_ws),
+                    2 => state.workspace_close(),
+                    3 => state.panel_split(),
+                    4 => state.panel_unsplit(),
+                    5 => state.tab_assign(&some_ws, side),
+                    6 => {
+                        state.focus_next();
+                        Ok(())
+                    }
+                    7 => state.workspace_next(),
+                    8 => {
+                        state.hide_slot(side);
+                        Ok(())
+                    }
+                    9 => {
+                        state.focus_slot(side);
+                        Ok(())
+                    }
+                    10 => state.fork(&some_ws).map(drop),
+                    11 => state.workspace_create(None, None, Some(side)).map(drop),
+                    12 => state.workspace_goto(rnd(4) as usize + 1),
+                    _ => match state.focused_workspace_id() {
+                        Some(caller) => state.pick_start(pick_spec(&caller)).map(drop),
+                        None => Ok(()),
+                    },
+                };
+                let layout = state.layout();
+                trace.push(format!("op {op} -> {layout:?}"));
+                let focused =
+                    if layout.focused == SlotId::Left { &layout.left } else { &layout.right };
+                assert!(
+                    focused.visible || !(layout.left.visible || layout.right.visible),
+                    "the focus is on a hidden slot:\n{}",
+                    trace.join("\n")
+                );
+            }
+        }
     }
 
     #[test]

@@ -50,7 +50,7 @@ the theme's `--mf-tab-focused` and `--mf-tab-unfocused`).
 
 * A ''left-click'' shows the workspace in the focused slot.
 * A ''right-click'' shows it in the other slot — the way, with `workspace:next slot`, to put two workspaces side by side.
-* The ''×'' closes it, like `workspace:close` for that tab: every slot that showed it moves to the tab before (after, for the first tab), or is left empty when none remains.
+* The ''×'' closes it, like `workspace:close` for that tab: the window moves to the tab before (after, for the first tab), shown with as many panels as it was left with — or only the slot that showed it moves, when two workspaces are side by side — or is left empty when none remains.
 
 !! Moving between workspaces
 
