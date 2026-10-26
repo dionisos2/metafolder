@@ -13,6 +13,12 @@
 #                under it is asked either. The skip is RECORDED (a
 #                `gui_tag_skipped` marker), so it survives the run and is
 #                offered for cleanup at the end and at the next run's start.
+#   a (all)   -> a second question about the REST of the current folder: the
+#                entry on screen and everything still to ask under the same
+#                folder, subtrees included. y/n tag or deny it all in one
+#                write, s skips it all (one marker per entry), u goes back to
+#                the entry's own question. What is already decided or skipped
+#                there is left as it is: the rest is the open set, narrowed.
 #
 # The arrow keys answer as well: → yes, ← no, ↑ mixed, ↓ skip. Backspace (or
 # `u`, for undo) takes the previous answer back — including a skip.
@@ -248,6 +254,19 @@ last_abs_path() {
 
 num() { case ${1:-} in '' | *[!0-9]*) printf 0 ;; *) printf '%s' "$1" ;; esac; }
 
+# The rest of the current folder: the entry on screen and every open entry
+# under the same folder, as one predicate. `=>*` and not `->*`, so at the walk
+# root the root record itself is part of it; anywhere else the folder itself is
+# never open (it was answered mixed, or the descent would have asked it first).
+rest_pred() {
+    printf '%s AND mfr_path =>* "%s"' "$(open_pred)" "$(mf_dsl_str "$CURRENT")"
+}
+
+rest_count() {
+    mf_into "$TMP/rest" metarecord -q "$(mf_gui_scoped "$(rest_pred)")" get --count
+    first_line "$TMP/rest"
+}
+
 # ── The skip markers ─────────────────────────────────────────────────────────
 
 # The tag's vocabulary entry, which a marker refs. It may not exist yet (`mf
@@ -359,6 +378,38 @@ record_skip() { # <uuid> <path> <dir|file>
     if [ "$3" = dir ]; then CLOSED_DIRS+=("$2"); fi
 }
 
+# Answer for the rest of the folder, as one write over the predicate — built
+# BEFORE the write, which takes its subjects out of the open set — then close
+# the folder: under `--redo` nothing else would take the rest out of the walk,
+# and a skip without a vocabulary entry writes no marker to do it.
+apply_rest() { # <uuid> <y|n|s> <count>
+    local q
+    q=$(mf_gui_scoped "$(rest_pred)")
+    case $2 in
+        y) mf tag -q "$q" add "$TAG" >/dev/null || STOP="cannot tag the rest of '${CURRENT:-/}'" ;;
+        n) mf tag -q "$q" deny "$TAG" >/dev/null || STOP="cannot tag the rest of '${CURRENT:-/}'" ;;
+        s)
+            SKIPPED=$((SKIPPED + $3))
+            [ -n "$TAG_UUID" ] || TAG_UUID=$(read_tag_uuid)
+            if [ -n "$TAG_UUID" ]; then
+                if mf metarecord -q "$q" field add "gui_tag_skipped:ref=$TAG_UUID" >/dev/null; then
+                    MARKERS=$((MARKERS + $3))
+                else
+                    STOP="cannot record the skip of the rest of '${CURRENT:-/}'"
+                fi
+            else
+                [ "$WARNED_SKIP" = 1 ] || mf_gui_report \
+                    "'$TAG' is not in the tag vocabulary yet: skips hold for this run only"
+                WARNED_SKIP=1
+            fi
+            ;;
+    esac
+    # The entry too: at the walk root it is the root record, which no closed
+    # subtree holds.
+    EXCLUDED+=("$1")
+    CLOSED_DIRS+=("$CURRENT")
+}
+
 # How the walk ended: "" = still going, "user" = stopped, anything else is an
 # ERROR MESSAGE. The two must stay apart: bash disables `set -e` wherever a
 # failure is tested, so a failed `mf tag` inside a handler would otherwise be
@@ -437,12 +488,24 @@ while :; do
     [ "${#BACK_STACK[@]}" -gt 0 ] && back_hint="   [u ⌫] back"
     if [ "$kind" = dir ]; then
         answer=$(mf_gui_ask_answer \
-            "'$disp' has tag '$TAG'?   [y →] oui   [n ←] non   [m ↑] mixed   [s ↓] skip$back_hint   [q] stop   — $counter" \
-            y n m s u q)
+            "'$disp' has tag '$TAG'?   [y →] oui   [n ←] non   [m ↑] mixed   [s ↓] skip   [a] all$back_hint   [q] stop   — $counter" \
+            y n m s a u q)
     else
         answer=$(mf_gui_ask_answer \
-            "'$disp' has tag '$TAG'?   [y →] oui   [n ←] non   [s ↓] skip$back_hint   [q] stop   — $counter" \
+            "'$disp' has tag '$TAG'?   [y →] oui   [n ←] non   [s ↓] skip   [a] all$back_hint   [q] stop   — $counter" \
+            y n s a u q)
+    fi
+
+    # All: the same three answers, for the rest of the folder. `u` here only
+    # takes the `a` back — nothing is written yet — so the entry is asked again.
+    rest=""
+    if [ "$answer" = a ]; then
+        rest=$(num "$(rest_count)")
+        answer=$(mf_gui_ask_answer \
+            "the rest of '${CURRENT:-/}' has tag '$TAG'? ($rest entries, from '$disp' on)   [y →] oui   [n ←] non   [s ↓] skip   [u ⌫] back   [q] stop" \
             y n s u q)
+        [ "$answer" != u ] || continue
+        [ "$answer" = q ] || answer="a $answer"
     fi
 
     # Back: undo the previous answer and let the query bring its entry back.
@@ -472,6 +535,7 @@ while :; do
     BACK_STACK+=(".$answer_label	.$CURRENT	${#CLOSED_DIRS[@]}	${#EXCLUDED[@]}	$MARKERS	$SKIPPED")
 
     case $answer in
+        "a "*) apply_rest "$uuid" "${answer#a }" "$rest" ;;
         y | n)
             verb=add
             [ "$answer" = y ] || verb=deny
@@ -504,7 +568,7 @@ while :; do
     esac
     # Under --redo nothing the answer wrote narrows the query (the decided
     # clause is gone), so the entry is held out by uuid.
-    if [ "$REDO" = 1 ] && [ "$answer" != s ]; then EXCLUDED+=("$uuid"); fi
+    case $answer in s | "a "*) ;; *) if [ "$REDO" = 1 ]; then EXCLUDED+=("$uuid"); fi ;; esac
 done
 
 mf_gui_progress --done "$TOTAL" --total "$TOTAL"

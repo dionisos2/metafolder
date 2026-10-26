@@ -20,6 +20,12 @@ matches and asks, per entry, whether it carries the tag:
                under it is asked either. The skip is RECORDED (a
                `gui_tag_skipped` marker), so it survives the run and is
                offered for cleanup at the end and at the next run's start.
+  a (all)   -> a second question about the REST of the current folder: the
+               entry on screen and everything still to ask under the same
+               folder, subtrees included. y/n tag or deny it all in one
+               write, s skips it all (one marker per entry), u goes back to
+               the entry's own question. What is already decided or skipped
+               there is left as it is: the rest is the open set, narrowed.
 
 The arrow keys answer as well: → yes, ← no, ↑ mixed, ↓ skip. Backspace (or
 `u`, for undo) takes the previous answer back — including a skip.

@@ -143,10 +143,10 @@ case "$sig" in
                 gui|input) continue ;;
                 --prompt|--timeout-ms) skip=1; continue ;;
                 --*) continue ;;
-                escape|ctrl+escape|backspace|tab|:)
+                escape|ctrl+escape|backspace|tab|:|!)
                     # The GUI refuses a wait that asks for one of the keys it
                     # keeps for the user (doc "Script sessions"): escape stops
-                    # the script, tab toggles the script keys, ":" opens the
+                    # the script, tab toggles the script keys, ":" and "!" open the
                     # command input. Refuse them here too, or a script asking for
                     # one would pass its tests and fail in the GUI.
                     echo "'$a' is reserved by the GUI and cannot be awaited by a script" >&2

@@ -796,4 +796,111 @@ assert "session panels: exits 0" [ "$code" -eq 0 ]
 assert "session panels: the workspace is created with both panels named" \
     [ "$(mock_count 'gui workspace new --repo repo-1 --left file --right metarecord-detail')" -eq 1 ]
 
+# ── Case 30: "a" then "y" tags the rest of the folder in one write ──────────
+# `a` (all) opens a second question about the REST of the current folder: the
+# entry on screen and everything still open under the same folder, subtrees
+# included. The rest is a query — the open predicate narrowed to
+# `mfr_path =>* "<folder>"` — so what is decided or skipped stays as it is.
+REST='mfr_path IS PRESENT AND mfr_path =>* "/top"'
+mock_reset
+setup_top
+walk_children "" dir dir-top
+walk_children /top file file-a
+walk_path dir-top /top
+walk_path file-a /top/a.txt
+walk_counts 4 4 3
+mock_respond "metarecord -q *$REST get --count" '3'
+mock_prompt '/top'
+#   top=m, then at a.txt: all → yes
+mock_input q m a y
+out=$(bash "$SCRIPT" music); code=$?
+assert "rest y: exits 0" [ "$code" -eq 0 ]
+assert "rest y: the entry question offers it" \
+    [ "$(mock_count "gui input --prompt '/top/a.txt' has tag*\\[a\\] all* a *")" -eq 1 ]
+assert "rest y: the second question names the folder and the count" \
+    [ "$(mock_count "gui input --prompt *rest of '/top'*3 entries* y right n left s down u q")" -eq 1 ]
+assert "rest y: one tag op over the open rest, scoped" \
+    [ "$(mock_count "tag -q ($SC) AND NOT (tag -> * AND $REST add music")" -eq 1 ]
+assert "rest y: the entry is not tagged on its own" \
+    [ "$(mock_count 'tag -i file-a *')" -eq 0 ]
+assert "rest y: the folder is closed for the rest of the run" \
+    [ "$(mock_count '*AND NOT mfr_path ->* "/top" AND*')" -ge 1 ]
+assert "rest y: the answer is a label of its own" \
+    [ "$(mock_count 'label begin /top/a.txt: a y')" -eq 1 ]
+assert_contains "rest y: reports done" "$out" "done tagging 'music'"
+
+# ── Case 31: "a" then "n" denies the same rest ──────────────────────────────
+mock_reset
+setup_top
+walk_children "" dir dir-top
+walk_children /top dir dir-sub
+walk_path dir-top /top
+walk_path dir-sub /top/sub
+walk_counts 4 4 3
+mock_respond "metarecord -q *$REST get --count" '3'
+mock_prompt '/top'
+mock_input q m a n
+bash "$SCRIPT" music >/dev/null; code=$?
+assert "rest n: exits 0" [ "$code" -eq 0 ]
+assert "rest n: one deny over the open rest" \
+    [ "$(mock_count "tag -q ($SC) AND NOT (tag -> * AND $REST deny music")" -eq 1 ]
+assert "rest n: no per-entry op" [ "$(mock_count 'tag -i dir-sub *')" -eq 0 ]
+
+# ── Case 32: "a" then "s" skips the rest, recorded like any skip ────────────
+mock_reset
+setup_top
+tag_entry music tag-music
+markers_count 0
+walk_children "" dir dir-top
+walk_children /top file file-a
+walk_path dir-top /top
+walk_path file-a /top/a.txt
+walk_counts 4 4 3
+mock_respond "metarecord -q *$REST get --count" '3'
+mock_prompt '/top'
+#   top=m, a.txt: all → skip, then keep the markers
+mock_input q m a s n
+out=$(bash "$SCRIPT" music); code=$?
+assert "rest s: exits 0" [ "$code" -eq 0 ]
+assert "rest s: one marker write over the open rest" \
+    [ "$(mock_count "metarecord -q ($SC) AND NOT (tag -> * AND $REST field add gui_tag_skipped:ref=tag-music")" -eq 1 ]
+assert "rest s: no tag op" [ "$(mock_count 'tag -* * music')" -eq 1 ]   # the mixed only
+assert "rest s: the folder is closed" [ "$(mock_count '*AND NOT mfr_path ->* "/top" AND*')" -ge 1 ]
+assert_contains "rest s: the summary counts every entry skipped" "$out" "3 skipped"
+assert "rest s: the cleanup offer counts them too" \
+    [ "$(mock_count "gui input --prompt 3 entries are skipped*")" -eq 1 ]
+
+# ── Case 33: "u" at the second question goes back to the entry, unwritten ───
+mock_reset
+setup_top
+walk_children "" file file-a file-a
+walk_path file-a /top/a.txt
+walk_counts 1 1 1
+mock_respond "metarecord -q *mfr_path =>* \"\" get --count" '1'
+mock_prompt '/top'
+mock_input q a u y
+bash "$SCRIPT" music >/dev/null; code=$?
+assert "rest back: exits 0" [ "$code" -eq 0 ]
+assert "rest back: the entry is asked again" [ "$(asked /top/a.txt)" -eq 2 ]
+assert "rest back: nothing was reverted" [ "$(mock_count 'log revert*')" -eq 0 ]
+assert "rest back: no rest write" [ "$(mock_count 'tag -q *')" -eq 0 ]
+assert "rest back: the entry's own answer is applied" \
+    [ "$(mock_count 'tag -i file-a add music')" -eq 1 ]
+
+# ── Case 34: at the walk root the rest is the whole open scope ──────────────
+mock_reset
+setup_top
+walk_children "" file file-a
+walk_path file-a a.txt
+walk_counts 2 2
+mock_respond "metarecord -q *mfr_path =>* \"\" get --count" '2'
+mock_prompt '/top'
+mock_input q a y
+bash "$SCRIPT" music >/dev/null; code=$?
+assert "rest root: exits 0" [ "$code" -eq 0 ]
+assert "rest root: the second question names the root" \
+    [ "$(mock_count "gui input --prompt *rest of '/'*")" -eq 1 ]
+assert "rest root: the rest is everything under the root" \
+    [ "$(mock_count 'tag -q *AND mfr_path IS PRESENT AND mfr_path =>* "" add music')" -eq 1 ]
+
 assert_summary

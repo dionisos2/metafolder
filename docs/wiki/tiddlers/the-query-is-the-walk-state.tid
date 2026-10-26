@@ -49,6 +49,17 @@ does not exist yet, the skip holds for this run only, in a `uuid_in` list.
 folder's subtree is still undecided, so both the count and the step query carry a
 `NOT mfr_path ->* "P"` per skipped folder P: rule 2 would otherwise walk into it.
 
+!! The rest of a folder
+
+`a` (all) asks a second question — `y`, `n` or `s` — about the ''rest'' of the current
+folder P: the entry on screen and every open entry under P, subtrees included. The rest
+is the same predicate again, narrowed by `mfr_path =>* "P"` (inclusive, so at the walk
+root it holds the root record), so it is one write — a `mf tag -q … add|deny`, or one
+`field add` of the skip marker over the set — and what is already decided or skipped
+under P stays as it is. P is then closed like a skipped folder, and the walk goes back
+up. `u` at that second question writes nothing and asks the entry again. `!` would have
+been the natural key, but it opens the shell input and a script may not await it.
+
 `--redo` drops the decided and skipped clauses, so nothing an answer writes narrows the
 query; it keeps its own memory — the entries asked, the folders answered whole — bounded
 by keypresses and restored by `back`.
