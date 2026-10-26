@@ -3,6 +3,15 @@
 
 use serde_json::Value as Json;
 
+/// The HTTP agent every client of this crate uses. Its peers (the daemon, the
+/// GUI) are on the loopback: no proxy from the environment, which ureq would
+/// otherwise read; and an error status is an answer to read, not a failure.
+pub(crate) fn agent() -> ureq::Agent {
+    ureq::Agent::new_with_config(
+        ureq::Agent::config_builder().proxy(None).http_status_as_error(false).build(),
+    )
+}
+
 #[derive(Debug)]
 pub enum CliError {
     /// Bad arguments, unparsable DSL/field spec, missing `--repo` (exit 2).
@@ -75,7 +84,7 @@ impl Client {
         Self {
             base: base_url.trim_end_matches('/').to_string(),
             peer,
-            agent: ureq::Agent::new(),
+            agent: agent(),
             token: metafolder_core::auth::read_token(&service).ok(),
             command: None,
         }
@@ -129,20 +138,27 @@ impl Client {
         body: Option<&Json>,
     ) -> Result<Json, (Option<u16>, String)> {
         let url = format!("{}{}", self.base, path);
-        let mut req = self.agent.request(method, &url);
+        let mut req = match method {
+            "GET" => self.agent.get(&url).force_send_body(),
+            "DELETE" => self.agent.delete(&url).force_send_body(),
+            "POST" => self.agent.post(&url),
+            "PUT" => self.agent.put(&url),
+            "PATCH" => self.agent.patch(&url),
+            other => return Err((None, format!("unsupported HTTP method {other}"))),
+        };
         if let Some(token) = &self.token {
-            req = req.set("Authorization", &format!("Bearer {token}"));
+            req = req.header("Authorization", format!("Bearer {token}"));
         }
         if let Some(command) = &self.command {
             use metafolder_core::context;
             req = req
-                .set(context::COMMAND_HEADER, &command.key)
-                .set(context::COMMAND_NAME_HEADER, &context::encode(&command.name));
+                .header(context::COMMAND_HEADER, &command.key)
+                .header(context::COMMAND_NAME_HEADER, context::encode(&command.name));
             if let Some(description) = &command.description {
-                req = req.set(context::COMMAND_DESCRIPTION_HEADER, &context::encode(description));
+                req = req.header(context::COMMAND_DESCRIPTION_HEADER, context::encode(description));
             }
             if let Some(label) = command.context.and_then(|c| c.label_for(path)) {
-                req = req.set(context::LABEL_HEADER, &label.to_string());
+                req = req.header(context::LABEL_HEADER, label.to_string());
             }
         }
         for (key, value) in query {
@@ -150,22 +166,26 @@ impl Client {
         }
         let result = match body {
             Some(json) => req.send_json(json),
-            None => req.call(),
+            None => req.send_empty(),
         };
-        match result {
-            Ok(response) => Ok(response.into_json().unwrap_or(Json::Null)),
-            Err(ureq::Error::Status(code, response)) => {
-                let body: Json = response.into_json().unwrap_or(Json::Null);
-                let message = body["error"]
-                    .as_str()
-                    .map(str::to_string)
-                    .unwrap_or_else(|| format!("{} returned HTTP {code}", self.peer));
-                Err((Some(code), message))
+        let mut response = match result {
+            Ok(response) => response,
+            Err(e) => {
+                return Err((None, format!("cannot reach the {} at {}: {e}", self.peer, self.base)))
             }
-            Err(ureq::Error::Transport(t)) => {
-                Err((None, format!("cannot reach the {} at {}: {t}", self.peer, self.base)))
-            }
+        };
+        let code = response.status().as_u16();
+        // Whole: ureq stops at 10 MB by default, and a page or a log is larger.
+        let body: Json =
+            response.body_mut().with_config().limit(u64::MAX).read_json().unwrap_or(Json::Null);
+        if response.status().is_success() {
+            return Ok(body);
         }
+        let message = body["error"]
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("{} returned HTTP {code}", self.peer));
+        Err((Some(code), message))
     }
 
     pub fn get(&self, path: &str, query: &[(&str, String)]) -> Result<Json, CliError> {
@@ -174,5 +194,59 @@ impl Client {
 
     pub fn post(&self, path: &str, body: &Json) -> Result<Json, CliError> {
         self.request("POST", path, &[], Some(body))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+
+    /// Answers one request on a loopback port with `status` and `body`.
+    fn serve_once(status: &str, body: String) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let status = status.to_string();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            let _ = stream.read(&mut request);
+            let head = format!(
+                "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(body.as_bytes());
+        });
+        url
+    }
+
+    /// The daemon is on the loopback: a proxy from the environment (which
+    /// the HTTP client would otherwise read) has no business in between.
+    #[test]
+    fn test_the_agent_takes_no_proxy() {
+        assert!(agent().config().proxy().is_none());
+    }
+
+    /// A large answer (a long page, a whole log) is read whole, not cut at
+    /// the HTTP client's default limit of 10 MB.
+    #[test]
+    fn test_a_large_answer_is_read_whole() {
+        let big = "x".repeat(11 * 1024 * 1024);
+        let url = serve_once("200 OK", serde_json::to_string(&json_of(&big)).unwrap());
+        let answer = Client::new(&url).get("/big", &[]).unwrap();
+        assert_eq!(answer["v"].as_str().map(str::len), Some(big.len()));
+    }
+
+    /// An error status keeps its status and the daemon's message.
+    #[test]
+    fn test_an_error_answer_keeps_its_status_and_message() {
+        let url = serve_once("409 Conflict", r#"{"error":"busy"}"#.into());
+        let err = Client::new(&url).request_daemon("GET", "/x", None).unwrap_err();
+        assert_eq!((err.status, err.message.as_str()), (Some(409), "busy"));
+    }
+
+    fn json_of(v: &str) -> Json {
+        serde_json::json!({ "v": v })
     }
 }
