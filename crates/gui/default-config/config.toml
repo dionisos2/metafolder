@@ -70,6 +70,14 @@ video-thumbnail-percent = 10
 # file is skipped; "" loads nothing. Default: "~/.bashrc".
 shell-rc = "~/.bashrc"
 
+# Whether the WebView's frames may be handed over as DMA-BUF buffers (WebKitGTK's
+# default). Off: with a video on screen, that path sometimes showed an old frame
+# in turn with the current one — the window flickering, a list's cursor
+# jumping between two rows, while nothing had changed (doc "Why the WebView
+# does not use DMA-BUF"). Setting WEBKIT_DISABLE_DMABUF_RENDERER yourself wins
+# over this key. Read at startup. Default: false.
+webview-dmabuf = false
+
 # Shared panel UX timing knobs, handed to every panel. Every key optional.
 [panels]
 

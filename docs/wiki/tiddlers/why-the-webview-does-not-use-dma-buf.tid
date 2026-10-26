@@ -1,0 +1,41 @@
+title: Why the WebView does not use DMA-BUF
+tags: [[GUI configuration]] [[Media preview]]
+kind: rationale
+audience: dev
+aliases: dmabuf flicker WEBKIT_DISABLE_DMABUF_RENDERER webview-dmabuf
+summary: With a video on screen, WebKitGTK's DMA-BUF path sometimes showed an old frame in turn with the current one; the GUI sets WEBKIT_DISABLE_DMABUF_RENDERER unless `webview-dmabuf` is turned on.
+
+!! The symptom
+
+During a slideshow of videos ([[Slideshow]]), moved through with the arrows, the
+cursor of the [[metarecord-list panel]] started jumping between two rows, fast and
+without end, while the video went on playing undisturbed — and, at other times, the
+whole window flickered. Nothing else moved: the file panel kept its file, the
+selection its metarecord.
+
+!! What it was not
+
+A probe patched into the page through WebKit's remote inspector recorded every
+`cursor` class added and every redraw of the list's rows, with its call stack. During
+the flicker it recorded ''nothing'': the page did not change. What alternated was what
+reached the screen — the current frame and an older one, where the cursor still sat
+on the previous row. No panel code can cause that, nor be fixed for it; and a test that
+reads the DOM (`scripts/dev/gui-e2e.sh`) cannot see it, which is why it did not
+reproduce there.
+
+!! The setting
+
+WebKitGTK hands the frames it composites — and it composites as soon as a video is on
+the page — to the window as DMA-BUF buffers. With that path off
+(`WEBKIT_DISABLE_DMABUF_RENDERER=1`, frames then go through shared memory) the
+flicker was not seen again. So the GUI sets that variable at startup, before the
+WebView exists, unless:
+
+* `webview-dmabuf = true` in `[settings]` ([[GUI configuration]]) — the machine renders fine through DMA-BUF and wants it back;
+* the variable is already set, whatever its value — set by hand for one run, it wins.
+
+The cost is a copy per frame where DMA-BUF would share it, negligible without a GPU
+(the container this was seen in has none), and small beside a GUI's frame rate
+with one. A bug intermittent enough that "not seen again" is the evidence: if it
+comes back with DMA-BUF off, `WEBKIT_DISABLE_COMPOSITING_MODE=1` is the next
+suspect, with a heavier cost to video.
