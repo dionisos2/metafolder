@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/clipboard:copy
+catalog: GUI command
+target: clipboard:copy
+summary: Copy a panel's checked files, or the one under its cursor (self / a panel type)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``ctrl+c`` → ``clipboard:copy self``

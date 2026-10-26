@@ -19,4 +19,4 @@ summary: The metarecord-list panel type
 
 !! Generic commands
 
-Provides ``index``, ``count``, ``select``, ``more``, ``refresh`` to [[Generic panel commands]].
+Provides ``index``, ``count``, ``select``, ``more``, ``paths``, ``refresh`` to [[Generic panel commands]].

@@ -38,6 +38,7 @@ import {
   getClipboard,
   setClipboard,
   hasClipboard,
+  clipboardPaths,
   metarecordMenuItems,
 } from '/__file-actions.js';
 
@@ -1122,7 +1123,8 @@ export async function mount(root, metafolder) {
     await afterMutation(mf, name);
   }
 
-  /** @param {MetafolderApi} mf @param {'copy'|'cut'} mode */
+  /** The right-click menu's Cut / Copy: the entry clicked, which the cursor
+   *  moved to. @param {MetafolderApi} mf @param {'copy'|'cut'} mode */
   async function clip(mf, mode) {
     const item = selectedEntry();
     if (!item) return;
@@ -1347,13 +1349,14 @@ export async function mount(root, metafolder) {
     label: 'File manager: duplicate the selected entry',
     handler: (mf) => duplicateSelected(mf),
   });
-  void commands.register('file-manager:copy', {
-    label: 'File manager: copy the selected entry to the clipboard',
-    handler: (mf) => clip(mf, 'copy'),
-  });
-  void commands.register('file-manager:cut', {
-    label: 'File manager: cut the selected entry to the clipboard',
-    handler: (mf) => clip(mf, 'cut'),
+  // `clipboard:copy`/`clipboard:cut` (doc "Generic panel commands"): the
+  // checked metarecords' files, else the entry under the cursor.
+  metafolder.provide({
+    paths: (mf) =>
+      clipboardPaths(mf, repo, selection.values(), () => {
+        const item = listing[cursorIndex];
+        return item && item.name !== '.' && item.name !== '..' ? [item.path] : [];
+      }),
   });
   void commands.register('file-manager:paste', {
     label: 'File manager: paste the clipboard into the current directory',

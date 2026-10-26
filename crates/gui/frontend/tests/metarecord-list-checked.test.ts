@@ -8,7 +8,8 @@
 // what cannot be shown or unchecked any more.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { cursor } from './support/cursor';
+import { cursor, generic } from './support/cursor';
+import { globalStub } from './support/global';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { withRuns } from './support/runs';
@@ -273,5 +274,65 @@ describe('the checked selection across lists', () => {
     const { handlers, selected } = await mountList({ selected_metarecords: ['u-a', 'u-z'] });
     await handlers.get('metarecord-list:select')!('none');
     expect(selected()).toEqual([]);
+  });
+});
+
+// The file clipboard (doc "Generic panel commands"): `clipboard:copy self`
+// copies the files of the checked metarecords when there are some, and the
+// file of the row under the cursor otherwise.
+describe('copying to the file clipboard', () => {
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = () => {};
+  });
+
+  async function mountWithFiles(vars: Record<string, unknown>) {
+    const harness = stub(vars, new Set(['u-a', 'u-b', 'u-c']));
+    const global = globalStub();
+    const api = {
+      ...harness.api,
+      global,
+      daemon: {
+        ...harness.api.daemon,
+        // A and B are files (they hold an mfr_path).
+        query: async () => {
+          const records = LIST_AB.map((r) => ({
+            ...r,
+            fields: [
+              ...r.fields,
+              {
+                id: null,
+                name: 'mfr_path',
+                value: { type: 'tree_ref', value: { parent: null, name: r.uuid } },
+              },
+            ],
+          }));
+          return { records, nextCursor: null, total: records.length };
+        },
+        // Every metarecord's file is /<label>, but u-c's, which has none.
+        treePaths: async (_repo: string, _field: string, uuids: string[]) =>
+          Object.fromEntries(
+            uuids.map((u) => [u, u === 'u-c' ? [] : [`/${u.slice(2).toUpperCase()}`]]),
+          ),
+      },
+    };
+    const mod = await import('../../default-config/panel-types/metarecord-list/main.js');
+    await mod.mount(shadowFor(), withRuns(api) as never);
+    await settle();
+    return { ...harness, api, global };
+  }
+
+  test('with nothing checked, the file of the row under the cursor', async () => {
+    const { api, global } = await mountWithFiles({});
+    await cursor(api.provide, 'first');
+    await cursor(api.provide, 'next');
+    await generic(api.provide, 'clipboard:copy');
+    expect(global.current('clipboard')).toEqual({ paths: ['/repo/B'], mode: 'copy' });
+  });
+
+  test('with metarecords checked, all their files, whatever the cursor', async () => {
+    const { api, global } = await mountWithFiles({ selected_metarecords: ['u-b', 'u-c', 'u-a'] });
+    await cursor(api.provide, 'first');
+    await generic(api.provide, 'clipboard:cut');
+    expect(global.current('clipboard')).toEqual({ paths: ['/repo/B', '/repo/A'], mode: 'cut' });
   });
 });

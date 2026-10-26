@@ -1,0 +1,6 @@
+title: clipboard:clear
+tags: [[GUI command]]
+kind: reference
+summary: Empty the file clipboard
+
+Empties the GUI's file clipboard, filled by `clipboard:copy` and `clipboard:cut`: the global GUI variable `clipboard` becomes `null` ([[Global GUI variables]]), and ''Paste'' is greyed in the right-click menus until something is copied again. Nothing on disk changes.

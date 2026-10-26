@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/clipboard:cut
+catalog: GUI command
+target: clipboard:cut
+summary: Cut a panel's checked files, or the one under its cursor (self / a panel type)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``ctrl+x`` → ``clipboard:cut self``

@@ -353,4 +353,29 @@ describe('a generic command', () => {
       tauri.filter((c) => c.cmd.startsWith('txn_')).map((c) => c.cmd),
     ).toEqual(['txn_begin', 'txn_end']);
   });
+
+  test('clipboard:copy writes the paths the panel designates into the clipboard, in the run', async () => {
+    setFunctionProvider({
+      get: async () => ({ paths: async () => ['/r/a.txt', '/r/b.txt'] }),
+      provided: () => new Set(['paths']),
+    });
+    tauri.length = 0;
+    expect(await dispatch('clipboard:copy metarecord-list', { ws: 'ws-1', slot: 'left' })).toEqual({
+      ok: true,
+    });
+    expect(tauri.find((c) => c.cmd === 'global_send')?.args).toEqual({
+      vars: { clipboard: { paths: ['/r/a.txt', '/r/b.txt'], mode: 'copy' } },
+      txn: 7,
+    });
+  });
+});
+
+describe('clipboard:clear', () => {
+  test('empties the file clipboard', async () => {
+    tauri.length = 0;
+    expect(await dispatch('clipboard:clear', { ws: 'ws-1', slot: 'left' })).toEqual({ ok: true });
+    expect(tauri.find((c) => c.cmd === 'global_send')?.args).toEqual({
+      vars: { clipboard: null },
+    });
+  });
 });

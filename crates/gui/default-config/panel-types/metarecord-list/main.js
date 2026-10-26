@@ -13,7 +13,7 @@ import {
   composeQuery,
   composeQueryText,
 } from '/__finder.js';
-import { fileMenuItems, metarecordMenuItems } from '/__file-actions.js';
+import { clipboardPaths, fileMenuItems, metarecordMenuItems } from '/__file-actions.js';
 import { attachHistory } from '/__history.js';
 import { createListCursor } from '/__list-cursor.js';
 import { createCatchup } from '/__watcher-settle.js';
@@ -950,6 +950,13 @@ export async function mount(root, metafolder) {
     count: () => metarecords.length,
     select: setCursor,
     more: (mf) => (nextCursor ? fetchPage(false, mf) : undefined),
+    // `clipboard:copy`/`clipboard:cut`: the checked metarecords' files, else
+    // the file of the row under the cursor.
+    paths: (mf) =>
+      clipboardPaths(mf, repo, selection.values(), () => {
+        const metarecord = metarecords[cursorIndex];
+        return metarecord ? pathsOf(metarecord) : [];
+      }),
   });
   // Only forward: the list grows as it scrolls, it does not paginate back.
   void commands.register('metarecord-list:page-next', {

@@ -459,11 +459,16 @@
 "alt+down" = { command = "metarecord-list:order move down", when = "metarecord-list" }
 "shift+w" = { command = "log:toggle watcher", when = "log" }
 
-# file-manager: filesystem operations (clipboard, rename, duplicate, create).
+# The file clipboard (doc "Generic panel commands"): copy / cut the checked
+# files, or the one under the cursor, in every panel that designates files (the
+# file manager, the metarecord list). Not in a text input, which keeps its own
+# ctrl+c / ctrl+x.
+"ctrl+c" = { command = "clipboard:copy self" }
+"ctrl+x" = { command = "clipboard:cut self" }
+
+# file-manager: filesystem operations (paste, rename, duplicate, create).
 # All scoped to the panel; it has no text-input focus, so these plain
 # accelerators never clash with editing.
-"ctrl+c" = { command = "file-manager:copy", when = "file-manager" }
-"ctrl+x" = { command = "file-manager:cut", when = "file-manager" }
 "ctrl+v" = { command = "file-manager:paste", when = "file-manager" }
 "f2" = { command = "file-manager:rename", when = "file-manager" }
 "ctrl+d" = { command = "file-manager:duplicate", when = "file-manager" }

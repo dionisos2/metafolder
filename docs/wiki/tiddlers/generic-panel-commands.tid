@@ -21,6 +21,7 @@ the shell runs on a few functions the panel provides:
 |<<cmd "cursor:root">> |to the top: the root directory, a forest's roots |`root` |
 |<<cmd "view:refresh">> |reads what the panel shows again |`refresh` |
 |<<cmd "view:zoom">> `in`/`out`/`reset` |zooms the whole panel, kept per workspace |`zoom` — every panel has it: the shell provides it |
+|<<cmd "clipboard:copy">>, <<cmd "clipboard:cut">> |puts the files the panel designates in the file clipboard ([[Global GUI variables]]) |`paths` |
 
 With no row under the cursor, `next` and `prev` both land on the first row, and
 none of them moves past either end. An empty list is left alone.
@@ -73,6 +74,7 @@ metafolder.provide({
 |`refresh()` |reads what the panel shows again |
 |`parent()` |goes up one level, the cursor on what it came out of — so `cursor:descend` goes straight back down |
 |`root()` |goes to the top level, the cursor on the top row of the way it came from |
+|`paths()` |the absolute paths of the files the panel designates: those of the checked metarecords when some are checked ([[Cross-panel selection]]), else the row under the cursor's — empty when there is no file (`clipboard:copy` then says so). The shared `clipboardPaths` of `/__file-actions.js` answers it |
 
 Every function is optional; a panel provides what it can do, and a later call
 adds to what an earlier one provided. Each panel's note in the [[Panel]] catalog

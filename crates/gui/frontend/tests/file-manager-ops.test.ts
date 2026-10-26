@@ -41,7 +41,7 @@ const DIR_ENTRIES = [
   { name: 'song.mp3', path: '/song.mp3', is_dir: false },
 ];
 
-function stub(repo: string | null) {
+function stub(repo: string | null, vars: Record<string, unknown> = {}) {
   const noop = () => {};
   const handlers = new Map<string, Handler>();
   const fs = {
@@ -77,13 +77,21 @@ function stub(repo: string | null) {
     whenVisible: (fn: () => void) => fn(),
     bench: { measure: (_n: string, fn: () => unknown) => fn(), record: noop },
     daemon: {
-      call: async () => ({ results: [], next_cursor: null }),
+      // A `uuid_in` query (the selection's pruning) finds every uuid it names.
+      call: async (_method: string, _path: string, body?: { query?: { uuids?: string[] } }) => ({
+        results: body?.query?.uuids ?? [],
+        next_cursor: null,
+      }),
       repoRoot: async () => '/',
       repoInternalDir: async () => '/.metafolder/internal',
+      // Every metarecord's file is /<uuid>, but `no-file`'s, which has none.
+      treePaths: vi.fn(async (_repo: string, _field: string, uuids: string[]) =>
+        Object.fromEntries(uuids.map((u) => [u, u === 'no-file' ? [] : [`/${u}`]])),
+      ),
     },
     changes: { sync: vi.fn(async () => {}), subscribe: vi.fn(() => () => {}) },
     workspace: {
-      get: async (key: string) => (key === 'active_repo' ? repo : null),
+      get: async (key: string) => (key === 'active_repo' ? repo : (vars[key] ?? null)),
       set: vi.fn(async () => {}),
       onChange: noop,
     },
@@ -123,8 +131,11 @@ describe('file-manager filesystem operations', () => {
     Element.prototype.scrollIntoView = () => {};
   });
 
-  async function mount(repo: string | null, { start = true } = {}) {
-    const s = stub(repo);
+  async function mount(
+    repo: string | null,
+    { start = true, vars = {} }: { start?: boolean; vars?: Record<string, unknown> } = {},
+  ) {
+    const s = stub(repo, vars);
     // With start = false the panel never opens a directory (whenVisible never
     // fires), so currentDir stays null — exercising the guards.
     if (!start) s.api.whenVisible = () => {};
@@ -196,7 +207,7 @@ describe('file-manager filesystem operations', () => {
   test('copy then paste copies into the current directory (deduped)', async () => {
     const { api, handlers, fs } = await mount(null);
     await selectSong(api);
-    await handlers.get('file-manager:copy')!();
+    await generic(api.provide, 'clipboard:copy');
     await handlers.get('file-manager:paste')!();
     // Pasting song.mp3 back into its own directory dedupes to "song copy.mp3".
     expect(fs.copy).toHaveBeenCalledWith('/song.mp3', '/song copy.mp3');
@@ -206,18 +217,28 @@ describe('file-manager filesystem operations', () => {
   test('copy and cut fill the global clipboard, which paste empties after a cut', async () => {
     const { api, handlers, global } = await mount(null);
     await selectSong(api);
-    await handlers.get('file-manager:copy')!();
+    await generic(api.provide, 'clipboard:copy');
     expect(global.current('clipboard')).toEqual({ paths: ['/song.mp3'], mode: 'copy' });
-    await handlers.get('file-manager:cut')!();
+    await generic(api.provide, 'clipboard:cut');
     expect(global.current('clipboard')).toEqual({ paths: ['/song.mp3'], mode: 'cut' });
     await handlers.get('file-manager:paste')!();
     expect(global.current('clipboard')).toBeNull();
   });
 
+  test('with checked metarecords, copy takes their files, not the row under the cursor', async () => {
+    const { api, global } = await mount('repo-1', {
+      vars: { selected_metarecords: ['u-a', 'no-file', 'u-b'] },
+    });
+    await selectSong(api);
+    await generic(api.provide, 'clipboard:copy');
+    // In check order; a metarecord without a file has nothing to copy.
+    expect(global.current('clipboard')).toEqual({ paths: ['/u-a', '/u-b'], mode: 'copy' });
+  });
+
   test('cut then paste moves into the current directory', async () => {
     const { api, handlers, fs } = await mount(null);
     await selectSong(api);
-    await handlers.get('file-manager:cut')!();
+    await generic(api.provide, 'clipboard:cut');
     await handlers.get('file-manager:paste')!();
     expect(fs.move).toHaveBeenCalledWith('/song.mp3', '/song copy.mp3');
   });
@@ -266,7 +287,7 @@ describe('file-manager filesystem operations', () => {
     await handlers.get('file-manager:rename')!();
     await handlers.get('file-manager:duplicate')!();
     await handlers.get('file-manager:delete')!();
-    await handlers.get('file-manager:copy')!();
+    await expect(generic(api.provide, 'clipboard:copy')).rejects.toThrow('no file to copy');
     expect(fs.move).not.toHaveBeenCalled();
     expect(fs.copy).not.toHaveBeenCalled();
     expect(trash.trashPath).not.toHaveBeenCalled();
@@ -371,7 +392,7 @@ describe('file-manager filesystem operations', () => {
   test('paste surfaces per-item errors and refuses pasting into itself', async () => {
     const { api, handlers, fs, statusBar } = await mount(null);
     await selectSong(api);
-    await handlers.get('file-manager:copy')!();
+    await generic(api.provide, 'clipboard:copy');
     fs.copy.mockRejectedValueOnce(new Error('x'));
     await handlers.get('file-manager:paste')!();
     expect(statusBar.error).toHaveBeenCalled();
@@ -380,7 +401,7 @@ describe('file-manager filesystem operations', () => {
     await cursor(api.provide, 'first');
     await cursor(api.provide, 'next');
     await cursor(api.provide, 'next'); // dir1
-    await handlers.get('file-manager:cut')!();
+    await generic(api.provide, 'clipboard:cut');
     await handlers.get('file-manager:activate')!(); // opens /dir1
     await handlers.get('file-manager:paste')!();
     expect(fs.move).not.toHaveBeenCalled();

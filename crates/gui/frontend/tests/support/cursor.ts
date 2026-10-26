@@ -33,9 +33,13 @@ export async function generic(
   ...args: string[]
 ): Promise<string[]> {
   const reinvoked: string[] = [];
+  // The clipboard commands write the global variable, through the stub's
+  // `global` when it has one.
+  const api = provide.mock.contexts[0] as { global?: { set(k: string, v: unknown): unknown } };
   await runGeneric(name, provided(provide), args, {
     panelType: 'panel',
     reinvoke: (invocation) => reinvoked.push(invocation),
+    clip: async (paths, mode) => void (await api?.global?.set('clipboard', { paths, mode })),
   });
   return reinvoked;
 }

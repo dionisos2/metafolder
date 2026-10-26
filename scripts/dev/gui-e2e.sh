@@ -51,7 +51,7 @@
 #   script-workspaces errors picker refs hierarchy hierarchy-form prompt history
 #   keybindings open-with tab-close close-layout pick-button suggested-key config-files walk open-viewers
 #   slideshow shell-line shell-cwd repos-memory help-keys help-cursor zoom order user-commands
-#   settle macro, and
+#   settle macro clipboard, and
 #   devtools last (it takes the inspector the clicking scenarios drive).
 #   --unsandboxed  pass --allow-unsandboxed-webview to the GUI (a container
 #                  that forbids WebKit's sandbox; never on real data)
@@ -83,7 +83,7 @@ done
     || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close close-layout
         pick-button suggested-key walk open-viewers slideshow shell-line shell-cwd repos-memory
-        help-keys help-cursor zoom refresh order user-commands settle macro devtools)
+        help-keys help-cursor zoom refresh order user-commands settle macro clipboard devtools)
 
 # shellcheck source=lib/daemon-fixture.sh
 . scripts/dev/lib/daemon-fixture.sh
@@ -1668,6 +1668,69 @@ scenario_refresh() {
     assert "refresh: the detail reads the metarecord again" \
         until_ok 10 shows '#field-rows td.value' fresh
     mfg layout right - >/dev/null
+}
+
+# global_var <key> — a global GUI variable, as JSON.
+global_var() {
+    curl -sf -H "Authorization: Bearer $(cat "$XDG_RUNTIME_DIR/metafolder/gui.token")" \
+        "http://127.0.0.1:$GUI_PORT/gui/vars/$1" |
+        python3 -c 'import json, sys; print(json.dumps(json.load(sys.stdin)["value"]))'
+}
+
+# clipboard_is <json> — the file clipboard holds <json> (compared as values:
+# the GUI does not keep the keys in order).
+clipboard_is() {
+    python3 -c 'import json, sys; sys.exit(json.loads(sys.argv[1]) != json.loads(sys.argv[2]))' \
+        "$(global_var clipboard)" "$1"
+}
+
+# clipboard:copy / cut take the checked metarecords' files, else the row under
+# the cursor's, in the metarecord list as in the file manager; clipboard:clear
+# empties the clipboard.
+scenario_clipboard() {
+    new_repo clipboard
+    mkdir -p "$REPO_DIR/d"
+    touch "$REPO_DIR/d/a.txt" "$REPO_DIR/d/b.txt"
+    local d a b
+    d=$(record "$REPO_DIR/d")
+    a=$(record "$REPO_DIR/d/a.txt")
+    b=$(record "$REPO_DIR/d/b.txt")
+    show_panel left metarecord-list view:refresh metarecord-list
+
+    run workspace:send "$WS" selected_metarecords "[\"$b\",\"$a\"]"
+    run clipboard:copy metarecord-list
+    command_ok "clipboard: copy in the list resolves"
+    assert "clipboard: the list copies every checked file" until_ok 5 clipboard_is \
+        "{\"paths\": [\"$REPO_DIR/d/b.txt\", \"$REPO_DIR/d/a.txt\"], \"mode\": \"copy\"}"
+
+    run clipboard:clear
+    command_ok "clipboard: clear resolves"
+    assert "clipboard: clear empties it" until_ok 5 clipboard_is null
+
+    # Nothing checked: the row under the cursor, in the folder's list.
+    run workspace:send "$WS" selected_metarecords "[]"
+    run workspace:send "$WS" selected_metarecord "{\"uuid\":\"$d\",\"repo\":\"$DF_REPO\"}"
+    run metarecord-list:folder here
+    until_ok 5 query_is 'mfr_path -> "/d"' || die "clipboard: the list never showed the folder"
+    run view:refresh metarecord-list
+    run cursor:first metarecord-list
+    run clipboard:cut metarecord-list
+    command_ok "clipboard: cut in the list resolves"
+    assert "clipboard: with nothing checked, the row under the cursor" until_ok 5 \
+        python3 -c 'import json, sys
+c = json.loads(sys.argv[1])
+sys.exit(not (c["mode"] == "cut" and len(c["paths"]) == 1
+              and c["paths"][0].startswith(sys.argv[2] + "/d/")))' \
+        "$(global_var clipboard)" "$REPO_DIR"
+
+    # The file manager takes the checked files too.
+    run workspace:send "$WS" selected_metarecords "[\"$a\"]"
+    show_panel left file-manager view:refresh file-manager
+    run clipboard:copy file-manager
+    command_ok "clipboard: copy in the file manager resolves"
+    assert "clipboard: the file manager copies the checked file" until_ok 5 clipboard_is \
+        "{\"paths\": [\"$REPO_DIR/d/a.txt\"], \"mode\": \"copy\"}"
+    run clipboard:clear
 }
 
 scenario_walk() {

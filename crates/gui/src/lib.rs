@@ -188,6 +188,17 @@ fn register_builtins(registry: &CommandRegistry) {
         ("cursor:root", "Take a panel to its top level (self / a panel type)", true),
         ("view:refresh", "Read what a panel shows again (self / a panel type)", true),
         ("view:zoom", "Zoom a panel in, out or back to 100 % (self / a panel type)", false),
+        (
+            "clipboard:copy",
+            "Copy a panel's checked files, or the one under its cursor (self / a panel type)",
+            true,
+        ),
+        (
+            "clipboard:cut",
+            "Cut a panel's checked files, or the one under its cursor (self / a panel type)",
+            true,
+        ),
+        ("clipboard:clear", "Empty the file clipboard", true),
         // Find in panel (doc "Find in a panel"). `log=false`: stepping
         // through matches is a keystroke-level action, not a command worth a
         // message-log line.

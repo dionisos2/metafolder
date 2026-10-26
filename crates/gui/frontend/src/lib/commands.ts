@@ -2617,6 +2617,17 @@ async function runCommand(
     case "context:unset":
       if (ws) await unsetWorkContext(ws);
       return true;
+    case "clipboard:clear":
+      await invoke("global_send", { vars: { clipboard: null } });
+      if (ws) {
+        await invoke("post_status", {
+          wsId: ws,
+          text: "Clipboard emptied",
+          kind: "info",
+          timeoutMs: 5000,
+        });
+      }
+      return true;
     case "log:undo":
     case "log:redo":
       if (ws) await undoOrRedo(ws, name === "log:redo", args[0]);
@@ -2864,6 +2875,23 @@ async function runCommand(
     await runGeneric(name, functions ?? {}, rest, {
       panelType,
       reinvoke: (invocation) => void dispatch(invocation, context),
+      clip: async (paths, mode) => {
+        // The file clipboard (doc "Global GUI variables"), written in the run.
+        await invoke("global_send", {
+          vars: { clipboard: { paths, mode } },
+          txn: context.txn,
+        });
+        const what =
+          paths.length === 1
+            ? paths[0].replace(/\/+$/, "").split("/").pop()
+            : `${paths.length} files`;
+        await invoke("post_status", {
+          wsId: ws,
+          text: `${mode === "cut" ? "Cut" : "Copied"} ${what}`,
+          kind: "info",
+          timeoutMs: 5000,
+        });
+      },
     });
     return true;
   }

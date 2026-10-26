@@ -418,6 +418,10 @@ declare namespace Metafolder {
     parent?(mf: Api): unknown;
     /** Goes to the top — the root directory, a forest's roots (`cursor:root`). */
     root?(mf: Api): unknown;
+    /** The absolute paths of the files the panel designates
+     *  (`clipboard:copy`/`clipboard:cut`): the checked metarecords' when some
+     *  are checked, else the row under the cursor's. */
+    paths?(mf: Api): string[] | Promise<string[]>;
   }
 
   interface CommandOptions {

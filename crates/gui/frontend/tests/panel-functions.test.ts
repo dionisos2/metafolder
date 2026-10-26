@@ -28,8 +28,13 @@ function list(n: number, at = -1) {
   return { state, fns };
 }
 
-const run = (name: string, fns: PanelFunctions, rest: string[] = [], reinvoke = vi.fn()) =>
-  runGeneric(name, fns, rest, { panelType: 'trash', reinvoke });
+const run = (
+  name: string,
+  fns: PanelFunctions,
+  rest: string[] = [],
+  reinvoke = vi.fn(),
+  clip = vi.fn(async () => {}),
+) => runGeneric(name, fns, rest, { panelType: 'trash', reinvoke, clip });
 
 describe('resolvePanel', () => {
   test('self is the focused panel type', () => {
@@ -405,5 +410,36 @@ describe('matchEntry', () => {
   test('no match, or an empty answer, is -1', () => {
     expect(matchEntry('zzz', rows)).toBe(-1);
     expect(matchEntry('   ', rows)).toBe(-1);
+  });
+});
+
+describe('runGeneric — the file clipboard', () => {
+  test('clipboard:copy and clipboard:cut need the paths a panel designates', () => {
+    expect(neededFunctions('clipboard:copy', [])).toEqual(['paths']);
+    expect(neededFunctions('clipboard:cut', [])).toEqual(['paths']);
+    expect(appliesHere('clipboard:copy self', 'help', () => new Set(['zoom']))).toBe(false);
+    expect(appliesHere('clipboard:copy self', 'metarecord-list', () => new Set(['paths']))).toBe(
+      true,
+    );
+  });
+
+  test('clipboard:copy puts every path the panel designates in the clipboard', async () => {
+    const clip = vi.fn(async () => {});
+    await run('clipboard:copy', { paths: () => ['/a', '/b'] }, [], vi.fn(), clip);
+    expect(clip).toHaveBeenCalledWith(['/a', '/b'], 'copy');
+  });
+
+  test('clipboard:cut does the same, to be moved', async () => {
+    const clip = vi.fn(async () => {});
+    await run('clipboard:cut', { paths: async () => ['/a'] }, [], vi.fn(), clip);
+    expect(clip).toHaveBeenCalledWith(['/a'], 'cut');
+  });
+
+  test('nothing to copy is an error, and leaves the clipboard alone', async () => {
+    const clip = vi.fn(async () => {});
+    await expect(
+      run('clipboard:copy', { paths: () => [] }, [], vi.fn(), clip),
+    ).rejects.toThrow('no file to copy');
+    expect(clip).not.toHaveBeenCalled();
   });
 });

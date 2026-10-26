@@ -56,6 +56,10 @@ export interface PanelFunctions {
   parent?: () => unknown;
   /** Goes to the top: the root directory, the roots of a forest. */
   root?: () => unknown;
+  /** The absolute paths of the files the panel designates, for
+   *  `clipboard:copy`/`clipboard:cut`: the checked metarecords' when some are
+   *  checked, else the row under the cursor's. */
+  paths?: () => string[] | Promise<string[]>;
 }
 export type FunctionName = keyof PanelFunctions;
 
@@ -109,6 +113,8 @@ const NEEDS: Record<string, (rest: string[]) => FunctionName[]> = {
   'cursor:root': () => ['root'],
   'view:refresh': () => ['refresh'],
   'view:zoom': () => ['zoom'],
+  'clipboard:copy': () => ['paths'],
+  'clipboard:cut': () => ['paths'],
 };
 
 export const GENERIC_COMMANDS = Object.keys(NEEDS);
@@ -191,6 +197,9 @@ export interface GenericContext {
   panelType: string;
   /** Runs another invocation (a walk asks again from inside). Not awaited. */
   reinvoke: (invocation: string) => void;
+  /** Puts `paths` in the file clipboard (the global GUI variable `clipboard`),
+   *  in the command's run. */
+  clip: (paths: string[], mode: 'copy' | 'cut') => Promise<void>;
 }
 
 /**
@@ -202,7 +211,7 @@ export async function runGeneric(
   name: string,
   functions: PanelFunctions,
   rest: string[],
-  { panelType, reinvoke }: GenericContext,
+  { panelType, reinvoke, clip }: GenericContext,
 ): Promise<void> {
   const needed = neededFunctions(name, rest);
   if (needed === null) throw new Error(`not a generic command: ${name}`);
@@ -258,6 +267,14 @@ export async function runGeneric(
     case 'view:zoom':
       await fns.zoom(rest[0]);
       return;
+    case 'clipboard:copy':
+    case 'clipboard:cut': {
+      const mode = name === 'clipboard:cut' ? 'cut' : 'copy';
+      const paths = await fns.paths();
+      if (paths.length === 0) throw new Error(`no file to ${mode} here`);
+      await clip(paths, mode);
+      return;
+    }
     case 'cursor:find': {
       const [mode, ...words] = rest;
       const text = words.join(' ').trim();

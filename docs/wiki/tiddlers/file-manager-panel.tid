@@ -94,7 +94,8 @@ tracked, outside the repository root or inside `internal/`.
 |<<key "file-manager:new folder" Ctrl+Shift+n>>, <<key "file-manager:new file" Ctrl+n>> |create a folder, an empty file — the name is asked |
 |<<key "file-manager:rename" F2>> |rename the entry |
 |<<key "file-manager:duplicate" Ctrl+d>> |copy it beside itself, as `name copy.ext` |
-|<<key "file-manager:copy" Ctrl+c>>, <<key "file-manager:cut" Ctrl+x>>, <<key "file-manager:paste" Ctrl+v>> |copy, cut, paste into the directory shown |
+|<<key "clipboard:copy self" Ctrl+c>>, <<key "clipboard:cut self" Ctrl+x>> |copy, cut the checked entries, or the one under the cursor ([[Generic panel commands]]) |
+|<<key "file-manager:paste" Ctrl+v>> |paste into the directory shown |
 |<<key "file-manager:delete" Delete>> |delete the entry, after a confirmation |
 
 They act on the disk directly, not through the daemon. A tracked file that is renamed
@@ -108,7 +109,8 @@ a paste or a duplicate that would collide takes a ` copy` suffix (`foo copy.txt`
 
 The clipboard belongs to the GUI, not to the panel: cut here, paste in the file
 manager of another workspace, or from the right-click menu of a list
-([[Context menus]]). A cut is emptied by its paste. It is the global GUI variable
+([[Context menus]]); copy in the [[metarecord-list panel]] and paste here. A cut is
+emptied by its paste, and `clipboard:clear` empties it. It is the global GUI variable
 `clipboard` ([[Global GUI variables]]): the [[workspace-info panel]] shows what it
 holds.
 

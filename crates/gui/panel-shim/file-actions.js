@@ -42,6 +42,28 @@ export function hasClipboard(metafolder) {
   return clipboard !== null && clipboard.paths.length > 0;
 }
 
+/**
+ * The files a clipboard command takes from a panel (doc "Generic panel
+ * commands"): those of the checked metarecords when some are checked (doc
+ * "Cross-panel selection"), in check order — one without a file has none to
+ * give —, else `cursor()`, the row under the cursor's.
+ * @param {MetafolderApi} mf @param {string|null} repo
+ * @param {string[]} checked @param {() => string[]} cursor
+ * @returns {Promise<string[]>}
+ */
+export async function clipboardPaths(mf, repo, checked, cursor) {
+  if (!repo || checked.length === 0) return cursor();
+  const [root, byUuid] = await Promise.all([
+    mf.daemon.repoRoot(repo),
+    mf.daemon.treePaths(repo, 'mfr_path', checked),
+  ]);
+  // Resolved paths are leading-"/"-rooted ('' is the repo root itself).
+  const base = root.replace(/\/+$/, '');
+  return checked.flatMap((uuid) =>
+    (byUuid[uuid] ?? []).map((path) => (path === '' ? root : `${base}${path}`)),
+  );
+}
+
 // ── Pure path helpers (own copies so the shim depends on nothing panel-local) ──
 
 /** The last path segment of `path`. @param {string} path */
