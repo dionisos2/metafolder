@@ -172,9 +172,8 @@ fn check_finds_damaged_derived_data_and_reindex_repairs_it() {
         let env =
             unsafe { heed::EnvOpenOptions::new().max_dbs(32).map_size(1 << 30).open(dir.path()) }
                 .unwrap();
+        let sets = common::kv::open_raw(&env, "sets");
         let mut w = env.write_txn().unwrap();
-        let sets: heed::Database<heed::types::Bytes, heed::types::Bytes> =
-            env.open_database(&w, Some("sets")).unwrap().unwrap();
         sets.clear(&mut w).unwrap();
         w.commit().unwrap();
     }
@@ -233,7 +232,6 @@ fn descendants_follow_moves_deletions_and_reverts_in(field: &str) {
 /// the bitmaps of its other forests.
 #[test]
 fn a_store_of_the_previous_derived_format_is_reindexed_when_it_opens() {
-    type Raw = heed::Database<heed::types::Bytes, heed::types::Bytes>;
     let (mut store, dir) = open();
     populate(&mut store);
     drop(store);
@@ -243,9 +241,9 @@ fn a_store_of_the_previous_derived_format_is_reindexed_when_it_opens() {
         let env =
             unsafe { heed::EnvOpenOptions::new().max_dbs(32).map_size(1 << 30).open(dir.path()) }
                 .unwrap();
+        let sets = common::kv::open_raw(&env, "sets");
+        let meta = common::kv::open_raw(&env, "meta");
         let mut w = env.write_txn().unwrap();
-        let sets: Raw = env.open_database(&w, Some("sets")).unwrap().unwrap();
-        let meta: Raw = env.open_database(&w, Some("meta")).unwrap().unwrap();
         let descendants: Vec<Vec<u8>> =
             sets.iter(&w).unwrap().map(|e| e.unwrap().0.to_vec()).filter(|k| k[0] == 6).collect();
         assert!(!descendants.is_empty(), "the `loc` forest has descendant bitmaps");

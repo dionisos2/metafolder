@@ -57,7 +57,7 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 use heed::types::Bytes;
-use heed::{Database, Env, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
+use heed::{CommitOrAbort, Database, Env, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
 use metafolder_core::metarecord::{TreeName, Value};
 use uuid::Uuid;
 
@@ -72,7 +72,7 @@ mod source;
 
 pub use source::KvSource;
 
-type Db = Database<Bytes, Bytes>;
+type Db = Database<'static, Bytes, Bytes>;
 
 /// The parent key of a forest root: the zero uuid, which no metarecord has.
 const ROOT: [u8; 16] = [0; 16];
@@ -513,36 +513,73 @@ impl KvStore {
             options.open(dir)
         }
         .with_context(|| format!("open the key-value store in {}", dir.display()))?;
-        let mut w = env.write_txn()?;
-        let mut db = |name| env.create_database::<Bytes, Bytes>(&mut w, Some(name));
+        // In `Tables`' order. heed hands a database out for good (`'static`)
+        // only once the transaction that created it has committed.
+        const NAMES: [&str; 23] = [
+            "meta",
+            "metarecords",
+            "field_cells",
+            "row_owner",
+            "by_field",
+            "field_types",
+            "forest",
+            "ops",
+            "snaps",
+            "ops_by_label",
+            "ops_by_entity",
+            "labels",
+            "label_kids",
+            "label_keys",
+            "reverted_by",
+            "watcher_ops",
+            "user_ops",
+            "ids",
+            "uuids",
+            "sets",
+            "parts",
+            "kids",
+            "grams",
+        ];
+        let w = env.write_txn()?;
+        let created = env.create_databases_and_commit(w, |dbo, w| -> heed::Result<_> {
+            let mut dbs = Vec::with_capacity(NAMES.len());
+            for name in NAMES {
+                dbs.push(dbo.create_database::<Bytes, Bytes>(w, Some(name))?);
+            }
+            let dbs: [_; 23] = dbs.try_into().expect("one database per name");
+            Ok(CommitOrAbort::<_, ()>::Commit(dbs))
+        })?;
+        let [meta, metarecords, cells, row_owner, by_field, field_types, forest, ops, snaps, ops_by_label, ops_by_entity, labels, label_kids, label_keys, reverted_by, watcher_ops, user_ops, ids, uuids, sets, parts, kids, grams] =
+            created.commit().expect("the databases are committed");
         let t = Tables {
-            meta: db("meta")?,
-            metarecords: db("metarecords")?,
-            cells: db("field_cells")?,
-            row_owner: db("row_owner")?,
-            by_field: db("by_field")?,
-            field_types: db("field_types")?,
-            forest: db("forest")?,
-            ops: db("ops")?,
-            snaps: db("snaps")?,
-            ops_by_label: db("ops_by_label")?,
-            ops_by_entity: db("ops_by_entity")?,
-            labels: db("labels")?,
-            label_kids: db("label_kids")?,
-            label_keys: db("label_keys")?,
-            reverted_by: db("reverted_by")?,
-            watcher_ops: db("watcher_ops")?,
-            user_ops: db("user_ops")?,
-            ids: db("ids")?,
-            uuids: db("uuids")?,
-            sets: db("sets")?,
-            parts: db("parts")?,
-            kids: db("kids")?,
-            grams: db("grams")?,
+            meta,
+            metarecords,
+            cells,
+            row_owner,
+            by_field,
+            field_types,
+            forest,
+            ops,
+            snaps,
+            ops_by_label,
+            ops_by_entity,
+            labels,
+            label_kids,
+            label_keys,
+            reverted_by,
+            watcher_ops,
+            user_ops,
+            ids,
+            uuids,
+            sets,
+            parts,
+            kids,
+            grams,
         };
-        let derived = t.meta.get(&w, b"derived")?.map(from_be);
-        let layout = t.meta.get(&w, b"layout")?.map(from_be);
-        w.commit()?;
+        let (derived, layout) = {
+            let r = env.read_txn()?;
+            (t.meta.get(&r, b"derived")?.map(from_be), t.meta.get(&r, b"layout")?.map(from_be))
+        };
         let mut store = KvStore {
             env,
             t,
@@ -1307,7 +1344,8 @@ impl KvStore {
     /// store.
     fn grow_map(&mut self) -> Result<()> {
         let info = self.env.info();
-        let used = (info.last_page_number + 1) * self.env.stat().page_size as usize;
+        let used =
+            (info.last_page_number + 1) * self.env.unnamed_database_stat().page_size as usize;
         // Unknown free space: at least as much room as the store holds.
         let free = free_space(&self.dir).unwrap_or(used.max(INITIAL_MAP));
         let resized = map_to_grant(used, info.map_size, free);
@@ -1323,7 +1361,8 @@ impl KvStore {
     /// The bytes of the map in use — what is held in memory: the used pages,
     /// never past the file's end (reading there would fault).
     fn used_bytes(&self) -> usize {
-        let used = (self.env.info().last_page_number + 1) * self.env.stat().page_size as usize;
+        let used = (self.env.info().last_page_number + 1)
+            * self.env.unnamed_database_stat().page_size as usize;
         let file = std::fs::metadata(self.dir.join("data.mdb")).map_or(used, |m| m.len() as usize);
         used.min(file)
     }
@@ -1414,12 +1453,28 @@ impl KvStore {
     /// A new store has nothing to move and only records the layout.
     fn migrate_layout(&mut self) -> Result<()> {
         const BATCH: usize = 10_000;
-        let env = self.env.clone();
+        // The tables of older layouts, opened (if there) before the write:
+        // heed opens a database in a transaction of its own.
+        const GONE: [&str; 4] = ["op_children", "restorations", "ops_by_rev", "revisions"];
+        let r = self.env.read_txn()?;
+        let (old_cells, gone) = self
+            .env
+            .open_databases_and_commit(r, |dbo, r| -> heed::Result<_> {
+                let cells = dbo.open_database::<Bytes, Bytes>(r, Some("cells"))?;
+                let mut gone = Vec::new();
+                for name in GONE {
+                    gone.push(dbo.open_database::<Bytes, Bytes>(r, Some(name))?);
+                }
+                let gone: [_; 4] = gone.try_into().expect("one per name");
+                Ok(CommitOrAbort::<_, ()>::Commit((cells, gone)))
+            })?
+            .commit()
+            .expect("the databases are committed");
         let txn = KvTxn::new(self)?;
         {
             let mut w = txn.txn.borrow_mut();
             let t = txn.t;
-            if let Some(old) = env.open_database::<Bytes, Bytes>(&w, Some("cells"))? {
+            if let Some(old) = old_cells {
                 let mut after: Option<Vec<u8>> = None;
                 loop {
                     let batch: Vec<(Vec<u8>, Vec<u8>)> = {
@@ -1444,10 +1499,8 @@ impl KvStore {
                 }
                 old.clear(&mut w)?;
             }
-            for name in ["op_children", "restorations", "ops_by_rev", "revisions"] {
-                if let Some(old) = env.open_database::<Bytes, Bytes>(&w, Some(name))? {
-                    old.clear(&mut w)?;
-                }
+            for old in gone.into_iter().flatten() {
+                old.clear(&mut w)?;
             }
             for db in [
                 t.ops,
@@ -1903,7 +1956,8 @@ mod resident_tests {
 
     /// The bytes of the store in use: what is read into memory.
     fn used(store: &super::KvStore) -> u64 {
-        ((store.env.info().last_page_number + 1) * store.env.stat().page_size as usize) as u64
+        ((store.env.info().last_page_number + 1)
+            * store.env.unnamed_database_stat().page_size as usize) as u64
     }
 
     fn fill(store: &mut super::KvStore, rows: usize) {

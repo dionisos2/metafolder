@@ -18,7 +18,7 @@
 
 use crate::date;
 use heed::types::Bytes;
-use heed::{Database, Env, EnvOpenOptions, WithoutTls};
+use heed::{CommitOrAbort, Database, Env, EnvOpenOptions, WithoutTls};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as Json};
 
@@ -192,8 +192,8 @@ const INDEX_MAP: usize = 1 << 30;
 #[derive(Clone)]
 struct Index {
     env: Env<WithoutTls>,
-    entries: Database<Bytes, Bytes>,
-    by_time: Database<Bytes, Bytes>,
+    entries: Database<'static, Bytes, Bytes>,
+    by_time: Database<'static, Bytes, Bytes>,
 }
 
 /// The indexes this process has open, by path: LMDB allows one opening of a
@@ -310,14 +310,16 @@ impl TrashDir {
             options.open(&key)
         }
         .map_err(|e| index_err("open the trash index", e))?;
-        let mut w = env.write_txn().map_err(|e| index_err("open the trash index", e))?;
-        let entries = env
-            .create_database::<Bytes, Bytes>(&mut w, Some("entries"))
-            .map_err(|e| index_err("open the trash index", e))?;
-        let by_time = env
-            .create_database::<Bytes, Bytes>(&mut w, Some("by_time"))
-            .map_err(|e| index_err("open the trash index", e))?;
-        w.commit().map_err(|e| index_err("open the trash index", e))?;
+        let w = env.write_txn().map_err(|e| index_err("open the trash index", e))?;
+        let created = env.create_databases_and_commit(w, |dbo, w| -> heed::Result<_> {
+            let entries = dbo.create_database::<Bytes, Bytes>(w, Some("entries"))?;
+            let by_time = dbo.create_database::<Bytes, Bytes>(w, Some("by_time"))?;
+            Ok(CommitOrAbort::<_, ()>::Commit((entries, by_time)))
+        });
+        let (entries, by_time) = created
+            .map_err(|e| index_err("open the trash index", e))?
+            .commit()
+            .expect("the databases are committed");
         let index = Index { env, entries, by_time };
         open.insert(key, index.clone());
         Ok(index)

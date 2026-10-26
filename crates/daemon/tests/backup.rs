@@ -74,9 +74,8 @@ fn a_damaged_store_leaves_the_previous_backup_in_place() {
     {
         let env =
             unsafe { heed::EnvOpenOptions::new().max_dbs(32).map_size(1 << 30).open(&kv).unwrap() };
+        let sets = common::kv::open_raw(&env, "sets");
         let mut w = env.write_txn().unwrap();
-        let sets: heed::Database<heed::types::Bytes, heed::types::Bytes> =
-            env.open_database(&w, Some("sets")).unwrap().unwrap();
         sets.clear(&mut w).unwrap();
         w.commit().unwrap();
     }
@@ -209,9 +208,8 @@ fn a_restore_refuses_a_damaged_backup() {
         let kv = dest.join("kv");
         let env =
             unsafe { heed::EnvOpenOptions::new().max_dbs(32).map_size(1 << 30).open(&kv).unwrap() };
+        let sets = common::kv::open_raw(&env, "sets");
         let mut w = env.write_txn().unwrap();
-        let sets: heed::Database<heed::types::Bytes, heed::types::Bytes> =
-            env.open_database(&w, Some("sets")).unwrap().unwrap();
         sets.clear(&mut w).unwrap();
         w.commit().unwrap();
     }

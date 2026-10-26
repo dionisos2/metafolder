@@ -27,4 +27,4 @@ libc = "0.2"
 metafolder-daemon = { path = "../daemon" }
 tokio = { version = "1", features = ["full"] }
 axum = "0.7"
-heed = { version = "0.22", default-features = false }
+heed = { version = "0.23", default-features = false }

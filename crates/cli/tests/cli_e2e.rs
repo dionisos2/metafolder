@@ -6814,9 +6814,17 @@ fn test_repo_check_reports_damage_and_reindex_repairs_it() {
         let kv = root.join(".metafolder/internal/kv");
         let env =
             unsafe { heed::EnvOpenOptions::new().max_dbs(32).map_size(1 << 30).open(&kv) }.unwrap();
+        let r = env.read_txn().unwrap();
+        let sets = env
+            .open_databases_and_commit(r, |dbo, r| -> heed::Result<_> {
+                let sets =
+                    dbo.open_database::<heed::types::Bytes, heed::types::Bytes>(r, Some("sets"));
+                Ok(heed::CommitOrAbort::<_, ()>::Commit(sets?.unwrap()))
+            })
+            .unwrap()
+            .commit()
+            .unwrap();
         let mut w = env.write_txn().unwrap();
-        let sets: heed::Database<heed::types::Bytes, heed::types::Bytes> =
-            env.open_database(&w, Some("sets")).unwrap().unwrap();
         sets.clear(&mut w).unwrap();
         w.commit().unwrap();
     }

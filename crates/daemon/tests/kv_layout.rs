@@ -11,7 +11,7 @@ use uuid::Uuid;
 mod common;
 use common::TempDir;
 
-type Raw = heed::Database<heed::types::Bytes, heed::types::Bytes>;
+use common::kv::{create_raw, open_raw};
 
 fn raw_env(dir: &std::path::Path) -> heed::Env {
     unsafe { heed::EnvOpenOptions::new().max_dbs(32).map_size(1 << 30).open(dir).unwrap() }
@@ -55,11 +55,11 @@ fn store() -> (TempDir, Vec<Uuid>) {
 /// forgets the layout's version: a store as an older daemon left it.
 fn downgrade(dir: &std::path::Path) {
     let env = raw_env(dir);
+    let current = open_raw(&env, "field_cells");
+    let cells = create_raw(&env, "cells");
+    let owners = open_raw(&env, "row_owner");
+    let meta = open_raw(&env, "meta");
     let mut w = env.write_txn().unwrap();
-    let current: Raw = env.open_database(&w, Some("field_cells")).unwrap().unwrap();
-    let cells: Raw = env.create_database(&mut w, Some("cells")).unwrap();
-    let owners: Raw = env.open_database(&w, Some("row_owner")).unwrap().unwrap();
-    let meta: Raw = env.open_database(&w, Some("meta")).unwrap().unwrap();
     let old: Vec<(Vec<u8>, Vec<u8>)> = current
         .iter(&w)
         .unwrap()
@@ -86,8 +86,8 @@ fn downgrade(dir: &std::path::Path) {
 
 fn layout(dir: &std::path::Path) -> Option<Vec<u8>> {
     let env = raw_env(dir);
+    let meta = open_raw(&env, "meta");
     let r = env.read_txn().unwrap();
-    let meta: Raw = env.open_database(&r, Some("meta")).unwrap().unwrap();
     meta.get(&r, b"layout").unwrap().map(<[u8]>::to_vec)
 }
 
@@ -160,12 +160,12 @@ fn a_store_of_the_tree_layout_opens_with_an_empty_log() {
     };
     {
         let env = raw_env(dir.path());
+        let meta = open_raw(&env, "meta");
+        let children = create_raw(&env, "op_children");
+        let restorations = create_raw(&env, "restorations");
         let mut w = env.write_txn().unwrap();
-        let meta: Raw = env.open_database(&w, Some("meta")).unwrap().unwrap();
         meta.put(&mut w, b"layout", &2i64.to_be_bytes()).unwrap();
-        let children: Raw = env.create_database(&mut w, Some("op_children")).unwrap();
         children.put(&mut w, &[1, 2, 3], &[]).unwrap();
-        let restorations: Raw = env.create_database(&mut w, Some("restorations")).unwrap();
         restorations.put(&mut w, &1i64.to_be_bytes(), &[0]).unwrap();
         w.commit().unwrap();
     }
@@ -183,9 +183,9 @@ fn a_store_of_the_tree_layout_opens_with_an_empty_log() {
     assert!(kv.head().unwrap().unwrap() > last_op, "operation ids are not reused");
     drop(kv);
     let env = raw_env(dir.path());
-    let r = env.read_txn().unwrap();
     for name in ["op_children", "restorations"] {
-        let db: Raw = env.open_database(&r, Some(name)).unwrap().unwrap();
+        let db = open_raw(&env, name);
+        let r = env.read_txn().unwrap();
         assert!(db.is_empty(&r).unwrap(), "{name} is cleared");
     }
 }

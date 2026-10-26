@@ -56,3 +56,31 @@ pub fn uuids(src: &KvSource, bm: &RoaringBitmap) -> Vec<Uuid> {
     use metafolder_daemon::index::Source;
     bm.iter().map(|id| src.uuid(id).expect("an id of the store")).collect()
 }
+
+/// One of a store's raw tables, as a test damages or downgrades it.
+pub type Raw = heed::Database<'static, heed::types::Bytes, heed::types::Bytes>;
+
+/// The store's existing table `name`, held for the test's duration. heed
+/// opens a database in a transaction of its own — so before the test's write
+/// transaction, not inside it.
+pub fn open_raw(env: &heed::Env, name: &str) -> Raw {
+    let r = env.read_txn().unwrap();
+    env.open_databases_and_commit(r, |dbo, r| -> heed::Result<_> {
+        Ok(heed::CommitOrAbort::<_, ()>::Commit(dbo.open_database(r, Some(name))?))
+    })
+    .unwrap()
+    .commit()
+    .unwrap()
+    .unwrap_or_else(|| panic!("no table {name}"))
+}
+
+/// [`open_raw`], creating the table if the store has none.
+pub fn create_raw(env: &heed::Env, name: &str) -> Raw {
+    let w = env.write_txn().unwrap();
+    env.create_databases_and_commit(w, |dbo, w| -> heed::Result<_> {
+        Ok(heed::CommitOrAbort::<_, ()>::Commit(dbo.create_database(w, Some(name))?))
+    })
+    .unwrap()
+    .commit()
+    .unwrap()
+}

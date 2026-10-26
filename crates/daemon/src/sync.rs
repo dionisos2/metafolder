@@ -56,11 +56,11 @@ pub fn sync_db_filename(a: Uuid, b: Uuid) -> String {
 #[derive(Clone)]
 pub struct SyncDb {
     env: Env<WithoutTls>,
-    meta: Database<Bytes, Bytes>,
-    links: Database<Bytes, Bytes>,
-    by_a: Database<Bytes, Bytes>,
-    by_b: Database<Bytes, Bytes>,
-    snaps: Database<Bytes, Bytes>,
+    meta: Database<'static, Bytes, Bytes>,
+    links: Database<'static, Bytes, Bytes>,
+    by_a: Database<'static, Bytes, Bytes>,
+    by_b: Database<'static, Bytes, Bytes>,
+    snaps: Database<'static, Bytes, Bytes>,
 }
 
 /// The stores this process has open, by path. LMDB allows one environment
@@ -84,11 +84,14 @@ pub fn open(path: &Path) -> Result<SyncDb> {
         options.open(&key)
     }
     .with_context(|| format!("open the sync store at {}", key.display()))?;
-    let mut w = env.write_txn()?;
-    let mut table = |name| env.create_database::<Bytes, Bytes>(&mut w, Some(name));
-    let (meta, links, by_a, by_b, snaps) =
-        (table("meta")?, table("links")?, table("by_a")?, table("by_b")?, table("snaps")?);
-    w.commit()?;
+    let w = env.write_txn()?;
+    let created = env.create_databases_and_commit(w, |dbo, w| -> heed::Result<_> {
+        let mut table = |name| dbo.create_database::<Bytes, Bytes>(w, Some(name));
+        let tables =
+            [table("meta")?, table("links")?, table("by_a")?, table("by_b")?, table("snaps")?];
+        Ok(heed::CommitOrAbort::<_, ()>::Commit(tables))
+    })?;
+    let [meta, links, by_a, by_b, snaps] = created.commit().expect("the databases are committed");
     let db = SyncDb { env, meta, links, by_a, by_b, snaps };
     open.insert(key, db.clone());
     Ok(db)

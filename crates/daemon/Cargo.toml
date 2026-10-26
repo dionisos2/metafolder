@@ -27,10 +27,10 @@ base64 = "0.23"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 # Pure-Rust, magic-byte MIME detection for mfr_mime (no system libmagic).
 infer = "0.22"
-roaring = "0.10"
+roaring = "0.11"
 # The key-value storage backend (doc "Storage"): LMDB, a memory-mapped
 # copy-on-write B+tree — the page cache is its cache.
-heed = { version = "0.22", default-features = false }
+heed = { version = "0.23", default-features = false }
 # flock(2), for the one-daemon-per-repository lock the store takes itself.
 libc = "0.2"
 lofty = "0.25.0"
