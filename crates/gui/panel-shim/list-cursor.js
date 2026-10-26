@@ -32,11 +32,17 @@ import { latestOnly } from '/__coalesce.js';
 export function createListCursor({ containers, className = 'cursor', publish }) {
   const propagate = publish ? latestOnly(publish) : null;
 
+  /** The rows of `container` marked as the cursor — its children, read
+   *  directly: jsdom 30 answers `:scope > .x` with nothing in a shadow root,
+   *  where every panel lives. @param {Element} container */
+  const marked = (container) =>
+    [...container.children].filter((row) => row.classList.contains(className));
+
   /** Moves the class onto the row at `index` (none past the rows), without
    *  touching the rows themselves. @param {number} index */
   function highlight(index) {
     for (const container of containers()) {
-      for (const stale of container.querySelectorAll(`:scope > .${className}`)) {
+      for (const stale of marked(container)) {
         stale.classList.remove(className);
       }
       container.children[index]?.classList.add(className);
@@ -46,7 +52,7 @@ export function createListCursor({ containers, className = 'cursor', publish }) 
   /** Scrolls the cursor row into view, as little as needed. */
   function reveal() {
     for (const container of containers()) {
-      container.querySelector(`:scope > .${className}`)?.scrollIntoView?.({ block: 'nearest' });
+      marked(container)[0]?.scrollIntoView?.({ block: 'nearest' });
     }
   }
 

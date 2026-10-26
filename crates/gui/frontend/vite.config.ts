@@ -98,7 +98,13 @@ export default defineConfig({
       // whole switch, the numerator one case. Overall: statements 71.1 → 71.6,
       // functions 59.0 → 59.7, branches 83.1 → 81.4, so the branch floor
       // follows to 81.
-      thresholds: { statements: 65, branches: 80, functions: 53, lines: 65 },
+      //
+      // Vitest 5 (October 2026) measures differently: v8's byte ranges are
+      // remapped onto the AST, so branches the old remapping never counted
+      // join the denominator, and functions are counted whole. The same suite
+      // read statements 73.3, functions 70.2, lines 76.9 — and branches 67.7,
+      // so the branch floor follows the new measure to 67.
+      thresholds: { statements: 65, branches: 67, functions: 53, lines: 65 },
     },
   },
 });

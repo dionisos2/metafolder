@@ -145,7 +145,7 @@ export function attachHistory(input, { zone, read, append, getRepo, container })
 
   /** @param {string} zoneName @returns {Promise<string[]>} */
   async function loadEntries(zoneName) {
-    let repo = null;
+    let repo;
     try {
       repo = await getRepo();
     } catch {

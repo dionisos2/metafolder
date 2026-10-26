@@ -7,7 +7,8 @@
     "docs/wiki"
   ],
   "devDependencies": {
-    "eslint": "^9.39.5",
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.13.0",
     "eslint-plugin-svelte": "^3.20.0",
     "globals": "^17.7.0",
     "svelte-eslint-parser": "^1.8.0",

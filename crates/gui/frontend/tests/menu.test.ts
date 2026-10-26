@@ -1,7 +1,7 @@
 // HTML context menu module (panel-shim/menu.js), shared by the shell and
 // the panels (doc "Context menus").
 
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi, type Mock } from 'vitest';
 import {
   MENU_CATEGORIES,
   clampPosition,
@@ -418,10 +418,10 @@ describe('orderMenu', () => {
 
 describe('installDefaultContextMenu', () => {
   let menu: { addItems: (provider: (event: MouseEvent) => Item[]) => void; uninstall: () => void };
-  let dispatch: ReturnType<typeof vi.fn>;
+  let dispatch: Mock<(invocation: string) => unknown>;
 
   function install() {
-    dispatch = vi.fn().mockResolvedValue(undefined);
+    dispatch = vi.fn<(invocation: string) => unknown>().mockResolvedValue(undefined);
     menu = installDefaultContextMenu(window, dispatch);
   }
 

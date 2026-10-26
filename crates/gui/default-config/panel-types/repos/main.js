@@ -440,8 +440,8 @@ export async function mount(root, metafolder) {
     for (const container of qsa(list, '.repo-watch')) {
       const repoUuid = container.dataset.watchFor;
       if (!repoUuid) continue;
-      /** @type {WatchStatus|null} */
-      let status = null;
+      /** @type {WatchStatus} */
+      let status;
       try {
         status = /** @type {WatchStatus} */ (
           await daemon.call('GET', `/repos/${repoUuid}/watch`)

@@ -823,7 +823,7 @@ export async function mount(root, metafolder) {
     const auth = metafolder.sessionToken
       ? `&token=${encodeURIComponent(metafolder.sessionToken)}`
       : '';
-    let pages = 0;
+    let pages;
     try {
       const response = await fetch(
         `${metafolder.guiServer}/document/info?path=${encodeURIComponent(path)}${auth}`,
