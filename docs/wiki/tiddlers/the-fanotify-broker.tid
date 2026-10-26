@@ -62,7 +62,7 @@ hangs up is let go entirely.
 * ''The kernel merges unread events'' (`fanotify_should_merge`, up to 128 back): without `FAN_REPORT_TARGET_FID`, "`x` deleted" and a new "`x` created" merge into one `CREATE|DELETE`, order lost. With it, a repeated move `a→b, b→a, a→b` still merges; the broker checks each moved object's position at the end of a batch and puts back a hop that a merge made vanish (`restore_merged_moves`).
 * ''Info records are 4-aligned'': walking them by `len` rounded to 8 lost the new side of renames for some name lengths.
 * ''Versions'': `FAN_REPORT_FID` 5.1, `FAN_REPORT_DFID_NAME` 5.9, `FAN_REPORT_TARGET_FID` 5.17 (also 5.15.154, 5.10.220) — detected at startup.
-* ''Limits'': `max_user_groups`, `max_user_marks`, `max_queued_events`; an overflow is announced, never a silent gap. No events for `mmap` writes, none remote on network filesystems (inotify is the fallback), some FUSE report a zero fsid, a filesystem without export handles cannot be marked at all — as a root, refused; mounted beneath one, a gap ([[Uncovered mounts]]).
+* ''Limits'': `max_user_groups`, `max_user_marks`, `max_queued_events`; an overflow is announced, never a silent gap — and at once: the marker goes out in its place in the stream without waiting for an event to follow it (until October 2026 it rode on the next event written, so an overflow at the end of a burst went unannounced until some file changed again). No events for `mmap` writes, none remote on network filesystems (inotify is the fallback), some FUSE report a zero fsid, a filesystem without export handles cannot be marked at all — as a root, refused; mounted beneath one, a gap ([[Uncovered mounts]]).
 
 !! Busy directories outside the roots
 

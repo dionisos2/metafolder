@@ -112,6 +112,9 @@ struct Client {
 /// order to hang up once everything queued before it is written.
 enum Out {
     Msg(ServerMsg),
+    /// Wakes the writer to announce an overflow flagged since: the marker
+    /// must not wait for an event that may never come.
+    Overflow,
     Close,
 }
 
@@ -214,13 +217,17 @@ impl<C: 'static + CredSource> Broker<C> {
             std::thread::spawn(move || {
                 let mut out = write_half;
                 for item in rx {
-                    let Out::Msg(msg) = item else { break };
+                    let msg = match item {
+                        Out::Msg(msg) => Some(msg),
+                        Out::Overflow => None,
+                        Out::Close => break,
+                    };
                     if client.overflow.swap(false, Ordering::Relaxed)
                         && write_msg(&mut out, &ServerMsg::Overflow {}).is_err()
                     {
                         break;
                     }
-                    if write_msg(&mut out, &msg).is_err() {
+                    if msg.is_some_and(|msg| write_msg(&mut out, &msg).is_err()) {
                         break;
                     }
                 }
@@ -316,6 +323,9 @@ impl<C: 'static + CredSource> Broker<C> {
     pub fn broadcast_overflow(&self) {
         for client in lock(&self.inner.clients).iter() {
             client.overflow.store(true, Ordering::Relaxed);
+            // Behind what was queued before the gap, so in its place; a full
+            // queue has a message coming that carries the flag anyway.
+            let _ = client.tx.try_send(Out::Overflow);
         }
     }
 
@@ -868,6 +878,25 @@ mod tests {
         broker.broadcast(&Event::Create { path: "/repo/x".into() });
         assert!(matches!(next_msg(&mut r), ServerMsg::Overflow {}));
         assert!(matches!(next_msg(&mut r), ServerMsg::Event { .. }));
+    }
+
+    /// An overflow after the last event of a burst is announced at once, not
+    /// held back until some later event happens to be written: nothing may
+    /// follow it for hours, and the subscriber must know now that it missed
+    /// changes.
+    #[test]
+    fn test_a_kernel_overflow_with_nothing_after_it_is_announced() {
+        let broker = Broker::with_queue_cap(AccessFilter::new(AllowAll), Arc::new(NoRoots), 64);
+        let (client, _writer) = attach_pair(&broker);
+        client.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+        let mut r = reader(&client);
+        subscribe(&client, &["/repo"]);
+        let _ = next_msg(&mut r);
+        broker.broadcast(&Event::Create { path: "/repo/x".into() });
+        assert!(matches!(next_msg(&mut r), ServerMsg::Event { .. }));
+
+        broker.broadcast_overflow();
+        assert!(matches!(next_msg(&mut r), ServerMsg::Overflow {}));
     }
 
     /// A sink that cannot cover the roots under `/gone`.
