@@ -6937,11 +6937,11 @@ fn stub_task_daemon(status: &'static str) -> String {
     use axum::routing::{get, post};
     let app = axum::Router::new()
         .route(
-            "/repos/:repo/duplicates/scan",
+            "/repos/{repo}/duplicates/scan",
             post(|| async { axum::Json(serde_json::json!({"task_id": "t1"})) }),
         )
         .route(
-            "/repos/:repo/tasks/:id",
+            "/repos/{repo}/tasks/{id}",
             get(move || async move {
                 let mut task = serde_json::json!({"id": "t1", "status": status});
                 if status == "failed" {
@@ -7068,7 +7068,7 @@ fn test_ignore_untracked_dir_and_emptied_patterns() {
 fn stub_watch_daemon(body: serde_json::Value) -> String {
     use axum::routing::get;
     let app = axum::Router::new()
-        .route("/repos/:repo/watch", get(move || async move { axum::Json(body) }));
+        .route("/repos/{repo}/watch", get(move || async move { axum::Json(body) }));
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     listener.set_nonblocking(true).unwrap();

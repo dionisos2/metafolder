@@ -55,17 +55,17 @@ async fn spawn_stub_with(
     let stub = Stub { mark, marked_count, deletes: Arc::new(Mutex::new(Vec::new())), refusal };
     let router = axum::Router::new()
         .route(
-            "/repos/:repo/orphans/mark",
+            "/repos/{repo}/orphans/mark",
             post(|State(stub): State<Stub>| async move { stub.answer(stub.mark.clone()) }),
         )
         .route(
-            "/repos/:repo/query",
+            "/repos/{repo}/query",
             post(|State(stub): State<Stub>, Json(_body): Json<Value>| async move {
                 stub.answer(json!({"results": [], "next_cursor": null, "total": stub.marked_count}))
             }),
         )
         .route(
-            "/repos/:repo/query/delete",
+            "/repos/{repo}/query/delete",
             post(|State(stub): State<Stub>, Json(body): Json<Value>| async move {
                 stub.deletes.lock().unwrap().push(body);
                 stub.answer(json!({"deleted": stub.marked_count}))

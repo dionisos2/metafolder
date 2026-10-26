@@ -6,6 +6,7 @@ use crate::server::command_wait::CommandOutcome;
 use crate::server::input_wait::{InputOutcome, PromptOutcome};
 use crate::state::layout::SlotId;
 use crate::state::{GuiState, Question};
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -114,8 +115,10 @@ pub struct CreateWorkspaceBody {
 
 pub async fn create_workspace(
     State(state): State<ServerState>,
-    body: Option<Json<CreateWorkspaceBody>>,
+    body: Result<Option<Json<CreateWorkspaceBody>>, JsonRejection>,
 ) -> Response {
+    // As axum 0.7 read an optional body: absent or unreadable alike.
+    let body = body.ok().flatten();
     let body = body.map(|Json(b)| b).unwrap_or_default();
     let task = body.task;
     let mut panels = Vec::new();
@@ -371,8 +374,10 @@ pub struct CommandBody {
 /// gets its own id.
 pub async fn post_command(
     State(state): State<ServerState>,
-    body: Option<Json<CommandBody>>,
+    body: Result<Option<Json<CommandBody>>, JsonRejection>,
 ) -> Response {
+    // As axum 0.7 read an optional body: absent or unreadable alike.
+    let body = body.ok().flatten();
     let Some(Json(body)) = body else {
         return error_response(StatusCode::BAD_REQUEST, "missing invocation");
     };
@@ -473,8 +478,10 @@ pub struct ProgressBody {
 
 pub async fn post_progress(
     State(state): State<ServerState>,
-    body: Option<Json<ProgressBody>>,
+    body: Result<Option<Json<ProgressBody>>, JsonRejection>,
 ) -> Response {
+    // As axum 0.7 read an optional body: absent or unreadable alike.
+    let body = body.ok().flatten();
     let body = body.map(|Json(b)| b).unwrap_or_default();
     if let Some(task) = body.task.as_deref() {
         state.gui.script_progress(task, body.done, body.total, body.phase);
@@ -572,8 +579,10 @@ const BUSY: &str = "this workspace already has a question waiting";
 
 pub async fn post_input(
     State(state): State<ServerState>,
-    body: Option<Json<InputBody>>,
+    body: Result<Option<Json<InputBody>>, JsonRejection>,
 ) -> Response {
+    // As axum 0.7 read an optional body: absent or unreadable alike.
+    let body = body.ok().flatten();
     let body = body.map(|Json(b)| b).unwrap_or_default();
     // The user's ways out of the question are not a script's to take (doc
     // "Script sessions"). Checked before the wait is registered, so a refused

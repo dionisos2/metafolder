@@ -454,8 +454,10 @@ pub(super) async fn orphans_mark(
 pub(super) async fn full_reconcile(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
-    payload: Option<Json<ReconcileBody>>,
+    payload: Result<Option<Json<ReconcileBody>>, JsonRejection>,
 ) -> Result<Response, ApiError> {
+    // As axum 0.7 read an optional body: absent or unreadable alike.
+    let payload = payload.ok().flatten();
     let repo_uuid = parse_uuid(&repo)?;
     let body = payload.map(|Json(b)| b).unwrap_or_default();
     if let Some(t) = body.threshold {
@@ -557,8 +559,10 @@ impl Default for DuplicatesBody {
 pub(super) async fn duplicates_scan(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
-    payload: Option<Json<DuplicatesBody>>,
+    payload: Result<Option<Json<DuplicatesBody>>, JsonRejection>,
 ) -> Result<Response, ApiError> {
+    // As axum 0.7 read an optional body: absent or unreadable alike.
+    let payload = payload.ok().flatten();
     let repo_uuid = parse_uuid(&repo)?;
     let body = payload.map(|Json(b)| b).unwrap_or_default();
     if body.min_size < 0 {

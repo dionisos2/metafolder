@@ -309,7 +309,7 @@ async fn spawn_recording_daemon(seen: Arc<std::sync::Mutex<Vec<Value>>>) -> Stri
             }),
         )
         .route(
-            "/repos/:repo/query",
+            "/repos/{repo}/query",
             axum::routing::post(move |Json(body): Json<Value>| {
                 let seen = seen.clone();
                 async move {

@@ -70,7 +70,7 @@ fn start_stub(input_response: Json_, prompt_response: Json_) -> StubGui {
                 }),
             )
             .route(
-                "/gui/workspaces/:id",
+                "/gui/workspaces/{id}",
                 delete(|State(s): State<Recorded>, Path(id): Path<String>| async move {
                     s.push("DELETE", &format!("/gui/workspaces/{id}"), Json_::Null);
                     axum::http::StatusCode::NO_CONTENT
@@ -86,7 +86,7 @@ fn start_stub(input_response: Json_, prompt_response: Json_) -> StubGui {
                 ),
             )
             .route(
-                "/gui/panels/:slot/view",
+                "/gui/panels/{slot}/view",
                 put(
                     |State(s): State<Recorded>,
                      Path(slot): Path<String>,
@@ -154,11 +154,11 @@ fn start_stub(input_response: Json_, prompt_response: Json_) -> StubGui {
                 }),
             )
             .route(
-                "/gui/workspaces/:id/messages",
+                "/gui/workspaces/{id}/messages",
                 get(|Path(id): Path<String>| async move { stub_messages(&id) }),
             )
             .route(
-                "/gui/workspaces/:id/vars/:key",
+                "/gui/workspaces/{id}/vars/{key}",
                 get(|Path((id, key)): Path<(String, String)>| async move { stub_var(&id, &key) }),
             )
             .with_state(state);

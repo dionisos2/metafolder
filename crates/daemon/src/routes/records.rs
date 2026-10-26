@@ -469,8 +469,10 @@ pub(super) async fn unset_record_field(
     State(state): State<Arc<AppState>>,
     Path((repo, uuid, name)): Path<(String, String, String)>,
     Query(ev): Query<ExpectedVersion>,
-    payload: Option<Json<ForceBody>>,
+    payload: Result<Option<Json<ForceBody>>, JsonRejection>,
 ) -> Result<StatusCode, ApiError> {
+    // As axum 0.7 read an optional body: absent or unreadable alike.
+    let payload = payload.ok().flatten();
     let force = payload.map(|Json(b)| b.force).unwrap_or(false);
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
@@ -641,8 +643,10 @@ pub(super) async fn patch_field_by_id(
 pub(super) async fn delete_field_by_id(
     State(state): State<Arc<AppState>>,
     Path((repo, id)): Path<(String, i64)>,
-    payload: Option<Json<ForceBody>>,
+    payload: Result<Option<Json<ForceBody>>, JsonRejection>,
 ) -> Result<StatusCode, ApiError> {
+    // As axum 0.7 read an optional body: absent or unreadable alike.
+    let payload = payload.ok().flatten();
     let force = payload.map(|Json(b)| b.force).unwrap_or(false);
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {

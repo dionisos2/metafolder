@@ -38,7 +38,7 @@ async fn spawn_stub(start: (u16, Value), polls: Vec<Value>) -> (String, Stub) {
     };
     let router = axum::Router::new()
         .route(
-            "/repos/:repo/duplicates/scan",
+            "/repos/{repo}/duplicates/scan",
             post(|State(stub): State<Stub>, Json(body): Json<Value>| async move {
                 stub.scans.lock().unwrap().push(body);
                 let (status, body) = stub.start.clone();
@@ -46,7 +46,7 @@ async fn spawn_stub(start: (u16, Value), polls: Vec<Value>) -> (String, Stub) {
             }),
         )
         .route(
-            "/repos/:repo/tasks/:id",
+            "/repos/{repo}/tasks/{id}",
             get(|State(stub): State<Stub>| async move {
                 *stub.poll_count.lock().unwrap() += 1;
                 let mut polls = stub.polls.lock().unwrap();

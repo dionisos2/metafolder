@@ -190,6 +190,28 @@ fn tokens(src: &str) -> Vec<Token> {
 
 /// Every route of the Axum router `src` builds — each `.route("path",
 /// get(handler).post(other)…)` call — one entry per method, in source order.
+/// A route pattern as the documentation and the slow log name it: axum's
+/// `{repo}` and `{*path}` read `:repo` and `*path`, the form every note
+/// title, slow-log entry and bench scenario was written in.
+pub fn display_route(pattern: &str) -> String {
+    let mut out = String::with_capacity(pattern.len());
+    let mut chars = pattern.chars();
+    while let Some(c) = chars.next() {
+        if c != '{' {
+            out.push(c);
+            continue;
+        }
+        let name: String = chars.by_ref().take_while(|&c| c != '}').collect();
+        let (sigil, name) = match name.strip_prefix('*') {
+            Some(rest) => ('*', rest),
+            None => (':', name.as_str()),
+        };
+        out.push(sigil);
+        out.push_str(name);
+    }
+    out
+}
+
 pub fn routes(src: &str) -> Vec<Route> {
     const METHODS: [&str; 5] = ["get", "post", "put", "patch", "delete"];
     let t = tokens(src);
@@ -222,7 +244,8 @@ pub fn routes(src: &str) -> Vec<Route> {
                         (Some(Token::Ident(h)), Some(Token::Punct(')'))) => h.clone(),
                         _ => "a closure".to_string(),
                     };
-                    out.push(Route { method: m.to_uppercase(), path: path.clone(), handler });
+                    let path = display_route(path);
+                    out.push(Route { method: m.to_uppercase(), path, handler });
                 }
                 _ => {}
             }
@@ -258,6 +281,18 @@ pub fn endpoint_notes(server: &str, routes: &[Route]) -> BTreeMap<String, String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_route_pattern_reads_with_colon_parameters() {
+        // axum's `{repo}` and `{*path}`, named as the documentation and the
+        // slow log always have: `:repo`, `*path`.
+        assert_eq!(display_route("/repos/{repo}/fields/{id}"), "/repos/:repo/fields/:id");
+        assert_eq!(display_route("/panel/{name}/{*path}"), "/panel/:name/*path");
+        assert_eq!(display_route("/health"), "/health");
+        assert_eq!(display_route("/repos/:repo"), "/repos/:repo", "already in that form");
+        let routes = routes(r#"Router::new().route("/repos/{repo}/query", post(run_query))"#);
+        assert_eq!(routes[0].path, "/repos/:repo/query");
+    }
 
     #[test]
     fn an_endpoint_note_is_named_by_method_and_path() {

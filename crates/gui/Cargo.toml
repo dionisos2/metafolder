@@ -24,9 +24,9 @@ infer = "0.22"
 tauri = { version = "2", features = ["devtools"] }
 tokio = { version = "1", features = ["full"] }
 # axum 0.7 to match the daemon (same router/test patterns).
-axum = "0.7"
-tower = { version = "0.4", features = ["util"] }
-tower-http = { version = "0.5", features = ["fs", "cors"] }
+axum = "0.8"
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.7", features = ["fs", "cors"] }
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
 # Blocking daemon client for the cross-repo sync orchestration
 # (`metafolder_core::sync`), run under `spawn_blocking` — the async reqwest

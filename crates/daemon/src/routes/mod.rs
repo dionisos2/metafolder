@@ -53,92 +53,92 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/tasks", get(list_all_tasks))
         .route("/repos", get(list_repos))
         .route("/repos/init", post(init_repo))
-        .route("/repos/:repo/check", post(check_repo))
-        .route("/repos/:repo/backup", post(backup_repo))
-        .route("/repos/:repo/restore", post(restore_loaded_repo))
+        .route("/repos/{repo}/check", post(check_repo))
+        .route("/repos/{repo}/backup", post(backup_repo))
+        .route("/repos/{repo}/restore", post(restore_loaded_repo))
         .route("/repos/restore", post(restore_repo))
-        .route("/repos/:repo/reindex", post(reindex_repo))
-        .route("/repos/:repo/memory", post(set_repo_memory))
+        .route("/repos/{repo}/reindex", post(reindex_repo))
+        .route("/repos/{repo}/memory", post(set_repo_memory))
         .route("/repos/load", post(load_repo))
-        .route("/repos/:repo", get(get_repo).patch(rename_repo))
-        .route("/repos/:repo/unload", post(unload_repo))
+        .route("/repos/{repo}", get(get_repo).patch(rename_repo))
+        .route("/repos/{repo}/unload", post(unload_repo))
         // ── Resource layer (single, directly-addressed) ──────────────────────
-        .route("/repos/:repo/metarecords", post(create_record_endpoint))
-        .route("/repos/:repo/metarecords/bulk", post(bulk_create_endpoint))
-        .route("/repos/:repo/metarecords/trash", post(trash_delete_endpoint))
+        .route("/repos/{repo}/metarecords", post(create_record_endpoint))
+        .route("/repos/{repo}/metarecords/bulk", post(bulk_create_endpoint))
+        .route("/repos/{repo}/metarecords/trash", post(trash_delete_endpoint))
         .route(
-            "/repos/:repo/metarecords/:uuid",
+            "/repos/{repo}/metarecords/{uuid}",
             get(get_record_endpoint).put(put_metarecord).delete(delete_record_endpoint),
         )
-        .route("/repos/:repo/metarecords/:uuid/fields", post(append_field))
+        .route("/repos/{repo}/metarecords/{uuid}/fields", post(append_field))
         .route(
-            "/repos/:repo/metarecords/:uuid/fields/:name",
+            "/repos/{repo}/metarecords/{uuid}/fields/{name}",
             get(get_record_field).put(set_record_field).delete(unset_record_field),
         )
         .route(
-            "/repos/:repo/metarecords/:uuid/fields/:name/resolve-tree",
+            "/repos/{repo}/metarecords/{uuid}/fields/{name}/resolve-tree",
             get(resolve_record_field_tree),
         )
-        .route("/repos/:repo/metarecords/:uuid/mf-sync", get(get_record_mf_sync))
-        .route("/repos/:repo/metarecords/:uuid/refresh", post(refresh_record))
+        .route("/repos/{repo}/metarecords/{uuid}/mf-sync", get(get_record_mf_sync))
+        .route("/repos/{repo}/metarecords/{uuid}/refresh", post(refresh_record))
         .route(
-            "/repos/:repo/fields/:id",
+            "/repos/{repo}/fields/{id}",
             get(get_field_by_id).patch(patch_field_by_id).delete(delete_field_by_id),
         )
-        .route("/repos/:repo/retype", post(retype_field))
-        .route("/repos/:repo/fields", get(list_fields))
-        .route("/repos/:repo/tree/roots", get(tree_roots))
-        .route("/repos/:repo/tree/children", get(tree_children))
-        .route("/repos/:repo/tree/resolve-path", post(resolve_tree_path))
+        .route("/repos/{repo}/retype", post(retype_field))
+        .route("/repos/{repo}/fields", get(list_fields))
+        .route("/repos/{repo}/tree/roots", get(tree_roots))
+        .route("/repos/{repo}/tree/children", get(tree_children))
+        .route("/repos/{repo}/tree/resolve-path", post(resolve_tree_path))
         // ── Set layer (by predicate) ─────────────────────────────────────────
-        .route("/repos/:repo/query", post(run_query))
-        .route("/repos/:repo/query/profile", post(profile_query))
-        .route("/repos/:repo/query/delete", post(delete_by_query))
-        .route("/repos/:repo/query/fields/set", post(batch_set))
-        .route("/repos/:repo/query/fields/add", post(batch_add))
-        .route("/repos/:repo/query/fields/remove", post(batch_remove))
-        .route("/repos/:repo/query/fields/unset", post(batch_unset))
-        .route("/repos/:repo/query/fields/batch", post(batch_writes))
-        .route("/repos/:repo/query/fields/resolve-tree", post(query_resolve_tree))
-        .route("/repos/:repo/log", get(get_log))
-        .route("/repos/:repo/log/since", get(get_log_since))
-        .route("/repos/:repo/log/labels/:id", get(get_label_detail))
-        .route("/repos/:repo/labels", post(create_label))
-        .route("/repos/:repo/labels/:id", get(get_label))
-        .route("/repos/:repo/log/prune", post(prune_log))
-        .route("/repos/:repo/revert", post(revert))
-        .route("/repos/:repo/revert/plan", get(revert_plan))
-        .route("/repos/:repo/revert/start", post(revert_start))
-        .route("/repos/:repo/revert/commit", post(revert_commit))
-        .route("/repos/:repo/revert/abort", post(revert_abort))
-        .route("/repos/:repo/schema", get(get_schema))
-        .route("/repos/:repo/schema/reload", post(reload_schema))
-        .route("/repos/:repo/schema/check", post(check_schema))
-        .route("/repos/:repo/tasks", get(list_repo_tasks))
-        .route("/repos/:repo/tasks/:task", get(get_task))
-        .route("/repos/:repo/tasks/:task/cancel", post(cancel_task))
-        .route("/repos/:repo/reconcile", post(full_reconcile))
-        .route("/repos/:repo/duplicates/scan", post(duplicates_scan))
-        .route("/repos/:repo/mounts", get(mounts))
-        .route("/repos/:repo/watch", get(watch_status))
-        .route("/repos/:repo/watch/pause", post(watch_pause))
-        .route("/repos/:repo/watch/resume", post(watch_resume))
-        .route("/repos/:repo/watch/exceeded", get(watch_exceeded_list).post(watch_exceeded_set))
-        .route("/repos/:repo/watch/check", post(watch_check))
-        .route("/repos/:repo/watch/activity", get(watch_activity_children).post(watch_activity_of))
-        .route("/repos/:repo/watch/activity/reset", post(watch_activity_reset))
-        .route("/repos/:repo/orphans/scan", post(orphans_scan))
-        .route("/repos/:repo/orphans/clear", post(orphans_clear))
-        .route("/repos/:repo/orphans/mark", post(orphans_mark))
-        .route("/repos/:repo/orphans/relink", post(orphans_relink))
-        .route("/repos/:repo/slow", get(slow_log).delete(clear_slow_log))
-        .route("/repos/:repo/eligibility", post(eligibility_explain))
-        .route("/repos/:repo/ignore/effective", get(effective_ignore))
+        .route("/repos/{repo}/query", post(run_query))
+        .route("/repos/{repo}/query/profile", post(profile_query))
+        .route("/repos/{repo}/query/delete", post(delete_by_query))
+        .route("/repos/{repo}/query/fields/set", post(batch_set))
+        .route("/repos/{repo}/query/fields/add", post(batch_add))
+        .route("/repos/{repo}/query/fields/remove", post(batch_remove))
+        .route("/repos/{repo}/query/fields/unset", post(batch_unset))
+        .route("/repos/{repo}/query/fields/batch", post(batch_writes))
+        .route("/repos/{repo}/query/fields/resolve-tree", post(query_resolve_tree))
+        .route("/repos/{repo}/log", get(get_log))
+        .route("/repos/{repo}/log/since", get(get_log_since))
+        .route("/repos/{repo}/log/labels/{id}", get(get_label_detail))
+        .route("/repos/{repo}/labels", post(create_label))
+        .route("/repos/{repo}/labels/{id}", get(get_label))
+        .route("/repos/{repo}/log/prune", post(prune_log))
+        .route("/repos/{repo}/revert", post(revert))
+        .route("/repos/{repo}/revert/plan", get(revert_plan))
+        .route("/repos/{repo}/revert/start", post(revert_start))
+        .route("/repos/{repo}/revert/commit", post(revert_commit))
+        .route("/repos/{repo}/revert/abort", post(revert_abort))
+        .route("/repos/{repo}/schema", get(get_schema))
+        .route("/repos/{repo}/schema/reload", post(reload_schema))
+        .route("/repos/{repo}/schema/check", post(check_schema))
+        .route("/repos/{repo}/tasks", get(list_repo_tasks))
+        .route("/repos/{repo}/tasks/{task}", get(get_task))
+        .route("/repos/{repo}/tasks/{task}/cancel", post(cancel_task))
+        .route("/repos/{repo}/reconcile", post(full_reconcile))
+        .route("/repos/{repo}/duplicates/scan", post(duplicates_scan))
+        .route("/repos/{repo}/mounts", get(mounts))
+        .route("/repos/{repo}/watch", get(watch_status))
+        .route("/repos/{repo}/watch/pause", post(watch_pause))
+        .route("/repos/{repo}/watch/resume", post(watch_resume))
+        .route("/repos/{repo}/watch/exceeded", get(watch_exceeded_list).post(watch_exceeded_set))
+        .route("/repos/{repo}/watch/check", post(watch_check))
+        .route("/repos/{repo}/watch/activity", get(watch_activity_children).post(watch_activity_of))
+        .route("/repos/{repo}/watch/activity/reset", post(watch_activity_reset))
+        .route("/repos/{repo}/orphans/scan", post(orphans_scan))
+        .route("/repos/{repo}/orphans/clear", post(orphans_clear))
+        .route("/repos/{repo}/orphans/mark", post(orphans_mark))
+        .route("/repos/{repo}/orphans/relink", post(orphans_relink))
+        .route("/repos/{repo}/slow", get(slow_log).delete(clear_slow_log))
+        .route("/repos/{repo}/eligibility", post(eligibility_explain))
+        .route("/repos/{repo}/ignore/effective", get(effective_ignore))
         // ── Cross-repo sync (doc "Sync endpoints") ─────────────────────────────────────
-        .route("/sync/:a/:b/links", get(sync_list_links).post(sync_create_link))
-        .route("/sync/:a/:b/links/:link", get(sync_get_link).delete(sync_delete_link))
-        .route("/sync/:a/:b/links/commit", post(sync_commit))
-        .route("/sync/:a/:b/status", get(sync_status))
+        .route("/sync/{a}/{b}/links", get(sync_list_links).post(sync_create_link))
+        .route("/sync/{a}/{b}/links/{link}", get(sync_get_link).delete(sync_delete_link))
+        .route("/sync/{a}/{b}/links/commit", post(sync_commit))
+        .route("/sync/{a}/{b}/status", get(sync_status))
         .with_state(state)
         .layer(axum::middleware::from_fn(name_operation))
 }
@@ -208,11 +208,12 @@ async fn name_operation(
     // below would make the middleware's future non-`Send` (the body is not
     // `Sync`), which no error message says plainly.
     let info = {
-        let route = matched
-            .as_ref()
-            .map(|p| p.as_str())
-            .unwrap_or_else(|| request.uri().path())
-            .to_string();
+        // In the `:repo` form the log was always written in, not axum's
+        // `{repo}`: its entries, and the notes named after routes, stay valid.
+        let route = match &matched {
+            Some(p) => metafolder_core::doc_gen::display_route(p.as_str()),
+            None => request.uri().path().to_string(),
+        };
         let command = match command_header(request.headers()) {
             Ok(command) => command,
             Err(e) => return e.into_response(),

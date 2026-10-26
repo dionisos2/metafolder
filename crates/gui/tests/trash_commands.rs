@@ -34,7 +34,7 @@ async fn spawn_stub_at(tracked: bool, root: String) -> (String, Stub) {
     let stub = Stub { deletes: Arc::new(Mutex::new(Vec::new())), tracked, root };
     let router = axum::Router::new()
         .route(
-            "/repos/:repo",
+            "/repos/{repo}",
             get(|State(stub): State<Stub>| async move {
                 Json(json!({
                     "root": stub.root,
@@ -43,7 +43,7 @@ async fn spawn_stub_at(tracked: bool, root: String) -> (String, Stub) {
             }),
         )
         .route(
-            "/repos/:repo/metarecords/:uuid/fields/mfr_path/resolve-tree",
+            "/repos/{repo}/metarecords/{uuid}/fields/mfr_path/resolve-tree",
             // The selected record's file, while it is tracked.
             get(|State(stub): State<Stub>| async move {
                 let paths = if stub.tracked { json!(["/f.txt"]) } else { json!([]) };
@@ -51,7 +51,7 @@ async fn spawn_stub_at(tracked: bool, root: String) -> (String, Stub) {
             }),
         )
         .route(
-            "/repos/:repo/query",
+            "/repos/{repo}/query",
             post(|State(stub): State<Stub>, Json(body): Json<Value>| async move {
                 // Two questions reach this route: "what tracks this path"
                 // (`eq`) and "what lives under it" (`follows_transitive`).
@@ -63,7 +63,7 @@ async fn spawn_stub_at(tracked: bool, root: String) -> (String, Stub) {
             }),
         )
         .route(
-            "/repos/:repo/metarecords/:uuid",
+            "/repos/{repo}/metarecords/{uuid}",
             get(|| async move {
                 Json(json!({
                     "uuid": UUID,
@@ -76,7 +76,7 @@ async fn spawn_stub_at(tracked: bool, root: String) -> (String, Stub) {
             }),
         )
         .route(
-            "/repos/:repo/metarecords/trash",
+            "/repos/{repo}/metarecords/trash",
             post(|State(stub): State<Stub>, Json(body): Json<Value>| async move {
                 stub.deletes.lock().unwrap().push(body);
                 Json(json!({"deleted": 1}))

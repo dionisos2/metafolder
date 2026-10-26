@@ -40,23 +40,23 @@ async fn spawn_stub(log: Value) -> (String, Stub) {
     let router = axum::Router::new()
         // Where the repository is: the revert locates the trash-bin.
         .route(
-            "/repos/:repo",
+            "/repos/{repo}",
             get(|| async {
                 Json(json!({"root": "/nowhere", "internal_dir": "/nowhere/.metafolder/internal"}))
             }),
         )
         .route(
-            "/repos/:repo/log",
+            "/repos/{repo}/log",
             get(|State(stub): State<Stub>| async move { Json(stub.log.clone()) }),
         )
         .route(
-            "/repos/:repo/revert/plan",
+            "/repos/{repo}/revert/plan",
             get(|State(stub): State<Stub>| async move {
                 Json(stub.revert_plan.lock().unwrap().clone())
             }),
         )
         .route(
-            "/repos/:repo/revert",
+            "/repos/{repo}/revert",
             post(|State(stub): State<Stub>, Json(body): Json<Value>| async move {
                 stub.reverts.lock().unwrap().push(body);
                 if *stub.revert_refused.lock().unwrap() {

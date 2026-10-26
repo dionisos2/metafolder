@@ -55,13 +55,13 @@ async fn spawn_stub(root: String, internal: String) -> (String, Stub) {
     let stub = Stub { root, internal, deletes: Arc::new(Mutex::new(Vec::new())) };
     let router = axum::Router::new()
         .route(
-            "/repos/:repo",
+            "/repos/{repo}",
             get(|State(stub): State<Stub>| async move {
                 Json(json!({"root": stub.root, "internal_dir": stub.internal}))
             }),
         )
         .route(
-            "/repos/:repo/query/fields/resolve-tree",
+            "/repos/{repo}/query/fields/resolve-tree",
             // The set the query names: two files, a directory and the file
             // under it, a metarecord with no file, and the repository root.
             post(|| async move {
@@ -75,13 +75,13 @@ async fn spawn_stub(root: String, internal: String) -> (String, Stub) {
             }),
         )
         .route(
-            "/repos/:repo/metarecords/:uuid",
+            "/repos/{repo}/metarecords/{uuid}",
             get(
                 |Path((_repo, uuid)): Path<(String, String)>| async move { Json(record_of(&uuid)) },
             ),
         )
         .route(
-            "/repos/:repo/query",
+            "/repos/{repo}/query",
             post(|Json(body): Json<Value>| async move {
                 // What lives under a path: only `dir` has a descendant.
                 let hits = match body["query"]["target"].as_str() {
@@ -92,7 +92,7 @@ async fn spawn_stub(root: String, internal: String) -> (String, Stub) {
             }),
         )
         .route(
-            "/repos/:repo/metarecords/trash",
+            "/repos/{repo}/metarecords/trash",
             post(|State(stub): State<Stub>, Json(body): Json<Value>| async move {
                 stub.deletes.lock().unwrap().push(body);
                 Json(json!({"deleted": 3}))

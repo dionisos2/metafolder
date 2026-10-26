@@ -51,8 +51,10 @@ pub(super) struct CheckBody {
 pub(super) async fn check_schema(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
-    payload: Option<Json<CheckBody>>,
+    payload: Result<Option<Json<CheckBody>>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    // As axum 0.7 read an optional body: absent or unreadable alike.
+    let payload = payload.ok().flatten();
     let body = payload.map(|Json(b)| b).unwrap_or_default();
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
