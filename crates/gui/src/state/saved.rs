@@ -1,7 +1,7 @@
 //! A workspace saved and loaded back (doc "Saved workspaces"): what a save
 //! takes from a workspace, and what loading one does to it. The files are
 //! [`crate::saved_workspaces`]; which variables a panel's save holds is the
-//! panel's declaration, gathered by the shell and passed in.
+//! panel's declaration (its `saved.json`), passed in.
 
 use super::layout::SlotId;
 use super::{Emit, GuiState, Inner};

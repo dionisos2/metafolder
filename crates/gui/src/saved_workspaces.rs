@@ -3,9 +3,9 @@
 //! alone, or the work in progress too — and the name of the repository's
 //! default in `.metafolder/gui/default-workspace`.
 //!
-//! This module is the files only: what a save holds is decided by the panels'
-//! declarations (the shell gathers them), and what loading one does to a
-//! workspace is [`crate::state::GuiState::apply_saved`].
+//! The files, the panels' declarations of what a save holds (each panel
+//! type's `saved.json`), and the `workspace:*` commands over them; what
+//! loading one does to a workspace is [`crate::state::GuiState::apply_saved`].
 
 use std::path::{Path, PathBuf};
 
@@ -213,6 +213,45 @@ pub fn read_default(metafolder: &Path) -> Result<Option<(String, SavedWorkspace)
     Ok(read(metafolder, &name)?.map(|saved| (name, saved)))
 }
 
+/// What a panel type's `saved.json` declares: its variables that belong to
+/// the layout and to the work, by name without the panel's prefix.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Declaration {
+    #[serde(default)]
+    layout: Vec<String>,
+    #[serde(default)]
+    work: Vec<String>,
+}
+
+const DECLARATION_FILE: &str = "saved.json";
+
+/// The variables the panel types under `panel_types_dir` declare — layout
+/// keys and work keys, prefixed with the panel's name. A panel type without
+/// `saved.json` saves nothing; one that does not read is an error naming it.
+pub fn declarations(panel_types_dir: &Path) -> Result<(Vec<String>, Vec<String>), String> {
+    let entries = match std::fs::read_dir(panel_types_dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Default::default()),
+        Err(e) => return Err(format!("cannot read {}: {e}", panel_types_dir.display())),
+    };
+    let (mut layout, mut work) = (Vec::new(), Vec::new());
+    for entry in entries {
+        let dir =
+            entry.map_err(|e| format!("cannot read {}: {e}", panel_types_dir.display()))?.path();
+        let Some(panel) = dir.file_name().and_then(|n| n.to_str()).map(str::to_string) else {
+            continue;
+        };
+        let file = dir.join(DECLARATION_FILE);
+        let Some(text) = read_text(&file)? else { continue };
+        let declaration: Declaration = serde_json::from_str(&text)
+            .map_err(|e| format!("{} does not declare saved variables: {e}", file.display()))?;
+        layout.extend(declaration.layout.iter().map(|key| format!("{panel}:{key}")));
+        work.extend(declaration.work.iter().map(|key| format!("{panel}:{key}")));
+    }
+    Ok((layout, work))
+}
+
 // ── With the GUI: a workspace's repository, its saves, its default ────────
 
 /// Where `workspace:open` loads a saved workspace (doc "Panel slots and
@@ -375,10 +414,10 @@ pub async fn saved_workspace_save(
     ws_id: String,
     kind: String,
     name: String,
-    layout_keys: Vec<String>,
-    work_keys: Vec<String>,
 ) -> Result<(), String> {
     let kind = Kind::parse(&kind)?;
+    // Read at each save: a panel edited since the start is taken as it is now.
+    let (layout_keys, work_keys) = declarations(&app.config.panel_types_dir())?;
     save(&app.gui, &app.daemon, &ws_id, kind, &name, &layout_keys, &work_keys).await
 }
 
@@ -454,6 +493,35 @@ mod tests {
             work: (kind == Kind::Work)
                 .then(|| json!({"metarecord-list:query": "jpg"}).as_object().unwrap().clone()),
         }
+    }
+
+    #[test]
+    fn test_declarations_are_prefixed_and_a_panel_without_one_saves_nothing() {
+        let dir = TempMetafolder::new("declarations");
+        for (panel, file) in [
+            ("metarecord-list", Some(r#"{"layout": ["columns"], "work": ["query"]}"#)),
+            ("path-ref", Some(r#"{"layout": ["field"]}"#)),
+            ("hello", None),
+        ] {
+            std::fs::create_dir_all(dir.0.join(panel)).unwrap();
+            if let Some(file) = file {
+                std::fs::write(dir.0.join(panel).join("saved.json"), file).unwrap();
+            }
+        }
+        let (mut layout, mut work) = declarations(&dir.0).unwrap();
+        layout.sort();
+        work.sort();
+        assert_eq!(layout, vec!["metarecord-list:columns", "path-ref:field"]);
+        assert_eq!(work, vec!["metarecord-list:query"]);
+    }
+
+    #[test]
+    fn test_a_declaration_that_does_not_read_names_its_file() {
+        let dir = TempMetafolder::new("bad_declaration");
+        std::fs::create_dir_all(dir.0.join("list")).unwrap();
+        std::fs::write(dir.0.join("list/saved.json"), r#"{"layuot": ["x"]}"#).unwrap();
+        let error = declarations(&dir.0).unwrap_err();
+        assert!(error.contains("list/saved.json"), "{error}");
     }
 
     #[test]
