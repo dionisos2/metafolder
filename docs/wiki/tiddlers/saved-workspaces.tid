@@ -2,7 +2,7 @@ title: Saved workspaces
 tags: GUI
 kind: reference
 status: proposed
-aliases: workspace:save workspace:load workspace:select-default saved-workspace default-workspace
+aliases: workspace:save workspace:open workspace:set-default workspace:unset-default workspace:delete-saved saved-workspace default-workspace
 summary: A workspace saved under a name in its repository — its layout alone, or the work in progress too — loaded back here or in a new workspace, one of them chosen as what every new workspace on the repository opens on.
 
 A workspace can be ''saved'' under a name and ''loaded'' back later, after a restart
@@ -47,11 +47,11 @@ is not saved.
 !! The commands
 
 * `workspace:save <layout|work> <name>` saves the focused workspace under that name. The name is asked with the saved workspaces' names as completions, so what exists already shows while typing; a name that exists is replaced only once the user confirms.
-* `workspace:load <here|new> <name>` loads it ([[Panel slots and layout]] for the targets): `here` writes the saved variables into the focused workspace — in one go, as [[workspace:send]] does — and puts its panel types back in the slots; `new` does the same in a new workspace on the repository. A variable the save does not hold is left as it is: loading a `layout` keeps the query.
-* `workspace:select-default <name>` makes a saved workspace — of either kind — the repository's default; `workspace:unselect-default` leaves the repository without one.
-* `workspace:delete <name>` deletes a saved workspace. Deleting the default also unselects it.
+* `workspace:open <here|new> <name>` loads it ([[Panel slots and layout]] for the targets): `here` writes the saved variables into the focused workspace — in one go, as [[workspace:send]] does — and puts its panel types back in the slots; `new` does the same in a new workspace on the repository. A variable the save does not hold is left as it is: loading a `layout` keeps the query.
+* `workspace:set-default <name>` makes a saved workspace — of either kind — the repository's default; `workspace:unset-default` leaves the repository without one.
+* `workspace:delete-saved <name>` deletes a saved workspace. Deleting the default also unsets it.
 
-There is no listing command: the names are the completions of `workspace:load`.
+There is no listing command: the names are the completions of `workspace:open`.
 
 `ctrl+s` saves and `ctrl+o` loads here;
 `i` and `b` before it choose `here` and `new`, as for every command with targets.
@@ -95,7 +95,3 @@ and `layout`.
 A value a panel no longer understands — a column on a field the repository no longer
 has — is handled as a stale variable already is: the panel falls back to its default.
 A panel type that no longer exists is left out of the slots, and the status bar says so.
-
-!! Open questions
-
-* The command names against [[Command naming]]: `load` and `delete` are verbs of the row that ''writes to the repository'', and `select` is the selection's verb. `delete` does remove a file of `.metafolder/`; `load` writes nothing. Candidates: `workspace:open <here|new> <name>`, `workspace:set-default <name>` (the `set-X <value>` form) / `workspace:unset-default`.
