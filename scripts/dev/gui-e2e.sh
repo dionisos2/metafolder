@@ -51,7 +51,7 @@
 #   script-workspaces errors picker refs hierarchy hierarchy-form prompt history
 #   keybindings open-with tab-close close-layout pick-button suggested-key config-files walk open-viewers
 #   slideshow shell-line shell-cwd repos-memory help-keys help-cursor zoom order user-commands
-#   settle macro clipboard, and
+#   settle macro clipboard saved-workspaces, and
 #   devtools last (it takes the inspector the clicking scenarios drive).
 #   --unsandboxed  pass --allow-unsandboxed-webview to the GUI (a container
 #                  that forbids WebKit's sandbox; never on real data)
@@ -83,7 +83,7 @@ done
     || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close close-layout
         pick-button suggested-key walk open-viewers slideshow shell-line shell-cwd repos-memory
-        help-keys help-cursor zoom refresh order user-commands settle macro clipboard devtools)
+        help-keys help-cursor zoom refresh order user-commands settle macro clipboard saved-workspaces devtools)
 
 # shellcheck source=lib/daemon-fixture.sh
 . scripts/dev/lib/daemon-fixture.sh
@@ -1932,6 +1932,54 @@ scenario_settle() {
     second=$(ws_var selected_metarecord)
     assert "settle: cursor:next has moved the selection when it returns" \
         test "$second" != null -a "$second" != "$first"
+}
+
+# Saved workspaces (doc "Saved workspaces"): a work saved in the repository,
+# opened back over a changed query, replaced only once confirmed; as the
+# default, loaded whole into a workspace:new and as layout variables only into
+# a script's workspace.
+scenario_saved_workspaces() {
+    new_repo saved
+    local file="$REPO_DIR/.metafolder/gui/workspaces/tri.json" ws1 new scripted
+    ws1=$WS
+    run workspace:send "$WS" metarecord-list:columns '"name"'
+    run workspace:send "$WS" metarecord-list:query note=hello
+
+    run workspace:save work tri
+    command_ok "saved: workspace:save runs"
+    assert "saved: the file is in the repository" test -f "$file"
+    status_is "saved: it says so" info 'workspace saved as "tri" (work)'
+
+    run workspace:send "$WS" metarecord-list:query note=changed
+    run workspace:open here tri
+    assert_eq "saved: open here puts the query back" '"note=hello"' \
+        "$(ws_var metarecord-list:query)"
+
+    answering no workspace:save work tri
+    assert "saved: replacing asks first" grep -q 'Replace the workspace saved as "tri"' \
+        <<<"$LAST_QUESTIONS"
+
+    run workspace:set-default tri
+    run workspace:send "$WS" metarecord-list:query note=other
+    run workspace:new
+    new=$(slot_ws left)
+    WS=$new
+    assert "saved: workspace:new made a workspace" test "$new" != "$ws1"
+    assert_eq "saved: the default is loaded whole into workspace:new" '"note=hello"' \
+        "$(ws_var metarecord-list:query)"
+
+    scripted=$(mfg workspace new --repo "$DF_REPO" --left message) || die "workspace new"
+    WS=$scripted
+    assert_eq "saved: a script's workspace gets the layout" '"name"' \
+        "$(ws_var metarecord-list:columns)"
+    assert_eq "saved: ...and not the work" 'null' "$(ws_var metarecord-list:query)"
+
+    WS=$ws1
+    mfg layout left "$WS" >/dev/null || die "layout left $WS"
+    run workspace:delete-saved tri
+    assert "saved: delete-saved removes the file" test ! -e "$file"
+    assert "saved: ...and the default with it" \
+        test ! -e "$REPO_DIR/.metafolder/gui/default-workspace"
 }
 
 scenario_devtools() {
