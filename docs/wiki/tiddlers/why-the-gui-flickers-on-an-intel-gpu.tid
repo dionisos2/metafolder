@@ -1,0 +1,52 @@
+title: Why the GUI flickers on an Intel GPU
+tags: GUI [[GUI runtime dependencies]]
+kind: rationale
+audience: dev
+status: record
+aliases: flicker flickering clignotement stale-frame webkitgtk-flicker
+summary: Pieces of the window sometimes show their previous state — a row's highlight, a button, a selection — and it is WebKitGTK on the host's Intel GPU, not metafolder: a 60-line page in WebKit's own MiniBrowser does the same (October 2026).
+
+!! The symptom
+
+While a video plays in the [[file panel]] — a slideshow ([[Slideshow]]) or not —
+pieces of the window flicker between their current and their previous state: the
+[[metarecord-list panel]]'s cursor jumping between two rows (not always adjacent), a
+button, a text selection, sometimes the whole window. Fast, random, and lasting until
+something else is done. Moving through the files quickly is not needed; clicking a
+video and selecting text with the mouse does it too.
+
+!! Where it is not
+
+* ''Not the page.'' A probe attached through WebKit's remote inspector (the method of [[Testing the GUI end to end]]) recorded, during the flicker, every DOM mutation in the page and every panel's shadow root, and once per frame what changes on screen without the DOM changing — the list's scroll position, the row under the pointer, the cursor row, the sizes, the focus. Over two seconds of flicker: nothing, while the screen, filmed at the same time (`ffmpeg -f x11grab`), showed a frame where the cursor sat on the previous row and the video on an older frame. What reached the screen was older than what the page held.
+* ''Not metafolder.'' WebKit's own demonstration browser, `/usr/lib/webkit2gtk-4.1/MiniBrowser` (shipped with `webkit2gtk-4.1`, the engine the GUI uses), flickers the same way on a static test page: a looping `<video>`, a table with one highlighted row moved by the arrows, buttons with a `:hover` style, a paragraph to select. No Tauri, no panel, no daemon.
+* ''Not DMA-BUF.'' `WEBKIT_DISABLE_DMABUF_RENDERER=1` was shipped as a fix on one quiet test and reverted when the flicker came back with it.
+* ''Not a compositing window manager.'' The host runs qtile on X11, started with `startx`, with no compositor beside it.
+
+!! Where it is
+
+It shows on the host and never in the development container, with the same binaries
+and the same WebKitGTK. The difference is the graphics stack: in the container Mesa
+has no DRI3 and WebKit renders in software; on the host it renders on the GPU. The host
+where it was seen:
+
+|Graphics |Intel HD Graphics 620 (Kaby Lake GT2), kernel driver `i915`, Mesa 26.2.5 (`iris`) |
+|Engine |`webkit2gtk-4.1` 2.54.2 |
+|Display |X11, qtile, no compositor |
+
+Pieces of the window showing their previous state, at the places that were just
+redrawn, is what a stale tile looks like: WebKitGTK paints the page in tiles, on the
+GPU through Skia since 2.46, and a tile presented before its painting is complete
+shows what it held before. That is a guess the measurements fit, not a finding.
+
+!! What was left untried
+
+The investigation stopped once metafolder was cleared, so none of these was run. In
+MiniBrowser on the test page, one variable at a time:
+
+# `WEBKIT_SKIA_ENABLE_CPU_RENDERING=1` — the tiles painted on the CPU, the compositing and the video still on the GPU. The cheapest workaround if it is enough: the GUI could set it at startup, behind a setting, as it sets `WEBKIT_FORCE_SANDBOX` ([[Sandboxing the media decoders]]).
+# `LIBGL_ALWAYS_SOFTWARE=1` — all of OpenGL in software, as in the container.
+# `WEBKIT_DISABLE_COMPOSITING_MODE=1` — no accelerated compositing at all: a diagnosis, not a fix, at a cost to video.
+
+A bug that a page this small reproduces in MiniBrowser is worth reporting upstream
+(WebKit's bugzilla, component WebKitGTK), with the GPU, the driver and the versions
+above.
