@@ -11,8 +11,7 @@ members = [
 resolver = "2"
 
 # Every unsafe block says why it is sound (`// SAFETY:` just above it); see
-# doc "Unsafe code". Every member opts in with `[lints] workspace = true`,
-# but watchd, whose blocks are not documented yet.
+# doc "Unsafe code". Every member opts in with `[lints] workspace = true`.
 [workspace.lints.clippy]
 undocumented_unsafe_blocks = "warn"
 

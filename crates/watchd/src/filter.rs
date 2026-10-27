@@ -402,10 +402,10 @@ mod tests {
         std::fs::create_dir_all(base.join("real/inner")).unwrap();
         std::os::unix::fs::symlink("real/inner", base.join("link")).unwrap();
         let me = Subscriber {
-            uid: unsafe { libc::geteuid() },
-            gid: unsafe { libc::getegid() },
+            uid: rustix::process::geteuid().as_raw(),
+            gid: rustix::process::getegid().as_raw(),
             pid: std::process::id() as i32,
-            groups: vec![unsafe { libc::getegid() }],
+            groups: vec![rustix::process::getegid().as_raw()],
         };
         let mut f = AccessFilter::new(SystemCreds);
         let got = f.resolve(&me, &base.join("link"));
@@ -603,7 +603,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
 
         let (uid, _, mode) = dir.expect("a directory has meta");
-        assert_eq!(uid, unsafe { libc::geteuid() });
+        assert_eq!(uid, rustix::process::geteuid().as_raw());
         assert_eq!(mode & 0o700, 0o700);
         assert_eq!(file, None, "a file is not a directory");
         assert!(matches!(entries[0], Some(Entry::Dir { .. })));

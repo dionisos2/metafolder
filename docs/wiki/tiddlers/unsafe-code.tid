@@ -10,7 +10,7 @@ it is sound.
 
 !! The rules
 
-* ''A system call goes through `rustix`'', which wraps it safely (typed descriptors, a `Result`), or through `std` where it has the call (`File::try_lock` is the store's `flock`). `libc` is for what `rustix` cannot do safely: the calls between `fork` and `exec`, and setting a signal disposition.
+* ''A system call goes through `rustix`'', which wraps it safely (typed descriptors, a `Result`), or through `std` where it has the call (`File::try_lock` is the store's `flock`). `libc` is for what `rustix` cannot do safely: the calls between `fork` and `exec`, setting a signal disposition, and what `rustix` does not wrap — which the broker gathers in `watchd/src/sys.rs`, one safe function each.
 * ''Every block says why it is sound'', in a `// SAFETY:` comment just above it. Clippy's `undocumented_unsafe_blocks`, set for the workspace in the root `Cargo.toml`, fails [[Static checks]] on one that does not.
 * ''A crate with no unsafe code forbids it'' (`#![forbid(unsafe_code)]`): the CLI, the bench, the query oracle. `core` denies it, and allows it at its one exception.
 
@@ -21,10 +21,15 @@ it is sound.
 |`gui` `lib.rs`, `sandbox.rs` |`std::env::set_var` |another thread could read the environment meanwhile; done at startup, before any |
 |`daemon` `kvstore/`, `sync.rs`; `core` `trash.rs` |opening and resizing an LMDB map |the file is mapped in memory: it must be opened once per process, and nothing may write to it behind the map ([[Storage safety]]) |
 |`daemon` `kvstore/resident.rs` |`mlock`, `munlock`, `madvise`, reading the pages |they take raw addresses, which must be a live part of the map ([[Holding a repository in memory]]) |
-|`watchd` |fanotify |no safe wrapper for fanotify, `open_by_handle_at` and the events read from a byte buffer; its blocks are not documented yet, so it does not take the workspace lint |
+|`watchd` `sys.rs` |fanotify, file handles, a filesystem's fsid, a socket peer's credentials |`rustix` has no fanotify nor file handles, keeps an fsid's two ints private, and cannot hold the pid 0 of a peer in another pid namespace. The events themselves are parsed from bytes, safely |
 
 Tests open a store's file raw to damage it or set it back to an older format
-(`common::kv::raw_env` in the daemon's tests), and one sets a signal disposition.
+(`common::kv::raw_env` in the daemon's tests); two set a signal disposition, and the
+broker's interrupts a thread with a signal to test what an EINTR does.
+
+The handle half of `sys.rs` (`open_by_handle_at`) runs only where the kernel lets a
+handle be resolved: not in a container whose seccomp profile refuses it, where its
+tests check that nothing is reported instead ([[Testing the watcher]]).
 
 !! What `unsafe` does not cover
 

@@ -63,6 +63,7 @@ use crate::fanotify::{
 use crate::filter::{AccessFilter, SystemCreds};
 use crate::server::{Gap, Uncovered};
 use crate::service::{self, Group};
+use rustix::mount::MountFlags;
 
 /// The simulated filesystem's id: every handle it hands out carries it — and
 /// each drive mounted later, the next one up.
@@ -827,7 +828,12 @@ impl SimFs {
     pub fn mount_tmpfs(&self, at: impl AsRef<Path>) -> io::Result<()> {
         self.remount(|st| {
             let comps = st.components(at.as_ref())?;
-            sys_mount(Some(Path::new("tmpfs")), &st.disk(&comps), Some("tmpfs"), 0)?;
+            sys_mount(
+                Some(Path::new("tmpfs")),
+                &st.disk(&comps),
+                Some("tmpfs"),
+                MountFlags::empty(),
+            )?;
             let over = st.lookup(&comps);
             let fs = st.add_filesystem();
             st.mounts.push(Mounted { fs, over });
@@ -844,7 +850,7 @@ impl SimFs {
     pub fn mount_uncoverable(&self, at: impl AsRef<Path>) -> io::Result<()> {
         self.remount(|st| {
             let disk = st.disk(&st.components(at.as_ref())?);
-            sys_mount(Some(Path::new("tmpfs")), &disk, Some("tmpfs"), 0)?;
+            sys_mount(Some(Path::new("tmpfs")), &disk, Some("tmpfs"), MountFlags::empty())?;
             st.uncoverable.push(disk);
             Ok(())
         })
@@ -864,7 +870,7 @@ impl SimFs {
                 ));
             }
             let comps = st.components(at.as_ref())?;
-            sys_mount(Some(&st.disk(&source)), &st.disk(&comps), None, libc::MS_BIND)?;
+            sys_mount(Some(&st.disk(&source)), &st.disk(&comps), None, MountFlags::BIND)?;
             let over = st.lookup(&comps);
             st.mounts.push(Mounted { fs, over });
             st.remark();
@@ -880,10 +886,7 @@ impl SimFs {
             let comps = st.components(at.as_ref())?;
             let disk = st.disk(&comps);
             if let Some(n) = st.uncoverable.iter().rposition(|p| *p == disk) {
-                let c = std::ffi::CString::new(disk.as_os_str().as_bytes())?;
-                if unsafe { libc::umount2(c.as_ptr(), 0) } != 0 {
-                    return Err(io::Error::last_os_error());
-                }
+                rustix::mount::unmount(&disk, rustix::mount::UnmountFlags::empty())?;
                 st.uncoverable.remove(n);
                 return Ok(());
             }
@@ -899,10 +902,7 @@ impl SimFs {
                     format!("{} is not a mount point", disk.display()),
                 ));
             };
-            let c = std::ffi::CString::new(disk.as_os_str().as_bytes())?;
-            if unsafe { libc::umount2(c.as_ptr(), 0) } != 0 {
-                return Err(io::Error::last_os_error());
-            }
+            rustix::mount::unmount(&disk, rustix::mount::UnmountFlags::empty())?;
             st.mounts.remove(n);
             st.remark();
             Ok(())
@@ -1058,21 +1058,12 @@ fn sys_mount(
     source: Option<&Path>,
     target: &Path,
     fstype: Option<&str>,
-    flags: libc::c_ulong,
+    flags: rustix::mount::MountFlags,
 ) -> io::Result<()> {
-    let c = |b: &[u8]| std::ffi::CString::new(b).map_err(io::Error::other);
-    let source = source.map(|p| c(p.as_os_str().as_bytes())).transpose()?;
-    let target = c(target.as_os_str().as_bytes())?;
-    let fstype = fstype.map(|t| c(t.as_bytes())).transpose()?;
-    let ptr = |s: &Option<std::ffi::CString>| s.as_ref().map_or(std::ptr::null(), |s| s.as_ptr());
-    let rc = unsafe {
-        libc::mount(ptr(&source), target.as_ptr(), ptr(&fstype), flags, std::ptr::null())
-    };
-    if rc == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
+    // A bind has no type, and neither carries data.
+    let source = source.unwrap_or(Path::new(""));
+    let fstype = fstype.unwrap_or("");
+    Ok(rustix::mount::mount(source, target, fstype, flags, None::<&std::ffi::CStr>)?)
 }
 
 impl Drop for Hold<'_> {

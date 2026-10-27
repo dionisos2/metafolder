@@ -70,7 +70,7 @@ fn test_the_accept_path_identifies_the_peer_and_serves_the_filtered_stream() {
 
     // Root bypasses DAC (in the filter as in the kernel), so the refusal half
     // of this test only reads as written for a normal uid.
-    let is_root = unsafe { libc::getuid() } == 0;
+    let is_root = rustix::process::getuid().as_raw() == 0;
     match next_msg(&mut r) {
         ServerMsg::Subscribed { roots, denied, .. } => {
             if is_root {
@@ -107,7 +107,7 @@ fn test_the_accept_path_identifies_the_peer_and_serves_the_filtered_stream() {
 
     // What the peer may *see* also gates the root it watches: /locked/c is in
     // nobody's roots here, but the visibility rule is exercised directly.
-    let peer_uid = unsafe { libc::getuid() };
+    let peer_uid = rustix::process::getuid().as_raw();
     let mut filter = AccessFilter::new(FakeCreds);
     let peer = Subscriber { uid: peer_uid, gid: 0, pid: 0, groups: vec![0] };
     if !is_root {

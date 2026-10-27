@@ -68,3 +68,22 @@ pub fn in_userns(test: &str) -> bool {
 pub fn scratch() -> PathBuf {
     PathBuf::from(std::env::var_os(CHILD_ENV).expect("inside in_userns"))
 }
+
+/// Runs `f` with this process's descriptor limit at `cur` (`None`: the lowest
+/// free descriptor, so the next one asked for fails with EMFILE), and puts the
+/// limit back — the coverage runtime writes its profile at exit, and needs a
+/// descriptor to. Process-wide: for a test run [`in_child`].
+pub fn with_descriptor_limit<T>(cur: Option<u64>, f: impl FnOnce() -> T) -> T {
+    use rustix::process::{getrlimit, setrlimit, Resource, Rlimit};
+    use std::os::fd::{AsFd, AsRawFd};
+    // The lowest free descriptor: what a new one would get.
+    let probe = std::io::stdin().as_fd().try_clone_to_owned().unwrap();
+    let lowest = probe.as_raw_fd() as u64;
+    drop(probe);
+    let old = getrlimit(Resource::Nofile);
+    let low = Rlimit { current: Some(cur.unwrap_or(lowest)), maximum: old.maximum };
+    setrlimit(Resource::Nofile, low).unwrap();
+    let out = f();
+    setrlimit(Resource::Nofile, old).unwrap();
+    out
+}

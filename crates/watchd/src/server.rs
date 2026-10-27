@@ -524,21 +524,8 @@ fn write_msg(out: &mut UnixStream, msg: &ServerMsg) -> std::io::Result<()> {
 fn peer_creds(stream: &UnixStream) -> std::io::Result<Subscriber> {
     use std::os::unix::io::AsRawFd;
     let fd = stream.as_raw_fd();
-    let mut cred = libc::ucred { pid: 0, uid: 0, gid: 0 };
-    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-    let rc = unsafe {
-        libc::getsockopt(
-            fd,
-            libc::SOL_SOCKET,
-            libc::SO_PEERCRED,
-            &mut cred as *mut libc::ucred as *mut libc::c_void,
-            &mut len,
-        )
-    };
-    if rc != 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok(Subscriber::new(cred.uid, cred.gid, cred.pid, peer_groups(fd)?))
+    let (pid, uid, gid) = crate::sys::peer_cred(fd)?;
+    Ok(Subscriber::new(uid, gid, pid, peer_groups(fd)?))
 }
 
 /// The peer's supplementary groups (`SO_PEERGROUPS`, Linux 4.13). A kernel
@@ -547,22 +534,11 @@ fn peer_creds(stream: &UnixStream) -> std::io::Result<Subscriber> {
 fn peer_groups(fd: std::os::unix::io::RawFd) -> std::io::Result<Vec<u32>> {
     let mut groups: Vec<libc::gid_t> = vec![0; 64];
     loop {
-        let mut len = std::mem::size_of_val(groups.as_slice()) as libc::socklen_t;
-        let rc = unsafe {
-            libc::getsockopt(
-                fd,
-                libc::SOL_SOCKET,
-                libc::SO_PEERGROUPS,
-                groups.as_mut_ptr().cast(),
-                &mut len,
-            )
-        };
-        let wanted = len as usize / std::mem::size_of::<libc::gid_t>();
-        if rc == 0 {
+        let (asked, wanted) = crate::sys::peer_groups(fd, &mut groups);
+        let Err(err) = asked else {
             groups.truncate(wanted);
             return Ok(groups);
-        }
-        let err = std::io::Error::last_os_error();
+        };
         match err.raw_os_error() {
             // Too small a buffer: the kernel says how large, and we ask again.
             Some(libc::ERANGE) if wanted > groups.len() => groups.resize(wanted, 0),
@@ -1025,9 +1001,8 @@ mod tests {
     #[test]
     fn test_a_connection_whose_peer_cannot_be_identified_is_refused() {
         // SO_PEERCRED on something that is no socket: ENOTSOCK.
-        use std::os::unix::io::{FromRawFd, IntoRawFd};
-        let fd = std::fs::File::open("/dev/null").unwrap().into_raw_fd();
-        let not_a_socket = unsafe { UnixStream::from_raw_fd(fd) };
+        let fd = std::os::fd::OwnedFd::from(std::fs::File::open("/dev/null").unwrap());
+        let not_a_socket = UnixStream::from(fd);
         assert!(peer_creds(&not_a_socket).is_err());
         let broker = Broker::new(AccessFilter::new(AllowAll), Arc::new(NoRoots));
         broker.attach_stream(not_a_socket);
@@ -1039,15 +1014,14 @@ mod tests {
         let broker = Broker::new(AccessFilter::new(AllowAll), Arc::new(NoRoots));
         let (client, server) = UnixStream::pair().unwrap();
         let peer = peer_creds(&server).unwrap();
-        assert_eq!(peer.uid, unsafe { libc::geteuid() });
-        assert_eq!(peer.gid, unsafe { libc::getegid() });
+        assert_eq!(peer.uid, rustix::process::geteuid().as_raw());
+        assert_eq!(peer.gid, rustix::process::getegid().as_raw());
         assert_eq!(peer.pid, std::process::id() as i32);
         // The group list comes with the socket (`SO_PEERGROUPS`, as of
         // `connect`), not from `/proc/<pid>`, which a recycled pid could make
         // another process's: the very list `getgroups` gives this process.
-        let n = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
-        let mut mine = vec![0 as libc::gid_t; n as usize];
-        unsafe { libc::getgroups(n, mine.as_mut_ptr()) };
+        let mut mine: Vec<u32> =
+            rustix::process::getgroups().unwrap().iter().map(|g| g.as_raw()).collect();
         mine.push(peer.gid);
         mine.sort_unstable();
         mine.dedup();
@@ -1086,7 +1060,6 @@ mod tests {
 
     #[test]
     fn test_a_listener_that_fails_stops_accepting() {
-        use std::os::unix::io::AsRawFd;
         let dir = std::env::temp_dir()
             .join("metafolder-tests")
             .join(format!("watchd-accept-{}", std::process::id()));
@@ -1094,7 +1067,8 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("s.sock");
         let listener = UnixListener::bind(&path).unwrap();
-        let fd = listener.as_raw_fd();
+        // A second descriptor on the same socket, to break it from here.
+        let handle = listener.try_clone().unwrap();
         let (tx, rx) = std::sync::mpsc::channel();
         let broker = Broker::new(AccessFilter::new(AllowAll), Arc::new(NoRoots));
         let serving = std::thread::spawn(move || broker.serve(listener, rx));
@@ -1102,7 +1076,8 @@ mod tests {
         drop(UnixStream::connect(&path).unwrap());
         // …until accept fails: the loop logs it and stops, and the listener
         // goes with it.
-        unsafe { libc::shutdown(fd, libc::SHUT_RDWR) };
+        rustix::net::shutdown(&handle, rustix::net::Shutdown::Both).unwrap();
+        drop(handle);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while UnixStream::connect(&path).is_ok() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -1126,14 +1101,7 @@ mod tests {
         let (client, server) = UnixStream::pair().unwrap();
         let peer = Subscriber { uid: 1000, gid: 1000, pid: 42, groups: vec![1000] };
         // The lowest free descriptor becomes the limit: the next one fails.
-        let probe = unsafe { libc::dup(0) };
-        unsafe { libc::close(probe) };
-        let mut old = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
-        unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut old) };
-        let low = libc::rlimit { rlim_cur: probe as libc::rlim_t, rlim_max: old.rlim_max };
-        unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &low) };
-        broker.attach(server, peer);
-        unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &old) };
+        crate::test_support::with_descriptor_limit(None, || broker.attach(server, peer));
         assert_eq!(broker.client_count(), 0);
         client.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
         let mut rest = String::new();

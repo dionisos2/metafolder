@@ -39,7 +39,7 @@ use std::ffi::{CString, OsStr, OsString};
 use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
-use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::unix::io::{AsRawFd, OwnedFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -48,6 +48,7 @@ use anyhow::{bail, Context, Result};
 
 use crate::proto::{Event, WirePath};
 use crate::server::{Gap, Uncovered};
+use crate::sys;
 
 // ── linux/fanotify.h ─────────────────────────────────────────────────────────
 // Copied, not guessed: these values are the uapi ABI.
@@ -347,7 +348,7 @@ impl PathResolver {
 /// Removes every inode mark of the group: the ignore marks, which are all the
 /// inode marks it has (`FAN_MARK_FLUSH` without a mount or filesystem flag).
 fn flush_ignores(group: RawFd) {
-    unsafe { libc::fanotify_mark(group, FAN_MARK_FLUSH, 0, libc::AT_FDCWD, std::ptr::null()) };
+    let _ = sys::fanotify_mark(group, FAN_MARK_FLUSH, 0, libc::AT_FDCWD, None);
 }
 
 /// Adds (`op` = `FAN_MARK_ADD`) or removes an ignore mark of [`ignore_mask`]
@@ -357,13 +358,7 @@ fn mark_ignore(group: RawFd, path: &Path, op: u32) -> io::Result<()> {
     // An ignore mask on a directory must survive modification
     // (`FAN_MARK_IGNORE` without it is EISDIR).
     let flags = op | FAN_MARK_IGNORE | FAN_MARK_IGNORED_SURV_MODIFY;
-    let rc =
-        unsafe { libc::fanotify_mark(group, flags, ignore_mask(), libc::AT_FDCWD, c.as_ptr()) };
-    if rc == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
+    sys::fanotify_mark(group, flags, ignore_mask(), libc::AT_FDCWD, Some(&c))
 }
 
 fn resolve_handle(fs_fd: RawFd, handle: &Handle) -> Option<PathBuf> {
@@ -394,46 +389,19 @@ fn resolve_handle_verbose(fs_fd: RawFd, handle: &Handle) -> Result<PathBuf> {
 
 /// `open_by_handle_at(fs_fd, handle, flags)`, close-on-exec.
 fn open_handle(fs_fd: RawFd, handle: &Handle, flags: libc::c_int) -> io::Result<OwnedFd> {
-    // `struct file_handle` is a header (u32 + i32) followed by the opaque
-    // bytes — laid out by hand because the uapi struct ends in a flexible
-    // array.
-    let mut buf = vec![0u8; 8 + handle.bytes.len()];
-    buf[0..4].copy_from_slice(&(handle.bytes.len() as u32).to_ne_bytes());
-    buf[4..8].copy_from_slice(&handle.handle_type.to_ne_bytes());
-    buf[8..].copy_from_slice(&handle.bytes);
-    let fh = buf.as_mut_ptr() as *mut libc::file_handle;
-    let fd = unsafe { libc::open_by_handle_at(fs_fd, fh, flags | libc::O_CLOEXEC) };
-    if fd < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: a fresh descriptor, owned by nothing else.
-    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    sys::open_by_handle_at(fs_fd, handle.handle_type, &handle.bytes, flags)
 }
 
 /// The `fsid` of the filesystem holding `path` (`statfs` reports the same
 /// `__kernel_fsid_t` the events carry).
 fn statfs_fsid(path: &Path) -> Result<[i32; 2]> {
     let c = CString::new(path.as_os_str().as_bytes()).context("path contains a NUL byte")?;
-    let mut st: libc::statfs = unsafe { std::mem::zeroed() };
-    if unsafe { libc::statfs(c.as_ptr(), &mut st) } != 0 {
-        return Err(io::Error::last_os_error()).context("statfs failed");
-    }
-    Ok(fsid_of(&st))
+    sys::statfs_fsid(&c).context("statfs failed")
 }
 
 /// [`statfs_fsid`] of an open descriptor.
 fn fsid_of_fd(fd: RawFd) -> Result<[i32; 2]> {
-    let mut st: libc::statfs = unsafe { std::mem::zeroed() };
-    if unsafe { libc::fstatfs(fd, &mut st) } != 0 {
-        return Err(io::Error::last_os_error()).context("fstatfs failed");
-    }
-    Ok(fsid_of(&st))
-}
-
-fn fsid_of(st: &libc::statfs) -> [i32; 2] {
-    // `fsid_t` hides its two ints; the events carry them plainly.
-    assert_eq!(std::mem::size_of::<libc::fsid_t>(), std::mem::size_of::<[i32; 2]>());
-    unsafe { std::mem::transmute::<libc::fsid_t, [i32; 2]>(st.f_fsid) }
+    sys::fstatfs_fsid(fd).context("fstatfs failed")
 }
 
 /// The fsid of the filesystem at `path`, refusing the zero fsid some FUSE
@@ -508,14 +476,15 @@ fn plan_marks(
 /// resolution then fails with EBADF (seen on 7.2). Opening a directory for
 /// reading takes the right to read it, which `CAP_DAC_READ_SEARCH` grants.
 fn open_fs_fd(path: &Path) -> Result<OwnedFd> {
+    use rustix::fs::{Mode, OFlags};
     let c = CString::new(path.as_os_str().as_bytes()).context("path contains a NUL byte")?;
-    let fd =
-        unsafe { libc::open(c.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) };
-    if fd < 0 {
-        return Err(io::Error::last_os_error()).context("cannot open the filesystem reference");
-    }
-    // SAFETY: a fresh descriptor, owned by nothing else.
-    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    rustix::fs::open(
+        c.as_c_str(),
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(io::Error::from)
+    .context("cannot open the filesystem reference")
 }
 
 // ── Mounts ───────────────────────────────────────────────────────────────────
@@ -710,15 +679,13 @@ impl MountWatch {
     /// Blocks until the mount table has changed.
     pub fn wait(&mut self) -> Result<()> {
         loop {
-            let mut pfd =
-                libc::pollfd { fd: self.file.as_raw_fd(), events: libc::POLLPRI, revents: 0 };
-            let rc = unsafe { libc::poll(&mut pfd, 1, -1) };
-            if rc < 0 {
-                let err = io::Error::last_os_error();
-                if err.kind() == io::ErrorKind::Interrupted {
-                    continue;
+            use rustix::event::{poll, PollFd, PollFlags};
+            match poll(&mut [PollFd::new(&self.file, PollFlags::PRI)], None) {
+                Ok(_) => {}
+                Err(rustix::io::Errno::INTR) => continue,
+                Err(err) => {
+                    return Err(io::Error::from(err)).context("poll on the mount table failed")
                 }
-                return Err(err).context("poll on the mount table failed");
             }
             // One descriptor, no timeout: poll returns only with something
             // set — the change (`POLLPRI`/`POLLERR`), or a descriptor gone bad
@@ -1260,15 +1227,10 @@ pub struct Fanotify {
 impl Fanotify {
     /// Opens the machine's one fanotify group.
     pub fn open() -> Result<Self> {
-        let fd = init_group(|flags| unsafe {
-            libc::fanotify_init(
-                flags,
-                (libc::O_RDONLY | libc::O_CLOEXEC | libc::O_LARGEFILE) as u32,
-            )
-        })
-        .context("fanotify_init failed")?;
-        // SAFETY: a fresh descriptor, owned by nothing else.
-        let fd = Arc::new(unsafe { OwnedFd::from_raw_fd(fd) });
+        let event_flags = (libc::O_RDONLY | libc::O_CLOEXEC | libc::O_LARGEFILE) as u32;
+        let fd = init_group(|flags| sys::fanotify_init(flags, event_flags))
+            .context("fanotify_init failed")?;
+        let fd = Arc::new(fd);
         let resolver = PathResolver::with_group(Arc::clone(&fd));
         Ok(Self {
             gaps: Vec::new(),
@@ -1401,16 +1363,14 @@ impl Fanotify {
     /// simulator's fidelity test compares itself against.
     #[cfg(test)]
     pub(crate) fn drain_raw(&self) -> Vec<RawEvent> {
-        let fd = self.fd.as_raw_fd();
-        unsafe { libc::fcntl(fd, libc::F_SETFL, libc::O_NONBLOCK) };
+        rustix::fs::fcntl_setfl(&*self.fd, rustix::fs::OFlags::NONBLOCK).unwrap();
         let mut buf = vec![0u8; 64 * 1024];
         let mut out = Vec::new();
         loop {
-            let n = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
-            if n <= 0 {
-                return out;
+            match rustix::io::read(&*self.fd, &mut buf) {
+                Ok(n) if n > 0 => out.extend(parse(&buf[..n]).0),
+                _ => return out,
             }
-            out.extend(parse(&buf[..n as usize]).0);
         }
     }
 
@@ -1447,17 +1407,14 @@ impl Fanotify {
             if fsid_of_fd(fd.as_raw_fd()).ok() != Some(fsid) {
                 continue;
             }
-            let rc = unsafe {
-                libc::fanotify_mark(
-                    self.fd.as_raw_fd(),
-                    FAN_MARK_REMOVE | FAN_MARK_FILESYSTEM,
-                    self.mask,
-                    fd.as_raw_fd(),
-                    std::ptr::null(),
-                )
-            };
-            if rc != 0 {
-                let err = io::Error::last_os_error();
+            let lifted = sys::fanotify_mark(
+                self.fd.as_raw_fd(),
+                FAN_MARK_REMOVE | FAN_MARK_FILESYSTEM,
+                self.mask,
+                fd.as_raw_fd(),
+                None,
+            );
+            if let Err(err) = lifted {
                 eprintln!("[watchd] cannot lift the mark at {}: {err}", path.display());
             }
             return;
@@ -1466,21 +1423,9 @@ impl Fanotify {
 
     fn mark_fs(&mut self, at: &Path, op: u32) -> Result<()> {
         let c = CString::new(at.as_os_str().as_bytes()).context("path contains a NUL byte")?;
+        let group = self.fd.as_raw_fd();
         let mark = |mask: u64| {
-            let rc = unsafe {
-                libc::fanotify_mark(
-                    self.fd.as_raw_fd(),
-                    op | FAN_MARK_FILESYSTEM,
-                    mask,
-                    libc::AT_FDCWD,
-                    c.as_ptr(),
-                )
-            };
-            if rc == 0 {
-                Ok(())
-            } else {
-                Err(io::Error::last_os_error())
-            }
+            sys::fanotify_mark(group, op | FAN_MARK_FILESYSTEM, mask, libc::AT_FDCWD, Some(&c))
         };
         self.mask = place_mark(op, self.mask, mark)
             .with_context(|| format!("fanotify_mark({at:?}) failed"))?;
@@ -1492,24 +1437,14 @@ impl Fanotify {
 /// `FAN_REPORT_TARGET_FID`, and without it on a kernel that refuses it
 /// (EINVAL, pre-5.17 — where `FAN_RENAME` is refused too, and moves arrive
 /// as pairs that carry no object anyway).
-fn init_group(mut init: impl FnMut(u32) -> RawFd) -> io::Result<RawFd> {
+fn init_group<T>(mut init: impl FnMut(u32) -> io::Result<T>) -> io::Result<T> {
     // `FAN_REPORT_FID` alongside `FAN_REPORT_DFID_NAME` is what makes the
     // *object's own* handle appear too (for the events that are about the
     // object, not about a name in its parent).
     let flags = FAN_CLASS_NOTIF | FAN_REPORT_FID | FAN_REPORT_DFID_NAME | FAN_CLOEXEC;
-    let fd = init(flags | FAN_REPORT_TARGET_FID);
-    if fd >= 0 {
-        return Ok(fd);
-    }
-    let err = io::Error::last_os_error();
-    if err.raw_os_error() != Some(libc::EINVAL) {
-        return Err(err);
-    }
-    let fd = init(flags);
-    if fd >= 0 {
-        Ok(fd)
-    } else {
-        Err(io::Error::last_os_error())
+    match init(flags | FAN_REPORT_TARGET_FID) {
+        Err(err) if err.raw_os_error() == Some(libc::EINVAL) => init(flags),
+        group => group,
     }
 }
 
@@ -1574,15 +1509,10 @@ impl Reader {
     /// One `read(2)` of the group into `buf`. Blocks until something happens.
     pub fn read(&self, buf: &mut [u8]) -> Result<usize> {
         loop {
-            let n = unsafe {
-                libc::read(self.fd.as_raw_fd(), buf.as_mut_ptr() as *mut libc::c_void, buf.len())
-            };
-            if n >= 0 {
-                return Ok(n as usize);
-            }
-            let err = io::Error::last_os_error();
-            if err.kind() != io::ErrorKind::Interrupted {
-                return Err(err).context("fanotify read failed");
+            match rustix::io::read(&*self.fd, &mut *buf) {
+                Ok(n) => return Ok(n),
+                Err(rustix::io::Errno::INTR) => continue,
+                Err(err) => return Err(io::Error::from(err)).context("fanotify read failed"),
             }
         }
     }
@@ -1592,17 +1522,8 @@ impl Reader {
 /// events use, obtained by name instead of received from the kernel.
 fn name_to_handle(path: &Path) -> Result<Handle> {
     let c = CString::new(path.as_os_str().as_bytes()).context("path contains a NUL byte")?;
-    let mut buf = vec![0u8; 8 + libc::MAX_HANDLE_SZ as usize];
-    buf[0..4].copy_from_slice(&(libc::MAX_HANDLE_SZ as u32).to_ne_bytes());
-    let fh = buf.as_mut_ptr() as *mut libc::file_handle;
-    let mut mount_id: libc::c_int = 0;
-    let rc = unsafe { libc::name_to_handle_at(libc::AT_FDCWD, c.as_ptr(), fh, &mut mount_id, 0) };
-    if rc != 0 {
-        return Err(io::Error::last_os_error()).context("name_to_handle_at failed");
-    }
-    let handle_bytes = u32::from_ne_bytes(buf[0..4].try_into().unwrap()) as usize;
-    let handle_type = i32::from_ne_bytes(buf[4..8].try_into().unwrap());
-    Ok(Handle { fsid: statfs_fsid(path)?, handle_type, bytes: buf[8..8 + handle_bytes].to_vec() })
+    let (handle_type, bytes) = sys::name_to_handle_at(&c).context("name_to_handle_at failed")?;
+    Ok(Handle { fsid: statfs_fsid(path)?, handle_type, bytes })
 }
 
 #[cfg(test)]
@@ -2341,9 +2262,8 @@ mod tests {
     }
 
     /// A failed `fanotify_init`: -1 with `errno` set.
-    fn refused(errno: i32) -> RawFd {
-        unsafe { *libc::__errno_location() = errno };
-        -1
+    fn refused(errno: i32) -> io::Result<RawFd> {
+        Err(io::Error::from_raw_os_error(errno))
     }
 
     #[test]
@@ -2354,7 +2274,7 @@ mod tests {
             if flags & FAN_REPORT_TARGET_FID != 0 {
                 refused(libc::EINVAL)
             } else {
-                7
+                Ok(7)
             }
         });
         assert_eq!(fd.unwrap(), 7);
@@ -2629,10 +2549,12 @@ mod tests {
             .join(format!("watchd-fsref-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let fd = open_fs_fd(&dir).unwrap();
-        let flags = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFL) };
+        let flags = rustix::fs::fcntl_getfl(&fd).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
-        assert!(flags >= 0);
-        assert_eq!(flags & libc::O_PATH, 0, "O_PATH: open_by_handle_at would answer EBADF");
+        assert!(
+            !flags.contains(rustix::fs::OFlags::PATH),
+            "O_PATH: open_by_handle_at would answer EBADF"
+        );
     }
 
     #[test]
@@ -2797,32 +2719,27 @@ mod tests {
         // covered by `preflight` in deployment.
         let dir = std::env::temp_dir().join(format!("metafolder-fanotify-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let group = match unsafe {
-            libc::fanotify_init(
-                FAN_CLASS_NOTIF | FAN_REPORT_DFID_NAME | FAN_CLOEXEC,
-                libc::O_RDONLY as u32,
-            )
-        } {
-            fd if fd >= 0 => fd,
-            _ => {
+        let group = match sys::fanotify_init(
+            FAN_CLASS_NOTIF | FAN_REPORT_DFID_NAME | FAN_CLOEXEC,
+            libc::O_RDONLY as u32,
+        ) {
+            Ok(group) => group,
+            Err(_) => {
                 eprintln!("skipped: fanotify_init is not permitted here");
                 std::fs::remove_dir_all(&dir).ok();
                 return;
             }
         };
         let c = CString::new(dir.as_os_str().as_bytes()).unwrap();
-        let rc = unsafe {
-            libc::fanotify_mark(
-                group,
-                FAN_MARK_ADD,
-                FAN_CREATE | FAN_ONDIR,
-                libc::AT_FDCWD,
-                c.as_ptr(),
-            )
-        };
-        if rc != 0 {
+        let marked = sys::fanotify_mark(
+            group.as_raw_fd(),
+            FAN_MARK_ADD,
+            FAN_CREATE | FAN_ONDIR,
+            libc::AT_FDCWD,
+            Some(&c),
+        );
+        if marked.is_err() {
             eprintln!("skipped: fanotify_mark is not permitted here");
-            unsafe { libc::close(group) };
             std::fs::remove_dir_all(&dir).ok();
             return;
         }
@@ -2831,13 +2748,13 @@ mod tests {
 
         // The watcher must not block the test for ever on a kernel that
         // swallowed the event.
-        unsafe { libc::fcntl(group, libc::F_SETFL, libc::O_NONBLOCK) };
+        rustix::fs::fcntl_setfl(&group, rustix::fs::OFlags::NONBLOCK).unwrap();
         let mut buf = [0u8; 8192];
         let mut seen = false;
         for _ in 0..50 {
-            let n = unsafe { libc::read(group, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+            let n = rustix::io::read(&group, &mut buf).unwrap_or(0);
             if n > 0 {
-                let (events, _) = parse(&buf[..n as usize]);
+                let (events, _) = parse(&buf[..n]);
                 seen = events.iter().any(|e| {
                     e.mask & FAN_CREATE != 0
                         && e.parent.as_ref().is_some_and(|(_, name)| name == "hello.txt")
@@ -2848,7 +2765,7 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
-        unsafe { libc::close(group) };
+        drop(group);
         std::fs::remove_dir_all(&dir).ok();
         assert!(seen, "the creation was reported and parsed");
     }
@@ -3122,23 +3039,6 @@ mod tests {
         assert!(format!("{err:#}").contains("cannot mark a filesystem"), "{err:#}");
     }
 
-    /// Runs `f` with this process's descriptor limit at `cur` (`None`: the
-    /// lowest free descriptor, so the next one asked for fails with EMFILE),
-    /// and puts the limit back — the coverage runtime writes its profile at
-    /// exit, and needs a descriptor to.
-    fn with_descriptor_limit<T>(cur: Option<libc::rlim_t>, f: impl FnOnce() -> T) -> T {
-        let probe = unsafe { libc::dup(0) };
-        unsafe { libc::close(probe) };
-        let mut old = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
-        unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut old) };
-        let low =
-            libc::rlimit { rlim_cur: cur.unwrap_or(probe as libc::rlim_t), rlim_max: old.rlim_max };
-        unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &low) };
-        let out = f();
-        unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &old) };
-        out
-    }
-
     #[test]
     fn test_a_group_that_cannot_be_opened_is_said_so() {
         if !crate::test_support::in_child(
@@ -3146,9 +3046,12 @@ mod tests {
         ) {
             return;
         }
-        let err = with_descriptor_limit(None, Fanotify::open).err().expect("no descriptor");
+        let err = crate::test_support::with_descriptor_limit(None, Fanotify::open)
+            .err()
+            .expect("no descriptor");
         assert!(format!("{err:#}").starts_with("fanotify_init failed"), "{err:#}");
-        let err = with_descriptor_limit(None, || preflight(Path::new("/"))).unwrap_err();
+        let err = crate::test_support::with_descriptor_limit(None, || preflight(Path::new("/")))
+            .unwrap_err();
         assert!(format!("{err:#}").starts_with("fanotify is not available"), "{err:#}");
     }
 
@@ -3157,6 +3060,10 @@ mod tests {
     /// SIGUSR1 interrupts a blocked call (no `SA_RESTART`) and does nothing
     /// else — what makes an EINTR happen on demand.
     fn sigusr1_interrupts() {
+        // SAFETY: `sigaction` is plain old data, for which all zeroes is valid
+        // (no flags, an empty mask once `sigemptyset` has run); the handler
+        // does nothing, so it is async-signal-safe; the test runs alone in its
+        // process (`in_child`), so no one else's handler is replaced.
         unsafe {
             let mut sa: libc::sigaction = std::mem::zeroed();
             sa.sa_sigaction = ignore_signal as extern "C" fn(libc::c_int) as usize;
@@ -3175,21 +3082,18 @@ mod tests {
         let (tid_tx, tid_rx) = std::sync::mpsc::channel();
         let (out_tx, out_rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
+            // SAFETY: `pthread_self` has no preconditions.
             tid_tx.send(unsafe { libc::pthread_self() }).unwrap();
             let _ = out_tx.send(blocked());
         });
         let tid = tid_rx.recv().unwrap();
         std::thread::sleep(std::time::Duration::from_millis(200));
+        // SAFETY: `tid` is the thread spawned above, still running: it sends
+        // its result only after `blocked` returns, which this signal is for.
         unsafe { libc::pthread_kill(tid, libc::SIGUSR1) };
         std::thread::sleep(std::time::Duration::from_millis(100));
         release();
         out_rx.recv_timeout(std::time::Duration::from_secs(5)).expect("returned")
-    }
-
-    fn pipe() -> (OwnedFd, OwnedFd) {
-        let mut fds = [0; 2];
-        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
-        unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) }
     }
 
     #[test]
@@ -3199,15 +3103,14 @@ mod tests {
         ) {
             return;
         }
-        let (read_end, write_end) = pipe();
+        let (read_end, write_end) = rustix::pipe::pipe().unwrap();
         let reader = Reader { fd: Arc::new(read_end) };
-        let writer = write_end.as_raw_fd();
         let got = interrupted(
             move || {
                 let mut buf = [0u8; 16];
                 reader.read(&mut buf).map(|n| buf[..n].to_vec())
             },
-            || assert_eq!(unsafe { libc::write(writer, b"hi".as_ptr().cast(), 2) }, 2),
+            || assert_eq!(rustix::io::write(&write_end, b"hi").unwrap(), 2),
         );
         assert_eq!(got.unwrap(), b"hi", "the interruption was not an end");
 
@@ -3237,7 +3140,7 @@ mod tests {
         }
         let mut watch = MountWatch::open().unwrap();
         // poll(2) refuses more descriptors than the limit allows (EINVAL).
-        let err = with_descriptor_limit(Some(0), || watch.wait()).unwrap_err();
+        let err = crate::test_support::with_descriptor_limit(Some(0), || watch.wait()).unwrap_err();
         assert!(format!("{err:#}").starts_with("poll on the mount table failed"), "{err:#}");
     }
 
@@ -3308,17 +3211,17 @@ mod tests {
         for name in &names {
             std::fs::rename(root.join(name), root.join(format!("{name}.moved"))).unwrap();
         }
-        unsafe { libc::fcntl(fa.fd.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) };
+        rustix::fs::fcntl_setfl(&*fa.fd, rustix::fs::OFlags::NONBLOCK).unwrap();
         let mut renames = Vec::new();
         let deadline = Instant::now() + std::time::Duration::from_secs(5);
         let mut buf = vec![0u8; 65536];
         while renames.len() < names.len() && Instant::now() < deadline {
-            let n = unsafe { libc::read(fa.fd.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len()) };
-            if n <= 0 {
+            let n = rustix::io::read(&*fa.fd, &mut buf).unwrap_or(0);
+            if n == 0 {
                 std::thread::sleep(std::time::Duration::from_millis(20));
                 continue;
             }
-            for raw in parse(&buf[..n as usize]).0 {
+            for raw in parse(&buf[..n]).0 {
                 if raw.mask & FAN_RENAME != 0 {
                     renames.push((
                         raw.old.map(|(_, n)| n.to_string_lossy().into_owned()),
