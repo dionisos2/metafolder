@@ -2275,6 +2275,7 @@ dependencies = [
  "libc",
  "metafolder-core",
  "reqwest",
+ "rustix",
  "serde",
  "serde_json",
  "tauri",

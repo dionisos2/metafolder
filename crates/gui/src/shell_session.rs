@@ -14,7 +14,9 @@
 //! writes what the user types into while it runs, and closes for an end of
 //! file — never from the shell's command stream, which it would swallow.
 
-use crate::shell_exec::{report_end, script_label, shell_quote, working_dir, RunningGuard};
+use crate::shell_exec::{
+    report_end, script_label, shell_quote, signal_group, working_dir, RunningGuard,
+};
 use crate::state::workspace::ShellLine;
 use crate::state::GuiState;
 use std::collections::HashMap;
@@ -334,19 +336,9 @@ fn input_fifo(task_id: &str) -> Result<PathBuf, String> {
     let dir = metafolder_core::auth::runtime_dir().map_err(|e| e.to_string())?;
     let fifo = dir.join(format!("shell-in-{}-{task_id}", std::process::id()));
     let _ = std::fs::remove_file(&fifo);
-    let path =
-        std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).map_err(|e| e.to_string())?;
-    // SAFETY: a plain syscall on a NUL-terminated path.
-    if unsafe { libc::mkfifo(path.as_ptr(), 0o600) } == -1 {
-        return Err(format!("cannot create the line's input: {}", std::io::Error::last_os_error()));
-    }
+    rustix::fs::mkfifoat(rustix::fs::CWD, &fifo, rustix::fs::Mode::from_raw_mode(0o600))
+        .map_err(|e| format!("cannot create the line's input: {e}"))?;
     Ok(fifo)
-}
-
-#[cfg(unix)]
-fn signal_group(pid: u32, signal: i32) -> bool {
-    // SAFETY: `kill` is a plain syscall; a negative pid addresses the group.
-    unsafe { libc::kill(-(pid as i32), signal) == 0 }
 }
 
 /// Starts a workspace's shell in `dir`, loading `rc`.
@@ -806,8 +798,8 @@ mod tests {
         let pid = gui.shells().live("ws-1").unwrap().pid;
         gui.shells().close("ws-1");
         for _ in 0..200 {
-            // SAFETY: signal 0 only checks that the process exists.
-            if unsafe { libc::kill(pid as i32, 0) } != 0 {
+            let pid = rustix::process::Pid::from_raw(pid as i32).expect("a shell's pid");
+            if rustix::process::test_kill_process(pid).is_err() {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;

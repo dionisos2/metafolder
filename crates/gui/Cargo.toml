@@ -47,10 +47,12 @@ url = "2"
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "2.0", features = ["v2_32"] }
 
-# setrlimit on the sandboxed media helpers (sandbox.rs) and killpg on a stopped
-# script's process group (shell_exec.rs).
+# The calls between fork and exec (sandbox.rs, shell_session.rs), which run in
+# an `unsafe` pre_exec hook whatever they call; every other system call goes
+# through rustix, which wraps it safely.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+rustix = { version = "1", features = ["fs", "process"] }
 
 [dev-dependencies]
 http-body-util = "0.1"

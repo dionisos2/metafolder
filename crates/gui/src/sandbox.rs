@@ -290,18 +290,14 @@ fn sandboxed(spec: &Spec) -> Result<Command, String> {
 /// the GUI; `None` where `crate::seccomp` has no table for the architecture.
 #[cfg(target_os = "linux")]
 fn seccomp_fd() -> Result<Option<i32>, String> {
-    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::fd::{AsRawFd, OwnedFd};
     static FD: std::sync::OnceLock<Result<Option<OwnedFd>, String>> = std::sync::OnceLock::new();
     let fd = FD.get_or_init(|| {
         let Some(program) = crate::seccomp::program() else {
             return Ok(None);
         };
-        // SAFETY: a fresh descriptor, owned by nothing else.
-        let fd = unsafe { libc::memfd_create(c"metafolder-seccomp".as_ptr(), libc::MFD_CLOEXEC) };
-        if fd < 0 {
-            return Err(format!("memfd_create: {}", std::io::Error::last_os_error()));
-        }
-        let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+        let fd = rustix::fs::memfd_create("metafolder-seccomp", rustix::fs::MemfdFlags::CLOEXEC)
+            .map_err(|e| format!("memfd_create: {e}"))?;
         let mut file = std::fs::File::from(fd);
         std::io::Write::write_all(&mut file, &program)
             .map_err(|e| format!("writing the syscall filter: {e}"))?;

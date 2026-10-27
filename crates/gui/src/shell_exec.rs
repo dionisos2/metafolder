@@ -413,13 +413,17 @@ const SIGKILL: i32 = 9;
 /// Signals a whole process group (negative pid). Returns whether the signal was
 /// delivered — false for an already-reaped group, and always off Unix.
 #[cfg(unix)]
-fn signal_group(pid: u32, signal: i32) -> bool {
-    // SAFETY: `kill` is a plain syscall; a negative pid addresses the group.
-    unsafe { libc::kill(-(pid as i32), signal) == 0 }
+pub(crate) fn signal_group(pid: u32, signal: i32) -> bool {
+    use rustix::process::{kill_process_group, Pid, Signal};
+    let (Some(pid), Some(signal)) = (Pid::from_raw(pid as i32), Signal::from_named_raw(signal))
+    else {
+        return false;
+    };
+    kill_process_group(pid, signal).is_ok()
 }
 
 #[cfg(not(unix))]
-fn signal_group(_pid: u32, _signal: i32) -> bool {
+pub(crate) fn signal_group(_pid: u32, _signal: i32) -> bool {
     false
 }
 
