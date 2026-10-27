@@ -45,6 +45,7 @@ help:
 	@echo '  build              build everything, release (daemon, cli, gui, config)'
 	@echo '  build-headless     build daemon + cli only (no GUI toolkit / npm)'
 	@echo '  frontend           (re)build the GUI frontend bundle'
+	@echo '  docs               render the documentation wiki (docs/wiki/dist/)'
 	@echo ''
 	@echo '  install            build + install binaries into $(BINDIR) + user config'
 	@echo '  install-headless   daemon + cli + user config'
@@ -97,11 +98,19 @@ build-gui: frontend
 .PHONY: build
 build: build-headless build-gui
 
+# The documentation wiki rendered into docs/wiki/dist/, which install-config
+# installs as ~/.config/metafolder/docs/ (the help panel reads it there).
+# Rendered on every install: sync-config only checks that dist/ exists, so a
+# stale one went in silently — a new note missing from the help panel.
+.PHONY: docs
+docs:
+	scripts/dev/doc build
+
 # ── install ──────────────────────────────────────────────────────────────────
 # install-config runs the freshly built binary from the repo root: sync-config
 # gathers crates/*/default-config/ relative to the working directory.
 .PHONY: install-config
-install-config: build-config
+install-config: build-config docs
 	$(TARGET)/metafolder-sync-config
 
 $(BINDIR):
