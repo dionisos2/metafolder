@@ -13,7 +13,8 @@ tab bar:
 * its status line and its message log (the [[message panel]]), which other workspaces do not see ([[Status bar and task bar]]);
 * whether it was last shown with one panel or two ([[Panel slots and layout]]).
 
-Nothing of it outlives the session: the GUI starts with a single empty workspace.
+The GUI starts with a single empty workspace. A workspace can be saved under a name in its
+repository and loaded back later ([[Saved workspaces]], proposed).
 
 !! One repository, for good
 
