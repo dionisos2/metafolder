@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/workspace:delete-saved
+catalog: GUI command
+target: workspace:delete-saved
+summary: Delete a saved workspace of the repository
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

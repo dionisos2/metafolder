@@ -1,0 +1,8 @@
+title: workspace:delete-saved
+tags: [[GUI command]] Workspaces
+kind: reference
+summary: Delete a saved workspace of the repository
+
+`workspace:delete-saved <name>` deletes a workspace saved in the repository. When it was
+the default, the repository is left without one. The workspaces open on screen are not
+touched. See [[Saved workspaces]].

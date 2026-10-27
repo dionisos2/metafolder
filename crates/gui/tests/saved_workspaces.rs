@@ -151,3 +151,26 @@ async fn test_delete_and_unset_default() {
     assert!(!metafolder.join("gui/workspaces/tri.json").exists());
     assert!(!saved::delete_of(&gui, &daemon, "ws-1", "tri").await.unwrap());
 }
+
+/// Every shipped declaration reads, names variables its panel uses, and keeps
+/// layout and work apart (doc "Saved workspaces": `work` names only what is not
+/// layout already).
+#[test]
+fn test_the_shipped_declarations_name_variables_their_panels_use() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("default-config/panel-types");
+    let (layout, work) = saved::declarations(&dir).unwrap();
+    assert!(layout.contains(&"metarecord-list:columns".to_string()), "{layout:?}");
+    assert!(work.contains(&"metarecord-list:query".to_string()), "{work:?}");
+    for key in &layout {
+        assert!(!work.contains(key), "{key} is declared both layout and work");
+    }
+    for key in layout.iter().chain(&work) {
+        let panel = key.split(':').next().unwrap();
+        let used = std::fs::read_dir(dir.join(panel)).unwrap().any(|entry| {
+            let path = entry.unwrap().path();
+            path.extension().is_some_and(|e| e == "js")
+                && std::fs::read_to_string(&path).unwrap().contains(&format!("'{key}'"))
+        });
+        assert!(used, "{key} is declared but no source of {panel} names it");
+    }
+}

@@ -1,0 +1,14 @@
+title: $:/mf/gen/GUI command/workspace:open
+catalog: GUI command
+target: workspace:open
+summary: Open a saved workspace here or in a new workspace
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``b ctrl+o`` → ``workspace:open new``
+* ``ctrl+o`` → ``workspace:open here``
+* ``i ctrl+o`` → ``workspace:open here``

@@ -1,0 +1,8 @@
+title: workspace:unset-default
+tags: [[GUI command]] Workspaces
+kind: reference
+summary: Leave the repository without a default workspace
+
+Leaves the repository without a default workspace: a workspace that takes the
+repository opens as it would without saved workspaces. The saved workspace itself is
+kept. See [[Saved workspaces]].

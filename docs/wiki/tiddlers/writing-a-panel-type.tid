@@ -15,6 +15,10 @@ panel-types/my-panel/
   main.js       export function mount(root, metafolder)
 ```
 
+A third, optional, says which of the panel's variables a saved workspace keeps:
+`saved.json`, with a `layout` and a `work` list of names without the panel's prefix
+([[Saved workspaces]]). Without it, saving a workspace keeps none of them.
+
 Copy the [[hello panel]] to start: it is the smallest panel that reads a workspace
 variable, follows it, and registers a command. The built-in panels are in the same
 directory, plain HTML and JavaScript with no build step, to be read as examples —

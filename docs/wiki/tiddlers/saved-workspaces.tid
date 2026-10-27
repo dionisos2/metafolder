@@ -1,8 +1,7 @@
 title: Saved workspaces
 tags: GUI
 kind: reference
-status: proposed
-aliases: workspace:save workspace:open workspace:set-default workspace:unset-default workspace:delete-saved saved-workspace default-workspace
+aliases: saved-workspace default-workspace
 summary: A workspace saved under a name in its repository — its layout alone, or the work in progress too — loaded back here or in a new workspace, one of them chosen as what every new workspace on the repository opens on.
 
 A workspace can be ''saved'' under a name and ''loaded'' back later, after a restart
@@ -22,39 +21,51 @@ its layout alone can be taken out of it — the file keeps the two apart (below)
 
 !! Which variables are saved
 
-A panel type decides for its own variables ([[Workspace variables]]): its `main.js`
-exports the list of those that belong to the layout and of those that belong to the
+A panel type decides for its own variables ([[Workspace variables]]): a `saved.json`
+in its directory lists those that belong to the layout and those that belong to the
 work, by name without the panel's prefix. The two lists do not overlap: `work` names
 only what is not layout already, since a work save holds both.
 
 ```
-export const saved = {
-  layout: ['columns', 'column-widths', 'sort', 'mode'],
-  work: ['query', 'normal-query', 'normal-frozen'],
-};
+{
+  "layout": ["columns", "column-widths", "mode", "page-size", "finder-fields"],
+  "work": ["query", "normal-query", "normal-frozen", "finder", "order-field"]
+}
 ```
 
-The GUI reads it with `import()`, without mounting the panel, so a panel type that was
-not opened this session still keeps its variables in the next save. A variable no list
-names is never saved. The standard variables are the GUI's: `selected_metarecord`,
+The GUI reads every panel type's file at each save, whether the panel is mounted or
+not: a panel type not opened this session still keeps its variables in the next save,
+and a file edited since the start is taken as it is now. A variable no list names is
+never saved, and a panel type without `saved.json` saves nothing. The standard variables are the GUI's: `selected_metarecord`,
 `selected_paths`, `selected_metarecords` and `selected_path_ref` are work,
 `view.zoom.<panel type>` is layout, and `active_repo`, `metarecords:dirty`,
 `pick_request` and `pick_result` are never saved.
 
 What a panel keeps outside the variables — its scroll position, a half-typed draft —
-is not saved.
+is not saved, nor is what a panel only publishes for others to read
+(`metarecord-list:effective-query`, `metarecord-list:sort`).
+
+|!Panel |!Layout |!Work |
+|[[metarecord-list|metarecord-list panel]] |`columns`, `column-widths`, `mode`, `page-size`, `finder-fields` |`query`, `normal-query`, `normal-frozen`, `finder`, `order-field` |
+|[[path-ref|path-ref panel]] |`field`, `ref-field` |`scope` |
+|[[file-manager|file-manager panel]] | |`dir`, `cursor` |
+|[[recent|recent panel]] |`sort` | |
+
+`crates/gui/tests/saved_workspaces.rs` checks that every shipped declaration reads, keeps
+the two lists apart, and names variables its panel's sources use.
 
 !! The commands
 
-* `workspace:save <layout|work> <name>` saves the focused workspace under that name. The name is asked with the saved workspaces' names as completions, so what exists already shows while typing; a name that exists is replaced only once the user confirms.
-* `workspace:open <here|new> <name>` loads it ([[Panel slots and layout]] for the targets): `here` writes the saved variables into the focused workspace — in one go, as [[workspace:send]] does — and puts its panel types back in the slots; `new` does the same in a new workspace on the repository. A variable the save does not hold is left as it is: loading a `layout` keeps the query.
-* `workspace:set-default <name>` makes a saved workspace — of either kind — the repository's default; `workspace:unset-default` leaves the repository without one.
-* `workspace:delete-saved <name>` deletes a saved workspace. Deleting the default also unsets it.
+* [[workspace:save]] `<layout|work> <name>` saves the focused workspace under that name. The name is asked with the saved workspaces' names as completions, so what exists already shows while typing; a name that exists is replaced only once the user confirms.
+* [[workspace:open]] `<here|new> <name>` loads it ([[Panel slots and layout]] for the targets): `here` writes the saved variables into the focused workspace — in one go, as [[workspace:send]] does — and puts its panel types back in the slots; `new` does the same in a new workspace on the repository. A variable the save does not hold is left as it is: loading a `layout` keeps the query.
+* [[workspace:set-default]] `<name>` makes a saved workspace — of either kind — the repository's default; [[workspace:unset-default]] leaves the repository without one.
+* [[workspace:delete-saved]] `<name>` deletes a saved workspace. Deleting the default also unsets it.
 
 There is no listing command: the names are the completions of `workspace:open`.
 
-`ctrl+s` saves and `ctrl+o` loads here;
-`i` and `b` before it choose `here` and `new`, as for every command with targets.
+<<key "workspace:save" ctrl+s>> saves and <<key "workspace:open here" ctrl+o>> opens
+here; `i` and `b` before it choose `here` and `new` (<<key "workspace:open new" "b ctrl+o">>),
+as for every command with targets.
 
 !! The default workspace
 
@@ -65,8 +76,13 @@ workspace without one takes the repository picked in the [[repos panel]]
 
 A workspace created by a command or a script — `mf.workspace.create`, a script's
 scratch workspace, a [[value picker|Value picker]] — gets the default's ''layout
-variables'' only: its own work comes from whoever created it, and so do its panels.
-When the default is a `work`, its layout part is what such a workspace gets.
+variables'' only, and only those it does not hold already: its own work comes from
+whoever created it, and so do its panels and a picker's seed. When the default is a
+`work`, its layout part is what such a workspace gets.
+
+A default that cannot be read — a file edited by hand into something else, one of a
+newer format — is reported on the workspace's status bar, and the workspace stays as it
+was created.
 
 Changing the default writes one value: which saved workspace it is. Overwriting that
 saved workspace changes what the default opens on.
@@ -94,4 +110,6 @@ and `layout`.
 
 A value a panel no longer understands — a column on a field the repository no longer
 has — is handled as a stale variable already is: the panel falls back to its default.
-A panel type that no longer exists is left out of the slots, and the status bar says so.
+A panel type that no longer exists is put back in its slot all the same, and shows
+there that it failed to load, as any panel type that cannot be loaded does
+([[Writing a panel type]]).

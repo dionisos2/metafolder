@@ -1,0 +1,10 @@
+title: workspace:save
+tags: [[GUI command]] Workspaces
+kind: reference
+summary: Save this workspace's layout, or its work too, in its repository
+
+`workspace:save <layout|work> <name>` saves the workspace the command runs in under
+that name, in its repository: a `layout` holds its panels and how they show things, a
+`work` holds what they show too. The name is asked with the names already saved as
+completions; one that exists is replaced only once confirmed. What each panel saves is
+its own declaration. See [[Saved workspaces]].

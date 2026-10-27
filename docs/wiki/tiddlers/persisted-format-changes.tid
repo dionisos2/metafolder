@@ -33,6 +33,7 @@ the old format, and an up-to-date one must be opened without being rewritten
 |the trash's index |`.metafolder/internal/trash/index/` ([[Trash on-disk layout]]) |''not migrated'': the SQLite index it replaced (`index.sqlite`) is not read, so what was trashed before the change stays on disk as blobs the index does not know — a breach of the rule, noted here |
 |backups |[[Backups and restore]] |a backup is a store: it migrates when it is restored and opened |
 |a pair's sync state |a store per pair under `internal/`, with a `format_version` in its `meta` table |nothing reads the version yet: a change of format would have to |
+|a saved workspace |`.metafolder/gui/workspaces/<name>.json` ([[Saved workspaces]]) |a `version` field; a file of a newer version is refused with what reads it, not misread. Nothing to convert yet: version 1 is the first |
 |the benchmark history |`benchmarks/history/*.jsonl` ([[The timed regression suite]]) |rewritten in place when a field goes |
 
 !! The precedent: SQLite to the key-value store

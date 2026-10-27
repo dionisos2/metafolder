@@ -58,6 +58,12 @@
 # workspace:prev slot commands.
 "ctrl+t" = { command = "workspace:new" }
 "ctrl+w" = { command = "workspace:close" }
+# Saved workspaces (doc "Saved workspaces"): ctrl+o opens one here, the target
+# keys before it choose where — "i" here, "b" a new workspace.
+"ctrl+s" = { command = "workspace:save" }
+"ctrl+o" = { command = "workspace:open here" }
+"i ctrl+o" = { command = "workspace:open here" }
+"b ctrl+o" = { command = "workspace:open new" }
 "n" = { command = "workspace:next" }
 "p" = { command = "workspace:prev" }
 "1" = { command = "workspace:goto 1" }

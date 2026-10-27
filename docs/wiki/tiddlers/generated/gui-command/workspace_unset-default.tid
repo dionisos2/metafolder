@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/workspace:unset-default
+catalog: GUI command
+target: workspace:unset-default
+summary: Leave the repository without a default workspace
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

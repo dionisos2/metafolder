@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/workspace:set-default
+catalog: GUI command
+target: workspace:set-default
+summary: Make a saved workspace the repository's default
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

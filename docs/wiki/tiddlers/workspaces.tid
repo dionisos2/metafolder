@@ -14,7 +14,7 @@ tab bar:
 * whether it was last shown with one panel or two ([[Panel slots and layout]]).
 
 The GUI starts with a single empty workspace. A workspace can be saved under a name in its
-repository and loaded back later ([[Saved workspaces]], proposed).
+repository and loaded back later ([[Saved workspaces]]).
 
 !! One repository, for good
 

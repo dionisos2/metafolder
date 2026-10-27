@@ -1,0 +1,9 @@
+title: workspace:set-default
+tags: [[GUI command]] Workspaces
+kind: reference
+summary: Make a saved workspace the repository's default
+
+`workspace:set-default <name>` makes a saved workspace — a layout or a work — the
+repository's default: a workspace that takes the repository opens on it. Only the name
+is written, so overwriting that save changes what the default opens on. See
+[[Saved workspaces]].

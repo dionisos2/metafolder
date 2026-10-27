@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/workspace:save
+catalog: GUI command
+target: workspace:save
+summary: Save this workspace's layout, or its work too, in its repository
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``ctrl+s`` → ``workspace:save``

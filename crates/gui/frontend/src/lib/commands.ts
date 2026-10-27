@@ -1612,6 +1612,71 @@ registerArgs("workspace:rename", [
   },
 ]);
 
+// Saved workspaces (doc "Saved workspaces"): the names saved in the focused
+// workspace's repository are the completions of every command naming one.
+type SavedWorkspaceEntry = {
+  name: string;
+  kind: string | null;
+  default: boolean;
+};
+
+async function savedWorkspaces(): Promise<SavedWorkspaceEntry[]> {
+  const ws = focusedWs();
+  if (!ws) return [];
+  try {
+    return await invoke<SavedWorkspaceEntry[]>("saved_workspace_list", {
+      wsId: ws,
+    });
+  } catch {
+    return []; // no repository: nothing to complete
+  }
+}
+
+const savedWorkspaceNames = async () =>
+  (await savedWorkspaces()).map((w) => w.name);
+
+registerArgs("workspace:save", [
+  {
+    name: "kind",
+    prompt: () => "Save what? (layout / work)",
+    complete: () => ["layout", "work"],
+  },
+  {
+    name: "name",
+    prompt: () => "Save as? (a saved name is replaced)",
+    complete: savedWorkspaceNames,
+  },
+]);
+
+registerArgs("workspace:open", [
+  {
+    name: "target",
+    prompt: () => "Open where? (here / new)",
+    complete: () => ["here", "new"],
+  },
+  {
+    name: "name",
+    prompt: () => "Open which saved workspace?",
+    complete: savedWorkspaceNames,
+  },
+]);
+
+registerArgs("workspace:set-default", [
+  {
+    name: "name",
+    prompt: () => "Which saved workspace becomes the default?",
+    complete: savedWorkspaceNames,
+  },
+]);
+
+registerArgs("workspace:delete-saved", [
+  {
+    name: "name",
+    prompt: () => "Delete which saved workspace?",
+    complete: savedWorkspaceNames,
+  },
+]);
+
 registerArgs("workspace:goto", [
   {
     name: "workspace",
@@ -2431,6 +2496,61 @@ async function runCommand(
       // contain spaces without quoting.
       const name = args.join(" ");
       if (ws) await invoke("workspace_rename", { wsId: ws, name });
+      return true;
+    }
+
+    // Saved workspaces (doc "Saved workspaces"). The name is the last
+    // argument and absorbs the remaining tokens, as workspace:rename's does.
+    case "workspace:save": {
+      const [kind, ...rest] = args;
+      const name = rest.join(" ");
+      if (!ws || !kind || !name) return true;
+      const exists = (await savedWorkspaces()).some((w) => w.name === name);
+      if (
+        exists &&
+        !window.confirm(`Replace the workspace saved as "${name}"?`)
+      )
+        return true;
+      await invoke("saved_workspace_save", { wsId: ws, kind, name });
+      await status(`workspace saved as "${name}" (${kind})`, "info");
+      return true;
+    }
+    case "workspace:open": {
+      const [target, ...rest] = args;
+      const name = rest.join(" ");
+      if (!ws || !target || !name) return true;
+      await invoke("saved_workspace_open", { wsId: ws, target, name });
+      return true;
+    }
+    case "workspace:set-default": {
+      const name = args.join(" ");
+      if (!ws || !name) return true;
+      await invoke("saved_workspace_set_default", { wsId: ws, name });
+      await status(`"${name}" is the repository's default workspace`, "info");
+      return true;
+    }
+    case "workspace:unset-default":
+      if (!ws) return true;
+      await status(
+        (await invoke<boolean>("saved_workspace_unset_default", { wsId: ws }))
+          ? "the repository has no default workspace any more"
+          : "the repository had no default workspace",
+        "info",
+      );
+      return true;
+    case "workspace:delete-saved": {
+      const name = args.join(" ");
+      if (!ws || !name) return true;
+      const deleted = await invoke<boolean>("saved_workspace_delete", {
+        wsId: ws,
+        name,
+      });
+      await status(
+        deleted
+          ? `saved workspace "${name}" deleted`
+          : `no workspace saved as "${name}"`,
+        deleted ? "info" : "error",
+      );
       return true;
     }
 

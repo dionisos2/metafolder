@@ -1,0 +1,10 @@
+title: workspace:open
+tags: [[GUI command]] Workspaces
+kind: reference
+summary: Open a saved workspace here or in a new workspace
+
+`workspace:open <here|new> <name>` loads a workspace saved in the repository: `here`
+into the workspace the command runs in, `new` into a new workspace on the same
+repository. Its variables are written and its panels put back; what the save does not
+hold is left as it is, so opening a layout keeps the query. The names saved are the
+completions. See [[Saved workspaces]].
