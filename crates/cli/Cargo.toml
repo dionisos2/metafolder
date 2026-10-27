@@ -19,9 +19,9 @@ ureq = { version = "3", default-features = false, features = ["json"] }
 # Reading the GUI's config.toml to discover its port (doc "mf gui").
 toml = "1.0"
 
-[target.'cfg(unix)'.dependencies]
-# `localtime_r`: the local time `mf slow` shows (doc "mf slow list").
-libc = "0.2"
+# The local time zone `mf slow` shows its times in (doc "mf slow list");
+# already built for the daemon (nom-exif), with the same features.
+chrono = "0.4"
 
 [dev-dependencies]
 metafolder-daemon = { path = "../daemon" }

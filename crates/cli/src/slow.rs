@@ -165,30 +165,15 @@ fn timestamp(at_ms: i64, offset_secs: i64) -> String {
 }
 
 /// The local time zone's offset east of UTC at `at_ms`, in seconds, as the C
-/// library reads it (`TZ`, else `/etc/localtime`; summer time included): the
-/// log is read against the reader's clock, and a UTC time with no `Z` reads
-/// as a local one hours off. 0 where it cannot be told.
+/// library would read it (`TZ`, else `/etc/localtime`; summer time included):
+/// the log is read against the reader's clock, and a UTC time with no `Z`
+/// reads as a local one hours off. 0 where it cannot be told.
 fn local_offset_secs(at_ms: i64) -> i64 {
-    #[cfg(unix)]
-    {
-        // POSIX, but not bound by the `libc` crate.
-        extern "C" {
-            fn tzset();
-        }
-        let t = at_ms.div_euclid(1000) as libc::time_t;
-        // SAFETY: `tzset` reads `TZ` into the C library's own state;
-        // `localtime_r` writes only into `tm`, a plain struct it fully
-        // initializes on success.
-        unsafe {
-            tzset();
-            let mut tm: libc::tm = std::mem::zeroed();
-            if !libc::localtime_r(&t, &mut tm).is_null() {
-                return tm.tm_gmtoff as i64;
-            }
-        }
+    use chrono::{Local, Offset, TimeZone};
+    match Local.timestamp_millis_opt(at_ms) {
+        chrono::LocalResult::Single(t) => t.offset().fix().local_minus_utc() as i64,
+        _ => 0,
     }
-    let _ = at_ms;
-    0
 }
 
 /// `840ms`, `4.82s`, `1m04s` — three ranges, because a log that says "4820ms"
@@ -224,6 +209,44 @@ mod tests {
         assert_eq!(timestamp(1_757_426_602_000, 0), "2025-09-09 14:03:22");
         assert_eq!(timestamp(1_757_426_602_000, 2 * 3600), "2025-09-09 16:03:22");
         assert_eq!(timestamp(1_757_426_602_000, -15 * 3600), "2025-09-08 23:03:22");
+    }
+
+    /// The offset is the one the C library gives (`date`), summer time
+    /// included: a winter and a summer instant, in a zone that has both.
+    #[test]
+    fn test_the_local_offset_is_the_c_librarys() {
+        let date_offset = |at_secs: i64, tz: &str| {
+            let out = std::process::Command::new("date")
+                .args(["-d", &format!("@{at_secs}"), "+%z"])
+                .env("TZ", tz)
+                .output()
+                .expect("date");
+            let z = String::from_utf8(out.stdout).unwrap();
+            let (sign, hm) = z.trim().split_at(1);
+            let secs =
+                hm[..2].parse::<i64>().unwrap() * 3600 + hm[2..].parse::<i64>().unwrap() * 60;
+            if sign == "-" {
+                -secs
+            } else {
+                secs
+            }
+        };
+        // Run in a child, since the zone is read from this process's `TZ`.
+        if let Ok(tz) = std::env::var("MF_TEST_TZ") {
+            for at_secs in [1_736_942_400, 1_752_580_800] {
+                assert_eq!(local_offset_secs(at_secs * 1000), date_offset(at_secs, &tz), "{tz}");
+            }
+            return;
+        }
+        for tz in ["Europe/Paris", "America/New_York", "Asia/Kolkata", "UTC"] {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "slow::tests::test_the_local_offset_is_the_c_librarys"])
+                .env("MF_TEST_TZ", tz)
+                .env("TZ", tz)
+                .status()
+                .unwrap();
+            assert!(status.success(), "{tz}");
+        }
     }
 
     #[test]

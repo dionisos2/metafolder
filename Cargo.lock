@@ -2209,9 +2209,9 @@ name = "metafolder-cli"
 version = "0.3.0"
 dependencies = [
  "axum",
+ "chrono",
  "clap",
  "heed",
- "libc",
  "metafolder-core",
  "metafolder-daemon",
  "serde",
