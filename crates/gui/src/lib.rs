@@ -448,13 +448,6 @@ pub fn run(options: Options) {
     // GUI settings (config.toml), with the CLI flags as optional overrides.
     // A missing config file is fatal (doc "No runtime fallback").
     let gui_config = or_exit(config.load_config());
-    // Read by WebKit when it creates the WebView, so set before (doc "Why the
-    // WebView does not use DMA-BUF").
-    let dmabuf_set = std::env::var_os(config::WEBKIT_DISABLE_DMABUF).is_some();
-    if gui_config.settings.disables_dmabuf(dmabuf_set) {
-        // SAFETY: single-threaded startup, before the Tauri runtime exists.
-        unsafe { std::env::set_var(config::WEBKIT_DISABLE_DMABUF, "1") };
-    }
     let gui_port = options.gui_port.unwrap_or(gui_config.gui_port);
     let page_sizes = gui_config.page_size.clone();
     let ref_seeds = gui_config.ref_seeds.clone();

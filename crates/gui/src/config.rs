@@ -58,24 +58,6 @@ pub struct Settings {
     /// user's aliases, functions and variables (doc "shell panel"); `~/` is
     /// the home directory. Empty: none.
     pub shell_rc: String,
-    /// Whether WebKitGTK may hand the WebView's frames over as DMA-BUF
-    /// buffers (doc "Why the WebView does not use DMA-BUF"). Off by default:
-    /// with a video on screen, that path sometimes showed a stale frame in
-    /// turn with the current one — the GUI flickering while its DOM stood
-    /// still.
-    pub webview_dmabuf: bool,
-}
-
-/// The variable WebKitGTK reads to stop handing frames over as DMA-BUF.
-pub const WEBKIT_DISABLE_DMABUF: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
-
-impl Settings {
-    /// Whether the GUI must set [`WEBKIT_DISABLE_DMABUF`] at startup: when the
-    /// setting is off and the variable is not already set — one set by hand,
-    /// whatever its value, says what the user wants for this run.
-    pub fn disables_dmabuf(&self, already_set: bool) -> bool {
-        !self.webview_dmabuf && !already_set
-    }
 }
 
 impl Default for Settings {
@@ -87,7 +69,6 @@ impl Default for Settings {
             slow_operation_threshold_ms: metafolder_core::slowlog::DEFAULT_THRESHOLD_MS,
             video_thumbnail_percent: 10.0,
             shell_rc: "~/.bashrc".into(),
-            webview_dmabuf: false,
         }
     }
 }
@@ -775,28 +756,6 @@ mod tests {
         assert_eq!(parsed.settings.daemon_health_poll_secs, 12);
         // Unspecified keys keep their defaults.
         assert_eq!(parsed.settings.reconcile_poll_ms, 200);
-    }
-
-    #[test]
-    fn test_webview_dmabuf_is_off_unless_turned_on() {
-        let empty: GuiConfig = toml::from_str("").unwrap();
-        assert!(!empty.settings.webview_dmabuf);
-        let on: GuiConfig = toml::from_str("[settings]\nwebview-dmabuf = true\n").unwrap();
-        assert!(on.settings.webview_dmabuf);
-        let shipped: GuiConfig =
-            toml::from_str(include_str!("../default-config/config.toml")).unwrap();
-        assert!(!shipped.settings.webview_dmabuf);
-    }
-
-    #[test]
-    fn test_dmabuf_is_disabled_only_when_off_and_the_environment_is_silent() {
-        let off = Settings { webview_dmabuf: false, ..Settings::default() };
-        let on = Settings { webview_dmabuf: true, ..Settings::default() };
-        assert!(off.disables_dmabuf(false));
-        // An explicit WEBKIT_DISABLE_DMABUF_RENDERER (even "0") wins over the file.
-        assert!(!off.disables_dmabuf(true));
-        assert!(!on.disables_dmabuf(false));
-        assert!(!on.disables_dmabuf(true));
     }
 
     #[test]
