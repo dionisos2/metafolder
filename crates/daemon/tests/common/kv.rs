@@ -57,6 +57,14 @@ pub fn uuids(src: &KvSource, bm: &RoaringBitmap) -> Vec<Uuid> {
     bm.iter().map(|id| src.uuid(id).expect("an id of the store")).collect()
 }
 
+/// The LMDB environment of the store in `dir`, opened raw — to damage it, or
+/// to set it back to an older format. The store itself must be closed.
+pub fn raw_env(dir: &std::path::Path) -> heed::Env {
+    // SAFETY: the test opens the file once, with no `KvStore` on it, and
+    // without WRITEMAP: nothing else maps it meanwhile.
+    unsafe { heed::EnvOpenOptions::new().max_dbs(32).map_size(1 << 30).open(dir).unwrap() }
+}
+
 /// One of a store's raw tables, as a test damages or downgrades it.
 pub type Raw = heed::Database<'static, heed::types::Bytes, heed::types::Bytes>;
 

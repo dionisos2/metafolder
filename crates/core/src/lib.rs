@@ -1,3 +1,6 @@
+// One exception, opening the trash index (trash.rs).
+#![deny(unsafe_code)]
+
 pub mod auth;
 pub mod config;
 #[cfg(feature = "git")]

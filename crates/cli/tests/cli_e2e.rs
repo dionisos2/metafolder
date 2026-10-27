@@ -6812,6 +6812,8 @@ fn test_repo_check_reports_damage_and_reindex_repairs_it() {
         // Every set chunk dropped (the universe, presence, parents), as the
         // daemon's own test of `check` does (kv_derived.rs).
         let kv = root.join(".metafolder/internal/kv");
+        // SAFETY: the repository is unloaded (see above), so nothing else
+        // maps the file; no WRITEMAP.
         let env =
             unsafe { heed::EnvOpenOptions::new().max_dbs(32).map_size(1 << 30).open(&kv) }.unwrap();
         let r = env.read_txn().unwrap();

@@ -6,6 +6,7 @@
 //! quartet (`get`/`set`/`add`/`delete`) at the metarecord, field-name and
 //! field-id levels, plus the `repo`/`task`/`log` management groups. Repository
 //! and daemon are selected once by the global `-n`/`-u`/`-p` flags.
+#![forbid(unsafe_code)]
 
 use std::path::PathBuf;
 

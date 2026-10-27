@@ -169,9 +169,7 @@ fn check_finds_damaged_derived_data_and_reindex_repairs_it() {
     drop(store);
     {
         // Damage: drop every set chunk (the universe, presence, parents).
-        let env =
-            unsafe { heed::EnvOpenOptions::new().max_dbs(32).map_size(1 << 30).open(dir.path()) }
-                .unwrap();
+        let env = common::kv::raw_env(dir.path());
         let sets = common::kv::open_raw(&env, "sets");
         let mut w = env.write_txn().unwrap();
         sets.clear(&mut w).unwrap();
@@ -238,9 +236,7 @@ fn a_store_of_the_previous_derived_format_is_reindexed_when_it_opens() {
     {
         // As format 4 left it: no descendant bitmap outside `mfr_path` (the
         // populated forest is `loc`), and the format stamped 4.
-        let env =
-            unsafe { heed::EnvOpenOptions::new().max_dbs(32).map_size(1 << 30).open(dir.path()) }
-                .unwrap();
+        let env = common::kv::raw_env(dir.path());
         let sets = common::kv::open_raw(&env, "sets");
         let meta = common::kv::open_raw(&env, "meta");
         let mut w = env.write_txn().unwrap();

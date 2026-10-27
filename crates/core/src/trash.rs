@@ -304,6 +304,7 @@ impl TrashDir {
         }
         // SAFETY: the registry above makes this the store's one opening in the
         // process; the map is read-only (no WRITEMAP).
+        #[allow(unsafe_code)]
         let env = unsafe {
             let mut options = EnvOpenOptions::new().read_txn_without_tls();
             options.map_size(INDEX_MAP).max_dbs(4);

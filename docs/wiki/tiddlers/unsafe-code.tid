@@ -1,0 +1,34 @@
+title: Unsafe code
+tags: Development
+kind: reference
+summary: Where the code is unsafe and why: only what cannot be otherwise — between fork and exec, the LMDB map, fanotify — each block saying why it is sound, and system calls through rustix rather than libc.
+audience: dev
+
+An `unsafe` block is where Rust stops checking and the code vouches for itself. The
+project keeps them to what cannot be written otherwise, and makes each one say why
+it is sound.
+
+!! The rules
+
+* ''A system call goes through `rustix`'', which wraps it safely (typed descriptors, a `Result`), or through `std` where it has the call (`File::try_lock` is the store's `flock`). `libc` is for what `rustix` cannot do safely: the calls between `fork` and `exec`, and setting a signal disposition.
+* ''Every block says why it is sound'', in a `// SAFETY:` comment just above it. Clippy's `undocumented_unsafe_blocks`, set for the workspace in the root `Cargo.toml`, fails [[Static checks]] on one that does not.
+* ''A crate with no unsafe code forbids it'' (`#![forbid(unsafe_code)]`): the CLI, the bench, the query oracle. `core` denies it, and allows it at its one exception.
+
+!! What is left, and why
+
+|!Where |!What |!Why it cannot be safe |
+|`gui` `sandbox.rs`, `shell_session.rs` |the `pre_exec` hooks |the closure runs in the child between `fork` and `exec`, where only async-signal-safe calls are allowed — no allocation, no lock — and the compiler cannot check that |
+|`gui` `lib.rs`, `sandbox.rs` |`std::env::set_var` |another thread could read the environment meanwhile; done at startup, before any |
+|`daemon` `kvstore/`, `sync.rs`; `core` `trash.rs` |opening and resizing an LMDB map |the file is mapped in memory: it must be opened once per process, and nothing may write to it behind the map ([[Storage safety]]) |
+|`daemon` `kvstore/resident.rs` |`mlock`, `munlock`, `madvise`, reading the pages |they take raw addresses, which must be a live part of the map ([[Holding a repository in memory]]) |
+|`watchd` |fanotify |no safe wrapper for fanotify, `open_by_handle_at` and the events read from a byte buffer; its blocks are not documented yet, so it does not take the workspace lint |
+
+Tests open a store's file raw to damage it or set it back to an older format
+(`common::kv::raw_env` in the daemon's tests), and one sets a signal disposition.
+
+!! What `unsafe` does not cover
+
+A segmentation fault of the GUI is not necessarily ours: WebKit and GTK are C and C++
+code in the same process. Read the core dump's stack before suspecting a block
+here — the one the GUI met in October 2026 was a WebKitGTK bug, a paste while the
+clipboard's owner did not answer.

@@ -11,11 +11,7 @@ use uuid::Uuid;
 mod common;
 use common::TempDir;
 
-use common::kv::{create_raw, open_raw};
-
-fn raw_env(dir: &std::path::Path) -> heed::Env {
-    unsafe { heed::EnvOpenOptions::new().max_dbs(32).map_size(1 << 30).open(dir).unwrap() }
-}
+use common::kv::{create_raw, open_raw, raw_env};
 
 /// A store with records whose fields interleave (`b`, `a`, `b`), a tree and
 /// a long text.

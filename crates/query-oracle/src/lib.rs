@@ -14,6 +14,7 @@
 //! were held to each other over the whole test battery before the SQL one
 //! went, cursors and rejections included. This crate is a dev-dependency of
 //! the daemon and of nothing else, so no shipped binary links it.
+#![forbid(unsafe_code)]
 
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap};

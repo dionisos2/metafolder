@@ -1,6 +1,7 @@
 //! `mf` — the metafolder CLI: a thin client over the daemon's HTTP API
 //! (doc "Command line"). No direct database or filesystem-watching work
 //! happens here.
+#![forbid(unsafe_code)]
 
 pub mod client;
 pub mod commands;

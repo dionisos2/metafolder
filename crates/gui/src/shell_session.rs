@@ -739,6 +739,7 @@ mod tests {
         let before = unsafe { libc::signal(libc::SIGINT, libc::SIG_IGN) };
         let gui = gui();
         run(&gui, "true", None).await;
+        // SAFETY: as above.
         unsafe { libc::signal(libc::SIGINT, before) };
         let (task, running) = started(&gui, "sleep 30").await;
         assert!(stop_script(&gui, &task, Stop::Terminate));

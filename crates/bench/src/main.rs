@@ -19,6 +19,7 @@
 //! files, runs the benchmarks, and removes the `.metafolder` again on teardown.
 //! The watcher benchmark mutates the files (renames) and undoes it afterwards,
 //! so the folders are left exactly as found.
+#![forbid(unsafe_code)]
 
 mod gui;
 mod regression;

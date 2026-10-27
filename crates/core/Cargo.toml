@@ -29,3 +29,6 @@ sync-config = ["git"]
 [[bin]]
 name = "metafolder-sync-config"
 required-features = ["sync-config"]
+
+[lints]
+workspace = true

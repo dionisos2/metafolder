@@ -47,3 +47,6 @@ metafolder-query-oracle = { path = "../query-oracle" }
 metafolder-watchd = { path = "../watchd", features = ["sim"] }
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
+
+[lints]
+workspace = true

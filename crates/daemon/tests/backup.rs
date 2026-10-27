@@ -72,8 +72,7 @@ fn a_damaged_store_leaves_the_previous_backup_in_place() {
     drop(opened);
     let kv = metafolder.join("internal/kv");
     {
-        let env =
-            unsafe { heed::EnvOpenOptions::new().max_dbs(32).map_size(1 << 30).open(&kv).unwrap() };
+        let env = common::kv::raw_env(&kv);
         let sets = common::kv::open_raw(&env, "sets");
         let mut w = env.write_txn().unwrap();
         sets.clear(&mut w).unwrap();
@@ -206,8 +205,7 @@ fn a_restore_refuses_a_damaged_backup() {
     drop(opened);
     {
         let kv = dest.join("kv");
-        let env =
-            unsafe { heed::EnvOpenOptions::new().max_dbs(32).map_size(1 << 30).open(&kv).unwrap() };
+        let env = common::kv::raw_env(&kv);
         let sets = common::kv::open_raw(&env, "sets");
         let mut w = env.write_txn().unwrap();
         sets.clear(&mut w).unwrap();
