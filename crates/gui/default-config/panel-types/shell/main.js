@@ -68,13 +68,35 @@ export async function mount(root, metafolder) {
       runs.clear();
       log.replaceChildren(empty);
       empty.hidden = false;
+      following = true;
       return;
     }
-    // Follow the output only when the reader is at the bottom; someone who
-    // scrolled up into older output keeps their position.
-    const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight <= 10;
     add(entry);
-    if (atBottom) log.scrollTop = log.scrollHeight;
+    if (following) toBottom();
+  }
+
+  // Follow the output only while the reader is at the bottom; someone who
+  // scrolled up into older output keeps their position. Whether to follow is
+  // decided by the reader's scrolling, not measured when a line arrives: the
+  // log also shrinks under its last line without anyone scrolling (the cwd
+  // line or the candidates shown, the slot resized, the panel hidden and
+  // shown again), and a measure would then read "scrolled up" and stop.
+  let following = true;
+  let lastTop = 0;
+  function toBottom() {
+    log.scrollTop = log.scrollHeight;
+    lastTop = log.scrollTop;
+  }
+  log.addEventListener('scroll', () => {
+    if (log.clientHeight === 0) return; // hidden: no reader to follow
+    if (log.scrollHeight - log.scrollTop - log.clientHeight <= 10) following = true;
+    else if (log.scrollTop < lastTop) following = false; // only up is the reader's
+    lastTop = log.scrollTop;
+  });
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(() => {
+      if (following) toBottom();
+    }).observe(log);
   }
 
   byId(root, 'clear').addEventListener('click', () => {
@@ -110,7 +132,8 @@ export async function mount(root, metafolder) {
     const text = line.value;
     line.value = '';
     showCandidates([]);
-    log.scrollTop = log.scrollHeight;
+    following = true;
+    toBottom();
     // An answer to a program is not a shell line: not in the history.
     if (await shell.input(text)) return;
     if (text.trim() === '') return;
@@ -181,5 +204,5 @@ export async function mount(root, metafolder) {
 
   shell.onAppend(append);
   for (const entry of await shell.list()) add(/** @type {Entry} */ (entry));
-  log.scrollTop = log.scrollHeight;
+  toBottom();
 }

@@ -183,6 +183,70 @@ describe('shell panel', () => {
     expect(invoke).toHaveBeenCalledWith(['shell:clear']);
   });
 
+  describe('following the output', () => {
+    /** Gives the log a geometry (jsdom lays nothing out). */
+    function geometry(log: HTMLElement, scrollHeight: number, clientHeight: number) {
+      Object.defineProperty(log, 'scrollHeight', { value: scrollHeight, configurable: true });
+      Object.defineProperty(log, 'clientHeight', { value: clientHeight, configurable: true });
+    }
+
+    test('keeps following when the log shrank under its last line', async () => {
+      const { shadow, push } = await mounted([]);
+      const log = shadow.getElementById('log') as HTMLElement;
+      geometry(log, 500, 100);
+      log.scrollTop = 400;
+      log.dispatchEvent(new Event('scroll'));
+      // The prompt grew a line (the cwd shown): the bottom is now 20px
+      // below the view, and no scroll happened.
+      geometry(log, 500, 80);
+      push(entry('script-1', 'stdout', 'next'));
+      expect(log.scrollTop).toBe(500);
+    });
+
+    test('a reader who scrolled up keeps their place', async () => {
+      const { shadow, push } = await mounted([]);
+      const log = shadow.getElementById('log') as HTMLElement;
+      geometry(log, 500, 100);
+      log.scrollTop = 400;
+      log.dispatchEvent(new Event('scroll'));
+      log.scrollTop = 100;
+      log.dispatchEvent(new Event('scroll'));
+      push(entry('script-1', 'stdout', 'next'));
+      expect(log.scrollTop).toBe(100);
+      // Back at the bottom, it follows again.
+      log.scrollTop = 395;
+      log.dispatchEvent(new Event('scroll'));
+      geometry(log, 520, 100);
+      push(entry('script-1', 'stdout', 'more'));
+      expect(log.scrollTop).toBe(520);
+    });
+
+    test('a resized log goes back to the bottom while following', async () => {
+      const observers: Array<() => void> = [];
+      vi.stubGlobal(
+        'ResizeObserver',
+        class {
+          constructor(callback: () => void) {
+            observers.push(callback);
+          }
+          observe() {}
+          disconnect() {}
+        },
+      );
+      try {
+        const { shadow } = await mounted([]);
+        const log = shadow.getElementById('log') as HTMLElement;
+        // Shown again after being hidden, where no scroll could take.
+        geometry(log, 500, 100);
+        log.scrollTop = 0;
+        for (const callback of observers) callback();
+        expect(log.scrollTop).toBe(500);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+  });
+
   describe('the command line', () => {
     afterEach(() => document.body.replaceChildren());
 

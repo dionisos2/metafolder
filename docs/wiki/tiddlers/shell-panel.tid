@@ -20,7 +20,9 @@ Two runs at once each keep their own block: a line goes into the block of the ru
 printed it, not after whatever was printed last.
 
 While the view is at the bottom it follows the output; once you have scrolled up into
-older output, it does not move.
+older output, it does not move. Only your scrolling decides it: the panel resized,
+hidden and shown again, or the line above the `$` appearing does not make it stop
+following.
 
 !! Typing a line in the panel
 
