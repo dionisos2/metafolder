@@ -149,6 +149,15 @@ pub async fn create_workspace(
         repo_name = state.daemon.repo_name(uuid).await;
     }
     let id = state.gui.create_workspace_with_panels(active_repo, repo_name, &panels);
+    // A script's workspace: its work and panels are the script's (doc "Saved
+    // workspaces").
+    crate::saved_workspaces::apply_default_or_tell(
+        &state.gui,
+        &state.daemon,
+        &id,
+        crate::state::saved::Apply::LayoutVars,
+    )
+    .await;
     if let Some(task) = task {
         state.gui.script_claim_workspace(&task, &id);
     }

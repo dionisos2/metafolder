@@ -57,6 +57,8 @@ pub struct App {
 
 type AppHandle<'a> = tauri::State<'a, Arc<App>>;
 
+use crate::state::saved::Apply;
+
 /// How long Rust-posted status messages stay before auto-clearing (config.toml
 /// `[panels]`), shared by the reconcile / undo / shell flows so their durations
 /// track the same knobs as the panels' own status messages.
@@ -135,7 +137,11 @@ pub async fn workspace_new(
         Some(uuid) => app.daemon.repo_name(uuid).await,
         None => None,
     };
-    Ok(app.gui.workspace_new_named(active_repo, repo_name))
+    let id = app.gui.workspace_new_named(active_repo, repo_name);
+    // A workspace taking the repository opens on its default (doc "Saved
+    // workspaces").
+    crate::saved_workspaces::apply_default_or_tell(&app.gui, &app.daemon, &id, Apply::Whole).await;
+    Ok(id)
 }
 
 /// `mf.workspace.create` — an empty workspace on `active_repo` (none: no
@@ -150,7 +156,11 @@ pub async fn workspace_create(
         Some(uuid) => app.daemon.repo_name(uuid).await,
         None => None,
     };
-    app.gui.workspace_create(active_repo, repo_name, slot)
+    let id = app.gui.workspace_create(active_repo, repo_name, slot)?;
+    // A command's workspace: its work and panels are the command's.
+    crate::saved_workspaces::apply_default_or_tell(&app.gui, &app.daemon, &id, Apply::LayoutVars)
+        .await;
+    Ok(id)
 }
 
 /// `workspace:send` / `mf.workspace.send` — writes variables into any
@@ -376,7 +386,10 @@ pub fn txn_end(app: AppHandle, txn: u64) -> Result<bool, String> {
 #[tauri::command]
 pub async fn adopt_repo(app: AppHandle<'_>, ws_id: String, repo: String) -> Result<(), String> {
     let repo_name = app.daemon.repo_name(&repo).await;
-    app.gui.adopt_repo_named(&ws_id, &repo, repo_name)
+    app.gui.adopt_repo_named(&ws_id, &repo, repo_name)?;
+    crate::saved_workspaces::apply_default_or_tell(&app.gui, &app.daemon, &ws_id, Apply::Whole)
+        .await;
+    Ok(())
 }
 
 // ── Commands and keybindings ─────────────────────────────────────────────
@@ -704,8 +717,15 @@ pub fn expand_query(app: AppHandle, text: String) -> Result<String, String> {
 // ── Value picker (doc "Value picker") ─────────────────────────────────
 
 #[tauri::command]
-pub fn pick_start(app: AppHandle, spec: crate::state::PickSpec) -> Result<String, String> {
-    app.gui.pick_start(spec)
+pub async fn pick_start(
+    app: AppHandle<'_>,
+    spec: crate::state::PickSpec,
+) -> Result<String, String> {
+    let id = app.gui.pick_start(spec)?;
+    // The picker's seed is in already, and is kept.
+    crate::saved_workspaces::apply_default_or_tell(&app.gui, &app.daemon, &id, Apply::LayoutVars)
+        .await;
+    Ok(id)
 }
 
 #[tauri::command]

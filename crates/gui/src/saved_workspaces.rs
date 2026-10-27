@@ -10,7 +10,11 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
+
+use crate::daemon_proxy::DaemonProxy;
+use crate::state::saved::Apply;
+use crate::state::GuiState;
 
 /// The format written; a file of a newer one is refused, not misread
 /// (doc "Persisted format changes").
@@ -209,10 +213,214 @@ pub fn read_default(metafolder: &Path) -> Result<Option<(String, SavedWorkspace)
     Ok(read(metafolder, &name)?.map(|saved| (name, saved)))
 }
 
+// ── With the GUI: a workspace's repository, its saves, its default ────────
+
+/// Where `workspace:open` loads a saved workspace (doc "Panel slots and
+/// layout"): into the workspace, or into a new one on its repository.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Target {
+    Here,
+    New,
+}
+
+impl Target {
+    pub fn parse(text: &str) -> Result<Target, String> {
+        match text {
+            "here" => Ok(Target::Here),
+            "new" => Ok(Target::New),
+            other => Err(format!("not a target for a saved workspace: \"{other}\" (here / new)")),
+        }
+    }
+}
+
+/// The `.metafolder/` of the workspace's repository.
+async fn metafolder_of(
+    gui: &GuiState,
+    daemon: &DaemonProxy,
+    ws_id: &str,
+) -> Result<PathBuf, String> {
+    let repo = gui.active_repo(ws_id)?;
+    crate::history::metafolder_dir_of(daemon, &repo).await
+}
+
+/// `workspace:save` — saves the workspace `ws_id` as `name` in its repository.
+/// `layout_keys` and `work_keys` are the panels' declarations.
+pub async fn save(
+    gui: &GuiState,
+    daemon: &DaemonProxy,
+    ws_id: &str,
+    kind: Kind,
+    name: &str,
+    layout_keys: &[String],
+    work_keys: &[String],
+) -> Result<(), String> {
+    validate_name(name)?;
+    let metafolder = metafolder_of(gui, daemon, ws_id).await?;
+    let saved = gui.snapshot_saved(ws_id, kind, layout_keys, work_keys)?;
+    write(&metafolder, name, &saved)
+}
+
+/// The workspaces saved in the repository of `ws_id`:
+/// `[{"name", "kind", "default"}]`, by name; `kind` is null for a file that
+/// does not read as one.
+pub async fn list_of(gui: &GuiState, daemon: &DaemonProxy, ws_id: &str) -> Result<Value, String> {
+    let metafolder = metafolder_of(gui, daemon, ws_id).await?;
+    let default = default_name(&metafolder)?;
+    let entries = list(&metafolder)?
+        .into_iter()
+        .map(|(name, kind)| {
+            let is_default = default.as_deref() == Some(name.as_str());
+            json!({"name": name, "kind": kind, "default": is_default})
+        })
+        .collect();
+    Ok(Value::Array(entries))
+}
+
+/// `workspace:open` — loads the workspace saved as `name`, whole, into
+/// `ws_id` or into a new workspace on its repository. The workspace loaded
+/// into.
+pub async fn open(
+    gui: &GuiState,
+    daemon: &DaemonProxy,
+    ws_id: &str,
+    target: Target,
+    name: &str,
+) -> Result<String, String> {
+    let metafolder = metafolder_of(gui, daemon, ws_id).await?;
+    let saved =
+        read(&metafolder, name)?.ok_or_else(|| format!("no workspace saved as \"{name}\""))?;
+    let into = match target {
+        Target::Here => ws_id.to_string(),
+        Target::New => {
+            let repo = gui.active_repo(ws_id)?;
+            let repo_name = daemon.repo_name(&repo).await;
+            gui.workspace_new_named(Some(repo), repo_name)
+        }
+    };
+    gui.apply_saved(&into, &saved, Apply::Whole)?;
+    Ok(into)
+}
+
+/// Loads the default of the repository of `ws_id` into it, as `apply` says.
+/// The name loaded; `None` without a repository or a default.
+pub async fn apply_default(
+    gui: &GuiState,
+    daemon: &DaemonProxy,
+    ws_id: &str,
+    apply: Apply,
+) -> Result<Option<String>, String> {
+    if gui.active_repo(ws_id).is_err() {
+        return Ok(None);
+    }
+    let metafolder = metafolder_of(gui, daemon, ws_id).await?;
+    let Some((name, saved)) = read_default(&metafolder)? else { return Ok(None) };
+    gui.apply_saved(ws_id, &saved, apply)?;
+    Ok(Some(name))
+}
+
+/// [`apply_default`] where nobody waits for an answer: a failure is told on
+/// the workspace's status bar, and the workspace stays as it was created.
+pub async fn apply_default_or_tell(
+    gui: &GuiState,
+    daemon: &DaemonProxy,
+    ws_id: &str,
+    apply: Apply,
+) {
+    if let Err(error) = apply_default(gui, daemon, ws_id, apply).await {
+        let _ = gui.post_status(ws_id, &format!("default workspace: {error}"), "error", None);
+    }
+}
+
+/// `workspace:set-default` on the repository of `ws_id`.
+pub async fn set_default_of(
+    gui: &GuiState,
+    daemon: &DaemonProxy,
+    ws_id: &str,
+    name: &str,
+) -> Result<(), String> {
+    set_default(&metafolder_of(gui, daemon, ws_id).await?, name)
+}
+
+/// `workspace:unset-default` on the repository of `ws_id`: whether it had one.
+pub async fn unset_default_of(
+    gui: &GuiState,
+    daemon: &DaemonProxy,
+    ws_id: &str,
+) -> Result<bool, String> {
+    unset_default(&metafolder_of(gui, daemon, ws_id).await?)
+}
+
+/// `workspace:delete-saved` on the repository of `ws_id`: whether it existed.
+pub async fn delete_of(
+    gui: &GuiState,
+    daemon: &DaemonProxy,
+    ws_id: &str,
+    name: &str,
+) -> Result<bool, String> {
+    delete(&metafolder_of(gui, daemon, ws_id).await?, name)
+}
+
+// ── Tauri commands (the shell's `workspace:*` commands) ──────────────────
+
+type AppHandle<'a> = tauri::State<'a, std::sync::Arc<crate::commands::App>>;
+
+#[tauri::command]
+pub async fn saved_workspace_list(app: AppHandle<'_>, ws_id: String) -> Result<Value, String> {
+    list_of(&app.gui, &app.daemon, &ws_id).await
+}
+
+#[tauri::command]
+pub async fn saved_workspace_save(
+    app: AppHandle<'_>,
+    ws_id: String,
+    kind: String,
+    name: String,
+    layout_keys: Vec<String>,
+    work_keys: Vec<String>,
+) -> Result<(), String> {
+    let kind = Kind::parse(&kind)?;
+    save(&app.gui, &app.daemon, &ws_id, kind, &name, &layout_keys, &work_keys).await
+}
+
+#[tauri::command]
+pub async fn saved_workspace_open(
+    app: AppHandle<'_>,
+    ws_id: String,
+    target: String,
+    name: String,
+) -> Result<String, String> {
+    open(&app.gui, &app.daemon, &ws_id, Target::parse(&target)?, &name).await
+}
+
+#[tauri::command]
+pub async fn saved_workspace_set_default(
+    app: AppHandle<'_>,
+    ws_id: String,
+    name: String,
+) -> Result<(), String> {
+    set_default_of(&app.gui, &app.daemon, &ws_id, &name).await
+}
+
+#[tauri::command]
+pub async fn saved_workspace_unset_default(
+    app: AppHandle<'_>,
+    ws_id: String,
+) -> Result<bool, String> {
+    unset_default_of(&app.gui, &app.daemon, &ws_id).await
+}
+
+#[tauri::command]
+pub async fn saved_workspace_delete(
+    app: AppHandle<'_>,
+    ws_id: String,
+    name: String,
+) -> Result<bool, String> {
+    delete_of(&app.gui, &app.daemon, &ws_id, &name).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     /// A `.metafolder/` of its own, removed on drop — a panicking test included.
     struct TempMetafolder(PathBuf);
