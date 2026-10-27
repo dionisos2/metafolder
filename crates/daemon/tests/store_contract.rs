@@ -533,12 +533,10 @@ fn a_kv_revision_larger_than_the_map_commits() {
 /// holder out — and still refuses a lasting one (a second daemon).
 #[test]
 fn a_kv_store_waits_out_a_transient_lock_holder() {
-    use std::os::fd::AsRawFd;
     let dir = TempDir::new("kv-lock");
     drop(KvStore::open(dir.path()).unwrap());
     let holder = std::fs::File::open(dir.path().join("daemon.lock")).unwrap();
-    // SAFETY: flock on a descriptor this test owns.
-    assert_eq!(unsafe { libc::flock(holder.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
+    holder.try_lock().expect("the lock is free once the store is closed");
     let release = std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(200));
         drop(holder);

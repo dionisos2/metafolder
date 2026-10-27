@@ -173,23 +173,19 @@ pub(crate) fn mapping_of(maps: &str, inode: u64) -> Option<usize> {
 pub(crate) struct Kernel;
 
 fn page_size() -> usize {
-    // SAFETY: sysconf has no preconditions.
-    (unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).max(4096) as usize
+    rustix::param::page_size().max(4096)
 }
 
 impl Memory for Kernel {
     fn lock(&self, addr: usize, len: usize) -> std::io::Result<()> {
         // SAFETY: the caller hands a range of a live mapping, which locking
         // only reads in.
-        match unsafe { libc::mlock(addr as *const libc::c_void, len) } {
-            0 => Ok(()),
-            _ => Err(std::io::Error::last_os_error()),
-        }
+        unsafe { rustix::mm::mlock(addr as *mut std::ffi::c_void, len) }.map_err(Into::into)
     }
 
     fn unlock(&self, addr: usize, len: usize) {
         // SAFETY: as for `lock`; unlocking a range never faults.
-        unsafe { libc::munlock(addr as *const libc::c_void, len) };
+        let _ = unsafe { rustix::mm::munlock(addr as *mut std::ffi::c_void, len) };
     }
 
     fn touch(&self, addr: usize, len: usize) {
@@ -198,7 +194,11 @@ impl Memory for Kernel {
         // (which the file holds: reading them cannot fault past its end), and
         // no resize can unmap it meanwhile — the caller holds the store.
         unsafe {
-            libc::madvise(addr as *mut libc::c_void, len, libc::MADV_WILLNEED);
+            let _ = rustix::mm::madvise(
+                addr as *mut std::ffi::c_void,
+                len,
+                rustix::mm::Advice::WillNeed,
+            );
             let mut off = 0;
             while off < len {
                 std::ptr::read_volatile((addr + off) as *const u8);
@@ -210,23 +210,19 @@ impl Memory for Kernel {
     /// The soft limit, first raised to the hard one; none for root, whom the
     /// limit does not bind.
     fn lock_limit(&self) -> Option<u64> {
-        // SAFETY: plain system calls on a struct this function owns.
-        unsafe {
-            if libc::geteuid() == 0 {
-                return None;
-            }
-            let mut lim = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
-            if libc::getrlimit(libc::RLIMIT_MEMLOCK, &mut lim) != 0 {
-                return None; // unknown: let the lock itself answer
-            }
-            if lim.rlim_cur < lim.rlim_max {
-                let raised = libc::rlimit { rlim_cur: lim.rlim_max, rlim_max: lim.rlim_max };
-                if libc::setrlimit(libc::RLIMIT_MEMLOCK, &raised) == 0 {
-                    lim.rlim_cur = lim.rlim_max;
-                }
-            }
-            (lim.rlim_cur != libc::RLIM_INFINITY).then_some(lim.rlim_cur)
+        use rustix::process::{getrlimit, setrlimit, Resource, Rlimit};
+        if rustix::process::geteuid().is_root() {
+            return None;
         }
+        // `None` is RLIM_INFINITY.
+        let mut lim = getrlimit(Resource::Memlock);
+        if lim.current != lim.maximum {
+            let raised = Rlimit { current: lim.maximum, maximum: lim.maximum };
+            if setrlimit(Resource::Memlock, raised).is_ok() {
+                lim.current = lim.maximum;
+            }
+        }
+        lim.current
     }
 }
 
@@ -256,7 +252,7 @@ mod tests {
             self.calls.borrow_mut().push(format!("lock {addr}+{len}"));
             let after = *self.locked.borrow() + len as u64;
             if self.budget.is_some_and(|b| after > b) {
-                return Err(std::io::Error::from_raw_os_error(libc::ENOMEM));
+                return Err(rustix::io::Errno::NOMEM.into());
             }
             *self.locked.borrow_mut() = after;
             Ok(())

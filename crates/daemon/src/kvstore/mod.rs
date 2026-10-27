@@ -431,20 +431,13 @@ fn map_to_grant(used: usize, map: usize, free: usize) -> Option<usize> {
 /// Bytes available to an unprivileged writer on the filesystem holding
 /// `dir`; `None` when it cannot be asked.
 fn free_space(dir: &Path) -> Option<usize> {
-    use std::os::unix::ffi::OsStrExt;
-    let c = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
-    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
-    // SAFETY: a valid NUL-terminated path and a zeroed out-parameter.
-    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
-        return None;
-    }
+    let st = rustix::fs::statvfs(dir).ok()?;
     Some((st.f_bavail as u128 * st.f_frsize as u128).min(usize::MAX as u128) as usize)
 }
 
 /// `n` rounded up to the system's page size, as LMDB requires of a map size.
 fn page_multiple(n: usize) -> usize {
-    // SAFETY: sysconf has no preconditions.
-    let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(4096) as usize;
+    let page = rustix::param::page_size().max(4096);
     n.div_ceil(page) * page
 }
 
@@ -477,7 +470,6 @@ impl KvStore {
         std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
         let lock = File::create(dir.join("daemon.lock"))?;
         {
-            use std::os::fd::AsRawFd;
             // An `flock` belongs to the open file description, which a `fork`
             // shares with the child until its `exec` closes it: a process
             // that spawns anything holds its own lock from another
@@ -486,9 +478,8 @@ impl KvStore {
             // a second daemon does not, and is refused after the wait.
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
             loop {
-                // SAFETY: flock on a descriptor this function owns.
-                let rc = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-                if rc == 0 {
+                // `flock(LOCK_EX | LOCK_NB)` on Unix.
+                if lock.try_lock().is_ok() {
                     break;
                 }
                 if std::time::Instant::now() > deadline {
