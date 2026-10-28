@@ -123,7 +123,7 @@ describe('trash panel actions', () => {
     expect(trash.restore).not.toHaveBeenCalled();
   });
 
-  test('restore, delete and empty drive the trash API', async () => {
+  test('restore and prune drive the trash API', async () => {
     const { api, handlers, trash, workspace, statusBar } = stub();
     mount(shadowForTrash(), withRuns(api) as never);
     // mount is synchronous, but its whenVisible→load() is async: let it settle
@@ -136,12 +136,12 @@ describe('trash panel actions', () => {
     expect(trash.restore).toHaveBeenCalledWith('repo-1', 'a');
     expect(workspace.set).toHaveBeenCalledWith('metarecords:dirty', expect.any(Number));
 
-    // Delete the (now first) entry after a confirmation.
-    await handlers.get('trash:delete')!();
+    // Prune the (now first) entry after a confirmation.
+    await handlers.get('trash:prune')!('entry');
     expect(trash.remove).toHaveBeenCalledTimes(1);
 
-    // Empty the whole trash.
-    await handlers.get('trash:empty')!();
+    // Prune the whole trash.
+    await handlers.get('trash:prune')!('all');
     expect(trash.empty).toHaveBeenCalledWith('repo-1');
     expect(statusBar.message).toHaveBeenCalled();
   });
@@ -180,13 +180,21 @@ describe('trash panel actions', () => {
     expect(shadow.querySelector('li.cursor .name')?.textContent).toBe('dir');
   });
 
+  test('prune refuses what it does not know, and nothing else is left', async () => {
+    const { api, handlers } = stub();
+    mount(shadowForTrash(), withRuns(api) as never);
+    expect(() => handlers.get('trash:prune')!('everything')).toThrow(/entry \/ all/);
+    expect(handlers.has('trash:delete')).toBe(false);
+    expect(handlers.has('trash:empty')).toBe(false);
+  });
+
   test('destructive actions are cancelled when unconfirmed', async () => {
     vi.stubGlobal('confirm', vi.fn(() => false));
     const { api, handlers, trash } = stub();
     mount(shadowForTrash(), withRuns(api) as never);
     await cursor(api.provide, 'next');
-    await handlers.get('trash:delete')!();
-    await handlers.get('trash:empty')!();
+    await handlers.get('trash:prune')!('entry');
+    await handlers.get('trash:prune')!('all');
     expect(trash.remove).not.toHaveBeenCalled();
     expect(trash.empty).not.toHaveBeenCalled();
   });

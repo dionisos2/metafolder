@@ -1,0 +1,13 @@
+title: trash:prune
+tags: [[GUI command]] Trash
+kind: reference
+summary: Trash: permanently delete the selected entry, or every entry (entry / all)
+
+The GUI half of `mf trash prune`: what is pruned leaves the trash for good, its
+bytes and its metarecords with it ([[Trash]]). `trash:prune entry` takes the
+entry under the cursor of the [[trash panel]], `trash:prune all` every entry; each
+asks for a confirmation first. Pruning by age or by size is command-line only
+([[Trash retention]]).
+
+Sending something ''to'' the trash is another command: deleting a file, from any
+panel, puts it there.

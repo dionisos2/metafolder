@@ -5,8 +5,7 @@ summary: The trash panel type
 
 !! Commands
 
-* ``trash:delete`` — Trash: permanently delete the selected entry
-* ``trash:empty`` — Trash: permanently delete every entry
+* ``trash:prune`` — Trash: permanently delete the selected entry, or every entry (entry / all)
 * ``trash:restore`` — Trash: restore the selected entry
 
 !! Generic commands

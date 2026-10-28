@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/trash:prune
+catalog: GUI command
+target: trash:prune
+summary: Trash: permanently delete the selected entry, or every entry (entry / all)
+
+!! Reference
+
+* Defined by the ``trash`` panel
+
+!! Default keys
+
+* ``delete`` → ``trash:prune entry`` (in the ``trash`` panel)

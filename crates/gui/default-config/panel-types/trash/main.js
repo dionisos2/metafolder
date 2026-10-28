@@ -172,13 +172,24 @@ export function mount(root, metafolder) {
     label: 'Trash: restore the selected entry',
     handler: (mf) => doRestore(mf),
   });
-  void commands.register('trash:delete', {
-    label: 'Trash: permanently delete the selected entry',
-    handler: (mf) => doDelete(mf),
-  });
-  void commands.register('trash:empty', {
-    label: 'Trash: permanently delete every entry',
-    handler: (mf) => doEmpty(mf),
+  // Pruning is the one way out of the trash for good, like `mf trash prune`
+  // (doc "Trash"): the entry under the cursor, or every entry.
+  /** @type {Record<string, (mf: MetafolderApi) => Promise<void>>} */
+  const PRUNES = { entry: doDelete, all: doEmpty };
+  void commands.register('trash:prune', {
+    label: 'Trash: permanently delete the selected entry, or every entry (entry / all)',
+    args: [
+      {
+        name: 'what',
+        prompt: () => 'Prune what? (entry / all)',
+        complete: () => Object.keys(PRUNES),
+      },
+    ],
+    handler: (mf, what) => {
+      const prune = PRUNES[what];
+      if (!prune) throw new Error(`prune what? "${what ?? ''}" (entry / all)`);
+      return prune(mf);
+    },
   });
   // The cursor, for the generic commands (doc "Generic panel commands").
   // Two entries can share a name (the same file trashed twice), so each find

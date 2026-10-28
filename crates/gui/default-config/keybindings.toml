@@ -417,7 +417,7 @@
   # entries can be deleted too — not just tracked metarecords.
   { command = "file-manager:delete", when = "file-manager" },
   { command = "metarecord:remove", when = "path-ref" },
-  { command = "trash:delete", when = "trash" },
+  { command = "trash:prune entry", when = "trash" },
   # In the duplicates panel it is the copy under the cursor that goes, and the
   # panel re-counts the group it left (doc "duplicates panel") — which
   # `metarecord:trash` on the shared selection could not do.
