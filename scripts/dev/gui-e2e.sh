@@ -438,13 +438,10 @@ scenario_trash() {
     record "$REPO_DIR/f.txt" >/dev/null
     select_path "$REPO_DIR/f.txt"
 
-    answering no metarecord:trash
-    assert_eq "trash: asks first" "Send the selected metarecord's file to the trash?" \
-        "$LAST_QUESTIONS"
-    status_is "trash refused: nothing said" info "e2e: before *"
-    assert "trash refused: the file stays" test -e "$REPO_DIR/f.txt"
-
-    answering yes metarecord:trash
+    # file:trash (doc "File commands"): the viewer designates the file it
+    # shows; nothing is asked, since the trash gives everything back.
+    run file:trash viewer
+    command_ok "trash: file:trash runs"
     status_is "trash: trashes the file" info "Trashed f.txt — restore it from the trash panel"
     assert_not "trash: the file is gone" test -e "$REPO_DIR/f.txt"
 
@@ -910,8 +907,8 @@ scenario_errors() {
     assert_eq "unknown command: fails" "1" "$LAST_RC"
     assert_contains "unknown command: says so" "$LAST_ERR" "unknown command"
 
-    run metarecord:trash
-    status_is "trash with nothing selected: refused" error "no metarecord is selected"
+    run item:delete
+    status_is "delete with nothing selected: refused" error "nothing is selected"
 
     show_panel left sync sync:status
     run sync:pair errors nowhere
@@ -1389,7 +1386,7 @@ scenario_pick_button() {
     # loaded: a selection made before would be overwritten by it.
     assert "pick button: the picker's list has selected a row" \
         until_ok 10 shows 'tr.row.cursor, .card.cursor'
-    mfg view "$(picker_slot "Pick: friend")" file --path "$REPO_DIR/c.txt" >/dev/null \
+    mfg view "$(picker_slot "Pick: friend")" viewer --path "$REPO_DIR/c.txt" >/dev/null \
         || die "view viewer c.txt"
     run pick:confirm
     assert "pick button: the picker closes" until_ok 10 not_picking "Pick: friend"
@@ -1416,7 +1413,7 @@ scenario_config_files() {
     # Show previews the file beside, as the selection.
     assert "config files: Show is clicked" click '#files tr' "$map" button Show
     assert "config files: the viewer panel opens beside" \
-        until_ok 10 right_is file
+        until_ok 10 right_is viewer
     assert_eq "config files: the file is the selection" "[\"$map\"]" "$(ws_var selected_paths)"
 }
 
@@ -1493,7 +1490,7 @@ scenario_open_viewers() {
     show_panel left metarecord-list view:refresh metarecord-list
     run panel:focus left
     keys Return
-    assert "open: Enter shows a file in the viewer panel" until_ok 10 right_is file
+    assert "open: Enter shows a file in the viewer panel" until_ok 10 right_is viewer
     run panel:focus left
     keys shift+Return
     assert "open: Shift+Enter shows it in the detail panel" until_ok 10 right_is metarecord-detail
@@ -1511,7 +1508,7 @@ scenario_open_viewers() {
     run cursor:find file-manager select song.txt
     run panel:focus left
     keys Return
-    assert "open: Enter on a file of the file manager shows it" until_ok 10 right_is file
+    assert "open: Enter on a file of the file manager shows it" until_ok 10 right_is viewer
     # Selected as soon as listed, before its tracked status was read: the
     # metarecord still reaches the selection, so the detail panel opens.
     run panel:focus left
@@ -1640,8 +1637,8 @@ scenario_refresh() {
 
     printf 'after\n' >"$REPO_DIR/f.txt"
     df_mf metarecord -i "$f" field set e2e_note:string=fresh >/dev/null
-    run view:refresh file
-    command_ok "refresh: view:refresh file resolves"
+    run view:refresh viewer
+    command_ok "refresh: view:refresh viewer resolves"
     assert "refresh: the viewer panel reads the file again" until_ok 10 shows pre after
     run view:refresh metarecord-detail
     command_ok "refresh: view:refresh metarecord-detail resolves"
