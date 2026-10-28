@@ -9,4 +9,4 @@ summary: Clear and leave the focused text input
 
 !! Default keys
 
-* ``ctrl+q`` → ``editing:discard`` (also in a text input)
+* ``ctrl+u`` → ``editing:discard`` (also in a text input)

@@ -9,6 +9,6 @@ summary: Open a saved workspace here or in a new workspace
 
 !! Default keys
 
-* ``b ctrl+o`` → ``workspace:open new``
 * ``ctrl+o`` → ``workspace:open here``
-* ``i ctrl+o`` → ``workspace:open here``
+* ``n w o`` → ``workspace:open new``
+* ``w o`` → ``workspace:open here``

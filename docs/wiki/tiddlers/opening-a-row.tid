@@ -23,7 +23,7 @@ user stylesheet (`button.mf-open`, `button.mf-open-enter`, `button.mf-open-disab
 The keys open the same two viewers, whatever the panel:
 <<key "panel:open other viewer" Enter>> shows the row under the cursor in the viewer panel,
 <<key "panel:open other metarecord-detail" Shift+Enter>> in the detail panel — in the
-other slot; after <<key "panel:open here viewer" "i">> in place of the list, after `b`
+other slot; after <<key "panel:open here viewer" "t f">> in place of the list, after `b`
 in a new workspace ([[open targets|Panel slots and layout]]). It is
 [[panel:open]] itself, since the row under the cursor is already the workspace's
 selection ([[Cross-panel selection]]): opening a viewer is opening a panel type, with

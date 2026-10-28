@@ -9,4 +9,4 @@ summary: Sync: compute the plan (from the intents file given, else the toolbar\
 
 !! Default keys
 
-* ``y p`` → ``sync:plan`` (in the ``sync`` panel)
+* ``p o`` → ``sync:plan`` (in the ``sync`` panel)

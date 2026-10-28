@@ -6,4 +6,7 @@ summary: Delete a saved workspace of the repository
 !! Reference
 
 * Defined by the shell (a builtin)
-* No default key
+
+!! Default keys
+
+* ``w d`` → ``workspace:delete-saved``

@@ -7,7 +7,7 @@ summary: The repositories the daemon has loaded, each with its running tasks and
 Open it with `repos:open` or `panel:open here repos` (<<key "panel:open here repos" "t r">>).
 One row per repository the daemon has loaded: its name, its root and the start of its
 uuid. The list is read when the panel is built, after each thing the panel does, and
-by <<key "view:refresh self" r>> (`view:refresh`) — a repository loaded from the command
+by <<key "view:refresh self" "Ctrl+r">> (`view:refresh`) — a repository loaded from the command
 line meanwhile appears at the next of these.
 
 A repository whose root went away — moved, removed, unmounted — has been unloaded by
@@ -31,7 +31,7 @@ violations, and says how many it found in the message log ([[Schema]]).
 
 * ''Load repo…'' opens a form holding the root directory, typed or picked with ''Browse…'' — the [[file-manager panel]] as a [[Value picker]] on the whole disk, starting at the path already typed or at your home directory.
 * The form's ''Load in memory'' loads it with its store held in memory ([[Holding a repository in memory]]); its row then says ''in memory'', the size of the copy in its tooltip. A repository taken out of service — its copy in memory could not take a write — is listed as a lost one, with the reason in place of the root's.
-* <<key "repos:load on-disk" "g l">> (`repos:load on-disk`) skips the form: the folder picker opens at once and the folder picked is loaded — held in memory with `repos:load in-memory`; typed by hand, `repos:load` asks which. Cancelling the picker loads nothing.
+* <<key "repos:load on-disk" "g Shift+o">> (`repos:load on-disk`) skips the form: the folder picker opens at once and the folder picked is loaded — held in memory with `repos:load in-memory`; typed by hand, `repos:load` asks which. Cancelling the picker loads nothing.
 * ''Known, not loaded'', under the list: the repositories the daemon's configuration names (`[[known]]`, `[[load]]`) that are not loaded, each with a ''Load'' button loading it by its name — in memory when its entry says `in-memory = true`. One that cannot be read (a drive unplugged) shows its root and why, with nothing to load. `repos:load-known NAME` does the same, completing over their names ([[Known repositories]]).
 * `repos:toggle-memory [repo]` holds a loaded repository (the active one by default) in memory, or lets go of it, without unloading it ([[Holding a repository in memory]]).
 * ''Init new repo…'' (`repos:open-init`) opens the form creating a repository: a root directory and an optional name, which defaults to the folder's — picking the folder fills it. `repos:init <folder> [name]` does the same without the form, for a keybinding or a script; a refusal is the command's error. The new root gets the `default` ignore preset ([[Ignore presets]]). A `.metafolder` kept outside the root is command-line only (`mf repo init --metafolder`).

@@ -11,4 +11,5 @@ summary: Zoom a panel in, out or back to 100 % (self / a panel type)
 
 * ``-`` → ``view:zoom self out``
 * ``0`` → ``view:zoom self reset``
+* ``=`` → ``view:zoom self in``
 * ``plus`` → ``view:zoom self in``

@@ -55,7 +55,7 @@ the theme's `--mf-tab-focused` and `--mf-tab-unfocused`).
 
 !! Moving between workspaces
 
-<<key "workspace:next" n>> and <<key "workspace:prev" p>> move to the next and
+<<key "workspace:next" "Ctrl+PageDown">> and <<key "workspace:prev" "Ctrl+PageUp">> move to the next and
 previous tab, wrapping round; <<key "workspace:goto 1" 1>> to <<key "workspace:goto 9" 9>>
 go to a tab by its position; <<key "workspace:new" ctrl+t>> opens one and
 <<key "workspace:close" ctrl+w>> closes the focused one. All of them move ''both''

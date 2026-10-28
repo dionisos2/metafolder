@@ -1078,7 +1078,11 @@ vars.y = ","
         let table = set.compiled();
         assert!(table.iter().any(|b| b.invocation == "workspace:new"));
         assert!(table.iter().any(|b| b.keys == [":"]));
-        assert!(table.iter().any(|b| b.keys == ["x"] && b.invocation == "panel:swap"));
+        // `x` is the command input (doc "Choosing keybindings"), `:` its alias.
+        assert!(table
+            .iter()
+            .any(|b| b.keys == ["x"] && b.invocation == "command-input:focus command"));
+        assert!(table.iter().any(|b| b.keys == ["v", "x"] && b.invocation == "panel:swap"));
 
         // Moving a cursor is one generic command for every panel (doc "Generic
         // panel commands"): one global `down`, plus the panels it drives from
@@ -1123,6 +1127,84 @@ vars.y = ","
         crate::register_builtins(&registry);
         for name in ["find:open", "find:next", "find:prev", "find:close"] {
             assert!(registry.list().iter().any(|c| c.name == name), "missing builtin {name}");
+        }
+    }
+
+    /// The rules the shipped keys follow (doc "Choosing keybindings"), on the
+    /// file as shipped, variables expanded.
+    #[test]
+    fn test_shipped_keys_follow_the_rules_of_choice() {
+        let defaults = include_str!("../default-config/keybindings.toml");
+        let table = KeybindingSet::from_source(defaults).unwrap().compiled();
+        const NAMED: [&str; 17] = [
+            "enter",
+            "escape",
+            "backspace",
+            "delete",
+            "tab",
+            "space",
+            "up",
+            "down",
+            "left",
+            "right",
+            "home",
+            "end",
+            "pageup",
+            "pagedown",
+            "plus",
+            "insert",
+            "menu",
+        ];
+        // Typed without a modifier on bépo, AZERTY and QWERTY alike.
+        const DIRECT: [&str; 3] = [",", "-", "="];
+        // Typed with shift at worst on one of them: fine alone, never under
+        // ctrl or alt, where the shift a layout needs changes the character.
+        const SHIFTED: [&str; 22] = [
+            "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "/", ";", ":", "!", "*", "(",
+            ")", "\"", "$", "%", "?",
+        ];
+        let is_f_key = |key: &str| {
+            key.strip_prefix('f')
+                .and_then(|n| n.parse::<u8>().ok())
+                .is_some_and(|n| (1..=12).contains(&n))
+        };
+        for binding in &table {
+            for chord in &binding.keys {
+                let (modifiers, key) = chord.rsplit_once('+').unwrap_or(("", chord));
+                let letter = key.len() == 1 && key.chars().all(|c| c.is_ascii_lowercase());
+                let named = NAMED.contains(&key) || is_f_key(key);
+                let under_ctrl_or_alt = modifiers.contains("ctrl") || modifiers.contains("alt");
+                let typed_alike = letter || named || DIRECT.contains(&key);
+                assert!(
+                    typed_alike || (!under_ctrl_or_alt && SHIFTED.contains(&key)),
+                    "{chord} (in {:?} → {}) is not typed alike on bépo, AZERTY and QWERTY",
+                    binding.keys,
+                    binding.invocation
+                );
+            }
+        }
+
+        // A single letter is for what is done all the time; every other one
+        // starts a domain, so that no letter is spent on a verb alone.
+        const CONSTANT: [&str; 6] = ["x", "shift+x", "o", "f", "shift+f", "space"];
+        for binding in table.iter().filter(|b| b.keys.len() == 1) {
+            let key = binding.keys[0].as_str();
+            let bare = key.trim_start_matches("shift+");
+            if bare.len() == 1 && bare.chars().all(|c| c.is_ascii_lowercase()) {
+                assert!(
+                    CONSTANT.contains(&key),
+                    "{key} runs {} alone: a letter alone is for the commands of every moment",
+                    binding.invocation
+                );
+            }
+        }
+
+        // What cannot be undone has no key.
+        for irreversible in ["trash:prune all", "log:prune", "orphan:delete", "trash:empty"] {
+            assert!(
+                table.iter().all(|b| b.invocation != irreversible),
+                "{irreversible} is bound: what cannot be undone has no key"
+            );
         }
     }
 
@@ -1212,18 +1294,18 @@ vars.y = ","
         for b in &tags {
             assert_eq!(b.keys[0], ",", "{:?} → {}", b.keys, b.invocation);
         }
-        // The plain tag gets the short forms, the other two fields a prefix each
-        // (`, n` / `, m`) followed by the verb.
+        // The plain tag gets the verbs directly, the other two fields a noun
+        // each (`, -` negative, `, =` mixed) followed by the verb.
         for (keys, invocation) in [
-            (vec![",", "t"], "tag:add tag"),
-            (vec![",", "d"], "tag:remove tag"),
+            (vec![",", "a"], "tag:add tag"),
+            (vec![",", "r"], "tag:remove tag"),
             (vec![",", "q"], "tag:query tag"),
-            (vec![",", "n", "a"], "tag:add negative_tag"),
-            (vec![",", "n", "d"], "tag:remove negative_tag"),
-            (vec![",", "n", "q"], "tag:query negative_tag"),
-            (vec![",", "m", "a"], "tag:add mixed_tag"),
-            (vec![",", "m", "d"], "tag:remove mixed_tag"),
-            (vec![",", "m", "q"], "tag:query mixed_tag"),
+            (vec![",", "-", "a"], "tag:add negative_tag"),
+            (vec![",", "-", "r"], "tag:remove negative_tag"),
+            (vec![",", "-", "q"], "tag:query negative_tag"),
+            (vec![",", "=", "a"], "tag:add mixed_tag"),
+            (vec![",", "=", "r"], "tag:remove mixed_tag"),
+            (vec![",", "=", "q"], "tag:query mixed_tag"),
         ] {
             let found: Vec<_> = tags.iter().filter(|b| b.keys == keys).collect();
             assert_eq!(found.len(), 1, "{keys:?}: {found:?}");
@@ -1252,8 +1334,8 @@ vars.y = ","
         for (keys, invocation) in [
             (["m", "s"], "metarecord:field set"),
             (["m", "a"], "metarecord:field add"),
-            (["m", "v"], "metarecord:field edit"),
-            (["m", "d"], "metarecord:field remove"),
+            (["m", "e"], "metarecord:field edit"),
+            (["m", "r"], "metarecord:field remove"),
             (["m", "u"], "metarecord:field unset"),
             (["m", "n"], "metarecord:field rename"),
             (["m", "t"], "metarecord:field retype"),
@@ -1272,30 +1354,25 @@ vars.y = ","
             assert_eq!(scopes, vec![None], "{keys:?} should be bound in every panel");
         }
 
-        // `m b` asks for the target and then the operation; `m m <op>` names both up
-        // front, targeting the checked selection. Both are the same command, so
-        // the prefix must stay free of an exact binding.
-        let bulk_bare = bound(&["m", "b"]);
-        assert!(!bulk_bare.is_empty() && bulk_bare.iter().all(|i| i == "metarecord:bulk"));
+        // `m m <op>` and shift+m <op> name the checked metarecords, `m q <op>`
+        // what the list's query matches: the prefixes must stay free of an
+        // exact binding.
         assert!(bound(&["m", "m"]).is_empty(), "an exact `m m` would shadow every `m m <op>`");
         assert!(bound(&["m", "q"]).is_empty(), "an exact `m q` would shadow every `m q <op>`");
         for (keys, invocation) in [
-            (["m", "m", "s"], "metarecord:bulk selection set"),
-            (["m", "m", "a"], "metarecord:bulk selection add"),
-            (["m", "m", "v"], "metarecord:bulk selection remove"),
-            (["m", "m", "r"], "metarecord:bulk selection unset"),
-            (["m", "m", "d"], "metarecord:bulk selection delete"),
-            // `m q <op>`: the same operations, targeting what the list's query
-            // matches.
-            (["m", "q", "s"], "metarecord:bulk query set"),
-            (["m", "q", "a"], "metarecord:bulk query add"),
-            (["m", "q", "v"], "metarecord:bulk query remove"),
-            (["m", "q", "r"], "metarecord:bulk query unset"),
-            (["m", "q", "d"], "metarecord:bulk query delete"),
-            // `t` sends the files to the trash, their metarecords with them.
-            (["m", "m", "t"], "metarecord:bulk selection trash"),
-            (["m", "q", "t"], "metarecord:bulk query trash"),
+            (vec!["m", "m", "s"], "metarecord:bulk selection set"),
+            (vec!["shift+m", "s"], "metarecord:bulk selection set"),
+            (vec!["m", "m", "a"], "metarecord:bulk selection add"),
+            (vec!["m", "m", "r"], "metarecord:bulk selection remove"),
+            (vec!["m", "m", "u"], "metarecord:bulk selection unset"),
+            (vec!["m", "m", "d"], "metarecord:bulk selection delete"),
+            (vec!["m", "q", "s"], "metarecord:bulk query set"),
+            (vec!["m", "q", "a"], "metarecord:bulk query add"),
+            (vec!["m", "q", "r"], "metarecord:bulk query remove"),
+            (vec!["m", "q", "u"], "metarecord:bulk query unset"),
+            (vec!["m", "q", "d"], "metarecord:bulk query delete"),
         ] {
+            let keys: Vec<&str> = keys;
             let found = bound(&keys);
             assert!(
                 found.iter().all(|i| i == invocation) && !found.is_empty(),
@@ -1314,42 +1391,43 @@ vars.y = ","
         let table = KeybindingSet::from_sources(defaults, "").unwrap().compiled();
         let f: Vec<_> = table.iter().filter(|b| b.keys == ["f"]).collect();
         assert!(f.iter().any(|b| b.when.is_none() && b.invocation == "cursor:find self select"));
-        // `d` walks down by name where a row can be entered (a directory, a
-        // node with children): asked again from inside.
-        assert!(table.iter().any(|b| b.keys == ["d"]
+        // shift+f walks down by name where a row can be entered (a directory,
+        // a node with children): asked again from inside.
+        assert!(table.iter().any(|b| b.keys == ["shift+f"]
             && b.when.is_none()
             && b.invocation == "cursor:find self walk"));
-        // The path-ref field picker moved off `f` to make room for it.
-        assert!(table
-            .iter()
-            .any(|b| b.keys == ["shift+f"] && b.invocation == "path-ref:set field"));
+        // The path-ref field picker is a view setting.
+        assert!(table.iter().any(|b| b.keys == ["v", "t"] && b.invocation == "path-ref:set field"));
         assert!(!f.iter().any(|b| b.invocation == "path-ref:set field"));
 
-        // `r` is "read the view again" in every panel, the viewer panel included
-        // (it reads the file again); playing the media from the start moved to
-        // shift+r there.
-        let r: Vec<_> = table.iter().filter(|b| b.keys == ["r"]).collect();
-        assert!(r.iter().any(|b| b.when.is_none() && b.invocation == "view:refresh self"));
-        assert!(r.iter().all(|b| b.invocation == "view:refresh self"));
-        assert!(table.iter().any(|b| b.keys == ["shift+r"]
+        // Refreshing is F5 and ctrl+r, as everywhere else; `r` is free.
+        for key in ["f5", "ctrl+r"] {
+            assert!(table.iter().any(|b| b.keys == [key]
+                && b.when.is_none()
+                && b.invocation == "view:refresh self"));
+        }
+        assert!(table.iter().all(|b| b.keys != ["r"]));
+        assert!(table.iter().any(|b| b.keys == ["p", "p"]
             && b.when.as_deref() == Some("viewer")
             && b.invocation == "viewer:restart"));
 
-        // + - 0 zoom every panel; the viewer panel zooms its image instead, and
-        // the detail panel's "one more value" moved to shift+a for it.
-        for (key, direction) in [("plus", "in"), ("-", "out"), ("0", "reset")] {
+        // = - 0 zoom every panel (`plus` too); the viewer zooms its image.
+        for (key, direction) in [("=", "in"), ("plus", "in"), ("-", "out"), ("0", "reset")] {
             let bound: Vec<_> = table.iter().filter(|b| b.keys == [key]).collect();
             let generic = format!("view:zoom self {direction}");
             assert!(bound.iter().any(|b| b.when.is_none() && b.invocation == generic), "{key}");
             assert!(bound.iter().any(|b| b.when.as_deref() == Some("viewer")), "{key}");
-            assert!(!bound.iter().any(|b| b.invocation == "metarecord:row-add"), "{key}");
         }
         assert!(table
             .iter()
-            .any(|b| b.keys == ["shift+a"] && b.invocation == "metarecord:row-add"));
+            .any(|b| b.keys == ["p", "shift+a"] && b.invocation == "metarecord:row-add"));
 
         // Fullscreen is a builtin toggle, and now has a key of its own.
-        assert!(table.iter().any(|b| b.keys == ["z"] && b.invocation == "panel:toggle fullscreen"));
+        for keys in [vec!["f11"], vec!["v", "f"]] {
+            assert!(table
+                .iter()
+                .any(|b| b.keys == keys && b.invocation == "panel:toggle fullscreen"));
+        }
         let registry = crate::command_registry::CommandRegistry::default();
         crate::register_builtins(&registry);
         // The registry holds the command; the binding pre-fills its argument.

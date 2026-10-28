@@ -12,8 +12,8 @@ match, so `mu ja` finds `/music/jazz`. A bare folder path typed inline is a pick
 
 |!Key |!Opens the folder |
 |<<key "folder:open files here" "g d">> |in the [[file-manager panel]] |
-|<<key "folder:open children here" "g c">> |in the [[metarecord-list panel]], as `mfr_path -> "<folder>"`: its direct children |
-|<<key "folder:open subtree here" "g t">> |in the [[metarecord-list panel]], as `mfr_path ->* "<folder>"`: everything under it ([[Following references]]) |
+|<<key "folder:open children here" "g l">> |in the [[metarecord-list panel]], as `mfr_path -> "<folder>"`: its direct children |
+|<<key "folder:open subtree here" "g Shift+l">> |in the [[metarecord-list panel]], as `mfr_path ->* "<folder>"`: everything under it ([[Following references]]) |
 
 Here by default, as `cd` would; the `i`, `w` and `b` prefixes choose here, the other
 slot or a new workspace ([[Panel slots and layout]]). The command is

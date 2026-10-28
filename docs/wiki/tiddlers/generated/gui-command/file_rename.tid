@@ -9,4 +9,4 @@ summary: Rename the file a panel designates (self / a panel type)
 
 !! Default keys
 
-* ``f2`` → ``file:rename self`` (in the ``file-manager`` panel)
+* ``f2`` → ``file:rename self``

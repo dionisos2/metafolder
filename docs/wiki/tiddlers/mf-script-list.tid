@@ -4,6 +4,6 @@ kind: reference
 summary: Print the scripts directory, the scripts the GUI offers, and the templates
 
 Prints the scripts directory, then the scripts the GUI offers — each with its
-`# Summary:` line, the way <<key "script:run" "g s">> lists them — then the templates
+`# Summary:` line, the way <<key "script:run" "g p">> lists them — then the templates
 <<cmd "mf script new">> copies. A directory not installed yet says so, and names
 `metafolder-sync-config`.

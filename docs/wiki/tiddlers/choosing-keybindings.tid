@@ -1,0 +1,81 @@
+title: Choosing keybindings
+tags: Keybindings
+kind: rationale
+summary: Why the keys are where they are: characters typed alike on bépo, AZERTY and QWERTY, single letters for the constant few, a domain then a verb for the rest, and the shortcuts every program has.
+
+
+The shipped keys were laid out again in October 2026, once the commands were
+many, on rules meant to last. They are written here, and the ones a program can
+check are checked on the shipped file (`test_shipped_keys_follow_the_rules_of_choice`).
+The keys themselves are in [[Keyboard navigation]].
+
+!! What can be typed
+
+A key is matched by the ''character'' it types, not by where it is on the keyboard
+([[Keybindings]]). The shipped keys must mean the same on bépo, AZERTY and QWERTY,
+so they are made of:
+
+* ''letters'' — the keys most at hand, and the most precious;
+* `,` `-` `=`, which the three layouts type without a modifier;
+* the ''named keys'': arrows, Enter, Delete, F1…F12, Home, PageUp…;
+* digits and `. / ; : ! * ( ) " $ % ?` ''alone'' only: each needs Shift on one of the layouts, so it counts as a modified key, and under Ctrl or Alt the Shift that layout needs changes the character — `ctrl+.` cannot be typed on AZERTY.
+
+Never a key that needs AltGr (`[ ] { } \ | ~ ^ # @ & _ < >`), a dead key, or an
+accented letter.
+
+!! How often, how many keys
+
+Every command falls in a class, by how often it is used:
+
+|!Class |!Used |!Gets |
+|A |all the time |one key |
+|B |several times a session |one modifier, or two keys |
+|C |now and then |two or three keys |
+|D |rarely |the command input only |
+|✕ |cannot be undone |never a key |
+
+A ''single letter'' is spent only on class A: `x` the command input, `o` the other
+panel, `f` find, Space. Every other letter starts a ''domain''.
+
+!! A domain, then a verb
+
+The first key names a domain — what the command is about — and the second a verb,
+from one table: `a` add, `s` set, `r` remove a value, `u` unset, `e` edit, `n`
+rename, `t` retype, `d` delete, `c` create, `q` query, `o` open, `l` list, `p` run,
+`z` revert, `k` keep, `i` index. Shift is a variant of the same verb: `p e` edits a
+field, `p E` edits it from empty. The position gives a letter its role: `t` is the
+panel types first, retype second.
+
+There are no verbs alone in first position: `d` alone deleting would spend a letter
+on what `m d` and `e d` say as well, and leave fewer for the domains.
+
+* Domains of nouns: `t` panel types, `g` go to, `v` view, `h` help, `w` workspaces, `c` the clipboard.
+* Domains of verbs: `m` the selected metarecord (Shift+m or `m m` the checked ones, `m q` the query's), `e` the items, `,` the tags, `p` the focused panel's own actions.
+
+The letters with a role are variables of `keybindings.toml`, so moving a domain or
+a verb is one line ([[Keybinding variables]]).
+
+!! Where it opens
+
+A command that opens something takes a target: `i` here, `b` beside (the other
+slot), `n` a new workspace, typed before its key. Without one, an action started
+from a row of the panel goes beside, so that the row stays in view; one picked
+from a list — a recent metarecord, a folder — goes here, in place of the list.
+
+!! The keys of every program
+
+What every program does has the key it has everywhere: Ctrl+c, Ctrl+z, Ctrl+f,
+Ctrl+q quits, Ctrl+r and F5 read again, F2 renames, F11 is full screen, F12 the
+developer tools, Ctrl+Tab the next tab. The rules add an alias where the common key
+breaks them — `:` for the command input needs Shift on bépo and AZERTY, hence `x`.
+Two conventions are left out on purpose: `j`/`k` (the arrows do it, and they would
+cost two letters) and `n`/`p` for next and previous.
+
+Tab moves between the elements of a panel, as in a browser; it never changes panel
+— `o` and F6 do.
+
+!! What costs more
+
+A key that destroys costs more than one that does not: Delete sends to the trash,
+which gives back; nothing that cannot be undone has a key. Shift+Delete deletes
+the metarecord alone, the file kept — a narrower form, under the same key.

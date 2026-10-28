@@ -11,14 +11,14 @@ The toolbar picks repository ''A'' (the active one by default) and ''B'' (anothe
 loaded one; never the same as A), and takes the path of the intents file the plan
 is computed from. Then, in order:
 
-* ''Status'' (<<key "sync:status" "y s">>) — the links between the two repositories, one row per link with its state.
-* ''Plan'' (<<key "sync:plan" "y p">>) — computes the plan from the intents file: its number of operations and its warnings, then the overlay and the conflicts below.
-* ''Show'' (<<key "sync:open" "y w">>) — the overlay of the current plan: its operations counted by kind, and in red each one the run would skip because its record changed since planning (green when every baseline is still current). Then the conflicts.
-* ''Run'' (<<key "sync:run" "y r">>) — runs the plan, after a confirmation, and reports what was done and skipped, the subtrees diverging from an external tool, and the warnings.
+* ''Status'' (<<key "sync:status" "Ctrl+r">>) — the links between the two repositories, one row per link with its state.
+* ''Plan'' (<<key "sync:plan" "p o">>) — computes the plan from the intents file: its number of operations and its warnings, then the overlay and the conflicts below.
+* ''Show'' (<<key "sync:open" "p Shift+o">>) — the overlay of the current plan: its operations counted by kind, and in red each one the run would skip because its record changed since planning (green when every baseline is still current). Then the conflicts.
+* ''Run'' (<<key "sync:run" "p p">>) — runs the plan, after a confirmation, and reports what was done and skipped, the subtrees diverging from an external tool, and the warnings.
 
 Status and Plan also say what they found on the status bar, and Run what it did.
 
-<<key "view:refresh self" r>> reads the loaded repositories again, keeping the pair,
+<<key "view:refresh self" "Ctrl+r">> reads the loaded repositories again, keeping the pair,
 then what the view shows: the status after Status or Run, the stored plan after Plan
 or Show ([[Generic panel commands]]). It never plans or runs: both write.
 

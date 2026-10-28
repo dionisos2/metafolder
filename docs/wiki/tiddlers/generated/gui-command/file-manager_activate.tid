@@ -9,6 +9,7 @@ summary: File manager: go into the folder / show the file (here / other / new)
 
 !! Default keys
 
-* ``b enter`` → ``file-manager:activate new`` (in the ``file-manager`` panel)
+* ``b enter`` → ``file-manager:activate other`` (in the ``file-manager`` panel)
 * ``enter`` → ``file-manager:activate other`` (in the ``file-manager`` panel)
 * ``i enter`` → ``file-manager:activate here`` (in the ``file-manager`` panel)
+* ``n enter`` → ``file-manager:activate new`` (in the ``file-manager`` panel)

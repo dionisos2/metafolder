@@ -9,4 +9,5 @@ summary: Copy a panel's checked files, or the one under its cursor (self / a pan
 
 !! Default keys
 
+* ``c c`` → ``clipboard:copy self``
 * ``ctrl+c`` → ``clipboard:copy self``

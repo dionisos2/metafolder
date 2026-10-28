@@ -6,4 +6,7 @@ summary: Clear the workspace shell log
 !! Reference
 
 * Defined by the shell (a builtin)
-* No default key
+
+!! Default keys
+
+* ``ctrl+l`` → ``shell:clear`` (in the ``shell`` panel)

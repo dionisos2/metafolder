@@ -9,7 +9,7 @@ summary: Path-ref explorer: list the metarecords pointing at the selected node (
 
 !! Default keys
 
-* ``b l`` → ``path-ref:list-refs new`` (in the ``path-ref`` panel)
-* ``i l`` → ``path-ref:list-refs here`` (in the ``path-ref`` panel)
-* ``l`` → ``path-ref:list-refs other`` (in the ``path-ref`` panel)
-* ``w l`` → ``path-ref:list-refs other`` (in the ``path-ref`` panel)
+* ``b p l`` → ``path-ref:list-refs other`` (in the ``path-ref`` panel)
+* ``i p l`` → ``path-ref:list-refs here`` (in the ``path-ref`` panel)
+* ``n p l`` → ``path-ref:list-refs new`` (in the ``path-ref`` panel)
+* ``p l`` → ``path-ref:list-refs other`` (in the ``path-ref`` panel)

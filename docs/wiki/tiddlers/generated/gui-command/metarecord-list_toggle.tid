@@ -9,4 +9,4 @@ summary: Metarecord list: toggle a view flag
 
 !! Default keys
 
-* ``shift+g`` → ``metarecord-list:toggle mode`` (in the ``metarecord-list`` panel)
+* ``v g`` → ``metarecord-list:toggle mode`` (in the ``metarecord-list`` panel)

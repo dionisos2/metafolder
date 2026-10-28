@@ -9,4 +9,5 @@ summary: Help: back to the page shown before
 
 !! Default keys
 
+* ``alt+left`` → ``help:back`` (in the ``help`` panel)
 * ``backspace`` → ``help:back`` (in the ``help`` panel)

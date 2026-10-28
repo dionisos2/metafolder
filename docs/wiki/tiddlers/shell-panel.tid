@@ -28,7 +28,7 @@ following.
 
 At the bottom of the panel, after `$`, is a line to type a shell command in, as in a
 console — no need to go through the command input. Click it, or press
-<<key "shell:focus line" "e l">> while the panel has the focus.
+<<key "shell:focus line" "p e">> while the panel has the focus.
 
 * `Enter` runs it exactly as `!` followed by the line would ([[Bash mode]]): in the workspace's shell (below), `%` standing for the selection, the run shown in the task bar.
 * While a line runs, `Enter` hands what is typed to it instead, as its input, as in a terminal: the answer to a `read`, to `rm -i`, a line for a program reading its input. It is shown in the run, and not kept in the history. `ctrl+d` on an empty field ends that input (a `cat` waiting for it ends), and `ctrl+c` with nothing selected in the field interrupts the line, as <<cmd "script:stop">> does.

@@ -9,6 +9,6 @@ summary: Insert a tag filter in the simplified query and search
 
 !! Default keys
 
-* ``, m q`` → ``tag:query mixed_tag``
-* ``, n q`` → ``tag:query negative_tag``
+* ``, - q`` → ``tag:query negative_tag``
+* ``, = q`` → ``tag:query mixed_tag``
 * ``, q`` → ``tag:query tag``

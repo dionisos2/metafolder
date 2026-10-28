@@ -9,4 +9,4 @@ summary: Sync: run the plan
 
 !! Default keys
 
-* ``y r`` → ``sync:run`` (in the ``sync`` panel)
+* ``p p`` → ``sync:run`` (in the ``sync`` panel)

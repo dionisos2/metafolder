@@ -1186,7 +1186,7 @@ mod tests {
         let config = kb_dir();
         std::fs::write(config.keybindings_path(), shipped).unwrap();
 
-        config.set_user_keybinding("h h", "help:open queries", None, None, false).unwrap();
+        config.set_user_keybinding("ctrl+t", "help:open queries", None, None, false).unwrap();
         config
             .set_user_keybinding("f", "metarecord-list:other", Some("metarecord-list"), None, false)
             .unwrap();

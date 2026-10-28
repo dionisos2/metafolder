@@ -36,11 +36,11 @@ one.
 
 !! Editing
 
-* <<key "cursor:next self" "↓ or j">> / <<key "cursor:prev self" "↑ or k">>, <<key "cursor:first self" Home>> / <<key "cursor:last self" End>> — move the cursor over the rows ([[Generic panel commands]]).
+* <<key "cursor:next self" "↓">> / <<key "cursor:prev self" "↑">>, <<key "cursor:first self" Home>> / <<key "cursor:last self" End>> — move the cursor over the rows ([[Generic panel commands]]).
 * <<key "metarecord:row-edit" Enter>>, or the row's ''Edit'' button — edit the value in place, with the [[Field editor]]: `Enter` saves, `Escape` cancels (`metarecord:cancel`).
-* <<key "metarecord:row-delete" d>>, or the row's ''Delete'' button — delete that row, after a confirmation.
-* <<key "metarecord:row-add" "Shift+A">>, or the ''+'' on a field's last row — the add form below, on that field's name and type: one more value of it. A [[hierarchy node|Hierarchy references]] gets another parent so, the parent alone typed, by its path (`évènement`).
-* <<key "metarecord:open-add-field" a>>, or ''Add / set field…'' — the form for a new value: a name, a type, a value, then ''Add field'' (one more row) or ''Set field (replace)'' (in place of every row of that name). A name the repository already knows offers its type and `nothing` only ([[One value type per field name]]).
+* <<key "metarecord:row-delete" "Delete">>, or the row's ''Delete'' button — delete that row, after a confirmation.
+* <<key "metarecord:row-add" "p Shift+a">>, or the ''+'' on a field's last row — the add form below, on that field's name and type: one more value of it. A [[hierarchy node|Hierarchy references]] gets another parent so, the parent alone typed, by its path (`évènement`).
+* <<key "metarecord:open-add-field" "p a">>, or ''Add / set field…'' — the form for a new value: a name, a type, a value, then ''Add field'' (one more row) or ''Set field (replace)'' (in place of every row of that name). A name the repository already knows offers its type and `nothing` only ([[One value type per field name]]).
 * <<key "metarecord:field set" "m s">> and the other `m` keys — the same from the command input, with completion ([[Editing metarecords in the GUI]]).
 
 `mfr_*` rows are the daemon's and cannot be edited ([[Reserved fields]]) until the
@@ -50,14 +50,14 @@ lets the add form and the `m` commands write such a field.
 While a value is being edited or the add form holds a name, the panel does not
 reload, and it asks before showing another metarecord. Otherwise it reloads whenever
 something in the GUI changes metarecords. A write made outside the GUI — `mf`, a
-script — shows at <<key "view:refresh self" r>>, which asks first too while an edit
+script — shows at <<key "view:refresh self" "Ctrl+r">>, which asks first too while an edit
 is in progress ([[Generic panel commands]]).
 
 !! The metarecord itself
 
 * <<key "metarecord:create" Ctrl+n>> (`metarecord:create`, ''New metarecord'') — creates a metarecord at once and selects it, so that the editing above applies to it from the start. It asks for a schema type, completed over the schema's ([[Schema]]): the type's template fields are filled in; left blank, the metarecord is empty. A type the schema does not declare is refused. To abandon it, delete it.
 * ''Reconcile'' (`metarecord:reconcile`) — reconciles the folder's subtree ([[Scoped reconcile]]). While the metarecord is not watched the button reads ''Watch and reconcile'' and sets `mf_watch = true` first (`metarecord:reconcile watch`, [[Tracking a folder]]). The task bar shows the progress, the status bar the result.
-* ''Delete metarecord'' (<<key "metarecord:delete" Shift+Delete>>) — deletes the metarecord and keeps its file; <<key "item:delete" Delete>> and <<key "file:trash self" Ctrl+Delete>> deal with the file as well ([[Sending files to the trash]]).
+* ''Delete metarecord'' (<<key "metarecord:delete" Shift+Delete>>) — deletes the metarecord and keeps its file; <<key "item:delete" Delete>> and `file:trash` deal with the file as well ([[Sending files to the trash]]).
 
 A right click offers the same, ''Copy UUID'' — a bare uuid pasted in a query box
 selects that metarecord — and the file's actions when it has one ([[Context menus]]).

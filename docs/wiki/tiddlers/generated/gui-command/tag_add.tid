@@ -9,6 +9,6 @@ summary: Add a tag to the selected metarecord
 
 !! Default keys
 
-* ``, m a`` → ``tag:add mixed_tag``
-* ``, n a`` → ``tag:add negative_tag``
-* ``, t`` → ``tag:add tag``
+* ``, - a`` → ``tag:add negative_tag``
+* ``, = a`` → ``tag:add mixed_tag``
+* ``, a`` → ``tag:add tag``

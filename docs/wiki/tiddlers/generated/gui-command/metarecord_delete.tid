@@ -9,6 +9,7 @@ summary: Delete the selected metarecord
 
 !! Default keys
 
+* ``m d`` → ``metarecord:delete``
 * ``shift+delete`` → ``metarecord:delete`` (in the ``metarecord-detail`` panel)
 * ``shift+delete`` → ``metarecord:delete`` (in the ``metarecord-list`` panel)
 * ``shift+delete`` → ``metarecord:delete`` (in the ``path-ref`` panel)

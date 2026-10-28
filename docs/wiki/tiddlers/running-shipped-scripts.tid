@@ -4,7 +4,7 @@ kind: guide
 summary: script:run lists the scripts installed with the configuration and runs the one you pick; its output goes to the shell panel and it shows in the task bar until it ends.
 
 
-<<key "script:run" "g s">> (`script:run`) opens the command input on the list of
+<<key "script:run" "g p">> (`script:run`) opens the command input on the list of
 installed scripts, each with its one-line description; pick one and it runs.
 
 ```

@@ -13,7 +13,7 @@ mf script new sort-folder      # copy a template there, to adapt it
 ```
 
 There are two kinds of shipped scripts. The ''scripts'' run as they are: the GUI
-offers them (<<key "script:run" "g s">>, [[Running shipped scripts]]). The
+offers them (<<key "script:run" "g p">>, [[Running shipped scripts]]). The
 ''templates'', in `scripts/templates/`, are examples to copy and rewrite — not
 offered to run, since a template's rules are yours to write
 ([[Writing a GUI script]]). <<cmd "mf script new">> copies one among the scripts,

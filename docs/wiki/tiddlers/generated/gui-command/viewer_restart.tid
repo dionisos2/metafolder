@@ -9,4 +9,4 @@ summary: File: play the media from the start
 
 !! Default keys
 
-* ``shift+r`` → ``viewer:restart`` (in the ``viewer`` panel)
+* ``p p`` → ``viewer:restart`` (in the ``viewer`` panel)

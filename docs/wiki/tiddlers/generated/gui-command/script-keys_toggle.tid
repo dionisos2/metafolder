@@ -6,7 +6,4 @@ summary: Give the script's keys back to the GUI, or take them again
 !! Reference
 
 * Defined by the shell (a builtin)
-
-!! Default keys
-
-* ``tab`` → ``script-keys:toggle``
+* No default key

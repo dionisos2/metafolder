@@ -10,4 +10,4 @@ summary: Cycle the prompt's completion views (forward / back)
 !! Default keys
 
 * ``ctrl+,`` → ``completion:cycle forward`` (also in a text input)
-* ``ctrl+.`` → ``completion:cycle back`` (also in a text input)
+* ``ctrl+-`` → ``completion:cycle back`` (also in a text input)

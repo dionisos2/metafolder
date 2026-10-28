@@ -9,7 +9,7 @@ summary: Metarecord list: clear a zone
 
 !! Default keys
 
-* ``c`` → ``metarecord-list:clear all`` (in the ``metarecord-list`` panel)
-* ``f`` → ``metarecord-list:clear finder`` (in the ``metarecord-list`` panel)
-* ``q`` → ``metarecord-list:clear normal`` (in the ``metarecord-list`` panel)
-* ``s`` → ``metarecord-list:clear simplified`` (in the ``metarecord-list`` panel)
+* ``p shift+e`` → ``metarecord-list:clear simplified`` (in the ``metarecord-list`` panel)
+* ``p shift+q`` → ``metarecord-list:clear normal`` (in the ``metarecord-list`` panel)
+* ``p u`` → ``metarecord-list:clear all`` (in the ``metarecord-list`` panel)
+* ``shift+f`` → ``metarecord-list:clear finder`` (in the ``metarecord-list`` panel)

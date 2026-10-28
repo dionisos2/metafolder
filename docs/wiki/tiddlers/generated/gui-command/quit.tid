@@ -6,4 +6,7 @@ summary: Exit the GUI
 !! Reference
 
 * Defined by the shell (a builtin)
-* No default key
+
+!! Default keys
+
+* ``ctrl+q`` → ``quit`` (also in a text input)

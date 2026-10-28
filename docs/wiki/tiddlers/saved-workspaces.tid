@@ -64,7 +64,7 @@ the two lists apart, and names variables its panel's sources use.
 There is no listing command: the names are the completions of `workspace:open`.
 
 <<key "workspace:save" ctrl+s>> saves and <<key "workspace:open here" ctrl+o>> opens
-here; `i` and `b` before it choose `here` and `new` (<<key "workspace:open new" "b ctrl+o">>),
+here; `i` and `b` before it choose `here` and `new` (<<key "workspace:open new" "n w o">>),
 as for every command with targets.
 
 !! The default workspace

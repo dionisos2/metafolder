@@ -43,7 +43,7 @@ never in conflict with an `n` bound in the panel underneath — and that panel c
 used meanwhile. A key typed in a text field is text, and reaches neither.
 
 The ''script keys'' checkbox in the question bar gives them back
-(<<key "script-keys:toggle" tab>>, `script-keys:toggle`), and so does
+(`script-keys:toggle`), and so does
 <<key "panel:focus cycle" F6>>, which walks the left panel, the right one and the
 question in turn: on the question the keys are the script's, on a panel they are
 the panel's. Unticked, every key means
@@ -62,7 +62,7 @@ refused (`400`) before it is shown.
 |Ctrl+Escape |kills it |
 |Backspace |goes back: answers `back` |
 |<<key "command-input:focus command" ":">>, <<key "command-input:focus bash" "!">> |open the command input |
-|<<key "script-keys:toggle" tab>> |flips the script keys |
+|`script-keys:toggle` |flips the script keys (no key by default) |
 |<<key "panel:focus cycle" F6>> |walks the panels and the question |
 
 Escape, Ctrl+Escape and Backspace are reserved as such; the others are whatever keys

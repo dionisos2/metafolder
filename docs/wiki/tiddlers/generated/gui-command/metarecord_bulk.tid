@@ -9,29 +9,18 @@ summary: Bulk operation on the selection or the current query
 
 !! Default keys
 
-* ``m b`` → ``metarecord:bulk`` (in the ``metarecord-detail`` panel)
-* ``m b`` → ``metarecord:bulk`` (in the ``metarecord-list`` panel)
-* ``m m a`` → ``metarecord:bulk selection add`` (in the ``metarecord-detail`` panel)
-* ``m m a`` → ``metarecord:bulk selection add`` (in the ``metarecord-list`` panel)
-* ``m m d`` → ``metarecord:bulk selection delete`` (in the ``metarecord-detail`` panel)
-* ``m m d`` → ``metarecord:bulk selection delete`` (in the ``metarecord-list`` panel)
-* ``m m r`` → ``metarecord:bulk selection unset`` (in the ``metarecord-detail`` panel)
-* ``m m r`` → ``metarecord:bulk selection unset`` (in the ``metarecord-list`` panel)
-* ``m m s`` → ``metarecord:bulk selection set`` (in the ``metarecord-detail`` panel)
-* ``m m s`` → ``metarecord:bulk selection set`` (in the ``metarecord-list`` panel)
-* ``m m t`` → ``metarecord:bulk selection trash`` (in the ``metarecord-detail`` panel)
-* ``m m t`` → ``metarecord:bulk selection trash`` (in the ``metarecord-list`` panel)
-* ``m m v`` → ``metarecord:bulk selection remove`` (in the ``metarecord-detail`` panel)
-* ``m m v`` → ``metarecord:bulk selection remove`` (in the ``metarecord-list`` panel)
-* ``m q a`` → ``metarecord:bulk query add`` (in the ``metarecord-detail`` panel)
-* ``m q a`` → ``metarecord:bulk query add`` (in the ``metarecord-list`` panel)
-* ``m q d`` → ``metarecord:bulk query delete`` (in the ``metarecord-detail`` panel)
-* ``m q d`` → ``metarecord:bulk query delete`` (in the ``metarecord-list`` panel)
-* ``m q r`` → ``metarecord:bulk query unset`` (in the ``metarecord-detail`` panel)
-* ``m q r`` → ``metarecord:bulk query unset`` (in the ``metarecord-list`` panel)
-* ``m q s`` → ``metarecord:bulk query set`` (in the ``metarecord-detail`` panel)
-* ``m q s`` → ``metarecord:bulk query set`` (in the ``metarecord-list`` panel)
-* ``m q t`` → ``metarecord:bulk query trash`` (in the ``metarecord-detail`` panel)
-* ``m q t`` → ``metarecord:bulk query trash`` (in the ``metarecord-list`` panel)
-* ``m q v`` → ``metarecord:bulk query remove`` (in the ``metarecord-detail`` panel)
-* ``m q v`` → ``metarecord:bulk query remove`` (in the ``metarecord-list`` panel)
+* ``m m a`` → ``metarecord:bulk selection add``
+* ``m m d`` → ``metarecord:bulk selection delete``
+* ``m m r`` → ``metarecord:bulk selection remove``
+* ``m m s`` → ``metarecord:bulk selection set``
+* ``m m u`` → ``metarecord:bulk selection unset``
+* ``m q a`` → ``metarecord:bulk query add``
+* ``m q d`` → ``metarecord:bulk query delete``
+* ``m q r`` → ``metarecord:bulk query remove``
+* ``m q s`` → ``metarecord:bulk query set``
+* ``m q u`` → ``metarecord:bulk query unset``
+* ``shift+m a`` → ``metarecord:bulk selection add``
+* ``shift+m d`` → ``metarecord:bulk selection delete``
+* ``shift+m r`` → ``metarecord:bulk selection remove``
+* ``shift+m s`` → ``metarecord:bulk selection set``
+* ``shift+m u`` → ``metarecord:bulk selection unset``

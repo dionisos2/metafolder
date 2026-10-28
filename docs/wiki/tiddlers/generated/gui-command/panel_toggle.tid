@@ -9,5 +9,6 @@ summary: Toggle a layout flag (split / fullscreen)
 
 !! Default keys
 
-* ``v`` → ``panel:toggle split``
-* ``z`` → ``panel:toggle fullscreen``
+* ``f11`` → ``panel:toggle fullscreen``
+* ``v f`` → ``panel:toggle fullscreen``
+* ``v v`` → ``panel:toggle split``

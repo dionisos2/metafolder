@@ -9,4 +9,4 @@ summary: Path-ref explorer: toggle the scope (the exact node ⇄ its whole subtr
 
 !! Default keys
 
-* ``s`` → ``path-ref:toggle-scope`` (in the ``path-ref`` panel)
+* ``v s`` → ``path-ref:toggle-scope`` (in the ``path-ref`` panel)

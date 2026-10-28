@@ -9,4 +9,4 @@ summary: Number the selected folder's (or selected file's folder's) direct child
 
 !! Default keys
 
-* ``m o`` → ``mf:order``
+* ``m i`` → ``mf:order``

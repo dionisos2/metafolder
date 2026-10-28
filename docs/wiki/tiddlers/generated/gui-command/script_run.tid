@@ -9,4 +9,4 @@ summary: Run an installed helper script
 
 !! Default keys
 
-* ``g s`` → ``script:run``
+* ``g p`` → ``script:run``

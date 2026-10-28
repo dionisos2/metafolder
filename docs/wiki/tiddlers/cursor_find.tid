@@ -6,4 +6,4 @@ summary: Move a panel's cursor to a row named in the command input (select / wal
 Moves the cursor of a panel onto a row named in the command input, among the rows it shows ([[Jumping to an entry]]). The first argument is the panel (`self`, or a panel type, [[Generic panel commands]]), the second the mode:
 
 * `cursor:find self select` (<<key "cursor:find self select" f>>) selects the row — a directory included — without entering it;
-* `cursor:find self walk` (<<key "cursor:find self walk" d>>) enters a directory, a node with children, and asks again from inside; it selects a file, a leaf, and stops. `shift+Enter` makes that step a `select`. Only the [[file-manager panel]] and the [[path-ref panel]] can walk.
+* `cursor:find self walk` (<<key "cursor:find self walk" "Shift+f">>) enters a directory, a node with children, and asks again from inside; it selects a file, a leaf, and stops. `shift+Enter` makes that step a `select`. Only the [[file-manager panel]] and the [[path-ref panel]] can walk.

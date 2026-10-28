@@ -16,7 +16,7 @@ is reached by a path. It was called `treeref` until it walked hierarchies too.
 The ''field'' button chooses the tree, among the repository's `tree_ref` and
 `hierarchy_ref` fields, and the badge beside it says which of the two types the
 chosen one is;
-<<key "path-ref:set field" Shift+f>> (`path-ref:set field`) asks for it in the command
+<<key "path-ref:set field" "v t">> (`path-ref:set field`) asks for it in the command
 input. It starts on `mfr_path` (`[panel-defaults.path-ref]`, [[GUI configuration]]),
 and changing it goes back to the roots.
 
@@ -29,13 +29,13 @@ key below or a piece of the path — puts the cursor on the node of the way left
 loading pages of children until it is among them.
 
 |!Key |!Does |
-|<<key "cursor:next self" "↓ or j">> / <<key "cursor:prev self" "↑ or k">>, <<key "cursor:first self" Home>> / <<key "cursor:last self" End>> |move the cursor (`End`: the last child loaded) |
+|<<key "cursor:next self" "↓">> / <<key "cursor:prev self" "↑">>, <<key "cursor:first self" Home>> / <<key "cursor:last self" End>> |move the cursor (`End`: the last child loaded) |
 |<<key "cursor:descend self" "Enter or →">>, or the `↘` button of a row ([[Opening a row]]) |go into the node |
 |<<key "cursor:parent self" "Backspace or ←">> |back to its parent |
-|<<key "cursor:root self" "/">> |back to the roots |
+|<<key "cursor:root self" "Alt+Home">> |back to the roots |
 |<<key "cursor:find self select" f>> |jump to a child by name, among those loaded ([[Jumping to an entry]]) |
-|<<key "cursor:find self walk" d>> |walk down by name: a node with children is gone into and the question asked again, a leaf is selected (`shift+Enter` stops on a node) |
-|<<key "view:refresh self" r>> |read the fields and the children again |
+|<<key "cursor:find self walk" "Shift+f">> |walk down by name: a node with children is gone into and the question asked again, a leaf is selected (`shift+Enter` stops on a node) |
+|<<key "view:refresh self" "Ctrl+r">> |read the fields and the children again |
 
 The node under the cursor is the workspace's selection, so [[metarecord-detail panel]]
 beside it shows it; its field, uuid and path are also published as `selected_path_ref`
@@ -63,8 +63,8 @@ The new node gets the cursor.
 A tree raises the question at once — what is tagged with this? The second row of the
 toolbar answers it by writing a query:
 
-* ''ref'' — the `ref` field to follow back into the tree: `tag` unless configured otherwise (<<key "path-ref:set ref-field" e>>, `path-ref:set ref-field`);
-* ''scope'' — `exact`, the node itself, or `+ descendants`, the node and everything below it (<<key "path-ref:toggle-scope" s>>);
+* ''ref'' — the `ref` field to follow back into the tree: `tag` unless configured otherwise (<<key "path-ref:set ref-field" "v r">>, `path-ref:set ref-field`);
+* ''scope'' — `exact`, the node itself, or `+ descendants`, the node and everything below it (<<key "path-ref:toggle-scope" "v s">>);
 * and the query the two make for the node under the cursor:
 
 ```
@@ -74,8 +74,8 @@ tag -> (path =>* "music/jazz")    the node and every tag below it
 
 <<key "path-ref:list-refs" l>> (`path-ref:list-refs`, or ''List what tag points at here''
 in the right-click menu) runs it in a [[metarecord-list panel]] opened in the
-''other'' slot: the tree stays in view for the next node. <<key "path-ref:list-refs new" "b l">>
-runs it in a new workspace instead, <<key "path-ref:list-refs here" "i l">> in place of the
+''other'' slot: the tree stays in view for the next node. <<key "path-ref:list-refs new" "n p l">>
+runs it in a new workspace instead, <<key "path-ref:list-refs here" "i p l">> in place of the
 tree ([[open targets|Panel slots and layout]]). The query lands in the
 list's normal DSL, frozen, where it can be narrowed or combined with
 anything else ([[Following references]]).

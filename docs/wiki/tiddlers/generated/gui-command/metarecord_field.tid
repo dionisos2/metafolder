@@ -10,9 +10,9 @@ summary: Field operation on this metarecord
 !! Default keys
 
 * ``m a`` → ``metarecord:field add``
-* ``m d`` → ``metarecord:field remove``
+* ``m e`` → ``metarecord:field edit``
 * ``m n`` → ``metarecord:field rename``
+* ``m r`` → ``metarecord:field remove``
 * ``m s`` → ``metarecord:field set``
 * ``m t`` → ``metarecord:field retype``
 * ``m u`` → ``metarecord:field unset``
-* ``m v`` → ``metarecord:field edit``

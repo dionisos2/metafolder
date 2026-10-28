@@ -9,4 +9,4 @@ summary: Help: focus the search box
 
 !! Default keys
 
-* ``e s`` → ``help:focus search`` (in the ``help`` panel)
+* ``p e`` → ``help:focus search`` (in the ``help`` panel)

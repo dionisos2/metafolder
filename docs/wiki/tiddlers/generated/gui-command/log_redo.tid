@@ -10,3 +10,4 @@ summary: Take back a label of the newest undo (asked when there are several)
 !! Default keys
 
 * ``ctrl+shift+z`` → ``log:redo``
+* ``ctrl+y`` → ``log:redo``

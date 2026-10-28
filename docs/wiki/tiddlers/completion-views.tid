@@ -45,8 +45,8 @@ because which naming reaches a metarecord fastest depends on the metarecord — 
 path, its name, a label.
 
 An argument declares its views as an array, each with a `title` and an `items`
-function. <<key "completion:cycle forward" "ctrl+,">> and
-<<key "completion:cycle back" "ctrl+.">> walk the array, wrapping; the hint at the
+function. <<key "completion:cycle forward" "Ctrl+,">> and
+<<key "completion:cycle back" "Ctrl+-">> walk the array, wrapping; the hint at the
 right of the line shows the title and the position (`path 1/3`). The default keys
 are chords on purpose: a plain comma stays typable. With one view the command does
 nothing.

@@ -15,7 +15,7 @@ From top to bottom. What runs is the query of the second or third, ''and'' the
 finder.
 
 * The ''finder'' (<<key "metarecord-list:focus finder" "/">>) narrows the list as you type, half a second after the last key. Each word must appear, in order, in one of the fields it searches ([[Ordered substring matching]]): `scien fic` finds `science-fiction`, `conf gui` a path `…/config/…/gui/…`. Those fields are named at the right of the box — `mfr_path`, `label` and `name` unless configured otherwise.
-* The ''simplified query'' (<<key "metarecord-list:focus simplified" "Ctrl+/">>) takes the [[Simplified query language]]. `Enter` or ''Apply'' runs it.
+* The ''simplified query'' (<<key "metarecord-list:focus simplified" "p e">>) takes the [[Simplified query language]]. `Enter` or ''Apply'' runs it.
 * The ''normal DSL'' below shows what the simplified query expands to, as you type it: that text is the query sent to the daemon ([[Writing queries]]). It is read-only until ''Freeze'' is checked; frozen, it is edited by hand and it alone is run, whatever the simplified field holds. Unfreezing brings the expansion back and discards the hand edit; `metarecord-list:toggle freeze` flips the box from the command line.
 
 `Enter` in any of them applies and leaves the field, so that the panel's keys work
@@ -26,9 +26,9 @@ keep a history, recorded when you apply and not at each debounced run
 ([[Input history]]).
 
 |!Key |!Does |
-|<<key "metarecord-list:focus finder" "e f">>, <<key "metarecord-list:focus simplified" "e s">>, <<key "metarecord-list:focus normal" "e q">> |edit the finder, the simplified query, the normal DSL, keeping what it holds |
-|<<key "metarecord-list:clear finder" f>>, <<key "metarecord-list:clear simplified" s>>, <<key "metarecord-list:clear normal" q>> |empty it first |
-|<<key "metarecord-list:clear all" c>> |empty the three and list everything |
+|<<key "metarecord-list:focus finder" "/">>, <<key "metarecord-list:focus simplified" "p e">>, <<key "metarecord-list:focus normal" "p q">> |edit the finder, the simplified query, the normal DSL, keeping what it holds |
+|<<key "metarecord-list:clear finder" "Shift+f">>, <<key "metarecord-list:clear simplified" "p Shift+e">>, <<key "metarecord-list:clear normal" "p Shift+q">> |empty it first |
+|<<key "metarecord-list:clear all" "p u">> |empty the three and list everything |
 
 Going to the simplified query unfreezes the normal DSL, and going to the normal DSL
 freezes it: the field the key lands in is always one the query reads.
@@ -74,7 +74,7 @@ first page ([[Sorting and postings]]) — and how many metarecords are checked.
 
 `metarecord-list:set mode grid` shows a thumbnail per metarecord instead of the table,
 named by the path ([[Display modes]]);
-<<key "metarecord-list:toggle mode" Shift+G>> switches between the two.
+<<key "metarecord-list:toggle mode" "v g">> switches between the two.
 
 A row's colour says something about its file:
 
@@ -92,12 +92,12 @@ re-reads the paths of its rows whenever the daemon reports a change in the repos
 
 !! The cursor and the selection
 
-* <<key "cursor:next self" "↓ or j">> / <<key "cursor:prev self" "↑ or k">>, <<key "cursor:first self" Home>> / <<key "cursor:last self" End>> (the last row ''loaded'') — move the cursor. The row under it is the workspace's selection, which the other panels follow; the arrows work from the finder too.
-* <<key "panel:open other viewer" "Enter or →">>, or the `↗` button at the start of a row or under a card ([[Opening a row]]) — show it in the [[viewer panel]] of the other slot; the button is greyed on a metarecord without a file, and the key refuses it. <<key "panel:open other metarecord-detail" Shift+Enter>>, or the `ⓘ` button — in the [[metarecord-detail panel]]. After `b` (<<key "panel:open new viewer" "b Enter">>) in a new workspace instead, after `i` (<<key "panel:open here viewer" "i Enter">>) in place of the list ([[open targets|Panel slots and layout]]).
-* <<key "metarecord-list:select toggle" Space>> — check the row; `metarecord-list:select all` checks every loaded row, <<key "metarecord-list:select none" Ctrl+Space>> unchecks everything ([[Cross-panel selection]]).
-* <<key "view:refresh self" r>> — run the query again; the cursor stays on its metarecord.
+* <<key "cursor:next self" "↓">> / <<key "cursor:prev self" "↑">>, <<key "cursor:first self" Home>> / <<key "cursor:last self" End>> (the last row ''loaded'') — move the cursor. The row under it is the workspace's selection, which the other panels follow; the arrows work from the finder too.
+* <<key "panel:open other viewer" "Enter or →">>, or the `↗` button at the start of a row or under a card ([[Opening a row]]) — show it in the [[viewer panel]] of the other slot; the button is greyed on a metarecord without a file, and the key refuses it. <<key "panel:open other metarecord-detail" Shift+Enter>>, or the `ⓘ` button — in the [[metarecord-detail panel]]. After `b` (<<key "panel:open new viewer" "n t f">>) in a new workspace instead, after `i` (<<key "panel:open here viewer" "t f">>) in place of the list ([[open targets|Panel slots and layout]]).
+* <<key "metarecord-list:select toggle" Space>> — check the row; `metarecord-list:select all` checks every loaded row, <<key "metarecord-list:select none" "Ctrl+Shift+a">> unchecks everything ([[Cross-panel selection]]).
+* <<key "view:refresh self" "Ctrl+r">> — run the query again; the cursor stays on its metarecord.
 * <<key "clipboard:copy self" Ctrl+c>>, <<key "clipboard:cut self" Ctrl+x>> — put the files of the checked metarecords, or the file of the row under the cursor, in the file clipboard, to paste in the [[file-manager panel]] ([[Global GUI variables]]).
-* <<key "item:delete" Delete>>, <<key "file:trash self" Ctrl+Delete>>, <<key "metarecord:delete" Shift+Delete>> — remove the selected metarecord, its file, or the metarecord alone ([[Sending files to the trash]]).
+* <<key "item:delete" Delete>>, `file:trash`, <<key "metarecord:delete" Shift+Delete>> — remove the selected metarecord, its file, or the metarecord alone ([[Sending files to the trash]]).
 
 A right click acts on the row clicked: the metarecord's actions, ''Add to the
 selection'', and the file's actions when it has one ([[Context menus]]).

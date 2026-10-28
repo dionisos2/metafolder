@@ -9,5 +9,4 @@ summary: Help: empty the search box and focus it (stay: leave the focus)
 
 !! Default keys
 
-* ``c`` → ``help:clear search stay`` (in the ``help`` panel)
-* ``s`` → ``help:clear search`` (in the ``help`` panel)
+* ``p shift+e`` → ``help:clear search`` (in the ``help`` panel)

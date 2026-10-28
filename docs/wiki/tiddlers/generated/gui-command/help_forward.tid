@@ -9,4 +9,5 @@ summary: Help: forward again, after going back
 
 !! Default keys
 
+* ``alt+right`` → ``help:forward`` (in the ``help`` panel)
 * ``shift+backspace`` → ``help:forward`` (in the ``help`` panel)

@@ -3,4 +3,4 @@ tags: [[GUI command]]
 kind: reference
 summary: Help: label the links in view with letters; typing a label follows it
 
-`help:open-hints` — <<key "help:open-hints" d>> in the [[help panel]]: labels every link in view (the topics above the page, its links, or the results of a search) with one or more letters, the way avy jumps in Emacs. Typing a label follows its link; Escape cancels. The letters are typed into a box of their own, so no other key takes them meanwhile. A view without a link says so in the status bar.
+`help:open-hints` — <<key "help:open-hints" "p o">> in the [[help panel]]: labels every link in view (the topics above the page, its links, or the results of a search) with one or more letters, the way avy jumps in Emacs. Typing a label follows its link; Escape cancels. The letters are typed into a box of their own, so no other key takes them meanwhile. A view without a link says so in the status bar.

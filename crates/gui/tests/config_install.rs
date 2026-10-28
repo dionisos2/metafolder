@@ -231,8 +231,7 @@ fn test_panel_dir_resolution() {
 }
 
 // The metarecord-list search-field editing shortcuts (GUI: search commands).
-// `panel:unsplit` moved off `c`, and the finder's Enter now leaves the field
-// while Shift+Enter keeps it.
+// The finder's Enter leaves the field while Shift+Enter keeps it.
 #[test]
 fn test_search_field_editing_keybindings() {
     let (_guard, config) = temp_config();
@@ -256,27 +255,21 @@ fn test_search_field_editing_keybindings() {
             .map(|b| b.invocation.clone())
     };
 
-    // `panel:unsplit` moved from `c` to `u`; every remaining `c` binding is
-    // panel-scoped (no global single), so the clear keys never fire elsewhere.
-    assert_eq!(find(&["u"]), ["panel:unsplit"]);
-    assert!(
-        compiled.iter().filter(|b| b.keys == ["c"]).all(|b| b.when.is_some()),
-        "`c` must stay panel-scoped, got {:?}",
-        find(&["c"])
-    );
-
-    // Edit family (focus, keep content): e f / e s / e q.
-    assert_eq!(mlist(&["e", "f"]).as_deref(), Some("metarecord-list:focus finder"));
-    assert_eq!(mlist(&["e", "s"]).as_deref(), Some("metarecord-list:focus simplified"));
-    assert_eq!(mlist(&["e", "q"]).as_deref(), Some("metarecord-list:focus normal"));
-
-    // Clear-then-edit family: the bare field letter clears and edits that
-    // field, and `c` clears all three. All scoped to the list, so the single
-    // letters do nothing in any other panel.
-    assert_eq!(mlist(&["f"]).as_deref(), Some("metarecord-list:clear finder"));
-    assert_eq!(mlist(&["s"]).as_deref(), Some("metarecord-list:clear simplified"));
-    assert_eq!(mlist(&["q"]).as_deref(), Some("metarecord-list:clear normal"));
-    assert_eq!(mlist(&["c"]).as_deref(), Some("metarecord-list:clear all"));
+    // The list's fields are its own actions (doc "Choosing keybindings"):
+    // `p` then a verb — `e` edit, shift for edit from empty, `q` the query,
+    // `u` empty all three. The finder is `f` (and `/`), shift+f empties it.
+    assert_eq!(mlist(&["f"]).as_deref(), Some("metarecord-list:focus finder"));
+    assert_eq!(mlist(&["/"]).as_deref(), Some("metarecord-list:focus finder"));
+    assert_eq!(mlist(&["shift+f"]).as_deref(), Some("metarecord-list:clear finder"));
+    assert_eq!(mlist(&["p", "e"]).as_deref(), Some("metarecord-list:focus simplified"));
+    assert_eq!(mlist(&["p", "shift+e"]).as_deref(), Some("metarecord-list:clear simplified"));
+    assert_eq!(mlist(&["p", "q"]).as_deref(), Some("metarecord-list:focus normal"));
+    assert_eq!(mlist(&["p", "shift+q"]).as_deref(), Some("metarecord-list:clear normal"));
+    assert_eq!(mlist(&["p", "u"]).as_deref(), Some("metarecord-list:clear all"));
+    // No single letter of the list is a field operation any more.
+    for letter in ["s", "q", "c"] {
+        assert!(find(&[letter]).is_empty(), "{letter}: {:?}", find(&[letter]));
+    }
 
     // Finder Enter leaves the field (submit-finder); Shift+Enter re-runs but
     // keeps focus (apply-finder). Both are focus-scoped to the finder input.
@@ -322,8 +315,10 @@ fn test_file_manager_root_and_hidden_keybindings() {
     // has a top (doc "Generic panel commands").
     assert!(compiled
         .iter()
-        .any(|b| b.keys == ["/"] && b.when.is_none() && b.invocation == "cursor:root self"));
+        .any(|b| b.keys == ["alt+home"] && b.when.is_none() && b.invocation == "cursor:root self"));
     assert_eq!(in_fm(&["ctrl+h"]).as_deref(), Some("file-manager:toggle hidden"));
+    assert_eq!(in_fm(&["v", "h"]).as_deref(), Some("file-manager:toggle hidden"));
+    assert_eq!(in_fm(&["v", "r"]).as_deref(), Some("file-manager:toggle root"));
 }
 
 // The `viewer` panel's Backspace: it steps up a level (like the file manager's),
@@ -348,11 +343,8 @@ fn test_file_panel_back_keybinding() {
     assert_eq!(in_file(&["shift+backspace"]).as_deref(), Some("viewer:speed reset"));
 }
 
-// The two shipped commands that had no key, now in the global "go" family:
-// `g l` loads a repository from a picked folder (`repos:load`, the form-less
-// path), `g f` lists the selection's folder as metarecords
-// (`metarecord-list:folder`). Both are global — they act on the selection and
-// the daemon, whichever panel is focused — like the rest of the family.
+// The global "go" family: repositories, recent metarecords, folders — global,
+// acting on the selection and the daemon whichever panel is focused.
 #[test]
 fn test_go_family_load_and_folder_keybindings() {
     let (_guard, config) = temp_config();
@@ -368,17 +360,17 @@ fn test_go_family_load_and_folder_keybindings() {
             .map(|b| b.invocation.clone())
     };
 
-    assert_eq!(global(&["g", "l"]).as_deref(), Some("repos:load on-disk"));
-    // A command opening a panel names its default target (doc "Panel slots and
-    // layout"); the same sequence after `w` / `b` opens in the other slot / a
-    // new workspace.
-    assert_eq!(global(&["g", "f"]).as_deref(), Some("metarecord-list:folder here"));
-    assert_eq!(global(&["b", "g", "f"]).as_deref(), Some("metarecord-list:folder new"));
-    // The family's other members keep their picks.
+    assert_eq!(global(&["g", "shift+o"]).as_deref(), Some("repos:load on-disk"));
     assert_eq!(global(&["g", "o"]).as_deref(), Some("repos:switch"));
-    assert_eq!(global(&["g", "r"]).as_deref(), Some("recent other time"));
-    assert_eq!(global(&["w", "g", "r"]).as_deref(), Some("recent other time"));
-    // The same pick by score (doc "Frecent folders"), and the folder jump.
-    assert_eq!(global(&["g", "m"]).as_deref(), Some("recent other score"));
+    // A command opening something names its default target, and the same
+    // keys after `i` / `b` / `n` open here, beside, in a new workspace (doc
+    // "Keybinding variables"). From a picker, here; from a row, beside.
+    assert_eq!(global(&["g", "r"]).as_deref(), Some("recent here time"));
+    assert_eq!(global(&["b", "g", "r"]).as_deref(), Some("recent other time"));
+    assert_eq!(global(&["n", "g", "r"]).as_deref(), Some("recent new time"));
+    assert_eq!(global(&["g", "shift+r"]).as_deref(), Some("recent here score"));
     assert_eq!(global(&["g", "d"]).as_deref(), Some("folder:open files here"));
+    assert_eq!(global(&["g", "l"]).as_deref(), Some("folder:open children here"));
+    assert_eq!(global(&["g", "s"]).as_deref(), Some("metarecord-list:folder other"));
+    assert_eq!(global(&["i", "g", "s"]).as_deref(), Some("metarecord-list:folder here"));
 }

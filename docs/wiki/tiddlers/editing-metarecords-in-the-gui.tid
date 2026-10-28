@@ -11,7 +11,7 @@ in the event log and <<key "log:undo" Ctrl+z>> takes it back ([[Undo and redo]])
 
 In [[metarecord-detail panel]], put the cursor on a row and press
 <<key "metarecord:row-edit" Enter>> to change its value,
-<<key "metarecord:row-delete" d>> to delete it, <<key "metarecord:open-add-field" a>>
+<<key "metarecord:row-delete" "Delete">> to delete it, <<key "metarecord:open-add-field" "p a">>
 to add one. This is the way to act on ''one particular row'' — one of two equal
 values, one `nothing` among several.
 
@@ -29,8 +29,8 @@ brought on screen first, so that the change is seen ([[Commands]]).
 |!Key |!Operation |!Does |
 |<<key "metarecord:field set" "m s">> |`set` |gives the field this value, in place of every value it had |
 |<<key "metarecord:field add" "m a">> |`add` |adds a value to the field; one it already holds changes nothing ([[No duplicate rows]]) |
-|<<key "metarecord:field edit" "m v">> |`edit` |changes one value: the field, ''which'' value when it has several, then the new one, starting from the old |
-|<<key "metarecord:field remove" "m d">> |`remove` |removes a value — every row equal to it |
+|<<key "metarecord:field edit" "m e">> |`edit` |changes one value: the field, ''which'' value when it has several, then the new one, starting from the old |
+|<<key "metarecord:field remove" "m r">> |`remove` |removes a value — every row equal to it |
 |<<key "metarecord:field unset" "m u">> |`unset` |removes the field altogether: it becomes unknown, which is not `nothing` ([[Nothing versus unknown]]) |
 |<<key "metarecord:field rename" "m n">> |`rename` |renames the field on this metarecord, all its values with it |
 |<<key "metarecord:field retype" "m t">> |`retype` |converts its values to another type, on this metarecord |
@@ -56,10 +56,10 @@ something is checked. An empty selection is nothing to do; it never falls back o
 |!Checked |!Matching |!Operation |
 |<<key "metarecord:bulk selection set" "m m s">> |<<key "metarecord:bulk query set" "m q s">> |`set` a field |
 |<<key "metarecord:bulk selection add" "m m a">> |<<key "metarecord:bulk query add" "m q a">> |`add` a value |
-|<<key "metarecord:bulk selection remove" "m m v">> |<<key "metarecord:bulk query remove" "m q v">> |`remove` a value |
-|<<key "metarecord:bulk selection unset" "m m r">> |<<key "metarecord:bulk query unset" "m q r">> |`unset` a field |
+|<<key "metarecord:bulk selection remove" "Shift+m r">> |<<key "metarecord:bulk query remove" "m q r">> |`remove` a value |
+|<<key "metarecord:bulk selection unset" "Shift+m u">> |<<key "metarecord:bulk query unset" "m q u">> |`unset` a field |
 |<<key "metarecord:bulk selection delete" "m m d">> |<<key "metarecord:bulk query delete" "m q d">> |`delete` the metarecords themselves; their files stay on disk |
-|<<key "metarecord:bulk selection trash" "m m t">> |<<key "metarecord:bulk query trash" "m q t">> |`trash` their files, the metarecords with them ([[Sending files to the trash]]) |
+|`metarecord:bulk selection trash` |`metarecord:bulk query trash` |`trash` their files, the metarecords with them ([[Sending files to the trash]]) |
 
 Every operation asks before it writes, giving the number of metarecords it will
 change — the checked ones as much as a query's matches.

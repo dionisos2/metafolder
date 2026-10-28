@@ -9,4 +9,5 @@ summary: Sync: show the pair status
 
 !! Default keys
 
-* ``y s`` → ``sync:status`` (in the ``sync`` panel)
+* ``ctrl+r`` → ``sync:status`` (in the ``sync`` panel)
+* ``f5`` → ``sync:status`` (in the ``sync`` panel)

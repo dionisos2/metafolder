@@ -6,4 +6,9 @@ summary: File: play one file after another — the checked selection or the quer
 !! Reference
 
 * Defined by the ``viewer`` panel
-* No default key
+
+!! Default keys
+
+* ``e e p`` → ``viewer:play selection``
+* ``e q p`` → ``viewer:play query``
+* ``shift+e p`` → ``viewer:play selection``

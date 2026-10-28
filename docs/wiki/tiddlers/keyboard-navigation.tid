@@ -2,83 +2,85 @@ title: Keyboard navigation
 tags: Keybindings
 kind: reference
 aliases: keyboard default-keys
-summary: The shipped keys, by family: the same key does the same kind of thing in every panel, and a first letter groups the rest.
+summary: The shipped keys, by family: a few single keys for what is done all the time, then a first letter for a domain and a second for a verb.
 
 Every command can be run from the keyboard: through
-<<key "command-input:focus command" ":">> and its name if nothing else
-([[The command input]]), and through a key for the common ones. The keys below are
-read from your bindings as they are now ([[Changing keybindings]]); the [[GUI command]]
-catalog gives the keys of each command, and each panel's note, the keys of that panel.
+<<key "command-input:focus command" "x">> and its name if nothing else, and most
+often through a key of its own. Why the keys are where they are is told in
+[[Choosing keybindings]]; this note lists them. <<key "help:key" "h k">> then a key
+says what it runs ([[In-app help]]).
 
-!! Everywhere
-
-|!Key |!Does |
-|<<key "command-input:focus command" ":">> / <<key "command-input:focus bash" "!">> |the command input, for a command / for a shell line |
-|<<key "workspace:new" Ctrl+t>> / <<key "workspace:close" Ctrl+w>> |a new workspace / close this one ([[Workspaces]]) |
-|<<key "workspace:next" n>> / <<key "workspace:prev" p>> |the next / the previous workspace |
-|<<key "workspace:goto 1" 1>> … <<key "workspace:goto 9" 9>> |the workspace of that rank |
-|<<key "panel:toggle split" v>> / <<key "panel:unsplit" u>> |two panels side by side, or one / back to one ([[Panel slots and layout]]) |
-|<<key "panel:focus next" o>> / <<key "panel:swap" x>> |the other panel / exchange the two |
-|<<key "panel:toggle fullscreen" z>> |the focused panel alone on the screen, and back (`Escape` leaves it too) |
-|<<key "log:undo" Ctrl+z>> / <<key "log:redo" Ctrl+Shift+z>> |undo your last change / redo it ([[Log commands in the GUI]]) |
-|<<key "find:open" Ctrl+f>> |search the text of the focused panel ([[Find in a panel]]) |
-|<<key "status:clear" Ctrl+l>> |clear the status bar's message |
-
-!! First letters
-
-A sequence groups commands under a first key. Typing that key shows what can follow,
-just above the status bar.
-
-|!Sequence |!Does |
-|`t` then a letter |the panel type of the focused slot: <<key "panel:open here metarecord-list" "t l">> list, <<key "panel:open here metarecord-detail" "t d">> detail, <<key "panel:open here viewer" "t f">> file, <<key "panel:open here file-manager" "t m">> file manager, <<key "panel:open here path-ref" "t t">> tree, <<key "panel:open here log" "t o">> log, <<key "panel:open here repos" "t r">> repositories, <<key "panel:open here trash" "t b">> trash, <<key "panel:open here duplicates" "t u">> duplicates, <<key "panel:open here recent" "t v">> recent, <<key "panel:open here sync" "t y">> sync, <<key "panel:open here message" "t g">> messages, <<key "panel:open here workspace-info" "t w">> workspace variables, <<key "panel:open here help" "t h">> help ([[Panel types]]) |
-|`w`, `b` or `i` then a sequence |the same, in the other slot, in a new workspace, or here ([[Panel slots and layout]]) |
-|`g` then a letter |go somewhere: <<key "repos:switch" "g o">> a loaded repository, <<key "repos:load on-disk" "g l">> a repository to load, <<key "recent" "g r">> a metarecord seen recently, <<key "metarecord-list:folder" "g f">> the selection's folder as a list, <<key "file:open-with" "g w">> the selection in another program ([[Opening a file with another program]]), <<key "script:run" "g s">> a script; `g r` and `g f` take a target key in front, like the `t` sequences |
-|`h` then a letter |help: <<key "help:open" "h h">> the documentation, <<key "help:cursor" "h c">> on what is clicked next, <<key "help:key" "h k">> on what a key runs, <<key "help:command" "h x">> on a command ([[In-app help]]) |
-|`m` then a letter |edit the fields of the selected metarecord from the command input, in any panel: <<key "metarecord:field set" "m s">> set, <<key "metarecord:field add" "m a">> add a value… — and, in the list and the detail, <<key "metarecord:bulk" "m b">> for several metarecords at once ([[Editing metarecords in the GUI]]) |
-|`e` then a letter |in the list, edit one of its search fields: <<key "metarecord-list:focus finder" "e f">> the finder, <<key "metarecord-list:focus simplified" "e s">> the query, <<key "metarecord-list:focus normal" "e q">> the query in the full language |
-
-!! In a list
-
-The panels that show rows under a cursor — the metarecord list, the file manager,
-the tree, the log, the trash, the duplicates, the recent list, and the fields of
-the detail — share their keys. Moving the cursor is one command for all of them,
-run on the focused panel; in a panel without a cursor these keys pass through
-([[Generic panel commands]]). The other keys run each panel's own command
-([[Keybindings]]).
+!! A key alone
 
 |!Key |!Does |
-|<<key "cursor:next self" "↓ or j">> / <<key "cursor:prev self" "↑ or k">> |the next / the previous row |
-|<<key "cursor:first self" Home>> / <<key "cursor:last self" End>> |the first / the last row |
-|<<key "panel:open other viewer, file-manager:activate other, cursor:descend self, trash:restore, duplicates:activate other, metarecord:row-edit" Enter>> |what the panel is for: show the row in the viewer panel, enter the directory, go down the tree or into the label, expand the group, restore the entry, edit the field |
-|<<key "panel:open other metarecord-detail" Shift+Enter>> |in the lists of metarecords and the file manager: show the row in the detail panel ([[Opening a row]]) |
-|<<key "cursor:parent self, metarecord:back, viewer:back" "Backspace or ←">> |go back up: the parent directory, the parent node, the label above; in the detail and the viewer panel, the metarecord shown before, the folder of the previewed file |
-|<<key "cursor:root self" "/">> |the top: the root directory, the roots of the tree |
-|<<key "cursor:find self select" f>> |move the cursor to a row named in the command input ([[Jumping to an entry]]) |
-|<<key "cursor:find self walk" d>> |walk down a path by name: enter each directory (node) named, until a file (a leaf) — in the file manager and the tree ([[Jumping to an entry]]) |
-|<<key "metarecord-list:select toggle, file-manager:select toggle" Space>> |check or uncheck the row ([[Cross-panel selection]]) |
-|<<key "view:refresh self" r>> |read the content again |
-|<<key "item:delete, trash:prune entry, duplicates:trash" Delete>> |delete what is selected: the file to the trash with its metarecord, else the metarecord ([[Deleting an item]]); in the trash panel, for good after a confirmation |
+|<<key "command-input:focus command" "x">> (or `:`), <<key "command-input:focus bash" "Shift+x">> (or `!`) |the command input, for a command or a bash line ([[The command input]]) |
+|<<key "panel:focus next" "o">> |the other panel |
+|<<key "panel:focus cycle" "F6">> |the left panel, the right one, then a script's question ([[Script sessions]]) |
+|<<key "cursor:find self select" "f">> (or `/`), <<key "cursor:find self walk" "Shift+f">> |jump to a row by its name, or walk down into it ([[Jumping to an entry]]); in the list, its finder |
+|<<key "workspace:goto 1" "1">> … `9` |a workspace |
+|`=`, `-`, `0` |zoom in, out, back ([[Panel slots and layout]]) |
+|Space |toggle in place: check a row, play or pause a media or a GIF |
+|Enter, Shift+Enter |open the row beside, in the viewer or the detail panel ([[Opening a row]]) |
+|<<key "item:delete" "Delete">> |delete the item: its file to the trash with its metarecord, else the metarecord ([[Deleting an item]]) |
+|<<key "metarecord:delete" "Shift+Delete">> |delete the metarecord alone |
+|↑ ↓, Home End |move the cursor ([[Generic panel commands]]) |
+|← or Backspace, → |up a level, into the row |
+|F1 |the help cursor ([[In-app help]]) |
+|F2 |rename the file |
+|F3, F4 |record a macro, run it ([[Macros]]) |
+|F5 |read the panel again |
+|F11, F12 |full screen, the developer tools |
 
-In the metarecord list, <<key "metarecord-list:focus finder" "/">> and
-<<key "metarecord-list:clear finder" f>> go to the finder instead: its rows come
-from a query, so finding one is asking the daemon.
+!! The keys of every program
 
-While the [[viewer panel]] shows a file, the arrows and <<key "cursor:first metarecord-list" Home>> /
-<<key "cursor:last metarecord-list" End>> still move the cursor of the list beside it —
-the next file is previewed without leaving the preview.
+|!Key |!Does |
+|Ctrl+z, Ctrl+Shift+z or Ctrl+y |undo, redo ([[The undo selection]]) |
+|Ctrl+c, Ctrl+x, Ctrl+v |copy, cut, paste files (also `c c`, `c x`, `c v`) |
+|Ctrl+a, Ctrl+Shift+a |check every row, none (while typing: the start of the line) |
+|Ctrl+f |find in the panel ([[Find in a panel]]) |
+|Ctrl+r |read the panel again (while typing: the input history) |
+|Ctrl+t, Ctrl+w, Ctrl+Tab, Ctrl+Shift+Tab |new workspace, close it, next, previous |
+|Ctrl+s, Ctrl+o, Ctrl+d |save the workspace, open a saved one, duplicate it |
+|Ctrl+n |a new metarecord, node or file, in the panel that makes one |
+|Ctrl+q |quit |
+
+!! A first letter, then a verb
+
+A letter alone that is not above starts a ''domain''; the second letter is a
+''verb'', the same in every domain ([[Choosing keybindings]]):
+
+|!Verb |!Means | |!Verb |!Means |
+|`a` |add | |`d` |delete |
+|`s` |set | |`c` |create |
+|`r` |remove a value | |`q` |query |
+|`u` |unset, empty | |`o` |open |
+|`e` |edit (Shift: from empty) | |`l` |list |
+|`n` |rename | |`p` |run, play |
+|`t` |retype | |`z` |revert |
+
+|!Domain |!Holds |
+|`m` |the selected metarecord: `m s`, `m a`, `m r`, `m u`, `m e`, `m n`, `m t` its fields, `m d` delete it, `m i` number a folder ([[Editing metarecords in the GUI]]) |
+|Shift+m or `m m`, `m q` |the same verbs on the checked metarecords, on what the list's query matches |
+|`e` |the items: `e d` delete; Shift+e or `e e`, `e q` the checked ones, the query's (`E p` plays them: [[Slideshow]]) |
+|`,` |tags: `, a`, `, r`, `, q`; `, -` and `, =` before them for the negative and mixed tags ([[Hierarchical tags]]) |
+|`p` |the focused panel's actions: its fields (`p e`, `p q`), revert in the log (`p z`), keep a duplicate (`p k`)… |
+|`v` |what is shown: `v v` split, `v f` full screen, `v x` swap; in a panel, its view flags (`v h` hidden files, `v g` grid…) |
+|`t` |a panel type: `t l` list, `t d` detail, `t f` viewer, `t m` file manager… ([[Panel types]]) |
+|`g` |go to: `g r` recent, `g d` a folder, `g o` a repository, `g p` a script, `g m` the file manager, `g s` the folder as a list |
+|`h` |help: `h h` a page, `h c` the cursor, `h k` a key, `h x` a command |
+|`w` |workspaces: `w c` new, `w o` open a saved one, `w n` rename, `w d` delete a saved one |
+|`c` |the file clipboard: `c c` copy, `c x` cut, `c v` paste, `c u` empty |
+
+!! Where it opens
+
+What opens something takes a ''target''. Before the key, `i` puts it here, `b`
+beside — in the other slot — and `n` in a new workspace: `b t l` opens a list
+beside, `n g r` a recent metarecord in a new workspace. Without one, what opens
+from a row goes beside, what is picked from a list goes here.
 
 !! While typing
 
-Most keys are left to the text field that has the focus. These still apply:
-
-|!Key |!Does |
-|<<key "editing:unfocus" Escape>> |leave the field, keeping what was typed |
-|<<key "editing:confirm" Enter>> |submit the command input |
-|<<key "editing:discard" Ctrl+q>> |leave the field and discard what was typed |
-|<<key "editing:goto line-start" Ctrl+a>> / <<key "editing:goto line-end" Ctrl+e>> |the start / the end of the line |
-|<<key "editing:clear-line-end" Ctrl+k>> |remove from the caret to the end of the line |
-|<<key "completion:cycle forward" "Ctrl+,">> / <<key "completion:cycle back" "Ctrl+.">> |the next / the previous view of the candidates ([[Completion views]]) |
-|<<key "pick:confirm" Ctrl+Enter>> / <<key "pick:cancel" Ctrl+Escape>> |confirm / cancel a [[Value picker]] |
-|<<key "help:cursor" F1>>, <<key "find:open" Ctrl+f>>, <<key "status:clear" Ctrl+l>> |as everywhere |
-
-`ctrl+p`, `ctrl+n` and `ctrl+r` recall what was typed before ([[Input history]]).
+A text field keeps its keys, except these: Enter confirms, Escape leaves the field,
+Ctrl+u empties it, Ctrl+a and Ctrl+e go to the start and the end, Ctrl+k clears to
+the end, Ctrl+, and Ctrl+- walk the completion views ([[Completion views]]), Ctrl+l
+clears the status bar, Ctrl+f finds, Ctrl+q quits, F1 is the help cursor.

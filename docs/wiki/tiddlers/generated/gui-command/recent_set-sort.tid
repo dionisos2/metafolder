@@ -9,4 +9,4 @@ summary: Recent: change the order (time / score)
 
 !! Default keys
 
-* ``s`` → ``recent:set-sort`` (in the ``recent`` panel)
+* ``v s`` → ``recent:set-sort`` (in the ``recent`` panel)

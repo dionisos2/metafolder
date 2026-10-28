@@ -9,6 +9,5 @@ summary: Log: revert what is selected, or a narrower or wider scope
 
 !! Default keys
 
-* ``shift+o`` → ``log:revert op`` (in the ``log`` panel)
-* ``shift+r`` → ``log:revert`` (in the ``log`` panel)
-* ``shift+v`` → ``log:revert label`` (in the ``log`` panel)
+* ``p shift+z`` → ``log:revert label`` (in the ``log`` panel)
+* ``p z`` → ``log:revert`` (in the ``log`` panel)

@@ -34,7 +34,7 @@ They all behave the same way:
 !! Walking down a path
 
 The second argument is the mode: `select` is the find above, and `walk`
-(<<key "cursor:find self walk" d>>, for ''descend'') goes ''into'' what it finds.
+(<<key "cursor:find self walk" "Shift+f">>, for ''descend'') goes ''into'' what it finds.
 A directory found — a node with children — is entered and the same question asked
 again from inside, so a path is walked down one name at a time; a file found — a
 leaf — is selected, and the walk stops. Whether a node has children is not known
@@ -49,5 +49,5 @@ elsewhere the key passes through. Another panel gains the mode the day it
 provides `descend`.
 
 `metarecord-list` provides no entries. Its rows come from a query, not from a list
-already loaded, so the same key (<<key "metarecord-list:clear finder" f>>) edits its
+already loaded, so the same key (<<key "metarecord-list:clear finder" "Shift+f">>) edits its
 finder: the same question, asked of the daemon.

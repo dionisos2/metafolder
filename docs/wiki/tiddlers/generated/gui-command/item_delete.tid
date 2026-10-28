@@ -10,7 +10,10 @@ summary: Delete what is designated: its file to the trash, or the metarecord wit
 !! Default keys
 
 * ``delete`` → ``item:delete`` (in the ``file-manager`` panel)
-* ``delete`` → ``item:delete`` (in the ``metarecord-detail`` panel)
 * ``delete`` → ``item:delete`` (in the ``metarecord-list`` panel)
 * ``delete`` → ``item:delete`` (in the ``path-ref`` panel)
 * ``delete`` → ``item:delete`` (in the ``viewer`` panel)
+* ``e d`` → ``item:delete``
+* ``e e d`` → ``item:delete selection``
+* ``e q d`` → ``item:delete query``
+* ``shift+e d`` → ``item:delete selection``

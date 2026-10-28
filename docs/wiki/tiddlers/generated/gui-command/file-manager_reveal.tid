@@ -6,4 +6,10 @@ summary: Open the selected metarecord's folder in the file manager (here / other
 !! Reference
 
 * Defined by the shipped ``commands.js``
-* No default key
+
+!! Default keys
+
+* ``b g m`` → ``file-manager:reveal other``
+* ``g m`` → ``file-manager:reveal here``
+* ``i g m`` → ``file-manager:reveal here``
+* ``n g m`` → ``file-manager:reveal new``

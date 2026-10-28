@@ -8,7 +8,8 @@ A ''keybinding'' maps a key — or a sequence of keys — to a command invocatio
 arguments included: `ctrl+t` to `workspace:new`, `t l` to
 `panel:open here metarecord-list`. Nothing else is behind a key, so whatever a key
 does can also be typed in [[the command input|The command input]], clicked or sent
-by a script ([[Commands]]).
+by a script ([[Commands]]). Why the shipped keys are where they are is told in
+[[Choosing keybindings]].
 
 All of them are in one file, `gui/keybindings.toml`, which can be edited
 ([[Changing keybindings]], [[The keybindings file]]). [[Keyboard navigation]] gives
@@ -32,7 +33,9 @@ letter (`shift+f`), whose two cases would otherwise be the same key.
 
 A ''sequence'' is several combos typed one after the other, written with spaces:
 `g r`, `m m s`. The shipped keys use it to group related commands under a first
-letter: `t` then a letter for a panel type, `g` to go somewhere, `h` for help.
+letter: `t` then a letter for a panel type, `g` to go somewhere, `h` for help. In the
+file, a letter with a role can be a variable, and a command taking a target can be
+written once for its four keys ([[Keybinding variables]]).
 
 * Once the beginning of a sequence is typed, the GUI waits for the rest, with no time limit, and lists the possible continuations just above the status bar ([[Status bar and task bar]]).
 * `Escape` gives the sequence up.
@@ -62,8 +65,8 @@ confirms the command input everywhere else.
 A binding also applies only where its ''command'' can run. A generic command —
 `cursor:next self`, run on the focused panel's cursor ([[Generic panel commands]])
 — cannot run in a panel without a cursor, so there its key is not bound at all and
-does what it would do unbound: `j` is one general binding, yet the help still
-scrolls with the arrows.
+does what it would do unbound: `↓` is one general binding, yet the help still
+scrolls with it.
 
 One key can have only one binding in a given place: the same key, `when` and `focus`.
 

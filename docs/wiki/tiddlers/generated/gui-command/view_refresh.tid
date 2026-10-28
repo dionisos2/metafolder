@@ -9,4 +9,5 @@ summary: Read what a panel shows again (self / a panel type)
 
 !! Default keys
 
-* ``r`` → ``view:refresh self``
+* ``ctrl+r`` → ``view:refresh self``
+* ``f5`` → ``view:refresh self``

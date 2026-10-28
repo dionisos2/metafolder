@@ -35,7 +35,7 @@ compacted.
 
 !! In the GUI
 
-`mf:order` (<<key "mf:order" "m o">>) numbers the selected folder — the selection itself
+`mf:order` (<<key "mf:order" "m i">>) numbers the selected folder — the selection itself
 when it is a directory, its folder when it is a file; with nothing selected, the file
 manager's current directory; with neither, an error, never the repository root. There is
 no dry run; the status bar names the folder and how many positions were written.

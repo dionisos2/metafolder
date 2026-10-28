@@ -9,4 +9,4 @@ summary: Sync: show the plan overlay
 
 !! Default keys
 
-* ``y w`` → ``sync:open`` (in the ``sync`` panel)
+* ``p shift+o`` → ``sync:open`` (in the ``sync`` panel)

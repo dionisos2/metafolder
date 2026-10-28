@@ -6,4 +6,7 @@ summary: Open a copy of this workspace in a new tab
 !! Reference
 
 * Defined by the shell (a builtin)
-* No default key
+
+!! Default keys
+
+* ``ctrl+d`` → ``workspace:fork``

@@ -12,4 +12,3 @@ summary: Move a panel's cursor down one row (self / a panel type)
 * ``down`` → ``cursor:next self``
 * ``down`` → ``cursor:next metarecord-list`` (while ``finder`` is focused)
 * ``down`` → ``cursor:next metarecord-list`` (in the ``viewer`` panel)
-* ``j`` → ``cursor:next self``

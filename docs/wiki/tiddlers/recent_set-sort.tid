@@ -3,4 +3,4 @@ tags: [[GUI command]] [[Panel types]]
 kind: reference
 summary: Recent: change the order (time / score)
 
-`recent:set-sort <time|score>` orders the rows of the [[recent panel]] newest first (`time`) or best score first (`score`, [[Frecent folders]]). The choice is kept in the workspace variable `recent:sort`. Asked without a value, the question offers the other order, so <<key "recent:set-sort" s>> then `Enter` switches.
+`recent:set-sort <time|score>` orders the rows of the [[recent panel]] newest first (`time`) or best score first (`score`, [[Frecent folders]]). The choice is kept in the workspace variable `recent:sort`. Asked without a value, the question offers the other order, so <<key "recent:set-sort" "v s">> then `Enter` switches.

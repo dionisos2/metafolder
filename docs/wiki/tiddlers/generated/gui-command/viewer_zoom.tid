@@ -11,5 +11,6 @@ summary: File: zoom the previewed image/video
 
 * ``-`` → ``viewer:zoom out`` (in the ``viewer`` panel)
 * ``0`` → ``viewer:zoom reset`` (in the ``viewer`` panel)
-* ``=`` → ``viewer:zoom fit`` (in the ``viewer`` panel)
+* ``=`` → ``viewer:zoom in`` (in the ``viewer`` panel)
 * ``plus`` → ``viewer:zoom in`` (in the ``viewer`` panel)
+* ``v z`` → ``viewer:zoom fit`` (in the ``viewer`` panel)

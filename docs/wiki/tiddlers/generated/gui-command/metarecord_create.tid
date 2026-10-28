@@ -10,3 +10,6 @@ summary: Create a new metarecord
 !! Default keys
 
 * ``ctrl+n`` → ``metarecord:create`` (in the ``metarecord-detail`` panel)
+* ``ctrl+n`` → ``metarecord:create`` (in the ``metarecord-list`` panel)
+* ``p c`` → ``metarecord:create`` (in the ``metarecord-detail`` panel)
+* ``p c`` → ``metarecord:create`` (in the ``metarecord-list`` panel)

@@ -9,4 +9,4 @@ summary: Exchange the two slots' panel types
 
 !! Default keys
 
-* ``x`` → ``panel:swap``
+* ``v x`` → ``panel:swap``

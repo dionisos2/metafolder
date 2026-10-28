@@ -48,7 +48,7 @@ They act on the command input, and on any text field of a panel that has the foc
 |!Key |!Command |!Does |
 |<<key "editing:confirm" Enter>> |`editing:confirm` |submit — the command input only; in a panel's field the key is the panel's |
 |<<key "editing:unfocus" Escape>> |`editing:unfocus` |leave, keeping the text |
-|<<key "editing:discard" "ctrl+q">> |`editing:discard` |empty the field and leave |
+|<<key "editing:discard" "Ctrl+u">> |`editing:discard` |empty the field and leave |
 |<<key "editing:goto line-start" "ctrl+a">> |`editing:goto line-start` |caret to the start |
 |<<key "editing:goto line-end" "ctrl+e">> |`editing:goto line-end` |caret to the end |
 |<<key "editing:clear-line-end" "ctrl+k">> |`editing:clear-line-end` |remove from the caret to the end of the line |

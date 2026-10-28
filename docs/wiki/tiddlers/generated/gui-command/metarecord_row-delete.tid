@@ -9,4 +9,4 @@ summary: Delete the field under the cursor
 
 !! Default keys
 
-* ``d`` → ``metarecord:row-delete`` (in the ``metarecord-detail`` panel)
+* ``delete`` → ``metarecord:row-delete`` (in the ``metarecord-detail`` panel)

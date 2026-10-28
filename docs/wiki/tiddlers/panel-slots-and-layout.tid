@@ -45,11 +45,11 @@ what it would have read here, since the panels show what their variables hold
 !! Splitting
 
 |!Command |!Key |!Does |
-|`panel:toggle split` |<<key "panel:toggle split" v>> |split when one slot is shown, unsplit when both are |
+|`panel:toggle split` |<<key "panel:toggle split" "v v">> |split when one slot is shown, unsplit when both are |
 |`panel:split` | |show the second slot |
-|`panel:unsplit` |<<key "panel:unsplit" u>> |hide the non-focused slot |
+|`panel:unsplit` |— (<<key "panel:toggle split" "v v">> does it with two shown) |hide the non-focused slot |
 |`panel:hide` | |hide the focused slot |
-|`panel:swap` |<<key "panel:swap" x>> |exchange the two slots' panel types |
+|`panel:swap` |<<key "panel:swap" "v x">> |exchange the two slots' panel types |
 
 A slot that is hidden remembers its workspace and panel type, and shows them again
 on the next split. A split with nothing remembered shows the focused workspace in
@@ -76,7 +76,7 @@ Each slot has a thin header bar:
 
 !! Fullscreen
 
-<<key "panel:toggle fullscreen" z>> — the key a tmux zooms a pane with — shows the
+<<key "panel:toggle fullscreen" "F11">> — the key a tmux zooms a pane with — shows the
 focused panel alone: no tab bar, header, command input, status bar or other slot, and
 the window itself goes fullscreen, like a video player. The same key, or Escape
 (even from a text field inside the panel), comes back.

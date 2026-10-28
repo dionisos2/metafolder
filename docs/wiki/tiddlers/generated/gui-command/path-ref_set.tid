@@ -9,5 +9,5 @@ summary: Path-ref explorer: change a view setting
 
 !! Default keys
 
-* ``e`` → ``path-ref:set ref-field`` (in the ``path-ref`` panel)
-* ``shift+f`` → ``path-ref:set field`` (in the ``path-ref`` panel)
+* ``v r`` → ``path-ref:set ref-field`` (in the ``path-ref`` panel)
+* ``v t`` → ``path-ref:set field`` (in the ``path-ref`` panel)

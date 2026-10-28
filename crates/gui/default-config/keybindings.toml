@@ -3,72 +3,177 @@
 # the shipped keys and your changes, merged by git — so edit it in place
 # (doc "Changing keybindings").
 #
-# Format: each key is a combo (or a whitespace-separated sequence like "s l").
+# Format: each key is a combo (or a whitespace-separated sequence like "g r").
 # Its value is either a single binding table, or — when the same combo maps to
 # a different command depending on the focused panel — an ARRAY of bindings,
 # each scoped with `when = "<panel-type>"`. `text-input = true` lets a binding
-# fire even while a text input is focused (e.g. editing commands);
-# `focus = "<name>"` restricts it to one named text field. A binding with no
-# `when` is global.
+# fire even while a text input is focused; `focus = "<name>"` restricts it to
+# one named text field. A binding with no `when` is global.
+#
+# How the keys are chosen (doc "Choosing keybindings"):
+# - a key is a character, typed the same on bépo, AZERTY and QWERTY: letters,
+#   `, - =`, named keys; never AltGr, a dead key or an accented letter;
+# - a single letter is for what is done all the time (`x` command input, `o`
+#   other panel, `f` find); every other letter starts a domain (`g` go to,
+#   `v` view, `p` the panel's actions, `m` metarecords, `,` tags…), and the
+#   second letter is a verb from one table (a add, s set, r remove, u unset…);
+# - the shortcuts every program has (ctrl+c, ctrl+z, F5…) are kept as well;
+# - what cannot be undone has no key.
+#
+# Variables (doc "Keybinding variables"): a letter with a role is named once
+# below, and `{name}` in a key stands for it. A command holding `{target}`
+# stands for four keys: its own, aimed at its default `target`, and the same
+# under the prefixes `i` (here), `b` (the other slot, beside) and `n` (a new
+# workspace).
 
-# Command input (spec default suggestions): `:` for commands, `!` for the
-# bash input (the same widget in shell mode, with Tab bash completion).
+# ── Variables ────────────────────────────────────────────────────────────────
+
+# Targets: where what opens goes.
+vars.target-here = "i"
+vars.target-other = "b"
+vars.target-new = "n"
+# Domains of nouns.
+vars.go = "g"
+vars.view = "v"
+vars.panels = "t"
+vars.help = "h"
+vars.workspaces = "w"
+vars.clipboard = "c"
+# Domains of verbs: the focused panel's actions, the selected metarecord, the
+# checked ones, the list's query, the items (a file, or a metarecord), tags.
+vars.panel = "p"
+vars.record = "m"
+vars.checked = "shift+m"
+vars.checked-long = "m m"
+vars.query = "m q"
+vars.item = "e"
+vars.items = "shift+e"
+vars.items-long = "e e"
+vars.items-query = "e q"
+vars.tags = ","
+vars.negative = ", -"
+vars.mixed = ", ="
+# Verbs (second position); shift is a variant of the same verb.
+vars.add = "a"
+vars.set = "s"
+vars.remove = "r"
+vars.unset = "u"
+vars.edit = "e"
+vars.rename = "n"
+vars.retype = "t"
+vars.delete = "d"
+vars.create = "c"
+vars.query-verb = "q"
+vars.open = "o"
+vars.list = "l"
+vars.run = "p"
+vars.revert = "z"
+vars.keep = "k"
+vars.index = "i"
+
+# ── Everywhere ───────────────────────────────────────────────────────────────
+
+# The command input (doc "The command input"): `x`, shift+x for a bash line.
+# `:` and `!` are the same, for whoever has them without shift.
+"x" = { command = "command-input:focus command" }
 ":" = { command = "command-input:focus command" }
+"shift+x" = { command = "command-input:focus bash" }
 "!" = { command = "command-input:focus bash" }
 
-# A script's question (doc "Script sessions"): `tab` hands the keys the script
-# awaits back to the panels — and takes them again — without abandoning the
-# question. Escape always stops the asking script, and neither of these, nor
-# whatever activates the command input, can be awaited by a script.
-"tab" = { command = "script-keys:toggle" }
-# F6 walks the left panel, the right one, then the script's question when one
-# awaits keys (doc "Keyboard navigation"), and round again.
+# The other panel; F6 walks the panels and a script's question (doc "Script
+# sessions"), whose keys it takes and gives back. Tab is left to the panels.
+"o" = { command = "panel:focus next" }
 "f6" = { command = "panel:focus cycle" }
 
-# Macros (doc "Macros"), on Emacs's keys: F3 starts recording and stops it, F4
-# runs the macro. Ctrl+G, in a question asked while recording, makes that
-# argument asked again each time the macro runs (press it again to undo).
+# Macros (doc "Macros"), on Emacs's keys.
 "f3" = { command = "macro:toggle-recording" }
 "f4" = { command = "macro:run" }
 "ctrl+g" = { command = "macro:ask", text-input = true }
 
-# Text editing (fire even while a text input is focused).
+# Text editing, while typing too.
 "escape" = [
   { command = "editing:unfocus", text-input = true },
-  # In the find bar, escape closes the search (and unpaints it) rather than
-  # merely leaving the input.
   { command = "find:close", focus = "find" },
 ]
-"ctrl+q" = { command = "editing:discard", text-input = true }
-"ctrl+a" = { command = "editing:goto line-start", text-input = true }
+"ctrl+u" = { command = "editing:discard", text-input = true }
 "ctrl+e" = { command = "editing:goto line-end", text-input = true }
 "ctrl+k" = { command = "editing:clear-line-end", text-input = true }
+# Ctrl+A goes to the start of the line while typing, and checks every row of
+# a list otherwise; Ctrl+Shift+A unchecks them.
+"ctrl+a" = [
+  { command = "editing:goto line-start", text-input = true },
+  { command = "metarecord-list:select all", when = "metarecord-list" },
+  { command = "file-manager:select all", when = "file-manager" },
+]
+"ctrl+shift+a" = [
+  { command = "metarecord-list:select none", when = "metarecord-list" },
+  { command = "file-manager:select none", when = "file-manager" },
+]
 
-# Completion views (doc "Completion views"): walk the views of the prompt's
-# candidates, next/previous. A prompt with a single view (the common case)
-# ignores both — and a plain comma stays a comma, which is the whole reason
-# the cycle is on Ctrl+punctuation rather than on the key it used to suggest.
+# Completion views (doc "Completion views"): next, previous.
 "ctrl+," = { command = "completion:cycle forward", text-input = true }
-"ctrl+." = { command = "completion:cycle back", text-input = true }
+"ctrl+-" = { command = "completion:cycle back", text-input = true }
 
-# Dismiss the transient status-bar message (works while typing too).
-"ctrl+l" = { command = "status:clear", text-input = true }
+# The status bar's message; in the shell, its output.
+"ctrl+l" = [
+  { command = "status:clear", text-input = true },
+  { command = "shell:clear", when = "shell" },
+]
 
-# Workspaces (spec default suggestions: t, w, 1..9). n/p and the digits move
-# BOTH panels together so the two slots never drift onto different
-# workspaces unnoticed; splitting across workspaces needs an explicit tab
-# click or the focused-slot workspace:next slot /
-# workspace:prev slot commands.
-"ctrl+t" = { command = "workspace:new" }
-"ctrl+w" = { command = "workspace:close" }
-# Saved workspaces (doc "Saved workspaces"): ctrl+o opens one here, the target
-# keys before it choose where — "i" here, "b" a new workspace.
-"ctrl+s" = { command = "workspace:save" }
-"ctrl+o" = { command = "workspace:open here" }
-"i ctrl+o" = { command = "workspace:open here" }
-"b ctrl+o" = { command = "workspace:open new" }
-"n" = { command = "workspace:next" }
-"p" = { command = "workspace:prev" }
+# Find in a panel (doc "Find in a panel").
+"ctrl+f" = { command = "find:open", text-input = true }
+
+# The conventions of every program. Ctrl+R refreshes; in a text field it stays
+# the input history's (doc "Input history").
+"ctrl+q" = { command = "quit", text-input = true }
+"f5" = [
+  { command = "view:refresh self" },
+  { command = "sync:status", when = "sync" },
+]
+"ctrl+r" = [
+  { command = "view:refresh self" },
+  { command = "sync:status", when = "sync" },
+]
+"ctrl+z" = { command = "log:undo" }
+"ctrl+shift+z" = { command = "log:redo" }
+"ctrl+y" = { command = "log:redo" }
+"f11" = { command = "panel:toggle fullscreen" }
+"f12" = { command = "devtools:open" }
+"ctrl+enter" = [
+  { command = "pick:confirm" },
+  { command = "pick:confirm", focus = "finder" },
+]
+"ctrl+escape" = { command = "pick:cancel" }
+
+# Zoom: `=` in (typed without shift everywhere, `plus` too), `-` out, `0` back.
+"=" = [
+  { command = "view:zoom self in" },
+  { command = "viewer:zoom in", when = "viewer" },
+]
+"plus" = [
+  { command = "view:zoom self in" },
+  { command = "viewer:zoom in", when = "viewer" },
+]
+"-" = [
+  { command = "view:zoom self out" },
+  { command = "viewer:zoom out", when = "viewer" },
+]
+"0" = [
+  { command = "view:zoom self reset" },
+  { command = "viewer:zoom reset", when = "viewer" },
+]
+
+# The file clipboard (doc "Global GUI variables"): the usual keys, and `c`.
+"ctrl+c" = { command = "clipboard:copy self" }
+"ctrl+x" = { command = "clipboard:cut self" }
+"ctrl+v" = { command = "file:paste self" }
+"{clipboard} c" = { command = "clipboard:copy self" }
+"{clipboard} x" = { command = "clipboard:cut self" }
+"{clipboard} v" = { command = "file:paste self" }
+"{clipboard} {unset}" = { command = "clipboard:clear" }
+
+# ── Workspaces ───────────────────────────────────────────────────────────────
+
 "1" = { command = "workspace:goto 1" }
 "2" = { command = "workspace:goto 2" }
 "3" = { command = "workspace:goto 3" }
@@ -78,214 +183,78 @@
 "7" = { command = "workspace:goto 7" }
 "8" = { command = "workspace:goto 8" }
 "9" = { command = "workspace:goto 9" }
-
-# Event log navigation (one write per step, on the active repo).
-"ctrl+z" = { command = "log:undo" }
-"ctrl+shift+z" = { command = "log:redo" }
-
-# Value picker (doc "Value picker"): confirm/cancel the current pick.
-# Dedicated combos so normal Enter/Escape keep working in the picker's panels;
-# a stray press outside a picker is a silent no-op. The `focus = "finder"`
-# entry lets Ctrl+Enter confirm a pick while typing in the metarecord-list
-# finder (the finder auto-focuses in picker mode).
-"ctrl+enter" = [
-  { command = "pick:confirm" },
-  { command = "pick:confirm", focus = "finder" },
+"ctrl+tab" = { command = "workspace:next" }
+"ctrl+pagedown" = { command = "workspace:next" }
+"ctrl+shift+tab" = { command = "workspace:prev" }
+"ctrl+pageup" = { command = "workspace:prev" }
+"ctrl+t" = { command = "workspace:new" }
+"ctrl+w" = { command = "workspace:close" }
+"ctrl+s" = { command = "workspace:save" }
+"ctrl+o" = { command = "workspace:open here" }
+# Ctrl+D duplicates: the workspace, or in the file manager the file.
+"ctrl+d" = [
+  { command = "workspace:fork" },
+  { command = "file:duplicate self", when = "file-manager" },
 ]
-"ctrl+escape" = { command = "pick:cancel" }
+"{workspaces} {create}" = { command = "workspace:new" }
+"{workspaces} {open}" = { command = "workspace:open here" }
+"{target-new} {workspaces} {open}" = { command = "workspace:open new" }
+"{workspaces} {rename}" = { command = "workspace:rename" }
+"{workspaces} {delete}" = { command = "workspace:delete-saved" }
 
-# Panel slots. panel:split is available via the command input.
-"v" = { command = "panel:toggle split" }
-# `panel:unsplit` lives on `u` (not `c`) so `c` is free for the metarecord-list
-# clear-then-edit family below — which ended up on the single keys f/s/q, with
-# `c` itself clearing all three.
-"u" = { command = "panel:unsplit" }
-"o" = { command = "panel:focus next" }
-"x" = { command = "panel:swap" }
-# Zoom the focused panel to the whole window and back — the key tmux zooms a
-# pane with. Escape also leaves fullscreen.
-"z" = { command = "panel:toggle fullscreen" }
+# ── Panels and their layout (v: view) ────────────────────────────────────────
 
-# Panel type switching: "t" then one letter (the status bar lists the
-# continuations while the sequence is pending; escape cancels it). It opens the
-# type here, in place of the focused panel; the same sequence after a target key
-# says where (doc "Panel slots and layout"): "i" here, "w" the other slot (the
-# other window), "b" a new workspace — a copy of this one.
-"t l" = { command = "panel:open here metarecord-list" }
-"t d" = { command = "panel:open here metarecord-detail" }
-"t f" = { command = "panel:open here viewer" }
-"t m" = { command = "panel:open here file-manager" }
-"t o" = { command = "panel:open here log" }
-"t r" = { command = "panel:open here repos" }
-"t g" = { command = "panel:open here message" }
-"t s" = { command = "panel:open here shell" }
-"t w" = { command = "panel:open here workspace-info" }
-"t t" = { command = "panel:open here path-ref" }
-"t b" = { command = "panel:open here trash" }
-"t y" = { command = "panel:open here sync" }
-"t h" = { command = "panel:open here help" }
-"t v" = { command = "panel:open here recent" }
-"t u" = { command = "panel:open here duplicates" }
-"t c" = { command = "panel:open here config" }
+"{view} v" = { command = "panel:toggle split" }
+"{view} f" = { command = "panel:toggle fullscreen" }
+"{view} x" = { command = "panel:swap" }
 
-"i t l" = { command = "panel:open here metarecord-list" }
-"i t d" = { command = "panel:open here metarecord-detail" }
-"i t f" = { command = "panel:open here viewer" }
-"i t m" = { command = "panel:open here file-manager" }
-"i t o" = { command = "panel:open here log" }
-"i t r" = { command = "panel:open here repos" }
-"i t g" = { command = "panel:open here message" }
-"i t s" = { command = "panel:open here shell" }
-"i t w" = { command = "panel:open here workspace-info" }
-"i t t" = { command = "panel:open here path-ref" }
-"i t b" = { command = "panel:open here trash" }
-"i t y" = { command = "panel:open here sync" }
-"i t h" = { command = "panel:open here help" }
-"i t v" = { command = "panel:open here recent" }
-"i t u" = { command = "panel:open here duplicates" }
-"i t c" = { command = "panel:open here config" }
+# t then a letter: a panel type, here by default.
+"{panels} l" = { command = "panel:open {target} metarecord-list", target = "here" }
+"{panels} d" = { command = "panel:open {target} metarecord-detail", target = "here" }
+"{panels} f" = { command = "panel:open {target} viewer", target = "here" }
+"{panels} m" = { command = "panel:open {target} file-manager", target = "here" }
+"{panels} o" = { command = "panel:open {target} log", target = "here" }
+"{panels} r" = { command = "panel:open {target} repos", target = "here" }
+"{panels} g" = { command = "panel:open {target} message", target = "here" }
+"{panels} s" = { command = "panel:open {target} shell", target = "here" }
+"{panels} w" = { command = "panel:open {target} workspace-info", target = "here" }
+"{panels} t" = { command = "panel:open {target} path-ref", target = "here" }
+"{panels} b" = { command = "panel:open {target} trash", target = "here" }
+"{panels} y" = { command = "panel:open {target} sync", target = "here" }
+"{panels} h" = { command = "panel:open {target} help", target = "here" }
+"{panels} v" = { command = "panel:open {target} recent", target = "here" }
+"{panels} u" = { command = "panel:open {target} duplicates", target = "here" }
+"{panels} c" = { command = "panel:open {target} config", target = "here" }
 
-"w t l" = { command = "panel:open other metarecord-list" }
-"w t d" = { command = "panel:open other metarecord-detail" }
-"w t f" = { command = "panel:open other viewer" }
-"w t m" = { command = "panel:open other file-manager" }
-"w t o" = { command = "panel:open other log" }
-"w t r" = { command = "panel:open other repos" }
-"w t g" = { command = "panel:open other message" }
-"w t s" = { command = "panel:open other shell" }
-"w t w" = { command = "panel:open other workspace-info" }
-"w t t" = { command = "panel:open other path-ref" }
-"w t b" = { command = "panel:open other trash" }
-"w t y" = { command = "panel:open other sync" }
-"w t h" = { command = "panel:open other help" }
-"w t v" = { command = "panel:open other recent" }
-"w t u" = { command = "panel:open other duplicates" }
-"w t c" = { command = "panel:open other config" }
+# ── Rows: the cursor in every panel with rows (doc "Generic panel commands"),
+# and opening one (doc "Opening a row") ───────────────────────────────────────
 
-"b t l" = { command = "panel:open new metarecord-list" }
-"b t d" = { command = "panel:open new metarecord-detail" }
-"b t f" = { command = "panel:open new viewer" }
-"b t m" = { command = "panel:open new file-manager" }
-"b t o" = { command = "panel:open new log" }
-"b t r" = { command = "panel:open new repos" }
-"b t g" = { command = "panel:open new message" }
-"b t s" = { command = "panel:open new shell" }
-"b t w" = { command = "panel:open new workspace-info" }
-"b t t" = { command = "panel:open new path-ref" }
-"b t b" = { command = "panel:open new trash" }
-"b t y" = { command = "panel:open new sync" }
-"b t h" = { command = "panel:open new help" }
-"b t v" = { command = "panel:open new recent" }
-"b t u" = { command = "panel:open new duplicates" }
-"b t c" = { command = "panel:open new config" }
-
-# Help (doc "In-app help"). "h" then a letter; F1 also arms the help cursor.
-"h h" = { command = "help:open" }
-"h c" = { command = "help:cursor" }
-"h k" = { command = "help:key" }
-"h x" = { command = "help:command" }
-"f1" = { command = "help:cursor", text-input = true }
-
-# Go to a recently-viewed metarecord ("g" = go): opens the `recent` picker in
-# the command input, filtered by ordered substring like the finder. Global
-# (works from any panel); the "g" prefix is otherwise free.
-"g r" = { command = "recent other time" }
-"i g r" = { command = "recent here time" }
-"w g r" = { command = "recent other time" }
-"b g r" = { command = "recent new time" }
-# The same pick, the most frecent first ("g m" = go → most used; doc "Frecent
-# folders"): each entry's rank weighted by how recently it was viewed.
-"g m" = { command = "recent other score" }
-"i g m" = { command = "recent here score" }
-"w g m" = { command = "recent other score" }
-"b g m" = { command = "recent new score" }
-
-# Run an installed helper script ("g s" = go → script): opens the `script:run`
-# picker in the command input, completing over ~/.config/metafolder/scripts/
-# with each script's `# Summary:` as the description. Global, like `g r`.
-"g s" = { command = "script:run" }
-
-# Open the selected file/folder with an external program ("g w" = go → with):
-# asks for the program in the command input, completing over the `open-with`
-# list of the GUI config.toml (candidates, not a whitelist — any command line
-# may be typed). Acts on `selected_paths`, so it works from any panel carrying
-# a selection; the same action sits in the right-click menu as "Open with…".
-"g w" = { command = "file:open-with" }
-
-# Open a loaded repository ("g o" = go → open): opens the `repos:switch` picker
-# in the command input, completing over the daemon's loaded repositories. Picks
-# it like a click in the repos panel (adopt in place, else a new workspace).
-"g o" = { command = "repos:switch" }
-
-# Load a repository from a folder ("g l" = go → load): `repos:load` without its
-# form — the folder picker opens straight away and the pick is loaded (a folder
-# that is not a repository is said in the status bar, since there is no form to
-# land the error in). Global, like `g o`: the two are the pair "open one the
-# daemon knows" / "point at one on disk". Loaded the ordinary way; typing
-# `repos:load` asks on-disk or in-memory.
-"g l" = { command = "repos:load on-disk" }
-
-# List the selection's folder as metarecords ("g f" = go → folder): the
-# keyboard form of the "Open folder in metarecord-list" menu item — the query
-# `mfr_path -> "<folder>"` lands in the DSL zone, frozen so it stays editable.
-# Global because it acts on the selection, whichever panel carries it (the file
-# manager included: "and now show me these as metarecords").
-"g f" = { command = "metarecord-list:folder here" }
-"i g f" = { command = "metarecord-list:folder here" }
-"w g f" = { command = "metarecord-list:folder other" }
-"b g f" = { command = "metarecord-list:folder new" }
-
-# Jump to a frecent folder ("g d" = go → directory), zoxide-style (doc
-# "Frecent folders"): the `folder:open` picker completes over the folders of
-# the recently-viewed metarecords, the most frequently and recently used
-# first. "g d" opens the pick in the file manager, "g c" lists its children and
-# "g t" its whole subtree in the metarecord list. Here by default, like
-# `cd`.
-"g d" = { command = "folder:open files here" }
-"i g d" = { command = "folder:open files here" }
-"w g d" = { command = "folder:open files other" }
-"b g d" = { command = "folder:open files new" }
-"g c" = { command = "folder:open children here" }
-"i g c" = { command = "folder:open children here" }
-"w g c" = { command = "folder:open children other" }
-"b g c" = { command = "folder:open children new" }
-"g t" = { command = "folder:open subtree here" }
-"i g t" = { command = "folder:open subtree here" }
-"w g t" = { command = "folder:open subtree other" }
-"b g t" = { command = "folder:open subtree new" }
-
-# Number the selection's folder ("m o" = metarecord → order): `mf:order` on the
-# selected folder, or on the selected file's folder — no prompt, the status bar
-# names the folder it numbered. Global, like the "g" family: the selection is
-# the workspace's, whichever panel published it.
-"m o" = { command = "mf:order" }
-
-# Tags (doc "Tagging from the GUI"), under "," — typed without a modifier on
-# AZERTY and QWERTY alike, where "#", the tag sigil, is not. The field comes
-# first, then the verb: ", n" (negative_tag) and ", m" (mixed_tag) are followed
-# by a (add: deny it / mark it mixed, by the rules of `mf tag`), d (take one
-# off) or q (search the records answering so). The plain tag, the most used,
-# has the short forms instead: ", t" adds it, ", d" takes it off, ", q"
-# searches it. Each asks for the tag, with completion. Global, like the "g"
-# family.
-", t" = { command = "tag:add tag" }
-", d" = { command = "tag:remove tag" }
-", q" = { command = "tag:query tag" }
-", n a" = { command = "tag:add negative_tag" }
-", n d" = { command = "tag:remove negative_tag" }
-", n q" = { command = "tag:query negative_tag" }
-", m a" = { command = "tag:add mixed_tag" }
-", m d" = { command = "tag:remove mixed_tag" }
-", m q" = { command = "tag:query mixed_tag" }
-
-# ── Panel navigation and actions ─────────────────────────────────────────────
-# Moving a cursor is one generic command for every panel (doc "Generic panel
-# commands"): `cursor:next self` runs in the focused panel, and only in a panel
-# that has a cursor — elsewhere the key passes through. Naming a panel type instead drives that one: in the `file`
-# panel the arrows still move the metarecord-list selection (the viewer panel
-# follows through selected_paths), and so do they while typing in its finder.
-
-# Move down / up one row.
+# Enter confirms what is typed, and on a row opens it: from a row, beside it
+# by default — i / b / n Enter here, beside, in a new workspace.
+"enter" = [
+  { command = "editing:confirm", text-input = true },
+  { command = "find:next", focus = "find" },
+  { command = "metarecord-list:apply finder", focus = "finder" },
+  { command = "help:apply search", focus = "search" },
+  { command = "panel:open other viewer", when = "metarecord-list" },
+  { command = "panel:open other viewer", when = "recent" },
+  { command = "file-manager:activate {target}", target = "other", when = "file-manager" },
+  { command = "duplicates:activate {target}", target = "other", when = "duplicates" },
+  { command = "cursor:descend self", when = "help" },
+  { command = "cursor:descend self", when = "log" },
+  { command = "cursor:descend self", when = "path-ref" },
+  { command = "metarecord:row-edit", when = "metarecord-detail" },
+  { command = "trash:restore", when = "trash" },
+]
+"shift+enter" = [
+  { command = "find:prev", focus = "find" },
+  { command = "metarecord-list:apply finder stay", focus = "finder" },
+  { command = "help:apply search stay", focus = "search" },
+  { command = "panel:open other metarecord-detail", when = "metarecord-list" },
+  { command = "panel:open other metarecord-detail", when = "recent" },
+  { command = "panel:open other metarecord-detail", when = "file-manager" },
+  { command = "panel:open other metarecord-detail", when = "duplicates" },
+]
 "down" = [
   { command = "cursor:next self" },
   { command = "cursor:next metarecord-list", when = "viewer" },
@@ -296,12 +265,6 @@
   { command = "cursor:prev metarecord-list", when = "viewer" },
   { command = "cursor:prev metarecord-list", focus = "finder" },
 ]
-
-# Vim-style down / up.
-"j" = { command = "cursor:next self" }
-"k" = { command = "cursor:prev self" }
-
-# Jump to first / last row.
 "home" = [
   { command = "cursor:first self" },
   { command = "cursor:first metarecord-list", when = "viewer" },
@@ -310,459 +273,227 @@
   { command = "cursor:last self" },
   { command = "cursor:last metarecord-list", when = "viewer" },
 ]
-
-# Enter: confirm while typing (global), otherwise the focused panel's primary
-# action (open / descend / activate / edit / expand). In the finder it re-runs
-# the filter immediately (bypassing the debounce).
-"enter" = [
-  { command = "editing:confirm", text-input = true },
-  # In the finder, Enter re-runs the filter AND leaves the field (blur), so the
-  # panel accelerators work again without a separate Escape. Shift+Enter (below)
-  # re-runs but keeps the focus for another edit.
-  { command = "metarecord-list:apply finder", focus = "finder" },
-  # The help panel's search box, the same way (doc "help panel").
-  { command = "help:apply search", focus = "search" },
-  # In the find bar, Enter walks to the next match (shift+Enter the previous),
-  # the way a browser's find behaves.
-  { command = "find:next", focus = "find" },
-  # A row of metarecords is shown in the viewer panel of the other slot (doc
-  # "Opening a row"); shift+Enter shows it in the detail panel. The file
-  # manager goes into a folder instead, duplicates unfolds a group.
-  { command = "panel:open other viewer", when = "metarecord-list" },
-  { command = "file-manager:activate other", when = "file-manager" },
-  # Go into the row (doc "Generic panel commands"). Scoped: `enter` already has
-  # its global binding (editing:confirm), and the file manager's Enter is
-  # `file-manager:activate`, which also shows a file.
-  { command = "cursor:descend self", when = "path-ref" },
-  { command = "cursor:descend self", when = "log" },
-  # The help opens the result under its cursor (doc "help panel").
-  { command = "cursor:descend self", when = "help" },
-  { command = "trash:restore", when = "trash" },
-  { command = "panel:open other viewer", when = "recent" },
-  { command = "duplicates:activate other", when = "duplicates" },
-  { command = "metarecord:row-edit", when = "metarecord-detail" },
-]
-
-# The lists' Enter opens the row in the other slot; after a target key it opens
-# it here ("i") or in a new workspace ("b") instead (doc "Panel slots and layout").
-"i enter" = [
-  { command = "panel:open here viewer", when = "metarecord-list" },
-  { command = "panel:open here viewer", when = "recent" },
-  { command = "file-manager:activate here", when = "file-manager" },
-  { command = "duplicates:activate here", when = "duplicates" },
-]
-"b enter" = [
-  { command = "panel:open new viewer", when = "metarecord-list" },
-  { command = "panel:open new viewer", when = "recent" },
-  { command = "file-manager:activate new", when = "file-manager" },
-  { command = "duplicates:activate new", when = "duplicates" },
-]
-"i shift+enter" = [
-  { command = "panel:open here metarecord-detail", when = "metarecord-list" },
-  { command = "panel:open here metarecord-detail", when = "recent" },
-  { command = "panel:open here metarecord-detail", when = "file-manager" },
-  { command = "panel:open here metarecord-detail", when = "duplicates" },
-]
-"b shift+enter" = [
-  { command = "panel:open new metarecord-detail", when = "metarecord-list" },
-  { command = "panel:open new metarecord-detail", when = "recent" },
-  { command = "panel:open new metarecord-detail", when = "file-manager" },
-  { command = "panel:open new metarecord-detail", when = "duplicates" },
-]
-
-# Right / left: descend into / go up (open in the other panel for lists).
-"right" = [
-  { command = "panel:open other viewer", when = "metarecord-list" },
-  # Go into the row: a node, a label, a directory (doc "Generic panel commands").
-  { command = "cursor:descend self" },
-  { command = "panel:open other viewer", when = "recent" },
-  { command = "duplicates:toggle-group", when = "duplicates" },
-  # In the viewer panel left/right seek the previewed media (see the transport
-  # section below); with no media shown they do nothing.
-  { command = "viewer:seek +10", when = "viewer" },
-]
 "left" = [
   { command = "cursor:parent self" },
-  # In metarecord-detail there is nothing to descend into, so left/backspace
-  # step back out of a chain of followed references. (Enter stays field-edit.)
   { command = "metarecord:back", when = "metarecord-detail" },
   { command = "viewer:seek -10", when = "viewer" },
 ]
+"right" = [
+  { command = "cursor:descend self" },
+  { command = "panel:open other viewer", when = "metarecord-list" },
+  { command = "panel:open other viewer", when = "recent" },
+  { command = "duplicates:toggle-group", when = "duplicates" },
+  { command = "viewer:seek +10", when = "viewer" },
+]
 "backspace" = [
-  # Up one level, in every panel that has levels (doc "Generic panel commands").
   { command = "cursor:parent self" },
   { command = "metarecord:back", when = "metarecord-detail" },
-  # Going up is what backspace means in every other panel; the `viewer` panel
-  # browses folders too, so it means the same there. mpv's "back to normal
-  # speed" keeps the key with shift (see the transport section below).
+  { command = "help:back", when = "help" },
   { command = "viewer:back", when = "viewer" },
-  # The help is browsed, not climbed: backspace goes back in the pages shown,
-  # as a browser does; left still goes up to the page's topic (doc "help panel").
+]
+"shift+backspace" = [
+  { command = "help:forward", when = "help" },
+  { command = "viewer:speed reset", when = "viewer" },
+]
+"alt+up" = [
+  { command = "cursor:parent self" },
+  { command = "metarecord-list:order move up", when = "metarecord-list" },
+]
+"alt+down" = { command = "metarecord-list:order move down", when = "metarecord-list" }
+"alt+home" = { command = "cursor:root self" }
+"alt+left" = [
+  { command = "metarecord:back", when = "metarecord-detail" },
   { command = "help:back", when = "help" },
 ]
+"alt+right" = { command = "help:forward", when = "help" }
 
-# Refresh the current view: one generic command, for every panel that can
-# read its content again (doc "Generic panel commands") — the viewer panel too,
-# which reads the file again; playing its media from the start is shift+r.
-"r" = { command = "view:refresh self" }
-
-# Delete: `item:delete` (doc "Deleting an item"), with no question — the
-# file to the trash, its metarecords with it, or the metarecord alone when
-# there is no file. In the trash panel itself, Delete permanently removes the
-# highlighted entry (confirmed).
-"delete" = [
-  { command = "item:delete", when = "metarecord-list" },
-  { command = "item:delete", when = "metarecord-detail" },
-  { command = "item:delete", when = "file-manager" },
-  { command = "item:delete", when = "path-ref" },
-  { command = "item:delete", when = "viewer" },
-  { command = "trash:prune entry", when = "trash" },
-  # In the duplicates panel it is the copy under the cursor that goes, and the
-  # panel re-counts the group it left (doc "duplicates panel") — which a
-  # reload on the shared dirty flag could not do before the watcher settles.
-  { command = "duplicates:trash", when = "duplicates" },
+# Find: `f` a row by its name, shift+f walking down into it; `/` as in most
+# programs. In the list, `f` is its finder field, and shift+f empties it.
+"f" = [
+  { command = "cursor:find self select" },
+  { command = "metarecord-list:focus finder", when = "metarecord-list" },
+]
+"/" = [
+  { command = "cursor:find self select" },
+  { command = "metarecord-list:focus finder", when = "metarecord-list" },
+]
+"shift+f" = [
+  { command = "cursor:find self walk" },
+  { command = "metarecord-list:clear finder", when = "metarecord-list" },
 ]
 
-# The direct forms: ctrl+delete sends the file to the trash (= file:trash,
-# its metarecords with it), shift+delete deletes the metarecord alone
-# (= metarecord:delete, the file kept).
-"ctrl+delete" = [
-  { command = "file:trash self", when = "metarecord-list" },
-  { command = "file:trash self", when = "metarecord-detail" },
+# Space toggles in place: check a row, play or pause.
+"space" = [
+  { command = "metarecord-list:select toggle", when = "metarecord-list" },
+  { command = "file-manager:select toggle", when = "file-manager" },
+  { command = "viewer:play-pause", when = "viewer" },
 ]
+
+# ── Go to (g): a picker, so here by default ──────────────────────────────────
+
+"{go} r" = { command = "recent {target} time", target = "here" }
+"{go} shift+r" = { command = "recent {target} score", target = "here" }
+"{go} d" = { command = "folder:open files {target}", target = "here" }
+"{go} l" = { command = "folder:open children {target}", target = "here" }
+"{go} shift+l" = { command = "folder:open subtree {target}", target = "here" }
+"{go} o" = { command = "repos:switch" }
+"{go} shift+o" = { command = "repos:load on-disk" }
+"{go} p" = { command = "script:run" }
+"{go} w" = { command = "file:open-with" }
+"{go} m" = { command = "file-manager:reveal {target}", target = "here" }
+# The selection's folder as a list: from a row, so beside it.
+"{go} s" = { command = "metarecord-list:folder {target}", target = "other" }
+
+# ── Help (h) ─────────────────────────────────────────────────────────────────
+
+"{help} h" = { command = "help:open" }
+"{help} c" = { command = "help:cursor" }
+"f1" = { command = "help:cursor", text-input = true }
+"{help} k" = { command = "help:key" }
+"{help} x" = { command = "help:command" }
+
+# ── The focused panel's actions (p) and what it shows (v) ────────────────────
+
+# Its text fields: edit, or edit from empty (shift).
+"{panel} {edit}" = [
+  { command = "metarecord-list:focus simplified", when = "metarecord-list" },
+  { command = "help:focus search", when = "help" },
+  { command = "shell:focus line", when = "shell" },
+]
+"{panel} shift+{edit}" = [
+  { command = "metarecord-list:clear simplified", when = "metarecord-list" },
+  { command = "help:clear search", when = "help" },
+]
+"{panel} {query-verb}" = { command = "metarecord-list:focus normal", when = "metarecord-list" }
+"{panel} shift+{query-verb}" = { command = "metarecord-list:clear normal", when = "metarecord-list" }
+"{panel} {unset}" = { command = "metarecord-list:clear all", when = "metarecord-list" }
+"{panel} {open}" = [
+  { command = "help:open-hints", when = "help" },
+  { command = "sync:plan", when = "sync" },
+]
+"{panel} shift+{open}" = { command = "sync:open", when = "sync" }
+"{panel} {run}" = [
+  { command = "viewer:restart", when = "viewer" },
+  { command = "sync:run", when = "sync" },
+]
+"{panel} {add}" = { command = "metarecord:open-add-field", when = "metarecord-detail" }
+"{panel} shift+{add}" = { command = "metarecord:row-add", when = "metarecord-detail" }
+"{panel} {create}" = [
+  { command = "metarecord:create", when = "metarecord-list" },
+  { command = "metarecord:create", when = "metarecord-detail" },
+  { command = "path-ref:add", when = "path-ref" },
+  { command = "file:record self", when = "file-manager" },
+]
+"{panel} {revert}" = { command = "log:revert", when = "log" }
+"{panel} shift+{revert}" = { command = "log:revert label", when = "log" }
+"{panel} {keep}" = { command = "duplicates:keep", when = "duplicates" }
+"{panel} {list}" = { command = "path-ref:list-refs {target}", target = "other", when = "path-ref" }
+
+"ctrl+n" = [
+  { command = "metarecord:create", when = "metarecord-detail" },
+  { command = "metarecord:create", when = "metarecord-list" },
+  { command = "path-ref:add", when = "path-ref" },
+  { command = "file:new self file", when = "file-manager" },
+]
+"ctrl+shift+n" = { command = "file:new self folder", when = "file-manager" }
+"f2" = { command = "file:rename self" }
+"ctrl+h" = { command = "file-manager:toggle hidden", when = "file-manager" }
+
+"{view} g" = { command = "metarecord-list:toggle mode", when = "metarecord-list" }
+"{view} h" = { command = "file-manager:toggle hidden", when = "file-manager" }
+"{view} r" = [
+  { command = "file-manager:toggle root", when = "file-manager" },
+  { command = "path-ref:set ref-field", when = "path-ref" },
+]
+"{view} a" = { command = "file-manager:toggle activity", when = "file-manager" }
+"{view} o" = { command = "file-manager:toggle operations", when = "file-manager" }
+"{view} w" = { command = "log:toggle watcher", when = "log" }
+"{view} u" = { command = "log:toggle unchanged", when = "log" }
+"{view} s" = [
+  { command = "path-ref:toggle-scope", when = "path-ref" },
+  { command = "recent:set-sort", when = "recent" },
+]
+"{view} t" = { command = "path-ref:set field", when = "path-ref" }
+"{view} z" = { command = "viewer:zoom fit", when = "viewer" }
+
+# ── The viewer's media (doc "Media preview"), on a media player's keys ──────
+
+"shift+left" = { command = "viewer:seek -60", when = "viewer" }
+"shift+right" = { command = "viewer:seek +60", when = "viewer" }
+"pagedown" = { command = "viewer:page next", when = "viewer" }
+"pageup" = { command = "viewer:page prev", when = "viewer" }
+"ctrl+up" = { command = "viewer:speed up", when = "viewer" }
+"ctrl+down" = { command = "viewer:speed down", when = "viewer" }
+"shift+up" = { command = "viewer:volume up", when = "viewer" }
+"shift+down" = { command = "viewer:volume down", when = "viewer" }
+"ctrl+m" = { command = "viewer:mute", when = "viewer" }
+
+# ── Metarecords (m): the selected one; shift+m or m m the checked ones; m q
+# what the list's query matches (doc "Editing metarecords in the GUI") ───────
+
+"{record} {set}" = { command = "metarecord:field set" }
+"{record} {add}" = { command = "metarecord:field add" }
+"{record} {remove}" = { command = "metarecord:field remove" }
+"{record} {unset}" = { command = "metarecord:field unset" }
+"{record} {edit}" = { command = "metarecord:field edit" }
+"{record} {rename}" = { command = "metarecord:field rename" }
+"{record} {retype}" = { command = "metarecord:field retype" }
+"{record} {delete}" = { command = "metarecord:delete" }
+"{record} {index}" = { command = "mf:order" }
+"{checked} {set}" = { command = "metarecord:bulk selection set" }
+"{checked} {add}" = { command = "metarecord:bulk selection add" }
+"{checked} {remove}" = { command = "metarecord:bulk selection remove" }
+"{checked} {unset}" = { command = "metarecord:bulk selection unset" }
+"{checked} {delete}" = { command = "metarecord:bulk selection delete" }
+"{checked-long} {set}" = { command = "metarecord:bulk selection set" }
+"{checked-long} {add}" = { command = "metarecord:bulk selection add" }
+"{checked-long} {remove}" = { command = "metarecord:bulk selection remove" }
+"{checked-long} {unset}" = { command = "metarecord:bulk selection unset" }
+"{checked-long} {delete}" = { command = "metarecord:bulk selection delete" }
+"{query} {set}" = { command = "metarecord:bulk query set" }
+"{query} {add}" = { command = "metarecord:bulk query add" }
+"{query} {remove}" = { command = "metarecord:bulk query remove" }
+"{query} {unset}" = { command = "metarecord:bulk query unset" }
+"{query} {delete}" = { command = "metarecord:bulk query delete" }
 "shift+delete" = [
   { command = "metarecord:delete", when = "metarecord-list" },
   { command = "metarecord:delete", when = "metarecord-detail" },
   { command = "metarecord:delete", when = "path-ref" },
 ]
 
-# duplicates: keep the copy under the cursor and trash the group's others. Plain
-# "k" is vim-up everywhere, so the choice of survivor takes the shifted key.
-"shift+k" = { command = "duplicates:keep", when = "duplicates" }
+# ── Items (e): a file with its metarecords, or a metarecord without a file
+# (doc "Deleting an item") ────────────────────────────────────────────────────
 
-# log: undoing a *past* change in place — the reverts. Shifted keys throughout:
-# plain "r" is refresh in every panel, and the log's own list keys (j/k, enter)
-# are the ones the fingers already know. "shift+r" reverts whatever the cursor
-# is on (a write, or one operation of an expanded one), which is the whole
-# point of being able to select an operation.
-"shift+r" = [
-  { command = "log:revert", when = "log" },
-  # viewer: play the media from the start (plain "r" refreshes, as everywhere).
-  { command = "viewer:restart", when = "viewer" },
-]
-"shift+o" = { command = "log:revert op", when = "log" }
-"shift+v" = { command = "log:revert label", when = "log" }
-# metarecord-list: the table ⇄ the grid of thumbnails (g = grid).
-"shift+g" = { command = "metarecord-list:toggle mode", when = "metarecord-list" }
-# metarecord-list ordered by an int field: move the row under the cursor
-# (doc "Ordering a list").
-"alt+up" = { command = "metarecord-list:order move up", when = "metarecord-list" }
-"alt+down" = { command = "metarecord-list:order move down", when = "metarecord-list" }
-"shift+w" = { command = "log:toggle watcher", when = "log" }
-
-# The file clipboard (doc "Generic panel commands"): copy / cut the checked
-# files, or the one under the cursor, in every panel that designates files (the
-# file manager, the metarecord list). Not in a text input, which keeps its own
-# ctrl+c / ctrl+x.
-"ctrl+c" = { command = "clipboard:copy self" }
-"ctrl+x" = { command = "clipboard:cut self" }
-
-# The file commands (doc "File commands"), on the panel's own files: paste,
-# rename, duplicate, create. Scoped to the file manager for now; it has no
-# text-input focus, so these plain accelerators never clash with editing.
-"ctrl+v" = { command = "file:paste self", when = "file-manager" }
-"f2" = { command = "file:rename self", when = "file-manager" }
-"ctrl+d" = { command = "file:duplicate self", when = "file-manager" }
-"ctrl+shift+n" = { command = "file:new self folder", when = "file-manager" }
-# Jump to the root — the repository's, or the filesystem's when no repository is
-# active — on the key that means root in a path. `/` is the metarecord-list
-# finder elsewhere, so the two never meet.
-"/" = [
-  { command = "metarecord-list:focus finder", when = "metarecord-list" },
-  # The tree explorer browses a forest the way the file manager browses the
-  # disk, so "/" means the same in both: back to the top (doc "Generic panel
-  # commands").
-  { command = "cursor:root self" },
-]
-# Show/hide dot-entries, on the combo the desktop file managers use.
-"ctrl+h" = { command = "file-manager:toggle hidden", when = "file-manager" }
-# Browse the repository root ⇄ the whole filesystem — the other thing this panel
-# toggles, and the only one of the pair that had no key.
-"ctrl+r" = { command = "file-manager:toggle root", when = "file-manager" }
-# Busiest entries first (watch activity): the walk down to where the watcher's
-# events come from.
-"ctrl+shift+a" = { command = "file-manager:toggle activity", when = "file-manager" }
-# Costliest entries first: what the watcher wrote to the log, not what it received.
-"ctrl+shift+o" = { command = "file-manager:toggle operations", when = "file-manager" }
-
-# metarecord-list: selection, finder, query editing. Space checks the row under
-# the cursor into the multi-selection — the workspace-wide set the bulk
-# operations act on (doc "Cross-panel selection"), kept when the list
-# changes so a selection can be gathered in several lists. The file manager
-# checks its own rows into the same set, hence its entry on the same keys.
-"space" = [
-  { command = "metarecord-list:select toggle", when = "metarecord-list" },
-  { command = "file-manager:select toggle", when = "file-manager" },
-  # In the viewer panel, space is the media player's play/pause (see the
-  # transport section below).
-  { command = "viewer:play-pause", when = "viewer" },
-]
-"ctrl+space" = [
-  { command = "metarecord-list:select none", when = "metarecord-list" },
-  { command = "file-manager:select none", when = "file-manager" },
-]
-"ctrl+/" = { command = "metarecord-list:focus simplified", when = "metarecord-list" }
-
-# Editing the three search fields by chord (in addition to `/` and `ctrl+/`).
-# Two mnemonic families, both `when = "metarecord-list"` so the `e`/`c` prefixes
-# only ever arm inside the list (elsewhere the single key does nothing):
-#   e = edit the field (focus it, keep its content)
-#   c = clear that field first, then edit it
-# The field letter is the same in both: f = finder, s = simplified query
-# (its command unfreezes the normal editor, otherwise the frozen DSL would keep
-# driving the query), q = the normal DSL (its command opens + freezes the
-# editor). c a clears all three at once. Shift+Enter in the finder re-runs but
-# keeps the focus.
-"shift+enter" = [
-  { command = "metarecord-list:apply finder stay", focus = "finder" },
-  { command = "help:apply search stay", focus = "search" },
-  { command = "find:prev", focus = "find" },
-  # The row under the cursor in the detail panel of the other slot (doc
-  # "Opening a row"); Enter shows it in the viewer panel.
-  { command = "panel:open other metarecord-detail", when = "metarecord-list" },
-  { command = "panel:open other metarecord-detail", when = "recent" },
-  { command = "panel:open other metarecord-detail", when = "file-manager" },
-  { command = "panel:open other metarecord-detail", when = "duplicates" },
-]
-"e f" = { command = "metarecord-list:focus finder", when = "metarecord-list" }
-"e s" = [
-  { command = "metarecord-list:focus simplified", when = "metarecord-list" },
-  # help: s = the search box, as in the list (doc "help panel").
-  { command = "help:focus search", when = "help" },
-]
-"e q" = { command = "metarecord-list:focus normal", when = "metarecord-list" }
-"e l" = { command = "shell:focus line", when = "shell" }
-# "f" = find. In the list panels it jumps to a row by name, completing over
-# what the panel displays and filtered by ordered substring like every other
-# picker (doc "Jumping to an entry"); in metarecord-list — whose rows come from
-# a query, not from a loaded list — the same key edits the finder, which asks
-# the daemon the same question. Ctrl+f is the other find: it highlights
-# rendered text without moving any cursor (doc "Find in a panel").
-"f" = [
-  { command = "cursor:find self select" },
-  { command = "metarecord-list:clear finder", when = "metarecord-list" },
-]
-# "d" = descend by name: the find in `walk` mode enters the directory (the
-# node with children) found and asks again from inside, so a path is walked
-# down one name at a time; a file (a leaf) found is selected, and Shift+Enter
-# stops on a directory, selected (doc "Jumping to an entry"). Only where a row
-# can be entered (the file manager, the tree).
-"d" = [
-  { command = "cursor:find self walk" },
+"delete" = [
+  { command = "item:delete", when = "metarecord-list" },
+  { command = "item:delete", when = "file-manager" },
+  { command = "item:delete", when = "path-ref" },
+  { command = "item:delete", when = "viewer" },
+  # In the detail panel, the field row under the cursor.
   { command = "metarecord:row-delete", when = "metarecord-detail" },
-  # help: label every link in view with letters, avy-style; typing a label
-  # follows it, escape cancels (doc "help panel").
-  { command = "help:open-hints", when = "help" },
+  # In the duplicates panel, the copy under the cursor: the panel re-counts
+  # its group at once (doc "duplicates panel").
+  { command = "duplicates:trash", when = "duplicates" },
+  # In the trash, for good — after a confirmation.
+  { command = "trash:prune entry", when = "trash" },
 ]
-# path-ref: pick which tree_ref / hierarchy_ref field the panel explores (the drop-down's
-# keyboard equivalent; the field name completes). It keeps the F key, shifted,
-# now that plain "f" finds a child.
-"shift+f" = { command = "path-ref:set field", when = "path-ref" }
-"s" = [
-  { command = "metarecord-list:clear simplified", when = "metarecord-list" },
-  # path-ref: exact node ⇄ the whole subtree, for the "what points here?" query.
-  { command = "path-ref:toggle-scope", when = "path-ref" },
-  # recent: newest first ⇄ best score first (doc "Frecent folders").
-  { command = "recent:set-sort", when = "recent" },
-  { command = "help:clear search", when = "help" },
-]
+"{item} {delete}" = { command = "item:delete" }
+"{items} {delete}" = { command = "item:delete selection" }
+"{items-long} {delete}" = { command = "item:delete selection" }
+"{items-query} {delete}" = { command = "item:delete query" }
+# The slideshow (doc "Slideshow"): the checked files, or the query's.
+"{items} {run}" = { command = "viewer:play selection" }
+"{items-long} {run}" = { command = "viewer:play selection" }
+"{items-query} {run}" = { command = "viewer:play query" }
 
-# path-ref: build the "what points at this node?" query and run it in a
-# metarecord-list opened in the other slot ("l"), or pick the Ref field it
-# follows back ("e"). See doc "path-ref panel".
-"l" = { command = "path-ref:list-refs other", when = "path-ref" }
-"w l" = { command = "path-ref:list-refs other", when = "path-ref" }
-"b l" = { command = "path-ref:list-refs new", when = "path-ref" }
-"i l" = { command = "path-ref:list-refs here", when = "path-ref" }
-"e" = { command = "path-ref:set ref-field", when = "path-ref" }
-"q" = { command = "metarecord-list:clear normal", when = "metarecord-list" }
-"c" = [
-  { command = "metarecord-list:clear all", when = "metarecord-list" },
-  # help: empties the search box, the focus staying on the page.
-  { command = "help:clear search stay", when = "help" },
-]
+# ── Tags (,) ─────────────────────────────────────────────────────────────────
 
-# metarecord-detail: field actions and record creation.
-"a" = { command = "metarecord:open-add-field", when = "metarecord-detail" }
-"ctrl+n" = [
-  { command = "metarecord:create", when = "metarecord-detail" },
-  # New *file*, on the same combo the folder uses without its shift — the
-  # sibling had a key and it did not.
-  { command = "file:new self file", when = "file-manager" },
-  # path-ref: a new element of the explored forest, under the current node —
-  # the create family keeps its combo.
-  { command = "path-ref:add", when = "path-ref" },
-]
-
-# Command-input-driven field editing ("m" = metarecord edit; the status bar
-# lists the continuations while the sequence is pending). The per-record family
-# is bound in EVERY panel: it acts on the workspace's selected metarecord, so it
-# is reachable wherever a metarecord is seen or selected — the list (its
-# highlighted row, which the detail panel mirrors), the detail, the viewer panel,
-# the file manager, a tree. Each command collects its arguments (field / value
-# / type) in the command input, with completion (see doc "Interactive command
-# arguments"), and says so when nothing is selected.
-# Mnemonics: s=set, a=add, v=value(edit), d=delete(a value), u=unset, n=name,
-# t=type, b=bulk. The per-record family is one command with the operation as
-# its first argument (`metarecord:field`), the bulk one carries a target first
-# and the operation second (`metarecord:bulk <target> <op>`), so each binding
-# here is that command with those arguments pre-filled — the remaining
-# arguments (field / value / type) are still collected in the command input,
-# with completion. These pre-filled invocations are exactly what the
-# command-input listing expands, so every one of them is discoverable there
-# with its combo.
-"m s" = { command = "metarecord:field set" }
-"m a" = { command = "metarecord:field add" }
-"m v" = { command = "metarecord:field edit" }
-"m d" = { command = "metarecord:field remove" }
-# `unset` removes the field entirely (every row → unknown), where `remove`
-# takes one value out of it. The per-record family had no unset until the two
-# scopes were given the same operation set.
-"m u" = { command = "metarecord:field unset" }
-"m n" = { command = "metarecord:field rename" }
-"m t" = { command = "metarecord:field retype" }
-# Bulk operations act on a target they name: `selection` (the checked rows) or
-# `query` (what the list shows). "m b" runs the command bare, so it asks for
-# the target and then the operation; the "m m <op>" sequences name BOTH up
-# front, targeting the checked selection, and "m q <op>" (below) the query. The key layout is unchanged from when these were eleven separate
-# commands — only what they invoke changed — and they work from either panel,
-# like the per-record family above (a command reaches its panel whatever is
-# focused, so the old list/detail split was an artifact of ownership).
-"m b" = [
-  { command = "metarecord:bulk", when = "metarecord-list" },
-  { command = "metarecord:bulk", when = "metarecord-detail" },
-]
-"m m s" = [
-  { command = "metarecord:bulk selection set", when = "metarecord-detail" },
-  { command = "metarecord:bulk selection set", when = "metarecord-list" },
-]
-"m m a" = [
-  { command = "metarecord:bulk selection add", when = "metarecord-detail" },
-  { command = "metarecord:bulk selection add", when = "metarecord-list" },
-]
-# "r" removes the field entirely (unset), "v" takes one value out of it, "d"
-# deletes the metarecords themselves (confirmed, naming the count).
-"m m r" = [
-  { command = "metarecord:bulk selection unset", when = "metarecord-detail" },
-  { command = "metarecord:bulk selection unset", when = "metarecord-list" },
-]
-"m m v" = [
-  { command = "metarecord:bulk selection remove", when = "metarecord-detail" },
-  { command = "metarecord:bulk selection remove", when = "metarecord-list" },
-]
-"m m d" = [
-  { command = "metarecord:bulk selection delete", when = "metarecord-detail" },
-  { command = "metarecord:bulk selection delete", when = "metarecord-list" },
-]
-# "t" sends the files to the trash, their metarecords with them (one write,
-# restorable from the trash panel); metarecords without a file are left alone.
-"m m t" = [
-  { command = "metarecord:bulk selection trash", when = "metarecord-detail" },
-  { command = "metarecord:bulk selection trash", when = "metarecord-list" },
-]
-# "m q <op>": the same operations on what the list's query matches
-# (q = query) instead of the checked rows. Each one still confirms, naming the
-# count, so a whole-repository edit is never one keystroke away.
-"m q s" = [
-  { command = "metarecord:bulk query set", when = "metarecord-detail" },
-  { command = "metarecord:bulk query set", when = "metarecord-list" },
-]
-"m q a" = [
-  { command = "metarecord:bulk query add", when = "metarecord-detail" },
-  { command = "metarecord:bulk query add", when = "metarecord-list" },
-]
-"m q r" = [
-  { command = "metarecord:bulk query unset", when = "metarecord-detail" },
-  { command = "metarecord:bulk query unset", when = "metarecord-list" },
-]
-"m q v" = [
-  { command = "metarecord:bulk query remove", when = "metarecord-detail" },
-  { command = "metarecord:bulk query remove", when = "metarecord-list" },
-]
-"m q d" = [
-  { command = "metarecord:bulk query delete", when = "metarecord-detail" },
-  { command = "metarecord:bulk query delete", when = "metarecord-list" },
-]
-"m q t" = [
-  { command = "metarecord:bulk query trash", when = "metarecord-detail" },
-  { command = "metarecord:bulk query trash", when = "metarecord-list" },
-]
-
-# sync (doc "sync panel"): the four steps of a cross-repo sync, on the prefix that
-# names it. The panel's own source claimed these lived here long before they
-# did — it was the one panel type with no keybinding at all.
-"y s" = { command = "sync:status", when = "sync" }
-"y p" = { command = "sync:plan", when = "sync" }
-"y w" = { command = "sync:open", when = "sync" }
-"y r" = { command = "sync:run", when = "sync" }
-
-# Zoom: the viewer panel zooms its image; every other panel zooms as a whole
-# (`view:zoom`, doc "Generic panel commands"), its zoom kept per workspace.
-"plus" = [
-  { command = "viewer:zoom in", when = "viewer" },
-  { command = "view:zoom self in" },
-]
-"-" = [
-  { command = "viewer:zoom out", when = "viewer" },
-  { command = "view:zoom self out" },
-]
-"=" = { command = "viewer:zoom fit", when = "viewer" }
-"0" = [
-  { command = "viewer:zoom reset", when = "viewer" },
-  { command = "view:zoom self reset" },
-]
-# metarecord-detail: one more value of the field under the cursor (a hierarchy
-# node: one more parent), beside `a` which adds a field. It was `+` until `+`
-# became the zoom.
-"shift+a" = { command = "metarecord:row-add", when = "metarecord-detail" }
-
-# viewer: document paging (a PDF preview). No-ops in front of anything else, so
-# the keys stay free for the rest of the panel.
-# (home/end are not taken: in this panel they already jump the metarecord-list
-# to its first/last row, like the arrow keys. viewer:page first / viewer:page last
-# stay reachable from the command input.)
-"pagedown" = { command = "viewer:page next", when = "viewer" }
-"pageup" = { command = "viewer:page prev", when = "viewer" }
-
-# viewer: media transport, on the keys a media player uses (mpv's, so the muscle
-# memory carries over). Space, left/right and backspace are in the sections
-# above, alongside the other panels' meaning for those keys. All of them are
-# no-ops unless the preview is actually showing an audio/video file.
-"shift+right" = { command = "viewer:seek +60", when = "viewer" }
-"shift+left" = { command = "viewer:seek -60", when = "viewer" }
-"]" = { command = "viewer:speed up", when = "viewer" }
-"[" = { command = "viewer:speed down", when = "viewer" }
-"shift+up" = { command = "viewer:volume up", when = "viewer" }
-"shift+down" = { command = "viewer:volume down", when = "viewer" }
-# Plain "m" starts the metarecord-edit key sequence, so mute takes ctrl+m.
-"ctrl+m" = { command = "viewer:mute", when = "viewer" }
-# mpv resets the speed with backspace; here plain backspace goes up a level
-# (above), so the reset keeps the key with shift.
-"shift+backspace" = [
-  { command = "viewer:speed reset", when = "viewer" },
-  # help: forward again, after a backspace (doc "help panel").
-  { command = "help:forward", when = "help" },
-]
-
-# Find in panel (doc "Find in a panel"): the browser's Ctrl-F over the text
-# the focused panel currently renders. `text-input = true` so it also works
-# from inside a panel's own search box, and pressing it again re-focuses the
-# find bar and selects what is in it. Enter / shift+Enter / escape while the
-# bar has the focus are the focus-scoped entries in the sections above.
-"ctrl+f" = { command = "find:open", text-input = true }
-
-# Panel types can still suggest their own keybindings at runtime
-# (metafolder.addKeybinding) — useful for third-party panels. Those are the
-# weakest layer: any entry here with the same combo and the same `when`
-# overrides them. The built-in panels declare all of their bindings above
-# rather than suggesting them, so they are all editable in this one file.
+"{tags} {add}" = { command = "tag:add tag" }
+"{tags} {remove}" = { command = "tag:remove tag" }
+"{tags} {query-verb}" = { command = "tag:query tag" }
+"{negative} {add}" = { command = "tag:add negative_tag" }
+"{negative} {remove}" = { command = "tag:remove negative_tag" }
+"{negative} {query-verb}" = { command = "tag:query negative_tag" }
+"{mixed} {add}" = { command = "tag:add mixed_tag" }
+"{mixed} {remove}" = { command = "tag:remove mixed_tag" }
+"{mixed} {query-verb}" = { command = "tag:query mixed_tag" }

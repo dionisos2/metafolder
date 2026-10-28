@@ -33,8 +33,8 @@ Without a repository nothing is marked.
 
 Dot-entries are hidden until ''hidden files'' is checked
 (<<key "file-manager:toggle hidden" Ctrl+h>>); `.` and `..` always show. ''by
-activity'' (<<key "file-manager:toggle activity" Ctrl+Shift+a>>) puts the busiest
-entries first, ''by operations'' (<<key "file-manager:toggle operations" Ctrl+Shift+o>>)
+activity'' (<<key "file-manager:toggle activity" "v a">>) puts the busiest
+entries first, ''by operations'' (<<key "file-manager:toggle operations" "v o">>)
 the ones the watcher wrote the most for; choosing one leaves the other.
 
 The rows are drawn 200 at a time (`[page-size]`, [[GUI configuration]]), the next
@@ -44,18 +44,18 @@ place of its rows.
 
 The marks follow the repository: they are read again whenever the daemon reports a
 change. The ''entries'' are not watched — a file another program creates appears on
-<<key "view:refresh self" r>>, or after an operation of the panel's own.
+<<key "view:refresh self" "Ctrl+r">>, or after an operation of the panel's own.
 
 !! Moving around
 
-* <<key "cursor:next self" "↓ or j">> / <<key "cursor:prev self" "↑ or k">>, <<key "cursor:first self" Home>> / <<key "cursor:last self" End>> — move the cursor.
+* <<key "cursor:next self" "↓">> / <<key "cursor:prev self" "↑">>, <<key "cursor:first self" Home>> / <<key "cursor:last self" End>> — move the cursor.
 * <<key "file-manager:activate other" Enter>> — enter the directory under the cursor; on a file, or on `.` (the folder shown), show it in the [[viewer panel]] of the other slot (after `i` in place of this panel, after `b` in a new workspace).
 * <<key "panel:open other metarecord-detail" Shift+Enter>> — show the entry's metarecord in the [[metarecord-detail panel]]; refused on an entry no metarecord records.
 * The buttons at the start of a row ([[Opening a row]]) — `↘` on a folder enters it; `↗` on a file, or on `.`, shows it in the viewer panel; `ⓘ` in the detail panel (greyed when untracked).
 * <<key "cursor:parent self" "Backspace or ←">>, or ''↑ up'' — the parent directory.
-* <<key "cursor:root self" "/">>, or the root button — the repository root; `/` when the workspace has no repository, and the button then reads ''root''.
+* <<key "cursor:root self" "Alt+Home">>, or the root button — the repository root; `/` when the workspace has no repository, and the button then reads ''root''.
 * <<key "cursor:find self select" f>> — jump to an entry of this directory by name ([[Jumping to an entry]]).
-* <<key "cursor:find self walk" d>> — walk down by name: a directory found is entered and the question asked again, a file found is selected (`shift+Enter` stops on a directory).
+* <<key "cursor:find self walk" "Shift+f">> — walk down by name: a directory found is entered and the question asked again, a file found is selected (`shift+Enter` stops on a directory).
 * <<key "folder:open files here" "g d">> — a folder you use often and lately, from anywhere ([[Frecent folders]]). Each folder the panel goes into counts as a view of it.
 
 Going back up — by ''↑ up'', the root button, their keys, or by entering `..` —
@@ -63,7 +63,7 @@ highlights the folder left (from the root, the top folder of the way left), so
 the way back down is one Enter away. A command revealing a location says what to
 highlight instead.
 
-''constrain to repo root'' (<<key "file-manager:toggle root" Ctrl+r>>, checked at
+''constrain to repo root'' (<<key "file-manager:toggle root" "v r">>, checked at
 first) keeps the browsing inside the repository: going above its root is refused, and
 the root has no `..` row. Unchecked, the whole disk is reachable. Without a
 repository the box is disabled.
@@ -76,7 +76,7 @@ when it has one. The panels beside it follow — a [[viewer panel]] previews the
 
 <<key "file-manager:select toggle" Space>> checks the metarecord of the row,
 `file-manager:select all` every tracked entry of the directory, and
-<<key "file-manager:select none" Ctrl+Space>> unchecks everything. The checked set is
+<<key "file-manager:select none" "Ctrl+Shift+a">> unchecks everything. The checked set is
 the one [[metarecord-list panel]] gathers and the bulk operations act on. An untracked
 entry has no metarecord to check, and the status bar says so.
 

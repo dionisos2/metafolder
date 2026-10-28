@@ -7,7 +7,7 @@ Which copy survives is always yours to choose. Nothing picks one for you, and no
 action spans several groups. In the [[duplicates panel]], both deletions act on
 the row under the cursor, and both are confirmed:
 
-* ''keep this one'' — <<key "duplicates:keep" Shift+k>>, and the first item of the context menu: trashes every ''other'' copy of the group. The confirmation names every path it will trash, and how much space pruning the trash will then reclaim.
+* ''keep this one'' — <<key "duplicates:keep" "p k">>, and the first item of the context menu: trashes every ''other'' copy of the group. The confirmation names every path it will trash, and how much space pruning the trash will then reclaim.
 * ''trash this one'' — <<key "duplicates:trash" Delete>>: that copy alone, saying what the group is left with.
 
 The copies go to the [[Trash]], so a mistake is recoverable

@@ -9,4 +9,4 @@ summary: Open the add-field form on the selected metarecord
 
 !! Default keys
 
-* ``a`` → ``metarecord:open-add-field`` (in the ``metarecord-detail`` panel)
+* ``p a`` → ``metarecord:open-add-field`` (in the ``metarecord-detail`` panel)

@@ -13,9 +13,9 @@ nothing to the daemon, so it adds no write to the event log.
 
 !! As a pick
 
-<<key "recent other time" "g r">> (`recent <where> time`) lists them in the command
+<<key "recent other time" "b g r">> (`recent <where> time`) lists them in the command
 input, newest first, each as its path, its `label`, its `name` and its ''score'';
-<<key "recent other score" "g m">> (`recent <where> score`) lists them best score
+<<key "recent other score" "b g Shift+r">> (`recent <where> score`) lists them best score
 first. The score is the entry's number of views, aged, weighted by how recently it was
 last viewed ([[Frecent folders]]), shown to one decimal. Type to narrow, `Enter` to open: the metarecord becomes
 the selection and is shown in the ''other'' slot — in the [[viewer panel]] when it has a
@@ -31,11 +31,11 @@ its score; how long ago it was viewed. The rows are newest first, or best score 
 with ''sort'' in the toolbar or `recent:set-sort score`; the choice is the
 workspace's (`recent:sort`).
 
-* <<key "cursor:next self" "↓ or j">> / <<key "cursor:prev self" "↑ or k">>, <<key "cursor:first self" Home>> / <<key "cursor:last self" End>> — move the cursor. The row under it is the workspace's selection, so a detail or viewer panel beside it follows.
+* <<key "cursor:next self" "↓">> / <<key "cursor:prev self" "↑">>, <<key "cursor:first self" Home>> / <<key "cursor:last self" End>> — move the cursor. The row under it is the workspace's selection, so a detail or viewer panel beside it follows.
 * <<key "panel:open other viewer" "Enter or →">>, or the `↗` button of a row ([[Opening a row]]) — show it in the [[viewer panel]] of the other slot; <<key "panel:open other metarecord-detail" Shift+Enter>>, or the `ⓘ` button, in the [[metarecord-detail panel]]. After `b` in a new workspace, after `i` in place of this panel ([[open targets|Panel slots and layout]]).
 * <<key "cursor:find self select" f>> — jump to a row by name; a candidate carries its path, which tells two rows of the same name apart ([[Jumping to an entry]]).
-* <<key "recent:set-sort" s>> — newest first ⇄ best score first (the question offers the other order).
-* <<key "view:refresh self" r>> — read the list again.
+* <<key "recent:set-sort" "v s">> — newest first ⇄ best score first (the question offers the other order).
+* <<key "view:refresh self" "Ctrl+r">> — read the list again.
 
 The rows are a snapshot: they are read when the panel is shown, on a refresh and when
 metarecords change, not at each view — walking the list does not reorder it under

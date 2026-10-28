@@ -9,4 +9,4 @@ summary: Duplicates: keep the copy under the cursor, trash the others
 
 !! Default keys
 
-* ``shift+k`` → ``duplicates:keep`` (in the ``duplicates`` panel)
+* ``p k`` → ``duplicates:keep`` (in the ``duplicates`` panel)

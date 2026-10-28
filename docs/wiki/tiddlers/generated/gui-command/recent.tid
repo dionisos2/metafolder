@@ -9,11 +9,11 @@ summary: Open a recently-viewed metarecord (here / other / new; by time / score)
 
 !! Default keys
 
-* ``b g m`` → ``recent new score``
-* ``b g r`` → ``recent new time``
-* ``g m`` → ``recent other score``
-* ``g r`` → ``recent other time``
-* ``i g m`` → ``recent here score``
+* ``b g r`` → ``recent other time``
+* ``b g shift+r`` → ``recent other score``
+* ``g r`` → ``recent here time``
+* ``g shift+r`` → ``recent here score``
 * ``i g r`` → ``recent here time``
-* ``w g m`` → ``recent other score``
-* ``w g r`` → ``recent other time``
+* ``i g shift+r`` → ``recent here score``
+* ``n g r`` → ``recent new time``
+* ``n g shift+r`` → ``recent new score``

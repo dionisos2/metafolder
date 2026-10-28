@@ -6,4 +6,7 @@ summary: Rename the focused slot's workspace
 !! Reference
 
 * Defined by the shell (a builtin)
-* No default key
+
+!! Default keys
+
+* ``w n`` → ``workspace:rename``

@@ -23,10 +23,10 @@ narrowed as you type like the command list.
 |!Key |!Does |
 |`Enter` |answers with the ''highlighted candidate'', and moves on to the next argument |
 |`ctrl+Enter` |answers with the text as typed, even when a candidate is highlighted — for a new value that happens to match an existing one |
-|`shift+Enter` |answers the way the argument declares as its ''alternate'', when it has one — the hint then reads `⇧⏎ …`. <<key "cursor:find self walk" d>> answered this way stops on the directory instead of entering it. Elsewhere it is a plain `Enter` |
+|`shift+Enter` |answers the way the argument declares as its ''alternate'', when it has one — the hint then reads `⇧⏎ …`. <<key "cursor:find self walk" "Shift+f">> answered this way stops on the directory instead of entering it. Elsewhere it is a plain `Enter` |
 |`Up` past the first row |removes the highlight; `Enter` then answers with the text as typed |
 |`Tab` |writes the highlighted candidate into the line |
-|<<key "completion:cycle forward" "ctrl+,">> / <<key "completion:cycle back" "ctrl+.">> |show the candidates named another way, when there are several ([[Completion views]]) |
+|<<key "completion:cycle forward" "Ctrl+,">> / <<key "completion:cycle back" "Ctrl+-">> |show the candidates named another way, when there are several ([[Completion views]]) |
 |`Escape` |abandons the whole invocation; nothing runs |
 
 With no candidate offered, or none highlighted, `Enter` answers with the text as
@@ -63,7 +63,7 @@ For whoever writes a panel or a user command — for each argument, in order:
 `initial` is for editing a value that already exists — a field's current value,
 a name being changed — never for a default answer. A command called by hand asks
 with an empty line; a default (open in the other slot, newest first, plain tags)
-belongs to the keybindings, which name every argument: <<key "recent other time" "g r">>
+belongs to the keybindings, which name every argument: <<key "recent other time" "b g r">>
 is the bare form of `w g r`, and typing `recent` asks where.
 
 Every function is called when the argument is reached, never at registration, and

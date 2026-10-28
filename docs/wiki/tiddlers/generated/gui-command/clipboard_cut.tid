@@ -9,4 +9,5 @@ summary: Cut a panel's checked files, or the one under its cursor (self / a pane
 
 !! Default keys
 
+* ``c x`` → ``clipboard:cut self``
 * ``ctrl+x`` → ``clipboard:cut self``

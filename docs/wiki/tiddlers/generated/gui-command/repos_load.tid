@@ -9,4 +9,4 @@ summary: Repos: pick a folder and load the repository in it (on-disk, or in-memo
 
 !! Default keys
 
-* ``g l`` → ``repos:load on-disk``
+* ``g shift+o`` → ``repos:load on-disk``

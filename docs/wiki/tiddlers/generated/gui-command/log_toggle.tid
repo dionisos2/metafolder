@@ -9,4 +9,5 @@ summary: Log: toggle a view flag (the watcher’s work / the unchanged fields of
 
 !! Default keys
 
-* ``shift+w`` → ``log:toggle watcher`` (in the ``log`` panel)
+* ``v u`` → ``log:toggle unchanged`` (in the ``log`` panel)
+* ``v w`` → ``log:toggle watcher`` (in the ``log`` panel)

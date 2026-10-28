@@ -32,7 +32,7 @@ refuses — another metarecord points at it — keeps its metarecord.
 
 |!To |!Command |
 |delete the metarecord alone, its file kept |<<key "metarecord:delete" Shift+Delete>> — <<cmd "metarecord:delete">> |
-|send the file to the trash, whatever the panel |<<key "file:trash self" Ctrl+Delete>> — <<cmd "file:trash">> ([[File commands]]) |
+|send the file to the trash, whatever the panel |<<cmd "file:trash">>, no key ([[File commands]]) |
 |delete a trash entry for good |<<key "trash:prune entry" Delete>> in the [[trash panel]] — <<cmd "trash:prune">> |
 
 The [[duplicates panel]] keeps its own Delete, `duplicates:trash`: it trashes

@@ -9,5 +9,6 @@ summary: Metarecord list: change the multi-selection (toggle / all / none)
 
 !! Default keys
 
-* ``ctrl+space`` → ``metarecord-list:select none`` (in the ``metarecord-list`` panel)
+* ``ctrl+a`` → ``metarecord-list:select all`` (in the ``metarecord-list`` panel)
+* ``ctrl+shift+a`` → ``metarecord-list:select none`` (in the ``metarecord-list`` panel)
 * ``space`` → ``metarecord-list:select toggle`` (in the ``metarecord-list`` panel)

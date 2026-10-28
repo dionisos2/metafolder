@@ -9,5 +9,6 @@ summary: Move a panel's cursor to a row named in the command input (select / wal
 
 !! Default keys
 
-* ``d`` → ``cursor:find self walk``
+* ``/`` → ``cursor:find self select``
 * ``f`` → ``cursor:find self select``
+* ``shift+f`` → ``cursor:find self walk``

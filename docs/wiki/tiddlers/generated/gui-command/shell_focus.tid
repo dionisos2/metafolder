@@ -9,4 +9,4 @@ summary: Shell: focus the command line (line)
 
 !! Default keys
 
-* ``e l`` → ``shell:focus line`` (in the ``shell`` panel)
+* ``p e`` → ``shell:focus line`` (in the ``shell`` panel)

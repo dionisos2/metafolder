@@ -10,7 +10,6 @@ summary: Metarecord list: focus a zone
 !! Default keys
 
 * ``/`` → ``metarecord-list:focus finder`` (in the ``metarecord-list`` panel)
-* ``ctrl+/`` → ``metarecord-list:focus simplified`` (in the ``metarecord-list`` panel)
-* ``e f`` → ``metarecord-list:focus finder`` (in the ``metarecord-list`` panel)
-* ``e q`` → ``metarecord-list:focus normal`` (in the ``metarecord-list`` panel)
-* ``e s`` → ``metarecord-list:focus simplified`` (in the ``metarecord-list`` panel)
+* ``f`` → ``metarecord-list:focus finder`` (in the ``metarecord-list`` panel)
+* ``p e`` → ``metarecord-list:focus simplified`` (in the ``metarecord-list`` panel)
+* ``p q`` → ``metarecord-list:focus normal`` (in the ``metarecord-list`` panel)

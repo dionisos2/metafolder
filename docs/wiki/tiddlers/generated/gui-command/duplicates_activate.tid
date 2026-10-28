@@ -9,6 +9,7 @@ summary: Duplicates: unfold the group / show the copy (here / other / new)
 
 !! Default keys
 
-* ``b enter`` → ``duplicates:activate new`` (in the ``duplicates`` panel)
+* ``b enter`` → ``duplicates:activate other`` (in the ``duplicates`` panel)
 * ``enter`` → ``duplicates:activate other`` (in the ``duplicates`` panel)
 * ``i enter`` → ``duplicates:activate here`` (in the ``duplicates`` panel)
+* ``n enter`` → ``duplicates:activate new`` (in the ``duplicates`` panel)

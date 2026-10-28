@@ -24,7 +24,7 @@ In the `metarecord-list`, `metarecord-detail` and `path-ref` panels,
 on the selected metarecord:
 
 * <<key "item:delete" Delete>> — <<cmd "item:delete">>: trashes the file, its metarecords with it; without a file, deletes the metarecord. No question ([[Deleting an item]]).
-* <<key "file:trash self" Ctrl+Delete>> — <<cmd "file:trash">>: trashes the file at once, its metarecords with it ([[File commands]]).
+* <<cmd "file:trash">> (no key): trashes the file at once, its metarecords with it ([[File commands]]).
 * <<key "metarecord:delete" Shift+Delete>> — <<cmd "metarecord:delete">>: deletes the metarecord and keeps the file.
 
 The metarecord panels also offer ''Move to trash'' in their context menu ([[Context menus]]).
@@ -33,8 +33,8 @@ The metarecord panels also offer ''Move to trash'' in their context menu ([[Cont
 
 `metarecord:bulk <target> trash` trashes the files of a whole set
 ([[Editing metarecords in the GUI]]): the checked metarecords
-(<<key "metarecord:bulk selection trash" "m m t">>) or everything the
-[[metarecord-list panel]] shows (<<key "metarecord:bulk query trash" "m q t">>). It
+(`metarecord:bulk selection trash`, or <<key "item:delete selection" "Shift+e d">> which deletes those without a file too) or everything the
+[[metarecord-list panel]] shows (`metarecord:bulk query trash`, or <<key "item:delete query" "e q d">>). It
 asks first, naming the count, then:
 
 * captures every metarecord of the set and deletes them all in ''one'' write — one undo, and a reference from one member of the set to another is not a refusal ([[What trashing does]]);

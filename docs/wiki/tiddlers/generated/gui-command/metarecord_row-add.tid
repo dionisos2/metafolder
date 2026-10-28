@@ -9,4 +9,4 @@ summary: Add a value to the field under the cursor
 
 !! Default keys
 
-* ``shift+a`` → ``metarecord:row-add`` (in the ``metarecord-detail`` panel)
+* ``p shift+a`` → ``metarecord:row-add`` (in the ``metarecord-detail`` panel)

@@ -6,4 +6,7 @@ summary: Empty the file clipboard
 !! Reference
 
 * Defined by the shell (a builtin)
-* No default key
+
+!! Default keys
+
+* ``c u`` → ``clipboard:clear``

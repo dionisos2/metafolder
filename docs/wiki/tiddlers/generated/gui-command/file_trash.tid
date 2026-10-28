@@ -6,8 +6,4 @@ summary: Send a panel's files to the trash, metarecords with them (self / a pane
 !! Reference
 
 * Defined by the shell (a builtin)
-
-!! Default keys
-
-* ``ctrl+delete`` → ``file:trash self`` (in the ``metarecord-detail`` panel)
-* ``ctrl+delete`` → ``file:trash self`` (in the ``metarecord-list`` panel)
+* No default key

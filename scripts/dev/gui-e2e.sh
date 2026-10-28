@@ -1555,11 +1555,12 @@ scenario_help_keys() {
     keys shift+BackSpace
     assert "help-keys: Shift+Backspace goes forward again" \
         until_ok 10 reads "panel" "#help-search"
-    keys s
+    # `p E`: the panel's field, edited from empty (doc "Choosing keybindings").
+    keys p shift+e
     typed "trash"
-    assert "help-keys: s empties the box and goes into it" until_ok 10 reads "trash" "#help-search"
-    keys Return c
-    assert "help-keys: c empties the box" until_ok 10 reads "" "#help-search"
+    assert "help-keys: p E empties the box and goes into it" until_ok 10 reads "trash" "#help-search"
+    keys Return p shift+e
+    assert "help-keys: p E empties the box again" until_ok 10 reads "" "#help-search"
 }
 
 # The help's cursor (doc "help panel"): over a list of results, the arrows move

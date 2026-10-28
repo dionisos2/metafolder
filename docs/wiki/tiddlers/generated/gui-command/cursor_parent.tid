@@ -9,5 +9,6 @@ summary: Take a panel up one level (self / a panel type)
 
 !! Default keys
 
+* ``alt+up`` → ``cursor:parent self``
 * ``backspace`` → ``cursor:parent self``
 * ``left`` → ``cursor:parent self``

@@ -10,3 +10,4 @@ summary: Path-ref explorer: add an element under the current node
 !! Default keys
 
 * ``ctrl+n`` → ``path-ref:add`` (in the ``path-ref`` panel)
+* ``p c`` → ``path-ref:add`` (in the ``path-ref`` panel)

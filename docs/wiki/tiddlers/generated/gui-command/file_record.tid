@@ -6,4 +6,7 @@ summary: Give a panel's files their metarecord (self / a panel type)
 !! Reference
 
 * Defined by the shell (a builtin)
-* No default key
+
+!! Default keys
+
+* ``p c`` → ``file:record self`` (in the ``file-manager`` panel)

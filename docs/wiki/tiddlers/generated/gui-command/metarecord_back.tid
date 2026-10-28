@@ -9,5 +9,6 @@ summary: Metarecord: back to the previously shown metarecord
 
 !! Default keys
 
+* ``alt+left`` → ``metarecord:back`` (in the ``metarecord-detail`` panel)
 * ``backspace`` → ``metarecord:back`` (in the ``metarecord-detail`` panel)
 * ``left`` → ``metarecord:back`` (in the ``metarecord-detail`` panel)

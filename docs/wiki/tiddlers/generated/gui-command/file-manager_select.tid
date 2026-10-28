@@ -9,5 +9,6 @@ summary: File manager: change the checked multi-selection (toggle / all / none)
 
 !! Default keys
 
-* ``ctrl+space`` → ``file-manager:select none`` (in the ``file-manager`` panel)
+* ``ctrl+a`` → ``file-manager:select all`` (in the ``file-manager`` panel)
+* ``ctrl+shift+a`` → ``file-manager:select none`` (in the ``file-manager`` panel)
 * ``space`` → ``file-manager:select toggle`` (in the ``file-manager`` panel)

@@ -9,15 +9,15 @@ summary: Open a frequently and recently used folder (files / children / subtree)
 
 !! Default keys
 
-* ``b g c`` → ``folder:open children new``
-* ``b g d`` → ``folder:open files new``
-* ``b g t`` → ``folder:open subtree new``
-* ``g c`` → ``folder:open children here``
+* ``b g d`` → ``folder:open files other``
+* ``b g l`` → ``folder:open children other``
+* ``b g shift+l`` → ``folder:open subtree other``
 * ``g d`` → ``folder:open files here``
-* ``g t`` → ``folder:open subtree here``
-* ``i g c`` → ``folder:open children here``
+* ``g l`` → ``folder:open children here``
+* ``g shift+l`` → ``folder:open subtree here``
 * ``i g d`` → ``folder:open files here``
-* ``i g t`` → ``folder:open subtree here``
-* ``w g c`` → ``folder:open children other``
-* ``w g d`` → ``folder:open files other``
-* ``w g t`` → ``folder:open subtree other``
+* ``i g l`` → ``folder:open children here``
+* ``i g shift+l`` → ``folder:open subtree here``
+* ``n g d`` → ``folder:open files new``
+* ``n g l`` → ``folder:open children new``
+* ``n g shift+l`` → ``folder:open subtree new``

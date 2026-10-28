@@ -32,8 +32,8 @@ metarecord: ''Unsaved changes — discard and switch metarecord?''
 Two commands show the folder of the selection, ''in place of the focused panel'' by
 default. Both are also in the right-click menu of the panels showing metarecords. Their
 first argument is the [[open target|Panel slots and layout]]: `here`, `other` (the other
-slot) or `new` (a copy of the workspace) — <<key "metarecord-list:folder other" "w g f">>
-lists the folder in the other slot, <<key "metarecord-list:folder new" "b g f">> in a
+slot) or `new` (a copy of the workspace) — <<key "metarecord-list:folder other" "g s">>
+lists the folder in the other slot, <<key "metarecord-list:folder new" "n g s">> in a
 new workspace, leaving the list here as it was.
 
 * `file-manager:reveal` (''Open folder in file manager'') shows it on disk: the folder itself when the selection is a folder, else the folder holding the file, with the file highlighted.
@@ -65,7 +65,7 @@ what the bulk operations act on (the ''Checked selection'' target of
 `metarecord:bulk`, [[Editing metarecords in the GUI]]), and what [[mf gui selected]] prints for a script.
 
 * <<key "metarecord-list:select toggle" Space>> checks or unchecks the row, in `metarecord-list` and in `file-manager` alike; so does ''Add to the selection'' in a row's right-click menu. A file-manager row is checked through its metarecord: an untracked file has none, and says so — track it first.
-* ''It survives changing the list'': a checked metarecord stays checked when the query or the finder moves on, so a set can be gathered from several lists — and from the file manager — before anything acts on it. `select all` checks every loaded row ''on top of'' what is checked; `select none` (<<key "metarecord-list:select none" ctrl+space>>) empties it.
+* ''It survives changing the list'': a checked metarecord stays checked when the query or the finder moves on, so a set can be gathered from several lists — and from the file manager — before anything acts on it. `select all` checks every loaded row ''on top of'' what is checked; `select none` (<<key "metarecord-list:select none" "Ctrl+Shift+a">>) empties it.
 * Only a metarecord that no longer ''exists'' — deleted or trashed, from anywhere, the command line included — leaves it, when a panel next reloads its rows: it could never be shown or unchecked again.
 * It holds metarecords of the workspace's one repository.
 
