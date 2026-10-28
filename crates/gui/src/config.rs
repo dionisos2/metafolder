@@ -393,6 +393,24 @@ impl ConfigDir {
     ) -> Result<KeybindingSet, String> {
         let normalized = crate::keybindings::parse_combo(combo)?.join(" ");
         let mut doc = self.read_keybindings_document()?;
+        let literal = combo_keys(&doc, &normalized)
+            .iter()
+            .any(|key| doc.get(key).is_some_and(|item| element_index(item, when, focus).is_some()));
+        // A key a variable or a target template produced has no line of its
+        // own to remove (doc "Keybinding variables").
+        if !literal {
+            let place = crate::keybindings::BindingPlace {
+                combo: normalized.clone(),
+                when: when.map(str::to_string),
+                focus: focus.map(str::to_string),
+            };
+            if let Some(line) = self.load_keybindings()?.derived_from(&place) {
+                return Err(format!(
+                    "{normalized} comes from the line \"{line}\" of keybindings.toml (a variable \
+                     or a target template): edit that line, or bind the key to something else"
+                ));
+            }
+        }
         for key in combo_keys(&doc, &normalized) {
             let item = doc.get_mut(&key).expect("listed key");
             let emptied = match item {
@@ -1101,6 +1119,33 @@ mod tests {
             "{written}"
         );
         assert_eq!(scopes_of(&config.load_keybindings().unwrap(), &["j"]).len(), 3);
+        std::fs::remove_dir_all(config.root()).unwrap();
+    }
+
+    #[test]
+    fn test_a_key_from_a_variable_is_rebound_by_a_literal_line() {
+        let config = kb_dir();
+        let source = "vars.tags = \",\"\n\"{tags} a\" = { command = \"template\" }\n";
+        std::fs::write(config.keybindings_path(), source).unwrap();
+
+        let set = config.set_user_keybinding(", a", "mine", None, None, false).unwrap();
+        let bound: Vec<_> = set.compiled().into_iter().filter(|b| b.keys == [",", "a"]).collect();
+        assert_eq!(bound.len(), 1);
+        assert_eq!(bound[0].invocation, "mine");
+        let written = std::fs::read_to_string(config.keybindings_path()).unwrap();
+        assert!(written.starts_with(source), "{written}");
+        std::fs::remove_dir_all(config.root()).unwrap();
+    }
+
+    #[test]
+    fn test_a_key_from_a_variable_cannot_be_removed_on_its_own() {
+        let config = kb_dir();
+        let source = "vars.tags = \",\"\n\"{tags} a\" = { command = \"template\" }\n";
+        std::fs::write(config.keybindings_path(), source).unwrap();
+
+        let error = config.remove_user_keybinding(", a", None, None).unwrap_err();
+        assert!(error.contains("{tags} a"), "{error}");
+        assert_eq!(std::fs::read_to_string(config.keybindings_path()).unwrap(), source);
         std::fs::remove_dir_all(config.root()).unwrap();
     }
 

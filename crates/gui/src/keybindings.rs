@@ -25,6 +25,10 @@ pub struct BindingSpec {
     /// `None` = not focus-scoped. The most specific scope dimension.
     #[serde(default)]
     pub focus: Option<String>,
+    /// The default target of a `{target}` template (doc "Keybinding
+    /// variables"): `here`, `other` or `new`. Gone once expanded.
+    #[serde(default)]
+    pub target: Option<String>,
 }
 
 /// One binding of the compiled table sent to the frontend.
@@ -259,26 +263,151 @@ impl SpecOrList {
     }
 }
 
-/// Parses a keybindings TOML file into (normalized combo, spec) pairs. A combo
-/// key may map to one binding or an array of them; each element becomes its own
-/// pair, so the same combo can appear more than once (different `when` scopes).
-pub fn parse_toml(source: &str) -> Result<Vec<(Vec<String>, BindingSpec)>, String> {
-    let table: HashMap<String, SpecOrList> =
+/// The targets a `{target}` template expands to, each under the prefix held
+/// by the variable `target-<name>` (doc "Keybinding variables").
+const TARGETS: [&str; 3] = ["here", "other", "new"];
+
+/// One binding of the file, once its variables and template are expanded.
+struct Entry {
+    keys: Vec<String>,
+    spec: BindingSpec,
+    /// The file's key it was derived from, when a variable or a target
+    /// template produced it — a literal key of the file overrides it.
+    derived_from: Option<String>,
+}
+
+fn is_var_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// `combo` with each `{name}` replaced by the variable's keys. A brace that
+/// names no variable (`{`, `{ }`) is a key like any other; an unknown name is
+/// an error.
+fn substitute(combo: &str, vars: &HashMap<String, String>) -> Result<String, String> {
+    let mut out = String::new();
+    let mut rest = combo;
+    while let Some(start) = rest.find('{') {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 1..];
+        match after.find('}') {
+            Some(end) if is_var_name(&after[..end]) => {
+                let name = &after[..end];
+                let keys = vars
+                    .get(name)
+                    .ok_or_else(|| format!("unknown variable {{{name}}} in \"{combo}\""))?;
+                out.push_str(keys);
+                rest = &after[end + 1..];
+            }
+            _ => {
+                out.push('{');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
+/// The `vars` table: variable name → keys.
+fn read_vars(value: Option<toml::Value>) -> Result<HashMap<String, String>, String> {
+    let Some(value) = value else { return Ok(HashMap::new()) };
+    let toml::Value::Table(table) = value else {
+        return Err("invalid keybindings file: `vars` must be a table".into());
+    };
+    table
+        .into_iter()
+        .map(|(name, value)| match value {
+            toml::Value::String(keys) if is_var_name(&name) => Ok((name, keys)),
+            toml::Value::String(_) => Err(format!(
+                "invalid keybindings file: variable name \"{name}\" (lowercase letters, digits, -)"
+            )),
+            _ => Err(format!("invalid keybindings file: the variable \"{name}\" must be a string")),
+        })
+        .collect()
+}
+
+/// The bindings one key of the file stands for: itself, or — for a
+/// `{target}` template — its default target on the key, and every target
+/// under its prefix.
+fn expand(
+    combo: &str,
+    spec: BindingSpec,
+    vars: &HashMap<String, String>,
+) -> Result<Vec<Entry>, String> {
+    let expanded = substitute(combo, vars)?;
+    let derived = (expanded != combo).then(|| combo.to_string());
+    let entry = |keys: &str, spec: BindingSpec, derived_from: Option<String>| {
+        Ok::<_, String>(Entry { keys: parse_combo(keys)?, spec, derived_from })
+    };
+    if !spec.command.contains("{target}") {
+        if spec.target.is_some() {
+            return Err(format!(
+                "\"{combo}\": `target` is set but the command has no {{target}} to fill"
+            ));
+        }
+        return Ok(vec![entry(&expanded, spec, derived)?]);
+    }
+    let default = spec.target.clone().ok_or_else(|| {
+        format!("\"{combo}\": a {{target}} command needs a default `target` (here, other, new)")
+    })?;
+    if !TARGETS.contains(&default.as_str()) {
+        return Err(format!("\"{combo}\": unknown target \"{default}\" (here, other, new)"));
+    }
+    let aimed = |target: &str| BindingSpec {
+        command: spec.command.replace("{target}", target),
+        target: None,
+        ..spec.clone()
+    };
+    let mut entries = vec![entry(&expanded, aimed(&default), derived)?];
+    for target in TARGETS {
+        let var = format!("target-{target}");
+        let prefix = vars
+            .get(&var)
+            .ok_or_else(|| format!("\"{combo}\": a {{target}} command needs the variable {var}"))?;
+        entries.push(entry(&format!("{prefix} {expanded}"), aimed(target), Some(combo.into()))?);
+    }
+    Ok(entries)
+}
+
+/// Parses a keybindings TOML file into its bindings, variables and target
+/// templates expanded (doc "Keybinding variables"). A combo key may map to
+/// one binding or an array of them; each element becomes its own entry, so
+/// the same combo can appear more than once (different `when` scopes).
+fn parse_entries(source: &str) -> Result<Vec<Entry>, String> {
+    let mut table: toml::Table =
         toml::from_str(source).map_err(|e| format!("invalid keybindings file: {e}"))?;
-    let mut entries: Vec<(Vec<String>, BindingSpec)> = Vec::new();
+    let vars = read_vars(table.remove("vars"))?;
+    let mut entries: Vec<Entry> = Vec::new();
     // One combo has one binding per (when, focus) scope. TOML only refuses a
     // key written twice the same way: two spellings of one combo
     // ("shift+ctrl+a", "ctrl+shift+a") are caught here, like a scope repeated
-    // in a combo's array.
-    let mut seen: HashMap<BindingKey, String> = HashMap::new();
+    // in a combo's array. A literal key overrides one a variable or a template
+    // produced — what the settings panel writes to rebind one of them.
+    let mut seen: HashMap<BindingKey, (String, usize)> = HashMap::new();
     for (combo, value) in table {
-        let keys = parse_combo(&combo)?;
-        for spec in value.into_vec() {
-            let key = (keys.clone(), spec.when.clone(), spec.focus.clone());
-            if let Some(other) = seen.insert(key, combo.clone()) {
+        let specs: SpecOrList =
+            value.try_into().map_err(|e| format!("invalid keybindings file: \"{combo}\": {e}"))?;
+        for spec in specs.into_vec() {
+            for entry in expand(&combo, spec, &vars)? {
+                let key = (entry.keys.clone(), entry.spec.when.clone(), entry.spec.focus.clone());
+                let Some((other, index)) = seen.get(&key).cloned() else {
+                    seen.insert(key, (combo.clone(), entries.len()));
+                    entries.push(entry);
+                    continue;
+                };
+                match (entries[index].derived_from.is_some(), entry.derived_from.is_some()) {
+                    (true, false) => {
+                        seen.insert(key, (combo.clone(), index));
+                        entries[index] = entry;
+                        continue;
+                    }
+                    (false, true) => continue,
+                    _ => {}
+                }
                 let (first, second) =
                     if other <= combo { (&other, &combo) } else { (&combo, &other) };
-                let scope = match (&spec.focus, &spec.when) {
+                let scope = match (&entry.spec.focus, &entry.spec.when) {
                     (Some(focus), _) => format!("in the {focus} widget"),
                     (None, Some(when)) => format!("in {when}"),
                     (None, None) => "globally".to_string(),
@@ -289,12 +418,20 @@ pub fn parse_toml(source: &str) -> Result<Vec<(Vec<String>, BindingSpec)>, Strin
                     format!("\"{first}\" and \"{second}\" are the same key, bound twice {scope}")
                 });
             }
-            entries.push((keys.clone(), spec));
         }
     }
-    // HashMap order is arbitrary: sort for determinism (by combo, then scope).
-    entries.sort_by(|a, b| (&a.0, &a.1.when, &a.1.focus).cmp(&(&b.0, &b.1.when, &b.1.focus)));
+    // Table order is the file's or arbitrary: sort for determinism (by combo,
+    // then scope).
+    entries.sort_by(|a, b| {
+        (&a.keys, &a.spec.when, &a.spec.focus).cmp(&(&b.keys, &b.spec.when, &b.spec.focus))
+    });
     Ok(entries)
+}
+
+/// Parses a keybindings TOML file into (normalized combo, spec) pairs,
+/// variables and templates expanded (`parse_entries`).
+pub fn parse_toml(source: &str) -> Result<Vec<(Vec<String>, BindingSpec)>, String> {
+    Ok(parse_entries(source)?.into_iter().map(|e| (e.keys, e.spec)).collect())
 }
 
 /// A binding's identity for override purposes: the same key sequence in the
@@ -309,6 +446,9 @@ pub struct KeybindingSet {
     /// Keyed by (combo, scope); defaults overridden by the user per (combo,
     /// scope), so rebinding one panel's `down` leaves the others intact.
     config: HashMap<BindingKey, BindingSpec>,
+    /// The bindings a variable or a target template produced, with the
+    /// file's key they come from (`derived_from`).
+    derived: HashMap<BindingKey, String>,
     /// Panel suggestions that survived conflict checking.
     suggestions: Vec<CompiledBinding>,
 }
@@ -318,13 +458,16 @@ impl KeybindingSet {
     /// scope)).
     pub fn from_sources(defaults: &str, user: &str) -> Result<Self, String> {
         let mut config: HashMap<BindingKey, BindingSpec> = HashMap::new();
-        for (keys, spec) in parse_toml(defaults)? {
-            config.insert((keys, spec.when.clone(), spec.focus.clone()), spec);
+        let mut derived: HashMap<BindingKey, String> = HashMap::new();
+        for entry in parse_entries(defaults)?.into_iter().chain(parse_entries(user)?) {
+            let key = (entry.keys, entry.spec.when.clone(), entry.spec.focus.clone());
+            match entry.derived_from {
+                Some(line) => derived.insert(key.clone(), line),
+                None => derived.remove(&key),
+            };
+            config.insert(key, entry.spec);
         }
-        for (keys, spec) in parse_toml(user)? {
-            config.insert((keys, spec.when.clone(), spec.focus.clone()), spec);
-        }
-        Ok(KeybindingSet { config, suggestions: Vec::new() })
+        Ok(KeybindingSet { config, derived, suggestions: Vec::new() })
     }
 
     /// The complete set from a single source. In the git-backed config model
@@ -382,6 +525,15 @@ impl KeybindingSet {
         self
     }
 
+    /// The file's key the binding at `place` was derived from, when a
+    /// variable or a target template produced it (doc "Keybinding
+    /// variables"): such a binding is not a line of its own, so it can be
+    /// overridden by one but not removed.
+    pub fn derived_from(&self, place: &BindingPlace) -> Option<String> {
+        let keys = parse_combo(&place.combo).ok()?;
+        self.derived.get(&(keys, place.when.clone(), place.focus.clone())).cloned()
+    }
+
     /// Whether the binding of this combo and scope is a suggestion — in effect,
     /// but not in the file, so not something the file's editor can remove.
     pub fn is_suggestion(&self, combo: &str, when: Option<&str>, focus: Option<&str>) -> bool {
@@ -415,11 +567,24 @@ impl KeybindingSet {
                 )
             })
         };
+        // A key a variable or a template produced has no line to move: the
+        // template would bind it again.
+        let moves_a_derived = || {
+            let old = replacing.filter(|old| !old.is(place))?;
+            self.derived_from(old).map(|line| {
+                format!(
+                    "{} comes from the line \"{line}\" of keybindings.toml (a variable or a \
+                     target template): it cannot be moved, only overridden in its own place",
+                    old.combo
+                )
+            })
+        };
         BindingCheck {
             command: check_command(command, known).err(),
             key: check_binding(&self.compiled(), place, replacing)
                 .err()
-                .or_else(moves_a_suggestion),
+                .or_else(moves_a_suggestion)
+                .or_else(moves_a_derived),
         }
     }
 
@@ -733,6 +898,137 @@ mod tests {
 "ctrl+shift+a" = { command = "second" }
 "#;
         assert_eq!(parse_toml(scoped).unwrap().len(), 2);
+    }
+
+    // ── Variables and target templates (doc "Keybinding variables") ──────
+
+    fn keys_of(entries: &[(Vec<String>, BindingSpec)]) -> Vec<(String, String)> {
+        entries.iter().map(|(k, spec)| (k.join(" "), spec.command.clone())).collect()
+    }
+
+    #[test]
+    fn test_a_variable_names_a_key_once() {
+        let source = r#"
+vars.tags = ","
+vars.add = "a"
+"{tags} {add}" = { command = "mf:tag add" }
+"shift+{add}" = { command = "other" }
+"#;
+        let entries = parse_toml(source).unwrap();
+        assert_eq!(
+            keys_of(&entries),
+            [
+                (", a".to_string(), "mf:tag add".to_string()),
+                ("shift+a".to_string(), "other".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn test_a_variable_may_hold_a_sequence_and_vars_may_be_a_table() {
+        let source = r#"
+"{bulk-query} d" = { command = "metarecord:bulk query delete" }
+
+[vars]
+bulk-query = "m q"
+"#;
+        let entries = parse_toml(source).unwrap();
+        assert_eq!(entries[0].0, ["m", "q", "d"]);
+    }
+
+    #[test]
+    fn test_an_unknown_or_malformed_variable_is_refused() {
+        let error = parse_toml(r#""{nope} a" = { command = "x" }"#).unwrap_err();
+        assert!(error.contains("{nope}"), "{error}");
+        assert!(parse_toml("vars.a = 1\n").is_err());
+        assert!(parse_toml("vars = \"a\"\n").is_err());
+        // A brace that names no variable is a key like any other.
+        assert_eq!(parse_toml(r#""{" = { command = "x" }"#).unwrap()[0].0, ["{"]);
+    }
+
+    const TARGET_VARS: &str = r#"
+vars.target-here = "i"
+vars.target-other = "b"
+vars.target-new = "n"
+"#;
+
+    #[test]
+    fn test_a_target_template_expands_to_its_default_and_three_prefixed_variants() {
+        let source = format!(
+            "{TARGET_VARS}\"t l\" = {{ command = \"panel:open {{target}} metarecord-list\", \
+             target = \"other\", when = \"log\" }}\n"
+        );
+        let entries = parse_toml(&source).unwrap();
+        assert_eq!(
+            keys_of(&entries),
+            [
+                ("b t l".to_string(), "panel:open other metarecord-list".to_string()),
+                ("i t l".to_string(), "panel:open here metarecord-list".to_string()),
+                ("n t l".to_string(), "panel:open new metarecord-list".to_string()),
+                ("t l".to_string(), "panel:open other metarecord-list".to_string()),
+            ]
+        );
+        assert!(entries.iter().all(|(_, spec)| spec.when.as_deref() == Some("log")));
+    }
+
+    #[test]
+    fn test_a_target_template_must_be_complete() {
+        let missing_default = format!("{TARGET_VARS}\"o\" = {{ command = \"x {{target}}\" }}\n");
+        assert!(parse_toml(&missing_default).unwrap_err().contains("target"));
+        let no_placeholder =
+            format!("{TARGET_VARS}\"o\" = {{ command = \"x\", target = \"here\" }}\n");
+        assert!(parse_toml(&no_placeholder).is_err());
+        let unknown =
+            format!("{TARGET_VARS}\"o\" = {{ command = \"x {{target}}\", target = \"far\" }}\n");
+        assert!(parse_toml(&unknown).unwrap_err().contains("far"));
+        let no_prefix = r#""o" = { command = "x {target}", target = "here" }"#;
+        assert!(parse_toml(no_prefix).unwrap_err().contains("target-here"));
+    }
+
+    #[test]
+    fn test_a_literal_key_overrides_one_derived_from_a_variable() {
+        // What the settings panel writes when one key of a template is
+        // rebound: a literal line, which wins over the template's.
+        let source = r#"
+vars.tags = ","
+"{tags} a" = { command = "template" }
+", a" = { command = "literal" }
+"#;
+        assert_eq!(keys_of(&parse_toml(source).unwrap()), [(", a".into(), "literal".into())]);
+        // Two templates landing on one key are a mistake, like two literals.
+        let clash = r#"
+vars.x = ","
+vars.y = ","
+"{x} a" = { command = "first" }
+"{y} a" = { command = "second" }
+"#;
+        assert!(parse_toml(clash).is_err());
+    }
+
+    #[test]
+    fn test_where_a_derived_binding_comes_from() {
+        let source = format!(
+            "{TARGET_VARS}vars.tags = \",\"\n\"{{tags}} a\" = {{ command = \"x\" }}\n\
+             \"o\" = {{ command = \"y {{target}}\", target = \"here\" }}\n\"z\" = {{ command = \"z\" }}\n"
+        );
+        let set = KeybindingSet::from_source(&source).unwrap();
+        let place = |combo: &str| BindingPlace { combo: combo.into(), when: None, focus: None };
+        assert_eq!(set.derived_from(&place(", a")).as_deref(), Some("{tags} a"));
+        assert_eq!(set.derived_from(&place("n o")).as_deref(), Some("o"));
+        assert_eq!(set.derived_from(&place("z")), None);
+    }
+
+    #[test]
+    fn test_a_derived_binding_can_be_overridden_but_not_moved() {
+        let set =
+            KeybindingSet::from_source("vars.tags = \",\"\n\"{tags} a\" = { command = \"x\" }\n")
+                .unwrap();
+        let place = |combo: &str| BindingPlace { combo: combo.into(), when: None, focus: None };
+        let known = |_: &str| true;
+        assert!(set.check(known, &place(", a"), "y", Some(&place(", a"))).into_result().is_ok());
+        let error =
+            set.check(known, &place("q"), "y", Some(&place(", a"))).into_result().unwrap_err();
+        assert!(error.contains("{tags} a"), "{error}");
     }
 
     #[test]

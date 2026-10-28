@@ -31,6 +31,10 @@ the form is typed, field by field; ''Save'' waits until nothing stands in the wa
 * ''A key already bound in the same place'' (same `when`, same `focus`) — to change what it runs, ''Edit'' its row. The same key elsewhere is no conflict: the most specific place wins where both apply.
 * ''A key that starts a sequence bound in the same place, or a sequence one of whose first keys is bound there alone'': a key alone runs before any sequence it starts, so one of the two could never run. `g` cannot join `g g` in one place.
 
+A key produced by a variable or a target template ([[Keybinding variables]]) can be
+overridden in its place like any other, which writes a line for it; removing or
+moving it is refused, with the line it comes from.
+
 A key suggested by a panel or by `commands.js` is listed too, marked ''suggested'',
 but is not in the file: there is nothing to remove, and the suggestion would be made
 again at the next start. It has no ''Remove''. ''Edit'' it and save it in the same
@@ -56,6 +60,10 @@ binding, or a list of them when the key does different things in different place
   { command = "find:next", focus = "find" },
 ]
 ```
+
+A letter with a role — a domain, a verb, a target prefix — can be named once as a
+variable, and a command taking a target written once for its four keys
+([[Keybinding variables]]).
 
 A key appears once in the file, which is why its bindings are a list, and has one
 binding per place: the same key bound twice with the same `when` and `focus` is

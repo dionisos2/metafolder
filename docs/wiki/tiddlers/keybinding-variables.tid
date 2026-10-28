@@ -1,0 +1,64 @@
+title: Keybinding variables
+tags: Keybindings Configuration
+kind: reference
+summary: A letter named once in keybindings.toml: variables in the keys, and {target} templates that write the here / beside / new variants.
+
+The shipped keys are built from a few letters with a role — a domain such as `,`
+for the tags, a verb such as `a` for ''add'', a target prefix such as `i` for
+''here''. `gui/keybindings.toml` names each of those letters once, so that moving
+a role to another letter is one line, not fifty.
+
+!! Variables
+
+The table `vars` maps a name to keys, and `{name}` in a key of the file stands for
+them:
+
+```
+vars.tags = ","
+vars.add = "a"
+vars.bulk-query = "m q"
+
+"{tags} {add}" = { command = "mf:tag add" }
+"{bulk-query} d" = { command = "metarecord:bulk query delete" }
+"shift+{add}" = { command = "…" }
+```
+
+* A variable holds a key or a sequence (`"m q"`); its name is lowercase letters, digits and `-`.
+* The table can be written as `vars.name = …` lines anywhere at the top of the file, or as a `[vars]` section at its end — TOML puts every key after a section header into that section.
+* A `{name}` that is not a variable is an error, which names it. A brace that names nothing (`"{"`) is a key like any other.
+* Variables are replaced in the keys only, not in the commands.
+
+!! Target templates
+
+Many commands take a target — where a panel opens: `here`, `other` (the other
+slot) or `new` (a new workspace). A binding whose command holds `{target}` and
+which names its default `target` stands for four:
+
+```
+vars.target-here = "i"
+vars.target-other = "b"
+vars.target-new = "n"
+
+"t l" = { command = "panel:open {target} metarecord-list", target = "other" }
+```
+
+binds `t l` to `panel:open other metarecord-list`, and `i t l`, `b t l`, `n t l`
+to the same command aimed `here`, `other` and `new`. The three prefixes are the
+variables `target-here`, `target-other` and `target-new`; a template without
+them, without a default `target`, or a `target` with no `{target}` to fill is an
+error.
+
+!! Changing one of them
+
+A key a variable or a template produced is not a line of its own. A ''literal''
+key of the file, in the same place, overrides it: that is what the config panel
+writes when such a key is rebound ([[Changing keybindings]]), and the template's
+other keys stay as they are. Two lines producing the same key in the same place
+— two templates, or two literal keys — are refused, as always.
+
+What has no line cannot be removed or moved on its own: the config panel refuses
+it and names the line it comes from. Edit that line, or bind the key to
+something else in its place.
+
+[[Keyboard navigation]] gives the keys as they are shipped, variables expanded,
+and the generated notes of each command list its keys the same way.
