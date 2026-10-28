@@ -57,7 +57,7 @@ is in progress ([[Generic panel commands]]).
 
 * <<key "metarecord:create" Ctrl+n>> (`metarecord:create`, ''New metarecord'') — creates a metarecord at once and selects it, so that the editing above applies to it from the start. It asks for a schema type, completed over the schema's ([[Schema]]): the type's template fields are filled in; left blank, the metarecord is empty. A type the schema does not declare is refused. To abandon it, delete it.
 * ''Reconcile'' (`metarecord:reconcile`) — reconciles the folder's subtree ([[Scoped reconcile]]). While the metarecord is not watched the button reads ''Watch and reconcile'' and sets `mf_watch = true` first (`metarecord:reconcile watch`, [[Tracking a folder]]). The task bar shows the progress, the status bar the result.
-* ''Delete metarecord'' (<<key "metarecord:delete" Shift+Delete>>) — deletes the metarecord and keeps its file; <<key "metarecord:remove" Delete>> and <<key "metarecord:trash" Ctrl+Delete>> deal with the file as well ([[Sending files to the trash]]).
+* ''Delete metarecord'' (<<key "metarecord:delete" Shift+Delete>>) — deletes the metarecord and keeps its file; <<key "metarecord:remove" Delete>> and <<key "file:trash self" Ctrl+Delete>> deal with the file as well ([[Sending files to the trash]]).
 
 A right click offers the same, ''Copy UUID'' — a bare uuid pasted in a query box
 selects that metarecord — and the file's actions when it has one ([[Context menus]]).

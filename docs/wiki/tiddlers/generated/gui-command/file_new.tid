@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/file:new
+catalog: GUI command
+target: file:new
+summary: Create a folder or a file in the folder a panel shows (self / a panel type)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``ctrl+n`` → ``file:new self file`` (in the ``file-manager`` panel)
+* ``ctrl+shift+n`` → ``file:new self folder`` (in the ``file-manager`` panel)

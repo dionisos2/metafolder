@@ -419,9 +419,15 @@ declare namespace Metafolder {
     /** Goes to the top — the root directory, a forest's roots (`cursor:root`). */
     root?(mf: Api): unknown;
     /** The absolute paths of the files the panel designates
-     *  (`clipboard:copy`/`clipboard:cut`): the checked metarecords' when some
-     *  are checked, else the row under the cursor's. */
+     *  (`clipboard:copy`/`clipboard:cut`, the `file:` commands): the checked
+     *  metarecords' when some are checked, else the row under the cursor's. */
     paths?(mf: Api): string[] | Promise<string[]>;
+    /** The folder the panel shows, where `file:new` and `file:paste` work;
+     *  null when it shows none right now (doc "File commands"). */
+    directory?(mf: Api): string | null | Promise<string | null>;
+    /** Puts the cursor on the entry `name` of the folder shown — what a
+     *  `file:` command just made. */
+    reveal?(mf: Api, name: string): unknown;
   }
 
   interface CommandOptions {

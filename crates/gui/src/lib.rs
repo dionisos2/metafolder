@@ -155,7 +155,6 @@ fn register_builtins(registry: &CommandRegistry) {
         ("ignore:add", "Append an ignore preset's patterns to the target directory", true),
         ("ignore:remove", "Remove an ignore preset's patterns from the target directory", true),
         ("ignore:set", "Replace the target directory's ignore set with a preset", true),
-        ("metarecord:trash", "Send the selected metarecord's file to the trash", true),
         ("log:undo", "Undo a label of the newest change you made (asked when there are several)", true),
         ("log:redo", "Take back a label of the newest undo (asked when there are several)", true),
         (
@@ -194,6 +193,14 @@ fn register_builtins(registry: &CommandRegistry) {
         ("cursor:root", "Take a panel to its top level (self / a panel type)", true),
         ("view:refresh", "Read what a panel shows again (self / a panel type)", true),
         ("view:zoom", "Zoom a panel in, out or back to 100 % (self / a panel type)", false),
+        // The file commands (doc "File commands"): generic too, on the files
+        // a panel designates or the folder it shows.
+        ("file:trash", "Send a panel's files to the trash, metarecords with them (self / a panel type)", true),
+        ("file:rename", "Rename the file a panel designates (self / a panel type)", true),
+        ("file:duplicate", "Copy a panel's files beside themselves (self / a panel type)", true),
+        ("file:record", "Give a panel's files their metarecord (self / a panel type)", true),
+        ("file:new", "Create a folder or a file in the folder a panel shows (self / a panel type)", true),
+        ("file:paste", "Paste the file clipboard into the folder a panel shows (self / a panel type)", true),
         (
             "clipboard:copy",
             "Copy a panel's checked files, or the one under its cursor (self / a panel type)",

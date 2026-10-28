@@ -905,6 +905,15 @@ export async function mount(root, metafolder) {
   // Read again on `view:refresh` (doc "Generic panel commands"): a write made
   // outside the GUI (`mf`, a script) reaches this panel by no other way. An
   // edit in progress is asked about first, as when the selection moves.
+  // The file of the metarecord shown, for the `file:` commands and the
+  // clipboard (doc "File commands"): the workspace's selected paths, published
+  // with the metarecord this panel follows.
+  metafolder.provide({
+    paths: async (mf) => {
+      const value = await mf.workspace.get('selected_paths');
+      return Array.isArray(value) ? value.filter((path) => typeof path === 'string') : [];
+    },
+  });
   metafolder.provide({
     refresh: () => {
       if (!confirmDiscardIfEditing()) return;

@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/file:trash
+catalog: GUI command
+target: file:trash
+summary: Send a panel's files to the trash, metarecords with them (self / a panel type)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``ctrl+delete`` → ``file:trash self`` (in the ``metarecord-detail`` panel)
+* ``ctrl+delete`` → ``file:trash self`` (in the ``metarecord-list`` panel)

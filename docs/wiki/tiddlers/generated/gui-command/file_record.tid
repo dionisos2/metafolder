@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/file:record
+catalog: GUI command
+target: file:record
+summary: Give a panel's files their metarecord (self / a panel type)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

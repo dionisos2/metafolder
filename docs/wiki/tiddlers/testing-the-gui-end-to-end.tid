@@ -113,7 +113,7 @@ get written.
 
 !! Confirmations
 
-A confirmed command (`metarecord:trash`, `orphan:delete`, an `ignore:add` that would
+A confirmed command (`metarecord:remove`, `orphan:delete`, an `ignore:add` that would
 shadow inherited patterns) is driven with `answering yes|no <command…>`, which passes
 `--confirm` to [[mf gui command]] and keeps the questions asked in `LAST_QUESTIONS`. A
 plain `run` answers `no` as well, and fails if anything was asked: a dialog nobody

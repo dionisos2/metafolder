@@ -24,7 +24,7 @@ In the `metarecord-list`, `metarecord-detail` and `path-ref` panels,
 on the selected metarecord:
 
 * <<key "metarecord:remove" Delete>> — <<cmd "metarecord:remove">>: if the metarecord has a file, asks in the command input whether to trash the file or keep it and delete the metarecord alone — Escape does neither (<<cmd "metarecord:remove-file">>); without a file, deletes the metarecord.
-* <<key "metarecord:trash" Ctrl+Delete>> — <<cmd "metarecord:trash">>: trashes the file at once (confirmed).
+* <<key "file:trash self" Ctrl+Delete>> — <<cmd "file:trash">>: trashes the file at once, its metarecords with it ([[File commands]]).
 * <<key "metarecord:delete" Shift+Delete>> — <<cmd "metarecord:delete">>: deletes the metarecord and keeps the file.
 
 The metarecord panels also offer ''Move to trash'' in their context menu ([[Context menus]]).

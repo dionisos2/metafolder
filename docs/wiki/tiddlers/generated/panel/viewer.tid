@@ -19,4 +19,4 @@ summary: The viewer panel type
 
 !! Generic commands
 
-Provides ``refresh`` to [[Generic panel commands]].
+Provides ``refresh``, ``paths`` to [[Generic panel commands]].

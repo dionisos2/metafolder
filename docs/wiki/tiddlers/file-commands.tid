@@ -1,0 +1,31 @@
+title: File commands
+tags: Commands
+kind: reference
+summary: file: acts on files from any panel — trash, rename, duplicate, record, new, paste — on the files the panel designates or the folder it shows.
+
+
+The `file:` commands act on files, from whichever panel shows them — as the
+`metarecord:` commands act on metarecords. A panel's own commands carry its
+name instead: `file-manager:toggle hidden` changes what the file manager
+shows, `file:rename` renames a file wherever it is designated.
+
+They are [[generic panel commands|Generic panel commands]]: the panel is their
+first argument, `self` or a panel type, and it designates what they work on.
+
+|!Command |!Works on |!What it does |
+|[[file:trash]] |the files |sends them to the trash, their metarecords with them ([[Trash]]) |
+|[[file:rename]] |the one file |renames it in its folder; the name is asked, the current one to edit |
+|[[file:duplicate]] |the files |copies each beside itself, under a free name |
+|[[file:record]] |the files |gives each its metarecord, `mf_watch = false` ([[Recording a path]]) |
+|[[file:new]] `folder`/`file` |the folder |creates a folder or an empty file there; the name is asked |
+|[[file:paste]] |the folder |copies — or moves, after a cut — the file clipboard there |
+
+* ''The files'' are what the panel provides as `paths`: the checked ones when some are, else the one under the cursor — in the [[file-manager panel]] and the [[metarecord-list panel]] — or the file shown, in the [[viewer panel]] and the [[metarecord-detail panel]]. The file manager's `.` and `..` rows are none.
+* ''The folder'' is what the panel provides as `directory`: the one the file manager shows. Elsewhere there is none, and `file:new` and `file:paste` are refused.
+
+A key bound to one of them applies only where the panel provides what it needs
+([[Keybindings]]). After a change the panel reads its content again and, when
+the command made an entry, puts its cursor on it (`reveal`).
+
+What is deleted from a row — its metarecord, its file, or both — is a separate
+choice: `file:trash` always takes the file, with its metarecords.

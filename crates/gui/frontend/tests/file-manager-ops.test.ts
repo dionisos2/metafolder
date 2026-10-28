@@ -148,41 +148,37 @@ describe('file-manager filesystem operations', () => {
   }
 
   test('new-folder / new-file create under the current directory', async () => {
-    const { handlers, fs } = await mount(null);
+    const { api, handlers, fs } = await mount(null);
     promptSpy.mockReturnValueOnce('My Folder');
-    await handlers.get('file-manager:new')!('folder');
+    await generic(api.provide, 'file:new', 'folder');
     expect(fs.mkdir).toHaveBeenCalledWith('/My Folder');
 
     promptSpy.mockReturnValueOnce('note.txt');
-    await handlers.get('file-manager:new')!('file');
+    await generic(api.provide, 'file:new', 'file');
     expect(fs.createFile).toHaveBeenCalledWith('/note.txt');
   });
 
   test('a blank or cancelled name cancels the create', async () => {
-    const { handlers, fs } = await mount(null);
+    const { api, handlers, fs } = await mount(null);
     promptSpy.mockReturnValueOnce('   '); // whitespace only
-    await handlers.get('file-manager:new')!('folder');
+    await generic(api.provide, 'file:new', 'folder');
     promptSpy.mockReturnValueOnce(null); // dialog cancelled
-    await handlers.get('file-manager:new')!('file');
+    await generic(api.provide, 'file:new', 'file');
     expect(fs.mkdir).not.toHaveBeenCalled();
     expect(fs.createFile).not.toHaveBeenCalled();
   });
 
   test('operations are inert before the panel has opened a directory', async () => {
-    const { handlers, fs, trash } = await mount(null, { start: false });
+    const { api, handlers, fs, trash } = await mount(null, { start: false });
     promptSpy.mockReturnValue('anything');
-    for (const [cmd, arg] of [
-      ['file-manager:new', 'folder'],
-      ['file-manager:new', 'file'],
-      ['file-manager:rename', undefined],
-      ['file-manager:duplicate', undefined],
-      ['file-manager:paste', undefined],
-      ['file-manager:delete', undefined],
-    ] as [string, string | undefined][]) {
-      await (handlers.get(cmd)! as (a?: string) => unknown)(arg);
-    }
+    // A panel that shows no folder yet has none to create or paste in, and no
+    // file to rename or copy: the file commands refuse.
+    await expect(generic(api.provide, 'file:new', 'folder')).rejects.toThrow('no folder here');
+    await expect(generic(api.provide, 'file:paste')).rejects.toThrow('no folder here');
+    await expect(generic(api.provide, 'file:rename')).rejects.toThrow('no file here');
+    await expect(generic(api.provide, 'file:duplicate')).rejects.toThrow('no file here');
+    await handlers.get('file-manager:delete')!();
     expect(fs.mkdir).not.toHaveBeenCalled();
-    expect(fs.createFile).not.toHaveBeenCalled();
     expect(fs.move).not.toHaveBeenCalled();
     expect(fs.copy).not.toHaveBeenCalled();
     expect(fs.remove).not.toHaveBeenCalled();
@@ -193,14 +189,14 @@ describe('file-manager filesystem operations', () => {
     const { api, handlers, fs } = await mount(null);
     await selectSong(api);
     promptSpy.mockReturnValueOnce('anthem.mp3');
-    await handlers.get('file-manager:rename')!();
+    await generic(api.provide, 'file:rename');
     expect(fs.move).toHaveBeenCalledWith('/song.mp3', '/anthem.mp3');
   });
 
   test('duplicate copies to a collision-free " copy" name', async () => {
     const { api, handlers, fs } = await mount(null);
     await selectSong(api);
-    await handlers.get('file-manager:duplicate')!();
+    await generic(api.provide, 'file:duplicate');
     expect(fs.copy).toHaveBeenCalledWith('/song.mp3', '/song copy.mp3');
   });
 
@@ -208,7 +204,7 @@ describe('file-manager filesystem operations', () => {
     const { api, handlers, fs } = await mount(null);
     await selectSong(api);
     await generic(api.provide, 'clipboard:copy');
-    await handlers.get('file-manager:paste')!();
+    await generic(api.provide, 'file:paste');
     // Pasting song.mp3 back into its own directory dedupes to "song copy.mp3".
     expect(fs.copy).toHaveBeenCalledWith('/song.mp3', '/song copy.mp3');
     expect(fs.move).not.toHaveBeenCalled();
@@ -221,7 +217,7 @@ describe('file-manager filesystem operations', () => {
     expect(global.current('clipboard')).toEqual({ paths: ['/song.mp3'], mode: 'copy' });
     await generic(api.provide, 'clipboard:cut');
     expect(global.current('clipboard')).toEqual({ paths: ['/song.mp3'], mode: 'cut' });
-    await handlers.get('file-manager:paste')!();
+    await generic(api.provide, 'file:paste');
     expect(global.current('clipboard')).toBeNull();
   });
 
@@ -239,13 +235,13 @@ describe('file-manager filesystem operations', () => {
     const { api, handlers, fs } = await mount(null);
     await selectSong(api);
     await generic(api.provide, 'clipboard:cut');
-    await handlers.get('file-manager:paste')!();
+    await generic(api.provide, 'file:paste');
     expect(fs.move).toHaveBeenCalledWith('/song.mp3', '/song copy.mp3');
   });
 
   test('paste with an empty clipboard does nothing', async () => {
-    const { handlers, fs } = await mount(null);
-    await handlers.get('file-manager:paste')!();
+    const { api, fs } = await mount(null);
+    await expect(generic(api.provide, 'file:paste')).rejects.toThrow('clipboard is empty');
     expect(fs.copy).not.toHaveBeenCalled();
     expect(fs.move).not.toHaveBeenCalled();
   });
@@ -284,8 +280,8 @@ describe('file-manager filesystem operations', () => {
     const { api, handlers, fs, trash, statusBar } = await mount(null);
     // Cursor at index 0 (the "." row) — not a real entry.
     await cursor(api.provide, 'first');
-    await handlers.get('file-manager:rename')!();
-    await handlers.get('file-manager:duplicate')!();
+    await expect(generic(api.provide, 'file:rename')).rejects.toThrow('no file here');
+    await expect(generic(api.provide, 'file:duplicate')).rejects.toThrow('no file here');
     await handlers.get('file-manager:delete')!();
     await expect(generic(api.provide, 'clipboard:copy')).rejects.toThrow('no file to copy');
     expect(fs.move).not.toHaveBeenCalled();
@@ -298,18 +294,17 @@ describe('file-manager filesystem operations', () => {
     const { api, handlers, fs } = await mount(null);
     await selectSong(api);
     promptSpy.mockReturnValueOnce('song.mp3');
-    await handlers.get('file-manager:rename')!();
+    await generic(api.provide, 'file:rename');
     promptSpy.mockReturnValueOnce('');
-    await handlers.get('file-manager:rename')!();
+    await generic(api.provide, 'file:rename');
     expect(fs.move).not.toHaveBeenCalled();
   });
 
-  test('a filesystem error is surfaced to the status bar', async () => {
-    const { handlers, fs, statusBar } = await mount(null);
+  test('a filesystem error fails the command, which the shell reports', async () => {
+    const { api, fs } = await mount(null);
     fs.mkdir.mockRejectedValueOnce(new Error('permission denied'));
     promptSpy.mockReturnValueOnce('blocked');
-    await handlers.get('file-manager:new')!('folder');
-    expect(statusBar.error).toHaveBeenCalled();
+    await expect(generic(api.provide, 'file:new', 'folder')).rejects.toThrow('permission denied');
   });
 
   test('navigation, toggles and activation are wired', async () => {
@@ -348,7 +343,7 @@ describe('file-manager filesystem operations', () => {
   });
 
   test('with a repository the root button still names the repo root', async () => {
-    const { root } = await mount('repo-1');
+    const { api, root } = await mount('repo-1');
     expect(root.getElementById('goto-root')!.textContent).toBe('repo root');
   });
 
@@ -359,43 +354,42 @@ describe('file-manager filesystem operations', () => {
     const mod = await import('../../default-config/panel-types/file-manager/main.js');
     await mod.mount(shadowRoot(), withRuns(s.api) as never);
     await new Promise((r) => setTimeout(r, 0));
-    // A create still works, falling back to the built-in message duration.
+    // A create still works.
     promptSpy.mockReturnValueOnce('x');
-    await s.handlers.get('file-manager:new')!('folder');
+    await generic(s.api.provide, 'file:new', 'folder');
     expect(s.fs.mkdir).toHaveBeenCalledWith('/x');
   });
 
-  test('rename / duplicate / trash errors are surfaced', async () => {
+  test('rename / duplicate errors fail the command, a trash error is surfaced', async () => {
     const { api, handlers, fs, trash, statusBar } = await mount('repo-1');
     await selectSong(api);
     fs.move.mockRejectedValueOnce(new Error('x'));
     promptSpy.mockReturnValueOnce('r.mp3');
-    await handlers.get('file-manager:rename')!();
-    fs.copy.mockRejectedValueOnce(new Error('x'));
-    await handlers.get('file-manager:duplicate')!();
-    trash.trashPath.mockRejectedValueOnce(new Error('x'));
+    await expect(generic(api.provide, 'file:rename')).rejects.toThrow('x');
+    fs.copy.mockRejectedValueOnce(new Error('y'));
+    await expect(generic(api.provide, 'file:duplicate')).rejects.toThrow('y');
+    trash.trashPath.mockRejectedValueOnce(new Error('z'));
     await handlers.get('file-manager:delete')!();
-    expect(statusBar.error).toHaveBeenCalledTimes(3);
+    expect(statusBar.error).toHaveBeenCalledTimes(1);
   });
 
-  test('new-file and permanent-delete errors are surfaced', async () => {
+  test('new-file and permanent-delete errors are reported', async () => {
     const { api, handlers, fs, statusBar } = await mount(null);
     fs.createFile.mockRejectedValueOnce(new Error('x'));
     promptSpy.mockReturnValueOnce('f');
-    await handlers.get('file-manager:new')!('file');
+    await expect(generic(api.provide, 'file:new', 'file')).rejects.toThrow('x');
     await selectSong(api);
     fs.remove.mockRejectedValueOnce(new Error('x'));
     await handlers.get('file-manager:delete')!();
-    expect(statusBar.error).toHaveBeenCalledTimes(2);
+    expect(statusBar.error).toHaveBeenCalledTimes(1);
   });
 
-  test('paste surfaces per-item errors and refuses pasting into itself', async () => {
-    const { api, handlers, fs, statusBar } = await mount(null);
+  test('paste fails on a copy error, and refuses pasting into itself', async () => {
+    const { api, handlers, fs } = await mount(null);
     await selectSong(api);
     await generic(api.provide, 'clipboard:copy');
     fs.copy.mockRejectedValueOnce(new Error('x'));
-    await handlers.get('file-manager:paste')!();
-    expect(statusBar.error).toHaveBeenCalled();
+    await expect(generic(api.provide, 'file:paste')).rejects.toThrow('x');
 
     // Cut dir1, navigate into it, then paste — refused (into itself).
     await cursor(api.provide, 'first');
@@ -403,7 +397,7 @@ describe('file-manager filesystem operations', () => {
     await cursor(api.provide, 'next'); // dir1
     await generic(api.provide, 'clipboard:cut');
     await handlers.get('file-manager:activate')!(); // opens /dir1
-    await handlers.get('file-manager:paste')!();
+    await generic(api.provide, 'file:paste');
     expect(fs.move).not.toHaveBeenCalled();
   });
 
@@ -457,7 +451,7 @@ describe('file-manager filesystem operations', () => {
 
   test('the row and background context menus build without throwing', async () => {
     for (const repo of ['repo-1', null] as const) {
-      const { root } = await mount(repo);
+      const { api, root } = await mount(repo);
       // A directory row, a file row, and the synthetic "." / ".." rows.
       for (const row of root.querySelectorAll('li')) {
         row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));

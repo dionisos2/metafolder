@@ -7,14 +7,9 @@ summary: The file-manager panel type
 
 * ``file-manager:activate`` — File manager: go into the folder / show the file (here / other / new)
 * ``file-manager:delete`` — File manager: delete the selected entry (trash when a repo is active)
-* ``file-manager:duplicate`` — File manager: duplicate the selected entry
-* ``file-manager:new`` — File manager: create a new folder or empty file
-* ``file-manager:paste`` — File manager: paste the clipboard into the current directory
-* ``file-manager:record`` — File manager: record the selected path — its metarecord, mf_watch = false
-* ``file-manager:rename`` — File manager: rename the selected entry
 * ``file-manager:select`` — File manager: change the checked multi-selection (toggle / all / none)
 * ``file-manager:toggle`` — File manager: toggle a view flag (root constraint / hidden dot-entries / sort by watch activity / sort by operations written)
 
 !! Generic commands
 
-Provides ``refresh``, ``index``, ``count``, ``select``, ``entries``, ``descend``, ``parent``, ``root``, ``paths`` to [[Generic panel commands]].
+Provides ``refresh``, ``index``, ``count``, ``select``, ``entries``, ``descend``, ``parent``, ``root``, ``directory``, ``reveal``, ``paths`` to [[Generic panel commands]].

@@ -1,7 +1,7 @@
 // Answering confirmations for a scripted command (doc "GUI scripting
 // endpoints"): `mf gui command --confirm yes|no` runs a command whose
 // `window.confirm` dialogs are answered for it, so a script — or the GUI's
-// end-to-end tests — can drive a confirmed command such as `metarecord:trash`.
+// end-to-end tests — can drive a confirmed command such as `metarecord:remove`.
 //
 // The answer is tied to the command, never armed in advance: it holds while the
 // command runs and stops when it resolves, so an answer nobody asked for cannot

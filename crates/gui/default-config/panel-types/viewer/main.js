@@ -1547,6 +1547,9 @@ export async function mount(root, metafolder) {
   // is on disk now, or the folder's listing. A medium goes back behind its
   // poster, its position kept for the next play — as when the selection moves.
   metafolder.provide({ refresh: () => metafolder.whenVisible(rerender) });
+  // The file shown, for the `file:` commands and the clipboard (doc "File
+  // commands"): the workspace's selection, which this panel follows.
+  metafolder.provide({ paths: (mf) => selectedPathsOf(mf) });
 
   workspace.onChange('selected_paths', (value) => void update(value));
   await update(await workspace.get('selected_paths'));
@@ -1562,3 +1565,10 @@ export async function mount(root, metafolder) {
 }
 
 /** The message of a thrown error (the fs/daemon seams throw Error). */
+
+/** The workspace's selected paths, as the `paths` a panel provides.
+ *  @param {MetafolderApi} mf @returns {Promise<string[]>} */
+async function selectedPathsOf(mf) {
+  const value = await mf.workspace.get('selected_paths');
+  return Array.isArray(value) ? value.filter((path) => typeof path === 'string') : [];
+}

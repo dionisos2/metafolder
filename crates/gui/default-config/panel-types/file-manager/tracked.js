@@ -3,9 +3,9 @@
 // instead of paginating the whole repository.
 
 // Parent directory and containment of absolute paths: the file actions' own.
-import { isWithin, parentDir } from '/__file-actions.js';
+import { isWithin, parentDir, recordPath } from '/__file-actions.js';
 
-export { isWithin, parentDir };
+export { isWithin, parentDir, recordPath };
 
 // File-manager footer summary (doc "file-manager panel"): how
 // many of the directory's entries are currently rendered. The listing is
@@ -116,35 +116,4 @@ export async function loadTrackedChildren(daemon, repo, repoRoot, dir, dirUuid) 
     tracked.set(prefix + child.name, child.uuid);
   }
   return tracked;
-}
-
-/**
- * Creates the metarecord of `path` (doc "Recording a path"). When parent
- * directories have none, the daemon refuses and lists them: they are named in
- * `confirm`'s question, and created only if it says yes.
- *
- * @param {Pick<Metafolder.Daemon, 'request'>} daemon
- * @param {string} repo
- * @param {string} path absolute filesystem path
- * @param {(question: string) => boolean} confirm
- * @returns {Promise<{uuid: string} | {cancelled: true} | {error: string}>}
- */
-export async function recordPath(daemon, repo, path, confirm) {
-  const url = `/repos/${repo}/metarecords`;
-  let response = await daemon.request('POST', url, { path, fields: [] });
-  /** @type {{uuid?: string, error?: string, missing_parents?: string[]}} */
-  let body = /** @type {any} */ (response.body) ?? {};
-  const missing = response.status === 409 ? body.missing_parents : undefined;
-  if (Array.isArray(missing) && missing.length > 0) {
-    const question =
-      `No metarecord for the parent ${missing.length === 1 ? 'directory' : 'directories'}:\n` +
-      `${missing.join('\n')}\n\nCreate ${missing.length === 1 ? 'it' : 'them'} too?`;
-    if (!confirm(question)) return { cancelled: true };
-    response = await daemon.request('POST', url, { path, fields: [], parents: true });
-    body = /** @type {any} */ (response.body) ?? {};
-  }
-  if (response.status >= 400) {
-    return { error: body.error ?? `POST ${url}: HTTP ${response.status}` };
-  }
-  return { uuid: String(body.uuid) };
 }

@@ -12,6 +12,7 @@
 // whether a key bound to it applies here, and what it does with the functions.
 
 import { osmMatch, splitTerms } from '../../../panel-shim/finder.js';
+import { FILE_NEEDS, runFileCommand, type FileOps } from './fileCommands';
 import type { ExecContext } from './types';
 
 /** One searchable row of `entries()`. `label` is what the completion offers and
@@ -60,6 +61,12 @@ export interface PanelFunctions {
    *  `clipboard:copy`/`clipboard:cut`: the checked metarecords' when some are
    *  checked, else the row under the cursor's. */
   paths?: () => string[] | Promise<string[]>;
+  /** The folder the panel shows, where `file:new` and `file:paste` work; null
+   *  when it shows none right now. */
+  directory?: () => string | null | Promise<string | null>;
+  /** Puts the cursor on the entry `name` of the folder shown — the one a
+   *  `file:` command just made. */
+  reveal?: (name: string) => unknown;
 }
 export type FunctionName = keyof PanelFunctions;
 
@@ -115,6 +122,10 @@ const NEEDS: Record<string, (rest: string[]) => FunctionName[]> = {
   'view:zoom': () => ['zoom'],
   'clipboard:copy': () => ['paths'],
   'clipboard:cut': () => ['paths'],
+  // The `file:` commands (doc "File commands").
+  ...Object.fromEntries(
+    Object.entries(FILE_NEEDS).map(([name, needs]) => [name, () => [needs] as FunctionName[]]),
+  ),
 };
 
 export const GENERIC_COMMANDS = Object.keys(NEEDS);
@@ -200,6 +211,8 @@ export interface GenericContext {
   /** Puts `paths` in the file clipboard (the global GUI variable `clipboard`),
    *  in the command's run. */
   clip: (paths: string[], mode: 'copy' | 'cut') => Promise<void>;
+  /** What the `file:` commands work with. */
+  files?: FileOps;
 }
 
 /**
@@ -211,7 +224,7 @@ export async function runGeneric(
   name: string,
   functions: PanelFunctions,
   rest: string[],
-  { panelType, reinvoke, clip }: GenericContext,
+  { panelType, reinvoke, clip, files }: GenericContext,
 ): Promise<void> {
   const needed = neededFunctions(name, rest);
   if (needed === null) throw new Error(`not a generic command: ${name}`);
@@ -224,6 +237,11 @@ export async function runGeneric(
   if (missingFunctions(providedNames(functions), needed).length > 0) {
     const what = name === 'cursor:find' && rest[0] === 'walk' ? `${name} walk` : name;
     throw new Error(`${what} is not implemented for the ${panelType} panel`);
+  }
+  if (name in FILE_NEEDS) {
+    if (!files) throw new Error(`${name}: no file operations here`);
+    await runFileCommand(name, functions, rest, files);
+    return;
   }
   // Every function `needed` names is there now.
   const fns = functions as Required<PanelFunctions>;

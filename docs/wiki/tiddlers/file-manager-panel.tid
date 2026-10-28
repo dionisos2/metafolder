@@ -82,7 +82,7 @@ entry has no metarecord to check, and the status bar says so.
 
 !! Recording
 
-''Add to DB'' (`file-manager:record`) creates the metarecord of the entry under the
+''Add to DB'' (`file:record file-manager`) creates the metarecord of the entry under the
 cursor with `mf_watch = false`: recorded, not watched ([[Recording a path]]). Parent
 directories with no metarecord are named in a confirmation and created only if it is
 accepted. The button is disabled on an entry that is already
@@ -90,12 +90,14 @@ tracked, outside the repository root or inside `internal/`.
 
 !! File operations
 
+These are the [[File commands]], run on this panel's files and folder.
+
 |!Key |!Does |
-|<<key "file-manager:new folder" Ctrl+Shift+n>>, <<key "file-manager:new file" Ctrl+n>> |create a folder, an empty file — the name is asked |
-|<<key "file-manager:rename" F2>> |rename the entry |
-|<<key "file-manager:duplicate" Ctrl+d>> |copy it beside itself, as `name copy.ext` |
+|<<key "file:new self folder" Ctrl+Shift+n>>, <<key "file:new self file" Ctrl+n>> |create a folder, an empty file — the name is asked |
+|<<key "file:rename self" F2>> |rename the entry |
+|<<key "file:duplicate self" Ctrl+d>> |copy it beside itself, as `name copy.ext` |
 |<<key "clipboard:copy self" Ctrl+c>>, <<key "clipboard:cut self" Ctrl+x>> |copy, cut the checked entries, or the one under the cursor ([[Generic panel commands]]) |
-|<<key "file-manager:paste" Ctrl+v>> |paste into the directory shown |
+|<<key "file:paste self" Ctrl+v>> |paste into the directory shown |
 |<<key "file-manager:delete" Delete>> |delete the entry, after a confirmation |
 
 They act on the disk directly, not through the daemon. A tracked file that is renamed

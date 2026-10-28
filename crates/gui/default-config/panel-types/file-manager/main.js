@@ -17,7 +17,6 @@ import {
   entriesFooter,
   filterHidden,
   syntheticRows,
-  recordPath,
 } from './tracked.js';
 import { loadEligibility, scopedPath } from './ignored.js';
 import { ignoreTarget, patternForExtension, patternForPath } from '/__ignore.js';
@@ -32,10 +31,6 @@ import {
 } from '/__activity.js';
 import { fetchMounts, offlineMountFor, relativeTo, unavailableLabel } from '/__mounts.js';
 import {
-  joinPath,
-  dedupeName,
-  baseName,
-  getClipboard,
   setClipboard,
   hasClipboard,
   clipboardPaths,
@@ -713,7 +708,7 @@ export async function mount(root, metafolder) {
       {
         label: 'Record (mf_watch = false)',
         disabled: !repo || trackedPaths.has(item.path) || !trackable(item.path),
-        action: () => void addSelected(metafolder),
+        action: () => void fileCommand('file:record'),
       },
       { header: 'File' },
     );
@@ -722,9 +717,9 @@ export async function mount(root, metafolder) {
       items.push(
         { label: 'Cut', action: () => void clip(metafolder, 'cut') },
         { label: 'Copy', action: () => void clip(metafolder, 'copy') },
-        { label: 'Paste', disabled: !hasClipboard(metafolder), action: () => void paste(metafolder) },
-        { label: 'Rename…', action: () => void renameSelected(metafolder) },
-        { label: 'Duplicate', action: () => void duplicateSelected(metafolder) },
+        { label: 'Paste', disabled: !hasClipboard(metafolder), action: () => void fileCommand('file:paste') },
+        { label: 'Rename…', action: () => void fileCommand('file:rename') },
+        { label: 'Duplicate', action: () => void fileCommand('file:duplicate') },
         {
           label: 'Copy full path',
           action: () => {
@@ -735,13 +730,13 @@ export async function mount(root, metafolder) {
         { label: repo ? 'Move to trash' : 'Delete…', action: () => void deleteSelected(metafolder) },
       );
     } else {
-      items.push({ label: 'Paste', disabled: !hasClipboard(metafolder), action: () => void paste(metafolder) });
+      items.push({ label: 'Paste', disabled: !hasClipboard(metafolder), action: () => void fileCommand('file:paste') });
     }
     if (isEntry) items.push(...ignoreMenuItems(item));
     items.push(
       { header: 'Directory' },
-      { label: 'New folder…', action: () => void newFolder(metafolder) },
-      { label: 'New file…', action: () => void newFile(metafolder) },
+      { label: 'New folder…', action: () => void fileCommand('file:new', 'folder') },
+      { label: 'New file…', action: () => void fileCommand('file:new', 'file') },
     );
     metafolder.contextMenu(event, items);
   }
@@ -754,10 +749,10 @@ export async function mount(root, metafolder) {
     /** @type {Metafolder.MenuItem[]} */
     const items = [
       { header: 'File' },
-      { label: 'Paste', disabled: !hasClipboard(metafolder), action: () => void paste(metafolder) },
+      { label: 'Paste', disabled: !hasClipboard(metafolder), action: () => void fileCommand('file:paste') },
       { header: 'Directory' },
-      { label: 'New folder…', action: () => void newFolder(metafolder) },
-      { label: 'New file…', action: () => void newFile(metafolder) },
+      { label: 'New folder…', action: () => void fileCommand('file:new', 'folder') },
+      { label: 'New file…', action: () => void fileCommand('file:new', 'file') },
     ];
     // In a folder pick, empty space chooses the current directory. It leads the
     // menu, above the categories (see /__menu.js: header-less items come first).
@@ -774,32 +769,6 @@ export async function mount(root, metafolder) {
     await open(mf, parentDir(currentDir));
   }
 
-  /** @param {MetafolderApi} mf */
-  async function addSelected(mf) {
-    const item = listing[cursorIndex];
-    if (!repo) {
-      void statusBar.message('no active repository', 4000);
-      return;
-    }
-    if (!item) return;
-    let outcome;
-    try {
-      outcome = await recordPath(daemon, repo, item.path, (question) => window.confirm(question));
-    } catch (error) {
-      await statusBar.error(error, 6000);
-      return;
-    }
-    if ('cancelled' in outcome) return;
-    if ('error' in outcome) {
-      await statusBar.error(outcome.error, 6000);
-      return;
-    }
-    void statusBar.message(`Recorded: ${item.name} (mf_watch = false)`, statusMessageMs);
-    await reenrichVisible(mf);
-    render();
-    await select(mf, cursorIndex);
-    await mf.workspace.set('metarecords:dirty', Date.now());
-  }
 
   // ── Ignore patterns (doc "Setting ignore patterns") ───────────────────────────
   // Adding a pattern always targets the *current directory*, never the row: an
@@ -1027,15 +996,6 @@ export async function mount(root, metafolder) {
   // layer refuses to overwrite an existing destination, so a name clash is a
   // clear error, never a silent clobber.
 
-  /** The names of the current directory's real entries (for de-duplication). */
-  function takenNames() {
-    const names = new Set();
-    for (const item of listing) {
-      if (item.name !== '.' && item.name !== '..') names.add(item.name);
-    }
-    return names;
-  }
-
   /** The cursor's row, unless it is a synthetic "." / ".." row or nothing. */
   function selectedEntry() {
     const item = listing[cursorIndex];
@@ -1060,68 +1020,9 @@ export async function mount(root, metafolder) {
     }
   }
 
-  /** @param {MetafolderApi} mf */
-  async function newFolder(mf) {
-    if (currentDir === null) return;
-    const name = (prompt('New folder name:') ?? '').trim();
-    if (!name) return;
-    try {
-      await mf.fs.mkdir(joinPath(currentDir, name));
-    } catch (error) {
-      await statusBar.error(error, statusErrorMs);
-      return;
-    }
-    void statusBar.message(`Created folder ${name}`, statusMessageMs);
-    await afterMutation(mf, name);
-  }
 
-  /** @param {MetafolderApi} mf */
-  async function newFile(mf) {
-    if (currentDir === null) return;
-    const name = (prompt('New file name:') ?? '').trim();
-    if (!name) return;
-    try {
-      await mf.fs.createFile(joinPath(currentDir, name));
-    } catch (error) {
-      await statusBar.error(error, statusErrorMs);
-      return;
-    }
-    void statusBar.message(`Created file ${name}`, statusMessageMs);
-    await afterMutation(mf, name);
-  }
 
-  /** @param {MetafolderApi} mf */
-  async function renameSelected(mf) {
-    if (currentDir === null) return;
-    const item = selectedEntry();
-    if (!item) return;
-    const next = (prompt('Rename to:', item.name) ?? '').trim();
-    if (!next || next === item.name) return;
-    try {
-      await mf.fs.move(item.path, joinPath(currentDir, next));
-    } catch (error) {
-      await statusBar.error(error, statusErrorMs);
-      return;
-    }
-    void statusBar.message(`Renamed to ${next}`, statusMessageMs);
-    await afterMutation(mf, next);
-  }
 
-  /** @param {MetafolderApi} mf */
-  async function duplicateSelected(mf) {
-    if (currentDir === null) return;
-    const item = selectedEntry();
-    if (!item) return;
-    const name = dedupeName(item.name, takenNames());
-    try {
-      await mf.fs.copy(item.path, joinPath(currentDir, name));
-    } catch (error) {
-      await statusBar.error(error, statusErrorMs);
-      return;
-    }
-    void statusBar.message(`Duplicated to ${name}`, statusMessageMs);
-    await afterMutation(mf, name);
-  }
 
   /** The right-click menu's Cut / Copy: the entry clicked, which the cursor
    *  moved to. @param {MetafolderApi} mf @param {'copy'|'cut'} mode */
@@ -1132,40 +1033,6 @@ export async function mount(root, metafolder) {
     void statusBar.message(`${mode === 'cut' ? 'Cut' : 'Copied'} ${item.name}`, statusMessageMs);
   }
 
-  /** @param {MetafolderApi} mf */
-  async function paste(mf) {
-    if (currentDir === null) return;
-    const cb = await getClipboard(mf);
-    if (!cb || cb.paths.length === 0) {
-      void statusBar.message('clipboard is empty', 3000);
-      return;
-    }
-    const { paths, mode } = cb;
-    const taken = takenNames();
-    let pasted = 0;
-    for (const src of paths) {
-      // Never move/copy a directory into itself or one of its descendants.
-      if (isWithin(currentDir, src)) {
-        await statusBar.error(`cannot paste ${baseName(src)} into itself`, statusErrorMs);
-        continue;
-      }
-      const name = dedupeName(baseName(src), taken);
-      const target = joinPath(currentDir, name);
-      try {
-        if (mode === 'cut') await mf.fs.move(src, target);
-        else await mf.fs.copy(src, target);
-        taken.add(name);
-        pasted += 1;
-      } catch (error) {
-        await statusBar.error(error, statusErrorMs);
-      }
-    }
-    if (mode === 'cut') await setClipboard(mf, null); // the sources have moved
-    if (pasted > 0) {
-      void statusBar.message(`Pasted ${pasted} item${pasted === 1 ? '' : 's'}`, statusMessageMs);
-      await afterMutation(mf, paths.length === 1 ? baseName(paths[0]) : null);
-    }
-  }
 
   /** @param {MetafolderApi} mf */
   async function deleteSelected(mf) {
@@ -1263,12 +1130,8 @@ export async function mount(root, metafolder) {
   byId(root, 'up').addEventListener('click', () => void goUp(metafolder));
   gotoRootButton.addEventListener('click', () => void gotoRoot(metafolder));
   byId(root, 'refresh').addEventListener('click', () => void refresh(metafolder));
-  addButton.addEventListener('click', () => void addSelected(metafolder));
+  addButton.addEventListener('click', () => void fileCommand('file:record'));
 
-  void commands.register('file-manager:record', {
-    label: 'File manager: record the selected path — its metarecord, mf_watch = false',
-    handler: (mf) => addSelected(mf),
-  });
 
   /** @type {Record<string, (mf: MetafolderApi) => unknown>} */
   const FM_FLAGS = {
@@ -1296,24 +1159,6 @@ export async function mount(root, metafolder) {
     },
   });
 
-  /** @type {Record<string, (mf: MetafolderApi) => unknown>} */
-  const FM_NEW = { folder: (mf) => newFolder(mf), file: (mf) => newFile(mf) };
-
-  void commands.register('file-manager:new', {
-    label: 'File manager: create a new folder or empty file',
-    args: [
-      {
-        name: 'kind',
-        prompt: () => `Create what? (${Object.keys(FM_NEW).join(' / ')})`,
-        complete: () => Object.keys(FM_NEW),
-      },
-    ],
-    handler: (mf, kind) => {
-      const run = FM_NEW[kind];
-      if (!run) throw new Error(`unknown kind: "${kind ?? ''}" (expected folder / file)`);
-      return run(mf);
-    },
-  });
 
   // Read again on `view:refresh` (doc "Generic panel commands").
   metafolder.provide({ refresh });
@@ -1341,14 +1186,20 @@ export async function mount(root, metafolder) {
   // Up one level, and to the top, on `cursor:parent` / `cursor:root` (doc
   // "Generic panel commands"): the root is the repo root, or / with no repo.
   metafolder.provide({ parent: goUp, root: gotoRoot });
-  void commands.register('file-manager:rename', {
-    label: 'File manager: rename the selected entry',
-    handler: (mf) => renameSelected(mf),
+  // The `file:` commands (doc "File commands") create and paste in the
+  // folder shown, and put the cursor on what they made.
+  metafolder.provide({
+    directory: () => currentDir,
+    reveal: async (mf, name) => {
+      const index = listing.findIndex((item) => item.name === name);
+      if (index >= 0) await select(mf, index);
+    },
   });
-  void commands.register('file-manager:duplicate', {
-    label: 'File manager: duplicate the selected entry',
-    handler: (mf) => duplicateSelected(mf),
-  });
+  /** Runs a `file:` command on this panel — a context menu's or a button's
+   *  action. @param {string} name @param {string[]} rest */
+  function fileCommand(name, ...rest) {
+    return commands.invoke([name, 'file-manager', ...rest]);
+  }
   // `clipboard:copy`/`clipboard:cut` (doc "Generic panel commands"): the
   // checked metarecords' files, else the entry under the cursor.
   metafolder.provide({
@@ -1357,10 +1208,6 @@ export async function mount(root, metafolder) {
         const item = listing[cursorIndex];
         return item && item.name !== '.' && item.name !== '..' ? [item.path] : [];
       }),
-  });
-  void commands.register('file-manager:paste', {
-    label: 'File manager: paste the clipboard into the current directory',
-    handler: (mf) => paste(mf),
   });
   void commands.register('file-manager:delete', {
     label: 'File manager: delete the selected entry (trash when a repo is active)',

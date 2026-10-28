@@ -1,0 +1,6 @@
+title: file:paste
+tags: [[GUI command]] [[File commands]]
+kind: reference
+summary: Paste the file clipboard into the folder a panel shows (self / a panel type)
+
+Copies, or moves after a cut, what the GUI's file clipboard holds into the folder the panel shows — the [[file-manager panel]]'s. A name already taken there gets a ` copy` suffix instead of being overwritten, and a folder is not pasted into itself or below. A cut is emptied from the clipboard once pasted. One of the [[File commands]].

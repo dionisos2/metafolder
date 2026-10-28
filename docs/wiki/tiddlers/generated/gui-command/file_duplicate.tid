@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/file:duplicate
+catalog: GUI command
+target: file:duplicate
+summary: Copy a panel's files beside themselves (self / a panel type)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``ctrl+d`` → ``file:duplicate self`` (in the ``file-manager`` panel)

@@ -420,20 +420,18 @@
   { command = "trash:prune entry", when = "trash" },
   # In the duplicates panel it is the copy under the cursor that goes, and the
   # panel re-counts the group it left (doc "duplicates panel") — which
-  # `metarecord:trash` on the shared selection could not do.
+  # `file:trash` on the shared selection could not do.
   { command = "duplicates:trash", when = "duplicates" },
 ]
 
 # The direct answers to the question `metarecord:remove` asks about a
 # metarecord's file (doc "Trash"), in the panels that carry a
 # metarecord selection: ctrl+delete sends the file to the trash at once
-# (= metarecord:trash), shift+delete deletes the metarecord alone
-# (= metarecord:delete, the file kept). Both are confirmed, as the bare
-# Delete key's action is.
+# (= file:trash, its metarecord with it), shift+delete deletes the metarecord
+# alone (= metarecord:delete, the file kept).
 "ctrl+delete" = [
-  { command = "metarecord:trash", when = "metarecord-list" },
-  { command = "metarecord:trash", when = "metarecord-detail" },
-  { command = "metarecord:trash", when = "path-ref" },
+  { command = "file:trash self", when = "metarecord-list" },
+  { command = "file:trash self", when = "metarecord-detail" },
 ]
 "shift+delete" = [
   { command = "metarecord:delete", when = "metarecord-list" },
@@ -472,13 +470,13 @@
 "ctrl+c" = { command = "clipboard:copy self" }
 "ctrl+x" = { command = "clipboard:cut self" }
 
-# file-manager: filesystem operations (paste, rename, duplicate, create).
-# All scoped to the panel; it has no text-input focus, so these plain
-# accelerators never clash with editing.
-"ctrl+v" = { command = "file-manager:paste", when = "file-manager" }
-"f2" = { command = "file-manager:rename", when = "file-manager" }
-"ctrl+d" = { command = "file-manager:duplicate", when = "file-manager" }
-"ctrl+shift+n" = { command = "file-manager:new folder", when = "file-manager" }
+# The file commands (doc "File commands"), on the panel's own files: paste,
+# rename, duplicate, create. Scoped to the file manager for now; it has no
+# text-input focus, so these plain accelerators never clash with editing.
+"ctrl+v" = { command = "file:paste self", when = "file-manager" }
+"f2" = { command = "file:rename self", when = "file-manager" }
+"ctrl+d" = { command = "file:duplicate self", when = "file-manager" }
+"ctrl+shift+n" = { command = "file:new self folder", when = "file-manager" }
 # Jump to the root — the repository's, or the filesystem's when no repository is
 # active — on the key that means root in a path. `/` is the metarecord-list
 # finder elsewhere, so the two never meet.
@@ -603,7 +601,7 @@
   { command = "metarecord:create", when = "metarecord-detail" },
   # New *file*, on the same combo the folder uses without its shift — the
   # sibling had a key and it did not.
-  { command = "file-manager:new file", when = "file-manager" },
+  { command = "file:new self file", when = "file-manager" },
   # path-ref: a new element of the explored forest, under the current node —
   # the create family keeps its combo.
   { command = "path-ref:add", when = "path-ref" },

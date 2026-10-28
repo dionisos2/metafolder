@@ -1,0 +1,6 @@
+title: file:rename
+tags: [[GUI command]] [[File commands]]
+kind: reference
+summary: Rename the file a panel designates (self / a panel type)
+
+Renames the one file the panel designates; the new name is asked in the command input with the current one to edit, or given after the panel. A name already taken is refused. The file moves on disk only: its metarecord follows when the watcher sees the move, or at the next reconcile ([[Watcher]]). One of the [[File commands]].

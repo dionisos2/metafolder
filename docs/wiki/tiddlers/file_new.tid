@@ -1,0 +1,6 @@
+title: file:new
+tags: [[GUI command]] [[File commands]]
+kind: reference
+summary: Create a folder or a file in the folder a panel shows (self / a panel type)
+
+`file:new <panel> folder` or `file:new <panel> file` creates a folder or an empty file in the folder the panel shows — the [[file-manager panel]]'s; the name is asked in the command input, or given after the kind. A name already taken is refused, never overwritten. One of the [[File commands]].

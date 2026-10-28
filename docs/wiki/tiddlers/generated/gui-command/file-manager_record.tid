@@ -1,9 +1,0 @@
-title: $:/mf/gen/GUI command/file-manager:record
-catalog: GUI command
-target: file-manager:record
-summary: File manager: record the selected path — its metarecord, mf_watch = false
-
-!! Reference
-
-* Defined by the ``file-manager`` panel
-* No default key

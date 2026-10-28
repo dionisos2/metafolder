@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/file:rename
+catalog: GUI command
+target: file:rename
+summary: Rename the file a panel designates (self / a panel type)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``f2`` → ``file:rename self`` (in the ``file-manager`` panel)

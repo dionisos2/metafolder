@@ -3,6 +3,8 @@
 // tested; dispatch routes to Tauri commands and panel instances.
 
 import { osmMatch } from "../../../panel-shim/finder.js";
+import { recordPath } from "../../../panel-shim/file-actions.js";
+import { NEW_KINDS, type FileOps } from "./fileCommands";
 import { bindingMatches } from "../../../panel-shim/keyhints.js";
 import { bindView, completionLabels } from "./completions";
 import type {
@@ -1727,6 +1729,77 @@ function panelArg(command: string): ArgSpec {
   };
 }
 
+/** What the `file:` commands work with (doc "File commands"), in workspace
+ *  `ws` and the run of `context`. */
+function fileOps(ws: string, context: ExecContext): FileOps {
+  const repo = () => {
+    const active = repoOf(ws);
+    if (!active) throw new Error("no active repository");
+    return active;
+  };
+  return {
+    readDir: async (dir) =>
+      (await invoke("fs_read_dir", { path: dir })) as { name: string }[],
+    move: async (from, to) => void (await invoke("fs_move", { from, to })),
+    copy: async (from, to) => void (await invoke("fs_copy", { from, to })),
+    mkdir: async (path) => void (await invoke("fs_mkdir", { path })),
+    createFile: async (path) => void (await invoke("fs_create_file", { path })),
+    trash: async (path) => void (await invoke("trash_path", { repo: repo(), path })),
+    record: async (path) => {
+      const daemon = {
+        request: (method: string, url: string, body: unknown) =>
+          invoke<Metafolder.DaemonResponse>("daemon_request", {
+            method,
+            path: url,
+            body,
+          }),
+      };
+      const outcome = await recordPath(daemon, repo(), path, (question: string) =>
+        window.confirm(question),
+      );
+      if ("error" in outcome) throw new Error(outcome.error);
+      return !("cancelled" in outcome);
+    },
+    ask: async (question, initial = "") => {
+      const answer = await promptForArg({
+        argName: "name",
+        position: 0,
+        prompt: question,
+        initial,
+        completions: [],
+      });
+      if (answer === null) return null;
+      return typeof answer === "string" ? answer : answer.value;
+    },
+    clipboard: async () => {
+      const value = (await invoke("global_get_var", {
+        key: "clipboard",
+        txn: context.txn,
+      })) as { paths: string[]; mode: "copy" | "cut" } | null;
+      return value && Array.isArray(value.paths) ? value : null;
+    },
+    clearClipboard: async () =>
+      void (await invoke("global_send", {
+        vars: { clipboard: null },
+        txn: context.txn,
+      })),
+    status: async (text) =>
+      void (await invoke("post_status", {
+        wsId: ws,
+        text,
+        kind: "info",
+        timeoutMs: 5000,
+      })),
+    changed: async () =>
+      void (await invoke("ws_set_var", {
+        wsId: ws,
+        key: "metarecords:dirty",
+        value: Date.now(),
+        txn: context.txn,
+      })),
+  };
+}
+
 /** The panel type a generic command's `panel` argument designates, in `context`. */
 function genericPanel(arg: string | undefined, context: ExecContext): string {
   return resolvePanel(
@@ -1736,10 +1809,18 @@ function genericPanel(arg: string | undefined, context: ExecContext): string {
 }
 
 for (const command of GENERIC_COMMANDS) {
-  if (command !== "cursor:find" && command !== "view:zoom") {
+  if (!["cursor:find", "view:zoom", "file:new"].includes(command)) {
     registerArgs(command, [panelArg(command)]);
   }
 }
+registerArgs("file:new", [
+  panelArg("file:new"),
+  {
+    name: "kind",
+    prompt: () => `Create what? (${NEW_KINDS.join(" / ")})`,
+    complete: () => [...NEW_KINDS],
+  },
+]);
 registerArgs("view:zoom", [
   panelArg("view:zoom"),
   {
@@ -2698,30 +2779,6 @@ async function runCommand(
       // is not surfaced twice.
       if (ws) await invoke("orphan_detect", { wsId: ws }).catch(() => 0);
       return true;
-    case "metarecord:trash": {
-      // Send the selected metarecord's file to the trash (doc "Trash").
-      // Reversible (restore from the trash panel), but confirmed anyway since
-      // it is bound to a bare Delete key.
-      if (!ws) return true;
-      const selected = await invoke("ws_get_var", {
-        wsId: ws,
-        key: "selected_metarecord",
-      });
-      if (!selected || typeof selected !== "object") {
-        await status("no metarecord is selected");
-        return true;
-      }
-      if (!window.confirm("Send the selected metarecord's file to the trash?"))
-        return true;
-      // The Rust command posts its own success/error status; swallow the
-      // rejection so the error is not surfaced twice.
-      try {
-        await invoke("trash_selected_metarecord", { wsId: ws });
-      } catch {
-        /* already reported to the status bar */
-      }
-      return true;
-    }
     case "context:set":
       // Both were collected by dispatch, the description with all its words.
       if (ws)
@@ -2990,6 +3047,7 @@ async function runCommand(
     const functions = await functionProvider()?.get(ws, panelType, context);
     await runGeneric(name, functions ?? {}, rest, {
       panelType,
+      files: fileOps(ws, context),
       reinvoke: (invocation) => void dispatch(invocation, context),
       clip: async (paths, mode) => {
         // The file clipboard (doc "Global GUI variables"), written in the run.

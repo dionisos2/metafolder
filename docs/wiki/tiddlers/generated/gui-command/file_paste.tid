@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/file:paste
+catalog: GUI command
+target: file:paste
+summary: Paste the file clipboard into the folder a panel shows (self / a panel type)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``ctrl+v`` → ``file:paste self`` (in the ``file-manager`` panel)
