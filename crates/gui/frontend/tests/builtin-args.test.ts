@@ -122,7 +122,7 @@ describe('the other builtins that take arguments', () => {
   test('the one-of-these builtins ask, with their choices in the prompt', async () => {
     for (const [invocation, prompt, reply] of [
       ['panel:toggle', 'Which flag? (split / fullscreen)', 'fullscreen'],
-      ['panel:focus', 'Focus which slot? (next / left / right)', 'right'],
+      ['panel:focus', 'Focus which slot? (next / left / right / cycle)', 'right'],
       ['editing:goto', 'Move the cursor where? (line-start / line-end)', 'line-end'],
       ['command-input:focus', 'Which mode? (command / bash)', 'bash'],
       ['mf:duplicate', 'Which operation? (scan)', 'scan'],
