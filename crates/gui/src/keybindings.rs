@@ -210,7 +210,9 @@ fn normalize_chord(chord: &str) -> Result<String, String> {
 // `command-input:focus` is listed bare so both of its modes are covered: the
 // match below also accepts an invocation that pre-fills arguments, and a script
 // must be unable to take over `!` any more than `:`.
-const RESERVED_COMMANDS: [&str; 2] = ["command-input:focus", "script-keys:toggle"];
+// `panel:focus cycle` (F6) walks to the question and back from it.
+const RESERVED_COMMANDS: [&str; 3] =
+    ["command-input:focus", "script-keys:toggle", "panel:focus cycle"];
 
 /// The combos a script's `mf gui input` may not await: whatever opens the
 /// command input, whatever toggles the script keys, `escape` (which always
@@ -1501,12 +1503,19 @@ vars.y = ","
 ":" = { command = "command-input:focus command" }
 "ctrl+p" = { command = "command-input:focus command" }
 "tab" = { command = "script-keys:toggle" }
+"f6" = { command = "panel:focus cycle" }
+"o" = { command = "panel:focus next" }
 "y" = { command = "metarecord-list:next" }
 "g g" = { command = "metarecord-list:goto-top" }
 "#;
         let set = KeybindingSet::from_sources(defaults, "").unwrap();
         let reserved = reserved_combos(&set.compiled());
-        assert_eq!(reserved, vec![":", "backspace", "ctrl+escape", "ctrl+p", "escape", "tab"]);
+        // F6 walks to the question and back from it: it is a way out too.
+        // `panel:focus next` is not — it moves between the panels only.
+        assert_eq!(
+            reserved,
+            vec![":", "backspace", "ctrl+escape", "ctrl+p", "escape", "f6", "tab"]
+        );
         // Both ways of ending the run: escape asks, ctrl+escape kills.
         assert!(is_reserved(&reserved, "Ctrl+Escape"));
 

@@ -9,4 +9,5 @@ summary: Focus a panel slot (next / left / right)
 
 !! Default keys
 
+* ``f6`` → ``panel:focus cycle``
 * ``o`` → ``panel:focus next``

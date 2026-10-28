@@ -43,7 +43,10 @@ never in conflict with an `n` bound in the panel underneath — and that panel c
 used meanwhile. A key typed in a text field is text, and reaches neither.
 
 The ''script keys'' checkbox in the question bar gives them back
-(<<key "script-keys:toggle" tab>>, `script-keys:toggle`). Unticked, every key means
+(<<key "script-keys:toggle" tab>>, `script-keys:toggle`), and so does
+<<key "panel:focus cycle" F6>>, which walks the left panel, the right one and the
+question in turn: on the question the keys are the script's, on a panel they are
+the panel's. Unticked, every key means
 again what it means in the panel; the question stays, its keys struck through, and
 is answered with `answer:send`, or by ticking the box again. The choice holds from
 one question to the next, but every ''new'' run starts with its keys live: a script is
@@ -51,7 +54,7 @@ never deprived, without anyone noticing, of the answers it waits for.
 
 !! Reserved keys
 
-Five keys are yours, and a script cannot take them. A question asking for one is
+Six keys are yours, and a script cannot take them. A question asking for one is
 refused (`400`) before it is shown.
 
 |!Key |!Does |
@@ -60,9 +63,11 @@ refused (`400`) before it is shown.
 |Backspace |goes back: answers `back` |
 |<<key "command-input:focus command" ":">>, <<key "command-input:focus bash" "!">> |open the command input |
 |<<key "script-keys:toggle" tab>> |flips the script keys |
+|<<key "panel:focus cycle" F6>> |walks the panels and the question |
 
 Escape, Ctrl+Escape and Backspace are reserved as such; the others are whatever keys
-are bound to `command-input:focus` and `script-keys:toggle`, so rebinding those moves
+are bound to `command-input:focus`, `script-keys:toggle` and `panel:focus cycle`, so
+rebinding those moves
 the reservation with them ([[Keybindings]]).
 
 There are two ways to end a run, and they are two commands — the GUI never turns the

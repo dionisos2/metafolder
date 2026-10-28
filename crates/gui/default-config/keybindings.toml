@@ -21,6 +21,9 @@
 # question. Escape always stops the asking script, and neither of these, nor
 # whatever activates the command input, can be awaited by a script.
 "tab" = { command = "script-keys:toggle" }
+# F6 walks the left panel, the right one, then the script's question when one
+# awaits keys (doc "Keyboard navigation"), and round again.
+"f6" = { command = "panel:focus cycle" }
 
 # Macros (doc "Macros"), on Emacs's keys: F3 starts recording and stops it, F4
 # runs the macro. Ctrl+G, in a question asked while recording, makes that

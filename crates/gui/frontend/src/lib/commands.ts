@@ -5,6 +5,7 @@
 import { osmMatch } from "../../../panel-shim/finder.js";
 import { recordPath } from "../../../panel-shim/file-actions.js";
 import { NEW_KINDS, type FileOps } from "./fileCommands";
+import { cycleStep } from "./focusCycle";
 import { bindingMatches } from "../../../panel-shim/keyhints.js";
 import { bindView, completionLabels } from "./completions";
 import type {
@@ -1800,6 +1801,21 @@ function fileOps(ws: string, context: ExecContext): FileOps {
   };
 }
 
+/** `panel:focus cycle` (F6): the left panel, the right one, the script's
+ *  question when one awaits keys, and round again (`cycleStep`). */
+async function focusCycle(): Promise<void> {
+  const step = cycleStep({
+    split: store.layout.left.visible && store.layout.right.visible,
+    focused: store.layout.focused,
+    question: (activeQuestion()?.keys.length ?? 0) > 0,
+    scriptKeys: store.ui.scriptKeys,
+  });
+  if (step.scriptKeys !== undefined && step.scriptKeys !== store.ui.scriptKeys) {
+    await invoke("script_keys_toggle");
+  }
+  if (step.focus !== undefined) await invoke("focus_slot", { slot: step.focus });
+}
+
 /** The panel type a generic command's `panel` argument designates, in `context`. */
 function genericPanel(arg: string | undefined, context: ExecContext): string {
   return resolvePanel(
@@ -1857,8 +1873,8 @@ registerArgs("cursor:find", [
 registerArgs("panel:focus", [
   {
     name: "slot",
-    prompt: () => "Focus which slot? (next / left / right)",
-    complete: () => ["next", "left", "right"],
+    prompt: () => "Focus which slot? (next / left / right / cycle)",
+    complete: () => ["next", "left", "right", "cycle"],
   },
 ]);
 
@@ -2675,11 +2691,12 @@ async function runCommand(
       // keybinding can reach a slot without knowing which one holds the focus.
       if (args[0] === undefined || args[0] === "next")
         await invoke("panel_focus_next");
+      else if (args[0] === "cycle") await focusCycle();
       else if (args[0] === "left" || args[0] === "right")
         await invoke("focus_slot", { slot: args[0] });
       else
         await status(
-          `unknown slot: "${args[0]}" (expected next / left / right)`,
+          `unknown slot: "${args[0]}" (expected next / left / right / cycle)`,
         );
       return true;
     case "panel:open": {
