@@ -8,7 +8,7 @@
 //! why this module holds no set of uuids: the marked set lives in the
 //! repository, not in the panel, and survives a restart.
 //!
-//! The confirmation before a deletion is the shell's (as for `metarecord:remove`)
+//! The confirmation before a deletion is the shell's (as for `metarecord:delete`)
 //! — hence [`count`], which is what the prompt names.
 
 use crate::commands::StatusTimeouts;

@@ -98,7 +98,7 @@ These are the [[File commands]], run on this panel's files and folder.
 |<<key "file:duplicate self" Ctrl+d>> |copy it beside itself, as `name copy.ext` |
 |<<key "clipboard:copy self" Ctrl+c>>, <<key "clipboard:cut self" Ctrl+x>> |copy, cut the checked entries, or the one under the cursor ([[Generic panel commands]]) |
 |<<key "file:paste self" Ctrl+v>> |paste into the directory shown |
-|<<key "file-manager:delete" Delete>> |delete the entry, after a confirmation |
+|<<key "item:delete" Delete>> |send the entry to the trash, its metarecord with it ([[Deleting an item]]); with no repository, `file-manager:delete` deletes it for good after a confirmation, and has no key |
 
 They act on the disk directly, not through the daemon. A tracked file that is renamed
 or moved here keeps its metarecord once the [[Watcher]] has seen the move — a couple

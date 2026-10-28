@@ -6,7 +6,4 @@ summary: File manager: delete the selected entry (trash when a repo is active)
 !! Reference
 
 * Defined by the ``file-manager`` panel
-
-!! Default keys
-
-* ``delete`` → ``file-manager:delete`` (in the ``file-manager`` panel)
+* No default key

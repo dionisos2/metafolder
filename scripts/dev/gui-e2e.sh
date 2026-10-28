@@ -457,39 +457,18 @@ scenario_trash() {
 
 has_record() { df_mf metarecord -i "$1" get >/dev/null 2>&1; }
 
-# Delete on a metarecord with a file asks three ways in the command input
-# (doc "metarecord:remove-file"): Escape keeps everything, `trash` trashes the
-# file, `delete` keeps the file and deletes the metarecord.
+# Delete (doc "Deleting an item"): `item:delete` asks nothing — a file goes
+# to the trash with its metarecord, a metarecord without a file is deleted.
 scenario_remove() {
-    needs_keyboard remove || return 0
     new_repo remove
     printf 'x\n' >"$REPO_DIR/f.txt"
-    printf 'y\n' >"$REPO_DIR/g.txt"
-    local f g runner
+    local f
     f=$(record "$REPO_DIR/f.txt")
-    g=$(record "$REPO_DIR/g.txt")
     select_path "$REPO_DIR/f.txt"
-
-    mfg command --timeout-ms 60000 metarecord:remove >/dev/null 2>&1 &
-    runner=$!
-    sleep 1
-    keys Escape
-    wait "$runner"
-    assert "remove, escape: the file stays" test -e "$REPO_DIR/f.txt"
-    assert "remove, escape: the metarecord stays" has_record "$f"
-
-    mfg command --timeout-ms 60000 metarecord:remove >/dev/null 2>&1 &
-    runner=$!
-    sleep 1
-    typed "trash"
-    keys Return
-    wait "$runner"
-    assert "remove, trash: the file is trashed" until_ok 10 test ! -e "$REPO_DIR/f.txt"
-
-    select_path "$REPO_DIR/g.txt"
-    answering yes metarecord:remove-file delete
-    assert "remove, delete: the file stays" test -e "$REPO_DIR/g.txt"
-    assert_not "remove, delete: the metarecord is gone" has_record "$g"
+    run item:delete
+    command_ok "remove: item:delete runs"
+    assert "remove: the file is trashed" until_ok 10 test ! -e "$REPO_DIR/f.txt"
+    assert_not "remove: its metarecord went with it" has_record "$f"
 }
 
 # The per-record field keys work wherever a metarecord is selected, the file

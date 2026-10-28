@@ -405,7 +405,7 @@ mod tests {
         let owner = |name: &str| all.iter().find(|c| c.name == name).map(|c| c.owner.clone());
         assert_eq!(owner("help:key"), Some(Owner::Shell));
         assert_eq!(owner("trash:restore"), Some(Owner::Panel("trash".into())));
-        assert_eq!(owner("metarecord:remove"), Some(Owner::UserCommands("commands.js")));
+        assert_eq!(owner("item:delete"), Some(Owner::UserCommands("commands.js")));
         assert_eq!(owner("user:rate"), Some(Owner::UserCommands("user-commands.js")));
         // The example in a module's header comment is not a command.
         assert_eq!(owner("user:thing"), None);

@@ -1,9 +1,0 @@
-title: $:/mf/gen/GUI command/metarecord:remove-file
-catalog: GUI command
-target: metarecord:remove-file
-summary: Remove the selected metarecord with a file: trash the file, or delete the metarecord only
-
-!! Reference
-
-* Defined by the shipped ``commands.js``
-* No default key

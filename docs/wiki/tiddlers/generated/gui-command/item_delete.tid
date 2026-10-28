@@ -1,0 +1,16 @@
+title: $:/mf/gen/GUI command/item:delete
+catalog: GUI command
+target: item:delete
+summary: Delete what is designated: its file to the trash, or the metarecord without a file (selection / query)
+
+!! Reference
+
+* Defined by the shipped ``commands.js``
+
+!! Default keys
+
+* ``delete`` → ``item:delete`` (in the ``file-manager`` panel)
+* ``delete`` → ``item:delete`` (in the ``metarecord-detail`` panel)
+* ``delete`` → ``item:delete`` (in the ``metarecord-list`` panel)
+* ``delete`` → ``item:delete`` (in the ``path-ref`` panel)
+* ``delete`` → ``item:delete`` (in the ``viewer`` panel)

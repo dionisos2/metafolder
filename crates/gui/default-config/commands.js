@@ -1,6 +1,6 @@
 // The GUI's own commands written in JavaScript (doc "User commands").
 //
-// The Delete key's `metarecord:remove`, the tag commands `tag:query` /
+// The Delete key's `item:delete`, the tag commands `tag:query` /
 // `tag:add` / `tag:remove`, the cross-panel `file-manager:reveal` and
 // `metarecord-list:folder`, the orphan cleanup `orphan:delete` /
 // `orphan:detect-delete`, and the picks `repos:switch` / `recent` /
@@ -321,73 +321,101 @@ export async function selectedFile(mf) {
   };
 }
 
+/**
+ * `item:delete` on the item under the cursor: the selected path to the trash,
+ * else the selected metarecord deleted.
+ * @param {MetafolderApi} mf @param {string} repo
+ * @param {{ uuid: string, repo: string } | null} selection
+ */
+async function deleteItem(mf, repo, selection) {
+  const paths = await mf.workspace.get('selected_paths');
+  // A panel may publish the metarecord alone (the tree explorer): its file is
+  // looked up, so that a metarecord is never deleted away from its file.
+  const path =
+    (Array.isArray(paths) ? paths.find((p) => typeof p === 'string') : undefined) ??
+    (await selectedFile(mf))?.path;
+  if (path) {
+    const trashed = await mf.trash.trashPath(repo, path);
+    await mf.statusBar.message(`Trashed ${trashed} — restore it from the trash panel`);
+  } else if (selection) {
+    await mf.daemon.call('DELETE', `/repos/${repo}/metarecords/${selection.uuid}`);
+    await mf.statusBar.message('Deleted the metarecord (it had no file)');
+  } else {
+    await mf.statusBar.error('nothing is selected');
+    return;
+  }
+  await mf.workspace.set('metarecords:dirty', Date.now());
+}
+
+/**
+ * `item:delete selection|query`: the metarecords without a file are deleted,
+ * then the files of the rest go to the trash, their metarecords with them.
+ * In this order, so that a file the trash refuses keeps its metarecord.
+ * @param {MetafolderApi} mf @param {string} repo @param {string} what
+ */
+async function deleteItems(mf, repo, what) {
+  /** @type {unknown} */
+  let query;
+  if (what === 'selection') {
+    const checked = await mf.workspace.get('selected_metarecords');
+    const uuids = Array.isArray(checked) ? checked.filter((u) => typeof u === 'string') : [];
+    if (uuids.length === 0) {
+      await mf.statusBar.message('No metarecords are checked — nothing to delete.');
+      return;
+    }
+    query = { type: 'uuid_in', uuids };
+  } else {
+    query = await mf.workspace.get('metarecord-list:effective-query');
+    if (!query) {
+      await mf.statusBar.message('The metarecord list shows no query — nothing to delete.');
+      return;
+    }
+  }
+  const withoutFile = {
+    type: 'and',
+    operands: [query, { type: 'not', operand: { type: 'is_present', field: 'mfr_path' } }],
+  };
+  await mf.daemon.call('POST', `/repos/${repo}/query/delete`, { query: withoutFile });
+  // The Rust side posts what was trashed and marks the lists dirty.
+  await mf.trash.trashQuery(repo, query);
+}
+
 export default {
-  // The Delete key on a metarecord (doc "Sending files to the trash"). Without
-  // a file this is a plain `metarecord:delete`, which confirms itself; with
-  // one, `metarecord:remove-file` asks what to do with the file.
+  // The Delete key (doc "Deleting an item"): what is designated goes, with no
+  // question — the file to the trash, its metarecords with it (a file is
+  // never deleted without its metarecord), or the metarecord alone when there
+  // is no file. `selection` / `query` do the same to the checked metarecords /
+  // to what the list's query matches. Nothing goes for good: without a
+  // repository there is no trash, and nothing is deleted.
   //
   // The keybindings default binds `delete` here (keybindings.toml), so
   // dropping this entry drops the command — rebind the key or put an entry
-  // back. The name is free: it is a builtin no longer.
-  'metarecord:remove': {
-    label: 'Remove the selected metarecord (its file: trash it, or keep it)',
-    run: async (/** @type {MetafolderApi} */ mf) => {
-      const selection = await selectedMetarecord(mf);
-      if (!selection) {
-        await mf.statusBar.error('no metarecord is selected');
-        return;
-      }
-      const rel = await metarecordFile(mf, selection.repo, selection.uuid);
-      await mf.invoke([rel === undefined ? 'metarecord:delete' : 'metarecord:remove-file']);
-    },
-  },
-
-  // The question `metarecord:remove` asks of a metarecord with a file, in the
-  // command input rather than an OK/Cancel dialog, which cannot say "neither":
-  // `trash` sends the file to the trash, the metarecord going with it (a
-  // tracked path's records are captured and deleted before the bytes move,
-  // `mf trash -f`'s order), so the question doubles as the confirmation
-  // `metarecord:trash` would ask; `delete` keeps the file and runs
-  // `metarecord:delete`, which confirms the record's deletion itself; Escape
-  // does nothing. `metarecord:remove-file trash` answers inline.
-  'metarecord:remove-file': {
-    label: 'Remove the selected metarecord with a file: trash the file, or delete the metarecord only',
+  // back.
+  'item:delete': {
+    label: 'Delete what is designated: its file to the trash, or the metarecord without a file (selection / query)',
     args: [
       {
-        name: 'how',
-        prompt: async (/** @type {MetafolderApi} */ mf) => {
-          const file = await selectedFile(mf);
-          return file ? `Remove "${file.name}":` : 'Remove:';
-        },
-        complete: () => [
-          { label: 'trash file (its metarecord goes with it)', value: 'trash' },
-          { label: 'delete metarecord (the file is kept)', value: 'delete' },
-        ],
+        name: 'what',
+        optional: true,
+        prompt: () => 'Delete what? (selection / query; empty: the item under the cursor)',
+        complete: () => ['selection', 'query'],
       },
     ],
-    run: async (/** @type {MetafolderApi} */ mf, /** @type {string} */ how = '') => {
-      if (how !== 'trash' && how !== 'delete') {
-        await mf.statusBar.error(`answer "trash" or "delete", not "${how}"`);
+    run: async (/** @type {MetafolderApi} */ mf, /** @type {string | undefined} */ what) => {
+      if (what !== undefined && what !== 'selection' && what !== 'query') {
+        await mf.statusBar.error(`delete what? "${what}" (selection / query)`);
         return;
       }
-      const file = await selectedFile(mf);
-      if (!file) {
-        await mf.statusBar.error('the selected metarecord has no file');
+      const selection = await selectedMetarecord(mf);
+      const active = await mf.workspace.get('active_repo');
+      const repo = selection?.repo ?? (typeof active === 'string' && active !== '' ? active : null);
+      if (!repo) {
+        await mf.statusBar.error('no active repository: nothing deleted, there is no trash to restore from');
         return;
       }
-      if (how === 'delete') {
-        await mf.invoke(['metarecord:delete']);
-        return;
-      }
-      // `mf.trash.trashPath` moves the bytes and returns the trashed name, but
-      // reports nothing and refreshes nothing: the status and the
-      // `metarecords:dirty` nonce are what a trashing reached any other way
-      // gets from its Rust command. A refusal is posted the same way — the key
-      // that started this should not be what throws it.
       try {
-        const trashed = await mf.trash.trashPath(file.repo, file.path);
-        await mf.statusBar.message(`Trashed ${trashed} — restore it from the trash panel`);
-        await mf.workspace.set('metarecords:dirty', Date.now());
+        if (what === undefined) await deleteItem(mf, repo, selection);
+        else await deleteItems(mf, repo, what);
       } catch (error) {
         await mf.statusBar.error(error);
       }

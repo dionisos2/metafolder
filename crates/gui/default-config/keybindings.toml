@@ -403,32 +403,26 @@
 # which reads the file again; playing its media from the start is shift+r.
 "r" = { command = "view:refresh self" }
 
-# Delete: remove the selection, confirmed (doc "Trash"). On a
-# metarecord (`metarecord:remove`) the record always goes: without a file that
-# is the whole of it, and with one the question is about the file — trash it
-# (and the record with it) or keep it (the record alone). The two direct forms
-# skip that question: ctrl+delete / shift+delete below. In the trash panel
-# itself, Delete permanently removes the highlighted entry.
+# Delete: `item:delete` (doc "Deleting an item"), with no question — the
+# file to the trash, its metarecords with it, or the metarecord alone when
+# there is no file. In the trash panel itself, Delete permanently removes the
+# highlighted entry (confirmed).
 "delete" = [
-  { command = "metarecord:remove", when = "metarecord-list" },
-  { command = "metarecord:remove", when = "metarecord-detail" },
-  # In the file-manager, Delete removes the highlighted file/folder itself
-  # (to the repo trash when a repo is active, else permanently), so untracked
-  # entries can be deleted too — not just tracked metarecords.
-  { command = "file-manager:delete", when = "file-manager" },
-  { command = "metarecord:remove", when = "path-ref" },
+  { command = "item:delete", when = "metarecord-list" },
+  { command = "item:delete", when = "metarecord-detail" },
+  { command = "item:delete", when = "file-manager" },
+  { command = "item:delete", when = "path-ref" },
+  { command = "item:delete", when = "viewer" },
   { command = "trash:prune entry", when = "trash" },
   # In the duplicates panel it is the copy under the cursor that goes, and the
-  # panel re-counts the group it left (doc "duplicates panel") — which
-  # `file:trash` on the shared selection could not do.
+  # panel re-counts the group it left (doc "duplicates panel") — which a
+  # reload on the shared dirty flag could not do before the watcher settles.
   { command = "duplicates:trash", when = "duplicates" },
 ]
 
-# The direct answers to the question `metarecord:remove` asks about a
-# metarecord's file (doc "Trash"), in the panels that carry a
-# metarecord selection: ctrl+delete sends the file to the trash at once
-# (= file:trash, its metarecord with it), shift+delete deletes the metarecord
-# alone (= metarecord:delete, the file kept).
+# The direct forms: ctrl+delete sends the file to the trash (= file:trash,
+# its metarecords with it), shift+delete deletes the metarecord alone
+# (= metarecord:delete, the file kept).
 "ctrl+delete" = [
   { command = "file:trash self", when = "metarecord-list" },
   { command = "file:trash self", when = "metarecord-detail" },

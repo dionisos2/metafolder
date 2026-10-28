@@ -1,0 +1,40 @@
+title: Deleting an item
+tags: Trash
+kind: guide
+summary: Delete deletes what is designated with no question: the file to the trash with its metarecords, or the metarecord when there is no file — never a file without its metarecord.
+
+
+<<key "item:delete" Delete>> runs <<cmd "item:delete">> on what the focused panel
+designates — a row of the [[metarecord-list panel]] or of the
+[[file-manager panel]], the metarecord the [[metarecord-detail panel]] or the
+[[viewer panel]] shows, a node of the [[path-ref panel]]:
+
+* ''a file'', tracked or not, goes to the repository's trash, its metarecords with it ([[What trashing does]]);
+* ''a metarecord without a file'' is deleted.
+
+A file is never deleted without its metarecord: one that would stay would
+describe a file that is gone. There is no question, since nothing here is final:
+the trash gives the file and its metarecords back, and <<key "log:undo" Ctrl+z>>
+brings a deleted metarecord back ([[The undo selection]]). For the same reason
+it does nothing without an active repository — there would be no trash to
+restore from.
+
+!! Several at once
+
+* `item:delete selection` — the checked metarecords;
+* `item:delete query` — everything the metarecord list shows.
+
+The metarecords without a file are deleted first, then the files of the others
+go to the trash, their metarecords with them. In that order, a file the trash
+refuses — another metarecord points at it — keeps its metarecord.
+
+!! The narrower forms
+
+|!To |!Command |
+|delete the metarecord alone, its file kept |<<key "metarecord:delete" Shift+Delete>> — <<cmd "metarecord:delete">> |
+|send the file to the trash, whatever the panel |<<key "file:trash self" Ctrl+Delete>> — <<cmd "file:trash">> ([[File commands]]) |
+|delete a trash entry for good |<<key "trash:prune entry" Delete>> in the [[trash panel]] — <<cmd "trash:prune">> |
+
+The [[duplicates panel]] keeps its own Delete, `duplicates:trash`: it trashes
+the copy under its cursor and re-counts the group at once, which a reload would
+get wrong until the watcher has settled.

@@ -42,7 +42,7 @@ beside it shows it; its field, uuid and path are also published as `selected_pat
 ([[Workspace variables]]). Children are loaded 200 at a time (`[page-size]`), more as
 the list scrolls; the roots come all at once.
 
-<<key "metarecord:remove" Delete>> and
+<<key "item:delete" Delete>> and
 <<key "metarecord:delete" Shift+Delete>> act on the selected node's metarecord
 ([[Sending files to the trash]]). In the `mfr_path` tree a node is a file or a folder,
 and its right-click menu has the file's actions too ([[Context menus]]).
