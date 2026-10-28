@@ -31,8 +31,8 @@ title or the id of another note.
 
 !! What the shell sends
 
-`help` and `help:open` write `{topic, nonce}` to the workspace variable
-`help.request` and set the focused slot's panel type to `help`. The nonce makes the
+`help:open` writes `{topic, nonce}` to the workspace variable
+`help.request` and sets the focused slot's panel type to `help`. The nonce makes the
 same topic asked twice count as a change. The panel reads the variable when it is
 built and on each change.
 

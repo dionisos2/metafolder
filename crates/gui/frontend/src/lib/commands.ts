@@ -1828,9 +1828,6 @@ registerArgs("answer:send", [
   },
 ]);
 
-registerArgs("help", [
-  { name: "topic", optional: true, prompt: () => "Help on what?" },
-]);
 registerArgs("help:open", [
   { name: "topic", optional: true, prompt: () => "Help on what?" },
 ]);
@@ -2794,7 +2791,6 @@ async function runCommand(
       closeFind();
       return true;
 
-    case "help":
     case "help:open":
       if (ws) await openHelp(ws, context.slot, args.join(" "));
       return true;
