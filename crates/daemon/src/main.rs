@@ -40,6 +40,10 @@ async fn main() {
         metafolder_daemon::diagnostics::warn("config", warning);
     }
 
+    // The copies in memory a daemon that crashed left behind (doc "Holding a
+    // repository in memory"): RAM, until the next boot otherwise.
+    metafolder_daemon::kvstore::memory::clean_stale(&config.settings.memory_dir);
+
     let state = Arc::new(AppState::new().with_settings(config.settings.clone()));
 
     let startup_state = state.clone();

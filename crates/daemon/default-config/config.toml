@@ -105,3 +105,9 @@ slow-operation-reads-threshold = 100000
 # repository for as long as it takes. Costs about the store's size once more on
 # disk. `mf repo backup` takes one by hand. 0 turns it off. Default: 7.
 auto-backup-days = 7
+
+# Where the store of a repository held in memory (`mf repo load --in-memory`)
+# is copied: a directory in RAM, a tmpfs. The copy takes the store's size there
+# for as long as the repository is held; a daemon starting removes the copies a
+# crash left. Default: /dev/shm/metafolder-<uid>.
+# memory-dir = "/dev/shm/metafolder-1000"

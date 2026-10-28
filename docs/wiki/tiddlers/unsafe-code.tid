@@ -20,7 +20,6 @@ it is sound.
 |`gui` `sandbox.rs`, `shell_session.rs` |the `pre_exec` hooks |the closure runs in the child between `fork` and `exec`, where only async-signal-safe calls are allowed — no allocation, no lock — and the compiler cannot check that |
 |`gui` `lib.rs`, `sandbox.rs` |`std::env::set_var` |another thread could read the environment meanwhile; done at startup, before any |
 |`daemon` `kvstore/`, `sync.rs`; `core` `trash.rs` |opening and resizing an LMDB map |the file is mapped in memory: it must be opened once per process, and nothing may write to it behind the map ([[Storage safety]]) |
-|`daemon` `kvstore/resident.rs` |`mlock`, `munlock`, `madvise`, reading the pages |they take raw addresses, which must be a live part of the map ([[Holding a repository in memory]]) |
 |`watchd` `sys.rs` |fanotify, file handles, a filesystem's fsid, a socket peer's credentials |`rustix` has no fanotify nor file handles, keeps an fsid's two ints private, and cannot hold the pid 0 of a peer in another pid namespace. The events themselves are parsed from bytes, safely |
 
 Tests open a store's file raw to damage it or set it back to an older format

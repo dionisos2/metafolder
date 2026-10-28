@@ -155,7 +155,12 @@ pub struct RepoState {
     in_memory: std::sync::atomic::AtomicBool,
     /// What the store holds in memory, once read in: read by [`Self::info`]
     /// without waiting on the store.
-    residency: std::sync::OnceLock<crate::kvstore::ResidencyHandle>,
+    residency: std::sync::OnceLock<crate::kvstore::memory::ResidencyHandle>,
+    /// Where a store held in memory is copied (`[settings] memory-dir`).
+    memory_dir: PathBuf,
+    /// Why the repository was taken out of service, when it was for another
+    /// reason than its root going away (see [`Self::take_out_of_service`]).
+    lost_message: std::sync::OnceLock<String>,
 }
 
 /// State of an in-progress coordinated revert. It suspends the watcher's
@@ -235,6 +240,8 @@ impl RepoState {
             on_root_lost: std::sync::OnceLock::new(),
             in_memory: std::sync::atomic::AtomicBool::new(false),
             residency: std::sync::OnceLock::new(),
+            memory_dir: settings.memory_dir.clone(),
+            lost_message: std::sync::OnceLock::new(),
         }
     }
 
@@ -265,17 +272,32 @@ impl RepoState {
         if root_identity_of(&self.config.root) == Some(expected) {
             return true;
         }
+        self.take_out_of_service(None);
+        false
+    }
+
+    /// Takes the repository out of service for good, then has the
+    /// [`AppState`] holding it unload it, listing it as lost (doc "When the
+    /// root moves"): its root went away (`None`), or — `message` — its store
+    /// can no longer be trusted (doc "Holding a repository in memory").
+    pub fn take_out_of_service(&self, message: Option<String>) {
+        use std::sync::atomic::Ordering;
+        if let Some(message) = message {
+            let _ = self.lost_message.set(message);
+        }
         if !self.root_lost.swap(true, Ordering::AcqRel) {
             crate::diagnostics::warn_for("repo", self.root_lost_message(), self.uuid());
             if let Some(unload) = self.on_root_lost.get() {
                 unload();
             }
         }
-        false
     }
 
-    /// What a request to a repository whose root is gone is told.
+    /// What a request to a repository taken out of service is told: why.
     pub fn root_lost_message(&self) -> String {
+        if let Some(message) = self.lost_message.get() {
+            return format!("repository '{}' is out of service: {message}", self.name());
+        }
         format!(
             "the root of repository '{}' is no longer at {} (moved, removed or unmounted): \
              the repository is frozen, nothing is recorded or orphaned for it — if it moved, \
@@ -324,6 +346,7 @@ impl RepoState {
             created_at: self.config.created_at,
             system: self.config.system,
             lost: self.root_lost.load(std::sync::atomic::Ordering::Acquire),
+            lost_reason: self.lost_message.get().cloned(),
             in_memory: self.residency.get().and_then(|handle| handle.get()),
             ready: self.is_ready(),
         }
@@ -653,7 +676,7 @@ impl RepoState {
     /// is still reported through `progress` `(phase, done, total)`, a no-op
     /// for the synchronous callers (startup auto-load, `init`).
     pub fn warmup(&self, progress: ProgressFn) -> Result<(), ApiError> {
-        let conn = metafolder_core::slowlog::timed("wait:conn", || self.conn.lock_recover());
+        let mut conn = metafolder_core::slowlog::timed("wait:conn", || self.conn.lock_recover());
         progress("mounts", None, None);
         // The declared mount points, read once here so they are resident from
         // the start: a repository is very often opened *while* something writes
@@ -662,41 +685,45 @@ impl RepoState {
         // A handful of rows off an indexed field — no phase of its own.
         self.set_declared_mounts(Arc::new(crate::mount::declared_set(&conn, &self.tree())?));
         if self.held_in_memory() {
-            self.read_in(&conn, &|done, total| progress("memory", Some(done), Some(total)))?;
+            self.read_in(&mut conn, &|done, total| progress("memory", Some(done), Some(total)))?;
         }
         Ok(())
     }
 
-    /// Reads the store into memory (doc "Holding a repository in memory"),
-    /// `conn` held: a resize meanwhile would unmap what is read.
+    /// Copies the store into memory (doc "Holding a repository in memory"),
+    /// `conn` held: nothing is written meanwhile.
     fn read_in(
         &self,
-        conn: &crate::store::Handle,
+        conn: &mut crate::store::Handle,
         progress: &dyn Fn(u64, u64),
     ) -> Result<(), ApiError> {
-        let _p = Phase::begin(&self.name(), "read the store into memory");
+        let _p = Phase::begin(&self.name(), "copy the store into memory");
         let kv = conn
-            .as_kv()
+            .as_kv_mut()
             .ok_or_else(|| ApiError::internal("only the key-value store can be held in memory"))?;
-        let residency =
-            kv.make_resident(progress).map_err(|e| ApiError::internal(format!("{e:#}")))?;
-        if let Some(reason) = &residency.reason {
-            crate::diagnostics::warn_for("memory", reason.clone(), self.uuid());
-        }
+        // Weakly: the store belongs to this repository.
+        let this = self.this.get().cloned().unwrap_or_default();
+        let on_lost = Box::new(move |message: String| {
+            if let Some(repo) = this.upgrade() {
+                repo.take_out_of_service(Some(message));
+            }
+        });
+        kv.hold_in_memory(&self.memory_dir, on_lost, progress)
+            .map_err(|e| ApiError::internal(format!("{e:#}")))?;
         let _ = self.residency.set(kv.residency_handle());
         Ok(())
     }
 
     /// Holds the loaded store in memory, or lets go of it, without unloading
     /// (`POST /repos/:repo/memory`, doc "Holding a repository in memory").
-    /// Already so, nothing is done. Reading in holds the store — every other
+    /// Already so, nothing is done. Copying in holds the store — every other
     /// request waits — for as long as the load's `memory` phase would.
     pub fn set_in_memory(&self, on: bool) -> Result<(), ApiError> {
-        let conn = metafolder_core::slowlog::timed("wait:conn", || self.conn.lock_recover());
+        let mut conn = metafolder_core::slowlog::timed("wait:conn", || self.conn.lock_recover());
         if on {
-            self.read_in(&conn, &|_, _| {})?;
-        } else if let Some(kv) = conn.as_kv() {
-            kv.release_resident();
+            self.read_in(&mut conn, &|_, _| {})?;
+        } else if let Some(kv) = conn.as_kv_mut() {
+            kv.release_memory();
         }
         self.in_memory.store(on, std::sync::atomic::Ordering::Release);
         Ok(())
@@ -855,6 +882,7 @@ impl RepoState {
     /// `progress` reports `(phase, done, total)` for the load progress bar; it
     /// is a no-op for the synchronous callers (startup auto-load, `init`).
     pub fn warm(self: &Arc<Self>, progress: ProgressFn) -> Result<(), ApiError> {
+        let _ = self.this.set(Arc::downgrade(self));
         self.warmup(progress)?;
         self.activate()?;
         self.ready.store(true, std::sync::atomic::Ordering::Release);
@@ -864,7 +892,6 @@ impl RepoState {
     /// Applies whatever the watcher buffered, then starts the watcher and its
     /// executor and places the watches. Runs *after* [`Self::warmup`].
     fn activate(self: &Arc<Self>) -> Result<(), ApiError> {
-        let _ = self.this.set(Arc::downgrade(self));
         // Each step is announced: the replay below applies whatever the
         // filesystem did while the daemon was down, which on a repository that
         // moved a lot is the longest part of a load (doc "The daemon's startup report").
@@ -1131,9 +1158,13 @@ pub struct RepoInfo {
     /// clients can say why it answers nothing, until it is loaded again or
     /// unloaded.
     pub lost: bool,
+    /// Why it was taken out of service, when its root did not go away: its
+    /// copy in memory fell behind its disk (doc "Holding a repository in
+    /// memory"). `null` otherwise.
+    pub lost_reason: Option<String>,
     /// What of its store is held in memory — `null` unless it was loaded with
     /// `in_memory` (doc "Holding a repository in memory").
-    pub in_memory: Option<crate::kvstore::resident::Residency>,
+    pub in_memory: Option<crate::kvstore::memory::Residency>,
     /// Its load is done (doc "Creating and loading a repository"): until then
     /// its data endpoints answer `503`, so a client offers to open it only
     /// once this is true.

@@ -329,28 +329,9 @@ pub fn load(
         if let Some(task_id) = resp["task_id"].as_str() {
             poll_task(ctx, &format!("/repos/{uuid}"), task_id, "load", LOAD_POLL_INTERVAL_MS)?;
         }
-        // Read in but not locked: said, since the point was that nothing
-        // waits on the disk.
-        if in_memory {
-            let info = ctx.client.get(&format!("/repos/{uuid}"), &[])?;
-            if let Some(warning) = residency_warning(&info) {
-                eprintln!("warning: {warning}");
-            }
-        }
     }
     println!("{uuid}");
     Ok(0)
-}
-
-/// What to warn of about a repository loaded in memory (`GET /repos/:repo`):
-/// its store read in but not locked there, and why (doc "Holding a repository
-/// in memory").
-pub fn residency_warning(info: &Json) -> Option<String> {
-    let held = info.get("in_memory").filter(|h| h.is_object())?;
-    if held["pinned"].as_bool() == Some(true) {
-        return None;
-    }
-    Some(held["reason"].as_str().unwrap_or("the store is not locked in memory").to_string())
 }
 
 pub fn repos(ctx: &Ctx, all: bool) -> Result<i32, CliError> {
@@ -2983,25 +2964,6 @@ pub fn trash_prune_mode(
             "mf trash prune needs one of -s <size>, -d <duration>, or --all".into(),
         )),
         _ => Err(CliError::Usage("mf trash prune: -s, -d and --all are mutually exclusive".into())),
-    }
-}
-
-#[cfg(test)]
-mod residency_tests {
-    use super::residency_warning;
-    use serde_json::json;
-
-    #[test]
-    fn test_a_store_read_in_but_not_locked_is_warned_of_with_its_reason() {
-        let info = json!({"in_memory": {"bytes": 9, "pinned": false, "reason": "the limit"}});
-        assert_eq!(residency_warning(&info).as_deref(), Some("the limit"));
-    }
-
-    #[test]
-    fn test_a_locked_store_or_an_ordinary_load_warns_of_nothing() {
-        assert_eq!(residency_warning(&json!({"in_memory": {"pinned": true}})), None);
-        assert_eq!(residency_warning(&json!({"in_memory": null})), None);
-        assert_eq!(residency_warning(&json!({})), None);
     }
 }
 

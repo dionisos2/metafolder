@@ -351,8 +351,8 @@ enum RepoCommand {
         /// Print the UUID immediately, without waiting for the warmup
         #[arg(long = "no-wait")]
         no_wait: bool,
-        /// Read the whole store into memory and lock it there, so that no
-        /// read waits on the disk (writes still go to it)
+        /// Copy the store into memory and read it there, so that no read
+        /// waits on the disk (every write still goes to the disk first)
         #[arg(long = "in-memory")]
         in_memory: bool,
     },

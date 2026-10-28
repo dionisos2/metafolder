@@ -41,8 +41,9 @@ interface Repo {
   root: string;
   internal_dir?: string;
   lost?: boolean;
+  lost_reason?: string | null;
   ready?: boolean;
-  in_memory?: { bytes: number; pinned: boolean; reason: string | null } | null;
+  in_memory?: { bytes: number } | null;
 }
 
 /** A minimal in-memory stand-in for the daemon's repository endpoints. */
@@ -109,7 +110,7 @@ function fakeDaemon() {
       const repo = repos.find((r) => r.repo_uuid === bare.split('/')[2]);
       if (!repo) return { status: 404, body: { error: 'Repository not found' } };
       repo.in_memory = (body as { in_memory: boolean }).in_memory
-        ? { bytes: 2 << 20, pinned: true, reason: null }
+        ? { bytes: 2 << 20 }
         : null;
       return { status: 200, body: repo };
     }
@@ -379,6 +380,25 @@ describe('repos panel — a lost repository', () => {
     expect(dispatch).not.toHaveBeenCalled();
     expect(created).toEqual([]);
     expect(calls.some((c) => c.path === '/repos/r1/watch')).toBe(false);
+  });
+
+  test('taken out of service, it says why rather than a root gone', async () => {
+    const { api, daemon } = setup({ activeRepo: null });
+    daemon.repos.push({
+      repo_uuid: 'r1',
+      name: 'photos',
+      root: '/tmp/photos',
+      lost: true,
+      lost_reason: 'the copy in memory could not take a write',
+    });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    const row = shadow.querySelector('#repo-list > li') as HTMLElement;
+    expect(row.classList.contains('lost')).toBe(true);
+    expect(row.textContent).toContain('the copy in memory could not take a write');
+    expect(row.textContent).not.toContain('no longer there');
   });
 
   test('forgetting it unloads it', async () => {
@@ -947,22 +967,11 @@ describe('repos panel — in memory', () => {
     expect(picks).toHaveLength(0);
   });
 
-  test('a repository held in memory says so on its row, and why it is not locked', async () => {
+  test('a repository held in memory says so on its row, with its size', async () => {
     const { api, daemon } = setup();
     daemon.repos.push(
-      {
-        repo_uuid: 'r1',
-        name: 'pinned',
-        root: '/tmp/a',
-        in_memory: { bytes: 3 << 20, pinned: true, reason: null },
-      },
-      {
-        repo_uuid: 'r2',
-        name: 'preloaded',
-        root: '/tmp/b',
-        in_memory: { bytes: 5 << 20, pinned: false, reason: 'the limit is 8 MiB' },
-      },
-      { repo_uuid: 'r3', name: 'plain', root: '/tmp/c', in_memory: null },
+      { repo_uuid: 'r1', name: 'held', root: '/tmp/a', in_memory: { bytes: 3 << 20 } },
+      { repo_uuid: 'r2', name: 'plain', root: '/tmp/b', in_memory: null },
     );
     const shadow = shadowForRepos();
     await mount(shadow, api);
@@ -973,10 +982,7 @@ describe('repos panel — in memory', () => {
     );
     expect(badges[0]?.textContent).toBe('in memory');
     expect(badges[0]?.title).toContain('3 MiB');
-    expect(badges[1]?.textContent).toBe('in memory, not locked');
-    expect(badges[1]?.title).toContain('the limit is 8 MiB');
-    expect(badges[1]?.dataset.unpinned).toBe('');
-    expect(badges[2]).toBeNull();
+    expect(badges[1]).toBeNull();
   });
 
   const memoryCalls = (daemon: ReturnType<typeof fakeDaemon>) =>
@@ -1011,7 +1017,7 @@ describe('repos panel — in memory', () => {
         repo_uuid: 'r2',
         name: 'music',
         root: '/tmp/music',
-        in_memory: { bytes: 1 << 20, pinned: true, reason: null },
+        in_memory: { bytes: 1 << 20 },
       },
     );
     const shadow = shadowForRepos();

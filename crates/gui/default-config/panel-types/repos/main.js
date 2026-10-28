@@ -8,11 +8,12 @@ import { createSelect } from '/__select.js';
 /**
  * A loaded repository, as `GET /repos` lists it.
  * @typedef {{repo_uuid: string, name: string, root: string, lost?: boolean,
+ *            lost_reason?: string|null,
  *            ready?: boolean, in_memory?: Residency|null}} Repo
  *
  * What of a repository's store is held in memory (doc "Holding a repository
  * in memory"), when it was loaded so.
- * @typedef {{bytes: number, pinned: boolean, reason: string|null}} Residency
+ * @typedef {{bytes: number}} Residency
  *
  * An in-flight daemon task (doc "Tasks").
  * @typedef {{id: string, repo_uuid: string, kind: string, status: string,
@@ -170,37 +171,21 @@ export async function mount(root, metafolder) {
   }
 
   /**
-   * The row's mark of a repository held in memory: locked there, or only read
-   * in — and then why, in its tooltip.
+   * The row's mark of a repository held in memory, its size in the tooltip.
    * @param {Repo} repo @returns {HTMLElement|null}
    */
   function memoryBadge(repo) {
     const held = repo.in_memory;
     if (!held) return null;
     const size = `${Math.ceil(held.bytes / (1 << 20))} MiB`;
-    if (held.pinned) {
-      return el(
-        'span',
-        { class: 'memory', title: `${size} of the store locked in memory` },
-        'in memory',
-      );
-    }
-    const badge = el(
-      'span',
-      {
-        class: 'memory',
-        title: `${size} of the store read into memory, not locked there: ${held.reason ?? ''}`,
-      },
-      'in memory, not locked',
-    );
-    badge.dataset.unpinned = '';
-    return badge;
+    return el('span', { class: 'memory', title: `a copy of ${size} in memory` }, 'in memory');
   }
 
   /**
-   * A repository whose root went away: no longer loaded, nothing in it can be
-   * opened, retyped or watched. It says where it was and how to resume; Forget
-   * unloads it for good.
+   * A repository whose root went away — or taken out of service for the
+   * reason it gives: no longer loaded, nothing in it can be opened, retyped
+   * or watched. It says where it was and how to resume; Forget unloads it for
+   * good.
    * @param {Repo} repo
    */
   function lostRow(repo) {
@@ -227,8 +212,10 @@ export async function mount(root, metafolder) {
       el(
         'div',
         { class: 'repo-lost' },
-        'Its root is no longer there (moved, removed or unmounted). ' +
-          'If it moved, load it where it is now: mf repo load <new root>, or Load… above.',
+        repo.lost_reason
+          ? `Taken out of service: ${repo.lost_reason}`
+          : 'Its root is no longer there (moved, removed or unmounted). ' +
+              'If it moved, load it where it is now: mf repo load <new root>, or Load… above.',
       ),
     );
   }
@@ -886,17 +873,10 @@ export async function mount(root, metafolder) {
           in_memory: !repo.in_memory,
         })
       );
-      const memory = held.in_memory;
-      if (!memory) {
-        void statusBar.message(`${repo.name}: no longer held in memory`, 3000);
-      } else if (memory.pinned) {
-        void statusBar.message(`${repo.name}: held in memory`, 3000);
-      } else {
-        void statusBar.message(
-          `${repo.name}: read into memory, not locked there: ${memory.reason ?? ''}`,
-          statusErrorMs,
-        );
-      }
+      void statusBar.message(
+        held.in_memory ? `${repo.name}: held in memory` : `${repo.name}: no longer held in memory`,
+        3000,
+      );
       await refresh();
     },
   });

@@ -49,3 +49,7 @@ A repository whose root comes back on a remounted drive is not recognised by its
 identity either — not reloaded, not even offered (decided October 2026): its return is a
 load like any other. A drive plugged back in ''under'' a root is another matter, followed
 at once ([[Offline subtrees]]).
+
+The same path takes out of service a repository whose copy in memory fell behind its
+disk ([[Holding a repository in memory]]): unloaded, listed as lost, every request
+answered `503` — with that reason, in `lost_reason`, instead of the root's.

@@ -8,7 +8,6 @@ terminal) and prints its uuid; `--no-wait` prints the uuid at once and lets the 
 go on (follow it with `mf task`). Refused when a loaded repository has the same name
 ([[Creating and loading a repository]]).
 
-`--in-memory` reads the whole store into memory and locks it there, so that no read
-waits on the disk; writes still go to it. When the store cannot be locked — it is
-larger than the memory-lock limit — it is only read in, and a warning says why
+`--in-memory` copies the store into memory and reads it there, so that no read
+waits on the disk; every write still goes to the disk, first
 ([[Holding a repository in memory]]).

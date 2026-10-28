@@ -31,9 +31,9 @@ roaring = "0.11"
 # The key-value storage backend (doc "Storage"): LMDB, a memory-mapped
 # copy-on-write B+tree — the page cache is its cache.
 heed = { version = "0.23", default-features = false }
-# statvfs, the page size, the memlock limit and mlock (the store held in
-# memory): safe wrappers, but for the calls on raw addresses.
-rustix = { version = "1", features = ["fs", "mm", "param", "process"] }
+# statvfs, the page size, and the uid naming the directory a store held in
+# memory is copied to: safe wrappers.
+rustix = { version = "1", features = ["fs", "param", "process"] }
 lofty = "0.25.0"
 nom-exif = "3.6.2"
 

@@ -1,8 +1,8 @@
 title: Holding a repository in memory
 tags: Storage Repository
 kind: guide
-aliases: in-memory in_memory resident mlock memlock
-summary: Loaded with --in-memory, a repository's store is read into RAM and locked there, so that no read waits on the disk; writes still go to the disk, one commit each.
+aliases: in-memory in_memory resident memory-dir tmpfs
+summary: Loaded with --in-memory, a repository's store is copied into RAM (a tmpfs) and read there, so that no read waits on the disk; every write is committed to the disk first, then to the copy.
 
 ```
 mf repo load --in-memory <root>
@@ -13,71 +13,64 @@ the keyboard (and `repos:toggle-memory` for one already loaded, below), `{"root"
 repository the daemon loads at startup, `in-memory = true` in its `[[load]]` entry
 ([[Daemon configuration]]).
 
-The load reads the whole store into memory — its phase `memory` counts the bytes —
-then the repository works as any other. Nothing else changes:
+The load copies the store into a directory in RAM — its phase `memory` counts the
+bytes — then the repository works as any other, reading the copy:
 
-* ''Writes'' are the store's own: each request commits to the file on disk, with its `fsync`. A crash loses nothing that was answered.
-* ''Reads'' find every page already in RAM: none waits on the disk, not the first query after a boot, nor one whose pages the kernel would have evicted under memory pressure. A write finds there what it has to change, too.
-* What a write adds to the store is held in its turn, when the next write starts.
-* The watcher, the tasks, the log: as usual. Unloading lets go of the memory.
+* ''Reads'' find every page in RAM: none waits on the disk, not the first query after a boot, nor one whose pages the kernel would have evicted. The copy lives in a `tmpfs`, whose pages are never dropped (only swapped, when the machine has swap and runs out of RAM).
+* ''Writes'' are made on the copy, where what they read is in RAM too; the keys a write puts and deletes are then replayed on the store on disk and committed there, with its `fsync`, and only then is the copy committed. The disk stays the store a crash leaves, and a crash loses nothing that was answered.
+* The watcher, the tasks, the log: as usual. Unloading removes the copy.
 
-!! Locked, or only read in
+The copies go to `/dev/shm/metafolder-<uid>/` — `memory-dir` in the daemon's
+`[settings]` ([[Daemon configuration]]) — one directory per repository, which takes the
+store's size in RAM for as long as it is held: hold in memory only what fits. A store
+larger than the free room there is refused, at the load or at the switch. A daemon
+starting removes the copies a crash left: each holds a lock while in use, so another
+daemon's copies stay.
 
-To stay in memory, the pages are ''locked'' there (`mlock`), out of the kernel's
-reach. A process may lock only so much: the ''memory-lock limit'' (`RLIMIT_MEMLOCK`),
-often 8 MiB for a user — far below a real store. When the store is larger, it is
-read in but not locked: it starts warm, and the kernel may evict some of it later,
-as for an ordinary load. The daemon says so — in [[GET /repos]], in its
-diagnostics, on the row of the [[repos panel]] (''in memory, not locked'', the reason
-in its tooltip), and `mf repo load --in-memory` prints it as a warning — with the
-limit and the store's size.
+`GET /repos` lists, for a repository held so, `in_memory: {bytes}`, the size of its
+copy — `null` for one loaded the ordinary way.
 
-To lock it, raise the limit for the daemon: `LimitMEMLOCK=infinity` (or a size) in its
-systemd unit, or a `memlock` line in `/etc/security/limits.conf` for a daemon started
-from a session. The daemon raises its own soft limit to the hard one; it cannot go
-further. Several repositories in memory share the limit. Locked or not, the memory
-taken is the store's size: hold in memory only what fits.
+!! When the disk or the memory refuses a write
 
-`GET /repos` lists, for a repository loaded so, `in_memory: {bytes, pinned, reason}`
-— `null` for one loaded the ordinary way.
-
-!! What it costs, what it buys
-
-The load reads the whole store: about a second more per 300 MiB on the development
-machine (a 289 MiB store, 50 000 files: 1.0 to 2.3 s against 0.3 s). The memory is
-the store's size, for as long as it is loaded.
-
-What it buys is the absence of a ''cold'' read — the first one after a boot, or after
-the kernel evicted the pages. There, the measure says nothing yet: in the development
-container (fuse-overlayfs, a file the daemon keeps mapped) the cache cannot be made
-cold, and a query that reads a few partitions took 10 to 30 ms either way, warm or not
-(October 2026). A query reads a small part of the store, a reconcile or a large sort
-more; the gain is largest where the store is read wide and the disk is slow.
+* ''The disk refuses it'' (full, failing): the write is undone in the copy too, and answered with its error, as for an ordinary load. Nothing happened.
+* ''The copy refuses it after the disk took it'' — the memory is full: the copy is behind the disk for good. The repository is taken out of service and unloaded, listed as lost with that reason (`lost_reason` in `GET /repos?lost=true`, the [[repos panel]]'s row) as a repository whose root went away is ([[When the root moves]]); every request to it answers `503` with the reason. Nothing on disk is lost: loading it again reads the disk. A full memory is a fault of the machine, not one the daemon works around (user decision, October 2026).
 
 !! Switching a loaded repository
 
 A loaded repository is held in memory, or let go of, without unloading it:
 `repos:toggle-memory [repo]` (the active repository by default) from the keyboard, or
 `{"in_memory": true}` / `false` for [[POST /repos/:repo/memory]]. Held, the store is
-read in as at a load — and, for that while, every other request to the repository
-waits, as it would for the load's `memory` phase. Let go, what was locked is unlocked
-and no longer followed by the writes: the pages stay in the page cache, and the kernel
-may evict them again, as for an ordinary load. Asked for what already is, nothing is
-done.
+copied in as at a load — and, for that while, every other request to the repository
+waits, as it would for the load's `memory` phase. Let go, the copy is removed and the
+store is read on disk again. Asked for what already is, nothing is done.
 
 `POST /repos/load` with `in_memory` on a repository already loaded the ordinary way is
-refused (`409`): a load of a loaded repository does nothing, so it would read nothing
+refused (`409`): a load of a loaded repository does nothing, so it would copy nothing
 in — the error names the switch above. Loading in memory a repository already held in
 memory is the ordinary idempotent load.
 
-!! Why one store, and not a copy in memory
+!! What it costs, what it buys
 
-LMDB reads through a memory map: a page in the page cache ''is'' in RAM, and reading
-it costs the same as reading a copy made in memory. A second store, in a `tmpfs`,
-with every write applied to both, would make no read faster — and would double each
-write and give the two copies a way to disagree. What was missing is that the pages
-''be'' there: read in at load, and kept. The same store, read in and locked, is all of
-it (user decision, October 2026).
+The load copies the whole store, at the speed of reading it from the disk; the
+memory is the store's size, for as long as it is held. Each write is written twice:
+computed once, on the copy, then replayed key by key on the disk — no derived index is
+computed again — and a write to the disk may still read the pages of the disk's B-tree
+it changes. Writes are no faster than an ordinary load's; reads are, wherever the
+ordinary load would have read from the disk.
+
+!! Why a copy, and not the store locked in memory
+
+The first version (October 2026) read the store's pages in at load and locked them
+there with `mlock`. A process may lock only so much — the memory-lock limit, 8 MiB for
+a user by default — and raising it for the daemon is a system setting no one should
+need: a real store was never locked, only read in, and the kernel evicted it again
+soon after. A copy in a `tmpfs` takes no lock and has no such limit (user decision,
+October 2026).
+
+Two copies are kept in step by replaying each write's own changes, not by applying the
+write twice: the keys written are the same bytes on both sides by construction, where
+two runs of the same write could allocate different ids. Committing to the disk first
+means a write either is on the disk, or did not happen.
 
 This answers, on demand, the cold-cache question of [[Storage open questions]]: an
 ordinary load still reads nothing at open.

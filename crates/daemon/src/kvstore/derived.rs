@@ -1408,10 +1408,10 @@ mod tests {
     }
 
     /// Applies `tamper` to the tables, behind the store's back.
-    fn tamper(store: &KvStore, tamper: impl FnOnce(&Tables, &mut heed::RwTxn<'_>)) {
-        let mut w = store.env.write_txn().unwrap();
+    fn tamper(store: &KvStore, tamper: impl FnOnce(&Tables, &mut super::super::Wtxn<'_>)) {
+        let mut w = super::super::Wtxn::new(store.env.write_txn().unwrap(), false);
         tamper(&store.t, &mut w);
-        w.commit().unwrap();
+        w.into_parts().0.commit().unwrap();
     }
 
     fn first_key(

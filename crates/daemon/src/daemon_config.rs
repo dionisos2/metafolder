@@ -120,6 +120,9 @@ pub struct DaemonSettings {
     /// taken, into `.metafolder/internal/backups/auto/` — one slot, replaced
     /// only by a backup that checks clean. `0` turns it off.
     pub auto_backup_days: u32,
+    /// Where the store of a repository held in memory is copied (doc
+    /// "Holding a repository in memory"): a directory in RAM — a `tmpfs`.
+    pub memory_dir: PathBuf,
 }
 
 impl Default for DaemonSettings {
@@ -137,6 +140,7 @@ impl Default for DaemonSettings {
             slow_operation_reads_threshold: DEFAULT_SLOW_OPERATION_READS_THRESHOLD,
             slow_read_threshold_ms: DEFAULT_SLOW_READ_THRESHOLD_MS,
             auto_backup_days: DEFAULT_AUTO_BACKUP_DAYS,
+            memory_dir: crate::kvstore::memory::default_dir(),
         }
     }
 }

@@ -859,6 +859,11 @@ pub trait Begin {
     /// the store's own file layout (`kv/`) — taken while the
     /// store stays open (`mf repo backup`, doc "Backups and restore").
     fn backup_to(&self, dir: &std::path::Path) -> Result<()>;
+    /// The key-value store behind this one, to change how it is held (doc
+    /// "Holding a repository in memory").
+    fn as_kv_mut(&mut self) -> Option<&mut crate::kvstore::KvStore> {
+        None
+    }
 }
 
 /// The metarecords holding more than one position in a forest, which the
@@ -920,6 +925,9 @@ impl Begin for Handle {
     fn backup_to(&self, dir: &std::path::Path) -> Result<()> {
         (**self).backup_to(dir)
     }
+    fn as_kv_mut(&mut self) -> Option<&mut crate::kvstore::KvStore> {
+        (**self).as_kv_mut()
+    }
 }
 
 impl Begin for std::sync::MutexGuard<'_, Handle> {
@@ -934,5 +942,8 @@ impl Begin for std::sync::MutexGuard<'_, Handle> {
     }
     fn backup_to(&self, dir: &std::path::Path) -> Result<()> {
         (***self).backup_to(dir)
+    }
+    fn as_kv_mut(&mut self) -> Option<&mut crate::kvstore::KvStore> {
+        (***self).as_kv_mut()
     }
 }

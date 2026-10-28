@@ -5,7 +5,7 @@ audience: dev
 summary: Listing, reading, renaming, creating, loading and unloading repositories, and checking, reindexing, backing them up and restoring them.
 
 |!Endpoint |!Does |
-|<<cmd "GET /repos">> |the loaded repositories — `{repo_uuid, name, root, internal_dir, system, lost, ready, in_memory, …}` each (`ready`: its load is done — until then its data endpoints answer `503`, [[Creating and loading a repository]]; `in_memory`: `{bytes, pinned, reason}` for one loaded in memory, else `null` — [[Holding a repository in memory]]); the system ones only with `?all=true`; with `?lost=true`, also the ones unloaded because their root went away, `lost: true` ([[When the root moves]]) |
+|<<cmd "GET /repos">> |the loaded repositories — `{repo_uuid, name, root, internal_dir, system, lost, ready, in_memory, …}` each (`ready`: its load is done — until then its data endpoints answer `503`, [[Creating and loading a repository]]; `in_memory`: `{bytes}`, the size of its copy in memory, for one held in memory, else `null` — [[Holding a repository in memory]]); the system ones only with `?all=true`; with `?lost=true`, also the ones unloaded because their root went away, `lost: true` ([[When the root moves]]) — or taken out of service for the reason in `lost_reason` (else `null`: a copy in memory that fell behind its disk, [[Holding a repository in memory]]) |
 |<<cmd "GET /repos/:repo">> |one of them, the same shape; `404` when not loaded, `503` when its root went away |
 |<<cmd "PATCH /repos/:repo">> |renames it: `{"name": "…"}`, `409` when the name is taken; written to `config.json` |
 |<<cmd "POST /repos/init">> |creates one: `{"root": …}`, optional `metafolder` (an external `.metafolder`) and `name`; answers `{"repo_uuid"}`, `409` when one exists there |
@@ -13,7 +13,7 @@ summary: Listing, reading, renaming, creating, loading and unloading repositorie
 |<<cmd "POST /repos/:repo/unload">> |unloads it; answers `{"repo_uuid"}` |
 |<<cmd "POST /repos/:repo/check">> |where its indexes disagree with its data, and the metarecords holding several positions in one forest: `{"problems": [...]}`, empty when healthy |
 |<<cmd "POST /repos/:repo/reindex">> |rebuilds its indexes from its data; answers `{}` |
-|<<cmd "POST /repos/:repo/memory">> |`{"in_memory": true}` reads its store into memory and holds it there, `false` lets go of it — without unloading it, the same either way when already so; answers its `GET /repos/:repo` shape ([[Holding a repository in memory]]) |
+|<<cmd "POST /repos/:repo/memory">> |`{"in_memory": true}` copies its store into memory and reads it there, `false` lets go of the copy — without unloading it, the same either way when already so; answers its `GET /repos/:repo` shape ([[Holding a repository in memory]]) |
 |<<cmd "POST /repos/:repo/backup">> |a verified copy of its store, taken while it stays loaded, with its `config.json` and its configuration's schema and metadata map; optional `{"to": "<new dir>"}` (`400` when it exists), by default a new `internal/backups/manual-<time>/`; answers `{"path", "created_at_ms", "metarecords"}` |
 |<<cmd "POST /repos/:repo/restore">> |puts a backup back — `{"from": "<dir>"}`, optional, else the most recent — and loads the repository again; answers `{"repo_uuid", "backup": {"path", "created_at_ms", "metarecords"}, "old_store"}` |
 |<<cmd "POST /repos/restore">> |the same for a repository named by its path, loaded or not: `{"root": …}` or `{"metafolder": …}`, and `from` |

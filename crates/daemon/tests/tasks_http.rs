@@ -497,8 +497,8 @@ async fn load_in_memory(app: &Router, root: &std::path::Path, repo: &str) -> Val
 
 #[tokio::test]
 async fn a_repository_loaded_in_memory_says_what_it_holds() {
-    // doc "Holding a repository in memory": the store is read into RAM at
-    // load, and `GET /repos` says how much, and whether it is locked there.
+    // doc "Holding a repository in memory": the store is copied into RAM at
+    // load, and `GET /repos` says how much it takes there.
     let state = Arc::new(AppState::new());
     let app = routes::build(state.clone());
     let root = temp_dir("inmemory");
@@ -517,9 +517,6 @@ async fn a_repository_loaded_in_memory_says_what_it_holds() {
     let (_, repos) = request(&app, "GET", "/repos").await;
     let listed = &repos.as_array().unwrap()[0]["in_memory"];
     assert!(listed["bytes"].as_u64().unwrap() > 0, "{listed}");
-    // A fresh repository is far below any memory-lock limit worth the name.
-    assert_eq!(listed["pinned"], true, "{listed}");
-    assert!(listed["reason"].is_null(), "{listed}");
 
     // Writes still go to the disk: what is written is there after a reload.
     let (st, _) = post(
@@ -580,6 +577,39 @@ async fn loading_in_memory_a_repository_already_loaded_otherwise_is_refused() {
     assert_eq!(st, StatusCode::OK, "{body}");
 }
 
+#[tokio::test]
+async fn a_repository_taken_out_of_service_is_unloaded_and_says_why() {
+    // doc "Holding a repository in memory": a copy that fell behind its disk
+    // takes the repository out of service, as a lost root does.
+    let state = Arc::new(AppState::new());
+    let app = routes::build(state.clone());
+    let root = temp_dir("outofservice");
+    common::seed_config(&root);
+    let uuid = state.init_repo(&root, None, None, false).unwrap();
+    let repo = uuid.as_simple().to_string();
+    state.repo(uuid).unwrap().take_out_of_service(Some("the memory is full".into()));
+
+    let (st, body) = request(&app, "GET", &format!("/repos/{repo}/fields")).await;
+    assert_eq!(st, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(body["error"].as_str().unwrap().contains("the memory is full"), "{body}");
+    let mut lost = Value::Null;
+    for _ in 0..100 {
+        let (_, listed) = request(&app, "GET", "/repos?lost=true").await;
+        if listed.as_array().is_some_and(|l| l.len() == 1) {
+            lost = listed;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(lost[0]["lost"], true, "{lost}");
+    assert_eq!(lost[0]["lost_reason"], "the memory is full", "{lost}");
+    let (_, listed) = request(&app, "GET", "/repos").await;
+    assert_eq!(listed, serde_json::json!([]));
+    // Unloaded: its store let go, it loads again.
+    let (st, body) = post(&app, "/repos/load", serde_json::json!({ "root": root.path() })).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+}
+
 /// `POST /repos/:repo/memory` with `in_memory`.
 async fn set_memory(app: &Router, repo: &str, on: bool) -> (StatusCode, Value) {
     post(app, &format!("/repos/{repo}/memory"), serde_json::json!({ "in_memory": on })).await
@@ -598,7 +628,6 @@ async fn a_loaded_repository_is_held_in_memory_and_let_go_without_unloading() {
     let (st, info) = set_memory(&app, &repo, true).await;
     assert_eq!(st, StatusCode::OK, "{info}");
     assert!(info["in_memory"]["bytes"].as_u64().unwrap() > 0, "{info}");
-    assert_eq!(info["in_memory"]["pinned"], true, "{info}");
     let (_, repos) = request(&app, "GET", "/repos").await;
     assert!(repos[0]["in_memory"]["bytes"].as_u64().unwrap() > 0, "{repos}");
     // Held, the load in memory is the ordinary idempotent one.

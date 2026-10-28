@@ -57,7 +57,7 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 use heed::types::Bytes;
-use heed::{CommitOrAbort, Database, Env, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
+use heed::{CommitOrAbort, Env, EnvOpenOptions, RoTxn, WithoutTls};
 use metafolder_core::metarecord::{TreeName, Value};
 use uuid::Uuid;
 
@@ -67,12 +67,12 @@ use crate::rows::{self, FieldRow, RawValue, TreeRow};
 use crate::store::{Begin, LabelMeta, Log, NewOp, Questions, Rows, WriteTxn};
 
 mod derived;
-pub mod resident;
+pub mod memory;
 mod source;
+mod table;
 
 pub use source::KvSource;
-
-type Db = Database<'static, Bytes, Bytes>;
+use table::{Db, Wtxn};
 
 /// The parent key of a forest root: the zero uuid, which no metarecord has.
 const ROOT: [u8; 16] = [0; 16];
@@ -105,10 +105,115 @@ struct Tables {
     grams: Db,
 }
 
+impl Tables {
+    /// Opens (creating them if needed) the store's tables in `env`.
+    fn open(env: &Env<WithoutTls>) -> Result<Tables> {
+        // In `Tables`' order. heed hands a database out for good (`'static`)
+        // only once the transaction that created it has committed.
+        const NAMES: [&str; 23] = [
+            "meta",
+            "metarecords",
+            "field_cells",
+            "row_owner",
+            "by_field",
+            "field_types",
+            "forest",
+            "ops",
+            "snaps",
+            "ops_by_label",
+            "ops_by_entity",
+            "labels",
+            "label_kids",
+            "label_keys",
+            "reverted_by",
+            "watcher_ops",
+            "user_ops",
+            "ids",
+            "uuids",
+            "sets",
+            "parts",
+            "kids",
+            "grams",
+        ];
+        let w = env.write_txn()?;
+        let created = env.create_databases_and_commit(w, |dbo, w| -> heed::Result<_> {
+            let mut dbs = Vec::with_capacity(NAMES.len());
+            for name in NAMES {
+                dbs.push(dbo.create_database::<Bytes, Bytes>(w, Some(name))?);
+            }
+            let dbs: [_; 23] = dbs.try_into().expect("one database per name");
+            Ok(CommitOrAbort::<_, ()>::Commit(dbs))
+        })?;
+        let dbs = created.commit().expect("the databases are committed");
+        let mut index = 0..;
+        let dbs = dbs.map(|db| Db::new(db, index.next().expect("unbounded")));
+        let [meta, metarecords, cells, row_owner, by_field, field_types, forest, ops, snaps, ops_by_label, ops_by_entity, labels, label_kids, label_keys, reverted_by, watcher_ops, user_ops, ids, uuids, sets, parts, kids, grams] =
+            dbs;
+        Ok(Tables {
+            meta,
+            metarecords,
+            cells,
+            row_owner,
+            by_field,
+            field_types,
+            forest,
+            ops,
+            snaps,
+            ops_by_label,
+            ops_by_entity,
+            labels,
+            label_kids,
+            label_keys,
+            reverted_by,
+            watcher_ops,
+            user_ops,
+            ids,
+            uuids,
+            sets,
+            parts,
+            kids,
+            grams,
+        })
+    }
+
+    /// Every table, in the order of their indexes (see [`table::Change`]).
+    fn all(&self) -> [Db; 23] {
+        [
+            self.meta,
+            self.metarecords,
+            self.cells,
+            self.row_owner,
+            self.by_field,
+            self.field_types,
+            self.forest,
+            self.ops,
+            self.snaps,
+            self.ops_by_label,
+            self.ops_by_entity,
+            self.labels,
+            self.label_kids,
+            self.label_keys,
+            self.reverted_by,
+            self.watcher_ops,
+            self.user_ops,
+            self.ids,
+            self.uuids,
+            self.sets,
+            self.parts,
+            self.kids,
+            self.grams,
+        ]
+    }
+}
+
 /// A repository database on LMDB.
 pub struct KvStore {
     env: Env<WithoutTls>,
     t: Tables,
+    /// The store on disk behind a copy in memory, while it is held there (doc
+    /// "Holding a repository in memory"): `env` and `t` are then the copy's.
+    /// Before `_lock`: the store on disk closes before its lock is let go.
+    memory: Option<memory::Memory>,
     /// Held for the store's lifetime: one daemon per repository.
     _lock: File,
     /// Where the store lives: the free space of its filesystem is the room
@@ -117,22 +222,9 @@ pub struct KvStore {
     /// Keys read so far by the store's reads and its query sources — what
     /// the cost assertions count (`tests/kv_cost.rs`).
     reads: std::sync::atomic::AtomicU64,
-    /// What of the map is held in memory, once [`KvStore::make_resident`]
-    /// asked for it (doc "Holding a repository in memory"); shared with
-    /// whoever reports it, so that reading it never waits on the store.
-    resident: ResidencyHandle,
-}
-
-/// What a store holds in memory, readable without the store itself — `GET
-/// /repos` must not wait behind a write for it.
-#[derive(Clone, Default)]
-pub struct ResidencyHandle(std::sync::Arc<std::sync::Mutex<Option<resident::Resident>>>);
-
-impl ResidencyHandle {
-    /// `None` until the store was asked to be held in memory.
-    pub fn get(&self) -> Option<resident::Residency> {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|r| r.residency())
-    }
+    /// Where the copy is, shared with whoever reports it, so that reading it
+    /// never waits on the store.
+    resident: memory::ResidencyHandle,
 }
 
 /// A directory that removes itself when dropped, for the unit tests' stores.
@@ -488,85 +580,8 @@ impl KvStore {
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
         }
-        // SAFETY: the lock above makes this process the file's only opener;
-        // the map is read-only (no WRITEMAP), so a stray write in the process
-        // cannot reach it (doc "Storage safety").
-        let env = unsafe {
-            let held = std::fs::metadata(dir.join("data.mdb")).map_or(0, |m| m.len() as usize);
-            let map_size = page_multiple(map_size.max(held.saturating_mul(2)));
-            let mut options = EnvOpenOptions::new().read_txn_without_tls();
-            options.map_size(map_size).max_dbs(32);
-            if !durable {
-                // SAFETY: NO_SYNC trades durability for speed, which is the
-                // caller's stated choice (`open_unsynced`).
-                options.flags(heed::EnvFlags::NO_SYNC);
-            }
-            options.open(dir)
-        }
-        .with_context(|| format!("open the key-value store in {}", dir.display()))?;
-        // In `Tables`' order. heed hands a database out for good (`'static`)
-        // only once the transaction that created it has committed.
-        const NAMES: [&str; 23] = [
-            "meta",
-            "metarecords",
-            "field_cells",
-            "row_owner",
-            "by_field",
-            "field_types",
-            "forest",
-            "ops",
-            "snaps",
-            "ops_by_label",
-            "ops_by_entity",
-            "labels",
-            "label_kids",
-            "label_keys",
-            "reverted_by",
-            "watcher_ops",
-            "user_ops",
-            "ids",
-            "uuids",
-            "sets",
-            "parts",
-            "kids",
-            "grams",
-        ];
-        let w = env.write_txn()?;
-        let created = env.create_databases_and_commit(w, |dbo, w| -> heed::Result<_> {
-            let mut dbs = Vec::with_capacity(NAMES.len());
-            for name in NAMES {
-                dbs.push(dbo.create_database::<Bytes, Bytes>(w, Some(name))?);
-            }
-            let dbs: [_; 23] = dbs.try_into().expect("one database per name");
-            Ok(CommitOrAbort::<_, ()>::Commit(dbs))
-        })?;
-        let [meta, metarecords, cells, row_owner, by_field, field_types, forest, ops, snaps, ops_by_label, ops_by_entity, labels, label_kids, label_keys, reverted_by, watcher_ops, user_ops, ids, uuids, sets, parts, kids, grams] =
-            created.commit().expect("the databases are committed");
-        let t = Tables {
-            meta,
-            metarecords,
-            cells,
-            row_owner,
-            by_field,
-            field_types,
-            forest,
-            ops,
-            snaps,
-            ops_by_label,
-            ops_by_entity,
-            labels,
-            label_kids,
-            label_keys,
-            reverted_by,
-            watcher_ops,
-            user_ops,
-            ids,
-            uuids,
-            sets,
-            parts,
-            kids,
-            grams,
-        };
+        let env = open_env(dir, map_size, durable)?;
+        let t = Tables::open(&env)?;
         let (derived, layout) = {
             let r = env.read_txn()?;
             (t.meta.get(&r, b"derived")?.map(from_be), t.meta.get(&r, b"layout")?.map(from_be))
@@ -577,6 +592,7 @@ impl KvStore {
             _lock: lock,
             dir: dir.to_path_buf(),
             reads: Default::default(),
+            memory: None,
             resident: Default::default(),
         };
         if layout != Some(LAYOUT) {
@@ -589,6 +605,29 @@ impl KvStore {
         }
         Ok(store)
     }
+}
+
+/// Opens the LMDB environment in `dir`, on a map of at least `map_size`
+/// bytes and twice what it holds; `durable`: an `fsync` per commit. The
+/// caller holds the repository's lock.
+fn open_env(dir: &Path, map_size: usize, durable: bool) -> Result<Env<WithoutTls>> {
+    // SAFETY: the repository's lock makes this process the file's only
+    // opener; the map is read-only (no WRITEMAP), so a stray write in the
+    // process cannot reach it (doc "Storage safety").
+    unsafe {
+        let held = std::fs::metadata(dir.join("data.mdb")).map_or(0, |m| m.len() as usize);
+        let map_size = page_multiple(map_size.max(held.saturating_mul(2)));
+        let mut options = EnvOpenOptions::new().read_txn_without_tls();
+        options.map_size(map_size).max_dbs(32);
+        if !durable {
+            // SAFETY: NO_SYNC trades durability for speed, which is the
+            // caller's stated choice (`open_unsynced`, or a copy in memory,
+            // which a crash loses anyway).
+            options.flags(heed::EnvFlags::NO_SYNC);
+        }
+        options.open(dir)
+    }
+    .with_context(|| format!("open the key-value store in {}", dir.display()))
 }
 
 // ── Reading (shared by the store and its write transactions) ──────────────────
@@ -1289,7 +1328,10 @@ impl KvTxn<'_> {
 /// A write transaction. Its reads see its own writes.
 pub struct KvTxn<'e> {
     t: Tables,
-    txn: RefCell<RwTxn<'e>>,
+    txn: RefCell<Wtxn<'e>>,
+    /// The store on disk, when the store is held in memory: what the
+    /// transaction's changes are committed to first.
+    memory: Option<&'e memory::Memory>,
     /// The derived set chunks this transaction changed, written at commit.
     sets: RefCell<HashMap<Vec<u8>, roaring::RoaringBitmap>>,
     /// Which chunks of each bitmap (table tag · key without chunk) the cache
@@ -1324,108 +1366,95 @@ impl Begin for KvStore {
             .context("copy the key-value store")?;
         Ok(())
     }
+    fn as_kv_mut(&mut self) -> Option<&mut KvStore> {
+        Some(self)
+    }
 }
 
 impl KvStore {
-    /// Grows the map so the write transaction about to start has the room
+    /// Grows the maps so the write transaction about to start has the room
     /// [`map_to_grant`] promises — the disk's free space, up to a cap: a
     /// write of any size commits unless the disk itself is full. Done here
     /// because LMDB allows a resize only while the process has no transaction
     /// open — which `&mut self` guarantees: every transaction borrows the
-    /// store.
+    /// store. Held in memory, the copy and the store on disk both grow, each
+    /// by the room of its own filesystem.
     fn grow_map(&mut self) -> Result<()> {
-        let info = self.env.info();
-        let used =
-            (info.last_page_number + 1) * self.env.unnamed_database_stat().page_size as usize;
-        // Unknown free space: at least as much room as the store holds.
-        let free = free_space(&self.dir).unwrap_or(used.max(INITIAL_MAP));
-        let resized = map_to_grant(used, info.map_size, free);
-        if let Some(size) = resized {
-            // SAFETY: no transaction is open in this process (see above), and
-            // the repository lock keeps every other process out of the file.
-            unsafe { self.env.resize(size) }.context("grow the key-value store's map")?;
-        }
-        self.follow_residency(resized.is_some());
-        Ok(())
-    }
-
-    /// The bytes of the map in use — what is held in memory: the used pages,
-    /// never past the file's end (reading there would fault).
-    fn used_bytes(&self) -> usize {
-        let used = (self.env.info().last_page_number + 1)
-            * self.env.unnamed_database_stat().page_size as usize;
-        let file = std::fs::metadata(self.dir.join("data.mdb")).map_or(used, |m| m.len() as usize);
-        used.min(file)
-    }
-
-    /// Where the store's file is mapped in this process. LMDB does not say —
-    /// its `me_mapaddr` is the address of a *fixed* map only, 0 otherwise —
-    /// so it is found in `/proc/self/maps`: the mapping of `data.mdb` from
-    /// its start. Linux only; `None` elsewhere.
-    fn map_addr(&self) -> Option<usize> {
-        use std::os::unix::fs::MetadataExt;
-        let inode = std::fs::metadata(self.dir.join("data.mdb")).ok()?.ino();
-        let maps = std::fs::read_to_string("/proc/self/maps").ok()?;
-        resident::mapping_of(&maps, inode)
-    }
-
-    /// Reads the store into memory and locks it there when the memory-lock
-    /// limit allows (doc "Holding a repository in memory"); `progress(done,
-    /// total)` in bytes. Asked again, it says what is held. The store must
-    /// stay borrowed meanwhile: a resize would unmap what is being read.
-    pub fn make_resident(&self, progress: &dyn Fn(u64, u64)) -> Result<resident::Residency> {
-        let mut slot = self.resident.0.lock().unwrap_or_else(|e| e.into_inner());
-        if slot.is_none() {
-            let addr = self.map_addr().context(
-                "the store's map is not found in /proc/self/maps: holding it in memory needs Linux",
-            )?;
-            *slot = Some(resident::Resident::take(
-                &resident::Kernel,
-                addr,
-                self.used_bytes(),
-                progress,
-            ));
-        }
-        Ok(slot.as_ref().expect("taken above").residency())
-    }
-
-    /// Lets go of what [`Self::make_resident`] held: unlocked, and no longer
-    /// followed by the writes. Nothing held, nothing done.
-    pub fn release_resident(&self) {
-        let taken = self.resident.0.lock().unwrap_or_else(|e| e.into_inner()).take();
-        if let Some(resident) = taken {
-            resident.release(&resident::Kernel);
+        match &self.memory {
+            Some(memory) => {
+                grow(&self.env, &memory.dir)?;
+                grow(&memory.disk, &self.dir)
+            }
+            None => grow(&self.env, &self.dir),
         }
     }
 
-    /// What is held in memory, `None` when nothing was asked.
-    pub fn residency(&self) -> Option<resident::Residency> {
+    /// Copies the store into memory, under `base`, and reads it there from
+    /// now on (doc "Holding a repository in memory"); `progress(done, total)`
+    /// in bytes. `on_lost` is told if the copy ever falls behind the disk.
+    /// Already held, nothing is done.
+    pub fn hold_in_memory(
+        &mut self,
+        base: &Path,
+        on_lost: memory::OnLost,
+        progress: &dyn Fn(u64, u64),
+    ) -> Result<memory::Residency> {
+        if self.memory.is_none() {
+            // `&mut self`: no transaction is open, the file is what was
+            // committed last.
+            let (dir, held) = memory::Memory::copy_in(&self.dir.join("data.mdb"), base, progress)?;
+            let env = open_env(&dir, INITIAL_MAP, false);
+            let opened = env.and_then(|env| Ok((Tables::open(&env)?, env)));
+            let (t, env) = match opened {
+                Ok(opened) => opened,
+                Err(e) => {
+                    let _ = std::fs::remove_dir_all(&dir);
+                    return Err(e);
+                }
+            };
+            let disk = std::mem::replace(&mut self.env, env);
+            let disk_t = std::mem::replace(&mut self.t, t);
+            self.resident.set(Some(dir.clone()));
+            self.memory = Some(memory::Memory::new(disk, disk_t, dir, held, on_lost));
+        }
+        Ok(self.resident.get().expect("held above"))
+    }
+
+    /// Lets go of the copy in memory: the store is read on disk again, and
+    /// the copy removed. Not held, nothing is done.
+    pub fn release_memory(&mut self) {
+        if let Some(memory) = self.memory.take() {
+            self.env = memory.disk.clone();
+            self.t = memory.disk_t;
+            self.resident.set(None);
+        }
+    }
+
+    /// What is held in memory, `None` when the store is not.
+    pub fn residency(&self) -> Option<memory::Residency> {
         self.resident.get()
     }
 
     /// The handle `GET /repos` reads the residency through.
-    pub fn residency_handle(&self) -> ResidencyHandle {
+    pub fn residency_handle(&self) -> memory::ResidencyHandle {
         self.resident.clone()
     }
+}
 
-    /// Takes in what the last writes added to the map, or all of it again
-    /// when a resize moved it. Run as a write starts — after the resize, with
-    /// no transaction open — so the pages a commit appended are locked by
-    /// the next one (until then they are the page cache's freshest).
-    fn follow_residency(&self, resized: bool) {
-        let mut slot = self.resident.0.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(resident) = slot.as_mut() {
-            // The address moves only with a resize: `/proc/self/maps` is read
-            // then, not at every write.
-            let addr = if resized { self.map_addr() } else { Some(resident.addr()) };
-            match addr {
-                Some(addr) => resident.follow(&resident::Kernel, addr, self.used_bytes()),
-                // Mapped again where it cannot be found: whatever was locked
-                // went with the old mapping.
-                None => resident.lose("the store's map, moved by a resize, is not found"),
-            }
-        }
+/// Grows `env`'s map, as [`KvStore::grow_map`] says, by the free space of
+/// the filesystem holding `dir`.
+fn grow(env: &Env<WithoutTls>, dir: &Path) -> Result<()> {
+    let info = env.info();
+    let used = (info.last_page_number + 1) * env.unnamed_database_stat().page_size as usize;
+    // Unknown free space: at least as much room as the store holds.
+    let free = free_space(dir).unwrap_or(used.max(INITIAL_MAP));
+    if let Some(size) = map_to_grant(used, info.map_size, free) {
+        // SAFETY: no transaction is open in this process (see
+        // `KvStore::grow_map`), and the repository lock keeps every other
+        // process out of the file.
+        unsafe { env.resize(size) }.context("grow the key-value store's map")?;
     }
+    Ok(())
 }
 
 impl KvStore {
@@ -1488,10 +1517,10 @@ impl KvStore {
                         t.row_owner.put(&mut w, id, &prefix)?;
                     }
                 }
-                old.clear(&mut w)?;
+                old.clear(w.unjournaled())?;
             }
             for old in gone.into_iter().flatten() {
-                old.clear(&mut w)?;
+                old.clear(w.unjournaled())?;
             }
             for db in [
                 t.ops,
@@ -1517,11 +1546,16 @@ impl KvStore {
 
 impl<'e> KvTxn<'e> {
     fn new(store: &'e mut KvStore) -> Result<KvTxn<'e>> {
+        if let Some(lost) = store.memory.as_ref().and_then(|m| m.lost()) {
+            bail!("{lost}");
+        }
         store.grow_map()?;
         let store: &'e KvStore = store;
+        let memory = store.memory.as_ref();
         Ok(KvTxn {
             t: store.t,
-            txn: RefCell::new(store.env.write_txn()?),
+            txn: RefCell::new(Wtxn::new(store.env.write_txn()?, memory.is_some())),
+            memory,
             sets: RefCell::new(HashMap::new()),
             cached_chunks: RefCell::new(HashMap::new()),
             reads: &store.reads,
@@ -1536,7 +1570,11 @@ impl<'e> KvTxn<'e> {
     /// Writes what the transaction still holds in memory, and commits.
     fn finish(self) -> Result<()> {
         self.flush_sets()?;
-        self.txn.into_inner().commit().context("Failed to commit write transaction")?;
+        let (txn, changes) = self.txn.into_inner().into_parts();
+        match (self.memory, changes) {
+            (Some(memory), Some(changes)) => memory.commit(txn, &changes)?,
+            _ => txn.commit().context("Failed to commit write transaction")?,
+        }
         // Every write commits here: an operation that never did is a read,
         // held to its own threshold in the slow-operation log.
         metafolder_core::slowlog::mark_write();
@@ -1939,69 +1977,172 @@ mod map_tests {
 }
 
 #[cfg(test)]
-mod resident_tests {
-    use super::test_store;
-    use crate::store::Begin;
+mod memory_tests {
+    use super::{memory, test_store, Env, Tables, TestDir, WithoutTls};
+    use crate::store::{Begin, Rows};
     use metafolder_core::metarecord::Value;
+    use std::sync::{Arc, Mutex};
     use uuid::Uuid;
 
-    /// The bytes of the store in use: what is read into memory.
-    fn used(store: &super::KvStore) -> u64 {
-        ((store.env.info().last_page_number + 1)
-            * store.env.unnamed_database_stat().page_size as usize) as u64
+    /// A directory standing for the RAM the copies go to.
+    fn base() -> TestDir {
+        TestDir(
+            std::env::temp_dir()
+                .join("metafolder-tests")
+                .join(format!("unit_memory_{}", Uuid::new_v4())),
+        )
     }
 
-    fn fill(store: &mut super::KvStore, rows: usize) {
-        let w = store.begin_write().unwrap();
+    /// What `on_lost` was told, and the callback telling it.
+    fn told() -> (Arc<Mutex<Vec<String>>>, memory::OnLost) {
+        let told = Arc::new(Mutex::new(Vec::new()));
+        let sink = told.clone();
+        (told, Box::new(move |m| sink.lock().unwrap().push(m)))
+    }
+
+    fn fill(store: &mut super::KvStore, rows: usize) -> anyhow::Result<()> {
+        let w = store.begin_write()?;
         for i in 0..rows {
             let uuid = Uuid::new_v4();
-            w.create_metarecord(uuid, 0).unwrap();
-            w.insert_row(uuid, "text", &Value::String(format!("{i:0>200}")), None).unwrap();
+            w.create_metarecord(uuid, 0)?;
+            w.insert_row(uuid, "text", &Value::String(format!("{i:0>200}")), None)?;
         }
-        w.commit().unwrap();
+        w.commit()
+    }
+
+    /// Every key and value of every table.
+    fn dump(env: &Env<WithoutTls>, t: &Tables) -> Vec<(usize, Vec<u8>, Vec<u8>)> {
+        let r = env.read_txn().unwrap();
+        let mut out = Vec::new();
+        for (i, db) in t.all().iter().enumerate() {
+            for e in db.iter(&r).unwrap() {
+                let (k, v) = e.unwrap();
+                out.push((i, k.to_vec(), v.to_vec()));
+            }
+        }
+        out
+    }
+
+    /// The copy and the store on disk hold the same keys and values.
+    fn assert_in_step(store: &super::KvStore) {
+        let disk = store.memory.as_ref().expect("held in memory");
+        let (copy, on_disk) = (dump(&store.env, &store.t), dump(&disk.disk, &disk.disk_t));
+        assert_eq!(copy.len(), on_disk.len());
+        assert!(copy == on_disk, "the copy and the disk differ");
     }
 
     #[test]
-    fn test_a_store_is_held_in_memory_only_when_asked() {
-        let (store, _dir) = test_store();
-        assert_eq!(store.residency(), None);
-        let calls = std::cell::Cell::new(0);
-        let residency = store.make_resident(&|_, _| calls.set(calls.get() + 1)).unwrap();
-        assert_eq!(residency.bytes, used(&store));
-        assert!(calls.get() >= 1, "the load reports its progress");
-        // A test store is far below any memory-lock limit worth the name.
-        assert!(residency.pinned, "{:?}", residency.reason);
-        assert_eq!(store.residency(), Some(residency));
-    }
-
-    #[test]
-    fn test_what_a_write_adds_is_held_too() {
+    fn test_a_store_is_copied_into_memory_only_when_asked() {
         let (mut store, _dir) = test_store();
-        store.make_resident(&|_, _| {}).unwrap();
-        let before = store.residency().unwrap().bytes;
-        fill(&mut store, 5000);
-        // Followed when the next write starts: the map may move then.
-        drop(store.begin_write().unwrap());
-        let after = store.residency().unwrap();
-        assert!(after.bytes > before, "{} then {}", before, after.bytes);
-        assert_eq!(after.bytes, used(&store));
+        fill(&mut store, 10).unwrap();
+        assert_eq!(store.residency(), None);
+        let base = base();
+        let calls = std::cell::Cell::new(0);
+        let (_, on_lost) = told();
+        let held =
+            store.hold_in_memory(&base.0, on_lost, &|_, _| calls.set(calls.get() + 1)).unwrap();
+        assert!(calls.get() >= 1, "the copy reports its progress");
+        let copy = std::fs::read_dir(&base.0).unwrap().next().unwrap().unwrap().path();
+        assert_eq!(held.bytes, std::fs::metadata(copy.join("data.mdb")).unwrap().len());
+        assert_eq!(store.residency(), Some(held));
+        // Read from the copy, the store answers as before.
+        assert_eq!(store.metarecord_count().unwrap(), 10);
+        assert_in_step(&store);
+    }
+
+    #[test]
+    fn test_a_write_to_a_store_held_in_memory_is_on_disk_too() {
+        let (mut store, dir) = test_store();
+        let base = base();
+        let (told, on_lost) = told();
+        store.hold_in_memory(&base.0, on_lost, &|_, _| {}).unwrap();
+        fill(&mut store, 300).unwrap();
+        fill(&mut store, 5).unwrap();
+        assert_in_step(&store);
+        // A derived index rewritten whole is replayed whole, its tables
+        // cleared first.
+        store.reindex().unwrap();
+        assert_in_step(&store);
+        assert!(told.lock().unwrap().is_empty());
+        drop(store);
+        // The copy goes with the store; the disk keeps every write.
+        assert_eq!(std::fs::read_dir(&base.0).unwrap().count(), 0);
+        let store = super::KvStore::open_unsynced(&dir.0).unwrap();
+        assert_eq!(store.metarecord_count().unwrap(), 305);
+    }
+
+    #[test]
+    fn test_a_write_the_disk_refuses_leaves_no_trace_in_memory() {
+        let (mut store, _dir) = test_store();
+        let base = base();
+        let (told, on_lost) = told();
+        store.hold_in_memory(&base.0, on_lost, &|_, _| {}).unwrap();
+        fill(&mut store, 3).unwrap();
+        store.memory.as_ref().unwrap().fail.store(1, std::sync::atomic::Ordering::SeqCst);
+        let refused = fill(&mut store, 4).unwrap_err();
+        assert!(format!("{refused:#}").contains("disk"), "{refused:#}");
+        assert_eq!(store.metarecord_count().unwrap(), 3, "the copy took a write the disk refused");
+        assert_in_step(&store);
+        // Nothing is lost: the next write is taken by both.
+        assert!(told.lock().unwrap().is_empty());
+        fill(&mut store, 4).unwrap();
+        assert_eq!(store.metarecord_count().unwrap(), 7);
+        assert_in_step(&store);
+    }
+
+    #[test]
+    fn test_a_copy_that_cannot_take_what_the_disk_took_is_lost() {
+        let (mut store, dir) = test_store();
+        let base = base();
+        let (told, on_lost) = told();
+        store.hold_in_memory(&base.0, on_lost, &|_, _| {}).unwrap();
+        store.memory.as_ref().unwrap().fail.store(2, std::sync::atomic::Ordering::SeqCst);
+        let failed = fill(&mut store, 4).unwrap_err();
+        let told = told.lock().unwrap().clone();
+        assert_eq!(told.len(), 1, "{told:?}");
+        assert!(format!("{failed:#}").contains(&told[0]), "{failed:#}");
+        // Behind the disk for good: no write is taken any more.
+        let refused = fill(&mut store, 1).map(|_| ()).unwrap_err();
+        assert!(format!("{refused:#}").contains(&told[0]), "{refused:#}");
+        drop(store);
+        let store = super::KvStore::open_unsynced(&dir.0).unwrap();
+        assert_eq!(store.metarecord_count().unwrap(), 4, "the disk keeps what it took");
     }
 
     #[test]
     fn test_a_store_held_in_memory_can_be_let_go_and_held_again() {
         let (mut store, _dir) = test_store();
-        store.make_resident(&|_, _| {}).unwrap();
-        store.release_resident();
+        let base = base();
+        store.hold_in_memory(&base.0, told().1, &|_, _| {}).unwrap();
+        fill(&mut store, 2).unwrap();
+        store.release_memory();
         assert_eq!(store.residency(), None);
-        // Let go, it no longer follows the writes.
-        fill(&mut store, 10);
-        drop(store.begin_write().unwrap());
-        assert_eq!(store.residency(), None);
-        let again = store.make_resident(&|_, _| {}).unwrap();
-        assert_eq!(again.bytes, used(&store));
+        assert_eq!(std::fs::read_dir(&base.0).unwrap().count(), 0, "the copy is removed");
+        // Read and written on disk again.
+        assert_eq!(store.metarecord_count().unwrap(), 2);
+        fill(&mut store, 3).unwrap();
+        store.hold_in_memory(&base.0, told().1, &|_, _| {}).unwrap();
+        assert_eq!(store.metarecord_count().unwrap(), 5);
         // Letting go of a store not held is nothing.
-        store.release_resident();
-        store.release_resident();
+        store.release_memory();
+        store.release_memory();
         assert_eq!(store.residency(), None);
+    }
+
+    #[test]
+    fn test_the_copies_a_crash_left_are_removed_and_those_in_use_kept() {
+        let (mut store, _dir) = test_store();
+        let base = base();
+        store.hold_in_memory(&base.0, told().1, &|_, _| {}).unwrap();
+        // Left by a daemon gone: its lock file, held by nobody.
+        let stale = base.0.join("stale");
+        std::fs::create_dir_all(&stale).unwrap();
+        std::fs::write(stale.join("held.lock"), b"").unwrap();
+        std::fs::write(stale.join("data.mdb"), b"old").unwrap();
+        memory::clean_stale(&base.0);
+        assert!(!stale.exists());
+        assert_eq!(std::fs::read_dir(&base.0).unwrap().count(), 1, "the copy in use stays");
+        fill(&mut store, 1).unwrap();
+        assert_in_step(&store);
     }
 }
