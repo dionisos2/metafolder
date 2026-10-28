@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/viewer:page
+catalog: GUI command
+target: viewer:page
+summary: File: go to a page of the document
+
+!! Reference
+
+* Defined by the ``viewer`` panel
+
+!! Default keys
+
+* ``pagedown`` → ``viewer:page next`` (in the ``viewer`` panel)
+* ``pageup`` → ``viewer:page prev`` (in the ``viewer`` panel)

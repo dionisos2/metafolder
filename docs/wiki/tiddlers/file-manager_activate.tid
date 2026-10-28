@@ -3,4 +3,4 @@ tags: [[GUI command]] [[file-manager panel]]
 kind: reference
 summary: File manager: go into the folder / show the file (here / other / new)
 
-`file-manager:activate <here|other|new>` — Enter in the [[file-manager panel]]. On a folder it goes into it, whatever the target (the row's `↘`). On a file, or on `.` (the folder shown), it shows it in a [[file panel]] at the [[open target|Panel slots and layout]] — `panel:open <target> file`, as the row's `↗` does ([[Opening a row]]); the entry is the workspace's selection already ([[Cross-panel selection]]).
+`file-manager:activate <here|other|new>` — Enter in the [[file-manager panel]]. On a folder it goes into it, whatever the target (the row's `↘`). On a file, or on `.` (the folder shown), it shows it in a [[viewer panel]] at the [[open target|Panel slots and layout]] — `panel:open <target> file`, as the row's `↗` does ([[Opening a row]]); the entry is the workspace's selection already ([[Cross-panel selection]]).

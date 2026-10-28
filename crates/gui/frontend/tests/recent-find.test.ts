@@ -193,7 +193,7 @@ describe('recent open buttons', () => {
     Element.prototype.scrollIntoView = () => {};
   });
 
-  test("a row's ↗ selects it and shows it in the file panel of the other slot", async () => {
+  test("a row's ↗ selects it and shows it in the viewer panel of the other slot", async () => {
     const s = stub();
     await mount(s);
     const row = [...s.root.querySelectorAll('li')].find(
@@ -203,7 +203,7 @@ describe('recent open buttons', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(cursorName(s.root)).toBe('rock.mp3');
     expect(s.api.workspace.set).toHaveBeenCalledWith('selected_paths', ['/repo/other/rock.mp3']);
-    expect(s.api.commands.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'file']);
+    expect(s.api.commands.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'viewer']);
   });
 
   test("a row's ⓘ shows it in the detail panel of the other slot", async () => {

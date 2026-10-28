@@ -1,6 +1,6 @@
 // Opening a metarecord-list row is a button on it (doc "Opening a row"): a
 // click on a row or a card only selects it, the ↗ button selects it and shows
-// it in the file panel of the other slot, the ⓘ button in the detail panel. ↗
+// it in the viewer panel of the other slot, the ⓘ button in the detail panel. ↗
 // is greyed on a metarecord without a file. A double click opens nothing.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -161,14 +161,14 @@ describe('metarecord-list open buttons', () => {
     document.body.replaceChildren();
   });
 
-  test("a row's ↗ selects it, then shows it in the file panel of the other slot", async () => {
+  test("a row's ↗ selects it, then shows it in the viewer panel of the other slot", async () => {
     const p = await mountPanel();
     const row = p.shadow.querySelectorAll('tr.row')[0];
     p.order.length = 0;
     row.querySelector<HTMLButtonElement>('button.mf-open-show')!.click();
     await settle();
     expect(row.classList.contains('cursor')).toBe(true);
-    expect(p.order).toEqual(['select aaaa', 'panel:open other file']);
+    expect(p.order).toEqual(['select aaaa', 'panel:open other viewer']);
   });
 
   test("a row's ⓘ shows it in the detail panel, file or not", async () => {

@@ -1,4 +1,4 @@
-// The `file` panel never builds a media pipeline on sight
+// The `viewer` panel never builds a media pipeline on sight
 // (doc "Why a media file is not played on sight"): opening a video or an audio
 // file shows its poster
 // frame — rendered out of process by ffmpeg and cached — and the <video>/<audio>
@@ -14,7 +14,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/file');
+const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/viewer');
 
 /** The shell's mount path: the panel's body markup into a Shadow root. */
 function shadowRoot(): ShadowRoot {
@@ -100,7 +100,7 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
   return { ok: true, json: async () => body } as unknown as Response;
 });
 
-describe('file panel — media loads only on demand', () => {
+describe('viewer panel — media loads only on demand', () => {
   beforeEach(() => {
     fetchMock.mockClear();
     vi.stubGlobal('fetch', fetchMock);
@@ -113,7 +113,7 @@ describe('file panel — media loads only on demand', () => {
   async function mountPanel(path: string) {
     const s = stub(path);
     const root = shadowRoot();
-    const mod = await import('../../default-config/panel-types/file/main.js');
+    const mod = await import('../../default-config/panel-types/viewer/main.js');
     await mod.mount(root, s.api as never);
     await flush();
     return { ...s, root, viewer: root.getElementById('viewer')! };
@@ -145,7 +145,7 @@ describe('file panel — media loads only on demand', () => {
 
   test('play/pause builds the element, probes the decoders, and plays', async () => {
     const { handlers, viewer } = await mountPanel('/music/clip.mp4');
-    await handlers.get('file:play-pause')!();
+    await handlers.get('viewer:play-pause')!();
     await flush();
     const video = viewer.querySelector('video');
     expect(video?.getAttribute('src')).toContain('/fsraw?path=');
@@ -162,7 +162,7 @@ describe('file panel — media loads only on demand', () => {
 
   test('once loaded, play/pause toggles the element instead of rebuilding it', async () => {
     const { handlers, viewer } = await mountPanel('/music/clip.mp4');
-    const play = handlers.get('file:play-pause')!;
+    const play = handlers.get('viewer:play-pause')!;
     await play();
     await flush();
     const video = viewer.querySelector('video')!;
@@ -182,7 +182,7 @@ describe('file panel — media loads only on demand', () => {
       return { ok: true, json: async () => body } as unknown as Response;
     });
     const { handlers, viewer } = await mountPanel('/music/clip.mp4');
-    await handlers.get('file:play-pause')!();
+    await handlers.get('viewer:play-pause')!();
     await flush();
     expect(viewer.querySelector('video')).toBeNull();
     expect(viewer.textContent).toContain('H.264 decoder');

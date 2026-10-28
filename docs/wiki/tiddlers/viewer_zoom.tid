@@ -1,0 +1,6 @@
+title: viewer:zoom
+tags: [[GUI command]] [[viewer panel]]
+kind: reference
+summary: File: zoom the previewed image/video
+
+Sizes the image, video or document page the [[viewer panel]] previews: `in` and `out` by one step, `fit` to fill the panel (the default), `reset` to the original size. Does nothing in front of anything else.

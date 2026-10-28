@@ -1,0 +1,15 @@
+title: $:/mf/gen/GUI command/viewer:seek
+catalog: GUI command
+target: viewer:seek
+summary: File: seek the previewed media by a signed number of seconds
+
+!! Reference
+
+* Defined by the ``viewer`` panel
+
+!! Default keys
+
+* ``left`` → ``viewer:seek -10`` (in the ``viewer`` panel)
+* ``right`` → ``viewer:seek +10`` (in the ``viewer`` panel)
+* ``shift+left`` → ``viewer:seek -60`` (in the ``viewer`` panel)
+* ``shift+right`` → ``viewer:seek +60`` (in the ``viewer`` panel)

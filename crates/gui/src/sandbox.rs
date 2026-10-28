@@ -759,7 +759,7 @@ mod tests {
     fn test_the_apps_own_origins_are_navigable() {
         for uri in [
             "http://tauri.localhost/",
-            "http://127.0.0.1:7524/panel/file/index.html",
+            "http://127.0.0.1:7524/panel/viewer/index.html",
             "http://localhost:7524/fsraw?path=/a/b.png",
             "about:blank",
             "tauri://localhost",

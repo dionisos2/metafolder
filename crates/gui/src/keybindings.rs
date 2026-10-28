@@ -1080,15 +1080,13 @@ vars.y = ","
 
         // Moving a cursor is one generic command for every panel (doc "Generic
         // panel commands"): one global `down`, plus the panels it drives from
-        // elsewhere — the file panel and the finder drive the list's cursor.
+        // elsewhere — the viewer panel and the finder drive the list's cursor.
         let down: Vec<_> = table.iter().filter(|b| b.keys == ["down"]).collect();
         assert!(down
             .iter()
             .any(|b| b.when.is_none() && b.focus.is_none() && b.invocation == "cursor:next self"));
-        assert!(down
-            .iter()
-            .any(|b| b.when.as_deref() == Some("file")
-                && b.invocation == "cursor:next metarecord-list"));
+        assert!(down.iter().any(|b| b.when.as_deref() == Some("viewer")
+            && b.invocation == "cursor:next metarecord-list"));
         // `enter` mixes a global text-input binding with per-panel actions.
         let enter: Vec<_> = table.iter().filter(|b| b.keys == ["enter"]).collect();
         assert!(enter.iter().any(|b| b.when.is_none() && b.text_input));
@@ -1325,23 +1323,23 @@ vars.y = ","
             .any(|b| b.keys == ["shift+f"] && b.invocation == "path-ref:set field"));
         assert!(!f.iter().any(|b| b.invocation == "path-ref:set field"));
 
-        // `r` is "read the view again" in every panel, the file panel included
+        // `r` is "read the view again" in every panel, the viewer panel included
         // (it reads the file again); playing the media from the start moved to
         // shift+r there.
         let r: Vec<_> = table.iter().filter(|b| b.keys == ["r"]).collect();
         assert!(r.iter().any(|b| b.when.is_none() && b.invocation == "view:refresh self"));
         assert!(r.iter().all(|b| b.invocation == "view:refresh self"));
         assert!(table.iter().any(|b| b.keys == ["shift+r"]
-            && b.when.as_deref() == Some("file")
-            && b.invocation == "file:restart"));
+            && b.when.as_deref() == Some("viewer")
+            && b.invocation == "viewer:restart"));
 
-        // + - 0 zoom every panel; the file panel zooms its image instead, and
+        // + - 0 zoom every panel; the viewer panel zooms its image instead, and
         // the detail panel's "one more value" moved to shift+a for it.
         for (key, direction) in [("plus", "in"), ("-", "out"), ("0", "reset")] {
             let bound: Vec<_> = table.iter().filter(|b| b.keys == [key]).collect();
             let generic = format!("view:zoom self {direction}");
             assert!(bound.iter().any(|b| b.when.is_none() && b.invocation == generic), "{key}");
-            assert!(bound.iter().any(|b| b.when.as_deref() == Some("file")), "{key}");
+            assert!(bound.iter().any(|b| b.when.as_deref() == Some("viewer")), "{key}");
             assert!(!bound.iter().any(|b| b.invocation == "metarecord:row-add"), "{key}");
         }
         assert!(table
@@ -1464,7 +1462,7 @@ vars.y = ","
     #[test]
     fn test_a_command_must_exist() {
         let known = |name: &str| name == "panel:open";
-        check_command("panel:open here file", known).unwrap();
+        check_command("panel:open here viewer", known).unwrap();
         check_command("  panel:open", known).unwrap();
         // A shell line names no command.
         check_command("!ls -l", known).unwrap();

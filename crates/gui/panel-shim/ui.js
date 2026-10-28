@@ -426,7 +426,7 @@ export function valueEl(value, onOpen) {
 
 /** The icon of each kind of opening (doc "Opening a row"): going into the row
  *  (a folder, a tree node, a label) is not showing it in another panel, and
- *  the file panel (the row's content) is not the detail panel (its fields). */
+ *  the viewer panel (the row's content) is not the detail panel (its fields). */
 const OPEN_GLYPHS = { enter: '↘', show: '↗', detail: 'ⓘ' };
 
 /** U+FE0E asks for each glyph's text presentation: where the panel's font has
@@ -443,7 +443,7 @@ const TEXT_PRESENTATION = '\uFE0E';
  * also a click on the row, so `onOpen` does the selecting it needs.
  *
  * @param {'enter'|'show'|'detail'} kind what opening does: go into the row, show
- *   it in the file panel, or in the detail panel
+ *   it in the viewer panel, or in the detail panel
  * @param {string} title what opening does, for hover and screen readers
  * @param {() => unknown} onOpen
  * @param {{ disabled?: string }} [options] `disabled`: why there is nothing to
@@ -472,21 +472,21 @@ export function openButton(kind, title, onOpen, { disabled } = {}) {
 
 /**
  * The two open buttons of a row showing a metarecord or a path (doc "Opening a
- * row"): its content in the file panel (`↗` — or `↘`, going into it, for a
+ * row"): its content in the viewer panel (`↗` — or `↘`, going into it, for a
  * folder the panel lists itself), then its fields in the detail panel (`ⓘ`).
  * Each is greyed when the row has nothing for that viewer: no file or folder,
  * or no metarecord (an untracked entry). `open` receives what was asked —
- * `'file'`, `'metarecord-detail'` or `'enter'` — and does the selecting first.
+ * `'viewer'`, `'metarecord-detail'` or `'enter'` — and does the selecting first.
  *
  * @param {{ hasFile: boolean, hasMetarecord: boolean, enter?: boolean,
- *   open: (what: 'file'|'metarecord-detail'|'enter') => unknown }} args
+ *   open: (what: 'viewer'|'metarecord-detail'|'enter') => unknown }} args
  * @returns {HTMLButtonElement[]}
  */
 export function viewerButtons({ hasFile, hasMetarecord, enter = false, open }) {
   return [
     enter
       ? openButton('enter', 'Open this folder', () => open('enter'))
-      : openButton('show', 'Show in the file panel, in the other slot', () => open('file'), {
+      : openButton('show', 'Show in the viewer panel, in the other slot', () => open('viewer'), {
           disabled: hasFile ? undefined : 'No file or folder to show',
         }),
     openButton('detail', 'Show in the detail panel, in the other slot', () => open('metarecord-detail'), {

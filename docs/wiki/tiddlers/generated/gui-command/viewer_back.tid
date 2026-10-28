@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/viewer:back
+catalog: GUI command
+target: viewer:back
+summary: File: go up one level (out of a listing, or to the containing folder)
+
+!! Reference
+
+* Defined by the ``viewer`` panel
+
+!! Default keys
+
+* ``backspace`` → ``viewer:back`` (in the ``viewer`` panel)

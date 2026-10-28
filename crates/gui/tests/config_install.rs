@@ -326,7 +326,7 @@ fn test_file_manager_root_and_hidden_keybindings() {
     assert_eq!(in_fm(&["ctrl+h"]).as_deref(), Some("file-manager:toggle hidden"));
 }
 
-// The `file` panel's Backspace: it steps up a level (like the file manager's),
+// The `viewer` panel's Backspace: it steps up a level (like the file manager's),
 // and mpv's "back to normal speed" keeps the same key with shift.
 #[test]
 fn test_file_panel_back_keybinding() {
@@ -339,13 +339,13 @@ fn test_file_panel_back_keybinding() {
             .iter()
             .find(|b| {
                 b.keys.iter().map(String::as_str).eq(keys.iter().copied())
-                    && b.when.as_deref() == Some("file")
+                    && b.when.as_deref() == Some("viewer")
             })
             .map(|b| b.invocation.clone())
     };
 
-    assert_eq!(in_file(&["backspace"]).as_deref(), Some("file:back"));
-    assert_eq!(in_file(&["shift+backspace"]).as_deref(), Some("file:speed reset"));
+    assert_eq!(in_file(&["backspace"]).as_deref(), Some("viewer:back"));
+    assert_eq!(in_file(&["shift+backspace"]).as_deref(), Some("viewer:speed reset"));
 }
 
 // The two shipped commands that had no key, now in the global "go" family:

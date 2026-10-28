@@ -28,7 +28,7 @@ can be stopped with one key ([[Script sessions]]).
 |[[mf gui query]], [[mf gui selected]] |print the query the metarecord list shows, and the checked metarecords — what to act on ([[A query is the scope]]) |
 |[[mf gui workspace new]], [[mf gui workspace rm]] |open and close a workspace |
 |[[mf gui layout]] |prints or sets which workspace each slot shows |
-|[[mf gui view]] |prints or sets the panel type of a slot, and the file a `file` panel shows |
+|[[mf gui view]] |prints or sets the panel type of a slot, and the file a `viewer` panel shows |
 |[[mf gui message]] |posts a message on a status bar |
 |[[mf gui progress]] |moves the script's bar in the task bar |
 |[[mf gui input]] |asks a question and waits for one key |

@@ -12,7 +12,7 @@ Every command is named
 
 with the verb taken from the closed list below, and ''whatever varies between sibling
 commands is an argument, never part of the verb''. There is no `zoom-in` beside
-`zoom-out`, no `bulk-set-field` beside `bulk-delete`: one `file:zoom`, one
+`zoom-out`, no `bulk-set-field` beside `bulk-delete`: one `viewer:zoom`, one
 `metarecord:bulk`, each taking what varies.
 
 The namespace is the panel type for a panel's command (`metarecord-list:apply`), and

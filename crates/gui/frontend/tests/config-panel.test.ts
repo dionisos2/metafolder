@@ -101,7 +101,7 @@ async function mountPanel(
           file('gui', 'gui/macros.js', 'commands'),
           file('gui', 'gui/style.css', 'style'),
           file('gui', 'gui/user-commands.js', 'commands'),
-          file('panel-types', 'gui/panel-types/file/main.js'),
+          file('panel-types', 'gui/panel-types/viewer/main.js'),
           ...(repo
             ? [
                 {
@@ -177,7 +177,7 @@ describe('config panel', () => {
     const text = root.getElementById('files')!.textContent;
     expect(text).toContain('/cfg/gui/keybindings.toml');
     expect(text).toContain('/cfg/cli/config.toml');
-    expect(text).toContain('/cfg/gui/panel-types/file/main.js');
+    expect(text).toContain('/cfg/gui/panel-types/viewer/main.js');
     const headings = [...root.querySelectorAll('#files th')].map((th) => th.textContent);
     expect(headings).toEqual(['cli', 'core', 'gui', 'panel-types']);
   });
@@ -209,7 +209,7 @@ describe('config panel', () => {
     expect(root.getElementById('files-count')!.textContent).toBe('2 of 8 files');
   });
 
-  test('Show selects the file and opens it in the file panel beside', async () => {
+  test('Show selects the file and opens it in the viewer panel beside', async () => {
     const { root, api, vars } = await mountPanel();
     const row = [...root.querySelectorAll('#files tr')].find((tr) =>
       tr.textContent.includes('cli/config.toml'),
@@ -218,7 +218,7 @@ describe('config panel', () => {
     await flush();
     expect(vars.selected_metarecord).toBeNull();
     expect(vars.selected_paths).toEqual(['/cfg/cli/config.toml']);
-    expect(api.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'file']);
+    expect(api.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'viewer']);
   });
 
   test('shown when it mounts, the key field takes the focus', async () => {

@@ -335,7 +335,7 @@ describe('metarecordMenuItems', () => {
     item(items, 'Open in panel metarecord-detail').action!();
     expect(commands.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'metarecord-detail']);
     item(items, 'Open in panel file').action!();
-    expect(commands.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'file']);
+    expect(commands.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'viewer']);
     item(items, 'Open folder in file manager').action!();
     expect(commands.invoke).toHaveBeenCalledWith(['file-manager:reveal', 'here']);
     item(items, 'Open folder in metarecord-list').action!();

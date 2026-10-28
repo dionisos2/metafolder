@@ -510,9 +510,9 @@ describe('deadInvocations', () => {
   });
 
   test('a pre-filled argument is not part of the name', () => {
-    // `panel:open here file` names `panel:open`; reading the whole invocation as
+    // `panel:open here viewer` names `panel:open`; reading the whole invocation as
     // a name would report every parameterized binding as dead.
-    const dead = deadInvocations([command('panel:open')], [binding(['s', 'f'], 'panel:open here file')]);
+    const dead = deadInvocations([command('panel:open')], [binding(['s', 'f'], 'panel:open here viewer')]);
     expect(dead).toEqual([]);
   });
 
@@ -593,7 +593,7 @@ describe('listedCommands', () => {
   });
 
   test('a combo bound in several panel contexts is shown once', () => {
-    // `enter` runs `panel:open other file` in metarecord-list *and* in recent:
+    // `enter` runs `panel:open other viewer` in metarecord-list *and* in recent:
     // two keytable rows (one per `when`), one key for the reader.
     const scoped = (keys: string[], invocation: string, when: string) => ({
       ...binding(keys, invocation),
@@ -602,14 +602,14 @@ describe('listedCommands', () => {
     const listed = listedCommands(
       [command('panel:open')],
       [
-        scoped(['enter'], 'panel:open other file', 'metarecord-list'),
-        scoped(['enter'], 'panel:open other file', 'recent'),
-        scoped(['right'], 'panel:open other file', 'metarecord-list'),
-        scoped(['right'], 'panel:open other file', 'recent'),
-        binding(['w', 't', 'f'], 'panel:open other file'),
+        scoped(['enter'], 'panel:open other viewer', 'metarecord-list'),
+        scoped(['enter'], 'panel:open other viewer', 'recent'),
+        scoped(['right'], 'panel:open other viewer', 'metarecord-list'),
+        scoped(['right'], 'panel:open other viewer', 'recent'),
+        binding(['w', 't', 'f'], 'panel:open other viewer'),
       ],
     );
-    expect(listed.find((c) => c.name === 'panel:open other file')?.shortcuts).toEqual([
+    expect(listed.find((c) => c.name === 'panel:open other viewer')?.shortcuts).toEqual([
       'enter',
       'right',
       'w t f',
@@ -658,8 +658,8 @@ describe('shortcutsFor', () => {
 
   test('a combo bound in several panel contexts is listed once', () => {
     const twice = [
-      { ...binding(['enter'], 'panel:open other file'), when: 'metarecord-list' },
-      { ...binding(['enter'], 'panel:open other file'), when: 'recent' },
+      { ...binding(['enter'], 'panel:open other viewer'), when: 'metarecord-list' },
+      { ...binding(['enter'], 'panel:open other viewer'), when: 'recent' },
     ];
     expect(shortcutsFor(twice, 'panel:open')).toEqual(['enter']);
   });
@@ -1096,18 +1096,18 @@ describe('resolveSubmission', () => {
     // `panel:open here` is an incomplete invocation: it asks for the type. It
     // must not run the first bound variant the list happens to show.
     const known = ['panel:open', 'help', 'help:cursor'];
-    const variants = [{ name: 'panel:open here duplicates' }, { name: 'panel:open here file' }];
+    const variants = [{ name: 'panel:open here duplicates' }, { name: 'panel:open here viewer' }];
     expect(resolveSubmission('panel:open here', variants, 0, known)).toBe('panel:open here');
     // An abbreviation names no command: the highlighted row runs.
     expect(resolveSubmission('pan ty', variants, 0, known)).toBe('panel:open here duplicates');
     // A highlight the user moved is a choice, and wins.
-    expect(resolveSubmission('panel:open here', variants, 1, known)).toBe('panel:open here file');
+    expect(resolveSubmission('panel:open here', variants, 1, known)).toBe('panel:open here viewer');
     const helps = [{ name: 'help' }, { name: 'help:cursor' }];
     expect(resolveSubmission('help', helps, 1, known)).toBe('help:cursor');
   });
 
   test('falls back to the typed text when there is no suggestion', () => {
-    expect(resolveSubmission('panel:open here file', [], 0)).toBe('panel:open here file');
+    expect(resolveSubmission('panel:open here viewer', [], 0)).toBe('panel:open here viewer');
     expect(resolveSubmission('!ls', [], 0)).toBe('!ls');
   });
 });

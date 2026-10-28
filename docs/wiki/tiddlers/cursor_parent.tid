@@ -10,4 +10,4 @@ Takes a panel up one level: the focused panel with `self`, the panel type named 
 |[[path-ref panel]] |the parent of the node it is in |
 |[[log panel]] |the level above the label it is in, the cursor on the row it came out of; at the units of work, nothing |
 
-In the [[metarecord-detail panel]] and the [[file panel]] the same keys go ''back'' instead — to the metarecord shown before, to the folder of the previewed file —, which is not a parent: they keep commands of their own.
+In the [[metarecord-detail panel]] and the [[viewer panel]] the same keys go ''back'' instead — to the metarecord shown before, to the folder of the previewed file —, which is not a parent: they keep commands of their own.

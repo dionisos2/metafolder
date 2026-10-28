@@ -104,7 +104,7 @@ mf_gui_session_open() {
     # selection, whenever that load ends. On a large repository that is after
     # the script's first `mf_gui_show_file`, so the first question was asked
     # over the wrong file.
-    _MF_WS=$(mf gui workspace new --repo "$REPO" --left file --right "$right") \
+    _MF_WS=$(mf gui workspace new --repo "$REPO" --left viewer --right "$right") \
         || mf_die "cannot create a workspace"
     trap _mf_gui_session_cleanup EXIT
     mf gui layout left "$_MF_WS" >/dev/null
@@ -123,8 +123,8 @@ mf_gui_session_open() {
 # A failing call is reported for the same reason: a preview silently stuck one
 # entry behind is worse than a visible complaint.
 mf_gui_show_file() {
-    mf gui view left file --path "${1:-}" >/dev/null 2>&1 \
-        || mf_gui_report "could not update the file panel${1:+ (\"$1\")}"
+    mf gui view left viewer --path "${1:-}" >/dev/null 2>&1 \
+        || mf_gui_report "could not update the viewer panel${1:+ (\"$1\")}"
 }
 
 # ── Argument prompts (GUI completion) ─────────────────────────────────────────

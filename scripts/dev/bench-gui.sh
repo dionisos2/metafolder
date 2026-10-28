@@ -164,7 +164,7 @@ scenario_fm_nav() {
     mfg layout left "$ws" >/dev/null
     mfg layout right "$ws" >/dev/null
     mfg view left file-manager >/dev/null
-    mfg view right file >/dev/null
+    mfg view right viewer >/dev/null
     settle
     clear_bench
     for ((i = 0; i < STEPS; i++)); do

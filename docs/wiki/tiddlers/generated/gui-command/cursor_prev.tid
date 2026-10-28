@@ -12,4 +12,4 @@ summary: Move a panel's cursor up one row (self / a panel type)
 * ``k`` → ``cursor:prev self``
 * ``up`` → ``cursor:prev self``
 * ``up`` → ``cursor:prev metarecord-list`` (while ``finder`` is focused)
-* ``up`` → ``cursor:prev metarecord-list`` (in the ``file`` panel)
+* ``up`` → ``cursor:prev metarecord-list`` (in the ``viewer`` panel)

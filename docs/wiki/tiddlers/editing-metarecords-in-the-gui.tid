@@ -22,7 +22,7 @@ panel, which is the selected one. Everything is asked in the command input, with
 completion, and what is given on the line is not asked
 ([[Interactive command arguments]]) — so the same command is a key, a few prompts, or
 one line: `metarecord:field set rating 5`. The `m` keys work in every panel, so
-wherever a metarecord is seen or selected — the list, the detail, the [[file panel]],
+wherever a metarecord is seen or selected — the list, the detail, the [[viewer panel]],
 the file manager, a tree; from another panel than the detail, the detail panel is
 brought on screen first, so that the change is seen ([[Commands]]).
 

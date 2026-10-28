@@ -1,4 +1,4 @@
-// `file:play` (doc "Slideshow"): the file panel walks a list of metarecords —
+// `viewer:play` (doc "Slideshow"): the viewer panel walks a list of metarecords —
 // the checked selection or the query the list shows — playing each audio or
 // video to its end, showing each image for a while, and skipping the rest.
 // It moves the workspace's selection, so every other panel follows.
@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { withRuns } from './support/runs';
 
-const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/file');
+const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/viewer');
 
 function shadowRoot(): ShadowRoot {
   const html = readFileSync(resolve(PANEL_DIR, 'index.html'), 'utf8');
@@ -152,7 +152,7 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
   return { ok: true, json: async () => body } as unknown as Response;
 });
 
-describe('file panel — the slideshow', () => {
+describe('viewer panel — the slideshow', () => {
   beforeEach(() => {
     fetchMock.mockClear();
     vi.stubGlobal('fetch', fetchMock);
@@ -168,7 +168,7 @@ describe('file panel — the slideshow', () => {
   async function mountPanel(vars: Record<string, unknown> = {}) {
     const s = stub(vars);
     const root = shadowRoot();
-    const mod = await import('../../default-config/panel-types/file/main.js');
+    const mod = await import('../../default-config/panel-types/viewer/main.js');
     await mod.mount(root, withRuns(s.api) as never);
     await flush();
     const viewer = root.getElementById('viewer')!;
@@ -185,7 +185,7 @@ describe('file panel — the slideshow', () => {
 
   test('the checked selection: an image waits, a document is skipped, a video plays to its end', async () => {
     const p = await mountPanel({ selected_metarecords: ['u_img', 'u_doc', 'u_vid'] });
-    await p.run('file:play', 'selection');
+    await p.run('viewer:play', 'selection');
     expect(p.shown).toEqual(['u_img']);
     expect(p.viewer.querySelector('img')).not.toBeNull();
 
@@ -206,7 +206,7 @@ describe('file panel — the slideshow', () => {
 
   test('a video starts from the beginning, not where it was left', async () => {
     const p = await mountPanel({ selected_metarecords: ['u_vid'] });
-    await p.run('file:play', 'selection');
+    await p.run('viewer:play', 'selection');
     await until(() => p.media() !== null);
     const video = p.media()!;
     Object.defineProperty(video, 'duration', { value: 100, configurable: true });
@@ -221,7 +221,7 @@ describe('file panel — the slideshow', () => {
       'metarecord-list:effective-query': query,
       'metarecord-list:sort': sort,
     });
-    await p.run('file:play', 'query');
+    await p.run('viewer:play', 'query');
     const post = p.calls.find((c) => c.url === '/repos/r/query');
     expect(post?.body).toEqual({ query, sort });
     expect(p.shown).toEqual(['u_vid']);
@@ -229,15 +229,15 @@ describe('file panel — the slideshow', () => {
 
   test('loop starts over at the end', async () => {
     const p = await mountPanel({ selected_metarecords: ['u_img', 'u_doc', 'u_gif'] });
-    await p.run('file:play', 'selection', 'loop');
+    await p.run('viewer:play', 'selection', 'loop');
     await until(() => p.shown.length >= 4);
     expect(p.shown.slice(0, 4)).toEqual(['u_img', 'u_gif', 'u_img', 'u_gif']);
-    await p.run('file:play', 'stop');
+    await p.run('viewer:play', 'stop');
   });
 
   test('a list with nothing to show stops instead of spinning', async () => {
     const p = await mountPanel({ selected_metarecords: ['u_doc', 'u_gone'] });
-    await p.run('file:play', 'selection', 'loop');
+    await p.run('viewer:play', 'selection', 'loop');
     await until(() =>
       p.statusBar.message.mock.calls.some(([m]) => /nothing to play/i.test(String(m))),
     );
@@ -248,22 +248,22 @@ describe('file panel — the slideshow', () => {
 
   test('an empty selection says so and plays nothing', async () => {
     const p = await mountPanel({ selected_metarecords: [] });
-    await p.run('file:play', 'selection');
+    await p.run('viewer:play', 'selection');
     expect(p.shown).toEqual([]);
     expect(p.statusBar.message.mock.calls.some(([m]) => /no metarecords are checked/i.test(String(m)))).toBe(true);
   });
 
   test('stop leaves the file shown and moves on no further', async () => {
     const p = await mountPanel({ selected_metarecords: ['u_img', 'u_vid'] });
-    await p.run('file:play', 'selection');
-    await p.run('file:play', 'stop');
+    await p.run('viewer:play', 'selection');
+    await p.run('viewer:play', 'stop');
     await sleep(60);
     expect(p.shown).toEqual(['u_img']);
   });
 
   test('choosing a file by hand continues from it', async () => {
     const p = await mountPanel({ selected_metarecords: ['u_img', 'u_doc', 'u_gif', 'u_snd'] });
-    await p.run('file:play', 'selection');
+    await p.run('viewer:play', 'selection');
     await p.select('u_gif'); // the user moves the list's cursor
     await until(() => p.media() !== null);
     // The GIF was shown (its length unreadable here: the fixed wait), then the
@@ -273,18 +273,18 @@ describe('file panel — the slideshow', () => {
 
   test('play-pause holds an image on screen, and resumes', async () => {
     const p = await mountPanel({ selected_metarecords: ['u_img', 'u_vid'] });
-    await p.run('file:play', 'selection');
-    await p.run('file:play-pause');
+    await p.run('viewer:play', 'selection');
+    await p.run('viewer:play-pause');
     await sleep(60);
     expect(p.shown).toEqual(['u_img']);
-    await p.run('file:play-pause');
+    await p.run('viewer:play-pause');
     await until(() => p.shown.length === 2);
   });
 
   test('walking up out of the file holds the slideshow until the selection moves', async () => {
     const p = await mountPanel({ selected_metarecords: ['u_img', 'u_doc', 'u_vid'] });
-    await p.run('file:play', 'selection');
-    await p.run('file:back'); // the folder holding the image
+    await p.run('viewer:play', 'selection');
+    await p.run('viewer:back'); // the folder holding the image
     await sleep(80);
     expect(p.shown).toEqual(['u_img']);
     await p.select('u_doc'); // moving the selection takes it up again
@@ -294,7 +294,7 @@ describe('file panel — the slideshow', () => {
 
   test('a file chosen by hand that cannot be shown is passed over at once', async () => {
     const p = await mountPanel({ selected_metarecords: ['u_img', 'u_doc', 'u_gif', 'u_vid'] });
-    await p.run('file:play', 'selection');
+    await p.run('viewer:play', 'selection');
     await p.select('u_doc');
     await until(() => p.shown.length === 2);
     expect(p.shown).toEqual(['u_img', 'u_gif']);
@@ -302,6 +302,6 @@ describe('file panel — the slideshow', () => {
 
   test('an unknown target is refused', async () => {
     const p = await mountPanel();
-    await expect(async () => p.run('file:play', 'everything')).rejects.toThrow(/everything/);
+    await expect(async () => p.run('viewer:play', 'everything')).rejects.toThrow(/everything/);
   });
 });

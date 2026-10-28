@@ -6,7 +6,7 @@
 // PREVIOUS metarecord: one file on screen, another one written to.
 //
 // This pins the order for the file-manager, the one panel that had it
-// backwards. (The scripting API's `view file --path`, the other publisher that
+// backwards. (The scripting API's `view viewer --path`, the other publisher that
 // had it backwards, is pinned in crates/gui/tests/gui_api.rs.)
 
 import { describe, expect, test, vi, beforeEach } from 'vitest';

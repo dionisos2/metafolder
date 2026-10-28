@@ -439,7 +439,7 @@ declare namespace Metafolder {
     args?: CommandArg[];
   }
 
-  /** An invocation as `invoke` takes it: `['panel:open', 'here', 'file']`,
+  /** An invocation as `invoke` takes it: `['panel:open', 'here', 'viewer']`,
    *  or a shell line as one element, `['!ls -l']`. */
   type Invocation = import('../src/lib/commands').InvocationParts;
 

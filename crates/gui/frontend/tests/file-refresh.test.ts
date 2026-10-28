@@ -6,7 +6,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/file');
+const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/viewer');
 
 function shadowRoot(): ShadowRoot {
   const html = readFileSync(resolve(PANEL_DIR, 'index.html'), 'utf8');
@@ -65,7 +65,7 @@ const flush = async () => {
   for (let i = 0; i < 6; i += 1) await new Promise((r) => setTimeout(r, 0));
 };
 
-describe('file panel — view:refresh', () => {
+describe('viewer panel — view:refresh', () => {
   test('reads the file again, as it is on disk now', async () => {
     let onDisk = 'before\n';
     vi.stubGlobal(
@@ -79,7 +79,7 @@ describe('file panel — view:refresh', () => {
     );
     const root = shadowRoot();
     const { api, provided } = stub('/notes.txt');
-    const mod = await import('../../default-config/panel-types/file/main.js');
+    const mod = await import('../../default-config/panel-types/viewer/main.js');
     await mod.mount(root, api as never);
     await flush();
     const viewer = root.getElementById('viewer')!;

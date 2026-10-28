@@ -30,7 +30,7 @@ An argument left out is not an error: the command input asks for it
 !! Where commands come from
 
 * The ''shell'' defines the builtins: workspaces, panel slots, the command input, find, help, undo…
-* Each ''panel type'' registers its own when it is built, under its name: `metarecord-list:apply`, `file:zoom`. What every panel with a cursor does alike, it does not register: it provides functions to the shell's generic commands, `cursor:next self` and its kin ([[Generic panel commands]]).
+* Each ''panel type'' registers its own when it is built, under its name: `metarecord-list:apply`, `viewer:zoom`. What every panel with a cursor does alike, it does not register: it provides functions to the shell's generic commands, `cursor:next self` and its kin ([[Generic panel commands]]).
 * `gui/commands.js` and the user's `gui/user-commands.js` add more ([[User commands]]).
 
 The GUI builds every installed panel type once at startup, hidden, so that all the
@@ -51,7 +51,7 @@ you press, starts from the focus again.
 Every command is listed and can be run whatever panel has the focus. A panel's
 command is handed to the panel type that registered it, in the ''context's
 workspace'': acting on a panel that is not focused — or not even displayed — is
-legitimate. The arrow keys of the [[file panel]] run `cursor:next metarecord-list` and
+legitimate. The arrow keys of the [[viewer panel]] run `cursor:next metarecord-list` and
 `cursor:prev metarecord-list` on the list of the other slot; a workspace that never showed
 the panel has it built for the occasion. What a panel invokes runs in its own
 workspace, in the slot that shows it.

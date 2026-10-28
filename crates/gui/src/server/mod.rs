@@ -1,6 +1,6 @@
 //! The GUI HTTP server (default 127.0.0.1:7524). Serves panel-type
 //! directories from the config dir (shim injected into HTML), raw local
-//! files for the `file` panel type, and the `/gui/*` scripting API.
+//! files for the `viewer` panel type, and the `/gui/*` scripting API.
 //! Built as a plain `axum::Router` so tests can drive it with
 //! `tower::ServiceExt::oneshot`.
 
@@ -299,7 +299,7 @@ struct MediaProbeParams {
     path: String,
 }
 
-/// `GET /__media-probe?path=…` — per-file codec probe for the `file` panel,
+/// `GET /__media-probe?path=…` — per-file codec probe for the `viewer` panel,
 /// requested before a media element is created: it reports the decoders this
 /// file needs and lacks, and whether the decoder GStreamer would pick is too
 /// slow for the stream. `gst-discoverer-1.0` runs out of process, so off the

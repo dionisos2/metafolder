@@ -7,5 +7,5 @@ summary: Zoom a panel in, out or back to 100 % (self / a panel type)
 
 Everything in the panel is drawn larger — text, icons, thumbnails — and the panel still fills its slot. The zoom is kept per workspace and per panel type, in the workspace variable `view.zoom.<panel type>` ([[Workspace variables]]): a list zoomed in one tab is not in another, and it is still zoomed after a restart. A script may set the variable; the panel follows.
 
-Every panel has it, provided by the shell rather than by the panel's code. In the [[file panel]] the same keys zoom the previewed image instead (`file:zoom`); the panel as a whole is zoomed there with the command alone. In the [[metarecord-detail panel]], one more value of a field moved from `+` to <<key "metarecord:row-add" "Shift+A">> for it.
+Every panel has it, provided by the shell rather than by the panel's code. In the [[viewer panel]] the same keys zoom the previewed image instead (`viewer:zoom`); the panel as a whole is zoomed there with the command alone. In the [[metarecord-detail panel]], one more value of a field moved from `+` to <<key "metarecord:row-add" "Shift+A">> for it.
 

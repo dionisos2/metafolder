@@ -1,9 +1,0 @@
-title: $:/mf/gen/GUI command/file:toggle-gif-animation
-catalog: GUI command
-target: file:toggle-gif-animation
-summary: File: play or stop the animation of a GIF
-
-!! Reference
-
-* Defined by the ``file`` panel
-* No default key

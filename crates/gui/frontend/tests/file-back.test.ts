@@ -1,4 +1,4 @@
-// Going back in the `file` panel (doc "file panel"): Backspace steps
+// Going back in the `viewer` panel (doc "viewer panel"): Backspace steps
 // up one level — out of a drilled-in listing, or from the followed selection
 // into the folder holding the previewed file — the way it does in the file
 // manager. `backTarget` is the pure decision; the mount test checks it is
@@ -7,9 +7,9 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { backTarget } from '../../default-config/panel-types/file/main.js';
+import { backTarget } from '../../default-config/panel-types/viewer/main.js';
 
-const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/file');
+const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/viewer');
 
 describe('backTarget', () => {
   test('from the followed selection, goes up to the containing folder', () => {
@@ -102,7 +102,7 @@ function stub(selectedPaths: string[]) {
   };
 }
 
-describe('file panel — file:back', () => {
+describe('viewer panel — viewer:back', () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = () => {};
   });
@@ -110,7 +110,7 @@ describe('file panel — file:back', () => {
   async function mountPanel(selectedPaths: string[]) {
     const s = stub(selectedPaths);
     const root = shadowRoot();
-    const mod = await import('../../default-config/panel-types/file/main.js');
+    const mod = await import('../../default-config/panel-types/viewer/main.js');
     await mod.mount(root, s.api as never);
     await new Promise((r) => setTimeout(r, 0));
     return { ...s, root };
@@ -118,7 +118,7 @@ describe('file panel — file:back', () => {
 
   test('steps up out of the previewed file, then out of its folder', async () => {
     const { handlers, root } = await mountPanel(['/music/album/song.mp3']);
-    const back = handlers.get('file:back');
+    const back = handlers.get('viewer:back');
     expect(back).toBeDefined();
 
     await back!();
@@ -129,7 +129,7 @@ describe('file panel — file:back', () => {
 
   test('with nothing selected it does nothing', async () => {
     const { handlers, root } = await mountPanel([]);
-    await handlers.get('file:back')!();
+    await handlers.get('viewer:back')!();
     expect(root.getElementById('path-bar')!.textContent).toBe('');
   });
 });

@@ -65,14 +65,14 @@ describe('openButton', () => {
 });
 
 describe('viewerButtons', () => {
-  test('a row shown in the file panel (↗) and the detail panel (ⓘ)', () => {
+  test('a row shown in the viewer panel (↗) and the detail panel (ⓘ)', () => {
     const open = vi.fn();
     const [file, detail] = viewerButtons({ hasFile: true, hasMetarecord: true, open });
     expect(file.textContent).toBe('↗' + TEXT);
     expect(detail.textContent).toBe('ⓘ' + TEXT);
     file.click();
     detail.click();
-    expect(open.mock.calls).toEqual([['file'], ['metarecord-detail']]);
+    expect(open.mock.calls).toEqual([['viewer'], ['metarecord-detail']]);
   });
 
   test('the viewer with nothing to show is greyed', () => {

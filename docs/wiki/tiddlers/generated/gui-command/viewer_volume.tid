@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/viewer:volume
+catalog: GUI command
+target: viewer:volume
+summary: File: step the volume
+
+!! Reference
+
+* Defined by the ``viewer`` panel
+
+!! Default keys
+
+* ``shift+down`` → ``viewer:volume down`` (in the ``viewer`` panel)
+* ``shift+up`` → ``viewer:volume up`` (in the ``viewer`` panel)

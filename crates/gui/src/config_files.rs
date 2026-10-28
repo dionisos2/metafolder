@@ -133,7 +133,7 @@ mod tests {
         for name in [
             "gui/keybindings.toml",
             "gui/config.toml",
-            "gui/panel-types/file/main.js",
+            "gui/panel-types/viewer/main.js",
             "daemon/repo-default/schema.json",
             "scripts/lib/mf-gui.sh",
             ".gitignore",
@@ -152,7 +152,7 @@ mod tests {
                 ("daemon", "daemon/repo-default/schema.json"),
                 ("gui", "gui/config.toml"),
                 ("gui", "gui/keybindings.toml"),
-                ("panel-types", "gui/panel-types/file/main.js"),
+                ("panel-types", "gui/panel-types/viewer/main.js"),
                 ("scripts", "scripts/lib/mf-gui.sh"),
             ]
         );

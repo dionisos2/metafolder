@@ -1153,7 +1153,7 @@ enum GuiCommand {
     },
     /// Run a command invocation through the GUI (same as the command input)
     Command {
-        /// The command invocation, e.g. `panel:open here file`
+        /// The command invocation, e.g. `panel:open here viewer`
         #[arg(required = true, trailing_var_arg = true)]
         invocation: Vec<String>,
         #[arg(long)]

@@ -107,7 +107,7 @@ pub struct CreateWorkspaceBody {
     #[serde(default)]
     task: Option<String>,
     /// The panel type each slot shows when the workspace is first assigned to
-    /// it (`{"left": "file"}`), in place of the default one — which a script
+    /// it (`{"left": "viewer"}`), in place of the default one — which a script
     /// never wants to see mounted (doc "Script sessions").
     #[serde(default)]
     panels: Map<String, Value>,
@@ -255,25 +255,25 @@ pub async fn put_panel_view(
         return map_state_error(error);
     }
 
-    // type=file + path: select that file (doc "GUI scripting endpoints").
+    // type=viewer + path: select that file (doc "GUI scripting endpoints").
     //
     // The two variables are ONE selection, and the metarecord goes first —
     // like every panel that publishes the pair. A consumer reacting to
-    // `selected_paths` reads `selected_metarecord` right then (the `file`
+    // `selected_paths` reads `selected_metarecord` right then (the `viewer`
     // panel, to know which metarecord holds the playback position of what it
     // is about to show), so it must already be the matching one. The lookup is
     // therefore done BEFORE either write, not between them: two daemon
     // round-trips in that gap left every consumer holding the *previous*
     // metarecord alongside the new path — a whole `gui-tag-folder` walk, one
-    // `view file --path` per question, ran one answer behind.
+    // `view viewer --path` per question, ran one answer behind.
     //
     // An EMPTY path is not "leave it alone" (that is an absent `path`) but
     // "there is no file": it CLEARS the pair. A script showing the entry it is
-    // asking about, one `view file --path` per question, reaches entries with
+    // asking about, one `view viewer --path` per question, reaches entries with
     // no file to show — a record with no `mfr_path`, a path that no longer
     // resolves — and leaving the previous question's file on screen presents
     // it as the answer to this one.
-    if body.panel_type == "file" {
+    if body.panel_type == "viewer" {
         if let Some(path) = &body.path {
             let (entry, paths) = if path.is_empty() {
                 (Value::Null, json!([]))

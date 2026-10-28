@@ -131,7 +131,7 @@ option {
  * enough to aim at. The two arrows are ringed buttons, each in its own colour,
  * never dimmed: `.mf-open-enter` (`↘`, goes into the row: a folder, a tree
  * node — the one way in) in green, `.mf-open-show` (`↗`, shows the row in the
- * file panel) in blue. The colour tells apart two arrows of the same shape;
+ * viewer panel) in blue. The colour tells apart two arrows of the same shape;
  * the ring gives a bare arrow the weight of a button. `ⓘ` stays dim until its
  * row is hovered or under the cursor. */
 button.mf-open {

@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/viewer:toggle-gif-animation
+catalog: GUI command
+target: viewer:toggle-gif-animation
+summary: File: play or stop the animation of a GIF
+
+!! Reference
+
+* Defined by the ``viewer`` panel
+* No default key

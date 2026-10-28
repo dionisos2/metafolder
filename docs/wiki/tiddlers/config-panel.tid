@@ -2,7 +2,7 @@ title: config panel
 tags: Panel [[Panel types]] [[Customising the GUI]]
 kind: reference
 aliases: settings-panel settings-view
-summary: Every configuration file, global and the repository's, filtered as a path is typed and shown in the file panel; and the keybinding editor: look up a key or a command as you type it, and bind it once the GUI has checked it.
+summary: Every configuration file, global and the repository's, filtered as a path is typed and shown in the viewer panel; and the keybinding editor: look up a key or a command as you type it, and bind it once the GUI has checked it.
 
 Open it with `panel:open here config` (<<key "panel:open here config" "t c">>). It used to be a
 dialog over the window, the ''settings view''; as a panel it sits beside the others,
@@ -20,7 +20,7 @@ above the keybindings; the line over it gives the two directories. The field abo
 list keeps the files whose path contains what is typed, ignoring case.
 
 Each file has a ''Show'' button: it becomes the workspace's selection — a path, with no
-metarecord — and the [[file panel]] is opened in the other slot to preview it
+metarecord — and the [[viewer panel]] is opened in the other slot to preview it
 ([[Cross-panel selection]]).
 
 The files the GUI can read again without a restart have a ''Reload'' button running

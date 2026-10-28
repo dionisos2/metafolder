@@ -16,7 +16,7 @@ workspace. See [[Panel types]].
 !! Opening a viewer of the selection
 
 `file` and `metarecord-detail` show the workspace's selection, and opening one is
-how a row is opened ([[Opening a row]]): <<key "panel:open other file" Enter>> and
+how a row is opened ([[Opening a row]]): <<key "panel:open other viewer" Enter>> and
 <<key "panel:open other metarecord-detail" Shift+Enter>> in the lists. So `panel:open`
 refuses a viewer with nothing of the selection to show, and says why on the status
 bar — before moving anywhere (no slot switched, no workspace forked):

@@ -31,7 +31,7 @@ none of them moves past either end. An empty list is left alone.
 The first argument is ''required'': the panel the command acts on.
 
 * `self` is the panel that has the focus: `cursor:next self` is what <<key "cursor:next self" j>> runs.
-* A panel type is that panel in the workspace, focused or not, on screen or not — mounted first if it has to be, like a panel's own command. In the [[file panel]], the arrows run `cursor:next metarecord-list`: the list beside it moves, and the preview follows.
+* A panel type is that panel in the workspace, focused or not, on screen or not — mounted first if it has to be, like a panel's own command. In the [[viewer panel]], the arrows run `cursor:next metarecord-list`: the list beside it moves, and the preview follows.
 
 A script names the panel it drives (`mf gui command "cursor:next trash"`), so
 what it does does not depend on where the focus happens to be.

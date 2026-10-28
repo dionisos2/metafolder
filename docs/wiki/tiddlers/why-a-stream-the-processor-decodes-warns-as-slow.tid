@@ -1,5 +1,5 @@
 title: Why a stream the processor decodes warns as slow
-tags: [[file panel]]
+tags: [[viewer panel]]
 kind: rationale
 audience: dev
 aliases: slow-decoder av1 dav1d why-only-measured-codecs-warn-as-slow
@@ -14,13 +14,13 @@ explained it.
 
 So `GET /__media-probe` also answers `slow`: a message when the stream will be decoded
 by the processor — no hardware decoder for its codec is installed — and its pixel rate
-(width × height × frames per second) is over a budget of 150 Mpx/s. The [[file panel]]
+(width × height × frames per second) is over a budget of 150 Mpx/s. The [[viewer panel]]
 shows it above the video and plays the file anyway — the user may only want to look
 through it.
 
 !! What was measured
 
-Images actually rendered in the file panel (`getVideoPlaybackQuality`), on a 2-core
+Images actually rendered in the viewer panel (`getVideoPlaybackQuality`), on a 2-core
 i7-7500U:
 
 |!Stream |!Mpx/s |!Processor |!Graphics card (VA-API) |

@@ -1,6 +1,6 @@
 // `panel:open <where> file|metarecord-detail` opens a viewer of the selection
 // (doc "Opening a row"). A viewer with nothing of the selection to show is not
-// opened: a metarecord without a file has nothing for the file panel, a path
+// opened: a metarecord without a file has nothing for the viewer panel, a path
 // without a metarecord (an untracked file) nothing for the detail panel. With
 // no selection at all, a viewer opens as any panel type does (a layout being
 // set up, `b t f` on an empty workspace).
@@ -44,14 +44,14 @@ describe('panel:open on a viewer of the selection', () => {
 
   test('a metarecord with a file opens in either viewer', async () => {
     select({ uuid: 'aa', repo: 'r' }, ['/repo/a.txt']);
-    await dispatch('panel:open other file', CONTEXT);
+    await dispatch('panel:open other viewer', CONTEXT);
     await dispatch('panel:open other metarecord-detail', CONTEXT);
-    expect(opened()).toEqual(['file', 'metarecord-detail']);
+    expect(opened()).toEqual(['viewer', 'metarecord-detail']);
   });
 
-  test('a metarecord without a file is not opened in the file panel', async () => {
+  test('a metarecord without a file is not opened in the viewer panel', async () => {
     select({ uuid: 'aa', repo: 'r' }, []);
-    await dispatch('panel:open other file', CONTEXT);
+    await dispatch('panel:open other viewer', CONTEXT);
     expect(opened()).toEqual([]);
     expect(statuses()).toEqual([expect.stringContaining('no file')]);
     // Nor moved anywhere first: no fork, no slot switch.
@@ -67,16 +67,16 @@ describe('panel:open on a viewer of the selection', () => {
     expect(tauri.map((c) => c.cmd)).not.toContain('workspace_fork');
   });
 
-  test('an untracked path still opens in the file panel', async () => {
+  test('an untracked path still opens in the viewer panel', async () => {
     select(null, ['/repo/untracked.txt']);
-    await dispatch('panel:open other file', CONTEXT);
-    expect(opened()).toEqual(['file']);
+    await dispatch('panel:open other viewer', CONTEXT);
+    expect(opened()).toEqual(['viewer']);
   });
 
   test('with nothing selected, a viewer opens as any panel type does', async () => {
-    await dispatch('panel:open here file', CONTEXT);
+    await dispatch('panel:open here viewer', CONTEXT);
     await dispatch('panel:open here metarecord-detail', CONTEXT);
-    expect(opened()).toEqual(['file', 'metarecord-detail']);
+    expect(opened()).toEqual(['viewer', 'metarecord-detail']);
   });
 
   test('other panel types are never checked', async () => {

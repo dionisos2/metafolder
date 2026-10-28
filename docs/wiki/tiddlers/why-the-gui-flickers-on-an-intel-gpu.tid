@@ -8,7 +8,7 @@ summary: Pieces of the window sometimes show their previous state — a row's hi
 
 !! The symptom
 
-While a video plays in the [[file panel]] — a slideshow ([[Slideshow]]) or not —
+While a video plays in the [[viewer panel]] — a slideshow ([[Slideshow]]) or not —
 pieces of the window flicker between their current and their previous state: the
 [[metarecord-list panel]]'s cursor jumping between two rows (not always adjacent), a
 button, a text selection, sometimes the whole window. Fast, random, and lasting until

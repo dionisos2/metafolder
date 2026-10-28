@@ -27,7 +27,7 @@ A change applies at once, in every panel, and is written to the file.
 The GUI checks a binding before writing it, and the panel shows the same check as
 the form is typed, field by field; ''Save'' waits until nothing stands in the way.
 
-* ''A command that does not exist.'' Only the first word is a name — a binding may pre-fill arguments (`panel:open here file`) — and a shell line (`!…`) names none. The commands known are those the command input lists: the shell's, every panel's, and `commands.js`'s.
+* ''A command that does not exist.'' Only the first word is a name — a binding may pre-fill arguments (`panel:open here viewer`) — and a shell line (`!…`) names none. The commands known are those the command input lists: the shell's, every panel's, and `commands.js`'s.
 * ''A key already bound in the same place'' (same `when`, same `focus`) — to change what it runs, ''Edit'' its row. The same key elsewhere is no conflict: the most specific place wins where both apply.
 * ''A key that starts a sequence bound in the same place, or a sequence one of whose first keys is bound there alone'': a key alone runs before any sequence it starts, so one of the two could never run. `g` cannot join `g g` in one place.
 
@@ -52,7 +52,7 @@ binding, or a list of them when the key does different things in different place
 
 "shift+r" = [
   { command = "log:revert", when = "log" },
-  { command = "file:restart", when = "file" },
+  { command = "viewer:restart", when = "viewer" },
 ]
 
 "enter" = [

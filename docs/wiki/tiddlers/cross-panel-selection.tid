@@ -9,7 +9,7 @@ summary: Selecting a metarecord in one panel shows it in the others of the works
 Moving the cursor in [[metarecord-list panel]], [[file-manager panel]], [[path-ref panel]] or
 [[recent panel]] sets the
 workspace's selection ([[Workspace variables]]). Every panel of the ''same'' workspace
-that follows it — [[metarecord-detail panel]], [[file panel]], [[workspace-info panel]] — updates at once, in
+that follows it — [[metarecord-detail panel]], [[viewer panel]], [[workspace-info panel]] — updates at once, in
 either slot; a slot showing another workspace is not affected.
 
 The [[metarecord-list panel]] follows a selection made ''elsewhere'' too — a
@@ -18,8 +18,8 @@ metarecord's row loaded, its cursor moves there, so its arrows go on from what i
 screen. Only the highlight moves; nothing is selected again.
 
 ''Opening'' a row of `metarecord-list` — its `↗` button ([[Opening a row]]), or
-<<key "panel:open other file" Enter>> — shows it in the other slot of the same
-workspace, in the [[file panel]]; its `ⓘ` button, or
+<<key "panel:open other viewer" Enter>> — shows it in the other slot of the same
+workspace, in the [[viewer panel]]; its `ⓘ` button, or
 <<key "panel:open other metarecord-detail" Shift+Enter>>, in `metarecord-detail`. Both
 are [[panel:open]]: the row is the selection already, which the panel opened reads. A
 hidden slot is opened for it.

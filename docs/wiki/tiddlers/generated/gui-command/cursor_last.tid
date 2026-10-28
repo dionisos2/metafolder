@@ -10,4 +10,4 @@ summary: Move a panel's cursor to the last row (self / a panel type)
 !! Default keys
 
 * ``end`` → ``cursor:last self``
-* ``end`` → ``cursor:last metarecord-list`` (in the ``file`` panel)
+* ``end`` → ``cursor:last metarecord-list`` (in the ``viewer`` panel)

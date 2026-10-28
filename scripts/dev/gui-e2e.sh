@@ -264,9 +264,9 @@ run() {
     fi
 }
 
-# select_path <abs path> — show it in the left slot's file panel, which makes
+# select_path <abs path> — show it in the left slot's viewer panel, which makes
 # its metarecord the workspace's selection.
-select_path() { mfg view left file --path "$1" >/dev/null || die "view file $1"; }
+select_path() { mfg view left viewer --path "$1" >/dev/null || die "view viewer $1"; }
 
 # show_panel <slot> <type> <invocation…> — shows a panel type and waits until it
 # has mounted: until the `invocation` (one that loads, so the panel's data is
@@ -512,7 +512,7 @@ scenario_field_keys() {
     sleep 0.5
     typed "from-the-file-panel"
     keys Return
-    assert "field keys: m a adds a field from the file panel" \
+    assert "field keys: m a adds a field from the viewer panel" \
         until_ok 10 field_is "$f" e2e_tag from-the-file-panel
 }
 field_is() { [ "$(df_mf metarecord -i "$1" field get "$2" 2>/dev/null)" = "$3" ]; }
@@ -975,7 +975,7 @@ scenario_picker() {
     runner=$!
     assert "picker: opens again" until_ok 10 picking
     # The picker's selection is what its panel shows: the folder, here.
-    mfg view "$(picker_slot)" file --path "$picked" >/dev/null || die "view file $picked"
+    mfg view "$(picker_slot)" viewer --path "$picked" >/dev/null || die "view viewer $picked"
     run pick:confirm
     wait "$runner"
     assert_not "pick confirm: the picker closes" picking
@@ -1411,7 +1411,7 @@ scenario_pick_button() {
     assert "pick button: the picker's list has selected a row" \
         until_ok 10 shows 'tr.row.cursor, .card.cursor'
     mfg view "$(picker_slot "Pick: friend")" file --path "$REPO_DIR/c.txt" >/dev/null \
-        || die "view file c.txt"
+        || die "view viewer c.txt"
     run pick:confirm
     assert "pick button: the picker closes" until_ok 10 not_picking "Pick: friend"
     # The pick's result reaches the editor after the command resolves.
@@ -1436,7 +1436,7 @@ scenario_config_files() {
     assert "config files: the global ones too" shows '#files tr' 'cli/config.toml'
     # Show previews the file beside, as the selection.
     assert "config files: Show is clicked" click '#files tr' "$map" button Show
-    assert "config files: the file panel opens beside" \
+    assert "config files: the viewer panel opens beside" \
         until_ok 10 right_is file
     assert_eq "config files: the file is the selection" "[\"$map\"]" "$(ws_var selected_paths)"
 }
@@ -1497,7 +1497,7 @@ errs() {
     [[ $got == "error"$'\t'$1 ]]
 }
 
-# doc "Opening a row": Enter shows the row under the cursor in the file panel of
+# doc "Opening a row": Enter shows the row under the cursor in the viewer panel of
 # the other slot, Shift+Enter in the detail panel — `panel:open`, which refuses
 # a viewer with nothing of the selection to show.
 scenario_open_viewers() {
@@ -1514,7 +1514,7 @@ scenario_open_viewers() {
     show_panel left metarecord-list view:refresh metarecord-list
     run panel:focus left
     keys Return
-    assert "open: Enter shows a file in the file panel" until_ok 10 right_is file
+    assert "open: Enter shows a file in the viewer panel" until_ok 10 right_is file
     run panel:focus left
     keys shift+Return
     assert "open: Shift+Enter shows it in the detail panel" until_ok 10 right_is metarecord-detail
@@ -1656,13 +1656,13 @@ scenario_refresh() {
     select_path "$REPO_DIR/f.txt"
     mfg layout right "$WS" >/dev/null || die "layout right $WS"
     show_panel right metarecord-detail metarecord:cancel
-    assert "refresh: the file panel shows the text" until_ok 10 shows pre before
+    assert "refresh: the viewer panel shows the text" until_ok 10 shows pre before
 
     printf 'after\n' >"$REPO_DIR/f.txt"
     df_mf metarecord -i "$f" field set e2e_note:string=fresh >/dev/null
     run view:refresh file
     command_ok "refresh: view:refresh file resolves"
-    assert "refresh: the file panel reads the file again" until_ok 10 shows pre after
+    assert "refresh: the viewer panel reads the file again" until_ok 10 shows pre after
     run view:refresh metarecord-detail
     command_ok "refresh: view:refresh metarecord-detail resolves"
     assert "refresh: the detail reads the metarecord again" \
@@ -1785,9 +1785,9 @@ scenario_walk() {
     assert "walk (path-ref): shift+return stops on the node, selected" until_ok 10 tree_at /a/b
 }
 
-# The slideshow (doc "Slideshow"): `file:play query` walks what the list
+# The slideshow (doc "Slideshow"): `viewer:play query` walks what the list
 # shows — the images for their time, the rest passed over — and says when it is
-# done. The file panel must be on screen: a hidden one shows nothing, so a
+# done. The viewer panel must be on screen: a hidden one shows nothing, so a
 # slideshow there waits.
 scenario_slideshow() {
     new_repo slideshow
@@ -1804,20 +1804,20 @@ scenario_slideshow() {
     # Assigned rather than split: an earlier scenario may have left the right
     # slot open, and `panel:split` would then close it.
     mfg layout right "$WS" >/dev/null || die "layout right $WS"
-    mfg view right file >/dev/null || die "view right file"
+    mfg view right viewer >/dev/null || die "view right viewer"
 
-    run file:play selection
+    run viewer:play selection
     status_is "slideshow: an empty selection plays nothing" info \
         'No metarecords are checked — nothing to play.'
 
-    run file:play query
-    command_ok "slideshow: file:play query starts"
+    run viewer:play query
+    command_ok "slideshow: viewer:play query starts"
     assert "slideshow: the query shown is played to its end" until_ok 30 says 'Slideshow finished.'
     # The text and the root folder are passed over, never left on screen.
     assert_eq "slideshow: it ends on an image" png \
         "$(ws_var selected_paths | python3 -c 'import json, sys; print(json.load(sys.stdin)[0].rsplit(".", 1)[-1])')"
 
-    run file:play stop
+    run viewer:play stop
     status_is "slideshow: stop with none running says so" info 'No slideshow is running.'
     mfg layout right - >/dev/null
 }

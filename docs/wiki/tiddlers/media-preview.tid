@@ -1,13 +1,13 @@
 title: Media preview
-tags: [[file panel]]
+tags: [[viewer panel]]
 kind: reference
 aliases: media codec codecs player playback gstreamer
 summary: A video or an audio file shows a poster until you ask to play it; then the player's keys are mpv's, a video resumes where it stopped, and a missing or slow decoder is named.
 
-In the [[file panel]], a video or an audio file is ''not played on sight''. It shows
+In the [[viewer panel]], a video or an audio file is ''not played on sight''. It shows
 a poster — a frame of the video, a glyph for audio, which has no frame — under the
 line ''▶ play (space) — the player loads on demand''. The player is built when you
-ask: <<key "file:play-pause" Space>>, or a click on the poster. Browsing a folder of
+ask: <<key "viewer:play-pause" Space>>, or a click on the poster. Browsing a folder of
 videos therefore decodes nothing ([[Why a media file is not played on sight]]).
 
 !! The keys
@@ -16,16 +16,16 @@ They are mpv's, so that the habit carries over. Each is a command, to rebind or 
 type ([[Keybindings]]).
 
 |!Key |!Does |
-|<<key "file:play-pause" Space>> |play or pause; in front of a poster, load the player and start |
-|<<key "file:seek -10" ←>> / <<key "file:seek +10" →>> |10 s back, forward |
-|<<key "file:seek -60" Shift+←>> / <<key "file:seek +60" Shift+→>> |60 s back, forward |
-|<<key "file:restart" Shift+r>> |from the start |
-|<<key "file:speed down" "[">> / <<key "file:speed up" "]">> |slower, faster: 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 3, 4 |
-|<<key "file:speed reset" Shift+Backspace>> |back to normal speed |
-|<<key "file:volume down" Shift+↓>> / <<key "file:volume up" Shift+↑>> |10 % quieter, louder; louder also unmutes |
-|<<key "file:mute" Ctrl+m>> |mute or unmute |
+|<<key "viewer:play-pause" Space>> |play or pause; in front of a poster, load the player and start |
+|<<key "viewer:seek -10" ←>> / <<key "viewer:seek +10" →>> |10 s back, forward |
+|<<key "viewer:seek -60" Shift+←>> / <<key "viewer:seek +60" Shift+→>> |60 s back, forward |
+|<<key "viewer:restart" Shift+r>> |from the start |
+|<<key "viewer:speed down" "[">> / <<key "viewer:speed up" "]">> |slower, faster: 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 3, 4 |
+|<<key "viewer:speed reset" Shift+Backspace>> |back to normal speed |
+|<<key "viewer:volume down" Shift+↓>> / <<key "viewer:volume up" Shift+↑>> |10 % quieter, louder; louder also unmutes |
+|<<key "viewer:mute" Ctrl+m>> |mute or unmute |
 
-`file:seek` takes any signed number of seconds, so `file:seek +5` can be bound too. A
+`viewer:seek` takes any signed number of seconds, so `viewer:seek +5` can be bound too. A
 seek stops at the start and at the end.
 
 Where a key differs from mpv's, another meaning had it first: plain `Backspace` goes
@@ -33,7 +33,7 @@ up a level here as in every panel, so the speed reset takes `Shift`; plain `m` s
 the keys that edit a metarecord, so mute takes `Ctrl`.
 
 All of them do nothing while no player is loaded — in front of an image, a text, a
-folder — with two exceptions. `file:play-pause` in front of a poster is what loads the
+folder — with two exceptions. `viewer:play-pause` in front of a poster is what loads the
 player. And the ''volume and mute are the panel's'', not the player's: set them in
 front of the poster and the player starts at that level, from the first sample; the
 poster's line then says `volume 40%` or `muted`. The level is kept from one file to

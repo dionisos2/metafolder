@@ -17,7 +17,7 @@ per repository, `.metafolder/gui/recent`, a line `<uuid>` tab `<ISO-8601 time>` 
 `<rank>` per metarecord, newest first. Viewing a metarecord again moves its line to
 the front rather than adding one. `crates/gui/src/recent.rs` holds it, behind
 `metafolder.recent.touch` and `metafolder.recent.list` ([[The metafolder API]]); the
-[[metarecord-detail panel]] and the [[file panel]] call `touch` when the metarecord they
+[[metarecord-detail panel]] and the [[viewer panel]] call `touch` when the metarecord they
 show changes, and not when the same one is reloaded; the [[file-manager panel]] when it
 goes into another folder.
 

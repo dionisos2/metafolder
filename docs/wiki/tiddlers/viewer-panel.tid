@@ -1,14 +1,17 @@
-title: file panel
+title: viewer panel
 tags: Panel [[Panel types]]
 kind: reference
-aliases: file viewer preview zoom gif
+aliases: file-panel viewer preview zoom gif
 summary: A preview of the selected file — image, video, audio, PDF, text — or a folder as a grid of thumbnails, with zoom, a media player's keys and a way up.
 
-Open it with `panel:open here file` (<<key "panel:open here file" "t f">>). It shows
+Open it with `panel:open here viewer` (<<key "panel:open here viewer" "t f">>). It shows
 the file the workspace has selected, and follows the selection: move the cursor in
 [[metarecord-list panel]] or [[file-manager panel]] beside it and the preview changes
 ([[Cross-panel selection]]). The file need not be tracked. With nothing selected it
 says ''No file selected''.
+
+It was called the `file` panel until October 2026: `file:` now names the commands
+that act on files from any panel, and the viewer's own commands are `viewer:…`.
 
 Its path is in the bar at the top. A metarecord that has several paths gets a
 drop-down there, to choose which one is previewed.
@@ -21,7 +24,7 @@ transport stream is a video and `main.ts` holding TypeScript is text.
 
 |!File |!Shown as |
 |image (PNG, JPEG, WebP, BMP, AVIF, ICO, SVG) |the image |
-|GIF |its first frame; ''animate'' in the toolbar (`file:toggle-gif-animation`) plays it |
+|GIF |its first frame; ''animate'' in the toolbar (`viewer:toggle-gif-animation`) plays it |
 |video |its poster frame, until you ask to play it ([[Media preview]]) |
 |audio |a type glyph, until you ask to play it ([[Media preview]]) |
 |PDF |one page at a time ([[Document preview]]) |
@@ -33,7 +36,7 @@ above. A file whose extension is in `text-extensions` (`txt`, `md`, `json`, `rs`
 is shown as text whatever it contains, which is how a UTF-16 file — full of the zero
 bytes the content test rejects — still previews; any other is shown as text when its
 content looks like text. That list, the size read and the zoom's step and bounds are
-settings of `[panel-defaults.file]` ([[GUI configuration]]).
+settings of `[panel-defaults.viewer]` ([[GUI configuration]]).
 
 An image format the web view cannot draw (TIFF, HEIF, a camera's raw file) is not
 counted as an image, and gets ''no preview available''.
@@ -49,7 +52,7 @@ tiles are loaded 150 at a time (`[page-size]`), the next ones on scroll; the foo
 gives `shown/total`.
 
 Clicking a tile goes into it — a subfolder's grid, a file's preview — without
-changing the selection. <<key "file:back" Backspace>>, or ''←'' in the path bar,
+changing the selection. <<key "viewer:back" Backspace>>, or ''←'' in the path bar,
 comes back up. It also works on a plain preview: it then shows the folder the file
 is in, so the panel browses upwards from wherever it is. The panel follows the
 selection again once the walk is back on the selected path, or as soon as the
@@ -58,7 +61,7 @@ selection changes.
 <<key "view:refresh self" r>> reads the file or the folder again, as it
 is on disk now: the panel is not told when a file's content changes, only when the
 selection does ([[Generic panel commands]]). A medium goes back behind its poster, its
-position kept. Playing the medium from the start is <<key "file:restart" Shift+r>>.
+position kept. Playing the medium from the start is <<key "viewer:restart" Shift+r>>.
 
 !! Zoom
 
@@ -66,9 +69,9 @@ For an image, a document page and a video once its player is loaded. The toolbar
 has the same four as buttons.
 
 |!Key |!Does |
-|<<key "file:zoom in" "+">> / <<key "file:zoom out" "-">> |one step larger, smaller (×1.25) |
-|<<key "file:zoom fit" "=">> |fit the panel, proportions kept — the default |
-|<<key "file:zoom reset" "0">> |the original size |
+|<<key "viewer:zoom in" "+">> / <<key "viewer:zoom out" "-">> |one step larger, smaller (×1.25) |
+|<<key "viewer:zoom fit" "=">> |fit the panel, proportions kept — the default |
+|<<key "viewer:zoom reset" "0">> |the original size |
 
 A manual zoom sizes the picture from its own pixels, between 5 % and 4000 %, and the
 panel scrolls when it overflows; the first step starts from what ''fit'' was showing.
@@ -87,7 +90,7 @@ is flipped through without leaving the preview — plain keybindings, to change 
 the others.
 
 To have it flipped through for you — each image for a few seconds, each video to
-its end — run a [[Slideshow]]: `file:play query`, or `file:play selection` for the
+its end — run a [[Slideshow]]: `viewer:play query`, or `viewer:play selection` for the
 checked metarecords.
 
 !! Right click

@@ -110,7 +110,7 @@
 # other window), "b" a new workspace — a copy of this one.
 "t l" = { command = "panel:open here metarecord-list" }
 "t d" = { command = "panel:open here metarecord-detail" }
-"t f" = { command = "panel:open here file" }
+"t f" = { command = "panel:open here viewer" }
 "t m" = { command = "panel:open here file-manager" }
 "t o" = { command = "panel:open here log" }
 "t r" = { command = "panel:open here repos" }
@@ -127,7 +127,7 @@
 
 "i t l" = { command = "panel:open here metarecord-list" }
 "i t d" = { command = "panel:open here metarecord-detail" }
-"i t f" = { command = "panel:open here file" }
+"i t f" = { command = "panel:open here viewer" }
 "i t m" = { command = "panel:open here file-manager" }
 "i t o" = { command = "panel:open here log" }
 "i t r" = { command = "panel:open here repos" }
@@ -144,7 +144,7 @@
 
 "w t l" = { command = "panel:open other metarecord-list" }
 "w t d" = { command = "panel:open other metarecord-detail" }
-"w t f" = { command = "panel:open other file" }
+"w t f" = { command = "panel:open other viewer" }
 "w t m" = { command = "panel:open other file-manager" }
 "w t o" = { command = "panel:open other log" }
 "w t r" = { command = "panel:open other repos" }
@@ -161,7 +161,7 @@
 
 "b t l" = { command = "panel:open new metarecord-list" }
 "b t d" = { command = "panel:open new metarecord-detail" }
-"b t f" = { command = "panel:open new file" }
+"b t f" = { command = "panel:open new viewer" }
 "b t m" = { command = "panel:open new file-manager" }
 "b t o" = { command = "panel:open new log" }
 "b t r" = { command = "panel:open new repos" }
@@ -279,18 +279,18 @@
 # Moving a cursor is one generic command for every panel (doc "Generic panel
 # commands"): `cursor:next self` runs in the focused panel, and only in a panel
 # that has a cursor — elsewhere the key passes through. Naming a panel type instead drives that one: in the `file`
-# panel the arrows still move the metarecord-list selection (the file panel
+# panel the arrows still move the metarecord-list selection (the viewer panel
 # follows through selected_paths), and so do they while typing in its finder.
 
 # Move down / up one row.
 "down" = [
   { command = "cursor:next self" },
-  { command = "cursor:next metarecord-list", when = "file" },
+  { command = "cursor:next metarecord-list", when = "viewer" },
   { command = "cursor:next metarecord-list", focus = "finder" },
 ]
 "up" = [
   { command = "cursor:prev self" },
-  { command = "cursor:prev metarecord-list", when = "file" },
+  { command = "cursor:prev metarecord-list", when = "viewer" },
   { command = "cursor:prev metarecord-list", focus = "finder" },
 ]
 
@@ -301,11 +301,11 @@
 # Jump to first / last row.
 "home" = [
   { command = "cursor:first self" },
-  { command = "cursor:first metarecord-list", when = "file" },
+  { command = "cursor:first metarecord-list", when = "viewer" },
 ]
 "end" = [
   { command = "cursor:last self" },
-  { command = "cursor:last metarecord-list", when = "file" },
+  { command = "cursor:last metarecord-list", when = "viewer" },
 ]
 
 # Enter: confirm while typing (global), otherwise the focused panel's primary
@@ -322,10 +322,10 @@
   # In the find bar, Enter walks to the next match (shift+Enter the previous),
   # the way a browser's find behaves.
   { command = "find:next", focus = "find" },
-  # A row of metarecords is shown in the file panel of the other slot (doc
+  # A row of metarecords is shown in the viewer panel of the other slot (doc
   # "Opening a row"); shift+Enter shows it in the detail panel. The file
   # manager goes into a folder instead, duplicates unfolds a group.
-  { command = "panel:open other file", when = "metarecord-list" },
+  { command = "panel:open other viewer", when = "metarecord-list" },
   { command = "file-manager:activate other", when = "file-manager" },
   # Go into the row (doc "Generic panel commands"). Scoped: `enter` already has
   # its global binding (editing:confirm), and the file manager's Enter is
@@ -335,7 +335,7 @@
   # The help opens the result under its cursor (doc "help panel").
   { command = "cursor:descend self", when = "help" },
   { command = "trash:restore", when = "trash" },
-  { command = "panel:open other file", when = "recent" },
+  { command = "panel:open other viewer", when = "recent" },
   { command = "duplicates:activate other", when = "duplicates" },
   { command = "metarecord:row-edit", when = "metarecord-detail" },
 ]
@@ -343,14 +343,14 @@
 # The lists' Enter opens the row in the other slot; after a target key it opens
 # it here ("i") or in a new workspace ("b") instead (doc "Panel slots and layout").
 "i enter" = [
-  { command = "panel:open here file", when = "metarecord-list" },
-  { command = "panel:open here file", when = "recent" },
+  { command = "panel:open here viewer", when = "metarecord-list" },
+  { command = "panel:open here viewer", when = "recent" },
   { command = "file-manager:activate here", when = "file-manager" },
   { command = "duplicates:activate here", when = "duplicates" },
 ]
 "b enter" = [
-  { command = "panel:open new file", when = "metarecord-list" },
-  { command = "panel:open new file", when = "recent" },
+  { command = "panel:open new viewer", when = "metarecord-list" },
+  { command = "panel:open new viewer", when = "recent" },
   { command = "file-manager:activate new", when = "file-manager" },
   { command = "duplicates:activate new", when = "duplicates" },
 ]
@@ -369,37 +369,37 @@
 
 # Right / left: descend into / go up (open in the other panel for lists).
 "right" = [
-  { command = "panel:open other file", when = "metarecord-list" },
+  { command = "panel:open other viewer", when = "metarecord-list" },
   # Go into the row: a node, a label, a directory (doc "Generic panel commands").
   { command = "cursor:descend self" },
-  { command = "panel:open other file", when = "recent" },
+  { command = "panel:open other viewer", when = "recent" },
   { command = "duplicates:toggle-group", when = "duplicates" },
-  # In the file panel left/right seek the previewed media (see the transport
+  # In the viewer panel left/right seek the previewed media (see the transport
   # section below); with no media shown they do nothing.
-  { command = "file:seek +10", when = "file" },
+  { command = "viewer:seek +10", when = "viewer" },
 ]
 "left" = [
   { command = "cursor:parent self" },
   # In metarecord-detail there is nothing to descend into, so left/backspace
   # step back out of a chain of followed references. (Enter stays field-edit.)
   { command = "metarecord:back", when = "metarecord-detail" },
-  { command = "file:seek -10", when = "file" },
+  { command = "viewer:seek -10", when = "viewer" },
 ]
 "backspace" = [
   # Up one level, in every panel that has levels (doc "Generic panel commands").
   { command = "cursor:parent self" },
   { command = "metarecord:back", when = "metarecord-detail" },
-  # Going up is what backspace means in every other panel; the `file` panel
+  # Going up is what backspace means in every other panel; the `viewer` panel
   # browses folders too, so it means the same there. mpv's "back to normal
   # speed" keeps the key with shift (see the transport section below).
-  { command = "file:back", when = "file" },
+  { command = "viewer:back", when = "viewer" },
   # The help is browsed, not climbed: backspace goes back in the pages shown,
   # as a browser does; left still goes up to the page's topic (doc "help panel").
   { command = "help:back", when = "help" },
 ]
 
 # Refresh the current view: one generic command, for every panel that can
-# read its content again (doc "Generic panel commands") — the file panel too,
+# read its content again (doc "Generic panel commands") — the viewer panel too,
 # which reads the file again; playing its media from the start is shift+r.
 "r" = { command = "view:refresh self" }
 
@@ -452,8 +452,8 @@
 # point of being able to select an operation.
 "shift+r" = [
   { command = "log:revert", when = "log" },
-  # file: play the media from the start (plain "r" refreshes, as everywhere).
-  { command = "file:restart", when = "file" },
+  # viewer: play the media from the start (plain "r" refreshes, as everywhere).
+  { command = "viewer:restart", when = "viewer" },
 ]
 "shift+o" = { command = "log:revert op", when = "log" }
 "shift+v" = { command = "log:revert label", when = "log" }
@@ -508,9 +508,9 @@
 "space" = [
   { command = "metarecord-list:select toggle", when = "metarecord-list" },
   { command = "file-manager:select toggle", when = "file-manager" },
-  # In the file panel, space is the media player's play/pause (see the
+  # In the viewer panel, space is the media player's play/pause (see the
   # transport section below).
-  { command = "file:play-pause", when = "file" },
+  { command = "viewer:play-pause", when = "viewer" },
 ]
 "ctrl+space" = [
   { command = "metarecord-list:select none", when = "metarecord-list" },
@@ -533,7 +533,7 @@
   { command = "help:apply search stay", focus = "search" },
   { command = "find:prev", focus = "find" },
   # The row under the cursor in the detail panel of the other slot (doc
-  # "Opening a row"); Enter shows it in the file panel.
+  # "Opening a row"); Enter shows it in the viewer panel.
   { command = "panel:open other metarecord-detail", when = "metarecord-list" },
   { command = "panel:open other metarecord-detail", when = "recent" },
   { command = "panel:open other metarecord-detail", when = "file-manager" },
@@ -613,7 +613,7 @@
 # lists the continuations while the sequence is pending). The per-record family
 # is bound in EVERY panel: it acts on the workspace's selected metarecord, so it
 # is reachable wherever a metarecord is seen or selected — the list (its
-# highlighted row, which the detail panel mirrors), the detail, the file panel,
+# highlighted row, which the detail panel mirrors), the detail, the viewer panel,
 # the file manager, a tree. Each command collects its arguments (field / value
 # / type) in the command input, with completion (see doc "Interactive command
 # arguments"), and says so when nothing is selected.
@@ -711,19 +711,19 @@
 "y w" = { command = "sync:open", when = "sync" }
 "y r" = { command = "sync:run", when = "sync" }
 
-# Zoom: the file panel zooms its image; every other panel zooms as a whole
+# Zoom: the viewer panel zooms its image; every other panel zooms as a whole
 # (`view:zoom`, doc "Generic panel commands"), its zoom kept per workspace.
 "plus" = [
-  { command = "file:zoom in", when = "file" },
+  { command = "viewer:zoom in", when = "viewer" },
   { command = "view:zoom self in" },
 ]
 "-" = [
-  { command = "file:zoom out", when = "file" },
+  { command = "viewer:zoom out", when = "viewer" },
   { command = "view:zoom self out" },
 ]
-"=" = { command = "file:zoom fit", when = "file" }
+"=" = { command = "viewer:zoom fit", when = "viewer" }
 "0" = [
-  { command = "file:zoom reset", when = "file" },
+  { command = "viewer:zoom reset", when = "viewer" },
   { command = "view:zoom self reset" },
 ]
 # metarecord-detail: one more value of the field under the cursor (a hierarchy
@@ -731,30 +731,30 @@
 # became the zoom.
 "shift+a" = { command = "metarecord:row-add", when = "metarecord-detail" }
 
-# file: document paging (a PDF preview). No-ops in front of anything else, so
+# viewer: document paging (a PDF preview). No-ops in front of anything else, so
 # the keys stay free for the rest of the panel.
 # (home/end are not taken: in this panel they already jump the metarecord-list
-# to its first/last row, like the arrow keys. file:page first / file:page last
+# to its first/last row, like the arrow keys. viewer:page first / viewer:page last
 # stay reachable from the command input.)
-"pagedown" = { command = "file:page next", when = "file" }
-"pageup" = { command = "file:page prev", when = "file" }
+"pagedown" = { command = "viewer:page next", when = "viewer" }
+"pageup" = { command = "viewer:page prev", when = "viewer" }
 
-# file: media transport, on the keys a media player uses (mpv's, so the muscle
+# viewer: media transport, on the keys a media player uses (mpv's, so the muscle
 # memory carries over). Space, left/right and backspace are in the sections
 # above, alongside the other panels' meaning for those keys. All of them are
 # no-ops unless the preview is actually showing an audio/video file.
-"shift+right" = { command = "file:seek +60", when = "file" }
-"shift+left" = { command = "file:seek -60", when = "file" }
-"]" = { command = "file:speed up", when = "file" }
-"[" = { command = "file:speed down", when = "file" }
-"shift+up" = { command = "file:volume up", when = "file" }
-"shift+down" = { command = "file:volume down", when = "file" }
+"shift+right" = { command = "viewer:seek +60", when = "viewer" }
+"shift+left" = { command = "viewer:seek -60", when = "viewer" }
+"]" = { command = "viewer:speed up", when = "viewer" }
+"[" = { command = "viewer:speed down", when = "viewer" }
+"shift+up" = { command = "viewer:volume up", when = "viewer" }
+"shift+down" = { command = "viewer:volume down", when = "viewer" }
 # Plain "m" starts the metarecord-edit key sequence, so mute takes ctrl+m.
-"ctrl+m" = { command = "file:mute", when = "file" }
+"ctrl+m" = { command = "viewer:mute", when = "viewer" }
 # mpv resets the speed with backspace; here plain backspace goes up a level
 # (above), so the reset keeps the key with shift.
 "shift+backspace" = [
-  { command = "file:speed reset", when = "file" },
+  { command = "viewer:speed reset", when = "viewer" },
   # help: forward again, after a backspace (doc "help panel").
   { command = "help:forward", when = "help" },
 ]

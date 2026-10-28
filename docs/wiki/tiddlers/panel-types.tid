@@ -14,13 +14,13 @@ listed next to the others ([[Writing a panel type]]).
 Choose one with the panel menu of the slot's header, with `panel:open here <name>`,
 or with the `t` keys: <<key "panel:open here metarecord-list" "t l">> for the list,
 <<key "panel:open here metarecord-detail" "t d">> the detail,
-<<key "panel:open here file" "t f">> the file, <<key "panel:open here file-manager" "t m">>
+<<key "panel:open here viewer" "t f">> the file, <<key "panel:open here file-manager" "t m">>
 the file manager…
 
 |!Panel type |!Shows |
 |[[metarecord-list panel]] |the metarecords a query selects, as a table or a grid; the main source of the selection |
 |[[metarecord-detail panel]] |every field of the selected metarecord |
-|[[file panel]] |a preview of the selected file — image, video, audio, text, PDF — or a folder's thumbnails |
+|[[viewer panel]] |a preview of the selected file — image, video, audio, text, PDF — or a folder's thumbnails |
 |[[file-manager panel]] |the file tree on disk, tracked or not, with file operations |
 |[[path-ref panel]] |a tree of metarecords (a `tree_ref` field such as `mfr_path` or tags), from the roots down |
 |[[recent panel]] |the metarecords most recently viewed in this GUI |

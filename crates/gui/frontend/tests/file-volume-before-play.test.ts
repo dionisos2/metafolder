@@ -1,4 +1,4 @@
-// The `file` panel's volume and mute are panel state, not the media element's
+// The `viewer` panel's volume and mute are panel state, not the media element's
 // (doc "Media preview"): the element only exists while something plays,
 // so a level that lived on it could only ever be set *after* the sound had
 // already come out at full blast. They are settable in front of the poster,
@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { withRuns } from './support/runs';
 
-const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/file');
+const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/viewer');
 
 /** The shell's mount path: the panel's body markup into a Shadow root. */
 function shadowRoot(): ShadowRoot {
@@ -98,7 +98,7 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
   return { ok: true, json: async () => body } as unknown as Response;
 });
 
-describe('file panel — the volume is set before playback, not after', () => {
+describe('viewer panel — the volume is set before playback, not after', () => {
   beforeEach(() => {
     fetchMock.mockClear();
     vi.stubGlobal('fetch', fetchMock);
@@ -112,7 +112,7 @@ describe('file panel — the volume is set before playback, not after', () => {
   async function mountPanel(path: string) {
     const s = stub(path);
     const root = shadowRoot();
-    const mod = await import('../../default-config/panel-types/file/main.js');
+    const mod = await import('../../default-config/panel-types/viewer/main.js');
     await mod.mount(root, withRuns(s.api) as never);
     await flush();
     const viewer = root.getElementById('viewer')!;
@@ -137,15 +137,15 @@ describe('file panel — the volume is set before playback, not after', () => {
     const p = await mountPanel('/music/clip.mp4');
     expect(p.video()).toBeNull(); // nothing mounted: the poster is showing
 
-    await p.run('file:volume', 'down');
-    await p.run('file:volume', 'down');
+    await p.run('viewer:volume', 'down');
+    await p.run('viewer:volume', 'down');
 
     expect(p.statusBar.message).toHaveBeenCalledWith(
       expect.stringContaining('80%'),
       expect.anything(),
     );
 
-    await p.run('file:play-pause');
+    await p.run('viewer:play-pause');
     expect(p.video()?.volume).toBeCloseTo(0.8);
   });
 
@@ -153,7 +153,7 @@ describe('file panel — the volume is set before playback, not after', () => {
     const p = await mountPanel('/music/clip.mp4');
     expect(p.viewer.textContent).not.toMatch(/volume/i); // 100%: nothing to say
 
-    await p.run('file:volume', 'down');
+    await p.run('viewer:volume', 'down');
 
     expect(p.viewer.textContent).toMatch(/90\s*%/);
   });
@@ -161,36 +161,36 @@ describe('file panel — the volume is set before playback, not after', () => {
   test('muting before playback starts the player muted', async () => {
     const p = await mountPanel('/music/clip.mp4');
 
-    await p.run('file:mute');
+    await p.run('viewer:mute');
     expect(p.viewer.textContent).toMatch(/muted/i);
 
-    await p.run('file:play-pause');
+    await p.run('viewer:play-pause');
     expect(p.video()?.muted).toBe(true);
   });
 
   test('the level carries to the next file', async () => {
     const p = await mountPanel('/music/clip.mp4');
-    await p.run('file:volume', 'down');
-    await p.run('file:play-pause');
+    await p.run('viewer:volume', 'down');
+    await p.run('viewer:play-pause');
     expect(p.video()?.volume).toBeCloseTo(0.9);
 
     await p.show('/music/other.mp4');
     expect(p.video()).toBeNull(); // the next file is behind its own poster
-    await p.run('file:play-pause');
+    await p.run('viewer:play-pause');
 
     expect(p.video()?.volume).toBeCloseTo(0.9);
   });
 
   test('a mounted element still follows the volume commands', async () => {
     const p = await mountPanel('/music/clip.mp4');
-    await p.run('file:play-pause');
+    await p.run('viewer:play-pause');
 
-    await p.run('file:volume', 'down');
+    await p.run('viewer:volume', 'down');
     expect(p.video()?.volume).toBeCloseTo(0.9);
 
-    await p.run('file:mute');
+    await p.run('viewer:mute');
     expect(p.video()?.muted).toBe(true);
-    await p.run('file:volume', 'up'); // louder undoes a mute
+    await p.run('viewer:volume', 'up'); // louder undoes a mute
     expect(p.video()?.muted).toBe(false);
     expect(p.video()?.volume).toBeCloseTo(1);
   });

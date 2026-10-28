@@ -185,7 +185,7 @@ async fn test_workspace_create_with_panels_never_shows_the_default_panel() {
         "/gui/workspaces",
         Some(json!({
             "active_repo": "cafe0000000000000000000000000000",
-            "panels": {"left": "file", "right": "metarecord-detail"},
+            "panels": {"left": "viewer", "right": "metarecord-detail"},
         })),
     )
     .await;
@@ -199,7 +199,7 @@ async fn test_workspace_create_with_panels_never_shows_the_default_panel() {
     }
     let layout = ctx.gui.layout();
     assert_eq!(layout.left.workspace_id.as_deref(), Some(id.as_str()));
-    assert_eq!(layout.left.panel_type.as_deref(), Some("file"));
+    assert_eq!(layout.left.panel_type.as_deref(), Some("viewer"));
     assert_eq!(layout.right.panel_type.as_deref(), Some("metarecord-detail"));
 
     // An unknown slot name is a mistake to report, not a key to ignore.
@@ -207,7 +207,7 @@ async fn test_workspace_create_with_panels_never_shows_the_default_panel() {
         &ctx.router,
         "POST",
         "/gui/workspaces",
-        Some(json!({"panels": {"middle": "file"}})),
+        Some(json!({"panels": {"middle": "viewer"}})),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -286,7 +286,7 @@ async fn test_panel_view_file_with_path_sets_selection() {
         &ctx.router,
         "PUT",
         "/gui/panels/left/view",
-        Some(json!({"type": "file", "path": "/tmp/picture.jpg"})),
+        Some(json!({"type": "viewer", "path": "/tmp/picture.jpg"})),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -326,7 +326,7 @@ async fn spawn_recording_daemon(seen: Arc<std::sync::Mutex<Vec<Value>>>) -> Stri
     format!("http://127.0.0.1:{port}")
 }
 
-/// `view file --path` on a **top-level** folder (a child directly under the
+/// `view viewer --path` on a **top-level** folder (a child directly under the
 /// repo root) must resolve its metarecord. The daemon's tree convention names
 /// the repo root the EMPTY string and every descendant with a single leading
 /// slash, so the exact-node lookup must query `mfr_path = "/projets"` — not a
@@ -345,7 +345,7 @@ async fn test_panel_view_file_top_level_folder_resolves_metarecord() {
         &ctx.router,
         "PUT",
         "/gui/panels/left/view",
-        Some(json!({"type": "file", "path": "/tmp/stub/projets"})),
+        Some(json!({"type": "viewer", "path": "/tmp/stub/projets"})),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -372,7 +372,7 @@ async fn test_panel_view_file_top_level_folder_resolves_metarecord() {
 /// position of what it is about to show), so publishing the paths first hands
 /// it the PREVIOUS metarecord — it shows one file and believes it is another.
 /// `gui-tag-folder` walks a whole folder through this endpoint, one
-/// `view file --path` per question, so every question inherited the answer
+/// `view viewer --path` per question, so every question inherited the answer
 /// before it.
 #[tokio::test]
 async fn test_panel_view_file_publishes_the_metarecord_before_the_paths() {
@@ -388,7 +388,7 @@ async fn test_panel_view_file_publishes_the_metarecord_before_the_paths() {
         &ctx.router,
         "PUT",
         "/gui/panels/left/view",
-        Some(json!({"type": "file", "path": "/tmp/stub/projets/note.txt"})),
+        Some(json!({"type": "viewer", "path": "/tmp/stub/projets/note.txt"})),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -404,7 +404,7 @@ async fn test_panel_view_file_publishes_the_metarecord_before_the_paths() {
 
 /// An EMPTY `path` clears the selection instead of leaving the previous one on
 /// screen. A shipped script shows the entry it is asking about with one
-/// `mf gui view left file --path <abs>` per question, and an entry may have no
+/// `mf gui view left viewer --path <abs>` per question, and an entry may have no
 /// file to show (a record with no `mfr_path`, a path that no longer resolves).
 /// Omitting `path` means "leave it alone", which in that spot is the previous
 /// *question's* file still on screen, presented as the answer to this one —
@@ -419,7 +419,7 @@ async fn test_panel_view_file_with_an_empty_path_clears_the_selection() {
         &ctx.router,
         "PUT",
         "/gui/panels/left/view",
-        Some(json!({"type": "file", "path": ""})),
+        Some(json!({"type": "viewer", "path": ""})),
     )
     .await;
     assert_eq!(status, StatusCode::OK);

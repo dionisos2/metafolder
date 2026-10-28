@@ -72,7 +72,7 @@ describe('panel:open', () => {
   });
 
   test('a complete invocation runs without opening the minibuffer', async () => {
-    expect(await dispatch('panel:open here file')).toEqual({ ok: true });
+    expect(await dispatch('panel:open here viewer')).toEqual({ ok: true });
     expect(store.ui.promptText).toBeNull();
     expect(invoked).toContainEqual({
       cmd: 'panel_set_type',
@@ -280,7 +280,7 @@ describe('an optional trailing argument is never asked for', () => {
   test('and the "…" marker follows: only a missing required argument earns it', () => {
     expect(promptsForInput('panel:open')).toBe(true);
     expect(promptsForInput('panel:open here')).toBe(true);
-    expect(promptsForInput('panel:open here file')).toBe(false);
+    expect(promptsForInput('panel:open here viewer')).toBe(false);
     expect(promptsForInput('workspace:rename')).toBe(true);
     expect(promptsForInput('workspace:rename music')).toBe(false);
     expect(promptsForInput('workspace:next')).toBe(false);

@@ -10,4 +10,4 @@ summary: Move a panel's cursor to the first row (self / a panel type)
 !! Default keys
 
 * ``home`` → ``cursor:first self``
-* ``home`` → ``cursor:first metarecord-list`` (in the ``file`` panel)
+* ``home`` → ``cursor:first metarecord-list`` (in the ``viewer`` panel)

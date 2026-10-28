@@ -1,6 +1,6 @@
-// The `file` panel's right-click menu acts on the file the panel is *showing*
-// (doc "file panel"). After drilling into a folder's listing — or stepping up
-// with `file:back` — that is no longer the selected path, and a menu still
+// The `viewer` panel's right-click menu acts on the file the panel is *showing*
+// (doc "viewer panel"). After drilling into a folder's listing — or stepping up
+// with `viewer:back` — that is no longer the selected path, and a menu still
 // aimed at the selection would rename or trash something that is not on screen.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { globalStub } from './support/global';
 
-const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/file');
+const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/viewer');
 
 function shadowRoot(): ShadowRoot {
   const html = readFileSync(resolve(PANEL_DIR, 'index.html'), 'utf8');
@@ -96,7 +96,7 @@ function copiedBy(
   return (global.current('clipboard') as { paths: string[] } | null)?.paths;
 }
 
-describe('file panel — context menu target', () => {
+describe('viewer panel — context menu target', () => {
   beforeEach(() => {
     vi.stubGlobal(
       'fetch',
@@ -112,7 +112,7 @@ describe('file panel — context menu target', () => {
   async function mountPanel(path: string, tracked = true) {
     const s = stub(path, tracked);
     const root = shadowRoot();
-    const mod = await import('../../default-config/panel-types/file/main.js');
+    const mod = await import('../../default-config/panel-types/viewer/main.js');
     await mod.mount(root, s.api as never);
     await flush();
     return { ...s, root, viewer: root.getElementById('viewer')! };
@@ -135,9 +135,9 @@ describe('file panel — context menu target', () => {
     expect(copiedBy(providers[0], global)).toEqual(['/repo/album/notes.txt']);
   });
 
-  test('after file:back, the menu acts on the folder shown', async () => {
+  test('after viewer:back, the menu acts on the folder shown', async () => {
     const { providers, global, handlers } = await mountPanel('/repo/album/notes.txt');
-    await handlers.get('file:back')!();
+    await handlers.get('viewer:back')!();
     await flush();
     expect(copiedBy(providers[0], global)).toEqual(['/repo/album']);
   });

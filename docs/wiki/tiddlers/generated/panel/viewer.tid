@@ -1,0 +1,22 @@
+title: $:/mf/gen/Panel/viewer panel
+catalog: Panel
+target: viewer panel
+summary: The viewer panel type
+
+!! Commands
+
+* ``viewer:back`` — File: go up one level (out of a listing, or to the containing folder)
+* ``viewer:mute`` — File: mute / unmute
+* ``viewer:page`` — File: go to a page of the document
+* ``viewer:play`` — File: play one file after another — the checked selection or the query shown (selection / query / stop) [shuffle] [loop]
+* ``viewer:play-pause`` — File: play / pause the media
+* ``viewer:restart`` — File: play the media from the start
+* ``viewer:seek`` — File: seek the previewed media by a signed number of seconds
+* ``viewer:speed`` — File: step the playback rate
+* ``viewer:toggle-gif-animation`` — File: play or stop the animation of a GIF
+* ``viewer:volume`` — File: step the volume
+* ``viewer:zoom`` — File: zoom the previewed image/video
+
+!! Generic commands
+
+Provides ``refresh`` to [[Generic panel commands]].

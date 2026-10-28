@@ -1,4 +1,4 @@
-//! Page rendering for *document* files (PDF) shown in the `file` panel.
+//! Page rendering for *document* files (PDF) shown in the `viewer` panel.
 //!
 //! A PDF cannot be handed to the WebView: `/fsraw` serves untrusted bytes, and
 //! loading them as a document (an `<iframe>`, so WebKit's own PDF.js could take

@@ -9,8 +9,8 @@ summary: Open a panel type here, in the other slot, or in a new workspace
 
 !! Default keys
 
-* ``b enter`` → ``panel:open new file`` (in the ``metarecord-list`` panel)
-* ``b enter`` → ``panel:open new file`` (in the ``recent`` panel)
+* ``b enter`` → ``panel:open new viewer`` (in the ``metarecord-list`` panel)
+* ``b enter`` → ``panel:open new viewer`` (in the ``recent`` panel)
 * ``b shift+enter`` → ``panel:open new metarecord-detail`` (in the ``duplicates`` panel)
 * ``b shift+enter`` → ``panel:open new metarecord-detail`` (in the ``file-manager`` panel)
 * ``b shift+enter`` → ``panel:open new metarecord-detail`` (in the ``metarecord-list`` panel)
@@ -18,7 +18,7 @@ summary: Open a panel type here, in the other slot, or in a new workspace
 * ``b t b`` → ``panel:open new trash``
 * ``b t c`` → ``panel:open new config``
 * ``b t d`` → ``panel:open new metarecord-detail``
-* ``b t f`` → ``panel:open new file``
+* ``b t f`` → ``panel:open new viewer``
 * ``b t g`` → ``panel:open new message``
 * ``b t h`` → ``panel:open new help``
 * ``b t l`` → ``panel:open new metarecord-list``
@@ -31,10 +31,10 @@ summary: Open a panel type here, in the other slot, or in a new workspace
 * ``b t v`` → ``panel:open new recent``
 * ``b t w`` → ``panel:open new workspace-info``
 * ``b t y`` → ``panel:open new sync``
-* ``enter`` → ``panel:open other file`` (in the ``metarecord-list`` panel)
-* ``enter`` → ``panel:open other file`` (in the ``recent`` panel)
-* ``i enter`` → ``panel:open here file`` (in the ``metarecord-list`` panel)
-* ``i enter`` → ``panel:open here file`` (in the ``recent`` panel)
+* ``enter`` → ``panel:open other viewer`` (in the ``metarecord-list`` panel)
+* ``enter`` → ``panel:open other viewer`` (in the ``recent`` panel)
+* ``i enter`` → ``panel:open here viewer`` (in the ``metarecord-list`` panel)
+* ``i enter`` → ``panel:open here viewer`` (in the ``recent`` panel)
 * ``i shift+enter`` → ``panel:open here metarecord-detail`` (in the ``duplicates`` panel)
 * ``i shift+enter`` → ``panel:open here metarecord-detail`` (in the ``file-manager`` panel)
 * ``i shift+enter`` → ``panel:open here metarecord-detail`` (in the ``metarecord-list`` panel)
@@ -42,7 +42,7 @@ summary: Open a panel type here, in the other slot, or in a new workspace
 * ``i t b`` → ``panel:open here trash``
 * ``i t c`` → ``panel:open here config``
 * ``i t d`` → ``panel:open here metarecord-detail``
-* ``i t f`` → ``panel:open here file``
+* ``i t f`` → ``panel:open here viewer``
 * ``i t g`` → ``panel:open here message``
 * ``i t h`` → ``panel:open here help``
 * ``i t l`` → ``panel:open here metarecord-list``
@@ -55,8 +55,8 @@ summary: Open a panel type here, in the other slot, or in a new workspace
 * ``i t v`` → ``panel:open here recent``
 * ``i t w`` → ``panel:open here workspace-info``
 * ``i t y`` → ``panel:open here sync``
-* ``right`` → ``panel:open other file`` (in the ``metarecord-list`` panel)
-* ``right`` → ``panel:open other file`` (in the ``recent`` panel)
+* ``right`` → ``panel:open other viewer`` (in the ``metarecord-list`` panel)
+* ``right`` → ``panel:open other viewer`` (in the ``recent`` panel)
 * ``shift+enter`` → ``panel:open other metarecord-detail`` (in the ``duplicates`` panel)
 * ``shift+enter`` → ``panel:open other metarecord-detail`` (in the ``file-manager`` panel)
 * ``shift+enter`` → ``panel:open other metarecord-detail`` (in the ``metarecord-list`` panel)
@@ -64,7 +64,7 @@ summary: Open a panel type here, in the other slot, or in a new workspace
 * ``t b`` → ``panel:open here trash``
 * ``t c`` → ``panel:open here config``
 * ``t d`` → ``panel:open here metarecord-detail``
-* ``t f`` → ``panel:open here file``
+* ``t f`` → ``panel:open here viewer``
 * ``t g`` → ``panel:open here message``
 * ``t h`` → ``panel:open here help``
 * ``t l`` → ``panel:open here metarecord-list``
@@ -80,7 +80,7 @@ summary: Open a panel type here, in the other slot, or in a new workspace
 * ``w t b`` → ``panel:open other trash``
 * ``w t c`` → ``panel:open other config``
 * ``w t d`` → ``panel:open other metarecord-detail``
-* ``w t f`` → ``panel:open other file``
+* ``w t f`` → ``panel:open other viewer``
 * ``w t g`` → ``panel:open other message``
 * ``w t h`` → ``panel:open other help``
 * ``w t l`` → ``panel:open other metarecord-list``

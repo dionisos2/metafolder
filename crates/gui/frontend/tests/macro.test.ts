@@ -334,7 +334,7 @@ describe("macroEntry", () => {
   test("is the user command one would write by hand", () => {
     expect(
       macroEntry("user:x", [
-        ["panel:open", "here", "file"],
+        ["panel:open", "here", "viewer"],
         ["metarecord:bulk", "selection", "set", ask, "int", "4"],
         ["!echo %"],
         ["workspace:rename", "it's \\ here"],
@@ -344,7 +344,7 @@ describe("macroEntry", () => {
         "  'user:x': {",
         "    label: 'Macro user:x',",
         "    run: async (mf) => {",
-        "      await mf.invoke(['panel:open', 'here', 'file']);",
+        "      await mf.invoke(['panel:open', 'here', 'viewer']);",
         "      await mf.invoke(['metarecord:bulk', 'selection', 'set', mf.ask, 'int', '4']);",
         "      await mf.invoke(['!echo %']);",
         "      await mf.invoke(['workspace:rename', 'it\\'s \\\\ here']);",

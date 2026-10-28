@@ -1,0 +1,14 @@
+title: $:/mf/gen/GUI command/viewer:speed
+catalog: GUI command
+target: viewer:speed
+summary: File: step the playback rate
+
+!! Reference
+
+* Defined by the ``viewer`` panel
+
+!! Default keys
+
+* ``[`` → ``viewer:speed down`` (in the ``viewer`` panel)
+* ``]`` → ``viewer:speed up`` (in the ``viewer`` panel)
+* ``shift+backspace`` → ``viewer:speed reset`` (in the ``viewer`` panel)

@@ -182,7 +182,7 @@ describe('the candidate lines', () => {
 });
 
 describe('opening the pick', () => {
-  test('the selection is published and the file panel opened at the target', async () => {
+  test('the selection is published and the viewer panel opened at the target', async () => {
     viewed('u1', [['name', str('jazz.mp3')]], 'music/jazz.mp3');
     const [line] = await complete();
 
@@ -194,7 +194,7 @@ describe('opening the pick', () => {
       { key: 'selected_metarecord', value: { uuid: 'u1', repo: 'r' } },
       { key: 'selected_paths', value: ['/srv/music/jazz.mp3'] },
     ]);
-    expect(calls.invoked).toEqual([['panel:open', 'here', 'file']]);
+    expect(calls.invoked).toEqual([['panel:open', 'here', 'viewer']]);
   });
 
   test('the target is the first argument: here, other or new', async () => {

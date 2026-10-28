@@ -30,7 +30,7 @@ A sequence groups commands under a first key. Typing that key shows what can fol
 just above the status bar.
 
 |!Sequence |!Does |
-|`t` then a letter |the panel type of the focused slot: <<key "panel:open here metarecord-list" "t l">> list, <<key "panel:open here metarecord-detail" "t d">> detail, <<key "panel:open here file" "t f">> file, <<key "panel:open here file-manager" "t m">> file manager, <<key "panel:open here path-ref" "t t">> tree, <<key "panel:open here log" "t o">> log, <<key "panel:open here repos" "t r">> repositories, <<key "panel:open here trash" "t b">> trash, <<key "panel:open here duplicates" "t u">> duplicates, <<key "panel:open here recent" "t v">> recent, <<key "panel:open here sync" "t y">> sync, <<key "panel:open here message" "t g">> messages, <<key "panel:open here workspace-info" "t w">> workspace variables, <<key "panel:open here help" "t h">> help ([[Panel types]]) |
+|`t` then a letter |the panel type of the focused slot: <<key "panel:open here metarecord-list" "t l">> list, <<key "panel:open here metarecord-detail" "t d">> detail, <<key "panel:open here viewer" "t f">> file, <<key "panel:open here file-manager" "t m">> file manager, <<key "panel:open here path-ref" "t t">> tree, <<key "panel:open here log" "t o">> log, <<key "panel:open here repos" "t r">> repositories, <<key "panel:open here trash" "t b">> trash, <<key "panel:open here duplicates" "t u">> duplicates, <<key "panel:open here recent" "t v">> recent, <<key "panel:open here sync" "t y">> sync, <<key "panel:open here message" "t g">> messages, <<key "panel:open here workspace-info" "t w">> workspace variables, <<key "panel:open here help" "t h">> help ([[Panel types]]) |
 |`w`, `b` or `i` then a sequence |the same, in the other slot, in a new workspace, or here ([[Panel slots and layout]]) |
 |`g` then a letter |go somewhere: <<key "repos:switch" "g o">> a loaded repository, <<key "repos:load on-disk" "g l">> a repository to load, <<key "recent" "g r">> a metarecord seen recently, <<key "metarecord-list:folder" "g f">> the selection's folder as a list, <<key "file:open-with" "g w">> the selection in another program ([[Opening a file with another program]]), <<key "script:run" "g s">> a script; `g r` and `g f` take a target key in front, like the `t` sequences |
 |`h` then a letter |help: <<key "help:open" "h h">> the documentation, <<key "help:cursor" "h c">> on what is clicked next, <<key "help:key" "h k">> on what a key runs, <<key "help:command" "h x">> on a command ([[In-app help]]) |
@@ -49,9 +49,9 @@ run on the focused panel; in a panel without a cursor these keys pass through
 |!Key |!Does |
 |<<key "cursor:next self" "↓ or j">> / <<key "cursor:prev self" "↑ or k">> |the next / the previous row |
 |<<key "cursor:first self" Home>> / <<key "cursor:last self" End>> |the first / the last row |
-|<<key "panel:open other file, file-manager:activate other, cursor:descend self, trash:restore, duplicates:activate other, metarecord:row-edit" Enter>> |what the panel is for: show the row in the file panel, enter the directory, go down the tree or into the label, expand the group, restore the entry, edit the field |
+|<<key "panel:open other viewer, file-manager:activate other, cursor:descend self, trash:restore, duplicates:activate other, metarecord:row-edit" Enter>> |what the panel is for: show the row in the viewer panel, enter the directory, go down the tree or into the label, expand the group, restore the entry, edit the field |
 |<<key "panel:open other metarecord-detail" Shift+Enter>> |in the lists of metarecords and the file manager: show the row in the detail panel ([[Opening a row]]) |
-|<<key "cursor:parent self, metarecord:back, file:back" "Backspace or ←">> |go back up: the parent directory, the parent node, the label above; in the detail and the file panel, the metarecord shown before, the folder of the previewed file |
+|<<key "cursor:parent self, metarecord:back, viewer:back" "Backspace or ←">> |go back up: the parent directory, the parent node, the label above; in the detail and the viewer panel, the metarecord shown before, the folder of the previewed file |
 |<<key "cursor:root self" "/">> |the top: the root directory, the roots of the tree |
 |<<key "cursor:find self select" f>> |move the cursor to a row named in the command input ([[Jumping to an entry]]) |
 |<<key "cursor:find self walk" d>> |walk down a path by name: enter each directory (node) named, until a file (a leaf) — in the file manager and the tree ([[Jumping to an entry]]) |
@@ -63,7 +63,7 @@ In the metarecord list, <<key "metarecord-list:focus finder" "/">> and
 <<key "metarecord-list:clear finder" f>> go to the finder instead: its rows come
 from a query, so finding one is asking the daemon.
 
-While the [[file panel]] shows a file, the arrows and <<key "cursor:first metarecord-list" Home>> /
+While the [[viewer panel]] shows a file, the arrows and <<key "cursor:first metarecord-list" Home>> /
 <<key "cursor:last metarecord-list" End>> still move the cursor of the list beside it —
 the next file is previewed without leaving the preview.
 

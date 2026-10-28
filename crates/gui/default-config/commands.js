@@ -647,7 +647,7 @@ export default {
   // best first by `score` (doc "Frecent folders") — and the choice publishes
   // the selection and opens the matching viewer at the target — the *other*
   // slot on the bare key, like a metarecord-list open (doc "Cross-panel selection")
-  // — the file panel when the metarecord has a file, the detail panel when it
+  // — the viewer panel when the metarecord has a file, the detail panel when it
   // has none. The candidate lines are shaped by `recentLine` above: reshape it
   // to reshape the pick.
   'recent': {
@@ -712,7 +712,7 @@ export default {
       await mf.atTarget(where, async (/** @type {MetafolderApi} */ mf) => {
         await mf.workspace.set('selected_metarecord', { uuid, repo });
         await mf.workspace.set('selected_paths', paths);
-        await mf.invoke(['panel:open', 'here', paths.length > 0 ? 'file' : 'metarecord-detail']);
+        await mf.invoke(['panel:open', 'here', paths.length > 0 ? 'viewer' : 'metarecord-detail']);
       });
     },
   },

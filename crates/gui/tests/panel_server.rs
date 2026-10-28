@@ -1,6 +1,6 @@
 //! GUI HTTP server, panel-asset side: serves panel-type directories from
 //! the config dir (verbatim — the shell mounts them into Shadow DOM) and raw
-//! local files for the `file` panel type (`/fsraw`, with Range support).
+//! local files for the `viewer` panel type (`/fsraw`, with Range support).
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -281,7 +281,7 @@ async fn test_fsraw_serves_local_files() {
 async fn test_fsraw_serves_a_file_whose_name_contains_an_ampersand() {
     // The `&` is percent-encoded in the URL and the token follows it as a
     // second parameter: decoding the whole query before splitting on `&` cut
-    // the path in half, the file 404'd, and the `file` panel reported the
+    // the path in half, the file 404'd, and the `viewer` panel reported the
     // video as "unsupported or corrupt media".
     let (_guard, _config, router) = setup();
     let dir = tempfile::tempdir().unwrap();

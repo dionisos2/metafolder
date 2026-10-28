@@ -1,4 +1,4 @@
-// The `file` panel previews a document (PDF) as server-rendered page images
+// The `viewer` panel previews a document (PDF) as server-rendered page images
 // (doc "Document preview"). Two things are load-bearing here:
 //
 //  - the document's own bytes never reach the WebView. `/fsraw` carries the
@@ -15,7 +15,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { withRuns } from './support/runs';
 
-const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/file');
+const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/viewer');
 
 function shadowRoot(): ShadowRoot {
   const html = readFileSync(resolve(PANEL_DIR, 'index.html'), 'utf8');
@@ -100,7 +100,7 @@ function mockFetch(pages: number | null) {
   });
 }
 
-describe('file panel — document preview', () => {
+describe('viewer panel — document preview', () => {
   let fetchMock: ReturnType<typeof mockFetch>;
 
   beforeEach(() => {
@@ -111,7 +111,7 @@ describe('file panel — document preview', () => {
   async function mountPanel(path: string) {
     const s = stub(path);
     const root = shadowRoot();
-    const mod = await import('../../default-config/panel-types/file/main.js');
+    const mod = await import('../../default-config/panel-types/viewer/main.js');
     await mod.mount(root, withRuns(s.api) as never);
     await flush();
     return { ...s, root, viewer: root.getElementById('viewer')! };
@@ -141,7 +141,7 @@ describe('file panel — document preview', () => {
 
   test('next/prev walk the pages and stop at both ends', async () => {
     const { handlers, root, viewer } = await mountPanel('/docs/report.pdf');
-    const page = handlers.get('file:page')!;
+    const page = handlers.get('viewer:page')!;
     const next = () => page('next');
     const prev = () => page('prev');
     const src = () => viewer.querySelector('img')!.getAttribute('src') ?? '';
@@ -167,10 +167,10 @@ describe('file panel — document preview', () => {
 
   test('first/last jump to the ends', async () => {
     const { handlers, viewer } = await mountPanel('/docs/report.pdf');
-    await handlers.get('file:page')!('last');
+    await handlers.get('viewer:page')!('last');
     await flush();
     expect(viewer.querySelector('img')!.getAttribute('src')).toContain('page=3');
-    await handlers.get('file:page')!('first');
+    await handlers.get('viewer:page')!('first');
     await flush();
     expect(viewer.querySelector('img')!.getAttribute('src')).toContain('page=1');
   });
@@ -178,7 +178,7 @@ describe('file panel — document preview', () => {
   test('turning a page swaps the image rather than rebuilding the view', async () => {
     const { handlers, viewer } = await mountPanel('/docs/report.pdf');
     const before = viewer.querySelector('img');
-    await handlers.get('file:page')!('next');
+    await handlers.get('viewer:page')!('next');
     await flush();
     // Same element: the zoom target, and any zoom the user set, survive.
     expect(viewer.querySelector('img')).toBe(before);
@@ -188,7 +188,7 @@ describe('file panel — document preview', () => {
     const { handlers, root, viewer } = await mountPanel('/photos/pic.png');
     expect(root.getElementById('doc-pager')!.hidden).toBe(true);
     const src = viewer.querySelector('img')!.getAttribute('src');
-    await handlers.get('file:page')!('next');
+    await handlers.get('viewer:page')!('next');
     await flush();
     expect(viewer.querySelector('img')!.getAttribute('src')).toBe(src);
   });

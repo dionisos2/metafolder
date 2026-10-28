@@ -151,7 +151,7 @@ describe('a builtin dispatched in a context', () => {
     tauri.length = 0;
     const context: ExecContext = { ws: 'ws-2', slot: 'right' };
     expect(await dispatch('message:clear', context)).toEqual({ ok: true });
-    expect(await dispatch('panel:open here file', context)).toEqual({ ok: true });
+    expect(await dispatch('panel:open here viewer', context)).toEqual({ ok: true });
     // Reads aside (`panel:open` reads the selection a viewer shows).
     const writes = tauri.filter(
       (c) => c.cmd !== 'append_message' && c.cmd !== 'ws_get_var' && !c.cmd.startsWith('command_'),
@@ -160,7 +160,7 @@ describe('a builtin dispatched in a context', () => {
       { cmd: 'clear_messages', args: { wsId: 'ws-2' } },
       // ws-2 is not on screen: shown in the context's slot first.
       { cmd: 'tab_assign', args: { wsId: 'ws-2', slot: 'right' } },
-      { cmd: 'panel_set_type', args: { slot: 'right', panelType: 'file' } },
+      { cmd: 'panel_set_type', args: { slot: 'right', panelType: 'viewer' } },
     ]);
   });
 });

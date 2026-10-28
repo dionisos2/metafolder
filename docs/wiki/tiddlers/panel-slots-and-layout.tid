@@ -31,7 +31,7 @@ first argument:
 |`other` |`w` |for the same workspace, in the other slot — opened if hidden, taken over if it showed another workspace |
 |`new` |`b` |in a new workspace, a copy of this one ([[workspace:fork]]): the same repository, variables and panels, so it shows the same thing |
 
-[[panel:open]] is the plain form: <<key "panel:open here file" "t f">> opens the file
+[[panel:open]] is the plain form: <<key "panel:open here viewer" "t f">> opens the file
 panel here. Each command opening a panel type has a default target — the short key
 sequence — and the same sequence after a target key opens it there: `w t f` in the
 other slot, `b t f` in a new workspace, `i t f` here. A command offers only the targets

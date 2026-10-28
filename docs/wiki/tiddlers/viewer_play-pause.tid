@@ -1,0 +1,6 @@
+title: viewer:play-pause
+tags: [[GUI command]] [[viewer panel]]
+kind: reference
+summary: File: play / pause the media
+
+Plays or pauses the audio or video the [[viewer panel]] previews. In front of a poster no player exists yet: this is what builds it and starts it ([[Media preview]]).

@@ -27,7 +27,7 @@ The candidates come from the recently-viewed list, where each metarecord carries
 as a view of a folder:
 
 * going into it in the [[file-manager panel]] — once per arrival, not again when the same folder is listed anew (a refresh, an operation);
-* viewing anything ''in'' it: a file the [[file panel]] or `metarecord-detail` shows counts for its parent folder.
+* viewing anything ''in'' it: a file the [[viewer panel]] or `metarecord-detail` shows counts for its parent folder.
 
 A folder is worth its ''best'' entry — the folder itself or one of its files — each
 entry being its rank weighted by how long ago it was last viewed, with zoxide's

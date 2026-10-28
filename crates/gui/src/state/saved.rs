@@ -200,7 +200,7 @@ mod tests {
         list.iter().map(|k| k.to_string()).collect()
     }
 
-    /// ws-1 on a repository, a list on the left and the file panel on the
+    /// ws-1 on a repository, a list on the left and the viewer panel on the
     /// right, with a layout variable, a work variable, a selection and the
     /// variables that are never saved.
     fn working_state() -> (Arc<RecordingNotifier>, GuiState) {

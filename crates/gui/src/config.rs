@@ -21,14 +21,16 @@ use std::path::{Path, PathBuf};
 #[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
 pub struct PageSizes {
     pub metarecord_list: u32,
-    pub file: u32,
+    /// `file` until the panel was renamed (October 2026), still read.
+    #[serde(alias = "file")]
+    pub viewer: u32,
     pub file_manager: u32,
     pub path_ref: u32,
 }
 
 impl Default for PageSizes {
     fn default() -> Self {
-        PageSizes { metarecord_list: 100, file: 150, file_manager: 200, path_ref: 200 }
+        PageSizes { metarecord_list: 100, viewer: 150, file_manager: 200, path_ref: 200 }
     }
 }
 
@@ -735,17 +737,25 @@ mod tests {
         // An empty config yields the documented per-panel defaults.
         let parsed: GuiConfig = toml::from_str("").unwrap();
         assert_eq!(parsed.page_size.metarecord_list, 100);
-        assert_eq!(parsed.page_size.file, 150);
+        assert_eq!(parsed.page_size.viewer, 150);
         assert_eq!(parsed.page_size.file_manager, 200);
     }
 
     #[test]
     fn test_page_sizes_override_one_panel_keeps_other_defaults() {
-        let parsed: GuiConfig = toml::from_str("[page-size]\nfile = 42\n").unwrap();
-        assert_eq!(parsed.page_size.file, 42);
+        let parsed: GuiConfig = toml::from_str("[page-size]\nviewer = 42\n").unwrap();
+        assert_eq!(parsed.page_size.viewer, 42);
         // Unspecified panels keep their defaults.
         assert_eq!(parsed.page_size.metarecord_list, 100);
         assert_eq!(parsed.page_size.file_manager, 200);
+    }
+
+    #[test]
+    fn test_the_page_size_of_the_viewer_still_reads_under_its_old_name() {
+        // The panel was `file` until October 2026: a configuration whose
+        // merge kept the old key must not stop the GUI.
+        let parsed: GuiConfig = toml::from_str("[page-size]\nfile = 42\n").unwrap();
+        assert_eq!(parsed.page_size.viewer, 42);
     }
 
     #[test]
@@ -754,7 +764,7 @@ mod tests {
         // kebab-case keys matching the panel directory names.
         let json = serde_json::to_value(PageSizes::default()).unwrap();
         assert_eq!(json["metarecord-list"], 100);
-        assert_eq!(json["file"], 150);
+        assert_eq!(json["viewer"], 150);
         assert_eq!(json["file-manager"], 200);
         // The keys must match the panel directory names exactly.
         assert_eq!(json["path-ref"], 200);
@@ -896,10 +906,10 @@ mod tests {
         // Numbers, floats, booleans and arrays survive the TOML → JSON hop, so
         // a panel reads a real number rather than a string.
         let parsed: GuiConfig = toml::from_str(
-            "[panel-defaults.file]\ntext-preview-limit = 262144\nzoom-step = 1.25\n             text-extensions = ['txt', 'md']\n",
+            "[panel-defaults.viewer]\ntext-preview-limit = 262144\nzoom-step = 1.25\n             text-extensions = ['txt', 'md']\n",
         )
         .unwrap();
-        let file = parsed.panel_defaults.get("file").unwrap();
+        let file = parsed.panel_defaults.get("viewer").unwrap();
         assert_eq!(file["text-preview-limit"], serde_json::json!(262144));
         assert_eq!(file["zoom-step"], serde_json::json!(1.25));
         assert_eq!(file["text-extensions"], serde_json::json!(["txt", "md"]));
@@ -927,7 +937,7 @@ mod tests {
             parsed.panel_defaults.get("path-ref").unwrap()["field"],
             serde_json::json!("mfr_path")
         );
-        let file = parsed.panel_defaults.get("file").unwrap();
+        let file = parsed.panel_defaults.get("viewer").unwrap();
         assert_eq!(file["text-preview-limit"], serde_json::json!(262144));
         assert_eq!(file["zoom-step"], serde_json::json!(1.25));
         assert_eq!(file["zoom-min"], serde_json::json!(0.05));

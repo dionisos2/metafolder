@@ -349,7 +349,7 @@ export async function mount(root, metafolder) {
         // MATCH_ALL.
         await mf.workspace.set('metarecord-list:effective-query-text', effectiveQueryText() ?? '');
         // ...and its order, so whoever plays what the list shows plays it in
-        // this order (the file panel's slideshow, doc "Slideshow").
+        // this order (the viewer panel's slideshow, doc "Slideshow").
         await mf.workspace.set('metarecord-list:sort', sort);
       }
       let result;
@@ -607,7 +607,7 @@ export async function mount(root, metafolder) {
   }
 
   /** A row's (or card's) open buttons (doc "Opening a row"): each selects the
-   *  row, then shows it in the other slot — `↗` in the file panel, greyed when
+   *  row, then shows it in the other slot — `↗` in the viewer panel, greyed when
    *  the metarecord has no file, `ⓘ` in the detail panel. The keys do the same
    *  through `panel:open`: the row is the published selection already.
    *  @param {number} index */
@@ -1303,7 +1303,7 @@ export async function mount(root, metafolder) {
     const target = repo;
     catchup.schedule(target, [200, 1300], () => void changes.sync(target));
   }
-  // A selection made by another panel (the file panel's slideshow, a click in
+  // A selection made by another panel (the viewer panel's slideshow, a click in
   // the recent panel) moves the cursor onto its row when the list has it
   // loaded, so the arrows go on from the file on screen. Only the highlight
   // moves: the selection is already what it should be, and propagating it

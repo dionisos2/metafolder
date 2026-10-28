@@ -167,8 +167,8 @@ assert "set: exits 0" [ "$code" -eq 0 ]
 assert "set: the first record is classified" [ "$(mock_count 'tag -i rec-1 add music')" -eq 1 ]
 assert "set: the second record is reached" [ "$(mock_count 'gui progress*--phase /file2')" -ge 1 ]
 assert "set: each preview is the root + the relative path" \
-    [ "$(mock_count 'gui view left file --path /abs/file')" -eq 1 ] \
-    && [ "$(mock_count 'gui view left file --path /abs/file2')" -eq 1 ]
+    [ "$(mock_count 'gui view left viewer --path /abs/file')" -eq 1 ] \
+    && [ "$(mock_count 'gui view left viewer --path /abs/file2')" -eq 1 ]
 assert "set: the root is read once, no \`mf path\` per record" \
     [ "$(mock_count 'repo root')" -eq 1 ] && [ "$(mock_count 'path *')" -eq 0 ]
 assert "set: the progress bar knows the total" \

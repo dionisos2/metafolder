@@ -1,9 +1,9 @@
-title: $:/mf/gen/GUI command/file:play
+title: $:/mf/gen/GUI command/viewer:play
 catalog: GUI command
-target: file:play
+target: viewer:play
 summary: File: play one file after another — the checked selection or the query shown (selection / query / stop) [shuffle] [loop]
 
 !! Reference
 
-* Defined by the ``file`` panel
+* Defined by the ``viewer`` panel
 * No default key

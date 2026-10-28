@@ -125,7 +125,7 @@ A `scenario_<name>` function: `new_repo <name>` for the repository and the works
 `df_mf` to prepare data through the daemon, `run` or `answering` to type a command,
 then `status_is <name> <kind> <glob>`, `command_ok`, or the `assert_*` of
 `scripts/dev/lib/assert.sh`. `gui_status <python expression>` evaluates one over [[mf gui status]] (`ws_count`, `slot_ws <slot>` are built on it). `select_path <abs path>` makes a path's metarecord the
-selection (through the `file` panel); `show_panel <slot> <type> <command>` shows a
+selection (through the `viewer` panel); `show_panel <slot> <type> <command>` shows a
 panel and waits until one of its commands answers. A keyboard scenario starts with
 `needs_keyboard <name> || return 0`, then presses keys with `keys` (`xdotool` names:
 `colon`, `Return`, `ctrl+p`) and types text with `typed`. A clicking one starts with

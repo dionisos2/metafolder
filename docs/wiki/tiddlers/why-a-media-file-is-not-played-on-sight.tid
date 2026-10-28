@@ -1,5 +1,5 @@
 title: Why a media file is not played on sight
-tags: [[file panel]]
+tags: [[viewer panel]]
 kind: rationale
 audience: dev
 summary: Creating a media element makes WebKit build a decoding pipeline in the one process that runs the whole GUI; a pipeline that crashes or stalls takes the window with it, so nothing is built until the user asks.
@@ -12,9 +12,9 @@ go wrong there, none of which reaches the page as an `error` event.
 * ''A missing decoder or demuxer crashes it too'', before any event, and the window freezes for seconds. Knowing that the outputs exist says nothing of one file. Hence `GET /__media-probe`: `gst-discoverer-1.0` reads the file's streams and names the missing plugins without building the pipeline.
 * ''A pipeline can stall with every decoder present'': a software decoder, no GPU, a heavy stream. The window stops repainting and takes no key. A script that shows one file per question builds and drops a pipeline at each, and met this every time.
 
-No check answers the third. So the [[file panel]] builds nothing when it shows a
+No check answers the third. So the [[viewer panel]] builds nothing when it shows a
 media file: a poster rendered out of process, and the element only on
-`file:play-pause` or a click ([[Media preview]]). The checks moved to that moment;
+`viewer:play-pause` or a click ([[Media preview]]). The checks moved to that moment;
 walking through videos costs neither a probe nor a decoder.
 
 A [[Slideshow]] is that request made once for a whole list: it builds one element

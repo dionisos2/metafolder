@@ -72,7 +72,7 @@ A command that fails or is abandoned still delivers what it wrote before, as a
 command did before transactions: its daemon writes are not undone either.
 
 What a command sets off and does not wait for — the slideshow's next file, selected
-by its timer once `file:play` has returned; a cursor's coalesced publication
+by its timer once `viewer:play` has returned; a cursor's coalesced publication
 finishing after its run — may still hold the run's API when the transaction has
 ended. An ended transaction is no transaction: its calls read and write the
 workspaces directly.

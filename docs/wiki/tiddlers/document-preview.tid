@@ -1,15 +1,15 @@
 title: Document preview
-tags: [[file panel]]
+tags: [[viewer panel]]
 kind: reference
 aliases: pdf document documents poppler
 summary: A PDF is previewed one page at a time, as an image rendered outside the application by poppler; the document itself never reaches the web view.
 
-In the [[file panel]], a PDF is shown ''one page at a time'', as a picture of the
+In the [[viewer panel]], a PDF is shown ''one page at a time'', as a picture of the
 page. The toolbar gives the page and the count (`3 / 12`) between ''‹'' and ''›''.
 
 |!Key |!Does |
-|<<key "file:page next" PageDown>> / <<key "file:page prev" PageUp>> |next, previous page |
-|`file:page first` / `file:page last` |first, last page — no key: `Home` and `End` move the list here, like the arrows |
+|<<key "viewer:page next" PageDown>> / <<key "viewer:page prev" PageUp>> |next, previous page |
+|`viewer:page first` / `viewer:page last` |first, last page — no key: `Home` and `End` move the list here, like the arrows |
 
 A page being a picture, the zoom of the panel applies to it as to any image, and
 turning the page keeps the zoom. In a folder's grid, and in the grid of
@@ -27,7 +27,7 @@ the page shows ''cannot render this page''.
 
 !! Setting
 
-`document-dpi` in `[panel-defaults.file]` ([[GUI configuration]]) is the resolution a
+`document-dpi` in `[panel-defaults.viewer]` ([[GUI configuration]]) is the resolution a
 page is rendered at: 150 by default, a readable A4 page, and between 20 and 600.
 Raise it for a sharper zoom, at the price of a slower render.
 

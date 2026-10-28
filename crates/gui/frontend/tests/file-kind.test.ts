@@ -1,4 +1,4 @@
-// What the `file` panel shows follows what the file *is* — the kind the GUI
+// What the `viewer` panel shows follows what the file *is* — the kind the GUI
 // reads from its first bytes (`fs.stat().kind`, doc "GUI file endpoints") —
 // and not its extension: `.ts` is an MPEG transport stream or a TypeScript
 // source, and only the content says which.
@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/file');
+const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/viewer');
 
 function shadowRoot(): ShadowRoot {
   const html = readFileSync(resolve(PANEL_DIR, 'index.html'), 'utf8');
@@ -64,7 +64,7 @@ const flush = async () => {
 
 const SOURCE = 'export const answer: number = 42;\n';
 
-describe('file panel — the kind comes from the content', () => {
+describe('viewer panel — the kind comes from the content', () => {
   beforeEach(() => {
     vi.stubGlobal(
       'fetch',
@@ -85,7 +85,7 @@ describe('file panel — the kind comes from the content', () => {
 
   async function show(path: string, kind: string | null) {
     const root = shadowRoot();
-    const mod = await import('../../default-config/panel-types/file/main.js');
+    const mod = await import('../../default-config/panel-types/viewer/main.js');
     await mod.mount(root, stub(path, kind) as never);
     await flush();
     return root.getElementById('viewer')!;

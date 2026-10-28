@@ -352,7 +352,7 @@ describe('duplicates panel, its buttons', () => {
     expect(p.cursorRow()).toBe(p.rows()[2]);
     expect(p.setVar).toHaveBeenCalledWith('selected_metarecord', { uuid: 'm2', repo: 'r' });
     expect(p.setVar).toHaveBeenCalledWith('selected_paths', ['/repo/b.bin']);
-    expect(p.api.commands.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'file']);
+    expect(p.api.commands.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'viewer']);
   });
 
   test("a copy's ⓘ shows it in the detail panel of the other slot", async () => {
@@ -417,7 +417,7 @@ describe('duplicates panel, the harder paths', () => {
     expect(p.cursorRow()?.textContent).toContain('/a.bin');
   });
 
-  test('moving the cursor publishes the paths too, so a file panel follows it', async () => {
+  test('moving the cursor publishes the paths too, so a viewer panel follows it', async () => {
     const members = [
       { uuid: 'm1', path: '/a.bin' },
       { uuid: 'm2', path: '/b.bin' },
@@ -431,7 +431,7 @@ describe('duplicates panel, the harder paths', () => {
     expect(p.setVar).toHaveBeenLastCalledWith('selected_paths', ['/repo/a.bin']);
   });
 
-  test('Enter on a group unfolds it; on a copy shows it in the file panel at the target', async () => {
+  test('Enter on a group unfolds it; on a copy shows it in the viewer panel at the target', async () => {
     const members = [
       { uuid: 'm1', path: '/a.bin' },
       { uuid: 'm2', path: '/b.bin' },
@@ -445,7 +445,7 @@ describe('duplicates panel, the harder paths', () => {
     await p.invoke('cursor:next');
     await p.invoke('duplicates:activate new');
     expect(p.rows()).toHaveLength(3); // still unfolded
-    expect(p.api.commands.invoke).toHaveBeenCalledWith(['panel:open', 'new', 'file']);
+    expect(p.api.commands.invoke).toHaveBeenCalledWith(['panel:open', 'new', 'viewer']);
   });
 
   test('toggle on a copy collapses its group and puts the cursor back on it', async () => {

@@ -1,4 +1,4 @@
-// The file panel's slideshow (doc "Slideshow"): what `file:play` takes, what
+// The viewer panel's slideshow (doc "Slideshow"): what `viewer:play` takes, what
 // each kind of file gets, how long a GIF lasts, and the order of the list.
 
 import { describe, expect, test } from 'vitest';
@@ -7,7 +7,7 @@ import {
   stepFor,
   gifDurationMs,
   createPlaylist,
-} from '../../default-config/panel-types/file/slideshow.js';
+} from '../../default-config/panel-types/viewer/slideshow.js';
 
 describe('parsePlayArgs', () => {
   test('a target alone plays in order and stops at the end', () => {

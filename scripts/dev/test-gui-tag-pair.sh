@@ -50,7 +50,7 @@ assert "walk: u4 not tagged (Escape)"          [ "$(mock_count 'tag -i u4 *')" -
 assert "walk: u5 untouched after Escape stops" [ "$(mock_count 'tag -i u5 *')" -eq 0 ]
 assert_contains "walk: summary counts correct" "$out" "1 yes, 1 no, 1 skipped"
 assert "walk: the preview is the root + the relative path" \
-    [ "$(mock_count 'gui view left file --path /abs/f1')" -eq 1 ]
+    [ "$(mock_count 'gui view left viewer --path /abs/f1')" -eq 1 ]
 assert "walk: the root is read once" [ "$(mock_count 'repo root')" -eq 1 ]
 assert "walk: no \`mf path\` per entry" [ "$(mock_count 'path *')" -eq 0 ]
 

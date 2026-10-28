@@ -12,7 +12,7 @@ Usage: mf gui command [OPTIONS] <INVOCATION>...
 
 Arguments:
   <INVOCATION>...
-          The command invocation, e.g. `panel:open here file`
+          The command invocation, e.g. `panel:open here viewer`
 
 Options:
       --timeout-ms <TIMEOUT_MS>

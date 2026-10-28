@@ -18,7 +18,7 @@ use crate::state::GuiState;
 
 /// The format written; a file of a newer one is refused, not misread
 /// (doc "Persisted format changes").
-pub const FORMAT_VERSION: u64 = 1;
+pub const FORMAT_VERSION: u64 = 2;
 
 const DIR: &str = "gui/workspaces";
 const DEFAULT_FILE: &str = "gui/default-workspace";
@@ -132,8 +132,20 @@ fn parse(file: &Path, text: &str) -> Result<SavedWorkspace, String> {
             file.display()
         ));
     }
-    serde_json::from_value(value)
-        .map_err(|e| format!("{} is not a saved workspace: {e}", file.display()))
+    let mut saved: SavedWorkspace = serde_json::from_value(value)
+        .map_err(|e| format!("{} is not a saved workspace: {e}", file.display()))?;
+    // Version 2: the panel type `file` became `viewer`, `file:` naming the
+    // commands that act on files from anywhere. Converted as read, the file
+    // left as it is until it is saved again (doc "Persisted format changes").
+    if saved.version < 2 {
+        for slot in [&mut saved.slots.left, &mut saved.slots.right] {
+            if slot.as_deref() == Some("file") {
+                *slot = Some("viewer".into());
+            }
+        }
+    }
+    saved.version = FORMAT_VERSION;
+    Ok(saved)
 }
 
 /// The names saved in `metafolder`, with their kind, sorted by name. A file
@@ -541,7 +553,7 @@ mod tests {
         assert_eq!(read(&dir.0, "tri").unwrap(), Some(sample(Kind::Work)));
         let text = std::fs::read_to_string(dir.0.join("gui/workspaces/tri.json")).unwrap();
         let file: Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(file["version"], json!(1));
+        assert_eq!(file["version"], json!(FORMAT_VERSION));
         assert_eq!(file["kind"], json!("work"));
         assert_eq!(file["work"]["metarecord-list:query"], json!("jpg"));
     }
@@ -564,6 +576,29 @@ mod tests {
         write(&dir.0, "newer", &newer).unwrap();
         let error = read(&dir.0, "newer").unwrap_err();
         assert!(error.contains("version"), "{error}");
+    }
+
+    #[test]
+    fn test_a_version_1_file_reads_its_file_panel_as_the_viewer_without_being_rewritten() {
+        // Version 2 (October 2026): the panel type `file` became `viewer`, so
+        // that `file:` names the commands acting on files from anywhere.
+        let dir = TempMetafolder::new("v1");
+        let text = r#"{"version": 1, "kind": "layout",
+            "slots": {"shown": 2, "left": "file", "right": "metarecord-detail"}}"#;
+        std::fs::create_dir_all(dir.0.join("gui/workspaces")).unwrap();
+        std::fs::write(dir.0.join("gui/workspaces/old.json"), text).unwrap();
+
+        let saved = read(&dir.0, "old").unwrap().unwrap();
+        assert_eq!(saved.version, FORMAT_VERSION);
+        assert_eq!(saved.slots.left.as_deref(), Some("viewer"));
+        assert_eq!(saved.slots.right.as_deref(), Some("metarecord-detail"));
+        assert_eq!(std::fs::read_to_string(dir.0.join("gui/workspaces/old.json")).unwrap(), text);
+
+        // A version 2 file means what it says: a panel type of its own named
+        // `file` is not renamed.
+        let current = r#"{"version": 2, "kind": "layout", "slots": {"shown": 1, "left": "file"}}"#;
+        std::fs::write(dir.0.join("gui/workspaces/new.json"), current).unwrap();
+        assert_eq!(read(&dir.0, "new").unwrap().unwrap().slots.left.as_deref(), Some("file"));
     }
 
     #[test]

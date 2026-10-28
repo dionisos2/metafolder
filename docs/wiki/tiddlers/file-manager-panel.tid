@@ -49,9 +49,9 @@ change. The ''entries'' are not watched — a file another program creates appea
 !! Moving around
 
 * <<key "cursor:next self" "↓ or j">> / <<key "cursor:prev self" "↑ or k">>, <<key "cursor:first self" Home>> / <<key "cursor:last self" End>> — move the cursor.
-* <<key "file-manager:activate other" Enter>> — enter the directory under the cursor; on a file, or on `.` (the folder shown), show it in the [[file panel]] of the other slot (after `i` in place of this panel, after `b` in a new workspace).
+* <<key "file-manager:activate other" Enter>> — enter the directory under the cursor; on a file, or on `.` (the folder shown), show it in the [[viewer panel]] of the other slot (after `i` in place of this panel, after `b` in a new workspace).
 * <<key "panel:open other metarecord-detail" Shift+Enter>> — show the entry's metarecord in the [[metarecord-detail panel]]; refused on an entry no metarecord records.
-* The buttons at the start of a row ([[Opening a row]]) — `↘` on a folder enters it; `↗` on a file, or on `.`, shows it in the file panel; `ⓘ` in the detail panel (greyed when untracked).
+* The buttons at the start of a row ([[Opening a row]]) — `↘` on a folder enters it; `↗` on a file, or on `.`, shows it in the viewer panel; `ⓘ` in the detail panel (greyed when untracked).
 * <<key "cursor:parent self" "Backspace or ←">>, or ''↑ up'' — the parent directory.
 * <<key "cursor:root self" "/">>, or the root button — the repository root; `/` when the workspace has no repository, and the button then reads ''root''.
 * <<key "cursor:find self select" f>> — jump to an entry of this directory by name ([[Jumping to an entry]]).
@@ -71,7 +71,7 @@ repository the box is disabled.
 !! The selection
 
 The row under the cursor is the workspace's selection: its path, and its metarecord
-when it has one. The panels beside it follow — a [[file panel]] previews the file,
+when it has one. The panels beside it follow — a [[viewer panel]] previews the file,
 [[metarecord-detail panel]] shows its fields ([[Cross-panel selection]]).
 
 <<key "file-manager:select toggle" Space>> checks the metarecord of the row,

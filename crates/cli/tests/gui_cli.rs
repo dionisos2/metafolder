@@ -705,11 +705,11 @@ fn command_bodies(gui: &StubGui) -> Vec<Json_> {
 #[test]
 fn test_gui_command_runs_the_invocation_and_prints_nothing() {
     let gui = stub();
-    let out = mf_gui(&gui, &["command", "panel:open", "here", "file"]);
+    let out = mf_gui(&gui, &["command", "panel:open", "here", "viewer"]);
     assert_ok(&out);
     assert_eq!(out.stdout, "");
     let bodies = command_bodies(&gui);
-    assert_eq!(bodies[0]["invocation"], "panel:open here file");
+    assert_eq!(bodies[0]["invocation"], "panel:open here viewer");
     assert!(bodies[0].get("confirm").is_none(), "no answer unless asked: {}", bodies[0]);
 }
 

@@ -1,5 +1,5 @@
 // The metarecord list follows a selection made elsewhere (doc "Cross-panel
-// selection"): when another panel — the file panel's slideshow, the recent
+// selection"): when another panel — the viewer panel's slideshow, the recent
 // panel — selects a metarecord the list has loaded, its cursor moves there, so
 // the arrows go on from the file on screen. It also publishes its sort beside
 // its query, for whoever plays what it shows (doc "Slideshow").
@@ -148,7 +148,7 @@ async function mountPanel(pages: number, options: { displayed?: boolean; echoLat
       api.echoes.shift()?.();
       await new Promise((r) => setTimeout(r, 0));
     },
-    /** The selection set by another panel (the file panel's slideshow, a click
+    /** The selection set by another panel (the viewer panel's slideshow, a click
      *  in the recent panel): the variable changes under the list. */
     selectElsewhere: async (uuid: string) => {
       api.store.set('selected_metarecord', { uuid, repo: 'r' });

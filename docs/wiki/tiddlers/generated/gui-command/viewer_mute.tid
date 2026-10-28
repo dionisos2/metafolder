@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/viewer:mute
+catalog: GUI command
+target: viewer:mute
+summary: File: mute / unmute
+
+!! Reference
+
+* Defined by the ``viewer`` panel
+
+!! Default keys
+
+* ``ctrl+m`` → ``viewer:mute`` (in the ``viewer`` panel)

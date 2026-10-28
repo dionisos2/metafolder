@@ -21,7 +21,7 @@ import {
   loadPosition,
   savePosition,
   clearPosition,
-} from '../../default-config/panel-types/file/playback.js';
+} from '../../default-config/panel-types/viewer/playback.js';
 
 describe('playbackAction', () => {
   test('saves a position in the middle of the video', () => {
@@ -179,7 +179,7 @@ describe('write throttling', () => {
 
 // ── Playback controls (doc "Media preview") ──────────────────────
 //
-// The arithmetic behind the file panel's transport commands, kept pure so the
+// The arithmetic behind the viewer panel's transport commands, kept pure so the
 // clamping is tested without a media element.
 
 describe('seekTarget', () => {

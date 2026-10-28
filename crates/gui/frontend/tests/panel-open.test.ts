@@ -38,38 +38,38 @@ beforeEach(() => {
 
 describe('panel:open', () => {
   test('here: in place of the context’s panel', async () => {
-    await dispatch('panel:open here file', HERE);
+    await dispatch('panel:open here viewer', HERE);
     expect(layoutCalls()).toEqual([
-      { cmd: 'panel_set_type', args: { slot: 'left', panelType: 'file' } },
+      { cmd: 'panel_set_type', args: { slot: 'left', panelType: 'viewer' } },
     ]);
   });
 
   test('here, in a context whose workspace is not on screen: shown there first', async () => {
-    await dispatch('panel:open here file', { ws: 'ws-4', slot: 'right' });
+    await dispatch('panel:open here viewer', { ws: 'ws-4', slot: 'right' });
     expect(layoutCalls()).toEqual([
       { cmd: 'tab_assign', args: { wsId: 'ws-4', slot: 'right' } },
-      { cmd: 'panel_set_type', args: { slot: 'right', panelType: 'file' } },
+      { cmd: 'panel_set_type', args: { slot: 'right', panelType: 'viewer' } },
     ]);
   });
 
   test('other: the same workspace, in the other slot', async () => {
-    await dispatch('panel:open other file', HERE);
+    await dispatch('panel:open other viewer', HERE);
     expect(layoutCalls()).toEqual([
       { cmd: 'tab_assign', args: { wsId: 'ws-1', slot: 'right' } },
-      { cmd: 'panel_set_type', args: { slot: 'right', panelType: 'file' } },
+      { cmd: 'panel_set_type', args: { slot: 'right', panelType: 'viewer' } },
     ]);
   });
 
   test('new: a fork of the workspace, where it opens', async () => {
-    await dispatch('panel:open new file', HERE);
+    await dispatch('panel:open new viewer', HERE);
     expect(layoutCalls()).toEqual([
       { cmd: 'workspace_fork', args: { wsId: 'ws-1' } },
-      { cmd: 'panel_set_type', args: { slot: 'left', panelType: 'file' } },
+      { cmd: 'panel_set_type', args: { slot: 'left', panelType: 'viewer' } },
     ]);
   });
 
   test('an unknown target is refused, and nothing moves', async () => {
-    await dispatch('panel:open elsewhere file', HERE);
+    await dispatch('panel:open elsewhere viewer', HERE);
     expect(layoutCalls()).toEqual([]);
     expect(tauri.some((c) => c.cmd === 'post_status')).toBe(true);
   });

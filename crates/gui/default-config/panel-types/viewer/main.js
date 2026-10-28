@@ -1,5 +1,5 @@
-// file panel: media/text preview of the active path from selected_paths
-// (doc "file panel"). Files are streamed by the GUI server's
+// viewer panel: media/text preview of the active path from selected_paths
+// (doc "viewer panel"). Files are streamed by the GUI server's
 // /fsraw endpoint (HTTP Range supported, so audio/video can seek).
 // When the active path is a directory, its contents are shown as a
 // thumbnail grid the user can click into (drill-in, with a back button).
@@ -47,7 +47,7 @@ const DIR_PAGE_DEFAULT = 150;
 // magic bytes, so it is what is left, decided below.
 //
 // The viewer limits are *fallbacks*: the effective values come from the GUI
-// config (`[panel-defaults.file]`), read in `mount`.
+// config (`[panel-defaults.viewer]`), read in `mount`.
 
 // Known text extensions: a *fast path* to the text preview (not the only way
 // in). A file with one of these is always rendered as text — this is also how
@@ -100,7 +100,7 @@ function nonNegativeNumber(configured, fallback) {
 }
 
 /**
- * Where "up one level" lands (doc "file panel"): out of a drilled-in
+ * Where "up one level" lands (doc "viewer panel"): out of a drilled-in
  * listing, or — when the panel is following the selection — into the folder
  * holding the previewed file, so Backspace browses upwards the way it does in
  * the file manager rather than being a dead end.
@@ -137,7 +137,7 @@ export async function mount(root, metafolder) {
   const dirPage = metafolder.pageSize ?? DIR_PAGE_DEFAULT;
   const statusMessageMs = metafolder.settings?.statusMessageMs ?? 5000;
   // The text fast path and the viewer's limits (GUI config
-  // `[panel-defaults.file]`, falling back to the module constants above).
+  // `[panel-defaults.viewer]`, falling back to the module constants above).
   const { defaults } = metafolder;
   const text = extensionSet(defaults.textExtensions, TEXT);
   const documentDpi = positiveNumber(defaults.documentDpi, DOCUMENT_DPI);
@@ -389,7 +389,7 @@ export async function mount(root, metafolder) {
   // --- Playback position ------------------------------------------------
   //
   // Where the user stopped watching, kept on the metarecord of the played
-  // file so the next open resumes there (doc "file panel"). The
+  // file so the next open resumes there (doc "viewer panel"). The
   // state of the video currently mounted, or null when none is (or when it
   // has no metarecord to store a position on): { media, repo, uuid, stored,
   // timer }, with `stored` mirroring the field's value so a redundant write
@@ -622,7 +622,7 @@ export async function mount(root, metafolder) {
   // playback is actually asked for. Same bargain as the GIF stills above.
   // Show the poster standing in for a media file: its first frame for a video,
   // the type glyph for audio (nothing to extract a frame from). Clicking it —
-  // like `file:play-pause` — is what loads the player.
+  // like `viewer:play-pause` — is what loads the player.
   /**
    * @param {'audio'|'video'} kind @param {string} path @param {string} url
    * @param {number} generation
@@ -1044,7 +1044,7 @@ export async function mount(root, metafolder) {
     if (activeMedia) fn(activeMedia);
   }
 
-  void commands.register('file:play-pause', {
+  void commands.register('viewer:play-pause', {
     label: 'File: play / pause the media',
     handler: async () => {
       // A slideshow waiting (an image on screen, the pause after a video):
@@ -1075,7 +1075,7 @@ export async function mount(root, metafolder) {
       if (target !== null) media.currentTime = target;
     });
   }
-  void commands.register('file:restart', {
+  void commands.register('viewer:restart', {
     label: 'File: play the media from the start',
     handler: () => withMedia((media) => (media.currentTime = 0)),
   });
@@ -1090,8 +1090,8 @@ export async function mount(root, metafolder) {
   // ── Generic transport / view commands ───────────────────────────────────
   //
   // One command per family, the variant as its first argument, so a keybinding
-  // names what it does (`file:zoom in`) and a user can bind a step the shipped
-  // defaults never offered (`file:seek +5`).
+  // names what it does (`viewer:zoom in`) and a user can bind a step the shipped
+  // defaults never offered (`viewer:seek +5`).
 
   /** @type {Record<string, () => unknown>} */
   const ZOOMS = {
@@ -1146,16 +1146,16 @@ export async function mount(root, metafolder) {
     };
   }
 
-  void commands.register('file:zoom', variant('zoom', ZOOMS, 'File: zoom the previewed image/video'));
-  void commands.register('file:page', variant('page', PAGES, 'File: go to a page of the document'));
-  void commands.register('file:speed', variant('speed', SPEEDS, 'File: step the playback rate'));
-  void commands.register('file:volume', variant('volume', VOLUMES, 'File: step the volume'));
-  void commands.register('file:toggle-gif-animation', {
+  void commands.register('viewer:zoom', variant('zoom', ZOOMS, 'File: zoom the previewed image/video'));
+  void commands.register('viewer:page', variant('page', PAGES, 'File: go to a page of the document'));
+  void commands.register('viewer:speed', variant('speed', SPEEDS, 'File: step the playback rate'));
+  void commands.register('viewer:volume', variant('volume', VOLUMES, 'File: step the volume'));
+  void commands.register('viewer:toggle-gif-animation', {
     label: 'File: play or stop the animation of a GIF',
     handler: () => setAnimateGifs(!animateGifs),
   });
 
-  void commands.register('file:seek', {
+  void commands.register('viewer:seek', {
     label: `File: seek the previewed media by a signed number of seconds (e.g. +${SEEK_STEP}, -${SEEK_STEP_LONG})`,
     args: [
       {
@@ -1171,7 +1171,7 @@ export async function mount(root, metafolder) {
     },
   });
 
-  void commands.register('file:back', {
+  void commands.register('viewer:back', {
     label: 'File: go up one level (out of a listing, or to the containing folder)',
     handler: navigateBack,
   });
@@ -1205,7 +1205,7 @@ export async function mount(root, metafolder) {
       statusMessageMs,
     );
   }
-  void commands.register('file:mute', {
+  void commands.register('viewer:mute', {
     label: 'File: mute / unmute',
     handler: () => {
       muted = !muted;
@@ -1227,7 +1227,7 @@ export async function mount(root, metafolder) {
 
   // --- Slideshow ----------------------------------------------------------
   //
-  // `file:play` (doc "Slideshow"): one file after another, taken from the
+  // `viewer:play` (doc "Slideshow"): one file after another, taken from the
   // checked selection or the query the metarecord list shows. It moves the
   // workspace's selection — every panel follows, this one included — and each
   // file, once shown, says what comes next (`slideStep`): an audio or a video
@@ -1347,7 +1347,7 @@ export async function mount(root, metafolder) {
   }
 
   /** Selects the next file of the list the slideshow can show, passing over
-   *  the others — through `mf`: the `file:play` run for the first file (doc
+   *  the others — through `mf`: the `viewer:play` run for the first file (doc
    *  "Command transactions"), the panel's own API for the next ones, which
    *  its timers select once the run is over.
    *  @param {MetafolderApi} [mf] */
@@ -1433,7 +1433,7 @@ export async function mount(root, metafolder) {
     media.addEventListener('error', next);
   }
 
-  /** @param {MetafolderApi} mf the `file:play` run
+  /** @param {MetafolderApi} mf the `viewer:play` run
    *  @param {{target: 'selection'|'query', shuffle: boolean, loop: boolean}} request */
   async function startShow(mf, { target, shuffle, loop }) {
     stopShow(null);
@@ -1485,7 +1485,7 @@ export async function mount(root, metafolder) {
     await advance(mf);
   }
 
-  /** The option slots of `file:play`: either option, in either. */
+  /** The option slots of `viewer:play`: either option, in either. */
   const playOption = {
     name: 'option',
     optional: true,
@@ -1494,7 +1494,7 @@ export async function mount(root, metafolder) {
     /** @param {string[]} prior */
     when: (prior) => prior[0] !== 'stop',
   };
-  void commands.register('file:play', {
+  void commands.register('viewer:play', {
     label: 'File: play one file after another — the checked selection or the query shown (selection / query / stop) [shuffle] [loop]',
     args: [
       {
@@ -1516,7 +1516,7 @@ export async function mount(root, metafolder) {
     },
   });
 
-  // Keybindings for this panel live in keybindings.toml (when = "file").
+  // Keybindings for this panel live in keybindings.toml (when = "viewer").
 
   // Right-click the preview to cut/copy/paste/rename/duplicate/trash the shown
   // file (shared with the file manager — see /__file-actions.js). The *shown*

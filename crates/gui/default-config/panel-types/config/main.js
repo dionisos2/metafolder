@@ -306,14 +306,14 @@ export async function mount(root, metafolder) {
       'Reload',
     );
 
-  /** The file panel follows the selection: the file becomes it — a path with
+  /** The viewer panel follows the selection: the file becomes it — a path with
    *  no metarecord, the metarecord written first as every panel publishes the
    *  pair (doc "Cross-panel selection") — and the panel is opened beside.
    *  @param {string} path */
   async function showInFilePanel(path) {
     await metafolder.workspace.set('selected_metarecord', null);
     await metafolder.workspace.set('selected_paths', [path]);
-    await metafolder.invoke(['panel:open', 'other', 'file']);
+    await metafolder.invoke(['panel:open', 'other', 'viewer']);
   }
 
   function renderFiles() {
@@ -341,7 +341,7 @@ export async function mount(root, metafolder) {
               { class: 'actions' },
               el(
                 'button',
-                { title: 'Show it in the file panel', onclick: () => void showInFilePanel(file.path) },
+                { title: 'Show it in the viewer panel', onclick: () => void showInFilePanel(file.path) },
                 'Show',
               ),
               file.reload ? reloadButton(file.reload) : null,

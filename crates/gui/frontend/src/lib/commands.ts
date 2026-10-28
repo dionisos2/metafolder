@@ -110,7 +110,7 @@ function distinctCombos(bindings: { keys: string[] }[]): string[] {
  * and never validated; this is the runtime half of that guard.
  *
  * Only the first token is a name: a binding may pre-fill arguments
- * (`panel:open here file`), and reading the whole invocation as a name would
+ * (`panel:open here viewer`), and reading the whole invocation as a name would
  * report every parameterized binding as dead. Shell invocations (`!…`) name no
  * command at all.
  */
@@ -225,7 +225,7 @@ function rankMatches<C extends { name: string }>(
 
 /** What the command input runs on Enter (command mode only): the
  *  highlighted suggestion when the list is non-empty, otherwise the raw
- *  typed text. Commands with arguments (e.g. `panel:open here file`) empty
+ *  typed text. Commands with arguments (e.g. `panel:open here viewer`) empty
  *  the suggestion list, so they fall through to the typed text.
  *
  *  A line whose first word is a command's whole name is an invocation, not an
@@ -1872,14 +1872,14 @@ export async function status(text: string, kind = "error") {
 
 /** Why `panelType`, a viewer of the selection, has nothing of `ws`'s selection
  *  to show — or `null` when it has, or is no viewer (doc "Opening a row"). A
- *  metarecord without a file is nothing for the file panel, a path without a
+ *  metarecord without a file is nothing for the viewer panel, a path without a
  *  metarecord nothing for the detail panel; no selection at all is not refused,
  *  so a viewer can still be opened to set up a layout. */
 async function viewerHasNothing(
   panelType: string,
   ws: string | null,
 ): Promise<string | null> {
-  if (!ws || (panelType !== "file" && panelType !== "metarecord-detail"))
+  if (!ws || (panelType !== "viewer" && panelType !== "metarecord-detail"))
     return null;
   const [metarecord, paths] = await Promise.all([
     invoke("ws_get_var", { wsId: ws, key: "selected_metarecord" }),
@@ -1887,7 +1887,7 @@ async function viewerHasNothing(
   ]);
   const hasMetarecord = metarecord !== null && typeof metarecord === "object";
   const hasPaths = Array.isArray(paths) && paths.length > 0;
-  if (panelType === "file" && hasMetarecord && !hasPaths) {
+  if (panelType === "viewer" && hasMetarecord && !hasPaths) {
     return "no file or folder for this metarecord — open it in metarecord-detail instead";
   }
   if (panelType === "metarecord-detail" && hasPaths && !hasMetarecord) {

@@ -6,7 +6,7 @@ summary: Take a panel into the row under its cursor (self / a panel type)
 Goes into the row under the cursor: of the focused panel with `self`, of the panel type named otherwise ([[Generic panel commands]]). The list then shows what the row holds.
 
 |!Panel |!Goes into |
-|[[file-manager panel]] |a directory; a file is not gone into (`Enter` there stays `file-manager:activate`, which also shows a file in the file panel) |
+|[[file-manager panel]] |a directory; a file is not gone into (`Enter` there stays `file-manager:activate`, which also shows a file in the viewer panel) |
 |[[path-ref panel]] |any node, showing its children — a leaf shows an empty list, where children can be added |
 |[[log panel]] |a label, or a fold of the watcher's flushes, the cursor on its first row; an operation holds nothing |
 

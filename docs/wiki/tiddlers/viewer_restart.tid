@@ -1,0 +1,6 @@
+title: viewer:restart
+tags: [[GUI command]] [[viewer panel]]
+kind: reference
+summary: File: play the media from the start
+
+Takes the media the [[viewer panel]] plays back to its start. Does nothing unless a player is loaded ([[Media preview]]).

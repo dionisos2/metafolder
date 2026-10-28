@@ -14,7 +14,7 @@ cursor after the key is released. Two things were slower than the repeat:
   whole table, up to a thousand rows, on every key; the recent, trash, path-ref,
   duplicates and detail panels did the same on shorter lists.
 * ''publishing the selection once per key.'' Two `workspace.set` round-trips, each
-  fanning out to the other panels of the workspace — a file panel loading a
+  fanning out to the other panels of the workspace — a viewer panel loading a
   preview per row passed over.
 
 `/__list-cursor.js` holds the rule, and every list panel goes through it:

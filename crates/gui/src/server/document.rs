@@ -1,7 +1,7 @@
 //! `GET /document?path=…&page=N&dpi=D` — one page of a document (PDF) as a
 //! PNG, and `GET /document/info?path=…` — its page count.
 //!
-//! The `file` panel previews a document by showing these images. It cannot show
+//! The `viewer` panel previews a document by showing these images. It cannot show
 //! the file itself: `/fsraw` carries the session token in the URL, so anything
 //! loaded from it *as a document* (an `<iframe>`, where WebKit's own PDF.js
 //! would take over) would run as code in this server's origin and could lift

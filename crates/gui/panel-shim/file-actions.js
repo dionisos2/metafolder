@@ -339,7 +339,7 @@ export function fileMenuItems({ metafolder, repo, path, name, isDir, onChanged }
 
 /**
  * The "Metarecord" section any panel showing metarecords can offer on the record
- * under the cursor: open it in the detail panel, in the file panel, reveal its
+ * under the cursor: open it in the detail panel, in the viewer panel, reveal its
  * folder in the file manager and list that folder's metarecords (all only when
  * it is backed by a file), and copy its UUID — the
  * same items the metarecord list has always shown. The reveal commands read the
@@ -380,7 +380,7 @@ export function metarecordMenuItems({
   if (hasFile) {
     items.push({
       label: 'Open in panel file',
-      action: () => void commands.invoke(['panel:open', 'other', 'file']),
+      action: () => void commands.invoke(['panel:open', 'other', 'viewer']),
     });
     if (revealFolder) {
       items.push({

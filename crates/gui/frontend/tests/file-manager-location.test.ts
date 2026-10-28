@@ -191,7 +191,7 @@ describe('file-manager open buttons', () => {
     button.click();
     await settle();
     expect(s.setVar).toHaveBeenCalledWith('selected_paths', ['/repo/top.txt']);
-    expect(s.api.commands.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'file']);
+    expect(s.api.commands.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'viewer']);
     expect(cursorName(s.root)).toBe('top.txt');
   });
 
@@ -204,13 +204,13 @@ describe('file-manager open buttons', () => {
     }
   });
 
-  test('Enter on a file shows it in the file panel of the other slot', async () => {
+  test('Enter on a file shows it in the viewer panel of the other slot', async () => {
     const s = stub('r', {});
     await mount(s);
     rowOf(s.root, 'top.txt').click();
     await settle();
     await s.handlers.get('file-manager:activate')!();
-    expect(s.api.commands.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'file']);
+    expect(s.api.commands.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'viewer']);
   });
 
   test('Enter takes a target: here, other or new', async () => {
@@ -219,7 +219,7 @@ describe('file-manager open buttons', () => {
     rowOf(s.root, 'top.txt').click();
     await settle();
     await s.handlers.get('file-manager:activate')!('new');
-    expect(s.api.commands.invoke).toHaveBeenCalledWith(['panel:open', 'new', 'file']);
+    expect(s.api.commands.invoke).toHaveBeenCalledWith(['panel:open', 'new', 'viewer']);
   });
 
   test('Enter on a folder goes into it, whatever the target', async () => {

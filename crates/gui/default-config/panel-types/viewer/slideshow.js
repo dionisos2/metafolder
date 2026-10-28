@@ -1,8 +1,8 @@
-// The slideshow's model (doc "Slideshow"): the arguments of `file:play`, what
+// The slideshow's model (doc "Slideshow"): the arguments of `viewer:play`, what
 // each kind of file gets, how long a GIF lasts, and the order the files come
 // in. Pure, so the panel's part is only timers and elements.
 
-// What the durations fall back to when `[panel-defaults.file]` has none.
+// What the durations fall back to when `[panel-defaults.viewer]` has none.
 export const IMAGE_SECONDS = 3;
 // A GIF whose length cannot be read (a still, a truncated file).
 export const GIF_SECONDS = 5;
@@ -13,7 +13,7 @@ const TARGETS = ['selection', 'query', 'stop'];
 export const PLAY_OPTIONS = ['shuffle', 'loop'];
 
 /**
- * What `file:play <target> [option] [option]` asks for. The options are a set:
+ * What `viewer:play <target> [option] [option]` asks for. The options are a set:
  * they come in any order, and a slot left empty is no option.
  *
  * @param {(string|undefined)[]} args

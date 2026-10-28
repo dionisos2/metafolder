@@ -1,0 +1,8 @@
+title: viewer:play
+tags: [[GUI command]] [[viewer panel]]
+kind: reference
+summary: File: play one file after another — the checked selection or the query shown
+
+Starts a [[Slideshow]] in the [[viewer panel]]: `viewer:play selection` or `viewer:play query`,
+followed by `shuffle`, `loop`, both or neither; `viewer:play stop` ends it. Starting one
+while another runs replaces it.

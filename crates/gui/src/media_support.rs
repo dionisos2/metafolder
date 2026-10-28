@@ -1,9 +1,9 @@
-//! GStreamer playback support detection for the `file` panel.
+//! GStreamer playback support detection for the `viewer` panel.
 //!
 //! WebKitGTK does not fail gracefully when its media pipeline cannot be
 //! built: a missing audio sink crashes the whole WebKit web process
 //! (`g_signal_connect` on a NULL sink), freezing the shell and every
-//! panel. The file panel therefore asks `GET /__media-support` before
+//! panel. The viewer panel therefore asks `GET /__media-support` before
 //! creating an `<audio>`/`<video>` element and shows a plain message
 //! when the required elements are missing (doc "Why a media file is not played on sight").
 
@@ -47,7 +47,7 @@ pub fn system() -> &'static MediaSupport {
 
 /// Per-file codec probe result. Unlike [`MediaSupport`] (a once-per-process
 /// sink check that prevents the WebKit crash), this depends on the actual
-/// file's streams: the `file` panel requests it before creating the element,
+/// file's streams: the `viewer` panel requests it before creating the element,
 /// and reports either a decoder that is missing (the element would fail) or
 /// one that is too slow for the stream (the element plays, badly).
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -231,7 +231,7 @@ fn hardware_decoders(codec: &str) -> &'static [&'static str] {
 /// Pixel rate above which a stream decoded by the CPU is assumed not to play
 /// smoothly in the WebView, whatever the codec: decoding is only part of the
 /// cost, every frame is then converted to RGBA (33 MB at 4K) and composited
-/// in software. Measured in the file panel on a 2-core i7-7500U: 1080p60
+/// in software. Measured in the viewer panel on a 2-core i7-7500U: 1080p60
 /// (124 Mpx/s) played at full rate; 4K30 (248) rendered 21 images a second in
 /// H.264, about 20 in AV1 through dav1d; 3840×1920 at 60 (442) 10 in HEVC.
 /// A hardware decoder played all of them at full rate.

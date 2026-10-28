@@ -129,7 +129,7 @@ export function mount(root, metafolder) {
     },
   });
 
-  /** Moves the cursor and publishes the selection so a paired detail/file panel
+  /** Moves the cursor and publishes the selection so a paired detail/viewer panel
    *  follows (the same live-preview the metarecord list does).
    *  @param {MetafolderApi} mf @param {number} index */
   async function select(mf, index) {

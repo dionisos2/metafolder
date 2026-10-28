@@ -176,9 +176,9 @@ describe('mf.invoke', () => {
 
   test('hands the array to the dispatcher as it is', async () => {
     const { mf, dispatched } = apiOver({ ok: true });
-    await mf.invoke(['panel:open', 'here', 'file']);
+    await mf.invoke(['panel:open', 'here', 'viewer']);
     await mf.commands.invoke(['message:clear']);
-    expect(dispatched).toEqual([['panel:open', 'here', 'file'], ['message:clear']]);
+    expect(dispatched).toEqual([['panel:open', 'here', 'viewer'], ['message:clear']]);
   });
 
   test('offers ask', () => {
@@ -188,7 +188,7 @@ describe('mf.invoke', () => {
 
   test('refuses a string, naming the array form', async () => {
     const { mf, dispatched } = apiOver({ ok: true });
-    await expect(mf.invoke('panel:open here file')).rejects.toThrow(/\['panel:open', 'here', 'file'\]/);
+    await expect(mf.invoke('panel:open here viewer')).rejects.toThrow(/\['panel:open', 'here', 'viewer'\]/);
     expect(dispatched).toEqual([]);
   });
 

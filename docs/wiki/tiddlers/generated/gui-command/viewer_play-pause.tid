@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/viewer:play-pause
+catalog: GUI command
+target: viewer:play-pause
+summary: File: play / pause the media
+
+!! Reference
+
+* Defined by the ``viewer`` panel
+
+!! Default keys
+
+* ``space`` → ``viewer:play-pause`` (in the ``viewer`` panel)

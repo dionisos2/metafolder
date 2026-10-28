@@ -770,9 +770,9 @@ mock_input q y y
 bash "$SCRIPT" music >/dev/null; code=$?
 assert "unresolved preview: exits 0" [ "$code" -eq 0 ]
 assert "unresolved preview: the resolvable entry is shown" \
-    [ "$(mock_count 'gui view left file --path /abs/a.txt')" -eq 1 ]
+    [ "$(mock_count 'gui view left viewer --path /abs/a.txt')" -eq 1 ]
 assert "unresolved preview: the unresolvable one clears the panel" \
-    [ "$(mock_count 'gui view left file --path ')" -eq 1 ]
+    [ "$(mock_count 'gui view left viewer --path ')" -eq 1 ]
 assert "unresolved preview: both questions were asked" \
     [ "$(mock_count 'gui input*')" -eq 3 ]  # the scope question, then two entries
 assert "unresolved preview: the root is read once, no \`mf path\` per entry" \
@@ -794,7 +794,7 @@ mock_input q y
 bash "$SCRIPT" music >/dev/null; code=$?
 assert "session panels: exits 0" [ "$code" -eq 0 ]
 assert "session panels: the workspace is created with both panels named" \
-    [ "$(mock_count 'gui workspace new --repo repo-1 --left file --right metarecord-detail')" -eq 1 ]
+    [ "$(mock_count 'gui workspace new --repo repo-1 --left viewer --right metarecord-detail')" -eq 1 ]
 
 # ── Case 30: "a" then "y" tags the rest of the folder in one write ──────────
 # `a` (all) opens a second question about the REST of the current folder: the

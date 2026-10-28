@@ -1,6 +1,6 @@
 // duplicates panel: the repository's groups of byte-identical files, worst
 // reclaimable space first (doc "duplicates panel"). Groups are collapsed; Enter
-// expands one into its members' paths (and shows a member in the file panel), `+` marking a member that shares an
+// expands one into its members' paths (and shows a member in the viewer panel), `+` marking a member that shares an
 // inode with another — removing that name frees nothing.
 //
 // Highlighting a row publishes it as `selected_metarecord` — a member, or the
@@ -190,7 +190,7 @@ export function mount(root, metafolder) {
     // the shared file actions apply without this panel implementing any of
     // them. A group row publishes the *group* metarecord — it is one too
     // (hash, size, counters), and the detail panel is where its fields can be
-    // read. Its paths too, so a file panel follows the cursor and `panel:open
+    // read. Its paths too, so a viewer panel follows the cursor and `panel:open
     // … file` knows a group has none (doc "Opening a row").
     publish: async (_index, mf = metafolder) => {
       const row = rows[cursorIndex];
@@ -211,13 +211,13 @@ export function mount(root, metafolder) {
   }
 
   /** Enter: unfold or fold the group under the cursor; on a copy, show it in the
-   *  file panel at `where` (doc "Opening a row").
+   *  viewer panel at `where` (doc "Opening a row").
    *  @param {MetafolderApi} mf @param {string} [where] `here`, `other` or `new` */
   async function open(mf, where = 'other') {
     const row = rows[cursorIndex];
     if (!row) return;
     if (row.member === null) await activate();
-    else await mf.commands.invoke(['panel:open', where, 'file']);
+    else await mf.commands.invoke(['panel:open', where, 'viewer']);
   }
 
   /** `duplicates:toggle-group` (→, the twisty): expand or collapse the group under

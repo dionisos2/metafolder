@@ -449,7 +449,7 @@ export async function mount(root, metafolder) {
             ...(title && { title }),
           },
           // doc "Opening a row": a folder is gone into, a file (or the folder
-          // shown, ".") shown in the file panel; either in the detail panel
+          // shown, ".") shown in the viewer panel; either in the detail panel
           // when it has a metarecord.
           viewerButtons({
             hasFile: true,
@@ -535,7 +535,7 @@ export async function mount(root, metafolder) {
   //
   // The metarecord goes FIRST, then the paths: the pair is one selection, and
   // a consumer reacting to `selected_paths` reads `selected_metarecord` right
-  // then (the `file` panel, for the playback position of the file it is about
+  // then (the `viewer` panel, for the playback position of the file it is about
   // to show). Publishing the paths first handed it the PREVIOUS row's
   // metarecord — the preview showing one file while the position was read from
   // and written to another.
@@ -581,9 +581,9 @@ export async function mount(root, metafolder) {
     return item.is_dir && item.name !== '.';
   }
 
-  /** A row's open buttons: `enter`/`file` do what Enter does, `metarecord-detail`
+  /** A row's open buttons: `enter`/`viewer` do what Enter does, `metarecord-detail`
    *  selects the row and shows its metarecord in the other slot.
-   *  @param {number} index @param {'enter'|'file'|'metarecord-detail'} what */
+   *  @param {number} index @param {'enter'|'viewer'|'metarecord-detail'} what */
   async function openRow(index, what) {
     if (what !== 'metarecord-detail') {
       await activate(metafolder, index);
@@ -595,7 +595,7 @@ export async function mount(root, metafolder) {
 
   /** @param {number} index */
   /** Enter (doc "Opening a row"): a folder is gone into; a file — or the folder
-   *  shown, the "." row — is shown in the file panel at `where`, where the panel
+   *  shown, the "." row — is shown in the viewer panel at `where`, where the panel
    *  follows the selection the cursor published.
    *  @param {MetafolderApi} mf @param {number} index
    *  @param {string} [where] `here`, `other` or `new` */
@@ -607,7 +607,7 @@ export async function mount(root, metafolder) {
       return;
     }
     await select(mf, index);
-    await mf.commands.invoke(['panel:open', where, 'file']);
+    await mf.commands.invoke(['panel:open', where, 'viewer']);
   }
 
   // ── The checked multi-selection (doc "Cross-panel selection") ─────────

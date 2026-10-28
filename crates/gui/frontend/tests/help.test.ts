@@ -89,7 +89,7 @@ describe('resolvePage', () => {
   test('"<type> panel" opens the panel note, or the page named by the type', () => {
     expect(resolvePage(PANELS, 'trash panel')?.id).toBe('trash-panel');
     // Not migrated yet: the older page, whose id is the panel type.
-    expect(resolvePage(PANELS, 'file panel')?.id).toBe('file');
+    expect(resolvePage(PANELS, 'viewer panel')?.id).toBe('file');
     expect(resolvePage(PANELS, 'nothing panel')).toBeNull();
   });
 

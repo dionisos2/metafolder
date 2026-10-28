@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/viewer:restart
+catalog: GUI command
+target: viewer:restart
+summary: File: play the media from the start
+
+!! Reference
+
+* Defined by the ``viewer`` panel
+
+!! Default keys
+
+* ``shift+r`` → ``viewer:restart`` (in the ``viewer`` panel)

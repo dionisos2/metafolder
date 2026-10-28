@@ -28,7 +28,7 @@ open-with = ["xdg-open"]
 # path-ref is keyed by its panel-type name too.
 [page-size]
 metarecord-list = 100
-file = 150
+viewer = 150
 file-manager = 200
 path-ref = 200
 
@@ -142,7 +142,7 @@ field = "mfr_path"
 # forest (`path-ref:list-refs`). Tags are by far the common case.
 ref-field = "tag"
 
-[panel-defaults.file]
+[panel-defaults.viewer]
 # Whether a file is an image, a video, an audio file or a PDF is read from its
 # content, not from its name: there is no extension list for those. Text has no
 # signature to read, hence the one list below.
@@ -167,7 +167,7 @@ text-preview-limit = 262144
 zoom-step = 1.25
 zoom-min = 0.05
 zoom-max = 40
-# The slideshow (`file:play`), in seconds: how long an image stays, how long a
+# The slideshow (`viewer:play`), in seconds: how long an image stays, how long a
 # GIF whose length cannot be read stays (an animated one plays through once),
 # and the pause after an audio or a video has ended (0 for none).
 slideshow-image-seconds = 3

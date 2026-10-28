@@ -5,7 +5,7 @@
 // panel type, `view:refresh <panel>` instead of a `<panel>:refresh`. The panel
 // is a required argument, a panel type or `self` (the focused one), so a key
 // can drive a panel beside the focused one
-// (`cursor:next metarecord-list` in the file panel) and a script names the panel
+// (`cursor:next metarecord-list` in the viewer panel) and a script names the panel
 // it drives.
 //
 // Pure, apart from the provider hook PanelHost installs: what a command needs,

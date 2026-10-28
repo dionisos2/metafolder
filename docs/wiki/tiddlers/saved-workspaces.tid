@@ -99,11 +99,14 @@ content, not `internal/`. A saved workspace carries a `version` field, so that a
 of its format can be recognised and converted ([[Persisted format changes]]):
 
 ```
-{"version": 1, "kind": "work",
- "slots": {"shown": 2, "left": "metarecord-list", "right": "file"},
+{"version": 2, "kind": "work",
+ "slots": {"shown": 2, "left": "metarecord-list", "right": "viewer"},
  "layout": {"metarecord-list:columns": "…", "metarecord-list:column-widths": {…}, …},
  "work": {"metarecord-list:query": "…", "selected_metarecord": {…}, …}}
 ```
+
+Version 2 (October 2026) renamed the panel type `file` to `viewer`: a version 1 file
+is read with `viewer` in place of `file`, and left as it is until it is saved again.
 
 A `layout` save has no `work` member. Reading the layout of either is reading `slots`
 and `layout`.
