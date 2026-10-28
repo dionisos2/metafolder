@@ -22,7 +22,7 @@ fn test_installed_defaults_are_readable() {
     assert!(config.root().join("config.toml").exists());
     assert!(config.root().join("keybindings.toml").exists());
     assert!(config.root().join("style.css").exists());
-    assert!(config.root().join("panel-types/hello/index.html").exists());
+    assert!(config.root().join("panel-types/message/index.html").exists());
     assert!(config.load_keybindings().is_ok());
     assert!(config.load_style().is_ok());
     // The shipped config defaults to the daemon's own default port.
@@ -215,7 +215,7 @@ fn test_list_panel_types_includes_custom_directories() {
     std::fs::create_dir_all(config.root().join("panel-types/broken")).unwrap();
 
     let types = config.list_panel_types().unwrap();
-    assert!(types.contains(&"hello".to_string()));
+    assert!(types.contains(&"message".to_string()));
     assert!(types.contains(&"my-custom-panel".to_string()));
     assert!(!types.contains(&"broken".to_string()));
 }
@@ -224,7 +224,7 @@ fn test_list_panel_types_includes_custom_directories() {
 fn test_panel_dir_resolution() {
     let (_guard, config) = temp_config();
     common::install_defaults(&config);
-    assert_eq!(config.panel_dir("hello").unwrap(), config.root().join("panel-types/hello"));
+    assert_eq!(config.panel_dir("message").unwrap(), config.root().join("panel-types/message"));
     assert!(config.panel_dir("nope").is_none());
     // Path traversal in a panel name must not resolve.
     assert!(config.panel_dir("../escape").is_none());

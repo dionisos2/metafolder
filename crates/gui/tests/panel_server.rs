@@ -53,7 +53,7 @@ async fn get(router: &axum::Router, uri: &str) -> (StatusCode, String, Vec<u8>) 
 #[tokio::test]
 async fn test_panel_html_served_verbatim() {
     let (_guard, _config, router) = setup();
-    let (status, content_type, body) = get(&router, "/panel/hello/index.html").await;
+    let (status, content_type, body) = get(&router, "/panel/message/index.html").await;
     assert_eq!(status, StatusCode::OK);
     assert!(content_type.starts_with("text/html"));
 
@@ -62,7 +62,7 @@ async fn test_panel_html_served_verbatim() {
     // itself: the served HTML is verbatim, no shim/style tags injected.
     assert!(!html.contains("/__shim.js"));
     assert!(!html.contains(r#"<link rel="stylesheet" href="/__style.css">"#));
-    assert!(html.contains("Hello from a panel type"));
+    assert!(html.contains("<title>message</title>"));
 }
 
 #[tokio::test]
@@ -128,10 +128,10 @@ async fn test_a_missing_command_module_is_404() {
 #[tokio::test]
 async fn test_panel_non_html_asset_served_verbatim() {
     let (_guard, config, router) = setup();
-    let js_path = config.root().join("panel-types/hello/main.js");
+    let js_path = config.root().join("panel-types/message/main.js");
     std::fs::write(&js_path, "console.log('x');").unwrap();
 
-    let (status, content_type, body) = get(&router, "/panel/hello/main.js").await;
+    let (status, content_type, body) = get(&router, "/panel/message/main.js").await;
     assert_eq!(status, StatusCode::OK);
     assert!(content_type.starts_with("text/javascript"));
     assert_eq!(body, b"console.log('x');");
@@ -141,7 +141,7 @@ async fn test_panel_non_html_asset_served_verbatim() {
 async fn test_unknown_panel_or_file_is_404() {
     let (_guard, _config, router) = setup();
     assert_eq!(get(&router, "/panel/nope/index.html").await.0, StatusCode::NOT_FOUND);
-    assert_eq!(get(&router, "/panel/hello/missing.js").await.0, StatusCode::NOT_FOUND);
+    assert_eq!(get(&router, "/panel/message/missing.js").await.0, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -161,7 +161,7 @@ async fn test_path_traversal_is_rejected() {
     let (_guard, config, router) = setup();
     // A real file outside the panel dir that traversal would reach.
     assert!(config.root().join("keybindings.toml").exists());
-    let (status, _, _) = get(&router, "/panel/hello/..%2F..%2Fkeybindings.toml").await;
+    let (status, _, _) = get(&router, "/panel/message/..%2F..%2Fkeybindings.toml").await;
     assert_ne!(status, StatusCode::OK);
     let (status, _, _) = get(&router, "/panel/..%2Fescape/index.html").await;
     assert_ne!(status, StatusCode::OK);

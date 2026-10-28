@@ -48,7 +48,7 @@ async fn status(router: &axum::Router, uri: &str, authorization: Option<&str>) -
 #[tokio::test]
 async fn open_panel_asset_needs_no_token() {
     let (_guard, router) = setup();
-    assert_eq!(status(&router, "/panel/hello/index.html", None).await, StatusCode::OK);
+    assert_eq!(status(&router, "/panel/message/index.html", None).await, StatusCode::OK);
 }
 
 #[tokio::test]

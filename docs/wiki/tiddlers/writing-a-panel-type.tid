@@ -19,10 +19,47 @@ A third, optional, says which of the panel's variables a saved workspace keeps:
 `saved.json`, with a `layout` and a `work` list of names without the panel's prefix
 ([[Saved workspaces]]). Without it, saving a workspace keeps none of them.
 
-Copy the [[hello panel]] to start: it is the smallest panel that reads a workspace
-variable, follows it, and registers a command. The built-in panels are in the same
-directory, plain HTML and JavaScript with no build step, to be read as examples —
-their sources are in `crates/gui/default-config/panel-types/`.
+The smallest useful panel reads a workspace variable, follows it, and registers a
+command:
+
+```
+<!-- index.html -->
+<!doctype html>
+<html lang="en">
+  <body>
+    <p id="repo">active_repo: ?</p>
+  </body>
+</html>
+```
+
+```
+// main.js
+import { byId } from '/__ui.js';
+
+/** @param {ShadowRoot} root @param {MetafolderApi} metafolder */
+export function mount(root, metafolder) {
+  const repo = byId(root, 'repo');
+  // A workspace variable is `unknown`: say how it becomes text.
+  /** @param {unknown} value */
+  const show = (value) => {
+    repo.textContent = `active_repo: ${typeof value === 'string' ? value : 'none'}`;
+  };
+  void metafolder.workspace.get('active_repo').then(show);
+  metafolder.workspace.onChange('active_repo', show);
+
+  // A handler gets the API of its run first ([[Command transactions]]).
+  void metafolder.commands.register('my-panel:greet', {
+    label: 'My panel: greet in the status bar',
+    handler: (mf) => mf.statusBar.message('Hello!', 3000),
+  });
+}
+```
+
+It reads nothing from the daemon, so it has no change feed to follow, and `mount`
+returns nothing because nothing is attached outside the root. The built-in panels
+are in the same directory, plain HTML and JavaScript with no build step, to be read
+as examples — their sources are in `crates/gui/default-config/panel-types/`; the
+`message` panel is the shortest.
 
 !! What the shell does with the two files
 
