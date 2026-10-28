@@ -1045,12 +1045,18 @@ export async function mount(root, metafolder) {
   }
 
   void commands.register('viewer:play-pause', {
-    label: 'File: play / pause the media',
+    label: 'Viewer: play / pause the media, or the animation of a GIF',
     handler: async () => {
       // A slideshow waiting (an image on screen, the pause after a video):
       // hold it, or let it go on.
       if (show && (show.timer !== null || show.paused)) {
         toggleShowPause();
+        return;
+      }
+      // A GIF has no player: play/pause is its animation, the space key the
+      // same toggle as the checkbox.
+      if (!gifAnimateWrap.hidden) {
+        setAnimateGifs(!animateGifs);
         return;
       }
       // Nothing mounted yet: the poster is showing, so this is the gesture that

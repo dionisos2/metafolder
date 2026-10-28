@@ -1,7 +1,7 @@
 title: $:/mf/gen/GUI command/viewer:play-pause
 catalog: GUI command
 target: viewer:play-pause
-summary: File: play / pause the media
+summary: Viewer: play / pause the media, or the animation of a GIF
 
 !! Reference
 

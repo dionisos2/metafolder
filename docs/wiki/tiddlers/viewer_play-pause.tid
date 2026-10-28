@@ -1,6 +1,6 @@
 title: viewer:play-pause
 tags: [[GUI command]] [[viewer panel]]
 kind: reference
-summary: File: play / pause the media
+summary: Viewer: play / pause the media, or the animation of a GIF
 
-Plays or pauses the audio or video the [[viewer panel]] previews. In front of a poster no player exists yet: this is what builds it and starts it ([[Media preview]]).
+Plays or pauses the audio or video the [[viewer panel]] previews. In front of a poster no player exists yet: this is what builds it and starts it ([[Media preview]]). In front of a GIF it starts or stops the animation, like `viewer:toggle-gif-animation` — the space key does both.

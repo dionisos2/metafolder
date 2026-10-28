@@ -9,7 +9,7 @@ summary: The viewer panel type
 * ``viewer:mute`` — File: mute / unmute
 * ``viewer:page`` — File: go to a page of the document
 * ``viewer:play`` — File: play one file after another — the checked selection or the query shown (selection / query / stop) [shuffle] [loop]
-* ``viewer:play-pause`` — File: play / pause the media
+* ``viewer:play-pause`` — Viewer: play / pause the media, or the animation of a GIF
 * ``viewer:restart`` — File: play the media from the start
 * ``viewer:seek`` — File: seek the previewed media by a signed number of seconds
 * ``viewer:speed`` — File: step the playback rate

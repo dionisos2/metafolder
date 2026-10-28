@@ -35,7 +35,13 @@ function shadowRoot(): ShadowRoot {
 
 type Handler = (...args: string[]) => unknown;
 
-const KINDS: Record<string, string> = { pdf: 'document', png: 'image', mp4: 'video', mp3: 'audio' };
+const KINDS: Record<string, string> = {
+  pdf: 'document',
+  png: 'image',
+  gif: 'gif',
+  mp4: 'video',
+  mp3: 'audio',
+};
 
 /** A stub API showing `path`, with no repository (so nothing else is fetched). */
 function stub(path: string) {
@@ -118,6 +124,17 @@ describe('viewer panel — media loads only on demand', () => {
     await flush();
     return { ...s, root, viewer: root.getElementById('viewer')! };
   }
+
+  test('play/pause on a GIF starts or stops its animation (the space key)', async () => {
+    const { handlers, root } = await mountPanel('/a.gif');
+    const box = root.getElementById('gif-animate') as HTMLInputElement;
+    const before = box.checked;
+    await handlers.get('viewer:play-pause')!();
+    expect(box.checked).toBe(!before);
+    await flush(); // the GIF is shown again, moving or still
+    await handlers.get('viewer:play-pause')!();
+    expect(box.checked).toBe(before);
+  });
 
   test('a video shows its poster frame, and no media element', async () => {
     const { viewer } = await mountPanel('/music/clip.mp4');
