@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::repo::RepoLocator;
 use crate::state::AppState;
@@ -184,6 +185,9 @@ impl DaemonSettings {
 pub struct DaemonConfig {
     /// Repositories to load at startup.
     pub load: Vec<LoadEntry>,
+    /// Repositories known by name, not loaded at startup (doc "Known
+    /// repositories"): `POST /repos/load {"name"}` finds them here.
+    pub known: Vec<LoadEntry>,
     /// Tunable UX/performance settings (`[settings]`).
     pub settings: DaemonSettings,
 }
@@ -193,6 +197,8 @@ pub struct DaemonConfig {
 struct RawConfig {
     #[serde(default)]
     load: Vec<RawLoadEntry>,
+    #[serde(default)]
+    known: Vec<RawLoadEntry>,
     #[serde(default)]
     settings: DaemonSettings,
 }
@@ -241,19 +247,108 @@ pub fn read_config(path: &Path) -> Result<DaemonConfig> {
     };
     let raw: RawConfig =
         toml::from_str(&contents).with_context(|| format!("parsing {}", path.display()))?;
-    let mut load = Vec::with_capacity(raw.load.len());
-    for entry in raw.load {
+    let load = entries(raw.load, "load", path)?;
+    let known = entries(raw.known, "known", path)?;
+    Ok(DaemonConfig { load, known, settings: raw.settings })
+}
+
+/// The `[[load]]` or `[[known]]` entries of the file at `path`, each checked
+/// to name exactly one of `root` or `metafolder`.
+fn entries(raw: Vec<RawLoadEntry>, table: &str, path: &Path) -> Result<Vec<LoadEntry>> {
+    let mut out = Vec::with_capacity(raw.len());
+    for entry in raw {
         let locator = match (entry.root, entry.metafolder) {
             (Some(root), None) => RepoLocator::Root(root),
             (None, Some(dir)) => RepoLocator::Metafolder(dir),
             _ => bail!(
-                "in {}: each 'load' entry needs exactly one of 'root' or 'metafolder'",
+                "in {}: each '{table}' entry needs exactly one of 'root' or 'metafolder'",
                 path.display()
             ),
         };
-        load.push(LoadEntry { locator, in_memory: entry.in_memory });
+        out.push(LoadEntry { locator, in_memory: entry.in_memory });
     }
-    Ok(DaemonConfig { load, settings: raw.settings })
+    Ok(out)
+}
+
+/// A repository the configuration names (doc "Known repositories"), as `GET
+/// /repos/known` lists it: what its `config.json` says of it, or why it
+/// could not be read — an unplugged drive is listed all the same.
+#[derive(Debug, Clone, Serialize)]
+pub struct KnownRepo {
+    /// Its own name (`config.json`), `null` when it could not be read.
+    pub name: Option<String>,
+    #[serde(with = "metafolder_core::metarecord::hex_uuid_opt")]
+    pub repo_uuid: Option<Uuid>,
+    /// Its root: the one `config.json` records, else the configured one.
+    pub root: Option<PathBuf>,
+    /// Its `.metafolder/` directory, when it could be resolved or was configured.
+    pub metafolder: Option<PathBuf>,
+    /// The entry's `in-memory`: how a load by name holds it.
+    pub in_memory: bool,
+    /// Named by `[[load]]`: loaded when the daemon starts.
+    pub startup: bool,
+    /// Loaded now (filled in by [`AppState::known_repos`]).
+    pub loaded: bool,
+    /// Why it could not be read; `null` otherwise.
+    pub error: Option<String>,
+    /// Where it is, as the configuration says.
+    #[serde(skip)]
+    pub locator: RepoLocator,
+}
+
+impl DaemonConfig {
+    /// Every repository this configuration names, `[[load]]` first, each once:
+    /// two entries reaching the same `.metafolder/` are one repository.
+    pub fn known_repos(&self) -> Vec<KnownRepo> {
+        let mut out: Vec<KnownRepo> = Vec::new();
+        let tagged =
+            self.load.iter().map(|e| (e, true)).chain(self.known.iter().map(|e| (e, false)));
+        for (entry, startup) in tagged {
+            let known = describe(entry, startup);
+            if let Some(dir) = &known.metafolder {
+                if known.error.is_none()
+                    && out.iter().any(|k| k.error.is_none() && k.metafolder.as_ref() == Some(dir))
+                {
+                    continue;
+                }
+            }
+            out.push(known);
+        }
+        out
+    }
+}
+
+/// What the repository an entry names says of itself.
+fn describe(entry: &LoadEntry, startup: bool) -> KnownRepo {
+    let mut known = KnownRepo {
+        name: None,
+        repo_uuid: None,
+        root: None,
+        metafolder: None,
+        in_memory: entry.in_memory,
+        startup,
+        loaded: false,
+        error: None,
+        locator: entry.locator.clone(),
+    };
+    match &entry.locator {
+        RepoLocator::Root(root) => known.root = Some(root.clone()),
+        RepoLocator::Metafolder(dir) => known.metafolder = Some(dir.clone()),
+    }
+    let read = entry.locator.metafolder_dir().and_then(|dir| {
+        let config = crate::config::RepoConfig::read(&dir)?;
+        Ok((dir, config))
+    });
+    match read {
+        Ok((dir, config)) => {
+            known.name = Some(config.name);
+            known.repo_uuid = Some(config.repo_uuid);
+            known.root = Some(config.root);
+            known.metafolder = Some(dir);
+        }
+        Err(e) => known.error = Some(format!("{e:#}")),
+    }
+    known
 }
 
 /// Loads the configured repositories, rendering each warmup as a progress bar
@@ -429,6 +524,7 @@ mod tests {
         let config = read_config(&path).unwrap();
         assert_eq!(config.settings, DaemonSettings::default());
         assert!(config.load.is_empty());
+        assert!(config.known.is_empty());
         std::fs::remove_file(&path).unwrap();
     }
 

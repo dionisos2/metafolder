@@ -44,7 +44,11 @@ async fn main() {
     // repository in memory"): RAM, until the next boot otherwise.
     metafolder_daemon::kvstore::memory::clean_stale(&config.settings.memory_dir);
 
-    let state = Arc::new(AppState::new().with_settings(config.settings.clone()));
+    let mut state = AppState::new().with_settings(config.settings.clone());
+    if let Some(path) = config_path {
+        state = state.with_config_file(path);
+    }
+    let state = Arc::new(state);
 
     let startup_state = state.clone();
     // `apply` reports each repository — loaded or failed — as it goes.

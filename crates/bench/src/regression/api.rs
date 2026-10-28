@@ -50,6 +50,7 @@ pub const SCENARIOS: &[Scenario] = &[
     s("api.diagnostics", &[(G, "/diagnostics")]),
     s("api.tasks", &[(G, "/tasks")]),
     s("api.repos", &[(G, "/repos")]),
+    s("api.repos.known", &[(G, "/repos/known")]),
     s("api.repo.get", &[(G, "/repos/:repo")]),
     // ── Reads ──────────────────────────────────────────────────────────────
     s("api.metarecord.get", &[(G, "/repos/:repo/metarecords/:uuid")]),
@@ -273,6 +274,7 @@ pub async fn run(id: &str, c: &Ctx) -> Result<()> {
         "api.diagnostics" => drop(get(&format!("{url}/diagnostics")).await?),
         "api.tasks" => drop(get(&format!("{url}/tasks")).await?),
         "api.repos" => drop(get(&format!("{url}/repos")).await?),
+        "api.repos.known" => drop(get(&format!("{url}/repos/known")).await?),
         "api.repo.get" => drop(get(base).await?),
 
         "api.metarecord.get" => drop(get(&format!("{base}/metarecords/{sample}")).await?),

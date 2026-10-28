@@ -2,6 +2,16 @@
 # Installed into ~/.config/metafolder/daemon/ by metafolder-sync-config.
 # The --config CLI flag overrides this path; a malformed file aborts startup.
 
+# Repositories known by name but NOT loaded at startup (doc "Known
+# repositories"): same shape as [[load]] below. `mf -n <name> repo load` (or the
+# GUI's repos panel) loads one by the name its own config.json gives it,
+# rather than by its path; `mf repo known` lists them. The [[load]] entries
+# are known too. Read again at each lookup: an entry added here is known
+# without restarting the daemon.
+#
+# [[known]]
+# root = "/media/usb/archive"
+
 # Repositories to auto-load when the daemon starts, as an array of tables
 # (one [[load]] block per repo). Each entry has exactly one of `root` (the
 # watched directory) or `metafolder` (an external .metafolder location) — same

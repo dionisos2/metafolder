@@ -1,0 +1,9 @@
+title: mf repo known
+tags: [[CLI command]] Daemon
+kind: reference
+summary: List the repositories the daemon's configuration knows by name, loaded or not (pretty-printed JSON)
+
+Prints [[GET /repos/known]]: every repository the daemon's `config.toml` names in
+`[[known]]` or `[[load]]`, with whether it is loaded, and why it could not be read
+when it could not. `mf -n NAME repo load` loads one of them by its name
+([[Known repositories]]).

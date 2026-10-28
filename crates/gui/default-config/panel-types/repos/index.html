@@ -221,12 +221,30 @@
       .empty {
         color: var(--mf-fg-dim, #8a8a96);
       }
+      h3 {
+        margin: 14px 0 6px;
+        font-size: 0.95em;
+        font-weight: normal;
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      /* Known by the daemon's configuration, not loaded (doc "Known
+         repositories"): its Load button is what the row does. */
+      li.repo.known .repo-head {
+        cursor: default;
+      }
+      li.repo.known.unreadable .repo-head {
+        color: var(--mf-fg-dim, #8a8a96);
+      }
     </style>
   </head>
   <body>
     <h2>Repositories</h2>
     <ul id="repo-list"></ul>
     <p id="empty" class="empty" hidden>No repository loaded in the daemon.</p>
+    <h3 id="known-title" hidden title="Named in the daemon's config.toml ([[known]], [[load]])">
+      Known, not loaded
+    </h3>
+    <ul id="known-list"></ul>
 
     <div class="actions">
       <button id="show-init">Init new repo…</button>

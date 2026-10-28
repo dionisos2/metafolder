@@ -8,6 +8,7 @@ mf repo init <root>                         # create .metafolder/ inside <root>
 mf repo init <root> --metafolder <path>     # … or anywhere else
 mf repo load <root>                         # load it (--metafolder <path> for an external one)
 mf repo load --in-memory <root>             # … with its store held in memory
+mf -n <name> repo load                      # load a known repository by its name
 mf repo                                     # the loaded repositories (mf repo list)
 mf -n <name> repo rename <new-name>         # rename it
 mf -n <name> repo root                      # print its root
@@ -37,7 +38,8 @@ registered at all: an invalid one fails the load itself, with a `400` naming the
 offending constraint.
 
 The daemon also loads, at startup, the repositories its configuration lists
-([[Daemon configuration]]).
+([[Daemon configuration]]), and knows by name those it lists not to load
+([[Known repositories]]).
 
 ''Unload'' stops the repository's watcher, drops it from the daemon and releases
 its lock; the data on disk is untouched. It is refused (`409`) while its load is

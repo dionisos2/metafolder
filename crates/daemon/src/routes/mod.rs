@@ -60,6 +60,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/{repo}/reindex", post(reindex_repo))
         .route("/repos/{repo}/memory", post(set_repo_memory))
         .route("/repos/load", post(load_repo))
+        .route("/repos/known", get(known_repos))
         .route("/repos/{repo}", get(get_repo).patch(rename_repo))
         .route("/repos/{repo}/unload", post(unload_repo))
         // ── Resource layer (single, directly-addressed) ──────────────────────

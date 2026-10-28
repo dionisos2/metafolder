@@ -1,0 +1,16 @@
+title: $:/mf/gen/CLI command/mf repo known
+catalog: CLI command
+target: mf repo known
+summary: List the repositories the daemon's configuration knows by name, loaded or not (pretty-printed JSON)
+
+!! Reference
+
+```
+List the repositories the daemon's configuration knows by name, loaded or not (pretty-printed JSON)
+
+Usage: mf repo known
+
+Options:
+  -h, --help
+          Print help
+```

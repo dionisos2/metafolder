@@ -20,6 +20,12 @@ import { createSelect } from '/__select.js';
  *            cancellable: boolean, phase?: string|null, done: number|null,
  *            total: number|null}} Task
  *
+ * A repository the daemon's configuration names, as `GET /repos/known` lists
+ * it (doc "Known repositories"); `error` when it could not be read.
+ * @typedef {{name: string|null, repo_uuid: string|null, root: string|null,
+ *            in_memory: boolean, startup: boolean, loaded: boolean,
+ *            error: string|null}} Known
+ *
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder
  */
 export async function mount(root, metafolder) {
@@ -60,6 +66,8 @@ export async function mount(root, metafolder) {
 
   const list = byId(root, 'repo-list');
   const empty = byId(root, 'empty');
+  const knownList = byId(root, 'known-list');
+  const knownTitle = byId(root, 'known-title');
   const initForm = byId(root, 'init-form', HTMLFormElement);
   const loadForm = byId(root, 'load-form', HTMLFormElement);
   const retypeForm = byId(root, 'retype-form', HTMLFormElement);
@@ -232,7 +240,75 @@ export async function mount(root, metafolder) {
   /** @param {Repo} repo */
   const isLoading = (repo) => !repo.lost && repo.ready === false;
 
+  /** The known repositories not loaded (doc "Known repositories"). */
+  async function knownNotLoaded() {
+    const known = /** @type {Known[]} */ ((await daemon.call('GET', '/repos/known')) ?? []);
+    return known.filter((k) => !k.loaded);
+  }
+
+  /** Loads the known repository `name`, as the Load button and `repos:load-known` do.
+   *  @param {MetafolderApi} mf @param {string} name */
+  async function loadKnown(mf, name) {
+    const loaded = /** @type {{repo_uuid: string}} */ (
+      await daemon.call('POST', '/repos/load', { name })
+    );
+    await onCreated(mf, loadForm, loaded.repo_uuid);
+  }
+
+  /** @param {Known} known */
+  function knownRow(known) {
+    if (known.error !== null || known.name === null) {
+      return el(
+        'li',
+        { class: 'repo known unreadable' },
+        el('div', { class: 'repo-head' }, el('span', { class: 'root' }, known.root ?? '')),
+        el('div', { class: 'repo-lost' }, `Cannot be read: ${known.error ?? 'no name'}`),
+      );
+    }
+    const name = known.name;
+    return el(
+      'li',
+      { class: 'repo known' },
+      el(
+        'div',
+        { class: 'repo-head' },
+        el('strong', {}, name),
+        known.in_memory ? el('span', { class: 'memory', title: 'loaded in memory' }, 'in memory') : null,
+        el('span', { class: 'root' }, known.root ?? ''),
+        el(
+          'button',
+          {
+            class: 'repo-unload',
+            type: 'button',
+            title: 'Load this repository into the daemon',
+            onclick: () =>
+              void loadKnown(metafolder, name).catch((error) =>
+                statusBar.error(`cannot load ${name}: ${messageOf(error)}`, statusErrorMs),
+              ),
+          },
+          'Load',
+        ),
+      ),
+    );
+  }
+
+  async function refreshKnown() {
+    /** @type {Known[]} */
+    let known;
+    try {
+      known = await knownNotLoaded();
+    } catch (error) {
+      // An older daemon, or a config.toml it cannot read: the loaded ones are
+      // still shown, and the status bar says why the known ones are not.
+      known = [];
+      void statusBar.error(`known repositories: ${messageOf(error)}`, statusErrorMs);
+    }
+    knownTitle.hidden = known.length === 0;
+    knownList.replaceChildren(...known.map(knownRow));
+  }
+
   async function refresh() {
+    await refreshKnown();
     /** @type {Repo[]} */
     let repos;
     try {
@@ -798,6 +874,18 @@ export async function mount(root, metafolder) {
       const opts = trimmed ? { root: root_.trim(), name: trimmed } : { root: root_.trim() };
       await onCreated(mf, initForm, await mf.daemon.initRepo(opts));
     },
+  });
+  void commands.register('repos:load-known', {
+    label: "Repos: load a repository the daemon's configuration knows, by its name",
+    args: [
+      {
+        name: 'repo',
+        prompt: () => 'Load which known repository?',
+        complete: async () =>
+          (await knownNotLoaded()).flatMap((k) => (k.name === null ? [] : [k.name])),
+      },
+    ],
+    handler: (mf, name) => loadKnown(mf, name.trim()),
   });
   void commands.register('repos:load', {
     label: 'Repos: pick a folder and load the repository in it (on-disk, or in-memory: held in memory)',

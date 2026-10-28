@@ -343,6 +343,10 @@ enum RepoCommand {
         path: PathBuf,
     },
     /// Load an existing repository, wait for its warmup and print its UUID
+    ///
+    /// By its root, its --metafolder, or — with no path — by the name given
+    /// with -n, among the repositories the daemon's configuration knows
+    /// (`[[known]]`, `[[load]]`; `mf repo known` lists them).
     Load {
         root: Option<PathBuf>,
         /// Load from an external .metafolder directory
@@ -356,6 +360,9 @@ enum RepoCommand {
         #[arg(long = "in-memory")]
         in_memory: bool,
     },
+    /// List the repositories the daemon's configuration knows by name, loaded
+    /// or not (pretty-printed JSON)
+    Known,
     /// Unload the selected repository (stops its watcher, releases its DB lock)
     Unload,
     /// Print the selected repository's root (an absolute path)
@@ -1363,6 +1370,7 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
             RepoCommand::Load { root, metafolder, no_wait, in_memory } => {
                 commands::load(ctx, root.as_deref(), metafolder.as_deref(), no_wait, in_memory)
             }
+            RepoCommand::Known => commands::known_repos(ctx),
             RepoCommand::Unload => commands::unload(ctx),
             RepoCommand::Root => commands::print_repo_root(ctx),
             RepoCommand::Check => commands::check_repo(ctx),

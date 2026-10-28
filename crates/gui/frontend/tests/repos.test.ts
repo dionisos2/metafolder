@@ -46,9 +46,20 @@ interface Repo {
   in_memory?: { bytes: number } | null;
 }
 
+/** A repository the daemon's configuration names (doc "Known repositories"). */
+interface Known {
+  name: string | null;
+  repo_uuid: string | null;
+  root: string | null;
+  in_memory: boolean;
+  startup: boolean;
+  error: string | null;
+}
+
 /** A minimal in-memory stand-in for the daemon's repository endpoints. */
 function fakeDaemon() {
   const repos: Repo[] = [];
+  const known: Known[] = [];
   const tasks: Record<string, unknown>[] = [];
   const cancelled: string[] = [];
   // Ingestion state of every repo of this fake daemon (doc "Watcher endpoints").
@@ -93,6 +104,21 @@ function fakeDaemon() {
       repos.push(repo);
       return { status: 200, body: repo };
     }
+    if (method === 'GET' && bare === '/repos/known') {
+      return {
+        status: 200,
+        body: known.map((k) => ({ ...k, loaded: repos.some((r) => r.repo_uuid === k.repo_uuid) })),
+      };
+    }
+    if (method === 'POST' && bare === '/repos/load' && (body as { name?: string }).name) {
+      const b = body as { name: string; in_memory?: boolean };
+      const k = known.find((e) => e.name === b.name);
+      if (!k) return { status: 404, body: { error: `no known repository named '${b.name}'` } };
+      const repo: Repo = { repo_uuid: k.repo_uuid!, name: k.name!, root: k.root! };
+      if (b.in_memory || k.in_memory) repo.in_memory = { bytes: 1 << 20 };
+      repos.push(repo);
+      return { status: 200, body: { repo_uuid: repo.repo_uuid, task_id: null } };
+    }
     if (method === 'POST' && bare === '/repos/load') {
       const b = body as { root: string };
       const known = repos.find((r) => r.root === b.root);
@@ -130,7 +156,7 @@ function fakeDaemon() {
     return { status: 404, body: { error: `unrouted ${method} ${bare}` } };
   }
 
-  return { repos, tasks, cancelled, watch, request, calls };
+  return { repos, known, tasks, cancelled, watch, request, calls };
 }
 
 /** The real panel API, with `invoke` routed to the fake daemon. */
@@ -1036,5 +1062,99 @@ describe('repos panel — in memory', () => {
     await settle();
     await expect(command(handlers, 'repos:toggle-memory')()).rejects.toThrow('no active');
     expect(memoryCalls(daemon)).toEqual([]);
+  });
+});
+
+describe('repos panel — known repositories', () => {
+  beforeEach(() => {
+    changeFeed._reset();
+    vi.useRealTimers();
+  });
+
+  const music: Known = {
+    name: 'music',
+    repo_uuid: 'k1',
+    root: '/data/music',
+    in_memory: false,
+    startup: false,
+    error: null,
+  };
+
+  test('a known repository not loaded is listed apart, and Load loads it by name', async () => {
+    const { api, daemon, vars } = setup({ activeRepo: null });
+    daemon.known.push({ ...music });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    expect(shadow.querySelectorAll('#repo-list > li')).toHaveLength(0);
+    const rows = shadow.querySelectorAll('#known-list > li');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].textContent).toContain('music');
+    expect(rows[0].textContent).toContain('/data/music');
+    expect((shadow.getElementById('known-title') as HTMLElement).hidden).toBe(false);
+
+    (rows[0].querySelector('button') as HTMLButtonElement).click();
+    await settle();
+    expect(daemon.calls).toContainEqual({
+      method: 'POST',
+      path: '/repos/load',
+      body: { name: 'music' },
+    });
+    // Loaded: in the list of loaded ones, no longer among the known.
+    expect(shadow.querySelectorAll('#repo-list > li')).toHaveLength(1);
+    expect(shadow.querySelectorAll('#known-list > li')).toHaveLength(0);
+    expect((shadow.getElementById('known-title') as HTMLElement).hidden).toBe(true);
+    expect(vars.get('active_repo')).toBe('k1');
+  });
+
+  test('a loaded known repository is not listed twice', async () => {
+    const { api, daemon } = setup();
+    daemon.known.push({ ...music });
+    daemon.repos.push({ repo_uuid: 'k1', name: 'music', root: '/data/music' });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+    expect(shadow.querySelectorAll('#repo-list > li')).toHaveLength(1);
+    expect(shadow.querySelectorAll('#known-list > li')).toHaveLength(0);
+  });
+
+  test('one that cannot be read says why, and has nothing to load', async () => {
+    const { api, daemon } = setup();
+    daemon.known.push({
+      name: null,
+      repo_uuid: null,
+      root: '/media/usb/photos',
+      in_memory: false,
+      startup: false,
+      error: 'the root directory must exist',
+    });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+    const row = shadow.querySelector('#known-list > li') as HTMLElement;
+    expect(row.textContent).toContain('/media/usb/photos');
+    expect(row.textContent).toContain('the root directory must exist');
+    expect(row.querySelector('button')).toBeNull();
+  });
+
+  test('repos:load-known loads by name, completing over the known not loaded', async () => {
+    const { api, daemon, handlers } = setup();
+    daemon.known.push({ ...music }, { ...music, name: 'books', repo_uuid: 'k2', root: '/b' });
+    daemon.repos.push({ repo_uuid: 'k2', name: 'books', root: '/b' });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+    await command(handlers, 'repos:load-known')('music');
+    await settle();
+    expect(daemon.repos.map((r) => r.name)).toEqual(['books', 'music']);
+  });
+
+  test('repos:load-known with an unknown name is a failure of the command', async () => {
+    const { api, handlers } = setup();
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+    await expect(command(handlers, 'repos:load-known')('nope')).rejects.toThrow(/nope/);
   });
 });

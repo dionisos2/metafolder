@@ -396,6 +396,10 @@ pub(super) struct LoadBody {
     root: Option<PathBuf>,
     #[serde(default)]
     metafolder: Option<PathBuf>,
+    /// A repository the daemon's configuration knows by this name (doc
+    /// "Known repositories").
+    #[serde(default)]
+    name: Option<String>,
     /// Hold the store in memory (doc "Holding a repository in memory").
     #[serde(default)]
     in_memory: bool,
@@ -406,20 +410,24 @@ pub(super) async fn load_repo(
     payload: Result<Json<LoadBody>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let Json(body) = payload?;
-    let locator = match (body.root, body.metafolder) {
-        (Some(root), None) => RepoLocator::Root(root),
-        (None, Some(dir)) => RepoLocator::Metafolder(dir),
+    let in_memory = body.in_memory;
+    let locator = match (body.root, body.metafolder, body.name) {
+        (Some(root), None, None) => Ok(RepoLocator::Root(root)),
+        (None, Some(dir), None) => Ok(RepoLocator::Metafolder(dir)),
+        (None, None, Some(name)) => Err(name),
         _ => {
             return Err(ApiError::bad_request(
-                "exactly one of 'root' or 'metafolder' must be provided",
+                "exactly one of 'root', 'metafolder' or 'name' must be provided",
             ))
         }
     };
     let state_for_warmup = state.clone();
-    let in_memory = body.in_memory;
-    let uuid = tokio::task::spawn_blocking(move || state.load_repo_with(locator, in_memory))
-        .await
-        .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))??;
+    let uuid = tokio::task::spawn_blocking(move || match locator {
+        Ok(locator) => state.load_repo_with(locator, in_memory),
+        Err(name) => state.load_known(&name, in_memory),
+    })
+    .await
+    .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))??;
     // Finish the load in the background, as an observable `load` task so the
     // GUI shows a progress bar (doc "Tasks"). The repository is registered and
     // reports its state meanwhile, but answers its data routes with `503`
@@ -430,6 +438,17 @@ pub(super) async fn load_repo(
         "repo_uuid": hex(uuid),
         "task_id": task_id.map(|id| id.as_simple().to_string()),
     })))
+}
+
+/// `GET /repos/known` — the repositories the daemon's configuration names,
+/// loaded or not (doc "Known repositories").
+pub(super) async fn known_repos(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let known = tokio::task::spawn_blocking(move || state.known_repos())
+        .await
+        .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))??;
+    Ok(Json(serde_json::to_value(known).expect("known repos serialization")))
 }
 
 /// Spawns the background warmup task for a freshly loaded repository and

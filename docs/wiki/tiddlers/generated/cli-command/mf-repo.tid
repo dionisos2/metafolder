@@ -15,6 +15,7 @@ Commands:
   init           Initialise a new repository and print its UUID
   update-config  Merge the repository defaults into one repository's configuration
   load           Load an existing repository, wait for its warmup and print its UUID
+  known          List the repositories the daemon's configuration knows by name, loaded or not (pretty-printed JSON)
   unload         Unload the selected repository (stops its watcher, releases its DB lock)
   root           Print the selected repository's root (an absolute path)
   rename         Rename the selected repository and print its UUID

@@ -1137,6 +1137,9 @@ pub struct AppState {
     /// to every repository this state opens (log retention, watcher quiet
     /// period, watch budget share). Defaults when unset (tests, no config file).
     settings: DaemonSettings,
+    /// The daemon's `config.toml`, read again at each lookup of a repository
+    /// known by name (doc "Known repositories"); none: nothing is known.
+    config_file: Option<PathBuf>,
 }
 
 /// Public description of a loaded repository (`GET /repos`).
@@ -1189,6 +1192,55 @@ impl AppState {
     pub fn with_settings(mut self, settings: DaemonSettings) -> Self {
         self.settings = settings;
         self
+    }
+
+    /// Sets the configuration file whose `[[load]]` and `[[known]]` entries
+    /// name the repositories known by name (doc "Known repositories").
+    pub fn with_config_file(mut self, path: PathBuf) -> Self {
+        self.config_file = Some(path);
+        self
+    }
+
+    /// The repositories the configuration file names, as it is now — edited
+    /// since the daemon started or not — each marked whether it is loaded.
+    pub fn known_repos(&self) -> Result<Vec<crate::daemon_config::KnownRepo>, ApiError> {
+        let Some(path) = &self.config_file else { return Ok(Vec::new()) };
+        let config = crate::daemon_config::read_config(path)
+            .map_err(|e| ApiError::internal(format!("{e:#}")))?;
+        let mut known = config.known_repos();
+        let repos = self.repos.lock_recover();
+        for k in &mut known {
+            k.loaded = k.repo_uuid.is_some_and(|u| repos.get(&u).is_some_and(|r| r.root_present()));
+        }
+        Ok(known)
+    }
+
+    /// Loads the known repository named `name` (doc "Known repositories"),
+    /// held in memory when its entry or `in_memory` asks. `404` when none is
+    /// named so, `409` when several are.
+    pub fn load_known(&self, name: &str, in_memory: bool) -> Result<Uuid, ApiError> {
+        let mut matching: Vec<_> =
+            self.known_repos()?.into_iter().filter(|k| k.name.as_deref() == Some(name)).collect();
+        match matching.len() {
+            0 => Err(ApiError::not_found(format!(
+                "no known repository named '{name}' (doc \"Known repositories\": [[known]] in \
+                 the daemon's config.toml)"
+            ))),
+            1 => {
+                let known = matching.remove(0);
+                self.load_repo_with(known.locator, in_memory || known.in_memory)
+            }
+            _ => {
+                let places: Vec<String> = matching
+                    .iter()
+                    .filter_map(|k| k.root.as_ref().map(|p| p.display().to_string()))
+                    .collect();
+                Err(ApiError::conflict(format!(
+                    "several known repositories are named '{name}': {}; load one by its path",
+                    places.join(", ")
+                )))
+            }
+        }
     }
 
     /// Initialises a new repository and registers it as loaded.

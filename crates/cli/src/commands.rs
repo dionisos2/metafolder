@@ -307,12 +307,15 @@ pub fn load(
     no_wait: bool,
     in_memory: bool,
 ) -> Result<i32, CliError> {
-    let mut body = match (root, metafolder) {
-        (Some(root), None) => json!({"root": absolutize(root)?}),
-        (None, Some(dir)) => json!({"metafolder": absolutize(dir)?}),
+    let mut body = match (root, metafolder, &ctx.name) {
+        (Some(root), None, _) => json!({"root": absolutize(root)?}),
+        (None, Some(dir), _) => json!({"metafolder": absolutize(dir)?}),
+        // No path: the repository the daemon knows by that name (doc "Known
+        // repositories").
+        (None, None, Some(name)) => json!({"name": name}),
         _ => {
             return Err(CliError::Usage(
-                "exactly one of <root> or --metafolder <path> must be given".into(),
+                "exactly one of <root>, --metafolder <path> or -n <name> must be given".into(),
             ))
         }
     };
@@ -331,6 +334,13 @@ pub fn load(
         }
     }
     println!("{uuid}");
+    Ok(0)
+}
+
+/// `mf repo known`: the repositories the daemon's configuration names.
+pub fn known_repos(ctx: &Ctx) -> Result<i32, CliError> {
+    let resp = ctx.client.get("/repos/known", &[])?;
+    print_pretty(&resp);
     Ok(0)
 }
 

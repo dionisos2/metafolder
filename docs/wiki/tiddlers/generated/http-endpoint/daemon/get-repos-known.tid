@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/GET /repos/known
+catalog: HTTP endpoint
+target: GET /repos/known
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``known_repos`` |

@@ -1,0 +1,46 @@
+title: Known repositories
+tags: Daemon Configuration Repository
+kind: guide
+summary: [[known]] in the daemon's config.toml names repositories it does not load at startup, so that they are loaded by name — mf -n NAME repo load, the repos panel — rather than by path.
+
+A repository you use now and then — an archive, a drive you plug in — does not need
+to be loaded each time the daemon starts, but typing its path to load it is a chore.
+Name it in the daemon's configuration ([[Daemon configuration]]) with `[[known]]`, the
+same shape as `[[load]]`:
+
+```
+[[known]]
+root = "/media/usb/archive"
+
+[[known]]
+metafolder = "/ssd/meta/photos/.metafolder"
+in-memory = true
+```
+
+and load it by its name:
+
+```
+mf -n archive repo load        # instead of mf repo load /media/usb/archive
+mf repo known                  # the repositories the configuration names
+```
+
+In the GUI, the [[repos panel]] lists the known repositories that are not loaded under
+''Known, not loaded'', each with a ''Load'' button; `repos:load-known NAME` does the
+same from the command input, completing over their names.
+
+!! What is known
+
+* ''The name is the repository's own'' — the one its `config.json` gives it (`mf repo init --name`, `mf repo rename`), not a key of the daemon's configuration: an alias would drift from the repository's name after a rename, and `-n` names a repository by that name everywhere else.
+* ''The `[[load]]` repositories are known too'': unloaded, one is loaded again by its name. An entry named twice — in both tables, or once by root and once by `metafolder` — is one repository.
+* ''`in-memory = true`'' holds the store in memory whenever the repository is loaded by name ([[Holding a repository in memory]]); asking for it in the request does too.
+* ''The file is read again at each lookup'' (`GET /repos/known`, a load by name): an entry added while the daemon runs is known at once, without a restart. A file that no longer parses is an error of that request, not of the daemon, which keeps running on what it read at startup.
+* ''A repository that cannot be read'' — its drive unplugged, its root gone — is listed all the same, with `name: null` and the reason in `error`; it cannot be loaded by name until it is back.
+* ''Two known repositories with one name'' are refused (`409`), the message naming both roots: load one by its path, or rename one. Names are unique among the *loaded* repositories only ([[Creating and loading a repository]]).
+
+!! On the wire
+
+`POST /repos/load {"name": "archive"}` — exactly one of `root`, `metafolder` or `name` —
+loads it like any load (the same `load` task, the same refusals), `404` when no known
+repository has that name. `GET /repos/known` lists them, loaded or not: `name`,
+`repo_uuid`, `root`, `metafolder`, `in_memory`, `startup` (named by `[[load]]`),
+`loaded`, `error` ([[Repository endpoints]]).

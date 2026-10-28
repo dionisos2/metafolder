@@ -8,6 +8,9 @@ terminal) and prints its uuid; `--no-wait` prints the uuid at once and lets the 
 go on (follow it with `mf task`). Refused when a loaded repository has the same name
 ([[Creating and loading a repository]]).
 
+With no path, `-n NAME` names the repository instead: one of those the daemon's
+configuration knows ([[Known repositories]]; `mf repo known` lists them).
+
 `--in-memory` copies the store into memory and reads it there, so that no read
 waits on the disk; every write still goes to the disk, first
 ([[Holding a repository in memory]]).

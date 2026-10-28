@@ -1,7 +1,7 @@
 title: Daemon configuration
 tags: Daemon Configuration
 kind: reference
-summary: daemon/config.toml — the repositories to load at startup, and the [settings] knobs with their defaults.
+summary: daemon/config.toml — the repositories to load at startup or to know by name, and the [settings] knobs with their defaults.
 
 `~/.config/metafolder/daemon/config.toml` (`--config <path>` overrides it). Not to
 be confused with each repository's `config.json` ([[Repository layout on disk]]).
@@ -22,6 +22,11 @@ watch-quiet-period-ms = 2000
 `root` or `metafolder`, like a `POST /repos/load` body; `in-memory = true` holds the
 repository's store in memory, as `mf repo load --in-memory` does ([[Holding a repository in memory]]).
 
+''`[[known]]`'' — the same shape, for repositories not loaded at startup but loaded
+by their name: `mf -n NAME repo load`, the [[repos panel]] ([[Known repositories]]). The
+`[[load]]` ones are known too. Unlike the rest of the file, these two tables are read
+again at each lookup by name.
+
 ''`[settings]`'' — every key optional:
 
 |!Key |!Default |!Meaning |
@@ -36,7 +41,7 @@ repository's store in memory, as `mf repo load --in-memory` does ([[Holding a re
 |`memory-dir` |`/dev/shm/metafolder-<uid>` |where the store of a repository held in memory is copied: a directory in RAM, a `tmpfs` ([[Holding a repository in memory]]) |
 
 A missing file is an empty one. A malformed one — invalid TOML, an unknown key
-anywhere in it, a `[[load]]` entry with both or neither of `root`/`metafolder` —
+anywhere in it, a `[[load]]` or `[[known]]` entry with both or neither of `root`/`metafolder` —
 stops the daemon at startup, with a message naming what is wrong: a misspelt
 setting would otherwise be read as "the default", and so would a setting that no
 longer exists. A repository that fails to load is a warning; the daemon starts anyway, with

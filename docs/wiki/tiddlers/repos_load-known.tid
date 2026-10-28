@@ -1,0 +1,8 @@
+title: repos:load-known
+tags: [[GUI command]] Repository
+kind: reference
+summary: Repos: load a repository the daemon's configuration knows, by its name
+
+Loads the known repository named — the [[repos panel]]'s ''Load'' button on a row of
+''Known, not loaded'' —, completing over the names of those not loaded
+([[Known repositories]]). A name no known repository has is the command's error.

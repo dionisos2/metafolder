@@ -1,0 +1,9 @@
+title: GET /repos/known
+tags: [[HTTP endpoint]] [[Repository endpoints]]
+kind: reference
+audience: dev
+summary: The repositories the daemon's configuration names, loaded or not, each with what its config.json says of it or why it could not be read.
+
+The configuration file is read again at each request ([[Known repositories]]).
+
+Bodies, answers and errors: [[Repository endpoints]].

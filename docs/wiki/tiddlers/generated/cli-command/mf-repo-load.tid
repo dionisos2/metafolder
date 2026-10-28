@@ -8,6 +8,8 @@ summary: Load an existing repository, wait for its warmup and print its UUID
 ```
 Load an existing repository, wait for its warmup and print its UUID
 
+By its root, its --metafolder, or — with no path — by the name given with -n, among the repositories the daemon's configuration knows (`[[known]]`, `[[load]]`; `mf repo known` lists them).
+
 Usage: mf repo load [OPTIONS] [ROOT]
 
 Arguments:
@@ -25,5 +27,5 @@ Options:
           Copy the store into memory and read it there, so that no read waits on the disk (every write still goes to the disk first)
 
   -h, --help
-          Print help
+          Print help (see a summary with '-h')
 ```

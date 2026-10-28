@@ -24,12 +24,26 @@ fn daemon_url() -> &'static str {
             rt.block_on(async move {
                 let listener = tokio::net::TcpListener::from_std(listener).unwrap();
                 // Expansion is client-side now: the daemon needs no grammar.
-                let app_state = metafolder_daemon::state::AppState::new();
+                // Its config.toml names the known repositories (doc "Known
+                // repositories"): absent, nothing is known.
+                let app_state = metafolder_daemon::state::AppState::new()
+                    .with_config_file(daemon_config_file().to_path_buf());
                 let app = metafolder_daemon::routes::build(std::sync::Arc::new(app_state));
                 axum::serve(listener, app).await.unwrap();
             });
         });
         format!("http://127.0.0.1:{}", addr.port())
+    })
+}
+
+/// The shared daemon's `config.toml`, written by the one test of known
+/// repositories (no other test may: they run concurrently).
+fn daemon_config_file() -> &'static std::path::Path {
+    static PATH: OnceLock<std::path::PathBuf> = OnceLock::new();
+    PATH.get_or_init(|| {
+        let dir = common::tests_root().join(format!("cli-daemon-cfg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("config.toml")
     })
 }
 
@@ -367,6 +381,31 @@ fn test_load_in_memory_holds_the_store_in_memory() {
     let listed: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
     let ours = listed.as_array().unwrap().iter().find(|r| r["repo_uuid"] == repo.as_str()).unwrap();
     assert!(ours["in_memory"]["bytes"].as_u64().unwrap() > 0, "{ours}");
+}
+
+/// `mf -n NAME repo load` loads a repository the daemon's configuration
+/// knows (doc "Known repositories"); `mf repo known` lists them.
+#[test]
+fn test_a_known_repository_is_loaded_by_its_name() {
+    let (repo, root) = init_repo("known");
+    let name = root.file_name().unwrap().to_str().unwrap().to_string();
+    assert_ok(&mf(&["-u", &repo, "repo", "unload"]));
+    std::fs::write(daemon_config_file(), format!("[[known]]\nroot = {:?}\n", root.to_path_buf()))
+        .unwrap();
+
+    let out = mf(&["repo", "known"]);
+    assert_ok(&out);
+    let known: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(known[0]["name"], name.as_str(), "{known}");
+    assert_eq!(known[0]["loaded"], false, "{known}");
+
+    let out = mf(&["-n", &name, "repo", "load"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), repo);
+
+    let out = mf(&["-n", "no-such-repository", "repo", "load"]);
+    assert_eq!(out.code, 1, "stderr: {}", out.stderr);
+    assert!(out.stderr.contains("no-such-repository"), "{}", out.stderr);
 }
 
 #[test]
