@@ -5,20 +5,20 @@ summary: In the duplicates panel, keep the copy under the cursor and trash the o
 
 Which copy survives is always yours to choose. Nothing picks one for you, and no
 action spans several groups. In the [[duplicates panel]], both deletions act on
-the row under the cursor, and both are confirmed:
+the row under the cursor:
 
-* ''keep this one'' — <<key "duplicates:keep" "p k">>, and the first item of the context menu: trashes every ''other'' copy of the group. The confirmation names every path it will trash, and how much space pruning the trash will then reclaim.
-* ''trash this one'' — <<key "duplicates:trash" Delete>>: that copy alone, saying what the group is left with.
+* ''keep this one'' — <<key "duplicates:keep" "p k">>, and the first item of the context menu: trashes every ''other'' copy of the group. It is confirmed, since it touches several files: the confirmation names every path it will trash, and how much space pruning the trash will then reclaim.
+* ''trash this one'' — <<key "item:delete" Delete>>: that copy alone, as Delete does anywhere else ([[Deleting an item]]), and like it unconfirmed. On a group row, Delete deletes the group's own metarecord.
 
 The copies go to the [[Trash]], so a mistake is recoverable
 ([[Restoring from the trash]]); the space is freed when the trash is pruned
 ([[Trash retention]]).
 
-The panel updates the group at once — its count, its reclaimable space, and the
-group itself, gone once a single copy is left — with the same arithmetic the
-daemon applies. The daemon's own update lands a watcher quiet period later, and
-the panel reloads then to confirm it, keeping the expanded groups and the cursor
-where they were.
+The group is updated at once — its count, its reclaimable space, and the group
+itself, gone once a single copy is left: the trash deletes a copy's metarecord
+through the daemon before it moves the bytes, and the daemon re-counts the group
+in that same write ([[Duplicate groups]]). The panel then reads the groups again,
+keeping the expanded groups and the cursor where they were.
 
 A copy deleted any other way — `mf trash -f`, a file manager — leaves its group
 the same way: see [[Duplicate groups]].

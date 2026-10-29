@@ -1,8 +1,8 @@
 // duplicates panel: choosing which copy survives (doc "duplicates panel").
 // Selecting a group row publishes the *group* metarecord, so the detail panel
 // can show what the row summarises; "keep this one" trashes the other copies of
-// the group under the cursor; and both trash actions re-count the group on the
-// spot — dissolving it when a single copy is left, exactly as the daemon does.
+// the group under the cursor, then reads the groups again: the daemon has
+// re-counted them in the trashing's own write (doc "Duplicate groups").
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { sameNodes } from './support/nodes';
@@ -92,8 +92,19 @@ function stubApi(
   const store = new Map<string, unknown>(options.noRepo ? [] : [['active_repo', 'r']]);
   const statusBar = { message: vi.fn(async () => {}), error: vi.fn(async () => {}) };
   const setVar = vi.fn(async (key: string, value: unknown) => void store.set(key, value));
+  // The daemon's side of a trashing: the member leaves its group, which is
+  // re-counted, and dissolved with a single copy left.
   const trashPath = vi.fn(async (_repo: string, path: string) => {
     if (options.trashFails?.includes(path)) throw new Error(`cannot trash ${path}`);
+    const at = members.findIndex((m) => `/repo${m.path}` === path);
+    if (at >= 0) members.splice(at, 1);
+    const first = groups[0] as { fields: { name: string; value: Metafolder.Value }[] } | undefined;
+    if (first && members.length < 2) groups.splice(0, 1);
+    else if (first) {
+      // In place: `field()` memoizes a record's index of its fields.
+      const count = first.fields.find((f) => f.name === 'mfr_duplicate_count');
+      if (count) count.value = int(members.length);
+    }
     return 'trash-id';
   });
   return {
@@ -270,39 +281,6 @@ describe('duplicates panel', () => {
     expect(p.statusBar.message).toHaveBeenCalled();
   });
 
-  test('trashing one member of three re-counts the group in place', async () => {
-    const members = [
-      { uuid: 'm1', path: '/a.bin' },
-      { uuid: 'm2', path: '/b.bin' },
-      { uuid: 'm3', path: '/c.bin' },
-    ];
-    const p = await mountPanel([group('g1', 10, 3, 20)], members);
-    await p.invoke('cursor:next');
-    await p.invoke('duplicates:toggle-group');
-    await new Promise((r) => setTimeout(r, 0));
-    await p.invoke('cursor:next');
-    await p.invoke('duplicates:trash');
-
-    expect(p.trashPath.mock.calls.map((c) => c[1])).toEqual(['/repo/a.bin']);
-    expect(p.groupRows()[0]).toContain(' 2 '); // the count, one lower
-    expect(p.groupRows()[0]).toContain('10B'); // and one copy less to reclaim
-    expect(p.rows().filter((li) => li.classList.contains('member'))).toHaveLength(2);
-  });
-
-  test('trashing one of a pair dissolves the group', async () => {
-    const members = [
-      { uuid: 'm1', path: '/a.bin' },
-      { uuid: 'm2', path: '/b.bin' },
-    ];
-    const p = await mountPanel([group('g1', 10, 2, 10)], members);
-    await p.invoke('cursor:next');
-    await p.invoke('duplicates:toggle-group');
-    await new Promise((r) => setTimeout(r, 0));
-    await p.invoke('cursor:next');
-    await p.invoke('duplicates:trash');
-    expect(p.rows()).toHaveLength(0);
-  });
-
   test('a declined confirmation trashes nothing', async () => {
     vi.stubGlobal('confirm', vi.fn(() => false));
     const members = [
@@ -470,47 +448,6 @@ describe('duplicates panel, the harder paths', () => {
     expect(p.rows()[0].classList.contains('cursor')).toBe(true);
   });
 
-  test('a copy whose path did not resolve is not trashed', async () => {
-    // The record is in the group but its `mfr_path` resolved to nothing: there
-    // is no file to move, so the action must say so rather than guess a path.
-    const members = [
-      { uuid: 'm1', path: '' },
-      { uuid: 'm2', path: '/b.bin' },
-      { uuid: 'm3', path: '/c.bin' },
-    ];
-    const p = await mountPanel([group('g1', 10, 3, 20)], members);
-    await p.invoke('cursor:next');
-    await p.invoke('duplicates:toggle-group');
-    await new Promise((r) => setTimeout(r, 0));
-    expect(p.rows()[1].textContent).toContain('(no path)');
-    await p.invoke('cursor:next');
-    await p.invoke('duplicates:trash');
-
-    expect(p.trashPath).not.toHaveBeenCalled();
-    expect(p.statusBar.error).toHaveBeenCalled();
-  });
-
-  test('a hard-linked copy is marked, and losing that name frees nothing', async () => {
-    const members = [
-      { uuid: 'm1', path: '/orig', inode: '7' },
-      { uuid: 'm2', path: '/link', inode: '7' },
-      { uuid: 'm3', path: '/copy' },
-    ];
-    const p = await mountPanel([group('g1', 16, 3, 16)], members);
-    await p.invoke('cursor:next');
-    await p.invoke('duplicates:toggle-group');
-    await new Promise((r) => setTimeout(r, 0));
-    expect(p.rows()[1].textContent).toContain('+');
-
-    await p.invoke('cursor:next'); // /orig
-    await p.invoke('cursor:next'); // /link, the other name of that inode
-    await p.invoke('duplicates:trash');
-
-    expect(p.trashPath.mock.calls.map((c) => c[1])).toEqual(['/repo/link']);
-    expect(p.groupRows()[0]).toContain(' 2 '); // one name less
-    expect(p.groupRows()[0]).toContain('16B'); // and not one byte more to gain
-  });
-
   test('a failing trash stops the run and re-counts what did leave', async () => {
     const members = [
       { uuid: 'm1', path: '/keep.bin' },
@@ -529,25 +466,49 @@ describe('duplicates panel, the harder paths', () => {
 
     expect(p.statusBar.error).toHaveBeenCalled();
     // The first copy went, the failure stopped the rest: three members left.
+    expect(p.trashPath.mock.calls.map((c) => c[1])).toEqual(['/repo/copy1.bin', '/repo/copy2.bin']);
     expect(p.groupRows()[0]).toContain(' 3 ');
-    expect(p.groupRows()[0]).toContain('20B');
-  });
-});
-
-describe('reclaimableOf', () => {
-  test('every member its own inode: all but one copy is recoverable', async () => {
-    const mod = await import('../../default-config/panel-types/duplicates/main.js');
-    expect(mod.reclaimableOf(10, [{}, {}, {}])).toBe(20);
   });
 
-  test('names sharing an inode count once — removing one frees nothing', async () => {
-    const mod = await import('../../default-config/panel-types/duplicates/main.js');
-    // Two names on inode 7 plus one separate file: one copy's worth.
-    expect(mod.reclaimableOf(16, [{ inode: '7' }, { inode: '7' }, {}])).toBe(16);
+  test('keep-this tells the other panels, and the group read again stays open', async () => {
+    const members = [
+      { uuid: 'm1', path: '/keep.bin' },
+      { uuid: 'm2', path: '/copy1.bin' },
+      { uuid: 'm3', path: '/copy2.bin' },
+      { uuid: 'm4', path: '/copy3.bin' },
+    ];
+    const p = await mountPanel([group('g1', 10, 4, 30)], members, {
+      trashFails: ['/repo/copy3.bin'],
+    });
+    await p.invoke('cursor:next');
+    await p.invoke('duplicates:toggle-group');
+    await new Promise((r) => setTimeout(r, 0));
+    await p.invoke('cursor:next'); // /keep.bin
+    await p.invoke('duplicates:keep');
+
+    expect(p.setVar).toHaveBeenCalledWith('metarecords:dirty', expect.any(Number));
+    expect(p.groupRows()[0]).toContain(' 2 ');
+    // Still unfolded, the cursor still on the survivor.
+    expect(p.rows().filter((li) => li.classList.contains('member'))).toHaveLength(2);
+    expect(p.cursorRow()?.textContent).toContain('/keep.bin');
   });
 
-  test('a lone member reclaims nothing', async () => {
-    const mod = await import('../../default-config/panel-types/duplicates/main.js');
-    expect(mod.reclaimableOf(10, [{}])).toBe(0);
+  test('a hard-linked copy is marked', async () => {
+    const members = [
+      { uuid: 'm1', path: '/orig', inode: '7' },
+      { uuid: 'm2', path: '/link', inode: '7' },
+      { uuid: 'm3', path: '/copy' },
+    ];
+    const p = await mountPanel([group('g1', 16, 3, 16)], members);
+    await p.invoke('cursor:next');
+    await p.invoke('duplicates:toggle-group');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(p.rows()[1].textContent).toContain('+');
+    expect(p.rows()[3].textContent).not.toContain('+');
+  });
+
+  test('the panel has no trash command of its own: Delete is item:delete', async () => {
+    const p = await mountPanel([group('g1', 10, 2, 10)], []);
+    await expect(p.invoke('duplicates:trash')).rejects.toThrow('not registered');
   });
 });

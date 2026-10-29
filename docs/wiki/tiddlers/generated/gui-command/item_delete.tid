@@ -9,6 +9,7 @@ summary: Delete what is designated: its file to the trash, or the metarecord wit
 
 !! Default keys
 
+* ``delete`` → ``item:delete`` (in the ``duplicates`` panel)
 * ``delete`` → ``item:delete`` (in the ``file-manager`` panel)
 * ``delete`` → ``item:delete`` (in the ``metarecord-list`` panel)
 * ``delete`` → ``item:delete`` (in the ``path-ref`` panel)

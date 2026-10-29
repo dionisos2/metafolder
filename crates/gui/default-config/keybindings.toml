@@ -469,11 +469,9 @@ vars.index = "i"
   { command = "item:delete", when = "file-manager" },
   { command = "item:delete", when = "path-ref" },
   { command = "item:delete", when = "viewer" },
+  { command = "item:delete", when = "duplicates" },
   # In the detail panel, the field row under the cursor.
   { command = "metarecord:row-delete", when = "metarecord-detail" },
-  # In the duplicates panel, the copy under the cursor: the panel re-counts
-  # its group at once (doc "duplicates panel").
-  { command = "duplicates:trash", when = "duplicates" },
   # In the trash, for good — after a confirmation.
   { command = "trash:prune entry", when = "trash" },
 ]

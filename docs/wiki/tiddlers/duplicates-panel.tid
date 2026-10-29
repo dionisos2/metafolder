@@ -12,7 +12,7 @@ space, file size, number of copies, hash. The ''Scan'' button runs
 * <<key "duplicates:activate other" Enter>> on a member, or its `↗` button ([[Opening a row]]) — show it in the [[viewer panel]] of the other slot; <<key "panel:open other metarecord-detail" Shift+Enter>> or `ⓘ` — in the [[metarecord-detail panel]] (on a group row: the group's own metarecord). The row under the cursor is the selection, so a viewer panel beside the list follows it.
 * <<key "cursor:find self select" f>> — jump to a group by hash, or to a copy by path ([[Jumping to an entry]]).
 * <<key "cursor:next self" "↓">> / <<key "cursor:prev self" "↑">>, <<key "cursor:first self" Home>> / <<key "cursor:last self" End>> — move; <<key "view:refresh self" "Ctrl+r">> — reload.
-* <<key "duplicates:keep" "p k">> — keep the copy under the cursor, trash the others; <<key "duplicates:trash" Delete>> — trash that copy alone ([[Deleting duplicate copies]]).
+* <<key "duplicates:keep" "p k">> — keep the copy under the cursor, trash the others; <<key "item:delete" Delete>> — trash that copy alone, or on a group row delete the group's metarecord ([[Deleting duplicate copies]]).
 
 Moving the cursor publishes the row as the workspace's selection: on a member row,
 the file's metarecord; on a header row, the group's own metarecord (its hash,
