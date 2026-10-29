@@ -74,7 +74,16 @@ async function mountHelp() {
     input.value = name;
     return run('help:apply', 'search');
   };
-  return { root, input, content, run, provided, show };
+  // jsdom does not scroll: give the scroll box a scrollTop that holds a value.
+  const scroll = root.getElementById('help-scroll') as HTMLElement;
+  let top = 0;
+  Object.defineProperty(scroll, 'scrollTop', {
+    get: () => top,
+    set: (v: number) => {
+      top = v;
+    },
+  });
+  return { root, input, content, run, provided, show, scroll };
 }
 
 beforeEach(() => {
@@ -297,5 +306,35 @@ describe('link hints', () => {
     await run('help:open-hints');
     expect(labels(root)).toEqual([]);
     expect(root.activeElement).toBeNull();
+  });
+});
+
+describe('scroll position', () => {
+  test('a new page opens at its top', async () => {
+    const { show, scroll } = await mountHelp();
+    await show('documentation');
+    scroll.scrollTop = 500;
+    await show('gui');
+    expect(scroll.scrollTop).toBe(0);
+  });
+
+  test('back and forward return to where each page was left', async () => {
+    const { run, show, scroll } = await mountHelp();
+    await show('documentation');
+    scroll.scrollTop = 300;
+    await show('gui');
+    scroll.scrollTop = 700;
+    await run('help:back');
+    expect(scroll.scrollTop).toBe(300);
+    await run('help:forward');
+    expect(scroll.scrollTop).toBe(700);
+  });
+
+  test('a search lists its results from the top', async () => {
+    const { show, scroll } = await mountHelp();
+    await show('documentation');
+    scroll.scrollTop = 300;
+    await show('#page');
+    expect(scroll.scrollTop).toBe(0);
   });
 });

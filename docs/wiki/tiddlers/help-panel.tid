@@ -29,7 +29,7 @@ The box behaves like the query fields of the [[metarecord-list panel]]:
 |<<key "help:clear search" "p Shift+e">> |empty the box, to type a new search |
 |<<key "help:clear search" "p Shift+e">> |empty the box and go into it |
 |<<key "help:focus search" "p e">> |go into the box, its text kept |
-|<<key "help:back" Backspace>> |back to the page shown before, as in a browser; a search is not a step: back from one is the page it was typed over |
+|<<key "help:back" Backspace>> |back to the page shown before, as in a browser, scrolled where it was left (a page newly opened starts at its top); a search is not a step: back from one is the page it was typed over |
 |<<key "help:forward" Shift+Backspace>> |forward again, after going back |
 |<<key "cursor:parent self" "Alt+↑">> |up to the page's topic — the page of its first tag ([[Generic panel commands]]) |
 |<<key "help:open-hints" "p o">> |label the links in view with letters, to follow one (below) |

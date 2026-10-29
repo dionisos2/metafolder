@@ -97,27 +97,36 @@ export async function mount(root, metafolder) {
   // The pages shown, oldest first, and where the panel stands in them: Back
   // and Forward walk it as a browser does (doc "help panel"). Only pages are
   // remembered — a search is a way to a page, not a place to come back to.
-  /** @type {string[]} */
+  // Each keeps how far it was scrolled when left, so walking the history
+  // returns there, while a page newly opened starts at its top.
+  /** @type {{id: string, scrollTop: number}[]} */
   const visited = [];
   let visitedAt = -1;
   /** @param {string} id */
   function remember(id) {
-    if (visited[visitedAt] === id) return;
+    if (visited[visitedAt]?.id === id) return;
     visited.splice(visitedAt + 1);
-    visited.push(id);
+    visited.push({ id, scrollTop: 0 });
     visitedAt = visited.length - 1;
+  }
+  // Called before the panel shows anything else.
+  function leavePage() {
+    const entry = visited[visitedAt];
+    if (shownPage !== null && entry?.id === shownPage) entry.scrollTop = scroll.scrollTop;
   }
   /** @param {number} at */
   function revisit(at) {
+    leavePage();
     visitedAt = at;
-    const id = visited[at] ?? '';
-    searchInput.value = id;
-    showPage(id, false);
+    const entry = visited[at];
+    searchInput.value = entry?.id ?? '';
+    showPage(entry?.id ?? '', false);
+    scroll.scrollTop = entry?.scrollTop ?? 0;
   }
   function back() {
     if (visitedAt < 0) return;
     // From a search, back is the page it was typed over.
-    if (shownPage !== visited[visitedAt]) revisit(visitedAt);
+    if (shownPage !== visited[visitedAt]?.id) revisit(visitedAt);
     else if (visitedAt > 0) revisit(visitedAt - 1);
   }
   function forward() {
@@ -132,13 +141,19 @@ export async function mount(root, metafolder) {
       return;
     }
     endHints();
-    if (record) remember(id);
+    const samePage = id === shownPage;
+    if (record) {
+      leavePage();
+      remember(id);
+    }
     shownPage = id;
     results.hidden = true;
     results.replaceChildren();
     content.hidden = false;
     content.innerHTML = raw;
     showPageInfo(manifest.find((p) => p.id === id));
+    // The same page shown again (the search applied twice) stays where it is.
+    if (!samePage) scroll.scrollTop = 0;
     applyKeyHints(content, keytable);
     // …and again with a fresh table, so a rebinding made since the panel was
     // mounted is reflected without a restart.
@@ -199,7 +214,9 @@ export async function mount(root, metafolder) {
   /** @param {string} term */
   function showGrep(term) {
     endHints();
+    leavePage();
     shownPage = null;
+    scroll.scrollTop = 0;
     shownHits = [];
     resultCursor = -1;
     content.hidden = true;
