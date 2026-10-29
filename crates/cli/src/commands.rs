@@ -234,7 +234,7 @@ pub fn init(
     };
     // Only a `config/` already there can conflict; the repository is created
     // all the same, with that configuration.
-    report_config_conflict(&outcome.config.sync);
+    report_config_conflict(&outcome.metafolder, &outcome.config.sync);
     println!("{}", outcome.repo_uuid);
     Ok(0)
 }
@@ -246,18 +246,16 @@ fn repo_defaults_dir() -> Result<PathBuf, CliError> {
         .ok_or_else(|| CliError::Usage("cannot determine the config directory".into()))
 }
 
-/// Says on stderr which files a configuration merge left alone; true when
-/// there were some.
-fn report_config_conflict(sync: &metafolder_core::config_sync::SyncOutcome) -> bool {
+/// Says on stderr which files a merge into the configuration of the
+/// repository whose `.metafolder/` is `metafolder` left alone, and how to
+/// finish it by hand; true when there were some.
+fn report_config_conflict(
+    metafolder: &Path,
+    sync: &metafolder_core::config_sync::SyncOutcome,
+) -> bool {
     let Some(paths) = &sync.conflict else { return false };
-    eprintln!(
-        "conflict in {} configuration file(s): .metafolder/config/ was left as it was; \
-         resolve it with git (git merge default, in that directory)",
-        paths.len()
-    );
-    for p in paths {
-        eprintln!("  {}", p.display());
-    }
+    let dir = metafolder.join(metafolder_core::repo_config::CONFIG_DIR);
+    eprint!("{}", metafolder_core::config_sync::conflict_help(&dir, paths));
     true
 }
 
@@ -280,7 +278,7 @@ pub fn update_repo_config(path: &Path) -> Result<i32, CliError> {
     for moved in &outcome.migrated {
         println!("moved {} into config/", moved.display());
     }
-    if report_config_conflict(&outcome.sync) {
+    if report_config_conflict(&metafolder, &outcome.sync) {
         return Ok(1);
     }
     println!(

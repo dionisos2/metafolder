@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use metafolder_core::config_sync::sync;
+use metafolder_core::config_sync::{conflict_help, sync};
 
 fn main() -> ExitCode {
     let mut source: Option<PathBuf> = None;
@@ -46,15 +46,8 @@ fn main() -> ExitCode {
                 println!("initialised {}", config_dir.display());
             }
             if let Some(paths) = outcome.conflict {
-                eprintln!(
-                    "metafolder-sync-config: merge conflict in {} file(s); \
-                     'main' was left untouched. Resolve manually with git, or \
-                     revert your edits and re-run.",
-                    paths.len()
-                );
-                for p in paths {
-                    eprintln!("  {}", p.display());
-                }
+                eprint!("metafolder-sync-config: {}", conflict_help(&config_dir, &paths));
+                eprintln!("Once committed, the configuration is up to date (no re-run needed).");
                 return ExitCode::FAILURE;
             }
             if outcome.updated {

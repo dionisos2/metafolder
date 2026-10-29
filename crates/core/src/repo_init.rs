@@ -32,6 +32,8 @@ pub struct InitOutcome {
     pub repo_uuid: String,
     pub applied: Vec<String>,
     pub config: InstallOutcome,
+    /// The repository's `.metafolder/`, where its configuration lives.
+    pub metafolder: PathBuf,
 }
 
 /// The `.metafolder/` an init body names: its `metafolder`, else
@@ -92,7 +94,7 @@ pub fn init_repo(
         }
     };
 
-    Ok(InitOutcome { repo_uuid, applied, config })
+    Ok(InitOutcome { repo_uuid, applied, config, metafolder })
 }
 
 #[cfg(test)]

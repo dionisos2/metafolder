@@ -32,9 +32,27 @@ Afterwards:
 # On a conflict, it resets `main` to where it stood before the merge (your edits kept, in their commit), reports the conflicting files, and changes nothing else.
 
 A conflict left that way is reported again on the next run: "nothing to do" means
-`main` contains `default`, not "the defaults did not change". Since it is a plain
-git repository, you can also resolve it yourself: `git merge default` in
-`~/.config/metafolder/`.
+`main` contains `default`, not "the defaults did not change".
+
+!! Resolving a conflict
+
+The report gives the full path of the configuration directory and of every
+conflicting file, then the commands that finish the merge by hand, ready to paste
+(the same report as `mf repo update-config`'s, with that repository's
+`.metafolder/config/`):
+
+```
+cd ~/.config/metafolder
+git merge default
+# edit each file (remove the <<<<<<< ======= >>>>>>> markers), or keep one side whole:
+git checkout --theirs -- gui/style.css     # the shipped version
+git checkout --ours -- gui/style.css       # your version
+git add gui/style.css
+git commit --no-edit
+```
+
+`git merge --abort` gives up and puts everything back. Once the merge is
+committed, `main` contains `default`: there is nothing left to run.
 
 !! Going back to a default
 

@@ -23,6 +23,48 @@ pub struct SyncOutcome {
     pub conflict: Option<Vec<PathBuf>>,
 }
 
+/// What to tell the user when a merge into `dir` conflicted on `paths`
+/// (relative to `dir`): the full path of the directory and of every file, then
+/// the git commands that finish the merge by hand, ready to paste. Shared by
+/// `metafolder-sync-config` and `mf repo init` / `update-config`.
+pub fn conflict_help(dir: &Path, paths: &[PathBuf]) -> String {
+    let dir = std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf());
+    let files =
+        paths.iter().map(|p| shell_quote(&p.to_string_lossy())).collect::<Vec<_>>().join(" ");
+    let mut out = format!("merge conflict in {} file(s) of {}:\n", paths.len(), dir.display());
+    for p in paths {
+        out += &format!("  {}\n", dir.join(p).display());
+    }
+    out += &format!(
+        "Nothing was changed: the 'main' branch (your edits, committed) was left as it was.\n\
+         To merge the new defaults by hand:\n\
+         \x20 cd {dir}\n\
+         \x20 git merge default\n\
+         then edit each file listed above to keep both your changes and the new defaults \
+         (remove the <<<<<<< ======= >>>>>>> markers), or keep one side whole:\n\
+         \x20 git checkout --theirs -- {files}    # the shipped version\n\
+         \x20 git checkout --ours -- {files}      # your version\n\
+         and finish the merge:\n\
+         \x20 git add {files}\n\
+         \x20 git commit --no-edit\n\
+         ('git merge --abort' gives up and puts everything back.)\n",
+        dir = shell_quote(&dir.to_string_lossy()),
+    );
+    out
+}
+
+/// `s` as one shell word: as is when it holds nothing the shell would
+/// interpret, single-quoted otherwise.
+fn shell_quote(s: &str) -> String {
+    let plain =
+        !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "/._-+=:,@%".contains(c));
+    if plain {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', "'\\''"))
+    }
+}
+
 /// Gathers `<source_root>/crates/*/default-config/` (plus the crate-agnostic
 /// `<source_root>/scripts/shipped/` → `scripts/` and the rendered
 /// `<source_root>/docs/wiki/dist/` → `docs/`) into the user configuration
@@ -506,6 +548,33 @@ mod tests {
         assert_eq!(conflict, vec![PathBuf::from("gui/style.css")]);
         // main restored to the user's committed edit, not a merged/marker state.
         assert_eq!(read(&config, "gui/style.css").as_deref(), Some("user-line\n"));
+    }
+
+    #[test]
+    fn conflict_help_names_the_full_paths_and_the_commands() {
+        let dir = Path::new("/home/u/.config/metafolder");
+        let paths = [PathBuf::from("gui/style.css"), PathBuf::from("gui/my file.toml")];
+        let help = conflict_help(dir, &paths);
+        // The directory and every file, in full, so they can be opened as is.
+        assert!(help.contains("/home/u/.config/metafolder:"), "{help}");
+        assert!(help.contains("  /home/u/.config/metafolder/gui/style.css\n"), "{help}");
+        // The commands, ready to paste: a path with a space is quoted.
+        assert!(help.contains("  cd /home/u/.config/metafolder\n"), "{help}");
+        assert!(help.contains("  git merge default\n"), "{help}");
+        assert!(
+            help.contains("git checkout --theirs -- gui/style.css 'gui/my file.toml'"),
+            "{help}"
+        );
+        assert!(help.contains("git checkout --ours -- gui/style.css 'gui/my file.toml'"), "{help}");
+        assert!(help.contains("  git add gui/style.css 'gui/my file.toml'\n"), "{help}");
+        assert!(help.contains("  git commit --no-edit\n"), "{help}");
+        assert!(help.contains("git merge --abort"), "{help}");
+    }
+
+    #[test]
+    fn conflict_help_quotes_a_directory_that_needs_it() {
+        let help = conflict_help(Path::new("/tmp/it's here"), &[PathBuf::from("a")]);
+        assert!(help.contains("  cd '/tmp/it'\\''s here'\n"), "{help}");
     }
 
     #[test]
