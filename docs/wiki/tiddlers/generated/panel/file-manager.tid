@@ -6,7 +6,6 @@ summary: The file-manager panel type
 !! Commands
 
 * ``file-manager:activate`` — File manager: go into the folder / show the file (here / other / new)
-* ``file-manager:delete`` — File manager: delete the selected entry (trash when a repo is active)
 * ``file-manager:select`` — File manager: change the checked multi-selection (toggle / all / none)
 * ``file-manager:toggle`` — File manager: toggle a view flag (root constraint / hidden dot-entries / sort by watch activity / sort by operations written)
 

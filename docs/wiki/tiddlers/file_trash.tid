@@ -3,4 +3,4 @@ tags: [[GUI command]] Trash
 kind: reference
 summary: Send a panel's files to the trash, metarecords with them (self / a panel type)
 
-Sends each file the panel designates to the repository's trash, its metarecords with it — what `mf trash -f` does. Nothing is forced: a reference from another metarecord is a refusal. See [[Sending files to the trash]]; one of the [[File commands]]. It used to be `metarecord:trash`, which acts first on the file: a file with no metarecord goes the same way.
+Sends each file the panel designates to the repository's trash, its metarecords with it — what `mf trash -f` does; a file no repository holds goes to the desktop's trash ([[The desktop trash]]). Nothing is forced: a reference from another metarecord is a refusal. See [[Sending files to the trash]]; one of the [[File commands]]. It used to be `metarecord:trash`, which acts first on the file: a file with no metarecord goes the same way.

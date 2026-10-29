@@ -1745,7 +1745,9 @@ function fileOps(ws: string, context: ExecContext): FileOps {
     copy: async (from, to) => void (await invoke("fs_copy", { from, to })),
     mkdir: async (path) => void (await invoke("fs_mkdir", { path })),
     createFile: async (path) => void (await invoke("fs_create_file", { path })),
-    trash: async (path) => void (await invoke("trash_path", { repo: repo(), path })),
+    trash: async (path) =>
+      ((await invoke("trash_path", { repo: repoOf(ws) ?? null, path })) as Metafolder.Trashed)
+        .desktop,
     record: async (path) => {
       const daemon = {
         request: (method: string, url: string, body: unknown) =>

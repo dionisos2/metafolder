@@ -9,15 +9,14 @@ designates — a row of the [[metarecord-list panel]] or of the
 [[file-manager panel]], the metarecord the [[metarecord-detail panel]] or the
 [[viewer panel]] shows, a node of the [[path-ref panel]]:
 
-* ''a file'', tracked or not, goes to the repository's trash, its metarecords with it ([[What trashing does]]);
+* ''a file'', tracked or not, goes to the repository's trash, its metarecords with it ([[What trashing does]]) — or, when no repository holds it, to the desktop's ([[The desktop trash]]);
 * ''a metarecord without a file'' is deleted.
 
 A file is never deleted without its metarecord: one that would stay would
 describe a file that is gone. There is no question, since nothing here is final:
 the trash gives the file and its metarecords back, and <<key "log:undo" Ctrl+z>>
-brings a deleted metarecord back ([[The undo selection]]). For the same reason
-it does nothing without an active repository — there would be no trash to
-restore from.
+brings a deleted metarecord back ([[The undo selection]]). The checked
+metarecords and the query need an active repository; a file alone does not.
 
 !! Several at once
 

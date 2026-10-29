@@ -98,7 +98,7 @@ These are the [[File commands]], run on this panel's files and folder.
 |<<key "file:duplicate self" Ctrl+d>> |copy it beside itself, as `name copy.ext` |
 |<<key "clipboard:copy self" Ctrl+c>>, <<key "clipboard:cut self" Ctrl+x>> |copy, cut the checked entries, or the one under the cursor ([[Generic panel commands]]) |
 |<<key "file:paste self" Ctrl+v>> |paste into the directory shown |
-|<<key "item:delete" Delete>> |send the entry to the trash, its metarecord with it ([[Deleting an item]]); with no repository, `file-manager:delete` deletes it for good after a confirmation, and has no key |
+|<<key "item:delete" Delete>> |send the entry to the trash, its metarecord with it ([[Deleting an item]]); with no repository, to the desktop's ([[The desktop trash]]) |
 
 They act on the disk directly, not through the daemon. A tracked file that is renamed
 or moved here keeps its metarecord once the [[Watcher]] has seen the move — a couple
@@ -118,8 +118,9 @@ holds.
 
 Deleting sends the entry to the repository's trash, tracked or not, together with its
 metarecords, and the [[trash panel]] restores it ([[Sending files to the trash]]).
-With no repository there is no trash: the removal is permanent, and the confirmation
-says so.
+An entry no repository holds — none is active, or the folder is outside its root —
+goes to the desktop's trash, which a file manager restores from
+([[The desktop trash]]). Nothing is deleted for good.
 
 !! Right click
 
@@ -127,7 +128,7 @@ A right click moves the cursor to the row, then offers ([[Context menus]]):
 
 * for a tracked row, the metarecord's actions and ''Add to the selection'';
 * ''Track'';
-* ''Open'' for a directory, the clipboard actions, ''Rename…'', ''Duplicate'', ''Copy full path'', ''Move to trash'' (''Delete…'' without a repository);
+* ''Open'' for a directory, the clipboard actions, ''Rename…'', ''Duplicate'', ''Copy full path'', ''Move to trash'';
 * ''Ignore “name” here'', ''Ignore *.ext here'' and ''Apply an ignore preset…'', which write on the directory shown ([[Setting ignore patterns]]);
 * ''New folder…'', ''New file…''.
 

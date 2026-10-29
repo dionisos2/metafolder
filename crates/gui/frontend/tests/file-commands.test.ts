@@ -15,7 +15,7 @@ function ops(over: Partial<Record<keyof FileOps, ReturnType<typeof vi.fn>>> = {}
     copy: vi.fn(async () => {}),
     mkdir: vi.fn(async () => {}),
     createFile: vi.fn(async () => {}),
-    trash: vi.fn(async () => {}),
+    trash: vi.fn(async () => false),
     record: vi.fn(async () => true),
     ask: vi.fn(async () => 'typed'),
     clipboard: vi.fn(async () => null),
@@ -48,8 +48,15 @@ describe('file: commands — what they do', () => {
     const refresh = vi.fn();
     await runFileCommand('file:trash', { paths: () => ['/r/a', '/r/b'], refresh }, [], o);
     expect(o.trash.mock.calls).toEqual([['/r/a'], ['/r/b']]);
+    expect(o.status).toHaveBeenCalledWith('Trashed 2 files — restore them from the trash panel');
     expect(o.changed).toHaveBeenCalled();
     expect(refresh).toHaveBeenCalled();
+  });
+
+  test('a file no repository holds goes to the desktop trash, and the status says so', async () => {
+    const o = ops({ trash: vi.fn(async () => true) });
+    await runFileCommand('file:trash', { paths: () => ['/tmp/a.txt'] }, [], o);
+    expect(o.status).toHaveBeenCalledWith('Trashed a.txt — restore it from the desktop trash');
   });
 
   test('nothing designated is an error', async () => {

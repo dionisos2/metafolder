@@ -515,6 +515,14 @@ declare namespace Metafolder {
     remove(path: string): Promise<void>;
   }
 
+  /** Where a trashing put a path (doc "Trash"). */
+  interface Trashed {
+    /** The trashed basename. */
+    name: string;
+    /** The desktop's trash, restored from a file manager, not the trash panel. */
+    desktop: boolean;
+  }
+
   /** One entry in a repository's trash-bin (doc "Trash"). */
   interface TrashEntry {
     id: string;
@@ -539,11 +547,12 @@ declare namespace Metafolder {
     remove(repo: string, id: string): Promise<void>;
     /** Empties the whole trash; returns the number of entries removed. */
     empty(repo: string): Promise<number>;
-    /** Sends a raw filesystem path to the trash and returns the trashed
-     *  basename. A *tracked* path loses its metarecords on the way (captured
-     *  and deleted before the bytes move, doc "Trash") — the file-manager
-     *  panel's delete, and `metarecord:remove`'s OK. */
-    trashPath(repo: string, path: string): Promise<string>;
+    /** Sends a raw filesystem path to a trash and says which: the
+     *  repository's when `repo` holds it — a *tracked* path loses its
+     *  metarecords on the way (captured and deleted before the bytes move, doc
+     *  "Trash") — the desktop's otherwise (no repository, or a path outside its
+     *  root). `item:delete` and `file:trash`. */
+    trashPath(repo: string | null, path: string): Promise<Trashed>;
     /** Sends the files of every metarecord `query` matches to the trash, their
      *  metarecords deleted in one write (doc "Sending files to the trash").
      *  Posts the outcome to the status bar itself. `metarecord:bulk <target>

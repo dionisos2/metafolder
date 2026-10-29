@@ -41,6 +41,10 @@ uuid = { version = "1", features = ["v4", "serde"] }
 clap = { version = "4", features = ["derive"] }
 # The navigation gate parses URLs rather than prefix-matching them (sandbox.rs).
 url = "2"
+# The desktop's trash (freedesktop.org specification) for a path no repository
+# holds (doc "Trash"). `chrono` writes the DeletionDate the specification
+# requires; the other default features are Windows COM settings.
+trash = { version = "5", default-features = false, features = ["chrono"] }
 
 # Already in the dependency tree via wry; used directly to react to
 # WebKit web-process crashes (reload instead of a frozen window).

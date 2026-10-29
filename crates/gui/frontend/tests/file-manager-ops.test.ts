@@ -169,7 +169,7 @@ describe('file-manager filesystem operations', () => {
   });
 
   test('operations are inert before the panel has opened a directory', async () => {
-    const { api, handlers, fs, trash } = await mount(null, { start: false });
+    const { api, fs, trash } = await mount(null, { start: false });
     promptSpy.mockReturnValue('anything');
     // A panel that shows no folder yet has none to create or paste in, and no
     // file to rename or copy: the file commands refuse.
@@ -177,7 +177,7 @@ describe('file-manager filesystem operations', () => {
     await expect(generic(api.provide, 'file:paste')).rejects.toThrow('no folder here');
     await expect(generic(api.provide, 'file:rename')).rejects.toThrow('no file here');
     await expect(generic(api.provide, 'file:duplicate')).rejects.toThrow('no file here');
-    await handlers.get('file-manager:delete')!();
+    await expect(generic(api.provide, 'file:trash')).rejects.toThrow('no file here');
     expect(fs.mkdir).not.toHaveBeenCalled();
     expect(fs.move).not.toHaveBeenCalled();
     expect(fs.copy).not.toHaveBeenCalled();
@@ -246,48 +246,28 @@ describe('file-manager filesystem operations', () => {
     expect(fs.move).not.toHaveBeenCalled();
   });
 
-  test('delete with no repo removes permanently after confirmation', async () => {
+  test('with no repository a file is never deleted for good: it goes to a trash', async () => {
+    // The desktop's, chosen by the trash_path command (doc "Trash").
     const { api, handlers, fs, trash } = await mount(null);
     await selectSong(api);
-    await handlers.get('file-manager:delete')!();
-    expect(confirmSpy).toHaveBeenCalled();
-    expect(fs.remove).toHaveBeenCalledWith('/song.mp3');
-    expect(trash.trashPath).not.toHaveBeenCalled();
-  });
-
-  test('delete with an active repo routes to the trash', async () => {
-    const { api, handlers, fs, trash } = await mount('repo-1');
-    await selectSong(api);
-    await handlers.get('file-manager:delete')!();
-    expect(trash.trashPath).toHaveBeenCalledWith('repo-1', '/song.mp3');
+    await generic(api.provide, 'file:trash');
+    expect(trash.trashPath).toHaveBeenCalledWith(null, '/song.mp3');
+    expect(confirmSpy).not.toHaveBeenCalled();
     expect(fs.remove).not.toHaveBeenCalled();
-  });
-
-  test('a declined confirmation aborts the delete (both paths)', async () => {
-    confirmSpy.mockReturnValue(false);
-    const noRepo = await mount(null);
-    await selectSong(noRepo.api);
-    await noRepo.handlers.get('file-manager:delete')!();
-    expect(noRepo.fs.remove).not.toHaveBeenCalled();
-
-    const withRepo = await mount('repo-1');
-    await selectSong(withRepo.api);
-    await withRepo.handlers.get('file-manager:delete')!();
-    expect(withRepo.trash.trashPath).not.toHaveBeenCalled();
+    expect(handlers.has('file-manager:delete')).toBe(false);
   });
 
   test('operations on the synthetic "." / ".." rows are refused', async () => {
-    const { api, handlers, fs, trash, statusBar } = await mount(null);
+    const { api, fs, trash } = await mount(null);
     // Cursor at index 0 (the "." row) — not a real entry.
     await cursor(api.provide, 'first');
     await expect(generic(api.provide, 'file:rename')).rejects.toThrow('no file here');
     await expect(generic(api.provide, 'file:duplicate')).rejects.toThrow('no file here');
-    await handlers.get('file-manager:delete')!();
+    await expect(generic(api.provide, 'file:trash')).rejects.toThrow('no file here');
     await expect(generic(api.provide, 'clipboard:copy')).rejects.toThrow('no file to copy');
     expect(fs.move).not.toHaveBeenCalled();
     expect(fs.copy).not.toHaveBeenCalled();
     expect(trash.trashPath).not.toHaveBeenCalled();
-    expect(statusBar.message).toHaveBeenCalled();
   });
 
   test('rename to the same name (or blank) is a no-op', async () => {
@@ -361,7 +341,7 @@ describe('file-manager filesystem operations', () => {
   });
 
   test('rename / duplicate errors fail the command, a trash error is surfaced', async () => {
-    const { api, handlers, fs, trash, statusBar } = await mount('repo-1');
+    const { api, fs, trash } = await mount('repo-1');
     await selectSong(api);
     fs.move.mockRejectedValueOnce(new Error('x'));
     promptSpy.mockReturnValueOnce('r.mp3');
@@ -369,19 +349,14 @@ describe('file-manager filesystem operations', () => {
     fs.copy.mockRejectedValueOnce(new Error('y'));
     await expect(generic(api.provide, 'file:duplicate')).rejects.toThrow('y');
     trash.trashPath.mockRejectedValueOnce(new Error('z'));
-    await handlers.get('file-manager:delete')!();
-    expect(statusBar.error).toHaveBeenCalledTimes(1);
+    await expect(generic(api.provide, 'file:trash')).rejects.toThrow('z');
   });
 
-  test('new-file and permanent-delete errors are reported', async () => {
-    const { api, handlers, fs, statusBar } = await mount(null);
+  test('new-file errors fail the command', async () => {
+    const { api, fs } = await mount(null);
     fs.createFile.mockRejectedValueOnce(new Error('x'));
     promptSpy.mockReturnValueOnce('f');
     await expect(generic(api.provide, 'file:new', 'file')).rejects.toThrow('x');
-    await selectSong(api);
-    fs.remove.mockRejectedValueOnce(new Error('x'));
-    await handlers.get('file-manager:delete')!();
-    expect(statusBar.error).toHaveBeenCalledTimes(1);
   });
 
   test('paste fails on a copy error, and refuses pasting into itself', async () => {

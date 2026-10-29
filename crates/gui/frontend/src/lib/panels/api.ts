@@ -754,8 +754,8 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
           invoke('trash_restore', { repo, id }) as Promise<string>,
         remove: (repo: string, id: string) => invoke('trash_remove', { repo, id }) as Promise<void>,
         empty: (repo: string) => invoke('trash_empty', { repo }) as Promise<number>,
-        trashPath: (repo: string, path: string) =>
-          invoke('trash_path', { repo, path }) as Promise<string>,
+        trashPath: (repo: string | null, path: string) =>
+          invoke('trash_path', { repo, path }) as Promise<Metafolder.Trashed>,
         trashQuery: (repo: string, query: unknown) =>
           invoke('trash_query_metarecords', {
             wsId: ctx.wsId,

@@ -727,7 +727,7 @@ export async function mount(root, metafolder) {
             void statusBar.message(`Copied ${item.path}`, statusMessageMs);
           },
         },
-        { label: repo ? 'Move to trash' : 'Delete…', action: () => void deleteSelected(metafolder) },
+        { label: 'Move to trash', action: () => void fileCommand('file:trash') },
       );
     } else {
       items.push({ label: 'Paste', disabled: !hasClipboard(metafolder), action: () => void fileCommand('file:paste') });
@@ -1034,36 +1034,6 @@ export async function mount(root, metafolder) {
   }
 
 
-  /** @param {MetafolderApi} mf */
-  async function deleteSelected(mf) {
-    if (currentDir === null) return;
-    const item = selectedEntry();
-    if (!item) return;
-    // With an active repo, deletions are restorable through the repo trash;
-    // otherwise (browsing the raw disk) there is nowhere to restore from, so
-    // the removal is permanent and confirmed as such.
-    if (repo) {
-      if (!confirm(`Send "${item.name}" to the trash?`)) return;
-      try {
-        await mf.trash.trashPath(repo, item.path);
-      } catch (error) {
-        await statusBar.error(error, statusErrorMs);
-        return;
-      }
-      void statusBar.message(`Trashed ${item.name} — restore it from the trash panel`, statusMessageMs);
-    } else {
-      if (!confirm(`Permanently delete "${item.name}"? This cannot be undone.`)) return;
-      try {
-        await mf.fs.remove(item.path);
-      } catch (error) {
-        await statusBar.error(error, statusErrorMs);
-        return;
-      }
-      void statusBar.message(`Deleted ${item.name}`, statusMessageMs);
-    }
-    await afterMutation(mf, null);
-  }
-
   // Re-read the current directory and its tracked status from disk/daemon,
   // preserving the cursor position.
   /** @param {MetafolderApi} mf */
@@ -1208,10 +1178,6 @@ export async function mount(root, metafolder) {
         const item = listing[cursorIndex];
         return item && item.name !== '.' && item.name !== '..' ? [item.path] : [];
       }),
-  });
-  void commands.register('file-manager:delete', {
-    label: 'File manager: delete the selected entry (trash when a repo is active)',
-    handler: (mf) => deleteSelected(mf),
   });
 
   /** @type {Record<string, (mf: MetafolderApi) => unknown>} */

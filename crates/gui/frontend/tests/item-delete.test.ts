@@ -2,14 +2,14 @@
 // `commands.js`, deletes what is designated without a question — the file to
 // the trash, its metarecords with it, or the metarecord alone when there is
 // no file. `selection` and `query` do it to the checked metarecords or to
-// what the list's query matches. Nothing is ever deleted for good: without a
-// repository there is no trash, and nothing is done.
+// what the list's query matches. Nothing is ever deleted for good: a file no
+// repository holds goes to the desktop's trash.
 
 import { beforeEach, describe, expect, test } from 'vitest';
 import shipped from '../../default-config/commands.js';
 
 let vars: Record<string, unknown>;
-let calls: { daemon: [string, string, unknown][]; trash: [string, string][]; trashQuery: [string, unknown][]; status: string[]; errors: string[] };
+let calls: { daemon: [string, string, unknown][]; trash: [string | null, string][]; trashQuery: [string, unknown][]; status: string[]; errors: string[] };
 
 function fakeMf() {
   return {
@@ -27,9 +27,10 @@ function fakeMf() {
       repoRoot: async () => '/srv',
     },
     trash: {
-      trashPath: async (repo: string, path: string) => {
+      trashPath: async (repo: string | null, path: string) => {
         calls.trash.push([repo, path]);
-        return path.split('/').pop();
+        // The repository's trash holds only what is under its root.
+        return { name: path.split('/').pop(), desktop: repo === null || !path.startsWith('/srv/') };
       },
       trashQuery: async (repo: string, query: unknown) => {
         calls.trashQuery.push([repo, query]);
@@ -61,7 +62,7 @@ describe('item:delete — the item under the cursor', () => {
     await run();
     expect(calls.trash).toEqual([['r1', '/srv/song.mp3']]);
     expect(calls.daemon).toEqual([]);
-    expect(calls.status[0]).toContain('song.mp3');
+    expect(calls.status[0]).toBe('Trashed song.mp3 — restore it from the trash panel');
     expect(vars['metarecords:dirty']).toEqual(expect.any(Number));
   });
 
@@ -89,10 +90,24 @@ describe('item:delete — the item under the cursor', () => {
     expect(calls.daemon).toEqual([]);
   });
 
-  test('without a repository nothing is deleted: there is no trash to restore from', async () => {
+  test('without a repository the file goes to the desktop trash', async () => {
     vars = { selected_paths: ['/tmp/x'] };
     await run();
+    expect(calls.trash).toEqual([[null, '/tmp/x']]);
+    expect(calls.status[0]).toBe('Trashed x — restore it from the desktop trash');
+  });
+
+  test('without a repository nor a file, nothing is deleted', async () => {
+    vars = {};
+    await run();
     expect(calls.trash).toEqual([]);
+    expect(calls.errors[0]).toContain('nothing is selected');
+  });
+
+  test('the checked ones need a repository', async () => {
+    vars = { selected_metarecords: ['u1'] };
+    await run('selection');
+    expect(calls.daemon).toEqual([]);
     expect(calls.errors[0]).toContain('no active repository');
   });
 

@@ -1,0 +1,24 @@
+title: The desktop trash
+tags: Trash
+kind: reference
+aliases: freedesktop-trash system-trash
+summary: A file no repository holds goes to the desktop's trash — the freedesktop.org one every file manager restores from — so the GUI deletes nothing for good.
+
+The GUI never deletes a file for good. A file that a repository holds — anywhere
+under its root, tracked or not — goes to that repository's trash, its metarecords
+with it ([[What trashing does]]). Any other file goes to the ''desktop's trash'':
+with no active repository, or a path outside its root, in the
+[[file-manager panel]] for instance.
+
+The desktop's trash is the one of the freedesktop.org ''Trash'' specification,
+the trash of Nautilus, Dolphin or `gio trash`: `~/.local/share/Trash/` (under
+`$XDG_DATA_HOME`), or `.Trash-<uid>/` at the top of another disk. The GUI writes
+into it through the `trash` crate.
+
+A file is restored from there by a file manager, not by the [[trash panel]],
+which shows only the repository's trash; the status line says which trash a file
+went to. There is no metarecord to keep: a file no repository holds has none.
+
+<<cmd "item:delete">> (Delete) and <<cmd "file:trash">> both choose the trash this
+way. There is no command that deletes a file for good: the desktop's trash is
+emptied from a file manager, the repository's by pruning it ([[Trash retention]]).

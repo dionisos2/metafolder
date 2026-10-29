@@ -13,7 +13,7 @@ They are [[generic panel commands|Generic panel commands]]: the panel is their
 first argument, `self` or a panel type, and it designates what they work on.
 
 |!Command |!Works on |!What it does |
-|[[file:trash]] |the files |sends them to the trash, their metarecords with them ([[Trash]]) |
+|[[file:trash]] |the files |sends them to the trash, their metarecords with them ([[Trash]]); to the desktop's when no repository holds them ([[The desktop trash]]) |
 |[[file:rename]] |the one file |renames it in its folder; the name is asked, the current one to edit |
 |[[file:duplicate]] |the files |copies each beside itself, under a free name |
 |[[file:record]] |the files |gives each its metarecord, `mf_watch = false` ([[Recording a path]]) |

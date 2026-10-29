@@ -248,19 +248,33 @@ async function duplicatePath(metafolder, path, onChanged, statusMs) {
 }
 
 /**
- * @param {MetafolderApi} metafolder @param {string} repo @param {string} path
+ * The status line after a trashing: what went, and where it is restored from —
+ * the trash panel for the repository's trash, a file manager for the desktop's
+ * (doc "Trash").
+ * @param {string} what @param {boolean} many @param {boolean[]} desktop one per trashing
+ */
+export function trashedMessage(what, many, desktop) {
+  const places = [];
+  if (desktop.some((d) => !d)) places.push('the trash panel');
+  if (desktop.some((d) => d)) places.push('the desktop trash');
+  return `Trashed ${what} — restore ${many ? 'them' : 'it'} from ${places.join(' and ')}`;
+}
+
+/**
+ * @param {MetafolderApi} metafolder @param {string | null} repo @param {string} path
  * @param {string} label @param {() => void|Promise<void>} onChanged @param {number} statusMs
  */
 async function trashPath(metafolder, repo, path, label, onChanged, statusMs) {
   const { trash, statusBar } = metafolder;
   if (!confirm(`Send "${label}" to the trash?`)) return;
+  let trashed;
   try {
-    await trash.trashPath(repo, path);
+    trashed = await trash.trashPath(repo, path);
   } catch (error) {
     await statusBar.error(error, errorMs(metafolder));
     return;
   }
-  void statusBar.message(`Trashed ${label} — restore it from the trash panel`, statusMs);
+  void statusBar.message(trashedMessage(label, false, [trashed.desktop]), statusMs);
   await onChanged();
 }
 

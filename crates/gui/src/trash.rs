@@ -400,25 +400,59 @@ fn bulk_trash_message(outcome: &BulkTrashOutcome) -> String {
     parts.join(" · ")
 }
 
-/// Sends a raw filesystem path to the repo's trash. Used by the file-manager
-/// panel's delete, which operates on the disk directly
-/// (doc "file-manager panel").
+/// Where a trashing put a path: the repository's trash, or the desktop's.
+#[derive(Debug, PartialEq, serde::Serialize)]
+pub struct Trashed {
+    /// The trashed basename, for the status line.
+    pub name: String,
+    /// The desktop's trash: restored from a file manager, not the trash panel.
+    pub desktop: bool,
+}
+
+/// Whether `abs` is the repository's to trash: a path under its root. Anything
+/// else no metarecord can track, and it goes to the desktop's trash.
+pub fn in_repository(root: &Path, abs: &Path) -> bool {
+    abs.starts_with(root)
+}
+
+/// Sends `abs` to the desktop's trash, the freedesktop.org one every file
+/// manager restores from (doc "Trash"). For a path no repository holds: with no
+/// repository there is no trash of ours to put it in. Returns the basename.
+pub fn trash_to_desktop(abs: &Path) -> Result<String, String> {
+    trash::delete(abs).map_err(|e| format!("cannot trash {}: {e}", abs.display()))?;
+    Ok(abs.file_name().map_or_else(|| abs.display().to_string(), |n| n.to_string_lossy().into()))
+}
+
+/// Sends a raw filesystem path to a trash (doc "File commands"): the
+/// repository's when `repo` holds it, the desktop's otherwise — no repository,
+/// or a path outside its root.
 ///
 /// Operating on a path does not mean operating behind the repository's back: if
 /// a metarecord tracks that path it is trashed along with the bytes, exactly as
 /// deleting the record itself would (doc "Trash"). An untracked path has none and
-/// only its bytes move. Returns the trashed basename.
+/// only its bytes move.
 #[tauri::command]
 pub async fn trash_path(
     app: tauri::State<'_, Arc<App>>,
-    repo: String,
+    repo: Option<String>,
     path: String,
-) -> Result<String, String> {
-    let info = repo_info(&app.daemon, &repo).await?;
-    let (root, internal) = root_and_internal(&info)?;
+) -> Result<Trashed, String> {
+    let abs = PathBuf::from(&path);
+    let held = match repo {
+        Some(repo) => {
+            let info = repo_info(&app.daemon, &repo).await?;
+            let (root, internal) = root_and_internal(&info)?;
+            in_repository(Path::new(&root), &abs).then_some((repo, root, internal))
+        }
+        None => None,
+    };
     let base = app.daemon.base_url();
-    tokio::task::spawn_blocking(move || {
-        trash_tracked(&base, &repo, &internal, Path::new(&path), Some(Path::new(&root)), None)
+    tokio::task::spawn_blocking(move || match held {
+        Some((repo, root, internal)) => {
+            trash_tracked(&base, &repo, &internal, &abs, Some(Path::new(&root)), None)
+                .map(|name| Trashed { name, desktop: false })
+        }
+        None => trash_to_desktop(&abs).map(|name| Trashed { name, desktop: true }),
     })
     .await
     .map_err(|e| format!("trash task panicked: {e}"))?

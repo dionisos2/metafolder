@@ -1,9 +1,0 @@
-title: $:/mf/gen/GUI command/file-manager:delete
-catalog: GUI command
-target: file-manager:delete
-summary: File manager: delete the selected entry (trash when a repo is active)
-
-!! Reference
-
-* Defined by the ``file-manager`` panel
-* No default key

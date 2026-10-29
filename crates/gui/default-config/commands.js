@@ -19,6 +19,7 @@
 // The shared panel helpers (doc "The metafolder API"): `frecency` is the
 // score of a recently-viewed entry, the same in the recent panel.
 import { frecency, formatScore } from '/__ui.js';
+import { trashedMessage } from '/__file-actions.js';
 
 /** The fields of the tag model (doc "Hierarchical tags"): what a record has,
  *  what it has not, and what a folder partly has. */
@@ -322,9 +323,10 @@ export async function selectedFile(mf) {
 }
 
 /**
- * `item:delete` on the item under the cursor: the selected path to the trash,
- * else the selected metarecord deleted.
- * @param {MetafolderApi} mf @param {string} repo
+ * `item:delete` on the item under the cursor: the selected path to the trash —
+ * the repository's, or the desktop's for a path no repository holds — else the
+ * selected metarecord deleted.
+ * @param {MetafolderApi} mf @param {string | null} repo
  * @param {{ uuid: string, repo: string } | null} selection
  */
 async function deleteItem(mf, repo, selection) {
@@ -336,8 +338,8 @@ async function deleteItem(mf, repo, selection) {
     (await selectedFile(mf))?.path;
   if (path) {
     const trashed = await mf.trash.trashPath(repo, path);
-    await mf.statusBar.message(`Trashed ${trashed} — restore it from the trash panel`);
-  } else if (selection) {
+    await mf.statusBar.message(trashedMessage(trashed.name, false, [trashed.desktop]));
+  } else if (selection && repo) {
     await mf.daemon.call('DELETE', `/repos/${repo}/metarecords/${selection.uuid}`);
     await mf.statusBar.message('Deleted the metarecord (it had no file)');
   } else {
@@ -409,13 +411,13 @@ export default {
       const selection = await selectedMetarecord(mf);
       const active = await mf.workspace.get('active_repo');
       const repo = selection?.repo ?? (typeof active === 'string' && active !== '' ? active : null);
-      if (!repo) {
-        await mf.statusBar.error('no active repository: nothing deleted, there is no trash to restore from');
+      if (!repo && what !== undefined) {
+        await mf.statusBar.error(`no active repository: no ${what} to delete`);
         return;
       }
       try {
         if (what === undefined) await deleteItem(mf, repo, selection);
-        else await deleteItems(mf, repo, what);
+        else if (repo) await deleteItems(mf, repo, what);
       } catch (error) {
         await mf.statusBar.error(error);
       }

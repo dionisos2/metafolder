@@ -14,6 +14,7 @@ import {
   isWithin,
   joinPath,
   parentDir,
+  trashedMessage,
 } from '../../../panel-shim/file-actions.js';
 
 /** What the `file:` commands do their work with. */
@@ -23,8 +24,9 @@ export interface FileOps {
   copy(from: string, to: string): Promise<void>;
   mkdir(path: string): Promise<void>;
   createFile(path: string): Promise<void>;
-  /** Sends `path` to the active repository's trash, its metarecords with it. */
-  trash(path: string): Promise<void>;
+  /** Sends `path` to the active repository's trash, its metarecords with it,
+   *  or to the desktop's when no repository holds it; true for the desktop's. */
+  trash(path: string): Promise<boolean>;
   /** Gives `path` its metarecord; false when the user gave up. */
   record(path: string): Promise<boolean>;
   /** Asks for a text in the command input; null when given up. */
@@ -95,9 +97,10 @@ export async function runFileCommand(
   switch (name) {
     case 'file:trash': {
       const paths = await designated(fns);
-      for (const path of paths) await ops.trash(path);
+      const desktop = [];
+      for (const path of paths) desktop.push(await ops.trash(path));
       const what = paths.length === 1 ? baseName(paths[0]) : plural(paths.length, 'file');
-      await ops.status(`Trashed ${what} — restore it from the trash panel`);
+      await ops.status(trashedMessage(what, paths.length > 1, desktop));
       await after(ops, fns, null);
       return;
     }

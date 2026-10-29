@@ -35,7 +35,7 @@ function mockMf(
     copy: vi.fn(async () => {}),
     ...fsOverrides,
   };
-  const trash = { trashPath: vi.fn(async () => {}) };
+  const trash = { trashPath: vi.fn(async () => ({ name: 'a.txt', desktop: false })) };
   const workspace = { set: vi.fn(async () => {}) };
   const commands = { invoke: vi.fn(async (_invocation?: string) => {}) };
   const global = globalStub();

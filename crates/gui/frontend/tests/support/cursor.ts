@@ -33,7 +33,9 @@ export function stubFileOps(api: StubApi): FileOps {
     copy: async (from, to) => void (await fs.copy?.(from, to)),
     mkdir: async (path) => void (await fs.mkdir?.(path)),
     createFile: async (path) => void (await fs.createFile?.(path)),
-    trash: async (path) => void (await api.trash?.trashPath?.(null, path)),
+    trash: async (path) =>
+      ((await api.trash?.trashPath?.(null, path)) as { desktop?: boolean } | undefined)?.desktop ??
+      true,
     record: async () => true,
     ask: async (question, initial) => window.prompt(question, initial),
     clipboard: async () =>

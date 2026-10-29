@@ -46,10 +46,11 @@ says how many files went and what was left out.
 
 !! From the file manager
 
-In the [[file-manager panel]], deleting the highlighted entry sends it to the
-repository's trash when a repository is active (its metarecords go with it if it
-is tracked, the bytes alone if it is not); with no active repository the removal
-is permanent. Both are confirmed.
+In the [[file-manager panel]], <<key "item:delete" Delete>> sends the highlighted
+entry to the repository's trash when the repository holds it (its metarecords go
+with it if it is tracked, the bytes alone if it is not), and to the desktop's
+otherwise — no active repository, or a folder outside its root
+([[The desktop trash]]). Neither is confirmed: both give the file back.
 
 The GUI never forces a trashing past a reference: the refusal is shown, and
 `mf trash -f --force` is the way through.
