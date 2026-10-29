@@ -1,0 +1,242 @@
+# The class of every command (doc "Command classes"): how often it is used,
+# which decides what key it may have (doc "Choosing keybindings").
+#
+#   A  all the time              one key
+#   B  several times a session   one modifier, or two keys
+#   C  now and then              two or three keys
+#   D  rarely                    the command input only
+#   X  cannot be undone          never a key
+#
+# A key is a command, or an invocation's first words: "log:revert" classes
+# every revert, "log:revert op" that one only — the longest that fits wins.
+# The keybindings panel filters its list by class.
+
+# ── Input and editing ────────────────────────────────────────────────────────
+"command-input:focus" = "A"
+"command-input:focus bash" = "B"
+"editing:confirm" = "A"
+"editing:unfocus" = "A"
+"editing:discard" = "B"
+"editing:goto" = "B"
+"editing:clear-line-end" = "B"
+"completion:cycle" = "C"
+"status:clear" = "B"
+"find:open" = "B"
+"find:next" = "A"
+"find:prev" = "A"
+"find:close" = "B"
+"quit" = "C"
+"view:refresh" = "B"
+"view:zoom" = "B"
+"log:undo" = "A"
+"log:redo" = "B"
+"clipboard:copy" = "B"
+"clipboard:cut" = "B"
+"clipboard:clear" = "B"
+"pick:confirm" = "B"
+"pick:cancel" = "B"
+"devtools:open" = "C"
+"config:reload" = "D"
+"daemon:set-url" = "D"
+
+# ── Help ─────────────────────────────────────────────────────────────────────
+"help:open" = "B"
+"help:cursor" = "B"
+"help:key" = "B"
+"help:command" = "B"
+"help:apply" = "B"
+"help:back" = "B"
+"help:forward" = "B"
+"help:focus" = "B"
+"help:clear" = "C"
+"help:open-hints" = "B"
+
+# ── Scripts and macros ───────────────────────────────────────────────────────
+"script:run" = "B"
+"script:stop" = "B"
+"script:kill" = "D"
+"script-keys:toggle" = "B"
+"answer:send" = "D"
+"macro:toggle-recording" = "B"
+"macro:run" = "B"
+"macro:ask" = "C"
+"macro:save" = "D"
+
+# ── Shell, messages, context ─────────────────────────────────────────────────
+"shell:focus" = "B"
+"shell:clear" = "C"
+"message:clear" = "D"
+"context:set" = "D"
+"context:unset" = "D"
+
+# ── Workspaces ───────────────────────────────────────────────────────────────
+"workspace:new" = "B"
+"workspace:close" = "B"
+"workspace:next" = "B"
+"workspace:prev" = "B"
+"workspace:goto" = "B"
+"workspace:save" = "B"
+"workspace:open" = "C"
+"workspace:rename" = "C"
+"workspace:fork" = "C"
+"workspace:delete-saved" = "C"
+"workspace:set-default" = "D"
+"workspace:unset-default" = "D"
+"workspace:send" = "D"
+
+# ── Panels and layout ────────────────────────────────────────────────────────
+"panel:focus" = "A"
+"panel:toggle" = "B"
+"panel:swap" = "C"
+"panel:open" = "B"
+"panel:unsplit" = "D"
+"panel:split" = "D"
+"panel:hide" = "D"
+"repos:open" = "D"
+
+# ── The cursor, in every panel with rows ─────────────────────────────────────
+"cursor:next" = "A"
+"cursor:prev" = "A"
+"cursor:first" = "B"
+"cursor:last" = "B"
+"cursor:parent" = "A"
+"cursor:descend" = "A"
+"cursor:root" = "C"
+"cursor:find" = "A"
+"cursor:find self walk" = "B"
+
+# ── The metarecord list ──────────────────────────────────────────────────────
+"metarecord-list:focus" = "B"
+"metarecord-list:focus finder" = "A"
+"metarecord-list:clear" = "B"
+"metarecord-list:clear normal" = "C"
+"metarecord-list:clear all" = "C"
+"metarecord-list:apply" = "A"
+"metarecord-list:select" = "B"
+"metarecord-list:select toggle" = "A"
+"metarecord-list:toggle" = "D"
+"metarecord-list:toggle mode" = "C"
+"metarecord-list:order" = "D"
+"metarecord-list:order move" = "C"
+"metarecord-list:folder" = "B"
+"metarecord-list:insert" = "D"
+"metarecord-list:open-bulk-edit" = "D"
+"metarecord-list:page-next" = "D"
+"metarecord-list:query" = "D"
+"metarecord-list:set" = "D"
+
+# ── Metarecords and fields ───────────────────────────────────────────────────
+"metarecord:field" = "B"
+"metarecord:bulk" = "C"
+"metarecord:bulk selection" = "B"
+"metarecord:bulk query" = "B"
+"item:delete" = "B"
+"item:delete selection" = "C"
+"item:delete query" = "C"
+"metarecord:delete" = "B"
+"file:trash" = "D"
+"metarecord:row-edit" = "A"
+"metarecord:row-delete" = "B"
+"metarecord:row-add" = "B"
+"metarecord:open-add-field" = "B"
+"metarecord:create" = "C"
+"metarecord:back" = "A"
+"metarecord:cancel" = "B"
+"metarecord:toggle-force" = "D"
+"metarecord:reconcile" = "D"
+
+# ── Tags ─────────────────────────────────────────────────────────────────────
+"tag:add" = "B"
+"tag:remove" = "B"
+"tag:query" = "B"
+"tag:add negative_tag" = "C"
+"tag:remove negative_tag" = "C"
+"tag:query negative_tag" = "C"
+"tag:add mixed_tag" = "C"
+"tag:remove mixed_tag" = "C"
+"tag:query mixed_tag" = "C"
+
+# ── Go to ────────────────────────────────────────────────────────────────────
+"recent" = "B"
+"folder:open" = "B"
+"folder:open subtree" = "C"
+"repos:switch" = "B"
+"repos:load" = "C"
+"repos:load-known" = "C"
+"file-manager:reveal" = "B"
+"file:open-with" = "C"
+
+# ── Files and the file manager ───────────────────────────────────────────────
+"file-manager:activate" = "A"
+"file-manager:select" = "A"
+"file-manager:select all" = "B"
+"file-manager:select none" = "B"
+"file-manager:toggle" = "C"
+"file:rename" = "B"
+"file:paste" = "B"
+"file:duplicate" = "C"
+"file:new" = "C"
+"file:record" = "C"
+
+# ── The viewer ───────────────────────────────────────────────────────────────
+"viewer:play-pause" = "A"
+"viewer:toggle-gif-animation" = "C"
+"viewer:back" = "A"
+"viewer:seek" = "B"
+"viewer:page" = "B"
+"viewer:zoom" = "B"
+"viewer:speed" = "C"
+"viewer:volume" = "C"
+"viewer:mute" = "C"
+"viewer:restart" = "C"
+"viewer:play" = "C"
+
+# ── The log ──────────────────────────────────────────────────────────────────
+"log:revert" = "B"
+"log:revert op" = "C"
+"log:revert label" = "C"
+"log:toggle" = "C"
+"log:prune" = "X"
+
+# ── The tree (path-ref) ──────────────────────────────────────────────────────
+"path-ref:list-refs" = "B"
+"path-ref:add" = "C"
+"path-ref:set" = "C"
+"path-ref:toggle-scope" = "C"
+
+# ── Duplicates, trash, recent ────────────────────────────────────────────────
+"duplicates:activate" = "A"
+"duplicates:toggle-group" = "B"
+"duplicates:keep" = "B"
+"trash:restore" = "B"
+"trash:prune" = "C"
+"trash:prune all" = "X"
+"recent:set-sort" = "C"
+"mf:duplicate" = "D"
+
+# ── Sync ─────────────────────────────────────────────────────────────────────
+"sync:status" = "C"
+"sync:plan" = "C"
+"sync:open" = "C"
+"sync:run" = "C"
+"sync:pair" = "D"
+
+# ── Repositories and maintenance ─────────────────────────────────────────────
+"mf:order" = "B"
+"reconcile:run" = "D"
+"repos:init" = "D"
+"repos:open-init" = "D"
+"repos:open-retype" = "D"
+"repos:unload" = "D"
+"repos:resume" = "D"
+"repos:stop" = "D"
+"repos:toggle-memory" = "D"
+"repos:watch-exceeded" = "D"
+"ignore:add" = "D"
+"ignore:list" = "D"
+"ignore:remove" = "D"
+"ignore:set" = "D"
+"orphan:detect" = "D"
+"orphan:detect-delete" = "D"
+"orphan:delete" = "X"
+"mf:watch-activity" = "D"

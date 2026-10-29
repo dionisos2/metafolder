@@ -7,6 +7,7 @@
 
 pub mod bash_complete;
 mod blocking_client;
+pub mod command_classes;
 pub mod command_registry;
 pub mod commands;
 pub mod config;
@@ -439,6 +440,9 @@ pub fn run(options: Options) {
     // The configuration is installed by `metafolder-sync-config`; a missing or
     // invalid file is fatal (doc "No runtime fallback").
     let keybindings = or_exit(config.load_keybindings());
+    // Read again whenever the keybindings panel asks; checked here so that a
+    // missing or malformed file fails like the others.
+    or_exit(config.load_command_classes());
     // The simplified-query grammar (shared, in core): expansion is done locally
     // by the GUI backend, never proxied to the daemon (doc "Why expansion runs in the client").
     let grammar = or_exit(metafolder_core::simplified::load::load_source());

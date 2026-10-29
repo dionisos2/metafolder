@@ -1,0 +1,40 @@
+title: Command classes
+tags: Keybindings Configuration
+kind: reference
+summary: gui/command-classes.toml gives every command its class, A to D or ✕, by how often it is used: what key it may have, and the keybindings panel's filter.
+
+Every command has a ''class'', by how often it is used; the class decides what key
+it may have ([[Choosing keybindings]]):
+
+|!Class |!Used |!Gets |
+|A |all the time |one key |
+|B |several times a session |one modifier, or two keys |
+|C |now and then |two or three keys |
+|D |rarely |the command input only |
+|✕ (`X` in the file) |cannot be undone |never a key |
+
+The classes are in a file of their own, `~/.config/metafolder/gui/command-classes.toml`,
+so that `keybindings.toml` stays a list of keys:
+
+```
+"log:revert" = "B"
+"log:revert op" = "C"
+"log:prune" = "X"
+```
+
+A key is a command, or the first words of an invocation: `"log:revert"` classes
+every revert, `"log:revert op"` that one only, and the longest key that fits an
+invocation wins — by whole words, so `"log:revert op"` does not fit
+`log:revert opx`. A key given twice, or a class other than `A` `B` `C` `D` `X`, is an
+error that names the key; the file is required, like the other files of the GUI
+([[No runtime fallback]]). The GUI checks it at startup and reads it again each time
+the keybindings panel asks, so an edit shows when the panel is next shown, or at
+`view:refresh`.
+
+The keybindings panel filters its list by class. The shipped file classes every
+shipped command — the commands of `user-commands.js` are yours to class — and a test
+holds the shipped keys to it (`test_the_shipped_classes_cover_every_command_and_fit_the_keys`):
+
+* a command of class D or ✕ has no key;
+* a letter typed alone, without Shift, runs a command of class A;
+* a class A command that has keys has one of a single chord.

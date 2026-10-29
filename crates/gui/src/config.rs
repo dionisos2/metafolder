@@ -487,6 +487,19 @@ impl ConfigDir {
             .map_err(|e| format!("cannot write {}: {e}", path.display()))
     }
 
+    // ── Command classes ──────────────────────────────────────────────────
+
+    pub fn command_classes_path(&self) -> PathBuf {
+        self.root.join("command-classes.toml")
+    }
+
+    /// The class of every command (doc "Command classes"). Read whenever it is
+    /// asked for, so an edit shows without a reload.
+    pub fn load_command_classes(&self) -> Result<crate::command_classes::CommandClasses, String> {
+        let src = metafolder_core::config::read_required(&self.command_classes_path())?;
+        crate::command_classes::CommandClasses::parse(&src)
+    }
+
     // ── Style ────────────────────────────────────────────────────────────
 
     pub fn style_css_path(&self) -> PathBuf {
