@@ -358,6 +358,137 @@ fn panel_note(panel: &str, commands: &[Command]) -> String {
     )
 }
 
+/// The generated half of doc "Key levels": how many keys each level has and
+/// how many the shipped file uses as a first key, then the 26 letters of
+/// level 0 — what each one is used for, and the ones left.
+fn key_levels_note() -> String {
+    use crate::keybindings::{key_level, DIRECT_KEYS, SHIFTED_KEYS};
+    let defaults = include_str!("../default-config/keybindings.toml");
+    let set = KeybindingSet::from_source(defaults).unwrap();
+    let table = set.compiled();
+
+    // The keys of each level: the plain keys (letters, `, - =`, the named
+    // ones) under no modifier, one Shift, or Ctrl / Alt / both, each with or
+    // without Shift; and the characters that need Shift on one layout.
+    let letters: Vec<String> = ('a'..='z').map(String::from).collect();
+    let named = [
+        "enter",
+        "escape",
+        "backspace",
+        "delete",
+        "tab",
+        "space",
+        "up",
+        "down",
+        "left",
+        "right",
+        "home",
+        "end",
+        "pageup",
+        "pagedown",
+        "plus",
+        "insert",
+        "menu",
+    ];
+    let others: Vec<String> = DIRECT_KEYS
+        .iter()
+        .chain(named.iter())
+        .map(|k| k.to_string())
+        .chain((1..=12).map(|n| format!("f{n}")))
+        .collect();
+    let plain = letters.len() + others.len();
+    let sizes = [letters.len(), others.len(), plain + SHIFTED_KEYS.len(), 6 * plain];
+    let mut first_keys: [std::collections::BTreeSet<&str>; 4] = Default::default();
+    for binding in &table {
+        if let Some(level) = key_level(&binding.keys[0]) {
+            first_keys[level as usize].insert(&binding.keys[0]);
+        }
+    }
+    let mut text = String::from("!! Counted\n\n|!Level |!Keys |!Used as a first key |!Left |\n");
+    for level in 0..4 {
+        let used = first_keys[level].len();
+        text.push_str(&format!("|{level} |{} |{used} |{} |\n", sizes[level], sizes[level] - used));
+    }
+    text.push_str(
+        "\nLevel 3 counts Ctrl, Alt and Ctrl+Alt, each with or without Shift, on a key of \
+         level 0 or 1.\n",
+    );
+
+    // Level 0: what each letter is used for.
+    let entries = set.entries();
+    let variables = set.variables();
+    // The variables that start a line — a domain — or prefix a template's
+    // keys — a target.
+    let starts_a_line = |name: &str| {
+        let reference = format!("{{{name}}}");
+        name.starts_with("target-")
+            || entries.iter().any(|e| e.source.split_whitespace().next() == Some(&reference))
+    };
+    let mut used = Vec::new();
+    let mut left = Vec::new();
+    for letter in &letters {
+        let alone: Vec<String> = table
+            .iter()
+            .filter(|b| b.keys == [letter.clone()])
+            .map(|b| match &b.when {
+                Some(when) => format!("{} (in {})", code(&b.invocation), code(when)),
+                None => code(&b.invocation),
+            })
+            .collect();
+        let sequences: Vec<_> =
+            table.iter().filter(|b| b.keys.len() > 1 && b.keys[0] == *letter).collect();
+        if alone.is_empty() && sequences.is_empty() {
+            left.push(code(letter));
+            continue;
+        }
+        let mut uses = alone;
+        if !sequences.is_empty() {
+            let names: Vec<String> = variables
+                .iter()
+                .filter(|v| v.keys.split_whitespace().next() == Some(letter.as_str()))
+                .filter(|v| starts_a_line(&v.name))
+                .map(|v| code(&format!("{{{}}}", v.name)))
+                .collect();
+            let mut panels: Vec<&str> =
+                sequences.iter().filter_map(|b| b.when.as_deref()).collect();
+            panels.sort();
+            panels.dedup();
+            let anywhere = sequences.iter().any(|b| b.when.is_none());
+            let mut line = format!(
+                "starts {} key{}",
+                sequences.len(),
+                if sequences.len() == 1 { "" } else { "s" }
+            );
+            if !names.is_empty() {
+                line.push_str(&format!(" ({})", names.join(", ")));
+            }
+            if !anywhere {
+                let list: Vec<String> = panels.iter().map(|p| code(p)).collect();
+                line.push_str(&format!(", in {} only", list.join(", ")));
+            }
+            uses.push(line);
+        }
+        used.push(format!("|{} |{} |\n", code(letter), uses.join("; ")));
+    }
+    text.push_str(&format!(
+        "\n!! Level 0: the letters used ({})\n\n|!Letter |!For |\n",
+        used.len()
+    ));
+    text.extend(used);
+    text.push_str(&format!("\n!! Level 0: the letters left ({})\n\n", left.len()));
+    text.push_str(&if left.is_empty() { "None.".to_string() } else { left.join(" ") });
+    text.push('\n');
+    tid(
+        &[
+            ("title", "$:/mf/gen/Key usage/Key levels"),
+            ("catalog", "Key usage"),
+            ("target", "Key levels"),
+            ("summary", "The keys of each level, and the letters used and left"),
+        ],
+        &text,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -452,5 +583,7 @@ mod tests {
             .map(|p| (format!("{}.tid", slug(p)), panel_note(p, &all)))
             .collect();
         sync_generated(&generated_dir(env!("CARGO_MANIFEST_DIR"), "Panel"), &panels).unwrap();
+        let levels = BTreeMap::from([("key_levels.tid".to_string(), key_levels_note())]);
+        sync_generated(&generated_dir(env!("CARGO_MANIFEST_DIR"), "Key usage"), &levels).unwrap();
     }
 }

@@ -36,5 +36,5 @@ shipped command — the commands of `user-commands.js` are yours to class — an
 holds the shipped keys to it (`test_the_shipped_classes_cover_every_command_and_fit_the_keys`):
 
 * a command of class D or ✕ has no key;
-* a letter typed alone, without Shift, runs a command of class A;
+* a letter typed alone, without Shift — a level 0 key ([[Key levels]]) — runs a command of class A;
 * a class A command that has keys has one of a single chord.

@@ -251,6 +251,70 @@ fn normalize_chord(chord: &str) -> Result<String, String> {
     Ok(out)
 }
 
+/// The named keys — typed by their name, alike on every layout.
+const NAMED_KEYS: [&str; 17] = [
+    "enter",
+    "escape",
+    "backspace",
+    "delete",
+    "tab",
+    "space",
+    "up",
+    "down",
+    "left",
+    "right",
+    "home",
+    "end",
+    "pageup",
+    "pagedown",
+    "plus",
+    "insert",
+    "menu",
+];
+
+/// Typed without a modifier on bépo, AZERTY and QWERTY alike.
+pub const DIRECT_KEYS: [&str; 3] = [",", "-", "="];
+
+/// Typed with shift at worst on one of the three layouts: fine alone, never
+/// under ctrl or alt, where the shift a layout needs changes the character.
+pub const SHIFTED_KEYS: [&str; 22] = [
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "/", ";", ":", "!", "*", "(", ")", "\"",
+    "$", "%", "?",
+];
+
+/// Whether `key` (a chord's key, modifiers off) is one of the named keys.
+pub fn is_named_key(key: &str) -> bool {
+    NAMED_KEYS.contains(&key)
+        || key
+            .strip_prefix('f')
+            .and_then(|n| n.parse::<u8>().ok())
+            .is_some_and(|n| (1..=12).contains(&n))
+}
+
+/// The level of a chord (doc "Key levels"), by what it costs to type, typed
+/// alike on bépo, AZERTY and QWERTY: 0 a letter alone, 1 another key typed
+/// without a modifier (`, - =`, a named key), 2 one shift — or a character
+/// that needs it on one of the layouts —, 3 ctrl or alt. `None` for a chord
+/// the three layouts do not type alike (`ctrl+.`, `é`, `[`).
+pub fn key_level(chord: &str) -> Option<u8> {
+    let (modifiers, key) = chord.rsplit_once('+').unwrap_or(("", chord));
+    // `ctrl++`: the key is the `+` after the last separator.
+    let (modifiers, key) =
+        if key.is_empty() { (modifiers.trim_end_matches('+'), "+") } else { (modifiers, key) };
+    let letter = key.len() == 1 && key.chars().all(|c| c.is_ascii_lowercase());
+    let plain = letter || is_named_key(key) || DIRECT_KEYS.contains(&key);
+    let control =
+        modifiers.contains("ctrl") || modifiers.contains("alt") || modifiers.contains("meta");
+    let shift = modifiers.contains("shift");
+    match (control, shift) {
+        (true, _) => plain.then_some(3),
+        (false, true) => plain.then_some(2),
+        (false, false) if letter => Some(0),
+        (false, false) if plain => Some(1),
+        (false, false) => SHIFTED_KEYS.contains(&key).then_some(2),
+    }
+}
+
 /// Commands whose keybinding a script may never take over: they are the user's
 /// only ways out of a script's question (doc "Script sessions").
 // `command-input:focus` is listed bare so both of its modes are covered: the
@@ -1666,53 +1730,42 @@ vars.y = ","
         }
     }
 
+    #[test]
+    fn test_a_chord_has_the_level_of_what_it_costs_to_type() {
+        for (chord, level) in [
+            ("x", Some(0)),
+            (",", Some(1)),
+            ("f6", Some(1)),
+            ("delete", Some(1)),
+            ("shift+x", Some(2)),
+            ("shift+delete", Some(2)),
+            // Shift on bépo and AZERTY: a level of its own, alone only.
+            ("1", Some(2)),
+            (":", Some(2)),
+            ("ctrl+x", Some(3)),
+            ("ctrl+shift+a", Some(3)),
+            ("alt+up", Some(3)),
+            ("ctrl+-", Some(3)),
+            ("ctrl+.", None),
+            ("shift+.", None),
+            ("[", None),
+            ("é", None),
+            ("f13", None),
+        ] {
+            assert_eq!(key_level(chord), level, "{chord}");
+        }
+    }
+
     /// The rules the shipped keys follow (doc "Choosing keybindings"), on the
     /// file as shipped, variables expanded.
     #[test]
     fn test_shipped_keys_follow_the_rules_of_choice() {
         let defaults = include_str!("../default-config/keybindings.toml");
         let table = KeybindingSet::from_source(defaults).unwrap().compiled();
-        const NAMED: [&str; 17] = [
-            "enter",
-            "escape",
-            "backspace",
-            "delete",
-            "tab",
-            "space",
-            "up",
-            "down",
-            "left",
-            "right",
-            "home",
-            "end",
-            "pageup",
-            "pagedown",
-            "plus",
-            "insert",
-            "menu",
-        ];
-        // Typed without a modifier on bépo, AZERTY and QWERTY alike.
-        const DIRECT: [&str; 3] = [",", "-", "="];
-        // Typed with shift at worst on one of them: fine alone, never under
-        // ctrl or alt, where the shift a layout needs changes the character.
-        const SHIFTED: [&str; 22] = [
-            "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "/", ";", ":", "!", "*", "(",
-            ")", "\"", "$", "%", "?",
-        ];
-        let is_f_key = |key: &str| {
-            key.strip_prefix('f')
-                .and_then(|n| n.parse::<u8>().ok())
-                .is_some_and(|n| (1..=12).contains(&n))
-        };
         for binding in &table {
             for chord in &binding.keys {
-                let (modifiers, key) = chord.rsplit_once('+').unwrap_or(("", chord));
-                let letter = key.len() == 1 && key.chars().all(|c| c.is_ascii_lowercase());
-                let named = NAMED.contains(&key) || is_f_key(key);
-                let under_ctrl_or_alt = modifiers.contains("ctrl") || modifiers.contains("alt");
-                let typed_alike = letter || named || DIRECT.contains(&key);
                 assert!(
-                    typed_alike || (!under_ctrl_or_alt && SHIFTED.contains(&key)),
+                    key_level(chord).is_some(),
                     "{chord} (in {:?} → {}) is not typed alike on bépo, AZERTY and QWERTY",
                     binding.keys,
                     binding.invocation

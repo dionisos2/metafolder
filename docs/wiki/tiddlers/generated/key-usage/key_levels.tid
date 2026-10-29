@@ -1,0 +1,37 @@
+title: $:/mf/gen/Key usage/Key levels
+catalog: Key usage
+target: Key levels
+summary: The keys of each level, and the letters used and left
+
+!! Counted
+
+|!Level |!Keys |!Used as a first key |!Left |
+|0 |26 |15 |11 |
+|1 |32 |25 |7 |
+|2 |80 |24 |56 |
+|3 |348 |40 |308 |
+
+Level 3 counts Ctrl, Alt and Ctrl+Alt, each with or without Shift, on a key of level 0 or 1.
+
+!! Level 0: the letters used (15)
+
+|!Letter |!For |
+|``b`` |starts 27 keys (``{target-other}``) |
+|``c`` |starts 4 keys (``{clipboard}``) |
+|``e`` |starts 5 keys (``{item}``, ``{items-long}``, ``{items-query}``) |
+|``f`` |``cursor:find self select``; ``metarecord-list:focus finder`` (in ``metarecord-list``) |
+|``g`` |starts 11 keys (``{go}``) |
+|``h`` |starts 4 keys (``{help}``) |
+|``i`` |starts 27 keys (``{target-here}``) |
+|``m`` |starts 19 keys (``{record}``, ``{checked-long}``, ``{query}``) |
+|``n`` |starts 28 keys (``{target-new}``) |
+|``o`` |``panel:focus next`` |
+|``p`` |starts 23 keys (``{panel}``), in ``duplicates``, ``file-manager``, ``help``, ``log``, ``metarecord-detail``, ``metarecord-list``, ``path-ref``, ``shell``, ``sync``, ``viewer`` only |
+|``t`` |starts 17 keys (``{panels}``) |
+|``v`` |starts 15 keys (``{view}``) |
+|``w`` |starts 4 keys (``{workspaces}``) |
+|``x`` |``command-input:focus command`` |
+
+!! Level 0: the letters left (11)
+
+``a`` ``d`` ``j`` ``k`` ``l`` ``q`` ``r`` ``s`` ``u`` ``y`` ``z``

@@ -1,0 +1,6 @@
+title: Key usage
+tags: Keybindings
+kind: overview
+summary: The notes counting what the shipped keybindings use of the keyboard, generated from keybindings.toml.
+
+<<catalog "Key usage">>
