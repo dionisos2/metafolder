@@ -1,0 +1,224 @@
+<!doctype html>
+<!-- Built-in panel type: the keybinding editor (doc "keybindings panel", doc
+     "Changing keybindings") — the lines of keybindings.toml, the commands no
+     key runs, filtered by class, and the variables. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>keybindings</title>
+    <style>
+      [hidden] {
+        display: none !important;
+      }
+      .mf-panel-body {
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        padding: 8px 12px;
+        box-sizing: border-box;
+        font-size: 13px;
+        gap: 8px;
+      }
+      code,
+      kbd,
+      input:not([type]) {
+        font-family: var(--mf-font-mono, monospace);
+      }
+      button {
+        font: inherit;
+        background: var(--mf-bg, #1e1e24);
+        color: var(--mf-fg, #d8d8e0);
+        border: 1px solid var(--mf-fg-dim, #8a8a96);
+        border-radius: 3px;
+        padding: 0 8px;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      input:not([type]) {
+        background: var(--mf-bg, #1e1e24);
+        color: var(--mf-fg, #d8d8e0);
+        border: 1px solid var(--mf-fg-dim, #8a8a96);
+        border-radius: 3px;
+        padding: 2px 6px;
+        min-width: 0;
+      }
+      input.invalid {
+        border-color: var(--mf-error, #c44c56);
+      }
+      #classes {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: center;
+      }
+      #classes button[aria-pressed='false'] {
+        opacity: 0.4;
+        text-decoration: line-through;
+      }
+      #count {
+        color: var(--mf-fg-dim, #8a8a96);
+        margin-left: auto;
+      }
+      #form {
+        display: grid;
+        grid-template-columns: minmax(8em, 1.2fr) minmax(8em, 1.6fr) repeat(3, minmax(5em, 1fr)) auto auto;
+        gap: 6px;
+        align-items: center;
+      }
+      label {
+        white-space: nowrap;
+      }
+      #checks {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      #checks p,
+      #editing {
+        margin: 0;
+      }
+      .ok {
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      .bad,
+      #error {
+        color: var(--mf-error, #c44c56);
+      }
+      #editing {
+        color: var(--mf-accent, #4c56c4);
+      }
+      #table {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        border-top: 1px solid var(--mf-bg-raised, #26262e);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      td {
+        padding: 2px 8px;
+        vertical-align: baseline;
+      }
+      #bindings tr:nth-child(odd),
+      #variables tr:nth-child(odd) {
+        background: var(--mf-bg-raised, #26262e);
+      }
+      tr.conflict {
+        box-shadow: inset 3px 0 0 var(--mf-error, #c44c56);
+      }
+      tr.editing {
+        box-shadow: inset 3px 0 0 var(--mf-accent, #4c56c4);
+      }
+      td.source input {
+        width: 100%;
+        box-sizing: border-box;
+      }
+      td.source input[readonly] {
+        border-color: transparent;
+      }
+      .keys {
+        white-space: nowrap;
+      }
+      kbd {
+        font-size: 0.95em;
+        padding: 0 4px;
+        border: 1px solid var(--mf-fg-dim, #8a8a96);
+        border-radius: 3px;
+      }
+      .label,
+      .scope,
+      .none,
+      .uses {
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      .class {
+        font-family: var(--mf-font-mono, monospace);
+        font-weight: bold;
+      }
+      .actions {
+        white-space: nowrap;
+        text-align: right;
+      }
+      details {
+        flex-shrink: 0;
+      }
+      summary {
+        cursor: pointer;
+        color: var(--mf-fg-dim, #8a8a96);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      #variables-block > div {
+        max-height: 14em;
+        overflow-y: auto;
+      }
+      #variables-block table {
+        width: auto;
+      }
+      #variable-check {
+        margin: 4px 0 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="classes" data-help-topic="command-classes">
+      <span>Class</span>
+      <button id="class-A" aria-pressed="true" title="used all the time: one key">A</button>
+      <button id="class-B" aria-pressed="true" title="several times a session: a modifier, or two keys">B</button>
+      <button id="class-C" aria-pressed="true" title="now and then: two or three keys">C</button>
+      <button id="class-D" aria-pressed="true" title="rarely: the command input only">D</button>
+      <button id="class-X" aria-pressed="true" title="cannot be undone: never a key">✕</button>
+      <button id="class-none" aria-pressed="true" title="no class in command-classes.toml">?</button>
+      <span id="count"></span>
+    </div>
+
+    <div id="form" data-help-topic="keybinding-editor">
+      <input id="source" placeholder="key ({go} l, ctrl+k)" title="the key as the file writes it: {name} is a variable" autocomplete="off" />
+      <input id="command" placeholder="command" list="command-list" autocomplete="off" />
+      <input id="when" placeholder="when (empty = global)" title="the panel type it applies in; empty = everywhere" list="when-list" autocomplete="off" />
+      <input id="focus" placeholder="focus (empty = none)" title="the text field it applies in (@name); empty = none" list="focus-list" autocomplete="off" />
+      <input id="target" placeholder="target" title="for a command holding {target}: where its key aims, the variants i / b / n aim the others" list="target-list" autocomplete="off" />
+      <label><input id="text-input" type="checkbox" /> text-input</label>
+      <span>
+        <button id="save" disabled>Save</button>
+        <button id="cancel">Clear</button>
+      </span>
+    </div>
+    <datalist id="command-list"></datalist>
+    <datalist id="when-list"></datalist>
+    <datalist id="focus-list"></datalist>
+    <datalist id="target-list">
+      <option value="here"></option>
+      <option value="other"></option>
+      <option value="new"></option>
+    </datalist>
+    <p id="editing" hidden></p>
+    <div id="checks">
+      <p id="key-check"></p>
+      <p id="command-check"></p>
+      <p id="error"></p>
+    </div>
+
+    <details id="variables-block" open data-help-topic="keybinding-variables">
+      <summary id="variables-summary">Variables</summary>
+      <div>
+        <table>
+          <tbody id="variables"></tbody>
+        </table>
+      </div>
+      <p id="variable-check"></p>
+    </details>
+
+    <div id="table" data-help-topic="keybinding-editor">
+      <table>
+        <tbody id="bindings"></tbody>
+      </table>
+    </div>
+  </body>
+</html>

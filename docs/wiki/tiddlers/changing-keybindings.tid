@@ -2,7 +2,7 @@ title: Changing keybindings
 tags: Keybindings Configuration
 kind: guide
 aliases: rebind keybindings.toml keybinding-editor settings
-summary: Bind, rebind or unbind a key from the config panel or by editing gui/keybindings.toml, without restarting.
+summary: Bind, rebind or unbind a key from the keybindings panel or by editing gui/keybindings.toml, without restarting.
 
 To find out what a key does now, press <<key "help:key" "h k">> then the key
 ([[In-app help]]). The command input also shows, next to each command, the keys
@@ -10,30 +10,35 @@ that run it.
 
 !! From the GUI
 
-`panel:open here config` (<<key "panel:open here config" "t c">>) opens the
-[[config panel]]. It lists every binding in effect: the key, the invocation, and
-where it applies — `global`, a panel type, or `@name` for a text
-field — followed by `⌨` when it also applies while typing ([[Keybindings]]).
+`panel:open here keybindings` (<<key "panel:open here keybindings" "t k">>) opens the
+[[keybindings panel]]. It lists every line of the file — its key as written,
+variables left in, beside the keys it really binds —, the keys suggested by a panel,
+and the commands no key runs, which the class buttons narrow ([[Command classes]]).
 
-* ''Look up'' a key or a command: type it in the form. The table narrows to the keys it starts and to the bindings of that command, so whether a key is free shows before anything is saved.
-* ''Add'': fill in the form — key, command, and optionally `when`, `focus` and `text-input` — and press ''Save'' (or Enter).
-* ''Change'': ''Edit'' on a row copies it into the form; ''Save'' replaces that binding, wherever the form now puts it. Moving a command to another key is one save.
-* ''Unbind'': ''Remove'' on the row.
+* ''Look up'' a key or a command: type it in the form. The list narrows to the lines binding a key it starts and to the lines of that command, so whether a key is free shows before anything is saved.
+* ''Add'': fill in the form — key, command, and optionally `when`, `focus`, `target` and `text-input` — and press ''Save'' (or Enter). The key may name variables: `{go} x`.
+* ''Change'': type the new key in the row's own key field and press Enter; or ''Edit'' the row, which copies it into the form, and ''Save'' it — the line is replaced, wherever the form now puts it. Moving a command to another key is one save; moving a `{target}` template moves its four keys.
+* ''Unbind'': ''Remove'' on the row removes the line, every key it binds.
+* ''Move a domain or a verb'': give its variable a new value in the list of variables; every key built on it follows.
 
 A change applies at once, in every panel, and is written to the file.
 
 !!! What a save refuses
 
-The GUI checks a binding before writing it, and the panel shows the same check as
-the form is typed, field by field; ''Save'' waits until nothing stands in the way.
+The GUI checks a line before writing it, and the panel shows the same check as the
+form is typed, field by field; ''Save'' waits until nothing stands in the way.
 
 * ''A command that does not exist.'' Only the first word is a name — a binding may pre-fill arguments (`panel:open here viewer`) — and a shell line (`!…`) names none. The commands known are those the command input lists: the shell's, every panel's, and `commands.js`'s.
-* ''A key already bound in the same place'' (same `when`, same `focus`) — to change what it runs, ''Edit'' its row. The same key elsewhere is no conflict: the most specific place wins where both apply.
+* ''A key already bound in the same place'' (same `when`, same `focus`) — to change what it runs, edit its row. The same key elsewhere is no conflict: the most specific place wins where both apply.
 * ''A key that starts a sequence bound in the same place, or a sequence one of whose first keys is bound there alone'': a key alone runs before any sequence it starts, so one of the two could never run. `g` cannot join `g g` in one place.
+* ''A variable that does not exist'', named in the key.
 
-A key produced by a variable or a target template ([[Keybinding variables]]) can be
-overridden in its place like any other, which writes a line for it; removing or
-moving it is refused, with the line it comes from.
+Each of the keys a line binds is checked; the line edited is no conflict with itself.
+A literal key over a key a template binds is no conflict either: the literal line
+overrides it ([[Keybinding variables]]), and the panel says so.
+
+A new value of a variable is refused when it would bind a key twice in one place, or
+make a key alone hide a sequence that nothing hid before.
 
 A key suggested by a panel or by `commands.js` is listed too, marked ''suggested'',
 but is not in the file: there is nothing to remove, and the suggestion would be made
@@ -76,7 +81,7 @@ refused with the reason, and the
 bindings in effect stay. At startup the same mistake stops the GUI
 ([[No runtime fallback]]).
 
-The config panel edits this same file, and only the entry concerned: comments,
+The keybindings panel edits this same file, and only the entry concerned: comments,
 order and layout are kept. That matters beyond tidiness — an update of metafolder
 merges the newly shipped keys into this file ([[Updating the configuration]]), and a
 file rewritten from top to bottom would conflict with every one of them.

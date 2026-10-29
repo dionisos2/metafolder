@@ -2,11 +2,10 @@ title: config panel
 tags: Panel [[Panel types]] [[Customising the GUI]]
 kind: reference
 aliases: settings-panel settings-view
-summary: Every configuration file, global and the repository's, filtered as a path is typed and shown in the viewer panel; and the keybinding editor: look up a key or a command as you type it, and bind it once the GUI has checked it.
+summary: Every configuration file, global and the repository's, filtered as a path is typed, shown in the viewer panel, and read again without a restart where the GUI can.
 
 Open it with `panel:open here config` (<<key "panel:open here config" "t c">>). It used to be a
-dialog over the window, the ''settings view''; as a panel it sits beside the others,
-so a key can be looked up while the panel it acts in stays on screen.
+dialog over the window, the ''settings view''; as a panel it sits beside the others.
 
 !! Files
 
@@ -15,8 +14,8 @@ its `.git/` and the rendered `docs/` —, and every file of the workspace's repo
 `.metafolder/config/` ([[Repository configuration]]), read from disk: a file added there
 is listed the next time the panel is shown, or at `view:refresh`, and the list follows the workspace to another repository. They are grouped by
 directory — `cli`, `core`, `daemon`, `gui`, `scripts`, `panel-types` for
-`gui/panel-types/` and `repository` for the repository's own —, in a block of their own
-above the keybindings; the line over it gives the two directories. The field above the
+`gui/panel-types/` and `repository` for the repository's own —; the line over them
+gives the two directories. The field above the
 list keeps the files whose path contains what is typed, ignoring case.
 
 Each file has a ''Show'' button: it becomes the workspace's selection — a path, with no
@@ -31,28 +30,8 @@ The files the GUI can read again without a restart have a ''Reload'' button runn
 only at the next start of the GUI, the daemon's and the CLI's files at theirs, a
 repository's at its next load (its schema at `mf schema reload`).
 
-!! Keybindings
-
-The form above the table — key, command, `when`, `focus`, `text-input` — both writes a
-binding and searches the table:
-
-* the ''key'' typed shows every binding of a key it starts, wherever it applies: `g` lists `g g` and `g t`, `ctrl` every ctrl chord, and `shift+ctrl+a` finds `ctrl+shift+a`;
-* the ''command'' typed shows the bindings whose invocation contains it, below those of the key — so the key's current use stays in sight while the command is typed. The field completes over every command, and the line under the form names the command it reads, with its description.
-
-As the form is typed, the panel asks the GUI what a save would refuse, and says it
-under the form: a command that does not exist, a key already bound in that place —
-whose row is marked —, or a key that would hide a sequence bound there or be hidden by
-it ([[Changing keybindings]]). ''Save'' stays disabled until nothing does. Enter in a
-field saves.
-
-Each row shows the key, the invocation, the command's description, and where it
-applies — `global`, a panel type, or `@name` for a text field, followed by `⌨` when
-it also applies while typing ([[Keybindings]]). A key suggested by a panel or by
-`commands.js` is marked ''suggested'' and has no ''Remove'': it is not in the file.
-
-* ''Edit'' copies a row into the form; ''Save'' then replaces that binding — under a new key or in a new place, the old one goes. ''Cancel'' leaves it untouched.
-* ''Remove'' unbinds the key.
-
-When the panel is shown, the key field takes the focus, and the table is read again:
-what was bound meanwhile, by `config:reload keybindings` or a panel, appears.
+When the panel is shown, the filter takes the focus and the list is read again;
 `view:refresh` reads it again too.
+
+The keys are edited in the [[keybindings panel]] (<<key "panel:open here keybindings" "t k">>),
+which used to be the lower half of this one.

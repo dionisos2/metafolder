@@ -2,10 +2,13 @@
 //! engine modules. No logic here — everything testable lives in
 //! `state`, `keybindings`, `command_registry` and `config`.
 
+use crate::command_classes::Class;
 use crate::command_registry::{CommandDef, CommandRegistry};
 use crate::config::ConfigDir;
 use crate::daemon_proxy::{DaemonProxy, ProxyResponse};
-use crate::keybindings::{BindingCheck, BindingPlace, CompiledBinding, KeybindingSet};
+use crate::keybindings::{
+    BindingCheck, CompiledBinding, EntryDraft, EntryPlace, FileEntry, KeybindingSet, Variable,
+};
 use crate::state::layout::{LayoutView, SlotId};
 use crate::state::workspace::{MessageEntry, ShellEntry, WorkspaceInfo};
 use crate::state::GuiState;
@@ -469,81 +472,176 @@ pub fn get_compiled_keybindings(app: AppHandle) -> Vec<CompiledBinding> {
     app.keybindings.lock_recover().compiled()
 }
 
-/// Settings panel: binds a key in keybindings.toml — refused when the command
-/// does not exist or the key is taken in that place; `replacing` names the
-/// binding being edited, which the new one takes the place of (doc "Changing
-/// keybindings") — swaps in the recompiled set and pushes it to every document.
-#[tauri::command]
-pub fn set_user_keybinding(
-    app: AppHandle,
-    combo: String,
-    command: String,
-    when: Option<String>,
-    focus: Option<String>,
-    text_input: Option<bool>,
-    replacing: Option<BindingPlace>,
-) -> Result<Vec<CompiledBinding>, String> {
-    let place = BindingPlace { combo, when, focus };
-    let mut keybindings = app.keybindings.lock_recover();
-    *keybindings = app.config.save_user_keybinding(
-        &keybindings,
-        |name| app.registry.get(name).is_some(),
-        &place,
-        &command,
-        text_input.unwrap_or(false),
-        replacing.as_ref(),
-    )?;
-    let compiled = keybindings.compiled();
-    drop(keybindings);
-    crate::push_keybindings(&app.gui, &compiled);
-    Ok(compiled)
+/// One line of `keybindings.toml` as the keybindings panel lists it, with
+/// the class of what it runs (doc "Command classes").
+#[derive(Serialize)]
+pub struct EntryView {
+    #[serde(flatten)]
+    pub entry: FileEntry,
+    pub class: Option<Class>,
 }
 
-/// Settings panel: what `set_user_keybinding` would refuse, field by field,
-/// without writing anything — shown while the form is typed.
+/// A command no key runs, with its class: what the panel lists under class D
+/// and ✕, and every other command bound nowhere.
+#[derive(Serialize)]
+pub struct UnboundCommand {
+    pub name: String,
+    pub label: String,
+    pub class: Option<Class>,
+}
+
+/// What the keybindings panel shows (doc "keybindings panel").
+#[derive(Serialize)]
+pub struct KeybindingView {
+    pub entries: Vec<EntryView>,
+    pub variables: Vec<Variable>,
+    pub unbound: Vec<UnboundCommand>,
+    /// Why `command-classes.toml` could not be read, if it could not: the
+    /// rest is shown, unclassed.
+    pub classes_error: Option<String>,
+}
+
+fn keybinding_view(app: &App, set: &KeybindingSet) -> KeybindingView {
+    let (classes, classes_error) = match app.config.load_command_classes() {
+        Ok(classes) => (classes, None),
+        Err(error) => (Default::default(), Some(error)),
+    };
+    let entries: Vec<EntryView> = set
+        .entries()
+        .into_iter()
+        .map(|entry| {
+            // A template is classed by what its default key runs.
+            let invocation = entry
+                .bindings
+                .first()
+                .map(|b| b.invocation.clone())
+                .unwrap_or_else(|| entry.command.replace("{target}", "here"));
+            EntryView { class: classes.class_of(&invocation), entry }
+        })
+        .collect();
+    let bound: std::collections::HashSet<String> = set
+        .compiled()
+        .iter()
+        .filter_map(|b| b.invocation.split_whitespace().next().map(str::to_string))
+        .collect();
+    let unbound = app
+        .registry
+        .list()
+        .into_iter()
+        .filter(|c| !bound.contains(&c.name))
+        .map(|c| UnboundCommand { class: classes.class_of(&c.name), name: c.name, label: c.label })
+        .collect();
+    KeybindingView { entries, variables: set.variables(), unbound, classes_error }
+}
+
+/// Swaps in `set`, pushes it to every document, and returns the panel's view.
+fn install_keybindings(app: &App, set: KeybindingSet) -> KeybindingView {
+    let mut keybindings = app.keybindings.lock_recover();
+    *keybindings = set;
+    let compiled = keybindings.compiled();
+    let view = keybinding_view(app, &keybindings);
+    drop(keybindings);
+    crate::push_keybindings(&app.gui, &compiled);
+    view
+}
+
+/// Keybindings panel: the lines of `keybindings.toml`, its variables, and the
+/// commands no key runs.
 #[tauri::command]
-pub fn check_user_keybinding(
+pub fn keybinding_entries(app: AppHandle) -> KeybindingView {
+    keybinding_view(&app, &app.keybindings.lock_recover())
+}
+
+/// Keybindings panel: what `save_keybinding_entry` would refuse, field by
+/// field, without writing anything — shown while the form is typed.
+#[tauri::command]
+pub fn check_keybinding_entry(
     app: AppHandle,
-    combo: String,
-    command: String,
-    when: Option<String>,
-    focus: Option<String>,
-    replacing: Option<BindingPlace>,
+    draft: EntryDraft,
+    replacing: Option<EntryPlace>,
 ) -> BindingCheck {
-    let place = BindingPlace { combo, when, focus };
-    app.keybindings.lock_recover().check(
+    app.keybindings.lock_recover().check_entry(
         |name| app.registry.get(name).is_some(),
-        &place,
-        &command,
+        &draft,
         replacing.as_ref(),
     )
 }
 
-/// Settings panel: unbinds a combo in keybindings.toml (reverting to a shipped
-/// default is a git operation on the config repo, not done here).
+/// Keybindings panel: writes a line of keybindings.toml — refused when the
+/// command does not exist or a key it binds is taken in that place;
+/// `replacing` names the line being edited (doc "Changing keybindings").
 #[tauri::command]
-pub fn remove_user_keybinding(
+pub fn save_keybinding_entry(
     app: AppHandle,
-    combo: String,
-    when: Option<String>,
-    focus: Option<String>,
-) -> Result<Vec<CompiledBinding>, String> {
-    // A suggested key (`addKeybinding`) is not in the file: there is nothing
-    // to remove, and it would be back at the next start anyway. Say so rather
-    // than leave the row in place without a word.
-    if app.keybindings.lock_recover().is_suggestion(&combo, when.as_deref(), focus.as_deref()) {
-        return Err(format!(
-            "{combo} is suggested by a panel or by commands.js, not set in keybindings.toml: \
-             bind the same key in the same place to override it"
-        ));
-    }
-    let set = app.config.remove_user_keybinding(&combo, when.as_deref(), focus.as_deref())?;
-    let mut keybindings = app.keybindings.lock_recover();
-    *keybindings = set.with_suggestions_of(&keybindings);
-    let compiled = keybindings.compiled();
-    drop(keybindings);
-    crate::push_keybindings(&app.gui, &compiled);
-    Ok(compiled)
+    draft: EntryDraft,
+    replacing: Option<EntryPlace>,
+) -> Result<KeybindingView, String> {
+    let set = {
+        let current = app.keybindings.lock_recover();
+        app.config.save_keybinding_entry(
+            &current,
+            |name| app.registry.get(name).is_some(),
+            &draft,
+            replacing.as_ref(),
+        )?
+    };
+    Ok(install_keybindings(&app, set))
+}
+
+/// Keybindings panel: removes a line of keybindings.toml, every key it binds
+/// (reverting to a shipped default is a git operation on the config repo,
+/// not done here).
+#[tauri::command]
+pub fn remove_keybinding_entry(
+    app: AppHandle,
+    place: EntryPlace,
+) -> Result<KeybindingView, String> {
+    let set = {
+        let current = app.keybindings.lock_recover();
+        // A suggested key (`addKeybinding`) is not in the file: there is
+        // nothing to remove, and it would be back at the next start anyway.
+        // Say so rather than leave the row in place without a word.
+        let in_file = current.entries().iter().any(|e| {
+            !e.suggested
+                && crate::keybindings::same_source(&e.source, &place.source)
+                && e.when == place.when
+                && e.focus == place.focus
+        });
+        if !in_file {
+            return Err(format!(
+                "{} is suggested by a panel or by commands.js, not set in keybindings.toml: \
+                 bind the same key in the same place to override it",
+                place.source
+            ));
+        }
+        app.config.remove_keybinding_entry(&current, &place)?
+    };
+    Ok(install_keybindings(&app, set))
+}
+
+/// Keybindings panel: what giving a variable a new value would change, or why
+/// it is refused.
+#[tauri::command]
+pub fn check_keybinding_variable(
+    app: AppHandle,
+    name: String,
+    value: String,
+) -> Result<String, String> {
+    app.config.check_keybinding_variable(&app.keybindings.lock_recover(), &name, &value)
+}
+
+/// Keybindings panel: gives a variable of keybindings.toml a new value.
+#[tauri::command]
+pub fn set_keybinding_variable(
+    app: AppHandle,
+    name: String,
+    value: String,
+) -> Result<KeybindingView, String> {
+    let set = {
+        let current = app.keybindings.lock_recover();
+        app.config.set_keybinding_variable(&current, &name, &value)?
+    };
+    Ok(install_keybindings(&app, set))
 }
 
 /// The configuration files the settings panel lists (doc "config panel").

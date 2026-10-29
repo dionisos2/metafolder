@@ -28,10 +28,10 @@ invocation wins — by whole words, so `"log:revert op"` does not fit
 `log:revert opx`. A key given twice, or a class other than `A` `B` `C` `D` `X`, is an
 error that names the key; the file is required, like the other files of the GUI
 ([[No runtime fallback]]). The GUI checks it at startup and reads it again each time
-the keybindings panel asks, so an edit shows when the panel is next shown, or at
+the [[keybindings panel]] asks, so an edit shows when the panel is next shown, or at
 `view:refresh`.
 
-The keybindings panel filters its list by class. The shipped file classes every
+The [[keybindings panel]] filters its list by class. The shipped file classes every
 shipped command — the commands of `user-commands.js` are yours to class — and a test
 holds the shipped keys to it (`test_the_shipped_classes_cover_every_command_and_fit_the_keys`):
 

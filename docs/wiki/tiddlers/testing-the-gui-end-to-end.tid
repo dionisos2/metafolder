@@ -31,8 +31,8 @@ GUI is told to use X there (`GDK_BACKEND=x11`), Wayland session or not. Without
 
 !! Keys pressed
 
-Some of the GUI's wrappers are reached by no command, only by a key: the settings
-view's keybinding editor, the command input's history and its prompts. The keyboard
+Some of the GUI's wrappers are reached by no command, only by a key: the keybindings
+panel's editor, the command input's history and its prompts. The keyboard
 scenarios (`prompt`, `history`, `keybindings`, `open-with`) press those keys with
 `xdotool`, in the GUI's window, and only on the private display. On a real one they
 would type into whatever the user is doing. A desktop's own shortcuts can catch
@@ -56,7 +56,7 @@ hold the focus.
 !! Clicks
 
 What only a mouse reaches — a tab's close button, the value picker's button in a field
-editor, the config panel's ''Edit'' — is clicked through WebKit's remote inspector, never
+editor, the keybindings panel's ''Edit'' — is clicked through WebKit's remote inspector, never
 at coordinates: a click aimed at a place moves with every change of style. The GUI runs with
 `WEBKIT_INSPECTOR_HTTP_SERVER` on a loopback port of its own, and `scripts/dev/lib/webview.mjs`
 (`node`) evaluates in the shell's page a search for the element, in the document and in
@@ -90,7 +90,7 @@ land just after the command resolved, and is waited for (`until_ok`), never assu
 !! What is asserted
 
 What a command ''said'', not how the window shows it: no pixel, no panel layout, and DOM
-only where the GUI says something nowhere else — the config panel shows its refusals in the
+only where the GUI says something nowhere else — the keybindings panel shows its refusals in the
 panel itself, not on the status bar. A change of style never breaks a scenario; a change of
 wording or of behaviour does, which is the point. A click is named by selector, so renaming
 a class it uses breaks one: the price of reaching what no command reaches.

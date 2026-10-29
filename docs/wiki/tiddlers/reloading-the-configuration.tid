@@ -7,7 +7,7 @@ summary: config:reload re-reads the keybindings, the style sheet, the query gram
 `config:reload <what>` reads a part of the configuration again, without a restart.
 
 |!`what` |!Reads |!Notes |
-|`keybindings` |`gui/keybindings.toml` |for a file edited outside the GUI: the [[config panel]] applies its own changes. Keys suggested by a panel or by `commands.js`, and the temporary keys of a running script, are kept ([[Changing keybindings]]) |
+|`keybindings` |`gui/keybindings.toml` |for a file edited outside the GUI: the [[keybindings panel]] applies its own changes. Keys suggested by a panel or by `commands.js`, and the temporary keys of a running script, are kept ([[Changing keybindings]]) |
 |`style` |`gui/style.css` |the shell and every panel are restyled ([[Style and theming]]) |
 |`grammar` |`core/query-grammar` |the simplified query language ([[Editing the grammar]]) |
 |`commands` |`gui/commands.js`, `gui/user-commands.js` |the commands of the previous version are forgotten first ([[User commands]]) |

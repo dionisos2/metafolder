@@ -42,6 +42,8 @@ function shadowFor(panelType: string): ShadowRoot {
   return shadow;
 }
 
+const VIEW = { entries: [], variables: [], unbound: [], classes_error: null };
+
 /** A metafolder API that answers everything with an empty result. */
 function stubApi(panelType: string, defaults: Record<string, unknown> = {}) {
   const noop = () => {};
@@ -77,9 +79,12 @@ function stubApi(panelType: string, defaults: Record<string, unknown> = {}) {
     pick: { start: async () => '' },
     config: {
       info: async () => ({ root: '', repo_config: null, files: [] }),
-      checkKeybinding: async () => ({ command: null, key: null }),
-      setKeybinding: async () => [],
-      removeKeybinding: async () => [],
+      keybindingEntries: async () => VIEW,
+      checkKeybindingEntry: async () => ({ command: null, key: null, note: null, in_the_way: null }),
+      saveKeybindingEntry: async () => VIEW,
+      removeKeybindingEntry: async () => VIEW,
+      checkKeybindingVariable: async () => '',
+      setKeybindingVariable: async () => VIEW,
     },
     workspace: {
       get: async () => null,

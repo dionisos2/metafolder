@@ -4,7 +4,7 @@
 //! no runtime install or embedded fallback any more.
 
 use metafolder_gui::config::ConfigDir;
-use metafolder_gui::keybindings::BindingPlace;
+use metafolder_gui::keybindings::{EntryDraft, EntryPlace};
 
 mod common;
 
@@ -107,40 +107,52 @@ fn test_remove_user_keybinding_unbinds_the_combo() {
     config.remove_user_keybinding("t", None, None).unwrap();
 }
 
-fn place(combo: &str, when: Option<&str>) -> BindingPlace {
-    BindingPlace { combo: combo.into(), when: when.map(str::to_string), focus: None }
+fn place(source: &str, when: Option<&str>) -> EntryPlace {
+    EntryPlace { source: source.into(), when: when.map(str::to_string), focus: None }
+}
+
+/// The line binding `command` at `place`.
+fn line(place: &EntryPlace, command: &str) -> EntryDraft {
+    EntryDraft {
+        source: place.source.clone(),
+        command: command.into(),
+        when: place.when.clone(),
+        focus: place.focus.clone(),
+        text_input: false,
+        target: None,
+    }
 }
 
 const KNOWN: fn(&str) -> bool = |name| name == "panel:split" || name == "workspace:new";
 
 #[test]
-fn test_save_user_keybinding_checks_the_command_and_the_key() {
+fn test_save_keybinding_entry_checks_the_command_and_the_key() {
     let (_guard, config) = temp_config();
     common::install_defaults(&config);
     let current = config.load_keybindings().unwrap();
 
     // A command nobody registered is refused, and nothing is written.
+    let alt_t = place("alt+t", None);
     let error = config
-        .save_user_keybinding(&current, KNOWN, &place("alt+t", None), "panel:splt", false, None)
+        .save_keybinding_entry(&current, KNOWN, &line(&alt_t, "panel:splt"), None)
         .unwrap_err();
     assert!(error.contains("panel:splt"), "{error}");
     // So is a key already bound in that place (ctrl+t is shipped).
     let error = config
-        .save_user_keybinding(&current, KNOWN, &place("ctrl+t", None), "panel:split", false, None)
+        .save_keybinding_entry(&current, KNOWN, &line(&place("ctrl+t", None), "panel:split"), None)
         .unwrap_err();
     assert!(error.contains("workspace:new"), "{error}");
     let reread = config.load_keybindings().unwrap().compiled();
     assert!(reread.iter().all(|b| b.keys != ["alt+t"]));
     assert!(reread.iter().any(|b| b.keys == ["ctrl+t"] && b.invocation == "workspace:new"));
 
-    let saved = config
-        .save_user_keybinding(&current, KNOWN, &place("alt+t", None), "panel:split", false, None)
-        .unwrap();
+    let saved =
+        config.save_keybinding_entry(&current, KNOWN, &line(&alt_t, "panel:split"), None).unwrap();
     assert!(saved.compiled().iter().any(|b| b.keys == ["alt+t"] && b.invocation == "panel:split"));
 }
 
 #[test]
-fn test_save_user_keybinding_replaces_the_edited_binding() {
+fn test_save_keybinding_entry_replaces_the_edited_line() {
     let (_guard, config) = temp_config();
     common::install_defaults(&config);
     let current = config.load_keybindings().unwrap();
@@ -148,31 +160,23 @@ fn test_save_user_keybinding_replaces_the_edited_binding() {
     // Same place: the command changes where it is.
     let ctrl_t = place("ctrl+t", None);
     let set = config
-        .save_user_keybinding(&current, KNOWN, &ctrl_t, "panel:split", false, Some(&ctrl_t))
+        .save_keybinding_entry(&current, KNOWN, &line(&ctrl_t, "panel:split"), Some(&ctrl_t))
         .unwrap();
     let table = set.compiled();
     let bound: Vec<_> = table.iter().filter(|b| b.keys == ["ctrl+t"]).collect();
     assert_eq!(bound.len(), 1);
     assert_eq!(bound[0].invocation, "panel:split");
 
-    // Another key or scope: the binding moves, the old one is gone.
-    let set = config
-        .save_user_keybinding(
-            &set,
-            KNOWN,
-            &place("alt+y", Some("log")),
-            "panel:split",
-            false,
-            Some(&ctrl_t),
-        )
-        .unwrap();
+    // Another key or scope: the line moves, the old one is gone.
+    let moved = line(&place("alt+y", Some("log")), "panel:split");
+    let set = config.save_keybinding_entry(&set, KNOWN, &moved, Some(&ctrl_t)).unwrap();
     let table = set.compiled();
     assert!(table.iter().all(|b| b.keys != ["ctrl+t"]));
     assert!(table.iter().any(|b| b.keys == ["alt+y"] && b.when.as_deref() == Some("log")));
 }
 
 #[test]
-fn test_save_user_keybinding_overrides_a_suggestion_in_its_place_only() {
+fn test_save_keybinding_entry_overrides_a_suggestion_in_its_place_only() {
     let (_guard, config) = temp_config();
     common::install_defaults(&config);
     let mut current = config.load_keybindings().unwrap();
@@ -180,21 +184,19 @@ fn test_save_user_keybinding_overrides_a_suggestion_in_its_place_only() {
     let suggested = place("ctrl+alt+y", Some("my-panel"));
 
     // Moving it elsewhere would leave it in effect: the panel suggests it again.
-    let error = config
-        .save_user_keybinding(
-            &current,
-            KNOWN,
-            &place("ctrl+alt+u", Some("my-panel")),
-            "panel:split",
-            false,
-            Some(&suggested),
-        )
-        .unwrap_err();
+    let moved = line(&place("ctrl+alt+u", Some("my-panel")), "panel:split");
+    let error =
+        config.save_keybinding_entry(&current, KNOWN, &moved, Some(&suggested)).unwrap_err();
     assert!(error.contains("suggested"), "{error}");
 
     // In its own place, the file's binding wins over it.
     let set = config
-        .save_user_keybinding(&current, KNOWN, &suggested, "workspace:new", false, Some(&suggested))
+        .save_keybinding_entry(
+            &current,
+            KNOWN,
+            &line(&suggested, "workspace:new"),
+            Some(&suggested),
+        )
         .unwrap();
     let table = set.compiled();
     let bound: Vec<_> = table.iter().filter(|b| b.keys == ["ctrl+alt+y"]).collect();

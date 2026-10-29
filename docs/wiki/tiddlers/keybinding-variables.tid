@@ -24,6 +24,7 @@ vars.bulk-query = "m q"
 ```
 
 * A variable holds a key or a sequence (`"m q"`); its name is lowercase letters, digits and `-`.
+* A value may name other variables: `vars.negative = "{tags} -"` holds `, -` while `tags` is `,`, and follows it when it moves — which is why the shipped `checked`, `query`, `items`, `negative`… are written on `record`, `item` and `tags`. Variables that refer to themselves, through any number of others, are an error that names them.
 * The table can be written as `vars.name = …` lines anywhere at the top of the file, or as a `[vars]` section at its end — TOML puts every key after a section header into that section.
 * A `{name}` that is not a variable is an error, which names it. A brace that names nothing (`"{"`) is a key like any other.
 * Variables are replaced in the keys only, not in the commands.
@@ -50,15 +51,20 @@ error.
 
 !! Changing one of them
 
-A key a variable or a template produced is not a line of its own. A ''literal''
-key of the file, in the same place, overrides it: that is what the config panel
-writes when such a key is rebound ([[Changing keybindings]]), and the template's
-other keys stay as they are. Two lines producing the same key in the same place
-— two templates, or two literal keys — are refused, as always.
+The [[keybindings panel]] lists the variables, each with its value, the keys it stands
+for and how many lines use it; a new value typed there is written into its line of
+the file, and every key built on it moves. It is refused when it would bind a key
+twice in one place, or make a key alone hide a sequence that nothing hid before — `go`
+given the value `x` would hide every `x …` behind the command input's `x`.
 
-What has no line cannot be removed or moved on its own: the config panel refuses
-it and names the line it comes from. Edit that line, or bind the key to
-something else in its place.
+The panel lists the ''lines'' of the file: a line using a variable or a template is one
+row, its key as written beside the keys it binds. Editing the row edits the line, so a
+template's four keys move together, and removing it removes them all.
+
+A key a template produced can still be given a meaning of its own: a ''literal'' key of
+the file, in the same place, overrides it, and the template's other keys stay as they
+are. Two lines producing the same key in the same place — two templates, or two
+literal keys — are refused, as always.
 
 [[Keyboard navigation]] gives the keys as they are shipped, variables expanded,
 and the generated notes of each command list its keys the same way.

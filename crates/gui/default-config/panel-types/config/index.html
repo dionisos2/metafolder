@@ -1,6 +1,6 @@
 <!doctype html>
-<!-- Built-in panel type: the settings — where the configuration files are, and
-     the keybinding editor (doc "config panel", doc "Changing keybindings"). -->
+<!-- Built-in panel type: the configuration files (doc "config panel"); the
+     keys are edited in the keybindings panel. -->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -42,8 +42,8 @@
         color: var(--mf-fg-dim, #8a8a96);
       }
       #files-block {
-        max-height: 40%;
-        flex-shrink: 0;
+        flex: 1;
+        min-height: 0;
         overflow-y: auto;
         border-top: 1px solid var(--mf-bg-raised, #26262e);
       }
@@ -66,7 +66,6 @@
         letter-spacing: normal;
       }
       code,
-      .combo,
       input:not([type]) {
         font-family: var(--mf-font-mono, monospace);
       }
@@ -83,17 +82,6 @@
         padding: 0 8px;
         cursor: pointer;
       }
-      button:disabled {
-        opacity: 0.5;
-        cursor: default;
-      }
-      #form {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(6em, 1fr)) auto auto;
-        gap: 6px;
-        align-items: center;
-      }
-      #form input:not([type]),
       #file-filter {
         background: var(--mf-bg, #1e1e24);
         color: var(--mf-fg, #d8d8e0);
@@ -105,41 +93,6 @@
       #file-filter {
         flex: 1;
       }
-      #form input.invalid {
-        border-color: var(--mf-error, #c44c56);
-      }
-      label {
-        white-space: nowrap;
-      }
-      #checks {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-      }
-      #checks p,
-      #editing,
-      #error {
-        margin: 0;
-      }
-      .ok {
-        color: var(--mf-fg-dim, #8a8a96);
-      }
-      .bad,
-      #error {
-        color: var(--mf-error, #c44c56);
-      }
-      #editing {
-        color: var(--mf-accent, #4c56c4);
-      }
-      #count {
-        color: var(--mf-fg-dim, #8a8a96);
-      }
-      #table {
-        flex: 1;
-        min-height: 0;
-        overflow-y: auto;
-        border-top: 1px solid var(--mf-bg-raised, #26262e);
-      }
       table {
         width: 100%;
         border-collapse: collapse;
@@ -150,19 +103,6 @@
       }
       tr:nth-child(odd) {
         background: var(--mf-bg-raised, #26262e);
-      }
-      tr.conflict {
-        box-shadow: inset 3px 0 0 var(--mf-error, #c44c56);
-      }
-      tr.editing {
-        box-shadow: inset 3px 0 0 var(--mf-accent, #4c56c4);
-      }
-      .combo {
-        white-space: nowrap;
-      }
-      .label,
-      .scope {
-        color: var(--mf-fg-dim, #8a8a96);
       }
       .actions {
         white-space: nowrap;
@@ -183,32 +123,5 @@
       </table>
     </div>
 
-    <h2 data-help-topic="settings">Keybindings</h2>
-    <div id="form" data-help-topic="settings">
-      <input id="combo" placeholder="key (ctrl+k, g g)" autocomplete="off" />
-      <input id="command" placeholder="command" list="command-list" autocomplete="off" />
-      <input id="when" placeholder="when (empty = global)" title="the panel type it applies in; empty = everywhere" list="when-list" autocomplete="off" />
-      <input id="focus" placeholder="focus (empty = none)" title="the text field it applies in (@name); empty = none" list="focus-list" autocomplete="off" />
-      <label><input id="text-input" type="checkbox" /> text-input</label>
-      <span>
-        <button id="save" disabled>Save</button>
-        <button id="cancel">Clear</button>
-      </span>
-    </div>
-    <datalist id="command-list"></datalist>
-    <datalist id="when-list"></datalist>
-    <datalist id="focus-list"></datalist>
-    <p id="editing" hidden></p>
-    <div id="checks">
-      <p id="key-check"></p>
-      <p id="command-check"></p>
-      <p id="error"></p>
-    </div>
-    <span id="count"></span>
-    <div id="table">
-      <table>
-        <tbody id="bindings"></tbody>
-      </table>
-    </div>
   </body>
 </html>

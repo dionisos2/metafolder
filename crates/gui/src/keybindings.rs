@@ -77,54 +77,87 @@ fn describe_scope(when: Option<&str>, focus: Option<&str>) -> String {
 }
 
 /// What stands in the way of binding a key at `new`, given the bindings in
-/// effect (`table`). The binding being edited (`replacing`) is left out: it is
-/// the one the new binding takes the place of.
+/// effect (`table`), the ones it takes the place of left out.
 ///
 /// Refused: a key already bound in the same place (to change it, edit that
 /// binding), and a key that starts — or is started by — a sequence bound in the
 /// same place: a key alone runs before any sequence it starts, so one of the two
 /// could never run there (`keymatch.js`).
-pub fn check_binding(
+pub fn check_binding(table: &[CompiledBinding], new: &BindingPlace) -> Result<(), String> {
+    binding_in_the_way(table, new).map_err(|(error, _)| error)
+}
+
+/// `check_binding`, with the binding that refuses the key.
+fn binding_in_the_way(
     table: &[CompiledBinding],
     new: &BindingPlace,
-    replacing: Option<&BindingPlace>,
-) -> Result<(), String> {
-    let keys = parse_combo(&new.combo)?;
-    let replaced = match replacing {
-        Some(place) => Some((parse_combo(&place.combo)?, place.when.clone(), place.focus.clone())),
-        None => None,
-    };
-    let starts = |long: &[String], short: &[String]| {
-        long.len() > short.len() && long[..short.len()] == *short
-    };
+) -> Result<(), (String, Option<KeyPlace>)> {
+    let keys = parse_combo(&new.combo).map_err(|e| (e, None))?;
     for binding in table {
         if binding.when != new.when || binding.focus != new.focus {
             continue;
         }
-        if replaced.as_ref().is_some_and(|(keys, when, focus)| {
-            *keys == binding.keys && *when == binding.when && *focus == binding.focus
-        }) {
-            continue;
-        }
-        let (combo, other) = (keys.join(" "), binding.keys.join(" "));
         let scope = describe_scope(new.when.as_deref(), new.focus.as_deref());
-        let invocation = &binding.invocation;
-        if binding.keys == keys {
-            return Err(format!("`{combo}` is already bound {scope} to `{invocation}`"));
-        }
-        if starts(&binding.keys, &keys) {
-            return Err(format!(
-                "`{combo}` would hide `{other}` (`{invocation}`) {scope}: \
-                 a key alone runs before any sequence it starts"
-            ));
-        }
-        if starts(&keys, &binding.keys) {
-            return Err(format!(
-                "`{combo}` could never run: `{other}` alone is bound {scope} to `{invocation}`"
-            ));
+        if let Some(clash) = clash(&keys, binding, &scope) {
+            let place = KeyPlace {
+                keys: binding.keys.clone(),
+                when: binding.when.clone(),
+                focus: binding.focus.clone(),
+            };
+            return Err((clash, Some(place)));
         }
     }
     Ok(())
+}
+
+/// Why `keys` cannot be bound beside `binding`, in the same place (`scope`).
+fn clash(keys: &[String], binding: &CompiledBinding, scope: &str) -> Option<String> {
+    let starts = |long: &[String], short: &[String]| {
+        long.len() > short.len() && long[..short.len()] == *short
+    };
+    let (combo, other) = (keys.join(" "), binding.keys.join(" "));
+    let invocation = &binding.invocation;
+    if binding.keys == keys {
+        return Some(format!("`{combo}` is already bound {scope} to `{invocation}`"));
+    }
+    if starts(&binding.keys, keys) {
+        return Some(format!(
+            "`{combo}` would hide `{other}` (`{invocation}`) {scope}: \
+             a key alone runs before any sequence it starts"
+        ));
+    }
+    if starts(keys, &binding.keys) {
+        return Some(format!(
+            "`{combo}` could never run: `{other}` alone is bound {scope} to `{invocation}`"
+        ));
+    }
+    None
+}
+
+/// Every pair of bindings in one place where a key alone hides a sequence it
+/// starts — what a change of variable may bring about (doc "keybindings
+/// panel"). The shipped table has none.
+pub fn sequence_clashes(table: &[CompiledBinding]) -> Vec<String> {
+    let mut out = Vec::new();
+    for short in table {
+        for long in table {
+            if short.when == long.when
+                && short.focus == long.focus
+                && long.keys.len() > short.keys.len()
+                && long.keys[..short.keys.len()] == short.keys[..]
+            {
+                let scope = describe_scope(short.when.as_deref(), short.focus.as_deref());
+                out.push(format!(
+                    "`{}` (`{}`) would hide `{}` (`{}`) {scope}",
+                    short.keys.join(" "),
+                    short.invocation,
+                    long.keys.join(" "),
+                    long.invocation
+                ));
+            }
+        }
+    }
+    out
 }
 
 /// Whether `invocation` runs a command that exists (`known`). Only its first
@@ -150,6 +183,19 @@ pub fn check_command(invocation: &str, known: impl Fn(&str) -> bool) -> Result<(
 pub struct BindingCheck {
     pub command: Option<String>,
     pub key: Option<String>,
+    /// What saving would do besides binding the key, when it is worth saying:
+    /// a key another line binds, which this one overrides.
+    pub note: Option<String>,
+    /// The binding that refuses the key, when one does.
+    pub in_the_way: Option<KeyPlace>,
+}
+
+/// A key in its place: what the keybindings panel marks.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct KeyPlace {
+    pub keys: Vec<String>,
+    pub when: Option<String>,
+    pub focus: Option<String>,
 }
 
 impl BindingCheck {
@@ -273,6 +319,8 @@ const TARGETS: [&str; 3] = ["here", "other", "new"];
 struct Entry {
     keys: Vec<String>,
     spec: BindingSpec,
+    /// The file's key it comes from, as written.
+    source: String,
     /// The file's key it was derived from, when a variable or a target
     /// template produced it — a literal key of the file overrides it.
     derived_from: Option<String>,
@@ -311,8 +359,9 @@ fn substitute(combo: &str, vars: &HashMap<String, String>) -> Result<String, Str
     Ok(out)
 }
 
-/// The `vars` table: variable name → keys.
-fn read_vars(value: Option<toml::Value>) -> Result<HashMap<String, String>, String> {
+/// The `vars` table as written: variable name → its value, which may name
+/// other variables.
+fn read_raw_vars(value: Option<toml::Value>) -> Result<HashMap<String, String>, String> {
     let Some(value) = value else { return Ok(HashMap::new()) };
     let toml::Value::Table(table) = value else {
         return Err("invalid keybindings file: `vars` must be a table".into());
@@ -329,6 +378,64 @@ fn read_vars(value: Option<toml::Value>) -> Result<HashMap<String, String>, Stri
         .collect()
 }
 
+/// The variables with their keys: a value naming another variable
+/// (`"{tags} -"`) holds that variable's keys, so that moving a domain moves
+/// the variables built on it too.
+fn resolve_vars(raw: &HashMap<String, String>) -> Result<HashMap<String, String>, String> {
+    fn resolve(
+        name: &str,
+        raw: &HashMap<String, String>,
+        done: &mut HashMap<String, String>,
+        stack: &mut Vec<String>,
+    ) -> Result<String, String> {
+        if let Some(keys) = done.get(name) {
+            return Ok(keys.clone());
+        }
+        if stack.iter().any(|n| n == name) {
+            stack.push(name.to_string());
+            return Err(format!(
+                "invalid keybindings file: the variables refer to themselves ({})",
+                stack.join(" → ")
+            ));
+        }
+        let value = raw.get(name).ok_or_else(|| format!("unknown variable {{{name}}}"))?;
+        stack.push(name.to_string());
+        let mut known = HashMap::new();
+        for other in referenced(value) {
+            if raw.contains_key(&other) {
+                known.insert(other.clone(), resolve(&other, raw, done, stack)?);
+            }
+        }
+        stack.pop();
+        let keys = substitute(value, &known)
+            .map_err(|e| format!("invalid keybindings file: the variable \"{name}\": {e}"))?;
+        done.insert(name.to_string(), keys.clone());
+        Ok(keys)
+    }
+    let mut done = HashMap::new();
+    for name in raw.keys() {
+        resolve(name, raw, &mut done, &mut Vec::new())?;
+    }
+    Ok(done)
+}
+
+/// The variables a key or a value names (`{name}`), in order.
+fn referenced(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find('{') {
+        let after = &rest[start + 1..];
+        match after.find('}') {
+            Some(end) if is_var_name(&after[..end]) => {
+                out.push(after[..end].to_string());
+                rest = &after[end + 1..];
+            }
+            _ => rest = after,
+        }
+    }
+    out
+}
+
 /// The bindings one key of the file stands for: itself, or — for a
 /// `{target}` template — its default target on the key, and every target
 /// under its prefix.
@@ -340,7 +447,12 @@ fn expand(
     let expanded = substitute(combo, vars)?;
     let derived = (expanded != combo).then(|| combo.to_string());
     let entry = |keys: &str, spec: BindingSpec, derived_from: Option<String>| {
-        Ok::<_, String>(Entry { keys: parse_combo(keys)?, spec, derived_from })
+        Ok::<_, String>(Entry {
+            keys: parse_combo(keys)?,
+            spec,
+            source: combo.to_string(),
+            derived_from,
+        })
     };
     if !spec.command.contains("{target}") {
         if spec.target.is_some() {
@@ -372,14 +484,44 @@ fn expand(
     Ok(entries)
 }
 
+/// A keybindings file, read.
+struct Parsed {
+    /// Its bindings, variables and templates expanded.
+    entries: Vec<Entry>,
+    /// Its lines as written: the key, and the binding before expansion.
+    lines: Vec<(String, BindingSpec)>,
+    /// The variables as written, and with their keys.
+    raw_vars: HashMap<String, String>,
+    vars: HashMap<String, String>,
+    /// The variables' names, in the order of the file.
+    var_order: Vec<String>,
+}
+
+/// The keys of the file and the names of its `vars` table, in the order the
+/// file writes them (`toml` sorts them; `toml_edit` keeps the file's order).
+fn in_file_order(source: &str) -> (Vec<String>, Vec<String>) {
+    let Ok(doc) = source.parse::<toml_edit::DocumentMut>() else { return Default::default() };
+    let keys = doc.iter().map(|(key, _)| key.to_string()).filter(|key| key != "vars").collect();
+    let vars = doc
+        .get("vars")
+        .and_then(toml_edit::Item::as_table_like)
+        .map(|vars| vars.iter().map(|(name, _)| name.to_string()).collect())
+        .unwrap_or_default();
+    (keys, vars)
+}
+
 /// Parses a keybindings TOML file into its bindings, variables and target
 /// templates expanded (doc "Keybinding variables"). A combo key may map to
 /// one binding or an array of them; each element becomes its own entry, so
 /// the same combo can appear more than once (different `when` scopes).
-fn parse_entries(source: &str) -> Result<Vec<Entry>, String> {
+fn parse_entries(source: &str) -> Result<Parsed, String> {
     let mut table: toml::Table =
         toml::from_str(source).map_err(|e| format!("invalid keybindings file: {e}"))?;
-    let vars = read_vars(table.remove("vars"))?;
+    let raw_vars = read_raw_vars(table.remove("vars"))?;
+    let vars = resolve_vars(&raw_vars)?;
+    let (key_order, mut var_order) = in_file_order(source);
+    var_order.retain(|name| vars.contains_key(name));
+    let mut lines: Vec<(String, BindingSpec)> = Vec::new();
     let mut entries: Vec<Entry> = Vec::new();
     // One combo has one binding per (when, focus) scope. TOML only refuses a
     // key written twice the same way: two spellings of one combo
@@ -391,6 +533,7 @@ fn parse_entries(source: &str) -> Result<Vec<Entry>, String> {
         let specs: SpecOrList =
             value.try_into().map_err(|e| format!("invalid keybindings file: \"{combo}\": {e}"))?;
         for spec in specs.into_vec() {
+            lines.push((combo.clone(), spec.clone()));
             for entry in expand(&combo, spec, &vars)? {
                 let key = (entry.keys.clone(), entry.spec.when.clone(), entry.spec.focus.clone());
                 let Some((other, index)) = seen.get(&key).cloned() else {
@@ -427,13 +570,114 @@ fn parse_entries(source: &str) -> Result<Vec<Entry>, String> {
     entries.sort_by(|a, b| {
         (&a.keys, &a.spec.when, &a.spec.focus).cmp(&(&b.keys, &b.spec.when, &b.spec.focus))
     });
-    Ok(entries)
+    // The lines as the file has them, a key's array in its order.
+    let position = |key: &str| key_order.iter().position(|k| k == key).unwrap_or(usize::MAX);
+    lines.sort_by_key(|(key, _)| position(key));
+    Ok(Parsed { entries, lines, raw_vars, vars, var_order })
 }
 
 /// Parses a keybindings TOML file into (normalized combo, spec) pairs,
 /// variables and templates expanded (`parse_entries`).
 pub fn parse_toml(source: &str) -> Result<Vec<(Vec<String>, BindingSpec)>, String> {
-    Ok(parse_entries(source)?.into_iter().map(|e| (e.keys, e.spec)).collect())
+    Ok(parse_entries(source)?.entries.into_iter().map(|e| (e.keys, e.spec)).collect())
+}
+
+/// Whether a key of the file names a variable (`{name}`).
+fn has_variables(source: &str) -> bool {
+    !referenced(source).is_empty()
+}
+
+/// A key of the file as it is written back: a combo normalized
+/// (`shift+ctrl+a` → `ctrl+shift+a`), one naming a variable with its words
+/// separated by one space, the variables left as they are.
+pub fn normalize_source(source: &str) -> Result<String, String> {
+    if has_variables(source) {
+        let words: Vec<&str> = source.split_whitespace().collect();
+        Ok(words.join(" "))
+    } else {
+        Ok(parse_combo(source)?.join(" "))
+    }
+}
+
+/// Whether two keys of the file are one, however each is spelled.
+pub fn same_source(a: &str, b: &str) -> bool {
+    match (normalize_source(a), normalize_source(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// One binding of a line of `keybindings.toml`: the keys, and what they run.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct EntryBinding {
+    pub keys: Vec<String>,
+    pub invocation: String,
+}
+
+/// One line of `keybindings.toml` — one binding of a key's array — as it is
+/// written, with the keys it binds (doc "keybindings panel"). A suggestion
+/// (`addKeybinding`) is listed too, as a line the file does not have.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct FileEntry {
+    /// The key as the file writes it, variables left in: `{go} {list}`.
+    pub source: String,
+    /// The command as written, `{target}` left in.
+    pub command: String,
+    pub when: Option<String>,
+    pub focus: Option<String>,
+    pub text_input: bool,
+    /// The default target of a `{target}` template.
+    pub target: Option<String>,
+    /// The keys it binds that are in effect — a literal line overrides one a
+    /// template binds —, each with what it runs.
+    pub bindings: Vec<EntryBinding>,
+    pub suggested: bool,
+}
+
+/// Where a line of the file is: its key as written, and its scope.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct EntryPlace {
+    pub source: String,
+    pub when: Option<String>,
+    pub focus: Option<String>,
+}
+
+/// A line as the keybindings panel's form holds it.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntryDraft {
+    pub source: String,
+    pub command: String,
+    pub when: Option<String>,
+    pub focus: Option<String>,
+    #[serde(default)]
+    pub text_input: bool,
+    pub target: Option<String>,
+}
+
+impl EntryDraft {
+    fn spec(&self) -> BindingSpec {
+        BindingSpec {
+            command: self.command.trim().to_string(),
+            when: self.when.clone(),
+            text_input: self.text_input,
+            focus: self.focus.clone(),
+            target: self.target.clone(),
+        }
+    }
+}
+
+/// A variable of the file (doc "Keybinding variables").
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Variable {
+    pub name: String,
+    /// As written: it may name other variables (`{tags} -`).
+    pub value: String,
+    /// Its keys, the variables it names replaced.
+    pub keys: String,
+    /// How many lines of the file use it, directly or through another
+    /// variable.
+    pub uses: usize,
 }
 
 /// A binding's identity for override purposes: the same key sequence in the
@@ -451,6 +695,13 @@ pub struct KeybindingSet {
     /// The bindings a variable or a target template produced, with the
     /// file's key they come from (`derived_from`).
     derived: HashMap<BindingKey, String>,
+    /// The file's key every binding of `config` comes from, as written.
+    origin: HashMap<BindingKey, String>,
+    /// The lines of the file, as written.
+    lines: Vec<(String, BindingSpec)>,
+    raw_vars: HashMap<String, String>,
+    vars: HashMap<String, String>,
+    var_order: Vec<String>,
     /// Panel suggestions that survived conflict checking.
     suggestions: Vec<CompiledBinding>,
 }
@@ -461,15 +712,38 @@ impl KeybindingSet {
     pub fn from_sources(defaults: &str, user: &str) -> Result<Self, String> {
         let mut config: HashMap<BindingKey, BindingSpec> = HashMap::new();
         let mut derived: HashMap<BindingKey, String> = HashMap::new();
-        for entry in parse_entries(defaults)?.into_iter().chain(parse_entries(user)?) {
-            let key = (entry.keys, entry.spec.when.clone(), entry.spec.focus.clone());
-            match entry.derived_from {
-                Some(line) => derived.insert(key.clone(), line),
-                None => derived.remove(&key),
-            };
-            config.insert(key, entry.spec);
+        let mut origin: HashMap<BindingKey, String> = HashMap::new();
+        let (mut lines, mut var_order) = (Vec::new(), Vec::new());
+        let (mut raw_vars, mut vars) = (HashMap::new(), HashMap::new());
+        for parsed in [parse_entries(defaults)?, parse_entries(user)?] {
+            for entry in parsed.entries {
+                let key = (entry.keys, entry.spec.when.clone(), entry.spec.focus.clone());
+                match entry.derived_from {
+                    Some(line) => derived.insert(key.clone(), line),
+                    None => derived.remove(&key),
+                };
+                origin.insert(key.clone(), entry.source);
+                config.insert(key, entry.spec);
+            }
+            lines.extend(parsed.lines);
+            for name in parsed.var_order {
+                if !var_order.contains(&name) {
+                    var_order.push(name);
+                }
+            }
+            raw_vars.extend(parsed.raw_vars);
+            vars.extend(parsed.vars);
         }
-        Ok(KeybindingSet { config, derived, suggestions: Vec::new() })
+        Ok(KeybindingSet {
+            config,
+            derived,
+            origin,
+            lines,
+            raw_vars,
+            vars,
+            var_order,
+            suggestions: Vec::new(),
+        })
     }
 
     /// The complete set from a single source. In the git-backed config model
@@ -527,15 +801,6 @@ impl KeybindingSet {
         self
     }
 
-    /// The file's key the binding at `place` was derived from, when a
-    /// variable or a target template produced it (doc "Keybinding
-    /// variables"): such a binding is not a line of its own, so it can be
-    /// overridden by one but not removed.
-    pub fn derived_from(&self, place: &BindingPlace) -> Option<String> {
-        let keys = parse_combo(&place.combo).ok()?;
-        self.derived.get(&(keys, place.when.clone(), place.focus.clone())).cloned()
-    }
-
     /// Whether the binding of this combo and scope is a suggestion — in effect,
     /// but not in the file, so not something the file's editor can remove.
     pub fn is_suggestion(&self, combo: &str, when: Option<&str>, focus: Option<&str>) -> bool {
@@ -546,48 +811,183 @@ impl KeybindingSet {
         })
     }
 
-    /// Checks binding `command` at `place` in this set (`check_command`,
-    /// `check_binding`), `replacing` the binding being edited. A suggested
-    /// binding can be overridden in its own place but not moved: it is not in
-    /// the file, and its panel would suggest it again.
-    pub fn check(
+    /// The lines of the file, in its order, then the suggestions — each with
+    /// the keys it binds that are in effect (doc "keybindings panel").
+    pub fn entries(&self) -> Vec<FileEntry> {
+        let mut out: Vec<FileEntry> = self
+            .lines
+            .iter()
+            .map(|(source, spec)| {
+                let bindings = expand(source, spec.clone(), &self.vars)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|e| {
+                        let key = (e.keys.clone(), e.spec.when.clone(), e.spec.focus.clone());
+                        self.origin.get(&key) == Some(source)
+                    })
+                    .map(|e| EntryBinding { keys: e.keys, invocation: e.spec.command })
+                    .collect();
+                FileEntry {
+                    source: source.clone(),
+                    command: spec.command.clone(),
+                    when: spec.when.clone(),
+                    focus: spec.focus.clone(),
+                    text_input: spec.text_input,
+                    target: spec.target.clone(),
+                    bindings,
+                    suggested: false,
+                }
+            })
+            .collect();
+        out.extend(self.suggestions.iter().map(|s| FileEntry {
+            source: s.keys.join(" "),
+            command: s.invocation.clone(),
+            when: s.when.clone(),
+            focus: s.focus.clone(),
+            text_input: s.text_input,
+            target: None,
+            bindings: vec![EntryBinding { keys: s.keys.clone(), invocation: s.invocation.clone() }],
+            suggested: true,
+        }));
+        out
+    }
+
+    /// The variables, in the order of the file, with the number of lines
+    /// using each: `{name}` in their key, directly or through another
+    /// variable, or — for a target prefix — a `{target}` template.
+    pub fn variables(&self) -> Vec<Variable> {
+        // Every variable a name stands for, itself included.
+        let reaches = |start: &str| {
+            let mut seen = vec![start.to_string()];
+            let mut i = 0;
+            while i < seen.len() {
+                let value = self.raw_vars.get(&seen[i]).cloned().unwrap_or_default();
+                for other in referenced(&value) {
+                    if !seen.contains(&other) {
+                        seen.push(other);
+                    }
+                }
+                i += 1;
+            }
+            seen
+        };
+        self.var_order
+            .iter()
+            .map(|name| {
+                let prefix = name.starts_with("target-");
+                let uses = self
+                    .lines
+                    .iter()
+                    .filter(|(source, spec)| {
+                        referenced(source).iter().any(|v| reaches(v).contains(name))
+                            || (prefix && spec.command.contains("{target}"))
+                    })
+                    .count();
+                Variable {
+                    name: name.clone(),
+                    value: self.raw_vars[name].clone(),
+                    keys: self.vars[name].clone(),
+                    uses,
+                }
+            })
+            .collect()
+    }
+
+    /// Whether this binding comes from the line at `place`.
+    fn comes_from(&self, binding: &CompiledBinding, place: &EntryPlace) -> bool {
+        binding.when == place.when
+            && binding.focus == place.focus
+            && self
+                .origin
+                .get(&(binding.keys.clone(), binding.when.clone(), binding.focus.clone()))
+                .is_some_and(|source| same_source(source, &place.source))
+    }
+
+    /// What would refuse saving the line `draft` (`check_command`, and
+    /// `check_binding` for every key it binds), `replacing` the line being
+    /// edited, whose own keys are no clash. A literal key over one a template
+    /// binds overrides it, and the other way round — the file's rule —, which
+    /// the check's note says. A suggestion can be overridden in its own place
+    /// but not moved: it is not in the file, and its panel would suggest it
+    /// again.
+    pub fn check_entry(
         &self,
         known: impl Fn(&str) -> bool,
-        place: &BindingPlace,
-        command: &str,
-        replacing: Option<&BindingPlace>,
+        draft: &EntryDraft,
+        replacing: Option<&EntryPlace>,
     ) -> BindingCheck {
-        let moves_a_suggestion = || {
-            let old = replacing?;
-            let suggested =
-                self.is_suggestion(&old.combo, old.when.as_deref(), old.focus.as_deref());
-            (!old.is(place) && suggested).then(|| {
-                format!(
-                    "{} is suggested by a panel or by commands.js, not set in keybindings.toml: \
-                     it cannot be moved, only overridden in its own place",
-                    old.combo
-                )
-            })
-        };
-        // A key a variable or a template produced has no line to move: the
-        // template would bind it again.
-        let moves_a_derived = || {
-            let old = replacing.filter(|old| !old.is(place))?;
-            self.derived_from(old).map(|line| {
-                format!(
-                    "{} comes from the line \"{line}\" of keybindings.toml (a variable or a \
-                     target template): it cannot be moved, only overridden in its own place",
-                    old.combo
-                )
-            })
-        };
-        BindingCheck {
-            command: check_command(command, known).err(),
-            key: check_binding(&self.compiled(), place, replacing)
-                .err()
-                .or_else(moves_a_suggestion)
-                .or_else(moves_a_derived),
+        let command = check_command(&draft.command, known).err();
+        match self.check_entry_keys(draft, replacing) {
+            Ok(note) => BindingCheck { command, note, ..Default::default() },
+            Err((key, in_the_way)) => {
+                BindingCheck { command, key: Some(key), in_the_way, note: None }
+            }
         }
+    }
+
+    fn check_entry_keys(
+        &self,
+        draft: &EntryDraft,
+        replacing: Option<&EntryPlace>,
+    ) -> Result<Option<String>, (String, Option<KeyPlace>)> {
+        let source = normalize_source(&draft.source).map_err(|e| (e, None))?;
+        if let Some(old) = replacing {
+            let moved = !same_source(&old.source, &source)
+                || old.when != draft.when
+                || old.focus != draft.focus;
+            let suggested =
+                self.is_suggestion(&old.source, old.when.as_deref(), old.focus.as_deref())
+                    && !self.lines.iter().any(|(s, spec)| {
+                        same_source(s, &old.source)
+                            && spec.when == old.when
+                            && spec.focus == old.focus
+                    });
+            if moved && suggested {
+                return Err((
+                    format!(
+                        "{} is suggested by a panel or by commands.js, not set in \
+                         keybindings.toml: it cannot be moved, only overridden in its own place",
+                        old.source
+                    ),
+                    None,
+                ));
+            }
+        }
+        let table: Vec<CompiledBinding> = self
+            .compiled()
+            .into_iter()
+            .filter(|b| !replacing.is_some_and(|old| self.comes_from(b, old)))
+            .collect();
+        let mut notes = Vec::new();
+        for entry in expand(&source, draft.spec(), &self.vars).map_err(|e| (e, None))? {
+            let (when, focus) = (entry.spec.when.clone(), entry.spec.focus.clone());
+            let key = (entry.keys.clone(), when.clone(), focus.clone());
+            let combo = entry.keys.join(" ");
+            // The same key in the same place, written once literally and once
+            // by a template (or suggested): the literal line wins, no clash.
+            let same =
+                table.iter().find(|b| b.keys == entry.keys && b.when == when && b.focus == focus);
+            let overridden = same.filter(|b| {
+                b.suggested || self.derived.contains_key(&key) != entry.derived_from.is_some()
+            });
+            if let Some(other) = overridden {
+                let line = self.origin.get(&key).cloned().unwrap_or_default();
+                notes.push(match (other.suggested, entry.derived_from.is_some()) {
+                    (true, _) => format!("Overrides the suggested `{combo}`."),
+                    (false, false) => {
+                        format!("Overrides `{combo}`, which the line \"{line}\" binds.")
+                    }
+                    (false, true) => format!("`{combo}` stays the line \"{line}\"'s."),
+                });
+            }
+            let others: Vec<CompiledBinding> = table
+                .iter()
+                .filter(|b| !overridden.is_some_and(|o| std::ptr::eq(*b, o)))
+                .cloned()
+                .collect();
+            binding_in_the_way(&others, &BindingPlace { combo, when, focus })?;
+        }
+        Ok((!notes.is_empty()).then(|| notes.join(" ")))
     }
 
     /// Flat table for the frontend matcher, deterministically ordered.
@@ -939,6 +1339,26 @@ bulk-query = "m q"
     }
 
     #[test]
+    fn test_a_variable_may_be_built_on_another() {
+        let source = r#"
+vars.mixed = "{tags} ="
+vars.tags = ","
+"{mixed} a" = { command = "x" }
+"#;
+        assert_eq!(keys_of(&parse_toml(source).unwrap()), [(", = a".into(), "x".into())]);
+        let set = KeybindingSet::from_source(source).unwrap();
+        let tags = set.variables().into_iter().find(|v| v.name == "tags").unwrap();
+        // Used through `mixed`.
+        assert_eq!(tags.uses, 1);
+        let mixed = set.variables().into_iter().find(|v| v.name == "mixed").unwrap();
+        assert_eq!((mixed.value.as_str(), mixed.keys.as_str()), ("{tags} =", ", ="));
+
+        let cycle = "vars.a = \"{b} x\"\nvars.b = \"{a}\"\n";
+        assert!(parse_toml(cycle).unwrap_err().contains("themselves"));
+        assert!(parse_toml("vars.a = \"{far}\"\n").unwrap_err().contains("far"));
+    }
+
+    #[test]
     fn test_an_unknown_or_malformed_variable_is_refused() {
         let error = parse_toml(r#""{nope} a" = { command = "x" }"#).unwrap_err();
         assert!(error.contains("{nope}"), "{error}");
@@ -1007,30 +1427,146 @@ vars.y = ","
         assert!(parse_toml(clash).is_err());
     }
 
-    #[test]
-    fn test_where_a_derived_binding_comes_from() {
-        let source = format!(
+    /// The lines of the file, for the keybindings panel (doc "keybindings
+    /// panel"): each as written, with the keys it binds that are in effect.
+    fn lines_source() -> String {
+        format!(
             "{TARGET_VARS}vars.tags = \",\"\n\"{{tags}} a\" = {{ command = \"x\" }}\n\
-             \"o\" = {{ command = \"y {{target}}\", target = \"here\" }}\n\"z\" = {{ command = \"z\" }}\n"
-        );
-        let set = KeybindingSet::from_source(&source).unwrap();
-        let place = |combo: &str| BindingPlace { combo: combo.into(), when: None, focus: None };
-        assert_eq!(set.derived_from(&place(", a")).as_deref(), Some("{tags} a"));
-        assert_eq!(set.derived_from(&place("n o")).as_deref(), Some("o"));
-        assert_eq!(set.derived_from(&place("z")), None);
+             \"o\" = {{ command = \"y {{target}}\", target = \"here\" }}\n\
+             \"b o\" = {{ command = \"mine\" }}\n\"z\" = {{ command = \"z\", when = \"log\" }}\n"
+        )
+    }
+
+    fn draft(source: &str, command: &str) -> EntryDraft {
+        EntryDraft {
+            source: source.into(),
+            command: command.into(),
+            when: None,
+            focus: None,
+            text_input: false,
+            target: None,
+        }
+    }
+
+    fn line(source: &str) -> EntryPlace {
+        EntryPlace { source: source.into(), when: None, focus: None }
     }
 
     #[test]
-    fn test_a_derived_binding_can_be_overridden_but_not_moved() {
-        let set =
-            KeybindingSet::from_source("vars.tags = \",\"\n\"{tags} a\" = { command = \"x\" }\n")
-                .unwrap();
-        let place = |combo: &str| BindingPlace { combo: combo.into(), when: None, focus: None };
+    fn test_entries_are_the_lines_of_the_file_with_the_keys_they_bind() {
+        let mut set = KeybindingSet::from_source(&lines_source()).unwrap();
+        set.add_suggestion("ctrl+y", "my-panel:go", Some("my-panel"), false, None).unwrap();
+        let entries = set.entries();
+        let of = |source: &str| entries.iter().find(|e| e.source == source).unwrap();
+        let keys = |e: &FileEntry| {
+            e.bindings
+                .iter()
+                .map(|b| format!("{} → {}", b.keys.join(" "), b.invocation))
+                .collect::<Vec<_>>()
+        };
+
+        // In the order of the file, then the suggestions.
+        let sources: Vec<&str> = entries.iter().map(|e| e.source.as_str()).collect();
+        assert_eq!(sources, ["{tags} a", "o", "b o", "z", "ctrl+y"]);
+        assert_eq!(keys(of("{tags} a")), [", a → x"]);
+        // A template binds four keys, but `b o` is the literal line's.
+        let template = of("o");
+        assert_eq!(template.command, "y {target}");
+        assert_eq!(template.target.as_deref(), Some("here"));
+        assert_eq!(keys(template), ["o → y here", "i o → y here", "n o → y new"]);
+        assert_eq!(keys(of("b o")), ["b o → mine"]);
+        assert_eq!(of("z").when.as_deref(), Some("log"));
+        assert!(entries.iter().all(|e| !e.suggested || e.source == "ctrl+y"));
+        assert!(of("ctrl+y").suggested);
+        assert_eq!(keys(of("ctrl+y")), ["ctrl+y → my-panel:go"]);
+    }
+
+    #[test]
+    fn test_the_variables_come_in_the_order_of_the_file_with_their_uses() {
+        let set = KeybindingSet::from_source(&lines_source()).unwrap();
+        let variables = set.variables();
+        let names: Vec<&str> = variables.iter().map(|v| v.name.as_str()).collect();
+        assert_eq!(names, ["target-here", "target-other", "target-new", "tags"]);
+        let uses = |name: &str| variables.iter().find(|v| v.name == name).unwrap().uses;
+        assert_eq!(uses("tags"), 1);
+        // A target prefix is used by every template.
+        assert_eq!(uses("target-new"), 1);
+        assert_eq!(variables[3].keys, ",");
+    }
+
+    #[test]
+    fn test_a_line_is_checked_against_the_others_and_not_itself() {
+        let set = KeybindingSet::from_source(&lines_source()).unwrap();
+        let known = |name: &str| name != "nothing";
+        let template = EntryDraft { target: Some("here".into()), ..draft("o", "y {target}") };
+
+        // Saved again as it is: no clash with its own keys, nor with the
+        // literal line that overrides one of them.
+        let check = set.check_entry(known, &template, Some(&line("o")));
+        assert_eq!((check.command.as_deref(), check.key.as_deref()), (None, None), "{check:?}");
+        // A literal key over one a template binds overrides it, and says so.
+        let check = set.check_entry(known, &draft("i o", "other"), None);
+        assert_eq!(check.key, None);
+        assert!(check.note.as_deref().unwrap_or("").contains("\"o\""), "{check:?}");
+        // Two literal lines on one key clash; a key alone hides the sequences
+        // it starts.
+        let check = set.check_entry(known, &draft("b o", "other"), None);
+        assert!(check.key.unwrap().contains("already bound"));
+        // The binding in the way is named, for the panel to mark its row.
+        assert_eq!(check.in_the_way.unwrap().keys, ["b", "o"]);
+        let check = set.check_entry(known, &draft("{tags}", "other"), None);
+        assert!(check.key.unwrap().contains("would hide"));
+        // Variables are read; an unknown one is named.
+        let check = set.check_entry(known, &draft("{tags} q", "other"), None);
+        assert_eq!(check.key, None);
+        let check = set.check_entry(known, &draft("{far} q", "other"), None);
+        assert!(check.key.unwrap().contains("far"));
+        let check = set.check_entry(known, &draft("q", "nothing"), None);
+        assert!(check.command.unwrap().contains("nothing"));
+        // Another scope is another place.
+        let z = EntryDraft { when: Some("log".into()), ..draft("z", "other") };
+        assert!(set.check_entry(known, &z, None).key.is_some());
+        assert!(set
+            .check_entry(known, &z, Some(&EntryPlace { when: Some("log".into()), ..line("z") }))
+            .key
+            .is_none());
+    }
+
+    #[test]
+    fn test_a_suggestion_can_be_overridden_in_its_place_but_not_moved() {
+        let mut set = KeybindingSet::from_source("").unwrap();
+        set.add_suggestion("ctrl+y", "my-panel:go", None, false, None).unwrap();
         let known = |_: &str| true;
-        assert!(set.check(known, &place(", a"), "y", Some(&place(", a"))).into_result().is_ok());
-        let error =
-            set.check(known, &place("q"), "y", Some(&place(", a"))).into_result().unwrap_err();
-        assert!(error.contains("{tags} a"), "{error}");
+        let check = set.check_entry(known, &draft("ctrl+y", "mine"), Some(&line("ctrl+y")));
+        assert_eq!(check.key, None);
+        let check = set.check_entry(known, &draft("ctrl+u", "mine"), Some(&line("ctrl+y")));
+        assert!(check.key.unwrap().contains("suggested"));
+    }
+
+    #[test]
+    fn test_sequence_clashes_name_the_key_that_hides_another() {
+        let table = KeybindingSet::from_source(
+            "\"g\" = { command = \"a\" }\n\"g g\" = { command = \"b\" }\n\
+             \"h\" = { command = \"c\", when = \"log\" }\n\"h h\" = { command = \"d\" }\n",
+        )
+        .unwrap()
+        .compiled();
+        let clashes = sequence_clashes(&table);
+        assert_eq!(clashes.len(), 1, "{clashes:?}");
+        assert!(clashes[0].contains("`g`") && clashes[0].contains("`g g`"), "{clashes:?}");
+        // The shipped keys have none.
+        assert!(sequence_clashes(&crate::doc_gen::default_bindings()).is_empty());
+    }
+
+    #[test]
+    fn test_a_key_of_the_file_is_the_same_however_it_is_spelled() {
+        assert!(same_source("shift+ctrl+a", "ctrl+shift+a"));
+        assert!(same_source("{go}  l", "{go} l"));
+        assert!(!same_source("{go} l", "g l"));
+        assert_eq!(normalize_source("Shift+Ctrl+A  g").unwrap(), "ctrl+shift+a g");
+        assert_eq!(normalize_source(" {go}   shift+{add} ").unwrap(), "{go} shift+{add}");
+        // A brace that names no variable is a key.
+        assert_eq!(normalize_source("{").unwrap(), "{");
     }
 
     #[test]
@@ -1460,7 +1996,7 @@ vars.y = ","
     #[test]
     fn test_a_key_bound_in_the_same_place_is_refused() {
         let table = table(r#""ctrl+k" = { command = "workspace:new" }"#);
-        let error = check_binding(&table, &place("K+ctrl", None, None), None).unwrap_err();
+        let error = check_binding(&table, &place("K+ctrl", None, None)).unwrap_err();
         assert!(error.contains("ctrl+k"), "{error}");
         assert!(error.contains("workspace:new"), "{error}");
         assert!(error.contains("globally"), "{error}");
@@ -1469,18 +2005,8 @@ vars.y = ","
     #[test]
     fn test_a_key_bound_elsewhere_is_free_here() {
         let table = table(r#""ctrl+k" = { command = "workspace:new" }"#);
-        check_binding(&table, &place("ctrl+k", Some("metarecord-list"), None), None).unwrap();
-        check_binding(&table, &place("ctrl+k", None, Some("finder")), None).unwrap();
-    }
-
-    #[test]
-    fn test_the_binding_being_edited_is_no_conflict() {
-        let table = table(r#""ctrl+k" = { command = "workspace:new", when = "log" }"#);
-        let edited = place("ctrl+k", Some("log"), None);
-        check_binding(&table, &edited, Some(&edited)).unwrap();
-        // Another place than the edited one is still checked.
-        let other = place("ctrl+j", Some("log"), None);
-        assert!(check_binding(&table, &edited, Some(&other)).is_err());
+        check_binding(&table, &place("ctrl+k", Some("metarecord-list"), None)).unwrap();
+        check_binding(&table, &place("ctrl+k", None, Some("finder"))).unwrap();
     }
 
     #[test]
@@ -1490,53 +2016,43 @@ vars.y = ","
 "t" = { command = "b", when = "log" }"#,
         );
         // A key alone runs before any sequence it starts: `g g` would be dead.
-        let error = check_binding(&table, &place("g", None, None), None).unwrap_err();
+        let error = check_binding(&table, &place("g", None, None)).unwrap_err();
         assert!(error.contains("g g"), "{error}");
         // And the other way round.
-        let error = check_binding(&table, &place("t x", Some("log"), None), None).unwrap_err();
+        let error = check_binding(&table, &place("t x", Some("log"), None)).unwrap_err();
         assert!(error.contains("`t`"), "{error}");
         // Elsewhere, both are free.
-        check_binding(&table, &place("g", Some("log"), None), None).unwrap();
-        check_binding(&table, &place("t x", None, None), None).unwrap();
+        check_binding(&table, &place("g", Some("log"), None)).unwrap();
+        check_binding(&table, &place("t x", None, None)).unwrap();
     }
 
     #[test]
-    fn test_the_edited_binding_does_not_hide_its_own_replacement() {
-        let table = table(r#""g g" = { command = "a" }"#);
-        check_binding(&table, &place("g", None, None), Some(&place("g g", None, None))).unwrap();
+    fn test_the_edited_line_does_not_hide_its_own_replacement() {
+        let set = KeybindingSet::from_source(r#""g g" = { command = "a" }"#).unwrap();
+        let check = set.check_entry(|_| true, &draft("g", "a"), Some(&line("g g")));
+        assert_eq!(check, BindingCheck::default());
     }
 
     #[test]
     fn test_a_malformed_key_is_refused() {
-        assert!(check_binding(&[], &place("ctrl+", None, None), None).is_err());
+        assert!(check_binding(&[], &place("ctrl+", None, None)).is_err());
+        let set = KeybindingSet::from_source("").unwrap();
+        assert!(set.check_entry(|_| true, &draft("ctrl+", "a"), None).key.is_some());
     }
 
     #[test]
-    fn test_the_set_checks_a_binding_field_by_field() {
-        let mut set =
+    fn test_the_set_checks_a_line_field_by_field() {
+        let set =
             KeybindingSet::from_source(r#""ctrl+k" = { command = "workspace:new" }"#).unwrap();
-        set.add_suggestion("y", "my-panel:go", Some("my-panel"), false, None).unwrap();
         let known = |name: &str| name == "workspace:new";
 
-        let check = set.check(known, &place("ctrl+k", None, None), "nope", None);
+        let check = set.check_entry(known, &draft("ctrl+k", "nope"), None);
         assert!(check.command.unwrap().contains("nope"));
         assert!(check.key.unwrap().contains("workspace:new"));
 
-        let free = set.check(known, &place("ctrl+j", None, None), "workspace:new", None);
+        let free = set.check_entry(known, &draft("ctrl+j", "workspace:new"), None);
         assert_eq!(free, BindingCheck::default());
         assert!(free.into_result().is_ok());
-
-        // A suggestion cannot be moved: the panel would suggest it again.
-        let suggested = place("y", Some("my-panel"), None);
-        let moved = set.check(
-            known,
-            &place("u", Some("my-panel"), None),
-            "workspace:new",
-            Some(&suggested),
-        );
-        assert!(moved.key.unwrap().contains("suggested"));
-        let kept = set.check(known, &suggested, "workspace:new", Some(&suggested));
-        assert_eq!(kept, BindingCheck::default());
     }
 
     #[test]

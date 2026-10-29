@@ -459,7 +459,7 @@ describe('panel api — misc surface', () => {
     expect(invoke).toHaveBeenCalledWith('label_separator');
   });
 
-  test('the settings panel reads and writes keybindings through the backend', async () => {
+  test('the config and keybindings panels read and write through the backend', async () => {
     const { api, invoke } = setup();
     await api.config.info();
     expect(invoke).toHaveBeenCalledWith('config_info', { repo: null });
@@ -467,37 +467,27 @@ describe('panel api — misc surface', () => {
     expect(invoke).toHaveBeenCalledWith('config_info', { repo: 'abc' });
     await api.commands.list();
     expect(invoke).toHaveBeenCalledWith('list_commands');
-    const replacing = { combo: 'g', when: null, focus: null };
-    await api.config.checkKeybinding({ combo: 'g g', command: 'x', when: 'log', focus: null, replacing });
-    expect(invoke).toHaveBeenCalledWith('check_user_keybinding', {
-      combo: 'g g',
+    await api.config.keybindingEntries();
+    expect(invoke).toHaveBeenCalledWith('keybinding_entries');
+    const replacing = { source: '{go}', when: null, focus: null };
+    const draft = {
+      source: '{go} g',
       command: 'x',
       when: 'log',
       focus: null,
-      replacing,
-    });
-    await api.config.setKeybinding({
-      combo: 'g g',
-      command: 'x',
-      when: null,
-      focus: null,
-      textInput: true,
-      replacing: null,
-    });
-    expect(invoke).toHaveBeenCalledWith('set_user_keybinding', {
-      combo: 'g g',
-      command: 'x',
-      when: null,
-      focus: null,
-      textInput: true,
-      replacing: null,
-    });
-    await api.config.removeKeybinding({ combo: 'g g', when: null, focus: 'find' });
-    expect(invoke).toHaveBeenCalledWith('remove_user_keybinding', {
-      combo: 'g g',
-      when: null,
-      focus: 'find',
-    });
+      textInput: false,
+      target: null,
+    };
+    await api.config.checkKeybindingEntry(draft, replacing);
+    expect(invoke).toHaveBeenCalledWith('check_keybinding_entry', { draft, replacing });
+    await api.config.saveKeybindingEntry(draft, null);
+    expect(invoke).toHaveBeenCalledWith('save_keybinding_entry', { draft, replacing: null });
+    await api.config.removeKeybindingEntry(replacing);
+    expect(invoke).toHaveBeenCalledWith('remove_keybinding_entry', { place: replacing });
+    await api.config.checkKeybindingVariable('go', 'j');
+    expect(invoke).toHaveBeenCalledWith('check_keybinding_variable', { name: 'go', value: 'j' });
+    await api.config.setKeybindingVariable('go', 'j');
+    expect(invoke).toHaveBeenCalledWith('set_keybinding_variable', { name: 'go', value: 'j' });
   });
 
   test('fs and statusBar route to their commands', async () => {

@@ -217,16 +217,24 @@ declare namespace Metafolder {
      *  configuration repository, and of `repo`'s `.metafolder/config/` when
      *  it is given and loaded. */
     info(repo?: string | null): Promise<ConfigInfo>;
-    /** What saving `binding` would refuse, field by field, without writing
-     *  (doc "Changing keybindings"). */
-    checkKeybinding(binding: KeybindingDraft): Promise<KeybindingCheck>;
-    /** Binds a key in `keybindings.toml`: refused when the command does not
-     *  exist or the key is taken in that place. `replacing` is the binding
-     *  being edited, which the new one takes the place of. Resolves to the
-     *  table now in effect. */
-    setKeybinding(binding: KeybindingDraft & { textInput: boolean }): Promise<Binding[]>;
-    /** Unbinds a key of `keybindings.toml`; refused for a suggested one. */
-    removeKeybinding(place: BindingPlace): Promise<Binding[]>;
+    /** The keybindings panel (doc "keybindings panel"): the lines of
+     *  `keybindings.toml`, its variables, and the commands no key runs. */
+    keybindingEntries(): Promise<KeybindingView>;
+    /** What saving the line `draft` would refuse, field by field, without
+     *  writing (doc "Changing keybindings"). */
+    checkKeybindingEntry(draft: EntryDraft, replacing: EntryPlace | null): Promise<KeybindingCheck>;
+    /** Writes a line of `keybindings.toml`: refused when the command does not
+     *  exist or a key it binds is taken in that place. `replacing` is the
+     *  line being edited, which the new one takes the place of. */
+    saveKeybindingEntry(draft: EntryDraft, replacing: EntryPlace | null): Promise<KeybindingView>;
+    /** Removes a line of `keybindings.toml`, every key it binds; refused for
+     *  a suggested one. */
+    removeKeybindingEntry(place: EntryPlace): Promise<KeybindingView>;
+    /** What giving a variable a new value would change ("3 keys change."),
+     *  rejected with the reason it would be refused. */
+    checkKeybindingVariable(name: string, value: string): Promise<string>;
+    /** Gives a variable of `keybindings.toml` a new value. */
+    setKeybindingVariable(name: string, value: string): Promise<KeybindingView>;
   }
 
   interface ConfigInfo {
@@ -249,24 +257,65 @@ declare namespace Metafolder {
     reload: string | null;
   }
 
-  /** Where a binding applies: its combo and its scope. */
-  interface BindingPlace {
-    combo: string;
+  /** Where a line of `keybindings.toml` is: its key as written, variables
+   *  left in, and its scope. */
+  interface EntryPlace {
+    source: string;
     when: string | null;
     focus: string | null;
   }
 
-  /** A binding as the settings panel's form holds it. */
-  interface KeybindingDraft extends BindingPlace {
+  /** A line as the keybindings panel's form holds it. */
+  interface EntryDraft extends EntryPlace {
     command: string;
-    replacing: BindingPlace | null;
+    textInput: boolean;
+    /** The default target of a `{target}` template: here, other, new. */
+    target: string | null;
   }
 
-  /** Why a binding would be refused: per field, null where nothing stands
-   *  in the way. */
+  /** How often a command is used (doc "Command classes"). */
+  type CommandClass = 'A' | 'B' | 'C' | 'D' | 'X';
+
+  /** One line of `keybindings.toml`, as written, with the keys it binds. */
+  interface FileEntry extends EntryPlace {
+    command: string;
+    text_input: boolean;
+    target: string | null;
+    /** The keys it binds that are in effect, each with what it runs. */
+    bindings: { keys: string[]; invocation: string }[];
+    /** Suggested by a panel or `commands.js`: in effect, not in the file. */
+    suggested: boolean;
+    class: CommandClass | null;
+  }
+
+  /** A variable of `keybindings.toml` (doc "Keybinding variables"). */
+  interface KeybindingVariable {
+    name: string;
+    /** As written: it may name other variables. */
+    value: string;
+    /** Its keys, the variables it names replaced. */
+    keys: string;
+    /** How many lines use it. */
+    uses: number;
+  }
+
+  interface KeybindingView {
+    entries: FileEntry[];
+    variables: KeybindingVariable[];
+    /** The commands no key runs. */
+    unbound: { name: string; label: string; class: CommandClass | null }[];
+    /** Why `command-classes.toml` could not be read, if it could not. */
+    classes_error: string | null;
+  }
+
+  /** Why a line would be refused: per field, null where nothing stands in
+   *  the way; `note` says what saving would override. */
   interface KeybindingCheck {
     command: string | null;
     key: string | null;
+    note: string | null;
+    /** The binding that refuses the key. */
+    in_the_way: { keys: string[]; when: string | null; focus: string | null } | null;
   }
 
   /** A registered command (`CommandDef`). */

@@ -1,0 +1,12 @@
+title: $:/mf/gen/Panel/keybindings panel
+catalog: Panel
+target: keybindings panel
+summary: The keybindings panel type
+
+!! Commands
+
+None of its own.
+
+!! Generic commands
+
+Provides ``refresh`` to [[Generic panel commands]].

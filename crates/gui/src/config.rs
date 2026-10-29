@@ -7,7 +7,7 @@
 //! at runtime a missing configuration file is an error, never a fall back to a
 //! shipped default (doc "No runtime fallback").
 
-use crate::keybindings::{BindingPlace, KeybindingSet};
+use crate::keybindings::{CompiledBinding, EntryDraft, EntryPlace, KeybindingSet};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -346,45 +346,17 @@ impl ConfigDir {
         focus: Option<&str>,
         text_input: bool,
     ) -> Result<KeybindingSet, String> {
-        let normalized = crate::keybindings::parse_combo(combo)?.join(" ");
         let mut doc = self.read_keybindings_document()?;
-        let keys = combo_keys(&doc, &normalized);
-        // The binding of this exact (when, focus) scope is changed where it is.
-        let existing = keys.iter().find(|key| {
-            doc.get(key.as_str()).is_some_and(|item| element_index(item, when, focus).is_some())
-        });
-        if let Some(key) = existing {
-            let item = doc.get_mut(key).expect("the key was just found");
-            let element = element_mut(item, when, focus).expect("the element was just found");
-            set_in_place(element, "command", command.into());
-            if text_input {
-                set_in_place(element, "text-input", true.into());
-            } else {
-                element.remove("text-input");
-            }
-        } else {
-            let mut entry = toml_edit::InlineTable::new();
-            entry.insert("command", command.into());
-            if let Some(when) = when {
-                entry.insert("when", when.into());
-            }
-            if let Some(focus) = focus {
-                entry.insert("focus", focus.into());
-            }
-            if text_input {
-                entry.insert("text-input", true.into());
-            }
-            // A new scope joins the combo's other bindings; a new combo goes
-            // at the end of the file.
-            match keys.first() {
-                Some(key) => push_element(doc.get_mut(key).expect("listed key"), entry),
-                None => {
-                    doc.insert(&normalized, toml_edit::value(entry));
-                }
-            }
-        }
-        self.write_keybindings_document(&doc)?;
-        self.load_keybindings()
+        let draft = EntryDraft {
+            source: combo.into(),
+            command: command.into(),
+            when: when.map(str::to_string),
+            focus: focus.map(str::to_string),
+            text_input,
+            target: None,
+        };
+        write_entry(&mut doc, &draft)?;
+        self.commit_keybindings(&doc)
     }
 
     /// Removes (unbinds) one `(when, focus)`-scoped binding of `combo` from
@@ -398,74 +370,119 @@ impl ConfigDir {
         when: Option<&str>,
         focus: Option<&str>,
     ) -> Result<KeybindingSet, String> {
-        let normalized = crate::keybindings::parse_combo(combo)?.join(" ");
         let mut doc = self.read_keybindings_document()?;
-        let literal = combo_keys(&doc, &normalized)
-            .iter()
-            .any(|key| doc.get(key).is_some_and(|item| element_index(item, when, focus).is_some()));
-        // A key a variable or a target template produced has no line of its
-        // own to remove (doc "Keybinding variables").
-        if !literal {
-            let place = crate::keybindings::BindingPlace {
-                combo: normalized.clone(),
-                when: when.map(str::to_string),
-                focus: focus.map(str::to_string),
-            };
-            if let Some(line) = self.load_keybindings()?.derived_from(&place) {
-                return Err(format!(
-                    "{normalized} comes from the line \"{line}\" of keybindings.toml (a variable \
-                     or a target template): edit that line, or bind the key to something else"
-                ));
-            }
-        }
-        for key in combo_keys(&doc, &normalized) {
-            let item = doc.get_mut(&key).expect("listed key");
-            let emptied = match item {
-                toml_edit::Item::Value(toml_edit::Value::Array(array)) => {
-                    array.retain(|value| !value_in_scope(value, when, focus));
-                    array.is_empty()
-                }
-                toml_edit::Item::ArrayOfTables(tables) => {
-                    tables.retain(|table| !in_scope(table, when, focus));
-                    tables.is_empty()
-                }
-                single => element_index(single, when, focus).is_some(),
-            };
-            if emptied {
-                doc.remove(&key);
-            }
-        }
-        self.write_keybindings_document(&doc)?;
-        self.load_keybindings()
+        remove_entry(&mut doc, combo, when, focus);
+        self.commit_keybindings(&doc)
     }
 
-    /// The settings panel's save (doc "Changing keybindings"): binds
-    /// `command` at `place` after checking that the command exists (`known`)
-    /// and that the key is free there in `current` — the set in effect — and,
-    /// when `replacing` names the binding being edited, takes its place: it is
-    /// no conflict, and it is removed when the new binding lands elsewhere.
-    /// Returns the new set, `current`'s suggestions kept.
-    pub fn save_user_keybinding(
+    /// The keybindings panel's save (doc "keybindings panel"): writes the
+    /// line `draft` after checking it against `current`, the set in effect
+    /// (`KeybindingSet::check_entry`, `known` naming the commands), in place
+    /// of the line `replacing` when one is edited — where it is, when it stays
+    /// at the same key and in the same scope. Returns the new set, `current`'s
+    /// suggestions kept.
+    pub fn save_keybinding_entry(
         &self,
         current: &KeybindingSet,
         known: impl Fn(&str) -> bool,
-        place: &BindingPlace,
-        command: &str,
-        text_input: bool,
-        replacing: Option<&BindingPlace>,
+        draft: &EntryDraft,
+        replacing: Option<&EntryPlace>,
     ) -> Result<KeybindingSet, String> {
-        current.check(known, place, command, replacing).into_result()?;
-        let (when, focus) = (place.when.as_deref(), place.focus.as_deref());
-        // The edited binding is removed when the new one lands elsewhere.
-        let moved = replacing.filter(|old| !old.is(place));
-        self.set_user_keybinding(&place.combo, command.trim(), when, focus, text_input)?;
-        let set = match moved {
-            Some(old) => {
-                self.remove_user_keybinding(&old.combo, old.when.as_deref(), old.focus.as_deref())?
-            }
-            None => self.load_keybindings()?,
-        };
+        current.check_entry(known, draft, replacing).into_result()?;
+        let mut doc = self.read_keybindings_document()?;
+        let moved = replacing.filter(|old| {
+            !crate::keybindings::same_source(&old.source, &draft.source)
+                || old.when != draft.when
+                || old.focus != draft.focus
+        });
+        if let Some(old) = moved {
+            remove_entry(&mut doc, &old.source, old.when.as_deref(), old.focus.as_deref());
+        }
+        write_entry(&mut doc, draft)?;
+        Ok(self.commit_keybindings(&doc)?.with_suggestions_of(current))
+    }
+
+    /// Removes the line at `place` — every key it binds. Returns the new set,
+    /// `current`'s suggestions kept.
+    pub fn remove_keybinding_entry(
+        &self,
+        current: &KeybindingSet,
+        place: &EntryPlace,
+    ) -> Result<KeybindingSet, String> {
+        let mut doc = self.read_keybindings_document()?;
+        remove_entry(&mut doc, &place.source, place.when.as_deref(), place.focus.as_deref());
+        Ok(self.commit_keybindings(&doc)?.with_suggestions_of(current))
+    }
+
+    /// What giving the variable `name` the value `value` would do: the file
+    /// with it, and its set — refused when the file would not load (a key
+    /// bound twice) or a key alone would hide a sequence that nothing hid.
+    fn variable_change(
+        &self,
+        current: &KeybindingSet,
+        name: &str,
+        value: &str,
+    ) -> Result<(toml_edit::DocumentMut, KeybindingSet), String> {
+        let value = value.split_whitespace().collect::<Vec<_>>().join(" ");
+        if value.is_empty() {
+            return Err(format!("{name}: a variable cannot be empty"));
+        }
+        let mut doc = self.read_keybindings_document()?;
+        let vars = doc
+            .get_mut("vars")
+            .and_then(toml_edit::Item::as_table_like_mut)
+            .filter(|vars| vars.contains_key(name))
+            .ok_or_else(|| format!("there is no variable \"{name}\" in keybindings.toml"))?;
+        set_in_place(vars, name, value.as_str().into());
+        let set = KeybindingSet::from_source(&doc.to_string())?;
+        let before = crate::keybindings::sequence_clashes(&current.compiled());
+        if let Some(clash) = crate::keybindings::sequence_clashes(&set.compiled())
+            .into_iter()
+            .find(|clash| !before.contains(clash))
+        {
+            return Err(clash);
+        }
+        Ok((doc, set))
+    }
+
+    /// What `set_keybinding_variable` would do, said, or why it would be
+    /// refused — shown as the value is typed.
+    pub fn check_keybinding_variable(
+        &self,
+        current: &KeybindingSet,
+        name: &str,
+        value: &str,
+    ) -> Result<String, String> {
+        let (_, set) = self.variable_change(current, name, value)?;
+        let key = |b: &CompiledBinding| (b.keys.clone(), b.when.clone(), b.focus.clone());
+        let old: std::collections::HashSet<_> = current.compiled().iter().map(key).collect();
+        let changed = set.compiled().iter().filter(|b| !old.contains(&key(b))).count();
+        Ok(match changed {
+            0 => "No key changes.".to_string(),
+            1 => "1 key changes.".to_string(),
+            n => format!("{n} keys change."),
+        })
+    }
+
+    /// Gives the variable `name` the value `value`, in its line of the file.
+    /// Returns the new set, `current`'s suggestions kept.
+    pub fn set_keybinding_variable(
+        &self,
+        current: &KeybindingSet,
+        name: &str,
+        value: &str,
+    ) -> Result<KeybindingSet, String> {
+        let (doc, set) = self.variable_change(current, name, value)?;
+        self.write_keybindings_document(&doc)?;
         Ok(set.with_suggestions_of(current))
+    }
+
+    /// Writes `doc` once it loads, and returns its set: an edit never leaves a
+    /// file the GUI would refuse at its next start.
+    fn commit_keybindings(&self, doc: &toml_edit::DocumentMut) -> Result<KeybindingSet, String> {
+        let set = KeybindingSet::from_source(&doc.to_string())?;
+        self.write_keybindings_document(doc)?;
+        Ok(set)
     }
 
     fn read_keybindings_document(&self) -> Result<toml_edit::DocumentMut, String> {
@@ -596,16 +613,93 @@ impl ConfigDir {
 
 /// The keys of `doc` that spell the combo `normalized` (a combo may be written
 /// in more than one way, `"shift+ctrl+a"` and `"ctrl+shift+a"`).
-fn combo_keys(doc: &toml_edit::DocumentMut, normalized: &str) -> Vec<String> {
+/// The keys of the file that are `source`, however each is spelled.
+fn source_keys(doc: &toml_edit::DocumentMut, source: &str) -> Vec<String> {
     doc.iter()
         .map(|(key, _)| key)
-        .filter(|key| {
-            crate::keybindings::parse_combo(key)
-                .map(|ks| ks.join(" ") == normalized)
-                .unwrap_or(false)
-        })
+        .filter(|key| *key != "vars" && crate::keybindings::same_source(key, source))
         .map(str::to_string)
         .collect()
+}
+
+/// Writes the line `draft` into `doc`: where the line of its key and scope
+/// is, or beside the other scopes of its key, or at the end of the file.
+fn write_entry(doc: &mut toml_edit::DocumentMut, draft: &EntryDraft) -> Result<(), String> {
+    let source = crate::keybindings::normalize_source(&draft.source)?;
+    let (when, focus) = (draft.when.as_deref(), draft.focus.as_deref());
+    let keys = source_keys(doc, &source);
+    let command = draft.command.trim();
+    // The binding of this exact (when, focus) scope is changed where it is.
+    let existing = keys.iter().find(|key| {
+        doc.get(key.as_str()).is_some_and(|item| element_index(item, when, focus).is_some())
+    });
+    if let Some(key) = existing {
+        let item = doc.get_mut(key).expect("the key was just found");
+        let element = element_mut(item, when, focus).expect("the element was just found");
+        set_in_place(element, "command", command.into());
+        if draft.text_input {
+            set_in_place(element, "text-input", true.into());
+        } else {
+            element.remove("text-input");
+        }
+        match &draft.target {
+            Some(target) => set_in_place(element, "target", target.as_str().into()),
+            None => {
+                element.remove("target");
+            }
+        }
+        return Ok(());
+    }
+    let mut entry = toml_edit::InlineTable::new();
+    entry.insert("command", command.into());
+    if let Some(when) = when {
+        entry.insert("when", when.into());
+    }
+    if let Some(focus) = focus {
+        entry.insert("focus", focus.into());
+    }
+    if draft.text_input {
+        entry.insert("text-input", true.into());
+    }
+    if let Some(target) = &draft.target {
+        entry.insert("target", target.as_str().into());
+    }
+    // A new scope joins the key's other bindings; a new key goes at the end
+    // of the file.
+    match keys.first() {
+        Some(key) => push_element(doc.get_mut(key).expect("listed key"), entry),
+        None => {
+            doc.insert(&source, toml_edit::value(entry));
+        }
+    }
+    Ok(())
+}
+
+/// Removes the line of key `source` and scope `(when, focus)` from `doc`, and
+/// the key when it was its last; nothing when there is none.
+fn remove_entry(
+    doc: &mut toml_edit::DocumentMut,
+    source: &str,
+    when: Option<&str>,
+    focus: Option<&str>,
+) {
+    for key in source_keys(doc, source) {
+        let item = doc.get_mut(&key).expect("listed key");
+        let emptied = match item {
+            toml_edit::Item::Value(toml_edit::Value::Array(array)) => {
+                array.retain(|value| !value_in_scope(value, when, focus));
+                array.is_empty()
+            }
+            toml_edit::Item::ArrayOfTables(tables) => {
+                tables.retain(|table| !in_scope(table, when, focus));
+                tables.is_empty()
+            }
+            single => element_index(single, when, focus).is_some(),
+        };
+        if emptied {
+            doc.remove(&key);
+        }
+    }
 }
 
 /// Whether one binding element has exactly this `(when, focus)` scope (`None`
@@ -1175,15 +1269,147 @@ mod tests {
         std::fs::remove_dir_all(config.root()).unwrap();
     }
 
-    #[test]
-    fn test_a_key_from_a_variable_cannot_be_removed_on_its_own() {
-        let config = kb_dir();
-        let source = "vars.tags = \",\"\n\"{tags} a\" = { command = \"template\" }\n";
-        std::fs::write(config.keybindings_path(), source).unwrap();
+    fn entry(source: &str, command: &str) -> crate::keybindings::EntryDraft {
+        crate::keybindings::EntryDraft {
+            source: source.into(),
+            command: command.into(),
+            when: None,
+            focus: None,
+            text_input: false,
+            target: None,
+        }
+    }
 
-        let error = config.remove_user_keybinding(", a", None, None).unwrap_err();
-        assert!(error.contains("{tags} a"), "{error}");
+    fn place(source: &str) -> crate::keybindings::EntryPlace {
+        crate::keybindings::EntryPlace { source: source.into(), when: None, focus: None }
+    }
+
+    /// The lines of the shipped file that differ from `written`.
+    fn changed_lines<'a>(shipped: &'a str, written: &'a str) -> Vec<(&'a str, &'a str)> {
+        shipped.lines().zip(written.lines()).filter(|(a, b)| a != b).collect()
+    }
+
+    #[test]
+    fn test_a_template_line_is_edited_where_it_is() {
+        let shipped = include_str!("../default-config/keybindings.toml");
+        let config = kb_dir();
+        std::fs::write(config.keybindings_path(), shipped).unwrap();
+        let current = config.load_keybindings().unwrap();
+        let draft = crate::keybindings::EntryDraft {
+            target: Some("other".into()),
+            ..entry("{panels} c", "panel:open {target} config")
+        };
+
+        let set = config
+            .save_keybinding_entry(&current, |_| true, &draft, Some(&place("{panels} c")))
+            .unwrap();
+        let written = std::fs::read_to_string(config.keybindings_path()).unwrap();
+        let changed = changed_lines(shipped, &written);
+        assert_eq!(changed.len(), 1, "{changed:?}");
+        assert!(changed[0].1.contains("target = \"other\""), "{changed:?}");
+        let bound = |keys: &[&str]| {
+            set.compiled().into_iter().find(|b| b.keys == keys).map(|b| b.invocation)
+        };
+        assert_eq!(bound(&["t", "c"]).as_deref(), Some("panel:open other config"));
+        assert_eq!(bound(&["i", "t", "c"]).as_deref(), Some("panel:open here config"));
+        std::fs::remove_dir_all(config.root()).unwrap();
+    }
+
+    #[test]
+    fn test_a_line_moved_to_another_key_takes_its_template_along() {
+        let config = kb_dir();
+        let source = "vars.target-here = \"i\"\nvars.target-other = \"b\"\nvars.target-new = \"n\"\n\
+                      vars.panels = \"t\"\n\
+                      \"{panels} c\" = { command = \"panel:open {target} config\", target = \"here\" }\n";
+        std::fs::write(config.keybindings_path(), source).unwrap();
+        let current = config.load_keybindings().unwrap();
+        let draft = crate::keybindings::EntryDraft {
+            target: Some("here".into()),
+            ..entry("{panels}  k", "panel:open {target} config")
+        };
+
+        let set = config
+            .save_keybinding_entry(&current, |_| true, &draft, Some(&place("{panels} c")))
+            .unwrap();
+        let written = std::fs::read_to_string(config.keybindings_path()).unwrap();
+        assert!(
+            written.contains(
+                "\"{panels} k\" = { command = \"panel:open {target} config\", target = \"here\" }"
+            ),
+            "{written}"
+        );
+        assert!(!written.contains("{panels} c"), "{written}");
+        let keys: Vec<String> = set.compiled().into_iter().map(|b| b.keys.join(" ")).collect();
+        assert_eq!(keys.len(), 4);
+        assert!(keys.contains(&"n t k".to_string()) && !keys.contains(&"t c".to_string()));
+
+        // Removing the line removes its four keys.
+        let set = config.remove_keybinding_entry(&set, &place("{panels} k")).unwrap();
+        assert!(set.compiled().is_empty());
+        std::fs::remove_dir_all(config.root()).unwrap();
+    }
+
+    #[test]
+    fn test_a_saved_line_is_checked_first() {
+        let config = kb_dir();
+        let source = "vars.tags = \",\"\n\"{tags} a\" = { command = \"x\" }\n";
+        std::fs::write(config.keybindings_path(), source).unwrap();
+        let current = config.load_keybindings().unwrap();
+        let error = config
+            .save_keybinding_entry(&current, |_| true, &entry("{tags}", "y"), None)
+            .unwrap_err();
+        assert!(error.contains("would hide"), "{error}");
+        let error =
+            config.save_keybinding_entry(&current, |_| false, &entry("q", "y"), None).unwrap_err();
+        assert!(error.contains("unknown command"), "{error}");
         assert_eq!(std::fs::read_to_string(config.keybindings_path()).unwrap(), source);
+
+        // A key naming a variable is written as it is typed, words apart.
+        config
+            .save_keybinding_entry(&current, |_| true, &entry(" {tags}   q ", "y"), None)
+            .unwrap();
+        let written = std::fs::read_to_string(config.keybindings_path()).unwrap();
+        assert!(written.ends_with("\"{tags} q\" = { command = \"y\" }\n"), "{written}");
+        std::fs::remove_dir_all(config.root()).unwrap();
+    }
+
+    #[test]
+    fn test_a_variable_is_changed_in_its_line_and_moves_every_key() {
+        let shipped = include_str!("../default-config/keybindings.toml");
+        let config = kb_dir();
+        std::fs::write(config.keybindings_path(), shipped).unwrap();
+        let current = config.load_keybindings().unwrap();
+
+        let summary = config.check_keybinding_variable(&current, "tags", ";").unwrap();
+        assert!(summary.contains("9 keys"), "{summary}");
+        let set = config.set_keybinding_variable(&current, "tags", ";").unwrap();
+        let written = std::fs::read_to_string(config.keybindings_path()).unwrap();
+        let changed = changed_lines(shipped, &written);
+        assert_eq!(changed, [("vars.tags = \",\"", "vars.tags = \";\"")]);
+        assert!(set
+            .compiled()
+            .iter()
+            .any(|b| b.keys == [";", "a"] && b.invocation == "tag:add tag"));
+        std::fs::remove_dir_all(config.root()).unwrap();
+    }
+
+    #[test]
+    fn test_a_variable_change_that_breaks_the_keys_is_refused() {
+        let shipped = include_str!("../default-config/keybindings.toml");
+        let config = kb_dir();
+        std::fs::write(config.keybindings_path(), shipped).unwrap();
+        let current = config.load_keybindings().unwrap();
+        let refused = |name: &str, keys: &str| {
+            config.check_keybinding_variable(&current, name, keys).unwrap_err()
+        };
+        // Two domains on one letter bind the same keys twice.
+        assert!(refused("tags", "g").contains("twice"), "{}", refused("tags", "g"));
+        // `x` alone opens the command input: a domain there hides it.
+        assert!(refused("go", "x").contains("hide"), "{}", refused("go", "x"));
+        assert!(refused("nothing", "q").contains("no variable"));
+        assert!(refused("tags", "").contains("empty"));
+        assert!(config.set_keybinding_variable(&current, "go", "x").is_err());
+        assert_eq!(std::fs::read_to_string(config.keybindings_path()).unwrap(), shipped);
         std::fs::remove_dir_all(config.root()).unwrap();
     }
 

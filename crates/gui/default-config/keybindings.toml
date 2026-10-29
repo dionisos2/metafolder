@@ -43,16 +43,16 @@ vars.clipboard = "c"
 # checked ones, the list's query, the items (a file, or a metarecord), tags.
 vars.panel = "p"
 vars.record = "m"
-vars.checked = "shift+m"
-vars.checked-long = "m m"
-vars.query = "m q"
+vars.checked = "shift+{record}"
+vars.checked-long = "{record} {record}"
+vars.query = "{record} {query-verb}"
 vars.item = "e"
-vars.items = "shift+e"
-vars.items-long = "e e"
-vars.items-query = "e q"
+vars.items = "shift+{item}"
+vars.items-long = "{item} {item}"
+vars.items-query = "{item} {query-verb}"
 vars.tags = ","
-vars.negative = ", -"
-vars.mixed = ", ="
+vars.negative = "{tags} -"
+vars.mixed = "{tags} ="
 # Verbs (second position); shift is a variant of the same verb.
 vars.add = "a"
 vars.set = "s"
@@ -225,6 +225,7 @@ vars.index = "i"
 "{panels} v" = { command = "panel:open {target} recent", target = "here" }
 "{panels} u" = { command = "panel:open {target} duplicates", target = "here" }
 "{panels} c" = { command = "panel:open {target} config", target = "here" }
+"{panels} k" = { command = "panel:open {target} keybindings", target = "here" }
 
 # ── Rows: the cursor in every panel with rows (doc "Generic panel commands"),
 # and opening one (doc "Opening a row") ───────────────────────────────────────

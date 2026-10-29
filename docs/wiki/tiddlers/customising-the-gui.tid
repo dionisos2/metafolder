@@ -12,7 +12,8 @@ of its own: a file that is missing or malformed stops it at startup
 ([[No runtime fallback]]).
 
 |!To change |!Edit |!Takes effect |
-|what a key runs |`keybindings.toml`, or the [[config panel]] — [[Changing keybindings]] |at once from the config panel; `config:reload keybindings` after editing the file |
+|what a key runs |`keybindings.toml`, or the [[keybindings panel]] — [[Changing keybindings]] |at once from the keybindings panel; `config:reload keybindings` after editing the file |
+|the class of a command |`command-classes.toml` — [[Command classes]] |when the keybindings panel next reads it |
 |colours, fonts, the look of a widget |`style.css` — [[Style and theming]] |`config:reload style` |
 |the commands themselves: add yours, edit the shipped ones written in JavaScript |`user-commands.js`, `commands.js` — [[User commands]] |`config:reload commands` |
 |the macros you saved |`macros.js` — [[Macros]] |at once on `macro:save`; `config:reload commands` after editing the file |
@@ -25,7 +26,8 @@ of its own: a file that is missing or malformed stops it at startup
 [[Reloading the configuration]] says why some of these need a restart.
 
 The [[config panel]] (<<key "panel:open here config" "t c">>) shows the paths of
-these files, a button reloading each, and the keybinding editor.
+these files and a button reloading each; the [[keybindings panel]]
+(<<key "panel:open here keybindings" "t k">>) edits the keys.
 
 <<tagged-with "GUI command">>
 

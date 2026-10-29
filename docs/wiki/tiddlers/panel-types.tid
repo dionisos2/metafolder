@@ -31,7 +31,8 @@ the file manager…
 |`sync` |synchronisation between two repositories |
 |[[message panel]] |the workspace's messages: status messages, commands run, the daemon's reports |
 |[[shell panel]] |what the shell lines and scripts run in the workspace printed, like a terminal |
-|[[config panel]] |the configuration files, and the keybinding editor |
+|[[config panel]] |the configuration files |
+|[[keybindings panel]] |the keybinding editor: the lines of `keybindings.toml`, the commands no key runs, the variables |
 |[[workspace-info panel]] |the workspace's variables, live — for debugging panels and scripts |
 |[[help panel]] |this documentation |
 

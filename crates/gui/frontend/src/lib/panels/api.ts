@@ -596,16 +596,23 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         // (config.toml `[completion].label-separator`, doc "Completion
         // views").
         labelSeparator: () => invoke('label_separator') as Promise<string>,
-        // The settings panel (doc "Changing keybindings"): where the
-        // configuration files are, and the editor of `keybindings.toml`.
+        // The config panel: where the configuration files are.
         info: (repo?: string | null) =>
           invoke('config_info', { repo: repo ?? null }) as Promise<Metafolder.ConfigInfo>,
-        checkKeybinding: (binding: Metafolder.KeybindingDraft) =>
-          invoke('check_user_keybinding', { ...binding }) as Promise<Metafolder.KeybindingCheck>,
-        setKeybinding: (binding: Metafolder.KeybindingDraft & { textInput: boolean }) =>
-          invoke('set_user_keybinding', { ...binding }) as Promise<Metafolder.Binding[]>,
-        removeKeybinding: (place: Metafolder.BindingPlace) =>
-          invoke('remove_user_keybinding', { ...place }) as Promise<Metafolder.Binding[]>,
+        // The keybindings panel (doc "Changing keybindings"): the editor of
+        // `keybindings.toml`, its lines and its variables.
+        keybindingEntries: () =>
+          invoke('keybinding_entries') as Promise<Metafolder.KeybindingView>,
+        checkKeybindingEntry: (draft: Metafolder.EntryDraft, replacing: Metafolder.EntryPlace | null) =>
+          invoke('check_keybinding_entry', { draft, replacing }) as Promise<Metafolder.KeybindingCheck>,
+        saveKeybindingEntry: (draft: Metafolder.EntryDraft, replacing: Metafolder.EntryPlace | null) =>
+          invoke('save_keybinding_entry', { draft, replacing }) as Promise<Metafolder.KeybindingView>,
+        removeKeybindingEntry: (place: Metafolder.EntryPlace) =>
+          invoke('remove_keybinding_entry', { place }) as Promise<Metafolder.KeybindingView>,
+        checkKeybindingVariable: (name: string, value: string) =>
+          invoke('check_keybinding_variable', { name, value }) as Promise<string>,
+        setKeybindingVariable: (name: string, value: string) =>
+          invoke('set_keybinding_variable', { name, value }) as Promise<Metafolder.KeybindingView>,
       },
 
       workspace: {

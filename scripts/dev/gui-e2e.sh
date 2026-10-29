@@ -15,12 +15,12 @@
 # The GUI runs on a private X server (Xvfb) when there is one, so its window
 # never shows on the user's desktop. The keyboard scenarios (prompt history
 # keybindings open-with) need it and xdotool: they press keys where no command
-# reaches — the config panel, the command input — and on a real display they
+# reaches — the keybindings panel, the command input — and on a real display they
 # would type into whatever the user is doing, or into the desktop's own
 # shortcuts. Without both they are a loud SKIP.
 #
 # What only a mouse reaches (a tab's close button, the field editor's picker
-# button, the config panel's Edit) is clicked through WebKit's remote
+# button, the keybindings panel's Edit) is clicked through WebKit's remote
 # inspector (scripts/dev/lib/webview.mjs, node): by selector and text, never by
 # coordinates. The inspector listens on loopback for the run's duration, open
 # to any local process — a throwaway daemon, but the GUI runs shell commands.
@@ -1163,14 +1163,14 @@ scenario_keybindings() {
     new_repo keybindings
     local file="$CONFIG_HOME/metafolder/gui/keybindings.toml"
 
-    run panel:open here config
-    command_ok "settings: config panel open"
+    run panel:open here keybindings
+    command_ok "keybindings: panel open"
     # The key field has the focus; tab goes to the command, Enter saves.
     typed "ctrl+alt+u"
     keys Tab
     typed "status:clear"
     keys Return
-    assert "settings: Enter writes the binding" \
+    assert "keybindings: Enter writes the binding" \
         until_ok 10 grep -qx '"ctrl+alt+u" = { command = "status:clear" }' "$file"
     # The form is empty again, the focus back on the key field. A key bound
     # in the same place is refused — "!" opens the command input — and so is
@@ -1180,7 +1180,7 @@ scenario_keybindings() {
     typed "status:clear"
     keys Return
     sleep 1
-    assert "settings: a key bound already keeps its command" \
+    assert "keybindings: a key bound already keeps its command" \
         grep -qx '"!" = { command = "command-input:focus bash" }' "$file"
     # The refused form stays as it was; a field reached with tab has its text
     # selected, so typing replaces it.
@@ -1190,13 +1190,13 @@ scenario_keybindings() {
     typed "status:nothing"
     keys Return
     sleep 1
-    assert_not "settings: an unknown command is not saved" grep -q '"ctrl+alt+j"' "$file"
+    assert_not "keybindings: an unknown command is not saved" grep -q '"ctrl+alt+j"' "$file"
     keys Escape
 
     show_panel left e2e-keys e2e-keys:ping
     mfg message --workspace "$WS" "e2e: before ctrl+alt+y" >/dev/null
     keys ctrl+alt+y
-    assert "settings: a key a panel suggested runs its command" \
+    assert "keybindings: a key a panel suggested runs its command" \
         until_ok 10 says "e2e: pinged"
 }
 
@@ -1430,9 +1430,9 @@ scenario_suggested_key() {
     local file="$CONFIG_HOME/metafolder/gui/keybindings.toml"
     # The panel suggests ctrl+alt+y when it mounts.
     show_panel left e2e-keys e2e-keys:ping
-    run panel:open here config
+    run panel:open here keybindings
 
-    # The settings panel says it is suggested, and offers no Remove: it is not
+    # The keybindings panel says it is suggested, and offers no Remove: it is not
     # in the file.
     assert_contains "suggested key: its row says so" \
         "$(until_ok 10 webview text '#bindings tr' ctrl+alt+y 2>/dev/null)" "suggested"
