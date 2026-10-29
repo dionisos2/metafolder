@@ -1763,8 +1763,8 @@ function fileOps(ws: string, context: ExecContext): FileOps {
       if ("error" in outcome) throw new Error(outcome.error);
       return !("cancelled" in outcome);
     },
-    confirm: async (question) =>
-      store.panelSettings["confirm-trash"] === false || window.confirm(question),
+    confirm: async (question, many) =>
+      (!many && store.panelSettings["confirm-trash"] === false) || window.confirm(question),
     ask: async (question, initial = "") => {
       const answer = await promptForArg({
         argName: "name",

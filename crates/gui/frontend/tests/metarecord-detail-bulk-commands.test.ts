@@ -98,7 +98,7 @@ describe('metarecord:bulk', () => {
     await expect(bulk.handler('selection', 'unset', 'mfr_mime')).rejects.toThrow('reserved');
   });
 
-  test('trash asks first, unless the confirmation is switched off', async () => {
+  test('trash always asks first: it touches a set', async () => {
     const confirm = vi.fn(() => false);
     vi.stubGlobal('confirm', confirm);
     const asked = setup({ selected_metarecords: ['u1'] });
@@ -109,8 +109,8 @@ describe('metarecord:bulk', () => {
     confirm.mockClear();
     const quiet = setup({ selected_metarecords: ['u1'] }, false, { confirmTrash: false });
     await quiet.bulk.handler('selection', 'trash');
-    expect(confirm).not.toHaveBeenCalled();
-    expect(quiet.metafolder.trash.trashQuery).toHaveBeenCalled();
+    expect(confirm).toHaveBeenCalled();
+    expect(quiet.metafolder.trash.trashQuery).not.toHaveBeenCalled();
   });
 
   test('refuses a target it does not know', async () => {

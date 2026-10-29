@@ -19,7 +19,7 @@
 
 import { byId, el, field, formatSize, formatValue, viewerButtons, whereArg } from '/__ui.js';
 import { createListCursor } from '/__list-cursor.js';
-import { rowActionsProvider, baseName, confirmTrash } from '/__file-actions.js';
+import { rowActionsProvider, baseName } from '/__file-actions.js';
 
 const GROUP_QUERY = { type: 'eq', field: 'mf_schema', value: { type: 'string', value: 'duplicate_group' } };
 const PAGE = 200;
@@ -274,8 +274,7 @@ export function mount(root, metafolder) {
     const list = others.map((m) => `  ${m.path}`).join('\n');
     const freed = formatSize(row.group.reclaimable);
     if (
-      !confirmTrash(
-        mf,
+      !confirm(
         `Keep ${row.member.path}\n\nand send its ${others.length} other ` +
           `cop${others.length === 1 ? 'y' : 'ies'} to the trash?\n\n${list}\n\n` +
           `Up to ${freed} is reclaimed once the trash is pruned.`,

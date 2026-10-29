@@ -165,7 +165,7 @@ describe('item:delete — the question first (doc "Confirming a trashing")', () 
     expect(calls.trashQuery).toEqual([]);
   });
 
-  test('switched off, nothing is asked', async () => {
+  test('switched off, one file is trashed without a question', async () => {
     settings = { confirmTrash: false };
     const confirm = vi.fn(() => false);
     vi.stubGlobal('confirm', confirm);
@@ -174,9 +174,25 @@ describe('item:delete — the question first (doc "Confirming a trashing")', () 
     expect(confirm).not.toHaveBeenCalled();
     expect(calls.trash).toHaveLength(1);
   });
+
+  test('switched off, the checked ones and the query still ask', async () => {
+    settings = { confirmTrash: false };
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirm);
+    vars.selected_metarecords = ['u1', 'u2'];
+    await run('selection');
+    vars['metarecord-list:effective-query'] = { type: 'is_present', field: 'a' };
+    await run('query');
+    expect(confirm).toHaveBeenCalledTimes(2);
+    expect(calls.trashQuery).toEqual([]);
+  });
 });
 
 describe('item:delete selection / query', () => {
+  beforeEach(() => {
+    vi.stubGlobal('confirm', vi.fn(() => true));
+  });
+
   const withoutFile = (query: unknown) => ({
     type: 'and',
     operands: [query, { type: 'not', operand: { type: 'is_present', field: 'mfr_path' } }],

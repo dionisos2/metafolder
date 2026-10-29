@@ -350,7 +350,8 @@ async function deleteItem(mf, repo, selection) {
   await mf.workspace.set('metarecords:dirty', Date.now());
 }
 
-/** How the bulk deletion's question ends (doc "Confirming a trashing"). */
+/** How the bulk deletion's question ends — asked whatever `confirm-trash`
+ *  says, since it touches a set (doc "Confirming a trashing"). */
 const GO_WITH = 'Their files go to the trash with them.';
 
 /**
@@ -371,7 +372,7 @@ async function deleteItems(mf, repo, what) {
     }
     query = { type: 'uuid_in', uuids };
     const n = uuids.length;
-    if (!confirmTrash(mf, `Delete the ${n === 1 ? 'checked metarecord' : `${n} checked metarecords`}? ${GO_WITH}`)) {
+    if (!confirm(`Delete the ${n === 1 ? 'checked metarecord' : `${n} checked metarecords`}? ${GO_WITH}`)) {
       return;
     }
   } else {
@@ -380,13 +381,11 @@ async function deleteItems(mf, repo, what) {
       await mf.statusBar.message('The metarecord list shows no query — nothing to delete.');
       return;
     }
-    if (mf.settings?.confirmTrash !== false) {
-      const counted = /** @type {{ total?: number | null }} */ (
-        await mf.daemon.call('POST', `/repos/${repo}/query`, { query, select: '*', limit: 1, count: true })
-      );
-      const n = counted.total ?? 0;
-      if (!confirm(`Delete the ${n === 1 ? 'metarecord' : `${n} metarecords`} the list shows? ${GO_WITH}`)) return;
-    }
+    const counted = /** @type {{ total?: number | null }} */ (
+      await mf.daemon.call('POST', `/repos/${repo}/query`, { query, select: '*', limit: 1, count: true })
+    );
+    const n = counted.total ?? 0;
+    if (!confirm(`Delete the ${n === 1 ? 'metarecord' : `${n} metarecords`} the list shows? ${GO_WITH}`)) return;
   }
   const withoutFile = {
     type: 'and',

@@ -261,8 +261,10 @@ export function trashedMessage(what, many, desktop) {
 }
 
 /**
- * Asks before a trashing, unless the user switched the question off (config.toml
- * `[panels] confirm-trash`, doc "Confirming a trashing"). True to go ahead.
+ * Asks before trashing one item, unless the user switched the question off
+ * (config.toml `[panels] confirm-trash`, doc "Confirming a trashing"). True to
+ * go ahead. What touches several files or metarecords asks with a plain
+ * `confirm`, whatever the setting.
  * @param {{ settings?: { confirmTrash?: boolean } }} metafolder @param {string} question
  */
 export function confirmTrash(metafolder, question) {

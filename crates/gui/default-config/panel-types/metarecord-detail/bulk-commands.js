@@ -8,7 +8,6 @@
 //   dirty(mf)       -> tell the other panels the metarecords changed, through
 //                      the API of the command's run (doc "Command transactions")
 
-import { confirmTrash } from '/__file-actions.js';
 import { MATCH_ALL } from '/__value-widget.js';
 import { settledType, splitTypeValue } from './field-args.js';
 import { CONCRETE_TYPES } from './values.js';
@@ -287,9 +286,10 @@ export function registerBulkCommand({
     },
 
     delete: {
-      // No field, no value: this one destroys the metarecords. It confirms on
-      // its own terms (never skipped, count named) rather than through
-      // confirmBulk, because it is not undoable from the UI.
+      // No field, no value: this one destroys the metarecords. Undo brings
+      // them back, but it touches a set, so it asks first (doc "Confirming a
+      // trashing"), on its own terms rather than through confirmBulk: the
+      // question says what goes and that the files stay.
       run: async (mf, t) => {
         if (t.count === 0) {
           void statusBar.message(
@@ -337,8 +337,7 @@ export function registerBulkCommand({
         }
         const on = t.explicit ? t.desc : `${t.count} metarecord${t.count === 1 ? '' : 's'}`;
         if (
-          !confirmTrash(
-            mf,
+          !confirm(
             `Send the files of ${on} to the trash? ` +
               `Their metarecords go with them; restore them from the trash panel.`,
           )

@@ -211,8 +211,8 @@ describe('the bulk form target', () => {
     expect(calls.filter((c) => c.method === 'POST' && c.path.endsWith('/query/delete'))).toEqual([]);
   });
 
-  test('trash asks nothing when the confirmation is switched off', async () => {
-    const confirm = vi.fn(() => false);
+  test('trash asks even with the confirmation switched off: it touches a set', async () => {
+    const confirm = vi.fn(() => true);
     vi.stubGlobal('confirm', confirm);
     const { shadow, calls, store } = await mountList({}, { confirmTrash: false });
     store.set('selected_metarecords', ['uuid-a']);
@@ -220,7 +220,7 @@ describe('the bulk form target', () => {
     await choose(shadow, 'bulk-target', 'Checked selection');
     await choose(shadow, 'bulk-op', 'Trash files');
     await apply(shadow);
-    expect(confirm).not.toHaveBeenCalled();
+    expect(confirm).toHaveBeenCalled();
     expect(calls.filter((c) => c.method === 'TRASH')).toHaveLength(1);
   });
 });

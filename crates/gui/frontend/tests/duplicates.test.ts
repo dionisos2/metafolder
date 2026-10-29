@@ -283,8 +283,8 @@ describe('duplicates panel', () => {
     expect(p.statusBar.message).toHaveBeenCalled();
   });
 
-  test('with the confirmation switched off, keep-this asks nothing', async () => {
-    const confirm = vi.fn(() => false);
+  test('keep-this touches several files: it asks even with the confirmation switched off', async () => {
+    const confirm = vi.fn(() => true);
     vi.stubGlobal('confirm', confirm);
     const members = [
       { uuid: 'm1', path: '/a.bin' },
@@ -298,7 +298,7 @@ describe('duplicates panel', () => {
     await new Promise((r) => setTimeout(r, 0));
     await p.invoke('cursor:next');
     await p.invoke('duplicates:keep');
-    expect(confirm).not.toHaveBeenCalled();
+    expect(confirm).toHaveBeenCalled();
     expect(p.trashPath).toHaveBeenCalledWith('r', '/repo/b.bin');
   });
 

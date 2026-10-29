@@ -92,8 +92,9 @@ pub struct PanelSettings {
     pub live_preview_debounce_ms: u32,
     /// Interval (ms) at which the `repos` panel polls task status.
     pub task_poll_ms: u32,
-    /// Whether a trashing asks first (doc "Confirming a trashing"). Every
-    /// trashing gives its files back, so this is a safety the user may drop.
+    /// Whether trashing one item asks first (doc "Confirming a trashing"):
+    /// the trash gives it back, so this is a safety the user may drop. What
+    /// touches several asks whatever this says.
     pub confirm_trash: bool,
 }
 

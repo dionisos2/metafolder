@@ -75,8 +75,8 @@ declare namespace Metafolder {
     finderDebounceMs?: number;
     livePreviewDebounceMs?: number;
     taskPollMs?: number;
-    /** Whether a trashing asks first (doc "Confirming a trashing"); absent
-     *  means yes. */
+    /** Whether trashing one item asks first (doc "Confirming a trashing");
+     *  absent means yes. What touches several asks regardless. */
     confirmTrash?: boolean;
   }
 

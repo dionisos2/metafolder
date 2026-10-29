@@ -15,8 +15,9 @@ designates — a row of the [[metarecord-list panel]] or of the
 A file is never deleted without its metarecord: one that would stay would
 describe a file that is gone. Nothing here is final: the trash gives the file
 and its metarecords back, and <<key "log:undo" Ctrl+z>> brings a deleted
-metarecord back ([[The undo selection]]). So only a trashing asks first, and
-that question can be switched off ([[Confirming a trashing]]). ''Move to trash''
+metarecord back ([[The undo selection]]). So deleting a metarecord asks
+nothing, trashing a file asks unless switched off, and the checked metarecords or
+the query always ask, naming the count ([[Confirming a trashing]]). ''Move to trash''
 in a context menu is this same command, on the clicked file. The checked
 metarecords and the query need an active repository; a file alone does not.
 

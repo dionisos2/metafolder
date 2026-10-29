@@ -63,10 +63,10 @@ describe('file: commands — what they do', () => {
   test('trash asks first, naming what goes; declined, nothing goes', async () => {
     const o = ops({ confirm: vi.fn(async () => false) });
     await runFileCommand('file:trash', { paths: () => ['/r/a.txt'] }, [], o);
-    expect(o.confirm).toHaveBeenCalledWith('Send "a.txt" to the trash?');
+    expect(o.confirm).toHaveBeenCalledWith('Send "a.txt" to the trash?', false);
     expect(o.trash).not.toHaveBeenCalled();
     await runFileCommand('file:trash', { paths: () => ['/r/a', '/r/b'] }, [], o);
-    expect(o.confirm).toHaveBeenLastCalledWith('Send 2 files to the trash?');
+    expect(o.confirm).toHaveBeenLastCalledWith('Send 2 files to the trash?', true);
   });
 
   test('nothing designated is an error', async () => {

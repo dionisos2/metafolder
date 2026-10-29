@@ -8,7 +8,6 @@
 import { byId, messageOf } from '/__ui.js';
 import { createTypePicker, widgetFor, bulkSetBody, MATCH_ALL, createPickRunner } from '/__value-widget.js';
 import { createSelect } from '/__select.js';
-import { confirmTrash } from '/__file-actions.js';
 
 /**
  * The value editor `widgetFor` builds.
@@ -166,8 +165,7 @@ export function createBulkEdit({ root, metafolder, getRepo, effectiveQuery, stat
         // write (doc "Sending files to the trash"); the Rust side posts the
         // outcome and marks the lists dirty.
         if (
-          !confirmTrash(
-            metafolder,
+          !confirm(
             `Send the files of ${n} metarecord${n === 1 ? '' : 's'} to the trash? ` +
               `Their metarecords go with them; restore them from the trash panel.`,
           )
@@ -180,8 +178,9 @@ export function createBulkEdit({ root, metafolder, getRepo, effectiveQuery, stat
 
       if (op.noField) {
         // Delete the matched metarecords themselves. This removes the
-        // metarecords; any associated files stay on disk (untracked). Confirm
-        // with the count since it is not undoable from the UI.
+        // metarecords; any associated files stay on disk (untracked). Undo
+        // brings them back, but it touches a set, so it asks first with the
+        // count (doc "Confirming a trashing").
         if (
           !confirm(
             `Delete ${n} metarecord${n === 1 ? '' : 's'}? This removes the metarecords ` +
