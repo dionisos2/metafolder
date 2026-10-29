@@ -1740,13 +1740,13 @@ function fileOps(ws: string, context: ExecContext): FileOps {
   };
   return {
     readDir: async (dir) =>
-      (await invoke("fs_read_dir", { path: dir })) as { name: string }[],
+      await invoke<{ name: string }[]>("fs_read_dir", { path: dir }),
     move: async (from, to) => void (await invoke("fs_move", { from, to })),
     copy: async (from, to) => void (await invoke("fs_copy", { from, to })),
     mkdir: async (path) => void (await invoke("fs_mkdir", { path })),
     createFile: async (path) => void (await invoke("fs_create_file", { path })),
     trash: async (path) =>
-      ((await invoke("trash_path", { repo: repoOf(ws) ?? null, path })) as Metafolder.Trashed)
+      (await invoke<Metafolder.Trashed>("trash_path", { repo: repoOf(ws) ?? null, path }))
         .desktop,
     record: async (path) => {
       const daemon = {
@@ -1777,10 +1777,10 @@ function fileOps(ws: string, context: ExecContext): FileOps {
       return typeof answer === "string" ? answer : answer.value;
     },
     clipboard: async () => {
-      const value = (await invoke("global_get_var", {
-        key: "clipboard",
-        txn: context.txn,
-      })) as { paths: string[]; mode: "copy" | "cut" } | null;
+      const value = await invoke<{ paths: string[]; mode: "copy" | "cut" } | null>(
+        "global_get_var",
+        { key: "clipboard", txn: context.txn },
+      );
       return value && Array.isArray(value.paths) ? value : null;
     },
     clearClipboard: async () =>

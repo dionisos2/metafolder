@@ -148,7 +148,7 @@ describe('file-manager filesystem operations', () => {
   }
 
   test('new-folder / new-file create under the current directory', async () => {
-    const { api, handlers, fs } = await mount(null);
+    const { api, fs } = await mount(null);
     promptSpy.mockReturnValueOnce('My Folder');
     await generic(api.provide, 'file:new', 'folder');
     expect(fs.mkdir).toHaveBeenCalledWith('/My Folder');
@@ -159,7 +159,7 @@ describe('file-manager filesystem operations', () => {
   });
 
   test('a blank or cancelled name cancels the create', async () => {
-    const { api, handlers, fs } = await mount(null);
+    const { api, fs } = await mount(null);
     promptSpy.mockReturnValueOnce('   '); // whitespace only
     await generic(api.provide, 'file:new', 'folder');
     promptSpy.mockReturnValueOnce(null); // dialog cancelled
@@ -186,7 +186,7 @@ describe('file-manager filesystem operations', () => {
   });
 
   test('rename moves the selected entry to the new name', async () => {
-    const { api, handlers, fs } = await mount(null);
+    const { api, fs } = await mount(null);
     await selectSong(api);
     promptSpy.mockReturnValueOnce('anthem.mp3');
     await generic(api.provide, 'file:rename');
@@ -194,14 +194,14 @@ describe('file-manager filesystem operations', () => {
   });
 
   test('duplicate copies to a collision-free " copy" name', async () => {
-    const { api, handlers, fs } = await mount(null);
+    const { api, fs } = await mount(null);
     await selectSong(api);
     await generic(api.provide, 'file:duplicate');
     expect(fs.copy).toHaveBeenCalledWith('/song.mp3', '/song copy.mp3');
   });
 
   test('copy then paste copies into the current directory (deduped)', async () => {
-    const { api, handlers, fs } = await mount(null);
+    const { api, fs } = await mount(null);
     await selectSong(api);
     await generic(api.provide, 'clipboard:copy');
     await generic(api.provide, 'file:paste');
@@ -211,7 +211,7 @@ describe('file-manager filesystem operations', () => {
   });
 
   test('copy and cut fill the global clipboard, which paste empties after a cut', async () => {
-    const { api, handlers, global } = await mount(null);
+    const { api, global } = await mount(null);
     await selectSong(api);
     await generic(api.provide, 'clipboard:copy');
     expect(global.current('clipboard')).toEqual({ paths: ['/song.mp3'], mode: 'copy' });
@@ -232,7 +232,7 @@ describe('file-manager filesystem operations', () => {
   });
 
   test('cut then paste moves into the current directory', async () => {
-    const { api, handlers, fs } = await mount(null);
+    const { api, fs } = await mount(null);
     await selectSong(api);
     await generic(api.provide, 'clipboard:cut');
     await generic(api.provide, 'file:paste');
@@ -271,7 +271,7 @@ describe('file-manager filesystem operations', () => {
   });
 
   test('rename to the same name (or blank) is a no-op', async () => {
-    const { api, handlers, fs } = await mount(null);
+    const { api, fs } = await mount(null);
     await selectSong(api);
     promptSpy.mockReturnValueOnce('song.mp3');
     await generic(api.provide, 'file:rename');
@@ -323,7 +323,7 @@ describe('file-manager filesystem operations', () => {
   });
 
   test('with a repository the root button still names the repo root', async () => {
-    const { api, root } = await mount('repo-1');
+    const { root } = await mount('repo-1');
     expect(root.getElementById('goto-root')!.textContent).toBe('repo root');
   });
 
@@ -426,7 +426,7 @@ describe('file-manager filesystem operations', () => {
 
   test('the row and background context menus build without throwing', async () => {
     for (const repo of ['repo-1', null] as const) {
-      const { api, root } = await mount(repo);
+      const { root } = await mount(repo);
       // A directory row, a file row, and the synthetic "." / ".." rows.
       for (const row of root.querySelectorAll('li')) {
         row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));

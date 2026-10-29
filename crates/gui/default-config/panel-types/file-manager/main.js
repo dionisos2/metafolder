@@ -1007,24 +1007,6 @@ export async function mount(root, metafolder) {
     return item;
   }
 
-  // Reload the current directory after a mutation and move the cursor to
-  // `selectName` when given (the freshly created/renamed entry). Other panels
-  // showing this repo refresh via the metarecords:dirty nudge.
-  /** @param {MetafolderApi} mf @param {string|null} selectName */
-  async function afterMutation(mf, selectName) {
-    await mf.workspace.set('metarecords:dirty', Date.now());
-    if (currentDir === null) return;
-    await open(mf, currentDir);
-    if (selectName !== null) {
-      const index = listing.findIndex((item) => item.name === selectName);
-      if (index >= 0) await select(mf, index);
-    }
-  }
-
-
-
-
-
   /** The right-click menu's Cut / Copy: the entry clicked, which the cursor
    *  moved to. @param {MetafolderApi} mf @param {'copy'|'cut'} mode */
   async function clip(mf, mode) {
