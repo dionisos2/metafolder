@@ -3,5 +3,6 @@ tags: [[GUI command]] Trash
 kind: reference
 summary: Delete the selected metarecord
 
-Deletes the selected metarecord and keeps its file (confirmed). The file, if
+Deletes the selected metarecord and keeps its file, with no question: undo brings
+it back ([[Confirming a trashing]]). The file, if
 watched, is then untracked until something tracks it again.

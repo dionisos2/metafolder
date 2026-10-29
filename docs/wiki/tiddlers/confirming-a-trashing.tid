@@ -23,7 +23,7 @@ confirm-trash = false
 
 On by default: a first use starts with the extra safety, and the user who finds
 it a waste of time drops it in one line. It asks nothing, either way, where
-nothing goes to a trash: Delete on a metarecord without a file deletes the
-metarecord, which <<key "log:undo" Ctrl+z>> brings back. What is final keeps its
-own question whatever this says: pruning the trash, deleting a metarecord by
-`metarecord:delete`.
+nothing goes to a trash: deleting a metarecord alone — Delete on one without a
+file, or <<cmd "metarecord:delete">> — which <<key "log:undo" Ctrl+z>> brings
+back. What is final keeps its own question whatever this says: pruning the
+trash.

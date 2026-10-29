@@ -681,9 +681,10 @@ export async function mount(root, metafolder) {
     }
   }
 
-  /** @param {MetafolderApi} mf */
+  /** No question: undo brings the metarecord back (doc "Confirming a
+   *  trashing"). @param {MetafolderApi} mf */
   async function deleteEntry(mf) {
-    if (!current || !confirm('Delete this metarecord (the file itself is kept)?')) return;
+    if (!current) return;
     try {
       await daemon.call('DELETE', api(''));
       void statusBar.message('Metarecord deleted.', statusMessageMs);

@@ -522,3 +522,18 @@ describe('reserved fields — force is asked for, never assumed', () => {
     expect(writes(calls)).toEqual([]);
   });
 });
+
+describe('metarecord:delete', () => {
+  // Undo brings the metarecord back, as it does after Delete on a metarecord
+  // without a file: so neither asks (doc "Confirming a trashing").
+  test('deletes the shown metarecord without a question', async () => {
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirm);
+    const { specs, calls } = await mountPanel([]);
+    await specs.get('metarecord:delete')!.handler();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(calls.filter((c) => c.method === 'DELETE')).toEqual([
+      { method: 'DELETE', path: `/repos/${REPO}/metarecords/${UUID}`, body: null },
+    ]);
+  });
+});
