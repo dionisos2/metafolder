@@ -1715,6 +1715,36 @@ sys.exit(not (c["mode"] == "cut" and len(c["paths"]) == 1
     assert "clipboard: the file manager copies the checked file" until_ok 5 clipboard_is \
         "{\"paths\": [\"$REPO_DIR/d/a.txt\"], \"mode\": \"copy\"}"
     run clipboard:clear
+
+    # A file without a metarecord is checked by its path, and copied with the
+    # checked metarecords' files (doc "Cross-panel selection").
+    touch "$REPO_DIR/d/c.txt"
+    run workspace:send "$WS" selected_paths "[\"$REPO_DIR/d/c.txt\"]"
+    run file-manager:reveal here
+    until_ok 10 fm_at /d c.txt || die "clipboard: the file manager never reached d/c.txt"
+    run file-manager:select toggle
+    command_ok "clipboard: checking an untracked file resolves"
+    assert "clipboard: the untracked file is checked by its path" until_ok 5 \
+        untracked_checked "[\"$REPO_DIR/d/c.txt\"]"
+    run clipboard:copy file-manager
+    assert "clipboard: the file manager copies the checked file and path" until_ok 5 clipboard_is \
+        "{\"paths\": [\"$REPO_DIR/d/a.txt\", \"$REPO_DIR/d/c.txt\"], \"mode\": \"copy\"}"
+    run clipboard:clear
+
+    # Recording it takes the checked paths alone; recorded, it stays checked,
+    # as a metarecord.
+    run file:record file-manager
+    command_ok "clipboard: recording the checked path resolves"
+    assert "clipboard: the recorded path leaves the checked paths" until_ok 10 untracked_checked "[]"
+    assert "clipboard: and is checked as its metarecord" until_ok 10 checked_count 2
+}
+
+# untracked_checked <json> — the workspace's checked paths without a metarecord.
+untracked_checked() { [ "$(ws_var selected_untracked_paths)" = "$1" ]; }
+# checked_count <n> — how many metarecords the workspace has checked.
+checked_count() {
+    python3 -c 'import json, sys; sys.exit(len(json.loads(sys.argv[1])) != int(sys.argv[2]))' \
+        "$(ws_var selected_metarecords)" "$1"
 }
 
 scenario_walk() {

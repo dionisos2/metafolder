@@ -61,6 +61,9 @@ export interface PanelFunctions {
    *  `clipboard:copy`/`clipboard:cut`: the checked metarecords' when some are
    *  checked, else the row under the cursor's. */
   paths?: () => string[] | Promise<string[]>;
+  /** What `file:record` takes, when it is not `paths`: the designated files
+   *  that have no metarecord yet. */
+  recordable?: () => string[] | Promise<string[]>;
   /** The folder the panel shows, where `file:new` and `file:paste` work; null
    *  when it shows none right now. */
   directory?: () => string | null | Promise<string | null>;

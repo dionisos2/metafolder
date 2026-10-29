@@ -472,8 +472,12 @@ declare namespace Metafolder {
     root?(mf: Api): unknown;
     /** The absolute paths of the files the panel designates
      *  (`clipboard:copy`/`clipboard:cut`, the `file:` commands): the checked
-     *  metarecords' when some are checked, else the row under the cursor's. */
+     *  metarecords' (and the file manager's checked paths) when some are
+     *  checked, else the row under the cursor's. */
     paths?(mf: Api): string[] | Promise<string[]>;
+    /** What `file:record` takes, when it is not `paths`: the designated files
+     *  that have no metarecord yet. */
+    recordable?(mf: Api): string[] | Promise<string[]>;
     /** The folder the panel shows, where `file:new` and `file:paste` work;
      *  null when it shows none right now (doc "File commands"). */
     directory?(mf: Api): string | null | Promise<string | null>;

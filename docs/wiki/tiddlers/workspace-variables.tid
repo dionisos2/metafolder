@@ -2,7 +2,7 @@ title: Workspace variables
 tags: GUI
 kind: reference
 audience: dev
-aliases: workspace-variables variables vars selected_metarecord selected_paths selected_metarecords active_repo metarecords:dirty
+aliases: workspace-variables variables vars selected_metarecord selected_paths selected_metarecords selected_untracked_paths active_repo metarecords:dirty
 summary: A per-workspace key-value store the panels communicate through — the selection, the active repository, and each panel's own keys.
 
 Each workspace has a key-value store, shared by every panel loaded in it; a change is
@@ -20,6 +20,7 @@ live. What belongs to no workspace in particular — the file clipboard — is i
 |`selected_metarecord` |`{uuid, repo}` or `null` |the highlighted metarecord; `null` for an untracked file |
 |`selected_paths` |list of absolute paths |the highlighted file — at most one entry, one position of the metarecord's `mfr_path` (a list, as scripts read it) |
 |`selected_metarecords` |list of uuids |the ''checked'' metarecords, for a bulk operation ([[Cross-panel selection]]) |
+|`selected_untracked_paths` |list of absolute paths |the ''checked'' files without a metarecord, checked in the file manager: the file operations take them, the field operations cannot ([[Cross-panel selection]]) |
 |`selected_path_ref` |`{repo, field, uuid, path}` or `null` |the node selected in `path-ref` |
 |`metarecords:dirty` |a time in ms |set whenever something the metarecord panels show may have changed (a write from the GUI, a reconcile…); they re-read on it |
 |`pick_request` |object or `null` |marks a workspace as a [[value picker|Value picker]], with who asked and what to restore |

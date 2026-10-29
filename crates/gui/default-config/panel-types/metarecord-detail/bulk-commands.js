@@ -155,12 +155,21 @@ export function registerBulkCommand({
       const selected = /** @type {string[]} */ (
         (await mf.workspace.get('selected_metarecords')) ?? []
       );
+      // The files the file manager checked without a metarecord have no field
+      // to write (doc "Cross-panel selection"): named, so none is thought done.
+      const untracked = /** @type {unknown[]} */ (
+        (await mf.workspace.get('selected_untracked_paths')) ?? []
+      ).length;
+      const leftOut =
+        untracked > 0
+          ? ` (${untracked} checked file${untracked === 1 ? '' : 's'} without a metarecord left out)`
+          : '';
       return {
         repo,
         query: { type: 'uuid_in', uuids: selected },
         count: selected.length,
         explicit: true,
-        desc: `${selected.length} selected metarecord${selected.length === 1 ? '' : 's'}`,
+        desc: `${selected.length} selected metarecord${selected.length === 1 ? '' : 's'}${leftOut}`,
       };
     }
     const { query, count, all } = await bulkQueryTarget(mf, repo);

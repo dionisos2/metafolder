@@ -3,4 +3,4 @@ tags: [[GUI command]] [[File commands]]
 kind: reference
 summary: Give a panel's files their metarecord (self / a panel type)
 
-Creates the metarecord of each file the panel designates, with `mf_watch = false` — recorded, not yet watched ([[Recording a path]]). When parent directories have no metarecord, a confirmation names them, and they are created only if it is accepted. A file already recorded is refused, as is one outside the repository root, or no repository at all. One of the [[File commands]]; the ''Add to DB'' button of the [[file-manager panel]] runs it.
+Creates the metarecord of each file the panel designates — in the [[file-manager panel]], the checked files without a metarecord when there are some, else the entry under the cursor ([[Cross-panel selection]]) — with `mf_watch = false` — recorded, not yet watched ([[Recording a path]]). When parent directories have no metarecord, a confirmation names them, and they are created only if it is accepted. A file already recorded is refused, as is one outside the repository root, or no repository at all. One of the [[File commands]]; the ''Add to DB'' button of the [[file-manager panel]] runs it.

@@ -37,7 +37,7 @@ The GUI reads every panel type's file at each save, whether the panel is mounted
 not: a panel type not opened this session still keeps its variables in the next save,
 and a file edited since the start is taken as it is now. A variable no list names is
 never saved, and a panel type without `saved.json` saves nothing. The standard variables are the GUI's: `selected_metarecord`,
-`selected_paths`, `selected_metarecords` and `selected_path_ref` are work,
+`selected_paths`, `selected_metarecords`, `selected_untracked_paths` and `selected_path_ref` are work,
 `view.zoom.<panel type>` is layout, and `active_repo`, `metarecords:dirty`,
 `pick_request` and `pick_result` are never saved.
 

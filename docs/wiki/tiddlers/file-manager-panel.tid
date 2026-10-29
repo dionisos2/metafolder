@@ -19,7 +19,7 @@ metarecord selectable — the repository root's included.
 
 |!Mark |!Means |
 |green name, `tracked` |the entry has a metarecord in the workspace's repository |
-|`✓` and a green row |its metarecord is checked ([[Cross-panel selection]]) |
+|`✓` and a green row |it is checked — its metarecord, or its path when it has none ([[Cross-panel selection]]) |
 |`⊘`, `ignored` or `not watched` |left out on purpose: an `mf_ignore` pattern excludes it, or an `mf_watch = false` starts there; the tooltip names the pattern and the directory it is set on ([[Setting ignore patterns]]) |
 |amber, `⏏ not mounted` |it sits on a volume that is not plugged in: unavailable, not deleted ([[Unmounted volumes in the GUI]]) |
 |red, `internal` |the repository's `.metafolder/internal/`, which is never tracked ([[Repository layout on disk]]) |
@@ -74,16 +74,20 @@ The row under the cursor is the workspace's selection: its path, and its metarec
 when it has one. The panels beside it follow — a [[viewer panel]] previews the file,
 [[metarecord-detail panel]] shows its fields ([[Cross-panel selection]]).
 
-<<key "file-manager:select toggle" Space>> checks the metarecord of the row,
-`file-manager:select all` every tracked entry of the directory, and
-<<key "file-manager:select none" "Ctrl+Shift+a">> unchecks everything. The checked set is
-the one [[metarecord-list panel]] gathers and the bulk operations act on. An untracked
-entry has no metarecord to check, and the status bar says so.
+<<key "file-manager:select toggle" Space>> checks the row,
+`file-manager:select all` every entry of the directory, and
+<<key "file-manager:select none" "Ctrl+Shift+a">> unchecks everything. A tracked row is
+checked by its metarecord — the set [[metarecord-list panel]] gathers and the bulk
+operations act on —, an untracked one by its path: the file operations take it, the
+field operations cannot until it is recorded ([[Cross-panel selection]]). The footer
+counts both.
 
 !! Recording
 
-''Add to DB'' (`file:record file-manager`) creates the metarecord of the entry under the
-cursor with `mf_watch = false`: recorded, not watched ([[Recording a path]]). Parent
+''Add to DB'' (`file:record file-manager`) creates the metarecord of the checked
+untracked entries, else of the entry under the cursor, with `mf_watch = false`:
+recorded, not watched ([[Recording a path]]). Recorded, they stay checked, as
+metarecords. Parent
 directories with no metarecord are named in a confirmation and created only if it is
 accepted. The button is disabled on an entry that is already
 tracked, outside the repository root or inside `internal/`.
@@ -126,7 +130,7 @@ goes to the desktop's trash, which a file manager restores from
 
 A right click moves the cursor to the row, then offers ([[Context menus]]):
 
-* for a tracked row, the metarecord's actions and ''Add to the selection'';
+* for a tracked row, the metarecord's actions; ''Add to the selection'' (or ''Remove from the selection'') on every row;
 * ''Track'';
 * ''Open'' for a directory, the clipboard actions, ''Rename…'', ''Duplicate'', ''Copy full path'', ''Move to trash'';
 * ''Ignore “name” here'', ''Ignore *.ext here'' and ''Apply an ignore preset…'', which write on the directory shown ([[Setting ignore patterns]]);

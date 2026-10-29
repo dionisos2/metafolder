@@ -64,11 +64,29 @@ Besides the one highlighted metarecord, a workspace has a ''set'' of checked one
 what the bulk operations act on (the ''Checked selection'' target of
 `metarecord:bulk`, [[Editing metarecords in the GUI]]), and what [[mf gui selected]] prints for a script.
 
-* <<key "metarecord-list:select toggle" Space>> checks or unchecks the row, in `metarecord-list` and in `file-manager` alike; so does ''Add to the selection'' in a row's right-click menu. A file-manager row is checked through its metarecord: an untracked file has none, and says so — track it first.
+* <<key "metarecord-list:select toggle" Space>> checks or unchecks the row, in `metarecord-list` and in `file-manager` alike; so does ''Add to the selection'' in a row's right-click menu. A file-manager row is checked through its metarecord, or by its path when it has none (below).
 * ''It survives changing the list'': a checked metarecord stays checked when the query or the finder moves on, so a set can be gathered from several lists — and from the file manager — before anything acts on it. `select all` checks every loaded row ''on top of'' what is checked; `select none` (<<key "metarecord-list:select none" "Ctrl+Shift+a">>) empties it.
 * Only a metarecord that no longer ''exists'' — deleted or trashed, from anywhere, the command line included — leaves it, when a panel next reloads its rows: it could never be shown or unchecked again.
 * It holds metarecords of the workspace's one repository.
 
+!!! Files without a metarecord
+
+An untracked entry of the [[file-manager panel]] is checked by its ''path'', into a
+second variable beside the metarecords, `selected_untracked_paths`
+([[Workspace variables]]). The two are one selection: the file manager lights both
+and counts both, `select none` empties both, and switching the workspace to another
+repository empties both. A file is in one or the other, never both: one recorded
+since it was checked — here, by a script, by the watcher — moves to the metarecords
+when the file manager's listing next learns its metarecord.
+
+What takes them depends on what it needs:
+
+* ''The file operations'' do — `clipboard:copy`/`clipboard:cut`, [[file:trash]], [[file:duplicate]] in the file manager ([[File commands]]), and `item:delete selection` ([[Deleting an item]]): they act on paths, and a file needs no metarecord for them. With no repository at all, the file manager checks every entry this way.
+* [[file:record]] takes ''only'' them, when some are checked: the checked metarecords have theirs. That is how a set of files is recorded at once.
+* ''The field operations'' cannot: `metarecord:bulk` on the selection writes the checked metarecords and names the files it left out in its confirmation; [[mf gui selected]], the slideshow and the `metarecord-list` footer know only the metarecords.
+
+A checked path no longer on disk — trashed, moved by the paste of a cut — leaves the
+set when the file manager next lists a folder.
 Every panel of the workspace shows the set as it stands, wherever it changed — a row
 checked in one panel is lit in the other — and gives its size; the
 `metarecord-list` footer adds how many of the checked are among its own rows.

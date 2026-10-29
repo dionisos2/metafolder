@@ -10,7 +10,7 @@
 // longer exists is pruned, or it stays checked but unshowable and ununcheckable.
 
 import { describe, expect, test, vi } from 'vitest';
-import { createMultiSelect } from '../../panel-shim/multi-select.js';
+import { createMultiSelect, createPathSelect } from '../../panel-shim/multi-select.js';
 
 type Listener = (value: unknown, key?: string) => void;
 
@@ -215,5 +215,98 @@ describe('createMultiSelect', () => {
     await selection.pruneVanished();
     expect(daemon.call).not.toHaveBeenCalled();
     expect(selection.values()).toEqual(['x']);
+  });
+});
+
+// The checked files without a metarecord (`selected_untracked_paths`, doc
+// "Cross-panel selection"): the file manager checks an untracked entry by its
+// path, beside the metarecords. Same mirror discipline; a path that no longer
+// exists on disk is what leaves it.
+describe('createPathSelect', () => {
+  const KEY = 'selected_untracked_paths';
+  /** A disk holding `present`. */
+  const stubFs = (present: Set<string>) => ({ exists: vi.fn(async (p: string) => present.has(p)) });
+
+  test('toggle checks then unchecks one path', async () => {
+    const ws = stubWorkspace();
+    const paths = createPathSelect({ workspace: ws.api, fs: stubFs(new Set()) });
+    await paths.load();
+    await paths.toggle('/r/a');
+    expect(paths.values()).toEqual(['/r/a']);
+    expect(paths.has('/r/a')).toBe(true);
+    await paths.toggle('/r/a');
+    expect(ws.writesOf(KEY)).toEqual([['/r/a'], []]);
+  });
+
+  test('an echo of our own write never regresses a later state', async () => {
+    const ws = stubWorkspace();
+    const paths = createPathSelect({ workspace: ws.api, fs: stubFs(new Set()) });
+    await paths.load();
+    await paths.toggle('/r/a');
+    await paths.toggle('/r/b');
+    ws.deliverAll();
+    expect(paths.values()).toEqual(['/r/a', '/r/b']);
+  });
+
+  test('an external change is adopted', async () => {
+    const ws = stubWorkspace();
+    const render = vi.fn();
+    const paths = createPathSelect({ workspace: ws.api, fs: stubFs(new Set()), render });
+    await paths.load();
+    ws.externalSet(KEY, ['/r/x']);
+    expect(paths.values()).toEqual(['/r/x']);
+    expect(render).toHaveBeenCalled();
+  });
+
+  test('add unions, remove takes out, clear empties — each writing only a change', async () => {
+    const ws = stubWorkspace({ [KEY]: ['/r/x'] });
+    const paths = createPathSelect({ workspace: ws.api, fs: stubFs(new Set()) });
+    await paths.load();
+    await paths.add(['/r/a', '/r/x']);
+    await paths.add(['/r/a']);
+    await paths.remove(['/r/x', '/r/none']);
+    await paths.remove(['/r/none']);
+    await paths.clear();
+    await paths.clear();
+    expect(ws.writesOf(KEY)).toEqual([['/r/x', '/r/a'], ['/r/a'], []]);
+  });
+
+  test('switching to another repository clears it, adopting one at startup does not', async () => {
+    const ws = stubWorkspace({ [KEY]: ['/r/x'] });
+    const paths = createPathSelect({ workspace: ws.api, fs: stubFs(new Set()) });
+    await paths.load();
+    ws.externalSet('active_repo', 'r1');
+    expect(paths.values()).toEqual(['/r/x']);
+    ws.externalSet('active_repo', 'r2');
+    expect(paths.values()).toEqual([]);
+  });
+
+  test('pruneVanished drops the paths no longer on disk, with or without a repository', async () => {
+    const ws = stubWorkspace();
+    const present = new Set(['/r/a', '/r/b']);
+    const fs = stubFs(present);
+    const paths = createPathSelect({ workspace: ws.api, fs });
+    await paths.load();
+    await paths.add(['/r/a', '/r/b']);
+    present.delete('/r/b'); // trashed, or moved by a paste of a cut
+    await paths.pruneVanished();
+    expect(paths.values()).toEqual(['/r/a']);
+    fs.exists.mockClear();
+    await paths.pruneVanished(); // nothing gone: no write
+    expect(ws.writesOf(KEY)).toEqual([['/r/a', '/r/b'], ['/r/a']]);
+  });
+
+  test('pruneVanished keeps a path it cannot ask about', async () => {
+    const ws = stubWorkspace();
+    const fs = {
+      exists: vi.fn(async () => {
+        throw new Error('EACCES');
+      }),
+    };
+    const paths = createPathSelect({ workspace: ws.api, fs });
+    await paths.load();
+    await paths.add(['/r/a']);
+    await paths.pruneVanished();
+    expect(paths.values()).toEqual(['/r/a']);
   });
 });

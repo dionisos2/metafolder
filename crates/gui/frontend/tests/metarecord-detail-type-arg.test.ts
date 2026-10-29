@@ -474,6 +474,21 @@ describe('metarecord:bulk — every write is confirmed', () => {
     expect(calls.some((c) => c.path.endsWith('/query/fields/set'))).toBe(true);
   });
 
+  test('the checked files without a metarecord are named as left out', async () => {
+    // The file manager checks an untracked file by its path (doc
+    // "Cross-panel selection"): a field write cannot reach it, and says so.
+    const { specs } = await mountPanel([], { rating: 'int' }, {
+      selected_metarecords: ['uuid-a'],
+      selected_untracked_paths: ['/r/new.txt'],
+    });
+    const confirm = vi.fn((_question: string) => true);
+    vi.stubGlobal('confirm', confirm);
+    await specs.get('metarecord:bulk')!.handler('selection', 'set', 'rating', '5');
+    expect(confirm.mock.calls[0][0]).toMatch(
+      /1 selected metarecord \(1 checked file without a metarecord left out\)/,
+    );
+  });
+
   test('declining writes nothing', async () => {
     const { specs, calls } = await mountPanel([], { rating: 'int' }, { selected_metarecords: ['uuid-a'] });
     vi.stubGlobal('confirm', vi.fn(() => false));

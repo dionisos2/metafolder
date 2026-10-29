@@ -6,8 +6,9 @@ summary: Delete what is designated: its file to the trash, or the metarecord wit
 The Delete key ([[Deleting an item]]). With no argument, the item under the
 cursor: its file goes to the trash, its metarecords with it; a metarecord
 without a file is deleted. `item:delete selection` does it to the checked
-metarecords, `item:delete query` to what the [[metarecord-list panel]] shows.
+metarecords and to the files checked without one, `item:delete query` to what the [[metarecord-list panel]] shows.
 Trashing one file asks first unless switched off, the checked ones and the
 query always ([[Confirming a trashing]]); a
 file no repository holds goes to the desktop's trash ([[The desktop trash]]),
-and the checked metarecords and the query need an active repository.
+and the checked metarecords and the query need an active repository (the checked
+files without a metarecord do not).

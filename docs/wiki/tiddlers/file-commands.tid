@@ -20,7 +20,7 @@ first argument, `self` or a panel type, and it designates what they work on.
 |[[file:new]] `folder`/`file` |the folder |creates a folder or an empty file there; the name is asked |
 |[[file:paste]] |the folder |copies — or moves, after a cut — the file clipboard there |
 
-* ''The files'' are what the panel provides as `paths`: the checked ones when some are, else the one under the cursor — in the [[file-manager panel]] and the [[metarecord-list panel]] — or the file shown, in the [[viewer panel]] and the [[metarecord-detail panel]]. The file manager's `.` and `..` rows are none.
+* ''The files'' are what the panel provides as `paths`: the checked ones when some are — in the file manager, those checked without a metarecord too ([[Cross-panel selection]]) —, else the one under the cursor — in the [[file-manager panel]] and the [[metarecord-list panel]] — or the file shown, in the [[viewer panel]] and the [[metarecord-detail panel]]. The file manager's `.` and `..` rows are none.
 * ''The folder'' is what the panel provides as `directory`: the one the file manager shows. Elsewhere there is none, and `file:new` and `file:paste` are refused.
 
 A key bound to one of them applies only where the panel provides what it needs

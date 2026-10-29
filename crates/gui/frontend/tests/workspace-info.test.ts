@@ -78,11 +78,12 @@ describe('workspace-info', () => {
 
   test('the standard variables come first, unset ones as null', async () => {
     const { keys, rows } = await mountWith({ 'path-ref:scope': 'exact', active_repo: 'r' });
-    expect(keys().slice(0, 5)).toEqual([
+    expect(keys().slice(0, 6)).toEqual([
       'active_repo',
       'selected_paths',
       'selected_metarecord',
       'selected_metarecords',
+      'selected_untracked_paths',
       'selected_path_ref',
     ]);
     expect(rows()['selected_metarecord']).toBe('null');

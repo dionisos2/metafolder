@@ -10,7 +10,7 @@ Open it with `panel:open here workspace-info`
 as JSON, updated as it changes.
 
 The standard ones come first, `null` while unset — `active_repo`, `selected_paths`,
-`selected_metarecord`, `selected_metarecords`, `selected_path_ref` — then every other variable the workspace holds, by name: each
+`selected_metarecord`, `selected_metarecords`, `selected_untracked_paths`, `selected_path_ref` — then every other variable the workspace holds, by name: each
 panel's own (`metarecord-list:query`, `path-ref:scope`…) and whatever a script wrote.
 
 Below them, under ''Global GUI variables'', the variables every workspace shares

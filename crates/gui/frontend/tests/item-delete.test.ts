@@ -206,6 +206,28 @@ describe('item:delete selection / query', () => {
     expect(calls.trashQuery).toEqual([['r1', checked]]);
   });
 
+  test('the checked paths without a metarecord go to the trash too, and leave the selection', async () => {
+    vars.selected_metarecords = ['u1'];
+    vars.selected_untracked_paths = ['/srv/new.txt', '/srv/other.txt'];
+    await run('selection');
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('3 checked items'));
+    expect(calls.trashQuery).toEqual([['r1', { type: 'uuid_in', uuids: ['u1'] }]]);
+    expect(calls.trash).toEqual([
+      ['r1', '/srv/new.txt'],
+      ['r1', '/srv/other.txt'],
+    ]);
+    expect(vars.selected_untracked_paths).toEqual([]);
+  });
+
+  test('checked paths alone need no metarecord, nor a repository', async () => {
+    vars = { selected_untracked_paths: ['/tmp/x'] };
+    await run('selection');
+    expect(calls.daemon).toEqual([]);
+    expect(calls.trashQuery).toEqual([]);
+    expect(calls.trash).toEqual([[null, '/tmp/x']]);
+    expect(calls.status[0]).toBe('Trashed x — restore it from the desktop trash');
+  });
+
   test('the query the list shows', async () => {
     const query = { type: 'eq', field: 'a', value: { type: 'int', value: 1 } };
     vars['metarecord-list:effective-query'] = query;

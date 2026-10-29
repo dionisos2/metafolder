@@ -2,11 +2,11 @@
 // doc "Cross-panel selection"): a tracked row can be checked into
 // `selected_metarecords` — the same workspace-wide set the metarecord list
 // gathers and the bulk operations act on — so a selection can be gathered from
-// the disk view too. Only rows that HAVE a metarecord can join it: an untracked
-// entry has no uuid to check and says so instead of silently doing nothing.
+// the disk view too. An untracked entry has no uuid: it is checked by its path,
+// into `selected_untracked_paths`, which the file operations take too.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { cursor, generic } from './support/cursor';
+import { cursor, generic, provided } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { withRuns } from './support/runs';
@@ -55,6 +55,8 @@ const NODE_BY_PATH: Record<string, string> = {
 
 /** When set, the tracked-children read waits for it (a slow daemon). */
 let childrenGate: Promise<void> | null = null;
+/** Paths no longer on disk (`fs.exists` says false). */
+const gone = new Set<string>();
 
 function stub(vars: Record<string, unknown>, existing: Set<string>) {
   const noop = () => {};
@@ -73,7 +75,7 @@ function stub(vars: Record<string, unknown>, existing: Set<string>) {
   const fs = {
     readDir: vi.fn(async () => ENTRIES.map((e) => ({ ...e }))),
     stat: vi.fn(async () => ({ is_dir: false })),
-    exists: vi.fn(async () => true),
+    exists: vi.fn(async (path: string) => !gone.has(path)),
     homeDir: vi.fn(async () => '/home/user'),
     mkdir: vi.fn(async () => {}),
     createFile: vi.fn(async () => {}),
@@ -161,6 +163,7 @@ function stub(vars: Record<string, unknown>, existing: Set<string>) {
     fs,
     statusBar,
     selected: () => (store.get('selected_metarecords') as string[] | undefined) ?? [],
+    untracked: () => (store.get('selected_untracked_paths') as string[] | undefined) ?? [],
     externalSet(key: string, value: unknown) {
       store.set(key, value);
       notify(key, value);
@@ -210,17 +213,27 @@ describe('checking metarecords from the file manager', () => {
     expect(selected()).toEqual([]);
   });
 
-  test('an untracked entry cannot be checked, and says so', async () => {
-    const { api, handlers, selected, statusBar, store } = await mountFileManager();
+  test('an untracked entry is checked by its path', async () => {
+    const { api, handlers, selected, untracked, shadow } = await mountFileManager();
     await moveTo(api, 4); // plain.txt
     await handlers.get('file-manager:select')!('toggle');
     expect(selected()).toEqual([]);
-    expect(store.has('selected_metarecords')).toBe(false);
-    expect(statusBar.message).toHaveBeenCalled();
+    expect(untracked()).toEqual(['/repo/music/plain.txt']);
+    expect(rows(shadow)[4].classList.contains('checked')).toBe(true);
+    expect(shadow.getElementById('status-line')!.textContent).toContain('1 selected');
+    await handlers.get('file-manager:select')!('toggle');
+    expect(untracked()).toEqual([]);
   });
 
-  test('select all checks the tracked entries, keeping what is already checked', async () => {
-    const { handlers, selected } = await mountFileManager({ selected_metarecords: ['u-x'] }, new Set([
+  test('without a repository, entries are checked by their paths', async () => {
+    const { api, handlers, untracked } = await mountFileManager({ active_repo: null });
+    await moveTo(api, 3); // song.mp3, untracked here
+    await handlers.get('file-manager:select')!('toggle');
+    expect(untracked()).toEqual(['/repo/music/song.mp3']);
+  });
+
+  test('select all checks every entry, keeping what is already checked', async () => {
+    const { handlers, selected, untracked } = await mountFileManager({ selected_metarecords: ['u-x'] }, new Set([
       'u-root',
       'u-music',
       'u-dir1',
@@ -228,15 +241,68 @@ describe('checking metarecords from the file manager', () => {
       'u-x',
     ]));
     await handlers.get('file-manager:select')!('all');
-    // The directory's two tracked entries — not plain.txt (untracked), not the
-    // synthetic "." / ".." rows (the directory and its parent).
+    // The directory's entries — the tracked by their metarecords, plain.txt by
+    // its path — not the synthetic "." / ".." rows (the directory and its parent).
     expect(selected()).toEqual(['u-x', 'u-dir1', 'u-song']);
+    expect(untracked()).toEqual(['/repo/music/plain.txt']);
   });
 
   test('select none clears the whole selection', async () => {
-    const { handlers, selected } = await mountFileManager({ selected_metarecords: ['u-song'] });
+    const { handlers, selected, untracked } = await mountFileManager({
+      selected_metarecords: ['u-song'],
+      selected_untracked_paths: ['/repo/music/plain.txt'],
+    });
     await handlers.get('file-manager:select')!('none');
     expect(selected()).toEqual([]);
+    expect(untracked()).toEqual([]);
+  });
+
+  test('a checked path lights its row, wherever it was checked', async () => {
+    const harness = await mountFileManager();
+    harness.externalSet('selected_untracked_paths', ['/repo/music/plain.txt']);
+    expect(rows(harness.shadow)[4].classList.contains('checked')).toBe(true);
+  });
+
+  test('a checked path recorded since moves to the checked metarecords', async () => {
+    const harness = await mountFileManager(
+      { selected_untracked_paths: ['/repo/music/plain.txt'] },
+      new Set(['u-root', 'u-music', 'u-dir1', 'u-song', 'u-plain']),
+    );
+    CHILDREN['u-music'].push({ uuid: 'u-plain', name: 'plain.txt' });
+    try {
+      await generic(harness.api.provide, 'view:refresh');
+      await settle();
+      expect(harness.untracked()).toEqual([]);
+      expect(harness.selected()).toEqual(['u-plain']);
+    } finally {
+      CHILDREN['u-music'].pop();
+    }
+  });
+
+  test('a checked path no longer on disk is dropped when the listing reloads', async () => {
+    gone.add('/elsewhere/gone.txt');
+    try {
+      const harness = await mountFileManager({
+        selected_untracked_paths: ['/elsewhere/kept.txt', '/elsewhere/gone.txt'],
+      });
+      expect(harness.untracked()).toEqual(['/elsewhere/kept.txt']);
+    } finally {
+      gone.clear();
+    }
+  });
+
+  test('the file operations take the checked paths; recording, only the untracked', async () => {
+    const harness = await mountFileManager({
+      selected_untracked_paths: ['/repo/music/plain.txt'],
+    });
+    const fns = provided(harness.api.provide as never);
+    expect(await fns.paths!()).toEqual(['/repo/music/plain.txt']);
+    expect(await fns.recordable!()).toEqual(['/repo/music/plain.txt']);
+    // Nothing checked: the entry under the cursor, as before.
+    await harness.handlers.get('file-manager:select')!('none');
+    await moveTo(harness.api, 3); // song.mp3
+    expect(await fns.paths!()).toEqual(['/repo/music/song.mp3']);
+    expect(await fns.recordable!()).toEqual(['/repo/music/song.mp3']);
   });
 
   test('checks made elsewhere (another list) light up the rows', async () => {

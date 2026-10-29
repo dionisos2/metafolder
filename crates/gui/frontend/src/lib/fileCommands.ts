@@ -46,6 +46,9 @@ export interface FileOps {
 /** The functions of the panel a `file:` command runs on. */
 export interface FileFunctions {
   paths?: () => string[] | Promise<string[]>;
+  /** What `file:record` takes, when it is not `paths`: those of them without
+   *  a metarecord. */
+  recordable?: () => string[] | Promise<string[]>;
   directory?: () => string | null | Promise<string | null>;
   refresh?: () => unknown;
   /** Puts the cursor on the entry `name` of the folder shown. */
@@ -138,7 +141,7 @@ export async function runFileCommand(
       return;
     }
     case 'file:record': {
-      const paths = await designated(fns);
+      const paths = await designated(fns.recordable ? { paths: fns.recordable } : fns);
       let recorded = 0;
       for (const path of paths) if (await ops.record(path)) recorded += 1;
       if (recorded === 0) return;

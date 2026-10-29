@@ -353,27 +353,42 @@ async function deleteItem(mf, repo, selection) {
  *  says, since it touches a set (doc "Confirming a trashing"). */
 const GO_WITH = 'Their files go to the trash with them.';
 
+/** The strings of a list variable. @param {unknown} value @returns {string[]} */
+const stringList = (value) =>
+  Array.isArray(value) ? value.filter((v) => typeof v === 'string') : [];
+
 /**
  * `item:delete selection|query`: the metarecords without a file are deleted,
  * then the files of the rest go to the trash, their metarecords with them.
- * In this order, so that a file the trash refuses keeps its metarecord.
- * @param {MetafolderApi} mf @param {string} repo @param {string} what
+ * In this order, so that a file the trash refuses keeps its metarecord. The
+ * selection holds the checked files without a metarecord too (doc
+ * "Cross-panel selection"): they go to the trash after, and need no
+ * repository — one no repository holds goes to the desktop's.
+ * @param {MetafolderApi} mf @param {string | null} repo @param {string} what
  */
 async function deleteItems(mf, repo, what) {
   /** @type {unknown} */
   let query;
+  /** @type {string[]} */
+  let paths = [];
   if (what === 'selection') {
-    const checked = await mf.workspace.get('selected_metarecords');
-    const uuids = Array.isArray(checked) ? checked.filter((u) => typeof u === 'string') : [];
-    if (uuids.length === 0) {
-      await mf.statusBar.message('No metarecords are checked — nothing to delete.');
+    const uuids = stringList(await mf.workspace.get('selected_metarecords'));
+    paths = stringList(await mf.workspace.get('selected_untracked_paths'));
+    if (uuids.length + paths.length === 0) {
+      await mf.statusBar.message('Nothing is checked — nothing to delete.');
       return;
     }
-    query = { type: 'uuid_in', uuids };
-    const n = uuids.length;
-    if (!confirm(`Delete the ${n === 1 ? 'checked metarecord' : `${n} checked metarecords`}? ${GO_WITH}`)) {
+    if (uuids.length > 0 && !repo) {
+      await mf.statusBar.error('no active repository: no selection to delete');
       return;
     }
+    const n = uuids.length + paths.length;
+    const named =
+      paths.length === 0
+        ? n === 1 ? 'checked metarecord' : `${n} checked metarecords`
+        : n === 1 ? 'checked item' : `${n} checked items`;
+    if (!confirm(`Delete the ${named}? ${GO_WITH}`)) return;
+    query = uuids.length > 0 ? { type: 'uuid_in', uuids } : null;
   } else {
     query = await mf.workspace.get('metarecord-list:effective-query');
     if (!query) {
@@ -386,13 +401,31 @@ async function deleteItems(mf, repo, what) {
     const n = counted.total ?? 0;
     if (!confirm(`Delete the ${n === 1 ? 'metarecord' : `${n} metarecords`} the list shows? ${GO_WITH}`)) return;
   }
-  const withoutFile = {
-    type: 'and',
-    operands: [query, { type: 'not', operand: { type: 'is_present', field: 'mfr_path' } }],
-  };
-  await mf.daemon.call('POST', `/repos/${repo}/query/delete`, { query: withoutFile });
-  // The Rust side posts what was trashed and marks the lists dirty.
-  await mf.trash.trashQuery(repo, query);
+  if (query && repo) {
+    const withoutFile = {
+      type: 'and',
+      operands: [query, { type: 'not', operand: { type: 'is_present', field: 'mfr_path' } }],
+    };
+    await mf.daemon.call('POST', `/repos/${repo}/query/delete`, { query: withoutFile });
+    // The Rust side posts what was trashed and marks the lists dirty.
+    await mf.trash.trashQuery(repo, query);
+  }
+  if (paths.length > 0) {
+    /** @type {boolean[]} */
+    const desktop = [];
+    /** @type {string} */
+    let name = '';
+    for (const path of paths) {
+      const trashed = await mf.trash.trashPath(repo, path);
+      desktop.push(trashed.desktop);
+      name = trashed.name;
+    }
+    // Gone from the disk: they could never be shown or unchecked again.
+    await mf.workspace.set('selected_untracked_paths', []);
+    const many = paths.length > 1;
+    await mf.statusBar.message(trashedMessage(many ? `${paths.length} files` : name, many, desktop));
+    await mf.workspace.set('metarecords:dirty', Date.now());
+  }
 }
 
 export default {
@@ -425,13 +458,13 @@ export default {
       const selection = await selectedMetarecord(mf);
       const active = await mf.workspace.get('active_repo');
       const repo = selection?.repo ?? (typeof active === 'string' && active !== '' ? active : null);
-      if (!repo && what !== undefined) {
+      if (!repo && what === 'query') {
         await mf.statusBar.error(`no active repository: no ${what} to delete`);
         return;
       }
       try {
         if (what === undefined) await deleteItem(mf, repo, selection);
-        else if (repo) await deleteItems(mf, repo, what);
+        else await deleteItems(mf, repo, what);
       } catch (error) {
         await mf.statusBar.error(error);
       }

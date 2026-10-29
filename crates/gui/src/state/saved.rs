@@ -11,8 +11,13 @@ use serde_json::{json, Map, Value};
 
 /// The standard variables a work save holds (doc "Workspace variables"): the
 /// selection, in every form.
-const STANDARD_WORK: &[&str] =
-    &["selected_metarecord", "selected_paths", "selected_metarecords", "selected_path_ref"];
+const STANDARD_WORK: &[&str] = &[
+    "selected_metarecord",
+    "selected_paths",
+    "selected_metarecords",
+    "selected_untracked_paths",
+    "selected_path_ref",
+];
 
 /// The prefix of the standard layout variables: the zoom of each panel type.
 const STANDARD_LAYOUT_PREFIX: &str = "view.zoom.";
@@ -217,6 +222,7 @@ mod tests {
             ("metarecord-list:undeclared", json!(1)),
             ("view.zoom.file", json!(1.5)),
             ("selected_paths", json!(["/a.jpg"])),
+            ("selected_untracked_paths", json!(["/new.txt"])),
             ("metarecords:dirty", json!(123)),
         ] {
             state.set_var("ws-1", key, value).unwrap();
@@ -265,7 +271,11 @@ mod tests {
         );
         assert_eq!(
             saved.work.map(Value::Object),
-            Some(json!({"metarecord-list:query": "jpg", "selected_paths": ["/a.jpg"]}))
+            Some(json!({
+                "metarecord-list:query": "jpg",
+                "selected_paths": ["/a.jpg"],
+                "selected_untracked_paths": ["/new.txt"],
+            }))
         );
     }
 

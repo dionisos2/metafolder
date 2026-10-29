@@ -74,7 +74,8 @@ metafolder.provide({
 |`refresh()` |reads what the panel shows again |
 |`parent()` |goes up one level, the cursor on what it came out of — so `cursor:descend` goes straight back down |
 |`root()` |goes to the top level, the cursor on the top row of the way it came from |
-|`paths()` |the absolute paths of the files the panel designates: those of the checked metarecords when some are checked ([[Cross-panel selection]]), else the row under the cursor's — empty when there is no file (`clipboard:copy` then says so). The shared `clipboardPaths` of `/__file-actions.js` answers it |
+|`paths()` |the absolute paths of the files the panel designates: those of the checked metarecords when some are checked ([[Cross-panel selection]]) — in the file manager, with the checked paths without one —, else the row under the cursor's — empty when there is no file (`clipboard:copy` then says so). The shared `clipboardPaths` of `/__file-actions.js` answers it |
+|`recordable()` |what [[file:record]] takes when it is not `paths()`: the designated files without a metarecord (the file manager's checked paths, else the row under the cursor) |
 
 Every function is optional; a panel provides what it can do, and a later call
 adds to what an earlier one provided. Each panel's note in the [[Panel]] catalog

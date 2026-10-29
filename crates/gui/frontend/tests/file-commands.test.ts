@@ -155,4 +155,13 @@ describe('file: commands — what they do', () => {
     expect(o.record.mock.calls).toEqual([['/r/a'], ['/r/b']]);
     expect(o.changed).toHaveBeenCalled();
   });
+
+  test('record takes what the panel says is recordable, when it says', async () => {
+    // The file manager designates the checked metarecords' files too, which
+    // have their metarecord already: only the checked paths are recorded.
+    const o = ops();
+    const fns = { paths: () => ['/r/tracked', '/r/new'], recordable: () => ['/r/new'] };
+    await runFileCommand('file:record', fns, [], o);
+    expect(o.record.mock.calls).toEqual([['/r/new']]);
+  });
 });

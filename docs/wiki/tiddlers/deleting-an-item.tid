@@ -19,16 +19,17 @@ metarecord back ([[The undo selection]]). So deleting a metarecord asks
 nothing, trashing a file asks unless switched off, and the checked metarecords or
 the query always ask, naming the count ([[Confirming a trashing]]). ''Move to trash''
 in a context menu is this same command, on the clicked file. The checked
-metarecords and the query need an active repository; a file alone does not.
+metarecords and the query need an active repository; a file alone — or files checked without a metarecord — does not.
 
 !! Several at once
 
-* `item:delete selection` — the checked metarecords;
+* `item:delete selection` — the checked metarecords, and the files checked without one ([[Cross-panel selection]]);
 * `item:delete query` — everything the metarecord list shows.
 
 The metarecords without a file are deleted first, then the files of the others
 go to the trash, their metarecords with them. In that order, a file the trash
-refuses — another metarecord points at it — keeps its metarecord.
+refuses — another metarecord points at it — keeps its metarecord. The checked files
+without a metarecord go last, and leave the selection.
 
 !! The narrower forms
 
