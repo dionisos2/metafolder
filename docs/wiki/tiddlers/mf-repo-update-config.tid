@@ -8,7 +8,7 @@ Merges `~/.config/metafolder/daemon/repo-default/` into the repository's
 `.metafolder/` directory or the root holding it; no daemon is involved. Prints
 `configuration created`, `configuration updated` or `configuration already up to
 date`; a conflict leaves `config/` as it was, lists the files (full paths) on
-stderr with the git commands that finish the merge by hand ([[Updating the
-configuration]]), and exits 1.
+stderr with the git commands that finish the merge by hand
+([[Updating the configuration]]), and exits 1.
 The first run on a repository from before `config/` moves its `schema.json` and
 `metadata-map.toml` there, each said on a `moved … into config/` line.
