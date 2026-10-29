@@ -151,3 +151,86 @@ async fn a_negative_min_size_is_rejected() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "got {body}");
 }
+
+/// Makes `names` identical tracked files, scans, and returns the group's uuid
+/// with the members' uuids in the order of `names`.
+async fn scanned_group(
+    app: &Router,
+    repo: &str,
+    root: &TempDir,
+    names: &[&str],
+) -> (String, Vec<String>) {
+    let mut members = Vec::new();
+    for name in names {
+        let abs = root.join(name);
+        std::fs::write(&abs, b"shared").unwrap();
+        let (status, body) = request(
+            app,
+            "POST",
+            &format!("/repos/{repo}/metarecords"),
+            Some(json!({"path": abs.to_str().unwrap(), "fields": []})),
+        )
+        .await;
+        assert!(status.is_success(), "create failed: {body}");
+        members.push(body["uuid"].as_str().unwrap().to_string());
+    }
+    let (_, body) = request(app, "POST", &format!("/repos/{repo}/duplicates/scan"), None).await;
+    await_task(app, repo, body["task_id"].as_str().unwrap()).await;
+    let (_, groups) = request(
+        app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "eq", "field": "mf_schema",
+                              "value": {"type": "string", "value": "duplicate_group"}}})),
+    )
+    .await;
+    (groups[0].as_str().unwrap().to_string(), members)
+}
+
+#[tokio::test]
+async fn trashing_a_member_recounts_its_group_at_once() {
+    // The trash deletes the metarecord through the daemon before it moves the
+    // bytes (doc "Trash"), so a panel reading the group right after the
+    // trashing sees the new count — no watcher flush to wait for.
+    let (app, repo, root) = setup("trash_recount").await;
+    let (group, members) = scanned_group(&app, &repo, &root, &["a.bin", "b.bin", "c.bin"]).await;
+
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords/trash"),
+        Some(json!({"uuids": [members[0]], "force": false})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "trash failed: {body}");
+
+    let (status, record) =
+        request(&app, "GET", &format!("/repos/{repo}/metarecords/{group}"), None).await;
+    assert_eq!(status, StatusCode::OK, "group read failed: {record}");
+    let count = record["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == "mfr_duplicate_count")
+        .map(|f| f["value"]["value"].clone());
+    assert_eq!(count, Some(json!(2)), "group: {record}");
+}
+
+#[tokio::test]
+async fn trashing_one_of_two_members_dissolves_the_group_at_once() {
+    let (app, repo, root) = setup("trash_dissolve").await;
+    let (group, members) = scanned_group(&app, &repo, &root, &["a.bin", "b.bin"]).await;
+
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords/trash"),
+        Some(json!({"uuids": [members[0]], "force": false})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "trash failed: {body}");
+
+    let (status, _) =
+        request(&app, "GET", &format!("/repos/{repo}/metarecords/{group}"), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "the group should be gone");
+}
