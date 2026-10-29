@@ -12,7 +12,6 @@
  * @typedef {object} Zone
  * @property {HTMLInputElement} input       the element focus lands on
  * @property {(mf: MetafolderApi) => unknown} apply    commit the zone's content
- * @property {(mf: MetafolderApi) => unknown} [enter]  run before focusing it
  * @property {(mf: MetafolderApi) => unknown} [clear]  empty it (focus follows)
  *
  * @param {{
@@ -42,10 +41,8 @@ export function registerZoneCommands({ commands, root, zones: ZONES, clearAll })
   void commands.register('metarecord-list:focus', {
     label: `Metarecord list: focus a zone (${ZONE_NAMES.join(' / ')})`,
     args: [zoneArg('focus')],
-    handler: async (mf, name) => {
-      const z = zone(name);
-      await z.enter?.(mf);
-      z.input.focus();
+    handler: async (_mf, name) => {
+      zone(name).input.focus();
     },
   });
 
@@ -100,19 +97,15 @@ export function registerZoneCommands({ commands, root, zones: ZONES, clearAll })
       // splice a literal trailing "stay".
       const stay = modifier === 'stay';
       const value = stay || modifier === undefined ? text : `${text} ${modifier}`;
-      const z = zone(name);
-      // Same unfreeze as `focus`: inserting into a zone the query ignores
-      // would look like a no-op.
-      await z.enter?.(mf);
-      const input = z.input;
+      const input = zone(name).input;
       const from = input.selectionStart ?? input.value.length;
       const to = input.selectionEnd ?? from;
       input.value = input.value.slice(0, from) + value + input.value.slice(to);
       const caret = from + value.length;
       input.setSelectionRange(caret, caret);
       if (!stay) input.focus();
-      // Assigning `.value` fires nothing, so the debounced expand(A) → B
-      // mirror would keep showing a stale expansion (panel-shim/history.js
+      // Assigning `.value` fires nothing, so the debounced preview of the
+      // simplified query's expansion would go stale (panel-shim/history.js
       // dispatches this for the same reason).
       input.dispatchEvent(new Event('input', { bubbles: true }));
       // Deliberately does not run: inserting prepares the query, `apply` runs it.

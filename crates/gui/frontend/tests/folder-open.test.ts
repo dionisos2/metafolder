@@ -233,8 +233,8 @@ describe('opening the pick', () => {
     expect(calls.targets).toEqual(['other']);
     expect(calls.batches).toEqual([
       {
+        'metarecord-list:query': '',
         'metarecord-list:normal-query': 'mfr_path -> "/music"',
-        'metarecord-list:normal-frozen': true,
       },
     ]);
     expect(calls.sets).toEqual([]);

@@ -46,8 +46,8 @@ it knows what the picker is for:
 |`result` |`uuid` (the default): the picker's `selected_metarecord`. `path`: the first of its `selected_paths` |
 
 The GUI composes it from the workspace primitives ([[Workspaces]]): it creates an
-''empty'' workspace — not a copy of the caller's, whose own list state (a frozen query)
-would otherwise run instead of the seed — sends it the panel's variables and
+''empty'' workspace — not a copy of the caller's, whose own list state (a normal DSL query)
+would otherwise narrow the seed — sends it the panel's variables and
 `pick_request` — who asked, the token, which slot it took and what that slot showed —
 and shows it in the slot other than the caller's. A picker is not forked
 ([[workspace:fork]]).

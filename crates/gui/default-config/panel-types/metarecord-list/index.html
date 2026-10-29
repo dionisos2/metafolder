@@ -78,6 +78,16 @@
       .editor-row input[readonly] {
         opacity: 0.55;
       }
+      #expansion-row[hidden] {
+        display: none;
+      }
+      .expansion-toggle {
+        padding: 0 6px;
+        background: none;
+        border: none;
+        color: var(--mf-fg-dim, #8a8a96);
+        cursor: pointer;
+      }
       .freeze-label {
         display: flex;
         align-items: center;
@@ -335,15 +345,17 @@
         <span class="zone-icon" aria-hidden="true" title="simplified query">✏️</span>
         <input id="query-input" placeholder='simplified query, e.g. fav genre=jazz (empty = all)' />
         <button id="query-apply">Apply</button>
+        <button id="expansion-toggle" class="expansion-toggle" aria-expanded="true" title="Show or hide what the simplified query expands to">▾</button>
+      </div>
+      <div id="expansion-row" class="editor-row">
+        <span class="zone-icon" aria-hidden="true" title="expansion of the simplified query">↳</span>
+        <input id="expansion-output" readonly spellcheck="false" placeholder="its expansion in the normal DSL" title="What the simplified query expands to (read-only: copy it into the normal DSL to edit it)" />
       </div>
       <div id="query-error" class="editor-error"></div>
       <div id="normal-editor">
         <div class="editor-row">
           <span class="zone-icon" aria-hidden="true" title="normal DSL">⚙️</span>
-          <input id="normal-input" readonly placeholder="normal DSL" />
-          <label class="freeze-label" title="Freeze to edit the normal DSL by hand; it then drives the query. Unfreeze to mirror the simplified query again.">
-            <input id="normal-freeze" type="checkbox" /> Freeze
-          </label>
+          <input id="normal-input" spellcheck="false" placeholder="normal DSL, AND-ed with the simplified query (empty = all)" />
         </div>
         <div id="normal-error" class="editor-error"></div>
       </div>

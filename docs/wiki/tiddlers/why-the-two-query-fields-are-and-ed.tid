@@ -1,0 +1,39 @@
+title: Why the two query fields are AND-ed
+tags: [[metarecord-list panel]]
+kind: rationale
+audience: dev
+summary: The metarecord list's simplified query and normal DSL used to be one query in two forms, the normal DSL mirroring the other or, frozen, replacing it; since October 2026 they are two filters AND-ed, so adding one never means giving up the other.
+
+Until October 2026 the [[metarecord-list panel]] had one query in two forms. The
+normal DSL field showed the simplified query's expansion, read-only; checking
+''Freeze'' made it editable, and from then on it alone ran, whatever the simplified
+field held. Unfreezing brought the expansion back and discarded the hand edit.
+
+That made every second filter a choice between the two languages. A query written
+by a command — a folder (`metarecord-list:folder`), what points at a node
+(`path-ref:list-refs`), the orphans — lands in the normal DSL, frozen. Narrowing it
+with a tag meant writing the tag in the normal DSL, since typing it in the simplified
+field unfroze the normal one and dropped the folder. And the focus and clear commands
+had to freeze or unfreeze as they went, so that the field the key landed in was one
+the query read.
+
+Now the two are separate filters, AND-ed: `(<expansion>) AND (<normal DSL>)`, each
+empty one adding nothing. The expansion keeps a line of its own under the simplified
+field — read-only, copyable, hidden by an arrow — so what the simplified query means
+is still in view. There is no Freeze and no state that decides which field runs:
+both always do.
+
+What is given up: a hand edit of the expansion no longer replaces the simplified
+query by itself. It is copied into the normal DSL and the simplified field emptied —
+two steps where the box was one.
+
+A command that writes a query chooses, by its last argument, whether its query is the
+whole query (`replace`, the default: the simplified field is emptied, as the old
+freeze ignored it) or AND-ed with the simplified one (`and`). Replacing stays the
+default because a key like <<key "metarecord-list:folder" "g f">> means "show me this
+folder", and an old, unrelated simplified query silently narrowing it would look like
+missing files.
+
+A saved workspace of version 2 is converted as it is read (version 3,
+[[Saved workspaces]]): frozen, its simplified query is emptied, since it did not run;
+not frozen, its normal DSL, which only held the expansion.

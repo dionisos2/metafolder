@@ -18,7 +18,7 @@ use crate::state::GuiState;
 
 /// The format written; a file of a newer one is refused, not misread
 /// (doc "Persisted format changes").
-pub const FORMAT_VERSION: u64 = 2;
+pub const FORMAT_VERSION: u64 = 3;
 
 const DIR: &str = "gui/workspaces";
 const DEFAULT_FILE: &str = "gui/default-workspace";
@@ -141,6 +141,20 @@ fn parse(file: &Path, text: &str) -> Result<SavedWorkspace, String> {
         for slot in [&mut saved.slots.left, &mut saved.slots.right] {
             if slot.as_deref() == Some("file") {
                 *slot = Some("viewer".into());
+            }
+        }
+    }
+    // Version 3: the metarecord list's normal DSL is AND-ed with the
+    // simplified query, and `normal-frozen` is gone. Frozen, the normal zone
+    // alone ran; not frozen, it held the simplified query's expansion. Either
+    // way the zone that did not run is emptied, so the list shows what it did.
+    if saved.version < 3 {
+        if let Some(work) = saved.work.as_mut() {
+            let frozen = work.remove("metarecord-list:normal-frozen") == Some(Value::Bool(true));
+            let ignored =
+                if frozen { "metarecord-list:query" } else { "metarecord-list:normal-query" };
+            if let Some(value) = work.get_mut(ignored) {
+                *value = Value::String(String::new());
             }
         }
     }
@@ -599,6 +613,48 @@ mod tests {
         let current = r#"{"version": 2, "kind": "layout", "slots": {"shown": 1, "left": "file"}}"#;
         std::fs::write(dir.0.join("gui/workspaces/new.json"), current).unwrap();
         assert_eq!(read(&dir.0, "new").unwrap().unwrap().slots.left.as_deref(), Some("file"));
+    }
+
+    #[test]
+    fn test_a_version_2_file_reads_the_metarecord_list_query_as_it_ran() {
+        // Version 3 (October 2026): the metarecord list's normal DSL is AND-ed
+        // with the simplified query instead of mirroring it or, frozen,
+        // replacing it. A v2 file is converted so that it lists what it did.
+        let dir = TempMetafolder::new("v2");
+        std::fs::create_dir_all(dir.0.join("gui/workspaces")).unwrap();
+        let mirrored = r#"{"version": 2, "kind": "work", "slots": {"shown": 1},
+            "work": {"metarecord-list:query": "jazz",
+                     "metarecord-list:normal-query": "genre = \"jazz\"",
+                     "metarecord-list:normal-frozen": false}}"#;
+        let frozen = r#"{"version": 2, "kind": "work", "slots": {"shown": 1},
+            "work": {"metarecord-list:query": "jazz",
+                     "metarecord-list:normal-query": "orphan = true",
+                     "metarecord-list:normal-frozen": true}}"#;
+        let unset = r#"{"version": 2, "kind": "work", "slots": {"shown": 1},
+            "work": {"metarecord-list:query": "jazz",
+                     "metarecord-list:normal-query": "genre = \"jazz\""}}"#;
+        for (name, text) in [("mirrored", mirrored), ("frozen", frozen), ("unset", unset)] {
+            std::fs::write(dir.0.join(format!("gui/workspaces/{name}.json")), text).unwrap();
+        }
+        let work = |name: &str| read(&dir.0, name).unwrap().unwrap().work.unwrap();
+
+        // Not frozen: the normal zone held the expansion, so it goes.
+        let w = work("mirrored");
+        assert_eq!(w["metarecord-list:query"], json!("jazz"));
+        assert_eq!(w["metarecord-list:normal-query"], json!(""));
+        assert!(!w.contains_key("metarecord-list:normal-frozen"));
+        // Frozen: the normal zone alone ran, so the simplified one goes.
+        let w = work("frozen");
+        assert_eq!(w["metarecord-list:query"], json!(""));
+        assert_eq!(w["metarecord-list:normal-query"], json!("orphan = true"));
+        assert!(!w.contains_key("metarecord-list:normal-frozen"));
+        // No variable is not frozen, the panel's default.
+        assert_eq!(work("unset")["metarecord-list:normal-query"], json!(""));
+        // Left as it is on disk until saved again.
+        assert_eq!(
+            std::fs::read_to_string(dir.0.join("gui/workspaces/frozen.json")).unwrap(),
+            frozen
+        );
     }
 
     #[test]

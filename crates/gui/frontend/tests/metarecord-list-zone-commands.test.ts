@@ -16,7 +16,6 @@ function setup() {
   document.body.append(host);
   const zone = {
     input,
-    enter: vi.fn(async () => {}),
     apply: vi.fn(async () => {}),
     clear: vi.fn(async () => {
       input.value = '';
@@ -38,14 +37,13 @@ function setup() {
 }
 
 describe('the zone commands', () => {
-  test('insert splices the whole trailing text at the caret, after entering the zone', async () => {
-    const { run, zone, input } = setup();
+  test('insert splices the whole trailing text at the caret', async () => {
+    const { run, input } = setup();
     input.value = 'ab';
     input.setSelectionRange(1, 1);
     const typed = vi.fn();
     input.addEventListener('input', typed);
     await run('metarecord-list:insert', 'simplified', '#=jazz', 'rock');
-    expect(zone.enter).toHaveBeenCalled();
     expect(input.value).toBe('a#=jazz rockb');
     expect(typed).toHaveBeenCalled();
   });

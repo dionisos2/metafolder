@@ -185,8 +185,8 @@ export function mount(_root, metafolder) {
     label: 'e2e: list a folder, writing the variables one by one',
     args: [{ name: 'dir', prompt: () => 'Folder?' }],
     handler: async (mf, dir) => {
+      await mf.workspace.set('metarecord-list:query', '');
       await mf.workspace.set('metarecord-list:normal-query', `mfr_path -> "/${dir}"`);
-      await mf.workspace.set('metarecord-list:normal-frozen', true);
     },
   });
 }
@@ -636,11 +636,11 @@ scenario_list() {
 # query_is <dsl> — the metarecord list runs <dsl> (`mf gui query`).
 query_is() { [ "$(mfg query)" = "$1" ]; }
 
-# metarecord-list:folder lands its query in three variables the list follows
-# together. Written one after another, a list that was not frozen could read
-# between two of them, run its old query and write it back over the new one —
-# "the command does nothing", once in a few tries. So: many tries, each from a
-# thawed list.
+# metarecord-list:folder lands its query in two variables the list follows
+# together (the simplified query emptied, the normal DSL). Written one after
+# another, a list could read between the two, run its old query and write it
+# back over the new one — "the command does nothing", once in a few tries. So:
+# many tries, each from a list running its simplified query.
 scenario_folder_list() {
     new_repo folder-list
     mkdir -p "$REPO_DIR/a" "$REPO_DIR/b"
@@ -657,9 +657,10 @@ scenario_folder_list() {
     local i missed=0 uuid
     for i in $(seq 1 20); do
         if [ $((i % 2)) = 0 ]; then dir=a uuid=$x; else dir=b uuid=$y; fi
-        # Back to a thawed list running the simplified query.
-        run workspace:send "$WS" metarecord-list:normal-frozen false
-        until_ok 5 query_is 'note = "hello"' || die "folder list: the list never thawed"
+        # Back to a list running the simplified query alone.
+        run workspace:send "$WS" metarecord-list:normal-query '""'
+        run workspace:send "$WS" metarecord-list:query note=hello
+        until_ok 5 query_is 'note = "hello"' || die "folder list: the list never went back"
         # Settled: a run still in flight publishes its cursor as the selection,
         # over the one written next.
         run view:refresh metarecord-list
@@ -674,7 +675,7 @@ scenario_folder_list() {
 }
 
 # The folder-list race, from a panel's command (doc "Command transactions"):
-# the handler writes the list's three query variables one `set` after another,
+# the handler writes the list's two query variables one `set` after another,
 # through the API of its run. The run's transaction delivers them at once, so
 # the list never runs the half-written state.
 scenario_panel_txn() {
@@ -693,8 +694,9 @@ scenario_panel_txn() {
     local i missed=0
     for i in $(seq 1 20); do
         if [ $((i % 2)) = 0 ]; then dir=a; else dir=b; fi
-        run workspace:send "$WS" metarecord-list:normal-frozen false
-        until_ok 5 query_is 'note = "hello"' || die "panel txn: the list never thawed"
+        run workspace:send "$WS" metarecord-list:normal-query '""'
+        run workspace:send "$WS" metarecord-list:query note=hello
+        until_ok 5 query_is 'note = "hello"' || die "panel txn: the list never went back"
         run view:refresh metarecord-list
         run e2e-keys:list "$dir"
         if ! until_ok 5 query_is "mfr_path -> \"/$dir\""; then

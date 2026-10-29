@@ -231,20 +231,32 @@ describe('listing what refers to the selected node', () => {
     await s.handlers.get('path-ref:list-refs')!('new');
     // At the target: in a new workspace, the list here stays as it was.
     expect(s.api.targets).toEqual(['new']);
-    // The list's query variables are its state: the normal zone, shown and
-    // frozen — no request, no nonce — written together, so the list never
-    // follows a half-written state.
+    // The list's query variables are its state: the normal zone, the
+    // simplified one emptied (`replace`, the default) — no request, no nonce —
+    // written together, so the list never follows a half-written state.
     expect(s.api.workspace.set).not.toHaveBeenCalled();
     const batches = s.api.workspace.setMany.mock.calls as unknown as [Record<string, unknown>][];
     expect(batches).toEqual([
       [
         {
+          'metarecord-list:query': '',
           'metarecord-list:normal-query': expect.stringContaining('mfr_path'),
-          'metarecord-list:normal-frozen': true,
         },
       ],
     ]);
     expect(s.api.commands.invoke).toHaveBeenCalledWith(['panel:open', 'here', 'metarecord-list']);
+  });
+
+  test('`and` keeps the list’s simplified query', async () => {
+    const s = stub();
+    await mount(s);
+    await cursor(s.api.provide, 'find', 'select', 'music');
+    s.api.workspace.setMany.mockClear();
+    await s.handlers.get('path-ref:list-refs')!('new', 'and');
+    const batches = s.api.workspace.setMany.mock.calls as unknown as [Record<string, unknown>][];
+    expect(batches).toEqual([
+      [{ 'metarecord-list:normal-query': expect.stringContaining('mfr_path') }],
+    ]);
   });
 
   test('the target is its first argument, never pre-filled', async () => {

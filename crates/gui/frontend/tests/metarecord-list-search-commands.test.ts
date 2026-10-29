@@ -108,7 +108,8 @@ async function mountPanel(initial: Record<string, unknown> = {}) {
     query: el('query-input'),
     normal: el('normal-input'),
     normalEditor: el<HTMLElement>('normal-editor'),
-    normalFreeze: el('normal-freeze'),
+    expansion: el('expansion-output'),
+    expansionRow: el<HTMLElement>('expansion-row'),
     columns: el('columns-input'),
     invoke: async (name: string, ...args: unknown[]) => {
       const h = handlers.get(name);
@@ -131,9 +132,9 @@ describe('zone commands', () => {
     const p = await mountPanel();
     expect(p.normalEditor.hidden).toBe(false);
     expect(p.shadow.getElementById('normal-toggle')).toBeNull();
-    // Shown, but still the read-only mirror of the simplified zone.
-    expect(p.normalFreeze.checked).toBe(false);
-    expect(p.normal.readOnly).toBe(true);
+    // Always editable: it is AND-ed with the simplified query, never a mirror.
+    expect(p.normal.readOnly).toBe(false);
+    expect(p.shadow.getElementById('normal-freeze')).toBeNull();
   });
 
   test('a stale stored preference to hide it is ignored', async () => {
@@ -160,28 +161,19 @@ describe('zone commands', () => {
 
   // ── focus ───────────────────────────────────────────────────────────────
 
-  test('focus normal freezes + focuses the normal DSL editor', async () => {
+  test('focus normal and focus simplified move the focus, keeping the other zone', async () => {
+    // Both zones are part of the query: going to one leaves the other as it is.
     const p = await mountPanel();
+    p.query.value = 'jazz';
+    p.normal.value = 'rating > 3';
 
     await p.invoke('metarecord-list:focus', 'normal');
-
-    expect(p.normalFreeze.checked).toBe(true);
-    expect(p.normal.readOnly).toBe(false);
     expect(p.shadow.activeElement).toBe(p.normal);
-  });
-
-  test('focus simplified unfreezes the normal editor first', async () => {
-    // Without the unfreeze the focused field is inert: a shown-and-frozen
-    // zone B is what the query runs, and zone A feeds nothing.
-    const p = await mountPanel();
-    await p.invoke('metarecord-list:focus', 'normal');
-    expect(p.normalFreeze.checked).toBe(true);
-
     await p.invoke('metarecord-list:focus', 'simplified');
-
-    expect(p.normalFreeze.checked).toBe(false);
-    expect(p.normal.readOnly).toBe(true);
     expect(p.shadow.activeElement).toBe(p.query);
+
+    expect(p.query.value).toBe('jazz');
+    expect(p.normal.value).toBe('rating > 3');
   });
 
   test('focus finder and focus columns move the focus', async () => {
@@ -212,15 +204,17 @@ describe('zone commands', () => {
     expect(p.normal.value).toBe('');
   });
 
-  test('clear simplified empties it, unfreezes zone B and focuses it', async () => {
+  test('clear simplified empties it and its expansion, keeps the normal DSL, and focuses it', async () => {
     const p = await mountPanel();
-    await p.invoke('metarecord-list:focus', 'normal');
     p.query.value = 'rating>3';
+    p.expansion.value = 'rating > 3';
+    p.normal.value = 'x = 1';
 
     await p.invoke('metarecord-list:clear', 'simplified');
 
     expect(p.query.value).toBe('');
-    expect(p.normalFreeze.checked).toBe(false);
+    expect(p.expansion.value).toBe('');
+    expect(p.normal.value).toBe('x = 1');
     expect(p.shadow.activeElement).toBe(p.query);
   });
 
@@ -234,14 +228,14 @@ describe('zone commands', () => {
     expect(p.shadow.activeElement).toBe(p.finder);
   });
 
-  test('clear normal opens, clears, freezes and focuses the normal editor', async () => {
+  test('clear normal empties the normal DSL, keeps the simplified query, and focuses it', async () => {
     const p = await mountPanel();
+    p.query.value = 'jazz';
     p.normal.value = 'rating gt 3';
 
     await p.invoke('metarecord-list:clear', 'normal');
 
-    expect(p.normalEditor.hidden).toBe(false);
-    expect(p.normalFreeze.checked).toBe(true);
+    expect(p.query.value).toBe('jazz');
     expect(p.normal.value).toBe('');
     expect(p.shadow.activeElement).toBe(p.normal);
   });
@@ -321,16 +315,15 @@ describe('zone commands', () => {
     expect(p.query.value).toBe('new text');
   });
 
-  test('insert into the simplified zone unfreezes zone B', async () => {
-    // Otherwise the inserted text changes nothing: a shown-and-frozen zone B
-    // is what runs.
+  test('insert into the simplified zone keeps the normal DSL: the two are AND-ed', async () => {
+    // What `tag:query` relies on to add a filter to a query a command wrote.
     const p = await mountPanel();
-    await p.invoke('metarecord-list:focus', 'normal');
-    expect(p.normalFreeze.checked).toBe(true);
+    p.normal.value = 'mfr_path -> "/music"';
 
     await p.invoke('metarecord-list:insert', 'simplified', '#=jazz');
 
-    expect(p.normalFreeze.checked).toBe(false);
+    expect(p.query.value).toBe('#=jazz');
+    expect(p.normal.value).toBe('mfr_path -> "/music"');
   });
 
   test('insert fires a bubbling input event so the live preview refreshes', async () => {
@@ -366,17 +359,17 @@ describe('zone commands', () => {
     expect(p.shadow.activeElement).toBe(p.finder);
   });
 
-  test('insert `stay` still unfreezes zone B and refreshes the mirror', async () => {
-    // Focused or not, what was inserted must end up being what the query runs.
+  test('insert `stay` still refreshes the expansion preview', async () => {
+    // Focused or not, the expansion line must follow what was inserted.
     const p = await mountPanel();
-    await p.invoke('metarecord-list:focus', 'normal');
+    p.normal.focus();
     const seen: string[] = [];
     p.query.addEventListener('input', () => seen.push(p.query.value));
 
     await p.invoke('metarecord-list:insert', 'simplified', '#=jazz', 'stay');
 
-    expect(p.normalFreeze.checked).toBe(false);
     expect(seen).toEqual(['#=jazz']);
+    expect(p.shadow.activeElement).toBe(p.normal);
   });
 
   test('a trailing run that is not `stay` is more text, not a modifier', async () => {
@@ -430,21 +423,23 @@ describe('display mode', () => {
     expect(isGrid(p.shadow)).toBe(false);
   });
 
-  test('toggle freeze flips the Freeze checkbox, and is persisted', async () => {
+  test('there is no toggle freeze any more', async () => {
+    const p = await mountPanel();
+    await expect(p.invoke('metarecord-list:toggle', 'freeze')).rejects.toThrow(/unknown flag/);
+  });
+
+  test('toggle expansion hides and shows the expansion line, and is persisted', async () => {
     const p = await mountPanel();
     p.normal.focus();
-    expect(p.normalFreeze.checked).toBe(false);
+    expect(p.expansionRow.hidden).toBe(false);
 
-    await p.invoke('metarecord-list:toggle', 'freeze');
-    expect(p.normalFreeze.checked).toBe(true);
-    expect(p.normal.readOnly).toBe(false);
-    expect(p.vars.get('metarecord-list:normal-frozen')).toBe(true);
+    await p.invoke('metarecord-list:toggle', 'expansion');
+    expect(p.expansionRow.hidden).toBe(true);
+    expect(p.vars.get('metarecord-list:show-expansion')).toBe(false);
 
-    await p.invoke('metarecord-list:toggle', 'freeze');
-    expect(p.normalFreeze.checked).toBe(false);
-    expect(p.normal.readOnly).toBe(true);
-    expect(p.vars.get('metarecord-list:normal-frozen')).toBe(false);
-    // Unlike `focus normal`, the toggle leaves the focus where it was.
+    await p.invoke('metarecord-list:toggle', 'expansion');
+    expect(p.expansionRow.hidden).toBe(false);
+    expect(p.vars.get('metarecord-list:show-expansion')).toBe(true);
     expect(p.shadow.activeElement).toBe(p.normal);
   });
 

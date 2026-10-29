@@ -18,7 +18,7 @@
 
 // The shared panel helpers (doc "The metafolder API"): `frecency` is the
 // score of a recently-viewed entry, the same in the recent panel.
-import { frecency, formatScore } from '/__ui.js';
+import { frecency, formatScore, listQueryVariables, queryModeArg } from '/__ui.js';
 import { baseName, confirmTrash, trashedMessage } from '/__file-actions.js';
 
 /** The fields of the tag model (doc "Hierarchical tags"): what a record has,
@@ -281,23 +281,22 @@ async function frecentFolders(mf, repo) {
 }
 
 /**
- * Lists `query` in the metarecord list at the target, landed in its DSL zone
- * frozen so it stays visible and editable — the list's query variables are its
+ * Lists `query` in the metarecord list at the target, landed in its normal DSL
+ * zone so it stays visible and editable — the list's query variables are its
  * state: written at the target, the list there shows them whether it is on
  * screen already or not.
  * @param {MetafolderApi} mf
  * @param {string} where
  * @param {string} query
  * @param {string} folder the repo-relative folder, for the status bar
+ * @param {string} [mode] `replace` / `and` (`listQueryVariables`)
  */
-export async function listAt(mf, where, query, folder) {
+export async function listAt(mf, where, query, folder, mode = 'replace') {
+  const variables = listQueryVariables(query, mode);
   await mf.atTarget(where, async (/** @type {MetafolderApi} */ mf) => {
     // At once: the list follows these together, and one read between two
     // separate writes ran the old query and wrote it back over the new one.
-    await mf.workspace.setMany({
-      'metarecord-list:normal-query': query,
-      'metarecord-list:normal-frozen': true,
-    });
+    await mf.workspace.setMany(variables);
     await mf.invoke(['panel:open', 'here', 'metarecord-list']);
     await mf.statusBar.message(`Listing ${folder || '/'}`);
   });
@@ -477,14 +476,19 @@ export default {
   // the same folder's *metarecords* instead of its disk entries, at the target
   // (here on the bare key; doc "Cross-panel selection"). The folder becomes the DSL
   // `mfr_path -> "<folder>"` (Follows: its files *and* its subdirectories, the
-  // contents a file manager shows), landed in the DSL zone frozen so it stays
-  // visible and editable. Repository-relative paths follow the `mfr_path`
+  // contents a file manager shows), landed in the normal DSL zone so it stays
+  // visible and editable — the whole query, or AND-ed with the simplified one
+  // after `and`. Repository-relative paths follow the `mfr_path`
   // convention throughout: `''` is the repository root, a descendant is
   // leading-"/"-rooted.
   'metarecord-list:folder': {
-    label: "List the selected metarecord's folder in the metarecord list (here / other / new)",
-    args: [whereArg()],
-    run: async (/** @type {MetafolderApi} */ mf, /** @type {string} */ where = 'here') => {
+    label: "List the selected metarecord's folder in the metarecord list (here / other / new) [replace / and]",
+    args: [whereArg(), queryModeArg()],
+    run: async (
+      /** @type {MetafolderApi} */ mf,
+      /** @type {string} */ where = 'here',
+      /** @type {string} */ mode = 'replace',
+    ) => {
       const repo = /** @type {string | null} */ (await mf.workspace.get('active_repo'));
       if (!repo) {
         await mf.statusBar.error('no active repository');
@@ -509,7 +513,7 @@ export default {
         await mf.statusBar.error('the selection lies outside the repository');
         return;
       }
-      await listAt(mf, where, `mfr_path -> ${dslString(folder)}`, folder);
+      await listAt(mf, where, `mfr_path -> ${dslString(folder)}`, folder, mode);
     },
   },
 

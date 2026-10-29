@@ -13,7 +13,7 @@
 // new node under the current one (schema type first, then the name), the way
 // the file manager creates a folder. doc "path-ref panel".
 
-import { byId, el, openButton, whereArg } from '/__ui.js';
+import { byId, el, listQueryVariables, openButton, queryModeArg, whereArg } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
 import { createListCursor } from '/__list-cursor.js';
 import { createSelect } from '/__select.js';
@@ -224,21 +224,20 @@ export async function mount(root, metafolder) {
   /** Runs the query in metarecord-list, at the target — the *other* slot by
    *  default: the tree stays visible so the next node can be asked about
    *  straight away, the pairing the ref-list panel used to provide.
-   *  @param {MetafolderApi} mf @param {string} where `here`, `other` or `new` */
-  async function listRefs(mf, where = 'other') {
+   *  @param {MetafolderApi} mf @param {string} where `here`, `other` or `new`
+   *  @param {string} [mode] `replace` (the default) or `and` the list's
+   *  simplified query (doc "metarecord-list panel") */
+  async function listRefs(mf, where = 'other', mode = 'replace') {
     if (selectedPath() === null) {
       await statusBar.message('select a node first');
       return;
     }
-    const dsl = currentQueryDsl();
+    const variables = listQueryVariables(currentQueryDsl(), mode);
     // The list's query variables are its state (doc "Cross-panel selection"):
-    // the normal zone, frozen, so the query stays visible and editable.
+    // the normal zone, so the query stays visible and editable.
     await mf.atTarget(where, async (there) => {
       // At once (`setMany`): the list follows them together.
-      await there.workspace.setMany({
-        'metarecord-list:normal-query': dsl,
-        'metarecord-list:normal-frozen': true,
-      });
+      await there.workspace.setMany(variables);
       await there.commands.invoke(['panel:open', 'here', 'metarecord-list']);
     });
   }
@@ -600,9 +599,9 @@ export async function mount(root, metafolder) {
   });
 
   void commands.register('path-ref:list-refs', {
-    label: 'Path-ref explorer: list the metarecords pointing at the selected node (here / other / new)',
-    args: [whereArg()],
-    handler: (mf, where) => listRefs(mf, where),
+    label: 'Path-ref explorer: list the metarecords pointing at the selected node (here / other / new) [replace / and]',
+    args: [whereArg(), queryModeArg()],
+    handler: (mf, where, mode) => listRefs(mf, where, mode),
   });
 
   // Adding an element to the forest (doc "path-ref panel"), on the

@@ -170,9 +170,22 @@ describe('metarecord-list:query orphans', () => {
   test('the query is the panel\u2019s, so it stays editable', async () => {
     const p = await mountPanel();
     await p.invoke('metarecord-list:query', 'orphans');
-    // Shown and frozen, like every other GUI-written query (never a hidden
-    // override): the user can narrow it by hand.
+    // Shown, like every other GUI-written query (never a hidden override):
+    // the user can narrow it by hand.
     expect(p.normalInput.value).toBe('orphan = true');
     expect((p.shadow.getElementById('normal-editor') as HTMLElement).hidden).toBe(false);
+  });
+
+  test('it replaces the simplified query, unless asked to AND with it', async () => {
+    const p = await mountPanel();
+    const simplified = p.shadow.getElementById('query-input') as HTMLInputElement;
+    simplified.value = 'jazz';
+    await p.invoke('metarecord-list:query', 'orphans');
+    expect(simplified.value).toBe('');
+
+    simplified.value = 'jazz';
+    await p.invoke('metarecord-list:query', 'orphans', 'and');
+    expect(simplified.value).toBe('jazz');
+    expect(p.normalInput.value).toBe('orphan = true');
   });
 });

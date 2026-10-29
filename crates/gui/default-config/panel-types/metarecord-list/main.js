@@ -1,7 +1,7 @@
 // metarecord-list panel: metarecords of the active repo filtered by an embedded
 // DSL query; primary selection source (doc "metarecord-list panel").
 
-import { byId, el, fields, messageOf, qs, thumbnail, viewerButtons } from '/__ui.js';
+import { byId, el, fields, messageOf, qs, queryModeArg, thumbnail, viewerButtons } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
 import { createMultiSelect } from '/__multi-select.js';
 import { MATCH_ALL } from '/__value-widget.js';
@@ -639,9 +639,9 @@ export async function mount(root, metafolder) {
    *  the marker is an ordinary field, so this is the query `orphan = true`
    *  typed into the visible DSL zone — which is exactly the point of the
    *  command, showing a new user what the detection wrote and where to edit it.
-   *  @param {MetafolderApi} mf */
-  async function showOrphans(mf) {
-    await editor.show(mf, 'orphan = true');
+   *  @param {MetafolderApi} mf @param {string} [mode] `replace` / `and` */
+  async function showOrphans(mf, mode) {
+    await editor.show(mf, 'orphan = true', mode);
   }
 
   // ── Duplicates (doc "duplicates panel") ────────────────────────────────────
@@ -649,8 +649,9 @@ export async function mount(root, metafolder) {
   /** Show what else is byte-identical to the selected metarecord. The point of
    *  the group model is reaching a file's twins without the caller ever
    *  handling a hash, so this is just `same(...)` typed into the DSL zone —
-   *  visible, editable and composable. @param {MetafolderApi} mf */
-  async function showDuplicates(mf) {
+   *  visible, editable and composable.
+   *  @param {MetafolderApi} mf @param {string} [mode] `replace` / `and` */
+  async function showDuplicates(mf, mode) {
     const selected = /** @type {{uuid?: string} | null} */ (
       (await mf.workspace.get('selected_metarecord')) ?? null
     );
@@ -659,7 +660,7 @@ export async function mount(root, metafolder) {
       await statusBar.message('no metarecord is selected', statusMessageMs);
       return;
     }
-    await editor.show(mf, `same(mfr_duplicate_group, ${uuid})`);
+    await editor.show(mf, `same(mfr_duplicate_group, ${uuid})`, mode);
   }
 
   // ── Columns ─────────────────────────────────────────────────────────────
@@ -988,13 +989,9 @@ export async function mount(root, metafolder) {
   });
   // ── Zones (commands in ./zone-commands.js) ──────────────────────────────
   //
-  // The table below is the single place a zone's quirks live.
-  //
-  // The quirk that matters most: while zone B is *frozen* it is what
-  // the query runs (./query-editor.js), so anything that hands the user zone A
-  // must unfreeze B first or the field it just focused feeds nothing.
-  // Unfreezing discards a hand-edited B, which re-mirrors expand(A) — that is
-  // the accepted trade in doc "metarecord-list panel".
+  // The table below is the single place a zone's quirks live. The simplified
+  // query and the normal DSL are AND-ed (./query-editor.js): going to one
+  // leaves the other as it is.
 
   /** @type {Record<string, import('./zone-commands.js').Zone>} */
   const ZONES = {
@@ -1011,15 +1008,13 @@ export async function mount(root, metafolder) {
     },
     simplified: {
       input: editor.simplifiedInput,
-      enter: (mf) => editor.editSimplified(mf),
       apply: (mf) => editor.apply(mf),
-      clear: (mf) => editor.clearSimplified(mf),
+      clear: () => editor.clearSimplified(),
     },
     normal: {
       input: editor.normalInput,
-      enter: (mf) => editor.editNormal(mf),
       apply: (mf) => editor.apply(mf),
-      clear: (mf) => editor.clearNormal(mf),
+      clear: () => editor.clearNormal(),
     },
     columns: {
       input: columnsInput,
@@ -1032,27 +1027,29 @@ export async function mount(root, metafolder) {
 
   registerZoneCommands({ commands, root, zones: ZONES, clearAll: clearAllQueries });
 
-  // Canned queries: each puts its DSL in the zone, frozen, so it
-  // stays visible, editable and composable rather than being a mode.
-  /** @type {Record<string, (mf: MetafolderApi) => unknown>} */
+  // Canned queries: each puts its DSL in the normal zone, so it stays
+  // visible, editable and composable rather than being a mode — the whole
+  // query, or AND-ed with the simplified one after `and`.
+  /** @type {Record<string, (mf: MetafolderApi, mode?: string) => unknown>} */
   const CANNED_QUERIES = {
-    duplicates: (mf) => showDuplicates(mf),
-    orphans: (mf) => showOrphans(mf),
+    duplicates: (mf, mode) => showDuplicates(mf, mode),
+    orphans: (mf, mode) => showOrphans(mf, mode),
   };
 
   void commands.register('metarecord-list:query', {
-    label: 'Metarecord list: run a canned query (duplicates / orphans)',
+    label: 'Metarecord list: run a canned query (duplicates / orphans) [replace / and]',
     args: [
       {
         name: 'what',
         prompt: () => `Which query? (${Object.keys(CANNED_QUERIES).join(' / ')})`,
         complete: () => Object.keys(CANNED_QUERIES),
       },
+      queryModeArg(),
     ],
-    handler: (mf, what) => {
+    handler: (mf, what, mode) => {
       const run = CANNED_QUERIES[what];
       if (!run) throw new Error(`unknown query: "${what ?? ''}"`);
-      return run(mf);
+      return run(mf, mode);
     },
   });
 
@@ -1089,7 +1086,7 @@ export async function mount(root, metafolder) {
   // toggle and `metarecord-list:set mode` persist the same variable.
   /** @type {Record<string, (mf: MetafolderApi) => unknown>} */
   const TOGGLES = {
-    freeze: (mf) => editor.toggleFreeze(mf),
+    expansion: (mf) => editor.toggleExpansion(mf),
     mode: (mf) => SETTINGS.mode.apply(mf, mode === 'grid' ? 'table' : 'grid'),
   };
 

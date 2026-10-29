@@ -1,5 +1,5 @@
 // metarecord-list follows its query variables (doc "Cross-panel selection"):
-// `metarecord-list:query`, `:normal-query` and `:normal-frozen` ARE the query
+// `metarecord-list:query` and `:normal-query` ARE the query
 // state. Another panel or a command shows a query by writing them; the panel
 // puts them in its zones and runs them, at mount and while mounted. What it compares against is the state it last
 // applied itself, so its own writes coming back and a draft being typed do not
@@ -116,11 +116,11 @@ async function settle() {
   for (let i = 0; i < 5; i += 1) await new Promise((r) => setTimeout(r, 0));
 }
 
-/** The variables that show `dsl` in the normal zone, frozen. */
+/** The variables that show `dsl` alone, in the normal zone. */
 function showing(dsl: string): Record<string, unknown> {
   return {
+    'metarecord-list:query': '',
     'metarecord-list:normal-query': dsl,
-    'metarecord-list:normal-frozen': true,
   };
 }
 
@@ -151,7 +151,6 @@ async function mountPanel(vars: Record<string, unknown>) {
     queryInput: shadow.getElementById('query-input') as HTMLInputElement,
     normalInput: shadow.getElementById('normal-input') as HTMLInputElement,
     normalEditor: shadow.getElementById('normal-editor') as HTMLElement,
-    normalFreeze: shadow.getElementById('normal-freeze') as HTMLInputElement,
   };
 }
 
@@ -175,7 +174,7 @@ describe('metarecord-list query variables', () => {
     const p = await mountPanel(showing('mfr_path -> "/live"'));
     expect(p.normalInput.value).toBe('mfr_path -> "/live"');
     expect(p.normalEditor.hidden).toBe(false); // visible…
-    expect(p.normalFreeze.checked).toBe(true); // …and authoritative, so it stays
+    expect(p.queryInput.value).toBe(''); // …and the whole query
     expect(ranQueries(p.calls)).toContain('mfr_path -> "/live"');
   });
 
@@ -184,7 +183,6 @@ describe('metarecord-list query variables', () => {
     p.calls.length = 0;
     await p.pushMany(showing('mfr_path -> "/live/2024"'));
     expect(p.normalInput.value).toBe('mfr_path -> "/live/2024"');
-    expect(p.normalFreeze.checked).toBe(true);
     expect(ranQueries(p.calls)).toEqual(['mfr_path -> "/live/2024"']);
   });
 
@@ -212,7 +210,7 @@ describe('metarecord-list query variables', () => {
     // The shell pushes every write back to the panel that made it.
     await p.pushMany({
       'metarecord-list:query': 'rating > 3',
-      'metarecord-list:normal-query': 'rating > 3',
+      'metarecord-list:normal-query': '',
     });
     expect(ranQueries(p.calls)).toEqual([]);
   });
@@ -221,7 +219,7 @@ describe('metarecord-list query variables', () => {
     const p = await mountPanel({});
     p.calls.length = 0;
     p.queryInput.value = 'half typ'; // not applied
-    await p.push('metarecord-list:normal-frozen', false); // what it already is
+    await p.push('metarecord-list:normal-query', ''); // what it already is
     expect(p.queryInput.value).toBe('half typ');
     expect(ranQueries(p.calls)).toEqual([]);
   });

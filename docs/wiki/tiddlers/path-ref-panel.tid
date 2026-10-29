@@ -77,8 +77,9 @@ in the right-click menu) runs it in a [[metarecord-list panel]] opened in the
 ''other'' slot: the tree stays in view for the next node. <<key "path-ref:list-refs new" "n p l">>
 runs it in a new workspace instead, <<key "path-ref:list-refs here" "i p l">> in place of the
 tree ([[open targets|Panel slots and layout]]). The query lands in the
-list's normal DSL, frozen, where it can be narrowed or combined with
-anything else ([[Following references]]).
+list's normal DSL, where it can be narrowed or combined with
+anything else ([[Following references]]); it replaces the list's simplified query, or
+is AND-ed with it after a last argument `and` (`path-ref:list-refs other and`).
 
 !! As a value picker
 

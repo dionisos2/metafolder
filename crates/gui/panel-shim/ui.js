@@ -509,6 +509,31 @@ export function whereArg() {
   };
 }
 
+/** The last argument of the commands that show a query in the metarecord
+ *  list: `replace` (the default) makes it the whole query, `and` AND-s it with
+ *  the simplified query in place (doc "metarecord-list panel"). */
+export function queryModeArg() {
+  return {
+    name: 'mode',
+    optional: true,
+    prompt: () => 'Replace the query, or AND with the simplified one? (replace / and)',
+    complete: () => ['replace', 'and'],
+  };
+}
+
+/**
+ * The metarecord list's query variables that show `query` in its normal DSL
+ * zone: with `replace` the simplified zone is emptied, with `and` it is kept.
+ * @param {string} query
+ * @param {string} [mode]
+ * @returns {Record<string, string>}
+ */
+export function listQueryVariables(query, mode = 'replace') {
+  if (mode === 'and') return { 'metarecord-list:normal-query': query };
+  if (mode === 'replace') return { 'metarecord-list:query': '', 'metarecord-list:normal-query': query };
+  throw new Error(`unknown mode: "${mode}" (expected replace / and)`);
+}
+
 /** An error's message, whatever was thrown.
  *  @param {unknown} error @returns {string} */
 export function messageOf(error) {

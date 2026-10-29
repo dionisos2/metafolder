@@ -1,9 +1,10 @@
-// The metarecord-list's two-zone query editor (doc "metarecord-list panel"):
-// zone A takes simplified text, zone B shows its expansion in the normal DSL —
-// or, frozen, is hand-edited and authoritative. It owns the zones' elements,
+// The metarecord-list's query editor (doc "metarecord-list panel"): the
+// simplified query, the line under it showing its expansion (read-only, hidden
+// by its arrow), and the normal DSL, AND-ed with it — so a filter is added in
+// either language without giving the other up. It owns the zones' elements,
 // the base query they compile to, and the workspace variables that are its
 // state. What it needs from the panel arrives through `ctx`:
-//   history   -> zone A's input history (an explicit apply records its text)
+//   history   -> the simplified zone's input history (an explicit apply records its text)
 //   onApply() -> an apply began (the panel now has a query to run)
 //   run()     -> run the compiled query (a reset of the list)
 
@@ -17,18 +18,30 @@ export function asText(value) {
   return typeof value === 'string' ? value : '';
 }
 
-/** @typedef {{query: string, normal: string, frozen: boolean}} QueryState */
+/** @typedef {{query: string, normal: string}} QueryState */
 
 /** @type {Record<keyof QueryState, string>} */
 const STATE_VARIABLES = {
   query: 'metarecord-list:query',
   normal: 'metarecord-list:normal-query',
-  frozen: 'metarecord-list:normal-frozen',
 };
+
+/** Whether the expansion line is shown: a layout variable (`saved.json`). */
+const SHOW_EXPANSION = 'metarecord-list:show-expansion';
+
+/** How a shown query meets the one in place (`show`). */
+export const SHOW_MODES = ['replace', 'and'];
 
 /** @param {QueryState} a @param {QueryState} b */
 function sameQueryState(a, b) {
-  return a.query === b.query && a.normal === b.normal && a.frozen === b.frozen;
+  return a.query === b.query && a.normal === b.normal;
+}
+
+/** The conjunction of the zones' texts, as one DSL text ('' = match all).
+ *  @param {string[]} parts */
+function conjunctionText(parts) {
+  const present = parts.filter((part) => part !== '');
+  return present.length === 1 ? present[0] : present.map((part) => `(${part})`).join(' AND ');
 }
 
 /**
@@ -51,9 +64,11 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
 
   const queryInput = byId(root, 'query-input', HTMLInputElement);
   const queryError = byId(root, 'query-error');
+  const expansionRow = byId(root, 'expansion-row');
+  const expansionOutput = byId(root, 'expansion-output', HTMLInputElement);
+  const expansionToggle = byId(root, 'expansion-toggle', HTMLButtonElement);
   const normalInput = byId(root, 'normal-input', HTMLInputElement);
   const normalError = byId(root, 'normal-error');
-  const normalFreeze = byId(root, 'normal-freeze', HTMLInputElement);
 
   /** @type {Record<string, unknown>|null} null = match all (the structural base query) */
   let queryIR = null;
@@ -61,59 +76,73 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
   // assignment below. It is what a script receives (`mf gui query`,
   // doc "metarecord-list panel"): text is what `mf metarecord -q` takes and what a script composes
   // with. It must be this local and not `metarecord-list:normal-query`, which
-  // mirrors the B zone and is only written when the zones are persisted.
+  // holds the normal zone alone.
   /** @type {string} '' = match all */
   let queryText = '';
-  let normalFrozen = false; // zone B decoupled (hand-edited, authoritative)?
+  let expansionShown = true;
   /** @type {ReturnType<typeof setTimeout>|undefined} */
   let livePreviewTimer;
+
+  /** The simplified zone's expansion, shown on its line; null on an error,
+   *  which is shown under it. */
+  async function expandSimplified() {
+    const simplified = queryInput.value.trim();
+    let dsl = '';
+    if (simplified !== '') {
+      try {
+        dsl = String(await query.expand(simplified)).trim();
+      } catch (error) {
+        queryError.textContent = messageOf(error);
+        return null;
+      }
+    }
+    expansionOutput.value = dsl;
+    return dsl;
+  }
+
+  /** Parses one zone's DSL, its error under that zone; undefined on an error.
+   *  @param {string} dsl @param {HTMLElement} errorEl */
+  async function parseZone(dsl, errorEl) {
+    if (dsl === '') return null;
+    try {
+      return /** @type {Record<string, unknown>} */ (await query.parse(dsl));
+    } catch (error) {
+      errorEl.textContent = messageOf(error);
+      return undefined;
+    }
+  }
 
   /** Recomputes `queryIR` from the current editor state (no fetch).
    *  @param {MetafolderApi} mf */
   async function recomputeQuery(mf) {
     queryError.textContent = '';
     normalError.textContent = '';
-    /** @type {string} */
-    let dsl;
-    if (normalFrozen) {
-      dsl = normalInput.value.trim(); // frozen normal DSL is authoritative
-    } else {
-      const simplified = queryInput.value.trim();
-      if (simplified === '') {
-        dsl = '';
-      } else {
-        try {
-          dsl = String(await query.expand(simplified)).trim();
-        } catch (error) {
-          queryError.textContent = messageOf(error);
-          return false;
-        }
-      }
-      normalInput.value = dsl; // reflect in B
-    }
+    const expanded = await expandSimplified();
+    if (expanded === null) return false;
+    const normal = normalInput.value.trim();
+    // Each zone parsed on its own, so that an error is shown under the zone
+    // it comes from — the expansion's under the simplified query.
+    const [expandedIR, normalIR] = await Promise.all([
+      parseZone(expanded, queryError),
+      parseZone(normal, normalError),
+    ]);
+    if (expandedIR === undefined || normalIR === undefined) return false;
+    const dsl = conjunctionText([expanded, normal]);
     // The base query as normal DSL, published for the panels that act on "the
     // current query" (metarecord-detail's bulk commands). It must be THIS
     // value: `metarecord-list:query` holds the *simplified* text, which the
     // normal-DSL parser does not read, and `metarecord-list:normal-query`
-    // mirrors the B zone and is only written when the zones are persisted.
-    // Both expansion and the frozen-zone case are already settled here.
+    // the normal zone alone.
     void mf.workspace.set('metarecord-list:base-query-text', dsl);
     // Tell the slow-operation log what this panel is running, so an entry for a
     // slow query names the text the user typed and not just the IR
     // (doc "Correlating the GUI and the daemon").
     daemon.setContext?.(dsl === '' ? 'match all' : dsl);
-    if (dsl === '') {
-      queryIR = null; // empty = match all
-      queryText = '';
-    } else {
-      try {
-        queryIR = /** @type {Record<string, unknown>} */ (await query.parse(dsl));
-        queryText = dsl; // only once the parse succeeded: the two stay in step
-      } catch (error) {
-        normalError.textContent = messageOf(error);
-        return false;
-      }
-    }
+    queryIR =
+      expandedIR && normalIR
+        ? { type: 'and', operands: [expandedIR, normalIR] }
+        : (expandedIR ?? normalIR);
+    queryText = dsl;
     return true;
   }
 
@@ -136,30 +165,26 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
   async function clearQueries(mf) {
     queryInput.value = '';
     normalInput.value = '';
-    queryError.textContent = '';
-    normalError.textContent = '';
-    // Back to mirroring the (now empty) simplified query, so B shows empty too.
-    if (normalFrozen) await setNormalFrozen(mf, false);
     await recomputeQuery(mf); // queryIR = null (match all)
     await persistQueryState(mf);
   }
 
   // ── The query variables are the state (doc "Cross-panel selection") ─────
-  // `metarecord-list:query`, `:normal-query` and `:normal-frozen` are not a
-  // record of what the panel shows: they ARE it.
+  // `metarecord-list:query` and `:normal-query` are not a record of what the
+  // panel shows: they ARE it.
   // Another panel or a command shows a query by writing them, and a forked
   // workspace shows the same list because it has the same variables. What a
   // write is compared with is the state this panel last applied or wrote — not
   // the inputs, which hold a draft until it is applied — so its own writes
   // coming back, and a write of what it already shows, change nothing. A
-  // writer changing several of them must write them at once
-  // (`workspace.setMany`): the follow is only deferred to the next task, and a
-  // read between two separate writes applies the half-written state — and
-  // writes its expansion back over the variables still to come. The change
-  // events of one batch are gathered and run once, on the final state.
+  // writer changing both must write them at once (`workspace.setMany`): the
+  // follow is only deferred to the next task, and a read between two separate
+  // writes applies the half-written state — and writes it back over the
+  // variable still to come. The change events of one batch are gathered and
+  // run once, on the final state.
 
   /** @type {QueryState} the state last applied or written by this panel */
-  let appliedState = { query: '', normal: '', frozen: false };
+  let appliedState = { query: '', normal: '' };
 
   // A read of the variables that overlaps the panel's own write is stale: begun
   // before it, it finds the state the panel HAD (and applying it put the old
@@ -190,12 +215,11 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
 
   /** @returns {Promise<QueryState>} the state the variables hold now */
   async function variableQueryState() {
-    const [query, normal, frozen] = await Promise.all([
+    const [query, normal] = await Promise.all([
       workspace.get(STATE_VARIABLES.query),
       workspace.get(STATE_VARIABLES.normal),
-      workspace.get(STATE_VARIABLES.frozen),
     ]);
-    return { query: asText(query), normal: asText(normal), frozen: frozen === true };
+    return { query: asText(query), normal: asText(normal) };
   }
 
   /** Brings the zones to what the variables say, and runs it when it differs
@@ -209,10 +233,7 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
     }
     if (sameQueryState(next, appliedState)) return;
     queryInput.value = next.query;
-    if (next.frozen !== normalFrozen) await setNormalFrozen(metafolder, next.frozen);
-    // After the setters: unfreezing refreshes B from A, which is what an
-    // unfrozen B shows anyway; a frozen B is the variable's text.
-    if (next.frozen) normalInput.value = next.normal;
+    normalInput.value = next.normal;
     await applyQuery(metafolder);
   }
 
@@ -226,60 +247,56 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
     );
   }
 
-  /** Puts `dsl` in the normal zone — frozen, so a query the GUI wrote stays
-   *  hand-editable and composable rather than being overwritten by the
-   *  simplified zone — and runs it. @param {MetafolderApi} mf @param {string} dsl */
-  async function showQuery(mf, dsl) {
+  /** Puts `dsl` in the normal zone, where a query the GUI wrote stays visible
+   *  and editable, and runs it. `replace` (the default) empties the simplified
+   *  zone, so that `dsl` is the whole query; `and` keeps it, AND-ed with `dsl`.
+   *  @param {MetafolderApi} mf @param {string} dsl @param {string} [mode] */
+  async function showQuery(mf, dsl, mode = 'replace') {
+    if (!SHOW_MODES.includes(mode)) {
+      throw new Error(`unknown mode: "${mode}" (expected ${SHOW_MODES.join(' / ')})`);
+    }
+    if (mode === 'replace') queryInput.value = '';
     normalInput.value = dsl;
-    if (!normalFrozen) await setNormalFrozen(mf, true);
     await applyQuery(mf);
   }
 
-  /** Debounced live mirror of expand(A) into B (preview only — does not run). */
+  /** Debounced live preview of the simplified zone's expansion (does not run). */
   function scheduleLivePreview() {
-    if (normalFrozen) return;
     clearTimeout(livePreviewTimer);
     livePreviewTimer = setTimeout(() => void refreshPreview(), livePreviewMs);
   }
 
   async function refreshPreview() {
-    if (normalFrozen) return;
     queryError.textContent = '';
-    const simplified = queryInput.value.trim();
-    if (simplified === '') {
-      normalInput.value = '';
-      return;
-    }
-    try {
-      normalInput.value = String(await query.expand(simplified)).trim();
-    } catch (error) {
-      queryError.textContent = messageOf(error);
-    }
+    await expandSimplified();
   }
 
-  /** @param {MetafolderApi} mf @param {boolean} frozen */
-  async function setNormalFrozen(mf, frozen) {
-    normalFrozen = frozen;
-    normalFreeze.checked = frozen;
-    normalInput.readOnly = !frozen;
-    if (!frozen) await refreshPreview();
-    await writeQueryState(mf, { frozen });
+  /** @param {boolean} shown */
+  function showExpansionLine(shown) {
+    expansionShown = shown;
+    expansionRow.hidden = !shown;
+    expansionToggle.textContent = shown ? '▾' : '▸';
+    expansionToggle.setAttribute('aria-expanded', String(shown));
+  }
+
+  /** The arrow: hides or shows the expansion line, and remembers it.
+   *  @param {MetafolderApi} mf */
+  async function toggleExpansion(mf) {
+    showExpansionLine(!expansionShown);
+    await mf.workspace.set(SHOW_EXPANSION, expansionShown);
   }
 
   // Enter applies AND leaves the field (blur) so the panel accelerators resume;
   // Shift+Enter applies but keeps the focus for another edit.
-  queryInput.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter') return;
-    void applyQuery(metafolder);
-    if (!event.shiftKey) queryInput.blur();
-  });
+  for (const input of [queryInput, normalInput]) {
+    input.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      void applyQuery(metafolder);
+      if (!event.shiftKey) input.blur();
+    });
+  }
   queryInput.addEventListener('input', scheduleLivePreview);
-  normalFreeze.addEventListener('change', () => void setNormalFrozen(metafolder, normalFreeze.checked));
-  normalInput.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter') return;
-    void applyQuery(metafolder);
-    if (!event.shiftKey) normalInput.blur();
-  });
+  expansionToggle.addEventListener('click', () => void toggleExpansion(metafolder));
   for (const key of Object.values(STATE_VARIABLES)) {
     workspace.onChange(key, scheduleFollowQueryVariables);
   }
@@ -295,35 +312,29 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
     apply: applyQuery,
     show: showQuery,
     clear: clearQueries,
-    /** Hands the user zone A: a frozen B would be what runs, so it thaws.
-     *  @param {MetafolderApi} mf */
-    editSimplified: (mf) => setNormalFrozen(mf, false),
-    /** Hands the user zone B: frozen, so what is typed there runs.
-     *  @param {MetafolderApi} mf */
-    editNormal: (mf) => setNormalFrozen(mf, true),
-    /** @param {MetafolderApi} mf */
-    async clearSimplified(mf) {
+    toggleExpansion,
+    /** Empties the simplified zone and its expansion line (does not run). */
+    clearSimplified() {
       queryInput.value = '';
+      expansionOutput.value = '';
       queryError.textContent = '';
-      await setNormalFrozen(mf, false);
     },
-    /** @param {MetafolderApi} mf */
-    async clearNormal(mf) {
-      await this.editNormal(mf);
+    /** Empties the normal zone (does not run). */
+    clearNormal() {
       normalInput.value = '';
       normalError.textContent = '';
     },
-    /** The Freeze checkbox, by command. @param {MetafolderApi} mf */
-    toggleFreeze: (mf) => setNormalFrozen(mf, !normalFrozen),
 
     /** Restores the zones from the variables (values only — no daemon call). */
     async restore() {
-      appliedState = await variableQueryState();
+      const [state, shown] = await Promise.all([
+        variableQueryState(),
+        workspace.get(SHOW_EXPANSION),
+      ]);
+      appliedState = state;
       queryInput.value = appliedState.query;
       normalInput.value = appliedState.normal;
-      normalFrozen = appliedState.frozen;
-      normalFreeze.checked = normalFrozen;
-      normalInput.readOnly = !normalFrozen;
+      showExpansionLine(shown !== false);
     },
 
     dispose() {

@@ -1,7 +1,7 @@
 title: $:/mf/gen/GUI command/path-ref:list-refs
 catalog: GUI command
 target: path-ref:list-refs
-summary: Path-ref explorer: list the metarecords pointing at the selected node (here / other / new)
+summary: Path-ref explorer: list the metarecords pointing at the selected node (here / other / new) [replace / and]
 
 !! Reference
 

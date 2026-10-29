@@ -1,6 +1,6 @@
 title: metarecord-list:toggle
 tags: [[GUI command]] Metarecord
 kind: reference
-summary: Metarecord list: toggle a view flag (freeze / mode)
+summary: Metarecord list: toggle a view flag (expansion / mode)
 
-`metarecord-list:toggle freeze` checks or unchecks ''Freeze'' on the normal DSL field of the [[metarecord-list panel]], exactly as a click on the box would, and leaves the focus where it is. (`metarecord-list:focus normal` freezes too, but moves the focus there; `metarecord-list:focus simplified` unfreezes.)
+`metarecord-list:toggle expansion` hides or shows the line under the simplified query of the [[metarecord-list panel]] that shows its expansion, exactly as a click on its arrow would, and leaves the focus where it is. The choice is kept in `metarecord-list:show-expansion`, a layout variable.

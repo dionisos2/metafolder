@@ -14,7 +14,7 @@ The [[path-ref panel]] writes the query instead, and says which before running i
 ref bar shows `tag -> (path = "music/jazz")` for the node under the cursor.
 `path-ref:list-refs` writes that text into the query variables of
 [[metarecord-list panel]] and opens the list in the ''other'' slot — the pairing
-`ref-list` provided. It lands in the normal DSL, frozen: a starting point,
+`ref-list` provided. It lands in the normal DSL: a starting point,
 not a mode. The same choice is made by `metarecord-list:folder` and
 `metarecord-list:query`.
 

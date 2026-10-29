@@ -29,7 +29,7 @@ only what is not layout already, since a work save holds both.
 ```
 {
   "layout": ["columns", "column-widths", "mode", "page-size", "finder-fields"],
-  "work": ["query", "normal-query", "normal-frozen", "finder", "order-field"]
+  "work": ["query", "normal-query", "finder", "order-field"]
 }
 ```
 
@@ -46,7 +46,7 @@ is not saved, nor is what a panel only publishes for others to read
 (`metarecord-list:effective-query`, `metarecord-list:sort`).
 
 |!Panel |!Layout |!Work |
-|[[metarecord-list|metarecord-list panel]] |`columns`, `column-widths`, `mode`, `page-size`, `finder-fields` |`query`, `normal-query`, `normal-frozen`, `finder`, `order-field` |
+|[[metarecord-list|metarecord-list panel]] |`columns`, `column-widths`, `mode`, `page-size`, `finder-fields`, `show-expansion` |`query`, `normal-query`, `finder`, `order-field` |
 |[[path-ref|path-ref panel]] |`field`, `ref-field` |`scope` |
 |[[file-manager|file-manager panel]] | |`dir`, `cursor` |
 |[[recent|recent panel]] |`sort` | |
@@ -99,7 +99,7 @@ content, not `internal/`. A saved workspace carries a `version` field, so that a
 of its format can be recognised and converted ([[Persisted format changes]]):
 
 ```
-{"version": 2, "kind": "work",
+{"version": 3, "kind": "work",
  "slots": {"shown": 2, "left": "metarecord-list", "right": "viewer"},
  "layout": {"metarecord-list:columns": "…", "metarecord-list:column-widths": {…}, …},
  "work": {"metarecord-list:query": "…", "selected_metarecord": {…}, …}}
@@ -107,6 +107,12 @@ of its format can be recognised and converted ([[Persisted format changes]]):
 
 Version 2 (October 2026) renamed the panel type `file` to `viewer`: a version 1 file
 is read with `viewer` in place of `file`, and left as it is until it is saved again.
+
+Version 3 (October 2026) made the metarecord list's normal DSL AND-ed with its
+simplified query, and dropped `normal-frozen` ([[Why the two query fields are AND-ed]]).
+An older `work` save is read with the field that did not run emptied — the simplified
+query when the normal DSL was frozen, the normal DSL (which held the expansion)
+otherwise — and `normal-frozen` dropped; the file is left as it is until saved again.
 
 A `layout` save has no `work` member. Reading the layout of either is reading `slots`
 and `layout`.

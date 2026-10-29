@@ -109,8 +109,8 @@ function fakeMf() {
   };
 }
 
-async function run(where = 'here') {
-  await shipped['metarecord-list:folder'].run(fakeMf() as never, where);
+async function run(where = 'here', mode?: string) {
+  await shipped['metarecord-list:folder'].run(fakeMf() as never, where, mode);
 }
 
 /** The DSL that landed in the panel, or null when nothing was asked of it. */
@@ -229,14 +229,14 @@ describe('the request it lands', () => {
     // `mfr_path -> "<folder>"`: Follows — the metarecords whose mfr_path parent
     // is that node, its files *and* its subdirectories.
     expect(landedDsl()).toBe('mfr_path -> "/live/2024"');
-    // The normal zone, shown and frozen: the query stays visible and is what
-    // runs. No nonce — the variables are the list's state, not a request.
-    // Written together: a list following them one at a time read a half-written
-    // state, ran the old query and wrote its expansion back over the new one.
+    // The normal zone, the simplified one emptied (`replace`, the default): the
+    // query stays visible and is the whole query. No nonce — the variables are
+    // the list's state, not a request. Written together: a list following them
+    // one at a time read a half-written state and ran the old query.
     expect(calls.batches).toEqual([
       {
+        'metarecord-list:query': '',
         'metarecord-list:normal-query': 'mfr_path -> "/live/2024"',
-        'metarecord-list:normal-frozen': true,
       },
     ]);
     expect(calls.sets).toEqual([]);
@@ -257,6 +257,28 @@ describe('the request it lands', () => {
     expect(landedDsl()).toBe('mfr_path -> "/live"');
     const [where] = shipped['metarecord-list:folder'].args;
     expect(where).not.toHaveProperty('initial');
+  });
+
+  test('`and` keeps the simplified query, AND-ed with the folder', async () => {
+    state.selection = { uuid: 'u1', repo: 'r' };
+    state.treePaths = { u1: ['/live'] };
+    state.type = 'dir';
+
+    await run('here', 'and');
+
+    expect(calls.batches).toEqual([{ 'metarecord-list:normal-query': 'mfr_path -> "/live"' }]);
+    const [, mode] = shipped['metarecord-list:folder'].args;
+    expect((mode as { optional?: boolean }).optional).toBe(true);
+    expect(mode.complete()).toEqual(['replace', 'and']);
+  });
+
+  test('another mode is an error, and writes nothing', async () => {
+    state.selection = { uuid: 'u1', repo: 'r' };
+    state.treePaths = { u1: ['/live'] };
+    state.type = 'dir';
+
+    await expect(run('here', 'or')).rejects.toThrow(/replace \/ and/);
+    expect(calls.batches).toEqual([]);
   });
 
   test('the repository root is the empty path', async () => {

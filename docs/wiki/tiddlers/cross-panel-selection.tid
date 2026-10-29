@@ -43,8 +43,8 @@ The two are defined in the shipped `gui/commands.js` ([[User commands]]). They r
 the selection where they run, then move to the target (`mf.atTarget`) and write there
 what the panel is to show, in the variables that ''are'' its state — the panel follows
 them whether it was on screen already or not — before opening it.
-`metarecord-list:folder` writes the list's query variables, the normal zone shown and
-frozen ([[metarecord-list panel]]); `file-manager:reveal` stats the path, to tell a
+`metarecord-list:folder` writes the list's query variables, the folder in the normal
+DSL and the simplified query emptied, or kept after `and` ([[metarecord-list panel]]); `file-manager:reveal` stats the path, to tell a
 folder from a file, and writes the file manager's location, `file-manager:dir` and
 `file-manager:cursor` ([[file-manager panel]]).
 

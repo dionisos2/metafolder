@@ -1,4 +1,4 @@
 {
-  "layout": ["columns", "column-widths", "mode", "page-size", "finder-fields"],
-  "work": ["query", "normal-query", "normal-frozen", "finder", "order-field"]
+  "layout": ["columns", "column-widths", "mode", "page-size", "finder-fields", "show-expansion"],
+  "work": ["query", "normal-query", "finder", "order-field"]
 }

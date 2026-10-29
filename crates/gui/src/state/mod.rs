@@ -2592,12 +2592,10 @@ mod tests {
     #[test]
     fn test_pick_start_starts_empty_not_from_the_callers_state() {
         let (_, state) = state();
-        // The caller's list shows a frozen query of its own: copied, it would
-        // run instead of the field's seed.
+        // The caller's list shows a normal DSL query of its own: copied, it
+        // would be AND-ed with the field's seed.
         state.set_var("ws-1", "metarecord-list:normal-query", json!("rating > 3")).unwrap();
-        state.set_var("ws-1", "metarecord-list:normal-frozen", json!(true)).unwrap();
         let picker = state.pick_start(pick_spec("ws-1")).unwrap();
-        assert_eq!(state.get_var(&picker, "metarecord-list:normal-frozen").unwrap(), Value::Null);
         assert_eq!(state.get_var(&picker, "metarecord-list:normal-query").unwrap(), Value::Null);
         assert_eq!(
             state.get_var(&picker, "metarecord-list:query").unwrap(),
