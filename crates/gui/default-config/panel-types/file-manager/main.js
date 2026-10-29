@@ -727,7 +727,8 @@ export async function mount(root, metafolder) {
             void statusBar.message(`Copied ${item.path}`, statusMessageMs);
           },
         },
-        { label: 'Move to trash', action: () => void fileCommand('file:trash') },
+        // Delete's own command, on the clicked entry (doc "Deleting an item").
+        { label: 'Move to trash', action: () => void deleteEntry(item.path) },
       );
     } else {
       items.push({ label: 'Paste', disabled: !hasClipboard(metafolder), action: () => void fileCommand('file:paste') });
@@ -1165,6 +1166,12 @@ export async function mount(root, metafolder) {
       if (index >= 0) await select(mf, index);
     },
   });
+  /** `item:delete` on `path`, the entry a context menu was opened on.
+   *  @param {string} path */
+  async function deleteEntry(path) {
+    await metafolder.workspace.set('selected_paths', [path]);
+    await commands.invoke(['item:delete']);
+  }
   /** Runs a `file:` command on this panel — a context menu's or a button's
    *  action. @param {string} name @param {string[]} rest */
   function fileCommand(name, ...rest) {

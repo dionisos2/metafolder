@@ -208,17 +208,14 @@ describe('file-actions shared operations', () => {
     expect(labels(menu)).toContain('Copy full path');
   });
 
-  test('Move to trash confirms then trashes; declining does nothing', async () => {
-    const { metafolder, trash } = mockMf();
-    vi.stubGlobal('confirm', vi.fn(() => true));
+  test('Move to trash is Delete: it runs item:delete on the clicked file', async () => {
+    // So the menu and the key cannot drift apart (doc "Deleting an item"):
+    // the question, when there is one, is item:delete's.
+    const { metafolder, trash, workspace, commands } = mockMf();
     const menu = fileMenuItems({ metafolder, repo: 'r', path: '/dir/a.txt', name: 'a.txt', isDir: false });
     item(menu, 'Move to trash').action!();
-    await vi.waitFor(() => expect(trash.trashPath).toHaveBeenCalledWith('r', '/dir/a.txt'));
-
-    vi.stubGlobal('confirm', vi.fn(() => false));
-    (trash.trashPath as ReturnType<typeof vi.fn>).mockClear();
-    item(menu, 'Move to trash').action!();
-    await Promise.resolve();
+    await vi.waitFor(() => expect(commands.invoke).toHaveBeenCalledWith(['item:delete']));
+    expect(workspace.set).toHaveBeenCalledWith('selected_paths', ['/dir/a.txt']);
     expect(trash.trashPath).not.toHaveBeenCalled();
   });
 

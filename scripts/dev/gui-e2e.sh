@@ -439,8 +439,11 @@ scenario_trash() {
     select_path "$REPO_DIR/f.txt"
 
     # file:trash (doc "File commands"): the viewer designates the file it
-    # shows; nothing is asked, since the trash gives everything back.
-    run file:trash viewer
+    # shows, and the trashing asks first (doc "Confirming a trashing").
+    answering no file:trash viewer
+    assert_contains "trash: asks first" "$LAST_QUESTIONS" 'Send "f.txt" to the trash?'
+    assert "trash: refused, the file stays" test -e "$REPO_DIR/f.txt"
+    answering yes file:trash viewer
     command_ok "trash: file:trash runs"
     status_is "trash: trashes the file" info "Trashed f.txt — restore it from the trash panel"
     assert_not "trash: the file is gone" test -e "$REPO_DIR/f.txt"
@@ -454,15 +457,17 @@ scenario_trash() {
 
 has_record() { df_mf metarecord -i "$1" get >/dev/null 2>&1; }
 
-# Delete (doc "Deleting an item"): `item:delete` asks nothing — a file goes
-# to the trash with its metarecord, a metarecord without a file is deleted.
+# Delete (doc "Deleting an item"): `item:delete` — a file goes to the trash
+# with its metarecord, once the question is answered (doc "Confirming a
+# trashing"); a metarecord without a file is deleted.
 scenario_remove() {
     new_repo remove
     printf 'x\n' >"$REPO_DIR/f.txt"
     local f
     f=$(record "$REPO_DIR/f.txt")
     select_path "$REPO_DIR/f.txt"
-    run item:delete
+    answering yes item:delete
+    assert_contains "remove: asks first" "$LAST_QUESTIONS" 'Send "f.txt" to the trash?'
     command_ok "remove: item:delete runs"
     assert "remove: the file is trashed" until_ok 10 test ! -e "$REPO_DIR/f.txt"
     assert_not "remove: its metarecord went with it" has_record "$f"

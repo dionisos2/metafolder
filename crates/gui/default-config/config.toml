@@ -90,6 +90,12 @@ live-preview-debounce-ms = 130
 # 1500.
 task-poll-ms = 1500
 
+# Whether sending files to a trash asks first — Delete, file:trash, keeping one
+# duplicate, the bulk trashing (doc "Confirming a trashing"). A trash gives
+# everything back, so this is a safety you may find a waste of time. Default:
+# true.
+confirm-trash = true
+
 # Ref value seeds (doc "Ref value seeds"). A `ref` field points to a
 # metarecord by uuid, which is unreadable to type by hand — so a rule here says
 # how its targets are *named* everywhere a value is typed or shown: which

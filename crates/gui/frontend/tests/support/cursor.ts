@@ -37,6 +37,8 @@ export function stubFileOps(api: StubApi): FileOps {
       ((await api.trash?.trashPath?.(null, path)) as { desktop?: boolean } | undefined)?.desktop ??
       true,
     record: async () => true,
+    // The question is item:delete's and file:trash's own test's business.
+    confirm: async () => true,
     ask: async (question, initial) => window.prompt(question, initial),
     clipboard: async () =>
       ((await api.global?.get?.('clipboard')) ?? null) as Awaited<ReturnType<FileOps['clipboard']>>,

@@ -7,8 +7,10 @@ Which copy survives is always yours to choose. Nothing picks one for you, and no
 action spans several groups. In the [[duplicates panel]], both deletions act on
 the row under the cursor:
 
-* ''keep this one'' — <<key "duplicates:keep" "p k">>, and the first item of the context menu: trashes every ''other'' copy of the group. It is confirmed, since it touches several files: the confirmation names every path it will trash, and how much space pruning the trash will then reclaim.
-* ''trash this one'' — <<key "item:delete" Delete>>: that copy alone, as Delete does anywhere else ([[Deleting an item]]), and like it unconfirmed. On a group row, Delete deletes the group's own metarecord.
+* ''keep this one'' — <<key "duplicates:keep" "p k">>, and the first item of the context menu: trashes every ''other'' copy of the group. The question names every path it will trash, and how much space pruning the trash will then reclaim.
+* ''trash this one'' — <<key "item:delete" Delete>>: that copy alone, as Delete does anywhere else ([[Deleting an item]]). On a group row, Delete deletes the group's own metarecord.
+
+Both ask first unless the question is switched off ([[Confirming a trashing]]).
 
 The copies go to the [[Trash]], so a mistake is recoverable
 ([[Restoring from the trash]]); the space is freed when the trash is pruned

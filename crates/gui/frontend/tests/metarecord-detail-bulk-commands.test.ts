@@ -10,7 +10,7 @@ import { withRuns } from './support/runs';
 type Call = { method: string; path: string; body: unknown };
 type Spec = { handler: (...args: string[]) => Promise<unknown> };
 
-function setup(vars: Record<string, unknown> = {}, forced = false) {
+function setup(vars: Record<string, unknown> = {}, forced = false, settings: Record<string, unknown> = {}) {
   const calls: Call[] = [];
   const store = new Map<string, unknown>(Object.entries(vars));
   const registered = new Map<string, Spec>();
@@ -26,6 +26,7 @@ function setup(vars: Record<string, unknown> = {}, forced = false) {
   };
   const statusBar = { message: vi.fn(async () => {}) };
   const metafolder = {
+    settings,
     daemon,
     statusBar,
     workspace: { get: async (key: string) => store.get(key) ?? null },
@@ -95,6 +96,21 @@ describe('metarecord:bulk', () => {
   test('a reserved field goes through the force the panel grants', async () => {
     const { bulk } = setup({ selected_metarecords: ['u1'] });
     await expect(bulk.handler('selection', 'unset', 'mfr_mime')).rejects.toThrow('reserved');
+  });
+
+  test('trash asks first, unless the confirmation is switched off', async () => {
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirm);
+    const asked = setup({ selected_metarecords: ['u1'] });
+    await asked.bulk.handler('selection', 'trash');
+    expect(confirm).toHaveBeenCalled();
+    expect(asked.metafolder.trash.trashQuery).not.toHaveBeenCalled();
+
+    confirm.mockClear();
+    const quiet = setup({ selected_metarecords: ['u1'] }, false, { confirmTrash: false });
+    await quiet.bulk.handler('selection', 'trash');
+    expect(confirm).not.toHaveBeenCalled();
+    expect(quiet.metafolder.trash.trashQuery).toHaveBeenCalled();
   });
 
   test('refuses a target it does not know', async () => {

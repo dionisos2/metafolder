@@ -23,7 +23,7 @@ When another metarecord still points at one of those being trashed (a `ref` or
 In the `metarecord-list`, `metarecord-detail` and `path-ref` panels,
 on the selected metarecord:
 
-* <<key "item:delete" Delete>> — <<cmd "item:delete">>: trashes the file, its metarecords with it; without a file, deletes the metarecord. No question ([[Deleting an item]]).
+* <<key "item:delete" Delete>> — <<cmd "item:delete">>: trashes the file, its metarecords with it; without a file, deletes the metarecord ([[Deleting an item]]).
 * <<cmd "file:trash">> (no key): trashes the file at once, its metarecords with it ([[File commands]]).
 * <<key "metarecord:delete" Shift+Delete>> — <<cmd "metarecord:delete">>: deletes the metarecord and keeps the file.
 
@@ -50,7 +50,10 @@ In the [[file-manager panel]], <<key "item:delete" Delete>> sends the highlighte
 entry to the repository's trash when the repository holds it (its metarecords go
 with it if it is tracked, the bytes alone if it is not), and to the desktop's
 otherwise — no active repository, or a folder outside its root
-([[The desktop trash]]). Neither is confirmed: both give the file back.
+([[The desktop trash]]).
+
+Every trashing asks first, naming what goes, unless the question is switched off
+([[Confirming a trashing]]).
 
 The GUI never forces a trashing past a reference: the refusal is shown, and
 `mf trash -f --force` is the way through.

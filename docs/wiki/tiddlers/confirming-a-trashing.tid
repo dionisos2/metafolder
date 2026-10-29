@@ -1,0 +1,29 @@
+title: Confirming a trashing
+tags: Trash
+kind: reference
+aliases: confirm-trash
+summary: Every trashing asks first, unless confirm-trash = false in the GUI's config.toml: a safety on by default, which a trash that gives everything back makes optional.
+
+Sending files to a trash asks first, naming what goes: Delete
+(<<cmd "item:delete">>, and ''Move to trash'' in a context menu, which runs it),
+<<cmd "file:trash">>, keeping one duplicate (<<cmd "duplicates:keep">>), and the
+bulk trashings — `item:delete selection` / `query`, `metarecord:bulk … trash`,
+the list's bulk form ([[Sending files to the trash]]). A bulk question names the
+count.
+
+A trashing is never final: the repository's trash gives the files and their
+metarecords back, the desktop's the files ([[The desktop trash]]). So the
+question is a safety rather than a necessity, and it can be switched off in the
+GUI's `config.toml` ([[GUI configuration]]):
+
+```toml
+[panels]
+confirm-trash = false
+```
+
+On by default: a first use starts with the extra safety, and the user who finds
+it a waste of time drops it in one line. It asks nothing, either way, where
+nothing goes to a trash: Delete on a metarecord without a file deletes the
+metarecord, which <<key "log:undo" Ctrl+z>> brings back. What is final keeps its
+own question whatever this says: pruning the trash, deleting a metarecord by
+`metarecord:delete`.

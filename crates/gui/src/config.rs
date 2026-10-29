@@ -92,6 +92,9 @@ pub struct PanelSettings {
     pub live_preview_debounce_ms: u32,
     /// Interval (ms) at which the `repos` panel polls task status.
     pub task_poll_ms: u32,
+    /// Whether a trashing asks first (doc "Confirming a trashing"). Every
+    /// trashing gives its files back, so this is a safety the user may drop.
+    pub confirm_trash: bool,
 }
 
 impl Default for PanelSettings {
@@ -102,6 +105,7 @@ impl Default for PanelSettings {
             finder_debounce_ms: 500,
             live_preview_debounce_ms: 130,
             task_poll_ms: 1500,
+            confirm_trash: true,
         }
     }
 }
@@ -823,6 +827,16 @@ mod tests {
         assert_eq!(json["finder-debounce-ms"], 500);
         assert_eq!(json["status-error-ms"], 8000);
         assert_eq!(json["task-poll-ms"], 1500);
+    }
+
+    #[test]
+    fn test_trashing_is_confirmed_unless_switched_off() {
+        // doc "Confirming a trashing": on by default, a safety the user drops.
+        let empty: GuiConfig = toml::from_str("").unwrap();
+        assert!(empty.panels.confirm_trash);
+        let off: GuiConfig = toml::from_str("[panels]\nconfirm-trash = false\n").unwrap();
+        assert!(!off.panels.confirm_trash);
+        assert_eq!(serde_json::to_value(&off.panels).unwrap()["confirm-trash"], false);
     }
 
     #[test]

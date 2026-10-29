@@ -74,7 +74,7 @@ export interface InitialState {
   /** Per-panel progressive-loading page sizes, keyed by panel-type name. */
   page_sizes: Record<string, number>;
   /** Shared panel UX timing knobs (config.toml `[panels]`), kebab-cased keys. */
-  panel_settings: Record<string, number>;
+  panel_settings: Record<string, number | boolean>;
   /** Per-panel-type defaults, keyed by panel-type name (config.toml
    *  `[panel-defaults.<type>]`); each table's keys are kebab-cased. */
   panel_defaults: Record<string, Record<string, unknown>>;

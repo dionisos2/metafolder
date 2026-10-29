@@ -8,6 +8,7 @@
 //   dirty(mf)       -> tell the other panels the metarecords changed, through
 //                      the API of the command's run (doc "Command transactions")
 
+import { confirmTrash } from '/__file-actions.js';
 import { MATCH_ALL } from '/__value-widget.js';
 import { settledType, splitTypeValue } from './field-args.js';
 import { CONCRETE_TYPES } from './values.js';
@@ -336,7 +337,8 @@ export function registerBulkCommand({
         }
         const on = t.explicit ? t.desc : `${t.count} metarecord${t.count === 1 ? '' : 's'}`;
         if (
-          !confirm(
+          !confirmTrash(
+            mf,
             `Send the files of ${on} to the trash? ` +
               `Their metarecords go with them; restore them from the trash panel.`,
           )

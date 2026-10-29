@@ -19,7 +19,7 @@
 // The shared panel helpers (doc "The metafolder API"): `frecency` is the
 // score of a recently-viewed entry, the same in the recent panel.
 import { frecency, formatScore } from '/__ui.js';
-import { trashedMessage } from '/__file-actions.js';
+import { baseName, confirmTrash, trashedMessage } from '/__file-actions.js';
 
 /** The fields of the tag model (doc "Hierarchical tags"): what a record has,
  *  what it has not, and what a folder partly has. */
@@ -337,6 +337,7 @@ async function deleteItem(mf, repo, selection) {
     (Array.isArray(paths) ? paths.find((p) => typeof p === 'string') : undefined) ??
     (await selectedFile(mf))?.path;
   if (path) {
+    if (!confirmTrash(mf, `Send "${baseName(path)}" to the trash?`)) return;
     const trashed = await mf.trash.trashPath(repo, path);
     await mf.statusBar.message(trashedMessage(trashed.name, false, [trashed.desktop]));
   } else if (selection && repo) {
@@ -348,6 +349,9 @@ async function deleteItem(mf, repo, selection) {
   }
   await mf.workspace.set('metarecords:dirty', Date.now());
 }
+
+/** How the bulk deletion's question ends (doc "Confirming a trashing"). */
+const GO_WITH = 'Their files go to the trash with them.';
 
 /**
  * `item:delete selection|query`: the metarecords without a file are deleted,
@@ -366,11 +370,22 @@ async function deleteItems(mf, repo, what) {
       return;
     }
     query = { type: 'uuid_in', uuids };
+    const n = uuids.length;
+    if (!confirmTrash(mf, `Delete the ${n === 1 ? 'checked metarecord' : `${n} checked metarecords`}? ${GO_WITH}`)) {
+      return;
+    }
   } else {
     query = await mf.workspace.get('metarecord-list:effective-query');
     if (!query) {
       await mf.statusBar.message('The metarecord list shows no query — nothing to delete.');
       return;
+    }
+    if (mf.settings?.confirmTrash !== false) {
+      const counted = /** @type {{ total?: number | null }} */ (
+        await mf.daemon.call('POST', `/repos/${repo}/query`, { query, select: '*', limit: 1, count: true })
+      );
+      const n = counted.total ?? 0;
+      if (!confirm(`Delete the ${n === 1 ? 'metarecord' : `${n} metarecords`} the list shows? ${GO_WITH}`)) return;
     }
   }
   const withoutFile = {
@@ -383,12 +398,13 @@ async function deleteItems(mf, repo, what) {
 }
 
 export default {
-  // The Delete key (doc "Deleting an item"): what is designated goes, with no
-  // question — the file to the trash, its metarecords with it (a file is
-  // never deleted without its metarecord), or the metarecord alone when there
-  // is no file. `selection` / `query` do the same to the checked metarecords /
-  // to what the list's query matches. Nothing goes for good: without a
-  // repository there is no trash, and nothing is deleted.
+  // The Delete key (doc "Deleting an item"): what is designated goes — the
+  // file to the trash, its metarecords with it (a file is never deleted
+  // without its metarecord), or the metarecord alone when there is no file.
+  // `selection` / `query` do the same to the checked metarecords / to what the
+  // list's query matches. Nothing goes for good: a file no repository holds
+  // goes to the desktop's trash, and a trashing asks first unless the user
+  // switched it off (doc "Confirming a trashing").
   //
   // The keybindings default binds `delete` here (keybindings.toml), so
   // dropping this entry drops the command — rebind the key or put an entry

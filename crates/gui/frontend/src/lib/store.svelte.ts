@@ -32,7 +32,7 @@ export const store = $state({
   sessionToken: '',
   pageSizes: {} as Record<string, number>,
   /** Shared panel UX timing knobs (config.toml `[panels]`), kebab-cased keys. */
-  panelSettings: {} as Record<string, number>,
+  panelSettings: {} as Record<string, number | boolean>,
   panelDefaults: {} as Record<string, Record<string, unknown>>,
   daemonUrl: '',
   daemonConnected: true,

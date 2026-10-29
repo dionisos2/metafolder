@@ -30,7 +30,7 @@ function shadowFor(): ShadowRoot {
 
 type Call = { method: string; path: string; body: unknown };
 
-function stubApi(vars: Record<string, unknown>, calls: Call[]) {
+function stubApi(vars: Record<string, unknown>, calls: Call[], settings: Record<string, unknown> = {}) {
   const noop = () => {};
   const store = new Map<string, unknown>([['active_repo', 'r'], ...Object.entries(vars)]);
   const statusBar = { message: vi.fn(async () => {}), error: vi.fn(async () => {}) };
@@ -42,7 +42,7 @@ function stubApi(vars: Record<string, unknown>, calls: Call[]) {
       guiServer: 'http://127.0.0.1:7524',
       sessionToken: 'token',
       pageSize: 100,
-      settings: {},
+      settings,
       defaults: {},
       visible: true,
       onVisibility: noop,
@@ -110,10 +110,10 @@ function stubApi(vars: Record<string, unknown>, calls: Call[]) {
 
 /** Mounts the list with `vars` pre-published, and returns the shadow root (to
  *  drive the form) and the recorded daemon calls. */
-async function mountList(vars: Record<string, unknown>) {
+async function mountList(vars: Record<string, unknown>, settings: Record<string, unknown> = {}) {
   const shadow = shadowFor();
   const calls: Call[] = [];
-  const { api, store, statusBar } = stubApi(vars, calls);
+  const { api, store, statusBar } = stubApi(vars, calls, settings);
   const mod = await import('../../default-config/panel-types/metarecord-list/main.js');
   await mod.mount(shadow, api as never);
   await new Promise((r) => setTimeout(r, 0));
@@ -209,6 +209,19 @@ describe('the bulk form target', () => {
       { method: 'TRASH', path: 'r', body: { type: 'uuid_in', uuids: ['uuid-a'] } },
     ]);
     expect(calls.filter((c) => c.method === 'POST' && c.path.endsWith('/query/delete'))).toEqual([]);
+  });
+
+  test('trash asks nothing when the confirmation is switched off', async () => {
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirm);
+    const { shadow, calls, store } = await mountList({}, { confirmTrash: false });
+    store.set('selected_metarecords', ['uuid-a']);
+    (shadow.getElementById('bulk-form') as HTMLElement).classList.add('open');
+    await choose(shadow, 'bulk-target', 'Checked selection');
+    await choose(shadow, 'bulk-op', 'Trash files');
+    await apply(shadow);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(calls.filter((c) => c.method === 'TRASH')).toHaveLength(1);
   });
 });
 describe('the bulk form and reserved fields', () => {

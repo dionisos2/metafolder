@@ -16,6 +16,7 @@ function ops(over: Partial<Record<keyof FileOps, ReturnType<typeof vi.fn>>> = {}
     mkdir: vi.fn(async () => {}),
     createFile: vi.fn(async () => {}),
     trash: vi.fn(async () => false),
+    confirm: vi.fn(async () => true),
     record: vi.fn(async () => true),
     ask: vi.fn(async () => 'typed'),
     clipboard: vi.fn(async () => null),
@@ -57,6 +58,15 @@ describe('file: commands — what they do', () => {
     const o = ops({ trash: vi.fn(async () => true) });
     await runFileCommand('file:trash', { paths: () => ['/tmp/a.txt'] }, [], o);
     expect(o.status).toHaveBeenCalledWith('Trashed a.txt — restore it from the desktop trash');
+  });
+
+  test('trash asks first, naming what goes; declined, nothing goes', async () => {
+    const o = ops({ confirm: vi.fn(async () => false) });
+    await runFileCommand('file:trash', { paths: () => ['/r/a.txt'] }, [], o);
+    expect(o.confirm).toHaveBeenCalledWith('Send "a.txt" to the trash?');
+    expect(o.trash).not.toHaveBeenCalled();
+    await runFileCommand('file:trash', { paths: () => ['/r/a', '/r/b'] }, [], o);
+    expect(o.confirm).toHaveBeenLastCalledWith('Send 2 files to the trash?');
   });
 
   test('nothing designated is an error', async () => {

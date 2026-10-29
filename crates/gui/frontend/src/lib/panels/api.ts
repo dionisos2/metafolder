@@ -102,7 +102,7 @@ export interface PanelApiCtx {
   /** Progressive-loading page size configured for this panel type, if any. */
   pageSize?: number;
   /** Shared panel UX timing knobs (config.toml `[panels]`), kebab-cased keys. */
-  panelSettings?: Record<string, number>;
+  panelSettings?: Record<string, number | boolean>;
   /** This panel type's default values (config.toml `[panel-defaults.<type>]`),
    *  kebab-cased keys, values verbatim from the TOML. */
   panelDefaults?: Record<string, unknown>;
@@ -161,7 +161,13 @@ function camelCaseKeys(table: Record<string, unknown>): Record<string, unknown> 
  */
 export function createUserCommandApi(
   deps: PanelApiDeps,
-  ctx: { guiServer: string; sessionToken: string; context: () => ExecContext },
+  ctx: {
+    guiServer: string;
+    sessionToken: string;
+    context: () => ExecContext;
+    /** config.toml `[panels]`: a command reads `mf.settings` as a panel does. */
+    panelSettings?: Record<string, number | boolean>;
+  },
 ): MetafolderApi {
   // Within the command's transaction, if it runs in one (doc "Command
   // transactions"): its variable calls carry it, and what it does not carry
@@ -185,6 +191,7 @@ export function createUserCommandApi(
       panelType: '',
       guiServer: ctx.guiServer,
       sessionToken: ctx.sessionToken,
+      panelSettings: ctx.panelSettings,
       root: null as unknown as ShadowRoot,
       visibilityGate: {
         visible: () => true,
@@ -401,11 +408,12 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
   // camelCase object. Undefined keys fall through to each panel's own fallback.
   const raw = ctx.panelSettings ?? {};
   const panelSettings = Object.freeze({
-    statusMessageMs: raw['status-message-ms'],
-    statusErrorMs: raw['status-error-ms'],
-    finderDebounceMs: raw['finder-debounce-ms'],
-    livePreviewDebounceMs: raw['live-preview-debounce-ms'],
-    taskPollMs: raw['task-poll-ms'],
+    statusMessageMs: raw['status-message-ms'] as number | undefined,
+    statusErrorMs: raw['status-error-ms'] as number | undefined,
+    finderDebounceMs: raw['finder-debounce-ms'] as number | undefined,
+    livePreviewDebounceMs: raw['live-preview-debounce-ms'] as number | undefined,
+    taskPollMs: raw['task-poll-ms'] as number | undefined,
+    confirmTrash: raw['confirm-trash'] as boolean | undefined,
   });
 
   // This panel type's configured defaults (config.toml

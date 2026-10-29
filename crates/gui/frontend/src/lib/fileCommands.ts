@@ -29,6 +29,9 @@ export interface FileOps {
   trash(path: string): Promise<boolean>;
   /** Gives `path` its metarecord; false when the user gave up. */
   record(path: string): Promise<boolean>;
+  /** Asks before a trashing, unless the user switched the question off
+   *  (doc "Confirming a trashing"); true to go ahead. */
+  confirm(question: string): Promise<boolean>;
   /** Asks for a text in the command input; null when given up. */
   ask(question: string, initial?: string): Promise<string | null>;
   /** The file clipboard (doc "Global GUI variables"). */
@@ -97,6 +100,8 @@ export async function runFileCommand(
   switch (name) {
     case 'file:trash': {
       const paths = await designated(fns);
+      const named = paths.length === 1 ? `"${baseName(paths[0])}"` : plural(paths.length, 'file');
+      if (!(await ops.confirm(`Send ${named} to the trash?`))) return;
       const desktop = [];
       for (const path of paths) desktop.push(await ops.trash(path));
       const what = paths.length === 1 ? baseName(paths[0]) : plural(paths.length, 'file');

@@ -75,6 +75,9 @@ declare namespace Metafolder {
     finderDebounceMs?: number;
     livePreviewDebounceMs?: number;
     taskPollMs?: number;
+    /** Whether a trashing asks first (doc "Confirming a trashing"); absent
+     *  means yes. */
+    confirmTrash?: boolean;
   }
 
   /** Per-panel-type defaults from `config.toml` (`[panel-defaults.<type>]`),

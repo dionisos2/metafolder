@@ -79,6 +79,8 @@ type Options = {
   failLoad?: boolean;
   /** Paths whose trashing fails, by absolute path. */
   trashFails?: string[];
+  /** `metafolder.settings` (config.toml `[panels]`). */
+  settings?: Record<string, unknown>;
 };
 
 function stubApi(
@@ -115,7 +117,7 @@ function stubApi(
       guiServer: 'http://127.0.0.1:7524',
       sessionToken: 'token',
       pageSize: 100,
-      settings: {},
+      settings: options.settings ?? {},
       defaults: {},
       visible: true,
       onVisibility: noop,
@@ -279,6 +281,25 @@ describe('duplicates panel', () => {
     await p.invoke('duplicates:keep');
     expect(p.trashPath).not.toHaveBeenCalled();
     expect(p.statusBar.message).toHaveBeenCalled();
+  });
+
+  test('with the confirmation switched off, keep-this asks nothing', async () => {
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirm);
+    const members = [
+      { uuid: 'm1', path: '/a.bin' },
+      { uuid: 'm2', path: '/b.bin' },
+    ];
+    const p = await mountPanel([group('g1', 10, 2, 10)], members, {
+      settings: { confirmTrash: false },
+    });
+    await p.invoke('cursor:next');
+    await p.invoke('duplicates:toggle-group');
+    await new Promise((r) => setTimeout(r, 0));
+    await p.invoke('cursor:next');
+    await p.invoke('duplicates:keep');
+    expect(confirm).not.toHaveBeenCalled();
+    expect(p.trashPath).toHaveBeenCalledWith('r', '/repo/b.bin');
   });
 
   test('a declined confirmation trashes nothing', async () => {

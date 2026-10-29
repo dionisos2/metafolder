@@ -80,7 +80,11 @@ export async function loadUserCommands(): Promise<string[]> {
     onCommandsChanged: () => {},
     addDefaultMenuItems: () => {},
   };
-  const server = { guiServer: base, sessionToken: store.sessionToken };
+  const server = {
+    guiServer: base,
+    sessionToken: store.sessionToken,
+    panelSettings: store.panelSettings,
+  };
   // The prompts and completions follow the focus; a run gets an API bound to
   // the context it runs in (doc "Commands").
   const api = createUserCommandApi(deps, { ...server, context: focusedContext });

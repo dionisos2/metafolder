@@ -1,7 +1,7 @@
 title: Deleting an item
 tags: Trash
 kind: guide
-summary: Delete deletes what is designated with no question: the file to the trash with its metarecords, or the metarecord when there is no file — never a file without its metarecord.
+summary: Delete deletes what is designated: the file to the trash with its metarecords, or the metarecord when there is no file — never a file without its metarecord.
 
 
 <<key "item:delete" Delete>> runs <<cmd "item:delete">> on what the focused panel
@@ -13,9 +13,11 @@ designates — a row of the [[metarecord-list panel]] or of the
 * ''a metarecord without a file'' is deleted.
 
 A file is never deleted without its metarecord: one that would stay would
-describe a file that is gone. There is no question, since nothing here is final:
-the trash gives the file and its metarecords back, and <<key "log:undo" Ctrl+z>>
-brings a deleted metarecord back ([[The undo selection]]). The checked
+describe a file that is gone. Nothing here is final: the trash gives the file
+and its metarecords back, and <<key "log:undo" Ctrl+z>> brings a deleted
+metarecord back ([[The undo selection]]). So only a trashing asks first, and
+that question can be switched off ([[Confirming a trashing]]). ''Move to trash''
+in a context menu is this same command, on the clicked file. The checked
 metarecords and the query need an active repository; a file alone does not.
 
 !! Several at once

@@ -261,21 +261,22 @@ export function trashedMessage(what, many, desktop) {
 }
 
 /**
- * @param {MetafolderApi} metafolder @param {string | null} repo @param {string} path
- * @param {string} label @param {() => void|Promise<void>} onChanged @param {number} statusMs
+ * Asks before a trashing, unless the user switched the question off (config.toml
+ * `[panels] confirm-trash`, doc "Confirming a trashing"). True to go ahead.
+ * @param {{ settings?: { confirmTrash?: boolean } }} metafolder @param {string} question
  */
-async function trashPath(metafolder, repo, path, label, onChanged, statusMs) {
-  const { trash, statusBar } = metafolder;
-  if (!confirm(`Send "${label}" to the trash?`)) return;
-  let trashed;
-  try {
-    trashed = await trash.trashPath(repo, path);
-  } catch (error) {
-    await statusBar.error(error, errorMs(metafolder));
-    return;
-  }
-  void statusBar.message(trashedMessage(label, false, [trashed.desktop]), statusMs);
-  await onChanged();
+export function confirmTrash(metafolder, question) {
+  return metafolder.settings?.confirmTrash === false || confirm(question);
+}
+
+/**
+ * `Move to trash` is Delete on the clicked file: `item:delete` once the file is
+ * the selection, so the menu and the key cannot drift apart (doc "Deleting an
+ * item"). @param {MetafolderApi} metafolder @param {string} path
+ */
+async function deleteViaItem(metafolder, path) {
+  await metafolder.workspace.set('selected_paths', [path]);
+  await metafolder.commands.invoke(['item:delete']);
 }
 
 /**
@@ -294,11 +295,11 @@ async function openWithExternal(metafolder, path) {
  * items for a metarecord's file at `path`. `isDir` (when known) picks the paste target;
  * `onChanged` is called after any successful mutation.
  *
- * @param {{ metafolder: MetafolderApi, repo: string, path: string,
+ * @param {{ metafolder: MetafolderApi, repo?: string, path: string,
  *   name?: string, isDir?: boolean, onChanged?: () => void|Promise<void> }} args
  * @returns {Metafolder.MenuItem[]}
  */
-export function fileMenuItems({ metafolder, repo, path, name, isDir, onChanged }) {
+export function fileMenuItems({ metafolder, path, name, isDir, onChanged }) {
   const { statusBar } = metafolder;
   const statusMs = metafolder.settings?.statusMessageMs ?? 5000;
   const label = name || baseName(path);
@@ -346,7 +347,7 @@ export function fileMenuItems({ metafolder, repo, path, name, isDir, onChanged }
     },
     {
       label: 'Move to trash',
-      action: () => void trashPath(metafolder, repo, path, label, nudge, statusMs),
+      action: () => void deleteViaItem(metafolder, path),
     },
   ];
 }
