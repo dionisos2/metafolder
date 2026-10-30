@@ -587,6 +587,25 @@ describe('keybindings panel', () => {
     expect(api.config.keybindingEntries).toHaveBeenCalledTimes(2);
   });
 
+  test('its own write does not read the list again, which would drop a row being edited', async () => {
+    const { api, typeIn, field, root } = await mountPanel();
+    const listener = api.workspace.onChange.mock.calls.find(([key]) => key === 'keybindings.changed')![1];
+    await typeIn('source', 'alt+t');
+    await typeIn('command', 'workspace:new');
+    (root.getElementById('save') as HTMLButtonElement).click();
+    await flush();
+    expect(field('source').value).toBe('');
+    const [, written] = api.workspace.set.mock.calls.find(([key]) => key === 'keybindings.changed')!;
+    const reads = api.config.keybindingEntries.mock.calls.length;
+    listener(written);
+    await flush();
+    expect(api.config.keybindingEntries).toHaveBeenCalledTimes(reads);
+    // Written by another panel: read again.
+    listener(written + 1);
+    await flush();
+    expect(api.config.keybindingEntries).toHaveBeenCalledTimes(reads + 1);
+  });
+
   test('keybindings:focus key gives the key field the focus', async () => {
     const { root, handlers, field } = await mountPanel();
     await handlers.get('keybindings:focus')!(undefined, 'key');

@@ -21,6 +21,10 @@ export async function mount(root, metafolder) {
   // Only the answer to the latest question is shown: one asked for an older
   // value may come back after it.
   let variableSeq = 0;
+  /** The value this panel last wrote to `keybindings.changed`: it comes back to
+   *  the panel too, and reading the list then would drop a value being typed.
+   *  @type {number|null} */
+  let ownChange = null;
 
   /** @param {Metafolder.KeybindingVariable} variable */
   function variableRow(variable) {
@@ -64,7 +68,8 @@ export async function mount(root, metafolder) {
         variableCheck.textContent = '';
         try {
           show(await metafolder.config.setKeybindingVariable(variable.name, value));
-          void metafolder.workspace.set('keybindings.changed', Date.now());
+          ownChange = Date.now();
+          void metafolder.workspace.set('keybindings.changed', ownChange);
         } catch (error) {
           variableCheck.className = 'bad';
           variableCheck.textContent = messageOf(error);
@@ -131,7 +136,9 @@ export async function mount(root, metafolder) {
     if (visible) void load();
   });
   // Changed from the keybindings panel, maybe beside this one.
-  metafolder.workspace.onChange('keybindings.changed', () => void load());
+  metafolder.workspace.onChange('keybindings.changed', (value) => {
+    if (value !== ownChange) void load();
+  });
 
   await load();
 }

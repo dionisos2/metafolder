@@ -1178,7 +1178,9 @@ scenario_keybindings() {
         assert "keybindings: a row's text-input checkbox changes" \
             until_ok 10 click '#bindings tr' ctrl+alt+u input.text-input
         assert "keybindings: a changed row has a Save" \
-            until_ok 10 click '#bindings tr' ctrl+alt+u button Save
+            until_ok 10 shows '#bindings tr' ctrl+alt+u button Save
+        # Disabled until the row's check has answered: a click then does nothing.
+        until_ok 10 click '#bindings tr' ctrl+alt+u 'button:not(:disabled)' Save
         assert "keybindings: Save writes the row" \
             until_ok 10 grep -q '^"ctrl+alt+u" = .*text-input = true' "$file"
         # A row's drop-down, by the keyboard: the form narrowed to the row, tab
@@ -1288,6 +1290,8 @@ scenario_context_menu() {
     assert "context menu: Ctrl+c beside the file's Copy" grep -qF "CopyCtrl+c" <<<"$menu"
     assert "context menu: no Text section" not_grep "Text" "$menu"
     assert "context menu: no opening of the row" not_grep "Open in panel" "$menu"
+    # Left open it would take the next scenario's keys.
+    keys Escape
 }
 not_grep() { ! grep -qF "$1" <<<"$2"; }
 
@@ -1646,6 +1650,8 @@ scenario_help_keys() {
         until_ok 10 reads "panel" "#help-search"
     # `p E`: the panel's field, edited from empty (doc "Choosing keybindings").
     keys p shift+e
+    # Emptied and focused in one step: typed earlier, the letters would be keys.
+    until_ok 10 reads "" "#help-search"
     typed "trash"
     assert "help-keys: p E empties the box and goes into it" until_ok 10 reads "trash" "#help-search"
     keys Return p shift+e

@@ -117,6 +117,25 @@ describe('keybindings-variables panel', () => {
     expect(root.getElementById('variables-count')!.textContent).toBe('4');
   });
 
+  test('its own write does not read the list again, which would drop a value being typed', async () => {
+    const { root, api } = await mountPanel(() => '1 key changes.');
+    const listener = (api.workspace.onChange.mock.calls as unknown[][]).find(([key]) => key === 'keybindings.changed')![1] as (value: unknown) => void;
+    const input = root.querySelector('#variables input') as HTMLInputElement;
+    input.value = 'j';
+    input.dispatchEvent(new Event('input'));
+    await flush();
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    await flush();
+    const written = (api.workspace.set.mock.calls as unknown[][]).find(([key]) => key === 'keybindings.changed')![1] as number;
+    const reads = api.config.keybindingEntries.mock.calls.length;
+    listener(written);
+    await flush();
+    expect(api.config.keybindingEntries).toHaveBeenCalledTimes(reads);
+    listener(written + 1);
+    await flush();
+    expect(api.config.keybindingEntries).toHaveBeenCalledTimes(reads + 1);
+  });
+
   test('opening the panel selects no text field; keybindings-variables:focus filter does', async () => {
     const { root, handlers } = await mountPanel(() => '');
     const filter = root.getElementById('variable-filter') as HTMLInputElement;

@@ -447,6 +447,11 @@ export async function mount(root, metafolder) {
     source.focus();
   }
 
+  /** The value this panel last wrote to `keybindings.changed`: it comes back to
+   *  the panel too, and reading the list then would drop a row being edited.
+   *  @type {number|null} */
+  let ownChange = null;
+
   /** Runs a write and shows the view it returns, or why it was refused.
    *  @param {() => Promise<Metafolder.KeybindingView>} action
    *  @returns {Promise<boolean>} whether it was done */
@@ -454,7 +459,8 @@ export async function mount(root, metafolder) {
     errorLine.textContent = '';
     try {
       show(await action());
-      void metafolder.workspace.set('keybindings.changed', Date.now());
+      ownChange = Date.now();
+      void metafolder.workspace.set('keybindings.changed', ownChange);
       return true;
     } catch (error) {
       errorLine.textContent = messageOf(error);
@@ -553,7 +559,9 @@ export async function mount(root, metafolder) {
     if (visible) void load();
   });
   // Changed from the keybindings-variables panel, maybe beside this one.
-  metafolder.workspace.onChange('keybindings.changed', () => void load());
+  metafolder.workspace.onChange('keybindings.changed', (value) => {
+    if (value !== ownChange) void load();
+  });
 
   fillTargets(target, '');
   renderForm();
