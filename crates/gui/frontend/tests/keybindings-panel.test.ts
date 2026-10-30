@@ -589,13 +589,13 @@ describe('keybindings panel', () => {
 
   test('its own write does not read the list again, which would drop a row being edited', async () => {
     const { api, typeIn, field, root } = await mountPanel();
-    const listener = api.workspace.onChange.mock.calls.find(([key]) => key === 'keybindings.changed')![1];
+    const listener = (api.workspace.onChange.mock.calls as unknown[][]).find(([key]) => key === 'keybindings.changed')![1] as (value: unknown) => void;
     await typeIn('source', 'alt+t');
     await typeIn('command', 'workspace:new');
     (root.getElementById('save') as HTMLButtonElement).click();
     await flush();
     expect(field('source').value).toBe('');
-    const [, written] = api.workspace.set.mock.calls.find(([key]) => key === 'keybindings.changed')!;
+    const written = (api.workspace.set.mock.calls as unknown[][]).find(([key]) => key === 'keybindings.changed')![1] as number;
     const reads = api.config.keybindingEntries.mock.calls.length;
     listener(written);
     await flush();
