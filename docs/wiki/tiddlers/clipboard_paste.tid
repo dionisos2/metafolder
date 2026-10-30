@@ -1,0 +1,8 @@
+title: clipboard:paste
+tags: [[GUI command]] [[File commands]]
+kind: reference
+summary: Paste the file clipboard at a panel's file or folder, under its cursor (self / a panel type)
+
+Copies, or moves after a cut, what the GUI's file clipboard holds to the file or folder under the panel's cursor: inside it when it is a folder, into the folder holding it when it is a file. It works wherever a file is designated: the [[file-manager panel]], the [[metarecord-list panel]], the [[viewer panel]], the [[metarecord-detail panel]].
+
+A name already taken there gets a ` copy` suffix instead of being overwritten, which is how a file is duplicated: copy it, paste it where it is. A folder is not pasted into itself or below; one folder copied and pasted on itself lands beside itself, which duplicates it the same way. A cut is emptied from the clipboard once pasted. One of the [[File commands]].

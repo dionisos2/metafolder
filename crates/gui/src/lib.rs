@@ -198,10 +198,13 @@ fn register_builtins(registry: &CommandRegistry) {
         // a panel designates or the folder it shows.
         ("file:trash", "Send a panel's files to the trash, metarecords with them (self / a panel type)", true),
         ("file:rename", "Rename the file a panel designates (self / a panel type)", true),
-        ("file:duplicate", "Copy a panel's files beside themselves (self / a panel type)", true),
         ("file:record", "Give a panel's files their metarecord (self / a panel type)", true),
         ("file:new", "Create a folder or a file in the folder a panel shows (self / a panel type)", true),
-        ("file:paste", "Paste the file clipboard into the folder a panel shows (self / a panel type)", true),
+        (
+            "clipboard:paste",
+            "Paste the file clipboard at a panel's file or folder, under its cursor (self / a panel type)",
+            true,
+        ),
         (
             "clipboard:copy",
             "Copy a panel's checked files, or the one under its cursor (self / a panel type)",

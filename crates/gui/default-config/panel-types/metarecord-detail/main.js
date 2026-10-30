@@ -914,6 +914,10 @@ export async function mount(root, metafolder) {
       const value = await mf.workspace.get('selected_paths');
       return Array.isArray(value) ? value.filter((path) => typeof path === 'string') : [];
     },
+    pasteTarget: async (mf) => {
+      const value = await mf.workspace.get('selected_paths');
+      return Array.isArray(value) && typeof value[0] === 'string' ? value[0] : null;
+    },
   });
   metafolder.provide({
     refresh: () => {
@@ -986,7 +990,7 @@ export async function mount(root, metafolder) {
         { label: 'Delete metarecord', action: () => void commands.invoke(['metarecord:delete']) },
       ],
     });
-    // The "File" category (cut/copy/paste/rename/duplicate/trash) when this
+    // The "File" category (cut/copy/paste/rename/trash) when this
     // metarecord is backed by a file — shared with the file manager.
     if (record.repo && hasFile) {
       items.push(

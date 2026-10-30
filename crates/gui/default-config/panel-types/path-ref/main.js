@@ -649,7 +649,7 @@ export async function mount(root, metafolder) {
     return -1;
   }
 
-  // Right-click a node in the mfr_path forest to cut/copy/paste/rename/duplicate
+  // Right-click a node in the mfr_path forest to cut/copy/paste/rename
   // /trash the file or directory it maps to (shared with the file manager). When
   // this panel is open as a tree_ref value picker, the node also gets a "Pick
   // this folder" (mfr_path) / "Pick this node" (any other TreeRef) item that

@@ -83,7 +83,7 @@ done
     || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close close-layout
         pick-button suggested-key walk open-viewers slideshow shell-line shell-cwd repos-memory
-        help-keys help-cursor zoom refresh order user-commands settle macro clipboard saved-workspaces devtools)
+        help-keys help-cursor zoom refresh order user-commands settle macro paste clipboard saved-workspaces devtools)
 
 # shellcheck source=lib/daemon-fixture.sh
 . scripts/dev/lib/daemon-fixture.sh
@@ -1666,6 +1666,46 @@ global_var() {
 clipboard_is() {
     python3 -c 'import json, sys; sys.exit(json.loads(sys.argv[1]) != json.loads(sys.argv[2]))' \
         "$(global_var clipboard)" "$1"
+}
+
+# clipboard:paste (doc "clipboard:paste"): inside the folder designated, beside
+# the file; a folder copied onto itself lands beside itself. Run on real files:
+# telling one from a folder is the listing failing.
+scenario_paste() {
+    new_repo paste
+    mkdir -p "$REPO_DIR/d" "$REPO_DIR/e"
+    touch "$REPO_DIR/d/a.txt" "$REPO_DIR/e/x.txt"
+
+    select_path "$REPO_DIR/d/a.txt"
+    run clipboard:copy viewer
+    select_path "$REPO_DIR/e/x.txt"
+    run clipboard:paste viewer
+    command_ok "paste: on a file resolves"
+    assert "paste: on a file lands beside it" until_ok 5 test -e "$REPO_DIR/e/a.txt"
+    select_path "$REPO_DIR/e"
+    run clipboard:paste viewer
+    assert "paste: in a folder, under a free name" until_ok 5 test -e "$REPO_DIR/e/a copy.txt"
+
+    select_path "$REPO_DIR/d"
+    run clipboard:copy viewer
+    run clipboard:paste viewer
+    assert "paste: a folder on itself lands beside itself" until_ok 5 test -e "$REPO_DIR/d copy/a.txt"
+    assert_not "paste: and not inside itself" test -e "$REPO_DIR/d/d"
+
+    # The file manager lands at the row under its cursor, not in the folder it
+    # shows: the cursor is on d, seen from the root.
+    touch "$REPO_DIR/new.txt"
+    select_path "$REPO_DIR/new.txt"
+    run clipboard:cut viewer
+    show_panel left file-manager view:refresh file-manager
+    run cursor:root file-manager
+    run cursor:first file-manager
+    run cursor:next file-manager
+    until_ok 10 fm_at "" d || die "paste: the file manager never reached d"
+    run clipboard:paste file-manager
+    assert "paste: the file manager goes inside the folder under its cursor" until_ok 5 \
+        test -e "$REPO_DIR/d/new.txt"
+    assert_not "paste: a cut moves" test -e "$REPO_DIR/new.txt"
 }
 
 # clipboard:copy / cut take the checked metarecords' files, else the row under

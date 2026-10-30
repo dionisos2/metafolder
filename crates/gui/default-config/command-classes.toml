@@ -32,6 +32,7 @@
 "log:redo" = "B"
 "clipboard:copy" = "B"
 "clipboard:cut" = "B"
+"clipboard:paste" = "B"
 "clipboard:clear" = "B"
 "pick:confirm" = "B"
 "pick:cancel" = "B"
@@ -173,8 +174,6 @@
 "file-manager:select none" = "B"
 "file-manager:toggle" = "C"
 "file:rename" = "B"
-"file:paste" = "B"
-"file:duplicate" = "C"
 "file:new" = "C"
 "file:record" = "C"
 

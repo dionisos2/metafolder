@@ -45,7 +45,10 @@ function stub(repo: string | null, vars: Record<string, unknown> = {}) {
   const noop = () => {};
   const handlers = new Map<string, Handler>();
   const fs = {
-    readDir: vi.fn(async () => DIR_ENTRIES.map((e) => ({ ...e }))),
+    readDir: vi.fn(async (dir?: string) => {
+      if (dir === '/song.mp3') throw new Error('not a directory');
+      return DIR_ENTRIES.map((e) => ({ ...e }));
+    }),
     stat: vi.fn(async () => ({})),
     exists: vi.fn(async () => true),
     homeDir: vi.fn(async () => '/home/user'),
@@ -169,14 +172,14 @@ describe('file-manager filesystem operations', () => {
   });
 
   test('operations are inert before the panel has opened a directory', async () => {
-    const { api, fs, trash } = await mount(null, { start: false });
+    const { api, fs, trash, global } = await mount(null, { start: false });
     promptSpy.mockReturnValue('anything');
     // A panel that shows no folder yet has none to create or paste in, and no
     // file to rename or copy: the file commands refuse.
     await expect(generic(api.provide, 'file:new', 'folder')).rejects.toThrow('no folder here');
-    await expect(generic(api.provide, 'file:paste')).rejects.toThrow('no folder here');
+    await global.set('clipboard', { paths: ['/x'], mode: 'copy' });
+    await expect(generic(api.provide, 'clipboard:paste')).rejects.toThrow('no folder here');
     await expect(generic(api.provide, 'file:rename')).rejects.toThrow('no file here');
-    await expect(generic(api.provide, 'file:duplicate')).rejects.toThrow('no file here');
     await expect(generic(api.provide, 'file:trash')).rejects.toThrow('no file here');
     expect(fs.mkdir).not.toHaveBeenCalled();
     expect(fs.move).not.toHaveBeenCalled();
@@ -193,21 +196,55 @@ describe('file-manager filesystem operations', () => {
     expect(fs.move).toHaveBeenCalledWith('/song.mp3', '/anthem.mp3');
   });
 
-  test('duplicate copies to a collision-free " copy" name', async () => {
-    const { api, fs } = await mount(null);
-    await selectSong(api);
-    await generic(api.provide, 'file:duplicate');
-    expect(fs.copy).toHaveBeenCalledWith('/song.mp3', '/song copy.mp3');
-  });
-
   test('copy then paste copies into the current directory (deduped)', async () => {
     const { api, fs } = await mount(null);
     await selectSong(api);
     await generic(api.provide, 'clipboard:copy');
-    await generic(api.provide, 'file:paste');
+    await generic(api.provide, 'clipboard:paste');
     // Pasting song.mp3 back into its own directory dedupes to "song copy.mp3".
     expect(fs.copy).toHaveBeenCalledWith('/song.mp3', '/song copy.mp3');
     expect(fs.move).not.toHaveBeenCalled();
+  });
+
+  test('paste with the cursor on a folder goes inside it, even with others checked', async () => {
+    const { api, fs, global } = await mount('repo-1', {
+      vars: { selected_metarecords: ['u-a'] },
+    });
+    await global.set('clipboard', { paths: ['/x/new.txt'], mode: 'copy' });
+    await cursor(api.provide, 'first');
+    await cursor(api.provide, 'next'); // dir1: a repository's root has no ".."
+    await generic(api.provide, 'clipboard:paste');
+    expect(fs.copy).toHaveBeenCalledWith('/x/new.txt', '/dir1/new.txt');
+  });
+
+  test('paste with the cursor on "." goes into the folder shown', async () => {
+    const { api, fs, global } = await mount(null);
+    await global.set('clipboard', { paths: ['/x/new.txt'], mode: 'copy' });
+    await cursor(api.provide, 'first');
+    await generic(api.provide, 'clipboard:paste');
+    expect(fs.copy).toHaveBeenCalledWith('/x/new.txt', '/new.txt');
+  });
+
+  test('Paste on the empty space goes into the folder shown, wherever the cursor is', async () => {
+    const { api, root, global, fs } = await mount(null);
+    let items: { label?: string; action?: () => void }[] = [];
+    const invoked: string[][] = [];
+    (api as unknown as { contextMenu: unknown }).contextMenu = (_e: unknown, menu: typeof items) => {
+      items = menu;
+    };
+    api.commands.invoke = ((words: string[]) => {
+      invoked.push(words);
+      return null;
+    }) as never;
+    await global.set('clipboard', { paths: ['/x/new.txt'], mode: 'copy' });
+    await cursor(api.provide, 'first');
+    await cursor(api.provide, 'next');
+    await cursor(api.provide, 'next'); // dir1
+    root.getElementById('listing')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+    items.find((i) => i.label === 'Paste')!.action!();
+    expect(invoked).toEqual([['clipboard:paste', 'file-manager']]);
+    await generic(api.provide, 'clipboard:paste');
+    expect(fs.copy).toHaveBeenCalledWith('/x/new.txt', '/new.txt');
   });
 
   test('copy and cut fill the global clipboard, which paste empties after a cut', async () => {
@@ -217,7 +254,7 @@ describe('file-manager filesystem operations', () => {
     expect(global.current('clipboard')).toEqual({ paths: ['/song.mp3'], mode: 'copy' });
     await generic(api.provide, 'clipboard:cut');
     expect(global.current('clipboard')).toEqual({ paths: ['/song.mp3'], mode: 'cut' });
-    await generic(api.provide, 'file:paste');
+    await generic(api.provide, 'clipboard:paste');
     expect(global.current('clipboard')).toBeNull();
   });
 
@@ -235,13 +272,13 @@ describe('file-manager filesystem operations', () => {
     const { api, fs } = await mount(null);
     await selectSong(api);
     await generic(api.provide, 'clipboard:cut');
-    await generic(api.provide, 'file:paste');
+    await generic(api.provide, 'clipboard:paste');
     expect(fs.move).toHaveBeenCalledWith('/song.mp3', '/song copy.mp3');
   });
 
   test('paste with an empty clipboard does nothing', async () => {
     const { api, fs } = await mount(null);
-    await expect(generic(api.provide, 'file:paste')).rejects.toThrow('clipboard is empty');
+    await expect(generic(api.provide, 'clipboard:paste')).rejects.toThrow('clipboard is empty');
     expect(fs.copy).not.toHaveBeenCalled();
     expect(fs.move).not.toHaveBeenCalled();
   });
@@ -262,7 +299,6 @@ describe('file-manager filesystem operations', () => {
     // Cursor at index 0 (the "." row) — not a real entry.
     await cursor(api.provide, 'first');
     await expect(generic(api.provide, 'file:rename')).rejects.toThrow('no file here');
-    await expect(generic(api.provide, 'file:duplicate')).rejects.toThrow('no file here');
     await expect(generic(api.provide, 'file:trash')).rejects.toThrow('no file here');
     await expect(generic(api.provide, 'clipboard:copy')).rejects.toThrow('no file to copy');
     expect(fs.move).not.toHaveBeenCalled();
@@ -346,8 +382,6 @@ describe('file-manager filesystem operations', () => {
     fs.move.mockRejectedValueOnce(new Error('x'));
     promptSpy.mockReturnValueOnce('r.mp3');
     await expect(generic(api.provide, 'file:rename')).rejects.toThrow('x');
-    fs.copy.mockRejectedValueOnce(new Error('y'));
-    await expect(generic(api.provide, 'file:duplicate')).rejects.toThrow('y');
     trash.trashPath.mockRejectedValueOnce(new Error('z'));
     await expect(generic(api.provide, 'file:trash')).rejects.toThrow('z');
   });
@@ -364,7 +398,7 @@ describe('file-manager filesystem operations', () => {
     await selectSong(api);
     await generic(api.provide, 'clipboard:copy');
     fs.copy.mockRejectedValueOnce(new Error('x'));
-    await expect(generic(api.provide, 'file:paste')).rejects.toThrow('x');
+    await expect(generic(api.provide, 'clipboard:paste')).rejects.toThrow('x');
 
     // Cut dir1, navigate into it, then paste — refused (into itself).
     await cursor(api.provide, 'first');
@@ -372,7 +406,7 @@ describe('file-manager filesystem operations', () => {
     await cursor(api.provide, 'next'); // dir1
     await generic(api.provide, 'clipboard:cut');
     await handlers.get('file-manager:activate')!(); // opens /dir1
-    await generic(api.provide, 'file:paste');
+    await generic(api.provide, 'clipboard:paste');
     expect(fs.move).not.toHaveBeenCalled();
   });
 

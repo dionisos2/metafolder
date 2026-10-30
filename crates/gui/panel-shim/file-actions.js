@@ -1,5 +1,5 @@
 // Shared filesystem-action helpers (doc "Context menus"): the cut / copy /
-// paste / rename / duplicate / trash operations that any panel can offer on a
+// paste / rename / trash operations that any panel can offer on a
 // metarecord backed by a file or directory. Served at /__file-actions.js and
 // imported by the file-manager and every metarecord-bearing panel. The
 // clipboard is the global GUI variable `clipboard` (doc "Global GUI
@@ -143,9 +143,13 @@ function errorMs(metafolder) {
 }
 
 /** The directory a paste lands in: the target itself when it is a directory,
- *  otherwise its parent. When `isDir` is unknown, probe by listing.
- *  @param {Metafolder.Fs} fs @param {string} path @param {boolean|undefined} isDir */
-async function targetDirOf(fs, path, isDir) {
+ *  otherwise its parent. When `isDir` is unknown, probe by listing. A folder
+ *  copied and pasted on itself lands beside itself: there is nothing else it
+ *  can mean (doc "File commands").
+ *  @param {{ readDir(path: string): Promise<unknown> }} fs @param {string} path
+ *  @param {boolean|undefined} isDir @param {{ paths: string[], mode: string }} clip */
+export async function pasteDir(fs, path, isDir, clip) {
+  if (clip.mode === 'copy' && clip.paths.length === 1 && clip.paths[0] === path) return parentDir(path);
   if (isDir === true) return path;
   if (isDir === false) return parentDir(path);
   try {
@@ -168,7 +172,7 @@ async function pasteInto(metafolder, targetPath, isDir, onChanged, statusMs) {
     void statusBar.message('clipboard is empty', 3000);
     return;
   }
-  const dir = await targetDirOf(fs, targetPath, isDir);
+  const dir = await pasteDir(fs, targetPath, isDir, cb);
   /** @type {string[]} */
   let existing;
   try {
@@ -222,32 +226,6 @@ async function renamePath(metafolder, path, onChanged, statusMs) {
 }
 
 /**
- * @param {MetafolderApi} metafolder @param {string} path
- * @param {() => void|Promise<void>} onChanged @param {number} statusMs
- */
-async function duplicatePath(metafolder, path, onChanged, statusMs) {
-  const { fs, statusBar } = metafolder;
-  const dir = parentDir(path);
-  /** @type {Set<string>} */
-  let taken;
-  try {
-    taken = new Set((await fs.readDir(dir)).map((entry) => entry.name));
-  } catch (error) {
-    await statusBar.error(error, errorMs(metafolder));
-    return;
-  }
-  const name = dedupeName(baseName(path), taken);
-  try {
-    await fs.copy(path, joinPath(dir, name));
-  } catch (error) {
-    await statusBar.error(error, errorMs(metafolder));
-    return;
-  }
-  void statusBar.message(`Duplicated to ${name}`, statusMs);
-  await onChanged();
-}
-
-/**
  * The status line after a trashing: what went, and where it is restored from —
  * the trash panel for the repository's trash, a file manager for the desktop's
  * (doc "Trash").
@@ -293,7 +271,7 @@ async function openWithExternal(metafolder, path) {
 }
 
 /**
- * The Open-with / Cut / Copy / Paste / Rename / Duplicate / Move-to-trash menu
+ * The Open-with / Cut / Copy / Paste / Rename / Move-to-trash menu
  * items for a metarecord's file at `path`. `isDir` (when known) picks the paste target;
  * `onChanged` is called after any successful mutation.
  *
@@ -339,7 +317,6 @@ export function fileMenuItems({ metafolder, path, name, isDir, onChanged }) {
       action: () => void pasteInto(metafolder, path, isDir, nudge, statusMs),
     },
     { label: 'Rename…', action: () => void renamePath(metafolder, path, nudge, statusMs) },
-    { label: 'Duplicate', action: () => void duplicatePath(metafolder, path, nudge, statusMs) },
     {
       label: 'Copy full path',
       action: () => {

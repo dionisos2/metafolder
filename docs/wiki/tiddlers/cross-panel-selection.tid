@@ -81,7 +81,7 @@ when the file manager's listing next learns its metarecord.
 
 What takes them depends on what it needs:
 
-* ''The file operations'' do — `clipboard:copy`/`clipboard:cut`, [[file:trash]], [[file:duplicate]] in the file manager ([[File commands]]), and `item:delete selection` ([[Deleting an item]]): they act on paths, and a file needs no metarecord for them. With no repository at all, the file manager checks every entry this way.
+* ''The file operations'' do — `clipboard:copy`/`clipboard:cut`, [[file:trash]] in the file manager ([[File commands]]), and `item:delete selection` ([[Deleting an item]]): they act on paths, and a file needs no metarecord for them. With no repository at all, the file manager checks every entry this way.
 * [[file:record]] takes ''only'' them, when some are checked: the checked metarecords have theirs. That is how a set of files is recorded at once.
 * ''The field operations'' cannot: `metarecord:bulk` on the selection writes the checked metarecords and names the files it left out in its confirmation; [[mf gui selected]], the slideshow and the `metarecord-list` footer know only the metarecords.
 

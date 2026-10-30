@@ -64,9 +64,12 @@ export interface PanelFunctions {
   /** What `file:record` takes, when it is not `paths`: the designated files
    *  that have no metarecord yet. */
   recordable?: () => string[] | Promise<string[]>;
-  /** The folder the panel shows, where `file:new` and `file:paste` work; null
-   *  when it shows none right now. */
+  /** The folder the panel shows, where `file:new` works; null when it shows
+   *  none right now. */
   directory?: () => string | null | Promise<string | null>;
+  /** The file or folder `clipboard:paste` lands at: the one under the cursor,
+   *  whatever is checked; null when there is none. */
+  pasteTarget?: () => string | null | Promise<string | null>;
   /** Puts the cursor on the entry `name` of the folder shown — the one a
    *  `file:` command just made. */
   reveal?: (name: string) => unknown;

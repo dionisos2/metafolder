@@ -958,6 +958,11 @@ export async function mount(root, metafolder) {
         const metarecord = metarecords[cursorIndex];
         return metarecord ? pathsOf(metarecord) : [];
       }),
+    // `clipboard:paste`: the row under the cursor, whatever is checked.
+    pasteTarget: () => {
+      const metarecord = metarecords[cursorIndex];
+      return (metarecord && pathsOf(metarecord)[0]) ?? null;
+    },
   });
   // Only forward: the list grows as it scrolls, it does not paginate back.
   void commands.register('metarecord-list:page-next', {
@@ -1225,7 +1230,7 @@ export async function mount(root, metafolder) {
       ],
     });
     if (repo && paths.length > 0) {
-      // The "File" category (cut / copy / paste / rename / duplicate / move to
+      // The "File" category (cut / copy / paste / rename / move to
       // trash), shared with the file manager — see /__file-actions.js. No
       // separator to push: /__menu.js draws one at the category boundary.
       items.push(

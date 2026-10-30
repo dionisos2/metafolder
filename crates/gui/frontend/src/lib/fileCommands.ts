@@ -3,7 +3,8 @@
 // panel named first designates the files — `paths`, the checked ones or the one
 // under its cursor — or the folder it shows — `directory` — and the command
 // does the rest, so renaming a file is the same command in the file manager,
-// the list and the viewer.
+// the list and the viewer. `clipboard:paste` lives here with them: it works on
+// the file or folder under the panel's cursor — `pasteTarget`.
 //
 // Pure apart from `FileOps`, what the shell hands in: the filesystem, the trash,
 // the questions and the status bar.
@@ -14,6 +15,7 @@ import {
   isWithin,
   joinPath,
   parentDir,
+  pasteDir,
   trashedMessage,
 } from '../../../panel-shim/file-actions.js';
 
@@ -50,19 +52,20 @@ export interface FileFunctions {
    *  a metarecord. */
   recordable?: () => string[] | Promise<string[]>;
   directory?: () => string | null | Promise<string | null>;
+  /** The file or folder `clipboard:paste` lands at. */
+  pasteTarget?: () => string | null | Promise<string | null>;
   refresh?: () => unknown;
   /** Puts the cursor on the entry `name` of the folder shown. */
   reveal?: (name: string) => unknown;
 }
 
 /** What each `file:` command needs of its panel. */
-export const FILE_NEEDS: Record<string, 'paths' | 'directory'> = {
+export const FILE_NEEDS: Record<string, 'paths' | 'directory' | 'pasteTarget'> = {
   'file:trash': 'paths',
   'file:rename': 'paths',
-  'file:duplicate': 'paths',
   'file:record': 'paths',
   'file:new': 'directory',
-  'file:paste': 'directory',
+  'clipboard:paste': 'pasteTarget',
 };
 
 export const FILE_COMMANDS = Object.keys(FILE_NEEDS);
@@ -128,18 +131,6 @@ export async function runFileCommand(
       await after(ops, fns, next);
       return;
     }
-    case 'file:duplicate': {
-      const paths = await designated(fns);
-      let last: string | null = null;
-      for (const path of paths) {
-        const dir = parentDir(path);
-        last = dedupeName(baseName(path), await takenNames(ops, dir));
-        await ops.copy(path, joinPath(dir, last));
-      }
-      await ops.status(paths.length === 1 ? `Duplicated to ${last}` : `Duplicated ${plural(paths.length, 'file')}`);
-      await after(ops, fns, paths.length === 1 ? last : null);
-      return;
-    }
     case 'file:record': {
       const paths = await designated(fns.recordable ? { paths: fns.recordable } : fns);
       let recorded = 0;
@@ -165,12 +156,15 @@ export async function runFileCommand(
       await after(ops, fns, newName);
       return;
     }
-    case 'file:paste': {
-      const dir = await folder(fns);
+    case 'clipboard:paste': {
       const clip = await ops.clipboard();
       if (!clip || clip.paths.length === 0) throw new Error('clipboard is empty');
+      const at = (await fns.pasteTarget?.()) ?? null;
+      if (at === null) throw new Error('no folder here');
+      const dir = await pasteDir(ops, at, undefined, clip);
       const taken = await takenNames(ops, dir);
       let pasted = 0;
+      let last: string | null = null;
       for (const src of clip.paths) {
         // Never a folder into itself or one of its descendants.
         if (isWithin(dir, src)) {
@@ -182,12 +176,15 @@ export async function runFileCommand(
         else await ops.copy(src, joinPath(dir, target));
         taken.add(target);
         pasted += 1;
+        last = target;
       }
       // What was cut has moved: there is nothing left to paste.
       if (clip.mode === 'cut') await ops.clearClipboard();
       if (pasted === 0) return;
       await ops.status(`Pasted ${plural(pasted, 'item')}`);
-      await after(ops, fns, clip.paths.length === 1 ? baseName(clip.paths[0]) : null);
+      // The cursor can only go on what was made in the folder the panel shows.
+      const shown = (await fns.directory?.()) === dir;
+      await after(ops, fns, shown && pasted === 1 ? last : null);
       return;
     }
   }

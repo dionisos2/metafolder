@@ -166,10 +166,10 @@ vars.index = "i"
 # The file clipboard (doc "Global GUI variables"): the usual keys, and `c`.
 "ctrl+c" = { command = "clipboard:copy self" }
 "ctrl+x" = { command = "clipboard:cut self" }
-"ctrl+v" = { command = "file:paste self" }
+"ctrl+v" = { command = "clipboard:paste self" }
 "{clipboard} c" = { command = "clipboard:copy self" }
 "{clipboard} x" = { command = "clipboard:cut self" }
-"{clipboard} v" = { command = "file:paste self" }
+"{clipboard} v" = { command = "clipboard:paste self" }
 "{clipboard} {unset}" = { command = "clipboard:clear" }
 
 # ── Workspaces ───────────────────────────────────────────────────────────────
@@ -191,11 +191,8 @@ vars.index = "i"
 "ctrl+w" = { command = "workspace:close" }
 "ctrl+s" = { command = "workspace:save" }
 "ctrl+o" = { command = "workspace:open here" }
-# Ctrl+D duplicates: the workspace, or in the file manager the file.
-"ctrl+d" = [
-  { command = "workspace:fork" },
-  { command = "file:duplicate self", when = "file-manager" },
-]
+# Ctrl+D duplicates the workspace.
+"ctrl+d" = { command = "workspace:fork" }
 "{workspaces} {create}" = { command = "workspace:new" }
 "{workspaces} {open}" = { command = "workspace:open here" }
 "{target-new} {workspaces} {open}" = { command = "workspace:open new" }

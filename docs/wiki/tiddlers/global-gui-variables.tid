@@ -16,7 +16,7 @@ saved: they last as long as the GUI.
 !! The standard variables
 
 |!Key |!Value |!Meaning |
-|`clipboard` |`{paths, mode}` or `null` |the file clipboard: absolute paths, `mode` `copy` or `cut`; filled by <<cmd "clipboard:copy">> and <<cmd "clipboard:cut">>, emptied by <<cmd "clipboard:clear">> and by the paste of a cut, the sources having moved ([[Context menus]], [[file-manager panel]]) |
+|`clipboard` |`{paths, mode}` or `null` |the file clipboard: absolute paths, `mode` `copy` or `cut`; filled by <<cmd "clipboard:copy">> and <<cmd "clipboard:cut">>, read by <<cmd "clipboard:paste">>, emptied by <<cmd "clipboard:clear">> and by the paste of a cut, the sources having moved ([[Context menus]], [[file-manager panel]]) |
 
 Like a workspace variable, anything else a panel, a command or a script writes is
 kept under its own name — a panel's under its type (`file-manager:…`).

@@ -241,7 +241,7 @@ export function mount(root, metafolder) {
 
   // Right-click a row: the shared "Metarecord" section (open in detail/file,
   // reveal folder, Copy UUID) plus, when the record is file-backed, the file
-  // actions (cut/copy/paste/rename/duplicate/trash) — see /__file-actions.js.
+  // actions (cut/copy/paste/rename/trash) — see /__file-actions.js.
   metafolder.contextMenu.addDefaultItems(rowActionsProvider(metafolder, () => repo));
 
   async function start() {

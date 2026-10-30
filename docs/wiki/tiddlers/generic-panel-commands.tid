@@ -22,6 +22,7 @@ the shell runs on a few functions the panel provides:
 |<<cmd "view:refresh">> |reads what the panel shows again |`refresh` |
 |<<cmd "view:zoom">> `in`/`out`/`reset` |zooms the whole panel, kept per workspace |`zoom` — every panel has it: the shell provides it |
 |<<cmd "clipboard:copy">>, <<cmd "clipboard:cut">> |puts the files the panel designates in the file clipboard ([[Global GUI variables]]) |`paths` |
+|<<cmd "clipboard:paste">> |puts it at the file or folder under the cursor ([[File commands]]) |`pasteTarget` |
 
 With no row under the cursor, `next` and `prev` both land on the first row, and
 none of them moves past either end. An empty list is left alone.
@@ -74,6 +75,7 @@ metafolder.provide({
 |`refresh()` |reads what the panel shows again |
 |`parent()` |goes up one level, the cursor on what it came out of — so `cursor:descend` goes straight back down |
 |`root()` |goes to the top level, the cursor on the top row of the way it came from |
+|`pasteTarget()` |the file or folder under the cursor, whatever is checked; null when there is none. Where `clipboard:paste` lands: inside a folder, beside a file |
 |`paths()` |the absolute paths of the files the panel designates: those of the checked metarecords when some are checked ([[Cross-panel selection]]) — in the file manager, with the checked paths without one —, else the row under the cursor's — empty when there is no file (`clipboard:copy` then says so). The shared `clipboardPaths` of `/__file-actions.js` answers it |
 |`recordable()` |what [[file:record]] takes when it is not `paths()`: the designated files without a metarecord (the file manager's checked paths, else the row under the cursor) |
 

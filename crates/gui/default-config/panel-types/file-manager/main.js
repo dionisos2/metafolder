@@ -745,9 +745,8 @@ export async function mount(root, metafolder) {
       items.push(
         { label: 'Cut', action: () => void clip(metafolder, 'cut') },
         { label: 'Copy', action: () => void clip(metafolder, 'copy') },
-        { label: 'Paste', disabled: !hasClipboard(metafolder), action: () => void fileCommand('file:paste') },
+        { label: 'Paste', disabled: !hasClipboard(metafolder), action: () => void fileCommand('clipboard:paste') },
         { label: 'Rename…', action: () => void fileCommand('file:rename') },
-        { label: 'Duplicate', action: () => void fileCommand('file:duplicate') },
         {
           label: 'Copy full path',
           action: () => {
@@ -759,7 +758,7 @@ export async function mount(root, metafolder) {
         { label: 'Move to trash', action: () => void deleteEntry(item.path) },
       );
     } else {
-      items.push({ label: 'Paste', disabled: !hasClipboard(metafolder), action: () => void fileCommand('file:paste') });
+      items.push({ label: 'Paste', disabled: !hasClipboard(metafolder), action: () => void fileCommand('clipboard:paste') });
     }
     if (isEntry) items.push(...ignoreMenuItems(item));
     items.push(
@@ -778,7 +777,15 @@ export async function mount(root, metafolder) {
     /** @type {Metafolder.MenuItem[]} */
     const items = [
       { header: 'File' },
-      { label: 'Paste', disabled: !hasClipboard(metafolder), action: () => void fileCommand('file:paste') },
+      {
+        label: 'Paste',
+        disabled: !hasClipboard(metafolder),
+        // Here is the folder shown, whatever the cursor is on: the "." row.
+        action: () => {
+          void select(metafolder, 0);
+          void fileCommand('clipboard:paste');
+        },
+      },
       { header: 'Directory' },
       { label: 'New folder…', action: () => void fileCommand('file:new', 'folder') },
       { label: 'New file…', action: () => void fileCommand('file:new', 'file') },
@@ -1167,10 +1174,12 @@ export async function mount(root, metafolder) {
   // Up one level, and to the top, on `cursor:parent` / `cursor:root` (doc
   // "Generic panel commands"): the root is the repo root, or / with no repo.
   metafolder.provide({ parent: goUp, root: gotoRoot });
-  // The `file:` commands (doc "File commands") create and paste in the
-  // folder shown, and put the cursor on what they made.
+  // The `file:` commands (doc "File commands") create in the folder shown and
+  // put the cursor on what they made; a paste lands at the row under the
+  // cursor, "." being the folder shown.
   metafolder.provide({
     directory: () => currentDir,
+    pasteTarget: () => listing[cursorIndex]?.path ?? currentDir,
     reveal: async (mf, name) => {
       const index = listing.findIndex((item) => item.name === name);
       if (index >= 0) await select(mf, index);

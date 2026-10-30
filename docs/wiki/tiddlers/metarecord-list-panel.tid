@@ -103,6 +103,7 @@ re-reads the paths of its rows whenever the daemon reports a change in the repos
 * <<key "metarecord-list:select toggle" Space>> — check the row; `metarecord-list:select all` checks every loaded row, <<key "metarecord-list:select none" "Ctrl+Shift+a">> unchecks everything ([[Cross-panel selection]]).
 * <<key "view:refresh self" "Ctrl+r">> — run the query again; the cursor stays on its metarecord.
 * <<key "clipboard:copy self" Ctrl+c>>, <<key "clipboard:cut self" Ctrl+x>> — put the files of the checked metarecords, or the file of the row under the cursor, in the file clipboard, to paste in the [[file-manager panel]] ([[Global GUI variables]]).
+* <<key "clipboard:paste self" Ctrl+v>> — paste the file clipboard inside the folder under the cursor, or beside its file ([[clipboard:paste]]).
 * <<key "item:delete" Delete>>, `file:trash`, <<key "metarecord:delete" Shift+Delete>> — remove the selected metarecord, its file, or the metarecord alone ([[Sending files to the trash]]).
 
 A right click acts on the row clicked: the metarecord's actions, ''Add to the

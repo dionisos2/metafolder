@@ -641,7 +641,7 @@ pub fn move_path(from: &Path, to: &Path) -> io::Result<()> {
 }
 
 /// Copies `from` (a file, a symlink, or a whole directory tree) to `to`, leaving
-/// the source in place — the file-manager panel's copy/duplicate primitive
+/// the source in place — the file-manager panel's copy primitive
 /// (doc "file-manager panel"). Modification times are carried over
 /// best-effort, like the trash's cross-device fallback. `to` must not already
 /// exist (the caller de-duplicates the destination name).

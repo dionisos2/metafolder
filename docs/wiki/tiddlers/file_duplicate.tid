@@ -1,6 +1,0 @@
-title: file:duplicate
-tags: [[GUI command]] [[File commands]]
-kind: reference
-summary: Copy a panel's files beside themselves (self / a panel type)
-
-Copies each file the panel designates — the checked ones, else the one under its cursor — beside itself, as `name copy.ext`, then `name copy 2.ext`… A directory is copied with its content. One of the [[File commands]]: `file:duplicate self` in the [[file-manager panel]], the list or the viewer.

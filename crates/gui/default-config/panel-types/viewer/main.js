@@ -1524,7 +1524,7 @@ export async function mount(root, metafolder) {
 
   // Keybindings for this panel live in keybindings.toml (when = "viewer").
 
-  // Right-click the preview to cut/copy/paste/rename/duplicate/trash the shown
+  // Right-click the preview to cut/copy/paste/rename/trash the shown
   // file (shared with the file manager — see /__file-actions.js). The *shown*
   // one: after a drill-in or a step back that is not the selected path, and a
   // menu aimed at the selection would act on something that is not on screen.
@@ -1555,7 +1555,10 @@ export async function mount(root, metafolder) {
   metafolder.provide({ refresh: () => metafolder.whenVisible(rerender) });
   // The file shown, for the `file:` commands and the clipboard (doc "File
   // commands"): the workspace's selection, which this panel follows.
-  metafolder.provide({ paths: (mf) => selectedPathsOf(mf) });
+  metafolder.provide({
+    paths: (mf) => selectedPathsOf(mf),
+    pasteTarget: async (mf) => (await selectedPathsOf(mf))[0] ?? null,
+  });
 
   workspace.onChange('selected_paths', (value) => void update(value));
   await update(await workspace.get('selected_paths'));

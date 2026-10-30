@@ -3,4 +3,4 @@ tags: [[GUI command]] [[Generic panel commands]]
 kind: reference
 summary: Cut a panel's checked files, or the one under its cursor (self / a panel type)
 
-The same as `clipboard:copy`, the files to be ''moved'' where `file-manager:paste` is run: the checked metarecords' files when some are checked, otherwise the one under the cursor. Nothing moves until the paste, which empties the clipboard ([[Global GUI variables]]).
+The same as `clipboard:copy`, the files to be ''moved'' where `clipboard:paste` is run: the checked metarecords' files when some are checked, otherwise the one under the cursor. Nothing moves until the paste, which empties the clipboard ([[Global GUI variables]]).

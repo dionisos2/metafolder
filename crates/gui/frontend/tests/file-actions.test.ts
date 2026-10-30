@@ -109,13 +109,13 @@ describe('file-actions shared operations', () => {
 
   test('Paste into itself is refused via statusBar.error with the error timeout', async () => {
     const { metafolder, statusBar, fs } = mockMf();
-    void metafolder.global.set('clipboard', { paths: ['/dst'], mode: 'copy' });
+    void metafolder.global.set('clipboard', { paths: ['/dst'], mode: 'cut' });
     const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst', isDir: true });
     item(dst, 'Paste').action!();
     await vi.waitFor(() =>
       expect(statusBar.error).toHaveBeenCalledWith(expect.stringContaining('into itself'), 2000),
     );
-    expect(fs.copy).not.toHaveBeenCalled();
+    expect(fs.move).not.toHaveBeenCalled();
   });
 
   test('a readDir failure during paste surfaces via the error timeout', async () => {
@@ -130,12 +130,12 @@ describe('file-actions shared operations', () => {
     await vi.waitFor(() => expect(statusBar.error).toHaveBeenCalledWith(expect.any(Error), 2000));
   });
 
-  test('Duplicate copies to a collision-free name in the same directory', async () => {
-    const { metafolder, fs } = mockMf();
-    const menu = fileMenuItems({ metafolder, repo: 'r', path: '/dir/a.txt', isDir: false });
-    item(menu, 'Duplicate').action!();
-    // "a.txt" already exists in the stub listing, so it dedupes to "a copy.txt".
-    await vi.waitFor(() => expect(fs.copy).toHaveBeenCalledWith('/dir/a.txt', '/dir/a copy.txt'));
+  test('Paste of a folder copied onto itself lands beside it', async () => {
+    const { metafolder, fs } = mockMf(undefined, { readDir: vi.fn(async () => [{ name: 'd' }]) });
+    void metafolder.global.set('clipboard', { paths: ['/dir/d'], mode: 'copy' });
+    const menu = fileMenuItems({ metafolder, repo: 'r', path: '/dir/d', isDir: true });
+    item(menu, 'Paste').action!();
+    await vi.waitFor(() => expect(fs.copy).toHaveBeenCalledWith('/dir/d', '/dir/d copy'));
   });
 
   test('errorMs falls back to 8000 when statusErrorMs is unset', async () => {
@@ -257,7 +257,6 @@ describe('fileMenuItems shape', () => {
       'Copy',
       'Paste',
       'Rename…',
-      'Duplicate',
       'Copy full path',
       'Move to trash',
     ]);

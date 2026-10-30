@@ -99,9 +99,8 @@ These are the [[File commands]], run on this panel's files and folder.
 |!Key |!Does |
 |<<key "file:new self folder" Ctrl+Shift+n>>, <<key "file:new self file" Ctrl+n>> |create a folder, an empty file — the name is asked |
 |<<key "file:rename self" F2>> |rename the entry |
-|<<key "file:duplicate self" Ctrl+d>> |copy it beside itself, as `name copy.ext` |
 |<<key "clipboard:copy self" Ctrl+c>>, <<key "clipboard:cut self" Ctrl+x>> |copy, cut the checked entries, or the one under the cursor ([[Generic panel commands]]) |
-|<<key "file:paste self" Ctrl+v>> |paste into the directory shown |
+|<<key "clipboard:paste self" Ctrl+v>> |paste inside the folder under the cursor, or beside the file; on `.`, into the directory shown |
 |<<key "item:delete" Delete>> |send the entry to the trash, its metarecord with it ([[Deleting an item]]); with no repository, to the desktop's ([[The desktop trash]]) |
 
 They act on the disk directly, not through the daemon. A tracked file that is renamed
@@ -110,7 +109,7 @@ of seconds later, and the `tracked` mark comes back by itself — or at the next
 [[Reconcile]] where the directory is not watched.
 
 Nothing is ever overwritten: creating or renaming onto a taken name is refused, and
-a paste or a duplicate that would collide takes a ` copy` suffix (`foo copy.txt`,
+a paste that would collide takes a ` copy` suffix (`foo copy.txt`,
 `foo copy 2.txt`…). A directory is not pasted into itself or below.
 
 The clipboard belongs to the GUI, not to the panel: cut here, paste in the file
@@ -132,11 +131,11 @@ A right click moves the cursor to the row, then offers ([[Context menus]]):
 
 * for a tracked row, the metarecord's actions; ''Add to the selection'' (or ''Remove from the selection'') on every row;
 * ''Track'';
-* ''Open'' for a directory, the clipboard actions, ''Rename…'', ''Duplicate'', ''Copy full path'', ''Move to trash'';
+* ''Open'' for a directory, the clipboard actions, ''Rename…'', ''Copy full path'', ''Move to trash'';
 * ''Ignore “name” here'', ''Ignore *.ext here'' and ''Apply an ignore preset…'', which write on the directory shown ([[Setting ignore patterns]]);
 * ''New folder…'', ''New file…''.
 
-On the empty part of the listing: ''Paste'', ''New folder…'', ''New file…''.
+On the empty part of the listing: ''Paste'', into the directory shown, ''New folder…'', ''New file…''.
 
 !! As a folder picker
 
