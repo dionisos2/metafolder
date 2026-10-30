@@ -82,6 +82,7 @@ function stubApi(panelType: string, defaults: Record<string, unknown> = {}) {
     pick: { start: async () => '' },
     config: {
       info: async () => ({ root: '', repo_config: null, files: [] }),
+      panelTypes: () => [],
       keybindingEntries: async () => VIEW,
       checkKeybindingEntry: async () => ({ command: null, key: null, note: null, in_the_way: null }),
       saveKeybindingEntry: async () => VIEW,

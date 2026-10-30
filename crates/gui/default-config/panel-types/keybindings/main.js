@@ -1,8 +1,8 @@
 // keybindings panel: the editor of keybindings.toml (doc "keybindings panel",
 // doc "Changing keybindings"). One row per line of the file: its key as the
-// file writes it — variables left in —, `when`, `focus` and `target`, all
-// editable in place, beside the keys it really binds; then the commands no key
-// runs, bound in place the same way. The class buttons keep the commands of the
+// file writes it — variables left in —, `when`, `focus`, `target` and
+// `text-input`, all editable in place, beside the keys it really binds; then the
+// commands no key runs, bound in place the same way. The class buttons keep the commands of the
 // classes pressed (doc "Command classes"). The variables have their own panel
 // (doc "keybindings-variables panel").
 //
@@ -70,6 +70,36 @@ const draftOf = (entry, source = entry.source) => ({
   target: entry.target,
 });
 
+/** The targets a `{target}` template aims (`keybindings.rs`, `TARGETS`). */
+const TARGETS = ['here', 'other', 'new'];
+
+/** The text fields shipped with a name (`data-mf-focus`). A panel of the user's
+ *  naming its own appears once a line of the file uses it. */
+const FOCUS_NAMES = ['find', 'finder', 'hints', 'search'];
+
+/**
+ * Gives a drop-down its options, keeping its value when it is still one of them.
+ * @param {HTMLSelectElement} select @param {string[]} values
+ * @param {string|null} empty the label of the empty choice, null when there is none
+ */
+function fillChoices(select, values, empty) {
+  const value = select.value;
+  select.replaceChildren(
+    ...(empty === null ? [] : [el('option', { value: '' }, empty)]),
+    ...values.map((v) => el('option', { value: v }, v)),
+  );
+  select.value = values.includes(value) ? value : (select.options[0]?.value ?? '');
+}
+
+/** What `target` can be for `invocation`: a target when it holds `{target}`,
+ *  and then it needs one, else nothing at all (`keybindings.rs`, `expand`).
+ *  @param {HTMLSelectElement} select @param {string} invocation */
+function fillTargets(select, invocation) {
+  const holdsTarget = invocation.includes('{target}');
+  fillChoices(select, holdsTarget ? TARGETS : [], holdsTarget ? null : 'target');
+  select.disabled = !holdsTarget;
+}
+
 /** A key sequence as keycaps. @param {string[]} keys */
 const keycaps = (keys) => keys.flatMap((key, i) => [i > 0 ? ' ' : null, el('kbd', {}, key)]);
 
@@ -80,9 +110,9 @@ const noObjection = (verdict) => verdict.command === null && verdict.key === nul
 export async function mount(root, metafolder) {
   const source = byId(root, 'source', HTMLInputElement);
   const command = byId(root, 'command', HTMLInputElement);
-  const when = byId(root, 'when', HTMLInputElement);
-  const focus = byId(root, 'focus', HTMLInputElement);
-  const target = byId(root, 'target', HTMLInputElement);
+  const when = byId(root, 'when', HTMLSelectElement);
+  const focus = byId(root, 'focus', HTMLSelectElement);
+  const target = byId(root, 'target', HTMLSelectElement);
   const textInput = byId(root, 'text-input', HTMLInputElement);
   const save = byId(root, 'save', HTMLButtonElement);
   const clear = byId(root, 'clear', HTMLButtonElement);
@@ -95,6 +125,10 @@ export async function mount(root, metafolder) {
   let view = { entries: [], variables: [], unbound: [], classes_error: null };
   /** @type {Map<string, Metafolder.CommandDef>} */
   let commands = new Map();
+  /** What `when` and `focus` can be. @type {string[]} */
+  let whenChoices = [];
+  /** @type {string[]} */
+  let focusChoices = [];
   /** The classes whose commands are shown. */
   const shownClasses = new Set(CLASSES);
   /** @type {Metafolder.KeybindingCheck} */
@@ -115,7 +149,7 @@ export async function mount(root, metafolder) {
       source: source.value.trim(),
       command: command.value.trim(),
       when: orNull(when.value),
-      focus: orNull(focus.value.replace(/^@/, '')),
+      focus: orNull(focus.value),
       textInput: textInput.checked,
       target: orNull(target.value),
     };
@@ -168,48 +202,92 @@ export async function mount(root, metafolder) {
   /** @param {string} invocation */
   const labelOf = (invocation) => commands.get(invocation.split(/\s+/)[0])?.label ?? '';
 
-  /** The fields of a row, edited in place: Enter saves the line as they say,
-   *  Escape gives them back. A command with no key is the same row, with no
+  /** The fields of a row, edited in place: Enter or its Save button saves the
+   *  line as they say, Escape gives them back. A command with no key is the same row, with no
    *  place to replace and nothing to save until a key is typed.
    *  @param {Metafolder.EntryDraft} line @param {Metafolder.EntryPlace|null} place
    *  @param {boolean} readOnly a suggestion: not in the file, it cannot be moved */
   function rowFields(line, place, readOnly) {
     /** The verdict on the values typed, null while it is asked. @type {Metafolder.KeybindingCheck|null} */
     let verdict = NO_OBJECTION;
-    /** @param {string} name @param {string} value @param {string} placeholder @param {string} title */
-    const field = (name, value, placeholder, title) => {
-      const input = el('input', {
+    /** @param {string} title */
+    const titled = (title) =>
+      readOnly ? 'suggested by a panel: overridden by a line of the file in its place' : title;
+    /** @param {KeyboardEvent} event */
+    const onkeydown = (event) => void onRowKey(event);
+    const onchange = () => void recheckRow();
+    /** A drop-down holding only its value until it is reached: with every
+     *  choice in every row, each render made thousands of options, and the
+     *  table renders at each key typed in the form.
+     *  @param {string} name @param {string} value @param {string} title
+     *  @param {string[]} values @param {string} empty */
+    const choice = (name, value, title, values, empty) => {
+      const fill = () => fillChoices(select, values, empty);
+      const select = el('select', {
         class: name,
-        value,
-        placeholder,
-        readOnly,
-        autocomplete: 'off',
-        title: readOnly ? 'suggested by a panel: overridden by a line of the file in its place' : title,
-        oninput: () => void recheckRow(),
-        /** @param {KeyboardEvent} event */
-        onkeydown: (event) => void onRowKey(event),
+        title: titled(title),
+        disabled: readOnly,
+        onchange,
+        onkeydown,
+        onmousedown: fill,
+        onfocus: fill,
       });
-      if (name !== 'source') input.setAttribute('list', `${name}-list`);
-      return input;
+      fillChoices(select, value === '' ? [] : [value], empty);
+      select.value = value;
+      return select;
     };
     const fields = {
-      source: field('source', line.source, 'no key', 'the key as the file writes it — Enter saves the line, Escape gives it back'),
-      when: field('when', line.when ?? '', 'when', 'the panel type it applies in; empty = everywhere'),
-      focus: field('focus', line.focus ?? '', 'focus', 'the text field it applies in; empty = none'),
-      target: field('target', line.target ?? '', 'target', 'for a command holding {target}: where its key aims'),
+      source: el('input', {
+        class: 'source',
+        value: line.source,
+        placeholder: 'no key',
+        readOnly,
+        autocomplete: 'off',
+        title: titled('the key as the file writes it — Enter saves the line, Escape gives it back'),
+        oninput: onchange,
+        onkeydown,
+      }),
+      when: choice('when', line.when ?? '', 'the panel type it applies in; when = everywhere', whenChoices, 'when'),
+      focus: choice('focus', line.focus ?? '', 'the text field it applies in; focus = none', focusChoices, 'focus'),
+      target: el('select', {
+        class: 'target',
+        title: titled('for a command holding {target}: where its key aims'),
+        onchange,
+        onkeydown,
+      }),
+      textInput: el('input', {
+        type: 'checkbox',
+        class: 'text-input',
+        checked: line.textInput,
+        disabled: readOnly,
+        title: titled('also applies while typing in a text field'),
+        onchange,
+        onkeydown,
+      }),
     };
+    fillTargets(fields.target, line.command);
+    fields.target.value = line.target ?? '';
+    if (readOnly) fields.target.disabled = true;
+    const saveRow = el('button', { hidden: true, onclick: () => void saveLine() }, 'Save');
+    /** Shows the Save of the row as the fields and the verdict stand. */
+    function renderSave() {
+      saveRow.hidden = !changed() || typed().source === '';
+      saveRow.disabled = verdict === null || !noObjection(verdict);
+    }
     /** The line as the fields say. @returns {Metafolder.EntryDraft} */
     const typed = () => ({
       ...line,
       source: fields.source.value.trim(),
       when: orNull(fields.when.value),
-      focus: orNull(fields.focus.value.replace(/^@/, '')),
+      focus: orNull(fields.focus.value),
+      textInput: fields.textInput.checked,
       target: orNull(fields.target.value),
     });
     const changed = () => JSON.stringify(typed()) !== JSON.stringify(line);
     async function recheckRow() {
       const seq = ++inlineSeq;
       verdict = null;
+      renderSave();
       const form = typed();
       const answer =
         !changed() || form.source === ''
@@ -220,6 +298,12 @@ export async function mount(root, metafolder) {
       fields.source.classList.toggle('invalid', answer.key !== null);
       keyCheck.className = answer.key ? 'bad' : 'ok';
       keyCheck.textContent = answer.key ?? answer.note ?? '';
+      renderSave();
+    }
+    async function saveLine() {
+      const form = typed();
+      if (!changed() || form.source === '' || verdict === null || !noObjection(verdict)) return;
+      await write(() => metafolder.config.saveKeybindingEntry(form, place));
     }
     /** @param {KeyboardEvent} event */
     async function onRowKey(event) {
@@ -228,19 +312,19 @@ export async function mount(root, metafolder) {
         fields.when.value = line.when ?? '';
         fields.focus.value = line.focus ?? '';
         fields.target.value = line.target ?? '';
+        fields.textInput.checked = line.textInput;
         fields.source.classList.remove('invalid');
         inlineSeq++;
         verdict = NO_OBJECTION;
+        renderSave();
         renderForm();
         return;
       }
       if (event.key !== 'Enter') return;
       event.preventDefault();
-      const form = typed();
-      if (!changed() || form.source === '' || verdict === null || !noObjection(verdict)) return;
-      await write(() => metafolder.config.saveKeybindingEntry(form, place));
+      await saveLine();
     }
-    return fields;
+    return { ...fields, save: saveRow };
   }
 
   /** @param {Metafolder.FileEntry} entry */
@@ -268,10 +352,11 @@ export async function mount(root, metafolder) {
       el('td', { class: 'when' }, fields.when),
       el('td', { class: 'focus' }, fields.focus),
       el('td', { class: 'target' }, fields.target),
-      el('td', { class: 'scope' }, entry.text_input ? '⌨' : '', entry.suggested ? ' suggested' : ''),
+      el('td', { class: 'scope' }, el('label', {}, fields.textInput, '⌨'), entry.suggested ? ' suggested' : ''),
       el(
         'td',
         { class: 'actions' },
+        fields.save,
         entry.suggested ? null : el('button', { onclick: () => void remove(entry) }, 'Remove'),
       ),
     );
@@ -306,8 +391,8 @@ export async function mount(root, metafolder) {
       el('td', { class: 'when' }, fields.when),
       el('td', { class: 'focus' }, fields.focus),
       el('td', { class: 'target' }, fields.target),
-      el('td', { class: 'scope' }),
-      el('td', { class: 'actions' }),
+      el('td', { class: 'scope' }, el('label', {}, fields.textInput, '⌨')),
+      el('td', { class: 'actions' }, fields.save),
     );
   }
 
@@ -328,9 +413,11 @@ export async function mount(root, metafolder) {
         String(Math.max(least, ...view.entries.map((entry) => (value(entry) ?? '').length))),
       );
     sizeColumn('source', 6, (entry) => entry.source);
-    sizeColumn('when', 4, (entry) => entry.when);
-    sizeColumn('focus', 5, (entry) => entry.focus);
-    sizeColumn('target', 6, (entry) => entry.target);
+    /** @param {string} name @param {string[]} values */
+    const sizeChoices = (name, values) =>
+      tbody.style.setProperty(`--${name}-chars`, String(Math.max(name.length, ...values.map((v) => v.length))));
+    sizeChoices('when', whenChoices);
+    sizeChoices('focus', focusChoices);
     tbody.replaceChildren(
       ...rows.map((row) => ('entry' in row ? entryRow(row.entry) : unboundRow(row.unbound))),
     );
@@ -372,13 +459,15 @@ export async function mount(root, metafolder) {
 
   function onInput() {
     errorLine.textContent = '';
+    fillTargets(target, command.value);
     renderTable();
     renderForm();
     checking = recheck();
   }
 
   function clearForm() {
-    for (const input of [source, command, when, focus, target]) input.value = '';
+    for (const input of [source, command, when, focus]) input.value = '';
+    fillTargets(target, '');
     textInput.checked = false;
     check = NO_OBJECTION;
     checkSeq++;
@@ -426,14 +515,13 @@ export async function mount(root, metafolder) {
     view = next;
     if (view.classes_error) errorLine.textContent = view.classes_error;
     const sorted = (/** @type {Iterable<string>} */ values) => [...new Set(values)].sort();
-    fillDatalist(
-      'when-list',
-      sorted([
-        ...[...commands.values()].flatMap((def) => (def.owner ? [def.owner] : [])),
-        ...view.entries.flatMap((e) => (e.when ? [e.when] : [])),
-      ]),
-    );
-    fillDatalist('focus-list', sorted(view.entries.flatMap((e) => (e.focus ? [e.focus] : []))));
+    whenChoices = sorted([
+      ...metafolder.config.panelTypes(),
+      ...view.entries.flatMap((e) => (e.when ? [e.when] : [])),
+    ]);
+    focusChoices = sorted([...FOCUS_NAMES, ...view.entries.flatMap((e) => (e.focus ? [e.focus] : []))]);
+    fillChoices(when, whenChoices, 'when: any');
+    fillChoices(focus, focusChoices, 'focus: none');
     renderTable();
     renderForm();
   }
@@ -465,8 +553,9 @@ export async function mount(root, metafolder) {
       renderTable();
     });
   }
-  for (const input of [source, command, when, focus, target]) {
-    input.addEventListener('input', onInput);
+  for (const input of [source, command]) input.addEventListener('input', onInput);
+  for (const select of [when, focus, target]) select.addEventListener('change', onInput);
+  for (const input of /** @type {HTMLElement[]} */ ([source, command, when, focus, target])) {
     input.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter') return;
       event.preventDefault();
@@ -495,6 +584,7 @@ export async function mount(root, metafolder) {
   // Changed from the keybindings-variables panel, maybe beside this one.
   metafolder.workspace.onChange('keybindings.changed', () => void load());
 
+  fillTargets(target, '');
   renderForm();
   await load();
 }

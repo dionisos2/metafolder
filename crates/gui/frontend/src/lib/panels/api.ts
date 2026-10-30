@@ -9,6 +9,7 @@ import { showMenu } from '../../../../panel-shim/menu.js';
 import { commonPrefix, insertCandidate } from '../bash';
 import { ask, type ArgSpec, type InvocationParts, invokerOver, withTopLevelInvoke } from '../commands';
 import { invoke as ipcInvoke } from '../ipc';
+import { store } from '../store.svelte';
 import { checkTarget, resolveTarget } from '../targets';
 import { transactional } from '../txn';
 import type { ExecContext } from '../types';
@@ -605,6 +606,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
           invoke('config_info', { repo: repo ?? null }) as Promise<Metafolder.ConfigInfo>,
         // The keybindings panel (doc "Changing keybindings"): the editor of
         // `keybindings.toml`, its lines and its variables.
+        panelTypes: () => [...store.panelTypes],
         keybindingEntries: () =>
           invoke('keybinding_entries') as Promise<Metafolder.KeybindingView>,
         checkKeybindingEntry: (draft: Metafolder.EntryDraft, replacing: Metafolder.EntryPlace | null) =>

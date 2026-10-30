@@ -6,6 +6,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { argSpecFor, clearArgSpecs } from '../src/lib/commands';
 import { createPanelApi } from '../src/lib/panels/api';
 import { globalMirror } from '../src/lib/globals';
+import { store } from '../src/lib/store.svelte';
 
 function setup() {
   const invoke = vi.fn(async (_cmd: string, _args?: unknown) => ({ status: 200, body: null }) as unknown);
@@ -467,6 +468,8 @@ describe('panel api — misc surface', () => {
     expect(invoke).toHaveBeenCalledWith('config_info', { repo: 'abc' });
     await api.commands.list();
     expect(invoke).toHaveBeenCalledWith('list_commands');
+    store.panelTypes = ['log', 'trash'];
+    expect(api.config.panelTypes()).toEqual(['log', 'trash']);
     await api.config.keybindingEntries();
     expect(invoke).toHaveBeenCalledWith('keybinding_entries');
     const replacing = { source: '{go}', when: null, focus: null };

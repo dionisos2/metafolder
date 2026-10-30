@@ -220,6 +220,8 @@ declare namespace Metafolder {
     /** The keybindings panel (doc "keybindings panel"): the lines of
      *  `keybindings.toml`, its variables, and the commands no key runs. */
     keybindingEntries(): Promise<KeybindingView>;
+    /** The panel types there are: what a keybinding's `when` can name. */
+    panelTypes(): string[];
     /** What saving the line `draft` would refuse, field by field, without
      *  writing (doc "Changing keybindings"). */
     checkKeybindingEntry(draft: EntryDraft, replacing: EntryPlace | null): Promise<KeybindingCheck>;

@@ -6,7 +6,7 @@
 // "Changing keybindings"), which the form also shows while it is typed.
 
 import { describe, expect, test, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/keybindings');
@@ -124,6 +124,7 @@ async function mountPanel(
       }),
     },
     config: {
+      panelTypes: vi.fn(() => ['keybindings', 'log', 'metarecord-list', 'trash']),
       keybindingEntries: vi.fn(async () => view),
       checkKeybindingEntry: vi.fn(async (draft: Record<string, unknown>) => ({
         command: null,
@@ -158,7 +159,14 @@ async function mountPanel(
     await flush();
   };
   const typeIn = (id: string, text: string) => type(field(id), text);
-  const key = async (input: HTMLInputElement, name: string) => {
+  const pick = async (control: HTMLSelectElement, value: string) => {
+    control.dispatchEvent(new Event('focus'));
+    control.value = value;
+    control.dispatchEvent(new Event('change'));
+    await flush();
+  };
+  const choice = (id: string) => root.getElementById(id) as HTMLSelectElement;
+  const key = async (input: HTMLElement, name: string) => {
     input.dispatchEvent(new KeyboardEvent('keydown', { key: name }));
     await flush();
   };
@@ -178,7 +186,7 @@ async function mountPanel(
     [...tr.querySelectorAll('button')].find((b) => b.textContent === label);
   const save = root.getElementById('save') as HTMLButtonElement;
   const classButton = (c: string) => root.getElementById(`class-${c}`) as HTMLButtonElement;
-  return { api, handlers, root, field, type, typeIn, key, rows, row, shown, button, save, classButton };
+  return { api, handlers, root, field, type, typeIn, pick, choice, key, rows, row, shown, button, save, classButton };
 }
 
 describe('keybindings panel', () => {
@@ -281,11 +289,11 @@ describe('keybindings panel', () => {
   });
 
   test('Save writes the line and empties the form', async () => {
-    const { typeIn, save, api, field } = await mountPanel();
+    const { typeIn, pick, choice, save, api, field } = await mountPanel();
     await typeIn('source', '{panels} k');
     await typeIn('command', 'panel:open {target} keybindings');
-    await typeIn('target', 'here');
-    await typeIn('when', 'log');
+    await pick(choice('target'), 'here');
+    await pick(choice('when'), 'log');
     save.click();
     await flush();
     expect(api.config.saveKeybindingEntry).toHaveBeenCalledWith(
@@ -336,6 +344,13 @@ describe('keybindings panel', () => {
     const { root } = await mountPanel();
     const width = (root.getElementById('bindings') as HTMLElement).style.getPropertyValue('--source-chars');
     expect(width).toBe(String('ctrl+shift+a'.length));
+  });
+
+  test('the when and focus columns are wide enough for the longest choice', async () => {
+    const { root } = await mountPanel();
+    const style = (root.getElementById('bindings') as HTMLElement).style;
+    expect(style.getPropertyValue('--when-chars')).toBe(String('metarecord-list'.length));
+    expect(style.getPropertyValue('--focus-chars')).toBe(String('finder'.length));
   });
 
   test('the key of a line is edited in place: Enter saves it, Escape gives it back', async () => {
@@ -403,41 +418,153 @@ describe('keybindings panel', () => {
     );
   });
 
-  test('when, focus and target are edited in place, the line replaced', async () => {
-    const { row, type, key, api, root } = await mountPanel({
-      check: (draft) => (draft.when === 'log' ? { key: '`g g` is already bound in log' } : {}),
+  test('when, focus and target are chosen in place, the line replaced', async () => {
+    const { row, pick, key, api, root } = await mountPanel({
+      check: (draft) => (draft.when === 'log' ? { key: '`t l` is already bound in log' } : {}),
     });
-    const tr = row('{go} g').tr;
-    const input = (name: string) => tr.querySelector(`input.${name}`) as HTMLInputElement;
-    await type(input('when'), 'log');
+    const tr = row('{panels} l').tr;
+    const select = (name: string) => tr.querySelector(`select.${name}`) as HTMLSelectElement;
+    await pick(select('when'), 'log');
     expect(root.getElementById('key-check')!.textContent).toContain('already bound');
-    await key(input('when'), 'Enter');
+    await key(select('when'), 'Enter');
     expect(api.config.saveKeybindingEntry).not.toHaveBeenCalled();
-    await key(input('when'), 'Escape');
-    expect(input('when').value).toBe('');
+    await key(select('when'), 'Escape');
+    expect(select('when').value).toBe('');
 
-    await type(input('when'), 'trash');
-    await type(input('focus'), '@finder');
-    await type(input('target'), 'other');
-    await key(input('target'), 'Enter');
+    await pick(select('when'), 'trash');
+    await pick(select('focus'), 'finder');
+    await pick(select('target'), 'other');
+    await key(select('target'), 'Enter');
     expect(api.config.saveKeybindingEntry).toHaveBeenCalledWith(
       {
-        source: '{go} g',
-        command: 'cursor:first self',
+        source: '{panels} l',
+        command: 'panel:open {target} metarecord-list',
         when: 'trash',
         focus: 'finder',
         textInput: false,
         target: 'other',
       },
-      { source: '{go} g', when: null, focus: null },
+      { source: '{panels} l', when: null, focus: null },
     );
+  });
+
+  test('text-input is a checkbox of the row, which Enter saves', async () => {
+    const { row, key, api } = await mountPanel();
+    const input = row('ctrl+g').tr.querySelector('input.text-input') as HTMLInputElement;
+    expect(input.type).toBe('checkbox');
+    expect(input.checked).toBe(false);
+    input.checked = true;
+    input.dispatchEvent(new Event('change'));
+    await flush();
+    await key(input, 'Enter');
+    expect(api.config.saveKeybindingEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'ctrl+g', textInput: true }),
+      { source: 'ctrl+g', when: null, focus: null },
+    );
+  });
+
+  test('a row changed has a Save button, enabled when nothing stands in the way', async () => {
+    const { row, pick, button, api } = await mountPanel({
+      check: (draft) => (draft.when === 'log' ? { key: 'taken' } : {}),
+    });
+    const tr = row('ctrl+g').tr;
+    const select = tr.querySelector('select.when') as HTMLSelectElement;
+    const save = button(tr, 'Save')!;
+    expect(save.hidden).toBe(true);
+    await pick(select, 'log');
+    expect(save.hidden).toBe(false);
+    expect(save.disabled).toBe(true);
+    await pick(select, 'trash');
+    expect(save.disabled).toBe(false);
+    save.click();
+    await flush();
+    expect(api.config.saveKeybindingEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'ctrl+g', when: 'trash' }),
+      { source: 'ctrl+g', when: null, focus: null },
+    );
+    // Back to what the file says, there is nothing to save.
+    await pick(select, '');
+    expect(save.hidden).toBe(true);
+  });
+
+  test('when offers the panel types and what the file names, nothing else', async () => {
+    const { choice, row } = await mountPanel();
+    const offered = (control: HTMLSelectElement) => [...control.options].map((o) => o.value);
+    const expected = ['', 'e2e', 'keybindings', 'log', 'metarecord-list', 'trash'];
+    expect(offered(choice('when'))).toEqual(expected);
+    const inRow = row('ctrl+shift+a').tr.querySelector('select.when') as HTMLSelectElement;
+    // Filled when reached: hundreds of rows, rendered at each key typed in the form.
+    expect(offered(inRow)).toEqual(['', 'metarecord-list']);
+    expect(inRow.value).toBe('metarecord-list');
+    inRow.dispatchEvent(new Event('focus'));
+    expect(offered(inRow)).toEqual(expected);
+    expect(inRow.value).toBe('metarecord-list');
+  });
+
+  test('focus offers the named fields and what the file names, nothing else', async () => {
+    const { choice } = await mountPanel({
+      view: { entries: [line('ctrl+o', 'find:open', { focus: 'mine' })] },
+    });
+    expect([...choice('focus').options].map((o) => o.value)).toEqual([
+      '',
+      'find',
+      'finder',
+      'hints',
+      'mine',
+      'search',
+    ]);
+  });
+
+  test('every text field named in the shipped code is offered as a focus', async () => {
+    const { choice } = await mountPanel();
+    const offered = [...choice('focus').options].map((o) => o.value);
+    const panels = resolve(PANEL_DIR, '..');
+    const sources = [
+      resolve(process.cwd(), 'src/components/FindBar.svelte'),
+      ...readdirSync(panels).flatMap((type) =>
+        readdirSync(resolve(panels, type))
+          .filter((name) => /\.(js|html)$/.test(name))
+          .map((name) => resolve(panels, type, name)),
+      ),
+    ];
+    const named = sources.flatMap((path) =>
+      [...readFileSync(path, 'utf8').matchAll(/(?:data-mf-focus=|dataset\.mfFocus = )["']([\w-]+)["']/g)].map(
+        (match) => match[1],
+      ),
+    );
+    expect(named.length).toBeGreaterThan(0);
+    for (const name of named) expect(offered).toContain(name);
+  });
+
+  test('target is only offered to a command holding {target}, and is then required', async () => {
+    const { choice, typeIn, row, rows } = await mountPanel();
+    const target = choice('target');
+    expect(target.disabled).toBe(true);
+    await typeIn('command', 'panel:open {target} log');
+    expect(target.disabled).toBe(false);
+    expect([...target.options].map((o) => o.value)).toEqual(['here', 'other', 'new']);
+    expect(target.value).toBe('here');
+    await typeIn('command', 'workspace:new');
+    expect(target.disabled).toBe(true);
+    expect(target.value).toBe('');
+
+    const select = (tr: Element) => tr.querySelector('select.target') as HTMLSelectElement;
+    await typeIn('command', '');
+    expect(select(row('ctrl+g').tr).disabled).toBe(true);
+    const template = select(row('{panels} l').tr);
+    expect(template.disabled).toBe(false);
+    expect(template.value).toBe('here');
+    expect([...template.options].map((o) => o.value)).toEqual(['here', 'other', 'new']);
+    const unbound = rows().find((r) => r.text.includes('reconcile:run'))!;
+    expect(select(unbound.tr).disabled).toBe(true);
   });
 
   test('a suggested key keeps all its fields read-only', async () => {
     const { row } = await mountPanel();
-    for (const name of ['source', 'when', 'focus', 'target']) {
-      const input = row('ctrl+alt+y').tr.querySelector(`input.${name}`) as HTMLInputElement;
-      expect(input.readOnly).toBe(true);
+    const tr = row('ctrl+alt+y').tr;
+    expect((tr.querySelector('input.source') as HTMLInputElement).readOnly).toBe(true);
+    for (const selector of ['select.when', 'select.focus', 'select.target', 'input.text-input']) {
+      expect((tr.querySelector(selector) as HTMLSelectElement).disabled).toBe(true);
     }
   });
 

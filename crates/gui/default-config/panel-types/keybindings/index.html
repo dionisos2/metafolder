@@ -22,7 +22,8 @@
       }
       code,
       kbd,
-      input:not([type]) {
+      input:not([type]),
+      select {
         font-family: var(--mf-font-mono, monospace);
       }
       button {
@@ -38,13 +39,24 @@
         opacity: 0.5;
         cursor: default;
       }
-      input:not([type]) {
+      input:not([type]),
+      select {
         background: var(--mf-bg, #1e1e24);
         color: var(--mf-fg, #d8d8e0);
         border: 1px solid var(--mf-fg-dim, #8a8a96);
         border-radius: 3px;
         padding: 2px 6px;
         min-width: 0;
+      }
+      /* Styled, a drop-down loses its arrow and reads as a text field. */
+      select {
+        appearance: none;
+        padding-right: 16px;
+        background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+          linear-gradient(135deg, currentColor 50%, transparent 50%);
+        background-position: right 9px center, right 5px center;
+        background-size: 4px 4px;
+        background-repeat: no-repeat;
       }
       input.invalid {
         border-color: var(--mf-error, #c44c56);
@@ -111,20 +123,23 @@
       td.source input {
         width: calc(var(--source-chars, 16) * 1ch + 16px);
       }
-      td.when input {
-        width: calc(var(--when-chars, 8) * 1ch + 16px);
+      /* 32px: padding, border and the arrow. */
+      td.when select {
+        width: calc(var(--when-chars, 8) * 1ch + 32px);
       }
-      td.focus input {
-        width: calc(var(--focus-chars, 8) * 1ch + 16px);
+      td.focus select {
+        width: calc(var(--focus-chars, 8) * 1ch + 32px);
       }
-      td.target input {
-        width: calc(var(--target-chars, 8) * 1ch + 16px);
-      }
-      td input {
+      td input,
+      td select {
         box-sizing: border-box;
       }
-      td input[readonly] {
+      td input[readonly],
+      td select:disabled {
         border-color: transparent;
+      }
+      td select:disabled {
+        opacity: 0.5;
       }
       .keys span {
         white-space: nowrap;
@@ -164,9 +179,9 @@
     <div id="form" data-help-topic="keybinding-editor">
       <input id="source" placeholder="key ({go} l, ctrl+k)" title="the key as the file writes it: {name} is a variable" autocomplete="off" />
       <input id="command" placeholder="command" list="command-list" autocomplete="off" />
-      <input id="when" placeholder="when (empty = global)" title="the panel type it applies in; empty = everywhere" list="when-list" autocomplete="off" />
-      <input id="focus" placeholder="focus (empty = none)" title="the text field it applies in (@name); empty = none" list="focus-list" autocomplete="off" />
-      <input id="target" placeholder="target" title="for a command holding {target}: where its key aims, the variants i / b / n aim the others" list="target-list" autocomplete="off" />
+      <select id="when" title="the panel type it applies in"></select>
+      <select id="focus" title="the text field it applies in"></select>
+      <select id="target" title="for a command holding {target}: where its key aims, the variants i / b / n aim the others"></select>
       <label><input id="text-input" type="checkbox" /> text-input</label>
       <span>
         <button id="save" disabled>Save</button>
@@ -174,13 +189,6 @@
       </span>
     </div>
     <datalist id="command-list"></datalist>
-    <datalist id="when-list"></datalist>
-    <datalist id="focus-list"></datalist>
-    <datalist id="target-list">
-      <option value="here"></option>
-      <option value="other"></option>
-      <option value="new"></option>
-    </datalist>
     <div id="checks">
       <p id="key-check"></p>
       <p id="command-check"></p>

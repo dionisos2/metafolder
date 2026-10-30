@@ -50,7 +50,7 @@ field. Three settings change that:
 |!Setting |!Effect |
 |`when = "<panel type>"` |only while a panel of that type has the focus — which is what lets `Enter` open a row in the list and restore an entry in the trash, a different command in each |
 |`text-input = true` |also while typing in a text field. Without it the key is left to the field: a binding on `n` must not fire in the middle of a word |
-|`focus = "<name>"` |only while one particular text field has the focus, and then ''even though'' it is a text field. Two fields have a name: `find`, the find bar ([[Find in a panel]]), and `finder`, the finder of `metarecord-list` |
+|`focus = "<name>"` |only while one particular text field has the focus, and then ''even though'' it is a text field. Four fields have a name: `find`, the find bar ([[Find in a panel]]), `finder`, the finder of `metarecord-list`, and `search` and `hints`, the search box and the link hints of the help |
 
 `when` may be combined with either of the other two. A text field is anything typed
 or chosen in: an input, a text area, a drop-down list — whose arrow keys must keep

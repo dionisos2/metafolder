@@ -1,7 +1,7 @@
 title: keybindings panel
 tags: Panel [[Panel types]] [[Customising the GUI]] Keybindings
 kind: reference
-summary: The editor of keybindings.toml: one row per line of the file, its key, when, focus and target edited in place beside the keys it binds, the commands no key runs, and a filter by class.
+summary: The editor of keybindings.toml: one row per line of the file, its key, when, focus, target and text-input edited in place beside the keys it binds, the commands no key runs, and a filter by class.
 
 Open it with `panel:open here keybindings` (<<key "panel:open here keybindings" "t k k">>).
 It edits `gui/keybindings.toml` ([[Changing keybindings]]) — what used to be the lower
@@ -19,10 +19,10 @@ writes it —, in the order of the file, then the keys suggested by a panel or b
 `commands.js`, then the commands no key runs. Each row shows:
 
 * its [[class|Command classes]], `?` when `command-classes.toml` gives it none;
-* its key ''as written'', variables left in (`{go} l`), and its `when`, `focus` and `target` — fields: what is typed there is checked as it is typed, ''Enter'' in any of them saves the line as they say, ''Escape'' gives the old values back;
+* its key ''as written'', variables left in (`{go} l`), and its `when`, `focus` and `target` — drop-downs — and `text-input` — the checkbox `⌨` ([[Keybindings]]): a change is checked as it is made, ''Enter'' in any of them or the row's ''Save'', which a changed row shows, saves the line as they say, ''Escape'' gives the old values back;
 * the keys it really binds, variables replaced: a `{target}` template binds four (`t l`, `i t l`, `b t l`, `n t l`), less the ones a literal line of the file overrides ([[Keybinding variables]]); each one says, on hover, what it runs;
 * the command as written, `{target}` left in, and its description;
-* `⌨` when it also applies while typing ([[Keybindings]]), and ''suggested'' for a key that is not in the file. A suggested key cannot be moved and has no ''Remove''; its fields are read-only.
+* ''suggested'' for a key that is not in the file. A suggested key cannot be moved and has no ''Remove''; its fields are read-only.
 
 A line saved in place stays where it is in the file when it keeps its key and its
 scope; else the old line goes and the new one is written at the end. ''Remove'' removes
@@ -48,8 +48,13 @@ and searches the list:
 * the ''key'' typed keeps the lines binding a key it starts: `g` keeps those of `g g` and `g t`, `ctrl` every ctrl chord, and `shift+ctrl+a` finds `ctrl+shift+a`; typed with a `{`, it keeps the lines written with it — `{go` the domain's;
 * the ''command'' typed keeps the lines whose command contains it, below those of the key, and the commands with no key it names. The field completes over every command, and the line under the form names the command it reads, with its description.
 
-`target` is for a command holding
-`{target}`: where its own key aims (`here`, `other`, `new`).
+The drop-downs offer only what the file can hold:
+
+* `when`: everywhere, or a panel type;
+* `focus`: none, or a text field with a name. The shipped ones are listed; a field named by a panel of yours is offered once a line of the file uses it, so its first line is written in the file;
+* `target`: `here`, `other` or `new` for a command holding `{target}`, where its own key aims. Any other command has none, and the drop-down is disabled.
+
+A value the file names that nothing else knows of — a panel type no longer there — is offered too, so that its line can still be shown as it is.
 
 As the form is typed, the panel asks the GUI what a save would refuse, and says it
 under the form: a command that does not exist, an unknown variable, a key already

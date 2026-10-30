@@ -18,7 +18,7 @@ and the commands no key runs, which the class buttons narrow ([[Command classes]
 * ''Look up'' a key or a command: type it in the form. The list narrows to the lines binding a key it starts and to the lines of that command, so whether a key is free shows before anything is saved.
 * ''Bind'' a command with no key: type the key in its row's empty field and press Enter.
 * ''Add'': fill in the form — key, command, and optionally `when`, `focus`, `target` and `text-input` — and press ''Save'' (or Enter). The key may name variables: `{go} x`.
-* ''Change'': type the new key, `when`, `focus` or `target` in the row's own fields and press Enter. To change its command, ''Remove'' the row and write the line again in the form. Moving a command to another key is one save; moving a `{target}` template moves its four keys.
+* ''Change'': type the new key, choose `when`, `focus` or `target`, or tick `⌨` (`text-input`) in the row's own fields, and press Enter or the row's ''Save''. To change its command, ''Remove'' the row and write the line again in the form. Moving a command to another key is one save; moving a `{target}` template moves its four keys.
 * ''Unbind'': ''Remove'' on the row removes the line, every key it binds.
 * ''Move a domain or a verb'': give its variable a new value in the list of variables; every key built on it follows.
 

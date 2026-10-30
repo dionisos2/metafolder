@@ -1173,6 +1173,25 @@ scenario_keybindings() {
     keys Return
     assert "keybindings: Enter writes the binding" \
         until_ok 10 grep -qx '"ctrl+alt+u" = { command = "status:clear" }' "$file"
+    # A row's checkbox: Save appears once changed, and writes it.
+    if needs_clicks keybindings; then
+        assert "keybindings: a row's text-input checkbox changes" \
+            until_ok 10 click '#bindings tr' ctrl+alt+u input.text-input
+        assert "keybindings: a changed row has a Save" \
+            until_ok 10 click '#bindings tr' ctrl+alt+u button Save
+        assert "keybindings: Save writes the row" \
+            until_ok 10 grep -q '^"ctrl+alt+u" = .*text-input = true' "$file"
+        # A row's drop-down, by the keyboard: the form narrowed to the row, tab
+        # goes through the form to the row's key, then its `when`.
+        run keybindings:focus key
+        typed "ctrl+alt+u"
+        keys Tab Tab Tab Tab Tab Tab Tab
+        typed "log"
+        keys Return
+        assert "keybindings: a row's when is chosen by the keyboard" \
+            until_ok 10 grep -q '^"ctrl+alt+u" = .*when = "log"' "$file"
+        assert "keybindings: Clear empties the form" until_ok 10 click '#clear'
+    fi
     # The form is empty again, the focus back on the key field. A key bound
     # in the same place is refused — "!" opens the command input — and so is
     # a command nobody registered: nothing is written.
