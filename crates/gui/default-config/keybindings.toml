@@ -66,11 +66,12 @@ vars.index = "i"
 
 # ── Everywhere ───────────────────────────────────────────────────────────────
 
-# The command input (doc "The command input"): `x`, shift+x for a bash line.
-# `:` and `!` are the same, for whoever has them without shift.
+# The command input (doc "The command input"): `x`, shift+x to start from an
+# empty line; `:` is the same as `x`, for whoever has it without shift, and `!`
+# a bash line.
 "x" = { command = "command-input:focus command" }
 ":" = { command = "command-input:focus command" }
-"shift+x" = { command = "command-input:focus bash" }
+"shift+x" = { command = "command-input:focus command clear" }
 "!" = { command = "command-input:focus bash" }
 
 # The other panel; F6 walks the panels and a script's question (doc "Script
@@ -312,7 +313,7 @@ vars.index = "i"
 ]
 "shift+f" = [
   { command = "cursor:find self walk" },
-  { command = "metarecord-list:clear finder", when = "metarecord-list" },
+  { command = "metarecord-list:focus finder clear", when = "metarecord-list" },
 ]
 
 # Space toggles in place: check a row, play or pause.
@@ -357,12 +358,12 @@ vars.index = "i"
   { command = "keybindings-variables:focus filter", when = "keybindings-variables" },
 ]
 "{panel} shift+{edit}" = [
-  { command = "metarecord-list:clear simplified", when = "metarecord-list" },
-  { command = "help:clear search", when = "help" },
+  { command = "metarecord-list:focus simplified clear", when = "metarecord-list" },
+  { command = "help:focus search clear", when = "help" },
 ]
 "{panel} {query-verb}" = { command = "metarecord-list:focus normal", when = "metarecord-list" }
-"{panel} shift+{query-verb}" = { command = "metarecord-list:clear normal", when = "metarecord-list" }
-"{panel} {unset}" = { command = "metarecord-list:clear all", when = "metarecord-list" }
+"{panel} shift+{query-verb}" = { command = "metarecord-list:focus normal clear", when = "metarecord-list" }
+"{panel} {unset}" = { command = "metarecord-list:clear-all", when = "metarecord-list" }
 "{panel} {open}" = [
   { command = "help:open-hints", when = "help" },
   { command = "sync:plan", when = "sync" },

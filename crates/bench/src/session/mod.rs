@@ -374,7 +374,7 @@ impl Session {
 
 /// The list's search zones run their query on `apply`.
 async fn list_search(s: &Session, zone: &str, text: &str) -> Result<()> {
-    s.command(&format!("metarecord-list:clear {zone}"), None).await?;
+    s.command(&format!("metarecord-list:focus {zone} clear"), None).await?;
     // Quoted: an unquoted text is split into words, its last one taken for the
     // `stay` modifier.
     let quoted = format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""));
@@ -448,7 +448,7 @@ async fn run_step(id: &str, s: &mut Session, quiet: Duration) -> Result<Option<I
             drawn(s, quiet).await
         }
         "list.clear" => {
-            s.command("metarecord-list:clear all", None).await?;
+            s.command("metarecord-list:clear-all", None).await?;
             drawn(s, quiet).await
         }
         "detail.open" => {

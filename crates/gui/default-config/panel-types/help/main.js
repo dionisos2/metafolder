@@ -299,21 +299,18 @@ export async function mount(root, metafolder) {
       if (stay !== 'stay' && root.activeElement === searchInput) searchInput.blur();
     },
   });
-  void metafolder.commands.register('help:clear', {
-    label: 'Help: empty the search box and focus it (stay: leave the focus)',
-    args: [zoneArg, stayArg],
-    handler: (_mf, /** @type {string} */ name, /** @type {string|undefined} */ stay) => {
-      checkZone(name);
-      searchInput.value = '';
-      runSearch('');
-      if (stay !== 'stay') searchInput.focus();
-    },
-  });
   void metafolder.commands.register('help:focus', {
-    label: 'Help: focus the search box',
-    args: [zoneArg],
-    handler: (_mf, /** @type {string} */ name) => {
+    label: 'Help: focus the search box (clear: empty it first)',
+    args: [zoneArg, { name: 'clear', optional: true, prompt: () => 'Empty it first? (clear)' }],
+    handler: (_mf, /** @type {string} */ name, /** @type {string|undefined} */ modifier) => {
       checkZone(name);
+      if (modifier !== undefined && modifier !== 'clear') {
+        throw new Error(`unknown modifier: "${modifier}" (expected clear)`);
+      }
+      if (modifier === 'clear') {
+        searchInput.value = '';
+        runSearch('');
+      }
       searchInput.focus();
     },
   });

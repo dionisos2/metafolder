@@ -1696,6 +1696,12 @@ vars.y = ","
         assert!(table
             .iter()
             .any(|b| b.keys == ["x"] && b.invocation == "command-input:focus command"));
+        assert!(table
+            .iter()
+            .any(|b| b.keys == ["shift+x"] && b.invocation == "command-input:focus command clear"));
+        assert!(table
+            .iter()
+            .any(|b| b.keys == ["!"] && b.invocation == "command-input:focus bash"));
         assert!(table.iter().any(|b| b.keys == ["v", "x"] && b.invocation == "panel:swap"));
 
         // Moving a cursor is one generic command for every panel (doc "Generic

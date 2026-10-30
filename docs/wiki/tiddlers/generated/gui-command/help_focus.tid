@@ -1,7 +1,7 @@
 title: $:/mf/gen/GUI command/help:focus
 catalog: GUI command
 target: help:focus
-summary: Help: focus the search box
+summary: Help: focus the search box (clear: empty it first)
 
 !! Reference
 
@@ -10,3 +10,4 @@ summary: Help: focus the search box
 !! Default keys
 
 * ``p e`` → ``help:focus search`` (in the ``help`` panel)
+* ``p shift+e`` → ``help:focus search clear`` (in the ``help`` panel)

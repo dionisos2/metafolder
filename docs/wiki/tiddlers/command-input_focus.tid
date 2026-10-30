@@ -3,4 +3,4 @@ tags: [[GUI command]] Commands
 kind: reference
 summary: Focus the command input (command / bash mode)
 
-Gives the keyboard to the command input, in the mode named: `command` for a command name, `bash` for a shell line. Each mode keeps its own draft per workspace, and the one of the mode entered comes back. While a question is on the line — a script's, or a command asking for an argument — the mode does not change: the question keeps the line. See [[The command input]] and [[Bash mode]].
+Gives the keyboard to the command input, in the mode named: `command` for a command name, `bash` for a shell line. Each mode keeps its own draft per workspace, and the one of the mode entered comes back; with `clear` (<<key "command-input:focus command clear" "Shift+x">>) it is emptied, the other mode's left alone. While a question is on the line — a script's, or a command asking for an argument — neither the mode nor the text changes: the question keeps the line. See [[The command input]] and [[Bash mode]].

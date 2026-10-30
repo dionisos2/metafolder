@@ -26,7 +26,10 @@ const gui = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.ur
 
 export default defineConfig({
   plugins: [svelte()],
-  resolve: { alias: shimAlias },
+  // `browser`: under vitest, svelte would otherwise resolve to its server build,
+  // which cannot mount a component. Only there: setting `conditions` replaces
+  // the defaults, and an empty list makes the shipped bundle a server one too.
+  resolve: { alias: shimAlias, ...(process.env.VITEST ? { conditions: ['browser'] } : {}) },
   clearScreen: false,
   // The shared key matcher lives outside the Vite root (panel-shim/ is
   // also served to panel iframes by the Rust server).

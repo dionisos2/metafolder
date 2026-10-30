@@ -4,3 +4,5 @@ kind: reference
 summary: Metarecord list: focus a zone
 
 Puts the focus in a field of the [[metarecord-list panel]]: `finder`, `simplified`, `normal` or `columns`. The other fields are left as they are: the simplified query and the normal DSL are AND-ed, so both always run.
+
+With `clear` the field is emptied first. Clearing the finder widens the list at once; clearing `simplified` or `normal` runs nothing until applied.

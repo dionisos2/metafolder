@@ -13,7 +13,7 @@ says what it runs ([[In-app help]]).
 !! A key alone
 
 |!Key |!Does |
-|<<key "command-input:focus command" "x">> (or `:`), <<key "command-input:focus bash" "Shift+x">> (or `!`) |the command input, for a command or a bash line ([[The command input]]) |
+|<<key "command-input:focus command" "x">> (or `:`), <<key "command-input:focus command clear" "Shift+x">> from an empty line, <<key "command-input:focus bash" "!">> |the command input, for a command or a bash line ([[The command input]]) |
 |<<key "panel:focus next" "o">> |the other panel |
 |<<key "panel:focus cycle" "F6">> |the left panel, the right one, then a script's question ([[Script sessions]]) |
 |<<key "cursor:find self select" "f">> (or `/`), <<key "cursor:find self walk" "Shift+f">> |jump to a row by its name, or walk down into it ([[Jumping to an entry]]); in the list, its finder |

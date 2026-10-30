@@ -49,7 +49,7 @@ the focus, and for the text field being typed in, if any. A key that is bound, b
 not here, says so:
 
 ```
-s is not bound to any command here (elsewhere: metarecord-list:clear simplified in metarecord-list, path-ref:toggle-scope in path-ref)
+s is not bound to any command here (elsewhere: metarecord-list:focus simplified clear in metarecord-list, path-ref:toggle-scope in path-ref)
 ```
 
 A sequence is followed to its end, its continuations listed above the status bar as

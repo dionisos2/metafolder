@@ -29,8 +29,8 @@ keep a history, recorded when you apply and not at each debounced run
 
 |!Key |!Does |
 |<<key "metarecord-list:focus finder" "/">>, <<key "metarecord-list:focus simplified" "p e">>, <<key "metarecord-list:focus normal" "p q">> |edit the finder, the simplified query, the normal DSL, keeping what it holds |
-|<<key "metarecord-list:clear finder" "Shift+f">>, <<key "metarecord-list:clear simplified" "p Shift+e">>, <<key "metarecord-list:clear normal" "p Shift+q">> |empty it first |
-|<<key "metarecord-list:clear all" "p u">> |empty the three and list everything |
+|<<key "metarecord-list:focus finder clear" "Shift+f">>, <<key "metarecord-list:focus simplified clear" "p Shift+e">>, <<key "metarecord-list:focus normal clear" "p Shift+q">> |empty it first |
+|<<key "metarecord-list:clear-all" "p u">> |empty the three and list everything |
 
 Going to one field, or clearing it, leaves the other as it is: both are always part
 of the query.

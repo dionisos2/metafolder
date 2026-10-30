@@ -1,10 +1,10 @@
-// The list's text zones, driven by four commands — `focus`, `clear`,
-// `apply`, `insert` — each taking the zone as its first argument, rather
-// than one command per (verb, zone) pair (doc "metarecord-list panel"). What
+// The list's text zones, driven by three commands — `focus`, `apply`, `insert`
+// — each taking the zone as its first argument, rather than one command per
+// (verb, zone) pair (doc "metarecord-list panel"). What
 // they need from the panel arrives through `ctx`:
 //   root       -> the panel's Shadow root (whose focus `apply` gives up)
 //   zones      -> the zone table: a new zone costs one entry, not four commands
-//   clearAll(mf) -> `clear all`: reset every search field and re-run
+//   clearAll(mf) -> `clear-all`: reset every search field and re-run
 // Each zone function takes first the API of the command's run (doc "Command
 // transactions").
 
@@ -31,32 +31,31 @@ export function registerZoneCommands({ commands, root, zones: ZONES, clearAll })
     return found;
   }
 
-  /** @param {string} verb @param {string[]} [extra] */
-  const zoneArg = (verb, extra = []) => ({
+  /** @param {string} verb */
+  const zoneArg = (verb) => ({
     name: 'zone',
-    prompt: () => `Which zone to ${verb}? (${[...ZONE_NAMES, ...extra].join(' / ')})`,
-    complete: () => [...ZONE_NAMES, ...extra],
+    prompt: () => `Which zone to ${verb}? (${ZONE_NAMES.join(' / ')})`,
+    complete: () => ZONE_NAMES,
   });
 
   void commands.register('metarecord-list:focus', {
     label: `Metarecord list: focus a zone (${ZONE_NAMES.join(' / ')})`,
-    args: [zoneArg('focus')],
-    handler: async (_mf, name) => {
-      zone(name).input.focus();
+    args: [zoneArg('focus'), { name: 'clear', optional: true, prompt: () => 'Empty it first? (clear)' }],
+    handler: async (mf, name, modifier) => {
+      const z = zone(name);
+      if (modifier !== undefined && modifier !== 'clear') {
+        throw new Error(`unknown modifier: "${modifier}" (expected clear)`);
+      }
+      if (modifier === 'clear') await z.clear?.(mf);
+      z.input.focus();
     },
   });
 
-  void commands.register('metarecord-list:clear', {
-    label: `Metarecord list: clear a zone (${ZONE_NAMES.join(' / ')} / all)`,
-    args: [zoneArg('clear', ['all'])],
-    handler: async (mf, name) => {
-      // `all` resets the three search fields at once and re-runs; an empty
-      // query matches everything, so it goes back to the whole repository.
-      if (name === 'all') return clearAll(mf);
-      const z = zone(name);
-      await z.clear?.(mf);
-      z.input.focus();
-    },
+  // Resets the three search fields at once and re-runs; an empty query matches
+  // everything, so it goes back to the whole repository. No zone takes the focus.
+  void commands.register('metarecord-list:clear-all', {
+    label: 'Metarecord list: empty the search fields and list everything',
+    handler: (mf) => clearAll(mf),
   });
 
   void commands.register('metarecord-list:apply', {

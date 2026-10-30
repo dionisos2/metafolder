@@ -1,0 +1,6 @@
+title: metarecord-list:clear-all
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Metarecord list: empty the search fields and list everything
+
+Empties the finder and both queries of the [[metarecord-list panel]] and lists everything. No field takes the focus; to empty one and go into it: [[metarecord-list:focus]] with `clear`.

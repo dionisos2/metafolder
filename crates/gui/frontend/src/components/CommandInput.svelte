@@ -136,7 +136,7 @@
   });
 
   /** command-input:focus command / command-input:focus bash: focus the always-visible
-   *  input in the given mode, swapping the per-mode drafts. */
+   *  input in the given mode, swapping the per-mode drafts, and empty it if asked. */
   function activate(target: 'command' | 'bash') {
     // A prompt on screen owns the line: `!` cannot take it away, and the
     // pre-filled answer it is holding is not a workspace draft to swap out.
@@ -147,6 +147,14 @@
       bashCandidates = [];
       selectedIndex = 0;
     }
+    // A question keeps its answer, as it keeps the mode.
+    if (store.ui.commandInputClear && promptText === null) {
+      draft = '';
+      if (currentWs !== null) draftsOf(mode)[currentWs] = '';
+      bashCandidates = [];
+      selectedIndex = 0;
+    }
+    store.ui.commandInputClear = false;
     element?.focus();
     setCursorSoon(draft.length);
   }

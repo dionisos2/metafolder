@@ -1,6 +1,0 @@
-title: help:clear
-tags: [[GUI command]]
-kind: reference
-summary: Help: empty the search box and focus it (stay: leave the focus)
-
-`help:clear search [stay]` — empties the search box of the [[help panel]], which then lists every page. Without `stay` (<<key "help:clear search" "p Shift+e">>) the box takes the focus, ready for a new search; with it (`help:clear search stay`, no key) the focus stays where it was.

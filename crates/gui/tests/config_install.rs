@@ -262,12 +262,12 @@ fn test_search_field_editing_keybindings() {
     // `u` empty all three. The finder is `f` (and `/`), shift+f empties it.
     assert_eq!(mlist(&["f"]).as_deref(), Some("metarecord-list:focus finder"));
     assert_eq!(mlist(&["/"]).as_deref(), Some("metarecord-list:focus finder"));
-    assert_eq!(mlist(&["shift+f"]).as_deref(), Some("metarecord-list:clear finder"));
+    assert_eq!(mlist(&["shift+f"]).as_deref(), Some("metarecord-list:focus finder clear"));
     assert_eq!(mlist(&["p", "e"]).as_deref(), Some("metarecord-list:focus simplified"));
-    assert_eq!(mlist(&["p", "shift+e"]).as_deref(), Some("metarecord-list:clear simplified"));
+    assert_eq!(mlist(&["p", "shift+e"]).as_deref(), Some("metarecord-list:focus simplified clear"));
     assert_eq!(mlist(&["p", "q"]).as_deref(), Some("metarecord-list:focus normal"));
-    assert_eq!(mlist(&["p", "shift+q"]).as_deref(), Some("metarecord-list:clear normal"));
-    assert_eq!(mlist(&["p", "u"]).as_deref(), Some("metarecord-list:clear all"));
+    assert_eq!(mlist(&["p", "shift+q"]).as_deref(), Some("metarecord-list:focus normal clear"));
+    assert_eq!(mlist(&["p", "u"]).as_deref(), Some("metarecord-list:clear-all"));
     // No single letter of the list is a field operation any more.
     for letter in ["s", "q", "c"] {
         assert!(find(&[letter]).is_empty(), "{letter}: {:?}", find(&[letter]));

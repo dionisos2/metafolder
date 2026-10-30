@@ -11,5 +11,5 @@ summary: Focus the command input (command / bash mode)
 
 * ``!`` → ``command-input:focus bash``
 * ``:`` → ``command-input:focus command``
-* ``shift+x`` → ``command-input:focus bash``
+* ``shift+x`` → ``command-input:focus command clear``
 * ``x`` → ``command-input:focus command``

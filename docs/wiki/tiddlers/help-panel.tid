@@ -26,8 +26,7 @@ The box behaves like the query fields of the [[metarecord-list panel]]:
 
 |<<key "help:apply search" Enter>> |search, and leave the box: the panel's keys work again |
 |<<key "help:apply search stay" Shift+Enter>> |search, and stay in the box |
-|<<key "help:clear search" "p Shift+e">> |empty the box, to type a new search |
-|<<key "help:clear search" "p Shift+e">> |empty the box and go into it |
+|<<key "help:focus search clear" "p Shift+e">> |empty the box and go into it, to type a new search |
 |<<key "help:focus search" "p e">> |go into the box, its text kept |
 |<<key "help:back" Backspace>> |back to the page shown before, as in a browser, scrolled where it was left (a page newly opened starts at its top); a search is not a step: back from one is the page it was typed over |
 |<<key "help:forward" Shift+Backspace>> |forward again, after going back |

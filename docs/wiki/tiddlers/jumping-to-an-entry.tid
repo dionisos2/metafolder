@@ -49,5 +49,5 @@ elsewhere the key passes through. Another panel gains the mode the day it
 provides `descend`.
 
 `metarecord-list` provides no entries. Its rows come from a query, not from a list
-already loaded, so the same key (<<key "metarecord-list:clear finder" "Shift+f">>) edits its
+already loaded, so the same key (<<key "metarecord-list:focus finder clear" "Shift+f">>) edits its
 finder: the same question, asked of the daemon.

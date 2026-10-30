@@ -42,7 +42,7 @@ the rest, through the command's own questions.
 Grouped by what they touch, which is what a name must make obvious:
 
 |!Touches |!Verbs |
-|a text zone |`focus <zone>`, `clear <zone>`, `apply <zone> [stay]`, `insert <zone> <text> [stay]` |
+|a text zone |`focus <zone> [clear]`, `apply <zone> [stay]`, `insert <zone> <text> [stay]` |
 |a form, an overlay, a panel |`open [what]`, `open-X` (a form of this panel), `close`, `cancel`, `reveal <type>` |
 |a view flag |`toggle <flag>`, `toggle-X` (the panel's one flag) |
 |a macro ([[Macros]]) |`toggle-recording`, `ask`, `run`, `save <name>` |
@@ -72,17 +72,19 @@ name, joined by a hyphen: `macro:toggle-recording`, not `macro:toggle recording`
 argument with a single value would be asked for when left out — a question with one
 answer — and, without a key bound to show it, `macro:toggle` in the command list
 would not say what it toggles. So `metarecord:toggle-force`, `path-ref:toggle-scope`,
-`recent:set-sort <time/score>`, `daemon:set-url <url>`, `editing:clear-line-end`,
+`recent:set-sort <time/score>`, `daemon:set-url <url>`, `editing:clear-line-end`, `metarecord-list:clear-all`,
 `metarecord-list:page-next`: the value that follows is still an argument when there is
 a choice to make. Where one panel has several flags (`file-manager:toggle <flag>`), the
 flag stays an argument.
 
 Two families keep a single-valued argument, on purpose:
 
-* The text zones — `focus <zone>`, `clear <zone>`, `apply <zone> [stay]` — are one form across the panels, so a key does the same thing everywhere: `help:focus search` and `shell:focus line`, beside `metarecord-list:focus finder`.
+* The text zones — `focus <zone> [clear]`, `apply <zone> [stay]` — are one form across the panels, so a key does the same thing everywhere: `help:focus search` and `shell:focus line`, beside `metarecord-list:focus finder`.
 * An `mf:` command takes the CLI's words: `mf:duplicate scan` is `mf duplicate scan`.
 
 An optional argument with one value (`metarecord:reconcile [watch]`, `[stay]`) is a choice between giving it and not, and stays an argument.
+
+Emptying a zone is a modifier of `focus` and not a verb of its own, because it gives the zone the focus: `metarecord-list:focus finder clear`, `command-input:focus command clear`. `clear` stays a verb for what takes no focus: `shell:clear`, `clipboard:clear`, `metarecord-list:clear-all`.
 
 !! Two forms kept on purpose
 

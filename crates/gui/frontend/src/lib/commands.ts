@@ -1575,6 +1575,11 @@ registerArgs("command-input:focus", [
     prompt: () => "Which mode? (command / bash)",
     complete: () => ["command", "bash"],
   },
+  {
+    name: "clear",
+    optional: true,
+    prompt: () => "Empty the line first? (clear)",
+  },
 ]);
 
 registerArgs("editing:goto", [
@@ -2491,6 +2496,11 @@ async function runCommand(
       // One widget, two modes: command (`:`) and bash (`!`, the line runs as a
       // shell command). It is always visible, so focusing is all there is to
       // do. Default to the command mode when nothing is named.
+      if (args[1] !== undefined && args[1] !== "clear") {
+        await status(`unknown modifier: "${args[1]}" (expected clear)`);
+        return true;
+      }
+      store.ui.commandInputClear = args[1] === "clear";
       if (args[0] === "bash") store.ui.bashInputFocusTick += 1;
       else if (args[0] === undefined || args[0] === "command")
         store.ui.commandInputFocusTick += 1;

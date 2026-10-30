@@ -63,11 +63,20 @@ describe('the zone commands', () => {
     expect(root.activeElement).not.toBe(input);
   });
 
-  test('clear all goes to the panel', async () => {
+  test('clear-all goes to the panel', async () => {
     const { run, clearAll, zone } = setup();
-    await run('metarecord-list:clear', 'all');
+    await run('metarecord-list:clear-all');
     expect(clearAll).toHaveBeenCalled();
     expect(zone.clear).not.toHaveBeenCalled();
+  });
+
+  test('focus only clears when asked, and refuses another modifier', async () => {
+    const { run, zone } = setup();
+    await run('metarecord-list:focus', 'simplified');
+    expect(zone.clear).not.toHaveBeenCalled();
+    await run('metarecord-list:focus', 'simplified', 'clear');
+    expect(zone.clear).toHaveBeenCalled();
+    await expect(run('metarecord-list:focus', 'simplified', 'nope')).rejects.toThrow(/expected clear/);
   });
 
   test('refuses a zone it does not know', async () => {

@@ -59,6 +59,9 @@ export const store = $state({
     /// Bumped on every command-input:focus bash: the same input grabs the focus
     /// in bash mode (`!` prompt, shell line, Tab bash completion).
     bashInputFocusTick: 0,
+    /// Whether the focus asked by these ticks empties the line first
+    /// (`command-input:focus <mode> clear`). The input consumes it.
+    commandInputClear: false,
     /// Immersive mode: only the focused panel shows (chrome hidden, OS
     /// window fullscreen). Toggled by panel:toggle fullscreen, exited with escape.
     fullscreen: false,

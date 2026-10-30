@@ -80,7 +80,8 @@ export function bindingMatches(binding, command) {
 /**
  * The formatted combos bound to any of `commands` (one name, or several
  * separated by commas — a hint that means "in any of these panels"), in table
- * order and deduplicated. Empty when nothing is bound.
+ * order and deduplicated. Empty when nothing is bound. A name bound exactly as
+ * written has those keys only; otherwise it matches as in `bindingMatches`.
  *
  * @param {Binding[]} bindings
  * @param {string} commands
@@ -90,10 +91,17 @@ export function keysFor(bindings, commands) {
     .split(',')
     .map((name) => name.trim())
     .filter(Boolean);
+  // An invocation bound as such stands for itself: `focus finder` is not also
+  // the key of `focus finder clear`.
+  const matches = wanted.map((command) => {
+    const exact = bindings.some((binding) => binding.invocation === command);
+    return (/** @type {{invocation: string}} */ binding) =>
+      exact ? binding.invocation === command : bindingMatches(binding, command);
+  });
   /** @type {string[]} */
   const hints = [];
   for (const binding of bindings) {
-    if (!wanted.some((command) => bindingMatches(binding, command))) continue;
+    if (!matches.some((match) => match(binding))) continue;
     const hint = formatCombo(binding.keys);
     if (!hints.includes(hint)) hints.push(hint);
   }

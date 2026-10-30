@@ -77,7 +77,7 @@ describe('bindingMatches', () => {
 
 describe('keysFor', () => {
   const table = [
-    bind(['f'], 'metarecord-list:clear finder', 'metarecord-list'),
+    bind(['f'], 'metarecord-list:focus finder clear', 'metarecord-list'),
     bind(['f'], 'file-manager:find', 'file-manager'),
     bind(['f'], 'path-ref:find', 'path-ref'),
     bind(['/'], 'metarecord-list:focus finder', 'metarecord-list'),
@@ -87,6 +87,11 @@ describe('keysFor', () => {
 
   test('every combo bound to the command, in table order', () => {
     expect(keysFor(table, 'metarecord-list:focus finder')).toEqual(['/', 'e f']);
+  });
+
+  test('a bare name gathers its invocations; a bound invocation has only its own keys', () => {
+    expect(keysFor(table, 'metarecord-list:focus')).toEqual(['f', '/', 'e f']);
+    expect(keysFor(table, 'metarecord-list:focus finder clear')).toEqual(['f']);
   });
 
   test('several commands are asked at once, their keys deduplicated', () => {

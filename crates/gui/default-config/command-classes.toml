@@ -14,6 +14,7 @@
 # ── Input and editing ────────────────────────────────────────────────────────
 "command-input:focus" = "A"
 "command-input:focus bash" = "B"
+"command-input:focus command clear" = "B"
 "editing:confirm" = "A"
 "editing:unfocus" = "A"
 "editing:discard" = "B"
@@ -52,7 +53,7 @@
 "help:back" = "B"
 "help:forward" = "B"
 "help:focus" = "B"
-"help:clear" = "C"
+"help:focus search clear" = "C"
 "help:open-hints" = "B"
 
 # ── Scripts and macros ───────────────────────────────────────────────────────
@@ -112,9 +113,9 @@
 # ── The metarecord list ──────────────────────────────────────────────────────
 "metarecord-list:focus" = "B"
 "metarecord-list:focus finder" = "A"
-"metarecord-list:clear" = "B"
-"metarecord-list:clear normal" = "C"
-"metarecord-list:clear all" = "C"
+"metarecord-list:focus finder clear" = "B"
+"metarecord-list:focus normal clear" = "C"
+"metarecord-list:clear-all" = "C"
 "metarecord-list:apply" = "A"
 "metarecord-list:select" = "B"
 "metarecord-list:select toggle" = "A"

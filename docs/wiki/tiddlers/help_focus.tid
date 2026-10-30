@@ -1,6 +1,6 @@
 title: help:focus
 tags: [[GUI command]]
 kind: reference
-summary: Help: focus the search box
+summary: Help: focus the search box (clear: empty it first)
 
-`help:focus search` — <<key "help:focus search" "p e">>: gives the search box of the [[help panel]] the focus, its text kept.
+`help:focus search [clear]` — <<key "help:focus search" "p e">>: gives the search box of the [[help panel]] the focus, its text kept. With `clear` (<<key "help:focus search clear" "p Shift+e">>) the box is emptied first, which lists every page again, ready for a new search.

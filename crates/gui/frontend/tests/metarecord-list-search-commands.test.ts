@@ -197,20 +197,20 @@ describe('zone commands', () => {
     p.query.value = 'rating>3';
     p.normal.value = 'rating gt 3';
 
-    await p.invoke('metarecord-list:clear', 'all');
+    await p.invoke('metarecord-list:clear-all');
 
     expect(p.finder.value).toBe('');
     expect(p.query.value).toBe('');
     expect(p.normal.value).toBe('');
   });
 
-  test('clear simplified empties it and its expansion, keeps the normal DSL, and focuses it', async () => {
+  test('focus simplified clear empties it and its expansion, keeps the normal DSL, and focuses it', async () => {
     const p = await mountPanel();
     p.query.value = 'rating>3';
     p.expansion.value = 'rating > 3';
     p.normal.value = 'x = 1';
 
-    await p.invoke('metarecord-list:clear', 'simplified');
+    await p.invoke('metarecord-list:focus', 'simplified', 'clear');
 
     expect(p.query.value).toBe('');
     expect(p.expansion.value).toBe('');
@@ -218,33 +218,33 @@ describe('zone commands', () => {
     expect(p.shadow.activeElement).toBe(p.query);
   });
 
-  test('clear finder empties the finder and focuses it', async () => {
+  test('focus finder clear empties the finder and focuses it', async () => {
     const p = await mountPanel();
     p.finder.value = 'foo';
 
-    await p.invoke('metarecord-list:clear', 'finder');
+    await p.invoke('metarecord-list:focus', 'finder', 'clear');
 
     expect(p.finder.value).toBe('');
     expect(p.shadow.activeElement).toBe(p.finder);
   });
 
-  test('clear normal empties the normal DSL, keeps the simplified query, and focuses it', async () => {
+  test('focus normal clear empties the normal DSL, keeps the simplified query, and focuses it', async () => {
     const p = await mountPanel();
     p.query.value = 'jazz';
     p.normal.value = 'rating gt 3';
 
-    await p.invoke('metarecord-list:clear', 'normal');
+    await p.invoke('metarecord-list:focus', 'normal', 'clear');
 
     expect(p.query.value).toBe('jazz');
     expect(p.normal.value).toBe('');
     expect(p.shadow.activeElement).toBe(p.normal);
   });
 
-  test('clear columns empties the columns field — the zone that had no clear', async () => {
+  test('focus columns clear empties the columns field — the zone that had no clear', async () => {
     const p = await mountPanel();
     p.columns.value = 'name rating';
 
-    await p.invoke('metarecord-list:clear', 'columns');
+    await p.invoke('metarecord-list:focus', 'columns', 'clear');
 
     expect(p.columns.value).toBe('');
     expect(p.shadow.activeElement).toBe(p.columns);

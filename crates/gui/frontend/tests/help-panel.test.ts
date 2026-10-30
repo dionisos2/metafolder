@@ -1,6 +1,6 @@
 // The help panel's keys (doc "help panel"): its search box is a text zone
-// driven like the list's — `help:apply search [stay]`, `help:clear`,
-// `help:focus search` — and `cursor:parent` goes up to the page's topic.
+// driven like the list's — `help:apply search [stay]`,
+// `help:focus search [clear]` — and `cursor:parent` goes up to the page's topic.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -141,21 +141,12 @@ describe('the search box is a text zone', () => {
     expect(input.value).toBe('gui');
   });
 
-  test('clear search empties the box and gives it the focus', async () => {
+  test('focus search clear empties the box and gives it the focus', async () => {
     const { root, input, run } = await mountHelp();
     input.value = 'gui';
-    await run('help:clear', 'search');
+    await run('help:focus', 'search', 'clear');
     expect(input.value).toBe('');
     expect(root.activeElement).toBe(input);
-  });
-
-  test('clear search stay empties the box and leaves the focus where it is', async () => {
-    const { root, input, run } = await mountHelp();
-    input.value = 'gui';
-    input.blur();
-    await run('help:clear', 'search', 'stay');
-    expect(input.value).toBe('');
-    expect(root.activeElement).toBeNull();
   });
 });
 
