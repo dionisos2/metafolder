@@ -1424,6 +1424,19 @@ vars.tags = ","
     }
 
     #[test]
+    fn test_no_shipped_variable_is_built_on_another() {
+        let defaults = include_str!("../default-config/keybindings.toml");
+        let set = KeybindingSet::from_source(defaults).unwrap();
+        let built: Vec<String> = set
+            .variables()
+            .into_iter()
+            .filter(|v| !referenced(&v.value).is_empty())
+            .map(|v| v.name)
+            .collect();
+        assert!(built.is_empty(), "name both variables in the key instead: {built:?}");
+    }
+
+    #[test]
     fn test_an_unknown_or_malformed_variable_is_refused() {
         let error = parse_toml(r#""{nope} a" = { command = "x" }"#).unwrap_err();
         assert!(error.contains("{nope}"), "{error}");

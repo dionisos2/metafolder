@@ -8,12 +8,12 @@ summary: The keys used and left at each level
 |!Letter |!For |
 |``b`` |starts 28 keys (``{target-other}``) |
 |``c`` |starts 4 keys (``{clipboard}``) |
-|``e`` |starts 5 keys (``{item}``, ``{items-long}``, ``{items-query}``) |
+|``e`` |starts 5 keys (``{item}``) |
 |``f`` |``cursor:find self select``; ``metarecord-list:focus finder`` (in ``metarecord-list``) |
 |``g`` |starts 11 keys (``{go}``) |
 |``h`` |starts 4 keys (``{help}``) |
 |``i`` |starts 28 keys (``{target-here}``) |
-|``m`` |starts 19 keys (``{record}``, ``{checked-long}``, ``{query}``) |
+|``m`` |starts 19 keys (``{record}``) |
 |``n`` |starts 29 keys (``{target-new}``) |
 |``o`` |``panel:focus next`` |
 |``p`` |starts 25 keys (``{panel}``), in ``config``, ``duplicates``, ``file-manager``, ``help``, ``keybindings``, ``log``, ``metarecord-detail``, ``metarecord-list``, ``path-ref``, ``shell``, ``sync``, ``viewer`` only |

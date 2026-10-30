@@ -24,7 +24,7 @@ vars.bulk-query = "m q"
 ```
 
 * A variable holds a key or a sequence (`"m q"`); its name is lowercase letters, digits and `-`.
-* A value may name other variables: `vars.negative = "{tags} -"` holds `, -` while `tags` is `,`, and follows it when it moves — which is why the shipped `checked`, `query`, `items`, `negative`… are written on `record`, `item` and `tags`. Variables that refer to themselves, through any number of others, are an error that names them.
+* A value may name other variables: `vars.negative = "{tags} -"` holds `, -` while `tags` is `,`, and follows it when it moves. Variables that refer to themselves, through any number of others, are an error that names them. The shipped file has none of these: a key names its variables one by one, `"{record} {query-verb} {delete}"`, so that it reads as what is typed.
 * The table can be written as `vars.name = …` lines anywhere at the top of the file, or as a `[vars]` section at its end — TOML puts every key after a section header into that section.
 * A `{name}` that is not a variable is an error, which names it. A brace that names nothing (`"{"`) is a key like any other.
 * Variables are replaced in the keys only, not in the commands.

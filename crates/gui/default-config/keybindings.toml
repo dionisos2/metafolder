@@ -40,19 +40,12 @@ vars.help = "h"
 vars.workspaces = "w"
 vars.clipboard = "c"
 # Domains of verbs: the focused panel's actions, the selected metarecord, the
-# checked ones, the list's query, the items (a file, or a metarecord), tags.
+# items (a file, or a metarecord), tags. Under `record` and `item`, shift or the
+# letter doubled means the checked ones, and `query-verb` the list's query.
 vars.panel = "p"
 vars.record = "m"
-vars.checked = "shift+{record}"
-vars.checked-long = "{record} {record}"
-vars.query = "{record} {query-verb}"
 vars.item = "e"
-vars.items = "shift+{item}"
-vars.items-long = "{item} {item}"
-vars.items-query = "{item} {query-verb}"
 vars.tags = ","
-vars.negative = "{tags} -"
-vars.mixed = "{tags} ="
 # Verbs (second position); shift is a variant of the same verb.
 vars.add = "a"
 vars.set = "s"
@@ -442,21 +435,21 @@ vars.index = "i"
 "{record} {retype}" = { command = "metarecord:field retype" }
 "{record} {delete}" = { command = "metarecord:delete" }
 "{record} {index}" = { command = "mf:order" }
-"{checked} {set}" = { command = "metarecord:bulk selection set" }
-"{checked} {add}" = { command = "metarecord:bulk selection add" }
-"{checked} {remove}" = { command = "metarecord:bulk selection remove" }
-"{checked} {unset}" = { command = "metarecord:bulk selection unset" }
-"{checked} {delete}" = { command = "metarecord:bulk selection delete" }
-"{checked-long} {set}" = { command = "metarecord:bulk selection set" }
-"{checked-long} {add}" = { command = "metarecord:bulk selection add" }
-"{checked-long} {remove}" = { command = "metarecord:bulk selection remove" }
-"{checked-long} {unset}" = { command = "metarecord:bulk selection unset" }
-"{checked-long} {delete}" = { command = "metarecord:bulk selection delete" }
-"{query} {set}" = { command = "metarecord:bulk query set" }
-"{query} {add}" = { command = "metarecord:bulk query add" }
-"{query} {remove}" = { command = "metarecord:bulk query remove" }
-"{query} {unset}" = { command = "metarecord:bulk query unset" }
-"{query} {delete}" = { command = "metarecord:bulk query delete" }
+"shift+{record} {set}" = { command = "metarecord:bulk selection set" }
+"shift+{record} {add}" = { command = "metarecord:bulk selection add" }
+"shift+{record} {remove}" = { command = "metarecord:bulk selection remove" }
+"shift+{record} {unset}" = { command = "metarecord:bulk selection unset" }
+"shift+{record} {delete}" = { command = "metarecord:bulk selection delete" }
+"{record} {record} {set}" = { command = "metarecord:bulk selection set" }
+"{record} {record} {add}" = { command = "metarecord:bulk selection add" }
+"{record} {record} {remove}" = { command = "metarecord:bulk selection remove" }
+"{record} {record} {unset}" = { command = "metarecord:bulk selection unset" }
+"{record} {record} {delete}" = { command = "metarecord:bulk selection delete" }
+"{record} {query-verb} {set}" = { command = "metarecord:bulk query set" }
+"{record} {query-verb} {add}" = { command = "metarecord:bulk query add" }
+"{record} {query-verb} {remove}" = { command = "metarecord:bulk query remove" }
+"{record} {query-verb} {unset}" = { command = "metarecord:bulk query unset" }
+"{record} {query-verb} {delete}" = { command = "metarecord:bulk query delete" }
 "shift+delete" = [
   { command = "metarecord:delete", when = "metarecord-list" },
   { command = "metarecord:delete", when = "metarecord-detail" },
@@ -478,22 +471,22 @@ vars.index = "i"
   { command = "trash:prune entry", when = "trash" },
 ]
 "{item} {delete}" = { command = "item:delete" }
-"{items} {delete}" = { command = "item:delete selection" }
-"{items-long} {delete}" = { command = "item:delete selection" }
-"{items-query} {delete}" = { command = "item:delete query" }
+"shift+{item} {delete}" = { command = "item:delete selection" }
+"{item} {item} {delete}" = { command = "item:delete selection" }
+"{item} {query-verb} {delete}" = { command = "item:delete query" }
 # The slideshow (doc "Slideshow"): the checked files, or the query's.
-"{items} {run}" = { command = "viewer:play selection" }
-"{items-long} {run}" = { command = "viewer:play selection" }
-"{items-query} {run}" = { command = "viewer:play query" }
+"shift+{item} {run}" = { command = "viewer:play selection" }
+"{item} {item} {run}" = { command = "viewer:play selection" }
+"{item} {query-verb} {run}" = { command = "viewer:play query" }
 
 # ── Tags (,) ─────────────────────────────────────────────────────────────────
 
 "{tags} {add}" = { command = "tag:add tag" }
 "{tags} {remove}" = { command = "tag:remove tag" }
 "{tags} {query-verb}" = { command = "tag:query tag" }
-"{negative} {add}" = { command = "tag:add negative_tag" }
-"{negative} {remove}" = { command = "tag:remove negative_tag" }
-"{negative} {query-verb}" = { command = "tag:query negative_tag" }
-"{mixed} {add}" = { command = "tag:add mixed_tag" }
-"{mixed} {remove}" = { command = "tag:remove mixed_tag" }
-"{mixed} {query-verb}" = { command = "tag:query mixed_tag" }
+"{tags} - {add}" = { command = "tag:add negative_tag" }
+"{tags} - {remove}" = { command = "tag:remove negative_tag" }
+"{tags} - {query-verb}" = { command = "tag:query negative_tag" }
+"{tags} = {add}" = { command = "tag:add mixed_tag" }
+"{tags} = {remove}" = { command = "tag:remove mixed_tag" }
+"{tags} = {query-verb}" = { command = "tag:query mixed_tag" }
