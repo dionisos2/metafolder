@@ -96,16 +96,18 @@ export async function mount(root, metafolder) {
 
   metafolder.workspace.onChange('active_repo', () => void showFiles());
   metafolder.provide({ refresh: showFiles });
-  // Shown again: a file added meanwhile is listed, and the filter takes the
-  // focus, so a file can be found from the keyboard alone.
+  void metafolder.commands.register('config:focus', {
+    label: 'Config: focus the filter of the files',
+    args: [{ name: 'zone', prompt: () => 'Which zone? (filter)', complete: () => ['filter'] }],
+    handler: (_mf, /** @type {string} */ zone) => {
+      if (zone !== 'filter') throw new Error(`unknown zone: "${zone ?? ''}" (expected filter)`);
+      fileFilter.focus();
+    },
+  });
+  // Shown again: a file added meanwhile is listed.
   metafolder.onVisibility((visible) => {
-    if (!visible) return;
-    void showFiles();
-    fileFilter.focus();
+    if (visible) void showFiles();
   });
 
-  // Already on screen — `panel:open` built it there — no visibility change
-  // will follow.
-  if (metafolder.visible) fileFilter.focus();
   await showFiles();
 }

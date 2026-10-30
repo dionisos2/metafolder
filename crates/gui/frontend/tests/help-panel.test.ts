@@ -47,7 +47,7 @@ async function mountHelp() {
   const provided: Record<string, () => unknown> = {};
   const api = {
     guiServer: 'http://gui',
-    whenVisible: () => {},
+    whenVisible: (fn: () => void) => fn(),
     provide: (fns: Record<string, () => unknown>) => Object.assign(provided, fns),
     commands: {
       keybindings: async () => [],
@@ -98,6 +98,12 @@ beforeEach(() => {
 });
 
 describe('the search box is a text zone', () => {
+  test('opening the panel, or asking it for a page, leaves the box unfocused', async () => {
+    const { root } = await mountHelp();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(root.activeElement).toBeNull();
+  });
+
   test('the box is tagged as the "search" focus scope', async () => {
     const { input } = await mountHelp();
     expect(input.dataset.mfFocus).toBe('search');

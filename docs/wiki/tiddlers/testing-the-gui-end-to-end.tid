@@ -56,7 +56,7 @@ hold the focus.
 !! Clicks
 
 What only a mouse reaches — a tab's close button, the value picker's button in a field
-editor, the keybindings panel's ''Edit'' — is clicked through WebKit's remote inspector, never
+editor, the keybindings panel's ''Remove'' — is clicked through WebKit's remote inspector, never
 at coordinates: a click aimed at a place moves with every change of style. The GUI runs with
 `WEBKIT_INSPECTOR_HTTP_SERVER` on a loopback port of its own, and `scripts/dev/lib/webview.mjs`
 (`node`) evaluates in the shell's page a search for the element, in the document and in

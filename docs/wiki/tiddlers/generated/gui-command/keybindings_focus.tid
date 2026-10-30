@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/keybindings:focus
+catalog: GUI command
+target: keybindings:focus
+summary: Keybindings: focus the key field of the form
+
+!! Reference
+
+* Defined by the ``keybindings`` panel
+
+!! Default keys
+
+* ``p e`` → ``keybindings:focus key`` (in the ``keybindings`` panel)

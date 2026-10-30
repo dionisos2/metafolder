@@ -115,9 +115,13 @@ async function mountPanel(
     classes_error: null,
     ...options.view,
   };
+  const handlers = new Map<string, (...args: unknown[]) => unknown>();
   const api = {
     commands: {
       list: vi.fn(async () => COMMANDS),
+      register: vi.fn(async (name: string, spec: { handler: (...args: unknown[]) => unknown }) => {
+        handlers.set(name, spec.handler);
+      }),
     },
     config: {
       keybindingEntries: vi.fn(async () => view),
@@ -173,7 +177,7 @@ async function mountPanel(
     [...tr.querySelectorAll('button')].find((b) => b.textContent === label);
   const save = root.getElementById('save') as HTMLButtonElement;
   const classButton = (c: string) => root.getElementById(`class-${c}`) as HTMLButtonElement;
-  return { api, root, field, type, typeIn, key, rows, row, shown, button, save, classButton };
+  return { api, handlers, root, field, type, typeIn, key, rows, row, shown, button, save, classButton };
 }
 
 describe('keybindings panel', () => {
@@ -321,23 +325,16 @@ describe('keybindings panel', () => {
     );
   });
 
-  test('Edit fills the form, and Save replaces the line edited', async () => {
-    const { row, button, field, typeIn, save, api, root } = await mountPanel();
-    button(row('{panels} l').tr, 'Edit')!.click();
-    await flush();
-    expect(field('source').value).toBe('{panels} l');
-    expect(field('command').value).toBe('panel:open {target} metarecord-list');
-    expect(field('target').value).toBe('here');
-    expect(root.getElementById('editing')!.hidden).toBe(false);
+  test('a line has no Edit: its key is edited in place', async () => {
+    const { row, button, root } = await mountPanel();
+    expect(button(row('{panels} l').tr, 'Edit')).toBeUndefined();
+    expect(root.getElementById('editing')).toBeNull();
+  });
 
-    await typeIn('source', '{panels} j');
-    save.click();
-    await flush();
-    expect(api.config.saveKeybindingEntry).toHaveBeenCalledWith(
-      expect.objectContaining({ source: '{panels} j', target: 'here' }),
-      { source: '{panels} l', when: null, focus: null },
-    );
-    expect(root.getElementById('editing')!.hidden).toBe(true);
+  test('the key field is wide enough for the longest key written', async () => {
+    const { root } = await mountPanel();
+    const width = (root.getElementById('bindings') as HTMLElement).style.getPropertyValue('--source-chars');
+    expect(width).toBe(String('ctrl+shift+a'.length));
   });
 
   test('the key of a line is edited in place: Enter saves it, Escape gives it back', async () => {
@@ -395,6 +392,7 @@ describe('keybindings panel', () => {
         return '3 keys change.';
       },
     });
+    (root.getElementById('show-variables') as HTMLButtonElement).click();
     const variables = [...root.querySelectorAll('#variables tr')];
     expect(variables).toHaveLength(3);
     const negative = variables.find((tr) => tr.textContent.includes('negative'))!;
@@ -422,8 +420,44 @@ describe('keybindings panel', () => {
     expect(shown()).toContain('ctrl+t');
   });
 
-  test('shown when it mounts, the key field takes the focus', async () => {
-    const { root, field } = await mountPanel({ visible: true });
+  test('the variables are a list apart: one list is shown at a time', async () => {
+    const { root, shown } = await mountPanel();
+    const keysView = root.getElementById('keys-view') as HTMLElement;
+    const variablesView = root.getElementById('variables-view') as HTMLElement;
+    const showKeys = root.getElementById('show-keys') as HTMLButtonElement;
+    const showVariables = root.getElementById('show-variables') as HTMLButtonElement;
+    expect(keysView.contains(root.getElementById('bindings'))).toBe(true);
+    expect(keysView.contains(root.getElementById('variables'))).toBe(false);
+    expect(keysView.hidden).toBe(false);
+    expect(variablesView.hidden).toBe(true);
+    expect(shown()).toContain('ctrl+t');
+    expect(showVariables.textContent).toContain('3');
+
+    showVariables.click();
+    expect(keysView.hidden).toBe(true);
+    expect(variablesView.hidden).toBe(false);
+    expect(showVariables.getAttribute('aria-pressed')).toBe('true');
+    expect(showKeys.getAttribute('aria-pressed')).toBe('false');
+
+    showKeys.click();
+    expect(keysView.hidden).toBe(false);
+    expect(variablesView.hidden).toBe(true);
+  });
+
+  test('opening the panel selects no text field, shown at mount or later', async () => {
+    const { root, api } = await mountPanel({ visible: true });
+    expect(root.activeElement).toBeNull();
+    const onVisibility = api.onVisibility.mock.calls[0]![0] as (visible: boolean) => void;
+    onVisibility(true);
+    await flush();
+    expect(root.activeElement).toBeNull();
+    expect(api.config.keybindingEntries).toHaveBeenCalledTimes(2);
+  });
+
+  test('keybindings:focus key gives the key field the focus', async () => {
+    const { root, handlers, field } = await mountPanel();
+    await handlers.get('keybindings:focus')!(undefined, 'key');
     expect(root.activeElement).toBe(field('source'));
+    expect(() => handlers.get('keybindings:focus')!(undefined, 'nope')).toThrow('unknown zone');
   });
 });

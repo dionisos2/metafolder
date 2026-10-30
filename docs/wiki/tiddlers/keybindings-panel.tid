@@ -8,6 +8,11 @@ It edits `gui/keybindings.toml` ([[Changing keybindings]]) — what used to be t
 half of the [[config panel]] —, so a key can be looked up while the panel it acts in
 stays on screen.
 
+The buttons at the top switch between two lists, one shown at a time: ''Keybindings'',
+the lines with their form and their filter, and ''Variables''. Opening the panel gives
+no field the focus: <<key "keybindings:focus key" "p e">> goes to the key field of the
+form.
+
 !! The lines
 
 The list has one row per ''line'' of the file — one binding of a key, as the file
@@ -20,10 +25,9 @@ writes it —, in the order of the file, then the keys suggested by a panel or b
 * the command as written, `{target}` left in, and its description;
 * where it applies — `global`, a panel type, or `@name` for a text field, followed by `⌨` when it also applies while typing ([[Keybindings]]) —, and ''suggested'' for a key that is not in the file. A suggested key cannot be moved and has no ''Remove''; its key field is read-only.
 
-''Edit'' copies a line into the form; ''Save'' then replaces it — in its place in the
-file when it keeps its key and its scope, else the old line goes and the new one is
-written at the end. ''Remove'' removes the line, every key it binds. A command with no
-key has ''Bind'', which puts it into the form.
+''Remove'' removes the line, every key it binds. A command with no key has ''Bind'',
+which puts it into the form. To change anything but a line's key — its command, its
+scope —, remove it and write it again in the form, or edit the file.
 
 !! The classes
 
@@ -41,7 +45,7 @@ and searches the list:
 * the ''key'' typed keeps the lines binding a key it starts: `g` keeps those of `g g` and `g t`, `ctrl` every ctrl chord, and `shift+ctrl+a` finds `ctrl+shift+a`; typed with a `{`, it keeps the lines written with it — `{go` the domain's;
 * the ''command'' typed keeps the lines whose command contains it, below those of the key, and the commands with no key it names. The field completes over every command, and the line under the form names the command it reads, with its description.
 
-The variables are listed above the lines. `target` is for a command holding
+`target` is for a command holding
 `{target}`: where its own key aims (`here`, `other`, `new`).
 
 As the form is typed, the panel asks the GUI what a save would refuse, and says it
@@ -53,13 +57,12 @@ refusal but an override, which the line says.
 
 !! The variables
 
-Above the list, every variable of the file, in its order: its name, its value — a
+The ''Variables'' list has every variable of the file, in its order: its name, its value — a
 field —, the keys it stands for, and how many lines use it, directly or through
 another variable ([[Keybinding variables]]). What a new value would do is said as it
 is typed — how many keys change, or why it is refused: a key bound twice, or a key
 alone hiding a sequence that nothing hid before. ''Enter'' writes it, in its line of
 the file; ''Escape'' gives the old value back.
 
-When the panel is shown, the key field takes the focus, and the list is read again:
-what was bound meanwhile, by `config:reload keybindings` or a panel, appears.
+When the panel is shown, the list is read again: what was bound meanwhile, by `config:reload keybindings` or a panel, appears.
 `view:refresh` reads it again too.

@@ -1,0 +1,6 @@
+title: keybindings:focus
+tags: [[GUI command]]
+kind: reference
+summary: Keybindings: focus the key field of the form
+
+`keybindings:focus key` — <<key "keybindings:focus key" "p e">>: shows the lines of the [[keybindings panel]] and gives the key field of its form the focus.

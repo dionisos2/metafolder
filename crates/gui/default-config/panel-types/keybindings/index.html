@@ -1,7 +1,7 @@
 <!doctype html>
 <!-- Built-in panel type: the keybinding editor (doc "keybindings panel", doc
      "Changing keybindings") — the lines of keybindings.toml, the commands no
-     key runs, filtered by class, and the variables. -->
+     key runs, filtered by class; the variables are a list apart. -->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -49,6 +49,21 @@
       input.invalid {
         border-color: var(--mf-error, #c44c56);
       }
+      #lists {
+        display: flex;
+        gap: 6px;
+      }
+      #lists button[aria-pressed='true'] {
+        background: var(--mf-accent, #4c56c4);
+      }
+      #keys-view,
+      #variables-view {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+        gap: 8px;
+      }
       #classes {
         display: flex;
         flex-wrap: wrap;
@@ -77,8 +92,7 @@
         flex-direction: column;
         gap: 2px;
       }
-      #checks p,
-      #editing {
+      #checks p {
         margin: 0;
       }
       .ok {
@@ -87,9 +101,6 @@
       .bad,
       #error {
         color: var(--mf-error, #c44c56);
-      }
-      #editing {
-        color: var(--mf-accent, #4c56c4);
       }
       #table {
         flex: 1;
@@ -112,17 +123,15 @@
       tr.conflict {
         box-shadow: inset 3px 0 0 var(--mf-error, #c44c56);
       }
-      tr.editing {
-        box-shadow: inset 3px 0 0 var(--mf-accent, #4c56c4);
-      }
       td.source input {
-        width: 100%;
+        /* --source-chars: the longest key written. 16px: padding and border. */
+        width: calc(var(--source-chars, 16) * 1ch + 16px);
         box-sizing: border-box;
       }
       td.source input[readonly] {
         border-color: transparent;
       }
-      .keys {
+      .keys span {
         white-space: nowrap;
       }
       kbd {
@@ -145,20 +154,12 @@
         white-space: nowrap;
         text-align: right;
       }
-      details {
-        flex-shrink: 0;
-      }
-      summary {
-        cursor: pointer;
-        color: var(--mf-fg-dim, #8a8a96);
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-      }
-      #variables-block > div {
-        max-height: 14em;
+      #variables-list {
+        flex: 1;
+        min-height: 0;
         overflow-y: auto;
       }
-      #variables-block table {
+      #variables-list table {
         width: auto;
       }
       #variable-check {
@@ -167,6 +168,12 @@
     </style>
   </head>
   <body>
+    <div id="lists">
+      <button id="show-keys" aria-pressed="true">Keybindings</button>
+      <button id="show-variables" aria-pressed="false">Variables</button>
+    </div>
+
+    <div id="keys-view">
     <div id="classes" data-help-topic="command-classes">
       <span>Class</span>
       <button id="class-A" aria-pressed="true" title="used all the time: one key">A</button>
@@ -187,7 +194,7 @@
       <label><input id="text-input" type="checkbox" /> text-input</label>
       <span>
         <button id="save" disabled>Save</button>
-        <button id="cancel">Clear</button>
+        <button id="clear">Clear</button>
       </span>
     </div>
     <datalist id="command-list"></datalist>
@@ -198,27 +205,26 @@
       <option value="other"></option>
       <option value="new"></option>
     </datalist>
-    <p id="editing" hidden></p>
     <div id="checks">
       <p id="key-check"></p>
       <p id="command-check"></p>
       <p id="error"></p>
     </div>
 
-    <details id="variables-block" open data-help-topic="keybinding-variables">
-      <summary id="variables-summary">Variables</summary>
-      <div>
+    <div id="table" data-help-topic="keybinding-editor">
+      <table>
+        <tbody id="bindings"></tbody>
+      </table>
+    </div>
+    </div>
+
+    <div id="variables-view" data-help-topic="keybinding-variables" hidden>
+      <div id="variables-list">
         <table>
           <tbody id="variables"></tbody>
         </table>
       </div>
       <p id="variable-check"></p>
-    </details>
-
-    <div id="table" data-help-topic="keybinding-editor">
-      <table>
-        <tbody id="bindings"></tbody>
-      </table>
     </div>
   </body>
 </html>

@@ -5,7 +5,7 @@ summary: The keybindings panel type
 
 !! Commands
 
-None of its own.
+* ``keybindings:focus`` — Keybindings: focus the key field of the form
 
 !! Generic commands
 

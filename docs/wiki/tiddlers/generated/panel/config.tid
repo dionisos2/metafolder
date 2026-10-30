@@ -5,7 +5,7 @@ summary: The config panel type
 
 !! Commands
 
-None of its own.
+* ``config:focus`` — Config: focus the filter of the files
 
 !! Generic commands
 

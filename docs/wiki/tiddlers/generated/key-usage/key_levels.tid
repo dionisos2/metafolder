@@ -26,7 +26,7 @@ Level 3 counts Ctrl, Alt and Ctrl+Alt, each with or without Shift, on a key of l
 |``m`` |starts 19 keys (``{record}``, ``{checked-long}``, ``{query}``) |
 |``n`` |starts 28 keys (``{target-new}``) |
 |``o`` |``panel:focus next`` |
-|``p`` |starts 23 keys (``{panel}``), in ``duplicates``, ``file-manager``, ``help``, ``log``, ``metarecord-detail``, ``metarecord-list``, ``path-ref``, ``shell``, ``sync``, ``viewer`` only |
+|``p`` |starts 25 keys (``{panel}``), in ``config``, ``duplicates``, ``file-manager``, ``help``, ``keybindings``, ``log``, ``metarecord-detail``, ``metarecord-list``, ``path-ref``, ``shell``, ``sync``, ``viewer`` only |
 |``t`` |starts 17 keys (``{panels}``) |
 |``v`` |starts 15 keys (``{view}``) |
 |``w`` |starts 4 keys (``{workspaces}``) |

@@ -38,6 +38,7 @@ const flush = async () => {
 async function mountPanel(options: { visible?: boolean; repo?: string | null } = {}) {
   const vars: Record<string, unknown> = { active_repo: options.repo ?? null };
   const varListeners: Record<string, (() => void)[]> = {};
+  const handlers = new Map<string, (...args: unknown[]) => unknown>();
   const api = {
     config: {
       info: vi.fn(async (repo?: string | null) => ({
@@ -75,6 +76,11 @@ async function mountPanel(options: { visible?: boolean; repo?: string | null } =
         return () => {};
       }),
     },
+    commands: {
+      register: vi.fn(async (name: string, spec: { handler: (...args: unknown[]) => unknown }) => {
+        handlers.set(name, spec.handler);
+      }),
+    },
     invoke: vi.fn(async () => {}),
     visible: options.visible ?? false,
     onVisibility: vi.fn(),
@@ -97,7 +103,7 @@ async function mountPanel(options: { visible?: boolean; repo?: string | null } =
     for (const listener of varListeners[key] ?? []) listener();
     await flush();
   };
-  return { api, root, field, type, fileRows, changeVar, vars };
+  return { api, handlers, root, field, type, fileRows, changeVar, vars };
 }
 
 describe('config panel', () => {
@@ -150,11 +156,12 @@ describe('config panel', () => {
     expect(api.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'viewer']);
   });
 
-  test('shown when it mounts, the filter takes the focus', async () => {
+  test('opening the panel selects no text field; config:focus filter does', async () => {
     // `panel:open here config` in a workspace that never showed the panel builds it on
-    // screen: it is visible before its mount has run, so no visibility change
-    // will follow.
-    const { root, field } = await mountPanel({ visible: true });
+    // screen: it is visible before its mount has run.
+    const { root, field, handlers } = await mountPanel({ visible: true });
+    expect(root.activeElement).toBeNull();
+    await handlers.get('config:focus')!(undefined, 'filter');
     expect(root.activeElement).toBe(field('file-filter'));
   });
 

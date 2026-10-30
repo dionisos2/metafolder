@@ -38,6 +38,8 @@
 "pick:cancel" = "B"
 "devtools:open" = "C"
 "config:reload" = "D"
+"config:focus" = "B"
+"keybindings:focus" = "B"
 "daemon:set-url" = "D"
 
 # ── Help ─────────────────────────────────────────────────────────────────────

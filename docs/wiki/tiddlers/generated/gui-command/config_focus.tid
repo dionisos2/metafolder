@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/config:focus
+catalog: GUI command
+target: config:focus
+summary: Config: focus the filter of the files
+
+!! Reference
+
+* Defined by the ``config`` panel
+
+!! Default keys
+
+* ``p e`` → ``config:focus filter`` (in the ``config`` panel)

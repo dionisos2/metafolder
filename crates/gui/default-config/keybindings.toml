@@ -358,6 +358,8 @@ vars.index = "i"
   { command = "metarecord-list:focus simplified", when = "metarecord-list" },
   { command = "help:focus search", when = "help" },
   { command = "shell:focus line", when = "shell" },
+  { command = "keybindings:focus key", when = "keybindings" },
+  { command = "config:focus filter", when = "config" },
 ]
 "{panel} shift+{edit}" = [
   { command = "metarecord-list:clear simplified", when = "metarecord-list" },

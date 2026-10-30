@@ -3,7 +3,7 @@
 // file writes it — variables left in, editable in place — beside the keys it
 // really binds; then the commands no key runs. The class buttons keep the
 // commands of the classes pressed (doc "Command classes"), and the variables
-// have a list of their own (doc "Keybinding variables").
+// are a list apart, shown instead of the lines (doc "Keybinding variables").
 //
 // The form doubles as the rows' filter: the key typed keeps the lines binding a
 // key it starts (or, holding a `{`, the lines written with it), the command
@@ -91,15 +91,17 @@ export async function mount(root, metafolder) {
   const target = byId(root, 'target', HTMLInputElement);
   const textInput = byId(root, 'text-input', HTMLInputElement);
   const save = byId(root, 'save', HTMLButtonElement);
-  const cancel = byId(root, 'cancel', HTMLButtonElement);
-  const editingLine = byId(root, 'editing');
+  const clear = byId(root, 'clear', HTMLButtonElement);
   const keyCheck = byId(root, 'key-check');
   const commandCheck = byId(root, 'command-check');
   const errorLine = byId(root, 'error');
   const count = byId(root, 'count');
   const tbody = byId(root, 'bindings');
   const variablesBody = byId(root, 'variables');
-  const variablesSummary = byId(root, 'variables-summary');
+  const keysView = byId(root, 'keys-view');
+  const variablesView = byId(root, 'variables-view');
+  const showKeys = byId(root, 'show-keys', HTMLButtonElement);
+  const showVariables = byId(root, 'show-variables', HTMLButtonElement);
   const variableCheck = byId(root, 'variable-check');
 
   /** @type {Metafolder.KeybindingView} */
@@ -108,8 +110,6 @@ export async function mount(root, metafolder) {
   let commands = new Map();
   /** The classes whose commands are shown. */
   const shownClasses = new Set(CLASSES);
-  /** The line the form edits: Save takes its place. @type {Metafolder.FileEntry|null} */
-  let editing = null;
   /** @type {Metafolder.KeybindingCheck} */
   const NO_OBJECTION = { command: null, key: null, note: null, in_the_way: null };
   /** The backend's verdict on the form as it stands. */
@@ -236,7 +236,7 @@ export async function mount(root, metafolder) {
   function entryRow(entry) {
     return el(
       'tr',
-      { class: [inTheWay(entry) && 'conflict', entry === editing && 'editing'] },
+      { class: [inTheWay(entry) && 'conflict'] },
       el('td', { class: 'class', title: 'its class (command-classes.toml)' }, classLabel(entry.class)),
       el('td', { class: 'source' }, sourceInput(entry)),
       el(
@@ -253,7 +253,6 @@ export async function mount(root, metafolder) {
       el(
         'td',
         { class: 'actions' },
-        el('button', { onclick: () => edit(entry) }, 'Edit'),
         entry.suggested ? null : el('button', { onclick: () => void remove(entry) }, 'Remove'),
       ),
     );
@@ -285,6 +284,11 @@ export async function mount(root, metafolder) {
       rows.length === total
         ? `${view.entries.length} lines · ${view.unbound.length} commands with no key`
         : `${rows.length} of ${total}`;
+    // Sized to the longest key written, not to what the table leaves over: long
+    // key lists elsewhere in the row would shrink the field until its text no
+    // longer shows.
+    const longest = Math.max(0, ...view.entries.map((entry) => entry.source.length));
+    tbody.style.setProperty('--source-chars', String(longest));
     tbody.replaceChildren(
       ...rows.map((row) => ('entry' in row ? entryRow(row.entry) : unboundRow(row.unbound))),
     );
@@ -303,11 +307,6 @@ export async function mount(root, metafolder) {
     command.classList.toggle('invalid', command.value.trim() !== '' && check.command !== null);
     save.disabled =
       source.value.trim() === '' || command.value.trim() === '' || !noObjection(check);
-    editingLine.hidden = editing === null;
-    if (editing) {
-      editingLine.textContent = `Editing ${editing.source} (${scopeOf(editing)}): Save replaces it.`;
-    }
-    cancel.textContent = editing ? 'Cancel' : 'Clear';
   }
 
   /** @param {Metafolder.KeybindingVariable} variable */
@@ -364,7 +363,7 @@ export async function mount(root, metafolder) {
   }
 
   function renderVariables() {
-    variablesSummary.textContent = `Variables · ${view.variables.length}`;
+    showVariables.textContent = `Variables · ${view.variables.length}`;
     variablesBody.replaceChildren(...view.variables.map(variableRow));
   }
 
@@ -374,7 +373,7 @@ export async function mount(root, metafolder) {
     const form = draft();
     let verdict = NO_OBJECTION;
     if (form.source !== '' || form.command !== '') {
-      verdict = await metafolder.config.checkKeybindingEntry(form, editing && placeOf(editing));
+      verdict = await metafolder.config.checkKeybindingEntry(form, null);
       if (seq !== checkSeq) return;
     }
     // A field left empty is not wrong yet, only unfinished.
@@ -395,7 +394,6 @@ export async function mount(root, metafolder) {
   }
 
   function clearForm() {
-    editing = null;
     for (const input of [source, command, when, focus, target]) input.value = '';
     textInput.checked = false;
     check = NO_OBJECTION;
@@ -405,22 +403,8 @@ export async function mount(root, metafolder) {
     source.focus();
   }
 
-  /** @param {Metafolder.FileEntry} entry */
-  function edit(entry) {
-    editing = entry;
-    source.value = entry.source;
-    command.value = entry.command;
-    when.value = entry.when ?? '';
-    focus.value = entry.focus ?? '';
-    target.value = entry.target ?? '';
-    textInput.checked = entry.text_input;
-    onInput();
-    command.focus();
-  }
-
   /** @param {string} name */
   function bind(name) {
-    editing = null;
     command.value = name;
     onInput();
     source.focus();
@@ -444,16 +428,12 @@ export async function mount(root, metafolder) {
     await checking;
     if (save.disabled) return;
     const form = draft();
-    const replacing = editing && placeOf(editing);
-    if (await write(() => metafolder.config.saveKeybindingEntry(form, replacing))) clearForm();
+    if (await write(() => metafolder.config.saveKeybindingEntry(form, null))) clearForm();
   }
 
   /** @param {Metafolder.FileEntry} entry */
   async function remove(entry) {
-    if (await write(() => metafolder.config.removeKeybindingEntry(placeOf(entry)))) {
-      if (editing === entry) clearForm();
-      else void recheck();
-    }
+    if (await write(() => metafolder.config.removeKeybindingEntry(placeOf(entry)))) void recheck();
   }
 
   /** @param {string} id @param {string[]} values @param {(value: string) => string} [label] */
@@ -466,10 +446,6 @@ export async function mount(root, metafolder) {
   /** @param {Metafolder.KeybindingView} next */
   function show(next) {
     view = next;
-    if (editing) {
-      const place = JSON.stringify(placeOf(editing));
-      editing = view.entries.find((e) => JSON.stringify(placeOf(e)) === place) ?? null;
-    }
     if (view.classes_error) errorLine.textContent = view.classes_error;
     const sorted = (/** @type {Iterable<string>} */ values) => [...new Set(values)].sort();
     fillDatalist(
@@ -522,20 +498,34 @@ export async function mount(root, metafolder) {
   }
   textInput.addEventListener('change', onInput);
   save.addEventListener('click', () => void submit());
-  cancel.addEventListener('click', () => clearForm());
+  clear.addEventListener('click', () => clearForm());
+
+  /** Shows one of the two lists. @param {boolean} variables */
+  function showList(variables) {
+    keysView.hidden = variables;
+    variablesView.hidden = !variables;
+    showKeys.setAttribute('aria-pressed', String(!variables));
+    showVariables.setAttribute('aria-pressed', String(variables));
+  }
+  showKeys.addEventListener('click', () => showList(false));
+  showVariables.addEventListener('click', () => showList(true));
+
+  void metafolder.commands.register('keybindings:focus', {
+    label: 'Keybindings: focus the key field of the form',
+    args: [{ name: 'zone', prompt: () => 'Which zone? (key)', complete: () => ['key'] }],
+    handler: (_mf, /** @type {string} */ zone) => {
+      if (zone !== 'key') throw new Error(`unknown zone: "${zone ?? ''}" (expected key)`);
+      showList(false);
+      source.focus();
+    },
+  });
 
   metafolder.provide({ refresh: load });
-  // Shown again: what changed meanwhile is read, and the key field takes the
-  // focus, so a key can be looked up or bound from the keyboard alone.
+  // Shown again: what changed meanwhile is read.
   metafolder.onVisibility((visible) => {
-    if (!visible) return;
-    void load();
-    source.focus();
+    if (visible) void load();
   });
 
   renderForm();
-  // Already on screen — `panel:open` built it there — no visibility change
-  // will follow.
-  if (metafolder.visible) source.focus();
   await load();
 }

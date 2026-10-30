@@ -1,0 +1,6 @@
+title: config:focus
+tags: [[GUI command]]
+kind: reference
+summary: Config: focus the filter of the files
+
+`config:focus filter` — <<key "config:focus filter" "p e">>: gives the filter of the files of the [[config panel]] the focus.

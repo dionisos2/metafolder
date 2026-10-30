@@ -442,15 +442,10 @@ export async function mount(root, metafolder) {
     } else {
       runSearch(topic);
     }
-    metafolder.whenVisible(() => searchInput.focus());
   }
 
   void metafolder.workspace.get('help.request').then(apply);
   metafolder.workspace.onChange('help.request', apply);
-
-  // Focus the search box when shown even absent a request (e.g. picked from the
-  // panel-type selector).
-  metafolder.whenVisible(() => searchInput.focus());
 }
 
 // How far one step of the cursor scrolls a page, in pixels: about two lines.

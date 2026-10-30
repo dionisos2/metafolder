@@ -20,7 +20,7 @@
 # shortcuts. Without both they are a loud SKIP.
 #
 # What only a mouse reaches (a tab's close button, the field editor's picker
-# button, the keybindings panel's Edit) is clicked through WebKit's remote
+# button, the keybindings panel's Remove) is clicked through WebKit's remote
 # inspector (scripts/dev/lib/webview.mjs, node): by selector and text, never by
 # coordinates. The inspector listens on loopback for the run's duration, open
 # to any local process — a throwaway daemon, but the GUI runs shell commands.
@@ -1165,6 +1165,7 @@ scenario_keybindings() {
 
     run panel:open here keybindings
     command_ok "keybindings: panel open"
+    run keybindings:focus key
     # The key field has the focus; tab goes to the command, Enter saves.
     typed "ctrl+alt+u"
     keys Tab
@@ -1460,6 +1461,7 @@ scenario_config_files() {
 }
 
 scenario_suggested_key() {
+    needs_keyboard suggested-key || return 0
     needs_clicks suggested-key || return 0
     new_repo suggested-key
     local file="$CONFIG_HOME/metafolder/gui/keybindings.toml"
@@ -1472,12 +1474,14 @@ scenario_suggested_key() {
     assert_contains "suggested key: its row says so" \
         "$(until_ok 10 webview text '#bindings tr' ctrl+alt+y 2>/dev/null)" "suggested"
     assert_not "suggested key: no Remove" click '#bindings tr' ctrl+alt+y button Remove
-    # Typing its key shows where it is taken, before any save.
-    assert "suggested key: its Edit is clicked" click '#bindings tr' ctrl+alt+y button Edit
-    assert_contains "suggested key: the form edits it" \
-        "$(until_ok 10 webview text '#editing' 2>/dev/null)" "Editing ctrl+alt+y"
     # Saved in its own place, it is written to the file, which overrides it.
-    assert "suggested key: Save is clicked" click '#save'
+    run keybindings:focus key
+    typed "ctrl+alt+y"
+    keys Tab
+    typed "e2e-keys:ping"
+    keys Tab
+    typed "e2e-keys"
+    keys Return
     assert "suggested key: saving writes it to the file" \
         until_ok 10 grep -q '^"ctrl+alt+y"' "$file"
 
@@ -1657,9 +1661,8 @@ scenario_help_cursor() {
     keys Return
     assert "help-cursor: Enter opens the page under the cursor" \
         until_ok 10 is_first "#help-title"
-    # A page long enough to scroll, the focus out of the box help:open puts it in.
+    # A page long enough to scroll.
     run help:open the-metafolder-api
-    run help:apply search
     assert "help-cursor: a long page is shown" until_ok 10 shows "#help-title" "The metafolder API"
     scrolled() { [ "$(webview scroll "#help-scroll" 2>/dev/null)" "$1" 0 ]; }
     keys Down Down
