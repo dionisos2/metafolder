@@ -1,17 +1,7 @@
 title: $:/mf/gen/Key usage/Key levels
 catalog: Key usage
 target: Key levels
-summary: The keys of each level, and the letters used and left
-
-!! Counted
-
-|!Level |!Keys |!Used as a first key |!Left |
-|0 |26 |15 |11 |
-|1 |32 |25 |7 |
-|2 |80 |24 |56 |
-|3 |348 |40 |308 |
-
-Level 3 counts Ctrl, Alt and Ctrl+Alt, each with or without Shift, on a key of level 0 or 1.
+summary: The keys used and left at each level
 
 !! Level 0: the letters used (15)
 
@@ -35,3 +25,24 @@ Level 3 counts Ctrl, Alt and Ctrl+Alt, each with or without Shift, on a key of l
 !! Level 0: the letters left (11)
 
 ``a`` ``d`` ``j`` ``k`` ``l`` ``q`` ``r`` ``s`` ``u`` ``y`` ``z``
+
+!! Level 1
+
+|!With |!Used |!Left |
+|Alone |25: ``,`` ``-`` ``=`` ``enter`` ``escape`` ``backspace`` ``delete`` ``space`` ``up`` ``down`` ``left`` ``right`` ``home`` ``end`` ``pageup`` ``pagedown`` ``plus`` ``f1`` ``f2`` ``f3`` ``f4`` ``f5`` ``f6`` ``f11`` ``f12`` |7: ``tab`` ``insert`` ``menu`` ``f7`` ``f8`` ``f9`` ``f10`` |
+
+!! Level 2
+
+|!With |!Used |!Left |
+|Shift |11: ``e`` ``f`` ``m`` ``x`` ``enter`` ``backspace`` ``delete`` ``up`` ``down`` ``left`` ``right`` |47: ``a`` ``b`` ``c`` ``d`` ``g`` ``h`` ``i`` ``j`` ``k`` ``l`` ``n`` ``o`` ``p`` ``q`` ``r`` ``s`` ``t`` ``u`` ``v`` ``w`` ``y`` ``z`` ``,`` ``-`` ``=`` ``escape`` ``tab`` ``space`` ``home`` ``end`` ``pageup`` ``pagedown`` ``plus`` ``insert`` ``menu`` ``f1`` ``f2`` ``f3`` ``f4`` ``f5`` ``f6`` ``f7`` ``f8`` ``f9`` ``f10`` ``f11`` ``f12`` |
+|Alone, needing Shift on a layout |13: ``0`` ``1`` ``2`` ``3`` ``4`` ``5`` ``6`` ``7`` ``8`` ``9`` ``/`` ``:`` ``!`` |9: ``.`` ``;`` ``*`` ``(`` ``)`` ``"`` ``$`` ``%`` ``?`` |
+|Ctrl |31: ``a`` ``c`` ``d`` ``e`` ``f`` ``g`` ``h`` ``k`` ``l`` ``m`` ``n`` ``o`` ``q`` ``r`` ``s`` ``t`` ``u`` ``v`` ``w`` ``x`` ``y`` ``z`` ``,`` ``-`` ``enter`` ``escape`` ``tab`` ``up`` ``down`` ``pageup`` ``pagedown`` |27: ``b`` ``i`` ``j`` ``p`` ``=`` ``backspace`` ``delete`` ``space`` ``left`` ``right`` ``home`` ``end`` ``plus`` ``insert`` ``menu`` ``f1`` ``f2`` ``f3`` ``f4`` ``f5`` ``f6`` ``f7`` ``f8`` ``f9`` ``f10`` ``f11`` ``f12`` |
+|Alt |5: ``up`` ``down`` ``left`` ``right`` ``home`` |53: ``a`` ``b`` ``c`` ``d`` ``e`` ``f`` ``g`` ``h`` ``i`` ``j`` ``k`` ``l`` ``m`` ``n`` ``o`` ``p`` ``q`` ``r`` ``s`` ``t`` ``u`` ``v`` ``w`` ``x`` ``y`` ``z`` ``,`` ``-`` ``=`` ``enter`` ``escape`` ``backspace`` ``delete`` ``tab`` ``space`` ``end`` ``pageup`` ``pagedown`` ``plus`` ``insert`` ``menu`` ``f1`` ``f2`` ``f3`` ``f4`` ``f5`` ``f6`` ``f7`` ``f8`` ``f9`` ``f10`` ``f11`` ``f12`` |
+|Ctrl+Alt |0: — |58: ``a`` ``b`` ``c`` ``d`` ``e`` ``f`` ``g`` ``h`` ``i`` ``j`` ``k`` ``l`` ``m`` ``n`` ``o`` ``p`` ``q`` ``r`` ``s`` ``t`` ``u`` ``v`` ``w`` ``x`` ``y`` ``z`` ``,`` ``-`` ``=`` ``enter`` ``escape`` ``backspace`` ``delete`` ``tab`` ``space`` ``up`` ``down`` ``left`` ``right`` ``home`` ``end`` ``pageup`` ``pagedown`` ``plus`` ``insert`` ``menu`` ``f1`` ``f2`` ``f3`` ``f4`` ``f5`` ``f6`` ``f7`` ``f8`` ``f9`` ``f10`` ``f11`` ``f12`` |
+
+!! Level 3
+
+|!With |!Used |!Left |
+|Ctrl+Shift |4: ``a`` ``n`` ``z`` ``tab`` |54: ``b`` ``c`` ``d`` ``e`` ``f`` ``g`` ``h`` ``i`` ``j`` ``k`` ``l`` ``m`` ``o`` ``p`` ``q`` ``r`` ``s`` ``t`` ``u`` ``v`` ``w`` ``x`` ``y`` ``,`` ``-`` ``=`` ``enter`` ``escape`` ``backspace`` ``delete`` ``space`` ``up`` ``down`` ``left`` ``right`` ``home`` ``end`` ``pageup`` ``pagedown`` ``plus`` ``insert`` ``menu`` ``f1`` ``f2`` ``f3`` ``f4`` ``f5`` ``f6`` ``f7`` ``f8`` ``f9`` ``f10`` ``f11`` ``f12`` |
+|Alt+Shift |0: — |58: ``a`` ``b`` ``c`` ``d`` ``e`` ``f`` ``g`` ``h`` ``i`` ``j`` ``k`` ``l`` ``m`` ``n`` ``o`` ``p`` ``q`` ``r`` ``s`` ``t`` ``u`` ``v`` ``w`` ``x`` ``y`` ``z`` ``,`` ``-`` ``=`` ``enter`` ``escape`` ``backspace`` ``delete`` ``tab`` ``space`` ``up`` ``down`` ``left`` ``right`` ``home`` ``end`` ``pageup`` ``pagedown`` ``plus`` ``insert`` ``menu`` ``f1`` ``f2`` ``f3`` ``f4`` ``f5`` ``f6`` ``f7`` ``f8`` ``f9`` ``f10`` ``f11`` ``f12`` |
+|Ctrl+Alt+Shift |0: — |58: ``a`` ``b`` ``c`` ``d`` ``e`` ``f`` ``g`` ``h`` ``i`` ``j`` ``k`` ``l`` ``m`` ``n`` ``o`` ``p`` ``q`` ``r`` ``s`` ``t`` ``u`` ``v`` ``w`` ``x`` ``y`` ``z`` ``,`` ``-`` ``=`` ``enter`` ``escape`` ``backspace`` ``delete`` ``tab`` ``space`` ``up`` ``down`` ``left`` ``right`` ``home`` ``end`` ``pageup`` ``pagedown`` ``plus`` ``insert`` ``menu`` ``f1`` ``f2`` ``f3`` ``f4`` ``f5`` ``f6`` ``f7`` ``f8`` ``f9`` ``f10`` ``f11`` ``f12`` |

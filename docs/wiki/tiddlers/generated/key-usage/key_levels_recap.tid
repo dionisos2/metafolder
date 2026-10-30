@@ -1,0 +1,8 @@
+title: $:/mf/gen/Key usage/Key levels recap
+summary: What each key level is, its size, and how much of it is used
+
+|!Level |!Keys |!Count |!Used as a first key |!Left |
+|0 |a letter alone: `a` … `z` |26 |15 |11 |
+|1 |another key typed without a modifier: `,` `-` `=`, the named keys — arrows, Enter, Escape, Backspace, Delete, Insert, Tab, Space, Home, End, PageUp, PageDown, Menu, `plus` — and F1 … F12 |32 |25 |7 |
+|2 |Shift, Ctrl, Alt or Ctrl+Alt on a key of level 0 or 1; and alone, a character that needs Shift on one of the three layouts — the digits and `. / ; : ! * ( ) " $ % ?` |254 |60 |194 |
+|3 |Ctrl, Alt or Ctrl+Alt with Shift, on a key of level 0 or 1 |174 |4 |170 |

@@ -252,7 +252,7 @@ fn normalize_chord(chord: &str) -> Result<String, String> {
 }
 
 /// The named keys — typed by their name, alike on every layout.
-const NAMED_KEYS: [&str; 17] = [
+pub const NAMED_KEYS: [&str; 17] = [
     "enter",
     "escape",
     "backspace",
@@ -293,9 +293,10 @@ pub fn is_named_key(key: &str) -> bool {
 
 /// The level of a chord (doc "Key levels"), by what it costs to type, typed
 /// alike on bépo, AZERTY and QWERTY: 0 a letter alone, 1 another key typed
-/// without a modifier (`, - =`, a named key), 2 one shift — or a character
-/// that needs it on one of the layouts —, 3 ctrl or alt. `None` for a chord
-/// the three layouts do not type alike (`ctrl+.`, `é`, `[`).
+/// without a modifier (`, - =`, a named key), 2 shift alone,
+/// a character that needs it on one of the layouts, or ctrl or alt without
+/// shift, 3 ctrl or alt with shift. `None` for a chord the three layouts do
+/// not type alike (`ctrl+.`, `é`, `[`).
 pub fn key_level(chord: &str) -> Option<u8> {
     let (modifiers, key) = chord.rsplit_once('+').unwrap_or(("", chord));
     // `ctrl++`: the key is the `+` after the last separator.
@@ -307,8 +308,8 @@ pub fn key_level(chord: &str) -> Option<u8> {
         modifiers.contains("ctrl") || modifiers.contains("alt") || modifiers.contains("meta");
     let shift = modifiers.contains("shift");
     match (control, shift) {
-        (true, _) => plain.then_some(3),
-        (false, true) => plain.then_some(2),
+        (true, true) => plain.then_some(3),
+        (true, false) | (false, true) => plain.then_some(2),
         (false, false) if letter => Some(0),
         (false, false) if plain => Some(1),
         (false, false) => SHIFTED_KEYS.contains(&key).then_some(2),
@@ -1746,10 +1747,13 @@ vars.y = ","
             // Shift on bépo and AZERTY: a level of its own, alone only.
             ("1", Some(2)),
             (":", Some(2)),
-            ("ctrl+x", Some(3)),
+            ("ctrl+x", Some(2)),
+            ("alt+up", Some(2)),
+            ("ctrl+-", Some(2)),
+            ("ctrl+alt+x", Some(2)),
             ("ctrl+shift+a", Some(3)),
-            ("alt+up", Some(3)),
-            ("ctrl+-", Some(3)),
+            ("alt+shift+up", Some(3)),
+            ("ctrl+alt+shift+x", Some(3)),
             ("ctrl+.", None),
             ("shift+.", None),
             ("[", None),

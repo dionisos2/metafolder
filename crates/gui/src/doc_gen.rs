@@ -7,7 +7,7 @@
 
 use crate::keybindings::{CompiledBinding, KeybindingSet};
 use metafolder_core::doc_gen::{code, generated_dir, slug, sync_generated, tid};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// Who defines a command.
@@ -358,61 +358,102 @@ fn panel_note(panel: &str, commands: &[Command]) -> String {
     )
 }
 
-/// The generated half of doc "Key levels": how many keys each level has and
-/// how many the shipped file uses as a first key, then the 26 letters of
-/// level 0 — what each one is used for, and the ones left.
-fn key_levels_note() -> String {
-    use crate::keybindings::{key_level, DIRECT_KEYS, SHIFTED_KEYS};
-    let defaults = include_str!("../default-config/keybindings.toml");
-    let set = KeybindingSet::from_source(defaults).unwrap();
-    let table = set.compiled();
+/// What a key of each level is, the first column of doc "Key levels".
+const KEY_LEVELS: [&str; 4] = [
+    "a letter alone: `a` … `z`",
+    "another key typed without a modifier: `,` `-` `=`, the named keys — arrows, Enter, \
+     Escape, Backspace, Delete, Insert, Tab, Space, Home, End, PageUp, PageDown, Menu, `plus` \
+     — and F1 … F12",
+    "Shift, Ctrl, Alt or Ctrl+Alt on a key of level 0 or 1; and alone, a character that needs \
+     Shift on one of the three layouts — the digits and `. / ; : ! * ( ) \" $ % ?`",
+    "Ctrl, Alt or Ctrl+Alt with Shift, on a key of level 0 or 1",
+];
 
-    // The keys of each level: the plain keys (letters, `, - =`, the named
-    // ones) under no modifier, one Shift, or Ctrl / Alt / both, each with or
-    // without Shift; and the characters that need Shift on one layout.
+/// The keys of a level sharing their modifiers.
+struct KeyGroup {
+    level: usize,
+    with: &'static str,
+    prefix: &'static str,
+    keys: Vec<String>,
+}
+
+impl KeyGroup {
+    fn chord(&self, key: &str) -> String {
+        format!("{}{key}", self.prefix)
+    }
+
+    /// The group's keys a first key of the shipped file uses, and the others.
+    fn split(&self, first_keys: &BTreeSet<String>) -> (Vec<&String>, Vec<&String>) {
+        self.keys.iter().partition(|k| first_keys.contains(&self.chord(k)))
+    }
+}
+
+/// Every key that has a level (`key_level`), by level and modifiers.
+fn key_groups() -> Vec<KeyGroup> {
+    use crate::keybindings::{DIRECT_KEYS, NAMED_KEYS, SHIFTED_KEYS};
     let letters: Vec<String> = ('a'..='z').map(String::from).collect();
-    let named = [
-        "enter",
-        "escape",
-        "backspace",
-        "delete",
-        "tab",
-        "space",
-        "up",
-        "down",
-        "left",
-        "right",
-        "home",
-        "end",
-        "pageup",
-        "pagedown",
-        "plus",
-        "insert",
-        "menu",
-    ];
     let others: Vec<String> = DIRECT_KEYS
         .iter()
-        .chain(named.iter())
+        .chain(NAMED_KEYS.iter())
         .map(|k| k.to_string())
         .chain((1..=12).map(|n| format!("f{n}")))
         .collect();
-    let plain = letters.len() + others.len();
-    let sizes = [letters.len(), others.len(), plain + SHIFTED_KEYS.len(), 6 * plain];
-    let mut first_keys: [std::collections::BTreeSet<&str>; 4] = Default::default();
-    for binding in &table {
-        if let Some(level) = key_level(&binding.keys[0]) {
-            first_keys[level as usize].insert(&binding.keys[0]);
+    let plain = [letters.clone(), others.clone()].concat();
+    let shifted = SHIFTED_KEYS.iter().map(|k| k.to_string()).collect();
+    let group = |level, with, prefix, keys| KeyGroup { level, with, prefix, keys };
+    vec![
+        group(0, "Alone", "", letters),
+        group(1, "Alone", "", others),
+        group(2, "Shift", "shift+", plain.clone()),
+        group(2, "Alone, needing Shift on a layout", "", shifted),
+        group(2, "Ctrl", "ctrl+", plain.clone()),
+        group(2, "Alt", "alt+", plain.clone()),
+        group(2, "Ctrl+Alt", "ctrl+alt+", plain.clone()),
+        group(3, "Ctrl+Shift", "ctrl+shift+", plain.clone()),
+        group(3, "Alt+Shift", "alt+shift+", plain.clone()),
+        group(3, "Ctrl+Alt+Shift", "ctrl+alt+shift+", plain),
+    ]
+}
+
+fn shipped_first_keys() -> BTreeSet<String> {
+    let defaults = include_str!("../default-config/keybindings.toml");
+    let table = KeybindingSet::from_source(defaults).unwrap().compiled();
+    table.iter().map(|b| b.keys[0].clone()).collect()
+}
+
+/// The table opening doc "Key levels", which transcludes it: what each level
+/// is, how many keys it has and how many the shipped file uses as a first key.
+fn key_levels_recap_note() -> String {
+    let first_keys = shipped_first_keys();
+    let groups = key_groups();
+    let mut text = String::from("|!Level |!Keys |!Count |!Used as a first key |!Left |\n");
+    for (level, keys) in KEY_LEVELS.iter().enumerate() {
+        let (mut used, mut left) = (0, 0);
+        for group in groups.iter().filter(|g| g.level == level) {
+            let (u, l) = group.split(&first_keys);
+            used += u.len();
+            left += l.len();
         }
+        text.push_str(&format!("|{level} |{keys} |{} |{used} |{left} |\n", used + left));
     }
-    let mut text = String::from("!! Counted\n\n|!Level |!Keys |!Used as a first key |!Left |\n");
-    for level in 0..4 {
-        let used = first_keys[level].len();
-        text.push_str(&format!("|{level} |{} |{used} |{} |\n", sizes[level], sizes[level] - used));
-    }
-    text.push_str(
-        "\nLevel 3 counts Ctrl, Alt and Ctrl+Alt, each with or without Shift, on a key of \
-         level 0 or 1.\n",
-    );
+    tid(
+        &[
+            ("title", "$:/mf/gen/Key usage/Key levels recap"),
+            ("summary", "What each key level is, its size, and how much of it is used"),
+        ],
+        &text,
+    )
+}
+
+/// The generated half of doc "Key levels": the 26 letters of level 0 — what
+/// each one is used for, and the ones left —, then the keys used and left of
+/// the other levels.
+fn key_levels_note() -> String {
+    let defaults = include_str!("../default-config/keybindings.toml");
+    let set = KeybindingSet::from_source(defaults).unwrap();
+    let table = set.compiled();
+    let letters: Vec<String> = ('a'..='z').map(String::from).collect();
+    let mut text = String::new();
 
     // Level 0: what each letter is used for.
     let entries = set.entries();
@@ -470,20 +511,37 @@ fn key_levels_note() -> String {
         }
         used.push(format!("|{} |{} |\n", code(letter), uses.join("; ")));
     }
-    text.push_str(&format!(
-        "\n!! Level 0: the letters used ({})\n\n|!Letter |!For |\n",
-        used.len()
-    ));
+    text.push_str(&format!("!! Level 0: the letters used ({})\n\n|!Letter |!For |\n", used.len()));
     text.extend(used);
     text.push_str(&format!("\n!! Level 0: the letters left ({})\n\n", left.len()));
     text.push_str(&if left.is_empty() { "None.".to_string() } else { left.join(" ") });
     text.push('\n');
+
+    // The other levels: the first keys used and left, by modifiers.
+    let first_keys = shipped_first_keys();
+    let groups = key_groups();
+    let keys_cell = |keys: &[&String]| {
+        let list: Vec<String> = keys.iter().map(|k| code(k)).collect();
+        format!("{}: {}", keys.len(), if list.is_empty() { "—".into() } else { list.join(" ") })
+    };
+    for level in 1..KEY_LEVELS.len() {
+        text.push_str(&format!("\n!! Level {level}\n\n|!With |!Used |!Left |\n"));
+        for group in groups.iter().filter(|g| g.level == level) {
+            let (used, left) = group.split(&first_keys);
+            text.push_str(&format!(
+                "|{} |{} |{} |\n",
+                group.with,
+                keys_cell(&used),
+                keys_cell(&left)
+            ));
+        }
+    }
     tid(
         &[
             ("title", "$:/mf/gen/Key usage/Key levels"),
             ("catalog", "Key usage"),
             ("target", "Key levels"),
-            ("summary", "The keys of each level, and the letters used and left"),
+            ("summary", "The keys used and left at each level"),
         ],
         &text,
     )
@@ -492,6 +550,26 @@ fn key_levels_note() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_key_group_holds_keys_of_its_level_and_covers_the_shipped_keys() {
+        let groups = key_groups();
+        let mut seen = BTreeSet::new();
+        for group in &groups {
+            for key in &group.keys {
+                let chord = group.chord(key);
+                assert_eq!(
+                    crate::keybindings::key_level(&chord),
+                    Some(group.level as u8),
+                    "{chord}"
+                );
+                assert!(seen.insert(chord.clone()), "{chord} is listed twice");
+            }
+        }
+        for first_key in shipped_first_keys() {
+            assert!(seen.contains(&first_key), "{first_key} is shipped but listed nowhere");
+        }
+    }
 
     #[test]
     fn scan_reads_names_and_their_labels() {
@@ -583,7 +661,10 @@ mod tests {
             .map(|p| (format!("{}.tid", slug(p)), panel_note(p, &all)))
             .collect();
         sync_generated(&generated_dir(env!("CARGO_MANIFEST_DIR"), "Panel"), &panels).unwrap();
-        let levels = BTreeMap::from([("key_levels.tid".to_string(), key_levels_note())]);
+        let levels = BTreeMap::from([
+            ("key_levels.tid".to_string(), key_levels_note()),
+            ("key_levels_recap.tid".to_string(), key_levels_recap_note()),
+        ]);
         sync_generated(&generated_dir(env!("CARGO_MANIFEST_DIR"), "Key usage"), &levels).unwrap();
     }
 }

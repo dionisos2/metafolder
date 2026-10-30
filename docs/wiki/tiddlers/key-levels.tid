@@ -1,7 +1,7 @@
 title: Key levels
 tags: Keybindings [[Key usage]]
 kind: reference
-summary: Every key the shipped keybindings may use, by level — what it costs to type —, and for level 0, the 26 letters alone, which are used and which are left.
+summary: Every key the shipped keybindings may use, by level — what it costs to type —, and at each level which keys are used and which are left.
 
 A key is not worth another: a letter under the fingers costs less than a
 Ctrl chord, and there are only 26 of them. The ''level'' of a key says what it costs
@@ -10,14 +10,9 @@ more precious. A test holds every shipped key to one of these levels
 (`test_shipped_keys_follow_the_rules_of_choice`, through `key_level` in
 `keybindings.rs`).
 
-|!Level |!Keys |
-|0 |a letter alone: `a` … `z` |
-|1 |another key typed without a modifier: `,` `-` `=`, the named keys — arrows, Enter, Escape, Backspace, Delete, Insert, Tab, Space, Home, End, PageUp, PageDown, Menu, `plus` — and F1 … F12 |
-|2 |one Shift: Shift and a key of level 0 or 1; and alone, a character that needs Shift on one of the three layouts — the digits and `. / ; : ! * ( ) " $ % ?` |
-|3 |Ctrl or Alt, with or without Shift, on a key of level 0 or 1 |
+{{$:/mf/gen/Key usage/Key levels recap}}
 
-How many keys each level has, and how many the shipped file uses as a first key, is
-counted below.
+Each level's keys, used and left, are listed below.
 
 * What has ''no level'' is never shipped: a key that needs AltGr (`[ ] { } \ | ~ ^ # @ & _ < >`), a dead key, an accented letter, and a level 2 character under Ctrl or Alt — the Shift a layout needs changes the character, so `ctrl+.` cannot be typed on AZERTY.
 * A ''sequence'' takes from the keyboard only its first key: `g l` spends `g`, and the second letters are free again in every domain. That is why the level of a binding is its first key's, and why level 0 is counted by first keys.

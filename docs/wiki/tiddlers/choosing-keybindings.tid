@@ -24,7 +24,7 @@ Never a key that needs AltGr (`[ ] { } \ | ~ ^ # @ & _ < >`), a dead key, or an
 accented letter.
 
 What each of these keys costs gives it a ''level'', from 0 — a letter alone — to 3 — a
-Ctrl or Alt chord; [[Key levels]] lists them, and counts the letters used and left.
+Ctrl or Alt chord with Shift; [[Key levels]] lists them, with those used and left.
 
 !! How often, how many keys
 
