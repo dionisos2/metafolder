@@ -20,6 +20,9 @@ import { resolve } from 'node:path';
 // jsdom leaves `import.meta.url` unusable as a file: URL).
 const PANELS_DIR = resolve(process.cwd(), '../default-config/panel-types');
 
+// A new panel type fails below with "Unknown variable dynamic import" until this
+// file changes: vitest caches its transform, with the list of panels the dynamic
+// import resolved to, by this file's content (~/.local/share/vitest).
 const panelTypes = readdirSync(PANELS_DIR, { withFileTypes: true })
   .filter((entry) => entry.isDirectory())
   .map((entry) => entry.name)

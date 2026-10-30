@@ -145,6 +145,7 @@ async function mountPanel(
     visible: options.visible ?? false,
     onVisibility: vi.fn(),
     provide: vi.fn(),
+    workspace: { set: vi.fn(async () => {}), onChange: vi.fn() },
   };
   const root = shadowRoot();
   const mod = await import('../../default-config/panel-types/keybindings/main.js');
@@ -198,11 +199,11 @@ describe('keybindings panel', () => {
   });
 
   test('the commands no key runs are listed too, after the lines', async () => {
-    const { shown, row, rows, button } = await mountPanel();
+    const { shown, row, rows } = await mountPanel();
     expect(shown().slice(-2)).toEqual(['', '']);
     const prune = rows().find((r) => r.text.includes('log:prune'))!;
     expect(prune.text).toContain('Prune the log');
-    expect(button(prune.tr, 'Bind')).toBeDefined();
+    expect(prune.tr.querySelector('input.source')).not.toBeNull();
     expect(row('x').text).toContain('A');
   });
 
@@ -377,39 +378,67 @@ describe('keybindings panel', () => {
     expect(shown()).not.toContain('{panels} l');
   });
 
-  test('Bind puts a command with no key into the form', async () => {
-    const { rows, button, field } = await mountPanel();
+  test('a command with no key is bound in place: the empty key field, then Enter', async () => {
+    const { rows, type, key, api, button } = await mountPanel();
     const run = rows().find((r) => r.text.includes('reconcile:run'))!;
-    button(run.tr, 'Bind')!.click();
-    await flush();
-    expect(field('command').value).toBe('reconcile:run');
+    expect(button(run.tr, 'Bind')).toBeUndefined();
+    const input = run.tr.querySelector('input.source') as HTMLInputElement;
+    expect(input.value).toBe('');
+    expect(input.placeholder).toBe('no key');
+    // Empty, it is not a line yet: Enter writes nothing.
+    await key(input, 'Enter');
+    expect(api.config.saveKeybindingEntry).not.toHaveBeenCalled();
+    await type(input, 'ctrl+alt+r');
+    await key(input, 'Enter');
+    expect(api.config.saveKeybindingEntry).toHaveBeenCalledWith(
+      {
+        source: 'ctrl+alt+r',
+        command: 'reconcile:run',
+        when: null,
+        focus: null,
+        textInput: false,
+        target: null,
+      },
+      null,
+    );
   });
 
-  test('each variable is listed with its keys; a new value is checked, then saved on Enter', async () => {
-    const { root, type, key, api } = await mountPanel({
-      checkVariable: (_name, value) => {
-        if (value === 'x') throw new Error('`x` (`command-input:focus command`) would hide `x l`');
-        return '3 keys change.';
-      },
+  test('when, focus and target are edited in place, the line replaced', async () => {
+    const { row, type, key, api, root } = await mountPanel({
+      check: (draft) => (draft.when === 'log' ? { key: '`g g` is already bound in log' } : {}),
     });
-    (root.getElementById('show-variables') as HTMLButtonElement).click();
-    const variables = [...root.querySelectorAll('#variables tr')];
-    expect(variables).toHaveLength(3);
-    const negative = variables.find((tr) => tr.textContent.includes('negative'))!;
-    const value = negative.querySelector('input')!;
-    expect(value.value).toBe('{tags} -');
-    expect(negative.textContent).toContain(', -');
-    expect(negative.textContent).toContain('3');
+    const tr = row('{go} g').tr;
+    const input = (name: string) => tr.querySelector(`input.${name}`) as HTMLInputElement;
+    await type(input('when'), 'log');
+    expect(root.getElementById('key-check')!.textContent).toContain('already bound');
+    await key(input('when'), 'Enter');
+    expect(api.config.saveKeybindingEntry).not.toHaveBeenCalled();
+    await key(input('when'), 'Escape');
+    expect(input('when').value).toBe('');
 
-    const go = variables.find((tr) => tr.textContent.includes('go'))!.querySelector('input')!;
-    await type(go, 'x');
-    expect(root.getElementById('variable-check')!.textContent).toContain('would hide');
-    await key(go, 'Enter');
-    expect(api.config.setKeybindingVariable).not.toHaveBeenCalled();
-    await type(go, 'j');
-    expect(root.getElementById('variable-check')!.textContent).toContain('3 keys change');
-    await key(go, 'Enter');
-    expect(api.config.setKeybindingVariable).toHaveBeenCalledWith('go', 'j');
+    await type(input('when'), 'trash');
+    await type(input('focus'), '@finder');
+    await type(input('target'), 'other');
+    await key(input('target'), 'Enter');
+    expect(api.config.saveKeybindingEntry).toHaveBeenCalledWith(
+      {
+        source: '{go} g',
+        command: 'cursor:first self',
+        when: 'trash',
+        focus: 'finder',
+        textInput: false,
+        target: 'other',
+      },
+      { source: '{go} g', when: null, focus: null },
+    );
+  });
+
+  test('a suggested key keeps all its fields read-only', async () => {
+    const { row } = await mountPanel();
+    for (const name of ['source', 'when', 'focus', 'target']) {
+      const input = row('ctrl+alt+y').tr.querySelector(`input.${name}`) as HTMLInputElement;
+      expect(input.readOnly).toBe(true);
+    }
   });
 
   test('a command-classes.toml that cannot be read is said, the rest shown', async () => {
@@ -420,32 +449,9 @@ describe('keybindings panel', () => {
     expect(shown()).toContain('ctrl+t');
   });
 
-  test('the variables are a list apart: one list is shown at a time', async () => {
-    const { root, shown } = await mountPanel();
-    const keysView = root.getElementById('keys-view') as HTMLElement;
-    const variablesView = root.getElementById('variables-view') as HTMLElement;
-    const showKeys = root.getElementById('show-keys') as HTMLButtonElement;
-    const showVariables = root.getElementById('show-variables') as HTMLButtonElement;
-    expect(keysView.contains(root.getElementById('bindings'))).toBe(true);
-    expect(keysView.contains(root.getElementById('variables'))).toBe(false);
-    expect(keysView.hidden).toBe(false);
-    expect(variablesView.hidden).toBe(true);
-    expect(shown()).toContain('ctrl+t');
-    expect(showVariables.textContent).toContain('3');
-
-    showVariables.click();
-    expect(keysView.hidden).toBe(true);
-    expect(variablesView.hidden).toBe(false);
-    expect(showVariables.getAttribute('aria-pressed')).toBe('true');
-    expect(showKeys.getAttribute('aria-pressed')).toBe('false');
-
-    showKeys.click();
-    expect(keysView.hidden).toBe(false);
-    expect(variablesView.hidden).toBe(true);
-  });
-
   test('opening the panel selects no text field, shown at mount or later', async () => {
     const { root, api } = await mountPanel({ visible: true });
+    expect(root.getElementById('variables')).toBeNull();
     expect(root.activeElement).toBeNull();
     const onVisibility = api.onVisibility.mock.calls[0]![0] as (visible: boolean) => void;
     onVisibility(true);

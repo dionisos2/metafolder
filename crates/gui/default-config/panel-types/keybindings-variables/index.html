@@ -1,0 +1,78 @@
+<!doctype html>
+<!-- Built-in panel type: the variables of keybindings.toml (doc
+     "keybindings-variables panel", doc "Keybinding variables"). -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>keybindings-variables</title>
+    <style>
+      .mf-panel-body {
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        padding: 8px 12px;
+        box-sizing: border-box;
+        font-size: 13px;
+        gap: 8px;
+      }
+      code,
+      kbd,
+      input {
+        font-family: var(--mf-font-mono, monospace);
+      }
+      input {
+        background: var(--mf-bg, #1e1e24);
+        color: var(--mf-fg, #d8d8e0);
+        border: 1px solid var(--mf-fg-dim, #8a8a96);
+        border-radius: 3px;
+        padding: 2px 6px;
+      }
+      input.invalid {
+        border-color: var(--mf-error, #c44c56);
+      }
+      kbd {
+        font-size: 0.95em;
+        padding: 0 4px;
+        border: 1px solid var(--mf-fg-dim, #8a8a96);
+        border-radius: 3px;
+      }
+      #list {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+      }
+      table {
+        border-collapse: collapse;
+      }
+      td {
+        padding: 2px 8px;
+        vertical-align: baseline;
+      }
+      #variables tr:nth-child(odd) {
+        background: var(--mf-bg-raised, #26262e);
+      }
+      .keys {
+        white-space: nowrap;
+      }
+      .uses,
+      .ok {
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      .bad {
+        color: var(--mf-error, #c44c56);
+      }
+      #variable-check {
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="list" data-help-topic="keybinding-variables">
+      <table>
+        <tbody id="variables"></tbody>
+      </table>
+    </div>
+    <p id="variable-check"></p>
+  </body>
+</html>

@@ -1661,8 +1661,9 @@ scenario_help_cursor() {
     keys Return
     assert "help-cursor: Enter opens the page under the cursor" \
         until_ok 10 is_first "#help-title"
-    # A page long enough to scroll.
+    # A page long enough to scroll, the focus out of the box help:open puts it in.
     run help:open the-metafolder-api
+    run help:apply search
     assert "help-cursor: a long page is shown" until_ok 10 shows "#help-title" "The metafolder API"
     scrolled() { [ "$(webview scroll "#help-scroll" 2>/dev/null)" "$1" 0 ]; }
     keys Down Down

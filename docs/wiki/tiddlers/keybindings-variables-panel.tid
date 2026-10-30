@@ -1,0 +1,17 @@
+title: keybindings-variables panel
+tags: Panel [[Panel types]] [[Customising the GUI]] Keybindings
+kind: reference
+summary: Every variable of keybindings.toml: its value, edited in place, the keys it stands for, and how many lines use it.
+
+Open it with `panel:open here keybindings-variables` (<<key "panel:open here keybindings-variables" "t k v">>).
+It lists every variable of the file, in its order: its name, its value — a field —, the
+keys it stands for, and how many lines use it, directly or through another variable
+([[Keybinding variables]]).
+
+What a new value would do is said as it is typed — how many keys change, or why it is
+refused: a key bound twice, or a key alone hiding a sequence that nothing hid before.
+''Enter'' writes it, in its line of the file; ''Escape'' gives the old value back.
+
+The list is read again when the panel is shown, at `view:refresh`, and when the
+[[keybindings panel]] of the workspace changes a line; a value written here makes that
+panel read its lines again in turn.

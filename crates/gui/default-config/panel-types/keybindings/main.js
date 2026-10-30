@@ -1,15 +1,15 @@
 // keybindings panel: the editor of keybindings.toml (doc "keybindings panel",
 // doc "Changing keybindings"). One row per line of the file: its key as the
-// file writes it — variables left in, editable in place — beside the keys it
-// really binds; then the commands no key runs. The class buttons keep the
-// commands of the classes pressed (doc "Command classes"), and the variables
-// are a list apart, shown instead of the lines (doc "Keybinding variables").
+// file writes it — variables left in —, `when`, `focus` and `target`, all
+// editable in place, beside the keys it really binds; then the commands no key
+// runs, bound in place the same way. The class buttons keep the commands of the
+// classes pressed (doc "Command classes"). The variables have their own panel
+// (doc "keybindings-variables panel").
 //
 // The form doubles as the rows' filter: the key typed keeps the lines binding a
 // key it starts (or, holding a `{`, the lines written with it), the command
 // typed the lines running it. What saving would refuse is asked of the backend
-// as anything is typed (`config.checkKeybindingEntry`,
-// `config.checkKeybindingVariable`), the same check the save makes, so the
+// as anything is typed (`config.checkKeybindingEntry`), the same check the save makes, so the
 // panel never restates the rules.
 
 import { byId, el, messageOf } from '/__ui.js';
@@ -70,12 +70,6 @@ const draftOf = (entry, source = entry.source) => ({
   target: entry.target,
 });
 
-/** @param {Metafolder.FileEntry} entry */
-function scopeOf(entry) {
-  const scope = entry.focus ? `@${entry.focus}` : (entry.when ?? 'global');
-  return entry.text_input ? `${scope} ⌨` : scope;
-}
-
 /** A key sequence as keycaps. @param {string[]} keys */
 const keycaps = (keys) => keys.flatMap((key, i) => [i > 0 ? ' ' : null, el('kbd', {}, key)]);
 
@@ -97,13 +91,6 @@ export async function mount(root, metafolder) {
   const errorLine = byId(root, 'error');
   const count = byId(root, 'count');
   const tbody = byId(root, 'bindings');
-  const variablesBody = byId(root, 'variables');
-  const keysView = byId(root, 'keys-view');
-  const variablesView = byId(root, 'variables-view');
-  const showKeys = byId(root, 'show-keys', HTMLButtonElement);
-  const showVariables = byId(root, 'show-variables', HTMLButtonElement);
-  const variableCheck = byId(root, 'variable-check');
-
   /** @type {Metafolder.KeybindingView} */
   let view = { entries: [], variables: [], unbound: [], classes_error: null };
   /** @type {Map<string, Metafolder.CommandDef>} */
@@ -121,7 +108,6 @@ export async function mount(root, metafolder) {
    *  right after the last key typed would find Save not yet enabled. */
   let checking = Promise.resolve();
   let inlineSeq = 0;
-  let variableSeq = 0;
 
   /** The form as the backend takes it. @returns {Metafolder.EntryDraft} */
   function draft() {
@@ -182,63 +168,89 @@ export async function mount(root, metafolder) {
   /** @param {string} invocation */
   const labelOf = (invocation) => commands.get(invocation.split(/\s+/)[0])?.label ?? '';
 
-  /** The key of a line, edited in place: Enter saves it under the new key,
-   *  Escape gives the old one back.
-   *  @param {Metafolder.FileEntry} entry */
-  function sourceInput(entry) {
-    /** The verdict on the value typed, null while it is asked. @type {Metafolder.KeybindingCheck|null} */
+  /** The fields of a row, edited in place: Enter saves the line as they say,
+   *  Escape gives them back. A command with no key is the same row, with no
+   *  place to replace and nothing to save until a key is typed.
+   *  @param {Metafolder.EntryDraft} line @param {Metafolder.EntryPlace|null} place
+   *  @param {boolean} readOnly a suggestion: not in the file, it cannot be moved */
+  function rowFields(line, place, readOnly) {
+    /** The verdict on the values typed, null while it is asked. @type {Metafolder.KeybindingCheck|null} */
     let verdict = NO_OBJECTION;
-    const input = el('input', {
-      class: 'source',
-      value: entry.source,
-      readOnly: entry.suggested,
-      autocomplete: 'off',
-      title: entry.suggested
-        ? 'suggested by a panel: overridden by a line of the file in its place'
-        : 'the key as the file writes it — Enter saves it, Escape gives it back',
-      oninput: async () => {
-        const seq = ++inlineSeq;
-        const typed = input.value.trim();
-        verdict = null;
-        const answer =
-          typed === entry.source
-            ? NO_OBJECTION
-            : await metafolder.config.checkKeybindingEntry(draftOf(entry, typed), placeOf(entry));
-        if (seq !== inlineSeq) return;
-        verdict = answer;
-        input.classList.toggle('invalid', answer.key !== null);
-        keyCheck.className = answer.key ? 'bad' : 'ok';
-        keyCheck.textContent = answer.key ?? answer.note ?? '';
-      },
-      /** @param {KeyboardEvent} event */
-      onkeydown: async (event) => {
-        if (event.key === 'Escape') {
-          input.value = entry.source;
-          input.classList.remove('invalid');
-          inlineSeq++;
-          verdict = NO_OBJECTION;
-          renderForm();
-          return;
-        }
-        if (event.key !== 'Enter') return;
-        event.preventDefault();
-        const typed = input.value.trim();
-        if (typed === entry.source || verdict === null || !noObjection(verdict)) return;
-        await write(() =>
-          metafolder.config.saveKeybindingEntry(draftOf(entry, typed), placeOf(entry)),
-        );
-      },
+    /** @param {string} name @param {string} value @param {string} placeholder @param {string} title */
+    const field = (name, value, placeholder, title) => {
+      const input = el('input', {
+        class: name,
+        value,
+        placeholder,
+        readOnly,
+        autocomplete: 'off',
+        title: readOnly ? 'suggested by a panel: overridden by a line of the file in its place' : title,
+        oninput: () => void recheckRow(),
+        /** @param {KeyboardEvent} event */
+        onkeydown: (event) => void onRowKey(event),
+      });
+      if (name !== 'source') input.setAttribute('list', `${name}-list`);
+      return input;
+    };
+    const fields = {
+      source: field('source', line.source, 'no key', 'the key as the file writes it — Enter saves the line, Escape gives it back'),
+      when: field('when', line.when ?? '', 'when', 'the panel type it applies in; empty = everywhere'),
+      focus: field('focus', line.focus ?? '', 'focus', 'the text field it applies in; empty = none'),
+      target: field('target', line.target ?? '', 'target', 'for a command holding {target}: where its key aims'),
+    };
+    /** The line as the fields say. @returns {Metafolder.EntryDraft} */
+    const typed = () => ({
+      ...line,
+      source: fields.source.value.trim(),
+      when: orNull(fields.when.value),
+      focus: orNull(fields.focus.value.replace(/^@/, '')),
+      target: orNull(fields.target.value),
     });
-    return input;
+    const changed = () => JSON.stringify(typed()) !== JSON.stringify(line);
+    async function recheckRow() {
+      const seq = ++inlineSeq;
+      verdict = null;
+      const form = typed();
+      const answer =
+        !changed() || form.source === ''
+          ? NO_OBJECTION
+          : await metafolder.config.checkKeybindingEntry(form, place);
+      if (seq !== inlineSeq) return;
+      verdict = answer;
+      fields.source.classList.toggle('invalid', answer.key !== null);
+      keyCheck.className = answer.key ? 'bad' : 'ok';
+      keyCheck.textContent = answer.key ?? answer.note ?? '';
+    }
+    /** @param {KeyboardEvent} event */
+    async function onRowKey(event) {
+      if (event.key === 'Escape') {
+        fields.source.value = line.source;
+        fields.when.value = line.when ?? '';
+        fields.focus.value = line.focus ?? '';
+        fields.target.value = line.target ?? '';
+        fields.source.classList.remove('invalid');
+        inlineSeq++;
+        verdict = NO_OBJECTION;
+        renderForm();
+        return;
+      }
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      const form = typed();
+      if (!changed() || form.source === '' || verdict === null || !noObjection(verdict)) return;
+      await write(() => metafolder.config.saveKeybindingEntry(form, place));
+    }
+    return fields;
   }
 
   /** @param {Metafolder.FileEntry} entry */
   function entryRow(entry) {
+    const fields = rowFields(draftOf(entry), placeOf(entry), entry.suggested);
     return el(
       'tr',
       { class: [inTheWay(entry) && 'conflict'] },
       el('td', { class: 'class', title: 'its class (command-classes.toml)' }, classLabel(entry.class)),
-      el('td', { class: 'source' }, sourceInput(entry)),
+      el('td', { class: 'source' }, fields.source),
       el(
         'td',
         { class: 'keys' },
@@ -247,9 +259,16 @@ export async function mount(root, metafolder) {
           el('span', { title: binding.invocation }, keycaps(binding.keys)),
         ]),
       ),
-      el('td', {}, el('code', {}, entry.command)),
-      el('td', { class: 'label' }, labelOf(entry.command)),
-      el('td', { class: 'scope' }, scopeOf(entry), entry.suggested ? ' · suggested' : ''),
+      el(
+        'td',
+        { class: 'command' },
+        el('code', {}, entry.command),
+        el('div', { class: 'label' }, labelOf(entry.command)),
+      ),
+      el('td', { class: 'when' }, fields.when),
+      el('td', { class: 'focus' }, fields.focus),
+      el('td', { class: 'target' }, fields.target),
+      el('td', { class: 'scope' }, entry.text_input ? '⌨' : '', entry.suggested ? ' suggested' : ''),
       el(
         'td',
         { class: 'actions' },
@@ -260,20 +279,35 @@ export async function mount(root, metafolder) {
 
   /** A command no key runs. @param {Metafolder.KeybindingView['unbound'][number]} unbound */
   function unboundRow(unbound) {
+    const fields = rowFields(
+      {
+        source: '',
+        command: unbound.name,
+        when: null,
+        focus: null,
+        textInput: false,
+        target: null,
+      },
+      null,
+      false,
+    );
     return el(
       'tr',
       {},
       el('td', { class: 'class' }, classLabel(unbound.class)),
-      el('td', { class: 'source' }),
-      el('td', { class: 'keys none' }, 'no key'),
-      el('td', {}, el('code', {}, unbound.name)),
-      el('td', { class: 'label' }, unbound.label),
-      el('td', { class: 'scope' }),
+      el('td', { class: 'source' }, fields.source),
+      el('td', { class: 'keys' }),
       el(
         'td',
-        { class: 'actions' },
-        el('button', { title: 'Bind a key to it', onclick: () => bind(unbound.name) }, 'Bind'),
+        { class: 'command' },
+        el('code', {}, unbound.name),
+        el('div', { class: 'label' }, unbound.label),
       ),
+      el('td', { class: 'when' }, fields.when),
+      el('td', { class: 'focus' }, fields.focus),
+      el('td', { class: 'target' }, fields.target),
+      el('td', { class: 'scope' }),
+      el('td', { class: 'actions' }),
     );
   }
 
@@ -284,11 +318,19 @@ export async function mount(root, metafolder) {
       rows.length === total
         ? `${view.entries.length} lines · ${view.unbound.length} commands with no key`
         : `${rows.length} of ${total}`;
-    // Sized to the longest key written, not to what the table leaves over: long
-    // key lists elsewhere in the row would shrink the field until its text no
-    // longer shows.
-    const longest = Math.max(0, ...view.entries.map((entry) => entry.source.length));
-    tbody.style.setProperty('--source-chars', String(longest));
+    // Sized to the longest value written, not to what the table leaves over:
+    // long key lists elsewhere in the row would shrink a field until its text no
+    // longer shows. Never narrower than the placeholder of an empty one.
+    /** @param {string} name @param {number} least @param {(e: Metafolder.FileEntry) => string|null} value */
+    const sizeColumn = (name, least, value) =>
+      tbody.style.setProperty(
+        `--${name}-chars`,
+        String(Math.max(least, ...view.entries.map((entry) => (value(entry) ?? '').length))),
+      );
+    sizeColumn('source', 6, (entry) => entry.source);
+    sizeColumn('when', 4, (entry) => entry.when);
+    sizeColumn('focus', 5, (entry) => entry.focus);
+    sizeColumn('target', 6, (entry) => entry.target);
     tbody.replaceChildren(
       ...rows.map((row) => ('entry' in row ? entryRow(row.entry) : unboundRow(row.unbound))),
     );
@@ -307,64 +349,6 @@ export async function mount(root, metafolder) {
     command.classList.toggle('invalid', command.value.trim() !== '' && check.command !== null);
     save.disabled =
       source.value.trim() === '' || command.value.trim() === '' || !noObjection(check);
-  }
-
-  /** @param {Metafolder.KeybindingVariable} variable */
-  function variableRow(variable) {
-    /** @type {string|null} the value the last verdict allowed */
-    let allowed = null;
-    const input = el('input', {
-      value: variable.value,
-      autocomplete: 'off',
-      title: 'Enter saves it, Escape gives it back',
-      oninput: async () => {
-        const seq = ++variableSeq;
-        const value = input.value.trim();
-        allowed = null;
-        /** @type {[string, boolean]} */
-        let answer;
-        try {
-          answer = [await metafolder.config.checkKeybindingVariable(variable.name, value), true];
-        } catch (error) {
-          answer = [messageOf(error), false];
-        }
-        if (seq !== variableSeq) return;
-        const [text, ok] = answer;
-        if (ok) allowed = value;
-        input.classList.toggle('invalid', !ok);
-        variableCheck.className = ok ? 'ok' : 'bad';
-        variableCheck.textContent = `${variable.name}: ${text}`;
-      },
-      /** @param {KeyboardEvent} event */
-      onkeydown: async (event) => {
-        if (event.key === 'Escape') {
-          input.value = variable.value;
-          input.classList.remove('invalid');
-          variableSeq++;
-          variableCheck.textContent = '';
-          return;
-        }
-        if (event.key !== 'Enter') return;
-        event.preventDefault();
-        const value = input.value.trim();
-        if (value === variable.value || allowed !== value) return;
-        variableCheck.textContent = '';
-        await write(() => metafolder.config.setKeybindingVariable(variable.name, value));
-      },
-    });
-    return el(
-      'tr',
-      {},
-      el('td', {}, el('code', {}, `{${variable.name}}`)),
-      el('td', { class: 'value' }, input),
-      el('td', { class: 'keys' }, keycaps(variable.keys.split(/\s+/))),
-      el('td', { class: 'uses' }, variable.uses === 1 ? '1 line' : `${variable.uses} lines`),
-    );
-  }
-
-  function renderVariables() {
-    showVariables.textContent = `Variables · ${view.variables.length}`;
-    variablesBody.replaceChildren(...view.variables.map(variableRow));
   }
 
   /** Asks the backend what saving the form would refuse. */
@@ -403,13 +387,6 @@ export async function mount(root, metafolder) {
     source.focus();
   }
 
-  /** @param {string} name */
-  function bind(name) {
-    command.value = name;
-    onInput();
-    source.focus();
-  }
-
   /** Runs a write and shows the view it returns, or why it was refused.
    *  @param {() => Promise<Metafolder.KeybindingView>} action
    *  @returns {Promise<boolean>} whether it was done */
@@ -417,6 +394,7 @@ export async function mount(root, metafolder) {
     errorLine.textContent = '';
     try {
       show(await action());
+      void metafolder.workspace.set('keybindings.changed', Date.now());
       return true;
     } catch (error) {
       errorLine.textContent = messageOf(error);
@@ -456,7 +434,6 @@ export async function mount(root, metafolder) {
       ]),
     );
     fillDatalist('focus-list', sorted(view.entries.flatMap((e) => (e.focus ? [e.focus] : []))));
-    renderVariables();
     renderTable();
     renderForm();
   }
@@ -500,22 +477,12 @@ export async function mount(root, metafolder) {
   save.addEventListener('click', () => void submit());
   clear.addEventListener('click', () => clearForm());
 
-  /** Shows one of the two lists. @param {boolean} variables */
-  function showList(variables) {
-    keysView.hidden = variables;
-    variablesView.hidden = !variables;
-    showKeys.setAttribute('aria-pressed', String(!variables));
-    showVariables.setAttribute('aria-pressed', String(variables));
-  }
-  showKeys.addEventListener('click', () => showList(false));
-  showVariables.addEventListener('click', () => showList(true));
 
   void metafolder.commands.register('keybindings:focus', {
     label: 'Keybindings: focus the key field of the form',
     args: [{ name: 'zone', prompt: () => 'Which zone? (key)', complete: () => ['key'] }],
     handler: (_mf, /** @type {string} */ zone) => {
       if (zone !== 'key') throw new Error(`unknown zone: "${zone ?? ''}" (expected key)`);
-      showList(false);
       source.focus();
     },
   });
@@ -525,6 +492,8 @@ export async function mount(root, metafolder) {
   metafolder.onVisibility((visible) => {
     if (visible) void load();
   });
+  // Changed from the keybindings-variables panel, maybe beside this one.
+  metafolder.workspace.onChange('keybindings.changed', () => void load());
 
   renderForm();
   await load();

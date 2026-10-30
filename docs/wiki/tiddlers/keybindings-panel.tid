@@ -1,15 +1,14 @@
 title: keybindings panel
 tags: Panel [[Panel types]] [[Customising the GUI]] Keybindings
 kind: reference
-summary: The editor of keybindings.toml: one row per line of the file, its key as written beside the keys it binds, the commands no key runs, a filter by class, and the variables.
+summary: The editor of keybindings.toml: one row per line of the file, its key, when, focus and target edited in place beside the keys it binds, the commands no key runs, and a filter by class.
 
-Open it with `panel:open here keybindings` (<<key "panel:open here keybindings" "t k">>).
+Open it with `panel:open here keybindings` (<<key "panel:open here keybindings" "t k k">>).
 It edits `gui/keybindings.toml` ([[Changing keybindings]]) — what used to be the lower
 half of the [[config panel]] —, so a key can be looked up while the panel it acts in
 stays on screen.
 
-The buttons at the top switch between two lists, one shown at a time: ''Keybindings'',
-the lines with their form and their filter, and ''Variables''. Opening the panel gives
+Opening the panel gives
 no field the focus: <<key "keybindings:focus key" "p e">> goes to the key field of the
 form.
 
@@ -20,14 +19,18 @@ writes it —, in the order of the file, then the keys suggested by a panel or b
 `commands.js`, then the commands no key runs. Each row shows:
 
 * its [[class|Command classes]], `?` when `command-classes.toml` gives it none;
-* its key ''as written'', variables left in (`{go} l`) — a field: what is typed there is checked as it is typed, ''Enter'' saves the line under the new key, ''Escape'' gives the old one back;
+* its key ''as written'', variables left in (`{go} l`), and its `when`, `focus` and `target` — fields: what is typed there is checked as it is typed, ''Enter'' in any of them saves the line as they say, ''Escape'' gives the old values back;
 * the keys it really binds, variables replaced: a `{target}` template binds four (`t l`, `i t l`, `b t l`, `n t l`), less the ones a literal line of the file overrides ([[Keybinding variables]]); each one says, on hover, what it runs;
 * the command as written, `{target}` left in, and its description;
-* where it applies — `global`, a panel type, or `@name` for a text field, followed by `⌨` when it also applies while typing ([[Keybindings]]) —, and ''suggested'' for a key that is not in the file. A suggested key cannot be moved and has no ''Remove''; its key field is read-only.
+* `⌨` when it also applies while typing ([[Keybindings]]), and ''suggested'' for a key that is not in the file. A suggested key cannot be moved and has no ''Remove''; its fields are read-only.
 
-''Remove'' removes the line, every key it binds. A command with no key has ''Bind'',
-which puts it into the form. To change anything but a line's key — its command, its
-scope —, remove it and write it again in the form, or edit the file.
+A line saved in place stays where it is in the file when it keeps its key and its
+scope; else the old line goes and the new one is written at the end. ''Remove'' removes
+the line, every key it binds. To change its command, remove it and write it again in
+the form, or edit the file.
+
+A command with no key has the same fields, its key field empty (`no key`): a key typed
+there and ''Enter'' bind it.
 
 !! The classes
 
@@ -55,14 +58,6 @@ there or be hidden by it ([[Changing keybindings]]). ''Save'' stays disabled unt
 nothing does; Enter in a field saves. A literal key over one a template binds is no
 refusal but an override, which the line says.
 
-!! The variables
-
-The ''Variables'' list has every variable of the file, in its order: its name, its value — a
-field —, the keys it stands for, and how many lines use it, directly or through
-another variable ([[Keybinding variables]]). What a new value would do is said as it
-is typed — how many keys change, or why it is refused: a key bound twice, or a key
-alone hiding a sequence that nothing hid before. ''Enter'' writes it, in its line of
-the file; ''Escape'' gives the old value back.
-
 When the panel is shown, the list is read again: what was bound meanwhile, by `config:reload keybindings` or a panel, appears.
-`view:refresh` reads it again too.
+`view:refresh` reads it again too, and so does a change made in the
+[[keybindings-variables panel]].

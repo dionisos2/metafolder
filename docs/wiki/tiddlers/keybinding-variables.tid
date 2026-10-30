@@ -51,7 +51,7 @@ error.
 
 !! Changing one of them
 
-The [[keybindings panel]] lists the variables, in a list of their own, each with its value, the keys it stands
+The [[keybindings-variables panel]] lists the variables, each with its value, the keys it stands
 for and how many lines use it; a new value typed there is written into its line of
 the file, and every key built on it moves. It is refused when it would bind a key
 twice in one place, or make a key alone hide a sequence that nothing hid before — `go`

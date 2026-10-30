@@ -27,7 +27,7 @@ of its own: a file that is missing or malformed stops it at startup
 
 The [[config panel]] (<<key "panel:open here config" "t c">>) shows the paths of
 these files and a button reloading each; the [[keybindings panel]]
-(<<key "panel:open here keybindings" "t k">>) edits the keys.
+(<<key "panel:open here keybindings" "t k k">>) edits the keys.
 
 <<tagged-with "GUI command">>
 

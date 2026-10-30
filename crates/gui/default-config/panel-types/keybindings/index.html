@@ -1,7 +1,7 @@
 <!doctype html>
 <!-- Built-in panel type: the keybinding editor (doc "keybindings panel", doc
      "Changing keybindings") — the lines of keybindings.toml, the commands no
-     key runs, filtered by class; the variables are a list apart. -->
+     key runs, filtered by class. -->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -48,21 +48,6 @@
       }
       input.invalid {
         border-color: var(--mf-error, #c44c56);
-      }
-      #lists {
-        display: flex;
-        gap: 6px;
-      }
-      #lists button[aria-pressed='true'] {
-        background: var(--mf-accent, #4c56c4);
-      }
-      #keys-view,
-      #variables-view {
-        display: flex;
-        flex-direction: column;
-        flex: 1;
-        min-height: 0;
-        gap: 8px;
       }
       #classes {
         display: flex;
@@ -116,19 +101,29 @@
         padding: 2px 8px;
         vertical-align: baseline;
       }
-      #bindings tr:nth-child(odd),
-      #variables tr:nth-child(odd) {
+      #bindings tr:nth-child(odd) {
         background: var(--mf-bg-raised, #26262e);
       }
       tr.conflict {
         box-shadow: inset 3px 0 0 var(--mf-error, #c44c56);
       }
+      /* --<field>-chars: the longest value written. 16px: padding and border. */
       td.source input {
-        /* --source-chars: the longest key written. 16px: padding and border. */
         width: calc(var(--source-chars, 16) * 1ch + 16px);
+      }
+      td.when input {
+        width: calc(var(--when-chars, 8) * 1ch + 16px);
+      }
+      td.focus input {
+        width: calc(var(--focus-chars, 8) * 1ch + 16px);
+      }
+      td.target input {
+        width: calc(var(--target-chars, 8) * 1ch + 16px);
+      }
+      td input {
         box-sizing: border-box;
       }
-      td.source input[readonly] {
+      td input[readonly] {
         border-color: transparent;
       }
       .keys span {
@@ -141,9 +136,7 @@
         border-radius: 3px;
       }
       .label,
-      .scope,
-      .none,
-      .uses {
+      .scope {
         color: var(--mf-fg-dim, #8a8a96);
       }
       .class {
@@ -154,26 +147,9 @@
         white-space: nowrap;
         text-align: right;
       }
-      #variables-list {
-        flex: 1;
-        min-height: 0;
-        overflow-y: auto;
-      }
-      #variables-list table {
-        width: auto;
-      }
-      #variable-check {
-        margin: 4px 0 0;
-      }
     </style>
   </head>
   <body>
-    <div id="lists">
-      <button id="show-keys" aria-pressed="true">Keybindings</button>
-      <button id="show-variables" aria-pressed="false">Variables</button>
-    </div>
-
-    <div id="keys-view">
     <div id="classes" data-help-topic="command-classes">
       <span>Class</span>
       <button id="class-A" aria-pressed="true" title="used all the time: one key">A</button>
@@ -215,16 +191,6 @@
       <table>
         <tbody id="bindings"></tbody>
       </table>
-    </div>
-    </div>
-
-    <div id="variables-view" data-help-topic="keybinding-variables" hidden>
-      <div id="variables-list">
-        <table>
-          <tbody id="variables"></tbody>
-        </table>
-      </div>
-      <p id="variable-check"></p>
     </div>
   </body>
 </html>

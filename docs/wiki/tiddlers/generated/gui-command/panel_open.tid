@@ -15,7 +15,8 @@ summary: Open a panel type here, in the other slot, or in a new workspace
 * ``b t f`` → ``panel:open other viewer``
 * ``b t g`` → ``panel:open other message``
 * ``b t h`` → ``panel:open other help``
-* ``b t k`` → ``panel:open other keybindings``
+* ``b t k k`` → ``panel:open other keybindings``
+* ``b t k v`` → ``panel:open other keybindings-variables``
 * ``b t l`` → ``panel:open other metarecord-list``
 * ``b t m`` → ``panel:open other file-manager``
 * ``b t o`` → ``panel:open other log``
@@ -34,7 +35,8 @@ summary: Open a panel type here, in the other slot, or in a new workspace
 * ``i t f`` → ``panel:open here viewer``
 * ``i t g`` → ``panel:open here message``
 * ``i t h`` → ``panel:open here help``
-* ``i t k`` → ``panel:open here keybindings``
+* ``i t k k`` → ``panel:open here keybindings``
+* ``i t k v`` → ``panel:open here keybindings-variables``
 * ``i t l`` → ``panel:open here metarecord-list``
 * ``i t m`` → ``panel:open here file-manager``
 * ``i t o`` → ``panel:open here log``
@@ -51,7 +53,8 @@ summary: Open a panel type here, in the other slot, or in a new workspace
 * ``n t f`` → ``panel:open new viewer``
 * ``n t g`` → ``panel:open new message``
 * ``n t h`` → ``panel:open new help``
-* ``n t k`` → ``panel:open new keybindings``
+* ``n t k k`` → ``panel:open new keybindings``
+* ``n t k v`` → ``panel:open new keybindings-variables``
 * ``n t l`` → ``panel:open new metarecord-list``
 * ``n t m`` → ``panel:open new file-manager``
 * ``n t o`` → ``panel:open new log``
@@ -75,7 +78,8 @@ summary: Open a panel type here, in the other slot, or in a new workspace
 * ``t f`` → ``panel:open here viewer``
 * ``t g`` → ``panel:open here message``
 * ``t h`` → ``panel:open here help``
-* ``t k`` → ``panel:open here keybindings``
+* ``t k k`` → ``panel:open here keybindings``
+* ``t k v`` → ``panel:open here keybindings-variables``
 * ``t l`` → ``panel:open here metarecord-list``
 * ``t m`` → ``panel:open here file-manager``
 * ``t o`` → ``panel:open here log``

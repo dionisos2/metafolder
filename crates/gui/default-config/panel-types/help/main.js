@@ -432,15 +432,26 @@ export async function mount(root, metafolder) {
 
   // Apply a requested topic from the shell. An empty topic shows the landing
   // page; an exact name opens its page; anything else greps.
+  /** @type {unknown} */
+  let servedNonce;
   /** @param {unknown} raw the `help.request` workspace variable */
   function apply(raw) {
-    const request = /** @type {{topic?: unknown}|null} */ (raw);
+    const request = /** @type {{topic?: unknown, nonce?: unknown, focus?: unknown}|null} */ (raw);
+    // The request served is written back below: that is no new request.
+    if (request && request.nonce === servedNonce) return;
+    servedNonce = request?.nonce;
     const topic = (typeof request?.topic === 'string' ? request.topic : '').trim();
     searchInput.value = topic;
     if (topic === '') {
       showPage('documentation');
     } else {
       runSearch(topic);
+    }
+    // `help:open` alone asks for the box. Asked once: the request stays in the
+    // workspace, and a panel built from it later must not take the focus.
+    if (request?.focus === true) {
+      void metafolder.workspace.set('help.request', { ...request, focus: false });
+      metafolder.whenVisible(() => searchInput.focus());
     }
   }
 

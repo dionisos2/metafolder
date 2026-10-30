@@ -16,18 +16,18 @@ Level 3 counts Ctrl, Alt and Ctrl+Alt, each with or without Shift, on a key of l
 !! Level 0: the letters used (15)
 
 |!Letter |!For |
-|``b`` |starts 27 keys (``{target-other}``) |
+|``b`` |starts 28 keys (``{target-other}``) |
 |``c`` |starts 4 keys (``{clipboard}``) |
 |``e`` |starts 5 keys (``{item}``, ``{items-long}``, ``{items-query}``) |
 |``f`` |``cursor:find self select``; ``metarecord-list:focus finder`` (in ``metarecord-list``) |
 |``g`` |starts 11 keys (``{go}``) |
 |``h`` |starts 4 keys (``{help}``) |
-|``i`` |starts 27 keys (``{target-here}``) |
+|``i`` |starts 28 keys (``{target-here}``) |
 |``m`` |starts 19 keys (``{record}``, ``{checked-long}``, ``{query}``) |
-|``n`` |starts 28 keys (``{target-new}``) |
+|``n`` |starts 29 keys (``{target-new}``) |
 |``o`` |``panel:focus next`` |
 |``p`` |starts 25 keys (``{panel}``), in ``config``, ``duplicates``, ``file-manager``, ``help``, ``keybindings``, ``log``, ``metarecord-detail``, ``metarecord-list``, ``path-ref``, ``shell``, ``sync``, ``viewer`` only |
-|``t`` |starts 17 keys (``{panels}``) |
+|``t`` |starts 18 keys (``{panels}``) |
 |``v`` |starts 15 keys (``{view}``) |
 |``w`` |starts 4 keys (``{workspaces}``) |
 |``x`` |``command-input:focus command`` |

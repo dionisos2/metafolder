@@ -2004,11 +2004,12 @@ async function openHelp(
   ws: string,
   slot: ExecContext["slot"],
   topic: string,
+  focus = false,
 ): Promise<void> {
   await invoke("ws_set_var", {
     wsId: ws,
     key: "help.request",
-    value: { topic, nonce: Date.now() },
+    value: { topic, nonce: Date.now(), focus },
   });
   await invoke("panel_set_type", { slot, panelType: "help" });
 }
@@ -2870,7 +2871,7 @@ async function runCommand(
       return true;
 
     case "help:open":
-      if (ws) await openHelp(ws, context.slot, args.join(" "));
+      if (ws) await openHelp(ws, context.slot, args.join(" "), true);
       return true;
     case "help:command": {
       // The command's page (doc "In-app help"): what `help:open <name>` finds,

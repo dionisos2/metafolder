@@ -41,10 +41,11 @@ function shadow(): ShadowRoot {
 
 type Handler = (...args: string[]) => unknown;
 
-async function mountHelp() {
+async function mountHelp(request: unknown = null) {
   const root = shadow();
   const handlers = new Map<string, Handler>();
   const provided: Record<string, () => unknown> = {};
+  const setVar = vi.fn(async () => {});
   const api = {
     guiServer: 'http://gui',
     whenVisible: (fn: () => void) => fn(),
@@ -58,7 +59,7 @@ async function mountHelp() {
     },
     query: { grammarSource: async () => '' },
     statusBar: { message: async () => {} },
-    workspace: { get: async () => null, onChange: () => {} },
+    workspace: { get: async () => request, set: setVar, onChange: () => {} },
   };
   const mod = await import('../../default-config/panel-types/help/main.js');
   await mod.mount(root, withRuns(api) as unknown as Metafolder.Api);
@@ -83,7 +84,7 @@ async function mountHelp() {
       top = v;
     },
   });
-  return { root, input, content, run, provided, show, scroll };
+  return { root, input, content, run, provided, show, scroll, setVar };
 }
 
 beforeEach(() => {
@@ -98,6 +99,14 @@ beforeEach(() => {
 });
 
 describe('the search box is a text zone', () => {
+  test('help:open asks for the focus once: the request is then marked as served', async () => {
+    const request = { topic: '', nonce: 1, focus: true };
+    const { root, input, setVar } = await mountHelp(request);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(root.activeElement).toBe(input);
+    expect(setVar).toHaveBeenCalledWith('help.request', { ...request, focus: false });
+  });
+
   test('opening the panel, or asking it for a page, leaves the box unfocused', async () => {
     const { root } = await mountHelp();
     await new Promise((r) => setTimeout(r, 0));

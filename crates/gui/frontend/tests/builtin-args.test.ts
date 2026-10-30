@@ -242,7 +242,7 @@ describe('an optional trailing argument is never asked for', () => {
     expect(request?.args).toMatchObject({
       wsId: 'ws-1',
       key: 'help.request',
-      value: { topic: 'trash:restore' },
+      value: { topic: 'trash:restore', focus: false },
     });
     expect(invoked).toContainEqual({
       cmd: 'panel_set_type',

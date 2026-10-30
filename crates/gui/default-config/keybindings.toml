@@ -222,7 +222,8 @@ vars.index = "i"
 "{panels} v" = { command = "panel:open {target} recent", target = "here" }
 "{panels} u" = { command = "panel:open {target} duplicates", target = "here" }
 "{panels} c" = { command = "panel:open {target} config", target = "here" }
-"{panels} k" = { command = "panel:open {target} keybindings", target = "here" }
+"{panels} k k" = { command = "panel:open {target} keybindings", target = "here" }
+"{panels} k v" = { command = "panel:open {target} keybindings-variables", target = "here" }
 
 # ── Rows: the cursor in every panel with rows (doc "Generic panel commands"),
 # and opening one (doc "Opening a row") ───────────────────────────────────────

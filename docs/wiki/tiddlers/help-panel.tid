@@ -9,7 +9,7 @@ Without anything to look for, it shows the entry page ([[Documentation]]).
 
 !! The box
 
-The box at the top takes the focus only when asked to (<<key "help:focus search" "p e">>): opening the panel, from a command or from `help:cursor`, leaves it alone. Enter leaves it (see Keys below).
+`help:open` gives the box at the top the focus, as <<key "help:focus search" "p e">> does: it is what it adds to `panel:open here help`. Opening the panel otherwise, or asking with `help:cursor`, leaves it alone. Enter leaves it (see Keys below).
 
 * An ''exact name'' opens the page as soon as it is typed: a page's title or one of its other names, a command, a panel type ([[In-app help]]).
 * Anything else searches every page, as you type, without regard to case: the pages whose title contains the text first, then those whose body does, each with the line around the first occurrence. Clicking a result opens the page.
