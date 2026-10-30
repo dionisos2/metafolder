@@ -433,6 +433,7 @@ export function mount(root, metafolder) {
     return [
       {
         label: `Keep this copy, trash the other ${others}`,
+        command: 'duplicates:keep',
         action: () => void keepThisOne(metafolder),
       },
       ...shared,

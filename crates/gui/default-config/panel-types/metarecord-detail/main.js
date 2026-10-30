@@ -970,24 +970,23 @@ export async function mount(root, metafolder) {
     const record = current;
     if (!record) return [];
     const hasFile = currentPaths.length > 0;
-    // The shared "Metarecord" category, in the same order as everywhere else —
-    // minus "Open in panel metarecord-detail", which is this very panel — plus
-    // this panel's own reconcile/delete at its end.
+    // The shared "Metarecord" category, in the same order as everywhere else,
+    // plus this panel's own reconcile/delete at its end.
     /** @type {Metafolder.MenuItem[]} */
     const items = metarecordMenuItems({
       metafolder,
       uuid: record.uuid,
       hasFile,
-      revealDetail: false,
       trailing: [
         {
           label: notes.needsWatch() ? 'Enable tracking & reconcile' : 'Reconcile',
+          command: 'metarecord:reconcile',
           action: () =>
             void commands.invoke(
               notes.needsWatch() ? ['metarecord:reconcile', 'watch'] : ['metarecord:reconcile'],
             ),
         },
-        { label: 'Delete metarecord', action: () => void commands.invoke(['metarecord:delete']) },
+        { label: 'Delete metarecord', command: 'metarecord:delete', action: () => void commands.invoke(['metarecord:delete']) },
       ],
     });
     // The "File" category (cut/copy/paste/rename/trash) when this

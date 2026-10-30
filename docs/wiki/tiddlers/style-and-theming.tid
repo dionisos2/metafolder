@@ -15,6 +15,7 @@ a value there is enough for most themes:
 |!Variable |!Used for |
 |`--mf-bg`, `--mf-bg-raised` |the background, and the background of what sits above it (bars, headers, menus) |
 |`--mf-fg`, `--mf-fg-dim` |text, and secondary text and borders |
+|`--mf-fg-disabled` |what cannot be done now: a greyed menu entry ([[Context menus]]) |
 |`--mf-accent`, `--mf-focus-border` |links and highlights; the frame of the focused slot |
 |`--mf-error`, `--mf-ok`, `--mf-warning` |messages, by kind |
 |`--mf-cursor`, `--mf-checked` |the row under the cursor; the checked rows ([[Cross-panel selection]]) |

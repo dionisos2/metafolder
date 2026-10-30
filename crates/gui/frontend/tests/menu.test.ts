@@ -11,10 +11,14 @@ import {
   installDefaultContextMenu,
   orderMenu,
   scopedProvider,
+  setMenuKeyResolver,
   showMenu,
 } from '../../panel-shim/menu.js';
 
-type Item = { label: string; action?: () => void; disabled?: boolean } | { header: string } | '-';
+type Item =
+  | { label: string; action?: () => void; disabled?: boolean; command?: string }
+  | { header: string }
+  | '-';
 
 function open(items: Item[], position = { x: 10, y: 20 }) {
   return showMenu(items, position);
@@ -40,6 +44,47 @@ afterEach(() => {
 });
 
 describe('showMenu', () => {
+  describe('the key of an entry', () => {
+    afterEach(() => setMenuKeyResolver(null));
+
+    test('is shown beside the label, asked for the panel clicked in', async () => {
+      const resolver = vi.fn((command: string) => (command === 'file:rename' ? 'F2' : null));
+      setMenuKeyResolver(resolver);
+      const promise = showMenu(
+        [
+          { label: 'Rename', command: 'file:rename' },
+          { label: 'Unbound', command: 'nothing:bound' },
+          { label: 'Plain' },
+        ],
+        { x: 0, y: 0, panelType: 'viewer' },
+      );
+      const keys = itemElements().map((item) => item.querySelector('.mf-menu-key')?.textContent);
+      expect(keys).toEqual(['F2', undefined, undefined]);
+      expect(resolver).toHaveBeenCalledWith('file:rename', 'viewer');
+      expect(itemElements()[1].textContent).toBe('Unbound');
+      press('Escape');
+      await promise;
+    });
+
+    test('is not part of what typing matches', async () => {
+      setMenuKeyResolver(() => 'x');
+      const promise = open([{ label: 'Rename', command: 'file:rename' }, { label: 'xylophone' }]);
+      press('x');
+      expect(itemElements()[1].classList.contains('active')).toBe(true);
+      press('Escape');
+      await promise;
+    });
+  });
+
+  test('an entry that cannot run has a colour of its own, not the dimmed text one', async () => {
+    const promise = open([{ label: 'Paste', disabled: true }]);
+    const css = document.getElementById('mf-menu-style')?.textContent ?? '';
+    // --mf-fg-dim is plain white in the shipped stylesheet: as bright as the rest.
+    expect(css).toMatch(/\.mf-menu-item\.disabled \{\s*color: var\(--mf-fg-disabled,/);
+    press('Escape');
+    await promise;
+  });
+
   test('renders items, separators and disabled entries', async () => {
     const promise = open([{ label: 'Open' }, '-', { label: 'Track', disabled: true }]);
     const menu = menuElement();
@@ -306,7 +351,7 @@ describe('orderMenu', () => {
   }
 
   test('the canonical category order is the documented one', () => {
-    expect(MENU_CATEGORIES).toEqual(['Metarecord', 'File', 'Directory', 'Ignore', 'Text', 'View']);
+    expect(MENU_CATEGORIES).toEqual(['Metarecord', 'File', 'Directory', 'Ignore', 'View']);
   });
 
   test('sorts categories canonically whatever order the panel pushed them in', () => {
@@ -454,11 +499,95 @@ describe('installDefaultContextMenu', () => {
     vi.restoreAllMocks();
   });
 
-  test('opens on right-click with a disabled Copy when nothing is selected', () => {
+  test('with no text selected, there is no Text section', () => {
     install();
     rightClick(target());
     expect(menuElement()).not.toBeNull();
-    expect(itemByLabel('Copy').classList.contains('disabled')).toBe(true);
+    const rendered = [...document.querySelectorAll('.mf-menu-header, .mf-menu-item')];
+    expect(rendered.map((element) => element.textContent)).toEqual([
+      'View',
+      'Split / unsplit',
+      'Swap panel types',
+      'Open web inspector',
+    ]);
+  });
+
+  test('on selected text, Copy is all there is, and no provider runs', () => {
+    install();
+    vi.spyOn(window, 'getSelection').mockReturnValue({
+      toString: () => 'hello',
+    } as Selection);
+    const provider = vi.fn().mockReturnValue([{ label: 'Open entry' }]);
+    menu.addItems(provider);
+    rightClick(target());
+    expect(itemElements().map((item) => item.textContent)).toEqual(['Copy']);
+    expect(document.querySelector('.mf-menu-header')).toBeNull();
+    expect(provider).not.toHaveBeenCalled();
+  });
+
+  test('on selected text, a panel’s own handler never runs: it would redraw the row', () => {
+    install();
+    vi.spyOn(window, 'getSelection').mockReturnValue({
+      toString: () => 'hello',
+    } as Selection);
+    const row = target();
+    const panelHandler = vi.fn();
+    row.addEventListener('contextmenu', panelHandler);
+    const event = rightClick(row);
+    expect(panelHandler).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(true);
+    expect(itemElements().map((item) => item.textContent)).toEqual(['Copy']);
+  });
+
+  test('text selected somewhere else leaves the menu of what was clicked', () => {
+    install();
+    const range = document.createRange();
+    range.getClientRects = () =>
+      [{ left: 100, right: 200, top: 100, bottom: 120 }] as unknown as DOMRectList;
+    vi.spyOn(window, 'getSelection').mockReturnValue({
+      toString: () => 'hello',
+      getComposedRanges: () => [range],
+    } as unknown as Selection);
+    menu.addItems(() => [{ label: 'Open entry' }]);
+    rightClick(target()); // at (5, 6), outside the selection
+    const labels = itemElements().map((item) => item.textContent);
+    expect(labels).toContain('Open entry');
+    expect(labels).not.toContain('Copy');
+  });
+
+  test('a click inside the selected text finds it through the shadow roots on its path', () => {
+    install();
+    const range = document.createRange();
+    range.getClientRects = () =>
+      [{ left: 0, right: 50, top: 0, bottom: 20 }] as unknown as DOMRectList;
+    const getComposedRanges = vi.fn(() => [range]);
+    vi.spyOn(window, 'getSelection').mockReturnValue({
+      toString: () => 'hello',
+      getComposedRanges,
+    } as unknown as Selection);
+    const host = document.createElement('div');
+    document.body.append(host);
+    const shadow = host.attachShadow({ mode: 'open' });
+    const inner = document.createElement('span');
+    shadow.append(inner);
+    inner.dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, composed: true, clientX: 5, clientY: 6 }),
+    );
+    expect(getComposedRanges).toHaveBeenCalledWith({ shadowRoots: [shadow] });
+    expect(itemElements().map((item) => item.textContent)).toEqual(['Copy']);
+  });
+
+  test('the layout commands ask for their key, in the panel clicked', () => {
+    install();
+    const resolver = vi.fn((command: string) => (command === 'panel:swap' ? 'v x' : null));
+    setMenuKeyResolver(resolver);
+    const host = document.createElement('div');
+    host.dataset.mfPanelType = 'recent';
+    document.body.append(host);
+    rightClick(host);
+    expect(resolver).toHaveBeenCalledWith('panel:swap', 'recent');
+    expect(document.querySelector('.mf-menu-key')?.textContent).toBe('v x');
+    setMenuKeyResolver(null);
   });
 
   test('keeps the native menu on editable text fields', () => {
@@ -541,12 +670,12 @@ describe('installDefaultContextMenu', () => {
 
     rightClick(target());
     expect(itemElements()[0].textContent).toBe('Open entry');
-    expect(itemElements()[1].textContent).toBe('Copy');
+    expect(itemElements()[1].textContent).toBe('Split / unsplit');
     itemByLabel('Open entry').click();
     expect(action).toHaveBeenCalledOnce();
   });
 
-  test('panel categories land in the canonical order, above Text and View', () => {
+  test('panel categories land in the canonical order, above View', () => {
     install();
     menu.addItems(() => [{ header: 'File' }, { label: 'Cut' }]);
     menu.addItems(() => [{ header: 'Metarecord' }, { label: 'Copy UUID' }]);
@@ -565,9 +694,6 @@ describe('installDefaultContextMenu', () => {
       '-',
       '# File',
       'Cut',
-      '-',
-      '# Text',
-      'Copy',
       '-',
       '# View',
       'Split / unsplit',

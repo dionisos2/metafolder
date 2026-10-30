@@ -22,9 +22,15 @@ const MENU_CSS = `
   user-select: none;
 }
 .mf-menu-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
   padding: 4px 14px;
   cursor: default;
   white-space: nowrap;
+}
+.mf-menu-key {
+  opacity: 0.7;
 }
 .mf-menu-item.active,
 .mf-menu-item:not(.disabled):hover {
@@ -32,7 +38,7 @@ const MENU_CSS = `
   color: var(--mf-fg-bright, #fff);
 }
 .mf-menu-item.disabled {
-  color: var(--mf-fg-dim, #8a8a96);
+  color: var(--mf-fg-disabled, #6e6e7c);
 }
 .mf-menu-separator {
   margin: 4px 0;
@@ -56,9 +62,16 @@ const MENU_CSS = `
 // hasOpenMenu() has to see a menu opened through the other instance, or its
 // key matcher keeps firing bindings over an open panel menu.
 /** @typedef {{close: (item: Metafolder.MenuEntry|null) => void}} MenuHandle */
-const shared = /** @type {{__mfMenuState?: {active: MenuHandle|null}}} */ (
+/** @typedef {(command: string, panelType: string|null) => string|null} KeyResolver */
+const shared = /** @type {{__mfMenuState?: {active: MenuHandle|null, keyOf: KeyResolver|null}}} */ (
   /** @type {unknown} */ (globalThis)
-).__mfMenuState ??= { active: null };
+).__mfMenuState ??= { active: null, keyOf: null };
+
+/** How a menu finds the key of an entry's `command`: the shell knows the
+ *  keybindings, this module does not. @param {KeyResolver|null} resolver */
+export function setMenuKeyResolver(resolver) {
+  shared.keyOf = resolver;
+}
 
 function installStyle() {
   if (document.getElementById('mf-menu-style')) return;
@@ -111,7 +124,7 @@ function isHeader(item) {
  * after the known ones.
  * @type {string[]}
  */
-export const MENU_CATEGORIES = ['Metarecord', 'File', 'Directory', 'Ignore', 'Text', 'View'];
+export const MENU_CATEGORIES = ['Metarecord', 'File', 'Directory', 'Ignore', 'View'];
 
 /** @param {string} header */
 function categoryRank(header) {
@@ -170,9 +183,11 @@ export function orderMenu(items) {
 /**
  * Shows an HTML context menu at {x, y} (viewport coordinates).
  *
- * `items` is an array of `{label, action?, disabled?}` objects, `{header}`
- * category labels and `'-'` separators; it is normalized by {@link orderMenu}
- * first. Resolves with the chosen item (after calling its `action`)
+ * `items` is an array of `{label, action?, disabled?, command?}` objects,
+ * `{header}` category labels and `'-'` separators; it is normalized by
+ * {@link orderMenu} first. An entry's `command` is the invocation whose key is
+ * shown beside its label, as bound in a panel of type `panelType` (the focused
+ * one if absent). Resolves with the chosen item (after calling its `action`)
  * or with null when dismissed (Escape, click outside, another menu).
  * Arrow keys navigate the enabled items (wrapping), Enter selects; typing
  * jumps to the first enabled item whose label starts with the typed prefix
@@ -180,10 +195,10 @@ export function orderMenu(items) {
  * repeating one letter cycles through its matches).
  *
  * @param {Metafolder.MenuItem[]} items
- * @param {{x: number, y: number}} position viewport coordinates
+ * @param {{x: number, y: number, panelType?: string|null}} position viewport coordinates
  * @returns {Promise<Metafolder.MenuEntry|null>}
  */
-export function showMenu(items, { x, y }) {
+export function showMenu(items, { x, y, panelType = null }) {
   shared.active?.close(null);
   // Categories in the canonical order, one rule per boundary — whoever built
   // the list (see orderMenu).
@@ -223,6 +238,13 @@ export function showMenu(items, { x, y }) {
       element.className = item.disabled ? 'mf-menu-item disabled' : 'mf-menu-item';
       element.setAttribute('role', 'menuitem');
       element.textContent = item.label;
+      const key = item.command ? shared.keyOf?.(item.command, panelType) : null;
+      if (key) {
+        const hint = document.createElement('span');
+        hint.className = 'mf-menu-key';
+        hint.textContent = key;
+        element.append(hint);
+      }
       if (!item.disabled) {
         itemElements.set(item, element);
         element.addEventListener('click', () => close(item));
@@ -363,6 +385,44 @@ export function installContextMenuSuppression(target = window) {
   });
 }
 
+/**
+ * The selected text under a right-click, '' when there is none: text selected
+ * elsewhere is left alone, since a selection outlives a right-click and would
+ * otherwise hide the menu of what was clicked. The ranges of a selection inside
+ * a panel are only given for the shadow roots named; a WebView without
+ * `getComposedRanges` counts any selection as clicked.
+ * @param {Window} target @param {MouseEvent} event
+ */
+function selectedTextAt(target, event) {
+  const selection = target.getSelection?.();
+  const text = String(selection ?? '');
+  if (text === '' || !selection?.getComposedRanges) return text;
+  const shadowRoots = event
+    .composedPath()
+    .filter((node) => node instanceof ShadowRoot);
+  const ranges = selection.getComposedRanges({ shadowRoots });
+  const inside = ranges.some((range) =>
+    [...toRange(range).getClientRects()].some(
+      (rect) =>
+        event.clientX >= rect.left &&
+        event.clientX <= rect.right &&
+        event.clientY >= rect.top &&
+        event.clientY <= rect.bottom,
+    ),
+  );
+  return inside ? text : '';
+}
+
+/** A live range of a `StaticRange` (which has no geometry).
+ *  @param {AbstractRange} range @returns {Range} */
+function toRange(range) {
+  if (range instanceof Range) return range;
+  const live = document.createRange();
+  live.setStart(range.startContainer, range.startOffset);
+  live.setEnd(range.endContainer, range.endOffset);
+  return live;
+}
+
 /** Copies `text` to the clipboard; panels reuse it for "Copy UUID".
  *  @param {string} text */
 export function copyText(text) {
@@ -398,8 +458,9 @@ export function scopedProvider(host, provider) {
 /**
  * Installs the default context menu (doc "Context menus"): right-click
  * anywhere that is not an editable text field and where no more specific
- * menu opened shows Copy (the selection, captured at open time) and the
- * everyday layout commands, sent through `dispatch(invocation)`.
+ * menu opened shows Copy alone on selected text (captured at open time), and
+ * otherwise what the panels provide and the everyday layout commands, sent
+ * through `dispatch(invocation)`.
  *
  * Returns `{ addItems, uninstall }`; `addItems` registers a provider
  * (`event => items`) whose items appear above the defaults — panels extend
@@ -412,32 +473,63 @@ export function installDefaultContextMenu(target, dispatch) {
   /** @type {((event: MouseEvent) => Metafolder.MenuItem[])[]} */
   const providers = [];
 
+  // In the capture phase, ahead of every panel's own handler: those move the
+  // cursor to the row clicked, and redrawing it would lose the selection.
+  /** @param {MouseEvent} event */
+  function onSelectedText(event) {
+    if (keepsNativeMenu(effectiveTarget(event))) return;
+    const selection = selectedTextAt(target, event);
+    if (selection === '') return;
+    event.preventDefault();
+    event.stopPropagation();
+    void showMenu([{ label: 'Copy', action: () => void copyText(selection) }], {
+      x: event.clientX,
+      y: event.clientY,
+    });
+  }
+
   /** @param {MouseEvent} event */
   function onContextMenu(event) {
     if (keepsNativeMenu(effectiveTarget(event))) return;
     if (hasOpenMenu()) return; // a more specific handler already answered
-    const selection = String(target.getSelection?.() ?? '');
+    const panelHost = event
+      .composedPath()
+      .find((node) => /** @type {HTMLElement} */ (node).dataset?.mfPanelType);
+    const panelType = /** @type {HTMLElement|undefined} */ (panelHost)?.dataset.mfPanelType ?? null;
     /** @type {Metafolder.MenuItem[]} */
     const items = [];
     for (const provider of providers) {
       items.push(...(provider(event) ?? []));
     }
     items.push(
-      { header: 'Text' },
-      { label: 'Copy', disabled: selection === '', action: () => void copyText(selection) },
       { header: 'View' },
-      { label: 'Split / unsplit', action: () => void dispatch('panel:toggle split') },
-      { label: 'Swap panel types', action: () => void dispatch('panel:swap') },
-      { label: 'Open web inspector', action: () => void dispatch('devtools:open') },
+      {
+        label: 'Split / unsplit',
+        command: 'panel:toggle split',
+        action: () => void dispatch('panel:toggle split'),
+      },
+      { label: 'Swap panel types', command: 'panel:swap', action: () => void dispatch('panel:swap') },
+      {
+        label: 'Open web inspector',
+        command: 'devtools:open',
+        action: () => void dispatch('devtools:open'),
+      },
     );
-    void showMenu(items, { x: event.clientX, y: event.clientY });
+    void showMenu(items, { x: event.clientX, y: event.clientY, panelType });
   }
 
+  target.addEventListener('contextmenu', /** @type {EventListener} */ (onSelectedText), {
+    capture: true,
+  });
   target.addEventListener('contextmenu', /** @type {EventListener} */ (onContextMenu));
   return {
     addItems: (/** @type {(event: MouseEvent) => Metafolder.MenuItem[]} */ provider) =>
       providers.push(provider),
-    uninstall: () =>
-      target.removeEventListener('contextmenu', /** @type {EventListener} */ (onContextMenu)),
+    uninstall: () => {
+      target.removeEventListener('contextmenu', /** @type {EventListener} */ (onSelectedText), {
+        capture: true,
+      });
+      target.removeEventListener('contextmenu', /** @type {EventListener} */ (onContextMenu));
+    },
   };
 }

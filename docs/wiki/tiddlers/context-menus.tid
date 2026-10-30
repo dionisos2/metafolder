@@ -2,24 +2,33 @@ title: Context menus
 tags: GUI
 kind: reference
 aliases: context-menu right-click menu file-actions
-summary: What a right-click offers — the metarecord's operations, the file actions, the text, the view — always in the same order, and how to drive a menu from the keyboard.
+summary: What a right-click offers — Copy on selected text; otherwise the metarecord's operations, the file actions, the view, always in the same order, with their keys — and how to drive a menu from the keyboard.
 
 The web view's own menu (back, reload, inspect…) never appears, except over an
 editable text field, which keeps it for cut, copy and paste. Everywhere else a
 right-click opens the GUI's own menu.
 
+!! On selected text
+
+A right-click on selected text offers ''Copy'', and nothing else: what was clicked is
+the text, not the row under it. Text selected elsewhere does not count, because a
+selection outlives a right-click and would otherwise hide the menu of what was
+clicked; that menu has no entry for the text.
+
 !! What it offers
 
-Its entries come under headers, always in this order, so the same right-click reads
+Everywhere else, its entries come under headers, always in this order, so the same right-click reads
 the same way in every panel:
 
 |!Header |!Entries |
-|''Metarecord'' |the panel's operations on the clicked metarecord: open it in `metarecord-detail` or the [[viewer panel]], show its folder in the [[file manager|file-manager panel]] or in `metarecord-list` ([[Cross-panel selection]]), add it to or remove it from the checked selection, copy its uuid, and what the panel adds (delete it…) |
+|''Metarecord'' |the panel's operations on the clicked metarecord: show its folder in the [[file manager|file-manager panel]] or in `metarecord-list` ([[Cross-panel selection]]), add it to or remove it from the checked selection, copy its uuid, and what the panel adds (delete it…) |
 |''File'' |the ''file actions'': Open with… ([[Opening a file with another program]]), Cut, Copy, Paste, Rename…, Copy full path, Move to trash |
 |''Directory'' |in the file manager: New folder…, New file… |
 |''Ignore'' |ignore patterns for the clicked path ([[Setting ignore patterns]]) |
-|''Text'' |''Copy'' — the text selected when the menu opened; greyed out with none |
 |''View'' |''Split / unsplit'', ''Swap panel types'', ''Open web inspector'' (`panel:toggle split`, `panel:swap`, `devtools:open`) |
+
+Opening the row in the [[viewer panel]] or the [[metarecord-detail panel]] is not in
+the menu: it is what the buttons and keys of [[Opening a row]] are for.
 
 A panel's single primary action — ''Keep this copy'' in the [[duplicates panel]], a
 picker's ''Pick this folder'' — comes first, above the headers. A header with nothing
@@ -33,9 +42,21 @@ GUI variable `clipboard` ([[Global GUI variables]]), which the [[workspace-info 
 shows. ''Copy full path'' copies the file's absolute path as text.
 
 Right-clicking where no panel offers anything — the tab bar's empty space, a slot
-header, the status bar, a panel's background — leaves only ''Text'' and ''View''. A
+header, the status bar, a panel's background — leaves only ''View''. A
 right-click on a tab does not open a menu: it shows that workspace in the other slot
 ([[Workspaces]]).
+
+!! Keys and greyed entries
+
+An entry a key can run shows that key on its right, read from the live keybinding table,
+so rebinding it changes the menu. It is the shortest key that would run the command from
+the panel clicked: a key bound in another panel, or taken over by this panel, is not
+shown, nor one whose command does not apply here (''Copy'' has no `Ctrl+c` in the
+[[viewer panel]], which `clipboard:copy` does not reach).
+
+An entry that cannot be run now is greyed in `--mf-fg-disabled`, a colour of its own:
+`--mf-fg-dim` is secondary text, which is meant to be read and ships as bright as the
+rest ([[Style and theming]]).
 
 !! From the keyboard
 
@@ -46,20 +67,26 @@ starting with it. Headers are skipped. While a menu is open, the keys go to it a
 keybinding fires.
 
 The menu is styled by the classes `mf-menu`, `mf-menu-item` (with `active` and
-`disabled`), `mf-menu-header` and `mf-menu-separator`, which the user stylesheet can
+`disabled`), `mf-menu-key`, `mf-menu-header` and `mf-menu-separator`, which the user stylesheet can
 override.
 
 !! In a panel
 
 A panel opens its own menu with `metafolder.contextMenu(event, items)`, or adds
 entries to the default one with `metafolder.contextMenu.addDefaultItems(event =>
-items)`. An item is `{label, action?, disabled?}`, `{header}`, or `-` for a separator.
+items)`. An item is `{label, action?, disabled?, command?}`, `{header}`, or `-` for a separator;
+`command` is the invocation whose key is shown beside the label.
 Every menu is put in order before it is shown (`orderMenu` in `/__menu.js`): known
 headers in the order above, unknown ones after them, two groups under the same header
 merged, and the separators ''derived'' — a `-` passed by a panel is dropped and one
 rule is drawn at each boundary between headers, so that a rule always means a new
 section. A menu without any header (a two-entry row menu, the panel menu of a slot) is
 shown as given, its separators included.
+
+Selected text is answered in the capture phase, ahead of every panel's own handler, which
+would move the cursor to the row and, redrawing it, lose the selection. A selection inside
+a panel gives its ranges only for the shadow roots named to `getComposedRanges`, so the
+test passes those on the click's path.
 
 The test "is this a text field?" looks at the event's ''composed'' target
 (`composedPath()[0]`): a right-click inside a panel reaches the shell's listener

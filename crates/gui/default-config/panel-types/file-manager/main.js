@@ -700,7 +700,7 @@ export async function mount(root, metafolder) {
     // this menu looks like every other panel's.
     //
     // A tracked row is a metarecord too: offer the same "Metarecord" category the
-    // metarecord list does (open in detail/file, Copy UUID). "Open folder in
+    // metarecord list does (Copy UUID). "Open folder in
     // file manager" is dropped — this panel already IS the file manager. This
     // covers the synthetic "." / ".." rows as well: the current directory and its
     // parent are ordinary tracked metarecords (their tree nodes), so right-clicking
@@ -713,6 +713,7 @@ export async function mount(root, metafolder) {
       label: (uuid ? selection.has(uuid) : checkedPaths.has(item.path))
         ? 'Remove from the selection'
         : 'Add to the selection',
+      command: 'file-manager:select toggle',
       action: () => void toggleRow(metafolder, item),
     };
     if (repo && uuid) {
@@ -735,18 +736,19 @@ export async function mount(root, metafolder) {
       { header: 'Metarecord' },
       {
         label: 'Record (mf_watch = false)',
+        command: 'file:record self',
         disabled: !repo || trackedPaths.has(item.path) || !trackable(item.path),
         action: () => void fileCommand('file:record'),
       },
       { header: 'File' },
     );
-    if (item.is_dir) items.push({ label: 'Open', action: () => void activate(metafolder, index) });
+    if (item.is_dir) items.push({ label: 'Open', command: 'file-manager:activate', action: () => void activate(metafolder, index) });
     if (isEntry) {
       items.push(
-        { label: 'Cut', action: () => void clip(metafolder, 'cut') },
-        { label: 'Copy', action: () => void clip(metafolder, 'copy') },
-        { label: 'Paste', disabled: !hasClipboard(metafolder), action: () => void fileCommand('clipboard:paste') },
-        { label: 'Rename…', action: () => void fileCommand('file:rename') },
+        { label: 'Cut', command: 'clipboard:cut self', action: () => void clip(metafolder, 'cut') },
+        { label: 'Copy', command: 'clipboard:copy self', action: () => void clip(metafolder, 'copy') },
+        { label: 'Paste', command: 'clipboard:paste self', disabled: !hasClipboard(metafolder), action: () => void fileCommand('clipboard:paste') },
+        { label: 'Rename…', command: 'file:rename self', action: () => void fileCommand('file:rename') },
         {
           label: 'Copy full path',
           action: () => {
@@ -755,16 +757,16 @@ export async function mount(root, metafolder) {
           },
         },
         // Delete's own command, on the clicked entry (doc "Deleting an item").
-        { label: 'Move to trash', action: () => void deleteEntry(item.path) },
+        { label: 'Move to trash', command: 'item:delete', action: () => void deleteEntry(item.path) },
       );
     } else {
-      items.push({ label: 'Paste', disabled: !hasClipboard(metafolder), action: () => void fileCommand('clipboard:paste') });
+      items.push({ label: 'Paste', command: 'clipboard:paste self', disabled: !hasClipboard(metafolder), action: () => void fileCommand('clipboard:paste') });
     }
     if (isEntry) items.push(...ignoreMenuItems(item));
     items.push(
       { header: 'Directory' },
-      { label: 'New folder…', action: () => void fileCommand('file:new', 'folder') },
-      { label: 'New file…', action: () => void fileCommand('file:new', 'file') },
+      { label: 'New folder…', command: 'file:new self folder', action: () => void fileCommand('file:new', 'folder') },
+      { label: 'New file…', command: 'file:new self file', action: () => void fileCommand('file:new', 'file') },
     );
     metafolder.contextMenu(event, items);
   }
@@ -779,6 +781,7 @@ export async function mount(root, metafolder) {
       { header: 'File' },
       {
         label: 'Paste',
+        command: 'clipboard:paste self',
         disabled: !hasClipboard(metafolder),
         // Here is the folder shown, whatever the cursor is on: the "." row.
         action: () => {
@@ -787,8 +790,8 @@ export async function mount(root, metafolder) {
         },
       },
       { header: 'Directory' },
-      { label: 'New folder…', action: () => void fileCommand('file:new', 'folder') },
-      { label: 'New file…', action: () => void fileCommand('file:new', 'file') },
+      { label: 'New folder…', command: 'file:new self folder', action: () => void fileCommand('file:new', 'folder') },
+      { label: 'New file…', command: 'file:new self file', action: () => void fileCommand('file:new', 'file') },
     ];
     // In a folder pick, empty space chooses the current directory. It leads the
     // menu, above the categories (see /__menu.js: header-less items come first).

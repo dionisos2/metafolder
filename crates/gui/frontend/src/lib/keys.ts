@@ -7,6 +7,7 @@ import {
   hasOpenMenu,
   installContextMenuSuppression,
   installDefaultContextMenu,
+  setMenuKeyResolver,
 } from '../../../panel-shim/menu.js';
 import { resolveClickTopic } from '../../../panel-shim/help.js';
 import { deepActiveElement, dispatch, hasEditingTarget, setFullscreen, status } from './commands';
@@ -20,6 +21,7 @@ import {
   store,
 } from './store.svelte';
 import { describeKeyStep } from './describeKey';
+import { menuKey } from './menuKeys';
 import { appliesHere, functionProvider } from './panelFunctions';
 import type { SlotId } from './types';
 
@@ -90,6 +92,11 @@ export function installKeys() {
   // the one default menu (Copy + layout commands) replaces it, over the
   // shell and every panel alike.
   installContextMenuSuppression(window);
+  setMenuKeyResolver((command, panelType) =>
+    menuKey(store.keytable, command, panelType ?? focusedPanelType(), (invocation, type) =>
+      appliesHere(invocation, type, (t) => functionProvider()?.provided(t)),
+    ),
+  );
   defaultMenu = installDefaultContextMenu(window, dispatch);
   for (const provider of pendingProviders) defaultMenu.addItems(provider);
   pendingProviders.length = 0;

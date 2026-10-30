@@ -111,6 +111,8 @@
     host.className = 'panel-host';
     host.style.display = 'none';
     layer.appendChild(host);
+    // Which panel a right-click landed in, for the keys its menu shows.
+    host.dataset.mfPanelType = panelType;
     const shadow = host.attachShadow({ mode: 'open' });
     // The panel's own sheet is adopted last (in mountPanel) so it overrides the
     // theme, matching the old linked-theme-then-panel cascade order.

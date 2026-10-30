@@ -14,6 +14,12 @@
 //       contains <text> — or, with <inner selector>, the one visible element
 //       inside it matching that (and containing <inner text>). Selectors are
 //       matched in the document and in every shadow root (the panels').
+//   contextmenu <selector> [<text> [<inner selector> [<inner text>]]]
+//       right-clicks the middle of that element (the event, not the mouse:
+//       the selection is left as it is)
+//   bounds <selector> [<text> [<inner selector> [<inner text>]]]
+//       prints that element's left, top, right and bottom, in the page's
+//       coordinates
 //   text <selector> [<text> [<inner selector> [<inner text>]]]
 //       prints that element's text (an input's: its value)
 //   zoom <selector> [<text> [<inner selector> [<inner text>]]]
@@ -53,6 +59,23 @@ function inPage(action, args) {
     return 'clicked';
   }
   const hit = hits[0];
+  if (action === 'bounds') {
+    const rect = hit.getBoundingClientRect();
+    return [rect.left, rect.top, rect.right, rect.bottom].map(Math.round).join(' ');
+  }
+  if (action === 'contextmenu') {
+    const rect = hit.getBoundingClientRect();
+    hit.dispatchEvent(
+      new MouseEvent('contextmenu', {
+        bubbles: true,
+        composed: true,
+        cancelable: true,
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height / 2,
+      }),
+    );
+    return 'opened';
+  }
   if (action === 'zoom') {
     return getComputedStyle(hit.closest('.mf-panel-body') ?? hit).zoom;
   }
@@ -66,7 +89,7 @@ function fail(code, message) {
   process.exit(code);
 }
 
-if (!['ready', 'click', 'text', 'zoom', 'scroll'].includes(action)) fail(2, `unknown action ${action}`);
+if (!['ready', 'click', 'bounds', 'contextmenu', 'text', 'zoom', 'scroll'].includes(action)) fail(2, `unknown action ${action}`);
 if (action !== 'ready' && !args[0]) fail(2, `${action} needs a selector`);
 
 const timer = setTimeout(() => fail(2, `no answer from the page within ${TIMEOUT_MS} ms`), TIMEOUT_MS);

@@ -1209,8 +1209,7 @@ export async function mount(root, metafolder) {
     const target = metarecords[index >= 0 ? index : cursorIndex];
     if (!target) return [];
     const paths = pathsOf(target);
-    // The shared "Metarecord" section (open in detail/file, reveal folder, Copy
-    // UUID) — every metarecord-bearing panel shows the same one. A value picker
+    // The shared "Metarecord" section (reveal folder, Copy UUID) — every metarecord-bearing panel shows the same one. A value picker
     // prepends "Pick this metarecord" right after the header.
     /** @type {Metafolder.MenuItem[]} */
     const items = metarecordMenuItems({
@@ -1218,13 +1217,14 @@ export async function mount(root, metafolder) {
       uuid: target.uuid,
       hasFile: paths.length > 0,
       leading: picking
-        ? [{ label: 'Pick this metarecord', action: () => void commands.invoke(['pick:confirm']) }]
+        ? [{ label: 'Pick this metarecord', command: 'pick:confirm', action: () => void commands.invoke(['pick:confirm']) }]
         : [],
       // Checking from the menu, as Space does from the keyboard: the row joins
       // (or leaves) the checked selection the bulk operations act on.
       trailing: [
         {
           label: selection.has(target.uuid) ? 'Remove from the selection' : 'Add to the selection',
+          command: 'metarecord-list:select toggle',
           action: () => void selection.toggle(target.uuid),
         },
       ],

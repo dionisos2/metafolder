@@ -18,7 +18,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-type MenuItem = { label: string; action?: () => void; disabled?: boolean };
+type MenuItem = { label: string; action?: () => void; disabled?: boolean; command?: string };
 
 function mockMf(
   settings: Record<string, number> | undefined = { statusMessageMs: 1000, statusErrorMs: 2000 },
@@ -318,30 +318,45 @@ describe('revealFolder', () => {
 });
 
 describe('metarecordMenuItems', () => {
-  test('a file-backed metarecord offers detail, file, reveal-folder and Copy UUID', () => {
+  test('a file-backed metarecord offers reveal-folder and Copy UUID', () => {
     const { metafolder, commands } = mockMf();
     const items = metarecordMenuItems({ metafolder, uuid: 'abc', hasFile: true });
     expect(labels(items)).toEqual([
-      'Open in panel metarecord-detail',
-      'Open in panel file',
       'Open folder in file manager',
       'Open folder in metarecord-list',
       'Copy UUID',
     ]);
-    item(items, 'Open in panel metarecord-detail').action!();
-    expect(commands.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'metarecord-detail']);
-    item(items, 'Open in panel file').action!();
-    expect(commands.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'viewer']);
     item(items, 'Open folder in file manager').action!();
     expect(commands.invoke).toHaveBeenCalledWith(['file-manager:reveal', 'here']);
     item(items, 'Open folder in metarecord-list').action!();
     expect(commands.invoke).toHaveBeenCalledWith(['metarecord-list:folder', 'here']);
   });
 
-  test('a metarecord with no file offers only detail and Copy UUID', () => {
+  test('the entries a key runs name their command, the others none', () => {
+    const { metafolder } = mockMf();
+    const items = metarecordMenuItems({ metafolder, uuid: 'abc', hasFile: true });
+    expect(item(items, 'Open folder in file manager').command).toBe('file-manager:reveal here');
+    expect(item(items, 'Open folder in metarecord-list').command).toBe('metarecord-list:folder here');
+    expect(item(items, 'Copy UUID').command).toBeUndefined();
+    const file = fileMenuItems({ metafolder, path: '/d/a.txt' });
+    expect(
+      ['Open with…', 'Cut', 'Copy', 'Paste', 'Rename…', 'Move to trash'].map(
+        (label) => item(file, label).command,
+      ),
+    ).toEqual([
+      'file:open-with',
+      'clipboard:cut self',
+      'clipboard:copy self',
+      'clipboard:paste self',
+      'file:rename self',
+      'item:delete',
+    ]);
+  });
+
+  test('a metarecord with no file offers only Copy UUID', () => {
     const { metafolder } = mockMf();
     const items = metarecordMenuItems({ metafolder, uuid: 'abc', hasFile: false });
-    expect(labels(items)).toEqual(['Open in panel metarecord-detail', 'Copy UUID']);
+    expect(labels(items)).toEqual(['Copy UUID']);
   });
 
   test('revealFolder:false drops the file-manager item (the panel IS the file manager)', () => {
@@ -350,24 +365,6 @@ describe('metarecordMenuItems', () => {
     // The metarecord-list listing stays: the file manager is exactly where
     // "show me this folder as metarecords" is asked.
     expect(labels(items)).toEqual([
-      'Open in panel metarecord-detail',
-      'Open in panel file',
-      'Open folder in metarecord-list',
-      'Copy UUID',
-    ]);
-  });
-
-  test('revealDetail:false drops the detail item (the panel IS the detail panel)', () => {
-    const { metafolder } = mockMf();
-    const items = metarecordMenuItems({
-      metafolder,
-      uuid: 'abc',
-      hasFile: true,
-      revealDetail: false,
-    });
-    expect(labels(items)).toEqual([
-      'Open in panel file',
-      'Open folder in file manager',
       'Open folder in metarecord-list',
       'Copy UUID',
     ]);
@@ -383,7 +380,6 @@ describe('metarecordMenuItems', () => {
     });
     expect(labels(items)).toEqual([
       'Pick this metarecord',
-      'Open in panel metarecord-detail',
       'Copy UUID',
     ]);
   });
@@ -418,7 +414,7 @@ describe('rowActionsProvider', () => {
     expect(workspace.set).toHaveBeenCalledWith('selected_metarecord', { uuid: 'abc', repo: 'r' });
     expect(workspace.set).toHaveBeenCalledWith('selected_paths', ['/dir/a.txt']);
     const l = labels(items);
-    expect(l).toContain('Open in panel metarecord-detail');
+    expect(l).toContain('Copy UUID');
     expect(l).toContain('Open folder in file manager');
     expect(l).toContain('Cut'); // the file section is appended
   });
@@ -428,7 +424,7 @@ describe('rowActionsProvider', () => {
     const provider = rowActionsProvider(metafolder, () => 'r');
     const items = provider(event({ mfUuid: 'abc' }));
     expect(workspace.set).toHaveBeenCalledWith('selected_paths', []);
-    expect(labels(items)).toEqual(['Open in panel metarecord-detail', 'Copy UUID']);
+    expect(labels(items)).toEqual(['Copy UUID']);
   });
 
   test('a file row with no uuid falls back to the file section only', () => {
@@ -437,7 +433,7 @@ describe('rowActionsProvider', () => {
     const items = provider(event({ mfPath: '/dir/a.txt', mfIsdir: '0' }));
     expect(workspace.set).not.toHaveBeenCalledWith('selected_metarecord', expect.anything());
     expect(labels(items)).toContain('Cut');
-    expect(labels(items)).not.toContain('Open in panel metarecord-detail');
+    expect(labels(items)).not.toContain('Copy UUID');
   });
 
   test('returns no items when the click was not on a tagged row', () => {

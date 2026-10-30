@@ -13,8 +13,7 @@
 // file-manager's own dialogs.
 //
 // It also owns the "Metarecord" section every panel showing metarecords offers
-// on the record under the cursor (open it in the detail / file panels, reveal
-// its folder, copy its UUID — the actions the metarecord list has always had),
+// on the record under the cursor (reveal its folder, copy its UUID — the actions the metarecord list has always had),
 // so file-manager, recent and the tree panels all present the same
 // menu the list does.
 
@@ -295,10 +294,12 @@ export function fileMenuItems({ metafolder, path, name, isDir, onChanged }) {
       // right-clicked row becomes the selection first — the same handoff
       // `rowActionsProvider` already does for the reveal commands.
       label: 'Open with…',
+      command: 'file:open-with',
       action: () => void openWithExternal(metafolder, path),
     },
     {
       label: 'Cut',
+      command: 'clipboard:cut self',
       action: () => {
         void setClipboard(metafolder, { paths: [path], mode: 'cut' });
         void statusBar.message(`Cut ${label}`, statusMs);
@@ -306,6 +307,7 @@ export function fileMenuItems({ metafolder, path, name, isDir, onChanged }) {
     },
     {
       label: 'Copy',
+      command: 'clipboard:copy self',
       action: () => {
         void setClipboard(metafolder, { paths: [path], mode: 'copy' });
         void statusBar.message(`Copied ${label}`, statusMs);
@@ -313,10 +315,15 @@ export function fileMenuItems({ metafolder, path, name, isDir, onChanged }) {
     },
     {
       label: 'Paste',
+      command: 'clipboard:paste self',
       disabled: !hasClipboard(metafolder),
       action: () => void pasteInto(metafolder, path, isDir, nudge, statusMs),
     },
-    { label: 'Rename…', action: () => void renamePath(metafolder, path, nudge, statusMs) },
+    {
+      label: 'Rename…',
+      command: 'file:rename self',
+      action: () => void renamePath(metafolder, path, nudge, statusMs),
+    },
     {
       label: 'Copy full path',
       action: () => {
@@ -326,6 +333,7 @@ export function fileMenuItems({ metafolder, path, name, isDir, onChanged }) {
     },
     {
       label: 'Move to trash',
+      command: 'item:delete',
       action: () => void deleteViaItem(metafolder, path),
     },
   ];
@@ -333,22 +341,20 @@ export function fileMenuItems({ metafolder, path, name, isDir, onChanged }) {
 
 /**
  * The "Metarecord" section any panel showing metarecords can offer on the record
- * under the cursor: open it in the detail panel, in the viewer panel, reveal its
- * folder in the file manager and list that folder's metarecords (all only when
- * it is backed by a file), and copy its UUID — the
+ * under the cursor: reveal its folder in the file manager and list that folder's
+ * metarecords (both only when it is backed by a file), and copy its UUID — the
  * same items the metarecord list has always shown. The reveal commands read the
  * `selected_metarecord` / `selected_paths` workspace vars, so the caller must
  * have made the clicked record the selection before a menu action fires (every
  * panel already does this when it moves the cursor to the right-clicked row).
  *
  * @param {{ metafolder: MetafolderApi, uuid: string, hasFile?: boolean,
- *   revealFolder?: boolean, revealDetail?: boolean,
+ *   revealFolder?: boolean,
  *   leading?: Metafolder.MenuItem[], trailing?: Metafolder.MenuItem[] }} args
  *   `hasFile`
  *   gates the file-backed items; `revealFolder` (default `hasFile`) also offers
  *   "Open folder in file manager" — a panel that IS the file manager passes
- *   `false`, and the detail panel passes `revealDetail: false` for the same
- *   reason; `leading` items are inserted right after the header (e.g. a value
+ *   `false`; `leading` items are inserted right after the header (e.g. a value
  *   picker's "Pick this metarecord") and `trailing` ones close the category
  *   (e.g. the detail panel's reconcile/delete).
  * @returns {Metafolder.MenuItem[]}
@@ -358,27 +364,17 @@ export function metarecordMenuItems({
   uuid,
   hasFile = false,
   revealFolder = hasFile,
-  revealDetail = true,
   leading = [],
   trailing = [],
 }) {
   const { commands } = metafolder;
   /** @type {Metafolder.MenuItem[]} */
   const items = [{ header: 'Metarecord' }, ...leading];
-  if (revealDetail) {
-    items.push({
-      label: 'Open in panel metarecord-detail',
-      action: () => void commands.invoke(['panel:open', 'other', 'metarecord-detail']),
-    });
-  }
   if (hasFile) {
-    items.push({
-      label: 'Open in panel file',
-      action: () => void commands.invoke(['panel:open', 'other', 'viewer']),
-    });
     if (revealFolder) {
       items.push({
         label: 'Open folder in file manager',
+        command: 'file-manager:reveal here',
         action: () => void commands.invoke(['file-manager:reveal', 'here']),
       });
     }
@@ -387,6 +383,7 @@ export function metarecordMenuItems({
     // which is precisely where "and now show me these as metarecords" is asked.
     items.push({
       label: 'Open folder in metarecord-list',
+      command: 'metarecord-list:folder here',
       action: () => void commands.invoke(['metarecord-list:folder', 'here']),
     });
   }

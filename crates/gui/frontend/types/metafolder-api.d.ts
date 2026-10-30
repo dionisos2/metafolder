@@ -833,7 +833,13 @@ declare namespace Metafolder {
    *  Directory, Ignore, Text, View), same-named ones merge, and one separator is
    *  drawn at each category boundary, so a `'-'` of one's own is only needed in
    *  a menu that has no category at all. */
-  type MenuEntry = { label: string; action?: () => void; disabled?: boolean };
+  type MenuEntry = {
+    label: string;
+    action?: () => void;
+    disabled?: boolean;
+    /** The invocation whose key is shown beside the label (doc "Context menus"). */
+    command?: string;
+  };
   type MenuHeader = { header: string };
   type MenuItem = MenuEntry | MenuHeader | '-';
 

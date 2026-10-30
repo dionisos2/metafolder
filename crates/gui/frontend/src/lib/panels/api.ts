@@ -432,7 +432,11 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       event.preventDefault();
       event.stopPropagation();
       // The chosen item runs its own action; nothing here awaits the choice.
-      void showMenu(items, { x: event.clientX, y: event.clientY });
+      void showMenu(items, {
+        x: event.clientX,
+        y: event.clientY,
+        panelType: ctx.panelType,
+      });
     },
     {
       addDefaultItems: (provider: (event: MouseEvent) => Metafolder.MenuItem[]) =>

@@ -50,7 +50,7 @@
 #   field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script
 #   script-workspaces errors picker refs hierarchy hierarchy-form prompt history
 #   keybindings open-with tab-close close-layout pick-button suggested-key config-files walk open-viewers
-#   slideshow shell-line shell-cwd repos-memory help-keys help-cursor zoom order user-commands
+#   slideshow context-menu shell-line shell-cwd repos-memory help-keys help-cursor zoom order user-commands
 #   settle macro clipboard saved-workspaces, and
 #   devtools last (it takes the inspector the clicking scenarios drive).
 #   --unsandboxed  pass --allow-unsandboxed-webview to the GUI (a container
@@ -82,7 +82,7 @@ done
 [ ${#SCENARIOS[@]} -gt 0 ] \
     || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close close-layout
-        pick-button suggested-key walk open-viewers slideshow shell-line shell-cwd repos-memory
+        pick-button suggested-key walk open-viewers slideshow context-menu shell-line shell-cwd repos-memory
         help-keys help-cursor zoom refresh order user-commands settle macro paste clipboard saved-workspaces devtools)
 
 # shellcheck source=lib/daemon-fixture.sh
@@ -1235,6 +1235,41 @@ scenario_open_with() {
     assert "open with: the program runs" until_ok 10 test -s "$WORK/opened"
     assert_eq "open with: on the selected file" "$file" "$(cat "$WORK/opened" 2>/dev/null)"
 }
+
+scenario_context_menu() {
+    needs_clicks context-menu || return 0
+    needs_keyboard context-menu || return 0
+    new_repo context-menu
+    touch "$REPO_DIR/alpha.txt" "$REPO_DIR/beta.txt"
+    show_panel left file-manager view:refresh file-manager
+    until_ok 10 shows span.name alpha.txt
+
+    # Selected by a real drag: a script cannot select inside a shadow root
+    # (Selection.addRange ignores such a range). The name's element is wider than
+    # its text, so the drag and the click stay at its left end.
+    local left top right bottom
+    read -r left top right bottom < <(webview bounds span.name alpha.txt)
+    local y=$(((top + bottom) / 2))
+    xdotool mousemove --window "$GUI_WIN" "$left" "$y" mousedown 1 \
+        mousemove --window "$GUI_WIN" "$((left + 200))" "$y" mouseup 1
+
+    # The real right button on the selected text: Copy, and nothing else. This
+    # goes through the real getComposedRanges, across the panel's shadow root.
+    xdotool mousemove --window "$GUI_WIN" "$((left + 10))" "$y" click 3
+    assert "context menu: selected text offers only Copy" until_ok 5 reads Copy .mf-menu
+    keys Escape
+
+    # Text selected on another row is not what was clicked: the row's own menu,
+    # with the keys of this panel.
+    webview contextmenu span.name beta.txt >/dev/null
+    local menu
+    menu=$(webview text .mf-menu)
+    assert "context menu: the row's own entries" grep -qF "Rename…F2" <<<"$menu"
+    assert "context menu: Ctrl+c beside the file's Copy" grep -qF "CopyCtrl+c" <<<"$menu"
+    assert "context menu: no Text section" not_grep "Text" "$menu"
+    assert "context menu: no opening of the row" not_grep "Open in panel" "$menu"
+}
+not_grep() { ! grep -qF "$1" <<<"$2"; }
 
 scenario_shell_line() {
     needs_keyboard shell-line || return 0

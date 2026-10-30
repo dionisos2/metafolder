@@ -658,8 +658,8 @@ export async function mount(root, metafolder) {
   const fileActions = fileActionsProvider(metafolder, () => repo);
   metafolder.contextMenu.addDefaultItems((event) => {
     const index = liIndexFromEvent(event);
-    // Make the clicked node the selection so `pick:confirm` and "Open in panel
-    // metarecord-detail" read its uuid, not whatever the cursor last sat on.
+    // Make the clicked node the selection so `pick:confirm` reads its uuid, not
+    // whatever the cursor last sat on.
     if (index >= 0 && index !== cursorIndex) void select(metafolder, index);
     const node = children[index >= 0 ? index : cursorIndex];
     /** @type {Metafolder.MenuItem[]} */
@@ -668,8 +668,7 @@ export async function mount(root, metafolder) {
       // A picker also offers "Pick this folder" (mfr_path) / "Pick this node"
       // (any other TreeRef) — worded per forest, as only mfr_path maps to disk.
       const pickLabel = field === 'mfr_path' ? 'Pick this folder' : 'Pick this node';
-      // No "Open in panel file"/"reveal folder" here: this panel does not
-      // publish `selected_paths`, which those commands need. The file actions
+      // No "reveal folder" here: this panel does not publish `selected_paths`, which those commands need. The file actions
       // (cut/copy/…) still come from `fileActions` via the row's data-mf-path.
       const listLabel =
         scope === 'subtree'
@@ -682,9 +681,9 @@ export async function mount(root, metafolder) {
           hasFile: false,
           leading: [
             ...(picking
-              ? [{ label: pickLabel, action: () => void commands.invoke(['pick:confirm']) }]
+              ? [{ label: pickLabel, command: 'pick:confirm', action: () => void commands.invoke(['pick:confirm']) }]
               : []),
-            { label: listLabel, action: () => void listRefs(metafolder, 'other') },
+            { label: listLabel, command: 'path-ref:list-refs', action: () => void listRefs(metafolder, 'other') },
           ],
         }),
       );

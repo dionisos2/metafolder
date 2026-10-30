@@ -72,7 +72,7 @@ of clicking something else.
 The inspector answers any local process for the duration of the run, and the GUI it
 reaches runs shell commands: a throwaway daemon, but a run belongs on a machine whose
 other users are trusted. Without `node`, or when the inspector does not answer, the
-clicking scenarios (`tab-close`, `pick-button`, `suggested-key`) are a loud `SKIP`.
+clicking scenarios (`tab-close`, `pick-button`, `suggested-key`, `context-menu`) are a loud `SKIP`.
 
 !! Its own configuration
 

@@ -7,6 +7,8 @@
   --mf-bg-raised: #26262e;
   --mf-fg: #ffffff;
   --mf-fg-dim: #ffffff;
+  /* What cannot be done now: a greyed menu entry. */
+  --mf-fg-disabled: #6e6e7c;
   --mf-accent: #4c56c4;
   --mf-focus-border: #4c56c4;
   --mf-error: #c44c56;
@@ -215,5 +217,5 @@ a.ref-link:hover {
 }
 
 /* HTML context menus (/__menu.js) ship built-in defaults; override them
- * here. Hooks: .mf-menu, .mf-menu-item (.active, .disabled),
+ * here. Hooks: .mf-menu, .mf-menu-item (.active, .disabled), .mf-menu-key,
  * .mf-menu-separator. */

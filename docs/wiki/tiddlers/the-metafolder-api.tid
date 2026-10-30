@@ -192,7 +192,7 @@ literally, so creating `new%file.txt` creates exactly that. `readDir` marks with
 |!Member |!Is |
 |`statusBar.message(text, timeoutMs?)`, `statusBar.error(error, timeoutMs?)` |a line in the workspace's status bar; `error` takes what a `catch` caught ([[Status bar and task bar]]) |
 |`messages.list()`, `messages.append(text)`, `messages.onAppend(listener)` |the workspace's message log; the listener receives `null` when the log is cleared |
-|`contextMenu(event, items)` |opens the HTML menu at the event's position; an item is `{label, action?, disabled?}`, a header or `'-'`. Returns nothing: the chosen item runs its `action` ([[Context menus]]) |
+|`contextMenu(event, items)` |opens the HTML menu at the event's position; an item is `{label, action?, disabled?, command?}`, a header or `'-'`. Returns nothing: the chosen item runs its `action` ([[Context menus]]) |
 |`contextMenu.addDefaultItems(event => items)` |adds items to the default menu when it opens inside this panel |
 |`pick.start(spec)` |opens a picker workspace; the answer comes back as the `pick_result` variable, matched by the `token` of the spec ([[Value picker]]). `createPickRunner` of `/__value-widget.js` wraps it |
 |`config.refSeed(field)`, `config.labelSeparator()` |the `[ref-seeds]` rule of a field and the separator of a completion label ([[Ref value seeds]]) |
