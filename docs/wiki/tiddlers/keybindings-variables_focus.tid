@@ -1,0 +1,6 @@
+title: keybindings-variables:focus
+tags: [[GUI command]]
+kind: reference
+summary: Keybindings variables: focus the filter
+
+`keybindings-variables:focus filter` — <<key "keybindings-variables:focus filter" "p e">>: gives the filter of the [[keybindings-variables panel]] the focus.

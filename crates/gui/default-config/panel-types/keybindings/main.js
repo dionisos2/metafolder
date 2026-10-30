@@ -12,39 +12,10 @@
 // as anything is typed (`config.checkKeybindingEntry`), the same check the save makes, so the
 // panel never restates the rules.
 
-import { byId, el, messageOf } from '/__ui.js';
-
-const MODIFIERS = ['ctrl', 'alt', 'shift', 'meta'];
+import { byId, el, keysStartWith, messageOf, normalizeChord } from '/__ui.js';
 
 /** The class buttons, `none` for a command with no class. */
 const CLASSES = ['A', 'B', 'C', 'D', 'X', 'none'];
-
-/**
- * A chord as the engine spells it — lowercased, modifiers in the order
- * `ctrl+alt+shift+meta` (`keybindings.rs`, `normalize_chord`) — so that
- * `shift+ctrl+a` finds `ctrl+shift+a`. Lenient: a chord being typed
- * (`ctrl+`) keeps its pieces as they are.
- * @param {string} chord @returns {string}
- */
-function normalizeChord(chord) {
-  const pieces = chord.toLowerCase().split('+');
-  const modifiers = MODIFIERS.filter((m) => pieces.includes(m));
-  const rest = pieces.filter((p) => !MODIFIERS.includes(p));
-  return [...modifiers, ...rest].join('+');
-}
-
-/**
- * Whether `keys` start with the sequence typed: every chord typed but the
- * last is matched whole, the last one as a prefix — `g` finds `g g`, `ctrl`
- * every ctrl chord.
- * @param {string[]} keys @param {string[]} typed
- */
-function keysStartWith(keys, typed) {
-  if (typed.length > keys.length) return false;
-  return typed.every((chord, index) =>
-    index < typed.length - 1 ? keys[index] === chord : keys[index].startsWith(chord),
-  );
-}
 
 /** @param {string} text @returns {string|null} */
 const orNull = (text) => (text.trim() === '' ? null : text.trim());

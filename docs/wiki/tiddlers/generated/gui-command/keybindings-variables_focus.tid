@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/keybindings-variables:focus
+catalog: GUI command
+target: keybindings-variables:focus
+summary: Keybindings variables: focus the filter
+
+!! Reference
+
+* Defined by the ``keybindings-variables`` panel
+
+!! Default keys
+
+* ``p e`` → ``keybindings-variables:focus filter`` (in the ``keybindings-variables`` panel)

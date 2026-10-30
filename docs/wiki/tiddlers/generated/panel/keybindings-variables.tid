@@ -5,7 +5,7 @@ summary: The keybindings-variables panel type
 
 !! Commands
 
-None of its own.
+* ``keybindings-variables:focus`` — Keybindings variables: focus the filter
 
 !! Generic commands
 

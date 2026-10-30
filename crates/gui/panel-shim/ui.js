@@ -585,3 +585,32 @@ export function frecency(rank, viewedAt, now = Date.now()) {
 export function formatScore(score) {
   return String(Math.round(score * 10) / 10);
 }
+
+const MODIFIERS = ['ctrl', 'alt', 'shift', 'meta'];
+
+/**
+ * A chord as the engine spells it — lowercased, modifiers in the order
+ * `ctrl+alt+shift+meta` (`keybindings.rs`, `normalize_chord`) — so that
+ * `shift+ctrl+a` finds `ctrl+shift+a`. Lenient: a chord being typed
+ * (`ctrl+`) keeps its pieces as they are.
+ * @param {string} chord @returns {string}
+ */
+export function normalizeChord(chord) {
+  const pieces = chord.toLowerCase().split('+');
+  const modifiers = MODIFIERS.filter((m) => pieces.includes(m));
+  const rest = pieces.filter((p) => !MODIFIERS.includes(p));
+  return [...modifiers, ...rest].join('+');
+}
+
+/**
+ * Whether `keys` start with the sequence typed: every chord typed but the
+ * last is matched whole, the last one as a prefix — `g` finds `g g`, `ctrl`
+ * every ctrl chord.
+ * @param {string[]} keys @param {string[]} typed
+ */
+export function keysStartWith(keys, typed) {
+  if (typed.length > keys.length) return false;
+  return typed.every((chord, index) =>
+    index < typed.length - 1 ? keys[index] === chord : keys[index].startsWith(chord),
+  );
+}

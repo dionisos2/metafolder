@@ -2,9 +2,10 @@
 // "keybindings-variables panel", doc "Keybinding variables"), each with its
 // value, editable in place, the keys it stands for and how many lines use it.
 // What a new value would do is asked of the backend as it is typed
-// (`config.checkKeybindingVariable`), the same check the save makes.
+// (`config.checkKeybindingVariable`), the same check the save makes. A filter
+// keeps the variables by key or by name.
 
-import { byId, el, messageOf } from '/__ui.js';
+import { byId, el, keysStartWith, messageOf, normalizeChord } from '/__ui.js';
 
 /** A key sequence as keycaps. @param {string[]} keys */
 const keycaps = (keys) => keys.flatMap((key, i) => [i > 0 ? ' ' : null, el('kbd', {}, key)]);
@@ -12,6 +13,10 @@ const keycaps = (keys) => keys.flatMap((key, i) => [i > 0 ? ' ' : null, el('kbd'
 /** @param {ShadowRoot} root @param {MetafolderApi} metafolder */
 export async function mount(root, metafolder) {
   const variablesBody = byId(root, 'variables');
+  const filter = byId(root, 'variable-filter', HTMLInputElement);
+  const count = byId(root, 'variables-count');
+  /** @type {Metafolder.KeybindingVariable[]} */
+  let variables = [];
   const variableCheck = byId(root, 'variable-check');
   // Only the answer to the latest question is shown: one asked for an older
   // value may come back after it.
@@ -78,14 +83,49 @@ export async function mount(root, metafolder) {
 
   /** @param {Metafolder.KeybindingView} view */
   function show(view) {
-    variablesBody.replaceChildren(...view.variables.map(variableRow));
+    variables = view.variables;
+    render();
+  }
+
+  /** The variables whose keys start with what is typed, then those whose name
+   *  holds it. */
+  function shownVariables() {
+    const typed = filter.value.trim();
+    if (typed === '') return variables;
+    const chords = typed.split(/\s+/).map(normalizeChord);
+    /** @param {Metafolder.KeybindingVariable} variable */
+    const byKey = (variable) =>
+      keysStartWith(variable.keys.split(/\s+/).map(normalizeChord), chords);
+    const name = typed.toLowerCase();
+    return [
+      ...variables.filter(byKey),
+      ...variables.filter((v) => !byKey(v) && `{${v.name}}`.includes(name)),
+    ];
+  }
+
+  function render() {
+    const shown = shownVariables();
+    variablesBody.replaceChildren(...shown.map(variableRow));
+    count.textContent =
+      shown.length === variables.length
+        ? String(variables.length)
+        : `${shown.length} of ${variables.length}`;
   }
 
   async function load() {
     show(await metafolder.config.keybindingEntries());
   }
 
+  filter.addEventListener('input', render);
   metafolder.provide({ refresh: load });
+  void metafolder.commands.register('keybindings-variables:focus', {
+    label: 'Keybindings variables: focus the filter',
+    args: [{ name: 'zone', prompt: () => 'Which zone? (filter)', complete: () => ['filter'] }],
+    handler: (_mf, /** @type {string} */ zone) => {
+      if (zone !== 'filter') throw new Error(`unknown zone: "${zone ?? ''}" (expected filter)`);
+      filter.focus();
+    },
+  });
   // Shown again: what changed meanwhile is read.
   metafolder.onVisibility((visible) => {
     if (visible) void load();

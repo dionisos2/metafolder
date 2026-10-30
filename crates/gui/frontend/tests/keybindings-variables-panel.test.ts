@@ -11,6 +11,7 @@ const VARIABLES = [
   { name: 'go', value: 'g', keys: 'g', uses: 1 },
   { name: 'panels', value: 't', keys: 't', uses: 1 },
   { name: 'negative', value: '{tags} -', keys: ', -', uses: 3 },
+  { name: 'tags', value: 'ctrl+shift+,', keys: 'ctrl+shift+,', uses: 2 },
 ];
 
 const flush = async () => {
@@ -27,7 +28,13 @@ async function mountPanel(checkVariable: (name: string, value: string) => string
     if (child.nodeName !== 'STYLE') root.append(child);
   }
   const view = { entries: [], variables: VARIABLES, unbound: [], classes_error: null };
+  const handlers = new Map<string, (...args: unknown[]) => unknown>();
   const api = {
+    commands: {
+      register: vi.fn(async (name: string, spec: { handler: (...args: unknown[]) => unknown }) => {
+        handlers.set(name, spec.handler);
+      }),
+    },
     config: {
       keybindingEntries: vi.fn(async () => view),
       checkKeybindingVariable: vi.fn(async (name: string, value: string) => checkVariable(name, value)),
@@ -41,7 +48,7 @@ async function mountPanel(checkVariable: (name: string, value: string) => string
   const mod = await import('../../default-config/panel-types/keybindings-variables/main.js');
   await mod.mount(root, api as never);
   await flush();
-  return { root, api };
+  return { root, api, handlers };
 }
 
 describe('keybindings-variables panel', () => {
@@ -60,7 +67,7 @@ describe('keybindings-variables panel', () => {
       await flush();
     };
     const variables = [...root.querySelectorAll('#variables tr')];
-    expect(variables).toHaveLength(3);
+    expect(variables).toHaveLength(4);
     const negative = variables.find((tr) => tr.textContent.includes('negative'))!;
     expect(negative.querySelector('input')!.value).toBe('{tags} -');
     expect(negative.textContent).toContain(', -');
@@ -77,5 +84,44 @@ describe('keybindings-variables panel', () => {
     expect(api.config.setKeybindingVariable).toHaveBeenCalledWith('go', 'j');
     // The keybindings panel, maybe beside it, reads its lines again.
     expect(api.workspace.set).toHaveBeenCalledWith('keybindings.changed', expect.any(Number));
+  });
+
+  const names = (root: ShadowRoot) =>
+    [...root.querySelectorAll('#variables tr code')].map((code) => code.textContent);
+
+  test('the filter keeps the keys starting with what is typed, then the names holding it', async () => {
+    const { root } = await mountPanel(() => '');
+    const filter = root.getElementById('variable-filter') as HTMLInputElement;
+    const filterBy = async (text: string) => {
+      filter.value = text;
+      filter.dispatchEvent(new Event('input'));
+      await flush();
+    };
+    await filterBy('nel');
+    expect(names(root)).toEqual(['{panels}']);
+    await filterBy('{go}');
+    expect(names(root)).toEqual(['{go}']);
+    // The key `t` first, then the names holding it.
+    await filterBy('t');
+    expect(names(root)).toEqual(['{panels}', '{negative}', '{tags}']);
+    await filterBy(', -');
+    expect(names(root)).toEqual(['{negative}']);
+    // However the chord is written.
+    await filterBy('shift+ctrl');
+    expect(names(root)).toEqual(['{tags}']);
+    await filterBy('nothing');
+    expect(names(root)).toEqual([]);
+    expect(root.getElementById('variables-count')!.textContent).toBe('0 of 4');
+    await filterBy('');
+    expect(names(root)).toHaveLength(4);
+    expect(root.getElementById('variables-count')!.textContent).toBe('4');
+  });
+
+  test('opening the panel selects no text field; keybindings-variables:focus filter does', async () => {
+    const { root, handlers } = await mountPanel(() => '');
+    const filter = root.getElementById('variable-filter') as HTMLInputElement;
+    expect(root.activeElement).not.toBe(filter);
+    await handlers.get('keybindings-variables:focus')!(undefined, 'filter');
+    expect(root.activeElement).toBe(filter);
   });
 });

@@ -1,12 +1,17 @@
 title: keybindings-variables panel
 tags: Panel [[Panel types]] [[Customising the GUI]] Keybindings
 kind: reference
-summary: Every variable of keybindings.toml: its value, edited in place, the keys it stands for, and how many lines use it.
+summary: Every variable of keybindings.toml, filtered by key or name: its value, edited in place, the keys it stands for, and how many lines use it.
 
 Open it with `panel:open here keybindings-variables` (<<key "panel:open here keybindings-variables" "t k v">>).
 It lists every variable of the file, in its order: its name, its value — a field —, the
 keys it stands for, and how many lines use it, directly or through another variable
 ([[Keybinding variables]]).
+
+The filter above the list narrows it as it is typed: first the variables whose keys
+start with the text — `shift+m`, however the chord is written —, then those
+whose name holds it. <<key "keybindings-variables:focus filter" "p e">> gives it the focus;
+opening the panel does not.
 
 What a new value would do is said as it is typed — how many keys change, or why it is
 refused: a key bound twice, or a key alone hiding a sequence that nothing hid before.

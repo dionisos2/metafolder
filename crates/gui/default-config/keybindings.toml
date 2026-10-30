@@ -354,6 +354,7 @@ vars.index = "i"
   { command = "shell:focus line", when = "shell" },
   { command = "keybindings:focus key", when = "keybindings" },
   { command = "config:focus filter", when = "config" },
+  { command = "keybindings-variables:focus filter", when = "keybindings-variables" },
 ]
 "{panel} shift+{edit}" = [
   { command = "metarecord-list:clear simplified", when = "metarecord-list" },
