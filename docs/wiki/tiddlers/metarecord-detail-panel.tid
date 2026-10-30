@@ -13,6 +13,9 @@ shows its name once, beside a line per parent — a link to the parent, reading 
 path — each of them edited or deleted on its own. With nothing selected it says so, and offers ''New
 metarecord''.
 
+The `↗` button of the head shows the metarecord's file in the [[viewer panel]] of the
+other slot, greyed without a file ([[Opening a row]]).
+
 !! Notes under the head
 
 * ''Orphan'', in purple — the file is gone, deleted or missing ([[Orphans in the GUI]]); or, in amber, its volume is not mounted, which is not the same thing ([[Unmounted volumes in the GUI]]).

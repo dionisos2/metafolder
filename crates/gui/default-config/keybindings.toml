@@ -252,6 +252,7 @@ vars.index = "i"
   { command = "panel:open other metarecord-detail", when = "recent" },
   { command = "panel:open other metarecord-detail", when = "file-manager" },
   { command = "panel:open other metarecord-detail", when = "duplicates" },
+  { command = "panel:open other metarecord-detail", when = "path-ref" },
 ]
 "down" = [
   { command = "cursor:next self" },

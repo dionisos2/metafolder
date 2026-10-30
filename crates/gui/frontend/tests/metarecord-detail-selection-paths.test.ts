@@ -4,7 +4,7 @@
 // to the right-click "File" menu (rename / duplicate / move to trash), while
 // the "Metarecord" half of the same menu used the loaded record. The two are
 // independent variables, and a panel is allowed to move `selected_metarecord`
-// ALONE — following a reference here, a path-ref node, a duplicates row — so
+// ALONE — following a reference here, a duplicates row — so
 // after such a move the File menu still named the *previously* selected file:
 // the menu said one record and renamed another. The paths are now resolved
 // from the loaded record's own `mfr_path`, so there is nothing left to diverge.
@@ -58,6 +58,7 @@ async function mountPanel(firstUuid: string) {
   ]);
   const subscriptions = new Map<string, (value: unknown) => void>();
   const menuBuilders: (() => unknown[])[] = [];
+  const invoke = vi.fn(() => null);
   const api = {
     ready: Promise.resolve(),
     workspaceId: 'ws-1',
@@ -107,7 +108,7 @@ async function mountPanel(firstUuid: string) {
       onChange: (key: string, cb: (value: unknown) => void) => subscriptions.set(key, cb),
     },
     provide: vi.fn(),
-    commands: { register: async () => {}, invoke: () => null },
+    commands: { register: async () => {}, invoke },
     addKeybinding: async () => null,
     fs: {
       readDir: async () => [],
@@ -129,9 +130,10 @@ async function mountPanel(firstUuid: string) {
     }),
   };
   const mod = await import('../../default-config/panel-types/metarecord-detail/main.js');
-  await mod.mount(shadowFor(), api as never);
+  const root = shadowFor();
+  await mod.mount(root, api as never);
   await new Promise((r) => setTimeout(r, 0));
-  return { subscriptions, menuBuilders };
+  return { subscriptions, menuBuilders, root, invoke, store };
 }
 
 /** The path the right-click File menu would act on, or null when it offers none. */
@@ -156,5 +158,21 @@ describe('metarecord-detail file actions', () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(menuPath(menuBuilders)).toBe('/tmp/repo/bbb.txt');
+  });
+});
+
+describe('metarecord-detail ↗ button', () => {
+  const button = (root: ShadowRoot) =>
+    root.querySelector<HTMLButtonElement>('#metarecord-head .mf-open-show')!;
+
+  test('publishes the displayed file, then opens the viewer beside', async () => {
+    const { subscriptions, root, invoke, store } = await mountPanel('aaa');
+    // A reference click moved `selected_metarecord` alone: the paths are stale.
+    subscriptions.get('selected_metarecord')?.({ uuid: 'bbb', repo: REPO });
+    await new Promise((r) => setTimeout(r, 0));
+    button(root).click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(store.get('selected_paths')).toEqual([pathOf('bbb')]);
+    expect(invoke).toHaveBeenCalledWith(['panel:open', 'other', 'viewer']);
   });
 });

@@ -31,14 +31,17 @@ loading pages of children until it is among them.
 |!Key |!Does |
 |<<key "cursor:next self" "↓">> / <<key "cursor:prev self" "↑">>, <<key "cursor:first self" Home>> / <<key "cursor:last self" End>> |move the cursor (`End`: the last child loaded) |
 |<<key "cursor:descend self" "Enter or →">>, or the `↘` button of a row ([[Opening a row]]) |go into the node |
+|<<key "panel:open other metarecord-detail" Shift+Enter>>, or the `ⓘ` button of a row |show the node in the [[metarecord-detail panel]] of the other slot |
+|the `↗` button of a row |show the node's file in the [[viewer panel]] of the other slot (`mfr_path` tree only) |
 |<<key "cursor:parent self" "Backspace or ←">> |back to its parent |
 |<<key "cursor:root self" "Alt+Home">> |back to the roots |
 |<<key "cursor:find self select" f>> |jump to a child by name, among those loaded ([[Jumping to an entry]]) |
 |<<key "cursor:find self walk" "Shift+f">> |walk down by name: a node with children is gone into and the question asked again, a leaf is selected (`shift+Enter` stops on a node) |
 |<<key "view:refresh self" "Ctrl+r">> |read the fields and the children again |
 
-The node under the cursor is the workspace's selection, so [[metarecord-detail panel]]
-beside it shows it; its field, uuid and path are also published as `selected_path_ref`
+The node under the cursor is the workspace's selection, its file included in the
+`mfr_path` tree, so a [[metarecord-detail panel]] or a [[viewer panel]] beside it shows
+it; its field, uuid and path are also published as `selected_path_ref`
 ([[Workspace variables]]). Children are loaded 200 at a time (`[page-size]`), more as
 the list scrolls; the roots come all at once.
 

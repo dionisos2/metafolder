@@ -56,7 +56,8 @@ focus where it was (the panel's keys keep working).
 |!Panel |!Button |!Opening |
 |[[file-manager panel]] |`↘` on a folder, `↗` on a file and on `.`; `ⓘ` on every row |goes into the folder; selects the file (or the folder shown) and shows it in the viewer panel; `ⓘ` in the detail panel (greyed when untracked) |
 |[[metarecord-list panel]] |`↗` and `ⓘ`, in a column of their own — under the thumbnail in the grid |shows the metarecord in the viewer panel (greyed without a file), in the detail panel |
-|[[path-ref panel]] |`↘` |goes into the node |
+|[[path-ref panel]] |`↘`, `↗` and `ⓘ` |goes into the node; shows it in the viewer panel (greyed outside the `mfr_path` tree, where a node has no file of its own), in the detail panel |
+|[[metarecord-detail panel]] |`↗` in the head |shows the displayed metarecord's file in the viewer panel (greyed without a file) |
 |[[log panel]] |`↘` on every row |goes into it: the list shows what a label or a fold of the watcher's flushes holds, and what an operation changed (it used to unfold in place — no reason for the log to unfold where the path-ref panel goes into; an operation's changes had a panel of their own, `log-detail`) |
 |[[recent panel]] |`↗` and `ⓘ` |shows the metarecord in the viewer panel, in the detail panel |
 |[[duplicates panel]] |`▸`/`▾` on a group, `↗` and `ⓘ` on a copy |unfolds the group in place; shows the copy in the viewer panel, in the detail panel |

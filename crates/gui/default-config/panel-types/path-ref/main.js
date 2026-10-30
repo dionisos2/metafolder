@@ -13,11 +13,11 @@
 // new node under the current one (schema type first, then the name), the way
 // the file manager creates a folder. doc "path-ref panel".
 
-import { byId, el, listQueryVariables, openButton, queryModeArg, whereArg } from '/__ui.js';
+import { byId, el, listQueryVariables, openButton, queryModeArg, viewerButtons, whereArg } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
 import { createListCursor } from '/__list-cursor.js';
 import { createSelect } from '/__select.js';
-import { fileActionsProvider, metarecordMenuItems } from '/__file-actions.js';
+import { baseName, fileActionsProvider, metarecordMenuItems } from '/__file-actions.js';
 import { loadSchema as loadSharedSchema, schemaTypes, templateFields } from '/__schema-template.js';
 import { childrenQuery, nodeFields, refQueryDsl, treeNameOf, treeRefPath } from './queries.js';
 
@@ -425,6 +425,8 @@ export async function mount(root, metafolder) {
       // Publish the path in the daemon's convention (see treeRefPath).
       const path = treeRefPath([...stack.map((c) => c.name), child.name]);
       await mf.workspace.set('selected_metarecord', { uuid: child.uuid, repo });
+      const file = nodeFile(child);
+      await mf.workspace.set('selected_paths', file === null ? [] : [file]);
       await mf.workspace.set('selected_path_ref', { repo, field, uuid: child.uuid, path });
       renderQueryPreview();
     },
@@ -445,15 +447,22 @@ export async function mount(root, metafolder) {
   /** @param {Node} node */
   const nodeLabel = (node) => (node.name === '' ? '/' : node.name || node.uuid.slice(0, 8));
 
-  // `data-mf-*` attributes for the shared right-click file menu — only for the
-  // mfr_path forest, whose nodes map to on-disk paths. isDir is left unset (a
-  // node may be a directory or a leaf file), so the menu probes when pasting.
+  // The absolute path of a node — only in the mfr_path forest, whose nodes map
+  // to on-disk paths; null elsewhere.
+  /** @param {Node} child @returns {string|null} */
+  function nodeFile(child) {
+    if (field !== 'mfr_path' || repoRootPath === null) return null;
+    const rel = [...stack.map((c) => c.name), child.name].filter((s) => s !== '').join('/');
+    return rel === '' ? repoRootPath : `${repoRootPath}/${rel}`;
+  }
+
+  // `data-mf-*` attributes for the shared right-click file menu. isDir is left
+  // unset (a node may be a directory or a leaf file), so the menu probes when
+  // pasting.
   /** @param {Node} child @returns {Record<string, string>} */
   function fileRowAttrs(child) {
-    if (field !== 'mfr_path' || repoRootPath === null) return {};
-    const rel = [...stack.map((c) => c.name), child.name].filter((s) => s !== '').join('/');
-    const abs = rel === '' ? repoRootPath : `${repoRootPath}/${rel}`;
-    return { 'data-mf-path': abs, 'data-mf-name': child.name || rel };
+    const abs = nodeFile(child);
+    return abs === null ? {} : { 'data-mf-path': abs, 'data-mf-name': child.name || baseName(abs) };
   }
 
   function render() {
@@ -489,6 +498,14 @@ export async function mount(root, metafolder) {
           },
           // doc "Opening a row"
           openButton('enter', 'Go into this node', () => void descend(index)),
+          viewerButtons({
+            hasFile: nodeFile(child) !== null,
+            hasMetarecord: true,
+            open: async (what) => {
+              await select(metafolder, index);
+              await commands.invoke(['panel:open', 'other', what]);
+            },
+          }),
           el('span', { class: 'icon' }, '🏷️'),
           el('span', { class: 'name' }, nodeLabel(child)),
         ),
@@ -668,7 +685,7 @@ export async function mount(root, metafolder) {
       // A picker also offers "Pick this folder" (mfr_path) / "Pick this node"
       // (any other TreeRef) — worded per forest, as only mfr_path maps to disk.
       const pickLabel = field === 'mfr_path' ? 'Pick this folder' : 'Pick this node';
-      // No "reveal folder" here: this panel does not publish `selected_paths`, which those commands need. The file actions
+      // No "reveal folder" here: what is offered on a node stays the tree's. The file actions
       // (cut/copy/…) still come from `fileActions` via the row's data-mf-path.
       const listLabel =
         scope === 'subtree'

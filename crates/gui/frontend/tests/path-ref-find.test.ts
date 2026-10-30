@@ -3,7 +3,7 @@
 // the explored forest, which must NOT pre-fill the minibuffer: the answer is a
 // new field name, not an edit of the current one).
 
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { beforeEach, describe, expect, test, vi, type Mock } from 'vitest';
 import { sameNodes } from './support/nodes';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -412,5 +412,63 @@ describe('going back up in the tree explorer', () => {
     crumb.click();
     await settle();
     expect(cursorName(s.root)).toBe('jazz');
+  });
+});
+
+describe('opening a node (doc "Opening a row")', () => {
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = () => {};
+  });
+
+  const row = (root: ShadowRoot, name: string) =>
+    [...root.querySelectorAll('li')].find(
+      (li) => li.querySelector('.name')?.textContent === name,
+    )!;
+
+  test('every row has ↘, ↗ and ⓘ', async () => {
+    const s = stub();
+    await mount(s);
+    const kinds = [...row(s.root, 'notes').querySelectorAll('button.mf-open')].map((button) =>
+      [...button.classList].find((c) => c.startsWith('mf-open-')),
+    );
+    expect(kinds).toEqual(['mf-open-enter', 'mf-open-show', 'mf-open-detail']);
+  });
+
+  test('↗ selects the node, its file included, then opens the viewer beside', async () => {
+    const s = stub();
+    await mount(s);
+    const order: string[] = [];
+    (s.api.workspace.set as Mock).mockImplementation(async (key: string, value: unknown) => {
+      if (key === 'selected_metarecord' || key === 'selected_paths')
+        order.push(`${key} ${JSON.stringify(value)}`);
+    });
+    (s.api.commands.invoke as Mock).mockImplementation((args: string[]) => void order.push(args.join(' ')));
+    row(s.root, 'notes').querySelector<HTMLButtonElement>('.mf-open-show')!.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(order).toEqual([
+      'selected_metarecord {"uuid":"u-notes","repo":"r"}',
+      'selected_paths ["/repo/notes"]',
+      'panel:open other viewer',
+    ]);
+  });
+
+  test('ⓘ opens the detail panel beside', async () => {
+    const s = stub();
+    await mount(s);
+    row(s.root, 'notes').querySelector<HTMLButtonElement>('.mf-open-detail')!.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(s.api.commands.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'metarecord-detail']);
+  });
+
+  test('in a tree of tags a node has no file: ↗ is greyed, and the selection has no path', async () => {
+    const s = stub();
+    await mount(s);
+    await s.handlers.get('path-ref:set')!('field', 'tag');
+    await new Promise((r) => setTimeout(r, 0));
+    const show = row(s.root, 'notes').querySelector<HTMLButtonElement>('.mf-open-show')!;
+    expect(show.disabled).toBe(true);
+    row(s.root, 'notes').click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(s.api.workspace.set).toHaveBeenCalledWith('selected_paths', []);
   });
 });

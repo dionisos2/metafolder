@@ -1,7 +1,7 @@
 // metarecord-detail panel: shows and edits all fields of selected_metarecord
 // (doc "metarecord-detail panel").
 
-import { byId, el, messageOf, valueEl } from '/__ui.js';
+import { byId, el, messageOf, openButton, valueEl } from '/__ui.js';
 import { createListCursor } from '/__list-cursor.js';
 import { createTypePicker, widgetFor, createPickRunner } from '/__value-widget.js';
 import { loadSchema as loadSharedSchema, schemaTypes, templateFields } from '/__schema-template.js';
@@ -301,7 +301,7 @@ export async function mount(root, metafolder) {
     // `hasContent` above already established this, but only through a variable.
     const loaded = metarecord;
     if (!loaded) return;
-    metarecordHead.textContent = `uuid ${loaded.uuid} — version ${loaded.version}`;
+    renderHead(loaded);
     fieldRows.replaceChildren(...rowItems().map(fieldRow));
   }
 
@@ -577,6 +577,25 @@ export async function mount(root, metafolder) {
     void notes.fill(selection.repo);
   }
 
+  /** The uuid and version, after the `↗` showing the file (doc "Opening a row").
+   *  It publishes the displayed record's file first: following a reference
+   *  moves `selected_metarecord` alone, so `selected_paths` may name another.
+   *  @param {Metafolder.Metarecord} loaded */
+  function renderHead(loaded) {
+    metarecordHead.replaceChildren(
+      openButton(
+        'show',
+        'Show in the viewer panel, in the other slot',
+        async () => {
+          await workspace.set('selected_paths', [currentPaths[0]]);
+          await commands.invoke(['panel:open', 'other', 'viewer']);
+        },
+        { disabled: currentPaths.length > 0 ? undefined : 'No file or folder to show' },
+      ),
+      ` uuid ${loaded.uuid} — version ${loaded.version}`,
+    );
+  }
+
   /** Resolves the loaded record's own file path(s) for the file actions. Like
    *  the notes, it is fired and forgotten with a guard: a selection
    *  that moved on while the daemon answered must not have its paths
@@ -588,6 +607,7 @@ export async function mount(root, metafolder) {
     const paths = await notes.recordPaths(selection.repo, shown);
     if (metarecord !== shown) return;
     currentPaths = paths;
+    renderHead(shown);
   }
 
   /** @param {Field} field @param {Metafolder.Value|Promise<Metafolder.Value>} newValue */

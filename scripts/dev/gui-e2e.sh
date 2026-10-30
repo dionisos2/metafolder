@@ -50,7 +50,7 @@
 #   field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script
 #   script-workspaces errors picker refs hierarchy hierarchy-form prompt history
 #   keybindings open-with tab-close close-layout pick-button suggested-key config-files walk open-viewers
-#   slideshow context-menu shell-line shell-cwd repos-memory help-keys help-cursor zoom order user-commands
+#   slideshow context-menu open-tree-node shell-line shell-cwd repos-memory help-keys help-cursor zoom order user-commands
 #   settle macro clipboard saved-workspaces, and
 #   devtools last (it takes the inspector the clicking scenarios drive).
 #   --unsandboxed  pass --allow-unsandboxed-webview to the GUI (a container
@@ -82,7 +82,7 @@ done
 [ ${#SCENARIOS[@]} -gt 0 ] \
     || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close close-layout
-        pick-button suggested-key walk open-viewers slideshow context-menu shell-line shell-cwd repos-memory
+        pick-button suggested-key walk open-viewers slideshow context-menu open-tree-node shell-line shell-cwd repos-memory
         help-keys help-cursor zoom refresh order user-commands settle macro paste clipboard saved-workspaces devtools)
 
 # shellcheck source=lib/daemon-fixture.sh
@@ -1518,6 +1518,33 @@ errs() {
 # doc "Opening a row": Enter shows the row under the cursor in the viewer panel of
 # the other slot, Shift+Enter in the detail panel — `panel:open`, which refuses
 # a viewer with nothing of the selection to show.
+scenario_open_tree_node() {
+    needs_clicks open-tree-node || return 0
+    needs_keyboard open-tree-node || return 0
+    new_repo open-tree-node
+    echo hi >"$REPO_DIR/song.txt"
+    record "$REPO_DIR/song.txt" >/dev/null || die "record song.txt"
+    show_panel left path-ref view:refresh path-ref
+    until_ok 10 click li "" .mf-open-enter
+    until_ok 10 shows span.name song.txt
+    run panel:focus left
+    until_ok 5 click li song.txt .mf-open-show
+    assert "tree node: ↗ shows its file in the viewer panel" until_ok 10 right_is viewer
+    run panel:focus left
+    keys shift+Return
+    assert "tree node: Shift+Enter shows it in the detail panel" until_ok 10 right_is metarecord-detail
+
+    mfg view right message >/dev/null
+    until_ok 5 click li song.txt .mf-open-detail
+    assert "tree node: ⓘ shows it in the detail panel" until_ok 10 right_is metarecord-detail
+
+    # The detail panel's own ↗, on the metarecord it displays: in its other slot,
+    # the left one here. Enabled once the panel has resolved the file.
+    until_ok 10 click '#metarecord-head' "" '.mf-open-show:not(:disabled)'
+    assert "detail: ↗ shows its file in the other slot" until_ok 10 left_is viewer
+}
+left_is() { [ "$(gui_status "(s['layout']['left'] or {}).get('panel_type')")" = "$1" ]; }
+
 scenario_open_viewers() {
     needs_keyboard open-viewers || return 0
     new_repo open-viewers

@@ -1718,6 +1718,10 @@ vars.y = ","
         assert!(table.iter().any(|b| b.keys == ["shift+enter"]
             && b.focus.as_deref() == Some("find")
             && b.invocation == "find:prev"));
+        // Shift+Enter shows a tree node in the detail panel, as it does a row.
+        assert!(table.iter().any(|b| b.keys == ["shift+enter"]
+            && b.when.as_deref() == Some("path-ref")
+            && b.invocation == "panel:open other metarecord-detail"));
         assert!(table.iter().any(|b| b.keys == ["escape"]
             && b.focus.as_deref() == Some("find")
             && b.invocation == "find:close"));

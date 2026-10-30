@@ -67,6 +67,7 @@ summary: Open a panel type here, in the other slot, or in a new workspace
 * ``shift+enter`` → ``panel:open other metarecord-detail`` (in the ``duplicates`` panel)
 * ``shift+enter`` → ``panel:open other metarecord-detail`` (in the ``file-manager`` panel)
 * ``shift+enter`` → ``panel:open other metarecord-detail`` (in the ``metarecord-list`` panel)
+* ``shift+enter`` → ``panel:open other metarecord-detail`` (in the ``path-ref`` panel)
 * ``shift+enter`` → ``panel:open other metarecord-detail`` (in the ``recent`` panel)
 * ``t b`` → ``panel:open here trash``
 * ``t c`` → ``panel:open here config``
