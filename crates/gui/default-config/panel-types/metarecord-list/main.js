@@ -205,12 +205,17 @@ export async function mount(root, metafolder) {
     ...historyDeps,
   });
   const queryHistory = attachHistory(queryInput, { zone: 'metarecord-list:query', ...historyDeps });
+  const normalHistory = attachHistory(byId(root, 'normal-input', HTMLInputElement), {
+    zone: 'metarecord-list:normal',
+    ...historyDeps,
+  });
 
   // ── Query (two-zone editor, ./query-editor.js) ──────────────────────────
   const editor = createQueryEditor({
     root,
     metafolder,
     history: queryHistory,
+    normalHistory,
     onApply: () => {
       queryRan = true;
     },

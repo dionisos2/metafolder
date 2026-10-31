@@ -44,21 +44,59 @@ function setup(vars: Record<string, unknown> = {}) {
     },
   };
   const run = vi.fn(async () => {});
+  const normalHistory = { push: vi.fn() };
   const editor = createQueryEditor({
     root: shadow,
     metafolder: metafolder as never,
     history: { push: () => {} },
+    normalHistory,
     onApply: () => {},
     run,
   });
   const input = (id: string) => shadow.getElementById(id) as HTMLInputElement;
   // What the editor writes through: the panel's API, or a command's run.
   const mf = metafolder as never;
-  return { editor, store, listeners, run, input, mf, shadow, metafolder };
+  return { editor, store, listeners, run, input, mf, shadow, metafolder, normalHistory };
 }
 
 beforeEach(() => {
   document.body.innerHTML = '';
+});
+
+describe('the normal zone history', () => {
+  test('an apply records the text typed in it', async () => {
+    const { editor, input, mf, normalHistory } = setup();
+    await editor.restore();
+    input('normal-input').value = 'rating > 3';
+    await editor.apply(mf);
+    expect(normalHistory.push).toHaveBeenCalledWith('rating > 3');
+  });
+
+  test('a query a command showed there is not recorded, even applied again', async () => {
+    const { editor, mf, normalHistory } = setup();
+    await editor.restore();
+    await editor.show(mf, 'orphan = true');
+    await editor.apply(mf);
+    expect(normalHistory.push).not.toHaveBeenCalled();
+  });
+
+  test('editing what a command showed there records the edit', async () => {
+    const { editor, input, mf, normalHistory } = setup();
+    await editor.restore();
+    await editor.show(mf, 'orphan = true');
+    input('normal-input').value = 'orphan = false';
+    await editor.apply(mf);
+    expect(normalHistory.push).toHaveBeenCalledWith('orphan = false');
+  });
+
+  test('a query another panel wrote in the variables is not recorded', async () => {
+    const { editor, store, listeners, input, normalHistory } = setup();
+    await editor.restore();
+    store.set('metarecord-list:normal-query', 'y = 2');
+    listeners.get('metarecord-list:normal-query')!('y = 2');
+    await vi.waitFor(() => expect(input('normal-input').value).toBe('y = 2'));
+    expect(normalHistory.push).not.toHaveBeenCalled();
+  });
 });
 
 describe('createQueryEditor', () => {

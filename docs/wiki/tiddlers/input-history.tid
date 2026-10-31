@@ -5,10 +5,10 @@ aliases: input-history recall ctrl-p ctrl-n ctrl-r history-commands
 summary: Each text zone remembers what was submitted in it, per repository: history:prev and history:next walk back and forth, history:search searches.
 
 The text zones keep what was submitted in them, ''per repository and per zone''.
-Four zones have a history:
+Five zones have a history:
 
 * the command input in command mode, and in bash mode — two separate histories ([[The command input]], [[Bash mode]]) — the line of the [[shell panel]] sharing the bash mode's;
-* the finder and the query of `metarecord-list`.
+* the finder, the simplified query and the normal query of `metarecord-list`.
 
 !! Recalling
 
@@ -26,12 +26,12 @@ applying a query that stays in its field, the first recall is the query before.
 The argument is ''required'': the field the command acts on.
 
 * `self-focus` is the field that has the focus: it is what the keys run. Where the focused field has no history, a key bound to it passes through as if it were not bound: outside a text field, `Ctrl+R` refreshes ([[Keybindings]]).
-* A name is that field of the focused panel, which then takes the focus — `finder`, `simplified`, or `line` for the [[shell panel]]. `history:search finder` typed in the command input opens the finder's search.
+* A name is that field of the focused panel, which then takes the focus — `finder`, `simplified`, `normal`, or `line` for the [[shell panel]]. `history:search finder` typed in the command input opens the finder's search.
 * `self` is the focused panel's history: see below. It is what the keys run outside a text field. `history:search` has no such form.
 
 Typed in the command input, `self-focus` finds nothing: the input gives up the focus
 before the command runs, and no field holds it then. A field without history, or a
-name the focused panel lacks, is an error. The `normal` query field has no history.
+name the focused panel lacks, is an error.
 
 !! A panel's history
 
@@ -54,7 +54,9 @@ walk. A panel without fields with a history lets the keys pass through.
 An entry is recorded when the zone is ''submitted'' — `Enter`, or the command that
 applies it — never while typing. The command mode records what actually ran: the
 command chosen in the list, not the few letters typed to reach it. An answer to a
-question — a command's argument, a script's prompt — is not recorded.
+question — a command's argument, a script's prompt — is not recorded. Nor is a query
+a command shows in the normal query field, a folder's for instance: it is not what
+was typed there, and would bury it. Editing it and applying records the edit.
 
 Submitting the same text twice in a row records it once. Each zone keeps its 1000
 newest entries.
@@ -66,7 +68,7 @@ only; it is not carried into a repository's history when one is opened.
 
 In the repository: one plain-text file per zone,
 `.metafolder/gui/history/<zone>` — `shell:command`, `shell:bash`,
-`metarecord-list:finder`, `metarecord-list:query` — one entry per line, the newest
+`metarecord-list:finder`, `metarecord-list:query`, `metarecord-list:normal` — one entry per line, the newest
 last. A panel's list of fields is a file of the same kind, `metarecord-list:fields`
 or `shell:fields`, with one field's name per line, a name repeated when the field was
 submitted twice in a row. The file is replaced whole at each addition (written aside, then renamed), so

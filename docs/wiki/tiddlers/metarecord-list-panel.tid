@@ -23,8 +23,8 @@ empty list everything.
 again; <<key "metarecord-list:apply finder stay" Shift+Enter>> applies and stays. An
 error is shown under the field it comes from — the simplified query's (its
 expansion, or the parse of that expansion) under the simplified query, the normal
-DSL's under the normal DSL. The finder and the simplified query each
-keep a history, recorded when you apply and not at each debounced run
+DSL's under the normal DSL. The finder, the simplified query and the
+normal DSL each keep a history, recorded when you apply and not at each debounced run
 ([[Input history]]).
 
 |!Key |!Does |

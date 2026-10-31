@@ -1229,6 +1229,17 @@ scenario_history() {
     keys Return
     assert "history: a submit lists the field again" \
         until_ok 10 bash -c "[ \"\$(grep -cx finder '$fields')\" = 2 ]"
+
+    # The normal query records what is typed in it.
+    run metarecord-list:focus normal
+    typed 'mfr_type = "file"'
+    keys Return
+    assert "history: applying the normal query records it" \
+        until_ok 10 grep -qx 'mfr_type = "file"' "$REPO_DIR/.metafolder/gui/history/metarecord-list:normal"
+    run metarecord-list:focus normal clear
+    keys ctrl+p
+    assert "history: ctrl+p in the normal query recalls it" \
+        until_ok 10 reads 'mfr_type = "file"' "#normal-input"
 }
 
 # Macros (doc "Macros"): F3 records what the keyboard runs, `macro:run`

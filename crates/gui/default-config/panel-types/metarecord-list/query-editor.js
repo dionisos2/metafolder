@@ -4,7 +4,8 @@
 // either language without giving the other up. It owns the zones' elements,
 // the base query they compile to, and the workspace variables that are its
 // state. What it needs from the panel arrives through `ctx`:
-//   history   -> the simplified zone's input history (an explicit apply records its text)
+//   history   -> the simplified zone's input history (an apply records its text)
+//   normalHistory -> the normal zone's (an explicit apply records what was typed there)
 //   onApply() -> an apply began (the panel now has a query to run)
 //   run()     -> run the compiled query (a reset of the list)
 
@@ -49,6 +50,7 @@ function conjunctionText(parts) {
  *   root: ShadowRoot,
  *   metafolder: MetafolderApi,
  *   history: {push: (entry: string) => void},
+ *   normalHistory: {push: (entry: string) => void},
  *   onApply: () => void,
  *   run: (mf: MetafolderApi) => Promise<unknown>,
  * }} ctx
@@ -58,7 +60,7 @@ function conjunctionText(parts) {
  * (`metafolder`) for what the panel does by itself — a key in a zone, a click,
  * following the variables.
  */
-export function createQueryEditor({ root, metafolder, history, onApply, run }) {
+export function createQueryEditor({ root, metafolder, history, normalHistory, onApply, run }) {
   const { daemon, workspace, query } = metafolder;
   const livePreviewMs = metafolder.settings.livePreviewDebounceMs ?? 130;
 
@@ -144,6 +146,15 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
         : (expandedIR ?? normalIR);
     queryText = dsl;
     return true;
+  }
+
+  /** An apply the user asked for. The normal zone is also where commands write
+   *  (`show`), and a folder's query is not something typed: only a text that
+   *  differs from what was last applied or written there is recorded.
+   *  @param {MetafolderApi} mf */
+  async function submitQuery(mf) {
+    if (normalInput.value !== appliedState.normal) normalHistory.push(normalInput.value);
+    await applyQuery(mf);
   }
 
   /** @param {MetafolderApi} mf */
@@ -304,7 +315,7 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
     simplifiedInput: queryInput,
     normalInput,
     recompute: recomputeQuery,
-    apply: applyQuery,
+    apply: submitQuery,
     show: showQuery,
     clear: clearQueries,
     toggleExpansion,
