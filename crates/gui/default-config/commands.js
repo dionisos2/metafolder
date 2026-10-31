@@ -526,7 +526,7 @@ export default {
     },
   },
 
-  // The mirror image of `file-manager:reveal` (keybindings.toml "g f"): show
+  // The mirror image of `file-manager:reveal` (keybindings.toml "g s"): show
   // the same folder's *metarecords* instead of its disk entries, at the target
   // (here on the bare key; doc "Cross-panel selection"). The folder becomes the DSL
   // `mfr_path -> "<folder>"` (Follows: its files *and* its subdirectories, the

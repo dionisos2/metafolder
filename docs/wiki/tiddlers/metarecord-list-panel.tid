@@ -36,7 +36,7 @@ Going to one field, or clearing it, leaves the other as it is: both are always p
 of the query.
 
 A query written by a command arrives in the normal DSL, so that it can be edited or
-combined: `metarecord-list:folder` (<<key "metarecord-list:folder" "g f">>, the
+combined: `metarecord-list:folder` (<<key "metarecord-list:folder here" "g s">>, the
 selection's folder — [[Cross-panel selection]]), `path-ref:list-refs`
 ([[path-ref panel]]), and `metarecord-list:query`, which takes `duplicates` (the files
 byte-identical to the selection, `same(mfr_duplicate_group, <uuid>)` —

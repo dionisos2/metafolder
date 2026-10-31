@@ -365,13 +365,14 @@ fn test_go_family_load_and_folder_keybindings() {
     assert_eq!(global(&["g", "o"]).as_deref(), Some("repos:switch"));
     // A command opening something names its default target, and the same
     // keys after `i` / `b` / `n` open here, beside, in a new workspace (doc
-    // "Keybinding variables"). From a picker, here; from a row, beside.
+    // "Keybinding variables"). From a picker, here; changing the list itself,
+    // here (doc "Choosing keybindings").
     assert_eq!(global(&["g", "r"]).as_deref(), Some("recent here time"));
     assert_eq!(global(&["b", "g", "r"]).as_deref(), Some("recent other time"));
     assert_eq!(global(&["n", "g", "r"]).as_deref(), Some("recent new time"));
     assert_eq!(global(&["g", "shift+r"]).as_deref(), Some("recent here score"));
     assert_eq!(global(&["g", "d"]).as_deref(), Some("folder:open files here"));
     assert_eq!(global(&["g", "l"]).as_deref(), Some("folder:open children here"));
-    assert_eq!(global(&["g", "s"]).as_deref(), Some("metarecord-list:folder other"));
-    assert_eq!(global(&["i", "g", "s"]).as_deref(), Some("metarecord-list:folder here"));
+    assert_eq!(global(&["g", "s"]).as_deref(), Some("metarecord-list:folder here"));
+    assert_eq!(global(&["b", "g", "s"]).as_deref(), Some("metarecord-list:folder other"));
 }

@@ -31,7 +31,7 @@ A command that writes a query chooses, by its last argument, whether its query i
 whole query (`replace`, the default: the simplified field is emptied, as the old
 freeze ignored it) or AND-ed with what the two fields hold (`and`: it is added to the
 normal DSL, so that a filter [[tag:query]] wrote there survives it). Replacing stays the
-default because a key like <<key "metarecord-list:folder" "g f">> means "show me this
+default because a key like <<key "metarecord-list:folder here" "g s">> means "show me this
 folder", and an old, unrelated simplified query silently narrowing it would look like
 missing files.
 

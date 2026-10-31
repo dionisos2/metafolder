@@ -441,8 +441,8 @@ vars.index = "i"
 "{target-here} {go} m" = { command = "file-manager:reveal here" }
 "{target-other} {go} m" = { command = "file-manager:reveal other" }
 "{target-new} {go} m" = { command = "file-manager:reveal new" }
-# The selection's folder as a list: from a row, so beside it.
-"{go} s" = { command = "metarecord-list:folder other" }
+# The selection's folder as a list: it changes the list, so here.
+"{go} s" = { command = "metarecord-list:folder here" }
 "{target-here} {go} s" = { command = "metarecord-list:folder here" }
 "{target-other} {go} s" = { command = "metarecord-list:folder other" }
 "{target-new} {go} s" = { command = "metarecord-list:folder new" }

@@ -10,6 +10,6 @@ summary: List the selected metarecord's folder in the metarecord list (here / ot
 !! Default keys
 
 * ``b g s`` → ``metarecord-list:folder other``
-* ``g s`` → ``metarecord-list:folder other``
+* ``g s`` → ``metarecord-list:folder here``
 * ``i g s`` → ``metarecord-list:folder here``
 * ``n g s`` → ``metarecord-list:folder new``
