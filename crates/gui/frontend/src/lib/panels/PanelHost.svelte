@@ -452,6 +452,7 @@
         return bindFunctions(provided, mf);
       },
       provided: (panelType) => providedByType.get(panelType),
+      root: (wsId, panelType) => instances.get(instanceKey(wsId, panelType))?.shadow ?? null,
       unsaved: (ws) => {
         const edits = [];
         for (const [key, instance] of instances) {

@@ -13,6 +13,7 @@ function provider(edits: { describe: string; discard: () => unknown }[]) {
     get: async () => null,
     provided: () => undefined,
     unsaved: () => edits,
+    root: () => null,
   });
 }
 

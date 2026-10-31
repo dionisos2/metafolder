@@ -48,6 +48,12 @@ import { isTarget, resolveTarget, TARGETS } from "./targets";
 import { macroEntry, macros } from "./macro";
 import { daemonWork } from "./working";
 import {
+  HISTORY_COMMANDS,
+  SELF_FOCUS,
+  historyFieldNames,
+  runHistoryCommand,
+} from "./historyCommands";
+import {
   FIND_MODES,
   findCandidates,
   functionProvider,
@@ -1164,6 +1170,16 @@ registerArgs("completion:cycle", [
   },
 ]);
 
+for (const command of HISTORY_COMMANDS) {
+  registerArgs(command, [
+    {
+      name: "field",
+      prompt: () => `Which field? (${SELF_FOCUS}, or a field of the focused panel)`,
+      complete: () => [SELF_FOCUS, ...historyFieldNames(focusedPanelRoot())],
+    },
+  ]);
+}
+
 /** Resolves a picked argument to an installed script's path. Accepts the full
  *  "<name> — <summary>" completion line, or a bare name (e.g. from a
  *  keybinding), with or without the `.sh` extension. Null when nothing matches. */
@@ -1507,6 +1523,12 @@ export function deepActiveElement(): Element | null {
   let el: Element | null = document.activeElement;
   while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement;
   return el;
+}
+
+/** The Shadow root of the focused slot's panel, null when there is none. */
+export function focusedPanelRoot(): ShadowRoot | null {
+  const { workspace_id: ws, panel_type: type } = slotPayload(store.layout.focused);
+  return ws && type ? (functionProvider()?.root(ws, type) ?? null) : null;
 }
 
 /** `editing:discard` on an element with no registered editing target — a
@@ -2572,6 +2594,11 @@ async function runCommand(
     case "editing:clear-line-end":
       if (editingTarget) editingTarget.clearToLineEnd();
       else clearToLineEnd(deepActiveElement());
+      return true;
+    case "history:prev":
+    case "history:next":
+    case "history:search":
+      await runHistoryCommand(name, args[0], deepActiveElement(), focusedPanelRoot());
       return true;
     case "completion:cycle": {
       // Walks the views of the prompt's completion (doc "Completion

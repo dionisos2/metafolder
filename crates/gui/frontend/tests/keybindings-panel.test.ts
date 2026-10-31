@@ -253,7 +253,7 @@ describe('keybindings panel', () => {
         draft.source === 'ctrl+t'
           ? {
               key: '`ctrl+t` is already bound globally to `workspace:new`',
-              in_the_way: { keys: ['ctrl+t'], when: null, focus: null },
+              in_the_way: { keys: ['ctrl+t'], when: null, focus: null, text_input: false },
             }
           : draft.source === 'i o'
             ? { note: 'Overrides `i o`, which the line "o" binds.' }
@@ -368,7 +368,7 @@ describe('keybindings panel', () => {
         focus: null,
         textInput: false,
       },
-      { source: '{go} g', when: null, focus: null },
+      { source: '{go} g', when: null, focus: null, textInput: false },
     );
   });
 
@@ -380,6 +380,7 @@ describe('keybindings panel', () => {
       source: '{panels} l',
       when: null,
       focus: null,
+      textInput: false,
     });
     expect(shown()).not.toContain('{panels} l');
   });
@@ -432,7 +433,7 @@ describe('keybindings panel', () => {
         focus: 'finder',
         textInput: false,
       },
-      { source: '{panels} l', when: null, focus: null },
+      { source: '{panels} l', when: null, focus: null, textInput: false },
     );
   });
 
@@ -447,7 +448,7 @@ describe('keybindings panel', () => {
     await key(input, 'Enter');
     expect(api.config.saveKeybindingEntry).toHaveBeenCalledWith(
       expect.objectContaining({ source: 'ctrl+g', textInput: true }),
-      { source: 'ctrl+g', when: null, focus: null },
+      { source: 'ctrl+g', when: null, focus: null, textInput: false },
     );
   });
 
@@ -468,7 +469,7 @@ describe('keybindings panel', () => {
     await flush();
     expect(api.config.saveKeybindingEntry).toHaveBeenCalledWith(
       expect.objectContaining({ source: 'ctrl+g', when: 'trash' }),
-      { source: 'ctrl+g', when: null, focus: null },
+      { source: 'ctrl+g', when: null, focus: null, textInput: false },
     );
     // Back to what the file says, there is nothing to save.
     await pick(select, '');
@@ -500,6 +501,7 @@ describe('keybindings panel', () => {
       'find',
       'finder',
       'hints',
+      'line',
       'mine',
       'normal',
       'search',

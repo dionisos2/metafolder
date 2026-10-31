@@ -2,11 +2,12 @@
 // command input and the panel text zones. One history per repository × zone,
 // stored GUI-side under the repo's `.metafolder/gui/history/` (the Tauri
 // `history_read`/`history_append` commands — the daemon plays no part);
-// without an active repo the history is session-only, in memory. Ctrl-p/
-// Ctrl-n walk the entries readline-style (the in-progress draft is kept at
-// the newest position); Ctrl-r opens an fzf-style overlay filtered by
-// client-side OSM matching. Keys are attached directly on the input (the
-// `editKeys` pattern), not through keybindings.toml.
+// without an active repo the history is session-only, in memory.
+// `history:prev`/`history:next` walk the entries readline-style (the
+// in-progress draft is kept at the newest position); `history:search` opens an
+// fzf-style overlay filtered by client-side OSM matching. The commands reach a
+// zone through the handle it carries (`historyOf`): the shell and the panels each
+// load their own copy of this module, so only the element itself is shared.
 
 import { splitTerms, osmMatch } from '/__finder.js';
 
@@ -98,10 +99,19 @@ function ensureStyle(container) {
   target.prepend(style);
 }
 
+/** The history handle of `element`, null when it has none or its zone is off
+ *  for now (a script's prompt in the shell command input).
+ *  @param {Element|null} element
+ *  @returns {{prev: () => Promise<void>, next: () => void, search: () => Promise<void>}|null} */
+export function historyOf(element) {
+  const handle = /** @type {any} */ (element)?.mfHistory;
+  return handle?.available() ? handle : null;
+}
+
 /**
  * Attaches per-repo input history to a text input.
  *
- * - `zone`: the zone name, or a function returning it per keypress (falsy
+ * - `zone`: the zone name, or a function returning it per command (falsy
  *   disables handling — used by the shell during script prompts).
  * - `read(repo, zone)` / `append(repo, zone, entry)`: the persistent store,
  *   async, throwing on error (panels pass `metafolder.history.*`; the shell
@@ -132,7 +142,7 @@ export function attachHistory(input, { zone, read, append, getRepo, container })
   const sessionEntries = new Map();
   /** @type {Nav|null} */
   let nav = null;
-  /** @type {Promise<void>|null} in-flight nav-session load (collapses rapid ctrl-p) */
+  /** @type {Promise<void>|null} in-flight nav-session load (collapses rapid history:prev) */
   let starting = null;
   /** Bumped by every reset, so a load still in flight knows it is stale. */
   let epoch = 0;
@@ -177,7 +187,7 @@ export function attachHistory(input, { zone, read, append, getRepo, container })
     return nav.index === nav.list.length ? nav.draft : nav.list[nav.index];
   }
 
-  /** Ends the walk in progress: the next ctrl-p starts again from the newest
+  /** Ends the walk in progress: the next history:prev starts again from the newest
    *  entry, with whatever the input holds as the draft. */
   function resetNav() {
     nav = null;
@@ -325,19 +335,6 @@ export function attachHistory(input, { zone, read, append, getRepo, container })
     search.focus();
   }
 
-  /** @param {KeyboardEvent} e */
-  function onKeydown(e) {
-    if (!e.ctrlKey || e.altKey || e.metaKey) return;
-    if (e.key !== 'p' && e.key !== 'n' && e.key !== 'r') return;
-    const zoneName = zoneOf();
-    if (!zoneName) return;
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.key === 'p') void stepBack(zoneName);
-    else if (e.key === 'n') stepForward();
-    else void openOverlay(zoneName);
-  }
-
   function onInput() {
     if (!applying) resetNav(); // a real edit becomes the new draft
   }
@@ -345,7 +342,7 @@ export function attachHistory(input, { zone, read, append, getRepo, container })
   // Leaving the zone ends the walk. The position cannot outlive the focus:
   // the value it belongs to does not survive either — the shell restores the
   // workspace's stored draft behind our back on blur — so a kept index would
-  // recall the *second* entry on the first ctrl-p after coming back.
+  // recall the *second* entry on the first history:prev after coming back.
   function onBlur() {
     resetNav();
   }
@@ -371,13 +368,24 @@ export function attachHistory(input, { zone, read, append, getRepo, container })
   }
 
   function detach() {
-    input.removeEventListener('keydown', /** @type {EventListener} */ (onKeydown));
+    delete (/** @type {any} */ (input).mfHistory);
     input.removeEventListener('input', onInput);
     input.removeEventListener('blur', onBlur);
     overlay?.close();
   }
 
-  input.addEventListener('keydown', /** @type {EventListener} */ (onKeydown));
+  /** @type {any} */ (input).mfHistory = {
+    available: () => zoneOf() !== null,
+    prev: async () => {
+      const zoneName = zoneOf();
+      if (zoneName) await stepBack(zoneName);
+    },
+    next: () => stepForward(),
+    search: async () => {
+      const zoneName = zoneOf();
+      if (zoneName) await openOverlay(zoneName);
+    },
+  };
   input.addEventListener('input', onInput);
   input.addEventListener('blur', onBlur);
   return { push, detach };

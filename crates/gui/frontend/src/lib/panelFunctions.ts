@@ -338,6 +338,9 @@ export interface FunctionProvider {
    *  (doc "Edits in progress"). Synchronous and mounting nothing: a panel never
    *  mounted holds no edit. */
   unsaved(ws: string | null): { describe: string; discard: () => unknown }[];
+  /** The Shadow root of the `panelType` instance of workspace `ws`, null when
+   *  it is not mounted. Synchronous and mounting nothing. */
+  root(ws: string, panelType: string): ShadowRoot | null;
 }
 
 let provider: FunctionProvider | null = null;

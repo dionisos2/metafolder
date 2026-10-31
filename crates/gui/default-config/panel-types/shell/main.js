@@ -106,6 +106,7 @@ export async function mount(root, metafolder) {
   // ── The command line ────────────────────────────────────────────────
   // The same history as the command input's bash mode (zone `shell:bash`):
   // a line typed in one is recalled in the other (doc "Input history").
+  line.dataset.mfFocus = 'line';
   const history = attachHistory(line, {
     zone: 'shell:bash',
     read: (repo, zone) => metafolder.history.read(repo, zone),

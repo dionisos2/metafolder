@@ -72,9 +72,13 @@ variable, and a command taking a target written once for its four keys
 ([[Keybinding variables]]).
 
 A key appears once in the file, which is why its bindings are a list, and has one
-binding per place: the same key bound twice with the same `when` and `focus` is
-refused, also when it is written in two ways (`"shift+ctrl+a"` and `"ctrl+shift+a"`
-are one key).
+binding per place: the same key bound twice with the same `when`, `focus` and
+`text-input` is refused, also when it is written in two ways (`"shift+ctrl+a"` and
+`"ctrl+shift+a"` are one key). `text-input` makes two places so that a key can do one
+thing outside a text field and another inside — `Ctrl+R` refreshes, and in a field
+searches its [[Input history]]; beside a `focus` it plays no part, such a binding
+firing in its widget regardless. A key alone that starts a sequence is refused on
+either side.
 
 After editing the file, `config:reload keybindings` reads it again. A file that
 cannot be read as TOML, a malformed key or a key bound twice in the same place is

@@ -27,7 +27,12 @@ const classKey = (c) => c ?? 'none';
 const classLabel = (c) => (c === 'X' ? '✕' : (c ?? '?'));
 
 /** @param {Metafolder.FileEntry} entry @returns {Metafolder.EntryPlace} */
-const placeOf = (entry) => ({ source: entry.source, when: entry.when, focus: entry.focus });
+const placeOf = (entry) => ({
+  source: entry.source,
+  when: entry.when,
+  focus: entry.focus,
+  textInput: entry.text_input,
+});
 
 /** The line `entry`, under the key `source`.
  *  @param {Metafolder.FileEntry} entry @param {string} [source]
@@ -42,7 +47,7 @@ const draftOf = (entry, source = entry.source) => ({
 
 /** The text fields shipped with a name (`data-mf-focus`). A panel of the user's
  *  naming its own appears once a line of the file uses it. */
-const FOCUS_NAMES = ['columns', 'filter', 'find', 'finder', 'hints', 'normal', 'search', 'simplified'];
+const FOCUS_NAMES = ['columns', 'filter', 'find', 'finder', 'hints', 'line', 'normal', 'search', 'simplified'];
 
 /**
  * Gives a drop-down its options, keeping its value when it is still one of them.
@@ -152,6 +157,7 @@ export async function mount(root, metafolder) {
   function inTheWay(entry) {
     const place = check.in_the_way;
     if (!place || entry.when !== place.when || entry.focus !== place.focus) return false;
+    if (entry.focus === null && entry.text_input !== place.text_input) return false;
     return entry.bindings.some((b) => b.keys.join(' ') === place.keys.join(' '));
   }
 

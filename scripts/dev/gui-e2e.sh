@@ -1194,6 +1194,23 @@ scenario_history() {
     sleep 1
     keys Return
     assert "history: ctrl+p recalls it" until_ok 10 named "Typed name"
+
+    # A panel's zone, by its name from the command line, then by its keys.
+    needs_clicks history-zone || return 0
+    printf 'old finder query\n' >"$REPO_DIR/.metafolder/gui/history/metarecord-list:finder"
+    show_panel left metarecord-list view:refresh metarecord-list
+    run history:search finder
+    assert "history: history:search finder opens its search" \
+        until_ok 10 shows .mf-history-item "old finder query"
+    # Escape in the search box leaves the field too (editing:unfocus).
+    keys Escape
+    run metarecord-list:focus finder
+    keys ctrl+p
+    assert "history: ctrl+p in the finder recalls its entry" \
+        until_ok 10 reads "old finder query" "#finder-input"
+    keys ctrl+r
+    assert "history: ctrl+r in the finder opens its search" \
+        until_ok 10 shows .mf-history-item "old finder query"
 }
 
 # Macros (doc "Macros"): F3 records what the keyboard runs, `macro:run`

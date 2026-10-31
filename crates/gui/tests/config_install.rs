@@ -80,7 +80,7 @@ fn test_set_user_keybinding_replaces_differently_spelled_combo() {
     // Same combo and same scope, spelled differently: the second upsert
     // replaces the first (override is keyed by the normalized combo AND scope).
     config
-        .set_user_keybinding("shift+ctrl+a", "first", Some("metarecord-list"), None, false)
+        .set_user_keybinding("shift+ctrl+a", "first", Some("metarecord-list"), None, true)
         .unwrap();
     let set = config
         .set_user_keybinding("ctrl+shift+A", "second", Some("metarecord-list"), None, true)
@@ -101,14 +101,19 @@ fn test_remove_user_keybinding_unbinds_the_combo() {
 
     // In the single-file model, removing unbinds the combo entirely (there is
     // no separate default layer to fall back to).
-    let set = config.remove_user_keybinding("ctrl+alt+j", None, None).unwrap();
+    let set = config.remove_user_keybinding("ctrl+alt+j", None, None, false).unwrap();
     assert!(set.compiled().iter().all(|b| b.keys != ["ctrl+alt+j"]));
     // Removing a missing combo is a no-op, not an error.
-    config.remove_user_keybinding("ctrl+alt+j", None, None).unwrap();
+    config.remove_user_keybinding("ctrl+alt+j", None, None, false).unwrap();
 }
 
 fn place(source: &str, when: Option<&str>) -> EntryPlace {
-    EntryPlace { source: source.into(), when: when.map(str::to_string), focus: None }
+    EntryPlace {
+        source: source.into(),
+        when: when.map(str::to_string),
+        focus: None,
+        text_input: false,
+    }
 }
 
 /// The line binding `command` at `place`.

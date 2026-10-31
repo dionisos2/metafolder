@@ -598,6 +598,8 @@ pub fn remove_keybinding_entry(
                 && crate::keybindings::same_source(&e.source, &place.source)
                 && e.when == place.when
                 && e.focus == place.focus
+                && crate::keybindings::field_side(e.text_input, e.focus.as_deref())
+                    == crate::keybindings::field_side(place.text_input, place.focus.as_deref())
         });
         if !in_file {
             return Err(format!(

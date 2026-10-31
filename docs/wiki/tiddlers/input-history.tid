@@ -1,8 +1,8 @@
 title: Input history
 tags: GUI
 kind: guide
-aliases: input-history recall ctrl-p ctrl-n ctrl-r
-summary: Each text zone remembers what was submitted in it, per repository: `ctrl+p` and `ctrl+n` walk back and forth, `ctrl+r` searches.
+aliases: input-history recall ctrl-p ctrl-n ctrl-r history-commands
+summary: Each text zone remembers what was submitted in it, per repository: history:prev and history:next walk back and forth, history:search searches.
 
 The text zones keep what was submitted in them, ''per repository and per zone''.
 Four zones have a history:
@@ -12,17 +12,24 @@ Four zones have a history:
 
 !! Recalling
 
-|!Key |!Does |
-|`ctrl+p` / `ctrl+n` |the previous / the next entry, as in a terminal. What was being typed is kept at the newest end and comes back when walking past it. |
-|`ctrl+r` |a search box over the entries: newest first, each shown once, narrowed by the pieces typed, in order. `ctrl+p` / `ctrl+n` or the arrows choose, `Enter` puts the entry in the zone, `Escape` — or clicking elsewhere — gives up. |
+|!Command |!Does |
+|<<key "history:prev self-focus" "Ctrl+P">> <<cmd "history:prev">> / <<key "history:next self-focus" "Ctrl+N">> <<cmd "history:next">> |the previous / the next entry, as in a terminal. What was being typed is kept at the newest end and comes back when walking past it. |
+|<<key "history:search self-focus" "Ctrl+R">> <<cmd "history:search">> |a search box over the entries: newest first, each shown once, narrowed by the pieces typed, in order. `ctrl+p` / `ctrl+n` or the arrows choose, `Enter` puts the entry in the zone, `Escape` — or clicking elsewhere — gives up. These keys are the box's own. |
 
 Editing the recalled text ends the walk: the edited text is the new draft. Leaving
-the zone ends it too, so the first `ctrl+p` after coming back recalls the newest
-entry again.
+the zone ends it too, so the first <<cmd "history:prev">> after coming back recalls
+the newest entry again.
 
-These three keys belong to the zones themselves and are not in `keybindings.toml` ([[Keybindings]]).
-Binding `ctrl+p`, `ctrl+n` or `ctrl+r` there with `text-input = true` would take
-them over.
+!! Which field
+
+The argument is ''required'': the field the command acts on.
+
+* `self-focus` is the field that has the focus: it is what the keys run. Where the focused field has no history, a key bound to it passes through as if it were not bound: outside a text field, `Ctrl+N` creates and `Ctrl+R` refreshes ([[Keybindings]]).
+* A name is that field of the focused panel, which then takes the focus — `finder`, `simplified`, or `line` for the [[shell panel]]. `history:search finder` typed in the command input opens the finder's search.
+
+Typed in the command input, `self-focus` finds nothing: the input gives up the focus
+before the command runs, and no field holds it then. A field without history, or a
+name the focused panel lacks, is an error. The `normal` query field has no history.
 
 !! What is recorded
 
@@ -52,7 +59,9 @@ starts with ([[Repository layout on disk]]).
 The GUI reads and writes them itself; the daemon has no part in it and no endpoint
 for it. It finds the repository's `.metafolder/` from `GET /repos`, which is right
 also when that directory lives outside the root. A panel reaches its own zones
-through `metafolder.history.read` and `metafolder.history.append`, and the keys
-through `attachHistory` of `/__history.js`. A zone's name is made of lowercase
+through `metafolder.history.read` and `metafolder.history.append`, and the commands
+through `attachHistory` of `/__history.js`, which leaves on the field the handle they
+call (`historyOf`) — on the element, because the shell and the panels each load
+their own copy of the module. A zone's name is made of lowercase
 letters, digits, `:`, `_` and `-`, 64 at most, so it cannot name a file outside the
 history directory.

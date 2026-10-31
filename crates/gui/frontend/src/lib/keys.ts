@@ -10,7 +10,14 @@ import {
   setMenuKeyResolver,
 } from '../../../panel-shim/menu.js';
 import { resolveClickTopic } from '../../../panel-shim/help.js';
-import { deepActiveElement, dispatch, hasEditingTarget, setFullscreen, status } from './commands';
+import {
+  deepActiveElement,
+  dispatch,
+  focusedPanelRoot,
+  hasEditingTarget,
+  setFullscreen,
+  status,
+} from './commands';
 import { setHelpCursor } from './cursor';
 import {
   activeQuestion,
@@ -22,6 +29,7 @@ import {
 } from './store.svelte';
 import { describeKeyStep } from './describeKey';
 import { menuKey } from './menuKeys';
+import { historyApplies } from './historyCommands';
 import { appliesHere, functionProvider } from './panelFunctions';
 import type { SlotId } from './types';
 
@@ -264,8 +272,10 @@ export function installKeys() {
 }
 
 /** Whether a binding's command applies where the focus is: a generic command
- *  (`cursor:next self`) only in a panel providing what it needs, so its key
- *  passes through elsewhere (doc "Generic panel commands"). */
+ *  (`cursor:next self`) only in a panel providing what it needs, a history
+ *  command only on a field having a history, so their keys pass through
+ *  elsewhere (doc "Generic panel commands", doc "Input history"). */
 function bindingApplies(invocation: string): boolean {
+  if (!historyApplies(invocation, deepActiveElement(), focusedPanelRoot())) return false;
   return appliesHere(invocation, focusedPanelType(), (type) => functionProvider()?.provided(type));
 }

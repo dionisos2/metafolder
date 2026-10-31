@@ -7,7 +7,7 @@
 //! at runtime a missing configuration file is an error, never a fall back to a
 //! shipped default (doc "No runtime fallback").
 
-use crate::keybindings::{CompiledBinding, EntryDraft, EntryPlace, KeybindingSet};
+use crate::keybindings::{field_side, CompiledBinding, EntryDraft, EntryPlace, KeybindingSet};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -368,9 +368,10 @@ impl ConfigDir {
         combo: &str,
         when: Option<&str>,
         focus: Option<&str>,
+        text_input: bool,
     ) -> Result<KeybindingSet, String> {
         let mut doc = self.read_keybindings_document()?;
-        remove_entry(&mut doc, combo, when, focus);
+        remove_entry(&mut doc, combo, when, focus, text_input);
         self.commit_keybindings(&doc)
     }
 
@@ -393,9 +394,17 @@ impl ConfigDir {
             !crate::keybindings::same_source(&old.source, &draft.source)
                 || old.when != draft.when
                 || old.focus != draft.focus
+                || field_side(old.text_input, old.focus.as_deref())
+                    != field_side(draft.text_input, draft.focus.as_deref())
         });
         if let Some(old) = moved {
-            remove_entry(&mut doc, &old.source, old.when.as_deref(), old.focus.as_deref());
+            remove_entry(
+                &mut doc,
+                &old.source,
+                old.when.as_deref(),
+                old.focus.as_deref(),
+                old.text_input,
+            );
         }
         write_entry(&mut doc, draft)?;
         Ok(self.commit_keybindings(&doc)?.with_suggestions_of(current))
@@ -409,7 +418,13 @@ impl ConfigDir {
         place: &EntryPlace,
     ) -> Result<KeybindingSet, String> {
         let mut doc = self.read_keybindings_document()?;
-        remove_entry(&mut doc, &place.source, place.when.as_deref(), place.focus.as_deref());
+        remove_entry(
+            &mut doc,
+            &place.source,
+            place.when.as_deref(),
+            place.focus.as_deref(),
+            place.text_input,
+        );
         Ok(self.commit_keybindings(&doc)?.with_suggestions_of(current))
     }
 
@@ -452,7 +467,8 @@ impl ConfigDir {
         value: &str,
     ) -> Result<String, String> {
         let (_, set) = self.variable_change(name, value)?;
-        let key = |b: &CompiledBinding| (b.keys.clone(), b.when.clone(), b.focus.clone());
+        let key =
+            |b: &CompiledBinding| (b.keys.clone(), b.when.clone(), b.focus.clone(), b.text_input);
         let old: std::collections::HashSet<_> = current.compiled().iter().map(key).collect();
         let changed = set.compiled().iter().filter(|b| !old.contains(&key(b))).count();
         Ok(match changed {
@@ -624,16 +640,19 @@ fn source_keys(doc: &toml_edit::DocumentMut, source: &str) -> Vec<String> {
 /// is, or beside the other scopes of its key, or at the end of the file.
 fn write_entry(doc: &mut toml_edit::DocumentMut, draft: &EntryDraft) -> Result<(), String> {
     let source = crate::keybindings::normalize_source(&draft.source)?;
-    let (when, focus) = (draft.when.as_deref(), draft.focus.as_deref());
+    let (when, focus, text_input) =
+        (draft.when.as_deref(), draft.focus.as_deref(), draft.text_input);
     let keys = source_keys(doc, &source);
     let command = draft.command.trim();
-    // The binding of this exact (when, focus) scope is changed where it is.
+    // The binding of this exact place is changed where it is.
     let existing = keys.iter().find(|key| {
-        doc.get(key.as_str()).is_some_and(|item| element_index(item, when, focus).is_some())
+        doc.get(key.as_str())
+            .is_some_and(|item| element_index(item, when, focus, text_input).is_some())
     });
     if let Some(key) = existing {
         let item = doc.get_mut(key).expect("the key was just found");
-        let element = element_mut(item, when, focus).expect("the element was just found");
+        let element =
+            element_mut(item, when, focus, text_input).expect("the element was just found");
         set_in_place(element, "command", command.into());
         if draft.text_input {
             set_in_place(element, "text-input", true.into());
@@ -671,19 +690,20 @@ fn remove_entry(
     source: &str,
     when: Option<&str>,
     focus: Option<&str>,
+    text_input: bool,
 ) {
     for key in source_keys(doc, source) {
         let item = doc.get_mut(&key).expect("listed key");
         let emptied = match item {
             toml_edit::Item::Value(toml_edit::Value::Array(array)) => {
-                array.retain(|value| !value_in_scope(value, when, focus));
+                array.retain(|value| !value_in_scope(value, when, focus, text_input));
                 array.is_empty()
             }
             toml_edit::Item::ArrayOfTables(tables) => {
-                tables.retain(|table| !in_scope(table, when, focus));
+                tables.retain(|table| !in_scope(table, when, focus, text_input));
                 tables.is_empty()
             }
-            single => element_index(single, when, focus).is_some(),
+            single => element_index(single, when, focus, text_input).is_some(),
         };
         if emptied {
             doc.remove(&key);
@@ -691,29 +711,49 @@ fn remove_entry(
     }
 }
 
-/// Whether one binding element has exactly this `(when, focus)` scope (`None`
-/// = global, resp. not focus-scoped).
-fn in_scope(element: &dyn toml_edit::TableLike, when: Option<&str>, focus: Option<&str>) -> bool {
+/// Whether one binding element is in exactly this place: `(when, focus)` scope
+/// (`None` = global, resp. not focus-scoped), and side of a text field.
+fn in_scope(
+    element: &dyn toml_edit::TableLike,
+    when: Option<&str>,
+    focus: Option<&str>,
+    text_input: bool,
+) -> bool {
+    let written = element.get("text-input").and_then(toml_edit::Item::as_bool).unwrap_or(false);
     element.get("when").and_then(toml_edit::Item::as_str) == when
         && element.get("focus").and_then(toml_edit::Item::as_str) == focus
+        && field_side(written, focus) == field_side(text_input, focus)
 }
 
-fn value_in_scope(value: &toml_edit::Value, when: Option<&str>, focus: Option<&str>) -> bool {
-    value.as_inline_table().is_some_and(|table| in_scope(table, when, focus))
+fn value_in_scope(
+    value: &toml_edit::Value,
+    when: Option<&str>,
+    focus: Option<&str>,
+    text_input: bool,
+) -> bool {
+    value.as_inline_table().is_some_and(|table| in_scope(table, when, focus, text_input))
 }
 
 /// Where the binding of this scope sits in a combo's value — which is one
 /// binding (index 0) or several, each written inline or under a table header
 /// (`[combo]` / `[[combo]]`, what the editor wrote before it kept the layout).
-fn element_index(item: &toml_edit::Item, when: Option<&str>, focus: Option<&str>) -> Option<usize> {
+fn element_index(
+    item: &toml_edit::Item,
+    when: Option<&str>,
+    focus: Option<&str>,
+    text_input: bool,
+) -> Option<usize> {
     match item {
         toml_edit::Item::Value(toml_edit::Value::Array(array)) => {
-            array.iter().position(|value| value_in_scope(value, when, focus))
+            array.iter().position(|value| value_in_scope(value, when, focus, text_input))
         }
         toml_edit::Item::ArrayOfTables(tables) => {
-            tables.iter().position(|table| in_scope(table, when, focus))
+            tables.iter().position(|table| in_scope(table, when, focus, text_input))
         }
-        single => single.as_table_like().filter(|table| in_scope(*table, when, focus)).map(|_| 0),
+        single => single
+            .as_table_like()
+            .filter(|table| in_scope(*table, when, focus, text_input))
+            .map(|_| 0),
     }
 }
 
@@ -721,8 +761,9 @@ fn element_mut<'a>(
     item: &'a mut toml_edit::Item,
     when: Option<&str>,
     focus: Option<&str>,
+    text_input: bool,
 ) -> Option<&'a mut dyn toml_edit::TableLike> {
-    let index = element_index(item, when, focus)?;
+    let index = element_index(item, when, focus, text_input)?;
     match item {
         toml_edit::Item::Value(toml_edit::Value::Array(array)) => array
             .get_mut(index)
@@ -1129,6 +1170,30 @@ mod tests {
     }
 
     #[test]
+    fn test_the_two_sides_of_a_text_field_are_edited_apart() {
+        let config = kb_dir();
+        std::fs::write(
+            config.keybindings_path(),
+            "\"k\" = [\n  { command = \"out\" },\n  { command = \"in\", text-input = true },\n]\n",
+        )
+        .unwrap();
+        let set = config.set_user_keybinding("k", "changed", None, None, true).unwrap();
+        let invocation = |set: &KeybindingSet, text_input: bool| {
+            set.compiled()
+                .into_iter()
+                .find(|b| b.keys == ["k"] && b.text_input == text_input)
+                .map(|b| b.invocation)
+        };
+        assert_eq!(invocation(&set, false).as_deref(), Some("out"));
+        assert_eq!(invocation(&set, true).as_deref(), Some("changed"));
+
+        let set = config.remove_user_keybinding("k", None, None, true).unwrap();
+        assert_eq!(invocation(&set, false).as_deref(), Some("out"));
+        assert_eq!(invocation(&set, true), None);
+        std::fs::remove_dir_all(config.root()).unwrap();
+    }
+
+    #[test]
     fn test_remove_keybinding_drops_one_scope_and_keeps_the_rest() {
         let config = kb_dir();
         std::fs::write(
@@ -1137,7 +1202,7 @@ mod tests {
         )
         .unwrap();
 
-        let set = config.remove_user_keybinding("j", Some("metarecord-list"), None).unwrap();
+        let set = config.remove_user_keybinding("j", Some("metarecord-list"), None, false).unwrap();
         assert_eq!(scopes_of(&set, &["j"]), vec![Some("file-manager".into())]);
         // The single remaining binding is persisted (as a table or 1-array).
         let reread = config.load_keybindings().unwrap();
@@ -1154,7 +1219,7 @@ mod tests {
         )
         .unwrap();
 
-        let set = config.remove_user_keybinding("j", Some("metarecord-list"), None).unwrap();
+        let set = config.remove_user_keybinding("j", Some("metarecord-list"), None, false).unwrap();
         assert!(scopes_of(&set, &["j"]).is_empty());
         // A different combo is untouched.
         assert_eq!(scopes_of(&set, &["t"]), vec![None]);
@@ -1182,7 +1247,7 @@ mod tests {
         assert!(downs.iter().any(|b| b.focus.as_deref() == Some("finder") && b.when.is_none()));
 
         // Removing by focus targets only the focus-scoped binding.
-        let set = config.remove_user_keybinding("down", None, Some("finder")).unwrap();
+        let set = config.remove_user_keybinding("down", None, Some("finder"), false).unwrap();
         let downs: Vec<_> = set.compiled().into_iter().filter(|b| b.keys == ["down"]).collect();
         assert_eq!(downs.len(), 1);
         assert_eq!(downs[0].when.as_deref(), Some("metarecord-list"));
@@ -1269,7 +1334,12 @@ mod tests {
     }
 
     fn place(source: &str) -> crate::keybindings::EntryPlace {
-        crate::keybindings::EntryPlace { source: source.into(), when: None, focus: None }
+        crate::keybindings::EntryPlace {
+            source: source.into(),
+            when: None,
+            focus: None,
+            text_input: false,
+        }
     }
 
     /// The lines of the shipped file that differ from `written`.
@@ -1407,11 +1477,11 @@ mod tests {
         let config = kb_dir();
         std::fs::write(config.keybindings_path(), COMMENTED).unwrap();
 
-        config.remove_user_keybinding("a", None, None).unwrap();
+        config.remove_user_keybinding("a", None, None, false).unwrap();
         let written = std::fs::read_to_string(config.keybindings_path()).unwrap();
         assert_eq!(written, COMMENTED.replace("\"a\" = { command = \"first\" }\n", ""));
 
-        config.remove_user_keybinding("j", Some("file-manager"), None).unwrap();
+        config.remove_user_keybinding("j", Some("file-manager"), None, false).unwrap();
         let written = std::fs::read_to_string(config.keybindings_path()).unwrap();
         assert!(written.contains("  # the list\n"), "{written}");
         assert!(written.contains("# new tab"));
@@ -1454,7 +1524,7 @@ mod tests {
         config.set_user_keybinding("a", "second", None, None, false).unwrap();
         config.set_user_keybinding("a", "third", Some("log"), None, false).unwrap();
         config.set_user_keybinding("j", "path-ref:next", Some("path-ref"), None, false).unwrap();
-        let set = config.remove_user_keybinding("j", Some("file-manager"), None).unwrap();
+        let set = config.remove_user_keybinding("j", Some("file-manager"), None, false).unwrap();
         assert_eq!(
             scopes_of(&set, &["j"]),
             vec![Some("metarecord-list".into()), Some("path-ref".into())]

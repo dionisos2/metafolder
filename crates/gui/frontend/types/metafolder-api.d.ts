@@ -265,6 +265,7 @@ declare namespace Metafolder {
     source: string;
     when: string | null;
     focus: string | null;
+    textInput: boolean;
   }
 
   /** A line as the keybindings panel's form holds it. */
@@ -312,7 +313,7 @@ declare namespace Metafolder {
     key: string | null;
     note: string | null;
     /** The binding that refuses the key. */
-    in_the_way: { keys: string[]; when: string | null; focus: string | null } | null;
+    in_the_way: { keys: string[]; when: string | null; focus: string | null; text_input: boolean } | null;
   }
 
   /** A registered command (`CommandDef`). */

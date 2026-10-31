@@ -51,6 +51,8 @@ pub struct BindingPlace {
     pub combo: String,
     pub when: Option<String>,
     pub focus: Option<String>,
+    #[serde(default, rename = "textInput")]
+    pub text_input: bool,
 }
 
 impl BindingPlace {
@@ -58,8 +60,17 @@ impl BindingPlace {
     pub fn is(&self, other: &BindingPlace) -> bool {
         self.when == other.when
             && self.focus == other.focus
+            && field_side(self.text_input, self.focus.as_deref())
+                == field_side(other.text_input, other.focus.as_deref())
             && parse_combo(&self.combo).ok() == parse_combo(&other.combo).ok()
     }
+}
+
+/// The part `text-input` plays in a binding's place: one key can have a binding
+/// for outside a text field and another for inside (doc "Changing keybindings").
+/// Under `focus` it plays none: such a binding fires in its widget regardless.
+pub(crate) fn field_side(text_input: bool, focus: Option<&str>) -> bool {
+    text_input && focus.is_none()
 }
 
 /// How a scope reads in a sentence: "globally", "in log", "at @find".
@@ -94,11 +105,19 @@ fn binding_in_the_way(
             continue;
         }
         let scope = describe_scope(new.when.as_deref(), new.focus.as_deref());
+        // The same key on the other side of a text field is another place; a
+        // key hiding a sequence hides it on both sides.
+        let side = field_side(new.text_input, new.focus.as_deref());
+        if binding.keys == keys && field_side(binding.text_input, binding.focus.as_deref()) != side
+        {
+            continue;
+        }
         if let Some(clash) = clash(&keys, binding, &scope) {
             let place = KeyPlace {
                 keys: binding.keys.clone(),
                 when: binding.when.clone(),
                 focus: binding.focus.clone(),
+                text_input: binding.text_input,
             };
             return Err((clash, Some(place)));
         }
@@ -166,6 +185,7 @@ pub struct KeyPlace {
     pub keys: Vec<String>,
     pub when: Option<String>,
     pub focus: Option<String>,
+    pub text_input: bool,
 }
 
 impl BindingCheck {
@@ -525,7 +545,7 @@ fn parse_entries(source: &str) -> Result<Parsed, String> {
         for spec in specs.into_vec() {
             lines.push((combo.clone(), spec.clone()));
             for entry in expand(&combo, spec, &vars)? {
-                let key = (entry.keys.clone(), entry.spec.when.clone(), entry.spec.focus.clone());
+                let key = binding_key(&entry.keys, &entry.spec);
                 let Some((other, index)) = seen.get(&key).cloned() else {
                     seen.insert(key, (combo.clone(), entries.len()));
                     entries.push(entry);
@@ -571,7 +591,12 @@ fn parse_entries(source: &str) -> Result<Parsed, String> {
     // Table order is the file's or arbitrary: sort for determinism (by combo,
     // then scope).
     entries.sort_by(|a, b| {
-        (&a.keys, &a.spec.when, &a.spec.focus).cmp(&(&b.keys, &b.spec.when, &b.spec.focus))
+        (&a.keys, &a.spec.when, &a.spec.focus, a.spec.text_input).cmp(&(
+            &b.keys,
+            &b.spec.when,
+            &b.spec.focus,
+            b.spec.text_input,
+        ))
     });
     check_no_key_hides_a_sequence(&entries)?;
     // The lines as the file has them, a key's array in its order.
@@ -676,6 +701,8 @@ pub struct EntryPlace {
     pub source: String,
     pub when: Option<String>,
     pub focus: Option<String>,
+    #[serde(default, rename = "textInput")]
+    pub text_input: bool,
 }
 
 /// A line as the keybindings panel's form holds it.
@@ -715,7 +742,16 @@ pub struct Variable {
 /// same `when` and `focus` scope. So `down` in `metarecord-list`, `down` in
 /// `file-manager` and `down` focus-scoped to the finder are all distinct, and a
 /// user file overrides each independently.
-type BindingKey = (Vec<String>, Option<String>, Option<String>);
+type BindingKey = (Vec<String>, Option<String>, Option<String>, bool);
+
+fn binding_key(keys: &[String], spec: &BindingSpec) -> BindingKey {
+    (
+        keys.to_vec(),
+        spec.when.clone(),
+        spec.focus.clone(),
+        field_side(spec.text_input, spec.focus.as_deref()),
+    )
+}
 
 /// The merged binding set.
 #[derive(Debug)]
@@ -747,7 +783,7 @@ impl KeybindingSet {
         let mut vars = HashMap::new();
         for parsed in [parse_entries(defaults)?, parse_entries(user)?] {
             for entry in parsed.entries {
-                let key = (entry.keys, entry.spec.when.clone(), entry.spec.focus.clone());
+                let key = binding_key(&entry.keys, &entry.spec);
                 match entry.derived_from {
                     Some(line) => derived.insert(key.clone(), line),
                     None => derived.remove(&key),
@@ -792,15 +828,18 @@ impl KeybindingSet {
         focus: Option<&str>,
     ) -> Result<(), String> {
         let keys = parse_combo(combo)?;
+        let side = field_side(text_input, focus);
         if self.config.contains_key(&(
             keys.clone(),
             when.map(str::to_string),
             focus.map(str::to_string),
-        )) || self
-            .suggestions
-            .iter()
-            .any(|s| s.keys == keys && s.when.as_deref() == when && s.focus.as_deref() == focus)
-        {
+            side,
+        )) || self.suggestions.iter().any(|s| {
+            s.keys == keys
+                && s.when.as_deref() == when
+                && s.focus.as_deref() == focus
+                && field_side(s.text_input, s.focus.as_deref()) == side
+        }) {
             return Ok(()); // user/config binding wins; suggestion dropped
         }
         self.suggestions.push(CompiledBinding {
@@ -821,7 +860,12 @@ impl KeybindingSet {
     /// are not mounted a second time.
     pub fn with_suggestions_of(mut self, previous: &KeybindingSet) -> Self {
         for suggestion in &previous.suggestions {
-            let key = (suggestion.keys.clone(), suggestion.when.clone(), suggestion.focus.clone());
+            let key = (
+                suggestion.keys.clone(),
+                suggestion.when.clone(),
+                suggestion.focus.clone(),
+                field_side(suggestion.text_input, suggestion.focus.as_deref()),
+            );
             if !self.config.contains_key(&key) {
                 self.suggestions.push(suggestion.clone());
             }
@@ -831,11 +875,20 @@ impl KeybindingSet {
 
     /// Whether the binding of this combo and scope is a suggestion — in effect,
     /// but not in the file, so not something the file's editor can remove.
-    pub fn is_suggestion(&self, combo: &str, when: Option<&str>, focus: Option<&str>) -> bool {
+    pub fn is_suggestion(
+        &self,
+        combo: &str,
+        when: Option<&str>,
+        focus: Option<&str>,
+        text_input: bool,
+    ) -> bool {
         parse_combo(combo).is_ok_and(|keys| {
-            self.suggestions
-                .iter()
-                .any(|s| s.keys == keys && s.when.as_deref() == when && s.focus.as_deref() == focus)
+            self.suggestions.iter().any(|s| {
+                s.keys == keys
+                    && s.when.as_deref() == when
+                    && s.focus.as_deref() == focus
+                    && field_side(s.text_input, s.focus.as_deref()) == field_side(text_input, focus)
+            })
         })
     }
 
@@ -849,10 +902,7 @@ impl KeybindingSet {
                 let bindings = expand(source, spec.clone(), &self.vars)
                     .unwrap_or_default()
                     .into_iter()
-                    .filter(|e| {
-                        let key = (e.keys.clone(), e.spec.when.clone(), e.spec.focus.clone());
-                        self.origin.get(&key) == Some(source)
-                    })
+                    .filter(|e| self.origin.get(&binding_key(&e.keys, &e.spec)) == Some(source))
                     .map(|e| EntryBinding { keys: e.keys, invocation: e.spec.command })
                     .collect();
                 FileEntry {
@@ -896,11 +946,13 @@ impl KeybindingSet {
 
     /// Whether this binding comes from the line at `place`.
     fn comes_from(&self, binding: &CompiledBinding, place: &EntryPlace) -> bool {
+        let side = field_side(binding.text_input, binding.focus.as_deref());
         binding.when == place.when
             && binding.focus == place.focus
+            && side == field_side(place.text_input, place.focus.as_deref())
             && self
                 .origin
-                .get(&(binding.keys.clone(), binding.when.clone(), binding.focus.clone()))
+                .get(&(binding.keys.clone(), binding.when.clone(), binding.focus.clone(), side))
                 .is_some_and(|source| same_source(source, &place.source))
     }
 
@@ -933,16 +985,22 @@ impl KeybindingSet {
     ) -> Result<Option<String>, (String, Option<KeyPlace>)> {
         let source = normalize_source(&draft.source).map_err(|e| (e, None))?;
         if let Some(old) = replacing {
+            let old_side = field_side(old.text_input, old.focus.as_deref());
             let moved = !same_source(&old.source, &source)
                 || old.when != draft.when
-                || old.focus != draft.focus;
-            let suggested =
-                self.is_suggestion(&old.source, old.when.as_deref(), old.focus.as_deref())
-                    && !self.lines.iter().any(|(s, spec)| {
-                        same_source(s, &old.source)
-                            && spec.when == old.when
-                            && spec.focus == old.focus
-                    });
+                || old.focus != draft.focus
+                || old_side != field_side(draft.text_input, draft.focus.as_deref());
+            let suggested = self.is_suggestion(
+                &old.source,
+                old.when.as_deref(),
+                old.focus.as_deref(),
+                old.text_input,
+            ) && !self.lines.iter().any(|(s, spec)| {
+                same_source(s, &old.source)
+                    && spec.when == old.when
+                    && spec.focus == old.focus
+                    && field_side(spec.text_input, spec.focus.as_deref()) == old_side
+            });
             if moved && suggested {
                 return Err((
                     format!(
@@ -962,12 +1020,17 @@ impl KeybindingSet {
         let mut notes = Vec::new();
         for entry in expand(&source, draft.spec(), &self.vars).map_err(|e| (e, None))? {
             let (when, focus) = (entry.spec.when.clone(), entry.spec.focus.clone());
-            let key = (entry.keys.clone(), when.clone(), focus.clone());
+            let key = binding_key(&entry.keys, &entry.spec);
+            let side = key.3;
             let combo = entry.keys.join(" ");
             // The same key in the same place, written once literally and once
             // through a variable (or suggested): the literal line wins, no clash.
-            let same =
-                table.iter().find(|b| b.keys == entry.keys && b.when == when && b.focus == focus);
+            let same = table.iter().find(|b| {
+                b.keys == entry.keys
+                    && b.when == when
+                    && b.focus == focus
+                    && field_side(b.text_input, b.focus.as_deref()) == side
+            });
             let overridden = same.filter(|b| {
                 b.suggested || self.derived.contains_key(&key) != entry.derived_from.is_some()
             });
@@ -986,12 +1049,11 @@ impl KeybindingSet {
                 .filter(|b| !overridden.is_some_and(|o| std::ptr::eq(*b, o)))
                 .cloned()
                 .collect();
-            binding_in_the_way(&others, &BindingPlace { combo, when, focus }).map_err(
-                |(error, place)| match entry.derived_from.is_some() {
+            binding_in_the_way(&others, &BindingPlace { combo, when, focus, text_input: side })
+                .map_err(|(error, place)| match entry.derived_from.is_some() {
                     true => (format!("{error} (from \"{source}\")"), place),
                     false => (error, place),
-                },
-            )?;
+                })?;
         }
         Ok((!notes.is_empty()).then(|| notes.join(" ")))
     }
@@ -1001,7 +1063,7 @@ impl KeybindingSet {
         let mut table: Vec<CompiledBinding> = self
             .config
             .iter()
-            .map(|((keys, _when, _focus), spec)| CompiledBinding {
+            .map(|((keys, _when, _focus, _side), spec)| CompiledBinding {
                 keys: keys.clone(),
                 invocation: spec.command.clone(),
                 when: spec.when.clone(),
@@ -1011,7 +1073,14 @@ impl KeybindingSet {
             })
             .chain(self.suggestions.iter().cloned())
             .collect();
-        table.sort_by(|a, b| (&a.keys, &a.when, &a.focus).cmp(&(&b.keys, &b.when, &b.focus)));
+        table.sort_by(|a, b| {
+            (&a.keys, &a.when, &a.focus, a.text_input).cmp(&(
+                &b.keys,
+                &b.when,
+                &b.focus,
+                b.text_input,
+            ))
+        });
         table
     }
 }
@@ -1282,6 +1351,30 @@ mod tests {
     }
 
     #[test]
+    fn test_a_key_may_differ_in_and_out_of_a_text_field() {
+        // Outside a field the first runs; in a field only the second can.
+        let source = r#""k" = [
+  { command = "out" },
+  { command = "in", text-input = true },
+]"#;
+        let set = KeybindingSet::from_source(source).unwrap();
+        let table = set.compiled();
+        assert_eq!(table.len(), 2);
+        // Deterministic: the stricter first.
+        assert_eq!(table[0].invocation, "out");
+        assert_eq!(table[1].invocation, "in");
+        // Each line of the file keeps its own key.
+        assert!(set.entries().iter().all(|e| e.bindings.len() == 1));
+
+        // Under `focus`, text-input plays no part: that is one place.
+        let focused = r#""k" = [
+  { command = "a", focus = "finder" },
+  { command = "b", focus = "finder", text-input = true },
+]"#;
+        assert!(parse_toml(focused).is_err());
+    }
+
+    #[test]
     fn test_one_combo_spelled_twice_in_the_same_scope_is_refused() {
         // TOML sees two keys; they are one combo, and which binding won used
         // to depend on the order of a hash table.
@@ -1523,7 +1616,7 @@ vars.y = ","
     }
 
     fn line(source: &str) -> EntryPlace {
-        EntryPlace { source: source.into(), when: None, focus: None }
+        EntryPlace { source: source.into(), when: None, focus: None, text_input: false }
     }
 
     #[test]
@@ -1654,9 +1747,9 @@ vars.y = ","
     fn test_a_suggestion_is_told_apart_from_a_binding_of_the_file() {
         let mut set = KeybindingSet::from_source(r#""x" = { command = "mine" }"#).unwrap();
         set.add_suggestion("shift+ctrl+y", "my-panel:go", Some("my-panel"), false, None).unwrap();
-        assert!(set.is_suggestion("ctrl+shift+Y", Some("my-panel"), None));
-        assert!(!set.is_suggestion("ctrl+shift+y", None, None));
-        assert!(!set.is_suggestion("x", None, None));
+        assert!(set.is_suggestion("ctrl+shift+Y", Some("my-panel"), None, false));
+        assert!(!set.is_suggestion("ctrl+shift+y", None, None, false));
+        assert!(!set.is_suggestion("x", None, None, false));
     }
 
     #[test]
@@ -2110,6 +2203,7 @@ vars.y = ","
             combo: combo.to_string(),
             when: when.map(str::to_string),
             focus: focus.map(str::to_string),
+            text_input: false,
         }
     }
 
@@ -2124,6 +2218,16 @@ vars.y = ","
         let table = set.compiled();
         assert!(!table.iter().find(|b| b.keys == ["x"]).unwrap().suggested);
         assert!(table.iter().find(|b| b.keys == ["y"]).unwrap().suggested);
+    }
+
+    #[test]
+    fn test_the_other_side_of_a_text_field_is_another_place() {
+        let table = table("\"k\" = { command = \"out\" }\n\"s\" = { command = \"seq\" }\n");
+        let inside = BindingPlace { text_input: true, ..place("k", None, None) };
+        check_binding(&table, &inside).unwrap();
+        // A key alone still hides a sequence, on either side.
+        let hiding = BindingPlace { text_input: true, ..place("s x", None, None) };
+        assert!(check_binding(&table, &hiding).is_err());
     }
 
     #[test]

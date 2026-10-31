@@ -1,0 +1,6 @@
+title: history:prev
+tags: [[GUI command]] Commands
+kind: reference
+summary: Recall the previous entry of a text field's input history
+
+Puts the previous entry of the history in the field `self-focus` or a name designates, keeping what was being typed at the newest end. See [[Input history]].

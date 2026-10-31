@@ -123,8 +123,11 @@ vars.index = "i"
 # Find in a panel (doc "Find in a panel").
 "ctrl+f" = { command = "find:open", text-input = true }
 
-# The conventions of every program. Ctrl+R refreshes; in a text field it stays
-# the input history's (doc "Input history").
+# The input history of the focused text field (doc "Input history"). Outside a
+# field that has one these keys pass through: Ctrl+N creates, Ctrl+R refreshes.
+"ctrl+p" = { command = "history:prev self-focus", text-input = true }
+
+# The conventions of every program.
 "ctrl+q" = { command = "quit", text-input = true }
 "f5" = [
   { command = "view:refresh self" },
@@ -133,6 +136,7 @@ vars.index = "i"
 "ctrl+r" = [
   { command = "view:refresh self" },
   { command = "sync:status", when = "sync" },
+  { command = "history:search self-focus", text-input = true },
 ]
 "ctrl+z" = { command = "log:undo" }
 "ctrl+shift+z" = { command = "log:redo" }
@@ -503,6 +507,7 @@ vars.index = "i"
   { command = "metarecord:create", when = "metarecord-list" },
   { command = "path-ref:add", when = "path-ref" },
   { command = "file:new self file", when = "file-manager" },
+  { command = "history:next self-focus", text-input = true },
 ]
 "ctrl+shift+n" = { command = "file:new self folder", when = "file-manager" }
 "f2" = { command = "file:rename self" }

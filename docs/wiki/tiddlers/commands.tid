@@ -76,7 +76,7 @@ tied to a position — one particular tab, one slot's `×` — have no command o
 Each invocation is written to the workspace's messages as `> name arguments`, before
 it runs — with the arguments that were asked for, so the line is what actually ran.
 A command may opt out (`log: false`): the keystroke-level ones do — `editing:*`,
-`command-input:focus`, `completion:cycle`, `find:*`, `help*`, `status:clear`.
+`command-input:focus`, `completion:cycle`, `history:*`, `find:*`, `help*`, `status:clear`.
 
 A command that fails says why in the status bar. An unknown name is ''unknown
 command: …''.

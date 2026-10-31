@@ -185,8 +185,8 @@ export async function mount(root, metafolder) {
   const columnsInput = byId(root, 'columns-input', HTMLInputElement);
   const columnsError = byId(root, 'columns-error');
 
-  // Per-repo input history (doc "Input history"): ctrl-p/ctrl-n walk,
-  // ctrl-r OSM search. Recorded on explicit submits only, never the debounce.
+  // Per-repo input history (doc "Input history"), driven by the
+  // history:* commands. Recorded on explicit submits only, never the debounce.
   const historyDeps = {
     /** @param {string} histRepo @param {string} zone */
     read: (histRepo, zone) => metafolder.history.read(histRepo, zone),

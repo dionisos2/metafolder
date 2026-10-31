@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/history:search
+catalog: GUI command
+target: history:search
+summary: Search a text field's input history
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``ctrl+r`` → ``history:search self-focus`` (also in a text input)

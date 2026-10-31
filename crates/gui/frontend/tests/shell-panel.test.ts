@@ -4,6 +4,7 @@
 // runs at once each keep their own block.
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import { historyOf } from '/__history.js';
 import { readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { withRuns } from './support/runs';
@@ -314,10 +315,11 @@ describe('shell panel', () => {
       expect(appended).toEqual(['echo hi']);
     });
 
-    test('ctrl+p recalls the previous line', async () => {
+    test('its history gives back the previous line, under a name', async () => {
       const { line } = await mounted([]);
       line.focus();
-      press(line, 'p', { ctrlKey: true });
+      expect(line.dataset.mfFocus).toBe('line');
+      void historyOf(line)!.prev();
       await settle();
       expect(line.value).toBe('newest');
     });

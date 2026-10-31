@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/history:next
+catalog: GUI command
+target: history:next
+summary: Recall the next entry of a text field's input history
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``ctrl+n`` → ``history:next self-focus`` (also in a text input)

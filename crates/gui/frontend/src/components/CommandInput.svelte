@@ -62,8 +62,8 @@
     return which === 'bash' ? store.bashDrafts : store.inputDrafts;
   }
 
-  // Per-repo input history (doc "Input history"): ctrl-p/ctrl-n walk,
-  // ctrl-r OSM search. The zone follows the mode (`:` vs `!` are separate
+  // Per-repo input history (doc "Input history"), driven by the history:*
+  // commands. The zone follows the mode (`:` vs `!` are separate
   // histories) and turns off while a script prompt is active. The store is
   // GUI-side (the history_read/history_append Tauri commands — the panel
   // equivalent is `metafolder.history.*`).

@@ -1,9 +1,9 @@
-// Input-history helper (panel-shim/history.js): readline-style ctrl-p/ctrl-n
-// navigation + ctrl-r OSM search overlay, shared by the shell command input
-// and the panel text zones (doc "Input history").
+// Input-history helper (panel-shim/history.js): readline-style walk + OSM search
+// overlay, shared by the shell command input and the panel text zones, driven by
+// the history:* commands through the handle a zone carries (doc "Input history").
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { attachHistory, filterHistory } from '/__history.js';
+import { attachHistory, filterHistory, historyOf } from '/__history.js';
 
 type Attached = { push: (text: string) => void; detach: () => void };
 
@@ -78,20 +78,20 @@ describe('filterHistory', () => {
   });
 });
 
-describe('ctrl-p / ctrl-n navigation', () => {
+describe('walking: prev / next', () => {
   test('ctrl-p recalls entries newest first and stops at the oldest', async () => {
     const input = makeInput();
     attach(input);
-    press(input, 'p', { ctrlKey: true });
+    void historyOf(input)!.prev();
     await flush();
     expect(input.value).toBe('three');
-    press(input, 'p', { ctrlKey: true });
+    void historyOf(input)!.prev();
     await flush();
     expect(input.value).toBe('two');
-    press(input, 'p', { ctrlKey: true });
+    void historyOf(input)!.prev();
     await flush();
     expect(input.value).toBe('one');
-    press(input, 'p', { ctrlKey: true }); // already at the oldest
+    void historyOf(input)!.prev(); // already at the oldest
     await flush();
     expect(input.value).toBe('one');
   });
@@ -100,15 +100,15 @@ describe('ctrl-p / ctrl-n navigation', () => {
     const input = makeInput();
     attach(input);
     type(input, 'my draft');
-    press(input, 'p', { ctrlKey: true });
+    void historyOf(input)!.prev();
     await flush();
-    press(input, 'p', { ctrlKey: true });
+    void historyOf(input)!.prev();
     await flush();
     expect(input.value).toBe('two');
-    press(input, 'n', { ctrlKey: true });
+    void historyOf(input)!.next();
     await flush();
     expect(input.value).toBe('three');
-    press(input, 'n', { ctrlKey: true });
+    void historyOf(input)!.next();
     await flush();
     expect(input.value).toBe('my draft');
   });
@@ -118,11 +118,11 @@ describe('ctrl-p / ctrl-n navigation', () => {
     attach(input);
     const seen: string[] = [];
     document.body.addEventListener('input', () => seen.push(input.value));
-    press(input, 'p', { ctrlKey: true });
+    void historyOf(input)!.prev();
     await flush();
     expect(seen).toEqual(['three']);
     // ...and that self-dispatched event did not reset the navigation.
-    press(input, 'p', { ctrlKey: true });
+    void historyOf(input)!.prev();
     await flush();
     expect(input.value).toBe('two');
   });
@@ -130,14 +130,14 @@ describe('ctrl-p / ctrl-n navigation', () => {
   test('typing resets navigation; the next ctrl-p starts from the edited text', async () => {
     const input = makeInput();
     attach(input);
-    press(input, 'p', { ctrlKey: true });
+    void historyOf(input)!.prev();
     await flush();
     expect(input.value).toBe('three');
     type(input, 'edited');
-    press(input, 'p', { ctrlKey: true });
+    void historyOf(input)!.prev();
     await flush();
     expect(input.value).toBe('three');
-    press(input, 'n', { ctrlKey: true });
+    void historyOf(input)!.next();
     await flush();
     expect(input.value).toBe('edited'); // the new draft is the edited text
   });
@@ -145,7 +145,7 @@ describe('ctrl-p / ctrl-n navigation', () => {
   test('leaving the zone restarts the walk at the newest entry', async () => {
     const input = makeInput();
     attach(input);
-    press(input, 'p', { ctrlKey: true });
+    void historyOf(input)!.prev();
     await flush();
     expect(input.value).toBe('three');
     // Leaving the zone ends the walk: the shell restores the stored draft
@@ -153,35 +153,31 @@ describe('ctrl-p / ctrl-n navigation', () => {
     // *second* entry on the way back in.
     input.focus();
     input.blur();
-    press(input, 'p', { ctrlKey: true });
+    void historyOf(input)!.prev();
     await flush();
     expect(input.value).toBe('three');
-    press(input, 'p', { ctrlKey: true });
+    void historyOf(input)!.prev();
     await flush();
     expect(input.value).toBe('two');
   });
 
-  test('a disabled zone (function returning null) leaves keys untouched', async () => {
+  test('a disabled zone (function returning null) has no handle', () => {
     const input = makeInput();
     const { store } = attach(input, { zone: () => null });
-    type(input, 'draft');
-    const event = press(input, 'p', { ctrlKey: true });
-    await flush();
-    expect(input.value).toBe('draft');
-    expect(event.defaultPrevented).toBe(false);
+    expect(historyOf(input)).toBeNull();
     expect(store.read).not.toHaveBeenCalled();
   });
 
-  test('the zone function is evaluated at keypress time', async () => {
+  test('the zone function is evaluated at each command', async () => {
     const input = makeInput();
     let zone = 'shell:command';
     const { store } = attach(input, { zone: () => zone });
-    press(input, 'p', { ctrlKey: true });
+    void historyOf(input)!.prev();
     await flush();
     expect(store.read).toHaveBeenLastCalledWith(REPO, 'shell:command');
     type(input, ''); // reset navigation
     zone = 'shell:bash';
-    press(input, 'p', { ctrlKey: true });
+    void historyOf(input)!.prev();
     await flush();
     expect(store.read).toHaveBeenLastCalledWith(REPO, 'shell:bash');
   });
@@ -212,13 +208,13 @@ describe('push', () => {
     attached.push('second');
     await flush();
     expect(store.appends).toEqual([]);
-    press(input, 'p', { ctrlKey: true });
+    void historyOf(input)!.prev();
     await flush();
     expect(input.value).toBe('second');
-    press(input, 'p', { ctrlKey: true });
+    void historyOf(input)!.prev();
     await flush();
     expect(input.value).toBe('local-only');
-    press(input, 'p', { ctrlKey: true });
+    void historyOf(input)!.prev();
     await flush();
     expect(input.value).toBe('local-only'); // deduped: only two entries
   });
@@ -242,7 +238,7 @@ describe('ctrl-r search overlay', () => {
   test('opens listing entries newest first and filters with OSM', async () => {
     const input = makeInput();
     attach(input, {}, ['repo:list', 'metarecord get', 'repo:init']);
-    press(input, 'r', { ctrlKey: true });
+    void historyOf(input)!.search();
     await flush();
     expect(overlay()).not.toBeNull();
     expect(items()).toEqual(['repo:init', 'metarecord get', 'repo:list']);
@@ -254,7 +250,7 @@ describe('ctrl-r search overlay', () => {
   test('Enter inserts the selection into the input and closes', async () => {
     const input = makeInput();
     attach(input, {}, ['repo:list', 'metarecord get']);
-    press(input, 'r', { ctrlKey: true });
+    void historyOf(input)!.search();
     await flush();
     // Selection starts on the newest; ctrl-n moves to the older entry.
     press(searchInput(), 'n', { ctrlKey: true });
@@ -268,7 +264,7 @@ describe('ctrl-r search overlay', () => {
     const input = makeInput();
     attach(input);
     type(input, 'draft');
-    press(input, 'r', { ctrlKey: true });
+    void historyOf(input)!.search();
     await flush();
     press(searchInput(), 'Escape');
     await flush();
@@ -279,7 +275,7 @@ describe('ctrl-r search overlay', () => {
   test('focusout closes without inserting (the shell Escape path blurs)', async () => {
     const input = makeInput();
     attach(input);
-    press(input, 'r', { ctrlKey: true });
+    void historyOf(input)!.search();
     await flush();
     searchInput().dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
     await flush();
@@ -289,13 +285,11 @@ describe('ctrl-r search overlay', () => {
   test('detach removes listeners and any open overlay', async () => {
     const input = makeInput();
     const { attached } = attach(input);
-    press(input, 'r', { ctrlKey: true });
+    void historyOf(input)!.search();
     await flush();
     attached.detach();
     expect(overlay()).toBeNull();
-    press(input, 'p', { ctrlKey: true });
-    await flush();
-    expect(input.value).toBe('');
+    expect(historyOf(input)).toBeNull();
   });
 });
 
@@ -315,7 +309,7 @@ describe('shadow DOM', () => {
       getRepo: async () => REPO,
       container: body,
     });
-    press(input, 'r', { ctrlKey: true });
+    void historyOf(input)!.search();
     await flush();
     expect(shadow.querySelector('.mf-history-overlay')).not.toBeNull();
     expect(shadow.querySelector('style#mf-history-style')).not.toBeNull();

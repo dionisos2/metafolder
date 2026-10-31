@@ -27,7 +27,7 @@ keeps it. Nothing else:
 * not what you type into a panel's own text field — the list's finder, a form: the typing is no command;
 * not what a script sends ([[mf gui command]]), nor what a command runs itself (a user command's `mf.invoke`): those are its doing, and run again with it;
 * not a command that failed, nor one abandoned at a question with `Escape`;
-* not the keystroke-level commands, those kept out of the message log (`editing:*`, `completion:cycle`, `find:*`, `help*`…), nor the `macro:*` ones.
+* not the keystroke-level commands, those kept out of the message log (`editing:*`, `completion:cycle`, `history:*`, `find:*`, `help*`…), nor the `macro:*` ones.
 
 What a step acts on is decided when it runs, as when you type it: the focused
 workspace and slot, the selection (`metarecord:bulk selection …`), the panel the
