@@ -458,12 +458,10 @@ fn key_levels_note() -> String {
     // Level 0: what each letter is used for.
     let entries = set.entries();
     let variables = set.variables();
-    // The variables that start a line — a domain — or prefix a template's
-    // keys — a target.
+    // The variables that start a line: a domain or a target.
     let starts_a_line = |name: &str| {
         let reference = format!("{{{name}}}");
-        name.starts_with("target-")
-            || entries.iter().any(|e| e.source.split_whitespace().next() == Some(&reference))
+        entries.iter().any(|e| e.source.split_whitespace().next() == Some(&reference))
     };
     let mut used = Vec::new();
     let mut left = Vec::new();

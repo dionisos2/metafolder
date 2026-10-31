@@ -20,8 +20,8 @@ writes it —, in the order of the file, then the keys suggested by a panel or b
 
 * its [[class|Command classes]], `?` when `command-classes.toml` gives it none;
 * its key ''as written'', variables left in (`{go} l`), and its `when`, `focus` and `target` — drop-downs — and `text-input` — the checkbox `⌨` ([[Keybindings]]): a change is checked as it is made, ''Enter'' in any of them or the row's ''Save'', which a changed row shows, saves the line as they say, ''Escape'' gives the old values back;
-* the keys it really binds, variables replaced: a `{target}` template binds four (`t l`, `i t l`, `b t l`, `n t l`), less the ones a literal line of the file overrides ([[Keybinding variables]]); each one says, on hover, what it runs;
-* the command as written, `{target}` left in, and its description;
+* the keys it really binds, variables replaced, less the ones a literal line of the file overrides ([[Keybinding variables]]); each one says, on hover, what it runs;
+* the command as written, and its description;
 * ''suggested'' for a key that is not in the file. A suggested key cannot be moved and has no ''Remove''; its fields are read-only.
 
 A line saved in place stays where it is in the file when it keeps its key and its
@@ -52,7 +52,6 @@ The drop-downs offer only what the file can hold:
 
 * `when`: everywhere, or a panel type;
 * `focus`: none, or a text field with a name. The shipped ones are listed; a field named by a panel of yours is offered once a line of the file uses it, so its first line is written in the file;
-* `target`: `here`, `other` or `new` for a command holding `{target}`, where its own key aims. Any other command has none, and the drop-down is disabled.
 
 A value the file names that nothing else knows of — a panel type no longer there — is offered too, so that its line can still be shown as it is.
 

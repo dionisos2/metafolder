@@ -353,7 +353,6 @@ impl ConfigDir {
             when: when.map(str::to_string),
             focus: focus.map(str::to_string),
             text_input,
-            target: None,
         };
         write_entry(&mut doc, &draft)?;
         self.commit_keybindings(&doc)
@@ -642,12 +641,6 @@ fn write_entry(doc: &mut toml_edit::DocumentMut, draft: &EntryDraft) -> Result<(
         } else {
             element.remove("text-input");
         }
-        match &draft.target {
-            Some(target) => set_in_place(element, "target", target.as_str().into()),
-            None => {
-                element.remove("target");
-            }
-        }
         return Ok(());
     }
     let mut entry = toml_edit::InlineTable::new();
@@ -660,9 +653,6 @@ fn write_entry(doc: &mut toml_edit::DocumentMut, draft: &EntryDraft) -> Result<(
     }
     if draft.text_input {
         entry.insert("text-input", true.into());
-    }
-    if let Some(target) = &draft.target {
-        entry.insert("target", target.as_str().into());
     }
     // A new scope joins the key's other bindings; a new key goes at the end
     // of the file.
@@ -1276,7 +1266,6 @@ mod tests {
             when: None,
             focus: None,
             text_input: false,
-            target: None,
         }
     }
 
@@ -1290,62 +1279,29 @@ mod tests {
     }
 
     #[test]
-    fn test_a_template_line_is_edited_where_it_is() {
+    fn test_a_line_naming_a_variable_is_edited_where_it_is() {
         let shipped = include_str!("../default-config/keybindings.toml");
         let config = kb_dir();
         std::fs::write(config.keybindings_path(), shipped).unwrap();
         let current = config.load_keybindings().unwrap();
-        let draft = crate::keybindings::EntryDraft {
-            target: Some("other".into()),
-            ..entry("{panels} c", "panel:open {target} config")
-        };
+        let draft = entry("{target-new} {panels} c", "panel:open other config");
 
         let set = config
-            .save_keybinding_entry(&current, |_| true, &draft, Some(&place("{panels} c")))
+            .save_keybinding_entry(
+                &current,
+                |_| true,
+                &draft,
+                Some(&place("{target-new} {panels} c")),
+            )
             .unwrap();
         let written = std::fs::read_to_string(config.keybindings_path()).unwrap();
         let changed = changed_lines(shipped, &written);
         assert_eq!(changed.len(), 1, "{changed:?}");
-        assert!(changed[0].1.contains("target = \"other\""), "{changed:?}");
         let bound = |keys: &[&str]| {
             set.compiled().into_iter().find(|b| b.keys == keys).map(|b| b.invocation)
         };
-        assert_eq!(bound(&["t", "c"]).as_deref(), Some("panel:open other config"));
+        assert_eq!(bound(&["n", "t", "c"]).as_deref(), Some("panel:open other config"));
         assert_eq!(bound(&["i", "t", "c"]).as_deref(), Some("panel:open here config"));
-        std::fs::remove_dir_all(config.root()).unwrap();
-    }
-
-    #[test]
-    fn test_a_line_moved_to_another_key_takes_its_template_along() {
-        let config = kb_dir();
-        let source = "vars.target-here = \"i\"\nvars.target-other = \"b\"\nvars.target-new = \"n\"\n\
-                      vars.panels = \"t\"\n\
-                      \"{panels} c\" = { command = \"panel:open {target} config\", target = \"here\" }\n";
-        std::fs::write(config.keybindings_path(), source).unwrap();
-        let current = config.load_keybindings().unwrap();
-        let draft = crate::keybindings::EntryDraft {
-            target: Some("here".into()),
-            ..entry("{panels}  k", "panel:open {target} config")
-        };
-
-        let set = config
-            .save_keybinding_entry(&current, |_| true, &draft, Some(&place("{panels} c")))
-            .unwrap();
-        let written = std::fs::read_to_string(config.keybindings_path()).unwrap();
-        assert!(
-            written.contains(
-                "\"{panels} k\" = { command = \"panel:open {target} config\", target = \"here\" }"
-            ),
-            "{written}"
-        );
-        assert!(!written.contains("{panels} c"), "{written}");
-        let keys: Vec<String> = set.compiled().into_iter().map(|b| b.keys.join(" ")).collect();
-        assert_eq!(keys.len(), 4);
-        assert!(keys.contains(&"n t k".to_string()) && !keys.contains(&"t c".to_string()));
-
-        // Removing the line removes its four keys.
-        let set = config.remove_keybinding_entry(&set, &place("{panels} k")).unwrap();
-        assert!(set.compiled().is_empty());
         std::fs::remove_dir_all(config.root()).unwrap();
     }
 

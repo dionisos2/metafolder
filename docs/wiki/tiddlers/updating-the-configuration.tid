@@ -31,6 +31,10 @@ Afterwards:
 # It merges `default` into `main`: a fast-forward when you have no edits, a merge commit otherwise, then checks the result out.
 # On a conflict, it resets `main` to where it stood before the merge (your edits kept, in their commit), reports the conflicting files, and changes nothing else.
 
+When no conflict stands, it then converts what the merge cannot: a line of your
+`gui/keybindings.toml` in a form that no longer exists ([[Persisted format changes]])
+is rewritten in the file, and is committed with your next edits.
+
 A conflict left that way is reported again on the next run: "nothing to do" means
 `main` contains `default`, not "the defaults did not change".
 

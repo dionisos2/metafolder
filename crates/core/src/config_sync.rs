@@ -21,6 +21,9 @@ pub struct SyncOutcome {
     /// When set, the merge conflicted and `main` was restored untouched; the
     /// listed paths are the conflicting files.
     pub conflict: Option<Vec<PathBuf>>,
+    /// `gui/keybindings.toml` held a form that no longer exists, and was
+    /// rewritten (doc "Persisted format changes").
+    pub keybindings_converted: bool,
 }
 
 /// What to tell the user when a merge into `dir` conflicted on `paths`
@@ -72,11 +75,107 @@ fn shell_quote(s: &str) -> String {
 /// the refreshed defaults into the user's `main` branch.
 pub fn sync(source_root: &Path, config_dir: &Path) -> Result<SyncOutcome, String> {
     let files = gather_defaults(source_root)?;
-    if config_dir.join(".git").exists() {
-        update(config_dir, &files)
+    let mut outcome = if config_dir.join(".git").exists() {
+        update(config_dir, &files)?
     } else {
-        init(config_dir, &files)
+        init(config_dir, &files)?
+    };
+    if outcome.conflict.is_none() {
+        outcome.keybindings_converted = convert_keybindings_file(config_dir)?;
     }
+    Ok(outcome)
+}
+
+/// Rewrites `gui/keybindings.toml` when `convert_keybindings` has something to
+/// do. The file stays uncommitted, like any edit of the user's: the next sync
+/// that merges commits it. Returns whether it was rewritten.
+fn convert_keybindings_file(config_dir: &Path) -> Result<bool, String> {
+    let path = config_dir.join("gui/keybindings.toml");
+    let Ok(source) = std::fs::read_to_string(&path) else { return Ok(false) };
+    let Some(converted) = convert_keybindings(&source) else { return Ok(false) };
+    std::fs::write(&path, converted)
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    Ok(true)
+}
+
+/// `source` with the forms `keybindings.toml` no longer has written out (doc
+/// "Persisted format changes"), or `None` when it has none — or does not parse,
+/// which the GUI reports. A `{target}` template becomes its four lines: its own
+/// key aimed at its default `target`, and the key under each target prefix. A
+/// line already there for one of them wins, as a literal key did over the
+/// template.
+fn convert_keybindings(source: &str) -> Option<String> {
+    use toml_edit::{Array, DocumentMut, InlineTable, Value};
+
+    /// The binding aimed at `target`, when it is a template.
+    fn aimed(binding: &InlineTable, target: &str) -> InlineTable {
+        let mut aimed = binding.clone();
+        aimed.remove("target");
+        let command = binding.get("command").and_then(Value::as_str).unwrap_or_default();
+        aimed.insert("command", command.replace("{target}", target).into());
+        aimed.fmt();
+        aimed.decor_mut().clear();
+        aimed
+    }
+    fn is_template(binding: &InlineTable) -> bool {
+        binding.get("command").and_then(Value::as_str).is_some_and(|c| c.contains("{target}"))
+    }
+    let scope = |binding: &InlineTable, field: &str| {
+        binding.get(field).and_then(Value::as_str).map(str::to_string)
+    };
+
+    let mut doc = source.parse::<DocumentMut>().ok()?;
+    let keys: Vec<String> =
+        doc.iter().map(|(key, _)| key.to_string()).filter(|key| key != "vars").collect();
+    let mut added: Vec<(String, InlineTable)> = Vec::new();
+    for key in keys {
+        let Some(value) = doc.get_mut(&key).and_then(toml_edit::Item::as_value_mut) else {
+            continue;
+        };
+        let mut bindings: Vec<&mut InlineTable> = match value {
+            Value::InlineTable(binding) => vec![binding],
+            Value::Array(array) => {
+                array.iter_mut().filter_map(Value::as_inline_table_mut).collect()
+            }
+            _ => continue,
+        };
+        for binding in bindings.iter_mut().filter(|binding| is_template(binding)) {
+            let default =
+                binding.get("target").and_then(Value::as_str).unwrap_or("here").to_string();
+            for target in ["here", "other", "new"] {
+                added.push((format!("{{target-{target}}} {key}"), aimed(binding, target)));
+            }
+            **binding = aimed(binding, &default);
+        }
+    }
+    if added.is_empty() {
+        return None;
+    }
+    for (key, binding) in added {
+        let Some(value) = doc.get_mut(&key).and_then(toml_edit::Item::as_value_mut) else {
+            doc.insert(&key, toml_edit::value(binding));
+            continue;
+        };
+        let same_scope = |other: &InlineTable| {
+            scope(other, "when") == scope(&binding, "when")
+                && scope(other, "focus") == scope(&binding, "focus")
+        };
+        match value {
+            Value::InlineTable(one) if !same_scope(one) => {
+                let mut array = Array::new();
+                array.push(one.clone());
+                array.push(binding);
+                *value = Value::Array(array);
+            }
+            Value::Array(array)
+                if !array.iter().filter_map(Value::as_inline_table).any(same_scope) =>
+            {
+                array.push(binding);
+            }
+            _ => {}
+        }
+    }
+    Some(doc.to_string())
 }
 
 /// The repo-root `.gitignore` shipped on the `default` branch: reserved for
@@ -429,6 +528,63 @@ mod tests {
 
     fn read(config: &Path, rel: &str) -> Option<String> {
         fs::read_to_string(config.join(rel)).ok()
+    }
+
+    #[test]
+    fn a_target_template_of_the_user_is_converted_to_its_four_lines() {
+        let source = r#"# mine
+vars.target-here = "i"
+vars.target-other = "b"
+vars.target-new = "n"
+"b o" = { command = "literal" }
+"o" = { command = "open {target} x", target = "other", when = "log" }
+"enter" = [
+  { command = "a {target}", target = "here", when = "log" },
+  { command = "cursor:descend self", when = "help" },
+]
+"{target-new} enter" = { command = "mine", when = "help" }
+"#;
+        let converted = convert_keybindings(source).unwrap();
+        let table: toml::Table = toml::from_str(&converted).unwrap();
+        let command = |key: &str| table[key]["command"].as_str().unwrap().to_string();
+        assert!(converted.starts_with("# mine"), "{converted}");
+        assert_eq!(command("o"), "open other x");
+        assert_eq!(table["o"]["when"].as_str(), Some("log"));
+        assert!(table["o"].get("target").is_none());
+        assert_eq!(command("{target-here} o"), "open here x");
+        assert_eq!(command("{target-other} o"), "open other x");
+        assert_eq!(command("{target-new} o"), "open new x");
+        assert_eq!(command("b o"), "literal");
+        // In an array, and joining a key that binds another scope.
+        assert_eq!(table["enter"][0]["command"].as_str(), Some("a here"));
+        assert_eq!(table["{target-other} enter"]["command"].as_str(), Some("a other"));
+        let new = table["{target-new} enter"].as_array().unwrap();
+        assert_eq!(new[0]["command"].as_str(), Some("mine"));
+        assert_eq!(new[1]["command"].as_str(), Some("a new"));
+        // Converted once: nothing is left to do, and the file is not rewritten.
+        assert_eq!(convert_keybindings(&converted), None);
+        assert_eq!(convert_keybindings("\"x\" = { command = \"y\" }\n"), None);
+        assert_eq!(convert_keybindings("not toml ["), None);
+    }
+
+    #[test]
+    fn sync_converts_the_keybindings_even_with_nothing_to_merge() {
+        let area = scratch();
+        let (source, config) = (area.join("src"), area.join("cfg"));
+        make_source(&source, &[("gui/keybindings.toml", "vars.a = \"a\"\n")]);
+        assert!(!sync(&source, &config).unwrap().keybindings_converted);
+        let up_to_date = read(&config, "gui/keybindings.toml");
+
+        assert!(!sync(&source, &config).unwrap().keybindings_converted);
+        assert_eq!(read(&config, "gui/keybindings.toml"), up_to_date);
+
+        fs::write(
+            config.join("gui/keybindings.toml"),
+            "\"o\" = { command = \"x {target}\", target = \"here\" }\n",
+        )
+        .unwrap();
+        assert!(sync(&source, &config).unwrap().keybindings_converted);
+        assert!(!read(&config, "gui/keybindings.toml").unwrap().contains("{target}\""));
     }
 
     #[test]

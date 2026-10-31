@@ -509,15 +509,7 @@ fn keybinding_view(app: &App, set: &KeybindingSet) -> KeybindingView {
     let entries: Vec<EntryView> = set
         .entries()
         .into_iter()
-        .map(|entry| {
-            // A template is classed by what its default key runs.
-            let invocation = entry
-                .bindings
-                .first()
-                .map(|b| b.invocation.clone())
-                .unwrap_or_else(|| entry.command.replace("{target}", "here"));
-            EntryView { class: classes.class_of(&invocation), entry }
-        })
+        .map(|entry| EntryView { class: classes.class_of(&entry.command), entry })
         .collect();
     let bound: std::collections::HashSet<String> = set
         .compiled()

@@ -25,10 +25,6 @@ pub struct BindingSpec {
     /// `None` = not focus-scoped. The most specific scope dimension.
     #[serde(default)]
     pub focus: Option<String>,
-    /// The default target of a `{target}` template (doc "Keybinding
-    /// variables"): `here`, `other` or `new`. Gone once expanded.
-    #[serde(default)]
-    pub target: Option<String>,
 }
 
 /// One binding of the compiled table sent to the frontend.
@@ -376,18 +372,14 @@ impl SpecOrList {
     }
 }
 
-/// The targets a `{target}` template expands to, each under the prefix held
-/// by the variable `target-<name>` (doc "Keybinding variables").
-const TARGETS: [&str; 3] = ["here", "other", "new"];
-
-/// One binding of the file, once its variables and template are expanded.
+/// One binding of the file, once its variables are expanded.
 struct Entry {
     keys: Vec<String>,
     spec: BindingSpec,
     /// The file's key it comes from, as written.
     source: String,
-    /// The file's key it was derived from, when a variable or a target
-    /// template produced it — a literal key of the file overrides it.
+    /// The file's key it was derived from, when a variable produced it — a
+    /// literal key of the file overrides it.
     derived_from: Option<String>,
 }
 
@@ -501,57 +493,28 @@ fn referenced(text: &str) -> Vec<String> {
     out
 }
 
-/// The bindings one key of the file stands for: itself, or — for a
-/// `{target}` template — its default target on the key, and every target
-/// under its prefix.
+/// The binding one key of the file stands for, its variables replaced. The
+/// `{target}` templates are gone: `metafolder-sync-config` converts a file still
+/// using one (doc "Persisted format changes").
 fn expand(
     combo: &str,
     spec: BindingSpec,
     vars: &HashMap<String, String>,
 ) -> Result<Vec<Entry>, String> {
+    if spec.command.contains("{target}") {
+        return Err(format!(
+            "\"{combo}\": {{target}} templates no longer exist: write one line per key, \
+             or run metafolder-sync-config, which converts them"
+        ));
+    }
     let expanded = substitute(combo, vars)?;
-    let derived = (expanded != combo).then(|| combo.to_string());
-    let entry = |keys: &str, spec: BindingSpec, derived_from: Option<String>| {
-        Ok::<_, String>(Entry {
-            keys: parse_combo(keys)?,
-            spec,
-            source: combo.to_string(),
-            derived_from,
-        })
-    };
-    if !spec.command.contains("{target}") {
-        if spec.target.is_some() {
-            return Err(format!(
-                "\"{combo}\": `target` is set but the command has no {{target}} to fill"
-            ));
-        }
-        return Ok(vec![entry(&expanded, spec, derived)?]);
-    }
-    let default = spec.target.clone().ok_or_else(|| {
-        format!("\"{combo}\": a {{target}} command needs a default `target` (here, other, new)")
-    })?;
-    if !TARGETS.contains(&default.as_str()) {
-        return Err(format!("\"{combo}\": unknown target \"{default}\" (here, other, new)"));
-    }
-    let aimed = |target: &str| BindingSpec {
-        command: spec.command.replace("{target}", target),
-        target: None,
-        ..spec.clone()
-    };
-    let mut entries = vec![entry(&expanded, aimed(&default), derived)?];
-    for target in TARGETS {
-        let var = format!("target-{target}");
-        let prefix = vars
-            .get(&var)
-            .ok_or_else(|| format!("\"{combo}\": a {{target}} command needs the variable {var}"))?;
-        entries.push(entry(&format!("{prefix} {expanded}"), aimed(target), Some(combo.into()))?);
-    }
-    Ok(entries)
+    let derived_from = (expanded != combo).then(|| combo.to_string());
+    Ok(vec![Entry { keys: parse_combo(&expanded)?, spec, source: combo.to_string(), derived_from }])
 }
 
 /// A keybindings file, read.
 struct Parsed {
-    /// Its bindings, variables and templates expanded.
+    /// Its bindings, variables expanded.
     entries: Vec<Entry>,
     /// Its lines as written: the key, and the binding before expansion.
     lines: Vec<(String, BindingSpec)>,
@@ -575,8 +538,8 @@ fn in_file_order(source: &str) -> (Vec<String>, Vec<String>) {
     (keys, vars)
 }
 
-/// Parses a keybindings TOML file into its bindings, variables and target
-/// templates expanded (doc "Keybinding variables"). A combo key may map to
+/// Parses a keybindings TOML file into its bindings, variables expanded (doc
+/// "Keybinding variables"). A combo key may map to
 /// one binding or an array of them; each element becomes its own entry, so
 /// the same combo can appear more than once (different `when` scopes).
 fn parse_entries(source: &str) -> Result<Parsed, String> {
@@ -591,8 +554,8 @@ fn parse_entries(source: &str) -> Result<Parsed, String> {
     // One combo has one binding per (when, focus) scope. TOML only refuses a
     // key written twice the same way: two spellings of one combo
     // ("shift+ctrl+a", "ctrl+shift+a") are caught here, like a scope repeated
-    // in a combo's array. A literal key overrides one a variable or a template
-    // produced — what the settings panel writes to rebind one of them.
+    // in a combo's array. A literal key overrides one a variable produced — what
+    // the settings panel writes to rebind one of them.
     let mut seen: HashMap<BindingKey, (String, usize)> = HashMap::new();
     for (combo, value) in table {
         let specs: SpecOrList =
@@ -642,7 +605,7 @@ fn parse_entries(source: &str) -> Result<Parsed, String> {
 }
 
 /// Parses a keybindings TOML file into (normalized combo, spec) pairs,
-/// variables and templates expanded (`parse_entries`).
+/// variables expanded (`parse_entries`).
 pub fn parse_toml(source: &str) -> Result<Vec<(Vec<String>, BindingSpec)>, String> {
     Ok(parse_entries(source)?.entries.into_iter().map(|e| (e.keys, e.spec)).collect())
 }
@@ -686,15 +649,12 @@ pub struct EntryBinding {
 pub struct FileEntry {
     /// The key as the file writes it, variables left in: `{go} {list}`.
     pub source: String,
-    /// The command as written, `{target}` left in.
     pub command: String,
     pub when: Option<String>,
     pub focus: Option<String>,
     pub text_input: bool,
-    /// The default target of a `{target}` template.
-    pub target: Option<String>,
     /// The keys it binds that are in effect — a literal line overrides one a
-    /// template binds —, each with what it runs.
+    /// variable binds —, each with what it runs.
     pub bindings: Vec<EntryBinding>,
     pub suggested: bool,
 }
@@ -717,7 +677,6 @@ pub struct EntryDraft {
     pub focus: Option<String>,
     #[serde(default)]
     pub text_input: bool,
-    pub target: Option<String>,
 }
 
 impl EntryDraft {
@@ -727,7 +686,6 @@ impl EntryDraft {
             when: self.when.clone(),
             text_input: self.text_input,
             focus: self.focus.clone(),
-            target: self.target.clone(),
         }
     }
 }
@@ -757,7 +715,7 @@ pub struct KeybindingSet {
     /// Keyed by (combo, scope); defaults overridden by the user per (combo,
     /// scope), so rebinding one panel's `down` leaves the others intact.
     config: HashMap<BindingKey, BindingSpec>,
-    /// The bindings a variable or a target template produced, with the
+    /// The bindings a variable produced, with the
     /// file's key they come from (`derived_from`).
     derived: HashMap<BindingKey, String>,
     /// The file's key every binding of `config` comes from, as written.
@@ -898,7 +856,6 @@ impl KeybindingSet {
                     when: spec.when.clone(),
                     focus: spec.focus.clone(),
                     text_input: spec.text_input,
-                    target: spec.target.clone(),
                     bindings,
                     suggested: false,
                 }
@@ -910,7 +867,6 @@ impl KeybindingSet {
             when: s.when.clone(),
             focus: s.focus.clone(),
             text_input: s.text_input,
-            target: None,
             bindings: vec![EntryBinding { keys: s.keys.clone(), invocation: s.invocation.clone() }],
             suggested: true,
         }));
@@ -919,7 +875,7 @@ impl KeybindingSet {
 
     /// The variables, in the order of the file, with the number of lines
     /// using each: `{name}` in their key, directly or through another
-    /// variable, or — for a target prefix — a `{target}` template.
+    /// variable.
     pub fn variables(&self) -> Vec<Variable> {
         // Every variable a name stands for, itself included.
         let reaches = |start: &str| {
@@ -939,13 +895,11 @@ impl KeybindingSet {
         self.var_order
             .iter()
             .map(|name| {
-                let prefix = name.starts_with("target-");
                 let uses = self
                     .lines
                     .iter()
-                    .filter(|(source, spec)| {
+                    .filter(|(source, _)| {
                         referenced(source).iter().any(|v| reaches(v).contains(name))
-                            || (prefix && spec.command.contains("{target}"))
                     })
                     .count();
                 Variable {
@@ -970,7 +924,7 @@ impl KeybindingSet {
 
     /// What would refuse saving the line `draft` (`check_command`, and
     /// `check_binding` for every key it binds), `replacing` the line being
-    /// edited, whose own keys are no clash. A literal key over one a template
+    /// edited, whose own keys are no clash. A literal key over one a variable
     /// binds overrides it, and the other way round — the file's rule —, which
     /// the check's note says. A suggestion can be overridden in its own place
     /// but not moved: it is not in the file, and its panel would suggest it
@@ -1029,7 +983,7 @@ impl KeybindingSet {
             let key = (entry.keys.clone(), when.clone(), focus.clone());
             let combo = entry.keys.join(" ");
             // The same key in the same place, written once literally and once
-            // by a template (or suggested): the literal line wins, no clash.
+            // through a variable (or suggested): the literal line wins, no clash.
             let same =
                 table.iter().find(|b| b.keys == entry.keys && b.when == when && b.focus == focus);
             let overridden = same.filter(|b| {
@@ -1453,49 +1407,45 @@ vars.target-new = "n"
 "#;
 
     #[test]
-    fn test_a_target_template_expands_to_its_default_and_three_prefixed_variants() {
+    fn test_a_target_template_is_refused_and_says_how_to_convert_it() {
         let source = format!(
-            "{TARGET_VARS}\"t l\" = {{ command = \"panel:open {{target}} metarecord-list\", \
-             target = \"other\", when = \"log\" }}\n"
+            "{TARGET_VARS}\"t l\" = {{ command = \"panel:open {{target}} log\", target = \"here\" }}\n"
         );
-        let entries = parse_toml(&source).unwrap();
-        assert_eq!(
-            keys_of(&entries),
-            [
-                ("b t l".to_string(), "panel:open other metarecord-list".to_string()),
-                ("i t l".to_string(), "panel:open here metarecord-list".to_string()),
-                ("n t l".to_string(), "panel:open new metarecord-list".to_string()),
-                ("t l".to_string(), "panel:open other metarecord-list".to_string()),
-            ]
-        );
-        assert!(entries.iter().all(|(_, spec)| spec.when.as_deref() == Some("log")));
+        let error = parse_toml(&source).unwrap_err();
+        assert!(error.contains("t l") && error.contains("metafolder-sync-config"), "{error}");
     }
 
     #[test]
-    fn test_a_target_template_must_be_complete() {
-        let missing_default = format!("{TARGET_VARS}\"o\" = {{ command = \"x {{target}}\" }}\n");
-        assert!(parse_toml(&missing_default).unwrap_err().contains("target"));
-        let no_placeholder =
-            format!("{TARGET_VARS}\"o\" = {{ command = \"x\", target = \"here\" }}\n");
-        assert!(parse_toml(&no_placeholder).is_err());
-        let unknown =
-            format!("{TARGET_VARS}\"o\" = {{ command = \"x {{target}}\", target = \"far\" }}\n");
-        assert!(parse_toml(&unknown).unwrap_err().contains("far"));
-        let no_prefix = r#""o" = { command = "x {target}", target = "here" }"#;
-        assert!(parse_toml(no_prefix).unwrap_err().contains("target-here"));
+    fn test_a_target_prefix_is_a_variable_like_any_other() {
+        let source = format!(
+            "{TARGET_VARS}\"{{target-new}} t\" = {{ command = \"panel:open new log\" }}\n\
+             \"t\" = {{ command = \"panel:open here log\" }}\n"
+        );
+        assert_eq!(
+            keys_of(&parse_toml(&source).unwrap()),
+            [
+                ("n t".to_string(), "panel:open new log".to_string()),
+                ("t".to_string(), "panel:open here log".to_string()),
+            ]
+        );
+        let set = KeybindingSet::from_source(&source).unwrap();
+        let uses = |name: &str| set.variables().into_iter().find(|v| v.name == name).unwrap().uses;
+        // Only the lines naming it use it: nothing is implied by a command.
+        assert_eq!((uses("target-new"), uses("target-here")), (1, 0));
     }
 
     #[test]
     fn test_a_literal_key_overrides_one_derived_from_a_variable() {
-        // What the settings panel writes when one key of a template is
-        // rebound: a literal line, which wins over the template's.
+        // What the settings panel writes when one key built on a variable is
+        // rebound: a literal line, which wins over the variable's.
         let source = r#"
 vars.tags = ","
 "{tags} a" = { command = "template" }
 ", a" = { command = "literal" }
 "#;
         assert_eq!(keys_of(&parse_toml(source).unwrap()), [(", a".into(), "literal".into())]);
-        // Two templates landing on one key are a mistake, like two literals.
+        // Two lines with variables landing on one key are a mistake, like two
+        // literals.
         let clash = r#"
 vars.x = ","
 vars.y = ","
@@ -1510,7 +1460,7 @@ vars.y = ","
     fn lines_source() -> String {
         format!(
             "{TARGET_VARS}vars.tags = \",\"\n\"{{tags}} a\" = {{ command = \"x\" }}\n\
-             \"o\" = {{ command = \"y {{target}}\", target = \"here\" }}\n\
+             \"{{target-other}} o\" = {{ command = \"y other\" }}\n\
              \"b o\" = {{ command = \"mine\" }}\n\"z\" = {{ command = \"z\", when = \"log\" }}\n"
         )
     }
@@ -1522,7 +1472,6 @@ vars.y = ","
             when: None,
             focus: None,
             text_input: false,
-            target: None,
         }
     }
 
@@ -1545,13 +1494,10 @@ vars.y = ","
 
         // In the order of the file, then the suggestions.
         let sources: Vec<&str> = entries.iter().map(|e| e.source.as_str()).collect();
-        assert_eq!(sources, ["{tags} a", "o", "b o", "z", "ctrl+y"]);
+        assert_eq!(sources, ["{tags} a", "{target-other} o", "b o", "z", "ctrl+y"]);
         assert_eq!(keys(of("{tags} a")), [", a → x"]);
-        // A template binds four keys, but `b o` is the literal line's.
-        let template = of("o");
-        assert_eq!(template.command, "y {target}");
-        assert_eq!(template.target.as_deref(), Some("here"));
-        assert_eq!(keys(template), ["o → y here", "i o → y here", "n o → y new"]);
+        // A literal line takes the key from the line with a variable.
+        assert_eq!(keys(of("{target-other} o")), Vec::<String>::new());
         assert_eq!(keys(of("b o")), ["b o → mine"]);
         assert_eq!(of("z").when.as_deref(), Some("log"));
         assert!(entries.iter().all(|e| !e.suggested || e.source == "ctrl+y"));
@@ -1567,8 +1513,8 @@ vars.y = ","
         assert_eq!(names, ["target-here", "target-other", "target-new", "tags"]);
         let uses = |name: &str| variables.iter().find(|v| v.name == name).unwrap().uses;
         assert_eq!(uses("tags"), 1);
-        // A target prefix is used by every template.
-        assert_eq!(uses("target-new"), 1);
+        assert_eq!(uses("target-other"), 1);
+        assert_eq!(uses("target-new"), 0);
         assert_eq!(variables[3].keys, ",");
     }
 
@@ -1576,16 +1522,18 @@ vars.y = ","
     fn test_a_line_is_checked_against_the_others_and_not_itself() {
         let set = KeybindingSet::from_source(&lines_source()).unwrap();
         let known = |name: &str| name != "nothing";
-        let template = EntryDraft { target: Some("here".into()), ..draft("o", "y {target}") };
-
         // Saved again as it is: no clash with its own keys, nor with the
         // literal line that overrides one of them.
-        let check = set.check_entry(known, &template, Some(&line("o")));
+        let check = set.check_entry(
+            known,
+            &draft("{target-other} o", "y other"),
+            Some(&line("{target-other} o")),
+        );
         assert_eq!((check.command.as_deref(), check.key.as_deref()), (None, None), "{check:?}");
-        // A literal key over one a template binds overrides it, and says so.
-        let check = set.check_entry(known, &draft("i o", "other"), None);
+        // A literal key over one a variable binds overrides it, and says so.
+        let check = set.check_entry(known, &draft(", a", "other"), None);
         assert_eq!(check.key, None);
-        assert!(check.note.as_deref().unwrap_or("").contains("\"o\""), "{check:?}");
+        assert!(check.note.as_deref().unwrap_or("").contains("{tags} a"), "{check:?}");
         // Two literal lines on one key clash; a key alone hides the sequences
         // it starts.
         let check = set.check_entry(known, &draft("b o", "other"), None);

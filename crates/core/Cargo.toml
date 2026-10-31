@@ -18,11 +18,13 @@ toml = "1.0"
 # command, and `mf`/the GUI for a repository's own configuration); reading
 # configuration never does, and the daemon never links it.
 git2 = { version = "0.21", default-features = false, optional = true }
+# Rewrites a `keybindings.toml` of an older form in place, comments kept.
+toml_edit = { version = "0.25", optional = true }
 
 [features]
 # The git-backed modules: `config_sync` and `repo_config` (doc "Repository
 # configuration"), and `repo_init`, which installs the latter.
-git = ["dep:git2"]
+git = ["dep:git2", "dep:toml_edit"]
 # Enables the `metafolder-sync-config` binary.
 sync-config = ["git"]
 

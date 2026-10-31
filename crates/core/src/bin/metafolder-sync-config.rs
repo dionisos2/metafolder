@@ -55,6 +55,9 @@ fn main() -> ExitCode {
             } else if !outcome.initialized {
                 println!("configuration already up to date");
             }
+            if outcome.keybindings_converted {
+                println!("gui/keybindings.toml converted to the current form");
+            }
             ExitCode::SUCCESS
         }
         Err(e) => {

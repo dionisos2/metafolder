@@ -271,8 +271,6 @@ declare namespace Metafolder {
   interface EntryDraft extends EntryPlace {
     command: string;
     textInput: boolean;
-    /** The default target of a `{target}` template: here, other, new. */
-    target: string | null;
   }
 
   /** How often a command is used (doc "Command classes"). */
@@ -282,7 +280,6 @@ declare namespace Metafolder {
   interface FileEntry extends EntryPlace {
     command: string;
     text_input: boolean;
-    target: string | null;
     /** The keys it binds that are in effect, each with what it runs. */
     bindings: { keys: string[]; invocation: string }[];
     /** Suggested by a panel or `commands.js`: in effect, not in the file. */

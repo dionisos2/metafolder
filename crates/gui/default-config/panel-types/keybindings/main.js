@@ -1,6 +1,6 @@
 // keybindings panel: the editor of keybindings.toml (doc "keybindings panel",
 // doc "Changing keybindings"). One row per line of the file: its key as the
-// file writes it — variables left in —, `when`, `focus`, `target` and
+// file writes it — variables left in —, `when`, `focus` and
 // `text-input`, all editable in place, beside the keys it really binds; then the
 // commands no key runs, bound in place the same way. The class buttons keep the commands of the
 // classes pressed (doc "Command classes"). The variables have their own panel
@@ -38,11 +38,7 @@ const draftOf = (entry, source = entry.source) => ({
   when: entry.when,
   focus: entry.focus,
   textInput: entry.text_input,
-  target: entry.target,
 });
-
-/** The targets a `{target}` template aims (`keybindings.rs`, `TARGETS`). */
-const TARGETS = ['here', 'other', 'new'];
 
 /** The text fields shipped with a name (`data-mf-focus`). A panel of the user's
  *  naming its own appears once a line of the file uses it. */
@@ -62,15 +58,6 @@ function fillChoices(select, values, empty) {
   select.value = values.includes(value) ? value : (select.options[0]?.value ?? '');
 }
 
-/** What `target` can be for `invocation`: a target when it holds `{target}`,
- *  and then it needs one, else nothing at all (`keybindings.rs`, `expand`).
- *  @param {HTMLSelectElement} select @param {string} invocation */
-function fillTargets(select, invocation) {
-  const holdsTarget = invocation.includes('{target}');
-  fillChoices(select, holdsTarget ? TARGETS : [], holdsTarget ? null : 'target');
-  select.disabled = !holdsTarget;
-}
-
 /** A key sequence as keycaps. @param {string[]} keys */
 const keycaps = (keys) => keys.flatMap((key, i) => [i > 0 ? ' ' : null, el('kbd', {}, key)]);
 
@@ -83,7 +70,6 @@ export async function mount(root, metafolder) {
   const command = byId(root, 'command', HTMLInputElement);
   const when = byId(root, 'when', HTMLSelectElement);
   const focus = byId(root, 'focus', HTMLSelectElement);
-  const target = byId(root, 'target', HTMLSelectElement);
   const textInput = byId(root, 'text-input', HTMLInputElement);
   const save = byId(root, 'save', HTMLButtonElement);
   const clear = byId(root, 'clear', HTMLButtonElement);
@@ -122,7 +108,6 @@ export async function mount(root, metafolder) {
       when: orNull(when.value),
       focus: orNull(focus.value),
       textInput: textInput.checked,
-      target: orNull(target.value),
     };
   }
 
@@ -220,12 +205,6 @@ export async function mount(root, metafolder) {
       }),
       when: choice('when', line.when ?? '', 'the panel type it applies in; when = everywhere', whenChoices, 'when'),
       focus: choice('focus', line.focus ?? '', 'the text field it applies in; focus = none', focusChoices, 'focus'),
-      target: el('select', {
-        class: 'target',
-        title: titled('for a command holding {target}: where its key aims'),
-        onchange,
-        onkeydown,
-      }),
       textInput: el('input', {
         type: 'checkbox',
         class: 'text-input',
@@ -236,9 +215,6 @@ export async function mount(root, metafolder) {
         onkeydown,
       }),
     };
-    fillTargets(fields.target, line.command);
-    fields.target.value = line.target ?? '';
-    if (readOnly) fields.target.disabled = true;
     const saveRow = el('button', { hidden: true, onclick: () => void saveLine() }, 'Save');
     /** Shows the Save of the row as the fields and the verdict stand. */
     function renderSave() {
@@ -252,7 +228,6 @@ export async function mount(root, metafolder) {
       when: orNull(fields.when.value),
       focus: orNull(fields.focus.value),
       textInput: fields.textInput.checked,
-      target: orNull(fields.target.value),
     });
     const changed = () => JSON.stringify(typed()) !== JSON.stringify(line);
     async function recheckRow() {
@@ -282,7 +257,6 @@ export async function mount(root, metafolder) {
         fields.source.value = line.source;
         fields.when.value = line.when ?? '';
         fields.focus.value = line.focus ?? '';
-        fields.target.value = line.target ?? '';
         fields.textInput.checked = line.textInput;
         fields.source.classList.remove('invalid');
         inlineSeq++;
@@ -322,7 +296,6 @@ export async function mount(root, metafolder) {
       ),
       el('td', { class: 'when' }, fields.when),
       el('td', { class: 'focus' }, fields.focus),
-      el('td', { class: 'target' }, fields.target),
       el('td', { class: 'scope' }, el('label', {}, fields.textInput, '⌨'), entry.suggested ? ' suggested' : ''),
       el(
         'td',
@@ -342,7 +315,6 @@ export async function mount(root, metafolder) {
         when: null,
         focus: null,
         textInput: false,
-        target: null,
       },
       null,
       false,
@@ -361,7 +333,6 @@ export async function mount(root, metafolder) {
       ),
       el('td', { class: 'when' }, fields.when),
       el('td', { class: 'focus' }, fields.focus),
-      el('td', { class: 'target' }, fields.target),
       el('td', { class: 'scope' }, el('label', {}, fields.textInput, '⌨')),
       el('td', { class: 'actions' }, fields.save),
     );
@@ -430,7 +401,6 @@ export async function mount(root, metafolder) {
 
   function onInput() {
     errorLine.textContent = '';
-    fillTargets(target, command.value);
     renderTable();
     renderForm();
     checking = recheck();
@@ -438,7 +408,6 @@ export async function mount(root, metafolder) {
 
   function clearForm() {
     for (const input of [source, command, when, focus]) input.value = '';
-    fillTargets(target, '');
     textInput.checked = false;
     check = NO_OBJECTION;
     checkSeq++;
@@ -531,8 +500,8 @@ export async function mount(root, metafolder) {
     });
   }
   for (const input of [source, command]) input.addEventListener('input', onInput);
-  for (const select of [when, focus, target]) select.addEventListener('change', onInput);
-  for (const input of /** @type {HTMLElement[]} */ ([source, command, when, focus, target])) {
+  for (const select of [when, focus]) select.addEventListener('change', onInput);
+  for (const input of /** @type {HTMLElement[]} */ ([source, command, when, focus])) {
     input.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter') return;
       event.preventDefault();
@@ -563,7 +532,6 @@ export async function mount(root, metafolder) {
     if (value !== ownChange) void load();
   });
 
-  fillTargets(target, '');
   renderForm();
   await load();
 }

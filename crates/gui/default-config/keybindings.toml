@@ -21,10 +21,9 @@
 # - what cannot be undone has no key.
 #
 # Variables (doc "Keybinding variables"): a letter with a role is named once
-# below, and `{name}` in a key stands for it. A command holding `{target}`
-# stands for four keys: its own, aimed at its default `target`, and the same
-# under the prefixes `i` (here), `b` (the other slot, beside) and `n` (a new
-# workspace).
+# below, and `{name}` in a key stands for it. A command that opens something has
+# four keys: its own, and the same under the prefixes `i` (here), `b` (the other
+# slot, beside) and `n` (a new workspace), each aiming its command there.
 
 # ── Variables ────────────────────────────────────────────────────────────────
 
@@ -206,24 +205,78 @@ vars.index = "i"
 "{view} x" = { command = "panel:swap" }
 
 # t then a letter: a panel type, here by default.
-"{panels} l" = { command = "panel:open {target} metarecord-list", target = "here" }
-"{panels} d" = { command = "panel:open {target} metarecord-detail", target = "here" }
-"{panels} f" = { command = "panel:open {target} viewer", target = "here" }
-"{panels} m" = { command = "panel:open {target} file-manager", target = "here" }
-"{panels} o" = { command = "panel:open {target} log", target = "here" }
-"{panels} r" = { command = "panel:open {target} repos", target = "here" }
-"{panels} g" = { command = "panel:open {target} message", target = "here" }
-"{panels} s" = { command = "panel:open {target} shell", target = "here" }
-"{panels} w" = { command = "panel:open {target} workspace-info", target = "here" }
-"{panels} t" = { command = "panel:open {target} path-ref", target = "here" }
-"{panels} b" = { command = "panel:open {target} trash", target = "here" }
-"{panels} y" = { command = "panel:open {target} sync", target = "here" }
-"{panels} h" = { command = "panel:open {target} help", target = "here" }
-"{panels} v" = { command = "panel:open {target} recent", target = "here" }
-"{panels} u" = { command = "panel:open {target} duplicates", target = "here" }
-"{panels} c" = { command = "panel:open {target} config", target = "here" }
-"{panels} k k" = { command = "panel:open {target} keybindings", target = "here" }
-"{panels} k v" = { command = "panel:open {target} keybindings-variables", target = "here" }
+"{panels} l" = { command = "panel:open here metarecord-list" }
+"{target-here} {panels} l" = { command = "panel:open here metarecord-list" }
+"{target-other} {panels} l" = { command = "panel:open other metarecord-list" }
+"{target-new} {panels} l" = { command = "panel:open new metarecord-list" }
+"{panels} d" = { command = "panel:open here metarecord-detail" }
+"{target-here} {panels} d" = { command = "panel:open here metarecord-detail" }
+"{target-other} {panels} d" = { command = "panel:open other metarecord-detail" }
+"{target-new} {panels} d" = { command = "panel:open new metarecord-detail" }
+"{panels} f" = { command = "panel:open here viewer" }
+"{target-here} {panels} f" = { command = "panel:open here viewer" }
+"{target-other} {panels} f" = { command = "panel:open other viewer" }
+"{target-new} {panels} f" = { command = "panel:open new viewer" }
+"{panels} m" = { command = "panel:open here file-manager" }
+"{target-here} {panels} m" = { command = "panel:open here file-manager" }
+"{target-other} {panels} m" = { command = "panel:open other file-manager" }
+"{target-new} {panels} m" = { command = "panel:open new file-manager" }
+"{panels} o" = { command = "panel:open here log" }
+"{target-here} {panels} o" = { command = "panel:open here log" }
+"{target-other} {panels} o" = { command = "panel:open other log" }
+"{target-new} {panels} o" = { command = "panel:open new log" }
+"{panels} r" = { command = "panel:open here repos" }
+"{target-here} {panels} r" = { command = "panel:open here repos" }
+"{target-other} {panels} r" = { command = "panel:open other repos" }
+"{target-new} {panels} r" = { command = "panel:open new repos" }
+"{panels} g" = { command = "panel:open here message" }
+"{target-here} {panels} g" = { command = "panel:open here message" }
+"{target-other} {panels} g" = { command = "panel:open other message" }
+"{target-new} {panels} g" = { command = "panel:open new message" }
+"{panels} s" = { command = "panel:open here shell" }
+"{target-here} {panels} s" = { command = "panel:open here shell" }
+"{target-other} {panels} s" = { command = "panel:open other shell" }
+"{target-new} {panels} s" = { command = "panel:open new shell" }
+"{panels} w" = { command = "panel:open here workspace-info" }
+"{target-here} {panels} w" = { command = "panel:open here workspace-info" }
+"{target-other} {panels} w" = { command = "panel:open other workspace-info" }
+"{target-new} {panels} w" = { command = "panel:open new workspace-info" }
+"{panels} t" = { command = "panel:open here path-ref" }
+"{target-here} {panels} t" = { command = "panel:open here path-ref" }
+"{target-other} {panels} t" = { command = "panel:open other path-ref" }
+"{target-new} {panels} t" = { command = "panel:open new path-ref" }
+"{panels} b" = { command = "panel:open here trash" }
+"{target-here} {panels} b" = { command = "panel:open here trash" }
+"{target-other} {panels} b" = { command = "panel:open other trash" }
+"{target-new} {panels} b" = { command = "panel:open new trash" }
+"{panels} y" = { command = "panel:open here sync" }
+"{target-here} {panels} y" = { command = "panel:open here sync" }
+"{target-other} {panels} y" = { command = "panel:open other sync" }
+"{target-new} {panels} y" = { command = "panel:open new sync" }
+"{panels} h" = { command = "panel:open here help" }
+"{target-here} {panels} h" = { command = "panel:open here help" }
+"{target-other} {panels} h" = { command = "panel:open other help" }
+"{target-new} {panels} h" = { command = "panel:open new help" }
+"{panels} v" = { command = "panel:open here recent" }
+"{target-here} {panels} v" = { command = "panel:open here recent" }
+"{target-other} {panels} v" = { command = "panel:open other recent" }
+"{target-new} {panels} v" = { command = "panel:open new recent" }
+"{panels} u" = { command = "panel:open here duplicates" }
+"{target-here} {panels} u" = { command = "panel:open here duplicates" }
+"{target-other} {panels} u" = { command = "panel:open other duplicates" }
+"{target-new} {panels} u" = { command = "panel:open new duplicates" }
+"{panels} c" = { command = "panel:open here config" }
+"{target-here} {panels} c" = { command = "panel:open here config" }
+"{target-other} {panels} c" = { command = "panel:open other config" }
+"{target-new} {panels} c" = { command = "panel:open new config" }
+"{panels} k k" = { command = "panel:open here keybindings" }
+"{target-here} {panels} k k" = { command = "panel:open here keybindings" }
+"{target-other} {panels} k k" = { command = "panel:open other keybindings" }
+"{target-new} {panels} k k" = { command = "panel:open new keybindings" }
+"{panels} k v" = { command = "panel:open here keybindings-variables" }
+"{target-here} {panels} k v" = { command = "panel:open here keybindings-variables" }
+"{target-other} {panels} k v" = { command = "panel:open other keybindings-variables" }
+"{target-new} {panels} k v" = { command = "panel:open new keybindings-variables" }
 
 # ── Rows: the cursor in every panel with rows (doc "Generic panel commands"),
 # and opening one (doc "Opening a row") ───────────────────────────────────────
@@ -237,13 +290,25 @@ vars.index = "i"
   { command = "help:apply search", focus = "search" },
   { command = "panel:open other viewer", when = "metarecord-list" },
   { command = "panel:open other viewer", when = "recent" },
-  { command = "file-manager:activate {target}", target = "other", when = "file-manager" },
-  { command = "duplicates:activate {target}", target = "other", when = "duplicates" },
+  { command = "file-manager:activate other", when = "file-manager" },
+  { command = "duplicates:activate other", when = "duplicates" },
   { command = "cursor:descend self", when = "help" },
   { command = "cursor:descend self", when = "log" },
   { command = "cursor:descend self", when = "path-ref" },
   { command = "metarecord:row-edit", when = "metarecord-detail" },
   { command = "trash:restore", when = "trash" },
+]
+"{target-here} enter" = [
+  { command = "file-manager:activate here", when = "file-manager" },
+  { command = "duplicates:activate here", when = "duplicates" },
+]
+"{target-other} enter" = [
+  { command = "file-manager:activate other", when = "file-manager" },
+  { command = "duplicates:activate other", when = "duplicates" },
+]
+"{target-new} enter" = [
+  { command = "file-manager:activate new", when = "file-manager" },
+  { command = "duplicates:activate new", when = "duplicates" },
 ]
 "shift+enter" = [
   { command = "find:prev", focus = "find" },
@@ -331,18 +396,39 @@ vars.index = "i"
 
 # ── Go to (g): a picker, so here by default ──────────────────────────────────
 
-"{go} r" = { command = "recent {target} time", target = "here" }
-"{go} shift+r" = { command = "recent {target} score", target = "here" }
-"{go} d" = { command = "folder:open files {target}", target = "here" }
-"{go} l" = { command = "folder:open children {target}", target = "here" }
-"{go} shift+l" = { command = "folder:open subtree {target}", target = "here" }
+"{go} r" = { command = "recent here time" }
+"{target-here} {go} r" = { command = "recent here time" }
+"{target-other} {go} r" = { command = "recent other time" }
+"{target-new} {go} r" = { command = "recent new time" }
+"{go} shift+r" = { command = "recent here score" }
+"{target-here} {go} shift+r" = { command = "recent here score" }
+"{target-other} {go} shift+r" = { command = "recent other score" }
+"{target-new} {go} shift+r" = { command = "recent new score" }
+"{go} d" = { command = "folder:open files here" }
+"{target-here} {go} d" = { command = "folder:open files here" }
+"{target-other} {go} d" = { command = "folder:open files other" }
+"{target-new} {go} d" = { command = "folder:open files new" }
+"{go} l" = { command = "folder:open children here" }
+"{target-here} {go} l" = { command = "folder:open children here" }
+"{target-other} {go} l" = { command = "folder:open children other" }
+"{target-new} {go} l" = { command = "folder:open children new" }
+"{go} shift+l" = { command = "folder:open subtree here" }
+"{target-here} {go} shift+l" = { command = "folder:open subtree here" }
+"{target-other} {go} shift+l" = { command = "folder:open subtree other" }
+"{target-new} {go} shift+l" = { command = "folder:open subtree new" }
 "{go} o" = { command = "repos:switch" }
 "{go} shift+o" = { command = "repos:load on-disk" }
 "{go} p" = { command = "script:run" }
 "{go} w" = { command = "file:open-with" }
-"{go} m" = { command = "file-manager:reveal {target}", target = "here" }
+"{go} m" = { command = "file-manager:reveal here" }
+"{target-here} {go} m" = { command = "file-manager:reveal here" }
+"{target-other} {go} m" = { command = "file-manager:reveal other" }
+"{target-new} {go} m" = { command = "file-manager:reveal new" }
 # The selection's folder as a list: from a row, so beside it.
-"{go} s" = { command = "metarecord-list:folder {target}", target = "other" }
+"{go} s" = { command = "metarecord-list:folder other" }
+"{target-here} {go} s" = { command = "metarecord-list:folder here" }
+"{target-other} {go} s" = { command = "metarecord-list:folder other" }
+"{target-new} {go} s" = { command = "metarecord-list:folder new" }
 
 # ── Help (h) ─────────────────────────────────────────────────────────────────
 
@@ -392,7 +478,10 @@ vars.index = "i"
 "{panel} {revert}" = { command = "log:revert", when = "log" }
 "{panel} shift+{revert}" = { command = "log:revert label", when = "log" }
 "{panel} {keep}" = { command = "duplicates:keep", when = "duplicates" }
-"{panel} {list}" = { command = "path-ref:list-refs {target}", target = "other", when = "path-ref" }
+"{panel} {list}" = { command = "path-ref:list-refs other", when = "path-ref" }
+"{target-here} {panel} {list}" = { command = "path-ref:list-refs here", when = "path-ref" }
+"{target-other} {panel} {list}" = { command = "path-ref:list-refs other", when = "path-ref" }
+"{target-new} {panel} {list}" = { command = "path-ref:list-refs new", when = "path-ref" }
 
 "ctrl+n" = [
   { command = "metarecord:create", when = "metarecord-detail" },

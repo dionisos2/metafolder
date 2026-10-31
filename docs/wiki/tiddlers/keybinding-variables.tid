@@ -1,7 +1,7 @@
 title: Keybinding variables
 tags: Keybindings Configuration
 kind: reference
-summary: A letter named once in keybindings.toml: variables in the keys, and {target} templates that write the here / beside / new variants.
+summary: A letter named once in keybindings.toml: variables in the keys, and the three target prefixes among them.
 
 The shipped keys are built from a few letters with a role — a domain such as `,`
 for the tags, a verb such as `a` for ''add'', a target prefix such as `i` for
@@ -29,25 +29,27 @@ vars.bulk-query = "m q"
 * A `{name}` that is not a variable is an error, which names it. A brace that names nothing (`"{"`) is a key like any other.
 * Variables are replaced in the keys only, not in the commands.
 
-!! Target templates
+!! Targets
 
 Many commands take a target — where a panel opens: `here`, `other` (the other
-slot) or `new` (a new workspace). A binding whose command holds `{target}` and
-which names its default `target` stands for four:
+slot) or `new` (a new workspace). The shipped file gives each such command four
+lines: its own key, and the same under the prefixes `target-here`, `target-other`
+and `target-new`, which are variables like the others:
 
 ```
 vars.target-here = "i"
 vars.target-other = "b"
 vars.target-new = "n"
 
-"t l" = { command = "panel:open {target} metarecord-list", target = "other" }
+"{panels} l" = { command = "panel:open here metarecord-list" }
+"{target-here} {panels} l" = { command = "panel:open here metarecord-list" }
+"{target-other} {panels} l" = { command = "panel:open other metarecord-list" }
+"{target-new} {panels} l" = { command = "panel:open new metarecord-list" }
 ```
 
-binds `t l` to `panel:open other metarecord-list`, and `i t l`, `b t l`, `n t l`
-to the same command aimed `here`, `other` and `new`. The three prefixes are the
-variables `target-here`, `target-other` and `target-new`; a template without
-them, without a default `target`, or a `target` with no `{target}` to fill is an
-error.
+A command holding `{target}` — the template that once stood for these four lines
+— is refused; `metafolder-sync-config` rewrites one left in a file
+([[Persisted format changes]]).
 
 !! Changing one of them
 
@@ -57,14 +59,12 @@ the file, and every key built on it moves. It is refused when it would bind a ke
 twice in one place, or make a key alone hide a sequence that nothing hid before — `go`
 given the value `x` would hide every `x …` behind the command input's `x`.
 
-The panel lists the ''lines'' of the file: a line using a variable or a template is one
-row, its key as written beside the keys it binds. Editing the row edits the line, so a
-template's four keys move together, and removing it removes them all.
+The panel lists the ''lines'' of the file: a line using a variable is one row, its key
+as written beside the keys it binds. Editing the row edits the line.
 
-A key a template produced can still be given a meaning of its own: a ''literal'' key of
-the file, in the same place, overrides it, and the template's other keys stay as they
-are. Two lines producing the same key in the same place — two templates, or two
-literal keys — are refused, as always.
+A key a variable produced can still be given a meaning of its own: a ''literal'' key of
+the file, in the same place, overrides it. Two lines producing the same key in the same
+place — two lines with variables, or two literal keys — are refused, as always.
 
 [[Keyboard navigation]] gives the keys as they are shipped, variables expanded,
 and the generated notes of each command list its keys the same way.

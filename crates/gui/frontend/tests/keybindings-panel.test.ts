@@ -33,7 +33,6 @@ type Entry = {
   when: string | null;
   focus: string | null;
   text_input: boolean;
-  target: string | null;
   bindings: { keys: string[]; invocation: string }[];
   suggested: boolean;
   class: string | null;
@@ -45,7 +44,6 @@ const line = (source: string, command: string, extra: Partial<Entry> = {}): Entr
   when: null,
   focus: null,
   text_input: false,
-  target: null,
   bindings: [{ keys: source.split(' '), invocation: command }],
   suggested: false,
   class: 'B',
@@ -63,9 +61,8 @@ const ENTRIES: Entry[] = [
   line('ctrl+shift+a', 'metarecord-list:select all', { when: 'metarecord-list' }),
   line('ctrl+t', 'workspace:new'),
   line('{go} g', 'cursor:first self', { bindings: [{ keys: ['g', 'g'], invocation: 'cursor:first self' }] }),
-  line('{panels} l', 'panel:open {target} metarecord-list', {
-    target: 'here',
-    bindings: [aimed('t l', 'here'), aimed('i t l', 'here'), aimed('b t l', 'other'), aimed('n t l', 'new')],
+  line('{panels} l', 'panel:open here metarecord-list', {
+    bindings: [aimed('t l', 'here'), aimed('i t l', 'here')],
   }),
   line('ctrl+alt+y', 'e2e:ping', { when: 'e2e', suggested: true, class: null }),
 ];
@@ -192,11 +189,9 @@ async function mountPanel(
 describe('keybindings panel', () => {
   test('each line shows its key as written beside the keys it binds', async () => {
     const { row, button } = await mountPanel();
-    const template = row('{panels} l');
-    expect(template.keys).toContain('t l');
-    expect(template.keys).toContain('i t l');
-    expect(template.keys).toContain('n t l');
-    expect(template.text).toContain('panel:open {target} metarecord-list');
+    const named = row('{panels} l');
+    expect(named.keys).toContain('t l');
+    expect(named.text).toContain('panel:open here metarecord-list');
     expect(row('{go} g').keys).toContain('g g');
     // The key as written is the editable one; a suggestion is not in the file.
     const suggested = row('ctrl+alt+y');
@@ -282,7 +277,6 @@ describe('keybindings panel', () => {
         when: null,
         focus: null,
         textInput: false,
-        target: null,
       },
       null,
     );
@@ -291,19 +285,17 @@ describe('keybindings panel', () => {
   test('Save writes the line and empties the form', async () => {
     const { typeIn, pick, choice, save, api, field } = await mountPanel();
     await typeIn('source', '{panels} k');
-    await typeIn('command', 'panel:open {target} keybindings');
-    await pick(choice('target'), 'here');
+    await typeIn('command', 'panel:open here keybindings');
     await pick(choice('when'), 'log');
     save.click();
     await flush();
     expect(api.config.saveKeybindingEntry).toHaveBeenCalledWith(
       {
         source: '{panels} k',
-        command: 'panel:open {target} keybindings',
+        command: 'panel:open here keybindings',
         when: 'log',
         focus: null,
         textInput: false,
-        target: 'here',
       },
       null,
     );
@@ -375,7 +367,6 @@ describe('keybindings panel', () => {
         when: null,
         focus: null,
         textInput: false,
-        target: null,
       },
       { source: '{go} g', when: null, focus: null },
     );
@@ -412,13 +403,12 @@ describe('keybindings panel', () => {
         when: null,
         focus: null,
         textInput: false,
-        target: null,
       },
       null,
     );
   });
 
-  test('when, focus and target are chosen in place, the line replaced', async () => {
+  test('when and focus are chosen in place, the line replaced', async () => {
     const { row, pick, key, api, root } = await mountPanel({
       check: (draft) => (draft.when === 'log' ? { key: '`t l` is already bound in log' } : {}),
     });
@@ -433,16 +423,14 @@ describe('keybindings panel', () => {
 
     await pick(select('when'), 'trash');
     await pick(select('focus'), 'finder');
-    await pick(select('target'), 'other');
-    await key(select('target'), 'Enter');
+    await key(select('focus'), 'Enter');
     expect(api.config.saveKeybindingEntry).toHaveBeenCalledWith(
       {
         source: '{panels} l',
-        command: 'panel:open {target} metarecord-list',
+        command: 'panel:open here metarecord-list',
         when: 'trash',
         focus: 'finder',
         textInput: false,
-        target: 'other',
       },
       { source: '{panels} l', when: null, focus: null },
     );
@@ -536,34 +524,11 @@ describe('keybindings panel', () => {
     for (const name of named) expect(offered).toContain(name);
   });
 
-  test('target is only offered to a command holding {target}, and is then required', async () => {
-    const { choice, typeIn, row, rows } = await mountPanel();
-    const target = choice('target');
-    expect(target.disabled).toBe(true);
-    await typeIn('command', 'panel:open {target} log');
-    expect(target.disabled).toBe(false);
-    expect([...target.options].map((o) => o.value)).toEqual(['here', 'other', 'new']);
-    expect(target.value).toBe('here');
-    await typeIn('command', 'workspace:new');
-    expect(target.disabled).toBe(true);
-    expect(target.value).toBe('');
-
-    const select = (tr: Element) => tr.querySelector('select.target') as HTMLSelectElement;
-    await typeIn('command', '');
-    expect(select(row('ctrl+g').tr).disabled).toBe(true);
-    const template = select(row('{panels} l').tr);
-    expect(template.disabled).toBe(false);
-    expect(template.value).toBe('here');
-    expect([...template.options].map((o) => o.value)).toEqual(['here', 'other', 'new']);
-    const unbound = rows().find((r) => r.text.includes('reconcile:run'))!;
-    expect(select(unbound.tr).disabled).toBe(true);
-  });
-
   test('a suggested key keeps all its fields read-only', async () => {
     const { row } = await mountPanel();
     const tr = row('ctrl+alt+y').tr;
     expect((tr.querySelector('input.source') as HTMLInputElement).readOnly).toBe(true);
-    for (const selector of ['select.when', 'select.focus', 'select.target', 'input.text-input']) {
+    for (const selector of ['select.when', 'select.focus', 'input.text-input']) {
       expect((tr.querySelector(selector) as HTMLSelectElement).disabled).toBe(true);
     }
   });

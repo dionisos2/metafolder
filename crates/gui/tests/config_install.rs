@@ -119,7 +119,6 @@ fn line(place: &EntryPlace, command: &str) -> EntryDraft {
         when: place.when.clone(),
         focus: place.focus.clone(),
         text_input: false,
-        target: None,
     }
 }
 
