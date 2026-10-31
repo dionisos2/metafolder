@@ -27,6 +27,7 @@ vars.delete = ["d", "x"]
 * A variable holds a key or a sequence (`"m q"`); its name is lowercase letters, digits and `-`.
 * A variable with several values binds a key for each, on every line naming it: with the above, `"{bulk-query} {delete}"` binds `m q d` and `m q x`. A key naming two such variables binds every combination; a variable named twice in a key takes the same value in both places (`"{record} {record} s"` binds `m m s`, never `m z s`). To give one command another key, write it a line of its own: a variable is the same for all its lines.
 * A list cannot be empty nor hold one key twice, and the error names the variable. A key bound twice through a value is refused like any other, and the error names the key, the lines and the variables involved.
+* A key alone that starts a sequence bound in the same place would hide it, since it runs first: the file is refused, as for a key bound twice, whether written so or brought about by a value (`["a", "a b"]`). The error names the keys, the lines and the variables.
 * A value cannot name another variable: a key names its variables one by one, `"{record} {query-verb} {delete}"`, so that it reads as what is typed.
 * The table can be written as `vars.name = …` lines anywhere at the top of the file, or as a `[vars]` section at its end — TOML puts every key after a section header into that section.
 * A `{name}` that is not a variable is an error, which names it. A brace that names nothing (`"{"`) is a key like any other.
@@ -61,7 +62,7 @@ for and how many lines use it; a new value typed there is written into its line 
 the file, and every key built on it moves. Several values are typed apart with ` | `
 (`d | x`), and written as a list; a key `|` can be a value only in the file itself. A
 new value is refused, naming the variable, when it would bind a key
-twice in one place, or make a key alone hide a sequence that nothing hid before — `go`
+twice in one place, or make a key alone hide a sequence — `go`
 given the value `x` would hide every `x …` behind the command input's `x`.
 
 The panel lists the ''lines'' of the file: a line using a variable is one row, its key

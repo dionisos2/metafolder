@@ -416,10 +416,9 @@ impl ConfigDir {
     /// What giving the variable `name` the value `value` — its keys, several
     /// apart with a `|` of its own (`a | m q`) — would do: the file with it, and
     /// its set — refused, naming the variable, when the file would not load (a
-    /// key bound twice) or a key alone would hide a sequence that nothing hid.
+    /// key bound twice, or a key alone hiding a sequence).
     fn variable_change(
         &self,
-        current: &KeybindingSet,
         name: &str,
         value: &str,
     ) -> Result<(toml_edit::DocumentMut, KeybindingSet), String> {
@@ -441,13 +440,6 @@ impl ConfigDir {
         set_in_place(vars, name, written);
         let set = KeybindingSet::from_source(&doc.to_string())
             .map_err(|error| format!("{name}: {error}"))?;
-        let before = crate::keybindings::sequence_clashes(&current.compiled());
-        if let Some(clash) = crate::keybindings::sequence_clashes(&set.compiled())
-            .into_iter()
-            .find(|clash| !before.contains(clash))
-        {
-            return Err(format!("{name}: {clash}"));
-        }
         Ok((doc, set))
     }
 
@@ -459,7 +451,7 @@ impl ConfigDir {
         name: &str,
         value: &str,
     ) -> Result<String, String> {
-        let (_, set) = self.variable_change(current, name, value)?;
+        let (_, set) = self.variable_change(name, value)?;
         let key = |b: &CompiledBinding| (b.keys.clone(), b.when.clone(), b.focus.clone());
         let old: std::collections::HashSet<_> = current.compiled().iter().map(key).collect();
         let changed = set.compiled().iter().filter(|b| !old.contains(&key(b))).count();
@@ -478,7 +470,7 @@ impl ConfigDir {
         name: &str,
         value: &str,
     ) -> Result<KeybindingSet, String> {
-        let (doc, set) = self.variable_change(current, name, value)?;
+        let (doc, set) = self.variable_change(name, value)?;
         self.write_keybindings_document(&doc)?;
         Ok(set.with_suggestions_of(current))
     }

@@ -97,14 +97,14 @@ fn test_set_user_keybinding_replaces_differently_spelled_combo() {
 fn test_remove_user_keybinding_unbinds_the_combo() {
     let (_guard, config) = temp_config();
     common::install_defaults(&config);
-    config.set_user_keybinding("t", "panel:split", None, None, false).unwrap();
+    config.set_user_keybinding("ctrl+alt+j", "panel:split", None, None, false).unwrap();
 
     // In the single-file model, removing unbinds the combo entirely (there is
     // no separate default layer to fall back to).
-    let set = config.remove_user_keybinding("t", None, None).unwrap();
-    assert!(set.compiled().iter().all(|b| b.keys != ["t"]));
+    let set = config.remove_user_keybinding("ctrl+alt+j", None, None).unwrap();
+    assert!(set.compiled().iter().all(|b| b.keys != ["ctrl+alt+j"]));
     // Removing a missing combo is a no-op, not an error.
-    config.remove_user_keybinding("t", None, None).unwrap();
+    config.remove_user_keybinding("ctrl+alt+j", None, None).unwrap();
 }
 
 fn place(source: &str, when: Option<&str>) -> EntryPlace {

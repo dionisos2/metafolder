@@ -16,7 +16,7 @@ Several values are typed apart with ` | ` (`d | x`): each then binds its keys on
 line naming the variable ([[Keybinding variables]]).
 
 What a new value would do is said as it is typed — how many keys change, or why it is
-refused: a key bound twice, or a key alone hiding a sequence that nothing hid before.
+refused: a key bound twice, or a key alone hiding a sequence.
 ''Enter'' writes it, in its line of the file; ''Escape'' gives the old value back.
 
 The list is read again when the panel is shown, at `view:refresh`, and when the

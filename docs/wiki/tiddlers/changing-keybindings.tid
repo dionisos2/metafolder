@@ -35,11 +35,11 @@ form is typed, field by field; ''Save'' waits until nothing stands in the way.
 * ''A variable that does not exist'', named in the key.
 
 Each of the keys a line binds is checked; the line edited is no conflict with itself.
-A literal key over a key a template binds is no conflict either: the literal line
+A literal key over a key a variable binds is no conflict either: the literal line
 overrides it ([[Keybinding variables]]), and the panel says so.
 
 A new value of a variable is refused when it would bind a key twice in one place, or
-make a key alone hide a sequence that nothing hid before.
+make a key alone hide a sequence.
 
 A key suggested by a panel or by `commands.js` is listed too, marked ''suggested'',
 but is not in the file: there is nothing to remove, and the suggestion would be made

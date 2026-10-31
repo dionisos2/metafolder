@@ -130,32 +130,6 @@ fn clash(keys: &[String], binding: &CompiledBinding, scope: &str) -> Option<Stri
     None
 }
 
-/// Every pair of bindings in one place where a key alone hides a sequence it
-/// starts — what a change of variable may bring about (doc "keybindings
-/// panel"). The shipped table has none.
-pub fn sequence_clashes(table: &[CompiledBinding]) -> Vec<String> {
-    let mut out = Vec::new();
-    for short in table {
-        for long in table {
-            if short.when == long.when
-                && short.focus == long.focus
-                && long.keys.len() > short.keys.len()
-                && long.keys[..short.keys.len()] == short.keys[..]
-            {
-                let scope = describe_scope(short.when.as_deref(), short.focus.as_deref());
-                out.push(format!(
-                    "`{}` (`{}`) would hide `{}` (`{}`) {scope}",
-                    short.keys.join(" "),
-                    short.invocation,
-                    long.keys.join(" "),
-                    long.invocation
-                ));
-            }
-        }
-    }
-    out
-}
-
 /// Whether `invocation` runs a command that exists (`known`). Only its first
 /// word is a name — a binding may pre-fill arguments — and a shell line (`!…`)
 /// names none.
@@ -599,10 +573,46 @@ fn parse_entries(source: &str) -> Result<Parsed, String> {
     entries.sort_by(|a, b| {
         (&a.keys, &a.spec.when, &a.spec.focus).cmp(&(&b.keys, &b.spec.when, &b.spec.focus))
     });
+    check_no_key_hides_a_sequence(&entries)?;
     // The lines as the file has them, a key's array in its order.
     let position = |key: &str| key_order.iter().position(|k| k == key).unwrap_or(usize::MAX);
     lines.sort_by_key(|(key, _)| position(key));
     Ok(Parsed { entries, lines, vars, var_order })
+}
+
+/// Refuses a key alone that starts a sequence bound in the same place: it runs
+/// before the sequence, which could never run (`keymatch.js`). The error names
+/// both lines, and the variables that brought them together.
+fn check_no_key_hides_a_sequence(entries: &[Entry]) -> Result<(), String> {
+    for short in entries {
+        for long in entries {
+            if short.spec.when == long.spec.when
+                && short.spec.focus == long.spec.focus
+                && long.keys.len() > short.keys.len()
+                && long.keys[..short.keys.len()] == short.keys[..]
+            {
+                let scope = describe_scope(short.spec.when.as_deref(), short.spec.focus.as_deref());
+                let mut names = referenced(&short.source);
+                names.extend(referenced(&long.source));
+                names.sort();
+                names.dedup();
+                let through = if names.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (through the variables {})", names.join(", "))
+                };
+                return Err(format!(
+                    "`{}` (\"{}\") would hide `{}` (\"{}\") {scope}{through}: \
+                     a key alone runs before any sequence it starts",
+                    short.keys.join(" "),
+                    short.source,
+                    long.keys.join(" "),
+                    long.source
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Parses a keybindings TOML file into (normalized combo, spec) pairs,
@@ -1607,18 +1617,26 @@ vars.y = ","
     }
 
     #[test]
-    fn test_sequence_clashes_name_the_key_that_hides_another() {
-        let table = KeybindingSet::from_source(
-            "\"g\" = { command = \"a\" }\n\"g g\" = { command = \"b\" }\n\
-             \"h\" = { command = \"c\", when = \"log\" }\n\"h h\" = { command = \"d\" }\n",
+    fn test_a_key_hiding_a_sequence_in_one_place_is_refused_at_load() {
+        let error =
+            parse_toml("\"g\" = { command = \"a\" }\n\"g g\" = { command = \"b\" }\n").unwrap_err();
+        assert!(error.contains("`g`") && error.contains("`g g`"), "{error}");
+        assert!(KeybindingSet::from_source(
+            "\"g\" = { command = \"a\" }\n\"g g\" = { command = \"b\" }\n"
         )
-        .unwrap()
-        .compiled();
-        let clashes = sequence_clashes(&table);
-        assert_eq!(clashes.len(), 1, "{clashes:?}");
-        assert!(clashes[0].contains("`g`") && clashes[0].contains("`g g`"), "{clashes:?}");
-        // The shipped keys have none.
-        assert!(sequence_clashes(&crate::doc_gen::default_bindings()).is_empty());
+        .is_err());
+        // Through a value of a variable, within one line: the variable is named.
+        let error = parse_toml("vars.far = [\"a\", \"a b\"]\n\"{far}\" = { command = \"x\" }\n")
+            .unwrap_err();
+        assert!(error.contains("hide") && error.contains("far"), "{error}");
+        // Another place is another keyboard.
+        parse_toml("\"h\" = { command = \"c\", when = \"log\" }\n\"h h\" = { command = \"d\" }\n")
+            .unwrap();
+        // A literal line taking the short key from a variable's still hides.
+        assert!(parse_toml(
+            "vars.x = \"g\"\n\"{x}\" = { command = \"a\" }\n\"g\" = { command = \"b\" }\n\"g g\" = { command = \"c\" }\n"
+        )
+        .is_err());
     }
 
     #[test]
