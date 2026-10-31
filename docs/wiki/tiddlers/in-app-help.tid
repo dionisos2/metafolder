@@ -37,8 +37,8 @@ the list…), and the page of the panel otherwise. `Escape` gives up.
 
 !! Asking about a key: `help:key`
 
-<<key "help:key" "h k">> waits for a key and says what it runs, instead of running
-it:
+<<key "help:key" "h k">> (`Ctrl+h k` in a text field, where `h` is text) waits for a
+key and says what it runs, instead of running it:
 
 ```
 t l runs panel:open here metarecord-list — Set the focused slot's panel type

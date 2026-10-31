@@ -1801,6 +1801,17 @@ scenario_help_keys() {
     assert "help-keys: p E empties the box and goes into it" until_ok 10 reads "trash" "#help-search"
     keys Return p shift+e
     assert "help-keys: p E empties the box again" until_ok 10 reads "" "#help-search"
+    # `Ctrl+h k` while typing: the two keys and the key asked about stay out of the
+    # box, and `h` alone is still text (doc "Keybinding variables").
+    typed "ah"
+    until_ok 10 reads "ah" "#help-search"
+    keys ctrl+h k q
+    sleep 0.5
+    assert "help-keys: Ctrl+h k in a field asks about the next key, typing nothing" \
+        until_ok 10 reads "ah" "#help-search"
+    typed "b"
+    assert "help-keys: the field takes text again after the answer" \
+        until_ok 10 reads "ahb" "#help-search"
 }
 
 # The help's cursor (doc "help panel"): over a list of results, the arrows move

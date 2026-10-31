@@ -39,6 +39,8 @@ vars.go = "g"
 vars.view = "v"
 vars.panels = "t"
 vars.help = "h"
+# The same keys while typing as well, where `h` is text.
+vars.help-typing = "ctrl+h"
 vars.workspaces = "w"
 vars.clipboard = "c"
 # Domains of verbs: the focused panel's actions, the selected metarecord, the
@@ -459,6 +461,10 @@ vars.index = "i"
 "f1" = { command = "help:cursor", text-input = true }
 "{help} k" = { command = "help:key" }
 "{help} x" = { command = "help:command" }
+"{help-typing} h" = { command = "help:open", text-input = true }
+"{help-typing} c" = { command = "help:cursor", text-input = true }
+"{help-typing} k" = { command = "help:key", text-input = true }
+"{help-typing} x" = { command = "help:command", text-input = true }
 
 # ── The focused panel's actions (p) and what it shows (v) ────────────────────
 

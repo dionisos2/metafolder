@@ -327,6 +327,38 @@ fn test_file_manager_root_and_hidden_keybindings() {
     assert_eq!(in_fm(&["v", "r"]).as_deref(), Some("file-manager:toggle root"));
 }
 
+// `ctrl+h` starts the help keys inside a text field too, where `h` is text: it
+// has its own variable, since `text-input` belongs to a line and not to a value
+// of a variable (doc "Keybinding variables").
+#[test]
+fn test_help_keys_work_while_typing_under_ctrl_h() {
+    let (_guard, config) = temp_config();
+    common::install_defaults(&config);
+    let compiled = config.load_keybindings().unwrap().compiled();
+    let global = |keys: &[&str]| {
+        compiled
+            .iter()
+            .find(|b| {
+                b.keys.iter().map(String::as_str).eq(keys.iter().copied())
+                    && b.when.is_none()
+                    && b.focus.is_none()
+            })
+            .unwrap_or_else(|| panic!("{keys:?} is not bound"))
+    };
+
+    for (letter, command) in
+        [("h", "help:open"), ("c", "help:cursor"), ("k", "help:key"), ("x", "help:command")]
+    {
+        let typing = global(&["ctrl+h", letter]);
+        assert_eq!(typing.invocation, command);
+        assert!(typing.text_input, "ctrl+h {letter} must work in a text field");
+
+        let plain = global(&["h", letter]);
+        assert_eq!(plain.invocation, command);
+        assert!(!plain.text_input, "h is text in a field");
+    }
+}
+
 // The `viewer` panel's Backspace: it steps up a level (like the file manager's),
 // and mpv's "back to normal speed" keeps the same key with shift.
 #[test]

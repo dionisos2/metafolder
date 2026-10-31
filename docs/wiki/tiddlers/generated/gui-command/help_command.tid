@@ -9,4 +9,5 @@ summary: Open help for a command (asks which)
 
 !! Default keys
 
+* ``ctrl+h x`` → ``help:command`` (also in a text input)
 * ``h x`` → ``help:command``

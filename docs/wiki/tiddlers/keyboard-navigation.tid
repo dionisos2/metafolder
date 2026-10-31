@@ -84,4 +84,5 @@ from a row goes beside, what is picked from a list goes here.
 A text field keeps its keys, except these: Enter confirms, Escape leaves the field,
 Ctrl+u empties it, Ctrl+a and Ctrl+e go to the start and the end, Ctrl+k clears to
 the end, Ctrl+, and Ctrl+- walk the completion views ([[Completion views]]), Ctrl+l
-clears the status bar, Ctrl+f finds, Ctrl+q quits, F1 is the help cursor.
+clears the status bar, Ctrl+f finds, Ctrl+q quits, F1 is the help cursor, and Ctrl+h starts the help keys (`Ctrl+h k` a
+key, `Ctrl+h c` the cursor…).

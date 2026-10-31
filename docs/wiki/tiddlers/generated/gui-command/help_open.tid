@@ -9,4 +9,5 @@ summary: Open help for a topic
 
 !! Default keys
 
+* ``ctrl+h h`` → ``help:open`` (also in a text input)
 * ``h h`` → ``help:open``

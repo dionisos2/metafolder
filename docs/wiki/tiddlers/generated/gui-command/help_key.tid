@@ -9,4 +9,5 @@ summary: Describe the command a key runs (press the key)
 
 !! Default keys
 
+* ``ctrl+h k`` → ``help:key`` (also in a text input)
 * ``h k`` → ``help:key``

@@ -61,6 +61,17 @@ A command holding `{target}` — the template that once stood for these four lin
 field that filters or searches, and leave it or stay in it ([[Keybindings]]). Everything
 else `Enter` does has its own literal lines, and does not move with them.
 
+!! The help keys while typing
+
+`help` (`h`) is a letter, which a text field keeps as text, and `text-input = true`
+belongs to a line, not to one value of a variable: a list `["h", "ctrl+h"]` would give
+both keys the same answer, so that either `h` would be swallowed in the middle of a
+word or `ctrl+h` would not work in a field. The help keys therefore have a second
+variable, `help-typing` (`ctrl+h`), whose lines carry `text-input = true`, and work in
+and out of a field. In the [[file-manager panel]], out of a field, `ctrl+h` alone
+stays <<key "file-manager:toggle hidden" Ctrl+h>>, which wins over a general sequence;
+the help keys are then `h …`.
+
 !! Changing one of them
 
 The [[keybindings-variables panel]] lists the variables, each with its value, the keys it stands
