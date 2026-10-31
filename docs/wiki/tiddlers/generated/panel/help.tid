@@ -9,7 +9,6 @@ summary: The help panel type
 * ``help:back`` — Help: back to the page shown before
 * ``help:focus`` — Help: focus the search box (clear: empty it first)
 * ``help:forward`` — Help: forward again, after going back
-* ``help:open-hints`` — Help: label the links in view with letters; typing a label follows it
 
 !! Generic commands
 

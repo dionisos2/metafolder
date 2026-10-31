@@ -27,6 +27,7 @@
 "find:next" = "A"
 "find:prev" = "A"
 "find:close" = "B"
+"hints:open" = "B"
 "quit" = "C"
 "view:refresh" = "B"
 "view:zoom" = "B"
@@ -55,7 +56,6 @@
 "help:forward" = "B"
 "help:focus" = "B"
 "help:focus search clear" = "C"
-"help:open-hints" = "B"
 
 # ── Scripts and macros ───────────────────────────────────────────────────────
 "script:run" = "B"

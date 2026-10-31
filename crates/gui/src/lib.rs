@@ -224,6 +224,8 @@ fn register_builtins(registry: &CommandRegistry) {
         ("find:next", "Go to the next find match", false),
         ("find:prev", "Go to the previous find match", false),
         ("find:close", "Close the find bar", false),
+        // Hints (doc "Hints").
+        ("hints:open", "Label what can be clicked in the focused panel; typing a label activates it", false),
         // Help (doc "In-app help"). `log=false`: the help-cursor drives these on
         // every click, which would otherwise flood the message log.
         ("help:open", "Open help for a topic", false),

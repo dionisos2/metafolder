@@ -1,0 +1,6 @@
+title: hints:open
+tags: [[GUI command]] Hints
+kind: reference
+summary: Labels what can be clicked in the focused panel; typing a label activates it.
+
+`hints:open` — <<key "hints:open" "g h">>: labels everything clickable in view of the focused panel with one or more letters, the way avy jumps in Emacs. Typing a label activates its element; Escape cancels. A panel with nothing to click in view says so in the status bar ([[Hints]]).

@@ -441,6 +441,7 @@ vars.index = "i"
 "{target-other} {go} m" = { command = "file-manager:reveal other" }
 "{target-new} {go} m" = { command = "file-manager:reveal new" }
 # The selection's folder as a list: from a row, so beside it.
+"{go} h" = { command = "hints:open" }
 "{go} s" = { command = "metarecord-list:folder other" }
 "{target-here} {go} s" = { command = "metarecord-list:folder here" }
 "{target-other} {go} s" = { command = "metarecord-list:folder other" }
@@ -474,10 +475,7 @@ vars.index = "i"
 "{panel} {query-verb}" = { command = "metarecord-list:focus normal", when = "metarecord-list" }
 "{panel} shift+{query-verb}" = { command = "metarecord-list:focus normal clear", when = "metarecord-list" }
 "{panel} {unset}" = { command = "metarecord-list:clear-all", when = "metarecord-list" }
-"{panel} {open}" = [
-  { command = "help:open-hints", when = "help" },
-  { command = "sync:plan", when = "sync" },
-]
+"{panel} {open}" = { command = "sync:plan", when = "sync" }
 "{panel} shift+{open}" = { command = "sync:open", when = "sync" }
 "{panel} {run}" = [
   { command = "viewer:restart", when = "viewer" },

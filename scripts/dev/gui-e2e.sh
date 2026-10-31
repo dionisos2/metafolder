@@ -50,7 +50,7 @@
 #   field-keys reconcile ignore sync repos list tag-query folder-list panel-txn reveal layout script
 #   script-workspaces errors picker refs hierarchy hierarchy-form prompt history
 #   keybindings validate-keys open-with tab-close close-layout pick-button suggested-key config-files walk open-viewers
-#   edit-text slideshow context-menu open-tree-node shell-line shell-cwd repos-memory help-keys help-cursor zoom order user-commands
+#   edit-text slideshow context-menu open-tree-node shell-line shell-cwd repos-memory help-keys help-cursor hints zoom order user-commands
 #   settle macro clipboard saved-workspaces, and
 #   devtools last (it takes the inspector the clicking scenarios drive).
 #   --unsandboxed  pass --allow-unsandboxed-webview to the GUI (a container
@@ -1788,6 +1788,49 @@ scenario_help_keys() {
 
 # The help's cursor (doc "help panel"): over a list of results, the arrows move
 # it and Enter opens the page under it; over a page, they scroll the page.
+# doc "Hints": labels on the real layout, and what typing one does to each kind of
+# element. jsdom lays nothing out, so where a label lands is only seen here.
+scenario_hints() {
+    needs_keyboard hints || return 0
+    needs_clicks hints || return 0
+    new_repo hints
+    show_panel left help help:focus search
+    keys ctrl+a
+    typed "help panel"
+    keys Return
+    assert "hints: the page is shown" until_ok 10 reads "help panel" "#help-title"
+
+    run panel:focus left
+    run hints:open
+    assert "hints: the labels show" until_ok 10 shows ".hint-bar"
+    local label_left label_top _r _b field_left field_top
+    read -r label_left label_top _r _b < <(webview bounds ".hint-label" "a")
+    read -r field_left field_top _r _b < <(webview bounds "#help-search")
+    local gap_left=$(( ${label_left%.*} - ${field_left%.*} )) gap_top=$(( ${label_top%.*} - ${field_top%.*} ))
+    assert "hints: the first label is on the search box" \
+        test "${gap_left#-}" -lt 10 -a "${gap_top#-}" -lt 10
+    keys Escape
+    assert "hints: Escape cancels" until_ok 10 eval '! shows ".hint-bar"'
+
+    run hints:open
+    until_ok 10 shows ".hint-bar"
+    keys a
+    typed "x"
+    assert "hints: a text zone takes the focus" until_ok 10 reads "help panelx" "#help-search"
+    run help:focus search clear
+    typed "#trash"
+    run help:apply search
+    assert "hints: a search lists results" until_ok 10 shows "#help-results"
+
+    # A row is clickable by its style alone: labelled, and a click opens its page.
+    run panel:focus left
+    run hints:open
+    until_ok 10 shows ".hint-bar"
+    typed "d"
+    assert "hints: its label clicks the row" until_ok 10 eval '! shows ".hint-bar"'
+    assert "hints: which opens its page" until_ok 10 shows "#help-title"
+}
+
 scenario_help_cursor() {
     needs_keyboard help-cursor || return 0
     new_repo help-cursor

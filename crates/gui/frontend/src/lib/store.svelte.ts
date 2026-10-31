@@ -155,6 +155,13 @@ export const store = $state({
       index: -1,
       focusTick: 0,
     },
+    /// The hints shown over the focused panel (doc "Hints"): each label and where
+    /// it goes, and the letters typed so far.
+    hints: {
+      open: false,
+      typed: '',
+      items: [] as { label: string; top: number; left: number }[],
+    },
     /// Shell scripts currently running (doc "Script sessions"): a loading
     /// indicator so a slow script never looks frozen. Fed by
     /// `script-task-changed`; empty when nothing runs. `done`/`total`/`phase`

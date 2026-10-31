@@ -1,0 +1,42 @@
+title: Hints
+tags: GUI
+kind: guide
+aliases: hints link-hints avy help-hints
+summary: g h puts a label of letters on everything clickable in view of the focused panel, in any panel type; typing a label activates it, as a click would.
+
+<<key "hints:open" "g h">> puts a label of one or more letters on everything that can
+be clicked in the focused panel, the way avy jumps in Emacs. Typing a label activates
+its element; while a label is half typed, only the ones it starts are shown, and a
+letter no label continues is ignored. Escape cancels and leaves the panel as it was.
+
+It works in every panel type because the shell does it: a panel has nothing to
+provide, as for [[Find in a panel]].
+
+!! What is labelled
+
+* the controls: links, buttons, text zones, checkboxes, radio buttons, selects, editable text, and what has one of those roles;
+* whatever the panel's style gives a pointer cursor (`cursor: pointer`): this is how a row of a list, or a tab, says that it can be clicked. What lies inside such an element shares its pointer and gets no label of its own, unless it is a control;
+* a `<label>` and its control are one: only the control gets a label.
+
+A panel whose element reacts to a click without any of these has to give it
+`cursor: pointer`, which it owes the mouse anyway.
+
+Only what is in view is labelled, so the labels stay short: one letter for up to 26
+elements, two beyond. Neither what is disabled or hidden is, nor what a scrolling part
+of the panel cuts off. What is covered by something else of the same panel is still
+labelled. To reach an element further down, scroll to it first.
+
+!! What activating does
+
+A text zone, a number or date field, a select or editable text gets the focus, ready
+to type in. Everything else gets a click: a button runs, a checkbox toggles, a row is
+selected, as with the mouse ([[Opening a row]]).
+
+!! While the labels show
+
+The letters go to a small box of their own at the bottom right (`focus = "hints"`), so
+no other key takes them. The labels mark where things were: scrolling, resizing the
+window, changing panel or leaving the box ends them. If the panel redraws under them,
+a label typed for an element that is gone says so in the status bar and clicks nothing.
+
+Like a click, activating an element is not recorded in a macro ([[Macros]]).

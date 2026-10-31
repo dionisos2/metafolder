@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/hints:open
+catalog: GUI command
+target: hints:open
+summary: Label what can be clicked in the focused panel; typing a label activates it
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``g h`` → ``hints:open``

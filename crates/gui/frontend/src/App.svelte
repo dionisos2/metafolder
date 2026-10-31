@@ -9,6 +9,7 @@
   import Slot from './components/Slot.svelte';
   import CommandInput from './components/CommandInput.svelte';
   import FindBar from './components/FindBar.svelte';
+  import HintLayer from './components/HintLayer.svelte';
   import StatusBar from './components/StatusBar.svelte';
   import TaskBar from './components/TaskBar.svelte';
   import PanelHost from './lib/panels/PanelHost.svelte';
@@ -104,6 +105,7 @@
     {/if}
   </div>
   <PanelHost />
+  <HintLayer />
 {:else}
   <div class="loading">Loading…</div>
 {/if}

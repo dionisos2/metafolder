@@ -38,6 +38,7 @@ says what it runs ([[In-app help]]).
 |Ctrl+c, Ctrl+x, Ctrl+v |copy, cut, paste files (also `c c`, `c x`, `c v`) |
 |Ctrl+a, Ctrl+Shift+a |check every row, none (while typing: the start of the line) |
 |Ctrl+f |find in the panel ([[Find in a panel]]) |
+|g h |click from the keyboard: label what can be clicked ([[Hints]]) |
 |Ctrl+r |read the panel again (while typing: the input history) |
 |Ctrl+t, Ctrl+w, Ctrl+Tab, Ctrl+Shift+Tab |new workspace, close it, next, previous |
 |Ctrl+s, Ctrl+o, Ctrl+d |save the workspace, open a saved one, duplicate it |

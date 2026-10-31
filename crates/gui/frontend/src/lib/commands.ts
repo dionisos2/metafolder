@@ -18,6 +18,7 @@ import type {
 } from "./completions";
 import { setHelpCursor } from "./cursor";
 import { closeFind, openFind, stepFind } from "./find";
+import { openHints } from "./hints";
 import {
   ignorePresetCandidates,
   ignoreTarget,
@@ -2917,6 +2918,10 @@ async function runCommand(
       return true;
     case "find:close":
       closeFind();
+      return true;
+
+    case "hints:open":
+      openHints();
       return true;
 
     case "help:open":
