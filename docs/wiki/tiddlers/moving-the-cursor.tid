@@ -28,6 +28,7 @@ const cursor = createListCursor({
 });
 
 async function select(index) {
+  if (!metafolder.workspace.mayMoveSelection()) return; // [[Edits in progress]]
   cursorIndex = index;
   await cursor.move(index);          // highlight, scroll into view, publish
 }

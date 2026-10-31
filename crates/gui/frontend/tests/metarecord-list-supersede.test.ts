@@ -97,6 +97,7 @@ function stubApi(vars: Record<string, unknown>, reads: Read[]) {
       pick: { start: async () => '' },
       config: {},
       workspace: {
+        mayMoveSelection: () => true,
         get: async (key: string) => store.get(key) ?? null,
         set: vi.fn(async (key: string, value: unknown) => void store.set(key, value)),
         adoptRepo: async () => {},

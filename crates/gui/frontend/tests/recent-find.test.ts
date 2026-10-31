@@ -62,6 +62,7 @@ function stub() {
     },
     changes: { sync: async () => {}, subscribe: () => () => {} },
     workspace: {
+      mayMoveSelection: () => true,
       get: vi.fn(async (key: string): Promise<string | null> => (key === 'active_repo' ? 'r' : null)),
       set: vi.fn(async () => {}),
       onChange: noop,

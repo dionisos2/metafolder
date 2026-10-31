@@ -573,7 +573,9 @@ export async function mount(root, metafolder) {
 
   /** @param {MetafolderApi} mf @param {number} index */
   async function select(mf, index) {
-    cursorIndex = Math.max(0, Math.min(index, listing.length - 1));
+    const next = Math.max(0, Math.min(index, listing.length - 1));
+    if (next !== cursorIndex && !mf.workspace.mayMoveSelection()) return;
+    cursorIndex = next;
     // Keep the cursor inside the rendered window (jumping to the last entry
     // expands it so the row exists in the DOM to scroll to). Tracked status is
     // already loaded for the whole directory, so revealing rows needs no fetch.

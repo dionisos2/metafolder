@@ -3,7 +3,7 @@
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { setFunctionProvider } from '../src/lib/panelFunctions';
-import { confirmClosing, confirmSelectionWrite } from '../src/lib/unsavedEdits';
+import { confirmClosing, confirmSelectionWrite, mayMoveSelection } from '../src/lib/unsavedEdits';
 import { createPanelApi } from '../src/lib/panels/api';
 
 const WS = 'ws-1';
@@ -83,6 +83,27 @@ describe('confirmSelectionWrite', () => {
     await tick();
     await confirmSelectionWrite(WS, 'selected_paths', ['/c'], read);
     expect(ask).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('mayMoveSelection', () => {
+  test('nothing in progress: yes, without asking', () => {
+    provider([]);
+    const ask = vi.fn(() => false);
+    vi.stubGlobal('confirm', ask);
+    expect(mayMoveSelection(WS)).toBe(true);
+    expect(ask).not.toHaveBeenCalled();
+  });
+
+  test('refused keeps the edit, agreed discards it', () => {
+    const discard = vi.fn();
+    provider([{ describe: 'a.txt', discard }]);
+    vi.stubGlobal('confirm', vi.fn(() => false));
+    expect(mayMoveSelection(WS)).toBe(false);
+    expect(discard).not.toHaveBeenCalled();
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    expect(mayMoveSelection(WS)).toBe(true);
+    expect(discard).toHaveBeenCalledOnce();
   });
 });
 

@@ -80,6 +80,7 @@ function stub() {
     },
     changes: { sync: vi.fn(async () => {}), subscribe: () => () => {} },
     workspace: {
+      mayMoveSelection: () => true,
       get: vi.fn(async (key: string) => (key === 'active_repo' ? 'r' : null)),
       set: vi.fn(async () => {}),
       setMany: vi.fn(async () => {}),

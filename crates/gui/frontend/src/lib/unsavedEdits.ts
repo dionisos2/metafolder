@@ -12,6 +12,19 @@ const SELECTION = new Set(['selected_metarecord', 'selected_paths']);
 // next write has run, which is before the next task.
 let refusedWorkspace: string | null = null;
 
+/** Whether the selection of workspace `ws` may move, having asked if it would
+ *  leave an edit. Agreeing discards the edit. For what moves along with the
+ *  selection, a list's cursor, to ask before it moves. */
+export function mayMoveSelection(ws: string): boolean {
+  const edits = functionProvider()?.unsaved(ws) ?? [];
+  if (edits.length === 0) return true;
+  if (!confirm(`Unsaved changes in ${names(edits)} — discard them and move the selection?`)) {
+    return false;
+  }
+  for (const edit of edits) edit.discard();
+  return true;
+}
+
 /** Whether the write of `key` may go on, having asked if it would leave an edit
  *  of workspace `ws`. Agreeing discards the edit. `read` gives the variable's value
  *  now: writing the same selection again is no move. */
@@ -28,12 +41,7 @@ export async function confirmSelectionWrite(
   if (JSON.stringify((await read(key)) ?? null) === JSON.stringify(value ?? null)) return true;
   // The edit may have ended, or the move been refused, during the read.
   if (refusedWorkspace === ws) return false;
-  const current = functionProvider()?.unsaved(ws) ?? [];
-  if (current.length === 0) return true;
-  if (confirm(`Unsaved changes in ${names(current)} — discard them and move the selection?`)) {
-    for (const edit of current) edit.discard();
-    return true;
-  }
+  if (mayMoveSelection(ws)) return true;
   refusedWorkspace = ws;
   setTimeout(() => {
     refusedWorkspace = null;

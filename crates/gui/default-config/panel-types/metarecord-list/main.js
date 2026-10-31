@@ -574,7 +574,9 @@ export async function mount(root, metafolder) {
 
   /** @param {MetafolderApi} mf @param {number} index */
   async function setCursor(mf, index) {
-    cursorIndex = Math.max(0, Math.min(index, metarecords.length - 1));
+    const next = Math.max(0, Math.min(index, metarecords.length - 1));
+    if (next !== cursorIndex && !mf.workspace.mayMoveSelection()) return;
+    cursorIndex = next;
     if (!metarecords[cursorIndex]) {
       render();
       return;

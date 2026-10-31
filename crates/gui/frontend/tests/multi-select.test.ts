@@ -38,6 +38,7 @@ function stubWorkspace(vars: Record<string, unknown> = {}) {
       },
       all: async () => ({}),
       adoptRepo: async () => {},
+      mayMoveSelection: () => true,
       create: async () => '',
       setMany: async () => {},
       send: async () => {},

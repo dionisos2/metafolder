@@ -126,6 +126,7 @@ function stub(vars: Record<string, unknown>, existing: Set<string>) {
     },
     changes: { sync: vi.fn(async () => {}), subscribe: vi.fn(() => () => {}) },
     workspace: {
+      mayMoveSelection: () => true,
       get: async (key: string) => store.get(key) ?? null,
       set: async (key: string, value: unknown) => {
         store.set(key, value);

@@ -91,6 +91,7 @@ function stubApi(handlers: Map<string, Handler>, calls: Call[], queryCalls: unkn
       pick: { start: async () => '' },
       config: {},
       workspace: {
+        mayMoveSelection: () => true,
         get: async (key: string) => store.get(key) ?? null,
         set: setVar,
         adoptRepo: async () => {},

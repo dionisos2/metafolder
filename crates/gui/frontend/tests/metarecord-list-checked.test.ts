@@ -107,6 +107,7 @@ function stub(vars: Record<string, unknown>, existing: Set<string>) {
     pick: { start: async () => '' },
     config: {},
     workspace: {
+      mayMoveSelection: () => true,
       get: async (key: string) => store.get(key) ?? null,
       set: async (key: string, value: unknown) => {
         store.set(key, value);

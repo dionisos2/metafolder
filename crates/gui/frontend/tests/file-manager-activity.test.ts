@@ -111,6 +111,7 @@ function stub(
         };
       }) },
     workspace: {
+      mayMoveSelection: () => true,
       get: async (key: string) => (key === 'active_repo' ? repo : null),
       set: vi.fn(async () => {}),
       onChange(key: string, listener: (v: unknown) => void) {

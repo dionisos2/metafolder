@@ -88,6 +88,7 @@ function stub(repo: string | null, vars: Record<string, unknown>, repoRoot = '/r
     },
     changes: { sync: vi.fn(async () => {}), subscribe: vi.fn(() => () => {}) },
     workspace: {
+      mayMoveSelection: () => true,
       get: async (key: string) => (key === 'active_repo' ? repo : (vars[key] ?? null)),
       set: setVar,
       onChange: (key: string, cb: (value: unknown) => void) => subscriptions.set(key, cb),
@@ -420,6 +421,7 @@ describe('the file-manager:reveal command (shipped commands.js)', () => {
   function fakeMf() {
     return {
       workspace: {
+        mayMoveSelection: () => true,
         get: async (key: string) => (key === 'selected_paths' ? state.paths : null),
         set: async (key: string, value: unknown) => {
           calls.sets.push({ key, value });

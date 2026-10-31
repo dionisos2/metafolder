@@ -115,6 +115,7 @@ async function mountPanel(daemon: ReturnType<typeof memoryDaemon>, vars = new Ma
     pick: { start: async () => '' },
     config: {},
     workspace: {
+      mayMoveSelection: () => true,
       get: async (key: string) => vars.get(key) ?? null,
       set: async (key: string, value: unknown) => void vars.set(key, value),
       adoptRepo: async () => {},

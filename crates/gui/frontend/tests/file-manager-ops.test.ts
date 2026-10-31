@@ -94,6 +94,7 @@ function stub(repo: string | null, vars: Record<string, unknown> = {}) {
     },
     changes: { sync: vi.fn(async () => {}), subscribe: vi.fn(() => () => {}) },
     workspace: {
+      mayMoveSelection: () => true,
       get: async (key: string) => (key === 'active_repo' ? repo : (vars[key] ?? null)),
       set: vi.fn(async () => {}),
       onChange: noop,

@@ -77,6 +77,7 @@ function stub() {
     },
     changes: { sync: vi.fn(async () => {}), subscribe: vi.fn(() => () => {}) },
     workspace: {
+      mayMoveSelection: () => true,
       get: async (key: string) => (key === 'active_repo' ? 'r' : (vars[key] ?? null)),
       set: setVar,
       onChange: (key: string, cb: (value: unknown) => void) => subscriptions.set(key, cb),

@@ -183,7 +183,9 @@ export function mount(root, metafolder) {
   /** @param {MetafolderApi} mf @param {number} index */
   async function select(mf, index) {
     if (rows.length === 0) return;
-    cursorIndex = Math.max(0, Math.min(index, rows.length - 1));
+    const next = Math.max(0, Math.min(index, rows.length - 1));
+    if (next !== cursorIndex && !mf.workspace.mayMoveSelection()) return;
+    cursorIndex = next;
     await cursor.move(cursorIndex, mf);
   }
 

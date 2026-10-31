@@ -133,7 +133,9 @@ export function mount(root, metafolder) {
    *  follows (the same live-preview the metarecord list does).
    *  @param {MetafolderApi} mf @param {number} index */
   async function select(mf, index) {
-    cursorIndex = Math.max(0, Math.min(index, rows.length - 1));
+    const next = Math.max(0, Math.min(index, rows.length - 1));
+    if (next !== cursorIndex && !mf.workspace.mayMoveSelection()) return;
+    cursorIndex = next;
     await cursor.move(cursorIndex, mf);
   }
 

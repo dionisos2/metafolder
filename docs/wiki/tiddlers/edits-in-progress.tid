@@ -13,8 +13,12 @@ or a text file with unsaved changes in the [[viewer panel]] ([[Editing a text fi
 
 Writing the selection it already holds is no move, and asks nothing.
 
-A list's own cursor is not held back: after a refusal it may sit on another row than the
-selection, until it moves again.
+The cursor of a list that publishes the selection asks before moving, so a refusal
+leaves it on its row: [[metarecord-list panel]], [[file-manager panel]], [[path-ref panel]],
+[[recent panel]], [[duplicates panel]].
+
+Going into another folder or node is not held back: the list changes, and only its
+selection stays.
 
 Scripts are not stopped by it. A selection written through `mf gui view`, or a workspace
 closed from outside the GUI, does not ask first: the panels still keep their edit when
@@ -34,6 +38,7 @@ metafolder.provide({
 });
 ```
 
-The check is in `workspace.set` and `workspace.setMany`, before the write, and a writer
+A list asks before moving its cursor, with `mf.workspace.mayMoveSelection()`: true at once
+when nothing is in progress, and an edit given up on a yes. ''The check is also'' in `workspace.set` and `workspace.setMany`, before the write, and a writer
 setting `selected_metarecord` then `selected_paths` is asked once. The other selections
 of the workspace (`workspace.send` from another one) go through without asking.

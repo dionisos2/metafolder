@@ -91,6 +91,7 @@ function stubApi(panelType: string, defaults: Record<string, unknown> = {}) {
       setKeybindingVariable: async () => VIEW,
     },
     workspace: {
+      mayMoveSelection: () => true,
       get: async () => null,
       set: async () => {},
       all: async () => ({}),

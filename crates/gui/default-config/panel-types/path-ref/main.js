@@ -436,7 +436,9 @@ export async function mount(root, metafolder) {
    *  "Command transactions"), or the panel's own API for a click.
    *  @param {MetafolderApi} mf @param {number} index */
   async function select(mf, index) {
-    cursorIndex = Math.max(0, Math.min(index, children.length - 1));
+    const next = Math.max(0, Math.min(index, children.length - 1));
+    if (next !== cursorIndex && !mf.workspace.mayMoveSelection()) return;
+    cursorIndex = next;
     await cursor.move(cursorIndex, mf);
   }
 

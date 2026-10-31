@@ -96,6 +96,7 @@ function stubApi(
     pick: { start: async () => '' },
     config: {},
     workspace: {
+      mayMoveSelection: () => store.get('moves-refused') !== true,
       get: async (key: string) => store.get(key) ?? null,
       set: async (key: string, value: unknown) => {
         store.set(key, value);
@@ -218,5 +219,32 @@ describe('the sort, published with the query', () => {
   test('is the empty list until a column is sorted', async () => {
     const p = await mountPanel(1);
     expect(p.store.get('metarecord-list:sort')).toEqual([]);
+  });
+});
+
+describe('a move refused to keep an edit (doc "Edits in progress")', () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('[]', { status: 200 })),
+    );
+    document.body.replaceChildren();
+    if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
+  });
+
+  test('leaves the cursor where it was', async () => {
+    const panel = await mountPanel(1);
+    await panel.next();
+    const row = panel.cursorRow();
+    const selected = panel.selected();
+
+    panel.store.set('moves-refused', true);
+    await panel.next();
+    expect(panel.cursorRow()).toBe(row);
+    expect(panel.selected()).toBe(selected);
+
+    panel.store.set('moves-refused', false);
+    await panel.next();
+    expect(panel.cursorRow()).toBe(row + 1);
   });
 });

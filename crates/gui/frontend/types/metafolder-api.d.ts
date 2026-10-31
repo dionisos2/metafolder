@@ -336,6 +336,10 @@ declare namespace Metafolder {
      *  is told, so a panel following several of them never reads a
      *  half-written state. */
     setMany(vars: Record<string, unknown>): Promise<void>;
+    /** Whether the selection may move: true at once with no edit in progress,
+     *  else the user's answer, an edit given up on a yes (doc "Edits in
+     *  progress"). A list asks before moving its cursor. */
+    mayMoveSelection(): boolean;
     /** Every variable the workspace holds now, `active_repo` included — what a
      *  panel built after some were set starts from (`onChange` only reports
      *  what moves afterwards). */

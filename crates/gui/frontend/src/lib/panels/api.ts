@@ -14,7 +14,7 @@ import { checkTarget, resolveTarget } from '../targets';
 import { transactional } from '../txn';
 import type { ExecContext } from '../types';
 import { daemonWork } from '../working';
-import { confirmSelectionWrite } from '../unsavedEdits';
+import { confirmSelectionWrite, mayMoveSelection } from '../unsavedEdits';
 import { globalMirror } from '../globals';
 import { changeFeed, type ChangeEvent } from './changes';
 import {
@@ -639,6 +639,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
           if (Object.keys(allowed).length === 0) return;
           await invoke('workspace_send', { wsId: ctx.wsId, vars: allowed });
         },
+        mayMoveSelection: () => mayMoveSelection(ctx.wsId),
         all: () => invoke('ws_vars', { wsId: ctx.wsId }) as Promise<Record<string, unknown>>,
         adoptRepo: (repo: string) => invoke('adopt_repo', { wsId: ctx.wsId, repo }) as Promise<void>,
         // The workspace primitives (doc "Workspaces"): an empty workspace, the

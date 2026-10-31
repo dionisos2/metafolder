@@ -96,6 +96,7 @@ function stubApi(
     pick: { start: async () => '' },
     config: {},
     workspace: {
+      mayMoveSelection: () => true,
       get: async (key: string) => store.get(key) ?? null,
       set: async (key: string, value: unknown) => void store.set(key, value),
       adoptRepo: async () => {},
