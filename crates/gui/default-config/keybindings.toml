@@ -79,6 +79,7 @@ vars.index = "i"
 # The other panel; F6 walks the panels and a script's question (doc "Script
 # sessions"), whose keys it takes and gives back. Tab is left to the panels.
 "o" = { command = "panel:focus next" }
+"l" = { command = "hints:open" }
 "f6" = { command = "panel:focus cycle" }
 
 # Macros (doc "Macros"), on Emacs's keys.
@@ -441,7 +442,6 @@ vars.index = "i"
 "{target-other} {go} m" = { command = "file-manager:reveal other" }
 "{target-new} {go} m" = { command = "file-manager:reveal new" }
 # The selection's folder as a list: from a row, so beside it.
-"{go} h" = { command = "hints:open" }
 "{go} s" = { command = "metarecord-list:folder other" }
 "{target-here} {go} s" = { command = "metarecord-list:folder here" }
 "{target-other} {go} s" = { command = "metarecord-list:folder other" }

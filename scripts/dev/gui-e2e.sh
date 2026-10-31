@@ -1801,8 +1801,8 @@ scenario_hints() {
     assert "hints: the page is shown" until_ok 10 reads "help panel" "#help-title"
 
     run panel:focus left
-    run hints:open
-    assert "hints: the labels show" until_ok 10 shows ".hint-bar"
+    keys l
+    assert "hints: its key shows the labels" until_ok 10 shows ".hint-bar"
     local label_left label_top _r _b field_left field_top
     read -r label_left label_top _r _b < <(webview bounds ".hint-label" "a")
     read -r field_left field_top _r _b < <(webview bounds "#help-search")

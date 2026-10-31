@@ -2,9 +2,9 @@ title: Hints
 tags: GUI
 kind: guide
 aliases: hints link-hints avy help-hints
-summary: g h puts a label of letters on everything clickable in view of the focused panel, in any panel type; typing a label activates it, as a click would.
+summary: l puts a label of letters on everything clickable in view of the focused panel, in any panel type; typing a label activates it, as a click would.
 
-<<key "hints:open" "g h">> puts a label of one or more letters on everything that can
+<<key "hints:open" "l">> puts a label of one or more letters on everything that can
 be clicked in the focused panel, the way avy jumps in Emacs. Typing a label activates
 its element; while a label is half typed, only the ones it starts are shown, and a
 letter no label continues is ignored. Escape cancels and leaves the panel as it was.

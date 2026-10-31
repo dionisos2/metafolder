@@ -3,16 +3,17 @@ catalog: Key usage
 target: Key levels
 summary: The keys used and left at each level
 
-!! Level 0: the letters used (15)
+!! Level 0: the letters used (16)
 
 |!Letter |!For |
 |``b`` |starts 28 keys (``{target-other}``) |
 |``c`` |starts 4 keys (``{clipboard}``) |
 |``e`` |starts 5 keys (``{item}``) |
 |``f`` |``cursor:find self select``; ``metarecord-list:focus finder`` (in ``metarecord-list``) |
-|``g`` |starts 12 keys (``{go}``) |
+|``g`` |starts 11 keys (``{go}``) |
 |``h`` |starts 4 keys (``{help}``) |
 |``i`` |starts 28 keys (``{target-here}``) |
+|``l`` |``hints:open`` |
 |``m`` |starts 19 keys (``{record}``) |
 |``n`` |starts 29 keys (``{target-new}``) |
 |``o`` |``panel:focus next`` |
@@ -22,9 +23,9 @@ summary: The keys used and left at each level
 |``w`` |starts 4 keys (``{workspaces}``) |
 |``x`` |``command-input:focus command`` |
 
-!! Level 0: the letters left (11)
+!! Level 0: the letters left (10)
 
-``a`` ``d`` ``j`` ``k`` ``l`` ``q`` ``r`` ``s`` ``u`` ``y`` ``z``
+``a`` ``d`` ``j`` ``k`` ``q`` ``r`` ``s`` ``u`` ``y`` ``z``
 
 !! Level 1
 

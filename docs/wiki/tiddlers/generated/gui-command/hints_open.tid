@@ -9,4 +9,4 @@ summary: Label what can be clicked in the focused panel; typing a label activate
 
 !! Default keys
 
-* ``g h`` → ``hints:open``
+* ``l`` → ``hints:open``

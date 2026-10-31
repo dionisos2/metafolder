@@ -1855,7 +1855,7 @@ vars.y = ","
 
         // A single letter is for what is done all the time; every other one
         // starts a domain, so that no letter is spent on a verb alone.
-        const CONSTANT: [&str; 6] = ["x", "shift+x", "o", "f", "shift+f", "space"];
+        const CONSTANT: [&str; 7] = ["x", "shift+x", "o", "f", "shift+f", "l", "space"];
         for binding in table.iter().filter(|b| b.keys.len() == 1) {
             let key = binding.keys[0].as_str();
             let bare = key.trim_start_matches("shift+");

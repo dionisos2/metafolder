@@ -27,7 +27,7 @@
 "find:next" = "A"
 "find:prev" = "A"
 "find:close" = "B"
-"hints:open" = "B"
+"hints:open" = "A"
 "quit" = "C"
 "view:refresh" = "B"
 "view:zoom" = "B"

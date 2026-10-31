@@ -39,7 +39,7 @@ Every command falls in a class, by how often it is used — written in
 |✕ |cannot be undone |never a key |
 
 A ''single letter'' is spent only on class A: `x` the command input, `o` the other
-panel, `f` find, Space. Every other letter starts a ''domain''.
+panel, `f` find, `l` the hints, Space. Every other letter starts a ''domain''.
 
 !! A domain, then a verb
 
