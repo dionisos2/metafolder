@@ -72,30 +72,19 @@ describe('the normal zone history', () => {
     expect(normalHistory.push).toHaveBeenCalledWith('rating > 3');
   });
 
-  test('a query a command showed there is not recorded, even applied again', async () => {
+  test('a query a command showed there is recorded', async () => {
     const { editor, mf, normalHistory } = setup();
     await editor.restore();
     await editor.show(mf, 'orphan = true');
-    await editor.apply(mf);
-    expect(normalHistory.push).not.toHaveBeenCalled();
+    expect(normalHistory.push).toHaveBeenCalledWith('orphan = true');
   });
 
-  test('editing what a command showed there records the edit', async () => {
-    const { editor, input, mf, normalHistory } = setup();
-    await editor.restore();
-    await editor.show(mf, 'orphan = true');
-    input('normal-input').value = 'orphan = false';
-    await editor.apply(mf);
-    expect(normalHistory.push).toHaveBeenCalledWith('orphan = false');
-  });
-
-  test('a query another panel wrote in the variables is not recorded', async () => {
-    const { editor, store, listeners, input, normalHistory } = setup();
+  test('a query another panel wrote in the variables is recorded', async () => {
+    const { editor, store, listeners, normalHistory } = setup();
     await editor.restore();
     store.set('metarecord-list:normal-query', 'y = 2');
     listeners.get('metarecord-list:normal-query')!('y = 2');
-    await vi.waitFor(() => expect(input('normal-input').value).toBe('y = 2'));
-    expect(normalHistory.push).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(normalHistory.push).toHaveBeenCalledWith('y = 2'));
   });
 });
 

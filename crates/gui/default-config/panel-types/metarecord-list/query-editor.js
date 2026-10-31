@@ -5,7 +5,7 @@
 // the base query they compile to, and the workspace variables that are its
 // state. What it needs from the panel arrives through `ctx`:
 //   history   -> the simplified zone's input history (an apply records its text)
-//   normalHistory -> the normal zone's (an explicit apply records what was typed there)
+//   normalHistory -> the normal zone's (likewise, whoever wrote the text)
 //   onApply() -> an apply began (the panel now has a query to run)
 //   run()     -> run the compiled query (a reset of the list)
 
@@ -148,19 +148,11 @@ export function createQueryEditor({ root, metafolder, history, normalHistory, on
     return true;
   }
 
-  /** An apply the user asked for. The normal zone is also where commands write
-   *  (`show`), and a folder's query is not something typed: only a text that
-   *  differs from what was last applied or written there is recorded.
-   *  @param {MetafolderApi} mf */
-  async function submitQuery(mf) {
-    if (normalInput.value !== appliedState.normal) normalHistory.push(normalInput.value);
-    await applyQuery(mf);
-  }
-
   /** @param {MetafolderApi} mf */
   async function applyQuery(mf) {
     onApply();
     history.push(queryInput.value.trim());
+    normalHistory.push(normalInput.value.trim());
     const ok = await recomputeQuery(mf);
     await persistQueryState(mf);
     if (ok) await run(mf);
@@ -315,7 +307,7 @@ export function createQueryEditor({ root, metafolder, history, normalHistory, on
     simplifiedInput: queryInput,
     normalInput,
     recompute: recomputeQuery,
-    apply: submitQuery,
+    apply: applyQuery,
     show: showQuery,
     clear: clearQueries,
     toggleExpansion,

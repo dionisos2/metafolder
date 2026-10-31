@@ -56,9 +56,9 @@ walk. A panel without fields with a history lets the keys pass through.
 An entry is recorded when the zone is ''submitted'' — `Enter`, or the command that
 applies it — never while typing. The command mode records what actually ran: the
 command chosen in the list, not the few letters typed to reach it. An answer to a
-question — a command's argument, a script's prompt — is not recorded. Nor is a query
-a command shows in the normal query field, a folder's for instance: it is not what
-was typed there, and would bury it. Editing it and applying records the edit.
+question — a command's argument, a script's prompt — is not recorded. A query a command
+shows in the normal query field, a folder's for instance, is recorded like a typed
+one: it is applied there, and can be recalled and edited.
 
 Submitting the same text twice in a row records it once. Each zone keeps its 1000
 newest entries.
