@@ -484,7 +484,11 @@ fn key_levels_note() -> String {
         if !sequences.is_empty() {
             let names: Vec<String> = variables
                 .iter()
-                .filter(|v| v.keys.split_whitespace().next() == Some(letter.as_str()))
+                .filter(|v| {
+                    v.values
+                        .iter()
+                        .any(|keys| keys.split_whitespace().next() == Some(letter.as_str()))
+                })
                 .filter(|v| starts_a_line(&v.name))
                 .map(|v| code(&format!("{{{}}}", v.name)))
                 .collect();

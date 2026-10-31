@@ -1,6 +1,7 @@
 // keybindings-variables panel: the variables of keybindings.toml (doc
 // "keybindings-variables panel", doc "Keybinding variables"), each with its
-// value, editable in place, the keys it stands for and how many lines use it.
+// value, editable in place — several apart with ` | ` —, the keys it stands for
+// and how many lines use it.
 // What a new value would do is asked of the backend as it is typed
 // (`config.checkKeybindingVariable`), the same check the save makes. A filter
 // keeps the variables by key or by name.
@@ -28,10 +29,11 @@ export async function mount(root, metafolder) {
 
   /** @param {Metafolder.KeybindingVariable} variable */
   function variableRow(variable) {
+    const written = variable.values.join(' | ');
     /** @type {string|null} the value the last verdict allowed */
     let allowed = null;
     const input = el('input', {
-      value: variable.value,
+      value: written,
       autocomplete: 'off',
       title: 'Enter saves it, Escape gives it back',
       oninput: async () => {
@@ -55,7 +57,7 @@ export async function mount(root, metafolder) {
       /** @param {KeyboardEvent} event */
       onkeydown: async (event) => {
         if (event.key === 'Escape') {
-          input.value = variable.value;
+          input.value = written;
           input.classList.remove('invalid');
           variableSeq++;
           variableCheck.textContent = '';
@@ -64,7 +66,7 @@ export async function mount(root, metafolder) {
         if (event.key !== 'Enter') return;
         event.preventDefault();
         const value = input.value.trim();
-        if (value === variable.value || allowed !== value) return;
+        if (value === written || allowed !== value) return;
         variableCheck.textContent = '';
         try {
           show(await metafolder.config.setKeybindingVariable(variable.name, value));
@@ -81,7 +83,11 @@ export async function mount(root, metafolder) {
       {},
       el('td', {}, el('code', {}, `{${variable.name}}`)),
       el('td', { class: 'value' }, input),
-      el('td', { class: 'keys' }, keycaps(variable.keys.split(/\s+/))),
+      el(
+        'td',
+        { class: 'keys' },
+        variable.values.flatMap((keys, i) => [i > 0 ? ' | ' : null, ...keycaps(keys.split(/\s+/))]),
+      ),
       el('td', { class: 'uses' }, variable.uses === 1 ? '1 line' : `${variable.uses} lines`),
     );
   }
@@ -100,7 +106,7 @@ export async function mount(root, metafolder) {
     const chords = typed.split(/\s+/).map(normalizeChord);
     /** @param {Metafolder.KeybindingVariable} variable */
     const byKey = (variable) =>
-      keysStartWith(variable.keys.split(/\s+/).map(normalizeChord), chords);
+      variable.values.some((keys) => keysStartWith(keys.split(/\s+/).map(normalizeChord), chords));
     const name = typed.toLowerCase();
     return [
       ...variables.filter(byKey),

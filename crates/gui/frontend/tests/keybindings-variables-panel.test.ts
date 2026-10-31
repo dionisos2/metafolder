@@ -8,10 +8,10 @@ import { resolve } from 'node:path';
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/keybindings-variables');
 
 const VARIABLES = [
-  { name: 'go', value: 'g', keys: 'g', uses: 1 },
-  { name: 'panels', value: 't', keys: 't', uses: 1 },
-  { name: 'negative', value: ', -', keys: ', -', uses: 3 },
-  { name: 'tags', value: 'ctrl+shift+,', keys: 'ctrl+shift+,', uses: 2 },
+  { name: 'go', values: ['g', 'y'], uses: 1 },
+  { name: 'panels', values: ['t'], uses: 1 },
+  { name: 'negative', values: [', -'], uses: 3 },
+  { name: 'tags', values: ['ctrl+shift+,'], uses: 2 },
 ];
 
 const flush = async () => {
@@ -73,7 +73,11 @@ describe('keybindings-variables panel', () => {
     expect(negative.textContent).toContain(', -');
     expect(negative.textContent).toContain('3');
 
-    const go = variables.find((tr) => tr.textContent.includes('go'))!.querySelector('input')!;
+    // Several values read as one field, each one's keys beside it.
+    const goRow = variables.find((tr) => tr.textContent.includes('go'))!;
+    expect(goRow.querySelector('input')!.value).toBe('g | y');
+    expect([...goRow.querySelectorAll('.keys kbd')].map((k) => k.textContent)).toEqual(['g', 'y']);
+    const go = goRow.querySelector('input')!;
     await type(go, 'x');
     expect(root.getElementById('variable-check')!.textContent).toContain('would hide');
     await key(go, 'Enter');
@@ -101,6 +105,9 @@ describe('keybindings-variables panel', () => {
     expect(names(root)).toEqual(['{panels}']);
     await filterBy('{go}');
     expect(names(root)).toEqual(['{go}']);
+    // Any of its values.
+    await filterBy('y');
+    expect(names(root)[0]).toBe('{go}');
     // The key `t` first, then the names holding it.
     await filterBy('t');
     expect(names(root)).toEqual(['{panels}', '{negative}', '{tags}']);

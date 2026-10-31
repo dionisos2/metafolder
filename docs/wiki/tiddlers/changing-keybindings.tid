@@ -20,7 +20,7 @@ and the commands no key runs, which the class buttons narrow ([[Command classes]
 * ''Add'': fill in the form — key, command, and optionally `when`, `focus` and `text-input` — and press ''Save'' (or Enter). The key may name variables: `{go} x`.
 * ''Change'': type the new key, choose `when` or `focus`, or tick `⌨` (`text-input`) in the row's own fields, and press Enter or the row's ''Save''. To change its command, ''Remove'' the row and write the line again in the form. Moving a command to another key is one save.
 * ''Unbind'': ''Remove'' on the row removes the line, every key it binds.
-* ''Move a domain or a verb'': give its variable a new value in the list of variables; every key built on it follows.
+* ''Move a domain or a verb'': give its variable a new value in the list of variables; every key built on it follows. Values apart with ` | ` keep several ways to type it.
 
 A change applies at once, in every panel, and is written to the file.
 

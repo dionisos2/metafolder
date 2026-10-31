@@ -413,17 +413,19 @@ impl ConfigDir {
         Ok(self.commit_keybindings(&doc)?.with_suggestions_of(current))
     }
 
-    /// What giving the variable `name` the value `value` would do: the file
-    /// with it, and its set — refused when the file would not load (a key
-    /// bound twice) or a key alone would hide a sequence that nothing hid.
+    /// What giving the variable `name` the value `value` — its keys, several
+    /// apart with a `|` of its own (`a | m q`) — would do: the file with it, and
+    /// its set — refused, naming the variable, when the file would not load (a
+    /// key bound twice) or a key alone would hide a sequence that nothing hid.
     fn variable_change(
         &self,
         current: &KeybindingSet,
         name: &str,
         value: &str,
     ) -> Result<(toml_edit::DocumentMut, KeybindingSet), String> {
-        let value = value.split_whitespace().collect::<Vec<_>>().join(" ");
-        if value.is_empty() {
+        let words: Vec<&str> = value.split_whitespace().collect();
+        let values: Vec<String> = words.split(|word| *word == "|").map(|w| w.join(" ")).collect();
+        if values.iter().any(String::is_empty) {
             return Err(format!("{name}: a variable cannot be empty"));
         }
         let mut doc = self.read_keybindings_document()?;
@@ -432,14 +434,19 @@ impl ConfigDir {
             .and_then(toml_edit::Item::as_table_like_mut)
             .filter(|vars| vars.contains_key(name))
             .ok_or_else(|| format!("there is no variable \"{name}\" in keybindings.toml"))?;
-        set_in_place(vars, name, value.as_str().into());
-        let set = KeybindingSet::from_source(&doc.to_string())?;
+        let written = match values.as_slice() {
+            [one] => one.as_str().into(),
+            several => toml_edit::Value::Array(several.iter().collect()),
+        };
+        set_in_place(vars, name, written);
+        let set = KeybindingSet::from_source(&doc.to_string())
+            .map_err(|error| format!("{name}: {error}"))?;
         let before = crate::keybindings::sequence_clashes(&current.compiled());
         if let Some(clash) = crate::keybindings::sequence_clashes(&set.compiled())
             .into_iter()
             .find(|clash| !before.contains(clash))
         {
-            return Err(clash);
+            return Err(format!("{name}: {clash}"));
         }
         Ok((doc, set))
     }
@@ -1346,6 +1353,40 @@ mod tests {
             .compiled()
             .iter()
             .any(|b| b.keys == [";", "a"] && b.invocation == "tag:add tag"));
+        std::fs::remove_dir_all(config.root()).unwrap();
+    }
+
+    #[test]
+    fn test_a_variable_is_given_several_values_and_back_to_one() {
+        let shipped = include_str!("../default-config/keybindings.toml");
+        let config = kb_dir();
+        std::fs::write(config.keybindings_path(), shipped).unwrap();
+        let current = config.load_keybindings().unwrap();
+
+        let summary = config.check_keybinding_variable(&current, "tags", ", | ;").unwrap();
+        assert!(summary.contains("9 keys"), "{summary}");
+        let set = config.set_keybinding_variable(&current, "tags", " ,  |  ; ").unwrap();
+        let written = std::fs::read_to_string(config.keybindings_path()).unwrap();
+        assert_eq!(
+            changed_lines(shipped, &written),
+            [("vars.tags = \",\"", "vars.tags = [\",\", \";\"]")]
+        );
+        let binds = |set: &KeybindingSet, key: &str| {
+            set.compiled().iter().any(|b| b.keys == [key, "a"] && b.invocation == "tag:add tag")
+        };
+        assert!(binds(&set, ",") && binds(&set, ";"));
+        // Back to one value, the line reads as it did.
+        let set = config.set_keybinding_variable(&set, "tags", ",").unwrap();
+        assert_eq!(std::fs::read_to_string(config.keybindings_path()).unwrap(), shipped);
+        assert!(!binds(&set, ";"));
+
+        // An empty value is refused, and a clash names the variable.
+        let refused = config.check_keybinding_variable(&current, "tags", ", |").unwrap_err();
+        assert!(refused.contains("tags") && refused.contains("empty"), "{refused}");
+        let refused = config.check_keybinding_variable(&current, "tags", ", | g").unwrap_err();
+        assert!(refused.contains("tags") && refused.contains("twice"), "{refused}");
+        let refused = config.check_keybinding_variable(&current, "go", "g | x").unwrap_err();
+        assert!(refused.contains("go") && refused.contains("hide"), "{refused}");
         std::fs::remove_dir_all(config.root()).unwrap();
     }
 

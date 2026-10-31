@@ -388,59 +388,70 @@ fn is_var_name(name: &str) -> bool {
         && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
-/// `combo` with each `{name}` replaced by the variable's keys. A brace that
-/// names no variable (`{`, `{ }`) is a key like any other; an unknown name is
-/// an error.
-fn substitute(combo: &str, vars: &HashMap<String, String>) -> Result<String, String> {
-    let mut out = String::new();
-    let mut rest = combo;
-    while let Some(start) = rest.find('{') {
-        out.push_str(&rest[..start]);
-        let after = &rest[start + 1..];
-        match after.find('}') {
-            Some(end) if is_var_name(&after[..end]) => {
-                let name = &after[..end];
-                let keys = vars
-                    .get(name)
-                    .ok_or_else(|| format!("unknown variable {{{name}}} in \"{combo}\""))?;
-                out.push_str(keys);
-                rest = &after[end + 1..];
-            }
-            _ => {
-                out.push('{');
-                rest = after;
-            }
-        }
+/// `combo` with each `{name}` replaced by the variable's keys: one result per
+/// choice of values, a variable named twice taking one value in both places. A
+/// brace that names no variable (`{`, `{ }`) is a key like any other; an unknown
+/// name is an error.
+fn substitute(combo: &str, vars: &HashMap<String, Vec<String>>) -> Result<Vec<String>, String> {
+    let mut out = vec![combo.to_string()];
+    let mut names = referenced(combo);
+    names.sort();
+    names.dedup();
+    for name in names {
+        let values =
+            vars.get(&name).ok_or_else(|| format!("unknown variable {{{name}}} in \"{combo}\""))?;
+        let reference = format!("{{{name}}}");
+        out = out
+            .iter()
+            .flat_map(|key| values.iter().map(|value| key.replace(&reference, value)))
+            .collect();
     }
-    out.push_str(rest);
     Ok(out)
 }
 
-/// The `vars` table: variable name → its keys. A value naming another variable
-/// is refused: `metafolder-sync-config` writes one left in a file out (doc
-/// "Persisted format changes").
-fn read_raw_vars(value: Option<toml::Value>) -> Result<HashMap<String, String>, String> {
+/// The `vars` table: variable name → its keys, a string or, for several ways
+/// to type it, an array of them (doc "Keybinding variables"). A value naming
+/// another variable is refused: `metafolder-sync-config` writes one left in a
+/// file out (doc "Persisted format changes").
+fn read_vars(value: Option<toml::Value>) -> Result<HashMap<String, Vec<String>>, String> {
     let Some(value) = value else { return Ok(HashMap::new()) };
     let toml::Value::Table(table) = value else {
         return Err("invalid keybindings file: `vars` must be a table".into());
     };
     table
         .into_iter()
-        .map(|(name, value)| match value {
-            toml::Value::String(keys) if is_var_name(&name) => {
-                if has_variables(&keys) {
-                    return Err(format!(
-                        "invalid keybindings file: the variable \"{name}\" names another \
-                         (\"{keys}\"): name both in the key, or run metafolder-sync-config, \
-                         which writes it out"
-                    ));
-                }
-                Ok((name, keys))
+        .map(|(name, value)| {
+            let invalid = |why: String| format!("invalid keybindings file: the variable \"{name}\" {why}");
+            if !is_var_name(&name) {
+                return Err(format!(
+                    "invalid keybindings file: variable name \"{name}\" (lowercase letters, digits, -)"
+                ));
             }
-            toml::Value::String(_) => Err(format!(
-                "invalid keybindings file: variable name \"{name}\" (lowercase letters, digits, -)"
-            )),
-            _ => Err(format!("invalid keybindings file: the variable \"{name}\" must be a string")),
+            let values = match value {
+                toml::Value::String(keys) => vec![keys],
+                toml::Value::Array(items) if !items.is_empty() => items
+                    .into_iter()
+                    .map(|item| match item {
+                        toml::Value::String(keys) if !keys.trim().is_empty() => Ok(keys),
+                        _ => Err(invalid("holds something that is not a key".into())),
+                    })
+                    .collect::<Result<_, _>>()?,
+                _ => return Err(invalid("must be a string or a list of strings".into())),
+            };
+            if let Some(keys) = values.iter().find(|keys| has_variables(keys)) {
+                return Err(invalid(format!(
+                    "names another (\"{keys}\"): name both in the key, or run \
+                     metafolder-sync-config, which writes it out"
+                )));
+            }
+            let mut seen = Vec::new();
+            for keys in values.iter().filter_map(|keys| parse_combo(keys).ok()) {
+                if seen.contains(&keys) {
+                    return Err(invalid(format!("holds `{}` twice", keys.join(" "))));
+                }
+                seen.push(keys);
+            }
+            Ok((name, values))
         })
         .collect()
 }
@@ -462,13 +473,14 @@ fn referenced(text: &str) -> Vec<String> {
     out
 }
 
-/// The binding one key of the file stands for, its variables replaced. The
-/// `{target}` templates are gone: `metafolder-sync-config` converts a file still
-/// using one (doc "Persisted format changes").
+/// The bindings one key of the file stands for: one per choice of its
+/// variables' values. The `{target}` templates are gone:
+/// `metafolder-sync-config` converts a file still using one (doc "Persisted
+/// format changes").
 fn expand(
     combo: &str,
     spec: BindingSpec,
-    vars: &HashMap<String, String>,
+    vars: &HashMap<String, Vec<String>>,
 ) -> Result<Vec<Entry>, String> {
     if spec.command.contains("{target}") {
         return Err(format!(
@@ -476,9 +488,18 @@ fn expand(
              or run metafolder-sync-config, which converts them"
         ));
     }
-    let expanded = substitute(combo, vars)?;
-    let derived_from = (expanded != combo).then(|| combo.to_string());
-    Ok(vec![Entry { keys: parse_combo(&expanded)?, spec, source: combo.to_string(), derived_from }])
+    let derived_from = has_variables(combo).then(|| combo.to_string());
+    substitute(combo, vars)?
+        .iter()
+        .map(|keys| {
+            Ok(Entry {
+                keys: parse_combo(keys)?,
+                spec: spec.clone(),
+                source: combo.to_string(),
+                derived_from: derived_from.clone(),
+            })
+        })
+        .collect()
 }
 
 /// A keybindings file, read.
@@ -488,7 +509,7 @@ struct Parsed {
     /// Its lines as written: the key, and the binding before expansion.
     lines: Vec<(String, BindingSpec)>,
     /// The variables, with their keys.
-    vars: HashMap<String, String>,
+    vars: HashMap<String, Vec<String>>,
     /// The variables' names, in the order of the file.
     var_order: Vec<String>,
 }
@@ -513,7 +534,7 @@ fn in_file_order(source: &str) -> (Vec<String>, Vec<String>) {
 fn parse_entries(source: &str) -> Result<Parsed, String> {
     let mut table: toml::Table =
         toml::from_str(source).map_err(|e| format!("invalid keybindings file: {e}"))?;
-    let vars = read_raw_vars(table.remove("vars"))?;
+    let vars = read_vars(table.remove("vars"))?;
     let (key_order, mut var_order) = in_file_order(source);
     var_order.retain(|name| vars.contains_key(name));
     let mut lines: Vec<(String, BindingSpec)> = Vec::new();
@@ -552,10 +573,23 @@ fn parse_entries(source: &str) -> Result<Parsed, String> {
                     (None, Some(when)) => format!("in {when}"),
                     (None, None) => "globally".to_string(),
                 };
-                return Err(if first == second {
-                    format!("\"{first}\" is bound twice {scope}")
+                let keys = entry.keys.join(" ");
+                let mut names = referenced(first);
+                names.extend(referenced(second));
+                names.sort();
+                names.dedup();
+                let through = if names.is_empty() {
+                    String::new()
                 } else {
-                    format!("\"{first}\" and \"{second}\" are the same key, bound twice {scope}")
+                    format!(" (through the variables {})", names.join(", "))
+                };
+                return Err(if first == second {
+                    format!("\"{first}\" binds `{keys}` twice {scope}{through}")
+                } else {
+                    format!(
+                        "\"{first}\" and \"{second}\" are the same key `{keys}`, \
+                         bound twice {scope}{through}"
+                    )
                 });
             }
         }
@@ -661,9 +695,8 @@ impl EntryDraft {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Variable {
     pub name: String,
-    pub value: String,
-    /// Its keys, as they are read.
-    pub keys: String,
+    /// Its keys: more than one when it can be typed several ways.
+    pub values: Vec<String>,
     /// How many lines of the file use it.
     pub uses: usize,
 }
@@ -687,7 +720,7 @@ pub struct KeybindingSet {
     origin: HashMap<BindingKey, String>,
     /// The lines of the file, as written.
     lines: Vec<(String, BindingSpec)>,
-    vars: HashMap<String, String>,
+    vars: HashMap<String, Vec<String>>,
     var_order: Vec<String>,
     /// Panel suggestions that survived conflict checking.
     suggestions: Vec<CompiledBinding>,
@@ -846,12 +879,7 @@ impl KeybindingSet {
                     .iter()
                     .filter(|(source, _)| referenced(source).contains(name))
                     .count();
-                Variable {
-                    name: name.clone(),
-                    value: self.vars[name].clone(),
-                    keys: self.vars[name].clone(),
-                    uses,
-                }
+                Variable { name: name.clone(), values: self.vars[name].clone(), uses }
             })
             .collect()
     }
@@ -948,7 +976,12 @@ impl KeybindingSet {
                 .filter(|b| !overridden.is_some_and(|o| std::ptr::eq(*b, o)))
                 .cloned()
                 .collect();
-            binding_in_the_way(&others, &BindingPlace { combo, when, focus })?;
+            binding_in_the_way(&others, &BindingPlace { combo, when, focus }).map_err(
+                |(error, place)| match entry.derived_from.is_some() {
+                    true => (format!("{error} (from \"{source}\")"), place),
+                    false => (error, place),
+                },
+            )?;
         }
         Ok((!notes.is_empty()).then(|| notes.join(" ")))
     }
@@ -1320,6 +1353,90 @@ bulk-query = "m q"
         assert_eq!(parse_toml(r#""{" = { command = "x" }"#).unwrap()[0].0, ["{"]);
     }
 
+    #[test]
+    fn test_a_variable_with_several_values_binds_a_key_for_each() {
+        let source = r#"
+vars.tags = [",", "z"]
+vars.add = ["a", "m q"]
+vars.one = "o"
+"{tags} {add}" = { command = "mf:tag add" }
+"{one} l" = { command = "other" }
+"#;
+        let keys: Vec<String> =
+            keys_of(&parse_toml(source).unwrap()).into_iter().map(|(k, _)| k).collect();
+        assert_eq!(keys, [", a", ", m q", "o l", "z a", "z m q"]);
+
+        let set = KeybindingSet::from_source(source).unwrap();
+        let line = set.entries().into_iter().find(|e| e.source == "{tags} {add}").unwrap();
+        assert_eq!(line.bindings.len(), 4);
+        let tags = set.variables().into_iter().find(|v| v.name == "tags").unwrap();
+        assert_eq!(tags.values, [",", "z"]);
+        assert_eq!(tags.uses, 1);
+    }
+
+    #[test]
+    fn test_a_variable_named_twice_in_a_key_takes_one_value() {
+        // `m m s` means the letter doubled: `m z s` is not what was written.
+        let source =
+            "vars.record = [\"m\", \"z\"]\n\"{record} {record} s\" = { command = \"x\" }\n";
+        let keys: Vec<String> =
+            keys_of(&parse_toml(source).unwrap()).into_iter().map(|(k, _)| k).collect();
+        assert_eq!(keys, ["m m s", "z z s"]);
+    }
+
+    #[test]
+    fn test_a_malformed_list_of_values_is_refused_and_named() {
+        for source in [
+            "vars.far = []\n",
+            "vars.far = [\"a\", 1]\n",
+            "vars.far = [\"a\", \" \"]\n",
+            "vars.far = [\"a\", \"{b}\"]\nvars.b = \"b\"\n",
+            // One key given twice, however it is spelled.
+            "vars.far = [\"shift+ctrl+a\", \"ctrl+shift+a\"]\n",
+        ] {
+            let error = parse_toml(source).unwrap_err();
+            assert!(error.contains("\"far\""), "{source}: {error}");
+        }
+    }
+
+    #[test]
+    fn test_a_key_bound_twice_through_a_value_names_the_variables() {
+        let source = r#"
+vars.x = ["a", "b"]
+vars.y = ["c", "b"]
+"{x} q" = { command = "first" }
+"{y} q" = { command = "second" }
+"#;
+        let error = parse_toml(source).unwrap_err();
+        for part in ["`b q`", "twice", "x", "y", "{x} q", "{y} q"] {
+            assert!(error.contains(part), "{part}: {error}");
+        }
+    }
+
+    #[test]
+    fn test_a_literal_key_overrides_one_value_and_leaves_the_others() {
+        let source = r#"
+vars.x = ["a", "b"]
+"{x} q" = { command = "named" }
+"b q" = { command = "literal" }
+"#;
+        assert_eq!(
+            keys_of(&parse_toml(source).unwrap()),
+            [("a q".to_string(), "named".to_string()), ("b q".to_string(), "literal".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_a_line_is_refused_naming_where_its_key_comes_from() {
+        let set = KeybindingSet::from_source(
+            "vars.x = [\"a\", \"b\"]\n\"b q\" = { command = \"first\" }\n\"c q\" = { command = \"z\" }\n",
+        )
+        .unwrap();
+        let check = set.check_entry(|_| true, &draft("{x}", "other"), None);
+        let error = check.key.unwrap();
+        assert!(error.contains("would hide") && error.contains("{x}"), "{error}");
+    }
+
     const TARGET_VARS: &str = r#"
 vars.target-here = "i"
 vars.target-other = "b"
@@ -1435,7 +1552,7 @@ vars.y = ","
         assert_eq!(uses("tags"), 1);
         assert_eq!(uses("target-other"), 1);
         assert_eq!(uses("target-new"), 0);
-        assert_eq!(variables[3].keys, ",");
+        assert_eq!(variables[3].values, [","]);
     }
 
     #[test]
