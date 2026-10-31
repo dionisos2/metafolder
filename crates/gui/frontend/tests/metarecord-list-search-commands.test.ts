@@ -9,6 +9,9 @@ import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { withRuns } from './support/runs';
+import { historyOf } from '/__history.js';
+
+const histories = new Map<string, string[]>();
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/metarecord-list');
 
@@ -83,7 +86,14 @@ function stubApi(handlers: Map<string, Handler>, store: Map<string, unknown>) {
     addKeybinding: async () => null,
     fs: { readDir: async () => [], stat: async () => ({}), exists: async () => true, homeDir: async () => '/home/user' },
     trash: { list: async () => [], restore: async () => '', remove: async () => {}, empty: async () => 0 },
-    history: { read: async () => [], append: async () => {} },
+    history: {
+      read: async (_repo: string, zone: string) => [...(histories.get(zone) ?? [])],
+      append: async (_repo: string, zone: string, entry: string) => {
+        histories.set(zone, [...(histories.get(zone) ?? []), entry]);
+        return true;
+      },
+      appendField: async () => true,
+    },
     statusBar: { message: async () => {}, error: async () => {} },
     messages: { list: async () => [], append: async () => {}, onAppend: noop },
     contextMenu: Object.assign(noop, { addDefaultItems: noop }),
@@ -121,6 +131,7 @@ async function mountPanel(initial: Record<string, unknown> = {}) {
 
 describe('zone commands', () => {
   beforeEach(() => {
+    histories.clear();
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response('[]', { status: 200 })),
@@ -285,6 +296,18 @@ describe('zone commands', () => {
     await p.invoke('metarecord-list:apply', 'columns');
 
     expect(p.shadow.activeElement).toBe(p.query);
+  });
+
+  test('applying the columns records them, as the field then shows them', async () => {
+    const p = await mountPanel();
+    p.columns.value = 'label,  rating';
+    await p.invoke('metarecord-list:apply', 'columns');
+    p.columns.value = 'label';
+    await p.invoke('metarecord-list:apply', 'columns');
+    await vi.waitFor(async () => {
+      await historyOf(p.columns)!.prev();
+      expect(p.columns.value).toBe('label rating');
+    });
   });
 
   // ── insert ──────────────────────────────────────────────────────────────

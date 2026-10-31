@@ -205,6 +205,10 @@ export async function mount(root, metafolder) {
     ...historyDeps,
   });
   const queryHistory = attachHistory(queryInput, { zone: 'metarecord-list:query', ...historyDeps });
+  const columnsHistory = attachHistory(columnsInput, {
+    zone: 'metarecord-list:columns',
+    ...historyDeps,
+  });
   const normalHistory = attachHistory(byId(root, 'normal-input', HTMLInputElement), {
     zone: 'metarecord-list:normal',
     ...historyDeps,
@@ -704,6 +708,7 @@ export async function mount(root, metafolder) {
     }
     columns = parsed.length > 0 ? parsed : parseColumnsOr(defaultColumns, DEFAULT_COLUMNS);
     columnsInput.value = columns.map((c) => c.spec).join(' ');
+    columnsHistory.push(columnsInput.value);
     await reresolveColumns();
     render();
     await mf.workspace.set(
