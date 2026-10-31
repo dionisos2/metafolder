@@ -1546,6 +1546,28 @@ export function clearToLineEnd(el: Element | null): boolean {
   return true;
 }
 
+/** `editing:goto` on an element with no registered editing target — a panel's
+ *  own input: the caret goes to the edge of its line, which in a textarea is not
+ *  the edge of the value. */
+export function gotoLineEdge(
+  el: Element | null,
+  edge: "line-start" | "line-end",
+): void {
+  const input = el as HTMLInputElement | HTMLTextAreaElement | null;
+  const value = input?.value ?? "";
+  let at = edge === "line-start" ? 0 : value.length;
+  if (el instanceof HTMLTextAreaElement) {
+    const caret = el.selectionStart ?? 0;
+    if (edge === "line-start") {
+      at = caret === 0 ? 0 : value.lastIndexOf("\n", caret - 1) + 1;
+    } else {
+      const newline = value.indexOf("\n", caret);
+      if (newline !== -1) at = newline;
+    }
+  }
+  input?.setSelectionRange?.(at, at);
+}
+
 // ── Panel dispatch hook (wired by PanelHost) ───────────────────────────
 
 export type PanelDispatch = (
@@ -2555,19 +2577,13 @@ async function runCommand(
       }
       if (args[0] === "line-start") {
         if (editingTarget) editingTarget.lineStart();
-        else
-          (deepActiveElement() as HTMLInputElement | null)?.setSelectionRange?.(
-            0,
-            0,
-          );
+        else gotoLineEdge(deepActiveElement(), "line-start");
         return true;
       }
       if (editingTarget) {
         editingTarget.lineEnd();
       } else {
-        const input = deepActiveElement() as HTMLInputElement | null;
-        const end = input?.value?.length ?? 0;
-        input?.setSelectionRange?.(end, end);
+        gotoLineEdge(deepActiveElement(), "line-end");
       }
       return true;
     }

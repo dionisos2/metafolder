@@ -12,6 +12,6 @@ Reads what a panel shows again: the focused panel with `self`, the panel type na
 |[[log panel]] |the log, and the operation gone into |
 |[[trash panel]], [[recent panel]], [[duplicates panel]] |the entries, the recently viewed metarecords, the groups |
 |[[repos panel]] |the loaded repositories, their tasks and their tracking notices |
-|[[viewer panel]] |the file or the folder, as it is on disk now; a medium goes back behind its poster, its position kept. Playing it from the start is <<key "viewer:restart" "p p">> |
+|[[viewer panel]] |the file or the folder, as it is on disk now; a medium goes back behind its poster, its position kept. Playing it from the start is <<key "viewer:restart" "p p">>. With unsaved changes in a text file, it asks first ([[Editing a text file]]) |
 |[[metarecord-detail panel]] |the metarecord shown; while an edit is in progress, it asks first |
 |[[sync panel]] |the loaded repositories, the pair kept, then the status or the stored plan, whichever is shown — never a new plan or a run |

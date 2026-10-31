@@ -34,6 +34,7 @@ import {
   parsePlayArgs,
   stepFor,
 } from './slideshow.js';
+import { editableText, encodeEdited } from './textedit.js';
 
 // Directory grid: render this many thumbnails per window (more on scroll), so
 // opening a folder with thousands of files does not build/load them all at
@@ -188,6 +189,11 @@ export async function mount(root, metafolder) {
   const pageLabel = byId(root, 'page-label');
   const gifAnimateWrap = byId(root, 'gif-animate-wrap');
   const gifAnimateBox = byId(root, 'gif-animate', HTMLInputElement);
+  const textToolbar = byId(root, 'text-toolbar');
+  const textEditBox = byId(root, 'text-edit', HTMLInputElement);
+  const textSave = byId(root, 'text-save', HTMLButtonElement);
+  const textReload = byId(root, 'text-reload', HTMLButtonElement);
+  const textNote = byId(root, 'text-note');
 
   // GIFs are shown as a still of their first frame unless this is on (the
   // toolbar checkbox, visible only while a GIF is previewed).
@@ -536,6 +542,7 @@ export async function mount(root, metafolder) {
   // file — returning to following the selection once we reach the originally
   // selected path.
   function navigateBack() {
+    if (holdingChanges()) return;
     const target = backTarget(localPath, paths[activeIndex]);
     if (!target.move) return;
     localPath = target.path;
@@ -555,6 +562,10 @@ export async function mount(root, metafolder) {
         'select',
         {
           onchange: () => {
+            if (holdingChanges()) {
+              select.value = String(activeIndex);
+              return;
+            }
             activeIndex = Number(select.value);
             void renderViewer();
           },
@@ -788,8 +799,9 @@ export async function mount(root, metafolder) {
   // We read arrayBuffer (not .text()) so the NUL sniff sees raw bytes and so
   // the decode is non-fatal: stray/latin-1 bytes become replacement chars
   // rather than throwing.
-  /** @param {string} url @param {number} generation @param {boolean} force */
-  async function renderText(url, generation, force) {
+  /** @param {string} url @param {number} generation @param {boolean} force
+   *  @param {string} path @param {Stamp|null} stamp the file before this read */
+  async function renderText(url, generation, force, path, stamp) {
     const current = () => generation === renderGeneration;
     try {
       const response = await fetch(url, {
@@ -802,15 +814,159 @@ export async function mount(root, metafolder) {
         placeholder('no preview available for this format');
         return;
       }
-      const text = new TextDecoder().decode(bytes);
-      const pre = el('pre', {}, text);
-      viewer.replaceChildren(pre);
-      if (response.status === 206 && bytes.length >= textPreviewLimit) {
-        pre.textContent += '\n… (truncated preview)';
-      }
+      const truncated = bytes.length >= textPreviewLimit;
+      const preview = new TextDecoder().decode(bytes);
+      const verdict = editableText(bytes, truncated);
+      const editable = verdict.ok ? verdict.text : null;
+      textShown = {
+        path,
+        preview: truncated ? `${preview}\n… (truncated preview)` : preview,
+        saved: editable,
+        current: editable,
+        eol: verdict.ok ? verdict.eol : '\n',
+        stamp,
+        refusal: verdict.ok ? (stamp ? null : 'not editable: cannot read its state') : verdict.reason,
+      };
+      showTextFile();
     } catch (error) {
       if (current()) placeholder(`cannot load the file: ${messageOf(error)}`);
     }
+  }
+
+  // --- Editing a text file ------------------------------------------------
+  //
+  // (doc "Editing a text file"). The box is panel state, kept from one file to
+  // the next like the zoom. The changes live in `textShown.current`, whichever
+  // of the field or the read-only view shows them, so unticking loses nothing.
+
+  /**
+   * What the panel knows of the file it shows as text, or null for anything
+   * else. `saved` and `current` are null when it cannot be edited (`refusal`
+   * says why); `stamp` is the file as last read or written, for telling that
+   * something else wrote to it.
+   * @typedef {{mtime?: number, size?: number}} Stamp
+   * @type {{path: string, preview: string, saved: string|null, current: string|null,
+   *         eol: '\n'|'\r\n', stamp: Stamp|null, refusal: string|null}|null}
+   */
+  let textShown = null;
+  let editingText = false;
+  let savingText = false;
+  // The selection that moved while the file held unsaved changes: `undefined`
+  // when it did not.
+  /** @type {unknown} */
+  let heldSelection;
+
+  function textChanged() {
+    return textShown !== null && textShown.current !== textShown.saved;
+  }
+
+  // Says so and answers true when something would replace unsaved changes.
+  function holdingChanges() {
+    if (!textChanged()) return false;
+    void statusBar.message(
+      `Unsaved changes in ${textShown?.path}: the panel stays on it until they are saved or reloaded.`,
+      statusMessageMs,
+    );
+    return true;
+  }
+
+  function updateTextToolbar() {
+    textToolbar.hidden = textShown === null;
+    if (textShown === null) return;
+    textEditBox.checked = editingText;
+    textEditBox.disabled = textShown.refusal !== null;
+    textSave.disabled = !textChanged();
+    textNote.textContent = textShown.refusal ?? '';
+  }
+
+  // Puts the text file in the view: the field while editing, else what it holds
+  // as text, the changes if there are any.
+  function showTextFile() {
+    if (!textShown) return;
+    const shown = textShown;
+    const scrollTop = viewer.firstElementChild?.scrollTop ?? 0;
+    /** @type {HTMLElement} */
+    let view;
+    if (editingText && shown.refusal === null) {
+      view = el('textarea', {
+        spellcheck: false,
+        'data-mf-focus': 'viewer-text',
+        oninput: () => {
+          shown.current = textArea().value;
+          updateTextToolbar();
+        },
+      });
+      viewer.replaceChildren(view);
+      textArea().value = shown.current ?? '';
+    } else {
+      view = el('pre', {}, textChanged() ? (shown.current ?? '') : shown.preview);
+      viewer.replaceChildren(view);
+    }
+    view.scrollTop = scrollTop;
+    updateTextToolbar();
+  }
+
+  function textArea() {
+    return /** @type {HTMLTextAreaElement} */ (viewer.querySelector('textarea'));
+  }
+
+  /** @param {boolean} on */
+  function setEditingText(on) {
+    if (on && textShown?.refusal) {
+      void statusBar.message(`${textShown.path}: ${textShown.refusal}`, statusMessageMs);
+      updateTextToolbar();
+      return;
+    }
+    editingText = on;
+    showTextFile();
+    if (on && textShown) textArea().focus();
+  }
+
+  // The selection held by the changes now gone, or the file read again.
+  function afterChangesGone() {
+    if (heldSelection === undefined) return false;
+    const value = heldSelection;
+    heldSelection = undefined;
+    void update(value);
+    return true;
+  }
+
+  /** @param {boolean} force write even over a change made on disk */
+  async function saveText(force) {
+    const shown = textShown;
+    if (!shown || !textChanged() || savingText) return;
+    savingText = true;
+    const text = shown.current ?? '';
+    try {
+      if (!force) {
+        const now = /** @type {Stamp} */ (await fs.stat(shown.path));
+        if (now.mtime !== shown.stamp?.mtime || now.size !== shown.stamp?.size) {
+          void statusBar.error(
+            `${shown.path} changed on disk since it was read: viewer:save force overwrites it, viewer:reload drops your changes.`,
+          );
+          return;
+        }
+      }
+      await fs.writeText(shown.path, encodeEdited(text, shown.eol));
+      shown.stamp = /** @type {Stamp} */ (await fs.stat(shown.path));
+    } catch (error) {
+      void statusBar.error(messageOf(error));
+      return;
+    } finally {
+      savingText = false;
+    }
+    shown.saved = text;
+    shown.preview = text;
+    void statusBar.message(`Saved ${shown.path}.`, statusMessageMs);
+    updateTextToolbar();
+    // Typed on while it was being written: those changes still hold the file.
+    if (!textChanged()) afterChangesGone();
+  }
+
+  function reloadText() {
+    if (!textShown) return;
+    textShown.current = textShown.saved;
+    if (!afterChangesGone()) rerender();
   }
 
   // Document preview: the pages are PNGs rendered out of process by poppler
@@ -866,6 +1022,9 @@ export async function mount(root, metafolder) {
   }
 
   async function renderViewer() {
+    if (holdingChanges()) return;
+    textShown = null;
+    textToolbar.hidden = true;
     const generation = ++renderGeneration;
     // Release any media from the previous view before showing the next one.
     teardownMedia();
@@ -903,10 +1062,12 @@ export async function mount(root, metafolder) {
       return;
     }
     // A directory has no meaningful file preview: list its contents instead.
-    /** @type {{is_dir?: boolean, kind?: string|null}|null} */
+    /** @type {{is_dir?: boolean, kind?: string|null, mtime?: number, size?: number}|null} */
     let info = null;
     try {
-      info = /** @type {{is_dir?: boolean, kind?: string|null}} */ (await fs.stat(path));
+      info = /** @type {{is_dir?: boolean, kind?: string|null, mtime?: number, size?: number}} */ (
+        await fs.stat(path)
+      );
     } catch {
       // Unreachable/removed: fall through to the file preview.
     }
@@ -956,13 +1117,13 @@ export async function mount(root, metafolder) {
     } else if (text.has(extension)) {
       // A known text extension: render as text unconditionally.
       slideStep(generation, step);
-      await renderText(url, generation, true);
+      await renderText(url, generation, true, path, info);
     } else {
       slideStep(generation, step);
       // Neither a known kind nor a listed text extension: sniff the bytes and
       // preview it only if it looks like text (so plain-text files with an
       // unlisted extension work).
-      await renderText(url, generation, false);
+      await renderText(url, generation, false, path, info);
     }
   }
 
@@ -994,6 +1155,10 @@ export async function mount(root, metafolder) {
   // a hidden instance following selected_paths must not stream anything.
   /** @param {unknown} newPaths the `selected_paths` workspace variable */
   async function update(newPaths) {
+    if (holdingChanges()) {
+      heldSelection = newPaths;
+      return;
+    }
     paths = Array.isArray(newPaths) ? newPaths : [];
     activeIndex = 0;
     localPath = null;
@@ -1222,6 +1387,44 @@ export async function mount(root, metafolder) {
       );
     },
   });
+
+  void commands.register('viewer:toggle-edit', {
+    label: 'Viewer: edit the text file shown in the panel, or stop editing it',
+    handler: () => setEditingText(!editingText),
+  });
+  void commands.register('viewer:focus', {
+    label: 'Viewer: give the keyboard to the text being edited, editing it if it was not',
+    args: [{ name: 'zone', prompt: () => 'Which zone? (text)', complete: () => ['text'] }],
+    handler: (_mf, /** @type {string} */ zone) => {
+      if (zone !== 'text') throw new Error(`unknown zone: "${zone ?? ''}" (expected text)`);
+      if (!textShown) return;
+      if (editingText && viewer.querySelector('textarea')) textArea().focus();
+      else setEditingText(true);
+    },
+  });
+  void commands.register('viewer:save', {
+    label: 'Viewer: write the changes to the text file [force: even over a change made on disk]',
+    args: [
+      {
+        name: 'force',
+        optional: true,
+        prompt: () => 'Overwrite a change made on disk? (force)',
+        complete: () => ['force'],
+      },
+    ],
+    handler: (_mf, /** @type {string|undefined} */ force) => {
+      if (force !== undefined && force !== 'force')
+        throw new Error(`unknown option: "${force}" (expected force)`);
+      return saveText(force === 'force');
+    },
+  });
+  void commands.register('viewer:reload', {
+    label: 'Viewer: read the text file again, dropping the changes',
+    handler: reloadText,
+  });
+  textEditBox.addEventListener('change', () => setEditingText(textEditBox.checked));
+  textSave.addEventListener('click', () => void saveText(false));
+  textReload.addEventListener('click', reloadText);
 
   /** @param {boolean} on */
   function setAnimateGifs(on) {
@@ -1552,7 +1755,18 @@ export async function mount(root, metafolder) {
   // Read again on `view:refresh` (doc "Generic panel commands"): the file as it
   // is on disk now, or the folder's listing. A medium goes back behind its
   // poster, its position kept for the next play — as when the selection moves.
-  metafolder.provide({ refresh: () => metafolder.whenVisible(rerender) });
+  // Changes in the text field are only dropped once the user agrees, as for an
+  // edit in the detail panel.
+  metafolder.provide({
+    refresh: () => {
+      if (textChanged()) {
+        if (!confirm(`Drop the unsaved changes in ${textShown?.path}?`)) return;
+        reloadText();
+        return;
+      }
+      metafolder.whenVisible(rerender);
+    },
+  });
   // The file shown, for the `file:` commands and the clipboard (doc "File
   // commands"): the workspace's selection, which this panel follows.
   metafolder.provide({

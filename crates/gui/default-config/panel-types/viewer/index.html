@@ -97,6 +97,33 @@
         color: var(--mf-fg-dim, #8a8a96);
         font-size: 0.9em;
       }
+      /* Text toolbar: the edit box, save and reload, shown only while a text
+         file is previewed. */
+      #text-toolbar {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        padding: 4px 8px;
+        background: var(--mf-bg-raised, #26262e);
+        font-size: 0.85em;
+      }
+      #text-toolbar button {
+        font: inherit;
+        background: var(--mf-bg, #1e1e24);
+        color: var(--mf-fg, #d8d8e0);
+        border: 1px solid var(--mf-fg-dim, #8a8a96);
+        border-radius: 3px;
+        padding: 1px 8px;
+        cursor: pointer;
+      }
+      #text-toolbar button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      #text-toolbar label,
+      #text-toolbar #text-note {
+        color: var(--mf-fg-dim, #8a8a96);
+      }
       /* Shown when a video was resumed at its stored playback position. */
       #media-toolbar #resume-hint {
         margin-left: auto;
@@ -134,6 +161,20 @@
         margin: 0;
         padding: 10px;
         overflow: auto;
+        font-family: var(--mf-font-mono, monospace);
+        font-size: 0.9em;
+        white-space: pre-wrap;
+      }
+      #viewer textarea {
+        align-self: stretch;
+        flex: 1;
+        margin: 0;
+        padding: 10px;
+        border: none;
+        outline: none;
+        resize: none;
+        background: var(--mf-bg, #1e1e24);
+        color: var(--mf-fg, #d8d8e0);
         font-family: var(--mf-font-mono, monospace);
         font-size: 0.9em;
         white-space: pre-wrap;
@@ -268,6 +309,14 @@
         <input type="checkbox" id="gif-animate" /> animate
       </label>
       <span id="resume-hint" hidden></span>
+    </div>
+    <div id="text-toolbar" hidden data-help-topic="file">
+      <label id="text-edit-wrap" title="Edit this file in the panel">
+        <input type="checkbox" id="text-edit" /> edit
+      </label>
+      <button id="text-save" title="Write the changes to the file" disabled>Save</button>
+      <button id="text-reload" title="Read the file again, dropping the changes">Reload</button>
+      <span id="text-note"></span>
     </div>
     <div id="media-warning" hidden></div>
     <div id="viewer" data-help-topic="file"><p class="placeholder">No file selected</p></div>

@@ -520,6 +520,8 @@ describe('panel api — misc surface', () => {
     expect(invoke).toHaveBeenCalledWith('fs_mkdir', { path: '/tmp/d' });
     await api.fs.createFile('/tmp/f');
     expect(invoke).toHaveBeenCalledWith('fs_create_file', { path: '/tmp/f' });
+    await api.fs.writeText('/tmp/f', 'text');
+    expect(invoke).toHaveBeenCalledWith('fs_write_text', { path: '/tmp/f', text: 'text' });
     await api.fs.move('/tmp/a', '/tmp/b');
     expect(invoke).toHaveBeenCalledWith('fs_move', { from: '/tmp/a', to: '/tmp/b' });
     await api.fs.copy('/tmp/a', '/tmp/c');

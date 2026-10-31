@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/viewer:save
+catalog: GUI command
+target: viewer:save
+summary: Viewer: write the changes to the text file [force: even over a change made on disk]
+
+!! Reference
+
+* Defined by the ``viewer`` panel
+
+!! Default keys
+
+* ``ctrl+s`` → ``viewer:save`` (while ``viewer-text`` is focused, also in a text input)
+* ``p s`` → ``viewer:save`` (in the ``viewer`` panel)

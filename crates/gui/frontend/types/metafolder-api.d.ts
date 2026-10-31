@@ -568,6 +568,9 @@ declare namespace Metafolder {
     mkdir(path: string): Promise<void>;
     /** Creates a new empty file; errors if it already exists (never truncates). */
     createFile(path: string): Promise<void>;
+    /** Replaces the content of an existing file, in place (doc "Editing a text
+     *  file"); errors if there is none. The one call that overwrites. */
+    writeText(path: string, text: string): Promise<void>;
     /** Moves/renames a path (cross-filesystem safe); refuses to overwrite `to`. */
     move(from: string, to: string): Promise<void>;
     /** Copies a file or directory tree, leaving the source; refuses to overwrite. */

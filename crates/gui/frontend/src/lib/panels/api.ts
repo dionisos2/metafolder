@@ -762,6 +762,8 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         homeDir: () => invoke('fs_home_dir') as Promise<string>,
         mkdir: (path: string) => invoke('fs_mkdir', { path }) as Promise<void>,
         createFile: (path: string) => invoke('fs_create_file', { path }) as Promise<void>,
+        writeText: (path: string, text: string) =>
+          invoke('fs_write_text', { path, text }) as Promise<void>,
         move: (from: string, to: string) => invoke('fs_move', { from, to }) as Promise<void>,
         copy: (from: string, to: string) => invoke('fs_copy', { from, to }) as Promise<void>,
         remove: (path: string) => invoke('fs_delete', { path }) as Promise<void>,

@@ -1,0 +1,6 @@
+title: viewer:focus
+tags: [[GUI command]] [[viewer panel]]
+kind: reference
+summary: Viewer: give the keyboard to the text being edited, editing it if it was not
+
+`viewer:focus text` gives the keyboard to the field of the [[viewer panel]], ticking its ''edit'' box if needed ([[Editing a text file]]). Does nothing unless a text file is shown.

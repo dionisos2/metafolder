@@ -193,6 +193,10 @@
 "viewer:mute" = "C"
 "viewer:restart" = "C"
 "viewer:play" = "C"
+"viewer:toggle-edit" = "C"
+"viewer:focus" = "B"
+"viewer:save" = "B"
+"viewer:reload" = "X"
 
 # ── The log ──────────────────────────────────────────────────────────────────
 "log:revert" = "B"

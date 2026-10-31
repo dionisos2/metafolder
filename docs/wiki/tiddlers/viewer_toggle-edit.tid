@@ -1,0 +1,6 @@
+title: viewer:toggle-edit
+tags: [[GUI command]] [[viewer panel]]
+kind: reference
+summary: Viewer: edit the text file shown in the panel, or stop editing it
+
+Ticks or unticks the ''edit'' box of the [[viewer panel]]: the text file becomes a field holding the keyboard, or read-only again, its changes kept ([[Editing a text file]]).

@@ -1,0 +1,6 @@
+title: viewer:reload
+tags: [[GUI command]] [[viewer panel]]
+kind: reference
+summary: Viewer: read the text file again, dropping the changes
+
+Reads the text file of the [[viewer panel]] again and drops the changes, without asking ([[Editing a text file]]). The ''Reload'' button of its toolbar. If the selection moved while the changes held the panel, the panel goes there instead.

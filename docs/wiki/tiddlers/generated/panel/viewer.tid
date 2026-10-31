@@ -6,13 +6,17 @@ summary: The viewer panel type
 !! Commands
 
 * ``viewer:back`` — File: go up one level (out of a listing, or to the containing folder)
+* ``viewer:focus`` — Viewer: give the keyboard to the text being edited, editing it if it was not
 * ``viewer:mute`` — File: mute / unmute
 * ``viewer:page`` — File: go to a page of the document
 * ``viewer:play`` — File: play one file after another — the checked selection or the query shown (selection / query / stop) [shuffle] [loop]
 * ``viewer:play-pause`` — Viewer: play / pause the media, or the animation of a GIF
+* ``viewer:reload`` — Viewer: read the text file again, dropping the changes
 * ``viewer:restart`` — File: play the media from the start
+* ``viewer:save`` — Viewer: write the changes to the text file [force: even over a change made on disk]
 * ``viewer:seek`` — File: seek the previewed media by a signed number of seconds
 * ``viewer:speed`` — File: step the playback rate
+* ``viewer:toggle-edit`` — Viewer: edit the text file shown in the panel, or stop editing it
 * ``viewer:toggle-gif-animation`` — File: play or stop the animation of a GIF
 * ``viewer:volume`` — File: step the volume
 * ``viewer:zoom`` — File: zoom the previewed image/video

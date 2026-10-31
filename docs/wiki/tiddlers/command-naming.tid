@@ -47,6 +47,7 @@ Grouped by what they touch, which is what a name must make obvious:
 |a view flag |`toggle <flag>`, `toggle-X` (the panel's one flag) |
 |a macro ([[Macros]]) |`toggle-recording`, `ask`, `run`, `save <name>` |
 |the cursor or the selection |`cursor:next/prev/first/last <panel>`, `cursor:find <panel> <mode>`, `page-next`, `select <toggle/all/none>`, and the `row-X` family (the row under the cursor) |
+|a text file being edited ([[Editing a text file]]) |`toggle-edit`, `focus text`, `save [force]`, `reload` |
 |a search |`query <what>` (adds a filter to the query shown and runs it: [[tag:query]]) |
 |a view setting |`set <setting> [value]`, `set-X <value>` (the panel's one setting) |
 |the media player |`play-pause`, `play <what> [options]` (a [[Slideshow]]), `restart`, `mute`, `seek <±s>`, `speed <up/down/reset>`, `volume <up/down>`, `zoom <in/out/fit/reset>` |

@@ -128,6 +128,21 @@ pub fn fs_create_file(path: String) -> Result<(), String> {
         .map_err(|e| format!("cannot create file {path}: {e}"))
 }
 
+/// Replaces the content of the existing file `path` with `text` (doc "Editing a
+/// text file"). In place, and not by a rename over it: the watcher reads a rename
+/// onto a tracked path as that file destroyed, and would orphan its metarecord; a
+/// write keeps the inode, so also the permissions, the hard links and a symlink.
+#[tauri::command]
+pub fn fs_write_text(path: String, text: String) -> Result<(), String> {
+    use std::io::Write;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(from_handle(&path))
+        .and_then(|mut file| file.write_all(text.as_bytes()))
+        .map_err(|e| format!("cannot write {path}: {e}"))
+}
+
 /// Moves/renames `from` to `to` (cross-filesystem safe). Refuses to overwrite an
 /// existing `to`.
 #[tauri::command]
@@ -322,6 +337,40 @@ mod tests {
         assert!(!tree.exists());
 
         assert!(fs_delete(p(dir.path(), "nope")).is_err());
+    }
+
+    #[test]
+    fn write_text_replaces_the_content_in_place() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("f.txt");
+        std::fs::write(&file, "a longer content").unwrap();
+        let inode = std::fs::metadata(&file).unwrap().ino();
+        fs_write_text(file.display().to_string(), "short".into()).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "short");
+        // Same file: a rename over it would orphan its metarecord (doc "Editing
+        // a text file").
+        assert_eq!(std::fs::metadata(&file).unwrap().ino(), inode);
+    }
+
+    #[test]
+    fn write_text_goes_through_a_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("f.txt");
+        let link = dir.path().join("l.txt");
+        std::fs::write(&file, "old").unwrap();
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        fs_write_text(link.display().to_string(), "new".into()).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "new");
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+    }
+
+    #[test]
+    fn write_text_never_creates_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("gone.txt");
+        assert!(fs_write_text(file.display().to_string(), "x".into()).is_err());
+        assert!(!file.exists());
     }
 
     /// `fs_stat` follows the link and fails; `fs_exists` answers about the entry.

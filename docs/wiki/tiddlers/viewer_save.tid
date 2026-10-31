@@ -1,0 +1,6 @@
+title: viewer:save
+tags: [[GUI command]] [[viewer panel]]
+kind: reference
+summary: Viewer: write the changes to the text file [force: even over a change made on disk]
+
+Writes the changes made in the [[viewer panel]] to the file. It refuses when the file changed on disk since it was read, unless given `force` ([[Editing a text file]]). Does nothing when there are no changes.

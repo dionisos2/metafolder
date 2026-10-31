@@ -44,6 +44,9 @@ counted as an image, and gets ''no preview available''.
 A file on a volume that is not mounted says which volume, instead of failing to load
 ([[Unmounted volumes in the GUI]]).
 
+A text file can be edited in the panel: the ''edit'' box of its toolbar, and
+''Save'' and ''Reload'' beside it ([[Editing a text file]]).
+
 !! A folder
 
 A folder is a grid of tiles, folders first: an image is its own thumbnail, a video
@@ -61,7 +64,8 @@ selection changes.
 <<key "view:refresh self" "Ctrl+r">> reads the file or the folder again, as it
 is on disk now: the panel is not told when a file's content changes, only when the
 selection does ([[Generic panel commands]]). A medium goes back behind its poster, its
-position kept. Playing the medium from the start is <<key "viewer:restart" "p p">>.
+position kept. Unsaved changes in a text file are dropped only if you agree.
+Playing the medium from the start is <<key "viewer:restart" "p p">>.
 
 !! Zoom
 

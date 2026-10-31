@@ -50,7 +50,7 @@
 #   field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script
 #   script-workspaces errors picker refs hierarchy hierarchy-form prompt history
 #   keybindings open-with tab-close close-layout pick-button suggested-key config-files walk open-viewers
-#   slideshow context-menu open-tree-node shell-line shell-cwd repos-memory help-keys help-cursor zoom order user-commands
+#   edit-text slideshow context-menu open-tree-node shell-line shell-cwd repos-memory help-keys help-cursor zoom order user-commands
 #   settle macro clipboard saved-workspaces, and
 #   devtools last (it takes the inspector the clicking scenarios drive).
 #   --unsandboxed  pass --allow-unsandboxed-webview to the GUI (a container
@@ -82,7 +82,7 @@ done
 [ ${#SCENARIOS[@]} -gt 0 ] \
     || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close close-layout
-        pick-button suggested-key walk open-viewers slideshow context-menu open-tree-node shell-line shell-cwd repos-memory
+        pick-button suggested-key walk open-viewers edit-text slideshow context-menu open-tree-node shell-line shell-cwd repos-memory
         help-keys help-cursor zoom refresh order user-commands settle macro paste clipboard saved-workspaces devtools)
 
 # shellcheck source=lib/daemon-fixture.sh
@@ -430,6 +430,41 @@ scenario_orphans() {
     run orphan:detect
     status_is "orphan detect: the file is back" info \
         "No orphans — every tracked metarecord has its file."
+}
+
+# Editing a text file in the viewer (doc "Editing a text file"), down to the keys:
+# Ctrl+S is the field's while it has the keyboard, the workspace's elsewhere.
+scenario_edit_text() {
+    new_repo edit-text
+    printf 'one\n' >"$REPO_DIR/f.txt"
+    : >"$REPO_DIR/empty.txt"
+    show_panel left viewer viewer:save
+    select_path "$REPO_DIR/f.txt"
+
+    run viewer:save
+    command_ok "edit-text: nothing to save is no error"
+    assert_eq "edit-text: the file is untouched" "one" "$(cat "$REPO_DIR/f.txt")"
+
+    needs_keyboard edit-text || return 0
+    # The panel reads the file after the selection moves, and nothing says when:
+    # the wait keeps a letter from being taken for a binding.
+    sleep 1
+    run viewer:focus text
+    command_ok "edit-text: viewer:focus text runs"
+    sleep 0.5
+    keys ctrl+e
+    typed "two"
+    keys ctrl+s
+    assert "edit-text: Ctrl+S in the field saves the file" until_ok 5 grep -q two "$REPO_DIR/f.txt"
+
+    # file:new makes empty files: they must open for editing too.
+    select_path "$REPO_DIR/empty.txt"
+    sleep 1
+    run viewer:focus text
+    sleep 0.5
+    typed "new"
+    keys ctrl+s
+    assert "edit-text: an empty file can be edited" until_ok 5 grep -q new "$REPO_DIR/empty.txt"
 }
 
 scenario_trash() {

@@ -626,6 +626,7 @@ pub fn run(options: Options) {
             fs_commands::fs_home_dir,
             fs_commands::fs_mkdir,
             fs_commands::fs_create_file,
+            fs_commands::fs_write_text,
             fs_commands::fs_move,
             fs_commands::fs_copy,
             fs_commands::fs_delete,

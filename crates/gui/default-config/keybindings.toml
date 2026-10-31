@@ -183,7 +183,10 @@ vars.index = "i"
 "ctrl+pageup" = { command = "workspace:prev" }
 "ctrl+t" = { command = "workspace:new" }
 "ctrl+w" = { command = "workspace:close" }
-"ctrl+s" = { command = "workspace:save" }
+"ctrl+s" = [
+  { command = "workspace:save" },
+  { command = "viewer:save", focus = "viewer-text", text-input = true },
+]
 "ctrl+o" = { command = "workspace:open here" }
 # Ctrl+D duplicates the workspace.
 "ctrl+d" = { command = "workspace:fork" }
@@ -349,7 +352,9 @@ vars.index = "i"
 # ── The focused panel's actions (p) and what it shows (v) ────────────────────
 
 # Its text fields: edit, or edit from empty (shift).
+"{panel} {set}" = { command = "viewer:save", when = "viewer" }
 "{panel} {edit}" = [
+  { command = "viewer:focus text", when = "viewer" },
   { command = "metarecord-list:focus simplified", when = "metarecord-list" },
   { command = "help:focus search", when = "help" },
   { command = "shell:focus line", when = "shell" },
@@ -412,6 +417,7 @@ vars.index = "i"
 ]
 "{view} t" = { command = "path-ref:set field", when = "path-ref" }
 "{view} z" = { command = "viewer:zoom fit", when = "viewer" }
+"{view} {edit}" = { command = "viewer:toggle-edit", when = "viewer" }
 
 # ── The viewer's media (doc "Media preview"), on a media player's keys ──────
 

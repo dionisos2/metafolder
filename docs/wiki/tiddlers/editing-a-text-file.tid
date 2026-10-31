@@ -1,0 +1,62 @@
+title: Editing a text file
+tags: [[viewer panel]]
+kind: reference
+aliases: text-editor viewer:edit
+summary: The viewer panel edits a text file in place — an edit box, Save greyed while there is nothing to save, Reload to drop the changes — and refuses what it could not write back exactly.
+
+While the [[viewer panel]] shows a text file, its toolbar has an ''edit'' box, and
+''Save'' and ''Reload'' buttons. Ticking the box turns the preview into a text field
+and gives it the keyboard. The box stays ticked from one file to the next.
+
+|!Key |!Command |!Does |
+|<<key "viewer:toggle-edit" "v e">> |[[viewer:toggle-edit]] |ticks or unticks the box |
+|<<key "viewer:focus text" "p e">> |[[viewer:focus]] `text` |gives the field the keyboard, ticking the box if needed. `Escape` takes it back, as in any field |
+|<<key "viewer:save" "p s">>, and `Ctrl+s` in the field |[[viewer:save]] |writes the changes. Greyed when there are none |
+|none |[[viewer:reload]] |reads the file again, dropping the changes |
+
+`Reload` has no key because what it drops cannot be got back ([[Command classes]]).
+Elsewhere `Ctrl+s` still saves the workspace.
+
+Unticking the box does not drop anything: the changes stay on screen, read-only, and
+can still be saved.
+
+!! Unsaved changes hold the panel
+
+The panel normally follows the selection. While a file has unsaved changes, it stays
+on that file, and says so: a move of the selection waits, and the panel goes there
+once the changes are saved or reloaded. Going up (<<key "viewer:back" Backspace>>) is
+refused the same way, and [[view:refresh]] asks before dropping them.
+
+Closing the workspace or quitting the GUI does not ask: the changes are lost.
+
+!! A change made on disk
+
+Saving first checks the file's size and modification time against those of the last
+read or save. If something else wrote to it meanwhile, nothing is written and the
+status bar says so. `viewer:save force` overwrites that change; `viewer:reload` takes
+it and drops yours.
+
+!! What cannot be edited
+
+Saving replaces the whole file with what the field holds, so a file is editable only
+when the field holds it exactly. The box is greyed, and the toolbar says why, for a
+file that:
+
+* is larger than the preview (`text-preview-limit`, 256 KiB, in [[GUI configuration]]): the field would hold only its beginning;
+* is not UTF-8, UTF-16 for instance: decoding it for display loses bytes;
+* holds NUL bytes;
+* mixes line endings. A text field only knows LF, so a file with CRLF everywhere is written back with CRLF, but a mix could not be restored.
+
+A byte order mark is kept.
+
+!! How it writes
+
+The content is written in place, not to a temporary file renamed over the original.
+The watcher reads a rename onto a tracked path as that file destroyed, and would
+orphan its metarecord ([[Event semantics]]). Writing in place also keeps permissions,
+hard links and symbolic links. The price is that a crash during the write can leave
+the file incomplete.
+
+To the repository, a save is a change like any other program's: the watcher or the
+next reconcile records it, and it is not in the [[log|The operation log]], so
+`log:undo` does not undo it.

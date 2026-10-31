@@ -169,12 +169,13 @@ changed here is recorded when the watcher sees it or at the next reconcile.
 |`homeDir()` |the user's home directory |
 |`mkdir(path)` |one directory, whose parent must exist |
 |`createFile(path)` |an empty file |
+|`writeText(path, text)` |replaces the content of an existing file, in place ([[Editing a text file]]) |
 |`move(from, to)` |a rename, falling back to copy and delete across file systems |
 |`copy(from, to)` |a file or a whole tree |
 |`remove(path)` |a permanent deletion, of a tree too |
 
-None of them overwrites: `mkdir`, `createFile`, `move` and `copy` fail when the
-destination exists.
+Apart from `writeText`, whose purpose it is, none of them overwrites: `mkdir`,
+`createFile`, `move` and `copy` fail when the destination exists.
 
 ''A path is a handle.'' The frontend speaks JSON, so a path it holds is text, while
 a path on disk is bytes that need not be UTF-8. Every path crossing this boundary

@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/viewer:reload
+catalog: GUI command
+target: viewer:reload
+summary: Viewer: read the text file again, dropping the changes
+
+!! Reference
+
+* Defined by the ``viewer`` panel
+* No default key

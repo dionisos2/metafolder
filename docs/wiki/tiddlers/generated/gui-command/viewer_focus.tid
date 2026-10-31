@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/viewer:focus
+catalog: GUI command
+target: viewer:focus
+summary: Viewer: give the keyboard to the text being edited, editing it if it was not
+
+!! Reference
+
+* Defined by the ``viewer`` panel
+
+!! Default keys
+
+* ``p e`` → ``viewer:focus text`` (in the ``viewer`` panel)
