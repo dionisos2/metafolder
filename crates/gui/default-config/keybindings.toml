@@ -437,7 +437,8 @@ vars.index = "i"
 "{go} shift+o" = { command = "repos:load on-disk" }
 "{go} p" = { command = "script:run" }
 "{go} w" = { command = "file:open-with" }
-"{go} m" = { command = "file-manager:reveal here" }
+# The selection's folder on disk: another panel, from a row, so beside it.
+"{go} m" = { command = "file-manager:reveal other" }
 "{target-here} {go} m" = { command = "file-manager:reveal here" }
 "{target-other} {go} m" = { command = "file-manager:reveal other" }
 "{target-new} {go} m" = { command = "file-manager:reveal new" }

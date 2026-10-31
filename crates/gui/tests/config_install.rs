@@ -375,4 +375,7 @@ fn test_go_family_load_and_folder_keybindings() {
     assert_eq!(global(&["g", "l"]).as_deref(), Some("folder:open children here"));
     assert_eq!(global(&["g", "s"]).as_deref(), Some("metarecord-list:folder here"));
     assert_eq!(global(&["b", "g", "s"]).as_deref(), Some("metarecord-list:folder other"));
+    // Showing another panel from a row: beside.
+    assert_eq!(global(&["g", "m"]).as_deref(), Some("file-manager:reveal other"));
+    assert_eq!(global(&["i", "g", "m"]).as_deref(), Some("file-manager:reveal here"));
 }

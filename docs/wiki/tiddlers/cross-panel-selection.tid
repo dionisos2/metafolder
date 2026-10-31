@@ -34,7 +34,9 @@ default. Both are also in the right-click menu of the panels showing metarecords
 first argument is the [[open target|Panel slots and layout]]: `here`, `other` (the other
 slot) or `new` (a copy of the workspace) — <<key "metarecord-list:folder other" "b g s">>
 lists the folder in the other slot, <<key "metarecord-list:folder new" "n g s">> in a
-new workspace, leaving the list here as it was.
+new workspace, leaving the list here as it was. The bare keys follow [[Choosing keybindings]]:
+<<key "metarecord-list:folder here" "g s">> changes the list, here, and
+<<key "file-manager:reveal other" "g m">> shows another panel, beside.
 
 * `file-manager:reveal` (''Open folder in file manager'') shows it on disk: the folder itself when the selection is a folder, else the folder holding the file, with the file highlighted.
 * `metarecord-list:folder` (<<key "metarecord-list:folder here" "g s">>, ''Open folder in metarecord-list'') shows the same folder's ''metarecords'' instead — its files and subfolders, as the query `mfr_path -> "<folder>"`. The folder is the selected metarecord's (itself when it is a folder), else the selected path's (an untracked file has no metarecord to ask), else the file manager's current folder, else the repository's root. A selection outside the repository is refused, rather than silently answered for the root.

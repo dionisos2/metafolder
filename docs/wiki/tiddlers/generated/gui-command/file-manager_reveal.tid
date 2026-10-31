@@ -10,6 +10,6 @@ summary: Open the selected metarecord's folder in the file manager (here / other
 !! Default keys
 
 * ``b g m`` → ``file-manager:reveal other``
-* ``g m`` → ``file-manager:reveal here``
+* ``g m`` → ``file-manager:reveal other``
 * ``i g m`` → ``file-manager:reveal here``
 * ``n g m`` → ``file-manager:reveal new``

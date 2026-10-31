@@ -63,8 +63,8 @@ a verb is one line ([[Keybinding variables]]).
 
 A command that opens something takes a target: `i` here, `b` beside (the other
 slot), `n` a new workspace, typed before its key. Without one, an action started
-from a row of the panel to show another panel goes beside, so that the row stays in
-view. One whose aim is to change the list itself — the selection's folder as a list —
+from a row of the panel to show another panel — the selection's folder in the file
+manager — goes beside, so that the row stays in view. One whose aim is to change the list itself — the selection's folder as a list —
 goes here, and so does one picked from a list — a recent metarecord, a folder —, in
 place of the list.
 
