@@ -485,58 +485,43 @@ number = n:NUMBER "MB" => {num($n) * 1048576}
         validate(&g).unwrap();
         // Fuzzy osm form: a slash is an osm term separator (ordered, not
         // necessarily contiguous or root-anchored).
-        assert_eq!(
-            expand(&g, "#jazz").unwrap(),
-            r#"tag -> (mf_schema = "tag" AND osm(path, "jazz"))"#
-        );
+        assert_eq!(expand(&g, "#jazz").unwrap(), r#"tag -> (osm(path, "jazz"))"#);
         assert_eq!(
             expand(&g, "#domaine/divertissement").unwrap(),
-            r#"tag -> (mf_schema = "tag" AND osm(path, "domaine divertissement"))"#
+            r#"tag -> (osm(path, "domaine divertissement"))"#
         );
         // Full-path subtree (`#=`) and exact node (`##=`), slash kept.
         assert_eq!(
             expand(&g, "#=domaine/divertissement").unwrap(),
-            r#"tag -> (mf_schema = "tag" AND path =>* "domaine/divertissement")"#
+            r#"tag -> (path =>* "domaine/divertissement")"#
         );
         assert_eq!(
             expand(&g, "##=domaine/divertissement").unwrap(),
-            r#"tag -> (mf_schema = "tag" AND path = "domaine/divertissement")"#
+            r#"tag -> (path = "domaine/divertissement")"#
         );
         // A quoted value is a single osm term (contiguous substring).
-        assert_eq!(
-            expand(&g, r#"#"music/jazz""#).unwrap(),
-            r#"tag -> (mf_schema = "tag" AND osm(path, "music/jazz"))"#
-        );
+        assert_eq!(expand(&g, r#"#"music/jazz""#).unwrap(), r#"tag -> (osm(path, "music/jazz"))"#);
         // Accented letters are word material, as in the normal DSL: no quotes
         // needed.
-        assert_eq!(
-            expand(&g, "#écriture").unwrap(),
-            r#"tag -> (mf_schema = "tag" AND osm(path, "écriture"))"#
-        );
+        assert_eq!(expand(&g, "#écriture").unwrap(), r#"tag -> (osm(path, "écriture"))"#);
         assert_eq!(
             expand(&g, "#=littérature/poésie").unwrap(),
-            r#"tag -> (mf_schema = "tag" AND path =>* "littérature/poésie")"#
+            r#"tag -> (path =>* "littérature/poésie")"#
         );
         assert_eq!(expand(&g, "genre=électro").unwrap(), r#"genre = "électro""#);
         // `#!X`: the records that *deny* a tag (a `negative_tag` ref), found
         // fuzzily like `#X` — an answer, unlike `! #X`, which also holds every
         // record never asked.
-        assert_eq!(
-            expand(&g, "#!le_tag").unwrap(),
-            r#"negative_tag -> (mf_schema = "tag" AND osm(path, "le_tag"))"#
-        );
+        assert_eq!(expand(&g, "#!le_tag").unwrap(), r#"negative_tag -> (osm(path, "le_tag"))"#);
         assert_eq!(
             expand(&g, "#!musique/jazz").unwrap(),
-            r#"negative_tag -> (mf_schema = "tag" AND osm(path, "musique jazz"))"#
+            r#"negative_tag -> (osm(path, "musique jazz"))"#
         );
-        assert_eq!(
-            expand(&g, "! #jazz").unwrap(),
-            r#"NOT tag -> (mf_schema = "tag" AND osm(path, "jazz"))"#
-        );
+        assert_eq!(expand(&g, "! #jazz").unwrap(), r#"NOT tag -> (osm(path, "jazz"))"#);
         // The records never asked: neither the tag nor its denial.
         assert_eq!(
             expand(&g, "! #jazz ! #!jazz").unwrap(),
-            r#"NOT tag -> (mf_schema = "tag" AND osm(path, "jazz")) AND NOT negative_tag -> (mf_schema = "tag" AND osm(path, "jazz"))"#
+            r#"NOT tag -> (osm(path, "jazz")) AND NOT negative_tag -> (osm(path, "jazz"))"#
         );
     }
 }

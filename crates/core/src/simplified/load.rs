@@ -159,38 +159,23 @@ mod tests {
         // tag path, so you can name a leaf without its ancestors. A `/` is an
         // osm term separator, not a path anchor: `#a/b` matches a path with `a`
         // then `b` in order, not necessarily contiguous or from the root.
-        assert_eq!(
-            expand(&g, "#musique").unwrap(),
-            r#"tag -> (mf_schema = "tag" AND osm(path, "musique"))"#
-        );
-        assert_eq!(
-            expand(&g, "#musique/jazz").unwrap(),
-            r#"tag -> (mf_schema = "tag" AND osm(path, "musique jazz"))"#
-        );
+        assert_eq!(expand(&g, "#musique").unwrap(), r#"tag -> (osm(path, "musique"))"#);
+        assert_eq!(expand(&g, "#musique/jazz").unwrap(), r#"tag -> (osm(path, "musique jazz"))"#);
         // A quoted value is one contiguous osm term.
         assert_eq!(
             expand(&g, r#"#"musique/jazz""#).unwrap(),
-            r#"tag -> (mf_schema = "tag" AND osm(path, "musique/jazz"))"#
+            r#"tag -> (osm(path, "musique/jazz"))"#
         );
         // `#=P` anchors the *full* path from the root and matches its subtree
         // (`=>*`); an unquoted slash-path is accepted.
-        assert_eq!(
-            expand(&g, "#=musique").unwrap(),
-            r#"tag -> (mf_schema = "tag" AND path =>* "musique")"#
-        );
-        assert_eq!(
-            expand(&g, "#=musique/jazz").unwrap(),
-            r#"tag -> (mf_schema = "tag" AND path =>* "musique/jazz")"#
-        );
+        assert_eq!(expand(&g, "#=musique").unwrap(), r#"tag -> (path =>* "musique")"#);
+        assert_eq!(expand(&g, "#=musique/jazz").unwrap(), r#"tag -> (path =>* "musique/jazz")"#);
         // `##=P` anchors the full path to that exact node (`=`).
-        assert_eq!(
-            expand(&g, "##=musique/jazz").unwrap(),
-            r#"tag -> (mf_schema = "tag" AND path = "musique/jazz")"#
-        );
+        assert_eq!(expand(&g, "##=musique/jazz").unwrap(), r#"tag -> (path = "musique/jazz")"#);
         // Composes with the boolean skeleton like any other predicate.
         assert_eq!(
             expand(&g, "#musique rating>3").unwrap(),
-            r#"tag -> (mf_schema = "tag" AND osm(path, "musique")) AND rating > 3"#
+            r#"tag -> (osm(path, "musique")) AND rating > 3"#
         );
         // Every expansion is valid normal DSL.
         for input in
@@ -208,29 +193,26 @@ mod tests {
         // under it, `mixed_tag ##=P` = the folders partly tagged with P.
         assert_eq!(
             expand(&g, "negative_tag #=musique/jazz").unwrap(),
-            r#"negative_tag -> (mf_schema = "tag" AND path =>* "musique/jazz")"#
+            r#"negative_tag -> (path =>* "musique/jazz")"#
         );
         assert_eq!(
             expand(&g, "mixed_tag ##=musique/jazz").unwrap(),
-            r#"mixed_tag -> (mf_schema = "tag" AND path = "musique/jazz")"#
+            r#"mixed_tag -> (path = "musique/jazz")"#
         );
         assert_eq!(
             expand(&g, "negative_tag #jazz").unwrap(),
-            r#"negative_tag -> (mf_schema = "tag" AND osm(path, "jazz"))"#
+            r#"negative_tag -> (osm(path, "jazz"))"#
         );
-        assert_eq!(
-            expand(&g, "tag #=musique").unwrap(),
-            r#"tag -> (mf_schema = "tag" AND path =>* "musique")"#
-        );
+        assert_eq!(expand(&g, "tag #=musique").unwrap(), r#"tag -> (path =>* "musique")"#);
         // Only those three names qualify a tag form: a keyword is never read
         // as a field, so `OR` still separates two tag forms.
         assert_eq!(
             expand(&g, "#=musique OR #=livre").unwrap(),
-            r#"tag -> (mf_schema = "tag" AND path =>* "musique") OR tag -> (mf_schema = "tag" AND path =>* "livre")"#
+            r#"tag -> (path =>* "musique") OR tag -> (path =>* "livre")"#
         );
         assert_eq!(
             expand(&g, "fav #=musique").unwrap(),
-            r#"rating >= 4 AND tag -> (mf_schema = "tag" AND path =>* "musique")"#
+            r#"rating >= 4 AND tag -> (path =>* "musique")"#
         );
         for input in ["negative_tag #=a/b", "mixed_tag ##=a", "negative_tag #a"] {
             crate::dsl::parse_query(&expand(&g, input).unwrap()).expect("valid DSL");
