@@ -108,6 +108,16 @@ export function historyOf(element) {
   return handle?.available() ? handle : null;
 }
 
+/** The field with a history last edited under `root` (a panel's Shadow root),
+ *  null when none was or it has left the panel. Kept on the root, shared by
+ *  the copies of this module like the handle.
+ *  @param {ParentNode|null} root
+ *  @returns {HTMLElement|null} */
+export function lastEditedField(root) {
+  const field = /** @type {any} */ (root)?.mfLastEdited ?? null;
+  return field?.isConnected ? field : null;
+}
+
 /**
  * Attaches per-repo input history to a text input.
  *
@@ -203,7 +213,10 @@ export function attachHistory(input, { zone, read, append, getRepo, container })
         starting = null;
         // A real edit or a blur may have landed while loading; it wins.
         if (loading !== epoch) return;
-        nav = { list, index: list.length, draft: input.value };
+        // A newest entry the field already holds would be a step that shows
+        // nothing: the text just submitted usually stays in the field.
+        const walked = list.at(-1) === input.value.trim() ? list.slice(0, -1) : list;
+        nav = { list: walked, index: walked.length, draft: input.value };
       });
     }
     await starting;
@@ -336,6 +349,7 @@ export function attachHistory(input, { zone, read, append, getRepo, container })
   }
 
   function onInput() {
+    /** @type {any} */ (input.getRootNode()).mfLastEdited = input;
     if (!applying) resetNav(); // a real edit becomes the new draft
   }
 

@@ -49,6 +49,7 @@ import { macroEntry, macros } from "./macro";
 import { daemonWork } from "./working";
 import {
   HISTORY_COMMANDS,
+  LAST_EDITED,
   SELF_FOCUS,
   historyFieldNames,
   runHistoryCommand,
@@ -1174,8 +1175,8 @@ for (const command of HISTORY_COMMANDS) {
   registerArgs(command, [
     {
       name: "field",
-      prompt: () => `Which field? (${SELF_FOCUS}, or a field of the focused panel)`,
-      complete: () => [SELF_FOCUS, ...historyFieldNames(focusedPanelRoot())],
+      prompt: () => `Which field? (${SELF_FOCUS}, ${LAST_EDITED}, or a field of the focused panel)`,
+      complete: () => [SELF_FOCUS, LAST_EDITED, ...historyFieldNames(focusedPanelRoot())],
     },
   ]);
 }

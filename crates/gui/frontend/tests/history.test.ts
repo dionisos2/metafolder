@@ -96,6 +96,18 @@ describe('walking: prev / next', () => {
     expect(input.value).toBe('one');
   });
 
+  test('the walk skips a newest entry the field already holds', async () => {
+    const input = makeInput();
+    attach(input);
+    type(input, 'three'); // just submitted, still in the field
+    void historyOf(input)!.prev();
+    await flush();
+    expect(input.value).toBe('two');
+    void historyOf(input)!.next();
+    await flush();
+    expect(input.value).toBe('three');
+  });
+
   test('ctrl-n walks forward and restores the in-progress draft', async () => {
     const input = makeInput();
     attach(input);
@@ -153,6 +165,7 @@ describe('walking: prev / next', () => {
     // *second* entry on the way back in.
     input.focus();
     input.blur();
+    input.value = '';
     void historyOf(input)!.prev();
     await flush();
     expect(input.value).toBe('three');

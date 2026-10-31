@@ -126,6 +126,84 @@ describe('runHistoryCommand', () => {
   });
 });
 
+describe('last-edited: the field of the focused panel last edited', () => {
+  /** A panel's Shadow root holding two fields with a history. */
+  function makePanel() {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = host.attachShadow({ mode: 'open' });
+    const container = document.createElement('div');
+    root.appendChild(container);
+    const field = (name: string, entries: string[]) => {
+      const input = document.createElement('input');
+      input.dataset.mfFocus = name;
+      container.appendChild(input);
+      attachHistory(input, {
+        zone: `test:${name}`,
+        read: async () => entries,
+        append: async () => true,
+        getRepo: async () => 'repo',
+        container,
+      });
+      return input;
+    };
+    return { root, finder: field('finder', ['f1', 'f2']), query: field('query', ['q1', 'q2']) };
+  }
+
+  function edit(input: HTMLInputElement, value: string) {
+    input.value = value;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  test('is the field edited last, and nothing before any edit', () => {
+    const { root, finder, query } = makePanel();
+    expect(resolveHistoryField('last-edited', document.body, root)).toBeNull();
+    edit(finder, 'a');
+    expect(resolveHistoryField('last-edited', document.body, root)).toBe(finder);
+    edit(query, 'b');
+    expect(resolveHistoryField('last-edited', document.body, root)).toBe(query);
+  });
+
+  test('a recall counts as an edit of that field', async () => {
+    const { root, finder, query } = makePanel();
+    edit(query, 'b');
+    await runHistoryCommand('history:prev', 'finder', document.body, root);
+    expect(resolveHistoryField('last-edited', document.body, root)).toBe(finder);
+  });
+
+  test('a key on it passes through until a field was edited', () => {
+    const { root, finder } = makePanel();
+    expect(historyApplies('history:prev last-edited', document.body, root)).toBe(false);
+    edit(finder, 'a');
+    expect(historyApplies('history:prev last-edited', document.body, root)).toBe(true);
+  });
+
+  test('a field gone from the panel is no longer designated', () => {
+    const { root, finder } = makePanel();
+    edit(finder, 'a');
+    finder.remove();
+    expect(resolveHistoryField('last-edited', document.body, root)).toBeNull();
+  });
+
+  test('walks that field from outside it, and gives it the focus', async () => {
+    const { root, finder, query } = makePanel();
+    edit(finder, 'a');
+    edit(query, 'b');
+    query.blur();
+    await runHistoryCommand('history:prev', 'last-edited', document.body, root);
+    expect(query.value).toBe('q2');
+    expect(root.activeElement).toBe(query);
+    expect(finder.value).toBe('a');
+  });
+
+  test('without an edited field, says so', async () => {
+    const { root } = makePanel();
+    await expect(
+      runHistoryCommand('history:prev', 'last-edited', document.body, root),
+    ).rejects.toThrow(/no field with a history was edited in the focused panel/);
+  });
+});
+
 describe('the shipped keys', () => {
   const toml = readFileSync(resolve(process.cwd(), '../default-config/keybindings.toml'), 'utf8');
 
@@ -138,5 +216,11 @@ describe('the shipped keys', () => {
     expect(start).toBeGreaterThanOrEqual(0);
     const block = toml.slice(start, toml.indexOf('\n"', start + 1));
     expect(block).toContain(`{ command = "${command}", text-input = true }`);
+  });
+
+  test('ctrl+p outside a text field recalls in the field last edited', () => {
+    const start = toml.indexOf('"ctrl+p" = ');
+    const block = toml.slice(start, toml.indexOf('\n"', start + 1));
+    expect(block).toContain('{ command = "history:prev last-edited" }');
   });
 });

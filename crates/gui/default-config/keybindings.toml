@@ -127,7 +127,12 @@ vars.index = "i"
 
 # The input history of the focused text field (doc "Input history"). Outside a
 # field that has one these keys pass through: Ctrl+N creates, Ctrl+R refreshes.
-"ctrl+p" = { command = "history:prev self-focus", text-input = true }
+# Ctrl+P there recalls in the field of the panel last edited, which takes the
+# focus: Ctrl+N then walks back in it.
+"ctrl+p" = [
+  { command = "history:prev last-edited" },
+  { command = "history:prev self-focus", text-input = true },
+]
 
 # The conventions of every program.
 "ctrl+q" = { command = "quit", text-input = true }

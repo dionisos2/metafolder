@@ -3,4 +3,4 @@ tags: [[GUI command]] Commands
 kind: reference
 summary: Recall the next entry of a text field's input history
 
-Puts the next entry of the history in the field `self-focus` or a name designates; past the newest, what was being typed comes back. See [[Input history]].
+Puts the next entry of the history in the field `self-focus`, `last-edited` or a name designates; past the newest, what was being typed comes back. See [[Input history]].

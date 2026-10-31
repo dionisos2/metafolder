@@ -18,7 +18,8 @@ Four zones have a history:
 
 Editing the recalled text ends the walk: the edited text is the new draft. Leaving
 the zone ends it too, so the first <<cmd "history:prev">> after coming back recalls
-the newest entry again.
+the newest entry again. A newest entry the zone already holds is skipped: after
+applying a query that stays in its field, the first recall is the query before.
 
 !! Which field
 
@@ -26,6 +27,7 @@ The argument is ''required'': the field the command acts on.
 
 * `self-focus` is the field that has the focus: it is what the keys run. Where the focused field has no history, a key bound to it passes through as if it were not bound: outside a text field, `Ctrl+N` creates and `Ctrl+R` refreshes ([[Keybindings]]).
 * A name is that field of the focused panel, which then takes the focus — `finder`, `simplified`, or `line` for the [[shell panel]]. `history:search finder` typed in the command input opens the finder's search.
+* `last-edited` is the field of the focused panel edited last — typed in, or changed by a command or a recall — which then takes the focus. It is what <<key "history:prev last-edited" "Ctrl+P">> runs outside a text field, so the previous query comes back without going to its field first; `Ctrl+N` then walks back, in the field. Each panel remembers its own for as long as the GUI runs; before any edit the key passes through. `Ctrl+N` itself is not bound to it, as it creates outside a field.
 
 Typed in the command input, `self-focus` finds nothing: the input gives up the focus
 before the command runs, and no field holds it then. A field without history, or a

@@ -2,9 +2,10 @@
 // designates, and what they do to it. The walk itself is the field's own
 // (panel-shim/history.js).
 
-import { historyOf } from '../../../panel-shim/history.js';
+import { historyOf, lastEditedField } from '../../../panel-shim/history.js';
 
 export const SELF_FOCUS = 'self-focus';
+export const LAST_EDITED = 'last-edited';
 export const HISTORY_COMMANDS = ['history:prev', 'history:next', 'history:search'];
 
 type Root = ParentNode | null;
@@ -14,7 +15,8 @@ function namedFields(root: Root): HTMLElement[] {
 }
 
 /** The field `arg` designates, when it has a history: the focused one for
- *  `self-focus`, else the field of that name in the focused panel. */
+ *  `self-focus`, the focused panel's last edited for `last-edited`, else the
+ *  field of that name in the focused panel. */
 export function resolveHistoryField(
   arg: string,
   active: Element | null,
@@ -23,7 +25,9 @@ export function resolveHistoryField(
   const field =
     arg === SELF_FOCUS
       ? (active as HTMLElement | null)
-      : (namedFields(root).find((el) => el.dataset.mfFocus === arg) ?? null);
+      : arg === LAST_EDITED
+        ? lastEditedField(root)
+        : (namedFields(root).find((el) => el.dataset.mfFocus === arg) ?? null);
   return historyOf(field) ? field : null;
 }
 
@@ -51,14 +55,18 @@ export async function runHistoryCommand(
   active: Element | null,
   root: Root,
 ): Promise<void> {
-  if (!arg) throw new Error(`which field? (${SELF_FOCUS}, or a field of the focused panel)`);
+  if (!arg) {
+    throw new Error(`which field? (${SELF_FOCUS}, ${LAST_EDITED}, or a field of the focused panel)`);
+  }
   const field = resolveHistoryField(arg, active, root);
   const history = historyOf(field);
   if (!field || !history) {
     throw new Error(
       arg === SELF_FOCUS
         ? 'no text field with a history has the focus'
-        : `no field "${arg}" with a history in the focused panel`,
+        : arg === LAST_EDITED
+          ? 'no field with a history was edited in the focused panel'
+          : `no field "${arg}" with a history in the focused panel`,
     );
   }
   if (arg !== SELF_FOCUS) field.focus();

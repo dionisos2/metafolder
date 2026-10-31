@@ -9,4 +9,5 @@ summary: Recall the previous entry of a text field's input history
 
 !! Default keys
 
+* ``ctrl+p`` → ``history:prev last-edited``
 * ``ctrl+p`` → ``history:prev self-focus`` (also in a text input)
