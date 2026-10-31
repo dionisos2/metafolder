@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/editing:uppercase
+catalog: GUI command
+target: editing:uppercase
+summary: Put the selected text of the focused text input in capitals
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``ctrl+u`` → ``editing:uppercase`` (while ``viewer-text`` is focused, also in a text input)

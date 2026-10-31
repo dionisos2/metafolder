@@ -24,8 +24,8 @@ workspace, in the [[viewer panel]]; its `ⓘ` button, or
 are [[panel:open]]: the row is the selection already, which the panel opened reads. A
 hidden slot is opened for it.
 
-When `metarecord-detail` is editing a field, it asks before showing another
-metarecord: ''Unsaved changes — discard and switch metarecord?''
+While a field of `metarecord-detail` or a file of the [[viewer panel]] is being edited,
+moving the selection asks first, and a refusal leaves it where it is ([[Edits in progress]]).
 
 !! Showing the folder
 

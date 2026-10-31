@@ -465,6 +465,21 @@ scenario_edit_text() {
     typed "new"
     keys ctrl+s
     assert "edit-text: an empty file can be edited" until_ok 5 grep -q new "$REPO_DIR/empty.txt"
+
+    # Ctrl+U in this field puts the selection in capitals, instead of emptying it.
+    keys shift+Home ctrl+u ctrl+s
+    assert "edit-text: Ctrl+U puts the selection in capitals" until_ok 5 grep -q NEW "$REPO_DIR/empty.txt"
+
+    # An edit in progress (doc "Edits in progress"): closing asks.
+    typed "x"
+    answering no workspace:close
+    assert_contains "edit-text: closing the workspace asks" "$LAST_QUESTIONS" "empty.txt"
+    answering no quit
+    assert_contains "edit-text: quitting asks" "$LAST_QUESTIONS" "empty.txt"
+    assert "edit-text: refused, the GUI is still there" mfg status-bar
+    run viewer:reload
+    run workspace:close
+    command_ok "edit-text: with nothing to lose, closing asks nothing"
 }
 
 scenario_trash() {

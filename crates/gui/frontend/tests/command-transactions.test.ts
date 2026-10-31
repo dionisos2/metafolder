@@ -342,6 +342,7 @@ describe('a generic command', () => {
         };
       },
       provided: () => new Set(['index', 'count', 'select']),
+      unsaved: () => [],
     });
     tauri.length = 0;
     expect(await dispatch('cursor:next metarecord-list', { ws: 'ws-1', slot: 'left' })).toEqual({
@@ -358,6 +359,7 @@ describe('a generic command', () => {
     setFunctionProvider({
       get: async () => ({ paths: async () => ['/r/a.txt', '/r/b.txt'] }),
       provided: () => new Set(['paths']),
+      unsaved: () => [],
     });
     tauri.length = 0;
     expect(await dispatch('clipboard:copy metarecord-list', { ws: 'ws-1', slot: 'left' })).toEqual({

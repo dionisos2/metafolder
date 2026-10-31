@@ -23,4 +23,4 @@ summary: The viewer panel type
 
 !! Generic commands
 
-Provides ``refresh``, ``paths``, ``pasteTarget`` to [[Generic panel commands]].
+Provides ``unsaved``, ``discard``, ``refresh``, ``paths``, ``pasteTarget`` to [[Generic panel commands]].

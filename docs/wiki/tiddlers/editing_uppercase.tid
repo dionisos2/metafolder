@@ -1,0 +1,6 @@
+title: editing:uppercase
+tags: [[GUI command]] [[Editing a text file]]
+kind: reference
+summary: Put the selected text of the focused text input in capitals
+
+Puts the selected text of the focused field in capitals, and leaves it selected. Bound to `Ctrl+u` in the field of the [[viewer panel]] ([[Editing a text file]]), which takes the key from [[editing:discard]] there.

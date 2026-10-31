@@ -20,6 +20,7 @@
 "editing:discard" = "B"
 "editing:goto" = "B"
 "editing:clear-line-end" = "B"
+"editing:uppercase" = "B"
 "completion:cycle" = "C"
 "status:clear" = "B"
 "find:open" = "B"

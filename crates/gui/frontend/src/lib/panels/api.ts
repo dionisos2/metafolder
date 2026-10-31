@@ -14,6 +14,7 @@ import { checkTarget, resolveTarget } from '../targets';
 import { transactional } from '../txn';
 import type { ExecContext } from '../types';
 import { daemonWork } from '../working';
+import { confirmSelectionWrite } from '../unsavedEdits';
 import { globalMirror } from '../globals';
 import { changeFeed, type ChangeEvent } from './changes';
 import {
@@ -452,6 +453,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
    * doc "Command transactions"). The per-instance state above is shared.
    */
   function build(invoke: PanelApiDeps['invoke'], context: () => ExecContext): MetafolderApi {
+    const readVar = (key: string) => invoke('ws_get_var', { wsId: ctx.wsId, key });
     return {
       // `mount` runs after init, so nothing to wait for; kept for compatibility.
       ready: Promise.resolve(),
@@ -623,12 +625,20 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
 
       workspace: {
         get: (key: string) => invoke('ws_get_var', { wsId: ctx.wsId, key }),
-        set: (key: string, value: unknown) =>
-          invoke('ws_set_var', { wsId: ctx.wsId, key, value }) as Promise<void>,
+        set: async (key: string, value: unknown) => {
+          if (!(await confirmSelectionWrite(ctx.wsId, key, value, readVar))) return;
+          await invoke('ws_set_var', { wsId: ctx.wsId, key, value });
+        },
         // All in before any listener hears of one (`workspace_send` on this
         // workspace): a panel following several variables never reads half.
-        setMany: (vars: Record<string, unknown>) =>
-          invoke('workspace_send', { wsId: ctx.wsId, vars }) as Promise<void>,
+        setMany: async (vars: Record<string, unknown>) => {
+          const allowed: Record<string, unknown> = {};
+          for (const [key, value] of Object.entries(vars)) {
+            if (await confirmSelectionWrite(ctx.wsId, key, value, readVar)) allowed[key] = value;
+          }
+          if (Object.keys(allowed).length === 0) return;
+          await invoke('workspace_send', { wsId: ctx.wsId, vars: allowed });
+        },
         all: () => invoke('ws_vars', { wsId: ctx.wsId }) as Promise<Record<string, unknown>>,
         adoptRepo: (repo: string) => invoke('adopt_repo', { wsId: ctx.wsId, repo }) as Promise<void>,
         // The workspace primitives (doc "Workspaces"): an empty workspace, the

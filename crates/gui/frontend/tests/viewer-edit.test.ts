@@ -403,3 +403,42 @@ describe('editing:goto in a panel text area', () => {
     expect(area.selectionStart).toBe(4);
   });
 });
+
+describe('editing:uppercase', () => {
+  test('puts the selected text in capitals, keeping it selected', async () => {
+    const { uppercaseSelection } = await import('../src/lib/commands');
+    const area = document.createElement('textarea');
+    document.body.append(area);
+    area.value = 'one straße two';
+    area.setSelectionRange(4, 10);
+    const input = vi.fn();
+    area.addEventListener('input', input);
+    uppercaseSelection(area);
+    expect(area.value).toBe('one STRASSE two');
+    expect([area.selectionStart, area.selectionEnd]).toEqual([4, 11]);
+    expect(input).toHaveBeenCalled();
+  });
+
+  test('with nothing selected, nothing changes', async () => {
+    const { uppercaseSelection } = await import('../src/lib/commands');
+    const area = document.createElement('textarea');
+    area.value = 'one';
+    area.setSelectionRange(1, 1);
+    uppercaseSelection(area);
+    expect(area.value).toBe('one');
+  });
+});
+
+describe('viewer panel — an edit in progress', () => {
+  test('says so to the shell, and drops it when told', async () => {
+    const { run, type, provided, root } = await mounted({ '/a.txt': 'one\n' }, '/a.txt');
+    const edit = provided as { unsaved?: () => string | null; discard?: () => unknown };
+    await run('viewer:toggle-edit');
+    expect(edit.unsaved!()).toBeNull();
+    type('mine\n');
+    expect(edit.unsaved!()).toContain('/a.txt');
+    edit.discard!();
+    expect(edit.unsaved!()).toBeNull();
+    expect(button(root, 'text-save').disabled).toBe(true);
+  });
+});

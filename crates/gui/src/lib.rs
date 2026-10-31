@@ -95,6 +95,7 @@ fn register_builtins(registry: &CommandRegistry) {
         ("editing:discard", "Clear and leave the focused text input", false),
         ("editing:confirm", "Confirm the focused text input", false),
         ("editing:goto", "Move the cursor to the line start / line end", false),
+        ("editing:uppercase", "Put the selected text of the focused text input in capitals", false),
         ("editing:clear-line-end", "Clear the focused text input from the cursor to the line end", false),
         ("completion:cycle", "Cycle the prompt's completion views (forward / back)", false),
         ("workspace:new", "Create a workspace and show it in both slots", true),
@@ -565,6 +566,14 @@ pub fn run(options: Options) {
         })
         .on_window_event({
             move |window, event| {
+                // Asked of the frontend, which knows of the edits in progress
+                // (doc "Edits in progress"); it answers with `quit`.
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    if commands::CLOSE_GUARDED.load(std::sync::atomic::Ordering::Relaxed) {
+                        api.prevent_close();
+                        let _ = tauri::Emitter::emit(window, "close-asked", ());
+                    }
+                }
                 if let tauri::WindowEvent::Destroyed = event {
                     let handle = tauri::Manager::app_handle(window);
                     let app: tauri::State<'_, Arc<commands::App>> = tauri::Manager::state(handle);
@@ -581,6 +590,7 @@ pub fn run(options: Options) {
             commands::workspace_send,
             commands::workspace_fork,
             commands::workspace_close,
+            commands::close_guard_ready,
             commands::workspace_close_ws,
             commands::workspace_rename,
             commands::tab_assign,

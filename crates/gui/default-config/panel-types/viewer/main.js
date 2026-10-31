@@ -1755,6 +1755,14 @@ export async function mount(root, metafolder) {
   // Read again on `view:refresh` (doc "Generic panel commands"): the file as it
   // is on disk now, or the folder's listing. A medium goes back behind its
   // poster, its position kept for the next play — as when the selection moves.
+  // The shell asks before losing them (doc "Edits in progress").
+  metafolder.provide({
+    unsaved: () => (textChanged() ? (textShown?.path ?? null) : null),
+    discard: () => {
+      if (textShown) textShown.current = textShown.saved;
+      showTextFile();
+    },
+  });
   // Changes in the text field are only dropped once the user agrees, as for an
   // edit in the detail panel.
   metafolder.provide({

@@ -453,6 +453,12 @@ declare namespace Metafolder {
     index?(mf: Api): number;
     /** How many rows there are (loaded, for a paged list). */
     count?(mf: Api): number;
+    /** What holds an edit nothing has saved, named for a question; null when
+     *  nothing does. The shell then asks before moving the selection or closing
+     *  (doc "Edits in progress"). */
+    unsaved?(mf: Api): string | null;
+    /** Drops that edit, when the user agreed to. */
+    discard?(mf: Api): unknown;
     /** Moves the cursor onto row `index`, always within `0..count()-1`. */
     select?(mf: Api, index: number): unknown;
     /** Loads more rows; asked by `cursor:next` on the last row loaded. */

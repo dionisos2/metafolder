@@ -2,6 +2,7 @@
 // (doc "The command input"). Parsing and filtering are pure and unit
 // tested; dispatch routes to Tauri commands and panel instances.
 
+import { confirmClosing } from "./unsavedEdits";
 import { osmMatch } from "../../../panel-shim/finder.js";
 import { recordPath } from "../../../panel-shim/file-actions.js";
 import { NEW_KINDS, type FileOps } from "./fileCommands";
@@ -1546,6 +1547,24 @@ export function clearToLineEnd(el: Element | null): boolean {
   return true;
 }
 
+/** `editing:uppercase`: the selected text of a text field in capitals, still
+ *  selected. Through the editor's own insertion where there is one, so that the
+ *  field's undo takes it back. */
+export function uppercaseSelection(el: Element | null): void {
+  if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement))
+    return;
+  const start = el.selectionStart ?? 0;
+  const end = el.selectionEnd ?? start;
+  if (start === end) return;
+  const upper = el.value.slice(start, end).toUpperCase();
+  // eslint-disable-next-line @typescript-eslint/no-deprecated -- the only insertion the undo of a text field sees
+  if (!el.ownerDocument.execCommand?.("insertText", false, upper)) {
+    el.setRangeText(upper, start, end, "preserve");
+    el.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+  }
+  el.setSelectionRange(start, start + upper.length);
+}
+
 /** `editing:goto` on an element with no registered editing target — a panel's
  *  own input: the caret goes to the edge of its line, which in a textarea is not
  *  the edge of the value. */
@@ -2546,6 +2565,9 @@ async function runCommand(
     case "editing:confirm":
       editingTarget?.confirm();
       return true;
+    case "editing:uppercase":
+      uppercaseSelection(deepActiveElement());
+      return true;
     case "editing:clear-line-end":
       if (editingTarget) editingTarget.clearToLineEnd();
       else clearToLineEnd(deepActiveElement());
@@ -2613,6 +2635,7 @@ async function runCommand(
       return true;
     }
     case "workspace:close":
+      if (!confirmClosing(ws ?? null)) return true;
       await invoke("workspace_close");
       return true;
     case "workspace:rename": {
@@ -3081,6 +3104,7 @@ async function runCommand(
       await invoke("open_devtools");
       return true;
     case "quit":
+      if (!confirmClosing(null)) return true;
       await invoke("quit");
       return true;
   }

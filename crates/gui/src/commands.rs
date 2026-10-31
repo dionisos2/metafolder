@@ -999,7 +999,17 @@ pub fn set_fullscreen(window: tauri::WebviewWindow, on: bool) -> Result<(), Stri
 
 #[tauri::command]
 pub fn quit(window: tauri::Window) {
-    let _ = window.close();
+    // Not `close()`: that would ask the frontend again.
+    let _ = window.destroy();
+}
+
+/// The frontend answers `close-asked`. Until it says so, closing the window just
+/// closes it, or a frontend that failed to load could never be closed.
+pub static CLOSE_GUARDED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[tauri::command]
+pub fn close_guard_ready() {
+    CLOSE_GUARDED.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Input history (doc "Input history") — a GUI-side concern: the files

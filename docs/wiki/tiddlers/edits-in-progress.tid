@@ -1,0 +1,39 @@
+title: Edits in progress
+tags: Commands [[Cross-panel selection]]
+kind: reference
+summary: Text a panel holds that nothing has saved stops the selection from moving unless you agree, and closing a workspace or the GUI asks first.
+
+An ''edit in progress'' is a field being edited or added in the [[metarecord-detail panel]],
+or a text file with unsaved changes in the [[viewer panel]] ([[Editing a text file]]).
+
+|!What would lose it |!Asks |!If you refuse |
+|moving the selection of its workspace |''Unsaved changes in … — discard them and move the selection?'' |the selection stays where it is, for every panel |
+|`workspace:close`, a tab's close button |''Unsaved changes in … — discard them and close?'' |the workspace stays |
+|`quit`, closing the window |the same, for every workspace |the GUI stays |
+
+Writing the selection it already holds is no move, and asks nothing.
+
+A list's own cursor is not held back: after a refusal it may sit on another row than the
+selection, until it moves again.
+
+Scripts are not stopped by it. A selection written through `mf gui view`, or a workspace
+closed from outside the GUI, does not ask first: the panels still keep their edit when
+the selection moves that way, but closing loses it.
+
+If the GUI's page hangs, the window cannot be closed from its title bar, since the page
+is what answers: use the window manager's way of killing it.
+
+!! For a panel
+
+A panel declares its edit with `metafolder.provide`:
+
+```
+metafolder.provide({
+  unsaved: () => (changed() ? 'notes.txt' : null), // named in the question
+  discard: () => dropChanges(),                    // when the user agreed
+});
+```
+
+The check is in `workspace.set` and `workspace.setMany`, before the write, and a writer
+setting `selected_metarecord` then `selected_paths` is asked once. The other selections
+of the workspace (`workspace.send` from another one) go through without asking.

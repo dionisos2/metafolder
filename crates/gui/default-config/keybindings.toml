@@ -89,7 +89,10 @@ vars.index = "i"
   { command = "editing:unfocus", text-input = true },
   { command = "find:close", focus = "find" },
 ]
-"ctrl+u" = { command = "editing:discard", text-input = true }
+"ctrl+u" = [
+  { command = "editing:discard", text-input = true },
+  { command = "editing:uppercase", focus = "viewer-text", text-input = true },
+]
 "ctrl+e" = { command = "editing:goto line-end", text-input = true }
 "ctrl+k" = { command = "editing:clear-line-end", text-input = true }
 # Ctrl+A goes to the start of the line while typing, and checks every row of

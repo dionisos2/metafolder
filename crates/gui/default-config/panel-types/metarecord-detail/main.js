@@ -838,6 +838,9 @@ export async function mount(root, metafolder) {
         return;
       }
       await mf.workspace.set('selected_metarecord', target);
+      // The move refused, to keep an edit: not one a later `back()` should see.
+      const now = /** @type {Selection|null} */ (await mf.workspace.get('selected_metarecord'));
+      if (now?.uuid !== target.uuid) navHistory.cancel();
     },
   });
 
@@ -1022,6 +1025,15 @@ export async function mount(root, metafolder) {
       );
     }
     return items;
+  });
+
+  // The shell asks before losing an edit (doc "Edits in progress").
+  metafolder.provide({
+    unsaved: () => (isEditing() ? 'the metarecord being edited' : null),
+    discard: () => {
+      addForm.classList.remove('open');
+      editingField = null;
+    },
   });
 
   workspace.onChange('selected_metarecord', (value) => {

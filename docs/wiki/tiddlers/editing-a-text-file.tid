@@ -20,14 +20,17 @@ Elsewhere `Ctrl+s` still saves the workspace.
 Unticking the box does not drop anything: the changes stay on screen, read-only, and
 can still be saved.
 
-!! Unsaved changes hold the panel
+!! Unsaved changes
 
-The panel normally follows the selection. While a file has unsaved changes, it stays
-on that file, and says so: a move of the selection waits, and the panel goes there
-once the changes are saved or reloaded. Going up (<<key "viewer:back" Backspace>>) is
-refused the same way, and [[view:refresh]] asks before dropping them.
+A file with unsaved changes is an edit in progress: moving the selection, closing the
+workspace and quitting ask first ([[Edits in progress]]). Going up
+(<<key "viewer:back" Backspace>>) is refused, and [[view:refresh]] asks.
 
-Closing the workspace or quitting the GUI does not ask: the changes are lost.
+A script moving the selection (`mf gui view`) is not asked: the panel stays on the file,
+says so, and goes where the selection went once the changes are saved or reloaded.
+
+In the field, `Ctrl+u` puts the selected text in capitals ([[editing:uppercase]]), and
+does not empty the field as it does in others.
 
 !! A change made on disk
 

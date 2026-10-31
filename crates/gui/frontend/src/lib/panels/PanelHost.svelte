@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke, listen } from '../ipc';
+  import { confirmClosing } from '../unsavedEdits';
   import { globalMirror } from '../globals';
   import {
     deadInvocations,
@@ -380,6 +381,14 @@
     }, 1000);
 
     const unlisteners: Promise<() => void>[] = [
+      // Closing the window, once the edits in progress are accounted for (doc
+      // "Edits in progress"). Rust waits for this listener before asking it.
+      listen('close-asked', () => {
+        if (confirmClosing(null)) void invoke('quit');
+      }).then((unlisten) => {
+        void invoke('close_guard_ready');
+        return unlisten;
+      }),
       listen<{ css: string }>('style-changed', (event) => userSheet.replaceSync(event.payload.css)),
       listen<{ workspace_id: string; key: string; value: unknown }>(
         'workspace-var-changed',
@@ -443,6 +452,17 @@
         return bindFunctions(provided, mf);
       },
       provided: (panelType) => providedByType.get(panelType),
+      unsaved: (ws) => {
+        const edits = [];
+        for (const [key, instance] of instances) {
+          if (ws !== null && !key.startsWith(instanceKey(ws, ''))) continue;
+          const provided = panelFunctions.get(key);
+          const describe = provided?.unsaved?.(instance.apiInst.api);
+          if (typeof describe !== 'string') continue;
+          edits.push({ describe, discard: () => provided?.discard?.(instance.apiInst.api) });
+        }
+        return edits;
+      },
     });
 
     // A command resolves once its effect is visible (doc "When a command has

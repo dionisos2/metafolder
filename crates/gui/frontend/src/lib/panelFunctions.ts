@@ -50,6 +50,11 @@ export interface PanelFunctions {
   leaf?: (index: number) => boolean | Promise<boolean>;
   /** Reads what the panel shows again. */
   refresh?: () => unknown;
+  /** What holds an edit nothing has saved, named for a question; null when
+   *  nothing does (doc "Edits in progress"). */
+  unsaved?: () => string | null;
+  /** Drops that edit. */
+  discard?: () => unknown;
   /** Zooms the panel: `in`, `out` or `reset`. Every panel has it — the shell's
    *  panel host provides it (a CSS zoom of the panel), not the panel's code. */
   zoom?: (direction: string) => unknown;
@@ -329,6 +334,10 @@ export interface FunctionProvider {
   /** What `panelType` provides (every instance provides the same), undefined
    *  when no instance has provided anything. Synchronous, for the key matcher. */
   provided(panelType: string): ReadonlySet<string> | undefined;
+  /** The edits in progress of workspace `ws`, of every workspace when null
+   *  (doc "Edits in progress"). Synchronous and mounting nothing: a panel never
+   *  mounted holds no edit. */
+  unsaved(ws: string | null): { describe: string; discard: () => unknown }[];
 }
 
 let provider: FunctionProvider | null = null;

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { confirmClosing } from '../lib/unsavedEdits';
   import { invoke } from '../lib/ipc';
   import { dispatch } from '../lib/commands';
   import { store } from '../lib/store.svelte';
@@ -41,6 +42,7 @@
   }
 
   async function closeWs(wsId: string) {
+    if (!confirmClosing(wsId)) return;
     try {
       await invoke('workspace_close_ws', { wsId });
     } catch {
