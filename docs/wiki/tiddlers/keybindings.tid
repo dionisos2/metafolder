@@ -69,12 +69,12 @@ field, so that the panel's keys work again; `Shift+Enter` validates and keeps th
 focus. These two keys are the variables `validate` and `validate-stay`
 ([[Keybinding variables]]), so they are changed in one line each: the finder, the two
 query fields and the columns of `metarecord-list`, the search box of the help, and the
-filters of the [[config panel]] and the [[keybindings-variables panel]]. Such a filter
+filters of the [[config panel]] and the [[keybindings-variables panel]], and the form
+of the [[keybindings panel]]. Such a filter
 runs as it is typed, so `validate` only leaves it, and `validate-stay` is not bound there.
 
 The find bar is the exception: it searches as it is typed too, and its `Enter` and
-`Shift+Enter` step through the matches ([[Find in a panel]]). The fields of the
-[[keybindings panel]]'s form search as well, but their `Enter` writes the line.
+`Shift+Enter` step through the matches ([[Find in a panel]]).
 
 A binding also applies only where its ''command'' can run. A generic command —
 `cursor:next self`, run on the focused panel's cursor ([[Generic panel commands]])

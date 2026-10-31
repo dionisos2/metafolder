@@ -1277,12 +1277,16 @@ scenario_keybindings() {
     run panel:open here keybindings
     command_ok "keybindings: panel open"
     run keybindings:focus key
-    # The key field has the focus; tab goes to the command, Enter saves.
+    # The key field has the focus; tab goes to the command. Enter only leaves
+    # it, like a filter's; ctrl+s saves.
     typed "ctrl+alt+u"
     keys Tab
     typed "status:clear"
     keys Return
-    assert "keybindings: Enter writes the binding" \
+    sleep 1
+    assert_not "keybindings: Enter does not write the binding" grep -q '"ctrl+alt+u"' "$file"
+    keys ctrl+s
+    assert "keybindings: ctrl+s writes the binding" \
         until_ok 10 grep -qx '"ctrl+alt+u" = { command = "status:clear" }' "$file"
     # A row's checkbox: Save appears once changed, and writes it.
     if needs_clicks keybindings; then
@@ -1311,7 +1315,7 @@ scenario_keybindings() {
     typed "!"
     keys Tab
     typed "status:clear"
-    keys Return
+    keys ctrl+s
     sleep 1
     assert "keybindings: a key bound already keeps its command" \
         grep -qx '"!" = { command = "command-input:focus bash" }' "$file"
@@ -1321,7 +1325,7 @@ scenario_keybindings() {
     typed "ctrl+alt+j"
     keys Tab
     typed "status:nothing"
-    keys Return
+    keys ctrl+s
     sleep 1
     assert_not "keybindings: an unknown command is not saved" grep -q '"ctrl+alt+j"' "$file"
     keys Escape
@@ -1649,7 +1653,7 @@ scenario_suggested_key() {
     typed "e2e-keys:ping"
     keys Tab
     typed "e2e-keys"
-    keys Return
+    keys ctrl+s
     assert "suggested key: saving writes it to the file" \
         until_ok 10 grep -q '^"ctrl+alt+y"' "$file"
 

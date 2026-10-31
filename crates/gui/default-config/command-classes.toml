@@ -46,6 +46,7 @@
 "config:reload" = "D"
 "config:focus" = "B"
 "keybindings:focus" = "B"
+"keybindings:save" = "B"
 "keybindings-variables:focus" = "B"
 "daemon:set-url" = "D"
 

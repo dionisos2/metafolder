@@ -1,0 +1,6 @@
+title: keybindings:save
+tags: [[GUI command]]
+kind: reference
+summary: Keybindings: write the line the form says
+
+`keybindings:save` — <<key "keybindings:save" "Ctrl+s">>: writes the line the form of the [[keybindings panel]] says, as its ''Save'' does. A form that is incomplete or refused writes nothing, and says why under the form.

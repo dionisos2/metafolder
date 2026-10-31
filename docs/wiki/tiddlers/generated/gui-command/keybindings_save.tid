@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/keybindings:save
+catalog: GUI command
+target: keybindings:save
+summary: Keybindings: write the line the form says
+
+!! Reference
+
+* Defined by the ``keybindings`` panel
+
+!! Default keys
+
+* ``ctrl+s`` → ``keybindings:save`` (in the ``keybindings`` panel, also in a text input)

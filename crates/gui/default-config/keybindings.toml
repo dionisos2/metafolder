@@ -198,6 +198,7 @@ vars.index = "i"
 "ctrl+s" = [
   { command = "workspace:save" },
   { command = "viewer:save", focus = "viewer-text", text-input = true },
+  { command = "keybindings:save", when = "keybindings", text-input = true },
 ]
 "ctrl+o" = { command = "workspace:open here" }
 # Ctrl+D duplicates the workspace.

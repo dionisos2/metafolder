@@ -6,6 +6,7 @@ summary: The keybindings panel type
 !! Commands
 
 * ``keybindings:focus`` — Keybindings: focus the key field of the form
+* ``keybindings:save`` — Keybindings: write the line the form says
 
 !! Generic commands
 

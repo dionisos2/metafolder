@@ -303,8 +303,8 @@ describe('keybindings panel', () => {
     expect(field('command').value).toBe('');
   });
 
-  test('Enter pressed while the last key typed is still being checked saves once it is', async () => {
-    const { field, api, typeIn } = await mountPanel();
+  test('keybindings:save run while the last key typed is still being checked saves once it is', async () => {
+    const { field, api, typeIn, handlers } = await mountPanel();
     let release = () => {};
     await typeIn('source', 'alt+t');
     api.config.checkKeybindingEntry.mockImplementationOnce(
@@ -315,7 +315,7 @@ describe('keybindings panel', () => {
     );
     field('command').value = 'workspace:new';
     field('command').dispatchEvent(new Event('input'));
-    field('command').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    void handlers.get('keybindings:save')!();
     await flush();
     expect(api.config.saveKeybindingEntry).not.toHaveBeenCalled();
     release();
@@ -343,6 +343,78 @@ describe('keybindings panel', () => {
     const style = (root.getElementById('bindings') as HTMLElement).style;
     expect(style.getPropertyValue('--when-chars')).toBe(String('metarecord-list'.length));
     expect(style.getPropertyValue('--focus-chars')).toBe(String('simplified'.length));
+  });
+
+  test('Enter in the form writes nothing: its fields are left like those of a filter', async () => {
+    const { field, choice, key, typeIn, api, save } = await mountPanel();
+    await typeIn('source', 'alt+t');
+    await typeIn('command', 'workspace:new');
+    expect(save.disabled).toBe(false);
+    for (const id of ['source', 'command']) {
+      await key(field(id), 'Enter');
+      expect(field(id).dataset.mfFocus).toBe('filter');
+    }
+    for (const id of ['when', 'focus']) {
+      await key(choice(id), 'Enter');
+      expect(choice(id).dataset.mfFocus).toBe('filter');
+    }
+    expect(field('text-input').dataset.mfFocus).toBe('filter');
+    expect(api.config.saveKeybindingEntry).not.toHaveBeenCalled();
+    expect(field('source').value).toBe('alt+t');
+  });
+
+  test('keybindings:save writes what the form says, not what it refuses', async () => {
+    const { typeIn, handlers, api, field } = await mountPanel({
+      check: (draft) => (draft.source === 'g' ? { key: 'already bound' } : {}),
+    });
+    await typeIn('source', 'g');
+    await typeIn('command', 'workspace:new');
+    await handlers.get('keybindings:save')!();
+    await flush();
+    expect(api.config.saveKeybindingEntry).not.toHaveBeenCalled();
+    expect(field('source').value).toBe('g');
+
+    await typeIn('source', 'alt+t');
+    await handlers.get('keybindings:save')!();
+    await flush();
+    expect(api.config.saveKeybindingEntry).toHaveBeenCalledTimes(1);
+    expect(field('source').value).toBe('');
+  });
+
+  test('Enter leaves the field of a row, unless what it says is refused', async () => {
+    const { row, rows, type, key, root, api } = await mountPanel({
+      check: (draft) => (draft.source === '{go} t' ? { key: 'already bound' } : {}),
+    });
+    const input = row('{go} g').tr.querySelector('input.source') as HTMLInputElement;
+    // Nothing changed: nothing to save, the field is left.
+    input.focus();
+    await key(input, 'Enter');
+    expect(root.activeElement).not.toBe(input);
+    expect(api.config.saveKeybindingEntry).not.toHaveBeenCalled();
+
+    // Refused: the field keeps the keyboard, to correct it.
+    input.focus();
+    await type(input, '{go} t');
+    await key(input, 'Enter');
+    expect(root.activeElement).toBe(input);
+    expect(api.config.saveKeybindingEntry).not.toHaveBeenCalled();
+
+    // Refused by the file only when written: the same.
+    api.config.saveKeybindingEntry.mockRejectedValueOnce(new Error('cannot write'));
+    await type(input, '{go} h');
+    await key(input, 'Enter');
+    expect(root.activeElement).toBe(input);
+
+    await key(input, 'Enter');
+    expect(api.config.saveKeybindingEntry).toHaveBeenCalledTimes(2);
+    expect(root.activeElement).not.toBe(input);
+
+    // A command with no key, its field still empty: left, nothing written.
+    const empty = rows().find((r) => r.source === '')!.tr.querySelector('input.source') as HTMLInputElement;
+    empty.focus();
+    await key(empty, 'Enter');
+    expect(root.activeElement).not.toBe(empty);
+    expect(api.config.saveKeybindingEntry).toHaveBeenCalledTimes(2);
   });
 
   test('the key of a line is edited in place: Enter saves it, Escape gives it back', async () => {

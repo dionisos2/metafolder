@@ -165,7 +165,8 @@ export async function mount(root, metafolder) {
   const labelOf = (invocation) => commands.get(invocation.split(/\s+/)[0])?.label ?? '';
 
   /** The fields of a row, edited in place: Enter or its Save button saves the
-   *  line as they say, Escape gives them back. A command with no key is the same row, with no
+   *  line as they say, Enter then leaves the field unless that was refused;
+   *  Escape gives them back. A command with no key is the same row, with no
    *  place to replace and nothing to save until a key is typed.
    *  @param {Metafolder.EntryDraft} line @param {Metafolder.EntryPlace|null} place
    *  @param {boolean} readOnly a suggestion: not in the file, it cannot be moved */
@@ -252,10 +253,12 @@ export async function mount(root, metafolder) {
       keyCheck.textContent = answer.key ?? answer.note ?? '';
       renderSave();
     }
+    /** @returns {Promise<boolean>} false if what the fields say was refused */
     async function saveLine() {
       const form = typed();
-      if (!changed() || form.source === '' || verdict === null || !noObjection(verdict)) return;
-      await write(() => metafolder.config.saveKeybindingEntry(form, place));
+      if (!changed() || form.source === '') return true;
+      if (verdict === null || !noObjection(verdict)) return false;
+      return write(() => metafolder.config.saveKeybindingEntry(form, place));
     }
     /** @param {KeyboardEvent} event */
     async function onRowKey(event) {
@@ -273,7 +276,8 @@ export async function mount(root, metafolder) {
       }
       if (event.key !== 'Enter') return;
       event.preventDefault();
-      await saveLine();
+      const field = /** @type {HTMLElement} */ (event.currentTarget);
+      if (await saveLine()) field.blur();
     }
     return { ...fields, save: saveRow };
   }
@@ -507,17 +511,15 @@ export async function mount(root, metafolder) {
   }
   for (const input of [source, command]) input.addEventListener('input', onInput);
   for (const select of [when, focus]) select.addEventListener('change', onInput);
-  for (const input of /** @type {HTMLElement[]} */ ([source, command, when, focus])) {
-    input.addEventListener('keydown', (event) => {
-      if (event.key !== 'Enter') return;
-      event.preventDefault();
-      void submit();
-    });
-  }
   textInput.addEventListener('change', onInput);
   save.addEventListener('click', () => void submit());
   clear.addEventListener('click', () => clearForm());
 
+
+  void metafolder.commands.register('keybindings:save', {
+    label: 'Keybindings: write the line the form says',
+    handler: () => submit(),
+  });
 
   void metafolder.commands.register('keybindings:focus', {
     label: 'Keybindings: focus the key field of the form',

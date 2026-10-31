@@ -19,7 +19,7 @@ writes it —, in the order of the file, then the keys suggested by a panel or b
 `commands.js`, then the commands no key runs. Each row shows:
 
 * its [[class|Command classes]], `?` when `command-classes.toml` gives it none;
-* its key ''as written'', variables left in (`{go} l`), and its `when`, `focus` and `target` — drop-downs — and `text-input` — the checkbox `⌨` ([[Keybindings]]): a change is checked as it is made, ''Enter'' in any of them or the row's ''Save'', which a changed row shows, saves the line as they say, ''Escape'' gives the old values back;
+* its key ''as written'', variables left in (`{go} l`), and its `when`, `focus` and `target` — drop-downs — and `text-input` — the checkbox `⌨` ([[Keybindings]]): a change is checked as it is made, ''Enter'' in any of them or the row's ''Save'', which a changed row shows, saves the line as they say, ''Escape'' gives the old values back. ''Enter'' then leaves the field, unless the line is refused: the field keeps the keyboard, to correct it;
 * the keys it really binds, variables replaced, less the ones a literal line of the file overrides ([[Keybinding variables]]); each one says, on hover, what it runs;
 * the command as written, and its description;
 * ''suggested'' for a key that is not in the file. A suggested key cannot be moved and has no ''Remove''; its fields are read-only.
@@ -43,7 +43,10 @@ rest is shown unclassed.
 !! The form
 
 The form — key, command, `when`, `focus`, `target`, `text-input` — both writes a line
-and searches the list:
+and searches the list. As in a filter, `Enter` only leaves a field ([[Keybindings]]), so
+that searching never adds a line by accident: ''Save'' writes it, or
+<<key "keybindings:save" "Ctrl+s">> ([[keybindings:save]]), which this panel takes from
+`workspace:save`.
 
 * the ''key'' typed keeps the lines binding a key it starts: `g` keeps those of `g g` and `g t`, `ctrl` every ctrl chord, and `shift+ctrl+a` finds `ctrl+shift+a`; typed with a `{`, it keeps the lines written with it — `{go` the domain's;
 * the ''command'' typed keeps the lines whose command contains it, below those of the key, and the commands with no key it names. The field completes over every command, and the line under the form names the command it reads, with its description.
