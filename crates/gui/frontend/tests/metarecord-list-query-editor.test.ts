@@ -139,7 +139,7 @@ describe('createQueryEditor', () => {
     expect(run).toHaveBeenCalledTimes(1);
   });
 
-  test('a shown query `and` keeps the simplified query and replaces the normal DSL', async () => {
+  test('a shown query `and` keeps the simplified query and adds to the normal DSL', async () => {
     const { editor, input, mf } = setup({
       'metarecord-list:query': 'jazz',
       'metarecord-list:normal-query': 'x = 1',
@@ -147,8 +147,16 @@ describe('createQueryEditor', () => {
     await editor.restore();
     await editor.show(mf, 'orphan = true', 'and');
     expect(input('query-input').value).toBe('jazz');
-    expect(input('normal-input').value).toBe('orphan = true');
-    expect(editor.text()).toBe('(expanded(jazz)) AND (orphan = true)');
+    expect(input('normal-input').value).toBe('x = 1 AND orphan = true');
+    expect(editor.text()).toBe('(expanded(jazz)) AND (x = 1 AND orphan = true)');
+  });
+
+  test('a shown query `and` already in the normal DSL is not added again', async () => {
+    const { editor, input, mf } = setup({ 'metarecord-list:normal-query': 'x = 1 OR y = 2' });
+    await editor.restore();
+    await editor.show(mf, 'orphan = true', 'and');
+    await editor.show(mf, 'orphan = true', 'and');
+    expect(input('normal-input').value).toBe('(x = 1 OR y = 2) AND orphan = true');
   });
 
   test('a shown query with another mode is an error', async () => {

@@ -13,7 +13,7 @@
 // new node under the current one (schema type first, then the name), the way
 // the file manager creates a folder. doc "path-ref panel".
 
-import { byId, el, listQueryVariables, openButton, queryModeArg, viewerButtons, whereArg } from '/__ui.js';
+import { byId, el, listQueryVariables, openButton, queryModeArg, requireQueryMode, viewerButtons, whereArg } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
 import { createListCursor } from '/__list-cursor.js';
 import { createSelect } from '/__select.js';
@@ -226,18 +226,22 @@ export async function mount(root, metafolder) {
    *  straight away, the pairing the ref-list panel used to provide.
    *  @param {MetafolderApi} mf @param {string} where `here`, `other` or `new`
    *  @param {string} [mode] `replace` (the default) or `and` the list's
-   *  simplified query (doc "metarecord-list panel") */
+   *  queries (doc "metarecord-list panel") */
   async function listRefs(mf, where = 'other', mode = 'replace') {
     if (selectedPath() === null) {
       await statusBar.message('select a node first');
       return;
     }
-    const variables = listQueryVariables(currentQueryDsl(), mode);
+    requireQueryMode(mode);
+    const query = currentQueryDsl();
     // The list's query variables are its state (doc "Cross-panel selection"):
     // the normal zone, so the query stays visible and editable.
     await mf.atTarget(where, async (there) => {
+      const normal = await there.workspace.get('metarecord-list:normal-query');
       // At once (`setMany`): the list follows them together.
-      await there.workspace.setMany(variables);
+      await there.workspace.setMany(
+        listQueryVariables(query, mode, typeof normal === 'string' ? normal : ''),
+      );
       await there.commands.invoke(['panel:open', 'here', 'metarecord-list']);
     });
   }

@@ -2,7 +2,7 @@
 // shared by the built-in panel types (doc "The metafolder API").
 
 import { describe, expect, test, vi } from 'vitest';
-import { el, field, fields, formatAge, frecency, formatScore, formatSize, formatValue, isPositionType, messageOf, valueEl, thumbnail, isThumbnailable, isVideoThumbnailable, fileTypeGlyph, looksLikeText, whereArg } from '../../panel-shim/ui.js';
+import { andQuery, el, field, fields, formatAge, frecency, formatScore, formatSize, formatValue, isPositionType, messageOf, valueEl, thumbnail, isThumbnailable, isVideoThumbnailable, fileTypeGlyph, looksLikeText, whereArg } from '../../panel-shim/ui.js';
 
 describe('whereArg', () => {
   test('asks where with an empty line: the default is the keybinding\'s', () => {
@@ -398,5 +398,22 @@ describe('hierarchy_ref (doc "Hierarchy references")', () => {
     );
     (node.querySelector('a') as HTMLAnchorElement).click();
     expect(opened).toEqual(['p1']);
+  });
+});
+
+describe('andQuery', () => {
+  test('adds a term to the top-level AND', () => {
+    expect(andQuery('', 'a = 1')).toBe('a = 1');
+    expect(andQuery('a = 1', 'b = 2')).toBe('a = 1 AND b = 2');
+  });
+
+  test('parenthesizes either side holding a top-level OR', () => {
+    expect(andQuery('a = 1 OR b = 2', 'c = 3')).toBe('(a = 1 OR b = 2) AND c = 3');
+    expect(andQuery('c = 3', 'a = 1 OR b = 2')).toBe('c = 3 AND (a = 1 OR b = 2)');
+  });
+
+  test('leaves out a term the query already holds', () => {
+    expect(andQuery('a = 1 AND b = 2', 'b = 2')).toBe('a = 1 AND b = 2');
+    expect(andQuery('a = 1', 'a = 1 AND b = 2')).toBe('a = 1 AND b = 2');
   });
 });

@@ -516,22 +516,81 @@ export function queryModeArg() {
   return {
     name: 'mode',
     optional: true,
-    prompt: () => 'Replace the query, or AND with the simplified one? (replace / and)',
+    prompt: () => 'Replace the query, or AND with it? (replace / and)',
     complete: () => ['replace', 'and'],
   };
 }
 
 /**
+ * The terms of a normal query's top-level AND, each as written. A query holding
+ * a top-level OR is one term, parenthesized so that an AND can follow it. Reads
+ * the text without the parser: a term is told by its spelling.
+ * @param {string} query
+ */
+export function queryTerms(query) {
+  const text = query.trim();
+  if (text === '') return [];
+  /** @type {string[]} */
+  const terms = [];
+  let start = 0;
+  let depth = 0;
+  let hasOr = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (c === '"') {
+      // To the closing quote; a backslash takes the next character with it.
+      for (i += 1; i < text.length && text[i] !== '"'; i += 1) if (text[i] === '\\') i += 1;
+    } else if (c === '(') {
+      depth += 1;
+    } else if (c === ')') {
+      depth -= 1;
+    } else if (/[\p{L}\p{N}_]/u.test(/** @type {string} */ (c))) {
+      const word = /^[\p{L}\p{N}_]+/u.exec(text.slice(i))?.[0] ?? '';
+      if (depth === 0 && word === 'OR') hasOr = true;
+      if (depth === 0 && word === 'AND') {
+        terms.push(text.slice(start, i).trim());
+        start = i + word.length;
+      }
+      i += word.length - 1;
+    }
+  }
+  if (hasOr) return [`(${text})`];
+  terms.push(text.slice(start).trim());
+  return terms;
+}
+
+/**
+ * `query` AND `term`, a term the query already holds being left out.
+ * @param {string} query
+ * @param {string} term
+ */
+export function andQuery(query, term) {
+  const terms = queryTerms(query);
+  const added = queryTerms(term).filter((t) => !terms.includes(t));
+  return [...terms, ...added].join(' AND ');
+}
+
+/** Refuses what is neither `replace` nor `and`. @param {string} mode */
+export function requireQueryMode(mode) {
+  if (mode !== 'replace' && mode !== 'and') {
+    throw new Error(`unknown mode: "${mode}" (expected replace / and)`);
+  }
+}
+
+/**
  * The metarecord list's query variables that show `query` in its normal DSL
- * zone: with `replace` the simplified zone is emptied, with `and` it is kept.
+ * zone: with `replace` it is the whole query, the simplified zone emptied; with
+ * `and` it is added to `normal`, what the zone holds, the simplified zone kept.
  * @param {string} query
  * @param {string} [mode]
+ * @param {string} [normal]
  * @returns {Record<string, string>}
  */
-export function listQueryVariables(query, mode = 'replace') {
-  if (mode === 'and') return { 'metarecord-list:normal-query': query };
-  if (mode === 'replace') return { 'metarecord-list:query': '', 'metarecord-list:normal-query': query };
-  throw new Error(`unknown mode: "${mode}" (expected replace / and)`);
+export function listQueryVariables(query, mode = 'replace', normal = '') {
+  requireQueryMode(mode);
+  return mode === 'and'
+    ? { 'metarecord-list:normal-query': andQuery(normal, query) }
+    : { 'metarecord-list:query': '', 'metarecord-list:normal-query': query };
 }
 
 /** An error's message, whatever was thrown.

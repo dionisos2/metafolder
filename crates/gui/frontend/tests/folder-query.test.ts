@@ -44,6 +44,7 @@ const calls = {
 };
 
 const state = {
+  normalQuery: '',
   repo: 'r' as string | null,
   selection: null as unknown,
   paths: null as unknown,
@@ -64,6 +65,7 @@ function fakeMf() {
         if (key === 'selected_metarecord') return state.selection;
         if (key === 'selected_paths') return state.paths;
         if (key === 'file-manager:dir') return state.fmDir;
+        if (key === 'metarecord-list:normal-query') return state.normalQuery;
         return null;
       },
       set: async (key: string, value: unknown) => {
@@ -259,17 +261,42 @@ describe('the request it lands', () => {
     expect(where).not.toHaveProperty('initial');
   });
 
-  test('`and` keeps the simplified query, AND-ed with the folder', async () => {
+  test('`and` keeps both queries, the folder AND-ed to the normal one', async () => {
+    state.selection = { uuid: 'u1', repo: 'r' };
+    state.treePaths = { u1: ['/live'] };
+    state.type = 'dir';
+    state.normalQuery = 'tag -> (path =>* "music")';
+
+    await run('here', 'and');
+
+    expect(calls.batches).toEqual([
+      { 'metarecord-list:normal-query': 'tag -> (path =>* "music") AND mfr_path -> "/live"' },
+    ]);
+    const [, mode] = shipped['metarecord-list:folder'].args;
+    expect((mode as { optional?: boolean }).optional).toBe(true);
+    expect(mode.complete()).toEqual(['replace', 'and']);
+  });
+
+  test('`and` replaces the folder the normal query already lists', async () => {
     state.selection = { uuid: 'u1', repo: 'r' };
     state.treePaths = { u1: ['/live'] };
     state.type = 'dir';
 
-    await run('here', 'and');
-
-    expect(calls.batches).toEqual([{ 'metarecord-list:normal-query': 'mfr_path -> "/live"' }]);
-    const [, mode] = shipped['metarecord-list:folder'].args;
-    expect((mode as { optional?: boolean }).optional).toBe(true);
-    expect(mode.complete()).toEqual(['replace', 'and']);
+    for (const [held, kept] of [
+      ['mfr_path -> "/old" AND a = 1', 'a = 1 AND '],
+      ['mfr_path ->* "/old \\"x\\"" AND a = 1', 'a = 1 AND '],
+      ['mfr_path -> "/old"', ''],
+      // Not a folder listed: under an OR, or asking something else of it.
+      ['(mfr_path -> "/old" OR a = 1)', '(mfr_path -> "/old" OR a = 1) AND '],
+      ['mfr_path -> (a = 1)', 'mfr_path -> (a = 1) AND '],
+    ] as const) {
+      calls.batches.length = 0;
+      state.normalQuery = held;
+      await run('here', 'and');
+      expect(calls.batches).toEqual([
+        { 'metarecord-list:normal-query': `${kept}mfr_path -> "/live"` },
+      ]);
+    }
   });
 
   test('another mode is an error, and writes nothing', async () => {

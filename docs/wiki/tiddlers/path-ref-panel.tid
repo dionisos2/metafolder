@@ -81,8 +81,9 @@ in the right-click menu) runs it in a [[metarecord-list panel]] opened in the
 runs it in a new workspace instead, <<key "path-ref:list-refs here" "i p l">> in place of the
 tree ([[open targets|Panel slots and layout]]). The query lands in the
 list's normal DSL, where it can be narrowed or combined with
-anything else ([[Following references]]); it replaces the list's simplified query, or
-is AND-ed with it after a last argument `and` (`path-ref:list-refs other and`).
+anything else ([[Following references]]); it replaces the list's two queries, or
+is added to the normal DSL, the simplified query kept, after a last argument `and`
+(`path-ref:list-refs other and`).
 
 !! As a value picker
 

@@ -3,4 +3,4 @@ tags: [[GUI command]] Metarecord
 kind: reference
 summary: Metarecord list: run a canned query (duplicates / orphans) [replace / and]
 
-Runs a ready-made query in the [[metarecord-list panel]], written in its normal DSL, where it can be edited: `duplicates` — the files byte-identical to the selected one ([[Duplicates]]) — or `orphans` — the metarecords the last detection marked, without detecting anything itself ([[Finding and clearing orphans]]). It replaces the simplified query, or after a last argument `and` is AND-ed with it (`metarecord-list:query orphans and`).
+Runs a ready-made query in the [[metarecord-list panel]], written in its normal DSL, where it can be edited: `duplicates` — the files byte-identical to the selected one ([[Duplicates]]) — or `orphans` — the metarecords the last detection marked, without detecting anything itself ([[Finding and clearing orphans]]). It replaces both queries, or after a last argument `and` is added to the normal DSL, the simplified query kept (`metarecord-list:query orphans and`).

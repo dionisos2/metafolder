@@ -81,7 +81,7 @@ function stub() {
     changes: { sync: vi.fn(async () => {}), subscribe: () => () => {} },
     workspace: {
       mayMoveSelection: () => true,
-      get: vi.fn(async (key: string) => (key === 'active_repo' ? 'r' : null)),
+      get: vi.fn(async (key: string): Promise<string | null> => (key === 'active_repo' ? 'r' : null)),
       set: vi.fn(async () => {}),
       setMany: vi.fn(async () => {}),
       onChange: noop,
@@ -248,15 +248,18 @@ describe('listing what refers to the selected node', () => {
     expect(s.api.commands.invoke).toHaveBeenCalledWith(['panel:open', 'here', 'metarecord-list']);
   });
 
-  test('`and` keeps the list’s simplified query', async () => {
+  test('`and` keeps the list’s simplified query, adding to the normal one', async () => {
     const s = stub();
     await mount(s);
     await cursor(s.api.provide, 'find', 'select', 'music');
     s.api.workspace.setMany.mockClear();
+    s.api.workspace.get.mockImplementation(async (key: string) =>
+      key === 'metarecord-list:normal-query' ? 'a = 1' : null,
+    );
     await s.handlers.get('path-ref:list-refs')!('new', 'and');
     const batches = s.api.workspace.setMany.mock.calls as unknown as [Record<string, unknown>][];
     expect(batches).toEqual([
-      [{ 'metarecord-list:normal-query': expect.stringContaining('mfr_path') }],
+      [{ 'metarecord-list:normal-query': expect.stringMatching(/^a = 1 AND .*mfr_path/) }],
     ]);
   });
 
@@ -326,7 +329,7 @@ describe('the type of the explored field', () => {
   test('a field the catalog does not list shows no type', async () => {
     const s = stub();
     s.api.workspace.get.mockImplementation(async (key: string) =>
-      key === 'active_repo' ? 'r' : key === 'path-ref:field' ? ('gone' as 'r') : null,
+      key === 'active_repo' ? 'r' : key === 'path-ref:field' ? 'gone' : null,
     );
     await mount(s);
     expect(typeBadge(s.root)).toBe('');

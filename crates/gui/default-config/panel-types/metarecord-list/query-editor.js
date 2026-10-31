@@ -8,7 +8,7 @@
 //   onApply() -> an apply began (the panel now has a query to run)
 //   run()     -> run the compiled query (a reset of the list)
 
-import { byId, messageOf } from '/__ui.js';
+import { andQuery, byId, messageOf } from '/__ui.js';
 
 /** A persisted workspace variable read back as text: anything that is not a
  *  string (a stale value of another shape) reads as empty, never as
@@ -249,14 +249,15 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
 
   /** Puts `dsl` in the normal zone, where a query the GUI wrote stays visible
    *  and editable, and runs it. `replace` (the default) empties the simplified
-   *  zone, so that `dsl` is the whole query; `and` keeps it, AND-ed with `dsl`.
+   *  zone and replaces the normal one, so that `dsl` is the whole query; `and`
+   *  keeps both, `dsl` added to the normal zone.
    *  @param {MetafolderApi} mf @param {string} dsl @param {string} [mode] */
   async function showQuery(mf, dsl, mode = 'replace') {
     if (!SHOW_MODES.includes(mode)) {
       throw new Error(`unknown mode: "${mode}" (expected ${SHOW_MODES.join(' / ')})`);
     }
     if (mode === 'replace') queryInput.value = '';
-    normalInput.value = dsl;
+    normalInput.value = mode === 'and' ? andQuery(normalInput.value, dsl) : dsl;
     await applyQuery(mf);
   }
 

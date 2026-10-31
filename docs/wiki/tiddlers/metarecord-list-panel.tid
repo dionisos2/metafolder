@@ -43,9 +43,12 @@ byte-identical to the selection, `same(mfr_duplicate_group, <uuid>)` —
 [[Duplicates]]) or `orphans` (`orphan = true`, what the last detection marked —
 [[Finding and clearing orphans]]). Each takes a last argument: `replace`, the default
 and what their keys do, empties the simplified query, so that the command's query is
-the whole query; `and` keeps it, AND-ed with the command's query (`metarecord-list:folder
-here and`: the folder, narrowed by the simplified query in place). Either way the
-command's query replaces what the normal DSL held. `folder:open` always replaces.
+the whole query, and it replaces what the normal DSL held; `and` keeps both, the
+command's query added to the normal DSL (`metarecord-list:folder here and`: the folder,
+narrowed by the two queries in place). A term it already holds is not added again, and
+`metarecord-list:folder` replaces a folder the normal DSL lists, as a term of its
+top-level `AND` (`mfr_path -> "<folder>"` or `mfr_path ->* "<folder>"`), rather than
+ask for two. `folder:open` always replaces.
 
 !! Columns
 

@@ -712,6 +712,22 @@ scenario_tag_query() {
     command_ok "tag unquery: removes a filter"
     until_ok 5 query_is "$sport"
     assert_eq "tag unquery: the list runs the rest" "$sport" "$(mfg query)"
+
+    # In `and` mode a command adds to the normal query, the folder in place of
+    # the one listed already.
+    mkdir -p "$REPO_DIR/a" "$REPO_DIR/b"
+    local a b
+    a=$(record "$REPO_DIR/a")
+    b=$(record "$REPO_DIR/b")
+    run workspace:send "$WS" selected_metarecord "{\"uuid\":\"$a\",\"repo\":\"$DF_REPO\"}"
+    run metarecord-list:folder here and
+    until_ok 5 query_is "$sport AND mfr_path -> \"/a\""
+    assert_eq "folder and: the tag stays" "$sport AND mfr_path -> \"/a\"" "$(mfg query)"
+    run view:refresh metarecord-list
+    run workspace:send "$WS" selected_metarecord "{\"uuid\":\"$b\",\"repo\":\"$DF_REPO\"}"
+    run metarecord-list:folder here and
+    until_ok 5 query_is "$sport AND mfr_path -> \"/b\""
+    assert_eq "folder and: the new folder replaces the old" "$sport AND mfr_path -> \"/b\"" "$(mfg query)"
 }
 
 # metarecord-list:folder lands its query in two variables the list follows

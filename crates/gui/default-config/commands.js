@@ -18,7 +18,7 @@
 
 // The shared panel helpers (doc "The metafolder API"): `frecency` is the
 // score of a recently-viewed entry, the same in the recent panel.
-import { frecency, formatScore, listQueryVariables, queryModeArg } from '/__ui.js';
+import { frecency, formatScore, listQueryVariables, queryModeArg, queryTerms, requireQueryMode } from '/__ui.js';
 import { baseName, confirmTrash, trashedMessage } from '/__file-actions.js';
 
 /** The fields of the tag model (doc "Hierarchical tags"): what a record has,
@@ -156,49 +156,13 @@ export function dslString(value) {
 /** The list's normal query zone: what the tag filters are written in. */
 const NORMAL_QUERY = 'metarecord-list:normal-query';
 
+/** A term listing a folder, as `listAt` writes it. */
+const FOLDER_TERM = /^mfr_path ->\*? "(?:[^"\\]|\\.)*"$/;
+
 /** A tag filter as `tag:query` writes it: the tag and those under it.
  *  @param {string} kind @param {string} tag */
 function tagFilter(kind, tag) {
   return `${kind} -> (path =>* ${dslString(tag)})`;
-}
-
-/**
- * The terms of a normal query's top-level AND, each as written. A query holding
- * a top-level OR is one term, parenthesized so that an AND can follow it. Reads
- * the text without the parser: a filter is found by its spelling, the one
- * `tagFilter` gives it.
- * @param {string} query
- */
-export function queryTerms(query) {
-  const text = query.trim();
-  if (text === '') return [];
-  /** @type {string[]} */
-  const terms = [];
-  let start = 0;
-  let depth = 0;
-  let hasOr = false;
-  for (let i = 0; i < text.length; i += 1) {
-    const c = text[i];
-    if (c === '"') {
-      // To the closing quote; a backslash takes the next character with it.
-      for (i += 1; i < text.length && text[i] !== '"'; i += 1) if (text[i] === '\\') i += 1;
-    } else if (c === '(') {
-      depth += 1;
-    } else if (c === ')') {
-      depth -= 1;
-    } else if (/[\p{L}\p{N}_]/u.test(/** @type {string} */ (c))) {
-      const word = /^[\p{L}\p{N}_]+/u.exec(text.slice(i))?.[0] ?? '';
-      if (depth === 0 && word === 'OR') hasOr = true;
-      if (depth === 0 && word === 'AND') {
-        terms.push(text.slice(start, i).trim());
-        start = i + word.length;
-      }
-      i += word.length - 1;
-    }
-  }
-  if (hasOr) return [`(${text})`];
-  terms.push(text.slice(start).trim());
-  return terms;
 }
 
 /** The terms of the query the list last applied in its normal zone.
@@ -344,14 +308,16 @@ async function frecentFolders(mf, repo) {
  * @param {string} where
  * @param {string} query
  * @param {string} folder the repo-relative folder, for the status bar
- * @param {string} [mode] `replace` / `and` (`listQueryVariables`)
+ * @param {string} [mode] `replace` / `and` (`listQueryVariables`); `and`
+ *   replaces the folder the normal query lists, if it does
  */
 export async function listAt(mf, where, query, folder, mode = 'replace') {
-  const variables = listQueryVariables(query, mode);
+  requireQueryMode(mode);
   await mf.atTarget(where, async (/** @type {MetafolderApi} */ mf) => {
+    const terms = (await normalQueryTerms(mf)).filter((term) => !FOLDER_TERM.test(term));
     // At once: the list follows these together, and one read between two
     // separate writes ran the old query and wrote it back over the new one.
-    await mf.workspace.setMany(variables);
+    await mf.workspace.setMany(listQueryVariables(query, mode, terms.join(' AND ')));
     await mf.invoke(['panel:open', 'here', 'metarecord-list']);
     await mf.statusBar.message(`Listing ${folder || '/'}`);
   });
