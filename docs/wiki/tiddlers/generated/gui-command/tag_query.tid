@@ -1,7 +1,7 @@
 title: $:/mf/gen/GUI command/tag:query
 catalog: GUI command
 target: tag:query
-summary: Insert a tag filter in the simplified query and search
+summary: Add a tag filter to the normal query and search
 
 !! Reference
 

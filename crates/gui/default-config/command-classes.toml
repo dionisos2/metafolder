@@ -161,6 +161,7 @@
 "tag:add mixed_tag" = "C"
 "tag:remove mixed_tag" = "C"
 "tag:query mixed_tag" = "C"
+"tag:unquery" = "C"
 
 # ── Go to ────────────────────────────────────────────────────────────────────
 "recent" = "B"

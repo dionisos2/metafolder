@@ -9,7 +9,8 @@ time from the command input, each taking first the field of the tag model it wor
 over the paths of the existing ones:
 
 |!Keys |!Command |!Does |
-|`, q` `, n q` `, m q` |[[tag:query]] |searches the records having, denying, partly having the tag and what is under it |
+|`, q` `, - q` `, = q` |[[tag:query]] |searches the records having, denying, partly having the tag and what is under it |
+|none |[[tag:unquery]] |takes that filter back off the query |
 |`, t` `, n a` `, m a` |[[tag:add]] |gives the selected metarecord the tag, denies it, marks it mixed |
 |`, d` `, n d` `, m d` |[[tag:remove]] |takes a tag of that field off the selected metarecord |
 

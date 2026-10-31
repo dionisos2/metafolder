@@ -1,0 +1,6 @@
+title: tag:unquery
+tags: [[GUI command]] [[Hierarchical tags]]
+kind: reference
+summary: Takes a tag filter that tag:query added back off the metarecord list's normal query, and runs the search.
+
+`tag:unquery <tag|negative_tag|mixed_tag> <tag>` asks a field of the tag model and a tag, completing over the filters of that field the normal DSL field of the metarecord list holds, removes `<field> -> (path =>* "<tag>")` from it and runs the search. Only a term of the query's top-level `AND`, spelled as [[tag:query]] writes it, is found: anything else in the field is kept as it is, and a tag not found is reported on the status bar. It has no default key ([[Tagging from the GUI]]).

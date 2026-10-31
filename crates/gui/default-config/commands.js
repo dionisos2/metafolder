@@ -1,7 +1,7 @@
 // The GUI's own commands written in JavaScript (doc "User commands").
 //
-// The Delete key's `item:delete`, the tag commands `tag:query` /
-// `tag:add` / `tag:remove`, the cross-panel `file-manager:reveal` and
+// The Delete key's `item:delete`, the tag commands `tag:query` / `tag:unquery`
+// / `tag:add` / `tag:remove`, the cross-panel `file-manager:reveal` and
 // `metarecord-list:folder`, the orphan cleanup `orphan:delete` /
 // `orphan:detect-delete`, and the picks `repos:switch` / `recent` /
 // `folder:open` are defined here rather than compiled into the shell exactly
@@ -151,6 +151,61 @@ export function whereArg() {
  */
 export function dslString(value) {
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+/** The list's normal query zone: what the tag filters are written in. */
+const NORMAL_QUERY = 'metarecord-list:normal-query';
+
+/** A tag filter as `tag:query` writes it: the tag and those under it.
+ *  @param {string} kind @param {string} tag */
+function tagFilter(kind, tag) {
+  return `${kind} -> (path =>* ${dslString(tag)})`;
+}
+
+/**
+ * The terms of a normal query's top-level AND, each as written. A query holding
+ * a top-level OR is one term, parenthesized so that an AND can follow it. Reads
+ * the text without the parser: a filter is found by its spelling, the one
+ * `tagFilter` gives it.
+ * @param {string} query
+ */
+export function queryTerms(query) {
+  const text = query.trim();
+  if (text === '') return [];
+  /** @type {string[]} */
+  const terms = [];
+  let start = 0;
+  let depth = 0;
+  let hasOr = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (c === '"') {
+      // To the closing quote; a backslash takes the next character with it.
+      for (i += 1; i < text.length && text[i] !== '"'; i += 1) if (text[i] === '\\') i += 1;
+    } else if (c === '(') {
+      depth += 1;
+    } else if (c === ')') {
+      depth -= 1;
+    } else if (/[\p{L}\p{N}_]/u.test(/** @type {string} */ (c))) {
+      const word = /^[\p{L}\p{N}_]+/u.exec(text.slice(i))?.[0] ?? '';
+      if (depth === 0 && word === 'OR') hasOr = true;
+      if (depth === 0 && word === 'AND') {
+        terms.push(text.slice(start, i).trim());
+        start = i + word.length;
+      }
+      i += word.length - 1;
+    }
+  }
+  if (hasOr) return [`(${text})`];
+  terms.push(text.slice(start).trim());
+  return terms;
+}
+
+/** The terms of the query the list last applied in its normal zone.
+ *  @param {MetafolderApi} mf */
+async function normalQueryTerms(mf) {
+  const query = await mf.workspace.get(NORMAL_QUERY);
+  return queryTerms(typeof query === 'string' ? query : '');
 }
 
 /**
@@ -799,13 +854,11 @@ export default {
     },
   },
 
-  // Insert a tag filter into the simplified query zone and run the search,
-  // completing over the tags that exist. `#=` is the simplified language's
-  // "this tag and every tag under it"; the kind names the field it is asked
-  // of — `negative_tag #=P`, the records that deny it (doc "Tag syntax in
-  // simplified queries").
+  // Add a tag filter to the normal query, completing over the tags that exist:
+  // the list follows the variable and runs the query, and the focus stays where
+  // it is. A filter already in the query is not added again.
   'tag:query': {
-    label: 'Insert a tag filter in the simplified query and search',
+    label: 'Add a tag filter to the normal query and search',
     args: [
       tagKindArg('Which tags? (tag / negative_tag / mixed_tag)'),
       {
@@ -814,21 +867,53 @@ export default {
         complete: (/** @type {MetafolderApi} */ mf) => tagPaths(mf),
       },
     ],
-    // Two composed commands, and the pair is the point: `insert`'s `stay`
-    // keeps the focus where it is (the search is this command's job, not an
-    // edit session in the query zone), and `apply` is the Enter nobody
-    // presses — it runs the query and, holding no focus, drops none.
     run: async (
       /** @type {MetafolderApi} */ mf,
       /** @type {string} */ kind,
       /** @type {string} */ tag,
     ) => {
       requireTagKind(kind);
-      // A path of plain words takes no quotes; any other is a quoted string.
-      const path = /^[\p{L}\p{N}_]+(\/[\p{L}\p{N}_]+)*$/u.test(tag) ? tag : `"${tag}"`;
-      const text = `${kind === 'tag' ? '' : `${kind} `}#=${path}`;
-      await mf.invoke(['metarecord-list:insert', 'simplified', text, 'stay']);
-      await mf.invoke(['metarecord-list:apply', 'simplified']);
+      const terms = await normalQueryTerms(mf);
+      const filter = tagFilter(kind, tag);
+      if (terms.includes(filter)) return;
+      await mf.workspace.set(NORMAL_QUERY, [...terms, filter].join(' AND '));
+    },
+  },
+
+  // Take a tag filter `tag:query` wrote back off the normal query, completing
+  // over those of that field the query holds.
+  'tag:unquery': {
+    label: 'Remove a tag filter from the normal query and search',
+    args: [
+      tagKindArg('From which tags? (tag / negative_tag / mixed_tag)'),
+      {
+        name: 'tag',
+        prompt: () => 'Tag to take off the query?',
+        complete: async (
+          /** @type {MetafolderApi} */ mf,
+          /** @type {string} */ _partial,
+          /** @type {string[]} */ prior = [],
+        ) => {
+          const prefix = `${prior[0]} -> (path =>* "`;
+          return (await normalQueryTerms(mf))
+            .filter((term) => term.startsWith(prefix) && term.endsWith('")'))
+            .map((term) => term.slice(prefix.length, -2).replace(/\\(["\\])/g, '$1'));
+        },
+      },
+    ],
+    run: async (
+      /** @type {MetafolderApi} */ mf,
+      /** @type {string} */ kind,
+      /** @type {string} */ tag,
+    ) => {
+      requireTagKind(kind);
+      const terms = await normalQueryTerms(mf);
+      const filter = tagFilter(kind, tag);
+      if (!terms.includes(filter)) {
+        await mf.statusBar.error(`${kind} "${tag}" is not in the query`);
+        return;
+      }
+      await mf.workspace.set(NORMAL_QUERY, terms.filter((t) => t !== filter).join(' AND '));
     },
   },
 

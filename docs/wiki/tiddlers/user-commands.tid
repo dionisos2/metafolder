@@ -92,10 +92,10 @@ import { selectedMetarecord } from './commands.js';
 
 !! The shipped entries
 
-`commands.js` holds eleven commands of the GUI, written there so that their
+`commands.js` holds commands of the GUI, written there so that their
 questions and what their answers run can be edited:
 
-* [[tag:query]], [[tag:add]] and [[tag:remove]] ([[Tagging from the GUI]]);
+* [[tag:query]], [[tag:unquery]], [[tag:add]] and [[tag:remove]] ([[Tagging from the GUI]]);
 * `metarecord:remove` and `metarecord:remove-file` ([[Sending files to the trash]]);
 * `file-manager:reveal` and `metarecord-list:folder` ([[Cross-panel selection]]);
 * `orphan:delete` and `orphan:detect-delete` ([[Orphans in the GUI]]);

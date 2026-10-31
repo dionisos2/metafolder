@@ -47,7 +47,7 @@
 #
 # Usage:  scripts/dev/gui-e2e.sh [--unsandboxed] [--keep-logs] [scenario...]
 #   with no scenario, runs them all: undo-redo duplicates orphans trash remove
-#   field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script
+#   field-keys reconcile ignore sync repos list tag-query folder-list panel-txn reveal layout script
 #   script-workspaces errors picker refs hierarchy hierarchy-form prompt history
 #   keybindings open-with tab-close close-layout pick-button suggested-key config-files walk open-viewers
 #   edit-text slideshow context-menu open-tree-node shell-line shell-cwd repos-memory help-keys help-cursor zoom order user-commands
@@ -685,6 +685,34 @@ scenario_list() {
 
 # query_is <dsl> — the metarecord list runs <dsl> (`mf gui query`).
 query_is() { [ "$(mfg query)" = "$1" ]; }
+
+# `tag:query` and `tag:unquery` write the normal query; the list follows it and
+# runs it, beside what the simplified query holds.
+scenario_tag_query() {
+    new_repo tag-query
+    local music='tag -> (path =>* "music")' sport='tag -> (path =>* "sport")'
+    run workspace:send "$WS" metarecord-list:normal-query '""'
+    run workspace:send "$WS" metarecord-list:query '#=expanded'
+    show_panel left metarecord-list view:refresh metarecord-list
+    assert_eq "tag query: the simplified form does not test the schema" \
+        'tag -> (path =>* "expanded")' "$(mfg query)"
+    run workspace:send "$WS" metarecord-list:query '""'
+    until_ok 5 query_is '' || die "tag query: the list never emptied"
+
+    run tag:query tag music
+    command_ok "tag query: adds a filter"
+    until_ok 5 query_is "$music"
+    assert_eq "tag query: the list runs it" "$music" "$(mfg query)"
+    run tag:query tag music
+    command_ok "tag query: the same tag again is no error"
+    run tag:query tag sport
+    until_ok 5 query_is "$music AND $sport"
+    assert_eq "tag query: the same tag is added once" "$music AND $sport" "$(mfg query)"
+    run tag:unquery tag music
+    command_ok "tag unquery: removes a filter"
+    until_ok 5 query_is "$sport"
+    assert_eq "tag unquery: the list runs the rest" "$sport" "$(mfg query)"
+}
 
 # metarecord-list:folder lands its query in two variables the list follows
 # together (the simplified query emptied, the normal DSL). Written one after
