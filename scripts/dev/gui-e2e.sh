@@ -49,7 +49,7 @@
 #   with no scenario, runs them all: undo-redo duplicates orphans trash remove
 #   field-keys reconcile ignore sync repos list tag-query folder-list panel-txn reveal layout script
 #   script-workspaces errors picker refs hierarchy hierarchy-form prompt history
-#   keybindings open-with tab-close close-layout pick-button suggested-key config-files walk open-viewers
+#   keybindings validate-keys open-with tab-close close-layout pick-button suggested-key config-files walk open-viewers
 #   edit-text slideshow context-menu open-tree-node shell-line shell-cwd repos-memory help-keys help-cursor zoom order user-commands
 #   settle macro clipboard saved-workspaces, and
 #   devtools last (it takes the inspector the clicking scenarios drive).
@@ -81,7 +81,7 @@ done
 # fails — forty tries of four seconds each.
 [ ${#SCENARIOS[@]} -gt 0 ] \
     || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script script-workspaces
-        errors picker refs hierarchy hierarchy-form prompt history keybindings open-with tab-close close-layout
+        errors picker refs hierarchy hierarchy-form prompt history keybindings validate-keys open-with tab-close close-layout
         pick-button suggested-key walk open-viewers edit-text slideshow context-menu open-tree-node shell-line shell-cwd repos-memory
         help-keys help-cursor zoom refresh order user-commands settle macro paste clipboard saved-workspaces devtools)
 
@@ -1318,6 +1318,40 @@ scenario_keybindings() {
 
 # running <pid> — the process has not exited.
 running() { kill -0 "$1" 2>/dev/null; }
+
+# The fields that filter or search: Enter validates and leaves, Shift+Enter
+# validates and stays (doc "Keybindings"). A key typed afterwards shows which.
+scenario_validate_keys() {
+    needs_keyboard validate-keys || return 0
+    needs_clicks validate-keys || return 0
+    new_repo validate-keys
+    df_mf metarecord add note:string=hello >/dev/null
+    show_panel left metarecord-list view:refresh metarecord-list
+
+    run metarecord-list:focus simplified
+    typed "note=hello"
+    keys Return
+    assert "validate: Enter applies the simplified query" \
+        until_ok 10 query_is 'note = "hello"'
+    typed "z"
+    assert "validate: Enter has left the field" reads "note=hello" '#query-input'
+
+    run metarecord-list:focus normal
+    typed 'note = "bye"'
+    keys shift+Return
+    assert "validate: Shift+Enter applies the normal query" \
+        until_ok 10 query_is '(note = "hello") AND (note = "bye")'
+    typed " "
+    assert "validate: Shift+Enter has kept the field" reads 'note = "bye" ' '#normal-input'
+    keys Escape
+
+    run panel:open here config
+    run config:focus filter
+    typed "cli"
+    keys Return
+    typed "z"
+    assert "validate: Enter leaves a filter" reads "cli" '#file-filter'
+}
 
 scenario_open_with() {
     needs_keyboard open-with || return 0

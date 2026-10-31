@@ -1789,6 +1789,56 @@ vars.y = ","
     /// The rules the shipped keys follow (doc "Choosing keybindings"), on the
     /// file as shipped, variables expanded.
     #[test]
+    fn test_shipped_filter_fields_validate_through_two_variables() {
+        // Enter validates and leaves a field that filters or searches, Shift+Enter
+        // validates and stays (doc "Keybindings").
+        let defaults = include_str!("../default-config/keybindings.toml");
+        let at = |source: &str, key: &str, focus: &str| -> Option<String> {
+            let set = KeybindingSet::from_source(source).unwrap();
+            let table = set.compiled();
+            table
+                .iter()
+                .find(|b| b.keys == [key] && b.focus.as_deref() == Some(focus))
+                .map(|b| b.invocation.clone())
+        };
+        for (focus, apply) in [
+            ("finder", "metarecord-list:apply finder"),
+            ("simplified", "metarecord-list:apply simplified"),
+            ("normal", "metarecord-list:apply normal"),
+            ("columns", "metarecord-list:apply columns"),
+            ("search", "help:apply search"),
+        ] {
+            assert_eq!(at(defaults, "enter", focus).as_deref(), Some(apply));
+            let stay = format!("{apply} stay");
+            assert_eq!(at(defaults, "shift+enter", focus).as_deref(), Some(stay.as_str()));
+        }
+        // A filter runs as it is typed: nothing is left to apply, only to leave.
+        assert_eq!(at(defaults, "enter", "filter").as_deref(), Some("editing:unfocus"));
+        // The find bar steps through its matches instead (doc "Find in a panel").
+        assert_eq!(at(defaults, "enter", "find").as_deref(), Some("find:next"));
+        assert_eq!(at(defaults, "shift+enter", "find").as_deref(), Some("find:prev"));
+
+        // The two variables move these keys, and nothing else that `enter` does.
+        let moved =
+            defaults.replace(r#"vars.validate = "enter""#, r#"vars.validate = "ctrl+j""#).replace(
+                r#"vars.validate-stay = "shift+enter""#,
+                r#"vars.validate-stay = "ctrl+shift+j""#,
+            );
+        assert_eq!(at(&moved, "ctrl+j", "finder").as_deref(), Some("metarecord-list:apply finder"));
+        assert_eq!(at(&moved, "ctrl+j", "filter").as_deref(), Some("editing:unfocus"));
+        assert_eq!(
+            at(&moved, "ctrl+shift+j", "simplified").as_deref(),
+            Some("metarecord-list:apply simplified stay")
+        );
+        assert_eq!(at(&moved, "enter", "finder"), None);
+        assert_eq!(at(&moved, "enter", "find").as_deref(), Some("find:next"));
+        let set = KeybindingSet::from_source(&moved).unwrap();
+        assert!(set.compiled().iter().any(|b| b.keys == ["enter"]
+            && b.when.as_deref() == Some("trash")
+            && b.invocation == "trash:restore"));
+    }
+
+    #[test]
     fn test_shipped_keys_follow_the_rules_of_choice() {
         let defaults = include_str!("../default-config/keybindings.toml");
         let table = KeybindingSet::from_source(defaults).unwrap().compiled();

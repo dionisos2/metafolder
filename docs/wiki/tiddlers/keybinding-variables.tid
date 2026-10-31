@@ -55,6 +55,12 @@ A command holding `{target}` — the template that once stood for these four lin
 — is refused; `metafolder-sync-config` rewrites one left in a file
 ([[Persisted format changes]]).
 
+!! Validating a text field
+
+`validate` (`enter`) and `validate-stay` (`shift+enter`) are the keys that validate a
+field that filters or searches, and leave it or stay in it ([[Keybindings]]). Everything
+else `Enter` does has its own literal lines, and does not move with them.
+
 !! Changing one of them
 
 The [[keybindings-variables panel]] lists the variables, each with its value, the keys it stands

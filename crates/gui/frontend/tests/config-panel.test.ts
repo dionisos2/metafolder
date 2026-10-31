@@ -107,6 +107,11 @@ async function mountPanel(options: { visible?: boolean; repo?: string | null } =
 }
 
 describe('config panel', () => {
+  test('its filter is named for the keybindings', async () => {
+    const { root } = await mountPanel();
+    expect((root.getElementById('file-filter') as HTMLInputElement).dataset.mfFocus).toBe('filter');
+  });
+
   test('it lists every configuration file, under its category', async () => {
     const { root } = await mountPanel();
     const text = root.getElementById('files')!.textContent;

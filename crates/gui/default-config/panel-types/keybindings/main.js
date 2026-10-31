@@ -42,7 +42,7 @@ const draftOf = (entry, source = entry.source) => ({
 
 /** The text fields shipped with a name (`data-mf-focus`). A panel of the user's
  *  naming its own appears once a line of the file uses it. */
-const FOCUS_NAMES = ['find', 'finder', 'hints', 'search'];
+const FOCUS_NAMES = ['columns', 'filter', 'find', 'finder', 'hints', 'normal', 'search', 'simplified'];
 
 /**
  * Gives a drop-down its options, keeping its value when it is still one of them.

@@ -31,6 +31,9 @@
 vars.target-here = "i"
 vars.target-other = "b"
 vars.target-new = "n"
+# Validating a text field that filters or searches: and leaving it, or staying.
+vars.validate = "enter"
+vars.validate-stay = "shift+enter"
 # Domains of nouns.
 vars.go = "g"
 vars.view = "v"
@@ -286,8 +289,6 @@ vars.index = "i"
 "enter" = [
   { command = "editing:confirm", text-input = true },
   { command = "find:next", focus = "find" },
-  { command = "metarecord-list:apply finder", focus = "finder" },
-  { command = "help:apply search", focus = "search" },
   { command = "panel:open other viewer", when = "metarecord-list" },
   { command = "panel:open other viewer", when = "recent" },
   { command = "file-manager:activate other", when = "file-manager" },
@@ -312,13 +313,28 @@ vars.index = "i"
 ]
 "shift+enter" = [
   { command = "find:prev", focus = "find" },
-  { command = "metarecord-list:apply finder stay", focus = "finder" },
-  { command = "help:apply search stay", focus = "search" },
   { command = "panel:open other metarecord-detail", when = "metarecord-list" },
   { command = "panel:open other metarecord-detail", when = "recent" },
   { command = "panel:open other metarecord-detail", when = "file-manager" },
   { command = "panel:open other metarecord-detail", when = "duplicates" },
   { command = "panel:open other metarecord-detail", when = "path-ref" },
+]
+# A field that filters or searches: validate and leave it, or validate and stay
+# (doc "Keybindings"). A `filter` runs as it is typed, so it only has to be left.
+"{validate}" = [
+  { command = "metarecord-list:apply finder", focus = "finder" },
+  { command = "metarecord-list:apply simplified", focus = "simplified" },
+  { command = "metarecord-list:apply normal", focus = "normal" },
+  { command = "metarecord-list:apply columns", focus = "columns" },
+  { command = "help:apply search", focus = "search" },
+  { command = "editing:unfocus", focus = "filter" },
+]
+"{validate-stay}" = [
+  { command = "metarecord-list:apply finder stay", focus = "finder" },
+  { command = "metarecord-list:apply simplified stay", focus = "simplified" },
+  { command = "metarecord-list:apply normal stay", focus = "normal" },
+  { command = "metarecord-list:apply columns stay", focus = "columns" },
+  { command = "help:apply search stay", focus = "search" },
 ]
 "down" = [
   { command = "cursor:next self" },

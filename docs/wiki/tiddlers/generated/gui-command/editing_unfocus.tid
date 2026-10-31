@@ -9,4 +9,5 @@ summary: Leave the focused text input
 
 !! Default keys
 
+* ``enter`` → ``editing:unfocus`` (while ``filter`` is focused)
 * ``escape`` → ``editing:unfocus`` (also in a text input)

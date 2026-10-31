@@ -89,6 +89,7 @@ export async function mount(root, metafolder) {
     renderFiles();
   }
 
+  fileFilter.dataset.mfFocus = 'filter';
   fileFilter.addEventListener('input', renderFiles);
   byId(root, 'reload-all', HTMLButtonElement).addEventListener('click', () => {
     void metafolder.invoke(['config:reload', 'all']);

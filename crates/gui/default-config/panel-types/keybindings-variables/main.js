@@ -127,6 +127,7 @@ export async function mount(root, metafolder) {
     show(await metafolder.config.keybindingEntries());
   }
 
+  filter.dataset.mfFocus = 'filter';
   filter.addEventListener('input', render);
   metafolder.provide({ refresh: load });
   void metafolder.commands.register('keybindings-variables:focus', {

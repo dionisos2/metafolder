@@ -935,11 +935,7 @@ export async function mount(root, metafolder) {
   // keybindings.toml with `focus = "finder"` — the `data-mf-focus` tag below is
   // what scopes them to this input. So they are all configurable, not hard-coded.
   finderInput.dataset.mfFocus = 'finder';
-  columnsInput.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter') return;
-    void applyColumns(metafolder);
-    if (!event.shiftKey) columnsInput.blur();
-  });
+  columnsInput.dataset.mfFocus = 'columns';
 
   // ── Wiring ──────────────────────────────────────────────────────────────
 

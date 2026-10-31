@@ -9,5 +9,11 @@ summary: Metarecord list: apply a zone's content
 
 !! Default keys
 
+* ``enter`` → ``metarecord-list:apply columns`` (while ``columns`` is focused)
 * ``enter`` → ``metarecord-list:apply finder`` (while ``finder`` is focused)
+* ``enter`` → ``metarecord-list:apply normal`` (while ``normal`` is focused)
+* ``enter`` → ``metarecord-list:apply simplified`` (while ``simplified`` is focused)
+* ``shift+enter`` → ``metarecord-list:apply columns stay`` (while ``columns`` is focused)
 * ``shift+enter`` → ``metarecord-list:apply finder stay`` (while ``finder`` is focused)
+* ``shift+enter`` → ``metarecord-list:apply normal stay`` (while ``normal`` is focused)
+* ``shift+enter`` → ``metarecord-list:apply simplified stay`` (while ``simplified`` is focused)

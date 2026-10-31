@@ -287,15 +287,9 @@ export function createQueryEditor({ root, metafolder, history, onApply, run }) {
     await mf.workspace.set(SHOW_EXPANSION, expansionShown);
   }
 
-  // Enter applies AND leaves the field (blur) so the panel accelerators resume;
-  // Shift+Enter applies but keeps the focus for another edit.
-  for (const input of [queryInput, normalInput]) {
-    input.addEventListener('keydown', (event) => {
-      if (event.key !== 'Enter') return;
-      void applyQuery(metafolder);
-      if (!event.shiftKey) input.blur();
-    });
-  }
+  // Validating is a keybinding on these names: `metarecord-list:apply <zone>`.
+  queryInput.dataset.mfFocus = 'simplified';
+  normalInput.dataset.mfFocus = 'normal';
   queryInput.addEventListener('input', scheduleLivePreview);
   expansionToggle.addEventListener('click', () => void toggleExpansion(metafolder));
   for (const key of Object.values(STATE_VARIABLES)) {

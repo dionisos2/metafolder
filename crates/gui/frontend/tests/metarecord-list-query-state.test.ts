@@ -205,7 +205,7 @@ describe('metarecord-list query variables', () => {
   test('its own writes coming back are not a change', async () => {
     const p = await mountPanel({});
     p.queryInput.value = 'rating > 3';
-    p.queryInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await handlers.get('metarecord-list:apply')!(p.api as never, 'simplified');
     await settle();
     p.calls.length = 0;
     // The shell pushes every write back to the panel that made it.
@@ -241,7 +241,7 @@ describe('metarecord-list query variables', () => {
     };
     const enter = async (text: string) => {
       p.queryInput.value = text;
-      p.queryInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await handlers.get('metarecord-list:apply')!(p.api as never, 'simplified');
       await settle();
     };
 

@@ -50,7 +50,7 @@ field. Three settings change that:
 |!Setting |!Effect |
 |`when = "<panel type>"` |only while a panel of that type has the focus — which is what lets `Enter` open a row in the list and restore an entry in the trash, a different command in each |
 |`text-input = true` |also while typing in a text field. Without it the key is left to the field: a binding on `n` must not fire in the middle of a word |
-|`focus = "<name>"` |only while one particular text field has the focus, and then ''even though'' it is a text field. Four fields have a name: `find`, the find bar ([[Find in a panel]]), `finder`, the finder of `metarecord-list`, and `search` and `hints`, the search box and the link hints of the help |
+|`focus = "<name>"` |only while one particular text field has the focus, and then ''even though'' it is a text field. These fields have a name: `find`, the find bar ([[Find in a panel]]); `finder`, `simplified`, `normal` and `columns`, the zones of `metarecord-list`; `search` and `hints`, the search box and the link hints of the help; `filter`, the filter of the [[config panel]] and of the [[keybindings-variables panel]] |
 
 `when` may be combined with either of the other two. A text field is anything typed
 or chosen in: an input, a text area, a drop-down list — whose arrow keys must keep
@@ -61,6 +61,20 @@ When the same key has several bindings that apply, the most specific wins: one w
 without `text-input` — the stricter. That is how `Enter` steps through the matches
 in the find bar, applies the finder in its field, opens the row in the list, and
 confirms the command input everywhere else.
+
+!! Validating a field that filters or searches
+
+In a field that filters or searches, `Enter` validates what is typed and leaves the
+field, so that the panel's keys work again; `Shift+Enter` validates and keeps the
+focus. These two keys are the variables `validate` and `validate-stay`
+([[Keybinding variables]]), so they are changed in one line each: the finder, the two
+query fields and the columns of `metarecord-list`, the search box of the help, and the
+filters of the [[config panel]] and the [[keybindings-variables panel]]. Such a filter
+runs as it is typed, so `validate` only leaves it, and `validate-stay` is not bound there.
+
+The find bar is the exception: it searches as it is typed too, and its `Enter` and
+`Shift+Enter` step through the matches ([[Find in a panel]]). The fields of the
+[[keybindings panel]]'s form search as well, but their `Enter` writes the line.
 
 A binding also applies only where its ''command'' can run. A generic command —
 `cursor:next self`, run on the focused panel's cursor ([[Generic panel commands]])

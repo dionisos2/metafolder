@@ -342,7 +342,7 @@ describe('keybindings panel', () => {
     const { root } = await mountPanel();
     const style = (root.getElementById('bindings') as HTMLElement).style;
     expect(style.getPropertyValue('--when-chars')).toBe(String('metarecord-list'.length));
-    expect(style.getPropertyValue('--focus-chars')).toBe(String('finder'.length));
+    expect(style.getPropertyValue('--focus-chars')).toBe(String('simplified'.length));
   });
 
   test('the key of a line is edited in place: Enter saves it, Escape gives it back', async () => {
@@ -495,11 +495,15 @@ describe('keybindings panel', () => {
     });
     expect([...choice('focus').options].map((o) => o.value)).toEqual([
       '',
+      'columns',
+      'filter',
       'find',
       'finder',
       'hints',
       'mine',
+      'normal',
       'search',
+      'simplified',
     ]);
   });
 

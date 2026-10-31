@@ -3,8 +3,7 @@
 // Mounts the real panel against its own markup (like panel-mount.test.ts) with
 // a recording `commands.register`, then drives the new commands and checks
 // their DOM effects: editing/clearing the three search fields (finder,
-// simplified query, normal DSL) and the Enter-leaves / Shift+Enter-stays
-// behaviour of the field inputs.
+// simplified query, normal DSL) and the leave-or-stay behaviour of `apply`.
 
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -253,25 +252,22 @@ describe('zone commands', () => {
 
   // ── apply ───────────────────────────────────────────────────────────────
 
-  test('Enter in the simplified field leaves it (blur); Shift+Enter keeps focus', async () => {
+  test('each zone is named for the keybindings, and Enter alone is left to them', async () => {
     const p = await mountPanel();
 
-    p.query.focus();
-    expect(p.shadow.activeElement).toBe(p.query);
-    p.query.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    expect(p.shadow.activeElement).not.toBe(p.query);
+    expect(p.finder.dataset.mfFocus).toBe('finder');
+    expect(p.query.dataset.mfFocus).toBe('simplified');
+    expect(p.normal.dataset.mfFocus).toBe('normal');
+    expect(p.columns.dataset.mfFocus).toBe('columns');
 
+    // No handler of its own: the key is whatever the file says (doc "Keybindings").
     p.query.focus();
-    p.query.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }),
-    );
+    p.query.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     expect(p.shadow.activeElement).toBe(p.query);
   });
 
   test('apply leaves the zone; `stay` keeps the focus in it', async () => {
-    // The finder is the one zone whose Enter is a keybinding rather than a
-    // hard-coded handler, so both behaviours have to survive as commands —
-    // as one verb with a modifier, not two verbs.
+    // Both behaviours of a zone's Enter are one verb with a modifier, not two verbs.
     const p = await mountPanel();
 
     p.finder.focus();

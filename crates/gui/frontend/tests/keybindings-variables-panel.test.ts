@@ -52,6 +52,11 @@ async function mountPanel(checkVariable: (name: string, value: string) => string
 }
 
 describe('keybindings-variables panel', () => {
+  test('its filter is named for the keybindings', async () => {
+    const { root } = await mountPanel(() => '');
+    expect((root.getElementById('variable-filter') as HTMLInputElement).dataset.mfFocus).toBe('filter');
+  });
+
   test('each variable is listed with its keys; a new value is checked, then saved on Enter', async () => {
     const { root, api } = await mountPanel((_name, value) => {
       if (value === 'x') throw new Error('`x` (`command-input:focus command`) would hide `x l`');
