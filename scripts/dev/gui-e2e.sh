@@ -628,6 +628,8 @@ scenario_sync() {
     # A file B lacks: create-link, sync, copy and chmod (doc "The sync plan").
     run sync:plan "$intents"
     status_is "sync plan: one file to create in B" info "Plan: 4 operation(s)"
+    assert "sync plan: the intents file joins its history" \
+        until_ok 10 grep -qxF "$intents" "$REPO_DIR/.metafolder/gui/history/sync:intents"
 
     answering no sync:run
     assert_eq "sync run: asks first" "Run the sync plan for sync-a ⇄ sync-b?" "$LAST_QUESTIONS"
@@ -1240,6 +1242,24 @@ scenario_history() {
     keys ctrl+p
     assert "history: ctrl+p in the normal query recalls it" \
         until_ok 10 reads 'mfr_type = "file"' "#normal-input"
+
+    # The columns record what they show once applied.
+    run metarecord-list:focus columns clear
+    typed 'label,  mfr_type'
+    keys Return
+    assert "history: applying the columns records them" \
+        until_ok 10 grep -qx 'label mfr_type' "$REPO_DIR/.metafolder/gui/history/metarecord-list:columns"
+
+    # The help panel's box: Enter records, the keys recall.
+    show_panel left help help:focus search
+    typed 'trash'
+    keys Return
+    assert "history: applying the help search records it" \
+        until_ok 10 grep -qx trash "$REPO_DIR/.metafolder/gui/history/help:search"
+    run help:focus search clear
+    keys ctrl+p
+    assert "history: ctrl+p in the help search recalls it" \
+        until_ok 10 reads trash "#help-search"
 }
 
 # Macros (doc "Macros"): F3 records what the keyboard runs, `macro:run`

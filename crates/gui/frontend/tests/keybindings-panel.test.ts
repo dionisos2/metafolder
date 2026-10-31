@@ -573,6 +573,7 @@ describe('keybindings panel', () => {
       'find',
       'finder',
       'hints',
+      'intents',
       'line',
       'mine',
       'normal',

@@ -3,6 +3,7 @@
 // red/green overlay), edit conflict resolutions in place, and run — all through
 // metafolder.sync (the shared core::sync orchestration; no shell).
 
+import { attachHistory } from '/__history.js';
 import { byId, el } from '/__ui.js';
 import { createSelect } from '/__select.js';
 
@@ -55,6 +56,21 @@ export function mount(root, metafolder) {
   /** @param {Select} select the selected repo uuid, or '' when none */
   const uuidOf = (select) => select.get() ?? '';
   const intentsInput = byId(root, 'intents', HTMLInputElement);
+  intentsInput.dataset.mfFocus = 'intents';
+  const intentsHistory = attachHistory(intentsInput, {
+    zone: 'sync:intents',
+    read: (histRepo, zone) => metafolder.history.read(histRepo, zone),
+    append: (histRepo, zone, entry) => metafolder.history.append(histRepo, zone, entry),
+    getRepo: async () => {
+      const repo = await metafolder.workspace.get('active_repo');
+      return typeof repo === 'string' ? repo : null;
+    },
+    container: /** @type {HTMLElement} */ (intentsInput.parentElement),
+    fields: {
+      zone: 'sync:fields',
+      append: (histRepo, zone, field) => metafolder.history.appendField(histRepo, zone, field),
+    },
+  });
   const statusBtn = byId(root, 'status-btn', HTMLButtonElement);
   const planBtn = byId(root, 'plan-btn', HTMLButtonElement);
   const showBtn = byId(root, 'show-btn', HTMLButtonElement);
@@ -175,6 +191,7 @@ export function mount(root, metafolder) {
 
   async function doPlan() {
     if (!pairOk() || intentsInput.value.trim() === '') return;
+    intentsHistory.push(intentsInput.value);
     setBusy(true);
     setStatus('Planning…');
     try {

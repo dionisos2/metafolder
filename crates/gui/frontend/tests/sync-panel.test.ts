@@ -52,6 +52,7 @@ async function mountPanel() {
     run: vi.fn(async () => ({ status: 'ran', done: 2, skipped: 0, divergences: [], warnings: [] })),
   };
   const noop = () => {};
+  const append = vi.fn(async (_repo: string, _zone: string, _entry: string) => true);
   const provided: { refresh?: (mf?: unknown) => unknown } = {};
   const daemonCall = vi.fn(async (_m: string, path: string) =>
     path.startsWith('/repos') ? REPOS : null,
@@ -75,6 +76,7 @@ async function mountPanel() {
       },
     },
     statusBar,
+    history: { read: async () => [], append, appendField: async () => true },
   };
   const mod = await import('../../default-config/panel-types/sync/main.js');
   mod.mount(shadow, withRuns(api) as never);
@@ -88,7 +90,7 @@ async function mountPanel() {
     if (!provided.refresh) throw new Error('the panel provides no refresh');
     await provided.refresh(api);
   };
-  return { shadow, sync, statusBar, invoke, refresh, daemonCall };
+  return { shadow, sync, statusBar, invoke, refresh, daemonCall, append };
 }
 
 describe('sync panel commands', () => {
@@ -141,6 +143,17 @@ describe('sync panel commands', () => {
     );
     const intents = p.shadow.getElementById('intents') as HTMLInputElement;
     expect(intents.value).toBe('/tmp/intents.toml');
+  });
+
+  test('planning records the intents file in its field history', async () => {
+    const p = await mountPanel();
+    await p.invoke('sync:pair', 'laptop', 'nas');
+    await p.invoke('sync:plan', '/tmp/intents.toml');
+    await vi.waitFor(() =>
+      expect(p.append).toHaveBeenCalledWith('aaa', 'sync:intents', '/tmp/intents.toml'),
+    );
+    const field = p.shadow.getElementById('intents') as HTMLInputElement;
+    expect(field.dataset.mfFocus).toBe('intents');
   });
 
   test('sync:plan with no intents file at all is refused', async () => {
