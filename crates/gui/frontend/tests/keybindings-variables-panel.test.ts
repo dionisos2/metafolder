@@ -10,7 +10,7 @@ const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/keybindi
 const VARIABLES = [
   { name: 'go', value: 'g', keys: 'g', uses: 1 },
   { name: 'panels', value: 't', keys: 't', uses: 1 },
-  { name: 'negative', value: '{tags} -', keys: ', -', uses: 3 },
+  { name: 'negative', value: ', -', keys: ', -', uses: 3 },
   { name: 'tags', value: 'ctrl+shift+,', keys: 'ctrl+shift+,', uses: 2 },
 ];
 
@@ -69,7 +69,7 @@ describe('keybindings-variables panel', () => {
     const variables = [...root.querySelectorAll('#variables tr')];
     expect(variables).toHaveLength(4);
     const negative = variables.find((tr) => tr.textContent.includes('negative'))!;
-    expect(negative.querySelector('input')!.value).toBe('{tags} -');
+    expect(negative.querySelector('input')!.value).toBe(', -');
     expect(negative.textContent).toContain(', -');
     expect(negative.textContent).toContain('3');
 

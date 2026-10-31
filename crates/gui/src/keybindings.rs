@@ -416,8 +416,9 @@ fn substitute(combo: &str, vars: &HashMap<String, String>) -> Result<String, Str
     Ok(out)
 }
 
-/// The `vars` table as written: variable name → its value, which may name
-/// other variables.
+/// The `vars` table: variable name → its keys. A value naming another variable
+/// is refused: `metafolder-sync-config` writes one left in a file out (doc
+/// "Persisted format changes").
 fn read_raw_vars(value: Option<toml::Value>) -> Result<HashMap<String, String>, String> {
     let Some(value) = value else { return Ok(HashMap::new()) };
     let toml::Value::Table(table) = value else {
@@ -426,54 +427,22 @@ fn read_raw_vars(value: Option<toml::Value>) -> Result<HashMap<String, String>, 
     table
         .into_iter()
         .map(|(name, value)| match value {
-            toml::Value::String(keys) if is_var_name(&name) => Ok((name, keys)),
+            toml::Value::String(keys) if is_var_name(&name) => {
+                if has_variables(&keys) {
+                    return Err(format!(
+                        "invalid keybindings file: the variable \"{name}\" names another \
+                         (\"{keys}\"): name both in the key, or run metafolder-sync-config, \
+                         which writes it out"
+                    ));
+                }
+                Ok((name, keys))
+            }
             toml::Value::String(_) => Err(format!(
                 "invalid keybindings file: variable name \"{name}\" (lowercase letters, digits, -)"
             )),
             _ => Err(format!("invalid keybindings file: the variable \"{name}\" must be a string")),
         })
         .collect()
-}
-
-/// The variables with their keys: a value naming another variable
-/// (`"{tags} -"`) holds that variable's keys, so that moving a domain moves
-/// the variables built on it too.
-fn resolve_vars(raw: &HashMap<String, String>) -> Result<HashMap<String, String>, String> {
-    fn resolve(
-        name: &str,
-        raw: &HashMap<String, String>,
-        done: &mut HashMap<String, String>,
-        stack: &mut Vec<String>,
-    ) -> Result<String, String> {
-        if let Some(keys) = done.get(name) {
-            return Ok(keys.clone());
-        }
-        if stack.iter().any(|n| n == name) {
-            stack.push(name.to_string());
-            return Err(format!(
-                "invalid keybindings file: the variables refer to themselves ({})",
-                stack.join(" → ")
-            ));
-        }
-        let value = raw.get(name).ok_or_else(|| format!("unknown variable {{{name}}}"))?;
-        stack.push(name.to_string());
-        let mut known = HashMap::new();
-        for other in referenced(value) {
-            if raw.contains_key(&other) {
-                known.insert(other.clone(), resolve(&other, raw, done, stack)?);
-            }
-        }
-        stack.pop();
-        let keys = substitute(value, &known)
-            .map_err(|e| format!("invalid keybindings file: the variable \"{name}\": {e}"))?;
-        done.insert(name.to_string(), keys.clone());
-        Ok(keys)
-    }
-    let mut done = HashMap::new();
-    for name in raw.keys() {
-        resolve(name, raw, &mut done, &mut Vec::new())?;
-    }
-    Ok(done)
 }
 
 /// The variables a key or a value names (`{name}`), in order.
@@ -518,8 +487,7 @@ struct Parsed {
     entries: Vec<Entry>,
     /// Its lines as written: the key, and the binding before expansion.
     lines: Vec<(String, BindingSpec)>,
-    /// The variables as written, and with their keys.
-    raw_vars: HashMap<String, String>,
+    /// The variables, with their keys.
     vars: HashMap<String, String>,
     /// The variables' names, in the order of the file.
     var_order: Vec<String>,
@@ -545,8 +513,7 @@ fn in_file_order(source: &str) -> (Vec<String>, Vec<String>) {
 fn parse_entries(source: &str) -> Result<Parsed, String> {
     let mut table: toml::Table =
         toml::from_str(source).map_err(|e| format!("invalid keybindings file: {e}"))?;
-    let raw_vars = read_raw_vars(table.remove("vars"))?;
-    let vars = resolve_vars(&raw_vars)?;
+    let vars = read_raw_vars(table.remove("vars"))?;
     let (key_order, mut var_order) = in_file_order(source);
     var_order.retain(|name| vars.contains_key(name));
     let mut lines: Vec<(String, BindingSpec)> = Vec::new();
@@ -601,7 +568,7 @@ fn parse_entries(source: &str) -> Result<Parsed, String> {
     // The lines as the file has them, a key's array in its order.
     let position = |key: &str| key_order.iter().position(|k| k == key).unwrap_or(usize::MAX);
     lines.sort_by_key(|(key, _)| position(key));
-    Ok(Parsed { entries, lines, raw_vars, vars, var_order })
+    Ok(Parsed { entries, lines, vars, var_order })
 }
 
 /// Parses a keybindings TOML file into (normalized combo, spec) pairs,
@@ -694,12 +661,10 @@ impl EntryDraft {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Variable {
     pub name: String,
-    /// As written: it may name other variables (`{tags} -`).
     pub value: String,
-    /// Its keys, the variables it names replaced.
+    /// Its keys, as they are read.
     pub keys: String,
-    /// How many lines of the file use it, directly or through another
-    /// variable.
+    /// How many lines of the file use it.
     pub uses: usize,
 }
 
@@ -722,7 +687,6 @@ pub struct KeybindingSet {
     origin: HashMap<BindingKey, String>,
     /// The lines of the file, as written.
     lines: Vec<(String, BindingSpec)>,
-    raw_vars: HashMap<String, String>,
     vars: HashMap<String, String>,
     var_order: Vec<String>,
     /// Panel suggestions that survived conflict checking.
@@ -737,7 +701,7 @@ impl KeybindingSet {
         let mut derived: HashMap<BindingKey, String> = HashMap::new();
         let mut origin: HashMap<BindingKey, String> = HashMap::new();
         let (mut lines, mut var_order) = (Vec::new(), Vec::new());
-        let (mut raw_vars, mut vars) = (HashMap::new(), HashMap::new());
+        let mut vars = HashMap::new();
         for parsed in [parse_entries(defaults)?, parse_entries(user)?] {
             for entry in parsed.entries {
                 let key = (entry.keys, entry.spec.when.clone(), entry.spec.focus.clone());
@@ -754,7 +718,6 @@ impl KeybindingSet {
                     var_order.push(name);
                 }
             }
-            raw_vars.extend(parsed.raw_vars);
             vars.extend(parsed.vars);
         }
         Ok(KeybindingSet {
@@ -762,7 +725,6 @@ impl KeybindingSet {
             derived,
             origin,
             lines,
-            raw_vars,
             vars,
             var_order,
             suggestions: Vec::new(),
@@ -874,37 +836,19 @@ impl KeybindingSet {
     }
 
     /// The variables, in the order of the file, with the number of lines
-    /// using each: `{name}` in their key, directly or through another
-    /// variable.
+    /// using each: `{name}` in their key.
     pub fn variables(&self) -> Vec<Variable> {
-        // Every variable a name stands for, itself included.
-        let reaches = |start: &str| {
-            let mut seen = vec![start.to_string()];
-            let mut i = 0;
-            while i < seen.len() {
-                let value = self.raw_vars.get(&seen[i]).cloned().unwrap_or_default();
-                for other in referenced(&value) {
-                    if !seen.contains(&other) {
-                        seen.push(other);
-                    }
-                }
-                i += 1;
-            }
-            seen
-        };
         self.var_order
             .iter()
             .map(|name| {
                 let uses = self
                     .lines
                     .iter()
-                    .filter(|(source, _)| {
-                        referenced(source).iter().any(|v| reaches(v).contains(name))
-                    })
+                    .filter(|(source, _)| referenced(source).contains(name))
                     .count();
                 Variable {
                     name: name.clone(),
-                    value: self.raw_vars[name].clone(),
+                    value: self.vars[name].clone(),
                     keys: self.vars[name].clone(),
                     uses,
                 }
@@ -1358,36 +1302,12 @@ bulk-query = "m q"
     }
 
     #[test]
-    fn test_a_variable_may_be_built_on_another() {
-        let source = r#"
-vars.mixed = "{tags} ="
-vars.tags = ","
-"{mixed} a" = { command = "x" }
-"#;
-        assert_eq!(keys_of(&parse_toml(source).unwrap()), [(", = a".into(), "x".into())]);
-        let set = KeybindingSet::from_source(source).unwrap();
-        let tags = set.variables().into_iter().find(|v| v.name == "tags").unwrap();
-        // Used through `mixed`.
-        assert_eq!(tags.uses, 1);
-        let mixed = set.variables().into_iter().find(|v| v.name == "mixed").unwrap();
-        assert_eq!((mixed.value.as_str(), mixed.keys.as_str()), ("{tags} =", ", ="));
-
-        let cycle = "vars.a = \"{b} x\"\nvars.b = \"{a}\"\n";
-        assert!(parse_toml(cycle).unwrap_err().contains("themselves"));
-        assert!(parse_toml("vars.a = \"{far}\"\n").unwrap_err().contains("far"));
-    }
-
-    #[test]
-    fn test_no_shipped_variable_is_built_on_another() {
-        let defaults = include_str!("../default-config/keybindings.toml");
-        let set = KeybindingSet::from_source(defaults).unwrap();
-        let built: Vec<String> = set
-            .variables()
-            .into_iter()
-            .filter(|v| !referenced(&v.value).is_empty())
-            .map(|v| v.name)
-            .collect();
-        assert!(built.is_empty(), "name both variables in the key instead: {built:?}");
+    fn test_a_variable_cannot_name_another() {
+        let source = "vars.mixed = \"{tags} =\"\nvars.tags = \",\"\n";
+        let error = parse_toml(source).unwrap_err();
+        assert!(error.contains("mixed") && error.contains("metafolder-sync-config"), "{error}");
+        // A brace that names nothing is a key like any other.
+        assert!(parse_toml("vars.brace = \"{\"\n").is_ok());
     }
 
     #[test]

@@ -70,7 +70,7 @@ const ENTRIES: Entry[] = [
 const VARIABLES = [
   { name: 'go', value: 'g', keys: 'g', uses: 1 },
   { name: 'panels', value: 't', keys: 't', uses: 1 },
-  { name: 'negative', value: '{tags} -', keys: ', -', uses: 3 },
+  { name: 'negative', value: ', -', keys: ', -', uses: 3 },
 ];
 
 const UNBOUND = [

@@ -290,9 +290,7 @@ declare namespace Metafolder {
   /** A variable of `keybindings.toml` (doc "Keybinding variables"). */
   interface KeybindingVariable {
     name: string;
-    /** As written: it may name other variables. */
     value: string;
-    /** Its keys, the variables it names replaced. */
     keys: string;
     /** How many lines use it. */
     uses: number;

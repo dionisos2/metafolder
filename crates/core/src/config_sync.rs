@@ -98,9 +98,44 @@ fn convert_keybindings_file(config_dir: &Path) -> Result<bool, String> {
     Ok(true)
 }
 
+/// Replaces, in the `vars` table of `doc`, each `{name}` of a variable by that
+/// variable's value. Returns whether one was. Variables naming themselves stay
+/// as they are, for the GUI to refuse.
+fn write_out_variables(doc: &mut toml_edit::DocumentMut) -> bool {
+    let Some(vars) = doc.get_mut("vars").and_then(toml_edit::Item::as_table_like_mut) else {
+        return false;
+    };
+    let values: BTreeMap<String, String> = vars
+        .iter()
+        .filter_map(|(name, item)| Some((name.to_string(), item.as_str()?.to_string())))
+        .collect();
+    let mut changed = false;
+    for (name, value) in &values {
+        let mut written = value.clone();
+        // No chain of variables is longer than the table, unless it is a cycle.
+        for _ in 0..values.len() {
+            for (other, keys) in &values {
+                written = written.replace(&format!("{{{other}}}"), keys);
+            }
+        }
+        if written != *value && !values.keys().any(|n| written.contains(&format!("{{{n}}}"))) {
+            let item = vars.get_mut(name).expect("listed variable");
+            let decor = item.as_value().map(|v| v.decor().clone());
+            let mut new = toml_edit::Value::from(written);
+            if let Some(decor) = decor {
+                *new.decor_mut() = decor;
+            }
+            *item = toml_edit::Item::Value(new);
+            changed = true;
+        }
+    }
+    changed
+}
+
 /// `source` with the forms `keybindings.toml` no longer has written out (doc
 /// "Persisted format changes"), or `None` when it has none — or does not parse,
-/// which the GUI reports. A `{target}` template becomes its four lines: its own
+/// which the GUI reports. A variable naming another holds the keys written out.
+/// A `{target}` template becomes its four lines: its own
 /// key aimed at its default `target`, and the key under each target prefix. A
 /// line already there for one of them wins, as a literal key did over the
 /// template.
@@ -125,6 +160,7 @@ fn convert_keybindings(source: &str) -> Option<String> {
     };
 
     let mut doc = source.parse::<DocumentMut>().ok()?;
+    let built_on_another = write_out_variables(&mut doc);
     let keys: Vec<String> =
         doc.iter().map(|(key, _)| key.to_string()).filter(|key| key != "vars").collect();
     let mut added: Vec<(String, InlineTable)> = Vec::new();
@@ -148,7 +184,7 @@ fn convert_keybindings(source: &str) -> Option<String> {
             **binding = aimed(binding, &default);
         }
     }
-    if added.is_empty() {
+    if added.is_empty() && !built_on_another {
         return None;
     }
     for (key, binding) in added {
@@ -565,6 +601,20 @@ vars.target-new = "n"
         assert_eq!(convert_keybindings(&converted), None);
         assert_eq!(convert_keybindings("\"x\" = { command = \"y\" }\n"), None);
         assert_eq!(convert_keybindings("not toml ["), None);
+    }
+
+    #[test]
+    fn a_variable_naming_another_is_written_out() {
+        let source = "vars.tags = \",\"\nvars.minus = \"{tags} -\"  # mine\n\
+                      vars.far = \"{minus} x\"\n\"{far}\" = { command = \"y\" }\n";
+        let converted = convert_keybindings(source).unwrap();
+        let table: toml::Table = toml::from_str(&converted).unwrap();
+        assert_eq!(table["vars"]["minus"].as_str(), Some(", -"));
+        assert_eq!(table["vars"]["far"].as_str(), Some(", - x"));
+        assert!(converted.contains("# mine"), "{converted}");
+        assert_eq!(convert_keybindings(&converted), None);
+        // A cycle has no writing out: the GUI refuses it.
+        assert_eq!(convert_keybindings("vars.a = \"{b}\"\nvars.b = \"{a}\"\n"), None);
     }
 
     #[test]
