@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { withRuns } from './support/runs';
+import { historyOf } from '/__history.js';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/help');
 
@@ -38,6 +39,7 @@ async function mountHelp(request: unknown = null) {
   const handlers = new Map<string, Handler>();
   const provided: Record<string, () => unknown> = {};
   const setVar = vi.fn(async () => {});
+  const append = vi.fn(async (_repo: string, _zone: string, _entry: string) => true);
   const api = {
     guiServer: 'http://gui',
     whenVisible: (fn: () => void) => fn(),
@@ -51,6 +53,7 @@ async function mountHelp(request: unknown = null) {
     },
     query: { grammarSource: async () => '' },
     statusBar: { message: async () => {} },
+    history: { read: async () => [], append, appendField: async () => true },
     workspace: { get: async () => request, set: setVar, onChange: () => {} },
   };
   const mod = await import('../../default-config/panel-types/help/main.js');
@@ -76,7 +79,7 @@ async function mountHelp(request: unknown = null) {
       top = v;
     },
   });
-  return { root, input, content, run, provided, show, scroll, setVar };
+  return { root, input, content, run, provided, show, scroll, setVar, append };
 }
 
 beforeEach(() => {
@@ -88,6 +91,18 @@ beforeEach(() => {
       return new Response(`<p>page ${id}</p>`);
     }),
   );
+});
+
+describe('the search box history', () => {
+  test('help:apply records the text', async () => {
+    const { input, run, append } = await mountHelp('repo-uuid');
+    input.value = 'trash';
+    await run('help:apply', 'search');
+    await vi.waitFor(() =>
+      expect(append).toHaveBeenCalledWith('repo-uuid', 'help:search', 'trash'),
+    );
+    expect(historyOf(input)).not.toBeNull();
+  });
 });
 
 describe('the search box is a text zone', () => {

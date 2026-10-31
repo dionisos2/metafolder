@@ -5,6 +5,7 @@
 // shell hands a requested topic in via the `help.request` workspace var (set by
 // the `help` / `help:open` builtins and the help-cursor click resolution).
 
+import { attachHistory } from '/__history.js';
 import { byId, el } from '/__ui.js';
 import { resolvePage, filterPages, parentPage } from '/__help.js';
 import { applyKeyHints } from '/__keyhints.js';
@@ -31,6 +32,21 @@ export async function mount(root, metafolder) {
   // The box is a text zone of the keybindings (`focus = "search"`): Enter
   // applies it and leaves it, Shift+Enter applies it and stays.
   searchInput.dataset.mfFocus = 'search';
+  // Only an explicit apply is recorded: the box also follows the page shown.
+  const history = attachHistory(searchInput, {
+    zone: 'help:search',
+    read: (repo, zone) => metafolder.history.read(repo, zone),
+    append: (repo, zone, entry) => metafolder.history.append(repo, zone, entry),
+    getRepo: async () => {
+      const repo = await metafolder.workspace.get('active_repo');
+      return typeof repo === 'string' ? repo : null;
+    },
+    container: /** @type {HTMLElement} */ (searchInput.parentElement),
+    fields: {
+      zone: 'help:fields',
+      append: (repo, zone, field) => metafolder.history.appendField(repo, zone, field),
+    },
+  });
   /** The page shown, for `cursor:parent`; null while a search lists results.
    *  @type {string|null} */
   let shownPage = null;
@@ -290,6 +306,7 @@ export async function mount(root, metafolder) {
     args: [zoneArg, stayArg],
     handler: (_mf, /** @type {string} */ name, /** @type {string|undefined} */ stay) => {
       checkZone(name);
+      history.push(searchInput.value);
       runSearch(searchInput.value);
       if (stay !== 'stay' && root.activeElement === searchInput) searchInput.blur();
     },
