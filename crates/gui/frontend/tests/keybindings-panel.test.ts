@@ -580,7 +580,7 @@ describe('keybindings panel', () => {
     const { root, api } = await mountPanel({ visible: true });
     expect(root.getElementById('variables')).toBeNull();
     expect(root.activeElement).toBeNull();
-    const onVisibility = api.onVisibility.mock.calls[0]![0] as (visible: boolean) => void;
+    const onVisibility = api.onVisibility.mock.calls[0][0] as (visible: boolean) => void;
     onVisibility(true);
     await flush();
     expect(root.activeElement).toBeNull();
