@@ -2,10 +2,10 @@
 // designates, and what they do to it. The walk itself is the field's own
 // (panel-shim/history.js).
 
-import { historyOf, lastEditedField } from '../../../panel-shim/history.js';
+import { historyOf, panelHistoryOf } from '../../../panel-shim/history.js';
 
 export const SELF_FOCUS = 'self-focus';
-export const LAST_EDITED = 'last-edited';
+export const SELF_PANEL = 'self';
 export const HISTORY_COMMANDS = ['history:prev', 'history:next', 'history:search'];
 
 type Root = ParentNode | null;
@@ -15,8 +15,7 @@ function namedFields(root: Root): HTMLElement[] {
 }
 
 /** The field `arg` designates, when it has a history: the focused one for
- *  `self-focus`, the focused panel's last edited for `last-edited`, else the
- *  field of that name in the focused panel. */
+ *  `self-focus`, else the field of that name in the focused panel. */
 export function resolveHistoryField(
   arg: string,
   active: Element | null,
@@ -25,9 +24,7 @@ export function resolveHistoryField(
   const field =
     arg === SELF_FOCUS
       ? (active as HTMLElement | null)
-      : arg === LAST_EDITED
-        ? lastEditedField(root)
-        : (namedFields(root).find((el) => el.dataset.mfFocus === arg) ?? null);
+      : (namedFields(root).find((el) => el.dataset.mfFocus === arg) ?? null);
   return historyOf(field) ? field : null;
 }
 
@@ -39,11 +36,12 @@ export function historyFieldNames(root: Root): string[] {
 }
 
 /** Whether a key bound to `invocation` fires here: a history command only on a
- *  field having a history, so that its key passes through elsewhere. Any other
- *  command always applies. */
+ *  field or a panel having a history, so that its key passes through elsewhere.
+ *  Any other command always applies. */
 export function historyApplies(invocation: string, active: Element | null, root: Root): boolean {
   const [name, field] = invocation.trim().split(/\s+/);
   if (!HISTORY_COMMANDS.includes(name)) return true;
+  if (field === SELF_PANEL) return name !== 'history:search' && panelHistoryOf(root) !== null;
   return resolveHistoryField(field ?? '', active, root) !== null;
 }
 
@@ -56,7 +54,14 @@ export async function runHistoryCommand(
   root: Root,
 ): Promise<void> {
   if (!arg) {
-    throw new Error(`which field? (${SELF_FOCUS}, ${LAST_EDITED}, or a field of the focused panel)`);
+    throw new Error(`which field? (${SELF_FOCUS}, ${SELF_PANEL}, or a field of the focused panel)`);
+  }
+  if (arg === SELF_PANEL) {
+    if (name === 'history:search') throw new Error('history:search needs a field');
+    const panel = panelHistoryOf(root);
+    if (!panel) throw new Error('the focused panel has no history');
+    await (name === 'history:prev' ? panel.prev() : panel.next());
+    return;
   }
   const field = resolveHistoryField(arg, active, root);
   const history = historyOf(field);
@@ -64,9 +69,7 @@ export async function runHistoryCommand(
     throw new Error(
       arg === SELF_FOCUS
         ? 'no text field with a history has the focus'
-        : arg === LAST_EDITED
-          ? 'no field with a history was edited in the focused panel'
-          : `no field "${arg}" with a history in the focused panel`,
+        : `no field "${arg}" with a history in the focused panel`,
     );
   }
   if (arg !== SELF_FOCUS) field.focus();

@@ -3,4 +3,4 @@ tags: [[GUI command]] Commands
 kind: reference
 summary: Search a text field's input history
 
-Opens a search box over the history of the field `self-focus`, `last-edited` or a name designates; the entry chosen goes in the field. See [[Input history]].
+Opens a search box over the history of the field `self-focus` or a name designates; the entry chosen goes in the field. See [[Input history]].

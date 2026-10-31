@@ -9,4 +9,5 @@ summary: Recall the next entry of a text field's input history
 
 !! Default keys
 
+* ``ctrl+n`` → ``history:next self``
 * ``ctrl+n`` → ``history:next self-focus`` (also in a text input)

@@ -1035,6 +1035,19 @@ pub async fn history_append(
         .map_err(|e| format!("blocking task failed: {e}"))?
 }
 
+#[tauri::command]
+pub async fn history_append_field(
+    app: AppHandle<'_>,
+    repo: String,
+    zone: String,
+    field: String,
+) -> Result<(), String> {
+    let dir = crate::history::metafolder_dir_of(&app.daemon, &repo).await?;
+    tauri::async_runtime::spawn_blocking(move || crate::history::append_field(&dir, &zone, &field))
+        .await
+        .map_err(|e| format!("blocking task failed: {e}"))?
+}
+
 /// Recently-viewed metarecords (crate::recent) — a GUI-side ranked list under
 /// `.metafolder/gui/recent`, like the input history: the daemon plays no part.
 #[tauri::command]

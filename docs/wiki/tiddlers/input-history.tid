@@ -25,13 +25,29 @@ applying a query that stays in its field, the first recall is the query before.
 
 The argument is ''required'': the field the command acts on.
 
-* `self-focus` is the field that has the focus: it is what the keys run. Where the focused field has no history, a key bound to it passes through as if it were not bound: outside a text field, `Ctrl+N` creates and `Ctrl+R` refreshes ([[Keybindings]]).
+* `self-focus` is the field that has the focus: it is what the keys run. Where the focused field has no history, a key bound to it passes through as if it were not bound: outside a text field, `Ctrl+R` refreshes ([[Keybindings]]).
 * A name is that field of the focused panel, which then takes the focus — `finder`, `simplified`, or `line` for the [[shell panel]]. `history:search finder` typed in the command input opens the finder's search.
-* `last-edited` is the field of the focused panel edited last — typed in, or changed by a command or a recall — which then takes the focus. It is what <<key "history:prev last-edited" "Ctrl+P">> runs outside a text field, so the previous query comes back without going to its field first; `Ctrl+N` then walks back, in the field. Each panel remembers its own for as long as the GUI runs; before any edit the key passes through. `Ctrl+N` itself is not bound to it, as it creates outside a field.
+* `self` is the focused panel's history: see below. It is what the keys run outside a text field. `history:search` has no such form.
 
 Typed in the command input, `self-focus` finds nothing: the input gives up the focus
 before the command runs, and no field holds it then. A field without history, or a
 name the focused panel lacks, is an error. The `normal` query field has no history.
+
+!! A panel's history
+
+Outside a text field <<key "history:prev self" "Ctrl+P">> and
+<<key "history:next self" "Ctrl+N">> walk the panel's own history: the list of its
+fields, in the order they were submitted. Each step runs <<cmd "history:prev">> on
+the field at that place of the list, then the one before, and so on, whichever field
+it is; <<cmd "history:next">> takes the same steps back. Going back through what was
+tried in the finder and the query so needs no going to either: ''no field takes the
+focus''.
+
+A step only fills the field, as a recall in it does: the finder filters as it
+changes, the query waits to be applied. A submitted field joins the list only if its
+history gained an entry, so that each step has one to recall; a name the panel no
+longer has is passed over. Editing a field, submitting one or leaving one ends the
+walk. A panel without fields with a history lets the keys pass through.
 
 !! What is recorded
 
@@ -51,7 +67,9 @@ only; it is not carried into a repository's history when one is opened.
 In the repository: one plain-text file per zone,
 `.metafolder/gui/history/<zone>` — `shell:command`, `shell:bash`,
 `metarecord-list:finder`, `metarecord-list:query` — one entry per line, the newest
-last. The file is replaced whole at each addition (written aside, then renamed), so
+last. A panel's list of fields is a file of the same kind, `metarecord-list:fields`
+or `shell:fields`, with one field's name per line, a name repeated when the field was
+submitted twice in a row. The file is replaced whole at each addition (written aside, then renamed), so
 an interrupted write leaves the previous history intact.
 
 These files are ordinary content of `.metafolder/`, unlike `internal/`: they can be
@@ -61,7 +79,8 @@ starts with ([[Repository layout on disk]]).
 The GUI reads and writes them itself; the daemon has no part in it and no endpoint
 for it. It finds the repository's `.metafolder/` from `GET /repos`, which is right
 also when that directory lives outside the root. A panel reaches its own zones
-through `metafolder.history.read` and `metafolder.history.append`, and the commands
+through `metafolder.history.read`, `metafolder.history.append` and
+`metafolder.history.appendField`, and the commands
 through `attachHistory` of `/__history.js`, which leaves on the field the handle they
 call (`historyOf`) — on the element, because the shell and the panels each load
 their own copy of the module. A zone's name is made of lowercase

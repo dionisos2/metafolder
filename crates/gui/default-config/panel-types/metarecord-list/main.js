@@ -194,6 +194,11 @@ export async function mount(root, metafolder) {
     append: (histRepo, zone, entry) => metafolder.history.append(histRepo, zone, entry),
     getRepo: async () => repo,
     container: bodyEl,
+    fields: {
+      zone: 'metarecord-list:fields',
+      /** @param {string} histRepo @param {string} zone @param {string} field */
+      append: (histRepo, zone, field) => metafolder.history.appendField(histRepo, zone, field),
+    },
   };
   const finderHistory = attachHistory(finderInput, {
     zone: 'metarecord-list:finder',

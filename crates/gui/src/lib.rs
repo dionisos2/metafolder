@@ -647,6 +647,7 @@ pub fn run(options: Options) {
             fs_commands::fs_delete,
             commands::history_read,
             commands::history_append,
+            commands::history_append_field,
             commands::recent_read,
             commands::recent_touch,
             commands::list_scripts,

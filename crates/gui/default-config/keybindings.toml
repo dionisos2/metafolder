@@ -125,13 +125,16 @@ vars.index = "i"
 # Find in a panel (doc "Find in a panel").
 "ctrl+f" = { command = "find:open", text-input = true }
 
-# The input history of the focused text field (doc "Input history"). Outside a
-# field that has one these keys pass through: Ctrl+N creates, Ctrl+R refreshes.
-# Ctrl+P there recalls in the field of the panel last edited, which takes the
-# focus: Ctrl+N then walks back in it.
+# The input history (doc "Input history"): of the focused text field in one,
+# and outside a field of the focused panel, over the fields it last changed.
+# Where there is none these keys pass through: Ctrl+R refreshes.
 "ctrl+p" = [
-  { command = "history:prev last-edited" },
+  { command = "history:prev self" },
   { command = "history:prev self-focus", text-input = true },
+]
+"ctrl+n" = [
+  { command = "history:next self" },
+  { command = "history:next self-focus", text-input = true },
 ]
 
 # The conventions of every program.
@@ -500,6 +503,7 @@ vars.index = "i"
 ]
 "{panel} {add}" = { command = "metarecord:open-add-field", when = "metarecord-detail" }
 "{panel} shift+{add}" = { command = "metarecord:row-add", when = "metarecord-detail" }
+"{panel} shift+{create}" = { command = "file:new self file", when = "file-manager" }
 "{panel} {create}" = [
   { command = "metarecord:create", when = "metarecord-list" },
   { command = "metarecord:create", when = "metarecord-detail" },
@@ -514,13 +518,6 @@ vars.index = "i"
 "{target-other} {panel} {list}" = { command = "path-ref:list-refs other", when = "path-ref" }
 "{target-new} {panel} {list}" = { command = "path-ref:list-refs new", when = "path-ref" }
 
-"ctrl+n" = [
-  { command = "metarecord:create", when = "metarecord-detail" },
-  { command = "metarecord:create", when = "metarecord-list" },
-  { command = "path-ref:add", when = "path-ref" },
-  { command = "file:new self file", when = "file-manager" },
-  { command = "history:next self-focus", text-input = true },
-]
 "ctrl+shift+n" = { command = "file:new self folder", when = "file-manager" }
 "f2" = { command = "file:rename self" }
 "ctrl+h" = { command = "file-manager:toggle hidden", when = "file-manager" }

@@ -685,7 +685,10 @@ declare namespace Metafolder {
    *  `.metafolder/gui/history/<zone>`. The store behind `attachHistory`. */
   interface History {
     read(repo: string, zone: string): Promise<string[]>;
-    append(repo: string, zone: string, entry: string): Promise<void>;
+    /** False when the entry repeats the newest one: nothing was written. */
+    append(repo: string, zone: string, entry: string): Promise<boolean>;
+    /** Adds to a panel's list of changed fields, where a repeat is kept. */
+    appendField(repo: string, zone: string, field: string): Promise<void>;
   }
 
   /** One entry of the recently-viewed list: a metarecord uuid, the ISO-8601

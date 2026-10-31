@@ -3,4 +3,4 @@ tags: [[GUI command]] Commands
 kind: reference
 summary: Recall the previous entry of a text field's input history
 
-Puts the previous entry of the history in the field `self-focus`, `last-edited` or a name designates, keeping what was being typed at the newest end. See [[Input history]].
+Puts the previous entry of the history in the field `self-focus` or a name designates, or in the panel's fields in turn for `self`, keeping what was being typed at the newest end. See [[Input history]].

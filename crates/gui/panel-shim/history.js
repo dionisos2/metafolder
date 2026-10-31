@@ -102,20 +102,93 @@ function ensureStyle(container) {
 /** The history handle of `element`, null when it has none or its zone is off
  *  for now (a script's prompt in the shell command input).
  *  @param {Element|null} element
- *  @returns {{prev: () => Promise<void>, next: () => void, search: () => Promise<void>}|null} */
+ *  @returns {{prev: () => Promise<void>, next: () => void, reset: () => void, search: () => Promise<void>}|null} */
 export function historyOf(element) {
   const handle = /** @type {any} */ (element)?.mfHistory;
   return handle?.available() ? handle : null;
 }
 
-/** The field with a history last edited under `root` (a panel's Shadow root),
- *  null when none was or it has left the panel. Kept on the root, shared by
- *  the copies of this module like the handle.
+/** The history of the panel under `root`, null when it has none.
  *  @param {ParentNode|null} root
- *  @returns {HTMLElement|null} */
-export function lastEditedField(root) {
-  const field = /** @type {any} */ (root)?.mfLastEdited ?? null;
-  return field?.isConnected ? field : null;
+ *  @returns {{prev: () => Promise<void>, next: () => Promise<void>}|null} */
+export function panelHistoryOf(root) {
+  return /** @type {any} */ (root)?.mfPanelHistory ?? null;
+}
+
+/** The panel's history, made by the first of its fields to ask (doc "Input
+ *  history"): a file listing the fields as they were submitted, walked by
+ *  stepping each one's own history in turn, without focusing it. On the root, as
+ *  a field's handle is on the field.
+ *  @param {ShadowRoot} root
+ *  @param {{
+ *   zone: string,
+ *   read: (repo: string, zone: string) => Promise<string[]>,
+ *   append: (repo: string, zone: string, field: string) => Promise<unknown>,
+ *   getRepo: () => Promise<string|null>,
+ * }} store */
+function ensurePanelHistory(root, { zone, read, append, getRepo }) {
+  const existing = /** @type {any} */ (root).mfPanelHistory;
+  if (existing) return existing;
+  /** @type {string[]} no active repo: the list lasts the session */
+  const session = [];
+  /** @type {{list: string[], index: number}|null} */
+  let walk = null;
+  /** Steps run one at a time, so that keys pressed quickly each take theirs. */
+  let queue = Promise.resolve();
+
+  /** @param {() => Promise<void>} step */
+  const enqueue = (step) => (queue = queue.then(step, step));
+  const namedFields = () => [...root.querySelectorAll('[data-mf-focus]')];
+  /** @param {string} name */
+  const handleOf = (name) =>
+    historyOf(
+      namedFields().find((el) => /** @type {HTMLElement} */ (el).dataset.mfFocus === name) ?? null,
+    );
+
+  async function load() {
+    const repo = await getRepo().catch(() => null);
+    if (!repo) return [...session];
+    return read(repo, zone).catch(() => []);
+  }
+
+  const handle = {
+    reset() {
+      walk = null;
+    },
+    /** @param {string} field */
+    async record(field) {
+      const repo = await getRepo();
+      if (repo) await append(repo, zone, field);
+      else {
+        session.push(field);
+        if (session.length > MAX_SESSION_ENTRIES) session.shift();
+      }
+    },
+    prev: () =>
+      enqueue(async () => {
+        if (!walk) {
+          // Every field starts afresh: a walk ended behind them left their position.
+          for (const el of namedFields()) /** @type {any} */ (el).mfHistory?.reset();
+          const list = await load();
+          walk = { list, index: list.length };
+        }
+        while (walk.index > 0) {
+          walk.index -= 1;
+          const field = handleOf(walk.list[walk.index]);
+          if (field) return field.prev();
+        }
+      }),
+    next: () =>
+      enqueue(async () => {
+        while (walk && walk.index < walk.list.length) {
+          const field = handleOf(walk.list[walk.index]);
+          walk.index += 1;
+          if (field) return field.next();
+        }
+      }),
+  };
+  /** @type {any} */ (root).mfPanelHistory = handle;
+  return handle;
 }
 
 /**
@@ -129,6 +202,8 @@ export function lastEditedField(root) {
  * - `getRepo()`: async, the active repo uuid or null (session-only mode).
  * - `container`: element the overlay is appended to — must live inside the
  *   panel's shadow root so the overlay (and its style) render there.
+ * - `fields`: the panel's list of changed fields, when the input takes part in
+ *   the panel's history: the zone of that list and how to add to it.
  *
  * Returns `{push, detach}`: call `push(text)` on submit; `detach()` on
  * cleanup.
@@ -145,9 +220,13 @@ export function lastEditedField(root) {
  *   append: (repo: string, zone: string, entry: string) => Promise<unknown>,
  *   getRepo: () => Promise<string|null>,
  *   container: HTMLElement,
+ *   fields?: {
+ *     zone: string,
+ *     append: (repo: string, zone: string, field: string) => Promise<unknown>,
+ *   },
  * }} options
  */
-export function attachHistory(input, { zone, read, append, getRepo, container }) {
+export function attachHistory(input, { zone, read, append, getRepo, container, fields }) {
   /** @type {Map<string, string[]>} zone name → oldest-first entries */
   const sessionEntries = new Map();
   /** @type {Nav|null} */
@@ -160,6 +239,14 @@ export function attachHistory(input, { zone, read, append, getRepo, container })
   /** @type {Overlay|null} */
   let overlay = null;
   let opening = false;
+  const panelHistory = fields
+    ? ensurePanelHistory(/** @type {ShadowRoot} */ (container.getRootNode()), {
+        zone: fields.zone,
+        append: fields.append,
+        read,
+        getRepo,
+      })
+    : null;
 
   const zoneOf = () => (typeof zone === 'function' ? zone() : zone) || null;
 
@@ -202,6 +289,7 @@ export function attachHistory(input, { zone, read, append, getRepo, container })
   function resetNav() {
     nav = null;
     epoch += 1;
+    panelHistory?.reset();
   }
 
   /** @param {string} zoneName */
@@ -349,7 +437,6 @@ export function attachHistory(input, { zone, read, append, getRepo, container })
   }
 
   function onInput() {
-    /** @type {any} */ (input.getRootNode()).mfLastEdited = input;
     if (!applying) resetNav(); // a real edit becomes the new draft
   }
 
@@ -367,17 +454,23 @@ export function attachHistory(input, { zone, read, append, getRepo, container })
     if (!entry) return;
     const zoneName = zoneOf();
     if (!zoneName) return;
+    panelHistory?.reset();
     void (async () => {
       const repo = await getRepo();
+      let added;
       if (repo) {
         // Fire-and-forget: a store failure must not break submission.
-        await append(repo, zoneName, entry);
+        added = (await append(repo, zoneName, entry)) !== false;
       } else {
         const list = sessionEntries.get(zoneName) ?? [];
-        if (list[list.length - 1] !== entry) list.push(entry);
+        added = list[list.length - 1] !== entry;
+        if (added) list.push(entry);
         if (list.length > MAX_SESSION_ENTRIES) list.splice(0, list.length - MAX_SESSION_ENTRIES);
         sessionEntries.set(zoneName, list);
       }
+      // One step of the panel's walk for each entry its field gained.
+      const name = /** @type {HTMLElement} */ (input).dataset.mfFocus;
+      if (added && name) await panelHistory?.record(name);
     })().catch(() => {});
   }
 
@@ -395,6 +488,7 @@ export function attachHistory(input, { zone, read, append, getRepo, container })
       if (zoneName) await stepBack(zoneName);
     },
     next: () => stepForward(),
+    reset: resetNav,
     search: async () => {
       const zoneName = zoneOf();
       if (zoneName) await openOverlay(zoneName);

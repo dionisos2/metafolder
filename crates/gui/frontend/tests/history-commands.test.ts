@@ -126,81 +126,131 @@ describe('runHistoryCommand', () => {
   });
 });
 
-describe('last-edited: the field of the focused panel last edited', () => {
-  /** A panel's Shadow root holding two fields with a history. */
-  function makePanel() {
+describe('self: the walk over the fields the panel last changed', () => {
+  /** A panel's Shadow root holding two fields with a history, and its
+   *  `fields` store holding `recorded`. */
+  function makePanel(recorded: string[] = []) {
     const host = document.createElement('div');
     document.body.appendChild(host);
     const root = host.attachShadow({ mode: 'open' });
     const container = document.createElement('div');
     root.appendChild(container);
-    const field = (name: string, entries: string[]) => {
+    const fieldsFile = [...recorded];
+    const stores: Record<string, string[]> = {
+      'test:finder': ['f1', 'f2'],
+      'test:query': ['q1', 'q2'],
+      'test:fields': fieldsFile,
+    };
+    const field = (name: string) => {
       const input = document.createElement('input');
       input.dataset.mfFocus = name;
       container.appendChild(input);
-      attachHistory(input, {
+      const attached = attachHistory(input, {
         zone: `test:${name}`,
-        read: async () => entries,
-        append: async () => true,
+        read: async (_repo: string, zone: string) => stores[zone],
+        append: async (_repo: string, zone: string, entry: string) => {
+          if (stores[zone].at(-1) === entry) return false;
+          stores[zone] = [...stores[zone], entry];
+          return true;
+        },
         getRepo: async () => 'repo',
         container,
+        fields: {
+          zone: 'test:fields',
+          append: async (_repo: string, _zone: string, name: string) => {
+            fieldsFile.push(name);
+          },
+        },
       });
-      return input;
+      return { input, attached };
     };
-    return { root, finder: field('finder', ['f1', 'f2']), query: field('query', ['q1', 'q2']) };
+    return { root, finder: field('finder'), query: field('query'), fieldsFile };
   }
 
-  function edit(input: HTMLInputElement, value: string) {
-    input.value = value;
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  }
-
-  test('is the field edited last, and nothing before any edit', () => {
-    const { root, finder, query } = makePanel();
-    expect(resolveHistoryField('last-edited', document.body, root)).toBeNull();
-    edit(finder, 'a');
-    expect(resolveHistoryField('last-edited', document.body, root)).toBe(finder);
-    edit(query, 'b');
-    expect(resolveHistoryField('last-edited', document.body, root)).toBe(query);
+  test('each step recalls in the field at that place of the list', async () => {
+    const { root, finder, query } = makePanel(['finder', 'query', 'finder']);
+    await runHistoryCommand('history:prev', 'self', document.body, root);
+    expect([finder.input.value, query.input.value]).toEqual(['f2', '']);
+    await runHistoryCommand('history:prev', 'self', document.body, root);
+    expect([finder.input.value, query.input.value]).toEqual(['f2', 'q2']);
+    await runHistoryCommand('history:prev', 'self', document.body, root);
+    expect([finder.input.value, query.input.value]).toEqual(['f1', 'q2']);
   });
 
-  test('a recall counts as an edit of that field', async () => {
-    const { root, finder, query } = makePanel();
-    edit(query, 'b');
-    await runHistoryCommand('history:prev', 'finder', document.body, root);
-    expect(resolveHistoryField('last-edited', document.body, root)).toBe(finder);
+  test('next walks the same steps back', async () => {
+    const { root, finder, query } = makePanel(['finder', 'query']);
+    finder.input.value = 'typed';
+    await runHistoryCommand('history:prev', 'self', document.body, root);
+    await runHistoryCommand('history:prev', 'self', document.body, root);
+    expect([finder.input.value, query.input.value]).toEqual(['f2', 'q2']);
+    await runHistoryCommand('history:next', 'self', document.body, root);
+    expect([finder.input.value, query.input.value]).toEqual(['typed', 'q2']);
+    await runHistoryCommand('history:next', 'self', document.body, root);
+    expect([finder.input.value, query.input.value]).toEqual(['typed', '']);
+    await runHistoryCommand('history:next', 'self', document.body, root);
+    expect([finder.input.value, query.input.value]).toEqual(['typed', '']);
   });
 
-  test('a key on it passes through until a field was edited', () => {
-    const { root, finder } = makePanel();
-    expect(historyApplies('history:prev last-edited', document.body, root)).toBe(false);
-    edit(finder, 'a');
-    expect(historyApplies('history:prev last-edited', document.body, root)).toBe(true);
+  test('gives no field the focus', async () => {
+    const { root } = makePanel(['query']);
+    await runHistoryCommand('history:prev', 'self', document.body, root);
+    expect(root.activeElement).toBeNull();
   });
 
-  test('a field gone from the panel is no longer designated', () => {
-    const { root, finder } = makePanel();
-    edit(finder, 'a');
-    finder.remove();
-    expect(resolveHistoryField('last-edited', document.body, root)).toBeNull();
+  test('keys pressed quickly each take their step', async () => {
+    const { root, finder, query } = makePanel(['finder', 'query']);
+    await Promise.all([
+      runHistoryCommand('history:prev', 'self', document.body, root),
+      runHistoryCommand('history:prev', 'self', document.body, root),
+    ]);
+    expect([finder.input.value, query.input.value]).toEqual(['f2', 'q2']);
   });
 
-  test('walks that field from outside it, and gives it the focus', async () => {
-    const { root, finder, query } = makePanel();
-    edit(finder, 'a');
-    edit(query, 'b');
-    query.blur();
-    await runHistoryCommand('history:prev', 'last-edited', document.body, root);
-    expect(query.value).toBe('q2');
-    expect(root.activeElement).toBe(query);
-    expect(finder.value).toBe('a');
+  test('a submit records the field, only when its entry is new', async () => {
+    const { query, fieldsFile } = makePanel();
+    query.input.value = 'new';
+    query.attached.push('new');
+    await flush();
+    query.attached.push('new');
+    await flush();
+    expect(fieldsFile).toEqual(['query']);
   });
 
-  test('without an edited field, says so', async () => {
+  test('a real edit ends the walk, in every field', async () => {
+    const { root, finder, query } = makePanel(['finder', 'query']);
+    await runHistoryCommand('history:prev', 'self', document.body, root);
+    await runHistoryCommand('history:prev', 'self', document.body, root);
+    finder.input.value = 'edited';
+    finder.input.dispatchEvent(new Event('input', { bubbles: true }));
+    query.input.value = '';
+    await runHistoryCommand('history:prev', 'self', document.body, root);
+    expect(query.input.value).toBe('q2');
+  });
+
+  test('a field the panel no longer has is passed over', async () => {
+    const { root, finder, query } = makePanel(['query', 'gone']);
+    await runHistoryCommand('history:prev', 'self', document.body, root);
+    expect(query.input.value).toBe('q2');
+    expect(finder.input.value).toBe('');
+  });
+
+  test('a key on it passes through in a panel without such history', () => {
     const { root } = makePanel();
-    await expect(
-      runHistoryCommand('history:prev', 'last-edited', document.body, root),
-    ).rejects.toThrow(/no field with a history was edited in the focused panel/);
+    expect(historyApplies('history:prev self', document.body, root)).toBe(true);
+    const plain = document.createElement('div').attachShadow({ mode: 'open' });
+    expect(historyApplies('history:prev self', document.body, plain)).toBe(false);
+    expect(historyApplies('history:next self', document.body, null)).toBe(false);
+  });
+
+  test('without such history, and for a search, says so', async () => {
+    const { root } = makePanel();
+    const plain = document.createElement('div').attachShadow({ mode: 'open' });
+    await expect(runHistoryCommand('history:prev', 'self', document.body, plain)).rejects.toThrow(
+      /the focused panel has no history/,
+    );
+    await expect(runHistoryCommand('history:search', 'self', document.body, root)).rejects.toThrow(
+      /history:search needs a field/,
+    );
   });
 });
 
@@ -218,9 +268,13 @@ describe('the shipped keys', () => {
     expect(block).toContain(`{ command = "${command}", text-input = true }`);
   });
 
-  test('ctrl+p outside a text field recalls in the field last edited', () => {
-    const start = toml.indexOf('"ctrl+p" = ');
+  test.each([
+    ['ctrl+p', 'history:prev self'],
+    ['ctrl+n', 'history:next self'],
+  ])('%s outside a text field runs %s', (key, command) => {
+    const start = toml.indexOf(`"${key}" = `);
     const block = toml.slice(start, toml.indexOf('\n"', start + 1));
-    expect(block).toContain('{ command = "history:prev last-edited" }');
+    expect(block).toContain(`{ command = "${command}" }`);
+    expect(block.match(/command = /g)).toHaveLength(2);
   });
 });

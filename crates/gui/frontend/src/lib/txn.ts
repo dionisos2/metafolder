@@ -35,6 +35,7 @@ const CARRIED_CALLS = new Set([
   'get_compiled_keybindings',
   'history_read',
   'history_append',
+  'history_append_field',
   'fs_stat',
   'fs_exists',
   'fs_read_dir',

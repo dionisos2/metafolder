@@ -92,10 +92,33 @@ pub fn append(metafolder_dir: &Path, zone: &str, entry: &str) -> Result<bool, St
         return Err("a history entry must be a non-empty single line".to_string());
     }
     let _guard = LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
-    let mut entries = read_lines(metafolder_dir, zone)?;
+    let entries = read_lines(metafolder_dir, zone)?;
     if entries.last().map(String::as_str) == Some(entry) {
         return Ok(false);
     }
+    write_with(metafolder_dir, zone, entries, entry)?;
+    Ok(true)
+}
+
+/// Appends a field's name to a panel's list of changed fields: unlike an entry,
+/// a repeat is kept, each one standing for a step of the walk (doc "Input history").
+pub fn append_field(metafolder_dir: &Path, zone: &str, field: &str) -> Result<(), String> {
+    validate_zone(zone)?;
+    if field.trim().is_empty() || field.contains('\n') || field.contains('\r') {
+        return Err("a history entry must be a non-empty single line".to_string());
+    }
+    let _guard = LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
+    let entries = read_lines(metafolder_dir, zone)?;
+    write_with(metafolder_dir, zone, entries, field)
+}
+
+/// Rewrites a zone file with `entry` added, under the caller's `LOCK`.
+fn write_with(
+    metafolder_dir: &Path,
+    zone: &str,
+    mut entries: Vec<String>,
+    entry: &str,
+) -> Result<(), String> {
     entries.push(entry.to_string());
     if entries.len() > MAX_ENTRIES {
         entries.drain(..entries.len() - MAX_ENTRIES);
@@ -107,8 +130,7 @@ pub fn append(metafolder_dir: &Path, zone: &str, entry: &str) -> Result<bool, St
     content.push('\n');
     let tmp = file.with_extension("tmp");
     std::fs::write(&tmp, content).map_err(|e| format!("cannot write history file: {e}"))?;
-    std::fs::rename(&tmp, &file).map_err(|e| format!("cannot replace history file: {e}"))?;
-    Ok(true)
+    std::fs::rename(&tmp, &file).map_err(|e| format!("cannot replace history file: {e}"))
 }
 
 /// Raw line read of a zone file (no locking, no limit). Skips empty lines so a
@@ -183,6 +205,14 @@ mod tests {
         assert!(append(&dir, "z", "b").unwrap());
         assert!(append(&dir, "z", "a").unwrap());
         assert_eq!(read(&dir, "z", None).unwrap(), vec!["a", "b", "a"]);
+    }
+
+    #[test]
+    fn test_append_field_keeps_consecutive_repeats() {
+        let dir = temp_metafolder("fields");
+        append_field(&dir, "z", "finder").unwrap();
+        append_field(&dir, "z", "finder").unwrap();
+        assert_eq!(read(&dir, "z", None).unwrap(), vec!["finder", "finder"]);
     }
 
     #[test]

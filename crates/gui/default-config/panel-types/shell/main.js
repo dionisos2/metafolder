@@ -116,6 +116,10 @@ export async function mount(root, metafolder) {
       return typeof repo === 'string' ? repo : null;
     },
     container: /** @type {HTMLElement} */ (log.parentElement),
+    fields: {
+      zone: 'shell:fields',
+      append: (repo, zone, field) => metafolder.history.appendField(repo, zone, field),
+    },
   });
 
   /** Lists the candidates a Tab left open, bash-style; none hides the row. */

@@ -867,7 +867,9 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         read: (repo: string, zone: string) =>
           invoke('history_read', { repo, zone }) as Promise<string[]>,
         append: (repo: string, zone: string, entry: string) =>
-          invoke('history_append', { repo, zone, entry }) as Promise<void>,
+          invoke('history_append', { repo, zone, entry }) as Promise<boolean>,
+        appendField: (repo: string, zone: string, field: string) =>
+          invoke('history_append_field', { repo, zone, field }) as Promise<void>,
       },
 
       /** Per-repo "recently viewed metarecords" — a GUI-side list under
