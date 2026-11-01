@@ -239,13 +239,20 @@ mod tests {
             return;
         }
         for tz in ["Europe/Paris", "America/New_York", "Asia/Kolkata", "UTC"] {
-            let status = std::process::Command::new(std::env::current_exe().unwrap())
+            // Captured, not inherited: libtest does not capture a child's output, and
+            // the child's "test result:" lines would count in run-tests.sh's total.
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "slow::tests::test_the_local_offset_is_the_c_librarys"])
                 .env("MF_TEST_TZ", tz)
                 .env("TZ", tz)
-                .status()
+                .output()
                 .unwrap();
-            assert!(status.success(), "{tz}");
+            assert!(
+                output.status.success(),
+                "{tz}: {}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
     }
 
