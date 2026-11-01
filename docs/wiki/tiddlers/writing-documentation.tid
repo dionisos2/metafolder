@@ -129,5 +129,5 @@ undocumented fails `check`.
 `scripts/dev/doc build` renders every hand-written note into `docs/wiki/dist/` — one
 HTML fragment per note plus `index.json` — which is not committed.
 `metafolder-sync-config` installs it under `~/.config/metafolder/docs/`, and refuses
-to run before it exists; `scripts/dev/complete-build.sh` does both ([[Building]]). The
+to run before it exists; `make dev` does both ([[Building]]). The
 GUI serves it at `/docs/`. The tools are tested by `scripts/dev/test-doc-tools.sh`.

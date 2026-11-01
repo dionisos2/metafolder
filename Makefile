@@ -6,9 +6,10 @@
 #
 # Common flows:
 #   make check-deps          # verify build/runtime deps, list what is missing
-#   make                     # build everything (release)
+#   make dev                 # the complete development build (debug) + user config
+#   make build               # build everything (release)
 #   make install             # build + install binaries + install user config
-#   make install-headless    # daemon + CLI only (no GUI: skips webkit/npm)
+#   make install-headless    # daemon + CLI only (no GUI toolkit; node renders the docs)
 #   make run-daemon / run-gui
 #   make uninstall
 #
@@ -42,8 +43,10 @@ help:
 	@echo 'metafolder — make targets:'
 	@echo ''
 	@echo '  check-deps         verify build & runtime dependencies'
+	@echo '  dev                complete debug build: frontend, workspace, test binaries,'
+	@echo '                     docs, then the user config applied'
 	@echo '  build              build everything, release (daemon, cli, gui, config)'
-	@echo '  build-headless     build daemon + cli only (no GUI toolkit / npm)'
+	@echo '  build-headless     build daemon + cli only (no GUI toolkit / frontend)'
 	@echo '  frontend           (re)build the GUI frontend bundle'
 	@echo '  docs               render the documentation wiki (docs/wiki/dist/)'
 	@echo ''
@@ -68,12 +71,26 @@ help:
 check-deps:
 	@scripts/dev/check-deps.sh
 
+.PHONY: check-deps-headless
+check-deps-headless:
+	@scripts/dev/check-deps.sh --headless
+
+# ── npm dependencies ─────────────────────────────────────────────────────────
+# node_modules lives at the repo root: the frontend and the documentation wiki
+# are members of the npm workspace declared there, and the root package-lock.json
+# is what pins them. `npm --prefix crates/gui/frontend install` ignores all that.
+# The hidden lockfile npm writes is the stamp, so a pull that moves the lock
+# reinstalls.
+NPM_STAMP := node_modules/.package-lock.json
+
+$(NPM_STAMP): package-lock.json
+	$(NPM) ci
+
 # ── build ────────────────────────────────────────────────────────────────────
 # The GUI frontend (Tauri embeds crates/gui/frontend/dist at compile time) must
 # be built BEFORE cargo touches the gui crate — hence `build` depends on it.
 .PHONY: frontend
-frontend:
-	@test -d $(FRONTEND)/node_modules || $(NPM) --prefix $(FRONTEND) install
+frontend: $(NPM_STAMP)
 	$(NPM) --prefix $(FRONTEND) run build
 
 # sync-config is feature-gated on core only: enabling the feature on the whole
@@ -103,8 +120,18 @@ build: build-headless build-gui
 # Rendered on every install: sync-config only checks that dist/ exists, so a
 # stale one went in silently — a new note missing from the help panel.
 .PHONY: docs
-docs:
+docs: $(NPM_STAMP)
 	scripts/dev/doc build
+
+# The complete development build, doc "Building". The frontend comes before cargo:
+# Tauri embeds it at compile time, and bundled after, the binary keeps the
+# previous bundle until the next run.
+.PHONY: dev
+dev: frontend docs
+	$(CARGO) build
+	$(CARGO) test --workspace --no-run
+	$(CARGO) build -p metafolder-core --features sync-config --bin metafolder-sync-config
+	target/debug/metafolder-sync-config
 
 # ── install ──────────────────────────────────────────────────────────────────
 # install-config runs the freshly built binary from the repo root: sync-config
@@ -117,7 +144,7 @@ $(BINDIR):
 	@mkdir -p $(BINDIR)
 
 .PHONY: install-headless
-install-headless: check-deps build-headless install-config | $(BINDIR)
+install-headless: check-deps-headless build-headless install-config | $(BINDIR)
 	@for b in $(BINS_HEADLESS); do \
 	    echo "install $(BINDIR)/$$b"; \
 	    install -m 0755 $(TARGET)/$$b $(BINDIR)/$$b; \

@@ -3,7 +3,7 @@
 #
 # check.sh never prunes target/ (pruning after clippy and the tests, without
 # the plain build and the sync-config core, would evict those universes every
-# run: see complete-build.sh), so a target/ that grows until a test dies on
+# run: see make dev), so a target/ that grows until a test dies on
 # "No space left on device" has to be announced instead. The checks
 # themselves run against stubs: what is asserted is the warning.
 
@@ -56,7 +56,7 @@ assert_not "no warning with room to spare" grep -q 'free on' <<<"$out"
 out=$(run $((3 * 1024 * 1024))); rc=$?
 assert_eq "a nearly full disk is a warning, not a failure" 0 "$rc"
 assert_contains "the warning says how much is left" "$out" "3 GiB free on"
-assert_contains "the warning names the cure" "$out" "scripts/dev/prune-target.sh"
+assert_contains "the warning names the cure" "$out" "make prune"
 
 # ── 3. the threshold can be moved ────────────────────────────────────────────
 out=$(cd "$fake" && FREE_KIB=$((3 * 1024 * 1024)) METAFOLDER_CHECK_MIN_FREE_GIB=2 \

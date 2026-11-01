@@ -491,8 +491,8 @@ fn gather_defaults(source_root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>, Str
     let docs = source_root.join("docs").join("wiki").join("dist");
     if !docs.is_dir() {
         return Err(format!(
-            "{} is missing: render the documentation first (scripts/doc build, \
-             which scripts/complete-build.sh runs)",
+            "{} is missing: render the documentation first (make docs, \
+             which make dev and make install run)",
             docs.display()
         ));
     }
@@ -697,7 +697,7 @@ vars.target-new = "n"
         let area = scratch();
         let (source, config) = (area.join("src"), area.join("cfg"));
         make_source(&source, &[("gui/style.css", "body{}")]);
-        // The documentation is rendered from docs/wiki/ by `scripts/doc build`
+        // The documentation is rendered from docs/wiki/ by `make docs`
         // and installs, outside any panel, to the config repo's docs/.
         let dist = source.join("docs").join("wiki").join("dist");
         fs::write(dist.join("trash.html"), "<p>bin</p>").unwrap();
@@ -715,7 +715,7 @@ vars.target-new = "n"
         // Applying it anyway would drop docs/ from the `default` branch and
         // leave the help panel empty: an error naming the cure instead.
         let err = sync(&source, &config).unwrap_err();
-        assert!(err.contains("scripts/doc build"), "{err}");
+        assert!(err.contains("make docs"), "{err}");
         assert!(!config.join("gui").exists(), "nothing applied");
     }
 

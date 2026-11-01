@@ -2,7 +2,8 @@
 # Checks the build- and run-time dependencies metafolder needs and reports what
 # is missing. Grouped by role:
 #
-#   build            — needed to compile the workspace (all crates, GUI included)
+#   build            — needed to build the daemon and the CLI (node: the docs)
+#   build (GUI)      — needed to compile the gui crate too
 #   runtime (GUI)    — bubblewrap: the GUI refuses to start without it
 #   runtime optional — GUI media features; each degrades gracefully when absent
 #
@@ -12,6 +13,7 @@
 #
 #   scripts/dev/check-deps.sh            # report and set exit status
 #   scripts/dev/check-deps.sh --quiet    # only print problems (nothing on success)
+#   scripts/dev/check-deps.sh --headless # only what the daemon and the CLI need
 #
 # Package names in the install hints are for Arch Linux; map them to your
 # distribution.
@@ -23,11 +25,13 @@
 set -uo pipefail
 
 quiet=false
+headless=false
 for arg in "${@:-}"; do
     case "$arg" in
         --quiet|-q) quiet=true ;;
+        --headless) headless=true ;;
         -h|--help)
-            sed -n '2,22p' "$0" | sed 's/^# \?//'
+            sed -n '2,24p' "$0" | sed 's/^# \?//'
             exit 0 ;;
         "") ;;
         *) echo "check-deps: unknown option: $arg (try --help)" >&2; exit 2 ;;
@@ -42,18 +46,18 @@ fi
 
 # The dependency table: one row per dependency.
 #   name | category | probe | arg | arch-package | purpose
-# category: build | runtime | optional
+# category: build | gui-build | runtime | optional
 # probe:    cmd (command -v arg) | pc (pkg-config --exists arg)
 #         | emoji (an emoji font in fontconfig) | gst (gst-inspect element)
 deps=(
     "cargo|build|cmd|cargo|rust|Rust toolchain (compiler + cargo)"
     "cc|build|cmd|cc|base-devel|C toolchain (bundled LMDB/libgit2)"
     "pkg-config|build|cmd|pkg-config|base-devel|locate system libraries"
-    "node|build|cmd|node|nodejs|build the GUI frontend bundle"
-    "npm|build|cmd|npm|npm|build the GUI frontend bundle"
-    "webkit2gtk|build|pc|webkit2gtk-4.1|webkit2gtk-4.1|Tauri WebView (gui crate)"
-    "gtk3|build|pc|gtk+-3.0|gtk3|Tauri windowing (gui crate)"
-    "librsvg|build|pc|librsvg-2.0|librsvg|Tauri icon rendering (gui crate)"
+    "node|build|cmd|node|nodejs|render the documentation, build the GUI frontend bundle"
+    "npm|build|cmd|npm|npm|install what node runs"
+    "webkit2gtk|gui-build|pc|webkit2gtk-4.1|webkit2gtk-4.1|Tauri WebView (gui crate)"
+    "gtk3|gui-build|pc|gtk+-3.0|gtk3|Tauri windowing (gui crate)"
+    "librsvg|gui-build|pc|librsvg-2.0|librsvg|Tauri icon rendering (gui crate)"
     "bwrap|runtime|cmd|bwrap|bubblewrap|sandbox — the GUI refuses to start without it"
     "emoji-font|optional|emoji||noto-fonts-emoji|file-manager / thumbnail glyphs"
     "ffmpeg|optional|cmd|ffmpeg|ffmpeg|video/GIF poster thumbnails"
@@ -105,7 +109,7 @@ section() {
             $shown || { $quiet || printf '%s%s%s\n' "$bold" "$title" "$off"; shown=true; }
             printf '  %s✗%s %-16s %s%s%s\n' "$red" "$off" "$name" "$yellow" "$purpose" "$off"
             case "$want" in
-                build)    miss_build+=("$pkg") ;;
+                build|gui-build) miss_build+=("$pkg") ;;
                 runtime)  miss_runtime+=("$pkg") ;;
                 optional) miss_optional+=("$pkg") ;;
             esac
@@ -125,8 +129,11 @@ uniq_words() {
 $quiet || printf '%smetafolder — dependency check%s\n\n' "$bold" "$off"
 
 section build    "Build dependencies (required)"
-section runtime  "Runtime, GUI (required)"
-section optional "Runtime, GUI (optional — media features)"
+if ! $headless; then
+    section gui-build "Build dependencies, GUI (required)"
+    section runtime   "Runtime, GUI (required)"
+    section optional  "Runtime, GUI (optional — media features)"
+fi
 
 # ── verdict ──────────────────────────────────────────────────────────────────
 status=0

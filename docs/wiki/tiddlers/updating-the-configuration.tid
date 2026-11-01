@@ -6,7 +6,7 @@ summary: metafolder-sync-config installs the shipped defaults, then merges each 
 After pulling a new version of metafolder, apply its defaults:
 
 ```
-scripts/dev/complete-build.sh                 # builds everything, then syncs
+make dev                                  # builds everything, then syncs
 target/debug/metafolder-sync-config       # the sync alone, from the checkout root
 ```
 
@@ -16,7 +16,7 @@ history (a repository's own configuration is `mf repo update-config`'s:
 is the checkout to read the defaults from (default: the current directory),
 `--config-dir <dir>` the configuration to update (default: `~/.config/metafolder/`).
 It refuses a checkout whose documentation has not been rendered
-(`scripts/dev/doc build`, which `complete-build.sh` runs first — [[Building]]).
+(`scripts/dev/doc build`, which `make dev` runs first — [[Building]]).
 
 !! What it does
 

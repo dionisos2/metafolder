@@ -17,7 +17,7 @@ brought it to about 4 GB, in order of effect:
 ''Prune only after every set has been rebuilt'' — the workspace, the test binaries,
 the feature variants. Pruning between two builds of different feature sets makes
 each look new and evict the other, and they are then rebuilt at every run. That is
-why `scripts/dev/complete-build.sh` builds all three before pruning, and why
+why it is run by hand after `make dev`, which builds all three, and why
 `scripts/dev/check.sh` never prunes: clippy and the tests are not every set. It warns
 on a nearly full disk instead — a `target/` left alone reached 38 GB and a test died
 on `No space left on device`.
@@ -25,7 +25,11 @@ on `No space left on device`.
 What does not help, checked: `resolver.feature-unification = "workspace"` is still
 nightly-only (cargo#14774, ignored with a warning on stable); the garbage collection
 stabilised in 1.88 covers the global `~/.cargo` cache only; `cargo clean gc` is
-nightly-only too. Thirteen copies of one library are not thirteen versions: distinct
+nightly-only too. `cargo-sweep` (0.8, measured 1 Nov. 2026): `--time N` found nothing, on a `target/` of
+15 GB entirely under a day old; `--stamp`/`--file` around a `make dev` that had nothing
+to do freed 5.5 GiB but counted the untouched live artifacts as dead, so the next
+`make dev` recompiled 396 crates (272 s). The script on the same `target/`: 2.8 GB
+freed, two crates and 32 s. Thirteen copies of one library are not thirteen versions: distinct
 versions × host and target × the feature sets of each invocation.
 
 The script is generic — no metafolder assumption — and tested by

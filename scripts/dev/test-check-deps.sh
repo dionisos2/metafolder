@@ -68,6 +68,22 @@ run_case "missing VA-API decoders ⇒ exit 0"   0 "gst-plugin-va" "$tmp/no-va"
 printf 'poppler=0\n' >"$tmp/no-poppler"
 run_case "missing poppler ⇒ exit 0"            0 "poppler"     "$tmp/no-poppler"
 
+# 6b. --headless asks only what the daemon and the CLI need: not the GUI toolkit,
+#     not the GUI's runtime — but node stays, the documentation is rendered by it.
+printf 'webkit2gtk=0\ngtk3=0\nlibrsvg=0\nbwrap=0\nffmpeg=0\n' >"$tmp/no-gui"
+if MF_CHECK_STUB="$tmp/no-gui" "$script" --headless >/dev/null 2>&1; then
+    echo "ok   — --headless ignores the GUI's dependencies"; pass=$((pass+1))
+else
+    echo "FAIL — --headless ignores the GUI's dependencies"; fail=$((fail+1))
+fi
+run_case "without --headless the toolkit is required" 1 "webkit2gtk" "$tmp/no-gui"
+printf 'node=0\n' >"$tmp/no-node"
+if MF_CHECK_STUB="$tmp/no-node" "$script" --headless >/dev/null 2>&1; then
+    echo "FAIL — --headless still requires node"; fail=$((fail+1))
+else
+    echo "ok   — --headless still requires node"; pass=$((pass+1))
+fi
+
 # 7. --help works and exits 0 (its own invocation — an explicit flag, no stub).
 out=$("$script" --help 2>&1); rc=$?
 if [ "$rc" -eq 0 ] && grep -qiE "usage|check-deps" <<<"$out"; then

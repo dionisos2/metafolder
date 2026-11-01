@@ -15,7 +15,7 @@ suites=(
     test-check-deps.sh      # the dependency table + its exit codes
     test-prune-target.sh    # target/ pruning (never deletes a live artifact)
     test-run-tests.sh       # the test-runner wrapper's totals/reporting
-    test-complete-build.sh  # the full build's order and the paths it runs
+    test-makefile.sh        # the build and install targets: order and paths
     test-check.sh           # the static checks' disk-space warning
     test-doc-tools.sh       # the documentation wiki's scripts/dev/doc
     test-coverage.sh        # coverage.sh's steps: tests + instrumented GUI e2e, one report

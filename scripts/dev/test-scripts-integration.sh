@@ -17,7 +17,7 @@ source "$HERE/lib/daemon-fixture.sh"
 source "$HERE/lib/assert.sh"
 
 if ! df_available; then
-    echo "SKIP: target/debug/metafolder-daemon or mf not built (run scripts/dev/complete-build.sh)"
+    echo "SKIP: target/debug/metafolder-daemon or mf not built (run make dev)"
     exit 0
 fi
 if ! df_start; then

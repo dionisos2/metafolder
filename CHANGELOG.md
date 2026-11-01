@@ -13,6 +13,17 @@ than breaking them.
 
 ## [Unreleased]
 
+### Changed
+- **`make dev` replaces `scripts/dev/complete-build.sh`.** The Makefile is the one
+  entry point for building and installing. It no longer prunes `target/` on its
+  own: `make prune`, by hand, after it.
+
+### Fixed
+- **`make install` and `make install-headless` work on a fresh clone.** npm
+  dependencies are installed by `npm ci` at the workspace root, from the root lock.
+- **`make install-headless` no longer requires the GUI toolkit**
+  (`check-deps.sh --headless`). It still needs `node`, which renders the documentation.
+
 ### Added
 - **`gui/user-commands.js`, the file for your own GUI commands.** Loaded after
   `commands.js`, which now holds only the GUI's commands written in JavaScript:

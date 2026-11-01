@@ -40,7 +40,7 @@ reported" is a failure, not zero failures. `scripts/dev/check.sh` runs all of th
 |GUI, end to end |`scripts/dev/gui-e2e.sh` |a real GUI against a throwaway daemon, its commands typed through `mf gui command` and their messages read back; needs a display, not in `check.sh` ([[Testing the GUI end to end]]) |
 |broker |`crates/watchd/tests/`, `scripts/dev/watchd-live-test.sh` |[[Testing the watcher]] |
 |shipped scripts |`scripts/test-*.sh` |[[Testing shipped scripts]] |
-|tooling |`scripts/test-{check,check-deps,complete-build,prune-target,run-tests}.sh`, `docs/wiki/tools/*.test.mjs` |each script against stubbed probes |
+|tooling |`scripts/dev/test-{check,check-deps,makefile,prune-target,run-tests}.sh`, `docs/wiki/tools/*.test.mjs` |each script against stubbed probes |
 
 Each `tests/` directory is a crate of its own, so its helpers (`tests/common/mod.rs`)
 are deliberately copied per crate.

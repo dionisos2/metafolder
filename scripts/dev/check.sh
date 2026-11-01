@@ -98,7 +98,7 @@ skip() {
 }
 
 # target/ is never pruned here: clippy and the tests are not every universe
-# complete-build.sh builds, so a prune now would evict the others and they
+# make dev builds, so a prune now would evict the others and they
 # would be rebuilt every run. A target/ left to grow ends with a test dying on
 # "No space left on device" (38 GB on 28 Sept. 2026), so say it out loud —
 # before the tests, where it would fail, and again in the summary.
@@ -109,7 +109,7 @@ disk_warning() {
     free_gib=$(df -Pk target | awk 'NR == 2 { print int($4 / 1048576) }')
     [ -n "$free_gib" ] && [ "$free_gib" -lt "$min_free_gib" ] || return 0
     echo "${yellow}${free_gib} GiB free on the disk holding target/${off} — reclaim with" \
-        "scripts/dev/prune-target.sh (after scripts/dev/complete-build.sh), or cargo clean"
+        "make prune (after make dev), or cargo clean"
 }
 
 echo "${bold}metafolder — static checks${off}"

@@ -2,8 +2,8 @@ title: Building
 tags: Development
 kind: guide
 audience: dev
-aliases: build complete-build
-summary: cargo build for one crate's work, scripts/dev/complete-build.sh for everything — the frontend bundle, the rendered documentation, the installed configuration — and what each needs.
+aliases: build make-dev
+summary: cargo build for one crate's work, make dev for everything — the frontend bundle, the rendered documentation, the installed configuration — and what each needs.
 
 !! The quick build
 
@@ -27,19 +27,23 @@ and `llvm-tools`): `rustup` installs it on first use. Bump it there, deliberatel
 !! The complete build
 
 ```
-scripts/dev/complete-build.sh
+make dev
 ```
 
-It takes no argument and does, in the one order that works:
+It does, in the one order that works:
 
-# `npm install`, the first time, then `npm --prefix crates/gui/frontend run build` — the Svelte shell, which Tauri embeds into the GUI binary at compile time, so ''before'' the cargo build (bundled after it, as the script once did, the binary kept the previous bundle until the next run);
+# `npm ci` at the root — the npm workspace, pinned by the root `package-lock.json` — when that lock is newer than `node_modules`, then `npm --prefix crates/gui/frontend run build` — the Svelte shell, which Tauri embeds into the GUI binary at compile time, so ''before'' the cargo build (bundled after it, the binary kept the previous bundle until the next run);
 # `cargo build`, `cargo test --workspace --no-run`, and `cargo build -p metafolder-core --features sync-config` — the three sets of artifacts the project uses;
-# `scripts/dev/prune-target.sh`, which deletes what those builds superseded;
 # `scripts/dev/doc build` — this wiki, rendered into `docs/wiki/dist/`;
 # `target/debug/metafolder-sync-config` — the shipped defaults, the shipped scripts and the rendered documentation applied to the configuration repository ([[Updating the configuration]], [[Shipped defaults in the source tree]]).
 
-Use it after pulling, after touching the frontend or a shipped default, and whenever
-`target/` has grown. `scripts/dev/test-complete-build.sh` holds its order and its paths.
+Use it after pulling, and after touching the frontend or a shipped default.
+`scripts/dev/test-makefile.sh` holds its order and its paths.
+
+`make install` is the same chain in release, with the binaries copied into
+`~/.local/bin` (`PREFIX=` to change). `make install-headless` leaves out the GUI and
+its toolkit; it still needs `node`, because the configuration ships the rendered
+documentation.
 
 !! What needs rebuilding after an edit
 
@@ -68,8 +72,7 @@ feature-enabled `core`.
 
 !! Disk space
 
-`target/` is never cleaned by cargo. `scripts/dev/prune-target.sh [--dry-run]` removes
-the artifacts that newer ones superseded; run it only right after a complete build,
-which is what `complete-build.sh` does ([[Keeping the target directory small]]).
+`target/` is never cleaned by cargo. `make prune` removes the artifacts that newer ones
+superseded; run it only right after a complete build ([[Keeping the target directory small]]).
 `scripts/dev/check.sh` warns when less than 10 GiB is free on the disk holding `target/`
 (`METAFOLDER_CHECK_MIN_FREE_GIB`).

@@ -81,7 +81,7 @@ export async function mount(root, metafolder) {
     const response = await fetch(`${wikiBase}/index.json`);
     if (!response.ok) {
       warning.textContent =
-        'The documentation is not installed (run scripts/dev/complete-build.sh, or ' +
+        'The documentation is not installed (run make dev, or ' +
         'scripts/dev/doc build then metafolder-sync-config).';
       warning.hidden = false;
       return;

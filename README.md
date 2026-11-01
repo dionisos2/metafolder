@@ -31,8 +31,9 @@ A `Makefile` wraps the build and install steps; `make help` lists every target.
 
 ```bash
 make check-deps        # verify build/runtime deps and list what is missing
+make dev               # the complete development build (debug) + user config
 make install           # build (release) + install binaries + install user config
-make install-headless  # daemon + CLI only (skips the GUI toolkit / npm)
+make install-headless  # daemon + CLI only (skips the GUI toolkit; node renders the docs)
 ```
 
 Binaries install to `~/.local/bin` (`make install PREFIX=/usr/local` to change);
@@ -140,7 +141,7 @@ make test          # or: scripts/dev/run-tests.sh [extra cargo test args]
 
 # GUI frontend tests (vitest). Install the npm dependencies first — vitest and
 # the other test tools live in devDependencies, so `npm test` fails without it:
-npm --prefix crates/gui/frontend install   # once (or after package.json changes)
+npm ci                                     # at the root: once, or after a pull moves the lock
 npm --prefix crates/gui/frontend test
 
 # Performance. Two layers (wiki: "Performance testing"): the cost assertions
@@ -180,7 +181,7 @@ Building the gui crate needs the Tauri system libraries and `npm` (see
 `metafolder-gui` with the daemon running:
 
 ```bash
-npm --prefix crates/gui/frontend install   # once
+npm ci                                     # at the root: once
 npm --prefix crates/gui/frontend run build
 
 cargo run -p metafolder-gui                              # GUI API on 127.0.0.1:7524

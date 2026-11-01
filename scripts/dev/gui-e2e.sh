@@ -32,7 +32,7 @@
 # Prerequisites:
 #   - built binaries: cargo build -p metafolder-daemon -p metafolder-cli
 #     -p metafolder-gui, and the frontend (npm --prefix crates/gui/frontend run
-#     build) — scripts/dev/complete-build.sh does all of it;
+#     build) — make dev does all of it;
 #   - the user configuration installed (metafolder-sync-config): the GUI reads
 #     its panels and keybindings from ~/.config/metafolder/gui/;
 #   - Xvfb (Arch: xorg-server-xvfb), else a display ($DISPLAY or
