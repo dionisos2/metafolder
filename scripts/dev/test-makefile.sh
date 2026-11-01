@@ -32,6 +32,7 @@ STUB
 cat >"$bin/cargo" <<STUB
 #!/usr/bin/env bash
 printf 'cargo %s\n' "\$*" >>"$log"
+echo message-from-this-run
 STUB
 chmod +x "$bin/npm" "$bin/cargo"
 
@@ -43,7 +44,7 @@ chmod +x "$fake/scripts/dev/doc"
 
 cat >"$fake/scripts/dev/prune-target.sh" <<STUB
 #!/usr/bin/env bash
-printf 'prune-target\n' >>"$log"
+printf 'prune-target %s\n' "\$*" >>"$log"
 STUB
 chmod +x "$fake/scripts/dev/prune-target.sh"
 
@@ -94,8 +95,11 @@ run dev; rc=$?
 assert_eq "dev succeeds" 0 "$rc"
 # Tauri embeds the bundle when cargo compiles the GUI: bundled after, the binary
 # carries the previous one until the next run.
-assert_before "bundles the frontend before cargo embeds it" "run build" "^cargo build$"
+assert_before "bundles the frontend before cargo embeds it" "run build" "^cargo build --message-format"
 assert_contains "builds the test binaries" "$(cat "$log")" "cargo test --workspace --no-run"
+# The prune deletes what these did not report: each must add to the list.
+assert_eq "all three builds report what they use" 3 "$(grep -c '^cargo .*--message-format=json' "$log")"
+assert_contains "the prune reads that list" "$(cat "$log")" "prune-target target/debug target/debug/.live-artifacts"
 assert_contains "scopes the feature to core" "$(cat "$log")" \
     "cargo build -p metafolder-core --features sync-config"
 assert_before "renders the documentation before the sync" "doc build" "sync-config debug"
@@ -103,10 +107,15 @@ assert_before "builds the sync binary before running it" \
     "features sync-config" "sync-config debug"
 # Pruning between two builds of different feature sets makes each look new and
 # evict the other: all three go first, doc "Keeping the target directory small".
-assert_before "builds the workspace before pruning" "^cargo build$" "prune-target"
+assert_before "builds the workspace before pruning" "^cargo build --message-format" "prune-target"
 assert_before "builds the test binaries before pruning" "test --workspace --no-run" "prune-target"
 assert_before "builds the sync-config core before pruning" "features sync-config" "prune-target"
 assert_eq "the sync is the last step" "sync-config debug" "$(tail -n1 "$log")"
+
+# A list left by an earlier run would keep what this one no longer uses.
+assert_eq "the list holds this run only" 3 "$(grep -c message-from-this-run "$fake/target/debug/.live-artifacts")"
+run dev
+assert_eq "and is not appended to across runs" 3 "$(grep -c message-from-this-run "$fake/target/debug/.live-artifacts")"
 
 # ── 3. install-headless: no GUI toolkit, and it says so ─────────────────────
 printf 'webkit2gtk=0\ngtk3=0\nlibrsvg=0\nbwrap=0\n' >"$stub"

@@ -2,7 +2,7 @@ title: Keeping the target directory small
 tags: Development
 kind: rationale
 audience: dev
-summary: cargo never collects target/ — 15 GB in a day — so debug info is cut down, feature builds are scoped to one crate, a script prunes superseded artifacts, and the compiler is pinned.
+summary: cargo never collects target/ — 15 GB in a day — so debug info is cut down, feature builds are scoped to one crate, a script deletes what cargo did not report using, and the compiler is pinned.
 
 Cargo never garbage-collects `target/`: every dependency bump, feature change or
 compiler update writes new hash-named artifacts ''next to'' the old ones
@@ -11,16 +11,35 @@ brought it to about 4 GB, in order of effect:
 
 # ''Less debug info'' (about −70 %). `[profile.dev] debug = "line-tables-only"` and `[profile.dev.package."*"] debug = false` in the workspace `Cargo.toml`: each of the fifty-odd test binaries carried the full DWARF of every dependency. Backtraces keep their line numbers.
 # ''Feature builds scoped to a crate.'' `cargo build --features X` on the workspace recompiles every crate against the variant — a second complete set. `cargo build -p <crate> --features X` builds the one binary that needs it.
-# ''`scripts/dev/prune-target.sh`''. A state file remembers the artifact hashes seen per crate name; when a name gains a new hash, its previous ones go. A second pass removes the artifacts of dependency versions `Cargo.lock` no longer holds, and two more trim the incremental caches. Deleting in `target/` can only cost a recompile, never corrupt anything.
+# ''`scripts/dev/prune-target.sh`''. `make dev` deletes what its builds did not report using, below.
 # ''One pinned compiler'' (`rust-toolchain.toml`). The compiler version is part of every artifact hash: a container and its host sharing one checkout with two versions kept two complete sets and overwrote each other's binaries at every switch — 21 GB two hours after a clean. To diagnose: the `rustc` field of `target/debug/.fingerprint/*/*.json` holding several values.
 
-''Prune only after every set has been rebuilt'' — the workspace, the test binaries,
-the feature variants. Pruning between two builds of different feature sets makes
-each look new and evict the other, and they are then rebuilt at every run. That is
-why `make dev` builds all three before pruning, why no other target prunes (the script reads every profile, so a release build would evict a debug set it did not rebuild), and why
-`scripts/dev/check.sh` never prunes: clippy and the tests are not every set. It warns
-on a nearly full disk instead — a `target/` left alone reached 38 GB and a test died
-on `No space left on device`.
+!! What is live is cargo's to say
+
+`--message-format=json` lists every artifact a build uses, fresh ones too. `make dev`
+collects that list across its three builds into `target/debug/.live-artifacts`, and the
+script deletes everything named with a hash that is not on it. It refuses an empty list
+or a failed build's, which would read as "all of this is dead". A build added to
+`make dev` must report as well.
+
+The script used to infer it instead, taking a new hash for a replacement of the old one.
+One crate has several live generations (`toml_edit` has four: target and build scripts,
+each set of features), so a single new one evicted the others, their rebuild evicted it
+in turn, and `make dev` recompiled about a hundred crates every run, for good.
+
+A binary is listed without a hash, under its uplifted name `target/debug/mf`: its
+originals `deps/mf-<hash>` are kept by count, as many as were reported, the most recent.
+
+`incremental/` is keyed by another hash, so only a count can be read: as many caches per
+crate as it has live generations, the most recent, and in each the newest session.
+
+Measured on 1 Nov. 2026, `target/` holds at about 7.4 GB and a `make dev` with nothing
+to do takes 30 to 55 s, after a `cargo build -p metafolder-gui` too. It still compiles
+`metafolder-gui` twice, because the frontend is bundled anew each time and the bundle is
+embedded, and one `metafolder-daemon`, not explained yet.
+
+`scripts/dev/check.sh` never prunes: it is not every set. It warns on a nearly full disk
+instead — a `target/` left alone reached 38 GB and a test died on `No space left on device`.
 
 !! Why a `-p` build shares the workspace's artifacts
 
@@ -42,10 +61,8 @@ nightly-only (cargo#14774, ignored with a warning on stable); the garbage collec
 stabilised in 1.88 covers the global `~/.cargo` cache only; `cargo clean gc` is
 nightly-only too. `cargo-sweep` (0.8, measured 1 Nov. 2026): `--time N` found nothing, on a `target/` of
 15 GB entirely under a day old; `--stamp`/`--file` around a `make dev` that had nothing
-to do freed 5.5 GiB but counted the untouched live artifacts as dead, so the next
-`make dev` recompiled 396 crates (272 s). The script on the same `target/`: 2.8 GB
-freed, two crates and 32 s. Thirteen copies of one library are not thirteen versions: distinct
+to do freed 5.5 GiB but counted the untouched live artifacts as dead, and the next
+`make dev` recompiled 396 crates. Thirteen copies of one library are not thirteen versions: distinct
 versions × host and target × the feature sets of each invocation.
 
-The script is generic — no metafolder assumption — and tested by
-`scripts/dev/test-prune-target.sh` (it must never delete a live artifact).
+`scripts/dev/test-prune-target.sh` holds that it never deletes a live artifact.

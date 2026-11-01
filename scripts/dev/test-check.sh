@@ -56,7 +56,7 @@ assert_not "no warning with room to spare" grep -q 'free on' <<<"$out"
 out=$(run $((3 * 1024 * 1024))); rc=$?
 assert_eq "a nearly full disk is a warning, not a failure" 0 "$rc"
 assert_contains "the warning says how much is left" "$out" "3 GiB free on"
-assert_contains "the warning names the cure" "$out" "make prune"
+assert_contains "the warning names the cure" "$out" "make dev"
 
 # ── 2b. the workspace-hack is checked against the manifests ─────────────────
 assert_contains "the suite runs the hakari check" "$out" "hakari"

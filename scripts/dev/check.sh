@@ -110,7 +110,7 @@ disk_warning() {
     free_gib=$(df -Pk target | awk 'NR == 2 { print int($4 / 1048576) }')
     [ -n "$free_gib" ] && [ "$free_gib" -lt "$min_free_gib" ] || return 0
     echo "${yellow}${free_gib} GiB free on the disk holding target/${off} — reclaim with" \
-        "make prune (after make dev), or cargo clean"
+        "make dev, which prunes, or cargo clean"
 }
 
 echo "${bold}metafolder — static checks${off}"

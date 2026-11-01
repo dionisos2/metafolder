@@ -62,7 +62,7 @@ help:
 	@echo '  run-daemon         run the daemon from the build tree'
 	@echo '  run-gui            build frontend + run the GUI from the build tree'
 	@echo '  test / check       run the suite (+ a global total)  /  all static checks'
-	@echo '  clean / prune      cargo clean  /  scripts/dev/prune-target.sh'
+	@echo '  clean              cargo clean'
 	@echo ''
 	@echo '  PREFIX=$(PREFIX)  BINDIR=$(BINDIR)'
 
@@ -125,16 +125,20 @@ docs: $(NPM_STAMP)
 
 # The complete development build, doc "Building". The frontend comes before cargo:
 # Tauri embeds it at compile time, and bundled after, the binary keeps the
-# previous bundle until the next run. The prune comes after all three builds, and
-# only here: between two feature sets each would evict the other, and the script
-# reads every profile, so a release-only target would evict a debug set it did not
-# rebuild (doc "Keeping the target directory small").
+# previous bundle until the next run. Each build reports the artifacts it uses, and
+# what none reported is pruned (doc "Keeping the target directory small"): a build
+# added here without the flag would see its artifacts deleted every time.
+LIVE_LIST := target/debug/.live-artifacts
+CARGO_REPORT := --message-format=json-render-diagnostics
+
 .PHONY: dev
 dev: frontend docs
-	$(CARGO) build
-	$(CARGO) test --workspace --no-run
-	$(CARGO) build -p metafolder-core --features sync-config --bin metafolder-sync-config
-	scripts/dev/prune-target.sh
+	@mkdir -p target/debug
+	@: >$(LIVE_LIST)
+	$(CARGO) build $(CARGO_REPORT) >>$(LIVE_LIST)
+	$(CARGO) test --workspace --no-run $(CARGO_REPORT) >>$(LIVE_LIST)
+	$(CARGO) build -p metafolder-core --features sync-config --bin metafolder-sync-config $(CARGO_REPORT) >>$(LIVE_LIST)
+	scripts/dev/prune-target.sh target/debug $(LIVE_LIST)
 	target/debug/metafolder-sync-config
 
 # ── install ──────────────────────────────────────────────────────────────────
@@ -215,10 +219,6 @@ test:
 .PHONY: check
 check:
 	@scripts/dev/check.sh
-
-.PHONY: prune
-prune:
-	@scripts/dev/prune-target.sh
 
 .PHONY: clean
 clean:
