@@ -1586,7 +1586,7 @@ export function uppercaseSelection(el: Element | null): void {
   const end = el.selectionEnd ?? start;
   if (start === end) return;
   const upper = el.value.slice(start, end).toUpperCase();
-  // eslint-disable-next-line @typescript-eslint/no-deprecated -- the only insertion the undo of a text field sees
+  // execCommand: the only insertion the undo of a text field sees.
   if (!el.ownerDocument.execCommand?.("insertText", false, upper)) {
     el.setRangeText(upper, start, end, "preserve");
     el.dispatchEvent(new Event("input", { bubbles: true, composed: true }));

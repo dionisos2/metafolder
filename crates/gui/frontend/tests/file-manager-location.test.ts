@@ -388,7 +388,7 @@ describe('file-manager location variables', () => {
     /** The run's end: what it wrote reaches the variables, then the panel. */
     const deliver = () => {
       for (const [key, value] of held.splice(0)) {
-        s.api.workspace.set(key, value);
+        void s.api.workspace.set(key, value);
         s.subscriptions.get(key)?.(value);
       }
     };
