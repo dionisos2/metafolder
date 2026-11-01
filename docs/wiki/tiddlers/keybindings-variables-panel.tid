@@ -10,7 +10,7 @@ keys it stands for, and how many lines use it ([[Keybinding variables]]).
 The filter above the list narrows it as it is typed: first the variables one of whose values
 starts with the text — `shift+m`, however the chord is written —, then those
 whose name holds it. <<key "keybindings-variables:focus filter" "p e">> gives it the focus;
-opening the panel does not, and `Enter` leaves it ([[Keybindings]]).
+opening the panel does not, and `Enter` leaves it and records it in its [[input history|Input history]] ([[Keybindings]]).
 
 Several values are typed apart with ` | ` (`d | x`): each then binds its keys on every
 line naming the variable ([[Keybinding variables]]).

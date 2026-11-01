@@ -6,6 +6,7 @@
 // (`config.checkKeybindingVariable`), the same check the save makes. A filter
 // keeps the variables by key or by name.
 
+import { attachHistory } from '/__history.js';
 import { byId, el, keysStartWith, messageOf, normalizeChord } from '/__ui.js';
 
 /** A key sequence as keycaps. @param {string[]} keys */
@@ -128,6 +129,20 @@ export async function mount(root, metafolder) {
   }
 
   filter.dataset.mfFocus = 'filter';
+  attachHistory(filter, {
+    zone: 'keybindings-variables:filter',
+    read: (repo, zone) => metafolder.history.read(repo, zone),
+    append: (repo, zone, entry) => metafolder.history.append(repo, zone, entry),
+    getRepo: async () => {
+      const repo = await metafolder.workspace.get('active_repo');
+      return typeof repo === 'string' ? repo : null;
+    },
+    container: /** @type {HTMLElement} */ (filter.parentElement),
+    fields: {
+      zone: 'keybindings-variables:fields',
+      append: (repo, zone, field) => metafolder.history.appendField(repo, zone, field),
+    },
+  });
   filter.addEventListener('input', render);
   metafolder.provide({ refresh: load });
   void metafolder.commands.register('keybindings-variables:focus', {

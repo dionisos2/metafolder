@@ -1283,6 +1283,12 @@ scenario_history() {
     keys BackSpace BackSpace BackSpace BackSpace ctrl+p
     assert "history: ctrl+p in the config filter recalls it" \
         until_ok 10 reads keys "#file-filter"
+
+    show_panel left keybindings-variables keybindings-variables:focus filter
+    typed 'go'
+    keys Return
+    assert "history: validating the variables filter records it" \
+        until_ok 10 grep -qx go "$REPO_DIR/.metafolder/gui/history/keybindings-variables:filter"
 }
 
 # Macros (doc "Macros"): F3 records what the keyboard runs, `macro:run`

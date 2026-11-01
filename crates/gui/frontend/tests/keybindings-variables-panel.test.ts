@@ -4,6 +4,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { historyOf } from '/__history.js';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/keybindings-variables');
 
@@ -40,7 +41,12 @@ async function mountPanel(checkVariable: (name: string, value: string) => string
       checkKeybindingVariable: vi.fn(async (name: string, value: string) => checkVariable(name, value)),
       setKeybindingVariable: vi.fn(async () => view),
     },
-    workspace: { set: vi.fn(async () => {}), onChange: vi.fn() },
+    workspace: { get: vi.fn(async () => 'music'), set: vi.fn(async () => {}), onChange: vi.fn() },
+    history: {
+      read: async () => [],
+      append: vi.fn(async (_repo: string, _zone: string, _entry: string) => true),
+      appendField: async () => true,
+    },
     visible: false,
     onVisibility: vi.fn(),
     provide: vi.fn(),
@@ -55,6 +61,16 @@ describe('keybindings-variables panel', () => {
   test('its filter is named for the keybindings', async () => {
     const { root } = await mountPanel(() => '');
     expect((root.getElementById('variable-filter') as HTMLInputElement).dataset.mfFocus).toBe('filter');
+  });
+
+  test('validating the filter records it in its history', async () => {
+    const { root, api } = await mountPanel(() => '');
+    const filter = root.getElementById('variable-filter') as HTMLInputElement;
+    filter.value = 'go';
+    historyOf(filter)!.submit();
+    await vi.waitFor(() =>
+      expect(api.history.append).toHaveBeenCalledWith('music', 'keybindings-variables:filter', 'go'),
+    );
   });
 
   test('each variable is listed with its keys; a new value is checked, then saved on Enter', async () => {
