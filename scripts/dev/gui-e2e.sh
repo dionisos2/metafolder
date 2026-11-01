@@ -1614,7 +1614,7 @@ scenario_repos_memory() {
 
     # A row's own button lets go of it, without unloading it.
     assert "repos memory: a row's button lets go of the store" \
-        until_ok 10 click '#repo-list li:has(.memory) .repo-memory'
+        until_ok 10 click '#repo-list li:has(.memory) .repo-memory:not([disabled])'
     assert "repos memory: the daemon no longer holds it" until_ok 10 not_held held
 }
 
