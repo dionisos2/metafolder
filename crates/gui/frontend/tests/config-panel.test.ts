@@ -5,6 +5,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { historyOf } from '/__history.js';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/config');
 
@@ -39,6 +40,7 @@ async function mountPanel(options: { visible?: boolean; repo?: string | null } =
   const vars: Record<string, unknown> = { active_repo: options.repo ?? null };
   const varListeners: Record<string, (() => void)[]> = {};
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
+  const append = vi.fn(async (_repo: string, _zone: string, _entry: string) => true);
   const api = {
     config: {
       info: vi.fn(async (repo?: string | null) => ({
@@ -81,6 +83,7 @@ async function mountPanel(options: { visible?: boolean; repo?: string | null } =
         handlers.set(name, spec.handler);
       }),
     },
+    history: { read: async () => [], append, appendField: async () => true },
     invoke: vi.fn(async () => {}),
     visible: options.visible ?? false,
     onVisibility: vi.fn(),
@@ -159,6 +162,14 @@ describe('config panel', () => {
     expect(vars.selected_metarecord).toBeNull();
     expect(vars.selected_paths).toEqual(['/cfg/cli/config.toml']);
     expect(api.invoke).toHaveBeenCalledWith(['panel:open', 'other', 'viewer']);
+  });
+
+  test('validating the filter records it in its history', async () => {
+    const p = await mountPanel({ repo: 'music' });
+    const filter = p.field('file-filter');
+    filter.value = 'keys';
+    historyOf(filter)!.submit();
+    await vi.waitFor(() => expect(p.api.history.append).toHaveBeenCalledWith('music', 'config:filter', 'keys'));
   });
 
   test('opening the panel selects no text field; config:focus filter does', async () => {

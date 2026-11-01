@@ -2,6 +2,7 @@
 // repository and of the workspace's repository, filtered as a path is typed
 // (doc "config panel"). The keys are edited in the keybindings panel.
 
+import { attachHistory } from '/__history.js';
 import { byId, el } from '/__ui.js';
 
 /** @param {ShadowRoot} root @param {MetafolderApi} metafolder */
@@ -90,6 +91,20 @@ export async function mount(root, metafolder) {
   }
 
   fileFilter.dataset.mfFocus = 'filter';
+  attachHistory(fileFilter, {
+    zone: 'config:filter',
+    read: (repo, zone) => metafolder.history.read(repo, zone),
+    append: (repo, zone, entry) => metafolder.history.append(repo, zone, entry),
+    getRepo: async () => {
+      const repo = await metafolder.workspace.get('active_repo');
+      return typeof repo === 'string' ? repo : null;
+    },
+    container: /** @type {HTMLElement} */ (fileFilter.parentElement),
+    fields: {
+      zone: 'config:fields',
+      append: (repo, zone, field) => metafolder.history.appendField(repo, zone, field),
+    },
+  });
   fileFilter.addEventListener('input', renderFiles);
   byId(root, 'reload-all', HTMLButtonElement).addEventListener('click', () => {
     void metafolder.invoke(['config:reload', 'all']);

@@ -53,6 +53,7 @@ import {
   SELF_FOCUS,
   historyFieldNames,
   runHistoryCommand,
+  validateField,
 } from "./historyCommands";
 import {
   FIND_MODES,
@@ -2585,6 +2586,9 @@ async function runCommand(
     case "editing:unfocus":
       if (editingTarget) editingTarget.unfocus();
       else (deepActiveElement() as HTMLElement | null)?.blur();
+      return true;
+    case "editing:validate":
+      validateField(deepActiveElement());
       return true;
     case "editing:discard":
       if (editingTarget) editingTarget.discard();

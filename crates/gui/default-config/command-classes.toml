@@ -17,6 +17,7 @@
 "command-input:focus command clear" = "B"
 "editing:confirm" = "A"
 "editing:unfocus" = "A"
+"editing:validate" = "A"
 "editing:discard" = "B"
 "editing:goto" = "B"
 "editing:clear-line-end" = "B"

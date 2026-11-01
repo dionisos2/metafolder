@@ -1,0 +1,6 @@
+title: editing:validate
+tags: [[GUI command]] Commands
+kind: reference
+summary: Record the focused text input in its history and leave it
+
+Validates a field that runs as it is typed, which has nothing left to apply: what it holds joins its [[input history|Input history]], if it has one, and the field gives up the keyboard. `Enter` runs it in a filter ([[Keybindings]]); [[editing:unfocus]] leaves without recording.

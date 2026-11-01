@@ -1,0 +1,14 @@
+title: $:/mf/gen/GUI command/editing:validate
+catalog: GUI command
+target: editing:validate
+summary: Record the focused text input in its history and leave it
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``enter`` → ``editing:validate`` (while ``command`` is focused)
+* ``enter`` → ``editing:validate`` (while ``filter`` is focused)
+* ``enter`` → ``editing:validate`` (while ``key`` is focused)

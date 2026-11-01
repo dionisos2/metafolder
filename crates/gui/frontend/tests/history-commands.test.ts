@@ -10,6 +10,7 @@ import {
   historyFieldNames,
   resolveHistoryField,
   runHistoryCommand,
+  validateField,
 } from '../src/lib/historyCommands';
 
 const flush = () => new Promise((done) => setTimeout(done, 0));
@@ -276,5 +277,36 @@ describe('the shipped keys', () => {
     const block = toml.slice(start, toml.indexOf('\n"', start + 1));
     expect(block).toContain(`{ command = "${command}" }`);
     expect(block.match(/command = /g)).toHaveLength(2);
+  });
+});
+
+describe('validateField', () => {
+  test('records what a field with a history holds, and leaves it', async () => {
+    const field = document.createElement('input');
+    document.body.appendChild(field);
+    const append = vi.fn(async () => true);
+    attachHistory(field, {
+      zone: 'config:filter',
+      read: async () => [],
+      append,
+      getRepo: async () => 'repo',
+      container: document.body,
+    });
+    field.value = 'keys';
+    field.focus();
+    validateField(field);
+    await flush();
+    expect(append).toHaveBeenCalledWith('repo', 'config:filter', 'keys');
+    expect(document.activeElement).not.toBe(field);
+    field.remove();
+  });
+
+  test('only leaves a field without a history', () => {
+    const field = document.createElement('input');
+    document.body.appendChild(field);
+    field.focus();
+    validateField(field);
+    expect(document.activeElement).not.toBe(field);
+    field.remove();
   });
 });

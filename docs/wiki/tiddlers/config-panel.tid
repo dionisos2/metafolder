@@ -31,7 +31,7 @@ only at the next start of the GUI, the daemon's and the CLI's files at theirs, a
 repository's at its next load (its schema at `mf schema reload`).
 
 When the panel is shown, the list is read again; `view:refresh` reads it again too.
-<<key "config:focus filter" "p e">> gives the filter the focus: opening the panel does not. `Enter` leaves it ([[Keybindings]]).
+<<key "config:focus filter" "p e">> gives the filter the focus: opening the panel does not. `Enter` leaves it and records it in its [[input history|Input history]] ([[Keybindings]]).
 
 The keys are edited in the [[keybindings panel]] (<<key "panel:open here keybindings" "t k k">>),
 which used to be the lower half of this one.

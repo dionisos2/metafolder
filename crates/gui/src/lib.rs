@@ -92,6 +92,7 @@ fn register_builtins(registry: &CommandRegistry) {
     for (name, label, log) in [
         ("command-input:focus", "Focus the command input (command / bash mode)", false),
         ("editing:unfocus", "Leave the focused text input", false),
+        ("editing:validate", "Record the focused text input in its history and leave it", false),
         ("editing:discard", "Clear and leave the focused text input", false),
         ("editing:confirm", "Confirm the focused text input", false),
         ("editing:goto", "Move the cursor to the line start / line end", false),

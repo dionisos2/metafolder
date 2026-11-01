@@ -71,7 +71,7 @@ focus. These two keys are the variables `validate` and `validate-stay`
 query fields and the columns of `metarecord-list`, the search box of the help, and the
 filters of the [[config panel]] and the [[keybindings-variables panel]], and the form
 of the [[keybindings panel]]. Such a filter
-runs as it is typed, so `validate` only leaves it, and `validate-stay` is not bound there.
+runs as it is typed, so `validate` only records it in its [[input history|Input history]] and leaves it ([[editing:validate]]), and `validate-stay` is not bound there.
 
 The find bar is the exception: it searches as it is typed too, and its `Enter` and
 `Shift+Enter` step through the matches ([[Find in a panel]]).

@@ -1905,8 +1905,9 @@ vars.y = ","
             let stay = format!("{apply} stay");
             assert_eq!(at(defaults, "shift+enter", focus).as_deref(), Some(stay.as_str()));
         }
-        // A filter runs as it is typed: nothing is left to apply, only to leave.
-        assert_eq!(at(defaults, "enter", "filter").as_deref(), Some("editing:unfocus"));
+        // A filter runs as it is typed: nothing is left to apply, only to record
+        // and to leave.
+        assert_eq!(at(defaults, "enter", "filter").as_deref(), Some("editing:validate"));
         // The find bar steps through its matches instead (doc "Find in a panel").
         assert_eq!(at(defaults, "enter", "find").as_deref(), Some("find:next"));
         assert_eq!(at(defaults, "shift+enter", "find").as_deref(), Some("find:prev"));
@@ -1918,7 +1919,7 @@ vars.y = ","
                 r#"vars.validate-stay = "ctrl+shift+j""#,
             );
         assert_eq!(at(&moved, "ctrl+j", "finder").as_deref(), Some("metarecord-list:apply finder"));
-        assert_eq!(at(&moved, "ctrl+j", "filter").as_deref(), Some("editing:unfocus"));
+        assert_eq!(at(&moved, "ctrl+j", "filter").as_deref(), Some("editing:validate"));
         assert_eq!(
             at(&moved, "ctrl+shift+j", "simplified").as_deref(),
             Some("metarecord-list:apply simplified stay")

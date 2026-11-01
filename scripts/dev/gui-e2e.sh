@@ -1272,6 +1272,17 @@ scenario_history() {
     assert "history: ctrl+p in the find bar recalls it" \
         until_ok 10 reads trash ".find-bar input"
     keys Escape
+
+    # The filters run as they are typed: Enter records and leaves them.
+    show_panel left config config:focus filter
+    typed 'keys'
+    keys Return
+    assert "history: validating the config filter records it" \
+        until_ok 10 grep -qx keys "$REPO_DIR/.metafolder/gui/history/config:filter"
+    run config:focus filter
+    keys BackSpace BackSpace BackSpace BackSpace ctrl+p
+    assert "history: ctrl+p in the config filter recalls it" \
+        until_ok 10 reads keys "#file-filter"
 }
 
 # Macros (doc "Macros"): F3 records what the keyboard runs, `macro:run`

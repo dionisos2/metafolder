@@ -45,6 +45,13 @@ export function historyApplies(invocation: string, active: Element | null, root:
   return resolveHistoryField(field ?? '', active, root) !== null;
 }
 
+/** `editing:validate`: a field that runs as it is typed has nothing to apply, so
+ *  validating it records what it holds, when it has a history, and leaves it. */
+export function validateField(active: Element | null): void {
+  historyOf(active)?.submit();
+  (active as HTMLElement | null)?.blur();
+}
+
 /** Runs a history command. A field named rather than focused takes the focus:
  *  what is recalled lands where the user goes on typing. */
 export async function runHistoryCommand(

@@ -336,14 +336,14 @@ vars.index = "i"
   { command = "panel:open other metarecord-detail", when = "path-ref" },
 ]
 # A field that filters or searches: validate and leave it, or validate and stay
-# (doc "Keybindings"). A `filter` runs as it is typed, so it only has to be left.
+# (doc "Keybindings"). A `filter` runs as it is typed, so it only has to be recorded and left.
 "{validate}" = [
   { command = "metarecord-list:apply finder", focus = "finder" },
   { command = "metarecord-list:apply simplified", focus = "simplified" },
   { command = "metarecord-list:apply normal", focus = "normal" },
   { command = "metarecord-list:apply columns", focus = "columns" },
   { command = "help:apply search", focus = "search" },
-  { command = "editing:unfocus", focus = "filter" },
+  { command = "editing:validate", focus = "filter" },
 ]
 "{validate-stay}" = [
   { command = "metarecord-list:apply finder stay", focus = "finder" },

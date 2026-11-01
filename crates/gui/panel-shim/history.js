@@ -102,7 +102,7 @@ function ensureStyle(container) {
 /** The history handle of `element`, null when it has none or its zone is off
  *  for now (a script's prompt in the shell command input).
  *  @param {Element|null} element
- *  @returns {{prev: () => Promise<void>, next: () => void, reset: () => void, search: () => Promise<void>}|null} */
+ *  @returns {{prev: () => Promise<void>, next: () => void, reset: () => void, search: () => Promise<void>, submit: () => void}|null} */
 export function historyOf(element) {
   const handle = /** @type {any} */ (element)?.mfHistory;
   return handle?.available() ? handle : null;
@@ -489,6 +489,7 @@ export function attachHistory(input, { zone, read, append, getRepo, container, f
     },
     next: () => stepForward(),
     reset: resetNav,
+    submit: () => push(input.value),
     search: async () => {
       const zoneName = zoneOf();
       if (zoneName) await openOverlay(zoneName);
