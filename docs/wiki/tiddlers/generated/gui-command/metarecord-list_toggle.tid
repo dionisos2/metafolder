@@ -9,4 +9,6 @@ summary: Metarecord list: toggle a view flag
 
 !! Default keys
 
+* ``v e`` → ``metarecord-list:toggle expansion`` (in the ``metarecord-list`` panel)
 * ``v g`` → ``metarecord-list:toggle mode`` (in the ``metarecord-list`` panel)
+* ``v o`` → ``metarecord-list:toggle order`` (in the ``metarecord-list`` panel)

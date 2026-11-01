@@ -50,7 +50,7 @@ Grouped by what they touch, which is what a name must make obvious:
 |a text file being edited ([[Editing a text file]]) |`toggle-edit`, `focus text`, `save [force]`, `reload` |
 |a search |`query <what>` (adds a filter to the query shown and runs it: [[tag:query]]), `unquery <what>` (takes it off: [[tag:unquery]]) |
 |a view setting |`set <setting> [value]`, `set-X <value>` (the panel's one setting) |
-|the media player |`play-pause`, `play <what> [options]` (a [[Slideshow]]), `restart`, `mute`, `seek <±s>`, `speed <up/down/reset>`, `volume <up/down>`, `zoom <in/out/fit/reset>` |
+|the media player |`play-pause`, `play <what> [options]` (a [[Slideshow]]), `restart`, `toggle-mute`, `seek <±s>`, `speed <up/down/reset>`, `volume <up/down>`, `zoom <in/out/fit/reset>` |
 |the repository |`<noun> <op>` with `op` among `set`, `add`, `remove`, `unset`, `delete`, and the plain verbs `create`, `delete`, `rename`, `record`, `trash`, `restore`, `prune`, `reconcile`, `rollback`, `undo`, `redo`, `revert [what]`, `mark`, `run`, `load`, `unload`, `stop` |
 
 ''A command that writes to the repository carries either `<noun> <op>` or a plain

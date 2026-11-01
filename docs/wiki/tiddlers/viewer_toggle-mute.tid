@@ -1,4 +1,4 @@
-title: viewer:mute
+title: viewer:toggle-mute
 tags: [[GUI command]] [[viewer panel]]
 kind: reference
 summary: File: mute / unmute

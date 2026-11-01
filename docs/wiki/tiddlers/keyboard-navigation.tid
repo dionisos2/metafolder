@@ -65,7 +65,7 @@ A letter alone that is not above starts a ''domain''; the second letter is a
 |`e` |the items: `e d` delete; Shift+e or `e e`, `e q` the checked ones, the query's (`E p` plays them: [[Slideshow]]) |
 |`,` |tags: `, a`, `, r`, `, q`; `, -` and `, =` before them for the negative and mixed tags ([[Hierarchical tags]]) |
 |`p` |the focused panel's actions: its fields (`p e`, `p q`), revert in the log (`p z`), keep a duplicate (`p k`)… |
-|`v` |what is shown: `v v` split, `v f` full screen, `v x` swap; in a panel, its view flags (`v h` hidden files, `v g` grid…) |
+|`v` |what is shown: `v v` split, `v f` full screen, `v x` swap; in a panel, its view flags (`v h` hidden files, `v g` grid, `v o` the list's order, `v m` a repository held in memory…) |
 |`t` |a panel type: `t l` list, `t d` detail, `t f` viewer, `t m` file manager… ([[Panel types]]) |
 |`g` |go to: `g r` recent, `g d` a folder, `g o` a repository, `g p` a script, `g m` the file manager, `g s` the folder as a list |
 |`h` |help: `h h` a page, `h c` the cursor, `h k` a key, `h x` a command |

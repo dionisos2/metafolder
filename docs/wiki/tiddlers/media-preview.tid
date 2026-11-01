@@ -23,7 +23,7 @@ type ([[Keybindings]]).
 |<<key "viewer:speed down" "Ctrl+↓">> / <<key "viewer:speed up" "Ctrl+↑">> |slower, faster: 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 3, 4 |
 |<<key "viewer:speed reset" Shift+Backspace>> |back to normal speed |
 |<<key "viewer:volume down" Shift+↓>> / <<key "viewer:volume up" Shift+↑>> |10 % quieter, louder; louder also unmutes |
-|<<key "viewer:mute" Ctrl+m>> |mute or unmute |
+|<<key "viewer:toggle-mute" Ctrl+m>> |mute or unmute |
 
 `viewer:seek` takes any signed number of seconds, so `viewer:seek +5` can be bound too. A
 seek stops at the start and at the end.

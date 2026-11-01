@@ -6,4 +6,7 @@ summary: Metarecord: toggle force (allow writing the reserved mfr_* fields)
 !! Reference
 
 * Defined by the ``metarecord-detail`` panel
-* No default key
+
+!! Default keys
+
+* ``v r`` → ``metarecord:toggle-force`` (in the ``metarecord-detail`` panel)

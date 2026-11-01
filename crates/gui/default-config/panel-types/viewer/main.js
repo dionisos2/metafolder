@@ -1376,7 +1376,7 @@ export async function mount(root, metafolder) {
       statusMessageMs,
     );
   }
-  void commands.register('viewer:mute', {
+  void commands.register('viewer:toggle-mute', {
     label: 'File: mute / unmute',
     handler: () => {
       muted = !muted;

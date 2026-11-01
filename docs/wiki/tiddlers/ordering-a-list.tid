@@ -25,7 +25,7 @@ fields, at a different position in each.
 
 The ''Order by'' box under the columns does the same as the command: the field is typed
 beside it (completed from the repository's `int` fields), checking and unchecking it is
-`toggle order`. Without a field, `toggle order` asks for one when it turns the order on.
+`toggle order`. Without a field, `toggle order` (<<key "metarecord-list:toggle order" "v o">>) asks for one when it turns the order on.
 
 !! Turning it on
 

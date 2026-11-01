@@ -161,7 +161,7 @@ describe('viewer panel — the volume is set before playback, not after', () => 
   test('muting before playback starts the player muted', async () => {
     const p = await mountPanel('/music/clip.mp4');
 
-    await p.run('viewer:mute');
+    await p.run('viewer:toggle-mute');
     expect(p.viewer.textContent).toMatch(/muted/i);
 
     await p.run('viewer:play-pause');
@@ -188,7 +188,7 @@ describe('viewer panel — the volume is set before playback, not after', () => 
     await p.run('viewer:volume', 'down');
     expect(p.video()?.volume).toBeCloseTo(0.9);
 
-    await p.run('viewer:mute');
+    await p.run('viewer:toggle-mute');
     expect(p.video()?.muted).toBe(true);
     await p.run('viewer:volume', 'up'); // louder undoes a mute
     expect(p.video()?.muted).toBe(false);

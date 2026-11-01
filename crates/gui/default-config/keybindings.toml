@@ -524,14 +524,22 @@ vars.index = "i"
 "f2" = { command = "file:rename self" }
 "ctrl+h" = { command = "file-manager:toggle hidden", when = "file-manager" }
 
-"{view} g" = { command = "metarecord-list:toggle mode", when = "metarecord-list" }
+"{view} g" = [
+  { command = "metarecord-list:toggle mode", when = "metarecord-list" },
+  { command = "viewer:toggle-gif-animation", when = "viewer" },
+]
+"{view} o" = [
+  { command = "file-manager:toggle operations", when = "file-manager" },
+  { command = "metarecord-list:toggle order", when = "metarecord-list" },
+]
+"{view} m" = { command = "repos:toggle-memory", when = "repos" }
 "{view} h" = { command = "file-manager:toggle hidden", when = "file-manager" }
 "{view} r" = [
   { command = "file-manager:toggle root", when = "file-manager" },
   { command = "path-ref:set ref-field", when = "path-ref" },
+  { command = "metarecord:toggle-force", when = "metarecord-detail" },
 ]
 "{view} a" = { command = "file-manager:toggle activity", when = "file-manager" }
-"{view} o" = { command = "file-manager:toggle operations", when = "file-manager" }
 "{view} w" = { command = "log:toggle watcher", when = "log" }
 "{view} u" = { command = "log:toggle unchanged", when = "log" }
 "{view} s" = [
@@ -540,7 +548,10 @@ vars.index = "i"
 ]
 "{view} t" = { command = "path-ref:set field", when = "path-ref" }
 "{view} z" = { command = "viewer:zoom fit", when = "viewer" }
-"{view} {edit}" = { command = "viewer:toggle-edit", when = "viewer" }
+"{view} {edit}" = [
+  { command = "viewer:toggle-edit", when = "viewer" },
+  { command = "metarecord-list:toggle expansion", when = "metarecord-list" },
+]
 
 # ── The viewer's media (doc "Media preview"), on a media player's keys ──────
 
@@ -552,7 +563,7 @@ vars.index = "i"
 "ctrl+down" = { command = "viewer:speed down", when = "viewer" }
 "shift+up" = { command = "viewer:volume up", when = "viewer" }
 "shift+down" = { command = "viewer:volume down", when = "viewer" }
-"ctrl+m" = { command = "viewer:mute", when = "viewer" }
+"ctrl+m" = { command = "viewer:toggle-mute", when = "viewer" }
 
 # ── Metarecords (m): the selected one; shift+m or m m the checked ones; m q
 # what the list's query matches (doc "Editing metarecords in the GUI") ───────

@@ -7,7 +7,6 @@ summary: The viewer panel type
 
 * ``viewer:back`` — File: go up one level (out of a listing, or to the containing folder)
 * ``viewer:focus`` — Viewer: give the keyboard to the text being edited, editing it if it was not
-* ``viewer:mute`` — File: mute / unmute
 * ``viewer:page`` — File: go to a page of the document
 * ``viewer:play`` — File: play one file after another — the checked selection or the query shown (selection / query / stop) [shuffle] [loop]
 * ``viewer:play-pause`` — Viewer: play / pause the media, or the animation of a GIF
@@ -18,6 +17,7 @@ summary: The viewer panel type
 * ``viewer:speed`` — File: step the playback rate
 * ``viewer:toggle-edit`` — Viewer: edit the text file shown in the panel, or stop editing it
 * ``viewer:toggle-gif-animation`` — File: play or stop the animation of a GIF
+* ``viewer:toggle-mute`` — File: mute / unmute
 * ``viewer:volume`` — File: step the volume
 * ``viewer:zoom`` — File: zoom the previewed image/video
 

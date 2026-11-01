@@ -6,4 +6,7 @@ summary: File: play or stop the animation of a GIF
 !! Reference
 
 * Defined by the ``viewer`` panel
-* No default key
+
+!! Default keys
+
+* ``v g`` → ``viewer:toggle-gif-animation`` (in the ``viewer`` panel)

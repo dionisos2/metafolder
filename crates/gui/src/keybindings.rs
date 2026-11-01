@@ -1977,6 +1977,30 @@ vars.y = ","
         }
     }
 
+    /// A toggle of a panel has a key under `v`, there and only there.
+    #[test]
+    fn test_shipped_panel_toggles_have_a_view_key() {
+        let defaults = include_str!("../default-config/keybindings.toml");
+        let set = KeybindingSet::from_sources(defaults, "").unwrap();
+        let table = set.compiled();
+        for (second, invocation, panel) in [
+            ("o", "metarecord-list:toggle order", "metarecord-list"),
+            ("e", "metarecord-list:toggle expansion", "metarecord-list"),
+            ("g", "metarecord-list:toggle mode", "metarecord-list"),
+            ("g", "viewer:toggle-gif-animation", "viewer"),
+            ("e", "viewer:toggle-edit", "viewer"),
+            ("r", "metarecord:toggle-force", "metarecord-detail"),
+            ("m", "repos:toggle-memory", "repos"),
+        ] {
+            assert!(
+                table.iter().any(|b| b.keys == ["v", second]
+                    && b.invocation == invocation
+                    && b.when.as_deref() == Some(panel)),
+                "v {second} does not run {invocation} in {panel}"
+            );
+        }
+    }
+
     /// Both ways into the command input are reserved from scripts.
     ///
     /// They used to be two commands (`command-input:activate` and
