@@ -132,7 +132,7 @@ async function mountPanel(daemon: ReturnType<typeof memoryDaemon>, vars = new Ma
     addKeybinding: async () => null,
     fs: { readDir: async () => [], stat: async () => ({}), exists: async () => true, homeDir: async () => '/home/user' },
     trash: { list: async () => [], restore: async () => '', remove: async () => {}, empty: async () => 0 },
-    history: { read: async () => [], append: async () => {} },
+    history: { read: async () => [], append: histories, appendField: async () => true },
     statusBar: { message: vi.fn(async () => {}), error: vi.fn(async () => {}) },
     messages: { list: async () => [], append: async () => {}, onAppend: noop },
     contextMenu: Object.assign(noop, { addDefaultItems: noop }),
@@ -154,12 +154,25 @@ async function mountPanel(daemon: ReturnType<typeof memoryDaemon>, vars = new Ma
   return { shadow, vars, api, invoke, rowUuids, cursorRow };
 }
 
+const histories = vi.fn(async (_repo: string, _zone: string, _entry: string) => true);
+
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
 describe('metarecord-list:order', () => {
   beforeEach(() => {
     document.body.replaceChildren();
     vi.stubGlobal('confirm', () => true);
+  });
+
+  test('turning the order on records the field in its history', async () => {
+    histories.mockClear();
+    const p = await mountPanel(memoryDaemon({ a: 1 }));
+    const field = p.shadow.getElementById('order-field') as HTMLInputElement;
+    expect(field.dataset.mfFocus).toBe('order');
+    await p.invoke('metarecord-list:order', 'on', 'pos');
+    await vi.waitFor(() =>
+      expect(histories).toHaveBeenCalledWith('r', 'metarecord-list:order', 'pos'),
+    );
   });
 
   test('on numbers the list, sorts by the field and shows it as a column', async () => {

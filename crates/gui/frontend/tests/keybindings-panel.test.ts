@@ -577,6 +577,7 @@ describe('keybindings panel', () => {
       'line',
       'mine',
       'normal',
+      'order',
       'search',
       'simplified',
     ]);

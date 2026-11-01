@@ -764,6 +764,11 @@ export async function mount(root, metafolder) {
   const orderOnInput = byId(root, 'order-on', HTMLInputElement);
   const orderFieldInput = byId(root, 'order-field', HTMLInputElement);
   const orderFieldList = byId(root, 'order-fields');
+  orderFieldInput.dataset.mfFocus = 'order';
+  const orderHistory = attachHistory(orderFieldInput, {
+    zone: 'metarecord-list:order',
+    ...historyDeps,
+  });
 
   /** The box and the field beside it say what the list is ordered by. */
   function syncOrderControls() {
@@ -787,6 +792,7 @@ export async function mount(root, metafolder) {
     const name = (field ?? '').trim();
     const written = await orderMode.activate(name);
     if (written === null) return; // declined: nothing written, nothing changed
+    orderHistory.push(name);
     // The other panels showing a renumbered record (metarecord-detail) re-read
     // it now rather than at the change feed's next poll.
     if (written > 0 && repo) void changes.sync(repo);
