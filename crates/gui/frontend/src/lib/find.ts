@@ -27,6 +27,16 @@ export function stepIndex(current: number, delta: number, count: number): number
   return (((current + delta) % count) + count) % count;
 }
 
+/** Told of the needle each time a step submits it (doc "Input history"). */
+const submitListeners = new Set<(needle: string) => void>();
+
+/** Calls `listener` at each submitted needle; returns what stops it. Typing
+ *  submits nothing: only stepping to a match does. */
+export function onFindSubmit(listener: (needle: string) => void): () => void {
+  submitListeners.add(listener);
+  return () => submitListeners.delete(listener);
+}
+
 /** The Range of the current match, or null. */
 export function currentRange(): Range | null {
   return ranges[store.ui.find.index] ?? null;
@@ -57,6 +67,7 @@ export function runFind(needle: string) {
 export function stepFind(delta: number) {
   const find = store.ui.find;
   if (!find.open) return;
+  for (const listener of submitListeners) listener(find.needle);
   runFind(find.needle);
   find.index = stepIndex(find.index, delta, ranges.length);
   paint();

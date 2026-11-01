@@ -1260,6 +1260,18 @@ scenario_history() {
     keys ctrl+p
     assert "history: ctrl+p in the help search recalls it" \
         until_ok 10 reads trash "#help-search"
+
+    # The find bar's history is the shell's: Enter records, the keys recall.
+    keys ctrl+f
+    typed 'trash'
+    keys Return
+    assert "history: stepping in the find bar records the needle" \
+        until_ok 10 grep -qx trash "$REPO_DIR/.metafolder/gui/history/shell:find"
+    keys BackSpace BackSpace BackSpace BackSpace BackSpace
+    keys ctrl+p
+    assert "history: ctrl+p in the find bar recalls it" \
+        until_ok 10 reads trash ".find-bar input"
+    keys Escape
 }
 
 # Macros (doc "Macros"): F3 records what the keyboard runs, `macro:run`

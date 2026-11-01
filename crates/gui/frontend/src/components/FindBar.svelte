@@ -5,10 +5,37 @@
   // Escape / step keys are focus-scoped keybindings (see keybindings.toml)
   // rather than hard-coded here.
   import { untrack } from 'svelte';
-  import { closeFind, runFind } from '../lib/find';
+  import { attachHistory } from '../../../panel-shim/history.js';
+  import { closeFind, onFindSubmit, runFind } from '../lib/find';
+  import { invoke } from '../lib/ipc';
   import { focusedWs, store } from '../lib/store.svelte';
 
   let element = $state<HTMLInputElement | null>(null);
+  let bar = $state<HTMLElement | null>(null);
+
+  // Per-repo input history (doc "Input history"), for as long as the bar is
+  // shown: stepping to a match records the needle.
+  $effect(() => {
+    if (!element || !bar) return;
+    const attached = attachHistory(element, {
+      zone: 'shell:find',
+      read: (repo: string, zone: string) => invoke('history_read', { repo, zone }),
+      append: (repo: string, zone: string, entry: string) =>
+        invoke('history_append', { repo, zone, entry }),
+      getRepo: async () => {
+        const wsId = untrack(focusedWs);
+        if (wsId === null) return null;
+        const value = await invoke('ws_get_var', { wsId, key: 'active_repo' });
+        return typeof value === 'string' ? value : null;
+      },
+      container: bar,
+    });
+    const stop = onFindSubmit((needle) => attached.push(needle));
+    return () => {
+      stop();
+      attached.detach();
+    };
+  });
 
   // Ctrl-F while the bar is already open re-focuses and selects the needle, so
   // a second press starts a new search without reaching for the mouse.
@@ -44,7 +71,7 @@
 </script>
 
 {#if store.ui.find.open}
-  <div class="find-bar" data-help-topic="find">
+  <div bind:this={bar} class="find-bar" data-help-topic="find">
     <span class="label">Find</span>
     <input
       bind:this={element}

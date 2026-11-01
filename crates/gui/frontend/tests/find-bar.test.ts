@@ -4,7 +4,15 @@
 // around at both ends.
 
 import { beforeEach, describe, expect, test } from 'vitest';
-import { closeFind, currentRange, openFind, runFind, stepFind, stepIndex } from '../src/lib/find';
+import {
+  closeFind,
+  currentRange,
+  onFindSubmit,
+  openFind,
+  runFind,
+  stepFind,
+  stepIndex,
+} from '../src/lib/find';
 import { setFindRootProvider } from '../src/lib/panels/roots';
 import { store } from '../src/lib/store.svelte';
 
@@ -15,6 +23,31 @@ beforeEach(() => {
   root = document.getElementById('panel')!;
   setFindRootProvider(() => root);
   closeFind();
+});
+
+describe('onFindSubmit', () => {
+  test('stepping submits the needle, typing does not', () => {
+    const submitted: string[] = [];
+    const stop = onFindSubmit((needle) => submitted.push(needle));
+    openFind('alpha');
+    runFind('alpha ');
+    expect(submitted).toEqual([]);
+    runFind('alpha');
+    stepFind(1);
+    stepFind(-1);
+    expect(submitted).toEqual(['alpha', 'alpha']);
+    stop();
+    stepFind(1);
+    expect(submitted).toHaveLength(2);
+  });
+
+  test('a step with the bar closed submits nothing', () => {
+    const submitted: string[] = [];
+    const stop = onFindSubmit((needle) => submitted.push(needle));
+    stepFind(1);
+    stop();
+    expect(submitted).toEqual([]);
+  });
 });
 
 describe('stepIndex', () => {
