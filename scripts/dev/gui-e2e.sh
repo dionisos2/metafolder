@@ -1590,6 +1590,7 @@ r = next((r for r in json.load(sys.stdin) if r["name"] == sys.argv[1]), {})
 print((r.get("in_memory") or {}).get("bytes", 0))' "$1"
 }
 held() { [ "$(in_memory_of "$1")" -gt 0 ]; }
+not_held() { ! held "$1"; }
 
 scenario_repos_memory() {
     needs_keyboard repos-memory || return 0
@@ -1610,6 +1611,11 @@ scenario_repos_memory() {
     assert "repos memory: Load in memory is clicked" until_ok 10 click '#load-memory'
     assert "repos memory: the daemon holds the store in memory" until_ok 10 held held
     assert "repos memory: its row says so" until_ok 10 shows '#repo-list .memory'
+
+    # A row's own button lets go of it, without unloading it.
+    assert "repos memory: a row's button lets go of the store" \
+        until_ok 10 click '#repo-list li:has(.memory) .repo-memory'
+    assert "repos memory: the daemon no longer holds it" until_ok 10 not_held held
 }
 
 # has_ws <id> — the GUI holds that workspace.
