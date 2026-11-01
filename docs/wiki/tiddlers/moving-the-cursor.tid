@@ -45,6 +45,20 @@ async function select(index) {
 * Several containers are kept in step: the table and the grid of
   `metarecord-list` are the same rows in two layouts.
 
+A held key also runs commands that overlap, so what a move reads may have changed
+by the time it uses it. Two ways this sent the cursor ''backwards'':
+
+* `cursor:next` kept the row it started from while `more` loaded a page: the next
+  runs moved on through the rows arriving, and it then landed just after the old row.
+  It reads the cursor after the load.
+* A variable a panel both writes and follows comes back to it, and a command's write
+  is held until its run ends ([[Command transactions]]): `set` has returned while the
+  variable still holds the row before. Reading it when an earlier write came back, the
+  [[file-manager panel]] took that row for a new location and went there. A panel
+  following what it writes recognises its own writes by what comes back, and does not
+  read the variable for those: `file-manager:dir` and `file-manager:cursor`, as
+  `selected_metarecord` in the [[metarecord-list panel]].
+
 A panel with a list must also let it scroll: the list's container takes the room
 left (`flex: 1; min-height: 0`) and scrolls (`overflow-y: auto`). Without
 `min-height: 0` a flex child does not shrink below its content, and the list

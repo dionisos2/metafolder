@@ -372,6 +372,45 @@ describe('file-manager location variables', () => {
   // undone by it: the read predates the panel's own move, so what it found is
   // where the panel WAS (the bug: the folder opened, then the parent again —
   // "nothing happens", or a flash).
+  // A command's writes are held until its run ends (doc "Command transactions"):
+  // `set` has returned, the panel knows where it is, and the variable still
+  // holds the previous row. A held arrow key lands in that window.
+  test('the echo of a row passed over does not send a held arrow back', async () => {
+    const s = stub('r', {});
+    const held: [string, unknown][] = [];
+    const run = {
+      ...s.api,
+      workspace: {
+        ...s.api.workspace,
+        set: async (key: string, value: unknown) => void held.push([key, value]),
+      },
+    };
+    /** The run's end: what it wrote reaches the variables, then the panel. */
+    const deliver = () => {
+      for (const [key, value] of held.splice(0)) {
+        s.api.workspace.set(key, value);
+        s.subscriptions.get(key)?.(value);
+      }
+    };
+    const mod = await import('../../default-config/panel-types/file-manager/main.js');
+    await mod.mount(s.root, withRuns(s.api, run) as never);
+    await settle();
+    const { select } = Object.assign(
+      {},
+      ...(s.api.provide.mock.calls as unknown as object[][]).map((call) => call[0]),
+    ) as { select: (mf: unknown, index: number) => Promise<void> };
+    const rows = [...s.root.querySelectorAll('li .name')].map((e) => e.textContent);
+    const first = rows.indexOf('sub');
+    const second = rows.indexOf('top.txt');
+
+    await select(run, first);
+    deliver(); // the first key's run ends…
+    await select(run, second); // …while the next one's has moved on, still held
+    await settle();
+
+    expect(cursorName(s.root)).toBe('top.txt');
+  });
+
   test('a read predating its own move does not send the panel back', async () => {
     const s = stub('r', {});
     await mount(s);

@@ -260,10 +260,10 @@ export async function runGeneric(
 
   switch (name) {
     case 'cursor:next': {
-      const index = fns.index();
-      if (index + 1 >= fns.count() && functions.more) await functions.more();
+      if (fns.index() + 1 >= fns.count() && functions.more) await functions.more();
+      // Read after the load: a held key's next runs move the cursor meanwhile.
       const count = fns.count();
-      if (count > 0) await fns.select(clampTo(index + 1, count));
+      if (count > 0) await fns.select(clampTo(fns.index() + 1, count));
       return;
     }
     case 'cursor:prev': {

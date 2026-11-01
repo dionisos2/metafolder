@@ -918,8 +918,8 @@ export async function mount(root, metafolder) {
   // the entry highlighted in it) are not a record of where the panel is: they
   // ARE it. A command shows a folder by writing them — `file-manager:reveal`
   // does — and a forked workspace opens where this one is. A write is compared
-  // with the location this panel last showed or wrote, so its own writes coming
-  // back change nothing. A writer must write both at once
+  // with the location this panel last showed or wrote, and its own writes coming
+  // back are not followed at all (`ownWrites` below). A writer must write both at once
   // (`workspace.setMany`): the follow is only deferred to the next task, and
   // opening the folder of a half-written location writes `cursor = null` over
   // the cursor still to come.
@@ -933,6 +933,23 @@ export async function mount(root, metafolder) {
   let locationEpoch = 0;
   let locationWrites = 0;
   let followDropped = false;
+  // This panel's writes that have not come back yet, per variable, oldest first.
+  // A command's are held until its run ends (doc "Command transactions"): `set`
+  // has returned while the variable still holds the row before, so reading it
+  // when an earlier write comes back would send a held arrow key back there.
+  /** @type {Record<string, unknown[]>} */
+  const ownWrites = { dir: [], cursor: [] };
+
+  /** Whether `value` is this panel's own write of `key` coming back. What was
+   *  written before it goes too: a run writing a variable twice announces only
+   *  the last value.
+   *  @param {'dir'|'cursor'} key @param {unknown} value */
+  function isOwnWrite(key, value) {
+    const at = ownWrites[key].indexOf(value);
+    if (at < 0) return false;
+    ownWrites[key].splice(0, at + 1);
+    return true;
+  }
 
   /** Moves the panel's location to `location`, writing the named variables.
    *  @param {MetafolderApi} mf
@@ -943,7 +960,10 @@ export async function mount(root, metafolder) {
     locationEpoch += 1;
     locationWrites += 1;
     try {
-      for (const key of keys) await mf.workspace.set(`file-manager:${key}`, location[key]);
+      for (const key of keys) {
+        ownWrites[key].push(location[key]);
+        await mf.workspace.set(`file-manager:${key}`, location[key]);
+      }
     } finally {
       locationWrites -= 1;
     }
@@ -1294,8 +1314,12 @@ export async function mount(root, metafolder) {
   workspace.onChange('active_repo', () => metafolder.whenVisible(deferredStart));
   // A location written while the panel is mounted: go there when it next is
   // visible (start() handles the one present at mount).
-  workspace.onChange('file-manager:dir', scheduleFollowLocation);
-  workspace.onChange('file-manager:cursor', scheduleFollowLocation);
+  workspace.onChange('file-manager:dir', (value) => {
+    if (!isOwnWrite('dir', value)) scheduleFollowLocation();
+  });
+  workspace.onChange('file-manager:cursor', (value) => {
+    if (!isOwnWrite('cursor', value)) scheduleFollowLocation();
+  });
   // Re-query the current directory's tracked status and repaint — the response
   // to a change we did not learn through our own query round-trip (the change
   // feed, or a mutation nudge). Cheap: one `tree/children` read.

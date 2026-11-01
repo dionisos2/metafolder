@@ -149,6 +149,18 @@ describe('runGeneric — moving the cursor', () => {
     expect(state.at).toBe(2);
   });
 
+  // A held key runs `cursor:next` again while the page is being prepared, and
+  // the rows are there before the page's load has returned.
+  test('next goes on from where the cursor is once the page has loaded', async () => {
+    const { fns, state } = list(3, 2);
+    const more = vi.fn(async () => {
+      state.n = 6;
+      state.at = 4; // the keys pressed meanwhile
+    });
+    await run('cursor:next', { ...fns, more });
+    expect(state.at).toBe(5);
+  });
+
   test('next from no selection lands on the first row', async () => {
     const { fns, state } = list(3, -1);
     await run('cursor:next', fns);
