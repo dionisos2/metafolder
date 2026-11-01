@@ -35,7 +35,7 @@ It does, in the one order that works:
 # `npm ci` at the root — the npm workspace, pinned by the root `package-lock.json` — when that lock is newer than `node_modules`, then `npm --prefix crates/gui/frontend run build` — the Svelte shell, which Tauri embeds into the GUI binary at compile time, so ''before'' the cargo build (bundled after it, the binary kept the previous bundle until the next run);
 # `cargo build`, `cargo test --workspace --no-run`, and `cargo build -p metafolder-core --features sync-config` — the three sets of artifacts the project uses;
 # `scripts/dev/prune-target.sh`, which deletes what those three builds did not report using;
-# `scripts/dev/doc build` — this wiki, rendered into `docs/wiki/dist/`;
+# `scripts/dev/doc build` — this wiki, rendered into `docs/wiki/dist/`, and `README.md` from its note;
 # `target/debug/metafolder-sync-config` — the shipped defaults, the shipped scripts and the rendered documentation applied to the configuration repository ([[Updating the configuration]], [[Shipped defaults in the source tree]]).
 
 Use it after pulling, and after touching the frontend or a shipped default.
@@ -52,7 +52,7 @@ documentation.
 |a panel type under `crates/gui/default-config/panel-types/` |`metafolder-sync-config` (the panels are served from the configuration repository), and restart the GUI |
 |`crates/gui/panel-shim/*.js` |`cargo build -p metafolder-gui` — the helpers are compiled into the binary — and restart |
 |the Svelte shell, `crates/gui/frontend/src/` |`npm --prefix crates/gui/frontend run build`, then `cargo build -p metafolder-gui`, and restart |
-|a note of this wiki |`scripts/dev/doc build`, then `metafolder-sync-config` |
+|a note of this wiki |`scripts/dev/doc build`, then `metafolder-sync-config`; for the note [[README]], commit the `README.md` it rewrites |
 |a default configuration file, a shipped script |`metafolder-sync-config` |
 
 A plain `cargo build` succeeds without a built frontend — `build.rs` writes a

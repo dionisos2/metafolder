@@ -1,359 +1,50 @@
+<!-- Generated from docs/wiki/tiddlers/readme.tid by scripts/dev/doc build: edit the note, not this file. -->
+
 # metafolder
 
-Metafolder is a file metadata management system. It attaches arbitrary metadata (tags, ratings, paths, notes, etc.) to files without modifying the files themselves or storing anything inside their directories. Metadata is stored in a `.metafolder/` directory at the root of each repository, similar to how `.git/` works.
+metafolder attaches metadata (tags, ratings, notes, any field of your own) to your
+files without touching them, and lets you query it. It is local: a daemon holds your
+repositories, each with its `.metafolder/` directory at its root, as `.git/` does, and
+`mf`, the command line, and a desktop GUI talk to it. A file keeps its metadata when it is
+moved or renamed, and every change can be undone.
 
-File identity is hash-based, so metadata follows files when they are moved or renamed.
+**Status: version 0.3, early.** The HTTP API, the commands and the configuration keys
+still change between versions without notice. What you have stored is kept: a change to
+an on-disk format comes with its conversion ([Persisted format changes](docs/wiki/tiddlers/persisted-format-changes.tid)). This project
+has been built predominantly with [Claude Code](https://claude.com/claude-code).
 
-> **Status: v0.3 — early; the API surface is not stable.** The HTTP API, the
-> CLI command tree and the configuration keys still change between versions
-> without deprecation. **On-disk formats are preserved, though:** from v0.3 on,
-> any change to a persisted format (the SQLite schema, the `.metafolder/`
-> layout, the config file format) ships with a conversion path that migrates
-> existing repositories and configuration rather than breaking them. This
-> project has been built predominantly with
-> [Claude Code](https://claude.com/claude-code).
+## Installing
 
-## Architecture
-
-The project is a Cargo workspace:
-
-- **`core`** — shared data model (`MetaRecord`, `Field`, `Value`, `Query`), its JSON serialization, the query DSL parser, and the simplified-query language (a user-editable grammar that expands client-side into the normal DSL).
-- **`daemon`** — single background process managing one or more repositories: a key-value store (LMDB) with derived bitmap and trigram indexes and a full event log, filesystem watcher (inotify, or the fanotify broker `watchd`), on-demand reconcile with fingerprint matching, user schema validation, and an HTTP API.
-- **`cli`** — the `mf` command-line client: a thin client over the daemon's HTTP API (repository management, metarecord CRUD, query DSL, reconcile/track, log/rollback/prune, schema, and GUI scripting).
-- **`gui`** — the `metafolder-gui` desktop app (Tauri v2 + Svelte 5): workspaces (tabs) with two panel slots, a keybinding system, a command input with autocomplete, and a local scripting HTTP API (`/gui/*`). Panel types are plain HTML/JS directories mounted in Shadow DOM roots (no iframes) and can be customized or added by the user.
-- **`bench`** — benchmarking harness running against two persistent data folders (`data`, `gui`, `attach` modes).
-
-The documentation is a wiki under `docs/wiki/`, read with `scripts/dev/doc` (`scripts/dev/doc show Documentation`) or in the GUI's help panel; start from the note `Documentation`.
-
-## Quick start (make)
-
-A `Makefile` wraps the build and install steps; `make help` lists every target.
-
-```bash
-make check-deps        # verify build/runtime deps and list what is missing
-make dev               # the complete development build (debug) + user config
-make install           # build (release) + install binaries + install user config
-make install-headless  # daemon + CLI only (skips the GUI toolkit; node renders the docs)
+```
+make check-deps        # what is missing, and the pacman line to install it (Arch Linux)
+make install           # build in release, install into ~/.local/bin, install the configuration
+make install-headless  # the same without the GUI and its toolkit (node is still needed)
 ```
 
-Binaries install to `~/.local/bin` (`make install PREFIX=/usr/local` to change);
-`make uninstall` removes them. `install` also runs `metafolder-sync-config` to
-install the user config repo (see [Configuration](#configuration)). Other useful
-targets: `make run-daemon`, `make run-gui`, `make test`, `make check`.
+To build for development instead: [Building](docs/wiki/tiddlers/building.tid).
 
-The individual commands each target runs are documented below.
+## First steps
 
-## Dependencies
+Start the daemon and leave it running, then from another terminal:
 
-Package names below are for Arch Linux; map them to your distribution.
-`make check-deps` (or `scripts/dev/check-deps.sh`) reports which of these are
-present and prints the `pacman` line for whatever is missing.
-
-### Build
-
-```bash
-pacman -S --needed rust base-devel openssl webkit2gtk-4.1 gtk3 librsvg nodejs npm
+```
+metafolder-daemon
 ```
 
-- **Rust** (stable, edition 2021) and a C toolchain + `pkg-config`
-  (`base-devel`) — SQLite and libgit2 are bundled and compiled from source, so
-  no system package is needed for them.
-- **OpenSSL** — linked from the system by `reqwest` (gui/bench crates).
-- **Tauri system libraries** — `webkit2gtk-4.1`, `gtk3`, `librsvg`. Required
-  even for a plain `cargo build`, since the `gui` crate is part of the
-  workspace (use `cargo build --workspace --exclude metafolder-gui` to skip it).
-- **Node.js + npm** — builds the GUI frontend (`crates/gui/frontend`). A plain
-  `cargo build` works without a built frontend (`build.rs` writes a
-  placeholder), but the GUI window stays empty until
-  `npm --prefix crates/gui/frontend run build` has produced the real bundle.
-
-### Runtime (GUI only, required)
-
-```bash
-pacman -S --needed bubblewrap
+```
+mf repo init ~/music                                                # a repository, named "music"
+mf -n music metarecord -q 'mfr_path = ""' field set mf_watch:bool=true   # follow its files
+mf -n music reconcile                                               # bring in what is already there
+mf -n music metarecord -q 'mfr_path = "/albums/one.flac"' field set rating:int=4
+mf -n music metarecord -q 'rating > 3' get
+mf -n music log                                                     # every change, which can be undone
 ```
 
-- **`bubblewrap`** (`bwrap`) — **hard dependency: the GUI refuses to start
-  without a working one.** Every media decoder is untrusted-input-facing and is
-  confined with `bwrap` + rlimits, and the WebView's web process is sandboxed
-  (`WEBKIT_FORCE_SANDBOX=1`); startup probes a real sandbox and aborts if it
-  fails. WebKit's sandbox mounts `/proc`, which some containers forbid — inside
-  one, pass `--allow-unsandboxed-webview` (dev only, per-run, prints a warning;
-  the media helpers stay sandboxed regardless). The daemon and CLI do not need
-  it.
+The desktop interface is `metafolder-gui`, with the daemon running.
+[Getting started](docs/wiki/tiddlers/getting-started.tid) explains all of this and goes further.
 
-### Runtime (GUI only, optional)
+## Documentation
 
-None of these are needed to build or test. Each degrades gracefully when
-absent (the feature is disabled, nothing crashes), but the feature silently
-looks broken without it:
-
-```bash
-pacman -S --needed noto-fonts-emoji ffmpeg \
-  gst-plugins-base gst-plugins-good gst-libav gst-plugins-bad gst-plugins-ugly \
-  gst-plugin-dav1d
-```
-
-- **An emoji-color font** (`noto-fonts-emoji`) — the file-manager row icons and
-  thumbnail type glyphs are emoji; without it WebKit renders blank "tofu" boxes.
-- **`ffmpeg`** — video/GIF still poster thumbnails; absent ⇒ glyph/animated
-  fallback.
-- **GStreamer plugins** — inline media preview in the `file` panel:
-  `gst-plugins-base` provides `gst-discoverer-1.0` (per-file codec probe),
-  `gst-plugins-good` the audio/video sinks WebKit needs, and
-  `gst-libav`/`gst-plugins-bad`/`gst-plugins-ugly` the actual decoders
-  (e.g. H.264). Absent ⇒ the preview is disabled with a message.
-- **`gst-plugin-dav1d`** — a *fast* AV1 decoder. AV1 plays without it, but
-  only through `gst-plugins-bad`'s single-threaded libaom `av1dec`: a 4K AV1
-  file then decodes at roughly a third of real time and stutters badly, while
-  playing perfectly in mpv or VLC (which decode through ffmpeg, not
-  GStreamer). Absent ⇒ the `file` panel warns and plays it anyway.
-
-The daemon and CLI have no runtime dependencies beyond their binaries.
-
-## Configuration
-
-The daemon and GUI read their configuration from `~/.config/metafolder/<crate>/`
-(`core/`, `daemon/`, `gui/`, `cli/`). There is **no runtime fallback to embedded
-defaults**: a missing or invalid config file is a hard startup error, so the
-config repository must be installed first:
-
-```bash
-# Install/update the user config repo at ~/.config/metafolder/ (git-backed)
-cargo run -p metafolder-core --features sync-config --bin metafolder-sync-config
-```
-
-`metafolder-sync-config` is the only git actor: it gathers each crate's
-`default-config/`, keeps them on a `default` branch (shipped defaults), and
-3-way-merges them into `main` (your edits) without clobbering your changes.
-Re-run it after pulling new built-in panels or default keybindings. See the
-wiki note `Configuration`.
-
-## Build and test
-
-```bash
-cargo build
-cargo test
-
-# The same suite plus a global report — cargo prints one result line per test
-# binary and no total, this adds the totals and which tests failed where:
-make test          # or: scripts/dev/run-tests.sh [extra cargo test args]
-
-# GUI frontend tests (vitest). Install the npm dependencies first — vitest and
-# the other test tools live in devDependencies, so `npm test` fails without it:
-npm ci                                     # at the root: once, or after a pull moves the lock
-npm --prefix crates/gui/frontend test
-
-# Performance. Two layers (wiki: "Performance testing"): the cost assertions
-# run in the ordinary suite above — they count the keys the store reads, never
-# a clock, so they catch an N+1 or a new scan without flaking. The
-# timed benchmarks are separate, slow, and keep a per-machine history in
-# benchmarks/history/ that every run is compared against:
-scripts/dev/bench.sh            # the standard suite (generated repositories)
-scripts/dev/bench.sh --quick    # the small size only
-scripts/dev/bench.sh --report   # what the history holds, no measurement
-```
-
-## Running the daemon
-
-```bash
-cargo run -p metafolder-daemon            # listens on 127.0.0.1:7523
-cargo run -p metafolder-daemon -- --port 8080
-```
-
-The daemon binds `127.0.0.1` only (single-user model, no *user* access control),
-but every request is gated by a per-service **session token**: it must carry
-`Authorization: Bearer <token>`, where `<token>` is the 64-hex-char secret the
-daemon writes to a user-only file at startup
-(`$XDG_RUNTIME_DIR/metafolder/daemon.token`, or `/tmp/metafolder-<uid>/…` when
-`XDG_RUNTIME_DIR` is unset). This keeps browser content — which can also reach
-`127.0.0.1` — out, since it cannot read the file. `mf` reads the token
-automatically; a raw `curl` client must pass it (see below). The GUI server has
-its own `gui.token`. See the wiki note `Session tokens`.
-
-Repositories listed in `~/.config/metafolder/daemon/config.toml` are auto-loaded
-at startup.
-
-## Running the GUI
-
-Building the gui crate needs the Tauri system libraries and `npm` (see
-[Dependencies](#dependencies)). Build the frontend first, then run
-`metafolder-gui` with the daemon running:
-
-```bash
-npm ci                                     # at the root: once
-npm --prefix crates/gui/frontend run build
-
-cargo run -p metafolder-gui                              # GUI API on 127.0.0.1:7524
-cargo run -p metafolder-gui -- --gui-port 7524 --daemon-port 7523
-```
-
-Ports come from `~/.config/metafolder/gui/config.toml` (`gui-port` default 7524,
-`daemon-port` default 7523); the CLI flags above override them. The GUI never
-installs or upgrades anything at startup — its keybindings, stylesheet and panel
-types come from the config repo (run `metafolder-sync-config` first). The local
-HTTP API on the GUI port lets external scripts drive the GUI (workspaces,
-layout, panel views, messages, input prompts). See the wiki notes `GUI` and
-`Scripting the GUI`.
-
-## Quick tour (mf)
-
-With the daemon running:
-
-```bash
-# Initialise a repository (creates .metafolder/ inside the directory)
-REPO=$(mf repo init /path/to/folder)
-export METAFOLDER_REPO=$REPO          # or pass -u $REPO to each command
-
-# Nothing is tracked by default (opt-in). Enable tracking on the root metarecord:
-ROOT=$(mf metarecord -q 'mf_watch IS PRESENT' get)
-mf metarecord -i $ROOT field set mf_watch:bool=true
-
-# Index the files already present (the watcher tracks new changes live):
-mf reconcile
-
-# Query: every file under /music, with sizes
-mf metarecord -q 'mfr_path ->* "/music"' get --select mfr_size
-
-# Tag one file, then find it back
-FILE=$(mf metarecord -q 'mfr_path ->* "/music"' get --limit 1)
-mf metarecord -i $FILE field set genre:string=jazz
-mf metarecord -q 'genre = "jazz"' get
-```
-
-### CLI command tree
-
-Repository and daemon are selected once by **global flags that precede the
-command**: `-n <name>` / `-u <uuid>` (repository, mutually exclusive) and
-`-p <port>` (daemon, default 7523). Env fallbacks: `METAFOLDER_REPO_NAME`,
-`METAFOLDER_REPO`, `METAFOLDER_DAEMON_PORT`. Exit codes: 0 success, 1 operation
-failed, 2 usage error.
-
-The command tree is a noun/verb hierarchy (`get`⁻¹`set`, `add`⁻¹`delete`):
-
-- `mf repo {list,init,load,unload}` — repository lifecycle.
-- `mf metarecord [selector] <verb>` — the selector is an **option before the
-  verb**: `-q "<DSL>"` (query; add `-s` to write it in the simplified
-  language), `-i <uuid>` (one metarecord), or none (all). Verbs: `get`,
-  `add <specs>`, `set <specs>`, `delete`, and `field <get|set|add|delete|unset>
-  <name|spec>`.
-- `mf field {list,get,set,delete}` — `list [--type <value_type>]` enumerates the
-  repository's distinct field names with their value type (`list` is the
-  default, so `mf field` ≡ `mf field list`); `get`/`set`/`delete <id>` give
-  direct field-row access by DB id.
-- `mf retype <name> <type>` — convert a field's value type repository-wide.
-- `mf reconcile`, `mf track <path>`, `mf path <uuid>` — filesystem sync.
-  `reconcile` takes `--metarecord`, `--threshold`, `--no-mime`, `--no-metadata`,
-  `--no-refresh`, `--json`, `--no-wait`, `--poll-interval`.
-- `mf tag [selector] <add|deny|mixed|remove|list> <tag>` — hierarchical tags
-  with subsumption and exclusivity (selector as for `metarecord`, plus `--eq`).
-- `mf order <folder>` — number a folder's direct children for sorting
-  (`order_file`/`order_dir`).
-- `mf trash {list,restore,prune}` (+ `mf trash -f <path>` to trash a tracked
-  file/directory) — the repository trash bin.
-- `mf log {list,show,rollback,prune}` — event log, atomic navigation, pruning.
-- `mf sync {plan,run,show,status,link,unlink}` — cross-repository sync (both
-  repos of a pair loaded in the daemon).
-- `mf task {list,show}` — background tasks.
-- `mf schema {check,reload,show}` — user schema.
-- `mf gui …` — drive a running GUI through its scripting API (`status`, `repo`,
-  `workspace new|rm`, `layout`, `view`, `message`, `bench`, `command`, `input`,
-  `prompt`); see `scripts/shipped/gui-tag-pair.sh` for a complete interactive
-  example.
-
-Field specs are `name:type[=value]` (e.g. `genre:string=jazz`, `rating:int=5`).
-Run `mf --help` (and `mf <command> --help`) for the full set of options.
-
-## Quick tour (curl)
-
-The HTTP API has two layers (see the wiki notes
-`Metarecord endpoints` / `Query endpoints`): a **resource layer** for a single directly-addressed
-thing (`…/metarecords/:uuid`, `…/fields/:name`, `…/fields/:id`) and a **set
-layer** (`POST …/query/*`) where every body carries a `query`.
-
-```bash
-B=localhost:7523
-
-# Every request needs the daemon's session token (see "Running the daemon"):
-TOKEN=$(cat "${XDG_RUNTIME_DIR:-/tmp/metafolder-$(id -u)}/metafolder/daemon.token")
-AUTH="Authorization: Bearer $TOKEN"
-
-# Initialise a repository (creates .metafolder/ inside the directory)
-REPO=$(curl -s -X POST $B/repos/init -d '{"root": "/path/to/folder"}' \
-       -H "$AUTH" -H 'content-type: application/json' | jq -r .repo_uuid)
-
-# Nothing is tracked by default (opt-in). Enable tracking on the root metarecord:
-ROOT=$(curl -s -X POST $B/repos/$REPO/query -H "$AUTH" \
-       -d '{"query": {"type": "is_present", "field": "mf_watch"}}' \
-       -H 'content-type: application/json' | jq -r '.[0]')
-curl -s -X PUT $B/repos/$REPO/metarecords/$ROOT/fields/mf_watch -H "$AUTH" \
-     -d '{"value": {"type": "bool", "value": true}}' \
-     -H 'content-type: application/json'
-
-# Index the files already present (the watcher tracks new changes live):
-curl -s -X POST $B/repos/$REPO/reconcile -H "$AUTH"
-
-# Query: every file under /music, with sizes
-curl -s -X POST $B/repos/$REPO/query -H "$AUTH" -H 'content-type: application/json' -d '{
-  "query": {"type": "follows_transitive", "field": "mfr_path", "target": "/music"},
-  "select": ["mfr_size"]
-}'
-
-# Set a field on every match of a query (one transaction)
-curl -s -X POST $B/repos/$REPO/query/fields/set -H "$AUTH" -H 'content-type: application/json' -d '{
-  "query": {"type": "eq", "field": "genre", "value": {"type": "string", "value": "jazz"}},
-  "name": "reviewed",
-  "value": {"type": "bool", "value": true}
-}'
-
-# Undo the last revision (metadata only)
-curl -s -X POST $B/repos/$REPO/rollback -H "$AUTH" \
-     -d '{"target": {"prev_revision": true}}' -H 'content-type: application/json'
-```
-
-## HTTP API overview
-
-All bodies are JSON; errors are `{"error": "<message>"}` with a meaningful
-status code. UUIDs are 32-char lowercase hex strings. **Every route (including
-`GET /health`) requires `Authorization: Bearer <token>`** — see "Running the
-daemon".
-See the wiki (`HTTP endpoint`, one note per route) for the full request/response formats.
-
-| Route | Description |
-|---|---|
-| `GET /health`, `GET /tasks` | Liveness check / all background tasks |
-| `GET /repos`, `POST /repos/init`, `POST /repos/load` | Repository management (`init`/`load` accept an external `metafolder` location) |
-| `GET\|PATCH /repos/:repo`, `POST .../unload` | Repo info / rename / unload |
-| `POST /repos/:repo/metarecords` | Create a metarecord |
-| `GET\|PUT\|DELETE .../metarecords/:uuid` | Read / overwrite / delete one metarecord |
-| `POST .../metarecords/:uuid/fields` | Append a field (multi-map) |
-| `GET\|PUT\|DELETE .../metarecords/:uuid/fields/:name` | Read / set / unset a field by name |
-| `GET .../metarecords/:uuid/fields/:name/resolve-tree` | Resolve a `tree_ref` field to its path |
-| `GET\|PATCH\|DELETE .../fields/:id` | Direct field-row access by DB id |
-| `GET /repos/:repo/fields[?type=]` | Distinct field names + value types (optionally filtered) |
-| `GET /repos/:repo/tree/roots[?field=]` | TreeRef forest roots (uuid + name) for top-down navigation |
-| `POST /repos/:repo/retype` | Convert a field's value type repository-wide |
-| `POST /repos/:repo/query` | Query engine (`select`, `sort`, keyset pagination) |
-| `POST .../query/delete` | Delete every match (one transaction) |
-| `POST .../query/fields/{set,append,remove,unset}` | Batch field ops over every match |
-| `POST .../query/fields/resolve-tree` | Resolve a `tree_ref` field for a query's matches |
-| `POST /repos/:repo/reconcile`, `POST .../track` | Full reconcile / track a single path |
-| `GET /repos/:repo/log`, `GET .../log/since` | Event-log reading / change feed |
-| `GET\|PATCH .../log/revisions/:rev_id`, `POST .../log/prune` | Revision labels / pruning |
-| `POST /repos/:repo/rollback` (+ `/plan`, `/start`, `/step`, `/abort`) | Atomic & coordinated navigation |
-| `GET /repos/:repo/schema`, `POST .../schema/{reload,check}` | User schema (wiki: `Schema`) |
-| `GET /repos/:repo/tasks`, `GET\|POST .../tasks/:task[/cancel]` | Background tasks |
-
-Key concepts (see the wiki note `Data model`):
-
-- Everything is a **metarecord**: a multi-map of `(name, value)` fields with
-  ten value types, including `tree_ref` (a position in a named tree — the
-  filesystem tree uses the reserved `mfr_path` field).
-- Three-valued logic: a field can be *present*, explicitly *absent*
-  (`nothing`), or *unknown* (no row).
-- `mfr_*` fields are daemon-owned (require `"force": true` to override);
-  `mf_*` fields (`mf_watch`, `mf_ignore`, `mf_schema`, `mf_sync`) control the
-  daemon.
-- Tracking is opt-in per subtree via `mf_watch`/`mf_ignore` inheritance.
-- Every write is recorded in an event log; any past state can be restored
-  with `POST /rollback`, and new writes after a rollback create branches.
+The documentation is a wiki, read in the GUI's help panel (`h h`), or from a checkout with
+`scripts/dev/doc show Documentation`. Its notes are the files of `docs/wiki/tiddlers/`,
+starting from [Documentation](docs/wiki/tiddlers/documentation.tid). To work on the project: [Development](docs/wiki/tiddlers/development.tid).

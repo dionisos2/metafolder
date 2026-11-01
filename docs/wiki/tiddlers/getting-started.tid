@@ -74,11 +74,11 @@ Every write is a write of the repository's history ([[Event log]]):
 
 ```
 mf -n music log               # the writes, newest first
-mf -n music log undo          # takes back the newest change you made
-mf -n music log redo          # … and brings it back
+mf -n music log undo          # lists the labels of the newest change you made
+mf -n music log undo <label>  # takes that label's changes back
 ```
 
-([[Undo and redo]].)
+`mf log redo` works the same way, and brings them back ([[Undo and redo]]).
 
 !! The GUI in brief
 

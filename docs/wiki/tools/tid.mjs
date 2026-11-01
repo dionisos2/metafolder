@@ -349,3 +349,75 @@ export function scriptTiddler(relPath, src) {
     text: `!! Reference\n\n\`\`\`\n${comment.join('\n').trim()}\n\`\`\`\n`,
   };
 }
+
+/** The note `README.md` is generated from, and the title GitHub shows above it. */
+const README_NOTE = 'README';
+const README_TITLE = 'metafolder';
+
+const INLINE = /(`[^`\n]*`)|\[\[([^\]]+?)\]\]|(https?:\/\/[^\s)]+)|''(.+?)''|\/\/(.+?)\/\//g;
+
+/** One line of text, its code and addresses left alone. @param {string} line @returns {string} */
+function inlineToMarkdown(line) {
+  return line.replace(INLINE, (_, code, link, url, bold, italic) => {
+    if (code !== undefined) return code;
+    if (url !== undefined) return url;
+    if (bold !== undefined) return `**${inlineToMarkdown(bold)}**`;
+    if (italic !== undefined) return `*${inlineToMarkdown(italic)}*`;
+    const bar = link.indexOf('|');
+    const shown = bar === -1 ? link : link.slice(0, bar);
+    const target = (bar === -1 ? link : link.slice(bar + 1)).trim();
+    return /^[a-z]+:\/\//i.test(target)
+      ? `[${shown}](${target})`
+      : `[${shown}](docs/wiki/tiddlers/${slugify(target)}.tid)`;
+  });
+}
+
+/**
+ * The README note's wikitext as Markdown. It covers what an entry page needs;
+ * anything else (a table, a procedure, a transclusion) is refused, so that the
+ * note cannot render well in the help and badly on GitHub without anyone knowing.
+ * @param {string} text @returns {string}
+ */
+export function wikitextToMarkdown(text) {
+  const unsupported = /^\|/m.test(stripCode(text)) || /<<|\{\{/.test(stripCode(text));
+  if (unsupported) throw new Error(`${README_NOTE}: no tables, procedures or transclusions (they have no Markdown form)`);
+  let fenced = false;
+  return text
+    .split('\n')
+    .map((line) => {
+      if (line.startsWith('```')) fenced = !fenced;
+      if (fenced || line.startsWith('```')) return line;
+      const heading = /^(!+)\s*(.*)$/.exec(line);
+      if (heading) return `${'#'.repeat(heading[1].length)} ${inlineToMarkdown(heading[2])}`;
+      const item = /^([*#])\s+(.*)$/.exec(line);
+      if (item) return `${item[1] === '*' ? '-' : '1.'} ${inlineToMarkdown(item[2])}`;
+      return inlineToMarkdown(line);
+    })
+    .join('\n');
+}
+
+/**
+ * What `README.md` must contain.
+ * @param {Tid[]} tiddlers @returns {string}
+ */
+export function readmeMarkdown(tiddlers) {
+  const note = tiddlers.find((t) => t.fields.title === README_NOTE);
+  if (!note) throw new Error(`no "${README_NOTE}" note`);
+  const source = `docs/wiki/tiddlers/${slugify(README_NOTE)}.tid`;
+  return `<!-- Generated from ${source} by scripts/dev/doc build: edit the note, not this file. -->\n\n# ${README_TITLE}\n\n${wikitextToMarkdown(note.text)}`;
+}
+
+/**
+ * Whether `README.md` is what the note generates.
+ * @param {Tid[]} tiddlers @param {string | undefined} current the file, if it exists
+ * @returns {string[]} problems
+ */
+export function checkReadme(tiddlers, current) {
+  try {
+    return readmeMarkdown(tiddlers) === current
+      ? []
+      : [`README.md is out of date with the note ${README_NOTE}; run scripts/dev/doc build`];
+  } catch (error) {
+    return [/** @type {Error} */ (error).message];
+  }
+}

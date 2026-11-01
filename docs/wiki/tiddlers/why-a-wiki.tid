@@ -23,6 +23,12 @@ build product and is not committed, like the frontend's bundle;
 `metafolder-sync-config` refuses to run without it, because applying the
 configuration without it would empty the help.
 
+One rendering is committed: `README.md`, generated from the note [[README]], because
+it has to be there on GitHub and in a fresh clone, before anything is built. So that
+it cannot drift, `scripts/dev/doc check` fails when it differs from the note. It stays
+an entry page, what the project is for and how to start: the detail is in the notes,
+where it has only one place to be wrong.
+
 The developer documentation is in the same wiki and ships with the rest: a note
 says `audience: dev`, and the help leaves those out of a search unless asked. One
 place to look, and no second tree to keep in step.

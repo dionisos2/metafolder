@@ -21,7 +21,7 @@ status is 1 when a check failed.
 |`test` |`scripts/dev/run-tests.sh` |the Rust suites, with the global total cargo never prints ([[Testing conventions]]) |
 |`scripts` |`scripts/dev/test-shipped-scripts.sh` |the shipped GUI scripts against a scripted `mf` and a throwaway daemon ([[Testing shipped scripts]]) |
 |`tooling` |`scripts/dev/test-tooling.sh` |the project's own build, check and prune scripts, and the wiki's tools |
-|`wiki` |`scripts/dev/doc check` |this documentation: links, fields, catalogs, the notes the code cites ([[Writing documentation]]) |
+|`wiki` |`scripts/dev/doc check` |this documentation: links, fields, catalogs, the notes the code cites, `README.md` matching its note ([[Writing documentation]]) |
 |`types` |`tsc --noEmit`, then `svelte-check --fail-on-warnings` |nothing else compiles the frontend's types — vite strips them unchecked — and `svelte-check` alone reads the `.svelte` files |
 |`frontend` |vitest with coverage |the JavaScript suites; the coverage thresholds are a ratchet at the measured floor, to raise and never to lower |
 |`lint` |`npx eslint .` |type-aware rules: a floating promise, an async handler where a void return is expected |

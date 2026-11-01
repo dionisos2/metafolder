@@ -15,6 +15,9 @@ import {
   renameInTiddler,
   renameInCode,
   scriptTiddler,
+  wikitextToMarkdown,
+  readmeMarkdown,
+  checkReadme,
 } from './tid.mjs';
 
 describe('parseTid / serializeTid', () => {
@@ -354,5 +357,68 @@ describe('scriptTiddler', () => {
     const t = scriptTiddler('lib/mf-gui.sh', '#!/bin/sh\n# Helpers.\nf() { :; }\n');
     assert.match(t.fields.summary, /no Summary: header/);
     assert.equal(t.fields.target, 'lib/mf-gui.sh');
+  });
+});
+
+describe('wikitextToMarkdown', () => {
+  test('headings, bold and italic', () => {
+    assert.equal(wikitextToMarkdown("!! Start\n\n''bold'' and //italic//\n"), '## Start\n\n**bold** and *italic*\n');
+  });
+
+  test('lists: bullets stay, numbered items become numbers', () => {
+    assert.equal(wikitextToMarkdown('* a\n* b\n\n# one\n# two\n'), '- a\n- b\n\n1. one\n1. two\n');
+  });
+
+  test('a note link points at its source file, which GitHub and a clone can open', () => {
+    assert.equal(
+      wikitextToMarkdown('See [[Getting started]] or [[this one|Why a wiki]].\n'),
+      'See [Getting started](docs/wiki/tiddlers/getting-started.tid) or [this one](docs/wiki/tiddlers/why-a-wiki.tid).\n',
+    );
+  });
+
+  test('external links, written or bare, keep their address whole', () => {
+    assert.equal(
+      wikitextToMarkdown('[[Site|https://example.org/a]] and https://example.org/b\n'),
+      '[Site](https://example.org/a) and https://example.org/b\n',
+    );
+  });
+
+  test('code is left alone, inline and fenced', () => {
+    const src = "`''a'' [[b]]`\n\n```\n!! not a heading\n# not a list\n''x'' //y//\n```\n";
+    assert.equal(wikitextToMarkdown(src), src);
+  });
+
+  test('what has no Markdown form is refused rather than copied', () => {
+    for (const src of ['|a |b |\n', '<<key "x" "y">>\n', '{{Some note}}\n']) {
+      assert.throws(() => wikitextToMarkdown(src), /README/);
+    }
+  });
+});
+
+describe('checkReadme', () => {
+  const note = { file: 'readme.tid', area: 'hand', fields: { title: 'README' }, text: 'Hello [[X]].\n' };
+
+  test('the file starts with its title and says where it comes from', () => {
+    const md = readmeMarkdown([note]);
+    assert.match(md, /^<!-- Generated from docs\/wiki\/tiddlers\/readme\.tid[^\n]*-->\n\n# metafolder\n\nHello \[X\]/);
+  });
+
+  test('the file as generated is fine', () => {
+    assert.deepEqual(checkReadme([note], readmeMarkdown([note])), []);
+  });
+
+  test('a file that differs from the note, or is missing, is a problem', () => {
+    for (const current of ['edited by hand\n', undefined]) {
+      assert.match(checkReadme([note], current)[0], /README\.md.*scripts\/dev\/doc build/);
+    }
+  });
+
+  test('a note that cannot be converted is a problem, not a crash', () => {
+    const bad = { ...note, text: '|a |b |\n' };
+    assert.match(checkReadme([bad], 'x')[0], /README/);
+  });
+
+  test('no note is a problem', () => {
+    assert.match(checkReadme([], 'x')[0], /no "README" note/);
   });
 });

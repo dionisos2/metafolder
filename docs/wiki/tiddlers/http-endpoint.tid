@@ -11,4 +11,11 @@ Each note is tagged with the group that describes its bodies and answers in cont
 * the daemon — [[Repository endpoints]], [[Metarecord endpoints]], [[Query endpoints]], [[Tree endpoints]], [[Log endpoints]], [[Revert endpoints]], [[Schema endpoints]], [[Task endpoints]], [[Watcher endpoints]], [[Health and diagnostics]];
 * the GUI — [[GUI scripting endpoints]], [[GUI file endpoints]], [[GUI asset endpoints]].
 
+To call the daemon by hand:
+
+```
+TOKEN=$(cat "$XDG_RUNTIME_DIR/metafolder/daemon.token")
+curl -s -H "Authorization: Bearer $TOKEN" localhost:7523/repos
+```
+
 <<catalog "HTTP endpoint">>

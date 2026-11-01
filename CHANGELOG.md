@@ -7,13 +7,17 @@ All notable changes to metafolder are recorded here. The format follows
 **Stability:** the HTTP API, the CLI command tree and the configuration keys
 still change between versions without deprecation. **On-disk formats are
 preserved, though** — from v0.3 on, any change to a persisted format (the
-SQLite schema, the `.metafolder/` layout, the config file format) ships with a
+store's layout, the `.metafolder/` layout, the config file format) ships with a
 conversion path that migrates existing repositories and configuration rather
 than breaking them.
 
 ## [Unreleased]
 
 ### Changed
+- **`README.md` is generated from the wiki note `README`** and is now only an entry
+  page: what the project is for and how to start. `scripts/dev/doc check` fails when
+  it differs from the note.
+
 - **`make dev` replaces `scripts/dev/complete-build.sh`.** The Makefile is the one
   entry point for building and installing.
 

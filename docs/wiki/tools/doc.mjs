@@ -18,6 +18,8 @@ import {
   renameInTiddler,
   renameInCode,
   scriptTiddler,
+  readmeMarkdown,
+  checkReadme,
 } from './tid.mjs';
 
 /** @typedef {import('./tid.mjs').Tiddler} Tiddler */
@@ -25,6 +27,7 @@ import {
 export const WIKI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const TIDDLERS = path.join(WIKI, 'tiddlers');
 const REPO = path.resolve(WIKI, '..', '..');
+const README = path.join(REPO, 'README.md');
 
 /** Where the code that may cite the wiki lives, and what counts as code. */
 const CODE_DIRS = ['crates', 'scripts'];
@@ -44,7 +47,7 @@ const USAGE = `usage: scripts/dev/doc <command> [args]
                           create a hand-written note at the right file name
   rename OLD NEW          rename a note and every mention of it (wiki and code)
   check                   every consistency check; exit 1 on any problem
-  build [OUT]             render the help pages (default docs/wiki/dist/)
+  build [OUT]             render the help pages (default docs/wiki/dist/) and README.md
   gen                     rewrite tiddlers/generated/ from the code`;
 
 /** @param {string} dir @returns {string[]} */
@@ -292,7 +295,8 @@ export async function main(argv) {
       return 0;
     }
     case 'check': {
-      const errors = [...checkWiki(wiki, scanCode()), ...syncScripts(false)];
+      const readme = fs.existsSync(README) ? fs.readFileSync(README, 'utf8') : undefined;
+      const errors = [...checkWiki(wiki, scanCode()), ...syncScripts(false), ...checkReadme(wiki, readme)];
       for (const e of errors) console.log(e);
       const hand = wiki.filter((t) => t.area === 'hand').length;
       console.log(errors.length === 0 ? `ok — ${hand} notes` : `${errors.length} problem(s)`);
@@ -320,6 +324,7 @@ export async function main(argv) {
       const { build } = await import('./build.mjs');
       const out = path.resolve(rest[0] ?? path.join(WIKI, 'dist'));
       console.log(`${await build(WIKI, out)} pages → ${path.relative(REPO, out) || out}`);
+      fs.writeFileSync(README, readmeMarkdown(wiki));
       return 0;
     }
     case undefined:
