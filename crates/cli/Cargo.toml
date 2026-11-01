@@ -22,6 +22,7 @@ toml = "1.0"
 # The local time zone `mf slow` shows its times in (doc "mf slow list");
 # already built for the daemon (nom-exif), with the same features.
 chrono = "0.4"
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 metafolder-daemon = { path = "../daemon" }

@@ -45,6 +45,7 @@ url = "2"
 # holds (doc "Trash"). `chrono` writes the DeletionDate the specification
 # requires; the other default features are Windows COM settings.
 trash = { version = "5", default-features = false, features = ["chrono"] }
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 # Already in the dependency tree via wry; used directly to react to
 # WebKit web-process crashes (reload instead of a frozen window).

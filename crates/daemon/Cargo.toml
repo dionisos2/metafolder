@@ -36,6 +36,7 @@ heed = { version = "0.23", default-features = false }
 rustix = { version = "1", features = ["fs", "param", "process"] }
 lofty = "0.25.0"
 nom-exif = "3.6.2"
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 # The naive query oracle the evaluator is validated against

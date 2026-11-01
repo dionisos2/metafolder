@@ -42,6 +42,7 @@ do alike therefore lives in `core`, not in either of them.
 |`watchd` |— |the broker, and the protocol its clients speak |
 |`query-oracle` |`core`, `daemon` |the naive evaluator the query engine is tested against; a dev-dependency of the daemon, linked into no shipped binary ([[The query oracle]]) |
 |`bench` |`core`, `daemon` |the benchmark harness ([[Benchmarks]]) and [[The timed regression suite]] |
+|`workspace-hack` |nothing of ours |generated, no code: the union of the dependencies' features, so that a `-p` build shares them ([[Keeping the target directory small]]); every member but `watchd` depends on it |
 
 !! Inside the daemon
 

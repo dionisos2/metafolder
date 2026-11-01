@@ -32,6 +32,7 @@
 #               (eslint.config.js). Catches what tsc will not: a floating
 #               promise, an async handler where a void return is expected.
 #   deny        dependency vulnerabilities, licenses and sources (deny.toml).
+#   hakari      the workspace-hack crate matches the manifests.
 #               Every ignored advisory is justified in that file.
 #   semgrep     the project invariants no type checker can express
 #               (.semgrep/invariants.yml) — writes go through log::Writer,
@@ -42,7 +43,7 @@
 # target/ is not pruned here (see disk_warning below); a disk with less than
 # METAFOLDER_CHECK_MIN_FREE_GIB (default 10) GiB free is announced instead.
 #
-# A missing optional tool (cargo-deny, semgrep, cargo-llvm-cov) is reported as
+# A missing optional tool (cargo-deny, cargo-hakari, semgrep, cargo-llvm-cov) is reported as
 # SKIP with its install line, not as a failure — but a skipped check has
 # verified nothing, so the summary says so out loud.
 
@@ -174,6 +175,15 @@ if cargo deny --version >/dev/null 2>&1; then
     run deny cargo deny check
 else
     skip deny "run: cargo install cargo-deny"
+fi
+
+# ── workspace-hack ───────────────────────────────────────────────────────────
+# Out of date, `-p` builds drift back to their own variants of the dependencies
+# (doc "Keeping the target directory small"), which nothing else would notice.
+if cargo hakari --version >/dev/null 2>&1; then
+    run hakari bash -c 'cargo hakari generate --diff && cargo hakari manage-deps --dry-run'
+else
+    skip hakari "run: cargo install cargo-hakari"
 fi
 
 # ── project invariants ───────────────────────────────────────────────────────

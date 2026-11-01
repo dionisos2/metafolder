@@ -20,6 +20,7 @@ toml = "1.0"
 git2 = { version = "0.21", default-features = false, optional = true }
 # Rewrites a `keybindings.toml` of an older form in place, comments kept.
 toml_edit = { version = "0.25", optional = true }
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [features]
 # The git-backed modules: `config_sync` and `repo_config` (doc "Repository

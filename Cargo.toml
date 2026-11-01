@@ -7,6 +7,7 @@ members = [
     "crates/bench",
     "crates/query-oracle",
     "crates/watchd",
+    "crates/workspace-hack",
 ]
 resolver = "2"
 

@@ -2202,6 +2202,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "uuid",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2220,6 +2221,7 @@ dependencies = [
  "toml 1.1.8+spec-1.1.0",
  "ureq",
  "uuid",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2233,6 +2235,7 @@ dependencies = [
  "toml 1.1.8+spec-1.1.0",
  "toml_edit 0.25.17+spec-1.1.0",
  "uuid",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2262,6 +2265,7 @@ dependencies = [
  "toml 1.1.8+spec-1.1.0",
  "tower",
  "uuid",
+ "workspace-hack",
  "xxhash-rust",
 ]
 
@@ -2292,6 +2296,7 @@ dependencies = [
  "url",
  "uuid",
  "webkit2gtk",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2302,6 +2307,7 @@ dependencies = [
  "metafolder-daemon",
  "serde_json",
  "uuid",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -5106,6 +5112,48 @@ name = "wit-bindgen"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
+
+[[package]]
+name = "workspace-hack"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "bitflags 2.13.2",
+ "cc",
+ "clap",
+ "clap_builder",
+ "crc32fast",
+ "fastrand",
+ "form_urlencoded",
+ "futures-core",
+ "http",
+ "httparse",
+ "icu_properties",
+ "memchr",
+ "num-traits",
+ "percent-encoding",
+ "phf_shared 0.13.1",
+ "proc-macro2",
+ "schemars 0.8.22",
+ "semver",
+ "serde",
+ "serde_core",
+ "serde_json",
+ "simd-adler32",
+ "smallvec",
+ "stable_deref_trait",
+ "syn 2.0.119",
+ "syn 3.0.9",
+ "sync_wrapper",
+ "time",
+ "toml_datetime 1.1.2+spec-1.1.0",
+ "toml_parser",
+ "toml_writer",
+ "tracing",
+ "url",
+ "uuid",
+ "winnow 1.0.4",
+]
 
 [[package]]
 name = "writeable"

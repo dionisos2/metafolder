@@ -68,7 +68,7 @@ feature-enabled `core`.
 * Rust, through `rustup`; `npm` and `node` for the frontend and the wiki.
 * The Tauri system libraries to build the `gui` crate (on Arch: `webkit2gtk-4.1 gtk3 librsvg`).
 * Nothing else to build or to test. What the GUI needs to ''run'' — `bwrap`, an emoji font, `ffmpeg`, `poppler`, the GStreamer plugins — is in [[GUI runtime dependencies]], checked by `scripts/dev/check-deps.sh`; in a container that forbids WebKit's sandbox, see [[Running inside a container]].
-* Optional tools, each skipped out loud by `scripts/dev/check.sh` when missing: `cargo-deny`, `semgrep`, `cargo-llvm-cov` ([[Static checks]]).
+* Optional tools, each skipped out loud by `scripts/dev/check.sh` when missing: `cargo-deny`, `cargo-hakari`, `semgrep`, `cargo-llvm-cov` ([[Static checks]]).
 * For [[Testing the GUI end to end]]: `Xvfb` (Arch: `xorg-server-xvfb`), the private display the GUI runs on, `xdotool`, which presses the keys of its keyboard scenarios, and `node`, which clicks for its clicking ones — each skipped out loud when missing.
 
 !! Disk space

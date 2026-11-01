@@ -26,10 +26,11 @@ status is 1 when a check failed.
 |`frontend` |vitest with coverage |the JavaScript suites; the coverage thresholds are a ratchet at the measured floor, to raise and never to lower |
 |`lint` |`npx eslint .` |type-aware rules: a floating promise, an async handler where a void return is expected |
 |`deny` |`cargo deny check` |vulnerabilities, licenses and sources of the dependencies |
+|`hakari` |`cargo hakari generate --diff`, `manage-deps --dry-run` |`crates/workspace-hack` still matches the manifests; `cargo hakari generate` after changing a dependency ([[Keeping the target directory small]]) |
 |`semgrep` |`semgrep scan --config .semgrep/invariants.yml` |the project's invariants no type checker can express |
 |`coverage` |`cargo llvm-cov --workspace --summary-only` |only with `--coverage`; the GUI end-to-end run counted too: [[Measuring coverage]] |
 
-A missing optional tool — `cargo-deny`, `semgrep`, `cargo-llvm-cov`, `node`, the npm
+A missing optional tool — `cargo-deny`, `cargo-hakari`, `semgrep`, `cargo-llvm-cov`, `node`, the npm
 packages — makes its check a ''skip'', printed with the line that installs it, and
 the summary then says that the skipped checks verified nothing.
 
