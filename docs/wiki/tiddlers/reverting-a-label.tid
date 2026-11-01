@@ -11,8 +11,7 @@ mf -n music log revert                  # the label of the newest operation
 mf -n music log revert 12 --metadata-only
 ```
 
-A metadata-only revert asks for nothing: it can itself be reverted, which is the point
-of preferring it to a rollback.
+A revert can itself be reverted, so trying one loses nothing.
 
 ''Changed since.'' Nothing blocks a revert: it goes back to what the operation replaced,
 whatever was written there since ([[Reverting onto the current state]]). When a later
@@ -21,7 +20,7 @@ it (`--force` skips the question):
 
 ```
 Changed since — the revert overwrites what was written there:
-  op 23  set_field(rating)  on 5f2a1c88… — changed since by op 91 (rev 40, 2024-01-16 08:04)
+  op 23  set_field(rating)  on 5f2a1c88… — changed since by op 91 (label 40, 2024-01-16 08:04)
 ```
 
 ''Files.'' When the plan needs file actions, the CLI shows it, asks (unless `--force`),
