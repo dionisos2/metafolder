@@ -5,14 +5,14 @@ aliases: input-history recall ctrl-p ctrl-n ctrl-r history-commands
 summary: Each text zone remembers what was submitted in it, per repository: history:prev and history:next walk back and forth, history:search searches.
 
 The text zones keep what was submitted in them, ''per repository and per zone''.
-Twelve zones have a history:
+Fourteen zones have a history:
 
 * the command input in command mode, and in bash mode — two separate histories ([[The command input]], [[Bash mode]]) — the line of the [[shell panel]] sharing the bash mode's;
 * the find bar, recorded at each step to a match ([[Find in a panel]]);
 * the finder, the simplified query, the normal query, the columns and the order field of `metarecord-list`, the columns as the field shows them once applied, the order field when the order is turned on;
 * the search box of the [[help panel]];
 * the intents file of the [[sync panel]], recorded when a plan is asked for;
-* the filter of the [[config panel]] and of the [[keybindings-variables panel]], recorded when it is validated ([[editing:validate]]).
+* the filter of the [[config panel]] and of the [[keybindings-variables panel]], and the key and the command of the form of the [[keybindings panel]], recorded when they are validated ([[editing:validate]]), the form's also when it is saved.
 
 !! Recalling
 
@@ -30,7 +30,7 @@ applying a query that stays in its field, the first recall is the query before.
 The argument is ''required'': the field the command acts on.
 
 * `self-focus` is the field that has the focus: it is what the keys run. Where the focused field has no history, a key bound to it passes through as if it were not bound: outside a text field, `Ctrl+R` refreshes ([[Keybindings]]).
-* A name is that field of the focused panel, which then takes the focus — `finder`, `simplified`, `normal`, `columns`, `order`, `search` for the help panel, `intents` for the sync panel, `filter` for the config and keybindings-variables panels, or `line` for the [[shell panel]]. `history:search finder` typed in the command input opens the finder's search.
+* A name is that field of the focused panel, which then takes the focus — `finder`, `simplified`, `normal`, `columns`, `order`, `search` for the help panel, `intents` for the sync panel, `filter` for the config and keybindings-variables panels, `key` and `command` for the keybindings panel, or `line` for the [[shell panel]]. `history:search finder` typed in the command input opens the finder's search.
 * `self` is the focused panel's history: see below. It is what the keys run outside a text field. `history:search` has no such form.
 
 Typed in the command input, `self-focus` finds nothing: the input gives up the focus
@@ -72,9 +72,9 @@ only; it is not carried into a repository's history when one is opened.
 
 In the repository: one plain-text file per zone,
 `.metafolder/gui/history/<zone>` — `shell:command`, `shell:bash`, `shell:find`,
-`metarecord-list:finder`, `metarecord-list:query`, `metarecord-list:normal`, `metarecord-list:columns`, `metarecord-list:order`, `help:search`, `sync:intents`, `config:filter`, `keybindings-variables:filter` — one entry per line, the newest
+`metarecord-list:finder`, `metarecord-list:query`, `metarecord-list:normal`, `metarecord-list:columns`, `metarecord-list:order`, `help:search`, `sync:intents`, `config:filter`, `keybindings-variables:filter`, `keybindings:key`, `keybindings:command` — one entry per line, the newest
 last. A panel's list of fields is a file of the same kind, `metarecord-list:fields`,
-`shell:fields`, `help:fields`, `sync:fields`, `config:fields` or `keybindings-variables:fields`, with one field's name per line, a name repeated when the field was
+`shell:fields`, `help:fields`, `sync:fields`, `config:fields`, `keybindings-variables:fields` or `keybindings:fields`, with one field's name per line, a name repeated when the field was
 submitted twice in a row. The file is replaced whole at each addition (written aside, then renamed), so
 an interrupted write leaves the previous history intact.
 

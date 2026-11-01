@@ -1907,7 +1907,9 @@ vars.y = ","
         }
         // A filter runs as it is typed: nothing is left to apply, only to record
         // and to leave.
-        assert_eq!(at(defaults, "enter", "filter").as_deref(), Some("editing:validate"));
+        for focus in ["filter", "key", "command"] {
+            assert_eq!(at(defaults, "enter", focus).as_deref(), Some("editing:validate"));
+        }
         // The find bar steps through its matches instead (doc "Find in a panel").
         assert_eq!(at(defaults, "enter", "find").as_deref(), Some("find:next"));
         assert_eq!(at(defaults, "shift+enter", "find").as_deref(), Some("find:prev"));

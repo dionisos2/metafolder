@@ -8,6 +8,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { historyOf } from '/__history.js';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/keybindings');
 
@@ -143,7 +144,12 @@ async function mountPanel(
     visible: options.visible ?? false,
     onVisibility: vi.fn(),
     provide: vi.fn(),
-    workspace: { set: vi.fn(async () => {}), onChange: vi.fn() },
+    workspace: { get: vi.fn(async () => 'music'), set: vi.fn(async () => {}), onChange: vi.fn() },
+    history: {
+      read: async () => [],
+      append: vi.fn(async (_repo: string, _zone: string, _entry: string) => true),
+      appendField: async () => true,
+    },
   };
   const root = shadowRoot();
   const mod = await import('../../default-config/panel-types/keybindings/main.js');
@@ -187,6 +193,20 @@ async function mountPanel(
 }
 
 describe('keybindings panel', () => {
+  test('its two text filters each keep a history, under a name of their own', async () => {
+    const { api, field } = await mountPanel();
+    for (const [id, name, zone, text] of [
+      ['source', 'key', 'keybindings:key', 'ctrl'],
+      ['command', 'command', 'keybindings:command', 'find'],
+    ]) {
+      const input = field(id);
+      expect(input.dataset.mfFocus).toBe(name);
+      input.value = text;
+      historyOf(input)!.submit();
+      await vi.waitFor(() => expect(api.history.append).toHaveBeenCalledWith('music', zone, text));
+    }
+  });
+
   test('each line shows its key as written beside the keys it binds', async () => {
     const { row, button } = await mountPanel();
     const named = row('{panels} l');
@@ -350,9 +370,12 @@ describe('keybindings panel', () => {
     await typeIn('source', 'alt+t');
     await typeIn('command', 'workspace:new');
     expect(save.disabled).toBe(false);
-    for (const id of ['source', 'command']) {
+    for (const [id, name] of [
+      ['source', 'key'],
+      ['command', 'command'],
+    ]) {
       await key(field(id), 'Enter');
-      expect(field(id).dataset.mfFocus).toBe('filter');
+      expect(field(id).dataset.mfFocus).toBe(name);
     }
     for (const id of ['when', 'focus']) {
       await key(choice(id), 'Enter');
@@ -569,11 +592,13 @@ describe('keybindings panel', () => {
     expect([...choice('focus').options].map((o) => o.value)).toEqual([
       '',
       'columns',
+      'command',
       'filter',
       'find',
       'finder',
       'hints',
       'intents',
+      'key',
       'line',
       'mine',
       'normal',

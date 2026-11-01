@@ -12,6 +12,7 @@
 // as anything is typed (`config.checkKeybindingEntry`), the same check the save makes, so the
 // panel never restates the rules.
 
+import { attachHistory } from '/__history.js';
 import { byId, el, keysStartWith, messageOf, normalizeChord } from '/__ui.js';
 
 /** The class buttons, `none` for a command with no class. */
@@ -47,7 +48,7 @@ const draftOf = (entry, source = entry.source) => ({
 
 /** The text fields shipped with a name (`data-mf-focus`). A panel of the user's
  *  naming its own appears once a line of the file uses it. */
-const FOCUS_NAMES = ['columns', 'filter', 'find', 'finder', 'hints', 'intents', 'line', 'normal', 'order', 'search', 'simplified'];
+const FOCUS_NAMES = ['columns', 'command', 'filter', 'find', 'finder', 'hints', 'intents', 'key', 'line', 'normal', 'order', 'search', 'simplified'];
 
 /**
  * Gives a drop-down its options, keeping its value when it is still one of them.
@@ -73,6 +74,24 @@ const noObjection = (verdict) => verdict.command === null && verdict.key === nul
 export async function mount(root, metafolder) {
   const source = byId(root, 'source', HTMLInputElement);
   const command = byId(root, 'command', HTMLInputElement);
+  const historyDeps = {
+    /** @param {string} repo @param {string} zone */
+    read: (repo, zone) => metafolder.history.read(repo, zone),
+    /** @param {string} repo @param {string} zone @param {string} entry */
+    append: (repo, zone, entry) => metafolder.history.append(repo, zone, entry),
+    getRepo: async () => {
+      const repo = await metafolder.workspace.get('active_repo');
+      return typeof repo === 'string' ? repo : null;
+    },
+    container: /** @type {HTMLElement} */ (source.parentElement),
+    fields: {
+      zone: 'keybindings:fields',
+      /** @param {string} repo @param {string} zone @param {string} field */
+      append: (repo, zone, field) => metafolder.history.appendField(repo, zone, field),
+    },
+  };
+  const sourceHistory = attachHistory(source, { zone: 'keybindings:key', ...historyDeps });
+  const commandHistory = attachHistory(command, { zone: 'keybindings:command', ...historyDeps });
   const when = byId(root, 'when', HTMLSelectElement);
   const focus = byId(root, 'focus', HTMLSelectElement);
   const textInput = byId(root, 'text-input', HTMLInputElement);
@@ -451,7 +470,11 @@ export async function mount(root, metafolder) {
     await checking;
     if (save.disabled) return;
     const form = draft();
-    if (await write(() => metafolder.config.saveKeybindingEntry(form, null))) clearForm();
+    if (await write(() => metafolder.config.saveKeybindingEntry(form, null))) {
+      sourceHistory.push(form.source);
+      commandHistory.push(form.command);
+      clearForm();
+    }
   }
 
   /** @param {Metafolder.FileEntry} entry */

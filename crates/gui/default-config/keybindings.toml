@@ -344,6 +344,8 @@ vars.index = "i"
   { command = "metarecord-list:apply columns", focus = "columns" },
   { command = "help:apply search", focus = "search" },
   { command = "editing:validate", focus = "filter" },
+  { command = "editing:validate", focus = "key" },
+  { command = "editing:validate", focus = "command" },
 ]
 "{validate-stay}" = [
   { command = "metarecord-list:apply finder stay", focus = "finder" },

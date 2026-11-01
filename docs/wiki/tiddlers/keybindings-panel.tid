@@ -43,7 +43,7 @@ rest is shown unclassed.
 !! The form
 
 The form — key, command, `when`, `focus`, `target`, `text-input` — both writes a line
-and searches the list. As in a filter, `Enter` only leaves a field ([[Keybindings]]), so
+and searches the list. As in a filter, `Enter` only leaves a field, recording the key or the command typed in its [[input history|Input history]] ([[Keybindings]]), so
 that searching never adds a line by accident: ''Save'' writes it, or
 <<key "keybindings:save" "Ctrl+s">> ([[keybindings:save]]), which this panel takes from
 `workspace:save`.
