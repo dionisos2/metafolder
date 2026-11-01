@@ -1,7 +1,7 @@
 // The history:* commands (doc "Input history"): which field an argument
 // designates, whether a key bound to them fires, and what they do to it.
 
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { attachHistory } from '/__history.js';
@@ -308,5 +308,25 @@ describe('validateField', () => {
     validateField(field);
     expect(document.activeElement).not.toBe(field);
     field.remove();
+  });
+});
+
+describe('the note listing the text fields', () => {
+  test('names every zone the shipped fields record in', () => {
+    const panels = resolve(process.cwd(), '../default-config/panel-types');
+    const sources = readdirSync(panels, { recursive: true, encoding: 'utf8' })
+      .filter((file) => file.endsWith('.js'))
+      .map((file) => resolve(panels, file));
+    sources.push(resolve(process.cwd(), 'src/components/FindBar.svelte'));
+    const zones = sources.flatMap((file) =>
+      [...readFileSync(file, 'utf8').matchAll(/zone: '([a-z-]+:[a-z]+)'/g)].map((m) => m[1]),
+    );
+    const note = readFileSync(
+      resolve(process.cwd(), '../../../docs/wiki/tiddlers/text-fields-and-their-history.tid'),
+      'utf8',
+    );
+    expect(zones).toContain('shell:find');
+    const missing = zones.filter((zone) => !zone.endsWith(':fields') && !note.includes(`\`${zone}\``));
+    expect(missing).toEqual([]);
   });
 });

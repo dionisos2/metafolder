@@ -1,0 +1,47 @@
+title: Text fields and their history
+tags: GUI
+kind: reference
+aliases: text-zones history-zones fields-with-history
+summary: Every text field of the GUI: which keep an input history, in which file, and when an entry is recorded; and which keep none.
+
+Which text fields remember what was submitted in them. How to recall it, and how the
+history works: [[Input history]]. An entry is never recorded while typing.
+
+!! With a history
+
+''Name'' is the field's name for `history:prev`, `history:next`, `history:search` and for `focus` in a keybinding: `—` means that only `self-focus` reaches it, while it has the focus. ''File'' is under `.metafolder/gui/history/`.
+
+|!Field |!Where |!Name |!File |!Recorded when |
+|command input, command mode (`:`) |the shell |— |`shell:command` |a command runs: the one chosen in the list, not the letters typed |
+|command input, bash mode (`!`) |the shell |— |`shell:bash` |a line runs |
+|the line |[[shell panel]] |`line` |`shell:bash`, shared with the bash mode |a line runs; an answer to a running program is not recorded |
+|find bar |the shell ([[Find in a panel]]) |`find`, in a keybinding only |`shell:find` |`Enter` or `Shift+Enter` steps to a match |
+|finder |[[metarecord-list panel]] |`finder` |`metarecord-list:finder` |it is applied |
+|simplified query |[[metarecord-list panel]] |`simplified` |`metarecord-list:query` |it is applied |
+|normal query |[[metarecord-list panel]] |`normal` |`metarecord-list:normal` |it is applied, or a command shows a query there |
+|columns |[[metarecord-list panel]] |`columns` |`metarecord-list:columns` |they are applied: as the field then shows them |
+|order field |[[metarecord-list panel]] |`order` |`metarecord-list:order` |the order is turned on |
+|search box |[[help panel]] |`search` |`help:search` |it is applied |
+|intents file |[[sync panel]] |`intents` |`sync:intents` |a plan is asked for |
+|filter |[[config panel]] |`filter` |`config:filter` |`Enter` validates it ([[editing:validate]]) |
+|filter |[[keybindings-variables panel]] |`filter` |`keybindings-variables:filter` |`Enter` validates it ([[editing:validate]]) |
+|key of the form |[[keybindings panel]] |`key` |`keybindings:key` |`Enter` validates it, or the line is saved |
+|command of the form |[[keybindings panel]] |`command` |`keybindings:command` |`Enter` validates it, or the line is saved |
+
+`Escape`, or clicking elsewhere, records nothing in any of them.
+
+!! Without a history
+
+|!Field |!Where |
+|command input, answering a question: a command's argument, a script's prompt |the shell ([[Interactive command arguments]]) |
+|search box of `history:search` |the shell |
+|link hints |the shell |
+|renaming a workspace |the tab bar |
+|field name and value of the bulk edit |[[metarecord-list panel]] |
+|field name to add, and a field's value when adding or editing it |`metarecord-detail` panel |
+|name and root of a new repository, root to load, field name to retype |`repos` panel |
+|text being edited |[[viewer panel]] |
+|key of each row |[[keybindings panel]] |
+|value of each variable |[[keybindings-variables panel]] |
+
+The expansion of the simplified query in [[metarecord-list panel]] is read-only: nothing is typed there.
