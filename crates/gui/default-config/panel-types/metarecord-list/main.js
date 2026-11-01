@@ -737,7 +737,7 @@ export async function mount(root, metafolder) {
     if (orderField !== null) {
       // Ordered: the order is the field's, and a header must not hide it.
       void statusBar.message(
-        `ordered by ${orderField} — metarecord-list:order off to sort by a column`,
+        `ordered by ${orderField} — metarecord-list:toggle order to sort by a column`,
         statusMessageMs,
       );
       return;
@@ -786,7 +786,7 @@ export async function mount(root, metafolder) {
     }
   }
 
-  /** `order on <field>`: numbers what has no position, then sorts by it.
+  /** `toggle order <field>`: numbers what has no position, then sorts by it.
    *  @param {MetafolderApi} mf @param {string} field */
   async function orderOn(mf, field) {
     const name = (field ?? '').trim();
@@ -809,7 +809,7 @@ export async function mount(root, metafolder) {
     await fetchPage(true, mf);
   }
 
-  /** `order off`: the ordinary sort again; the positions stay.
+  /** `toggle order` when ordered: the ordinary sort again; the positions stay.
    *  @param {MetafolderApi} mf */
   async function orderOff(mf) {
     if (orderField === null) return;
@@ -825,12 +825,12 @@ export async function mount(root, metafolder) {
    *  one left. */
   let moveChain = Promise.resolve();
 
-  /** `order move <where>` on the row under the cursor, which stays on it.
+  /** `order-move <where>` on the row under the cursor, which stays on it.
    *  @param {MetafolderApi} mf @param {string} where */
   async function orderMove(mf, where) {
     const field = orderField;
     if (field === null) {
-      throw new Error('the list is not ordered: metarecord-list:order on <field> first');
+      throw new Error('the list is not ordered: metarecord-list:toggle order <field> first');
     }
     if (!MOVES.includes(where)) {
       throw new Error(`unknown move: "${where ?? ''}" (expected ${MOVES.join(' / ')})`);
@@ -849,7 +849,7 @@ export async function mount(root, metafolder) {
       void statusBar.message(`nothing to move ${where}`, statusMessageMs);
       return;
     }
-    if (repo) void changes.sync(repo); // as after `order on`
+    if (repo) void changes.sync(repo); // as after turning the order on
     // The loaded rows, in their new order, with their new positions: no read
     // again, so a move deep in a long list keeps the pages loaded.
     const before = new Map(rowsNow.map((r) => [r.uuid, r.value]));
@@ -869,17 +869,6 @@ export async function mount(root, metafolder) {
     render();
     await setCursor(mf, index >= 0 ? index : cursorIndex);
   }
-
-  /** @type {Record<string, (mf: MetafolderApi, arg: string) => Promise<unknown>>} */
-  const ORDER_ACTIONS = {
-    on: (mf, field) => orderOn(mf, field),
-    off: (mf) => orderOff(mf),
-    move: (mf, where) => {
-      const run = moveChain.then(() => orderMove(mf, where));
-      moveChain = run.catch(() => {});
-      return run;
-    },
-  };
 
   orderOnInput.addEventListener('change', () => {
     const run = orderOnInput.checked
@@ -1077,40 +1066,30 @@ export async function mount(root, metafolder) {
     },
   });
 
-  // One command, the action as its first argument (doc "Command naming"): the
-  // field always comes second, so no field name can be mistaken for `off`.
-  void commands.register('metarecord-list:order', {
-    label: 'Metarecord list: order by an int field (on <field> / off / move <up/down/top/bottom>)',
+  // Applied one after the other: each reads the rows the previous one left.
+  void commands.register('metarecord-list:order-move', {
+    label: `Metarecord list: move the row under the cursor in the order (${MOVES.join(' / ')})`,
     args: [
       {
-        name: 'action',
-        prompt: () => `Order: ${Object.keys(ORDER_ACTIONS).join(' / ')}?`,
-        complete: () => Object.keys(ORDER_ACTIONS),
-      },
-      {
-        name: 'arg',
-        when: (p) => p[0] !== 'off',
-        prompt: (p) =>
-          p[0] === 'move' ? `Move where? (${MOVES.join(' / ')})` : 'Order by which int field?',
-        complete: async (_partial, p) => (p[0] === 'move' ? MOVES : await intFields()),
+        name: 'where',
+        prompt: () => `Move where? (${MOVES.join(' / ')})`,
+        complete: () => MOVES,
       },
     ],
-    handler: (mf, action, arg) => {
-      const run = ORDER_ACTIONS[action];
-      if (!run) {
-        throw new Error(
-          `unknown order action: "${action ?? ''}" (expected ${Object.keys(ORDER_ACTIONS).join(' / ')})`,
-        );
-      }
-      return run(mf, arg);
+    handler: (mf, where) => {
+      const run = moveChain.then(() => orderMove(mf, where));
+      moveChain = run.catch(() => {});
+      return run;
     },
   });
 
   // `mode` flips the table ⇄ the grid through the `mode` setting, so the
   // toggle and `metarecord-list:set mode` persist the same variable.
-  /** @type {Record<string, (mf: MetafolderApi) => unknown>} */
+  /** @type {Record<string, (mf: MetafolderApi, field?: string) => unknown>} */
   const TOGGLES = {
     expansion: (mf) => editor.toggleExpansion(mf),
+    // Turning it on numbers the list: the field says by which (doc "Ordering a list").
+    order: (mf, field) => (orderField === null ? orderOn(mf, field ?? '') : orderOff(mf)),
     mode: (mf) => SETTINGS.mode.apply(mf, mode === 'grid' ? 'table' : 'grid'),
   };
 
@@ -1122,14 +1101,20 @@ export async function mount(root, metafolder) {
         prompt: () => `Which flag? (${Object.keys(TOGGLES).join(' / ')})`,
         complete: () => Object.keys(TOGGLES),
       },
+      {
+        name: 'field',
+        when: (p) => p[0] === 'order' && orderField === null,
+        prompt: () => 'Order by which int field?',
+        complete: () => intFields(),
+      },
     ],
-    handler: (mf, flag) => {
+    handler: (mf, flag, field) => {
       const toggle = TOGGLES[flag];
       if (!toggle)
         throw new Error(
           `unknown flag: "${flag ?? ''}" (expected ${Object.keys(TOGGLES).join(' / ')})`,
         );
-      return toggle(mf);
+      return toggle(mf, field);
     },
   });
 
@@ -1157,8 +1142,14 @@ export async function mount(root, metafolder) {
 
   // View settings: what is displayed, not what is stored. `set` names the
   // setting as its first argument, so a new one costs a table entry.
-  /** @type {Record<string, {values?: string[], apply: (mf: MetafolderApi, value: string) => unknown}>} */
+  /** @type {Record<string, {values?: string[], complete?: () => Promise<string[]>, prompt?: string, apply: (mf: MetafolderApi, value: string) => unknown}>} */
   const SETTINGS = {
+    // Unlike the others it writes: the positions of what has none (doc "Ordering a list").
+    order: {
+      prompt: 'Order by which int field? (empty: no order)',
+      complete: () => intFields(),
+      apply: (mf, field) => ((field ?? '').trim() ? orderOn(mf, field) : orderOff(mf)),
+    },
     mode: {
       values: ['table', 'grid'],
       apply: (mf, value) => {
@@ -1187,8 +1178,9 @@ export async function mount(root, metafolder) {
       },
       {
         name: 'value',
-        prompt: (p) => `Value for "${p[0]}"?`,
-        complete: (_partial, p) => SETTINGS[p[0]]?.values ?? [],
+        prompt: (p) => SETTINGS[p[0]]?.prompt ?? `Value for "${p[0]}"?`,
+        complete: async (_partial, p) =>
+          (await SETTINGS[p[0]]?.complete?.()) ?? SETTINGS[p[0]]?.values ?? [],
       },
     ],
     handler: (mf, setting, value) => {

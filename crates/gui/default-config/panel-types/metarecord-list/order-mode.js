@@ -1,5 +1,5 @@
 // Ordering the list by an int field (doc "Ordering a list"): the numbering
-// `metarecord-list:order on` writes, the writes of `order move`, and the local
+// `metarecord-list:toggle order` writes, the writes of `order-move`, and the local
 // reorder that keeps the loaded rows in step without reading them again.
 //
 // A row here is `{uuid, value}`: a metarecord and its position in the field
@@ -7,7 +7,7 @@
 
 import { MATCH_ALL } from '/__value-widget.js';
 
-/** Above this many positions to write, `order on` asks first. */
+/** Above this many positions to write, turning the order on asks first. */
 export const CONFIRM_ABOVE = 50;
 /** Positions per `query/fields/batch`: a batch stays under the daemon's 2 MiB
  *  body limit (the same bound as `metafolder_core::order`). */
@@ -40,7 +40,7 @@ export function positionOf(metarecord, field) {
  */
 
 /**
- * What `order on` writes: ties broken by +1 (cascading onto a position a
+ * What turning the order on writes: ties broken by +1 (cascading onto a position a
  * later row holds), then the unnumbered after the largest position, one
  * apart. `rows` is in the order the list showed, which decides ties and the
  * order of the unnumbered. Gaps are kept.
@@ -206,7 +206,7 @@ export function createOrderMode({
 
   return {
     /**
-     * `order on <field>`: numbers every match of the list's query. Resolves
+     * Turning the order on by `field`: numbers every match of the list's query. Resolves
      * with how many positions were written, or null when the user declined.
      * @param {string} field
      */
@@ -249,7 +249,7 @@ export function createOrderMode({
     },
 
     /**
-     * `order move <where>` on `rows[index]`. Resolves with the loaded rows
+     * `order-move <where>` on `rows[index]`. Resolves with the loaded rows
      * reordered, or null when there was nothing to do.
      * @param {string} field @param {Row[]} rows @param {number} index
      * @param {'up'|'down'|'top'|'bottom'} where @param {boolean} hasMore

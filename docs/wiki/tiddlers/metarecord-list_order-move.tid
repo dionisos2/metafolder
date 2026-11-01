@@ -1,0 +1,8 @@
+title: metarecord-list:order-move
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Metarecord list: move the row under the cursor in the order (up / down / top / bottom)
+
+`metarecord-list:order-move up`, `down`, `top`, `bottom` move the row under the cursor of an
+ordered [[metarecord-list panel]] by rewriting its position. The order is turned on with
+[[metarecord-list:toggle]] `order`. The whole of it: [[Ordering a list]].

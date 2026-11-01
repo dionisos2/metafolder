@@ -3,7 +3,7 @@
 //
 // The panel used to re-read only on the `metarecords:dirty` nudge, which a
 // write raises only when its author remembers to: a move in an ordered list,
-// `order on`, a tag answer, a script, `mf` — none of them did, and the panel
+// turning a list's order on, a tag answer, a script, `mf` — none of them did, and the panel
 // kept showing the field as it was. The change feed reports every write,
 // whoever made it.
 //

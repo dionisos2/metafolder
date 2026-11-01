@@ -396,9 +396,9 @@ vars.index = "i"
 ]
 "alt+up" = [
   { command = "cursor:parent self" },
-  { command = "metarecord-list:order move up", when = "metarecord-list" },
+  { command = "metarecord-list:order-move up", when = "metarecord-list" },
 ]
-"alt+down" = { command = "metarecord-list:order move down", when = "metarecord-list" }
+"alt+down" = { command = "metarecord-list:order-move down", when = "metarecord-list" }
 "alt+home" = { command = "cursor:root self" }
 "alt+left" = [
   { command = "metarecord:back", when = "metarecord-detail" },

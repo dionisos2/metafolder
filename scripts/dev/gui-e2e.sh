@@ -2266,8 +2266,8 @@ print((json.load(sys.stdin) or {}).get("path"))')" = "$1" ]
 
 pos_is() { [ "$(df_mf metarecord -i "$1" field get pos 2>/dev/null)" = "$2" ]; }
 
-# Ordering a list by an int field (doc "Ordering a list"): `order on` numbers
-# what has no position, `order move` swaps, Alt+↓ is the same move, and above
+# Ordering a list by an int field (doc "Ordering a list"): `toggle order` numbers
+# what has no position, `order-move` swaps, Alt+↓ is the same move, and above
 # 50 positions to write it asks first.
 scenario_order() {
     new_repo order
@@ -2278,14 +2278,14 @@ scenario_order() {
     run workspace:send "$WS" metarecord-list:query grp=o
     show_panel left metarecord-list view:refresh metarecord-list
 
-    run metarecord-list:order on pos
+    run metarecord-list:toggle order pos
     command_ok "order: on resolves"
     assert "order: on numbers the unnumbered after the largest" until_ok 10 pos_is "$a" 6
     assert_eq "order: on keeps the numbered" "1 5" "$(df_mf metarecord -i "$b" field get pos) $(df_mf metarecord -i "$c" field get pos)"
     assert_eq "order: the order field is kept in the workspace" '"pos"' "$(ws_var metarecord-list:order-field)"
 
     run cursor:first metarecord-list
-    run metarecord-list:order move down
+    run metarecord-list:order-move down
     command_ok "order: move resolves"
     assert "order: move down swaps with the row below" until_ok 10 pos_is "$b" 5
     assert "order: ...which takes the moved row's position" until_ok 10 pos_is "$c" 1
@@ -2299,14 +2299,14 @@ scenario_order() {
         printf 'SKIP order: Alt+Down needs Xvfb and xdotool\n'
     fi
 
-    run metarecord-list:order off
+    run metarecord-list:toggle order
     assert_eq "order: off forgets the order field" 'null' "$(ws_var metarecord-list:order-field)"
 
     local i
     for i in $(seq 1 51); do df_mf metarecord add grp:string=many >/dev/null || die "add $i"; done
     run workspace:send "$WS" metarecord-list:query grp=many
     run view:refresh metarecord-list
-    answering no metarecord-list:order on rank
+    answering no metarecord-list:set order rank
     assert "order: above 50 positions it asks, naming the count" \
         grep -q "51 metarecords" <<<"$LAST_QUESTIONS"
     assert_eq "order: declined, nothing is written" "" \

@@ -70,7 +70,7 @@ edge resizes the column.
 
 ''Order by'', beside the columns, orders the list by an `int` field instead: it numbers
 the rows that have no position, sorts by it, and
-<<key "metarecord-list:order move up" Alt+↑>> / <<key "metarecord-list:order move down" Alt+↓>>
+<<key "metarecord-list:order-move up" Alt+↑>> / <<key "metarecord-list:order-move down" Alt+↓>>
 move the row under the cursor by rewriting it ([[Ordering a list]]).
 
 !! Rows

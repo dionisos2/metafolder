@@ -1,6 +1,8 @@
 title: metarecord-list:toggle
 tags: [[GUI command]] Metarecord
 kind: reference
-summary: Metarecord list: toggle a view flag (expansion / mode)
+summary: Metarecord list: toggle a view flag (expansion / order / mode)
 
 `metarecord-list:toggle expansion` hides or shows the line under the simplified query of the [[metarecord-list panel]] that shows its expansion, exactly as a click on its arrow would, and leaves the focus where it is. The choice is kept in `metarecord-list:show-expansion`, a layout variable.
+
+`metarecord-list:toggle order [field]` orders the list by an `int` field, asking which when none is given, or takes the order off: it numbers what has no position, which writes to the repository ([[Ordering a list]]). `mode` flips the table and the grid ([[Display modes]]).

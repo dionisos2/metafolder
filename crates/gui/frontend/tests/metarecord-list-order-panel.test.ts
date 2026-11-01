@@ -1,4 +1,4 @@
-// `metarecord-list:order` in the panel (doc "Ordering a list"): turning the
+// `metarecord-list:toggle order` in the panel (doc "Ordering a list"): turning the
 // order on numbers and sorts the list, a move reorders the rows and keeps the
 // cursor on the moved one, and `off` gives the ordinary sort back. Mounts the
 // real panel against its markup, over an in-memory daemon that applies the
@@ -158,7 +158,7 @@ const histories = vi.fn(async (_repo: string, _zone: string, _entry: string) => 
 
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
-describe('metarecord-list:order', () => {
+describe('metarecord-list:toggle order', () => {
   beforeEach(() => {
     document.body.replaceChildren();
     vi.stubGlobal('confirm', () => true);
@@ -169,7 +169,7 @@ describe('metarecord-list:order', () => {
     const p = await mountPanel(memoryDaemon({ a: 1 }));
     const field = p.shadow.getElementById('order-field') as HTMLInputElement;
     expect(field.dataset.mfFocus).toBe('order');
-    await p.invoke('metarecord-list:order', 'on', 'pos');
+    await p.invoke('metarecord-list:toggle', 'order', 'pos');
     await vi.waitFor(() =>
       expect(histories).toHaveBeenCalledWith('r', 'metarecord-list:order', 'pos'),
     );
@@ -178,7 +178,7 @@ describe('metarecord-list:order', () => {
   test('on numbers the list, sorts by the field and shows it as a column', async () => {
     const daemon = memoryDaemon({ a: null, b: 3, c: 3 });
     const p = await mountPanel(daemon, new Map([['metarecord-list:columns', ['&uuid']]]));
-    await p.invoke('metarecord-list:order', 'on', 'pos');
+    await p.invoke('metarecord-list:toggle', 'order', 'pos');
     expect(Object.fromEntries(daemon.pos)).toEqual({ a: 5, b: 3, c: 4 });
     expect(p.vars.get('metarecord-list:order-field')).toBe('pos');
     expect(daemon.queries.at(-1)?.sort).toEqual([{ field: 'pos', order: 'asc' }]);
@@ -190,14 +190,14 @@ describe('metarecord-list:order', () => {
   test('a move swaps with the neighbour and the cursor follows the row', async () => {
     const daemon = memoryDaemon({ a: 1, b: 2, c: 3 });
     const p = await mountPanel(daemon, new Map([['metarecord-list:columns', ['pos']]]));
-    await p.invoke('metarecord-list:order', 'on', 'pos');
+    await p.invoke('metarecord-list:toggle', 'order', 'pos');
     // Put the cursor on c (the last row) through the cursor provider.
     const provider = (p.api.provide).mock.calls
       .map((c) => c[0])
       .find((x) => x.select);
     await provider.select(p.api, 2);
     await settle();
-    await p.invoke('metarecord-list:order', 'move', 'up');
+    await p.invoke('metarecord-list:order-move', 'up');
     expect(Object.fromEntries(daemon.pos)).toEqual({ a: 1, b: 3, c: 2 });
     expect(p.cursorRow()).toBe(1);
     expect(p.rowUuids()).toEqual(['1', '2', '3']); // the pos column, top to bottom
@@ -206,21 +206,21 @@ describe('metarecord-list:order', () => {
   test('a write tells the change feed at once, so metarecord-detail re-reads', async () => {
     const daemon = memoryDaemon({ a: null, b: 2 });
     const p = await mountPanel(daemon, new Map([['metarecord-list:columns', ['pos']]]));
-    await p.invoke('metarecord-list:order', 'on', 'pos');
+    await p.invoke('metarecord-list:toggle', 'order', 'pos');
     expect(p.api.changes.sync).toHaveBeenCalledTimes(1);
     const provider = (p.api.provide).mock.calls
       .map((c) => c[0])
       .find((x) => x.select);
     await provider.select(p.api, 1);
     await settle();
-    await p.invoke('metarecord-list:order', 'move', 'up');
+    await p.invoke('metarecord-list:order-move', 'up');
     expect(p.api.changes.sync).toHaveBeenCalledTimes(2);
   });
 
   test('a header click does not sort while ordered', async () => {
     const daemon = memoryDaemon({ a: 1 });
     const p = await mountPanel(daemon, new Map([['metarecord-list:columns', ['pos']]]));
-    await p.invoke('metarecord-list:order', 'on', 'pos');
+    await p.invoke('metarecord-list:toggle', 'order', 'pos');
     (p.shadow.querySelector('#header-row th:last-child') as HTMLElement).click();
     await settle();
     expect(daemon.queries.at(-1)?.sort).toEqual([{ field: 'pos', order: 'asc' }]);
@@ -229,9 +229,9 @@ describe('metarecord-list:order', () => {
   test('off sorts as before and writes nothing', async () => {
     const daemon = memoryDaemon({ a: 1 });
     const p = await mountPanel(daemon);
-    await p.invoke('metarecord-list:order', 'on', 'pos');
+    await p.invoke('metarecord-list:toggle', 'order', 'pos');
     const written = daemon.batches.length;
-    await p.invoke('metarecord-list:order', 'off');
+    await p.invoke('metarecord-list:toggle', 'order');
     expect(daemon.batches.length).toBe(written);
     expect(p.vars.get('metarecord-list:order-field')).toBeNull();
     expect(daemon.queries.at(-1)?.sort).toBeUndefined();
@@ -246,11 +246,43 @@ describe('metarecord-list:order', () => {
 
   test('move without the order on is refused', async () => {
     const p = await mountPanel(memoryDaemon({ a: 1 }));
-    await expect(p.invoke('metarecord-list:order', 'move', 'up')).rejects.toThrow(/not ordered/);
+    await expect(p.invoke('metarecord-list:order-move', 'up')).rejects.toThrow(/not ordered/);
   });
 
-  test('an unknown action is refused', async () => {
+  test('an unknown move is refused', async () => {
     const p = await mountPanel(memoryDaemon({ a: 1 }));
-    await expect(p.invoke('metarecord-list:order', 'pos')).rejects.toThrow(/on \/ off \/ move/);
+    await p.invoke('metarecord-list:toggle', 'order', 'pos');
+    await expect(p.invoke('metarecord-list:order-move', 'sideways')).rejects.toThrow(/unknown move/);
+  });
+
+  test('the old command is gone', async () => {
+    const p = await mountPanel(memoryDaemon({ a: 1 }));
+    await expect(p.invoke('metarecord-list:order', 'on', 'pos')).rejects.toThrow();
+  });
+
+  test('set order orders by the field, whatever the list was ordered by', async () => {
+    const daemon = memoryDaemon({ a: 1 });
+    const p = await mountPanel(daemon);
+    await p.invoke('metarecord-list:set', 'order', 'pos');
+    expect(p.vars.get('metarecord-list:order-field')).toBe('pos');
+    await p.invoke('metarecord-list:set', 'order', 'rank');
+    expect(p.vars.get('metarecord-list:order-field')).toBe('rank');
+    expect(daemon.queries.at(-1)?.sort).toEqual([{ field: 'rank', order: 'asc' }]);
+  });
+
+  test('set order to nothing takes the order off, and stays off', async () => {
+    const daemon = memoryDaemon({ a: 1 });
+    const p = await mountPanel(daemon);
+    await p.invoke('metarecord-list:set', 'order', 'pos');
+    await p.invoke('metarecord-list:set', 'order', '');
+    expect(p.vars.get('metarecord-list:order-field')).toBeNull();
+    await p.invoke('metarecord-list:set', 'order', '');
+    expect(p.vars.get('metarecord-list:order-field')).toBeNull();
+  });
+
+  test('toggling the order on without a field is refused, and leaves it off', async () => {
+    const p = await mountPanel(memoryDaemon({ a: 1 }));
+    await expect(p.invoke('metarecord-list:toggle', 'order')).rejects.toThrow();
+    expect(p.vars.get('metarecord-list:order-field') ?? null).toBeNull();
   });
 });

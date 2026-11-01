@@ -2,15 +2,17 @@ title: Ordering a list
 tags: [[metarecord-list panel]]
 kind: guide
 aliases: order-mode playlist-order manual-order order-move
-summary: metarecord-list:order on <field> sorts the list by an int field, numbers what has no position yet, and lets Alt+↑ / Alt+↓ move a row by rewriting that field — one field per order, so a playlist is a field.
+summary: metarecord-list:toggle order <field> sorts the list by an int field, numbers what has no position yet, and lets Alt+↑ / Alt+↓ move a row by rewriting that field — one field per order, so a playlist is a field.
 
 ```
-metarecord-list:order on order_file     # number the list by order_file, sort by it
-metarecord-list:order move up           # Alt+↑ — the row under the cursor goes one up
-metarecord-list:order move down         # Alt+↓
-metarecord-list:order move top          # before the first row of the list
-metarecord-list:order move bottom       # after the last one
-metarecord-list:order off               # back to the ordinary sort; nothing is written
+metarecord-list:toggle order order_file # number the list by order_file, sort by it
+metarecord-list:order-move up           # Alt+↑ — the row under the cursor goes one up
+metarecord-list:order-move down         # Alt+↓
+metarecord-list:order-move top          # before the first row of the list
+metarecord-list:order-move bottom       # after the last one
+metarecord-list:toggle order            # back to the ordinary sort; nothing is written
+metarecord-list:set order rank          # order by that field, ordered already or not
+metarecord-list:set order ""            # no order, whatever it was
 ```
 
 [[mf order|Ordering a folder]] guesses a folder's order; when the guess is wrong, this
@@ -22,12 +24,12 @@ to a folder: any `int` field is an order, so a playlist is a field of its own �
 fields, at a different position in each.
 
 The ''Order by'' box under the columns does the same as the command: the field is typed
-beside it (completed from the repository's `int` fields), checking it is `order on`,
-unchecking it `order off`.
+beside it (completed from the repository's `int` fields), checking and unchecking it is
+`toggle order`. Without a field, `toggle order` asks for one when it turns the order on.
 
 !! Turning it on
 
-`order on <field>` takes the name of an `int` field, existing or not — a new name makes
+`toggle order <field>` takes the name of an `int` field, existing or not — a new name makes
 a new order. A field of another type is refused. Then, over ''every'' metarecord the
 list's query matches (the finder included, every page, not just the loaded ones):
 
@@ -42,17 +44,17 @@ the whole repository.
 
 The ordering field is kept in the workspace (`metarecord-list:order-field`), and a list
 shown again comes back ordered — without writing anything; a metarecord that arrived
-since sorts after the numbered ones until `order on` is run again.
+since sorts after the numbered ones until the order is turned on again.
 
 !! Moving a row
 
-`order move` acts on the row under the cursor, which stays on it.
+`order-move` acts on the row under the cursor, which stays on it.
 
 * `up` / `down` ''swap'' its position with the row above / below it. Swapping keeps every gap where it was. Two rows that tie (a position written since) are untied instead: the moved one goes to its neighbour's position minus 1 (`up`) or plus 1 (`down`).
 * `top` puts it at the first row's position minus 1, `bottom` at the list's largest position plus 1 — positions can go below zero.
 
 It moves among the rows the list shows: with a finder narrowing it, a row swaps with
-its visible neighbour. A row without a position cannot move (`order on` numbers it),
+its visible neighbour. A row without a position cannot move (turning the order on numbers it),
 nor can a numbered row move below the last numbered one. Each move is one write: Ctrl+z takes the last
 one back.
 
@@ -65,5 +67,5 @@ numbered.
 
 !! Keys
 
-|<<key "metarecord-list:order move up" Alt+↑>> |move the row up |
-|<<key "metarecord-list:order move down" Alt+↓>> |move the row down |
+|<<key "metarecord-list:order-move up" Alt+↑>> |move the row up |
+|<<key "metarecord-list:order-move down" Alt+↓>> |move the row down |

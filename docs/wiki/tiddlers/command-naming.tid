@@ -51,7 +51,7 @@ Grouped by what they touch, which is what a name must make obvious:
 |a search |`query <what>` (adds a filter to the query shown and runs it: [[tag:query]]), `unquery <what>` (takes it off: [[tag:unquery]]) |
 |a view setting |`set <setting> [value]`, `set-X <value>` (the panel's one setting) |
 |the media player |`play-pause`, `play <what> [options]` (a [[Slideshow]]), `restart`, `mute`, `seek <±s>`, `speed <up/down/reset>`, `volume <up/down>`, `zoom <in/out/fit/reset>` |
-|the repository |`<noun> <op>` with `op` among `set`, `add`, `remove`, `unset`, `delete`, and the plain verbs `create`, `delete`, `rename`, `record`, `trash`, `restore`, `prune`, `reconcile`, `rollback`, `undo`, `redo`, `revert [what]`, `mark`, `run`, `load`, `unload`, `stop`, `order <on/off/move>` |
+|the repository |`<noun> <op>` with `op` among `set`, `add`, `remove`, `unset`, `delete`, and the plain verbs `create`, `delete`, `rename`, `record`, `trash`, `restore`, `prune`, `reconcile`, `rollback`, `undo`, `redo`, `revert [what]`, `mark`, `run`, `load`, `unload`, `stop` |
 
 ''A command that writes to the repository carries either `<noun> <op>` or a plain
 verb of the last row; everything else only moves the view.'' Nothing that writes can
@@ -61,10 +61,17 @@ The five operations are those of the daemon and of the CLI ([[The verb pattern]]
 `set` replaces a field's values, `add` and `remove` put one in and take one out,
 `unset` removes the field, and `delete` destroys a thing that has an id.
 
-`order` writes positions ([[Ordering a list]]); its `off` writes nothing but stays under
-the same name, so that typing `order` shows the three. The first argument is always one
-of `on`, `off`, `move` and the field comes after, so no field name can be mistaken for
-`off`.
+!! A state is toggled or set
+
+A command changing a state says `toggle` or `set`, never `on` and `off` arguments of a
+verb of its own: `metarecord-list:toggle order`, `viewer:toggle-mute`. That is where
+one looks for it, among the panel's other flags (user decision, November 2026).
+
+''The one exception to the rule above:'' turning a list's order on — `metarecord-list:toggle order`,
+`metarecord-list:set order` — also numbers what has no position, a write to the
+repository under a view verb. It asks first above 50 positions, and one undo takes
+them back ([[Ordering a list]]). `metarecord-list:order` once said the write in its name;
+finding the switch where the others are was judged worth more. `order-move` writes too, and stays a name of its own.
 
 !! A single choice is a name
 
