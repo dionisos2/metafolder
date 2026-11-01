@@ -2,7 +2,6 @@ fn main() {
     // include_str!/include_dir! do not register their inputs with cargo:
     // re-embed the shim, panels and default config when they change.
     println!("cargo:rerun-if-changed=panel-shim");
-    println!("cargo:rerun-if-changed=panel-types");
     println!("cargo:rerun-if-changed=default-config");
     println!("cargo:rerun-if-changed=frontend/dist");
 
