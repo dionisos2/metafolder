@@ -41,6 +41,12 @@ printf 'doc %s\n' "\$*" >>"$log"
 STUB
 chmod +x "$fake/scripts/dev/doc"
 
+cat >"$fake/scripts/dev/prune-target.sh" <<STUB
+#!/usr/bin/env bash
+printf 'prune-target\n' >>"$log"
+STUB
+chmod +x "$fake/scripts/dev/prune-target.sh"
+
 for profile in debug release; do
     cat >"$fake/target/$profile/metafolder-sync-config" <<STUB
 #!/usr/bin/env bash
@@ -95,6 +101,11 @@ assert_contains "scopes the feature to core" "$(cat "$log")" \
 assert_before "renders the documentation before the sync" "doc build" "sync-config debug"
 assert_before "builds the sync binary before running it" \
     "features sync-config" "sync-config debug"
+# Pruning between two builds of different feature sets makes each look new and
+# evict the other: all three go first, doc "Keeping the target directory small".
+assert_before "builds the workspace before pruning" "^cargo build$" "prune-target"
+assert_before "builds the test binaries before pruning" "test --workspace --no-run" "prune-target"
+assert_before "builds the sync-config core before pruning" "features sync-config" "prune-target"
 assert_eq "the sync is the last step" "sync-config debug" "$(tail -n1 "$log")"
 
 # ── 3. install-headless: no GUI toolkit, and it says so ─────────────────────
@@ -105,6 +116,7 @@ assert "installs the daemon" [ -x "$tmp/prefix/bin/metafolder-daemon" ]
 assert "installs mf" [ -x "$tmp/prefix/bin/mf" ]
 assert "does not install the GUI" [ ! -e "$tmp/prefix/bin/metafolder-gui" ]
 assert_not "does not build the GUI" grep -q 'metafolder-gui' "$log"
+assert_not "a partial build does not prune" grep -q 'prune-target' "$log"
 
 run install; rc=$?
 assert "install still requires the GUI toolkit" [ "$rc" -ne 0 ]

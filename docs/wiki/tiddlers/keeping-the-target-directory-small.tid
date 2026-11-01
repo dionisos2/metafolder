@@ -17,7 +17,7 @@ brought it to about 4 GB, in order of effect:
 ''Prune only after every set has been rebuilt'' — the workspace, the test binaries,
 the feature variants. Pruning between two builds of different feature sets makes
 each look new and evict the other, and they are then rebuilt at every run. That is
-why it is run by hand after `make dev`, which builds all three, and why
+why `make dev` builds all three before pruning, why no other target prunes (the script reads every profile, so a release build would evict a debug set it did not rebuild), and why
 `scripts/dev/check.sh` never prunes: clippy and the tests are not every set. It warns
 on a nearly full disk instead — a `target/` left alone reached 38 GB and a test died
 on `No space left on device`.

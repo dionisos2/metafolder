@@ -44,7 +44,7 @@ help:
 	@echo ''
 	@echo '  check-deps         verify build & runtime dependencies'
 	@echo '  dev                complete debug build: frontend, workspace, test binaries,'
-	@echo '                     docs, then the user config applied'
+	@echo '                     prune of target/, docs, then the user config applied'
 	@echo '  build              build everything, release (daemon, cli, gui, config)'
 	@echo '  build-headless     build daemon + cli only (no GUI toolkit / frontend)'
 	@echo '  frontend           (re)build the GUI frontend bundle'
@@ -125,12 +125,16 @@ docs: $(NPM_STAMP)
 
 # The complete development build, doc "Building". The frontend comes before cargo:
 # Tauri embeds it at compile time, and bundled after, the binary keeps the
-# previous bundle until the next run.
+# previous bundle until the next run. The prune comes after all three builds, and
+# only here: between two feature sets each would evict the other, and the script
+# reads every profile, so a release-only target would evict a debug set it did not
+# rebuild (doc "Keeping the target directory small").
 .PHONY: dev
 dev: frontend docs
 	$(CARGO) build
 	$(CARGO) test --workspace --no-run
 	$(CARGO) build -p metafolder-core --features sync-config --bin metafolder-sync-config
+	scripts/dev/prune-target.sh
 	target/debug/metafolder-sync-config
 
 # ── install ──────────────────────────────────────────────────────────────────

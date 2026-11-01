@@ -15,8 +15,7 @@ than breaking them.
 
 ### Changed
 - **`make dev` replaces `scripts/dev/complete-build.sh`.** The Makefile is the one
-  entry point for building and installing. It no longer prunes `target/` on its
-  own: `make prune`, by hand, after it.
+  entry point for building and installing.
 
 ### Fixed
 - **`make install` and `make install-headless` work on a fresh clone.** npm
