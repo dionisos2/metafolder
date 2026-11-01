@@ -72,6 +72,17 @@ function fakeDaemon() {
   const uuid = () => String(nextUuid++).padStart(32, '0');
   const calls: { method: string; path: string; body: unknown }[] = [];
 
+  const fake = {
+    repos,
+    known,
+    tasks,
+    cancelled,
+    watch,
+    calls,
+    refuseMemory: null as string | null,
+    request,
+  };
+
   function request(method: string, path: string, body: unknown) {
     calls.push({ method, path, body });
     const bare = path.split('?')[0];
@@ -133,6 +144,7 @@ function fakeDaemon() {
       return { status: 200, body: {} };
     }
     if (method === 'POST' && /^\/repos\/[^/]+\/memory$/.test(bare)) {
+      if (fake.refuseMemory) return { status: 409, body: { error: fake.refuseMemory } };
       const repo = repos.find((r) => r.repo_uuid === bare.split('/')[2]);
       if (!repo) return { status: 404, body: { error: 'Repository not found' } };
       repo.in_memory = (body as { in_memory: boolean }).in_memory
@@ -156,7 +168,7 @@ function fakeDaemon() {
     return { status: 404, body: { error: `unrouted ${method} ${bare}` } };
   }
 
-  return { repos, known, tasks, cancelled, watch, request, calls };
+  return fake;
 }
 
 /** The real panel API, with `invoke` routed to the fake daemon. */
@@ -1011,6 +1023,82 @@ describe('repos panel — in memory', () => {
     expect(badges[1]).toBeNull();
   });
 
+  test('a repository read on disk says so on its row too', async () => {
+    const { api, daemon } = setup();
+    daemon.repos.push(
+      { repo_uuid: 'r1', name: 'held', root: '/tmp/a', in_memory: { bytes: 3 << 20 } },
+      { repo_uuid: 'r2', name: 'plain', root: '/tmp/b', in_memory: null },
+    );
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    const rows = [...shadow.querySelectorAll('#repo-list > li')];
+    expect(rows[0].querySelector('.on-disk')).toBeNull();
+    expect(rows[1].querySelector('.on-disk')?.textContent).toBe('on disk');
+  });
+
+  test('a repository still loading does not yet say where it is read', async () => {
+    const { api, daemon } = setup();
+    daemon.repos.push({ repo_uuid: 'r1', name: 'slow', root: '/tmp/a', in_memory: null, ready: false });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    expect(shadow.querySelector('#repo-list .on-disk')).toBeNull();
+  });
+
+  test("a row's button switches the repository, and says what it will do", async () => {
+    const { api, daemon, vars, created } = setup({ activeRepo: 'r1' });
+    daemon.repos.push({ repo_uuid: 'r2', name: 'plain', root: '/tmp/b', in_memory: null });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    const button = () => shadow.querySelector<HTMLButtonElement>('#repo-list .repo-memory')!;
+    expect(button().textContent).toBe('Hold in memory');
+    button().click();
+    await settle();
+    expect(memoryCalls(daemon)).toEqual([['/repos/r2/memory', true]]);
+    expect(shadow.querySelector('#repo-list .memory')?.textContent).toBe('in memory');
+
+    expect(button().textContent).toBe('Read on disk');
+    button().click();
+    await settle();
+    expect(memoryCalls(daemon)).toEqual([
+      ['/repos/r2/memory', true],
+      ['/repos/r2/memory', false],
+    ]);
+    expect(shadow.querySelector('#repo-list .on-disk')).not.toBeNull();
+    // The header opens the repository on a click: the button must not.
+    expect(vars.get('active_repo')).toBe('r1');
+    expect(created).toEqual([]);
+  });
+
+  test("a row's button cannot switch a repository still loading", async () => {
+    const { api, daemon } = setup();
+    daemon.repos.push({ repo_uuid: 'r1', name: 'slow', root: '/tmp/a', in_memory: null, ready: false });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    expect(shadow.querySelector<HTMLButtonElement>('#repo-list .repo-memory')?.disabled).toBe(true);
+  });
+
+  test("a refused switch is said in the status bar", async () => {
+    const { api, daemon, invoke } = setup({ activeRepo: 'r1' });
+    daemon.repos.push({ repo_uuid: 'r2', name: 'plain', root: '/tmp/b', in_memory: null });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+    daemon.refuseMemory = 'not enough room';
+    shadow.querySelector<HTMLButtonElement>('#repo-list .repo-memory')!.click();
+    await settle();
+    expect(JSON.stringify(invoke.mock.calls.filter((c) => c[0] === 'post_status'))).toContain(
+      'not enough room',
+    );
+  });
+
   const memoryCalls = (daemon: ReturnType<typeof fakeDaemon>) =>
     daemon.calls
       .filter((c) => c.path.endsWith('/memory'))
@@ -1136,6 +1224,52 @@ describe('repos panel — known repositories', () => {
     expect(row.textContent).toContain('/media/usb/photos');
     expect(row.textContent).toContain('the root directory must exist');
     expect(row.querySelector('button')).toBeNull();
+  });
+
+  const loadInMemoryButton = (shadow: ShadowRoot) =>
+    shadow.querySelector<HTMLButtonElement>('#known-list .repo-load-memory');
+
+  test('a known repository can be loaded in memory from its row', async () => {
+    const { api, daemon } = setup({ activeRepo: 'other' });
+    daemon.known.push({ ...music });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    expect(loadInMemoryButton(shadow)?.textContent).toBe('Load in memory');
+    loadInMemoryButton(shadow)!.click();
+    await settle();
+    expect(daemon.calls).toContainEqual({
+      method: 'POST',
+      path: '/repos/load',
+      body: { name: 'music', in_memory: true },
+    });
+    expect(daemon.repos[0].in_memory).toEqual({ bytes: 1 << 20 });
+  });
+
+  test('a known repository its entry holds in memory has no second button', async () => {
+    const { api, daemon } = setup({ activeRepo: 'other' });
+    daemon.known.push({ ...music, in_memory: true });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    expect(loadInMemoryButton(shadow)).toBeNull();
+  });
+
+  test('repos:load-known in-memory loads it in memory', async () => {
+    const { api, daemon, handlers } = setup({ activeRepo: 'other' });
+    daemon.known.push({ ...music });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    await command(handlers, 'repos:load-known')('music', 'in-memory');
+    expect(daemon.calls).toContainEqual({
+      method: 'POST',
+      path: '/repos/load',
+      body: { name: 'music', in_memory: true },
+    });
   });
 
   test('repos:load-known loads by name, completing over the known not loaded', async () => {

@@ -57,7 +57,9 @@
       .repo-head:hover {
         background: var(--mf-bg-raised, #26262e);
       }
-      .repo-unload {
+      .repo-unload,
+      .repo-memory,
+      .repo-load-memory {
         padding: 1px 8px;
         font-size: 0.85em;
       }
@@ -147,6 +149,13 @@
         border-radius: 3px;
         border: 1px solid var(--mf-accent, #3d5a80);
         color: var(--mf-fg, #d8d8e0);
+      }
+      .on-disk {
+        font-size: 0.8em;
+        padding: 0 5px;
+        border-radius: 3px;
+        border: 1px solid var(--mf-border, #3a3a44);
+        color: var(--mf-fg-dim, #8a8a96);
       }
       .uuid {
         font-family: var(--mf-font-mono, monospace);
@@ -278,7 +287,7 @@
         <button
           type="button"
           id="load-memory"
-          title="Read the whole store into memory and lock it there, so that no read waits on the disk; writes still go to it"
+          title="Copy the whole store into memory, so that no read waits on the disk; writes still go to the disk"
         >
           Load in memory
         </button>

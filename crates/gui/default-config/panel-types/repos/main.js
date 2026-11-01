@@ -179,12 +179,16 @@ export async function mount(root, metafolder) {
   }
 
   /**
-   * The row's mark of a repository held in memory, its size in the tooltip.
+   * Where the row's repository is read: in memory, its size in the tooltip, or
+   * on disk. Nothing while it loads: it is not read at all yet.
    * @param {Repo} repo @returns {HTMLElement|null}
    */
   function memoryBadge(repo) {
     const held = repo.in_memory;
-    if (!held) return null;
+    if (!held) {
+      if (isLoading(repo)) return null;
+      return el('span', { class: 'on-disk', title: 'read from the disk' }, 'on disk');
+    }
     const size = `${Math.ceil(held.bytes / (1 << 20))} MiB`;
     return el('span', { class: 'memory', title: `a copy of ${size} in memory` }, 'in memory');
   }
@@ -246,11 +250,14 @@ export async function mount(root, metafolder) {
     return known.filter((k) => !k.loaded);
   }
 
-  /** Loads the known repository `name`, as the Load button and `repos:load-known` do.
-   *  @param {MetafolderApi} mf @param {string} name */
-  async function loadKnown(mf, name) {
+  /** Loads the known repository `name`, as the row's buttons and
+   *  `repos:load-known` do. Without `inMemory` its entry in the configuration
+   *  decides (doc "Known repositories").
+   *  @param {MetafolderApi} mf @param {string} name @param {boolean} [inMemory] */
+  async function loadKnown(mf, name, inMemory = false) {
+    const body = inMemory ? { name, in_memory: true } : { name };
     const loaded = /** @type {{repo_uuid: string}} */ (
-      await daemon.call('POST', '/repos/load', { name })
+      await daemon.call('POST', '/repos/load', body)
     );
     await onCreated(mf, loadForm, loaded.repo_uuid);
   }
@@ -266,6 +273,11 @@ export async function mount(root, metafolder) {
       );
     }
     const name = known.name;
+    /** @param {boolean} inMemory */
+    const load = (inMemory) =>
+      void loadKnown(metafolder, name, inMemory).catch((error) =>
+        statusBar.error(`cannot load ${name}: ${messageOf(error)}`, statusErrorMs),
+      );
     return el(
       'li',
       { class: 'repo known' },
@@ -281,13 +293,23 @@ export async function mount(root, metafolder) {
             class: 'repo-unload',
             type: 'button',
             title: 'Load this repository into the daemon',
-            onclick: () =>
-              void loadKnown(metafolder, name).catch((error) =>
-                statusBar.error(`cannot load ${name}: ${messageOf(error)}`, statusErrorMs),
-              ),
+            onclick: () => load(false),
           },
           'Load',
         ),
+        // Its entry already loads it in memory: Load does just that.
+        known.in_memory
+          ? null
+          : el(
+              'button',
+              {
+                class: 'repo-load-memory',
+                type: 'button',
+                title: 'Load this repository with its store held in memory',
+                onclick: () => load(true),
+              },
+              'Load in memory',
+            ),
       ),
     );
   }
@@ -346,6 +368,24 @@ export async function mount(root, metafolder) {
                 memoryBadge(repo),
                 el('span', { class: 'root' }, repo.root),
                 el('span', { class: 'uuid' }, repo.repo_uuid.slice(0, 8)),
+                el(
+                  'button',
+                  {
+                    class: 'repo-memory',
+                    type: 'button',
+                    disabled: isLoading(repo),
+                    title: repo.in_memory
+                      ? 'Let go of the copy in memory, and read the store on disk again'
+                      : 'Copy the store into memory, so that no read waits on the disk',
+                    onclick: (/** @type {Event} */ event) => {
+                      event.stopPropagation();
+                      void toggleMemory(repo).catch((error) =>
+                        statusBar.error(`${repo.name}: ${messageOf(error)}`, statusErrorMs),
+                      );
+                    },
+                  },
+                  repo.in_memory ? 'Read on disk' : 'Hold in memory',
+                ),
                 el(
                   'button',
                   {
@@ -667,6 +707,22 @@ export async function mount(root, metafolder) {
     await pollWatch();
   }
 
+  /** Holds a loaded repository's store in memory, or lets go of it (doc
+   *  "Holding a repository in memory"): the opposite of what `repo` says.
+   *  @param {Repo} repo */
+  async function toggleMemory(repo) {
+    const held = /** @type {Repo} */ (
+      await daemon.call('POST', `/repos/${repo.repo_uuid}/memory`, {
+        in_memory: !repo.in_memory,
+      })
+    );
+    void statusBar.message(
+      held.in_memory ? `${repo.name}: held in memory` : `${repo.name}: no longer held in memory`,
+      3000,
+    );
+    await refresh();
+  }
+
   // Unload a repository from the daemon (doc "Repository endpoints"):
   // stops its watcher and releases its DB lock, then refreshes the list.
   /** @param {string} repoUuid */
@@ -876,7 +932,7 @@ export async function mount(root, metafolder) {
     },
   });
   void commands.register('repos:load-known', {
-    label: "Repos: load a repository the daemon's configuration knows, by its name",
+    label: "Repos: load a repository the daemon's configuration knows, by its name [in-memory]",
     args: [
       {
         name: 'repo',
@@ -884,8 +940,19 @@ export async function mount(root, metafolder) {
         complete: async () =>
           (await knownNotLoaded()).flatMap((k) => (k.name === null ? [] : [k.name])),
       },
+      {
+        name: 'memory',
+        optional: true,
+        prompt: () => 'Hold it in memory? (in-memory)',
+        complete: () => ['in-memory'],
+      },
     ],
-    handler: (mf, name) => loadKnown(mf, name.trim()),
+    handler: (mf, name, memory) => {
+      if (memory !== undefined && memory !== 'in-memory') {
+        throw new Error(`unknown mode: "${memory}" (expected in-memory)`);
+      }
+      return loadKnown(mf, name.trim(), memory === 'in-memory');
+    },
   });
   void commands.register('repos:load', {
     label: 'Repos: pick a folder and load the repository in it (on-disk, or in-memory: held in memory)',
@@ -956,16 +1023,7 @@ export async function mount(root, metafolder) {
       const uuid = wanted ? null : (await activeRepo()).uuid;
       const repo = repos.find((r) => (wanted ? r.name === wanted : r.repo_uuid === uuid));
       if (!repo) throw new Error(`no loaded repository named "${wanted || uuid}"`);
-      const held = /** @type {Repo} */ (
-        await daemon.call('POST', `/repos/${repo.repo_uuid}/memory`, {
-          in_memory: !repo.in_memory,
-        })
-      );
-      void statusBar.message(
-        held.in_memory ? `${repo.name}: held in memory` : `${repo.name}: no longer held in memory`,
-        3000,
-      );
-      await refresh();
+      await toggleMemory(repo);
     },
   });
 
