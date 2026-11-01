@@ -6,11 +6,12 @@ summary: Typing simplified queries in the GUI's query box and with -s on the com
 !! In the GUI
 
 The query box of the [[metarecord-list panel]] takes simplified text; focus it with
-<<key "metarecord-list:focus simplified" "p e">> (or <<key "metarecord-list:focus simplified" "p e">>).
-The field below it shows what it expands to, updated as you type. To edit the DSL
-by hand, ''freeze'' it: the DSL box then drives the query and the simplified text no
-longer does, until you focus the simplified box again, which unfreezes it. An
-expansion error shows under the simplified box; a DSL error under the DSL box.
+<<key "metarecord-list:focus simplified" "p e">>. The line below it shows what it
+expands to, updated as you type: read-only, but it can be copied. To write the DSL by
+hand, use the normal DSL field (<<key "metarecord-list:focus normal" "p q">>), which is
+AND-ed with the simplified query, so that both always run
+([[Why the two query fields are AND-ed]]). An expansion error shows under the simplified
+box; a DSL error under the DSL box.
 
 !! On the command line
 
