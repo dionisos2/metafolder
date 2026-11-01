@@ -8,8 +8,8 @@ The command input is the line just above the status bar, always there. It runs
 [[commands|Commands]], runs shell lines, and is where a command or a script asks
 its questions.
 
-* <<key "command-input:focus command" ":">> focuses it in ''command mode'' — the prompt reads `:`.
-* <<key "command-input:focus command clear" "Shift+x">> does the same from an empty line.
+* <<key "command-input:focus command clear" ":">> focuses it in ''command mode'', from an empty line — the prompt reads `:`.
+* <<key "command-input:focus command" "Shift+x">> does the same keeping the line being typed.
 * <<key "command-input:focus bash" "!">> focuses it in ''bash mode'' — the prompt reads `!` ([[Bash mode]]). Typing `!` first in an empty command line switches too.
 * <<key "editing:unfocus" Escape>> leaves it, keeping what was typed.
 

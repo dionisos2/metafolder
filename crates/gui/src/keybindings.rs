@@ -1788,13 +1788,17 @@ vars.y = ","
         let table = set.compiled();
         assert!(table.iter().any(|b| b.invocation == "workspace:new"));
         assert!(table.iter().any(|b| b.keys == [":"]));
-        // `x` is the command input (doc "Choosing keybindings"), `:` its alias.
+        // `x` is the command input from an empty line (doc "Choosing keybindings"),
+        // `:` its alias; shift+x keeps the line being typed.
         assert!(table
             .iter()
-            .any(|b| b.keys == ["x"] && b.invocation == "command-input:focus command"));
+            .any(|b| b.keys == ["x"] && b.invocation == "command-input:focus command clear"));
         assert!(table
             .iter()
-            .any(|b| b.keys == ["shift+x"] && b.invocation == "command-input:focus command clear"));
+            .any(|b| b.keys == [":"] && b.invocation == "command-input:focus command clear"));
+        assert!(table
+            .iter()
+            .any(|b| b.keys == ["shift+x"] && b.invocation == "command-input:focus command"));
         assert!(table
             .iter()
             .any(|b| b.keys == ["!"] && b.invocation == "command-input:focus bash"));

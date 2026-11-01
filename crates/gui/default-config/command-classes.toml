@@ -14,7 +14,7 @@
 # ── Input and editing ────────────────────────────────────────────────────────
 "command-input:focus" = "A"
 "command-input:focus bash" = "B"
-"command-input:focus command clear" = "B"
+"command-input:focus command clear" = "A"
 "editing:confirm" = "A"
 "editing:unfocus" = "A"
 "editing:validate" = "A"

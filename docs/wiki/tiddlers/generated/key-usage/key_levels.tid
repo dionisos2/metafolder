@@ -21,7 +21,7 @@ summary: The keys used and left at each level
 |``t`` |starts 18 keys (``{panels}``) |
 |``v`` |starts 16 keys (``{view}``) |
 |``w`` |starts 4 keys (``{workspaces}``) |
-|``x`` |``command-input:focus command`` |
+|``x`` |``command-input:focus command clear`` |
 
 !! Level 0: the letters left (10)
 

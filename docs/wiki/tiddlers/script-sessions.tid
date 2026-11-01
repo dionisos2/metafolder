@@ -61,7 +61,7 @@ refused (`400`) before it is shown.
 |Escape |stops the asking script |
 |Ctrl+Escape |kills it |
 |Backspace |goes back: answers `back` |
-|<<key "command-input:focus command" ":">>, <<key "command-input:focus bash" "!">> |open the command input |
+|<<key "command-input:focus command clear" ":">>, <<key "command-input:focus bash" "!">> |open the command input |
 |`script-keys:toggle` |flips the script keys (no key by default) |
 |<<key "panel:focus cycle" F6>> |walks the panels and the question |
 

@@ -91,7 +91,7 @@ with one empty workspace: pick a repository in the [[repos panel]], and the
 workspace is on it ([[Workspaces]]).
 
 * The window shows one or two ''panels'' side by side; each slot can show any panel type — the list of metarecords, the detail of one, the file manager, the log… ([[Panel types]], [[Panel slots and layout]]).
-* Everything is a ''command'': <<key "command-input:focus command" ":">> focuses the command input, which completes command names; <<key "command-input:focus bash" "!">> runs a shell line instead ([[The command input]], [[Commands]]).
+* Everything is a ''command'': <<key "command-input:focus command clear" ":">> focuses the command input, which completes command names; <<key "command-input:focus bash" "!">> runs a shell line instead ([[The command input]], [[Commands]]).
 * Almost every command has a ''key'', and every key can be changed ([[Keyboard navigation]], [[Changing keybindings]]).
 * Typing in the list's query box filters the metarecords, in the simplified language ([[Using simplified queries]]).
 * <<key "help:open" "h h">> opens this documentation; <<key "help:cursor" "h c">> then a click opens the page of what was clicked, and <<key "help:key" "h k">> says what a key runs ([[In-app help]]).

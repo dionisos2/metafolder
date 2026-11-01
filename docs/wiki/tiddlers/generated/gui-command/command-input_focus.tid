@@ -10,6 +10,6 @@ summary: Focus the command input (command / bash mode)
 !! Default keys
 
 * ``!`` → ``command-input:focus bash``
-* ``:`` → ``command-input:focus command``
-* ``shift+x`` → ``command-input:focus command clear``
-* ``x`` → ``command-input:focus command``
+* ``:`` → ``command-input:focus command clear``
+* ``shift+x`` → ``command-input:focus command``
+* ``x`` → ``command-input:focus command clear``
