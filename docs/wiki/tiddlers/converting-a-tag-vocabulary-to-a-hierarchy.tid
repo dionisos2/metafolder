@@ -24,5 +24,5 @@ or, in the GUI's detail panel on the tag, `metarecord:field add path évènement
 new parent alone, typed by its path: the tag keeps its name.
 
 Done in this order: retyped first, the field would break the constraint the schema
-still holds. `tests/cli_e2e.rs` (`test_a_tree_vocabulary_converts_to_a_hierarchy`)
+still holds. `tests/cli_e2e/` (`test_a_tree_vocabulary_converts_to_a_hierarchy`)
 runs it.
