@@ -39,6 +39,6 @@ production at fault:
 * every string literal lexes to ''exactly one'' token — a literal matches one input token by its text, so `"/fav"` (two tokens) could never match; the error suggests the split form, `"/" "fav"`.
 
 A missing or malformed file is an error when a client loads it — there is no fallback
-to a built-in grammar ([[No runtime fallback]]); an empty file is a grammar with no
-rules, accepting nothing. The DSL needs no grammar and is unaffected either way.
+to a built-in grammar ([[No runtime fallback]]); an empty file is malformed, having
+no `query` production. The DSL needs no grammar and is unaffected either way.
 Expansion errors carry the position in the simplified input.

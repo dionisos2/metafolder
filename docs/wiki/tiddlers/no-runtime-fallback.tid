@@ -16,7 +16,7 @@ with the merge of a new version; while a merge stays in conflict, a program that
 that key refuses to start until it is resolved.
 
 |!File |!Read by |!Missing |!Malformed |
-|`core/query-grammar` |the GUI at startup, `mf` with `-s` — never the daemon |error when loaded; an ''empty'' file is valid (the simplified language then accepts nothing) |error |
+|`core/query-grammar` |the GUI at startup, `mf` with `-s` — never the daemon |error when loaded |error when loaded; an ''empty'' file is one, having no `query` production |
 |`core/ignore-presets.toml` |`mf ignore`, `mf repo init`, the GUI's repository creation — never the daemon |error when loaded (`mf repo init --no-ignore` skips it) |error |
 |`gui/config.toml`, `gui/keybindings.toml` |the GUI |error at startup |error at startup |
 |`gui/style.css` |the GUI |error at startup |nothing checks it: the WebView ignores what it cannot parse |
