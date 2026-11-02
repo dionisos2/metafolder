@@ -9,6 +9,7 @@ import { cursor } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { withRuns } from './support/runs';
+import { shippedDefaults, shippedSettings } from './support/shipped-defaults';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/metarecord-list');
 
@@ -61,8 +62,8 @@ function stubApi(
     guiServer: 'http://127.0.0.1:7524',
     sessionToken: 'token',
     pageSize: PAGE,
-    settings: {},
-    defaults: {},
+    settings: shippedSettings(),
+    defaults: shippedDefaults(),
     visible: false, // never displayed: the scroll pager can never fire
     onVisibility: noop,
     // …but the panel still ran its query — unless it is never displayed at all.

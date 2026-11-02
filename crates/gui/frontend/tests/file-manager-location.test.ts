@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import shipped from '../../default-config/commands.js';
 import { withRuns } from './support/runs';
+import { shippedDefaults } from './support/shipped-defaults';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/file-manager');
 
@@ -76,7 +77,7 @@ function stub(repo: string | null, vars: Record<string, unknown>, repoRoot = '/r
     panelType: 'file-manager',
     pageSize: 100,
     settings: { statusMessageMs: 1000, statusErrorMs: 2000 },
-    defaults: {},
+    defaults: shippedDefaults(),
     visible: true,
     onVisibility: noop,
     whenVisible: (fn: () => void) => fn(),

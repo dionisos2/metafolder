@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { changeFeed, createPanelApi } from '../src/lib/panels/api';
+import { shippedDefaults } from './support/shipped-defaults';
 
 const PANEL_DIR = resolvePath(process.cwd(), '../default-config/panel-types/metarecord-list');
 
@@ -230,6 +231,7 @@ function setup() {
       guiServer: 'http://127.0.0.1:7524',
       sessionToken: 'test-token',
       pageSize: 100,
+      panelDefaults: shippedDefaults(),
       root: {} as ShadowRoot,
       visibilityGate: { visible: true, set: () => {}, whenVisible: (fn: () => void) => fn() },
     },

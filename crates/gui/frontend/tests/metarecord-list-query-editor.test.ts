@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createQueryEditor } from '../../default-config/panel-types/metarecord-list/query-editor.js';
+import { shippedDefaults, shippedSettings } from './support/shipped-defaults';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/metarecord-list');
 
@@ -30,7 +31,7 @@ function setup(vars: Record<string, unknown> = {}) {
   const store = new Map<string, unknown>(Object.entries(vars));
   const listeners = new Map<string, (value: unknown) => void>();
   const metafolder = {
-    settings: {},
+    settings: shippedSettings(),
     whenVisible: (fn: () => void) => fn(),
     daemon: { setContext: vi.fn() },
     query: {

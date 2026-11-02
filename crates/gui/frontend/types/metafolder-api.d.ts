@@ -67,43 +67,41 @@ declare namespace Metafolder {
 
   // ── The API surface ───────────────────────────────────────────────────────
 
-  /** Shared panel UX timing knobs (config.toml `[panels]`). Every key may be
-   *  absent when the config is minimal, so read them as `?? <fallback>`. */
+  /** Shared panel UX timing knobs (config.toml `[panels]`), all required. */
   interface Settings {
-    statusMessageMs?: number;
-    statusErrorMs?: number;
-    finderDebounceMs?: number;
-    livePreviewDebounceMs?: number;
-    taskPollMs?: number;
-    /** Whether trashing one item asks first (doc "Confirming a trashing");
-     *  absent means yes. What touches several asks regardless. */
-    confirmTrash?: boolean;
+    statusMessageMs: number;
+    statusErrorMs: number;
+    finderDebounceMs: number;
+    livePreviewDebounceMs: number;
+    taskPollMs: number;
+    /** Whether trashing one item asks first (doc "Confirming a trashing").
+     *  What touches several asks regardless. */
+    confirmTrash: boolean;
   }
 
   /** Per-panel-type defaults from `config.toml` (`[panel-defaults.<type>]`),
-   *  camelCased. Every key is optional: an unconfigured one is undefined and
-   *  the panel falls back to its own module constant. The built-in panels'
-   *  keys are declared for type-checking; the index signature carries a custom
+   *  camelCased. Reading a key the table lacks throws (doc "No runtime
+   *  fallback"): test an optional one with `in`. The built-in panels' keys are declared for type-checking; the index signature carries a custom
    *  panel type's own keys, which the GUI knows nothing about. */
   interface Defaults {
     /** metarecord-list: initial table columns (columns-input syntax). */
-    columns?: string;
+    columns: string;
     /** metarecord-list: fields the finder searches (`field[:aspect]`). */
-    finderFields?: string[];
+    finderFields: string[];
     /** metarecord-list: the column shown as a tile's name in grid mode. */
-    gridNameColumn?: string;
+    gridNameColumn: string;
     /** path-ref: the tree_ref field whose forest the panel opens on. */
-    field?: string;
+    field: string;
     /** path-ref: the Ref field `path-ref:list-refs` follows back into the forest. */
-    refField?: string;
+    refField: string;
     /** file: extensions taking the text-preview fast path. */
-    textExtensions?: string[];
+    textExtensions: string[];
     /** file: bytes of a text file read into the preview. */
-    textPreviewLimit?: number;
+    textPreviewLimit: number;
     /** file: image zoom step (a multiplier) and bounds. */
-    zoomStep?: number;
-    zoomMin?: number;
-    zoomMax?: number;
+    zoomStep: number;
+    zoomMin: number;
+    zoomMax: number;
     readonly [key: string]: unknown;
   }
 
@@ -877,11 +875,12 @@ declare namespace Metafolder {
      *  `/__media-probe`): append as `?token=` (doc "Session tokens"). */
     readonly sessionToken: string;
     /** The configured progressive-loading page size for this panel type
-     *  (config.toml `[page-size]`); undefined for panels without an entry. */
-    readonly pageSize: number | undefined;
+     *  (config.toml `[page-size]`); undefined only for a custom panel type,
+     *  which has no entry. */
+    readonly pageSize: number;
     readonly settings: Settings;
     /** This panel type's configured defaults (config.toml
-     *  `[panel-defaults.<panel-type>]`); `{}` when the user configured none. */
+     *  `[panel-defaults.<panel-type>]`). */
     readonly defaults: Defaults;
     readonly visible: boolean;
     onVisibility(listener: (visible: boolean, slot: string | null) => void): void;

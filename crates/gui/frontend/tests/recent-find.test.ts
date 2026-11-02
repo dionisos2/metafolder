@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { cursor, findCandidates } from './support/cursor';
 import { withRuns } from './support/runs';
+import { shippedDefaults } from './support/shipped-defaults';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/recent');
 
@@ -45,7 +46,7 @@ function stub() {
   const statusBar = { message: vi.fn(async () => {}), error: vi.fn(async () => {}) };
   const api = {
     settings: { statusErrorMs: 2000 },
-    defaults: {},
+    defaults: shippedDefaults(),
     whenVisible: (fn: () => void) => fn(),
     recent: { list: vi.fn(async () => VIEWED.map((e) => ({ ...e }))) },
     daemon: {

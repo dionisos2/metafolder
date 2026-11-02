@@ -41,7 +41,7 @@ function previewValue(value) {
  */
 export function mount(root, metafolder) {
   const { sync, daemon, query, workspace, commands, statusBar } = metafolder;
-  const statusMessageMs = metafolder.settings.statusMessageMs ?? 5000;
+  const statusMessageMs = metafolder.settings.statusMessageMs;
 
   // `onPairChange` is a hoisted function declaration, so onChange can name it.
   const repoA = createSelect(byId(root, 'repo-a'), {

@@ -2,13 +2,6 @@
 // each kind of file gets, how long a GIF lasts, and the order the files come
 // in. Pure, so the panel's part is only timers and elements.
 
-// What the durations fall back to when `[panel-defaults.viewer]` has none.
-export const IMAGE_SECONDS = 3;
-// A GIF whose length cannot be read (a still, a truncated file).
-export const GIF_SECONDS = 5;
-// The pause after an audio or a video has played to its end.
-export const GAP_SECONDS = 0.5;
-
 const TARGETS = ['selection', 'query', 'stop'];
 export const PLAY_OPTIONS = ['shuffle', 'loop'];
 

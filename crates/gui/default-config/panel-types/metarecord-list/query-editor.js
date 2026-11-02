@@ -62,7 +62,7 @@ function conjunctionText(parts) {
  */
 export function createQueryEditor({ root, metafolder, history, normalHistory, onApply, run }) {
   const { daemon, workspace, query } = metafolder;
-  const livePreviewMs = metafolder.settings.livePreviewDebounceMs ?? 130;
+  const livePreviewMs = metafolder.settings.livePreviewDebounceMs;
 
   const queryInput = byId(root, 'query-input', HTMLInputElement);
   const queryError = byId(root, 'query-error');

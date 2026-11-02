@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { cursor, findCandidates, generic } from './support/cursor';
 import { withRuns } from './support/runs';
+import { shippedDefaults } from './support/shipped-defaults';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/path-ref');
 
@@ -54,7 +55,7 @@ function stub() {
     panelType: 'path-ref',
     pageSize: 200,
     settings: { statusMessageMs: 1000, statusErrorMs: 2000 },
-    defaults: {},
+    defaults: shippedDefaults(),
     visible: true,
     whenVisible: (fn: () => void) => fn(),
     daemon: {

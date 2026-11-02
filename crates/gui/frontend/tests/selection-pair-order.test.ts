@@ -12,6 +12,7 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { shippedDefaults } from './support/shipped-defaults';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/file-manager');
 
@@ -65,7 +66,7 @@ function stub() {
     panelType: 'file-manager',
     pageSize: 100,
     settings: { statusMessageMs: 1000, statusErrorMs: 2000 },
-    defaults: {},
+    defaults: shippedDefaults(),
     visible: true,
     onVisibility: noop,
     whenVisible: (fn: () => void) => fn(),

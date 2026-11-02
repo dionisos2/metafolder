@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { mount } from '../../default-config/panel-types/trash/main.js';
 import { withRuns } from './support/runs';
+import { shippedDefaults, shippedSettings } from './support/shipped-defaults';
 
 /** The shell's mount path: index.html body (minus scripts/styles) into a Shadow root. */
 function shadowForTrash(): ShadowRoot {
@@ -66,8 +67,8 @@ function stub() {
   const workspace = { get: vi.fn(async () => 'repo-1'), set: vi.fn(async () => {}), onChange: vi.fn() };
   const statusBar = { message: vi.fn(async () => {}), error: vi.fn(async () => {}) };
   const api = {
-    settings: {},
-    defaults: {},
+    settings: shippedSettings(),
+    defaults: shippedDefaults(),
     trash,
     workspace,
     statusBar,

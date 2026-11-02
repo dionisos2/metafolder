@@ -25,9 +25,6 @@ import {
 } from './playback.js';
 import { fetchMounts, offlineMountFor, relativeTo, unavailableLabel } from '/__mounts.js';
 import {
-  GAP_SECONDS,
-  GIF_SECONDS,
-  IMAGE_SECONDS,
   PLAY_OPTIONS,
   createPlaylist,
   gifDurationMs,
@@ -36,68 +33,51 @@ import {
 } from './slideshow.js';
 import { editableText, encodeEdited } from './textedit.js';
 
-// Directory grid: render this many thumbnails per window (more on scroll), so
-// opening a folder with thousands of files does not build/load them all at
-// once. The size comes from the GUI config (`[page-size].file`); this is only
-// the fallback when no config value is provided.
-const DIR_PAGE_DEFAULT = 150;
-
 // What a file is shown as comes from its content, not its name
 // (doc "GUI file endpoints"): the GUI reads the kind from the file's first
 // bytes (`fs.stat().kind`) — image, gif, video, audio or document. Text has no
 // magic bytes, so it is what is left, decided below.
 //
-// The viewer limits are *fallbacks*: the effective values come from the GUI
-// config (`[panel-defaults.viewer]`), read in `mount`.
-
-// Known text extensions: a *fast path* to the text preview (not the only way
-// in). A file with one of these is always rendered as text — this is also how
-// encodings the content sniff rejects still preview (UTF-16 holds NULs). Any
-// other extension (including none) is decided by `looksLikeText` on its bytes,
-// so `.tid`/`.cmake`/an extensionless script need not be listed here.
-const TEXT = new Set([
-  'txt', 'md', 'org', 'json', 'toml', 'yaml', 'yml', 'xml', 'html', 'css', 'js', 'ts',
-  'rs', 'py', 'sh', 'c', 'h', 'cpp', 'java', 'log', 'csv', 'ini', 'conf',
-]);
-const TEXT_PREVIEW_LIMIT = 256 * 1024;
-// A document is rendered page by page by the GUI server (`GET /document`),
-// never handed to the WebView as a file: see `server/document.rs` for why.
-// Resolution of a rendered page, in DPI. 150 is a readable A4 page on a normal
-// screen; the zoom controls work on the resulting image, so this is the
-// *rendering* detail, not the displayed size.
-const DOCUMENT_DPI = 150;
-
-// Zoom: a step multiplies the current scale; bounds keep the manual size sane.
-const ZOOM_STEP = 1.25;
-const ZOOM_MIN = 0.05;
-const ZOOM_MAX = 40;
+// The viewer limits come from the GUI config (`[panel-defaults.viewer]`), read
+// in `mount`.
 
 // What the media poster says, before the volume note it may carry.
 const POSTER_HINT = '\u25b6 play (space) \u2014 the player loads on demand';
 
-/** A configured extension list as a lowercase Set, or `fallback` when the
- *  config has none (or something that is not a list of strings).
- *  @param {unknown} configured @param {Set<string>} fallback */
-function extensionSet(configured, fallback) {
-  if (!Array.isArray(configured)) return fallback;
-  const extensions = configured.filter((e) => typeof e === 'string');
-  return extensions.length ? new Set(extensions.map((e) => e.toLowerCase())) : fallback;
+/** A value of `[panel-defaults.viewer]` the panel cannot use stops it, and it
+ *  shows the error (doc "No runtime fallback").
+ *  @param {string} key @param {string} expected @param {unknown} got */
+function invalid(key, expected, got) {
+  return new Error(`[panel-defaults.viewer] ${key} in gui/config.toml must be ${expected}, got ${JSON.stringify(got)}`);
 }
 
-/** A configured number, or `fallback` when it is missing or not a finite one.
- *  @param {unknown} configured @param {number} fallback */
-function positiveNumber(configured, fallback) {
-  return typeof configured === 'number' && Number.isFinite(configured) && configured > 0
-    ? configured
-    : fallback;
+/** The known text extensions: a *fast path* to the text preview (not the only
+ *  way in). A file with one of these is always rendered as text — this is also
+ *  how encodings the content sniff rejects still preview (UTF-16 holds NULs).
+ *  Any other extension (including none) is decided by `looksLikeText` on its
+ *  bytes, so `.tid`/`.cmake`/an extensionless script need not be listed.
+ *  @param {unknown} configured */
+function extensionSet(configured) {
+  if (!Array.isArray(configured) || configured.some((e) => typeof e !== 'string')) {
+    throw invalid('text-extensions', 'an array of strings', configured);
+  }
+  return new Set(configured.map((e) => e.toLowerCase()));
 }
 
-/** A configured number of seconds that may be 0, or `fallback`.
- *  @param {unknown} configured @param {number} fallback */
-function nonNegativeNumber(configured, fallback) {
-  return typeof configured === 'number' && Number.isFinite(configured) && configured >= 0
-    ? configured
-    : fallback;
+/** @param {unknown} configured @param {string} key */
+function positiveNumber(configured, key) {
+  if (typeof configured === 'number' && Number.isFinite(configured) && configured > 0) {
+    return configured;
+  }
+  throw invalid(key, 'a positive number', configured);
+}
+
+/** @param {unknown} configured @param {string} key */
+function nonNegativeNumber(configured, key) {
+  if (typeof configured === 'number' && Number.isFinite(configured) && configured >= 0) {
+    return configured;
+  }
+  throw invalid(key, 'a number that is not negative', configured);
 }
 
 /**
@@ -135,21 +115,26 @@ export function backTarget(local, selectedPath) {
  */
 export async function mount(root, metafolder) {
   const { workspace, fs, commands, daemon, statusBar } = metafolder;
-  const dirPage = metafolder.pageSize ?? DIR_PAGE_DEFAULT;
-  const statusMessageMs = metafolder.settings?.statusMessageMs ?? 5000;
+  // Directory grid: render this many thumbnails per window (more on scroll), so
+  // opening a folder with thousands of files does not build/load them all at once.
+  const dirPage = metafolder.pageSize;
+  const statusMessageMs = metafolder.settings.statusMessageMs;
   // The text fast path and the viewer's limits (GUI config
-  // `[panel-defaults.viewer]`, falling back to the module constants above).
+  // `[panel-defaults.viewer]`).
   const { defaults } = metafolder;
-  const text = extensionSet(defaults.textExtensions, TEXT);
-  const documentDpi = positiveNumber(defaults.documentDpi, DOCUMENT_DPI);
-  const textPreviewLimit = positiveNumber(defaults.textPreviewLimit, TEXT_PREVIEW_LIMIT);
-  const zoomStep = positiveNumber(defaults.zoomStep, ZOOM_STEP);
-  const zoomMin = positiveNumber(defaults.zoomMin, ZOOM_MIN);
-  const zoomMax = positiveNumber(defaults.zoomMax, ZOOM_MAX);
+  const text = extensionSet(defaults.textExtensions);
+  const documentDpi = positiveNumber(defaults.documentDpi, 'document-dpi');
+  const textPreviewLimit = positiveNumber(defaults.textPreviewLimit, 'text-preview-limit');
+  const zoomStep = positiveNumber(defaults.zoomStep, 'zoom-step');
+  const zoomMin = positiveNumber(defaults.zoomMin, 'zoom-min');
+  const zoomMax = positiveNumber(defaults.zoomMax, 'zoom-max');
   // The slideshow's waits (doc "Slideshow").
-  const slideshowImageMs = positiveNumber(defaults.slideshowImageSeconds, IMAGE_SECONDS) * 1000;
-  const slideshowGifMs = positiveNumber(defaults.slideshowGifSeconds, GIF_SECONDS) * 1000;
-  const slideshowGapMs = nonNegativeNumber(defaults.slideshowGapSeconds, GAP_SECONDS) * 1000;
+  const slideshowImageMs =
+    positiveNumber(defaults.slideshowImageSeconds, 'slideshow-image-seconds') * 1000;
+  const slideshowGifMs =
+    positiveNumber(defaults.slideshowGifSeconds, 'slideshow-gif-seconds') * 1000;
+  const slideshowGapMs =
+    nonNegativeNumber(defaults.slideshowGapSeconds, 'slideshow-gap-seconds') * 1000;
 
   /** @type {string[]} */
   let paths = [];

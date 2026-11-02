@@ -7,6 +7,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { editableText, encodeEdited } from '../../default-config/panel-types/viewer/textedit.js';
+import { shippedDefaults, shippedSettings } from './support/shipped-defaults';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/viewer');
 const encode = (text: string) => new TextEncoder().encode(text);
@@ -66,8 +67,8 @@ async function mounted(files: Record<string, string | Uint8Array>, selected: str
     guiServer: 'http://127.0.0.1:7524',
     sessionToken: 'test-token',
     pageSize: 10,
-    settings: {},
-    defaults,
+    settings: shippedSettings(),
+    defaults: { ...shippedDefaults(), ...defaults },
     whenVisible: (fn: () => void) => fn(),
     provide: (fns: object) => Object.assign(provided, fns),
     workspace: {

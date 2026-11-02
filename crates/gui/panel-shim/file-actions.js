@@ -138,7 +138,7 @@ export function revealFolder(path, isDir) {
  *  status bar pairs with its error styling. Messages keep the shorter
  *  `statusMs` passed in by the caller. @param {MetafolderApi} metafolder */
 function errorMs(metafolder) {
-  return metafolder.settings?.statusErrorMs ?? 8000;
+  return metafolder.settings.statusErrorMs;
 }
 
 /** The directory a paste lands in: the target itself when it is a directory,
@@ -242,10 +242,10 @@ export function trashedMessage(what, many, desktop) {
  * (config.toml `[panels] confirm-trash`, doc "Confirming a trashing"). True to
  * go ahead. What touches several files or metarecords asks with a plain
  * `confirm`, whatever the setting.
- * @param {{ settings?: { confirmTrash?: boolean } }} metafolder @param {string} question
+ * @param {{ settings: { confirmTrash: boolean } }} metafolder @param {string} question
  */
 export function confirmTrash(metafolder, question) {
-  return metafolder.settings?.confirmTrash === false || confirm(question);
+  return !metafolder.settings.confirmTrash || confirm(question);
 }
 
 /**
@@ -280,7 +280,7 @@ async function openWithExternal(metafolder, path) {
  */
 export function fileMenuItems({ metafolder, path, name, isDir, onChanged }) {
   const { statusBar } = metafolder;
-  const statusMs = metafolder.settings?.statusMessageMs ?? 5000;
+  const statusMs = metafolder.settings.statusMessageMs;
   const label = name || baseName(path);
   const nudge =
     onChanged ?? (() => void metafolder.workspace.set('metarecords:dirty', Date.now()));

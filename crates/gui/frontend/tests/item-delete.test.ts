@@ -124,7 +124,7 @@ describe('item:delete — the item under the cursor', () => {
 
 describe('item:delete — the question first (doc "Confirming a trashing")', () => {
   beforeEach(() => {
-    settings = {};
+    settings = { confirmTrash: true };
   });
 
   test('a file is trashed once the question is answered yes', async () => {

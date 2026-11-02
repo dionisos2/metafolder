@@ -50,7 +50,7 @@ function text(rec, name) {
  */
 export function mount(root, metafolder) {
   const { daemon, workspace, commands, statusBar } = metafolder;
-  const statusMessageMs = metafolder.settings?.statusMessageMs ?? 5000;
+  const statusMessageMs = metafolder.settings.statusMessageMs;
 
   /** @type {string|null} */
   let repo = null;

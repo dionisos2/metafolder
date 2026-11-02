@@ -29,44 +29,18 @@ import {
   cellText,
 } from '/__columns.js';
 
-// Smallest page of the three list panels: each row needs several daemon
-// round-trips (TreeRef path resolution, ref-target metarecords) and parsing,
-// so a modest page keeps a large result responsive on first display. The
-// effective default comes from the GUI config (`[page-size].metarecord-list`);
-// this is only the fallback, and the per-workspace page-size variable still
-// overrides it.
-const DEFAULT_PAGE_SIZE_FALLBACK = 100;
-// Initial table columns. The effective value comes from the GUI config
-// (`[panel-defaults.metarecord-list].columns`), overridden in turn by the
-// per-workspace `metarecord-list:columns` variable; this is only the fallback.
-const DEFAULT_COLUMNS = '(mfr_path:path|path:path) (mfr_type|mf_schema) mfr_mtime order_file';
-// Fields the finder (quick OSM filter) searches by default, each with an
-// explicit aspect (`field:path` for the tree_ref path, `field:value` for a plain
-// value) so it never depends on the async field catalog. A bare `field` (no
-// mode) auto-detects from the catalog. Missing fields contribute nothing.
-// Configured by `[panel-defaults.metarecord-list].finder-fields`, overridable
-// per workspace via `metarecord-list:finder-fields`.
-const DEFAULT_FINDER_FIELDS = ['mfr_path:path', 'label:value', 'name:value'];
-// Idle delay before the finder re-runs the query, so a burst of typing sends
-// one request rather than one per keystroke.
-const FINDER_DEBOUNCE_MS = 500;
-// The column shown as a tile's name in grid mode
-// (`[panel-defaults.metarecord-list].grid-name-column`).
-const DEFAULT_GRID_NAME_COLUMN = 'mfr_path:path';
-
 /**
- * Parses a columns spec, falling back to `fallback` when it is missing, empty
- * or invalid — a bad configured value must never break the panel.
- * @param {string|undefined} spec @param {string} fallback @returns {Column[]}
+ * A columns spec of `[panel-defaults.metarecord-list]`: one that names no column
+ * or does not parse stops the panel, which shows the error (doc "No runtime
+ * fallback").
+ * @param {string} spec @param {string} key @returns {Column[]}
  */
-function parseColumnsOr(spec, fallback) {
-  try {
-    const parsed = parseColumns(spec ?? '');
-    if (parsed.length > 0) return parsed;
-  } catch {
-    /* invalid spec (stale config or persisted value): fall back */
+function configuredColumns(spec, key) {
+  const parsed = parseColumns(spec);
+  if (parsed.length === 0) {
+    throw new Error(`[panel-defaults.metarecord-list] ${key} in gui/config.toml names no column`);
   }
-  return parseColumns(fallback);
+  return parsed;
 }
 
 /**
@@ -80,25 +54,24 @@ function parseColumnsOr(spec, fallback) {
  */
 export async function mount(root, metafolder) {
   const { daemon, workspace, commands, statusBar, bench, changes } = metafolder;
-  const defaultPageSize = metafolder.pageSize ?? DEFAULT_PAGE_SIZE_FALLBACK;
-  // UX timing knobs (config.toml `[panels]`), with the module fallbacks below.
+  const defaultPageSize = metafolder.pageSize;
+  // UX timing knobs (config.toml `[panels]`).
   const { settings } = metafolder;
-  const finderDebounceMs = settings.finderDebounceMs ?? FINDER_DEBOUNCE_MS;
-  // Initial values from the GUI config (`[panel-defaults.metarecord-list]`),
-  // with the module constants as fallbacks. A value persisted per workspace
-  // (columns, finder fields) still wins over both.
-  const defaultColumns = metafolder.defaults.columns ?? DEFAULT_COLUMNS;
-  const defaultFinderFields = metafolder.defaults.finderFields ?? DEFAULT_FINDER_FIELDS;
-  const gridNameColumn = parseColumnsOr(
+  const finderDebounceMs = settings.finderDebounceMs;
+  // Initial values from the GUI config (`[panel-defaults.metarecord-list]`).
+  // A value persisted per workspace (columns, finder fields) wins over them.
+  const defaultColumns = configuredColumns(metafolder.defaults.columns, 'columns');
+  const defaultFinderFields = metafolder.defaults.finderFields;
+  const gridNameColumn = configuredColumns(
     metafolder.defaults.gridNameColumn,
-    DEFAULT_GRID_NAME_COLUMN,
+    'grid-name-column',
   )[0];
-  const statusMessageMs = settings.statusMessageMs ?? 5000;
+  const statusMessageMs = settings.statusMessageMs;
 
   /** @type {string|null} */
   let repo = null;
   /** @type {Column[]} persisted per workspace (spec strings) */
-  let columns = parseColumnsOr(defaultColumns, DEFAULT_COLUMNS);
+  let columns = defaultColumns;
   /** @type {Record<string, number>} column spec -> px; persisted per workspace */
   let widths = {};
   /** @type {Metafolder.Metarecord[]} */
@@ -690,7 +663,7 @@ export async function mount(root, metafolder) {
     } catch {
       /* stale persisted value: fall back to the defaults */
     }
-    columns = parsed.length > 0 ? parsed : parseColumnsOr(defaultColumns, DEFAULT_COLUMNS);
+    columns = parsed.length > 0 ? parsed : defaultColumns;
     columnsInput.value = columns.map((c) => c.spec).join(' ');
   }
 
@@ -706,7 +679,7 @@ export async function mount(root, metafolder) {
       columnsError.textContent = messageOf(error);
       return;
     }
-    columns = parsed.length > 0 ? parsed : parseColumnsOr(defaultColumns, DEFAULT_COLUMNS);
+    columns = parsed.length > 0 ? parsed : defaultColumns;
     columnsInput.value = columns.map((c) => c.spec).join(' ');
     columnsHistory.push(columnsInput.value);
     await reresolveColumns();

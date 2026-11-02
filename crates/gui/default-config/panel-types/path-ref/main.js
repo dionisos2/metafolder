@@ -26,16 +26,6 @@ import { childrenQuery, nodeFields, refQueryDsl, treeNameOf, treeRefPath } from 
  * @typedef {import('/__schema-template.js').Schema} Schema
  */
 
-const PAGE_DEFAULT = 200;
-// The tree_ref field the panel opens on. The effective value comes from the
-// GUI config (`[panel-defaults.path-ref].field`), overridden by the stored
-// `path-ref:field` workspace variable; this is only the fallback.
-const DEFAULT_FIELD = 'mfr_path';
-// The Ref field `path-ref:list-refs` follows back into the forest. Tags are by
-// far the common case, so that is the default; `[panel-defaults.path-ref]
-// .ref-field` and the stored `path-ref:ref-field` variable override it.
-const DEFAULT_REF_FIELD = 'tag';
-
 /**
  * A node of the forest, as this panel handles it: the roots endpoint and a
  * Follows page are normalized to the same shape.
@@ -45,9 +35,9 @@ const DEFAULT_REF_FIELD = 'tag';
  */
 export async function mount(root, metafolder) {
   const { daemon, workspace, commands, statusBar } = metafolder;
-  const PAGE = metafolder.pageSize ?? PAGE_DEFAULT;
-  const defaultField = metafolder.defaults.field ?? DEFAULT_FIELD;
-  const defaultRefField = metafolder.defaults.refField ?? DEFAULT_REF_FIELD;
+  const PAGE = metafolder.pageSize;
+  const defaultField = metafolder.defaults.field;
+  const defaultRefField = metafolder.defaults.refField;
 
   /** @type {string|null} */
   let repo = null;

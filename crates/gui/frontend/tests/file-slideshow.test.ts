@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { withRuns } from './support/runs';
+import { shippedDefaults, shippedSettings } from './support/shipped-defaults';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/viewer');
 
@@ -47,7 +48,7 @@ const FILES: Record<string, string> = {
 };
 
 // Short durations, so the slideshow runs in real time within a test.
-const DEFAULTS = { slideshowImageSeconds: 0.03, slideshowGifSeconds: 0.03, slideshowGapSeconds: 0.01 };
+const DEFAULTS = { ...shippedDefaults(), slideshowImageSeconds: 0.03, slideshowGifSeconds: 0.03, slideshowGapSeconds: 0.01 };
 
 function stub(vars: Record<string, unknown>) {
   const noop = () => {};
@@ -86,7 +87,7 @@ function stub(vars: Record<string, unknown>) {
       guiServer: 'http://127.0.0.1:7524',
       sessionToken: 'test-token',
       pageSize: 10,
-      settings: {},
+      settings: shippedSettings(),
       defaults: DEFAULTS,
       whenVisible: (fn: () => void) => fn(),
       provide: () => {},

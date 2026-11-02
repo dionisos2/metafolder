@@ -10,6 +10,7 @@ import { generic } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { withRuns } from './support/runs';
+import { shippedDefaults } from './support/shipped-defaults';
 
 const PANEL_DIR = resolvePath(process.cwd(), '../default-config/panel-types/duplicates');
 
@@ -118,7 +119,7 @@ function stubApi(
       sessionToken: 'token',
       pageSize: 100,
       settings: options.settings ?? {},
-      defaults: {},
+      defaults: shippedDefaults(),
       visible: true,
       onVisibility: noop,
       whenVisible: (fn: () => void) => fn(),

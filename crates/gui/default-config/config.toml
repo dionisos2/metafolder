@@ -140,8 +140,8 @@ sparse     = "sparse"          # bool flag: classification picks children one by
 # handed verbatim to the panel of that name as `metafolder.defaults` (keys
 # camelCased: `text-preview-limit` reads as `metafolder.defaults.textPreviewLimit`),
 # so a custom panel type gets its own table the same way — the GUI knows
-# nothing about the keys. Omit a key (or the whole table) and the panel falls
-# back to the built-in value shown below. These are *initial* values: where a
+# nothing about the keys. A shipped panel stops and shows an error when a key it
+# reads is missing or unusable. These are *initial* values: where a
 # panel persists the setting per workspace (columns, finder fields, the path-ref
 # field), the stored workspace value still wins.
 

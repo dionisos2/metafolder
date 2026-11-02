@@ -407,23 +407,33 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
   }
 
   // Shared panel timing knobs (config.toml `[panels]`), exposed as a frozen
-  // camelCase object. Undefined keys fall through to each panel's own fallback.
+  // camelCase object.
   const raw = ctx.panelSettings ?? {};
   const panelSettings = Object.freeze({
-    statusMessageMs: raw['status-message-ms'] as number | undefined,
-    statusErrorMs: raw['status-error-ms'] as number | undefined,
-    finderDebounceMs: raw['finder-debounce-ms'] as number | undefined,
-    livePreviewDebounceMs: raw['live-preview-debounce-ms'] as number | undefined,
-    taskPollMs: raw['task-poll-ms'] as number | undefined,
-    confirmTrash: raw['confirm-trash'] as boolean | undefined,
+    statusMessageMs: raw['status-message-ms'] as number,
+    statusErrorMs: raw['status-error-ms'] as number,
+    finderDebounceMs: raw['finder-debounce-ms'] as number,
+    livePreviewDebounceMs: raw['live-preview-debounce-ms'] as number,
+    taskPollMs: raw['task-poll-ms'] as number,
+    confirmTrash: raw['confirm-trash'] as boolean,
   });
 
   // This panel type's configured defaults (config.toml
   // `[panel-defaults.<panel-type>]`), exposed as a frozen camelCase object.
   // Untyped on purpose: panel types are user-extensible, so the shell passes
-  // the table through and each panel reads the keys it knows, falling back to
-  // its own constant for a key the user did not configure.
-  const panelDefaults = Object.freeze(camelCaseKeys(ctx.panelDefaults ?? {})) as Metafolder.Defaults;
+  // the table through and each panel reads the keys it knows. There is no value
+  // behind a missing key (doc "No runtime fallback"): reading one throws, naming
+  // it, and the panel shows the error. A key a panel treats as optional is tested
+  // with `in`.
+  const panelDefaults = new Proxy(Object.freeze(camelCaseKeys(ctx.panelDefaults ?? {})), {
+    get(target, key, receiver) {
+      if (typeof key === 'string' && !(key in target)) {
+        const kebab = key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+        throw new Error(`${kebab} is missing from [panel-defaults.${ctx.panelType}] in gui/config.toml`);
+      }
+      return Reflect.get(target, key, receiver);
+    },
+  }) as Metafolder.Defaults;
 
   // Menus render in the shell document (showMenu appends there), so viewport
   // coordinates stay correct across shadow boundaries. Callable *and* carrying
@@ -474,20 +484,18 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         return ctx.sessionToken;
       },
       // Configured progressive-loading page size for this panel type (config.toml
-      // `[page-size]`); undefined for panels without an entry.
+      // `[page-size]`); undefined for a custom panel, which has no entry.
       get pageSize() {
-        return ctx.pageSize;
+        return ctx.pageSize as number;
       },
       // Shared panel UX timing knobs (config.toml `[panels]`), as a frozen object
-      // with camelCase keys. Each value may be undefined if the config is minimal,
-      // so panels should read them as `metafolder.settings.xxx ?? <fallback>`.
+      // with camelCase keys.
       get settings() {
         return panelSettings;
       },
       // Configured defaults for this panel type (config.toml
-      // `[panel-defaults.<panel-type>]`), as a frozen camelCase object. A key the
-      // user did not configure is undefined, so panels read them as
-      // `metafolder.defaults.xxx ?? <fallback>`.
+      // `[panel-defaults.<panel-type>]`), as a frozen camelCase object. Reading a
+      // key the table lacks throws: test an optional one with `in`.
       get defaults() {
         return panelDefaults;
       },

@@ -37,8 +37,8 @@ export async function mount(root, metafolder) {
   // Status-message durations (config.toml `[panels]`), with the fallbacks used
   // before they were configurable.
   const { settings } = metafolder;
-  const statusMessageMs = settings.statusMessageMs ?? 5000;
-  const statusErrorMs = settings.statusErrorMs ?? 8000;
+  const statusMessageMs = settings.statusMessageMs;
+  const statusErrorMs = settings.statusErrorMs;
 
   /** @type {Selection|null} */
   let current = null;

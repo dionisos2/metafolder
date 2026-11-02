@@ -32,8 +32,8 @@ export async function mount(root, metafolder) {
   const { daemon, workspace, commands, statusBar, fs, messages } = metafolder;
   // Timing knobs (config.toml `[panels]`), with the former hard-coded fallbacks.
   const { settings } = metafolder;
-  const statusErrorMs = settings.statusErrorMs ?? 8000;
-  const taskPollMs = settings.taskPollMs ?? 1500;
+  const statusErrorMs = settings.statusErrorMs;
+  const taskPollMs = settings.taskPollMs;
 
   // Schema↔data inconsistencies are surfaced once, when a repo is opened (the
   // schema is read at repo load). Best-effort and capped: the daemon stops the

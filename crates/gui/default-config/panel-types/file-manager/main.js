@@ -42,13 +42,6 @@ import {
 // another workspace, or in a metarecord panel's right-click menu, and back.
 // Cleared after a cut is pasted (sources are gone).
 
-// Render the directory in windows of this many rows (plus more on scroll), so
-// a directory with thousands of entries does not build a huge DOM — and, just
-// as importantly, only the rendered window's tracked status is queried. The
-// size comes from the GUI config (`[page-size].file-manager`); this is only
-// the fallback when no config value is provided.
-const PAGE_DEFAULT = 200;
-
 /**
  * One row of the listing: a real directory entry, or the synthetic "." / ".."
  * rows this panel prepends.
@@ -60,9 +53,12 @@ export async function mount(root, metafolder) {
   const { fs, daemon, workspace, commands, statusBar, bench, changes } = metafolder;
   // Standard status-message duration (config.toml `[panels]`), with the former
   // hard-coded fallback.
-  const statusMessageMs = metafolder.settings.statusMessageMs ?? 5000;
-  const statusErrorMs = metafolder.settings.statusErrorMs ?? 8000;
-  const PAGE = metafolder.pageSize ?? PAGE_DEFAULT;
+  const statusMessageMs = metafolder.settings.statusMessageMs;
+  const statusErrorMs = metafolder.settings.statusErrorMs;
+  // Render the directory in windows of this many rows (plus more on scroll), so
+  // a directory with thousands of entries does not build a huge DOM — and, just
+  // as importantly, only the rendered window's tracked status is queried.
+  const PAGE = metafolder.pageSize;
 
   /** @type {string|null} */
   let repo = null;

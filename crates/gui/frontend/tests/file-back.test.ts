@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { backTarget } from '../../default-config/panel-types/viewer/main.js';
+import { shippedDefaults, shippedSettings } from './support/shipped-defaults';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/viewer');
 
@@ -75,8 +76,8 @@ function stub(selectedPaths: string[]) {
       guiServer: 'http://127.0.0.1:7524',
       sessionToken: 'test-token',
       pageSize: 10,
-      settings: {},
-      defaults: {},
+      settings: shippedSettings(),
+      defaults: shippedDefaults(),
       // The panel is never displayed: renderViewer is deferred, so a `back`
       // only moves the state and repaints the path bar.
       whenVisible: noop,

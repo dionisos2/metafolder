@@ -138,18 +138,6 @@ describe('file-actions shared operations', () => {
     await vi.waitFor(() => expect(fs.copy).toHaveBeenCalledWith('/dir/d', '/dir/d copy'));
   });
 
-  test('errorMs falls back to 8000 when statusErrorMs is unset', async () => {
-    const { metafolder, statusBar } = mockMf({ statusMessageMs: 1000 }, {
-      readDir: vi.fn(async () => {
-        throw new Error('denied');
-      }),
-    });
-    void metafolder.global.set('clipboard', { paths: ['/x/y.txt'], mode: 'copy' });
-    const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst', isDir: true });
-    item(dst, 'Paste').action!();
-    await vi.waitFor(() => expect(statusBar.error).toHaveBeenCalledWith(expect.any(Error), 8000));
-  });
-
   test('Paste with an empty clipboard reports it and does nothing', async () => {
     const { metafolder, statusBar, fs } = mockMf();
     const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst', isDir: true });

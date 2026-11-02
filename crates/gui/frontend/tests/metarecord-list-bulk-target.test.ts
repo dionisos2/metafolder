@@ -8,6 +8,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { shippedDefaults, shippedSettings } from './support/shipped-defaults';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/metarecord-list');
 
@@ -30,7 +31,7 @@ function shadowFor(): ShadowRoot {
 
 type Call = { method: string; path: string; body: unknown };
 
-function stubApi(vars: Record<string, unknown>, calls: Call[], settings: Record<string, unknown> = {}) {
+function stubApi(vars: Record<string, unknown>, calls: Call[], settings: Record<string, unknown> = shippedSettings()) {
   const noop = () => {};
   const store = new Map<string, unknown>([['active_repo', 'r'], ...Object.entries(vars)]);
   const statusBar = { message: vi.fn(async () => {}), error: vi.fn(async () => {}) };
@@ -43,7 +44,7 @@ function stubApi(vars: Record<string, unknown>, calls: Call[], settings: Record<
       sessionToken: 'token',
       pageSize: 100,
       settings,
-      defaults: {},
+      defaults: shippedDefaults(),
       visible: true,
       onVisibility: noop,
       whenVisible: (fn: () => void) => fn(),
@@ -111,7 +112,7 @@ function stubApi(vars: Record<string, unknown>, calls: Call[], settings: Record<
 
 /** Mounts the list with `vars` pre-published, and returns the shadow root (to
  *  drive the form) and the recorded daemon calls. */
-async function mountList(vars: Record<string, unknown>, settings: Record<string, unknown> = {}) {
+async function mountList(vars: Record<string, unknown>, settings: Record<string, unknown> = shippedSettings()) {
   const shadow = shadowFor();
   const calls: Call[] = [];
   const { api, store, statusBar } = stubApi(vars, calls, settings);

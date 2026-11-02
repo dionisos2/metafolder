@@ -24,6 +24,10 @@ that key refuses to start until it is resolved.
 |`daemon/repo-default/` |`mf repo init`, the GUI's repository creation, `mf repo update-config` — never the daemon |error: no repository is created ([[Repository configuration]]) |copied as it is; the repository's load then reports it |
 |a repository's `config/metadata-map.toml` |the daemon, at the repository's load |error: that repository does not load ([[The metadata map]]) |error: that repository does not load |
 
+A key of `[panel-defaults.<panel>]` is the panel's: the GUI cannot know it, so it is the
+panel that stops, on the read of a missing key or on a value it cannot use, and shows
+the error while the rest of the GUI goes on ([[GUI configuration]]).
+
 `mf --config FILE` reads that file instead of yours, for scripts that must not depend
 on your personal settings.
 

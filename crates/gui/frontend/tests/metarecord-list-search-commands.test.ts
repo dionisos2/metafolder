@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { withRuns } from './support/runs';
 import { historyOf } from '/__history.js';
+import { shippedDefaults, shippedSettings } from './support/shipped-defaults';
 
 const histories = new Map<string, string[]>();
 
@@ -44,8 +45,8 @@ function stubApi(handlers: Map<string, Handler>, store: Map<string, unknown>) {
     guiServer: 'http://127.0.0.1:7524',
     sessionToken: 'token',
     pageSize: 100,
-    settings: {},
-    defaults: {},
+    settings: shippedSettings(),
+    defaults: shippedDefaults(),
     visible: false,
     onVisibility: noop,
     whenVisible: noop, // keep start() from running (no eager fetch)

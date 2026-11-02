@@ -1041,8 +1041,8 @@ mod tests {
 
     #[test]
     fn test_shipped_config_carries_the_panel_defaults() {
-        // The shipped default-config file is the documented source of the
-        // panel defaults: the module constants are only fallbacks.
+        // The shipped default-config file is the only source of the panel
+        // defaults.
         let shipped = include_str!("../default-config/config.toml");
         let parsed: GuiConfig = toml::from_str(shipped).unwrap();
         let list = parsed.panel_defaults.get("metarecord-list").unwrap();

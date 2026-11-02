@@ -155,14 +155,17 @@ describe('panel api — identity', () => {
     expect(defaults.finderFields).toEqual(['label:direct']);
     expect(defaults.textPreviewLimit).toBe(42);
     // Unconfigured keys are undefined (the panel falls back to its own constant).
-    expect(defaults.gridNameColumn).toBeUndefined();
+    // No built-in value behind it (doc "No runtime fallback"): reading a key
+    // the table lacks throws, naming the key and the table.
+    expect(() => defaults.gridNameColumn).toThrow(/grid-name-column.*panel-defaults/);
+    expect('gridNameColumn' in defaults).toBe(false);
     expect(Object.isFrozen(defaults)).toBe(true);
   });
 
-  test('defaults is an empty object without a panelDefaults context', () => {
+  test('defaults holds no key without a panelDefaults context', () => {
     const { api } = setup();
-    expect(api.defaults).toEqual({});
-    expect(api.defaults.columns).toBeUndefined();
+    expect(Object.keys(api.defaults)).toEqual([]);
+    expect(() => api.defaults.columns).toThrow(/columns/);
   });
 });
 

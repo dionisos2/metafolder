@@ -58,7 +58,7 @@ change of design, to be decided as such, with its note rewritten.
 * Every request to the daemon carries its session token; no route is exempt, `/health` included. The GUI server gates its scripting API and every route serving a file ([[Session tokens]]).
 * `core::API_VERSION` is the wire-protocol version, not the crate version: a change to the HTTP contract that would make an older client misbehave bumps it by one; a purely additive change does not ([[The wire protocol version]]).
 * Nothing reaches a remote host ([[No network access]]).
-* No program falls back to a built-in default: a missing required file, or a malformed one, stops it ([[No runtime fallback]], [[Shipped defaults in the source tree]]).
+* No program keeps its defaults in its code: a missing file, a missing setting or a malformed file stops it ([[No runtime fallback]], [[Shipped defaults in the source tree]]).
 
 !! The GUI
 

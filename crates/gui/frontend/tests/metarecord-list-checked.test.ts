@@ -13,6 +13,7 @@ import { globalStub } from './support/global';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { withRuns } from './support/runs';
+import { shippedDefaults, shippedSettings } from './support/shipped-defaults';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/metarecord-list');
 
@@ -65,8 +66,8 @@ function stub(vars: Record<string, unknown>, existing: Set<string>) {
     guiServer: 'http://127.0.0.1:7524',
     sessionToken: 'token',
     pageSize: 100,
-    settings: {},
-    defaults: {},
+    settings: shippedSettings(),
+    defaults: shippedDefaults(),
     visible: true,
     onVisibility: noop,
     whenVisible: (fn: () => void) => fn(),

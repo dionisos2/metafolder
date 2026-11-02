@@ -15,6 +15,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { shippedDefaults, shippedSettings } from './support/shipped-defaults';
 
 // vitest runs with cwd = crates/gui/frontend (as served-modules.test.ts notes,
 // jsdom leaves `import.meta.url` unusable as a file: URL).
@@ -48,7 +49,8 @@ function shadowFor(panelType: string): ShadowRoot {
 const VIEW = { entries: [], variables: [], unbound: [], classes_error: null };
 
 /** A metafolder API that answers everything with an empty result. */
-function stubApi(panelType: string, defaults: Record<string, unknown> = {}) {
+function stubApi(panelType: string, overrides: Record<string, unknown> = {}) {
+  const defaults = { ...shippedDefaults(), ...overrides };
   const noop = () => {};
   return {
     ready: Promise.resolve(),
@@ -57,7 +59,7 @@ function stubApi(panelType: string, defaults: Record<string, unknown> = {}) {
     guiServer: 'http://127.0.0.1:7524',
     sessionToken: 'token',
     pageSize: 100,
-    settings: {},
+    settings: shippedSettings(),
     defaults,
     visible: false,
     onVisibility: noop,
@@ -148,16 +150,23 @@ describe('panel defaults come from the GUI config', () => {
     expect(root.getElementById('finder-fields')?.textContent).toBe('label name');
   });
 
-  test('metarecord-list falls back to its own defaults on an invalid columns spec', async () => {
+  test('metarecord-list stops on an invalid columns spec, naming the problem', async () => {
     const mod = await import('../../default-config/panel-types/metarecord-list/main.js');
     const root = shadowFor('metarecord-list');
-    await mod.mount(
-      root,
-      stubApi('metarecord-list', { columns: 'label:nonsense' }) as unknown as Metafolder.Api,
-    );
-    expect((root.getElementById('columns-input') as HTMLInputElement).value).toBe(
-      '(mfr_path:path|path:path) (mfr_type|mf_schema) mfr_mtime order_file',
-    );
+    await expect(
+      mod.mount(
+        root,
+        stubApi('metarecord-list', { columns: '   ' }) as unknown as Metafolder.Api,
+      ),
+    ).rejects.toThrow(/columns.*names no column/);
+  });
+
+  test('the viewer stops on an unusable value, naming its key', async () => {
+    const mod = await import('../../default-config/panel-types/viewer/main.js');
+    const root = shadowFor('viewer');
+    await expect(
+      mod.mount(root, stubApi('viewer', { zoomStep: 'big' }) as unknown as Metafolder.Api),
+    ).rejects.toThrow(/zoom-step.*positive number/);
   });
 
   test('path-ref opens on the configured tree_ref field', async () => {
@@ -168,7 +177,7 @@ describe('panel defaults come from the GUI config', () => {
       stubApi('path-ref', { field: 'path' }) as unknown as Metafolder.Api,
     );
     // The button carries the select widget's caret after the field name, and
-    // `toContain` would pass on the `mfr_path` fallback too — strip and compare.
+    // `toContain` would pass on `mfr_path` too — strip and compare.
     expect(root.getElementById('field')?.textContent?.replace(/\W/g, '')).toBe('path');
   });
 });

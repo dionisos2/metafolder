@@ -244,6 +244,7 @@ function setup(options: { activeRepo?: string | null } = {}) {
     {
       wsId: 'ws-1',
       panelType: 'repos',
+      panelSettings: { 'task-poll-ms': 1500 },
       guiServer: 'http://127.0.0.1:7524',
       sessionToken: 'test-token',
       root: {} as ShadowRoot,

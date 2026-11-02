@@ -9,6 +9,7 @@ import { generic } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { withRuns } from './support/runs';
+import { shippedDefaults, shippedSettings } from './support/shipped-defaults';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/log');
 
@@ -82,7 +83,7 @@ async function mountPanel() {
   const handlers = new Map<string, Handler>();
   const noop = () => {};
   const api = {
-    settings: {},
+    settings: shippedSettings(),
     whenVisible: (fn: () => void) => fn(),
     daemon: {
       call: vi.fn(async (_method: string, url: string) => {
