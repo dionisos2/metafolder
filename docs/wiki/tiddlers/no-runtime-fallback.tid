@@ -18,7 +18,9 @@ that key refuses to start until it is resolved.
 |!File |!Read by |!Missing |!Malformed |
 |`core/query-grammar` |the GUI at startup, `mf` with `-s` — never the daemon |error when loaded; an ''empty'' file is valid (the simplified language then accepts nothing) |error |
 |`core/ignore-presets.toml` |`mf ignore`, `mf repo init`, the GUI's repository creation — never the daemon |error when loaded (`mf repo init --no-ignore` skips it) |error |
-|`gui/config.toml`, `gui/keybindings.toml`, `gui/style.css`, `gui/commands.js`, `gui/user-commands.js` |the GUI |error at startup |error at startup (a syntax error in `commands.js` shows on screen) |
+|`gui/config.toml`, `gui/keybindings.toml`, `gui/style.css` |the GUI |error at startup |error at startup |
+|`gui/commands.js`, `gui/user-commands.js`, `gui/macros.js` |the GUI; the WebView imports them |error at startup |shown on screen, and the UI does not appear; on `config:reload commands`, in the status bar, the commands already installed staying |
+|`gui/command-classes.toml` |the GUI, at startup and each time the [[keybindings panel]] reads it |error at startup; afterwards the panel shows the error and the commands unclassed |same as missing |
 |`daemon/config.toml` |the daemon |error at startup |error at startup |
 |`cli/config.toml` |`mf`, or the file `--config` names |error, exit 2, before any daemon call |error, exit 2, before any daemon call |
 |`daemon/repo-default/` |`mf repo init`, the GUI's repository creation, `mf repo update-config` — never the daemon |error: no repository is created ([[Repository configuration]]) |copied as it is; the repository's load then reports it |
