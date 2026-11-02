@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { withRuns } from './support/runs';
-import { shippedDefaults, shippedSettings } from './support/shipped-defaults';
+import { shippedSettings } from './support/shipped-defaults';
 
 const PANEL_DIR = resolvePath(process.cwd(), '../default-config/panel-types/sync');
 

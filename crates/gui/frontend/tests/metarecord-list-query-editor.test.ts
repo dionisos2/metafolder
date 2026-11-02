@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createQueryEditor } from '../../default-config/panel-types/metarecord-list/query-editor.js';
-import { shippedDefaults, shippedSettings } from './support/shipped-defaults';
+import { shippedSettings } from './support/shipped-defaults';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/metarecord-list');
 
