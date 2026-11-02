@@ -1,0 +1,23 @@
+title: slot:show
+tags: [[GUI command]] [[Panel slots and layout]]
+kind: reference
+summary: Show a panel type in a named slot, and in a viewer a file
+
+`slot:show <left|right> <type> [path]` shows a panel type in a slot named outright,
+whichever holds the focus, without moving the focus. A hidden slot is shown first; one
+with no workspace takes the focused slot's, and it fails when there is none. It is what
+[[mf gui view]] runs; [[panel:open]], which goes by the focused slot, is the one for a key.
+
+`path` counts only with `viewer`, and selects that file in the slot's workspace:
+
+* a path sets `selected_metarecord` to the metarecord at that path — `null` for an untracked file, or when the daemon does not answer — and `selected_paths` to `[path]`;
+* no `path` leaves the selection as it is;
+* an ''empty'' `path` clears both. A script previewing the entry it asks about reaches entries with no file, and leaving the previous file on screen would present it as the subject of the question.
+
+It runs in a [[transaction|Command transactions]], unlike the other builtins: the pair is
+delivered together, once the slot has changed — so a refused slot leaves the selection
+as it was. The selection moving this way asks nothing about an unsaved edit
+([[Edits in progress]]). Unlike [[panel:open]], it opens a viewer whatever the selection.
+
+An invocation typed as a line cannot say an empty path: a script sends the words as an
+array ([[GUI scripting endpoints]]).

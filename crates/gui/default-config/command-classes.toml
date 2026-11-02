@@ -103,6 +103,7 @@
 "panel:unsplit" = "D"
 "panel:split" = "D"
 "panel:hide" = "D"
+"slot:show" = "D"
 "repos:open" = "D"
 
 # ── The cursor, in every panel with rows ─────────────────────────────────────

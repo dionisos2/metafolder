@@ -13,7 +13,8 @@ use metafolder_gui::notifier::RecordingNotifier;
 use metafolder_gui::server::bench::BenchBuffer;
 use metafolder_gui::server::command_wait::{CommandOutcome, CommandWait};
 use metafolder_gui::server::input_wait::InputWait;
-use metafolder_gui::server::{self, ServerState};
+use metafolder_gui::server::{self, gui_api, ServerState};
+use metafolder_gui::state::layout::SlotId;
 use metafolder_gui::state::GuiState;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -25,6 +26,7 @@ struct Ctx {
     _guard: tempfile::TempDir,
     notifier: Arc<RecordingNotifier>,
     gui: Arc<GuiState>,
+    daemon: Arc<DaemonProxy>,
     input: Arc<InputWait>,
     commands: Arc<CommandWait>,
     bench: Arc<BenchBuffer>,
@@ -69,7 +71,7 @@ async fn setup_with_daemon(daemon_url: &str) -> Ctx {
     let state = ServerState {
         config,
         gui: gui.clone(),
-        daemon,
+        daemon: daemon.clone(),
         keybindings,
         input: input.clone(),
         commands: commands.clone(),
@@ -81,6 +83,7 @@ async fn setup_with_daemon(daemon_url: &str) -> Ctx {
         _guard: guard,
         notifier,
         gui,
+        daemon,
         input: input.clone(),
         commands: commands.clone(),
         bench: bench.clone(),
@@ -245,13 +248,9 @@ async fn test_layout_get_and_partial_put() {
 // ── Panel views ───────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_panel_view_set_and_get() {
+async fn test_panel_view_get() {
     let ctx = setup().await;
-
-    let (status, _) =
-        request(&ctx.router, "PUT", "/gui/panels/left/view", Some(json!({"type": "message"})))
-            .await;
-    assert_eq!(status, StatusCode::OK);
+    ctx.gui.set_panel_type(SlotId::Left, "message").unwrap();
 
     let (status, body) = request(&ctx.router, "GET", "/gui/panels/left/view", None).await;
     assert_eq!(status, StatusCode::OK);
@@ -262,37 +261,49 @@ async fn test_panel_view_set_and_get() {
     let (_, body) = request(&ctx.router, "GET", "/gui/panels/left/view", None).await;
     assert_eq!(body["status"], "ready");
 
-    // A hidden slot is shown first (it inherits the focused workspace).
-    let (status, _) = request(
-        &ctx.router,
-        "PUT",
-        "/gui/panels/right/view",
-        Some(json!({"type": "workspace-info"})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let layout = ctx.gui.layout();
-    assert!(layout.right.visible);
-    assert_eq!(layout.right.panel_type.as_deref(), Some("workspace-info"));
-
     let (status, _) = request(&ctx.router, "GET", "/gui/panels/middle/view", None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
+/// A script changes a slot through `slot:show`, under the rules of a command
+/// (doc "Command transactions"): the route that wrote directly is gone.
 #[tokio::test]
-async fn test_panel_view_file_with_path_sets_selection() {
+async fn test_panel_view_cannot_be_written_directly() {
     let ctx = setup().await;
-    let (status, _) = request(
-        &ctx.router,
-        "PUT",
-        "/gui/panels/left/view",
-        Some(json!({"type": "viewer", "path": "/tmp/picture.jpg"})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(ctx.gui.get_var("ws-1", "selected_paths").unwrap(), json!(["/tmp/picture.jpg"]));
+    let (status, _) =
+        request(&ctx.router, "PUT", "/gui/panels/left/view", Some(json!({"type": "message"})))
+            .await;
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+}
+
+/// A slot with no workspace takes the focused one, which `slot:show` assigns.
+#[tokio::test]
+async fn test_slot_show_target_of_a_hidden_slot_is_the_focused_workspace() {
+    let ctx = setup().await;
+    let target = gui_api::slot_show_target(&ctx.gui, &ctx.daemon, "right", None).await.unwrap();
+    assert_eq!(target, json!({"ws": "ws-1", "selection": null}));
+}
+
+#[tokio::test]
+async fn test_slot_show_target_refuses_an_unknown_slot() {
+    let ctx = setup().await;
+    let error = gui_api::slot_show_target(&ctx.gui, &ctx.daemon, "middle", None).await.unwrap_err();
+    assert!(error.contains("unknown slot"), "{error}");
+}
+
+#[tokio::test]
+async fn test_slot_show_target_of_an_untracked_path_has_no_metarecord() {
+    let ctx = setup().await;
+    let target = gui_api::slot_show_target(&ctx.gui, &ctx.daemon, "left", Some("/tmp/picture.jpg"))
+        .await
+        .unwrap();
     // No active repo in ws-1: no entry lookup is possible.
-    assert_eq!(ctx.gui.get_var("ws-1", "selected_metarecord").unwrap(), Value::Null);
+    assert_eq!(
+        target["selection"],
+        json!({"selected_metarecord": null, "selected_paths": ["/tmp/picture.jpg"]})
+    );
+    // Resolving writes nothing: the command does, in its transaction.
+    assert_eq!(ctx.gui.get_var("ws-1", "selected_paths").unwrap(), Value::Null);
 }
 
 /// A stub daemon that records every query body it receives and answers each
@@ -332,27 +343,24 @@ async fn spawn_recording_daemon(seen: Arc<std::sync::Mutex<Vec<Value>>>) -> Stri
 /// slash, so the exact-node lookup must query `mfr_path = "/projets"` — not a
 /// `follows mfr_path -> "/"`, whose "/" resolves to no node (the root is "").
 #[tokio::test]
-async fn test_panel_view_file_top_level_folder_resolves_metarecord() {
+async fn test_slot_show_target_top_level_folder_resolves_metarecord() {
     let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
     let url = spawn_recording_daemon(seen.clone()).await;
     let ctx = setup_with_daemon(&url).await;
 
     // A workspace bound to the stub repo, shown in the left slot.
     let ws = ctx.gui.create_workspace(Some("feedfacefeedfacefeedfacefeedface".into()));
-    ctx.gui.tab_assign(&ws, metafolder_gui::state::layout::SlotId::Left).unwrap();
+    ctx.gui.tab_assign(&ws, SlotId::Left).unwrap();
 
-    let (status, _) = request(
-        &ctx.router,
-        "PUT",
-        "/gui/panels/left/view",
-        Some(json!({"type": "viewer", "path": "/tmp/stub/projets"})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
+    let target =
+        gui_api::slot_show_target(&ctx.gui, &ctx.daemon, "left", Some("/tmp/stub/projets"))
+            .await
+            .unwrap();
 
     // The lookup succeeded (a real daemon would have matched the node).
+    assert_eq!(target["ws"], json!(ws));
     assert_eq!(
-        ctx.gui.get_var(&ws, "selected_metarecord").unwrap(),
+        target["selection"]["selected_metarecord"],
         json!({"uuid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                "repo": "feedfacefeedfacefeedfacefeedface"})
     );
@@ -366,65 +374,18 @@ async fn test_panel_view_file_top_level_folder_resolves_metarecord() {
     );
 }
 
-/// The selection is a PAIR, and it is published metarecord-first. A consumer
-/// reacting to `selected_paths` reads `selected_metarecord` right then (the
-/// `file` panel does exactly that, to know which metarecord holds the playback
-/// position of what it is about to show), so publishing the paths first hands
-/// it the PREVIOUS metarecord — it shows one file and believes it is another.
-/// `gui-tag-folder` walks a whole folder through this endpoint, one
-/// `view viewer --path` per question, so every question inherited the answer
-/// before it.
-#[tokio::test]
-async fn test_panel_view_file_publishes_the_metarecord_before_the_paths() {
-    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let url = spawn_recording_daemon(seen.clone()).await;
-    let ctx = setup_with_daemon(&url).await;
-
-    let ws = ctx.gui.create_workspace(Some("feedfacefeedfacefeedfacefeedface".into()));
-    ctx.gui.tab_assign(&ws, metafolder_gui::state::layout::SlotId::Left).unwrap();
-    ctx.notifier.clear();
-
-    let (status, _) = request(
-        &ctx.router,
-        "PUT",
-        "/gui/panels/left/view",
-        Some(json!({"type": "viewer", "path": "/tmp/stub/projets/note.txt"})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-
-    let keys: Vec<String> = ctx
-        .notifier
-        .payloads(events::WORKSPACE_VAR_CHANGED)
-        .iter()
-        .filter_map(|payload| payload["key"].as_str().map(str::to_string))
-        .collect();
-    assert_eq!(keys, vec!["selected_metarecord".to_string(), "selected_paths".to_string()]);
-}
-
-/// An EMPTY `path` clears the selection instead of leaving the previous one on
+/// An EMPTY path clears the selection instead of leaving the previous one on
 /// screen. A shipped script shows the entry it is asking about with one
 /// `mf gui view left viewer --path <abs>` per question, and an entry may have no
 /// file to show (a record with no `mfr_path`, a path that no longer resolves).
-/// Omitting `path` means "leave it alone", which in that spot is the previous
+/// Omitting the path means "leave it alone", which in that spot is the previous
 /// *question's* file still on screen, presented as the answer to this one —
 /// so "no file" has to be sayable.
 #[tokio::test]
-async fn test_panel_view_file_with_an_empty_path_clears_the_selection() {
+async fn test_slot_show_target_of_an_empty_path_clears_the_selection() {
     let ctx = setup().await;
-    ctx.gui.set_var("ws-1", "selected_paths", json!(["/tmp/previous.jpg"])).unwrap();
-    ctx.gui.set_var("ws-1", "selected_metarecord", json!({"uuid": "aa", "repo": "r"})).unwrap();
-
-    let (status, _) = request(
-        &ctx.router,
-        "PUT",
-        "/gui/panels/left/view",
-        Some(json!({"type": "viewer", "path": ""})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(ctx.gui.get_var("ws-1", "selected_paths").unwrap(), json!([]));
-    assert_eq!(ctx.gui.get_var("ws-1", "selected_metarecord").unwrap(), Value::Null);
+    let target = gui_api::slot_show_target(&ctx.gui, &ctx.daemon, "left", Some("")).await.unwrap();
+    assert_eq!(target["selection"], json!({"selected_metarecord": null, "selected_paths": []}));
 }
 
 // ── Messages ──────────────────────────────────────────────────────────────
@@ -1121,6 +1082,32 @@ async fn test_command_dispatch_reports_error() {
     let (status, body) = waiting.await.unwrap();
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, json!({"event": "error", "message": "unknown command: bogus:cmd"}));
+}
+
+/// An array invocation is forwarded as it is: its words are not parsed, so a
+/// path with spaces or an empty one stays one argument.
+#[tokio::test]
+async fn test_command_dispatch_forwards_an_array_invocation() {
+    let ctx = setup().await;
+    ctx.notifier.clear();
+    let router = ctx.router.clone();
+    let parts = json!(["slot:show", "left", "viewer", "/a b/c.jpg", ""]);
+    let body = json!({"invocation": parts, "timeout_ms": 200});
+    let (status, answer) = request(&router, "POST", "/gui/command", Some(body)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(answer, json!({"event": "timeout"}));
+    let payloads = ctx.notifier.payloads(events::COMMAND_REQUESTED);
+    assert_eq!(payloads.last().unwrap()["invocation"], parts);
+}
+
+#[tokio::test]
+async fn test_command_dispatch_refuses_an_empty_array_or_a_blank_name() {
+    let ctx = setup().await;
+    for invocation in [json!([]), json!(["  ", "x"]), json!([1]), json!(1)] {
+        let body = json!({"invocation": invocation});
+        let (status, _) = request(&ctx.router, "POST", "/gui/command", Some(body)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
 }
 
 #[tokio::test]

@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/slot:show
+catalog: GUI command
+target: slot:show
+summary: Show a panel type in a named slot, and in a viewer a file
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

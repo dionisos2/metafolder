@@ -264,6 +264,10 @@ pub fn layout(ctx: &GuiCtx, slot: Option<&str>, value: Option<&str>) -> Result<i
 
 /// `mf gui view <slot>` prints the current panel type; with a type (and
 /// optional `--path`), sets it.
+/// How long `mf gui view` waits: a script must not hang on a GUI page that no
+/// longer answers.
+const VIEW_TIMEOUT_MS: u64 = 30_000;
+
 pub fn view(
     ctx: &GuiCtx,
     slot: &str,
@@ -278,11 +282,13 @@ pub fn view(
             println!("{}", resp["type"].as_str().unwrap_or_default());
         }
         Some(panel_type) => {
-            let mut body = json!({"type": panel_type});
+            // A front for the GUI's own command, under its rules (doc "slot:show").
+            let mut invocation = vec![json!("slot:show"), json!(slot), json!(panel_type)];
             if let Some(path) = path {
-                body["path"] = json!(path);
+                invocation.push(json!(path));
             }
-            ctx.client.request("PUT", &url, &[], Some(&body))?;
+            let body = json!({"invocation": invocation, "timeout_ms": VIEW_TIMEOUT_MS});
+            run_command(ctx, &body)?;
         }
     }
     Ok(0)
@@ -347,7 +353,12 @@ pub fn command(
     if let Some(confirm) = confirm {
         body["confirm"] = json!(confirm);
     }
-    let resp = ctx.client.post("/gui/command", &body)?;
+    run_command(ctx, &body)
+}
+
+/// Runs a `POST /gui/command` body; its outcome is the exit code or the error.
+fn run_command(ctx: &GuiCtx, body: &Json) -> Result<i32, CliError> {
+    let resp = ctx.client.post("/gui/command", body)?;
     for question in resp["confirmations"].as_array().into_iter().flatten() {
         println!("{}", question.as_str().unwrap_or_default());
     }

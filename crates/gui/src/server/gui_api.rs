@@ -1,6 +1,7 @@
 //! `/gui/*` scripting endpoints (doc "GUI scripting endpoints").
 
 use super::ServerState;
+use crate::daemon_proxy::DaemonProxy;
 use crate::events;
 use crate::server::command_wait::CommandOutcome;
 use crate::server::input_wait::{InputOutcome, PromptOutcome};
@@ -216,89 +217,62 @@ pub async fn put_layout(
 
 // ── Panel views ───────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
-pub struct PutViewBody {
-    #[serde(rename = "type")]
-    panel_type: String,
-    #[serde(default)]
-    path: Option<String>,
-}
-
-pub async fn put_panel_view(
-    State(state): State<ServerState>,
-    Path(slot): Path<String>,
-    Json(body): Json<PutViewBody>,
-) -> Response {
-    let slot_id = match parse_slot(&slot) {
-        Ok(slot_id) => slot_id,
-        Err(response) => return *response,
+/// What `slot:show` needs before it acts (doc "slot:show"): the workspace of
+/// `slot` — the focused one for a slot with none — and, given a path, the
+/// selection pair it stands for. Writes nothing: the command does, in its
+/// transaction, so that no panel ever sees one variable of the pair without the
+/// other.
+///
+/// An EMPTY path is not "leave it alone" (that is no path at all) but "there is
+/// no file": a script showing the entry it is asking about, one `view viewer
+/// --path` per question, reaches entries with no file to show — a record with no
+/// `mfr_path`, a path that no longer resolves — and leaving the previous
+/// question's file on screen presents it as the answer to this one.
+pub async fn slot_show_target(
+    gui: &GuiState,
+    daemon: &DaemonProxy,
+    slot: &str,
+    path: Option<&str>,
+) -> Result<Value, String> {
+    let slot_id = match slot {
+        "left" => SlotId::Left,
+        "right" => SlotId::Right,
+        other => return Err(format!("unknown slot: {other} (left | right)")),
     };
-
-    // Show the slot first; an unassigned slot inherits the focused
-    // slot's workspace (decision: the spec only says "shown first").
-    let layout = state.gui.layout();
+    let layout = gui.layout();
     let payload = match slot_id {
         SlotId::Left => &layout.left,
         SlotId::Right => &layout.right,
     };
-    let ws_id = match &payload.workspace_id {
-        Some(ws_id) => ws_id.clone(),
-        None => match state.gui.focused_workspace_id() {
-            Some(ws_id) => ws_id,
-            None => return error_response(StatusCode::CONFLICT, "no workspace to assign"),
-        },
+    let ws_id = payload
+        .workspace_id
+        .clone()
+        .or_else(|| gui.focused_workspace_id())
+        .ok_or("no workspace to assign")?;
+    let selection = match path {
+        None => Value::Null,
+        Some("") => json!({"selected_metarecord": null, "selected_paths": []}),
+        Some(path) => json!({
+            "selected_metarecord": lookup_record_by_path(gui, daemon, &ws_id, path).await,
+            "selected_paths": [path],
+        }),
     };
-    if let Err(error) = state.gui.tab_assign(&ws_id, slot_id) {
-        return map_state_error(error);
-    }
-    if let Err(error) = state.gui.set_panel_type(slot_id, &body.panel_type) {
-        return map_state_error(error);
-    }
-
-    // type=viewer + path: select that file (doc "GUI scripting endpoints").
-    //
-    // The two variables are ONE selection, and the metarecord goes first —
-    // like every panel that publishes the pair. A consumer reacting to
-    // `selected_paths` reads `selected_metarecord` right then (the `viewer`
-    // panel, to know which metarecord holds the playback position of what it
-    // is about to show), so it must already be the matching one. The lookup is
-    // therefore done BEFORE either write, not between them: two daemon
-    // round-trips in that gap left every consumer holding the *previous*
-    // metarecord alongside the new path — a whole `gui-tag-folder` walk, one
-    // `view viewer --path` per question, ran one answer behind.
-    //
-    // An EMPTY path is not "leave it alone" (that is an absent `path`) but
-    // "there is no file": it CLEARS the pair. A script showing the entry it is
-    // asking about, one `view viewer --path` per question, reaches entries with
-    // no file to show — a record with no `mfr_path`, a path that no longer
-    // resolves — and leaving the previous question's file on screen presents
-    // it as the answer to this one.
-    if body.panel_type == "viewer" {
-        if let Some(path) = &body.path {
-            let (entry, paths) = if path.is_empty() {
-                (Value::Null, json!([]))
-            } else {
-                (lookup_record_by_path(&state, &ws_id, path).await, json!([path]))
-            };
-            if let Err(error) = state.gui.set_var(&ws_id, "selected_metarecord", entry) {
-                return map_state_error(error);
-            }
-            if let Err(error) = state.gui.set_var(&ws_id, "selected_paths", paths) {
-                return map_state_error(error);
-            }
-        }
-    }
-    Json(json!({})).into_response()
+    Ok(json!({"ws": ws_id, "selection": selection}))
 }
 
 /// Best-effort: the metarecord whose `mfr_path` resolves to `path`
 /// in the workspace's active repo; `Null` for untracked files.
-async fn lookup_record_by_path(state: &ServerState, ws_id: &str, path: &str) -> Value {
-    let Ok(Value::String(repo)) = state.gui.get_var(ws_id, "active_repo") else {
+async fn lookup_record_by_path(
+    gui: &GuiState,
+    daemon: &DaemonProxy,
+    ws_id: &str,
+    path: &str,
+) -> Value {
+    let Ok(Value::String(repo)) = gui.get_var(ws_id, "active_repo") else {
         return Value::Null;
     };
     // Repo root (for the repo-relative query path).
-    let Ok(repos) = state.daemon.request("GET", "/repos", None).await else {
+    let Ok(repos) = daemon.request("GET", "/repos", None).await else {
         return Value::Null;
     };
     let Some(root) = repos
@@ -327,8 +301,7 @@ async fn lookup_record_by_path(state: &ServerState, ws_id: &str, path: &str) -> 
         "field": "mfr_path",
         "value": {"type": "string", "value": tree_path},
     });
-    match state
-        .daemon
+    match daemon
         .request("POST", &format!("/repos/{repo}/query"), Some(json!({"query": query})))
         .await
     {
@@ -366,13 +339,28 @@ pub async fn get_panel_view(
 
 #[derive(Deserialize)]
 pub struct CommandBody {
-    invocation: String,
+    /// A line parsed like typed text, or an array of words taken as they are —
+    /// what a path with spaces or an empty argument needs.
+    invocation: Value,
     #[serde(default)]
     timeout_ms: Option<u64>,
     /// The answer to every confirmation the command asks while it runs
     /// (`true` = accept). Absent: the dialogs are the user's, as when typed.
     #[serde(default)]
     confirm: Option<bool>,
+}
+
+/// A non-blank line, or an array of strings whose first is not blank.
+fn invocation_names_something(invocation: &Value) -> bool {
+    let blank = |text: &str| text.trim().is_empty();
+    match invocation {
+        Value::String(line) => !blank(line),
+        Value::Array(words) => {
+            words.iter().all(Value::is_string)
+                && words.first().and_then(Value::as_str).is_some_and(|name| !blank(name))
+        }
+        _ => false,
+    }
 }
 
 /// Runs an arbitrary command invocation through the frontend's own
@@ -390,7 +378,7 @@ pub async fn post_command(
     let Some(Json(body)) = body else {
         return error_response(StatusCode::BAD_REQUEST, "missing invocation");
     };
-    if body.invocation.trim().is_empty() {
+    if !invocation_names_something(&body.invocation) {
         return error_response(StatusCode::BAD_REQUEST, "missing invocation");
     }
 

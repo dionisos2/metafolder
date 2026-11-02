@@ -24,7 +24,7 @@ through events, so a script and the window always agree ([[GUI]]).
 |<<cmd "GET /gui/vars/:key">>, <<cmd "GET /gui/vars">> |reads the global GUI variables |
 |<<cmd "GET /gui/workspaces/:id/messages">> |its message log and last status message |
 |<<cmd "GET /gui/layout">>, <<cmd "PUT /gui/layout">> |which workspace each slot shows |
-|<<cmd "GET /gui/panels/:slot/view">>, <<cmd "PUT /gui/panels/:slot/view">> |the panel type of a slot |
+|<<cmd "GET /gui/panels/:slot/view">> |the panel type of a slot |
 |<<cmd "POST /gui/command">> |runs a command |
 |<<cmd "POST /gui/message">> |posts a status message |
 |<<cmd "POST /gui/progress">> |updates a script's task-bar entry |
@@ -82,24 +82,7 @@ and `mf gui selected` are built on it.
 slot. `PUT /gui/layout` takes the same shape and changes only the keys present; `null`
 hides a slot. It answers `{}`.
 
-`PUT /gui/panels/:slot/view` (`left` or `right`) takes
-
-```
-{"type": "viewer", "path": "/abs/file.jpg"}
-```
-
-and answers `{}`. A hidden slot is shown first; one with no workspace
-takes the focused slot's, and `409` when there is none.
-
-`path` counts only with `"type": "viewer"`, and selects that file in the slot's
-workspace:
-
-* a path sets `selected_metarecord` to the metarecord at that path — `null` for an untracked file, or when the daemon does not answer — then `selected_paths` to `[path]`. In that order, the lookup done before either write: a panel reacting to the path reads the metarecord right then ([[Cross-panel selection]]).
-* no `path` leaves the selection as it is.
-* an ''empty'' `path` clears both. A script previewing the entry it asks about reaches entries with no file, and leaving the previous file on screen would present it as the subject of the question.
-
-Any other member of the body is ignored: there is no way to hand a panel an initial
-state.
+Changing what a slot shows is a command, [[slot:show]] (`mf gui view`): there is no route writing it, so a script's change is under the same rules as the GUI's.
 
 `GET /gui/panels/:slot/view` answers `{"type": "viewer", "status": "ready"}` — or
 `"loading"` until the panel has mounted — and `404` for a slot showing nothing.
@@ -109,7 +92,9 @@ state.
 `POST /gui/command` takes `{"invocation": "panel:open here viewer", "timeout_ms": null}`.
 The line is handed to the shell's own dispatcher — the one the command input and the
 keys use, so there is a single path — and parsed like typed text; a leading `!` runs a
-shell line. The request blocks until the command resolves:
+shell line. An array of strings (`["slot:show", "left", "viewer", "/a b.jpg"]`) names
+the words itself: nothing is parsed, so a path with spaces or an empty argument stays
+one word. The request blocks until the command resolves:
 
 |!Answer |!Means |
 |`{"event": "ok"}` |it ran |
@@ -117,7 +102,7 @@ shell line. The request blocks until the command resolves:
 |`{"event": "timeout"}` |`timeout_ms` passed first |
 |`{"event": "closed"}` |the GUI is closing |
 
-All with `200`; an empty or missing `invocation` is `400`. Several may be in flight at
+All with `200`; an empty or missing `invocation`, or an array that is not all strings or whose first is blank, is `400`. Several may be in flight at
 once.
 
 `"confirm": true` (or `false`) answers the confirmations the command asks while it

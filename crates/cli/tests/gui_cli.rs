@@ -342,19 +342,9 @@ fn test_gui_view_set_and_get() {
     let out = mf_gui(&gui, &["view", "right", "entry-detail"]);
     assert_ok(&out);
 
-    let requests = gui.recorded.all();
-    assert_eq!(
-        requests[0],
-        (
-            "PUT".into(),
-            "/gui/panels/left/view".into(),
-            json!({"type": "file", "path": "/tmp/img.jpg"})
-        )
-    );
-    assert_eq!(
-        requests[1],
-        ("PUT".into(), "/gui/panels/right/view".into(), json!({"type": "entry-detail"}))
-    );
+    let requests = command_bodies(&gui);
+    assert_eq!(requests[0]["invocation"], json!(["slot:show", "left", "file", "/tmp/img.jpg"]));
+    assert_eq!(requests[1]["invocation"], json!(["slot:show", "right", "entry-detail"]));
 
     let out = mf_gui(&gui, &["view", "left"]);
     assert_ok(&out);
@@ -374,7 +364,7 @@ fn test_gui_view_has_no_state_option() {
 }
 
 /// An empty `--path` is a value, not an absent option: it travels as `""` and
-/// tells the GUI to CLEAR the selection (doc "PUT /gui/panels/:slot/view").
+/// tells the GUI to CLEAR the selection (doc "slot:show").
 /// A shipped script that previews the entry it is asking about needs to say
 /// "no file" — dropping the option would mean "leave it alone", which leaves
 /// the previous question's file on screen.
@@ -382,10 +372,17 @@ fn test_gui_view_has_no_state_option() {
 fn test_gui_view_forwards_an_empty_path() {
     let gui = stub();
     assert_ok(&mf_gui(&gui, &["view", "left", "file", "--path", ""]));
-    let requests = gui.recorded.all();
+    assert_eq!(command_bodies(&gui)[0]["invocation"], json!(["slot:show", "left", "file", ""]));
+}
+
+/// A path is one argument, whatever it holds: the array is not parsed as text.
+#[test]
+fn test_gui_view_keeps_a_path_with_spaces_whole() {
+    let gui = stub();
+    assert_ok(&mf_gui(&gui, &["view", "left", "viewer", "--path", "/a b/c d.jpg"]));
     assert_eq!(
-        requests[0],
-        ("PUT".into(), "/gui/panels/left/view".into(), json!({"type": "file", "path": ""}))
+        command_bodies(&gui)[0]["invocation"],
+        json!(["slot:show", "left", "viewer", "/a b/c d.jpg"])
     );
 }
 

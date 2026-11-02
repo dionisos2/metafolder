@@ -2,7 +2,7 @@
 // Frontend-only UI state (divider ratio, command-input drafts, overlay
 // visibility) also lives here.
 
-import { dispatch } from './commands';
+import { dispatch, type InvocationParts } from './commands';
 import { completionLabels } from './completions';
 import { createConfirmAnswerer } from './confirm';
 import type { LoadedView } from './completions';
@@ -680,7 +680,7 @@ export async function initStore() {
   // the waiting HTTP handler resolves. With `confirm`, the confirmations it
   // asks are answered for it (`mf gui command --confirm`, lib/confirm.ts).
   const confirmations = createConfirmAnswerer(window);
-  type CommandRequest = { invocation_id: string; invocation: string; confirm?: boolean | null };
+  type CommandRequest = { invocation_id: string; invocation: string | InvocationParts; confirm?: boolean | null };
   const onCommandRequested = async (event: { payload: CommandRequest }) => {
     const { invocation_id, invocation, confirm = null } = event.payload;
     let result: Awaited<ReturnType<typeof dispatch>>;

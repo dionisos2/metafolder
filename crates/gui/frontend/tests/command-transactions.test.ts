@@ -24,6 +24,16 @@ vi.mock('../src/lib/ipc', () => ({
     tauri.push({ cmd, args });
     if (cmd === 'txn_begin') return 7;
     if (cmd === 'txn_flush' || cmd === 'txn_end') return true;
+    if (cmd === 'slot_show_target') {
+      const { path } = args as { path?: string | null };
+      return {
+        ws: 'ws-9',
+        selection:
+          path === null || path === undefined
+            ? null
+            : { selected_metarecord: null, selected_paths: path === '' ? [] : [path] },
+      };
+    }
     return null;
   }),
   listen: vi.fn(async () => () => {}),
@@ -323,6 +333,72 @@ describe('dispatch', () => {
         ['txn_end', 7],
       ]);
     });
+  });
+});
+
+describe('slot:show', () => {
+  const calls = () => tauri.filter(({ cmd }) => !['begin_command', 'end_command'].includes(cmd));
+
+  beforeEach(() => {
+    tauri.length = 0;
+  });
+
+  test('delivers the selection pair at once, after the slot changed', async () => {
+    const result = await dispatch(['slot:show', 'left', 'viewer', '/a b/c.jpg']);
+    expect(result).toEqual({ ok: true });
+    const names = calls().map(({ cmd }) => cmd);
+    expect(names.indexOf('txn_begin')).toBeLessThan(names.indexOf('tab_assign'));
+    expect(names.indexOf('panel_set_type')).toBeLessThan(names.indexOf('workspace_send'));
+    expect(names.indexOf('workspace_send')).toBeLessThan(names.indexOf('txn_end'));
+    expect(tauri.find(({ cmd }) => cmd === 'slot_show_target')?.args).toEqual({
+      slot: 'left',
+      path: '/a b/c.jpg',
+    });
+    expect(tauri.find(({ cmd }) => cmd === 'tab_assign')?.args).toEqual({ wsId: 'ws-9', slot: 'left' });
+    expect(tauri.find(({ cmd }) => cmd === 'panel_set_type')?.args).toEqual({
+      slot: 'left',
+      panelType: 'viewer',
+    });
+    expect(tauri.find(({ cmd }) => cmd === 'workspace_send')?.args).toEqual({
+      wsId: 'ws-9',
+      vars: { selected_metarecord: null, selected_paths: ['/a b/c.jpg'] },
+      txn: 7,
+    });
+  });
+
+  test('an empty path clears the selection', async () => {
+    await dispatch(['slot:show', 'left', 'viewer', '']);
+    expect(tauri.find(({ cmd }) => cmd === 'workspace_send')?.args).toMatchObject({
+      vars: { selected_metarecord: null, selected_paths: [] },
+    });
+  });
+
+  test('no path leaves the selection as it is', async () => {
+    await dispatch(['slot:show', 'right', 'viewer']);
+    expect(tauri.some(({ cmd }) => cmd === 'workspace_send')).toBe(false);
+    expect(tauri.find(({ cmd }) => cmd === 'panel_set_type')?.args).toMatchObject({ slot: 'right' });
+  });
+
+  test('a path counts only with the viewer', async () => {
+    await dispatch(['slot:show', 'left', 'message', '/a.jpg']);
+    expect(tauri.find(({ cmd }) => cmd === 'slot_show_target')?.args).toMatchObject({ path: null });
+    expect(tauri.some(({ cmd }) => cmd === 'workspace_send')).toBe(false);
+  });
+
+  test('a refused slot leaves the selection as it was', async () => {
+    const { invoke } = await import('../src/lib/ipc');
+    const real = vi.mocked(invoke).getMockImplementation()!;
+    vi.mocked(invoke).mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'panel_set_type') throw new Error('already displayed');
+      return real(cmd, args as never);
+    });
+    try {
+      const result = await dispatch(['slot:show', 'left', 'viewer', '/a.jpg']);
+      expect(result).toEqual({ ok: false, error: 'already displayed' });
+      expect(tauri.some(({ cmd }) => cmd === 'workspace_send')).toBe(false);
+    } finally {
+      vi.mocked(invoke).mockImplementation(real);
+    }
   });
 });
 

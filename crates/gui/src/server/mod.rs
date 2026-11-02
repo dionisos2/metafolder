@@ -20,7 +20,7 @@ use crate::daemon_proxy::DaemonProxy;
 use crate::keybindings::KeybindingSet;
 use crate::state::GuiState;
 use axum::middleware::map_response;
-use axum::routing::{delete, get, post, put};
+use axum::routing::{delete, get, post};
 use axum::Router;
 use bench::BenchBuffer;
 use command_wait::CommandWait;
@@ -145,7 +145,7 @@ pub fn build_router(state: ServerState) -> Router {
         .route("/gui/vars/{key}", get(gui_api::get_global_var))
         .route("/gui/workspaces/{id}/messages", get(gui_api::get_workspace_messages))
         .route("/gui/layout", get(gui_api::get_layout).put(gui_api::put_layout))
-        .route("/gui/panels/{slot}/view", put(gui_api::put_panel_view).get(gui_api::get_panel_view))
+        .route("/gui/panels/{slot}/view", get(gui_api::get_panel_view))
         .route("/gui/command", post(gui_api::post_command))
         .route("/gui/bench", get(gui_api::get_bench))
         .route("/gui/bench/clear", post(gui_api::clear_bench))

@@ -801,8 +801,10 @@ export function isUserCommand(name: string): boolean {
 }
 
 /** Whether `name` runs in a transaction (doc "Command transactions"): a
- *  user command, a panel's command, a generic one — not a builtin. */
+ *  user command, a panel's command, a generic one, and `slot:show` — no other
+ *  builtin. */
 function runsInTransaction(name: string): boolean {
+  if (name === "slot:show") return true;
   if (isUserCommand(name) || GENERIC_COMMANDS.includes(name)) return true;
   return store.commands.some(
     (command) => command.name === name && command.owner,
@@ -2822,6 +2824,30 @@ async function runCommand(
         await invoke("tab_assign", { wsId: target.ws, slot: target.slot });
       }
       await invoke("panel_set_type", { slot: target.slot, panelType });
+      return true;
+    }
+    case "slot:show": {
+      // `slot:show <left|right> <type> [path]` (doc "slot:show"). The slot
+      // first: refused, it leaves the selection as it was. The pair is then
+      // held by the transaction, so it reaches the panels together.
+      const [slot, panelType, path] = args;
+      if (!panelType) throw new Error("slot:show needs a slot and a panel type");
+      const target = await invoke<{
+        ws: string;
+        selection: Record<string, unknown> | null;
+      }>("slot_show_target", {
+        slot,
+        path: panelType === "viewer" ? (path ?? null) : null,
+      });
+      await invoke("tab_assign", { wsId: target.ws, slot });
+      await invoke("panel_set_type", { slot, panelType });
+      if (target.selection) {
+        await invoke("workspace_send", {
+          wsId: target.ws,
+          vars: target.selection,
+          txn: context.txn,
+        });
+      }
       return true;
     }
     case "panel:swap":

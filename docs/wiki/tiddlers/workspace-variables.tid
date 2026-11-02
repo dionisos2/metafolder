@@ -46,10 +46,10 @@ of the file it is about to show — so the matching metarecord has to be in plac
 already. Writing the paths first hands every one of them the ''previous'' metarecord:
 one file on screen, another one read from and written to.
 
-It binds the scripting API as much as the panels: `PUT /gui/panels/:slot/view` with
-`{"type": "viewer", "path": …}` resolves the metarecord ''before'' it writes either
-variable. A script walking a folder one `mf gui view left viewer --path` at a time
-(`gui-tag-folder.sh`) otherwise ran a whole session one answer behind.
+It binds the scripting API as much as the panels: [[slot:show]] resolves the metarecord
+''before'' it writes either variable, and delivers the two together. A script walking a
+folder one `mf gui view left viewer --path` at a time (`gui-tag-folder.sh`) otherwise
+ran a whole session one answer behind.
 
 A panel may move `selected_metarecord` ''alone'' — following a reference in
 `metarecord-detail` does — and the [[viewer panel]] deliberately ignores that, keeping the

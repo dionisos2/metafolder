@@ -276,6 +276,16 @@ pub fn focus_slot(app: AppHandle, slot: SlotId) {
     app.gui.focus_slot(slot)
 }
 
+/// What `slot:show` acts on (doc "slot:show").
+#[tauri::command]
+pub async fn slot_show_target(
+    app: tauri::State<'_, Arc<App>>,
+    slot: String,
+    path: Option<String>,
+) -> Result<Value, String> {
+    crate::server::gui_api::slot_show_target(&app.gui, &app.daemon, &slot, path.as_deref()).await
+}
+
 #[tauri::command]
 pub fn panel_set_type(app: AppHandle, slot: SlotId, panel_type: String) -> Result<(), String> {
     app.gui.set_panel_type(slot, &panel_type)
