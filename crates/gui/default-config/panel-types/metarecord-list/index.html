@@ -88,7 +88,7 @@
         color: var(--mf-fg-dim, #8a8a96);
         cursor: pointer;
       }
-      .freeze-label {
+      .check-label {
         display: flex;
         align-items: center;
         gap: 3px;
@@ -374,7 +374,7 @@
         <span class="zone-icon" aria-hidden="true" title="order">🔢</span>
         <input id="order-field" list="order-fields" value="order_file" placeholder="int field, e.g. order_file" />
         <datalist id="order-fields"></datalist>
-        <label class="freeze-label" title="Order the list by an int field: rows without a position are numbered, the list sorts by it, and Alt+↑ / Alt+↓ move the row under the cursor (doc &quot;Ordering a list&quot;).">
+        <label class="check-label" title="Order the list by an int field: rows without a position are numbered, the list sorts by it, and Alt+↑ / Alt+↓ move the row under the cursor (doc &quot;Ordering a list&quot;).">
           <input id="order-on" type="checkbox" /> Order by
         </label>
       </div>
@@ -401,7 +401,7 @@
         <span id="bulk-value"></span>
       </div>
       <div class="editor-row">
-        <label id="bulk-force-label" class="freeze-label" title="Required to write reserved mfr_* fields">
+        <label id="bulk-force-label" class="check-label" title="Required to write reserved mfr_* fields">
           <input id="bulk-force" type="checkbox" /> Force
         </label>
         <button id="bulk-apply">Apply</button>
