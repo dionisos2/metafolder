@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for scripts/run-tests.sh.
+# Tests for scripts/dev/run-tests.sh.
 #
 # run-tests.sh runs the workspace suite and adds the one thing cargo never
 # prints: a GLOBAL report over every test binary. The aggregation is exposed as

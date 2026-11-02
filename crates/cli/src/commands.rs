@@ -436,8 +436,8 @@ pub fn reindex_repo(ctx: &Ctx) -> Result<i32, CliError> {
     Ok(0)
 }
 
-/// `mf unload`: unloads the repository from the daemon (`POST …/unload`),
-/// printing its UUID. A repository not loaded (404) or in a rollback navigation
+/// `mf repo unload`: unloads the repository from the daemon (`POST …/unload`),
+/// printing its UUID. A repository not loaded (404) or in a coordinated revert
 /// (409) is reported as an error.
 pub fn unload(ctx: &Ctx) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
@@ -1544,7 +1544,7 @@ fn poll_task(
     }
 }
 
-/// `mf tasks [--all]`: lists background tasks (doc "Tasks"). `--all` queries
+/// `mf task list [--all]`: lists background tasks (doc "Tasks"). `--all` queries
 /// every loaded repository (no `--repo` needed); otherwise the current repo.
 pub fn tasks(ctx: &Ctx, all: bool, raw_json: bool) -> Result<i32, CliError> {
     let path = if all { "/tasks".to_string() } else { format!("{}/tasks", ctx.repo_base()?) };

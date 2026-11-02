@@ -18,7 +18,7 @@ rules:
       include:
         - crates/daemon/src/**
       exclude:
-        # The Writer and the navigation (log.rs), and the storage layer the
+        # The Writer and the revert (log.rs), and the storage layer the
         # Writer writes through (store.rs, kvstore/): not a bypass.
         - crates/daemon/src/log.rs
         - crates/daemon/src/store.rs

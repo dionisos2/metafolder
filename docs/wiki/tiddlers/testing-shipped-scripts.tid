@@ -63,7 +63,7 @@ files, each phase timed apart.
 
 !! The suites
 
-One per script, `scripts/test-<script>.sh`, run by `scripts/dev/test-shipped-scripts.sh`,
+One per script, `scripts/dev/test-<script>.sh`, run by `scripts/dev/test-shipped-scripts.sh`,
 which is the `scripts` check of `scripts/dev/check.sh` ([[Static checks]]). `gui-tag-next.sh`, a pure
 selector, needs no mock. Lint a script with `shellcheck -x -P SCRIPTDIR`.
 

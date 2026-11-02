@@ -112,7 +112,7 @@ fn install_cli_config(xdg: &std::path::Path) {
 }
 
 /// `XDG_CONFIG_HOME` for a config dir with the shipped `cli/` and `core/` config
-/// installed: the query-grammar (so `mf query --simplified` can expand locally)
+/// installed: the query-grammar (so `mf metarecord get -q -s` can expand locally)
 /// and the ignore-presets (so `mf repo init` / `mf ignore` can apply the
 /// `default` preset — the daemon no longer ships ignore patterns); and the
 /// repository defaults `mf repo init` installs (doc "Repository

@@ -1659,7 +1659,7 @@ fn undo_arguments(
     Ok((plan, label))
 }
 
-/// The two `move_file` policies, with the defaults of `mf rollback`.
+/// The two `move_file` policies, with the defaults of `mf log undo`, `redo` and `revert`.
 fn move_policies(
     on_available: Option<String>,
     on_unavailable: Option<String>,

@@ -4,7 +4,7 @@
 # Walks the metarecords a QUERY matches and, for each, shows the file (left
 # `file` panel) and its metadata (right `metarecord-detail` panel), then asks a
 # descending series of questions "add tag <path> ?" chosen by
-# scripts/gui-tag-next.sh:
+# scripts/shipped/gui-tag-next.sh:
 #
 #   y / →  -> the file HAS the tag       (mf tag add)
 #   n / ←  -> the file does NOT have it  (mf tag deny)

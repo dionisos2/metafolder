@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Tests for scripts/gui-tag-next.sh — the pure "next question" selector of the
+# Tests for scripts/shipped/gui-tag-next.sh — the pure "next question" selector of the
 # hierarchical-tag classification flow. No daemon/GUI involved: fixtures are
 # plain files, we compare the selector's stdout/exit code. Mirrors the harness
-# style of scripts/test-prune-target.sh.
+# style of scripts/dev/test-prune-target.sh.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)

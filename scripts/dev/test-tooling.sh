@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the tests for the project's own tooling scripts — the ones that build,
 # check and prune the tree, as opposed to the shipped GUI scripts covered by
-# scripts/test-shipped-scripts.sh. Each suite is standalone and hermetic (they
+# scripts/dev/test-shipped-scripts.sh. Each suite is standalone and hermetic (they
 # stub their probes rather than touching the real host).
 #
 #   scripts/dev/test-tooling.sh

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for scripts/check-deps.sh.
+# Tests for scripts/dev/check-deps.sh.
 #
 # check-deps.sh probes the host for build/runtime dependencies, which is not
 # reproducible in a test. The seam MF_CHECK_STUB makes it deterministic: a file

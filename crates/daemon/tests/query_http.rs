@@ -1286,7 +1286,7 @@ async fn test_multi_term_osm_path_paginates() {
     let query = json!({"type": "osm", "field": "loc",
                        "terms": ["sci", "ep"], "mode": "path"});
 
-    // Walk every page, exactly as the finder and `mf query --limit` do.
+    // Walk every page, exactly as the finder and `mf metarecord get --limit` do.
     let mut seen: Vec<String> = Vec::new();
     let mut cursor: Option<String> = None;
     for page in 0..10 {

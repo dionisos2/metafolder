@@ -373,7 +373,7 @@ struct Parser {
 /// nested JSON, and for the same reason. This is a recursive-descent parser, so
 /// nesting depth *is* stack depth, and the input comes straight from a user:
 /// the GUI's query editor hands whatever is typed to the `parse_query` command,
-/// `mf query` takes it from argv. Unbounded, a run of open parentheses is not a
+/// `mf metarecord get -q` takes it from argv. Unbounded, a run of open parentheses is not a
 /// parse error but a stack overflow — a process-killing SIGSEGV instead of a
 /// message anyone can act on. Far above any query a human or a UI builds.
 const MAX_DEPTH: usize = 128;
