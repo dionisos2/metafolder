@@ -45,6 +45,8 @@ pub struct App {
     pub ref_seeds: std::collections::HashMap<String, crate::config::RefSeed>,
     /// Completion-wide knobs (config.toml `[completion]`).
     pub completion: crate::config::CompletionSettings,
+    /// The tag-model field names (`[tag]`, doc "Tagging from the GUI").
+    pub tag: metafolder_core::tag::TagConfig,
     /// External programs offered by `file:open-with` (config.toml `open-with`).
     pub open_with: Vec<String>,
     pub daemon: Arc<DaemonProxy>,

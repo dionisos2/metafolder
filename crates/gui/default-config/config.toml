@@ -1,6 +1,9 @@
 # Metafolder GUI settings (doc "Configuration"; doc "Connection to the daemon").
 # Installed into ~/.config/metafolder/gui/ by metafolder-sync-config.
 # CLI flags (--daemon-port / --gui-port) override these at launch.
+# Every key is required, but those of [panel-defaults.*]: the GUI holds no copy
+# of these values. To go back to a shipped value:
+# git checkout default -- gui/config.toml (from ~/.config/metafolder/).
 
 # Port of the daemon the GUI connects to (on 127.0.0.1, the only address the
 # daemon listens on). Defaults to the daemon's own default port, so the GUI
@@ -32,8 +35,7 @@ viewer = 150
 file-manager = 200
 path-ref = 200
 
-# Miscellaneous runtime settings. Every key is optional: omit the table (or any
-# key) to keep the default shown below.
+# Miscellaneous runtime settings.
 [settings]
 
 # How often (seconds) the GUI polls the daemon's health endpoint (drives the
@@ -70,7 +72,7 @@ video-thumbnail-percent = 10
 # file is skipped; "" loads nothing. Default: "~/.bashrc".
 shell-rc = "~/.bashrc"
 
-# Shared panel UX timing knobs, handed to every panel. Every key optional.
+# Shared panel UX timing knobs, handed to every panel.
 [panels]
 
 # Durations (ms) the panels attach to a status message, ordinary and error.
@@ -120,6 +122,19 @@ mixed_tag    = ['mf_schema = "tag"', 'path:path']
 # must be deterministic and typeable. Default: " | ".
 [completion]
 label-separator = ' | '
+
+# The field names of the tag model `mf.tag.answer` works with (doc "Tagging from
+# the GUI"): the same as the [tag] table of cli/config.toml.
+[tag]
+type-field = "mf_schema"       # field marking a metarecord as a tag entry
+entry-type = "tag"             # its value
+path-field = "path"            # TreeRef: the tag's position in the hierarchy
+positive   = "tag"             # multi-map ref: the record HAS the tag
+negative   = "negative_tag"    # multi-map ref: the record does NOT
+mixed      = "mixed_tag"       # multi-map ref: a folder is mixed
+always     = "always"          # bool flag: classification adds it unasked
+partition  = "partition"       # bool flag: its children exclude one another
+sparse     = "sparse"          # bool flag: classification picks children one by one
 
 # Per-panel-type default values (doc "GUI configuration"). Each table is
 # handed verbatim to the panel of that name as `metafolder.defaults` (keys

@@ -473,6 +473,7 @@ pub fn run(options: Options) {
     let page_sizes = gui_config.page_size.clone();
     let ref_seeds = gui_config.ref_seeds.clone();
     let completion = gui_config.completion.clone();
+    let tag = gui_config.tag.clone();
     let open_with = gui_config.open_with.clone();
     let settings = gui_config.settings.clone();
     let panel_settings = gui_config.panels.clone();
@@ -534,6 +535,7 @@ pub fn run(options: Options) {
                 page_sizes: page_sizes.clone(),
                 ref_seeds: ref_seeds.clone(),
                 completion: completion.clone(),
+                tag: tag.clone(),
                 open_with: open_with.clone(),
                 settings: settings.clone(),
                 panel_settings: panel_settings.clone(),

@@ -26,6 +26,6 @@ false, and is created — with any missing parent — when its path names no tag
 ([[Tag subsumption]]). ''Removing'' takes back one ref and rewrites nothing else, in
 whichever field.
 
-The GUI uses the field names of the convention; the `[tag]` table of
-[[CLI configuration]] does not apply to it. To answer many records or a whole folder,
+The field names are those of the `[tag]` table of `gui/config.toml`
+([[GUI configuration]]), kept apart from the one of [[CLI configuration]]. To answer many records or a whole folder,
 the tagging scripts ask the questions for you ([[Classifying with tags]]).

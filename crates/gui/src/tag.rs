@@ -40,6 +40,7 @@ fn summary(answer: Answer, path: &str, written: u64) -> String {
 /// the Tauri command so a stub can drive it.
 fn run_with(
     client: &dyn DaemonClient,
+    config: &TagConfig,
     repo: &str,
     uuid: &str,
     verb: &str,
@@ -52,10 +53,7 @@ fn run_with(
         return Err("no tag named".into());
     }
     let query = json!({"type": "uuid_in", "uuids": [uuid]});
-    // The field names are the convention's defaults: the GUI has no `[tag]`
-    // table of its own, and its `[ref-seeds]` name the same three fields.
-    let written = tag::apply(client, repo, &TagConfig::default(), &query, answer, path)
-        .map_err(|e| e.message)?;
+    let written = tag::apply(client, repo, config, &query, answer, path).map_err(|e| e.message)?;
     Ok(TagReport { written, message: summary(answer, path, written) })
 }
 
@@ -69,8 +67,9 @@ pub async fn tag_answer(
     path: String,
 ) -> Result<TagReport, String> {
     let base = app.daemon.base_url();
+    let config = app.tag.clone();
     tokio::task::spawn_blocking(move || {
-        run_with(&BlockingClient::new(base), &repo, &uuid, &verb, &path)
+        run_with(&BlockingClient::new(base), &config, &repo, &uuid, &verb, &path)
     })
     .await
     .map_err(|e| format!("tag task panicked: {e}"))?
@@ -79,6 +78,13 @@ pub async fn tag_answer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The `[tag]` table of the shipped file.
+    fn config() -> TagConfig {
+        let shipped: toml::Table =
+            toml::from_str(include_str!("../default-config/config.toml")).unwrap();
+        shipped["tag"].clone().try_into().unwrap()
+    }
     use metafolder_core::daemon_client::DaemonError;
     use serde_json::Value;
     use std::cell::RefCell;
@@ -120,7 +126,8 @@ mod tests {
     #[test]
     fn test_adds_the_tag_to_the_one_metarecord_with_the_rewrite() {
         let client = stub();
-        let report = run_with(&client, "r", "abc", "add", "musique/jazz").expect("tagged");
+        let report =
+            run_with(&client, &config(), "r", "abc", "add", "musique/jazz").expect("tagged");
         assert_eq!(report.written, 1);
         assert_eq!(report.message, "Tag: musique/jazz added");
         let batch = client.batch.borrow().clone().expect("one write");
@@ -138,7 +145,7 @@ mod tests {
     fn test_deny_and_mixed_write_their_field() {
         for (verb, field) in [("deny", "negative_tag"), ("mixed", "mixed_tag")] {
             let client = stub();
-            run_with(&client, "r", "abc", verb, "musique").expect("answered");
+            run_with(&client, &config(), "r", "abc", verb, "musique").expect("answered");
             let batch = client.batch.borrow().clone().unwrap();
             assert_eq!(batch["ops"][0]["name"], field, "{verb}");
         }
@@ -146,7 +153,9 @@ mod tests {
 
     #[test]
     fn test_an_unknown_verb_or_an_empty_tag_is_refused() {
-        assert!(run_with(&stub(), "r", "abc", "tag", "musique").unwrap_err().contains("add, deny"));
-        assert!(run_with(&stub(), "r", "abc", "add", " / ").is_err());
+        assert!(run_with(&stub(), &config(), "r", "abc", "tag", "musique")
+            .unwrap_err()
+            .contains("add, deny"));
+        assert!(run_with(&stub(), &config(), "r", "abc", "add", " / ").is_err());
     }
 }

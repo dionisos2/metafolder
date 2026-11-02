@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 /// (each row needs several daemon round-trips), largest for `file-manager`
 /// (a plain text row is the cheapest to build).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct PageSizes {
     pub metarecord_list: u32,
     /// `file` until the panel was renamed (October 2026), still read.
@@ -28,17 +28,11 @@ pub struct PageSizes {
     pub path_ref: u32,
 }
 
-impl Default for PageSizes {
-    fn default() -> Self {
-        PageSizes { metarecord_list: 100, viewer: 150, file_manager: 200, path_ref: 200 }
-    }
-}
-
 /// Miscellaneous GUI runtime settings (the `[settings]` table of `config.toml`).
 /// These stay Rust-side (they drive background loops and the GUI HTTP server),
 /// unlike `[page-size]`/`[panels]` which are handed to the panels.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct Settings {
     /// How often (seconds) the GUI polls the daemon's health endpoint.
     pub daemon_health_poll_secs: u64,
@@ -62,23 +56,10 @@ pub struct Settings {
     pub shell_rc: String,
 }
 
-impl Default for Settings {
-    fn default() -> Self {
-        Settings {
-            daemon_health_poll_secs: 5,
-            reconcile_poll_ms: 200,
-            repo_list_cache_ttl_secs: 3,
-            slow_operation_threshold_ms: metafolder_core::slowlog::DEFAULT_THRESHOLD_MS,
-            video_thumbnail_percent: 10.0,
-            shell_rc: "~/.bashrc".into(),
-        }
-    }
-}
-
 /// UX timing knobs shared by the panels (the `[panels]` table), handed to each
 /// panel through the `metafolder` object (`metafolder.settings`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct PanelSettings {
     /// Duration (ms) the panels attach to an ordinary status message. No
     /// longer acted on: a status message stays until the next one replaces it
@@ -98,38 +79,23 @@ pub struct PanelSettings {
     pub confirm_trash: bool,
 }
 
-impl Default for PanelSettings {
-    fn default() -> Self {
-        PanelSettings {
-            status_message_ms: 5000,
-            status_error_ms: 8000,
-            finder_debounce_ms: 500,
-            live_preview_debounce_ms: 130,
-            task_poll_ms: 1500,
-            confirm_trash: true,
-        }
-    }
-}
-
 /// Per-panel-type default values (the `[panel-defaults.<panel-type>]` tables of
 /// `config.toml`), handed to each panel as `metafolder.defaults` (doc
 /// "GUI configuration"). Deliberately untyped: panel types are user-extensible, so
 /// the GUI cannot know a custom panel's keys — a table is passed through to its
-/// panel verbatim, and each panel keeps its own module fallback for a key the
-/// user did not configure.
+/// panel verbatim.
 pub type PanelDefaults =
     std::collections::HashMap<String, serde_json::Map<String, serde_json::Value>>;
 
 /// GUI settings read from `~/.config/metafolder/gui/config.toml` (doc "Configuration";
-/// doc "Connection to the daemon"). Missing fields fall back to the
-/// defaults below — notably the daemon's own default port, so a fresh install
-/// connects without any flag or extra file.
+/// doc "Connection to the daemon"). Every key is required: the defaults live
+/// in the shipped file alone (doc "No runtime fallback").
 ///
 /// A key the GUI does not know is refused, in every table but
 /// `[panel-defaults.<type>]`, whose keys belong to the panels: a typo or a
 /// retired setting must not be read as "the default".
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct GuiConfig {
     /// Port of the daemon the GUI talks to (on 127.0.0.1, the only address it
     /// listens on).
@@ -156,8 +122,11 @@ pub struct GuiConfig {
     /// External programs offered by `file:open-with` (doc "Opening a file
     /// with another program"), read from the top-level `open-with` array. They
     /// are completion candidates, not a whitelist: any command line may be
-    /// typed. Defaults to the desktop's own handler.
+    /// typed.
     pub open_with: Vec<String>,
+    /// The tag-model field names `mf.tag.answer` works with (`[tag]`, doc
+    /// "Tagging from the GUI").
+    pub tag: metafolder_core::tag::TagConfig,
 }
 
 /// Completion-wide knobs (config.toml `[completion]`, doc "Completion
@@ -167,18 +136,7 @@ pub struct GuiConfig {
 pub struct CompletionSettings {
     /// What joins the columns of a multi-column completion label — the label
     /// is typed back whole, so the join must be deterministic and typeable.
-    #[serde(default = "default_label_separator")]
     pub label_separator: String,
-}
-
-fn default_label_separator() -> String {
-    " | ".to_string()
-}
-
-impl Default for CompletionSettings {
-    fn default() -> Self {
-        CompletionSettings { label_separator: default_label_separator() }
-    }
 }
 
 /// One `[ref-seeds]` rule (doc "Ref value seeds"): how a `ref` field's
@@ -258,22 +216,6 @@ impl Settings {
     /// The thumbnail repo-list cache TTL as a [`std::time::Duration`].
     pub fn repo_list_cache_ttl(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.repo_list_cache_ttl_secs)
-    }
-}
-
-impl Default for GuiConfig {
-    fn default() -> Self {
-        GuiConfig {
-            daemon_port: 7523,
-            gui_port: 7524,
-            page_size: PageSizes::default(),
-            settings: Settings::default(),
-            panels: PanelSettings::default(),
-            panel_defaults: PanelDefaults::new(),
-            ref_seeds: std::collections::HashMap::new(),
-            completion: CompletionSettings::default(),
-            open_with: vec!["xdg-open".to_string()],
-        }
     }
 }
 
@@ -828,11 +770,62 @@ fn push_line(array: &mut toml_edit::Array, element: toml_edit::InlineTable) {
 mod tests {
     use super::*;
 
+    const SHIPPED: &str = include_str!("../default-config/config.toml");
+
+    /// The shipped file, with the keys of `src` set over it: every setting is
+    /// required, so a test states only what it is about.
+    fn over_shipped(src: &str) -> Result<GuiConfig, toml::de::Error> {
+        fn merge(base: &mut toml::Table, over: toml::Table) {
+            for (key, value) in over {
+                match (base.get_mut(&key), value) {
+                    (Some(toml::Value::Table(b)), toml::Value::Table(o)) => merge(b, o),
+                    (_, value) => {
+                        base.insert(key, value);
+                    }
+                }
+            }
+        }
+        let mut base: toml::Table = toml::from_str(SHIPPED).unwrap();
+        merge(&mut base, toml::from_str(src)?);
+        toml::from_str(&toml::to_string(&base).unwrap())
+    }
+
+    /// The shipped file without `key` of `table` (the top level if empty).
+    fn shipped_without(table: &str, key: &str) -> Result<GuiConfig, toml::de::Error> {
+        let mut base: toml::Table = toml::from_str(SHIPPED).unwrap();
+        let target = if table.is_empty() { &mut base } else { base[table].as_table_mut().unwrap() };
+        assert!(target.remove(key).is_some(), "{table}.{key} is not shipped");
+        toml::from_str(&toml::to_string(&base).unwrap())
+    }
+
+    /// No built-in copy of the defaults (doc "No runtime fallback"): whatever
+    /// the shipped file sets is required, and the error names what is missing.
     #[test]
-    fn test_config_defaults_to_the_daemon_default_port() {
-        // An empty config still yields the daemon's default port and the GUI
-        // default port, so no flag or extra file is needed out of the box.
-        let parsed: GuiConfig = toml::from_str("").unwrap();
+    fn test_a_missing_key_is_an_error_naming_it() {
+        for (table, key) in [
+            ("", "daemon-port"),
+            ("", "gui-port"),
+            ("", "open-with"),
+            ("", "page-size"),
+            ("", "settings"),
+            ("", "panels"),
+            ("", "ref-seeds"),
+            ("", "completion"),
+            ("", "panel-defaults"),
+            ("", "tag"),
+            ("page-size", "path-ref"),
+            ("settings", "shell-rc"),
+            ("panels", "confirm-trash"),
+            ("completion", "label-separator"),
+        ] {
+            let err = shipped_without(table, key).expect_err(key).to_string();
+            assert!(err.contains(key), "{table}.{key}: {err}");
+        }
+    }
+
+    #[test]
+    fn test_the_shipped_ports_are_the_daemon_default_port_and_the_gui_default_port() {
+        let parsed = over_shipped("").unwrap();
         assert_eq!(parsed.daemon_port, 7523);
         assert_eq!(parsed.daemon_base_url(), "http://127.0.0.1:7523");
         assert_eq!(parsed.gui_port, 7524);
@@ -854,7 +847,7 @@ mod tests {
             "[page-size]\nmy-panel = 10\n",
             "[completion]\nseparator = '/'\n",
         ] {
-            let err = toml::from_str::<GuiConfig>(src).expect_err(src).to_string();
+            let err = over_shipped(src).expect_err(src).to_string();
             assert!(err.contains("unknown field"), "{src}: {err}");
         }
     }
@@ -862,41 +855,37 @@ mod tests {
     #[test]
     fn test_panel_defaults_keep_any_key() {
         // Panel types are user-extensible: a custom panel's keys are its own.
-        let parsed: GuiConfig =
-            toml::from_str("[panel-defaults.my-panel]\nanything = 3\n").unwrap();
+        let parsed = over_shipped("[panel-defaults.my-panel]\nanything = 3\n").unwrap();
         assert_eq!(parsed.panel_defaults["my-panel"]["anything"], 3);
     }
 
     #[test]
     fn test_config_overrides_each_field() {
-        let parsed: GuiConfig = toml::from_str("daemon-port = 9000\ngui-port = 8800\n").unwrap();
+        let parsed = over_shipped("daemon-port = 9000\ngui-port = 8800\n").unwrap();
         assert_eq!(parsed.daemon_port, 9000);
         assert_eq!(parsed.gui_port, 8800);
     }
 
     #[test]
-    fn test_page_sizes_default_per_panel() {
-        // An empty config yields the documented per-panel defaults.
-        let parsed: GuiConfig = toml::from_str("").unwrap();
+    fn test_page_sizes_shipped_per_panel() {
+        let parsed = over_shipped("").unwrap();
         assert_eq!(parsed.page_size.metarecord_list, 100);
         assert_eq!(parsed.page_size.viewer, 150);
         assert_eq!(parsed.page_size.file_manager, 200);
     }
 
     #[test]
-    fn test_page_sizes_override_one_panel_keeps_other_defaults() {
-        let parsed: GuiConfig = toml::from_str("[page-size]\nviewer = 42\n").unwrap();
+    fn test_page_sizes_override_one_panel() {
+        let parsed = over_shipped("[page-size]\nviewer = 42\n").unwrap();
         assert_eq!(parsed.page_size.viewer, 42);
-        // Unspecified panels keep their defaults.
-        assert_eq!(parsed.page_size.metarecord_list, 100);
-        assert_eq!(parsed.page_size.file_manager, 200);
     }
 
     #[test]
     fn test_the_page_size_of_the_viewer_still_reads_under_its_old_name() {
         // The panel was `file` until October 2026: a configuration whose
         // merge kept the old key must not stop the GUI.
-        let parsed: GuiConfig = toml::from_str("[page-size]\nfile = 42\n").unwrap();
+        let src = SHIPPED.replace("viewer = 150", "file = 42");
+        let parsed: GuiConfig = toml::from_str(&src).unwrap();
         assert_eq!(parsed.page_size.viewer, 42);
     }
 
@@ -904,7 +893,7 @@ mod tests {
     fn test_page_sizes_serialize_with_kebab_panel_keys() {
         // The frontend keys the map by panel-type name, so the JSON must use
         // kebab-case keys matching the panel directory names.
-        let json = serde_json::to_value(PageSizes::default()).unwrap();
+        let json = serde_json::to_value(over_shipped("").unwrap().page_size).unwrap();
         assert_eq!(json["metarecord-list"], 100);
         assert_eq!(json["viewer"], 150);
         assert_eq!(json["file-manager"], 200);
@@ -913,55 +902,46 @@ mod tests {
     }
 
     #[test]
-    fn test_settings_default_and_override() {
-        let empty: GuiConfig = toml::from_str("").unwrap();
-        assert_eq!(empty.settings, Settings::default());
+    fn test_settings_shipped_and_override() {
+        let empty = over_shipped("").unwrap();
         assert_eq!(empty.settings.daemon_health_poll_secs, 5);
         assert_eq!(empty.settings.reconcile_poll_ms, 200);
         assert_eq!(empty.settings.repo_list_cache_ttl_secs, 3);
         assert_eq!(empty.settings.video_thumbnail_percent, 10.0);
 
-        let parsed: GuiConfig =
-            toml::from_str("[settings]\ndaemon-health-poll-secs = 12\n").unwrap();
+        let parsed = over_shipped("[settings]\ndaemon-health-poll-secs = 12\n").unwrap();
         assert_eq!(parsed.settings.daemon_health_poll_secs, 12);
-        // Unspecified keys keep their defaults.
-        assert_eq!(parsed.settings.reconcile_poll_ms, 200);
     }
 
     #[test]
     fn test_video_thumbnail_percent_is_read_and_bounded() {
-        let parsed: GuiConfig =
-            toml::from_str("[settings]\nvideo-thumbnail-percent = 25\n").unwrap();
+        let parsed = over_shipped("[settings]\nvideo-thumbnail-percent = 25\n").unwrap();
         assert_eq!(parsed.settings.video_thumbnail_percent, 25.0);
         assert!(parsed.validate().is_ok());
-        let float: GuiConfig =
-            toml::from_str("[settings]\nvideo-thumbnail-percent = 2.5\n").unwrap();
+        let float = over_shipped("[settings]\nvideo-thumbnail-percent = 2.5\n").unwrap();
         assert_eq!(float.settings.video_thumbnail_percent, 2.5);
         for bad in ["-1", "100.5", "nan"] {
-            let parsed: GuiConfig =
-                toml::from_str(&format!("[settings]\nvideo-thumbnail-percent = {bad}\n")).unwrap();
+            let parsed =
+                over_shipped(&format!("[settings]\nvideo-thumbnail-percent = {bad}\n")).unwrap();
             assert!(parsed.validate().is_err(), "{bad} must be refused");
         }
     }
 
     #[test]
-    fn test_panel_settings_default_and_override() {
-        let empty: GuiConfig = toml::from_str("").unwrap();
-        assert_eq!(empty.panels, PanelSettings::default());
+    fn test_panel_settings_shipped_and_override() {
+        let empty = over_shipped("").unwrap();
         assert_eq!(empty.panels.finder_debounce_ms, 500);
         assert_eq!(empty.panels.status_error_ms, 8000);
 
-        let parsed: GuiConfig = toml::from_str("[panels]\nfinder-debounce-ms = 1000\n").unwrap();
+        let parsed = over_shipped("[panels]\nfinder-debounce-ms = 1000\n").unwrap();
         assert_eq!(parsed.panels.finder_debounce_ms, 1000);
-        // Unspecified keys keep their defaults.
-        assert_eq!(parsed.panels.live_preview_debounce_ms, 130);
     }
 
     #[test]
     fn test_panel_settings_serialize_with_kebab_keys() {
         // The frontend reads these keys off `metafolder.settings`; they must be
         // camelCase-friendly kebab keys that the JS maps to camelCase.
-        let json = serde_json::to_value(PanelSettings::default()).unwrap();
+        let json = serde_json::to_value(over_shipped("").unwrap().panels).unwrap();
         assert_eq!(json["finder-debounce-ms"], 500);
         assert_eq!(json["status-error-ms"], 8000);
         assert_eq!(json["task-poll-ms"], 1500);
@@ -969,21 +949,20 @@ mod tests {
 
     #[test]
     fn test_trashing_is_confirmed_unless_switched_off() {
-        // doc "Confirming a trashing": on by default, a safety the user drops.
-        let empty: GuiConfig = toml::from_str("").unwrap();
+        // doc "Confirming a trashing": shipped on, a safety the user drops.
+        let empty = over_shipped("").unwrap();
         assert!(empty.panels.confirm_trash);
-        let off: GuiConfig = toml::from_str("[panels]\nconfirm-trash = false\n").unwrap();
+        let off = over_shipped("[panels]\nconfirm-trash = false\n").unwrap();
         assert!(!off.panels.confirm_trash);
         assert_eq!(serde_json::to_value(&off.panels).unwrap()["confirm-trash"], false);
     }
 
     #[test]
     fn test_ref_seeds_rules_and_the_default_wildcard() {
-        let empty: GuiConfig = toml::from_str("").unwrap();
-        assert!(empty.ref_seeds.is_empty());
-        assert_eq!(empty.completion.label_separator, " | ");
+        let shipped = over_shipped("").unwrap();
+        assert_eq!(shipped.completion.label_separator, " | ");
 
-        let parsed: GuiConfig = toml::from_str(
+        let parsed = over_shipped(
             "[ref-seeds]\n\
              tag = ['mf_schema=tag', 'path:path']\n\
              author = 'full_name:value'\n\
@@ -1015,29 +994,23 @@ mod tests {
 
     #[test]
     fn test_ref_seed_rejects_a_wrongly_shaped_rule() {
-        assert!(toml::from_str::<GuiConfig>("[ref-seeds]\ntag = ['a', 'b', 'c']\n").is_err());
+        assert!(over_shipped("[ref-seeds]\ntag = ['a', 'b', 'c']\n").is_err());
     }
 
     #[test]
-    fn test_open_with_defaults_to_the_desktop_handler_and_parses() {
-        // Omitted: the system's default handler, always available on a desktop
-        // — so "Open with…" offers something out of the box.
-        let empty: GuiConfig = toml::from_str("").unwrap();
+    fn test_open_with_ships_the_desktop_handler_and_parses() {
+        // The system's default handler, always available on a desktop — so
+        // "Open with…" offers something out of the box.
+        let empty = over_shipped("").unwrap();
         assert_eq!(empty.open_with, vec!["xdg-open".to_string()]);
 
-        let parsed: GuiConfig =
-            toml::from_str("open-with = ['mpv', 'gimp', 'xdg-open']\n").unwrap();
+        let parsed = over_shipped("open-with = ['mpv', 'gimp', 'xdg-open']\n").unwrap();
         assert_eq!(parsed.open_with, vec!["mpv", "gimp", "xdg-open"]);
     }
 
     #[test]
-    fn test_panel_defaults_default_empty_and_parse_per_panel_type() {
-        // Absent table: no defaults at all, and every panel falls back to its
-        // own module constant.
-        let empty: GuiConfig = toml::from_str("").unwrap();
-        assert!(empty.panel_defaults.is_empty());
-
-        let parsed: GuiConfig = toml::from_str(
+    fn test_panel_defaults_parse_per_panel_type() {
+        let parsed = over_shipped(
             "[panel-defaults.metarecord-list]\ncolumns = 'name mfr_type'\n             finder-fields = ['label:direct']\n\n             [panel-defaults.my-custom-panel]\nwhatever = 3\n",
         )
         .unwrap();
@@ -1050,14 +1023,13 @@ mod tests {
             parsed.panel_defaults.get("my-custom-panel").unwrap()["whatever"],
             serde_json::json!(3)
         );
-        assert!(!parsed.panel_defaults.contains_key("path-ref"));
     }
 
     #[test]
     fn test_panel_defaults_keep_toml_scalar_types() {
         // Numbers, floats, booleans and arrays survive the TOML → JSON hop, so
         // a panel reads a real number rather than a string.
-        let parsed: GuiConfig = toml::from_str(
+        let parsed = over_shipped(
             "[panel-defaults.viewer]\ntext-preview-limit = 262144\nzoom-step = 1.25\n             text-extensions = ['txt', 'md']\n",
         )
         .unwrap();
@@ -1550,12 +1522,14 @@ mod tests {
             .join("metafolder-tests")
             .join(format!("mf_gui_cfg_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("config.toml"), "gui-port = 7600\n").unwrap();
+        std::fs::write(
+            dir.join("config.toml"),
+            SHIPPED.replace("gui-port = 7524", "gui-port = 7600"),
+        )
+        .unwrap();
         let config = ConfigDir::at(dir.clone());
         let loaded = config.load_config().unwrap();
         assert_eq!(loaded.gui_port, 7600);
-        // Unspecified field keeps the default.
-        assert_eq!(loaded.daemon_port, 7523);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
