@@ -19,7 +19,7 @@ drive unplugged.
 ''Unloading.'' A lost root takes the repository out of service for good, even if the root
 comes back:
 
-* the daemon unloads it — tasks asked to stop, a rollback lock dropped, watcher and executor stopped, the store and its lock let go — on a thread of its own, since the executor can be the one that found the root gone and the unload joins it;
+* the daemon unloads it — tasks asked to stop, a [[coordinated revert's lock|Filesystem coordination]] dropped, watcher and executor stopped, the store and its lock let go — on a thread of its own, since the executor can be the one that found the root gone and the unload joins it;
 * until that is done, each flush drops what the watcher buffered, writing nothing;
 * a warning in the repository's diagnostics says so once.
 
