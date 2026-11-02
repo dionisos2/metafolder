@@ -1,14 +1,13 @@
-//! The forest's questions (doc "The tree cache"): path strings to
+//! The forest's questions (doc "Forest lookups"): path strings to
 //! metarecords and back, children, descendants, path matches and path sort
 //! keys, answered from the store (doc "The forest in the store"). One per
 //! repository, shared across all TreeRef field names (the field name is the
 //! first level).
 //!
-//! Despite the name, nothing is cached: every lookup reads the store, so there
-//! is nothing to keep in step with a write, nothing to go stale and nothing to
-//! lock. A [`TreeCache`] is only the repository's case sensitivity. (A resident
+//! Nothing is cached: every lookup reads the store, so there is nothing to keep
+//! in step with a write, nothing to go stale and nothing to lock. A [`Forest`] is only the repository's case sensitivity. (A resident
 //! forest, kept in step with every write, was the SQLite backend's and went
-//! with it in September 2026; the name stayed.)
+//! with it in September 2026.)
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -22,7 +21,7 @@ use metafolder_core::metarecord::TreeName;
 use crate::log::MAX_TREE_DEPTH;
 use crate::store::Rows;
 
-/// The most paths [`TreeCache::paths_of`] gives one node: a hierarchy's
+/// The most paths [`Forest::paths_of`] gives one node: a hierarchy's
 /// paths multiply with every node of several parents above it, and a client
 /// showing them has no use for thousands.
 pub const MAX_PATHS: usize = 256;
@@ -107,11 +106,11 @@ pub fn normalize_name(name: &TreeName, case_insensitive: bool) -> Vec<u8> {
 /// The forest lookups of one repository: its case sensitivity, which decides
 /// how a typed name is matched. Holds nothing else (see the module doc).
 #[derive(Debug, Clone, Copy)]
-pub struct TreeCache {
+pub struct Forest {
     case_insensitive: bool,
 }
 
-impl TreeCache {
+impl Forest {
     pub fn new(case_insensitive: bool) -> Self {
         Self { case_insensitive }
     }
@@ -421,7 +420,7 @@ impl TreeCache {
             _ if found.iter().all(|x| x == &found[0]) => Resolved::Found(found[0]),
             _ => {
                 crate::diagnostics::warn(
-                    "tree cache",
+                    "forest",
                     format!(
                         "{comp:?} names two different files — one whose name really is that \
                          text, one whose name holds the bytes it escapes; say which with the \

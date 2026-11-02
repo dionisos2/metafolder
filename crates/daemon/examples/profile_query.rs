@@ -10,10 +10,10 @@
 use std::time::Instant;
 
 use metafolder_core::query::Query;
+use metafolder_daemon::forest::{Forest, SortKeys};
 use metafolder_daemon::forest_query;
 use metafolder_daemon::index::{collect_path_targets, Eval, PageStrategy, QueryRoots};
 use metafolder_daemon::kvstore::KvStore;
-use metafolder_daemon::tree_cache::{SortKeys, TreeCache};
 
 fn median(mut v: Vec<f64>) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -45,7 +45,7 @@ fn main() {
     let mut targets = Vec::new();
     collect_path_targets(&q, &mut targets);
     let resolved = phase(&kv, "resolve path targets", runs, || {
-        let cache = TreeCache::new(false);
+        let cache = Forest::new(false);
         targets
             .iter()
             .filter_map(|(f, p)| {
@@ -55,7 +55,7 @@ fn main() {
     });
     let src = phase(&kv, "open the source", runs, || kv.source().unwrap());
     let e = Eval { src: &src, strategy: PageStrategy::Auto };
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
     let q = phase(&kv, "rewrite the forest's leaves", runs, || {
         forest_query::resolve_path_leaves(&cache, &kv, Some(&e), &q).unwrap()
     });

@@ -157,12 +157,12 @@ pub(super) fn engine(conn: &dyn crate::store::Store) -> Result<Engine<'_>, ApiEr
 /// — the shared preparation feeding the bitmap index, used by both the paginated
 /// query path ([`run_query_filter`]) and the whole-set resolution
 /// ([`resolve_query_uuids`]). Path targets and exact-node operands resolve to
-/// metarecords through the tree cache; the leaves the bitmaps cannot serve — a
+/// metarecords through the forest; the leaves the bitmaps cannot serve — a
 /// `:path` predicate, an order-sensitive `osm` path — are resolved against the
 /// same forest and rewritten to `UuidIn` sets (doc "No operand runs in SQL").
 fn prepare_indexed_query<'a>(
     conn: &dyn crate::store::Store,
-    cache: &crate::tree_cache::TreeCache,
+    cache: &crate::forest::Forest,
     index: &crate::index::Eval<'_>,
     query: &MetaQuery,
 ) -> Result<(crate::index::QueryRoots<'a>, MetaQuery), ApiError> {
@@ -200,7 +200,7 @@ fn prepare_indexed_query<'a>(
 /// there being nothing else to ask.
 pub(super) fn resolve_query_uuids(
     conn: &dyn crate::store::Store,
-    cache: &crate::tree_cache::TreeCache,
+    cache: &crate::forest::Forest,
     query: &MetaQuery,
 ) -> Result<Vec<Uuid>, ApiError> {
     let _phase = slowlog::phase("resolve.uuids");
@@ -238,7 +238,7 @@ fn index_gap(gap: crate::index::Unsupported) -> ApiError {
 /// bug (see [`index_gap`]).
 fn run_query_filter(
     conn: &dyn crate::store::Store,
-    cache: &crate::tree_cache::TreeCache,
+    cache: &crate::forest::Forest,
     body: &QueryBody,
     cancel: &dyn Fn() -> bool,
 ) -> Result<QueryPage, ApiError> {
@@ -275,7 +275,7 @@ fn run_query_filter(
     let (mut roots, indexed_query) = prepare_indexed_query(conn, cache, &index, &body.query)?;
     // Full-path sort keys for a `tree_ref` sort key, rebuilt from the store's
     // forest (doc "Pagination and sorting", doc "The forest in the store").
-    let sort_keys = crate::tree_cache::SortKeys::new(conn);
+    let sort_keys = crate::forest::SortKeys::new(conn);
     roots.keys = Some(&sort_keys);
     // The preparation above (path seeds, forest leaves) can be the heavy phase
     // on a large repo; if a Stop landed during it, don't start the evaluation.

@@ -20,10 +20,10 @@ use metafolder_core::query::{osm_advance, Aspect, FollowTarget, OsmMode, OsmProg
 use uuid::Uuid;
 
 use crate::error::ApiError;
+use crate::forest::{Forest, PathSeek, MAX_PATHS};
 use crate::index::{Eval, QueryRoots};
 use crate::log::MAX_TREE_DEPTH;
 use crate::store::Rows;
-use crate::tree_cache::{PathSeek, TreeCache, MAX_PATHS};
 
 /// Rewrites every forest-served leaf of `q` into the `uuid_in` set it matches.
 ///
@@ -37,7 +37,7 @@ use crate::tree_cache::{PathSeek, TreeCache, MAX_PATHS};
 /// `names` is the index the query will run on: it supplies the name
 /// candidates an `osm` path is narrowed to. `None` walks.
 pub fn resolve_path_leaves(
-    cache: &TreeCache,
+    cache: &Forest,
     store: &dyn Rows,
     names: Option<&Eval<'_>>,
     q: &Query,
@@ -79,7 +79,7 @@ pub fn resolve_path_leaves(
 }
 
 fn rewrite_all(
-    cache: &TreeCache,
+    cache: &Forest,
     store: &dyn Rows,
     names: Option<&Eval<'_>>,
     operands: &[Query],
@@ -88,7 +88,7 @@ fn rewrite_all(
 }
 
 fn rewrite_target(
-    cache: &TreeCache,
+    cache: &Forest,
     store: &dyn Rows,
     names: Option<&Eval<'_>>,
     target: &FollowTarget,
@@ -104,7 +104,7 @@ fn rewrite_target(
 /// The rewrite of a single forest leaf, or `None` when `q` is not one or the
 /// forest cannot answer it.
 fn path_leaf_matches(
-    cache: &TreeCache,
+    cache: &Forest,
     store: &dyn Rows,
     names: Option<&Eval<'_>>,
     q: &Query,
@@ -372,7 +372,7 @@ fn anchors_within(
     Some(within)
 }
 
-/// Lower-cases as the walk (`TreeCache::osm_path_matches_with`) and the oracle
+/// Lower-cases as the walk (`Forest::osm_path_matches_with`) and the oracle
 /// do: the whole string at once, so a word-final capital sigma becomes `ς`, not
 /// `σ`. Applied one component at a time, which folds the same as the whole
 /// path: `/` is neither a letter nor case-ignorable, so it ends a word.
@@ -386,7 +386,7 @@ type Position = (Option<Uuid>, String);
 /// A node of a forest and its positions there.
 type Named = (Uuid, Vec<Position>);
 
-/// The paths of each node, as `TreeCache::paths_of` assembles them — one per
+/// The paths of each node, as `Forest::paths_of` assembles them — one per
 /// way up to a root, several in a hierarchy (doc "Hierarchy references") —
 /// each name passed through `fold` (lower-cased for an `osm` path),
 /// remembered, so candidates sharing a folder read its ancestry once.

@@ -11,7 +11,7 @@
 //!
 //! Nothing is built at load or kept between queries. Shapes it cannot resolve
 //! on its own are handled with caller-supplied seeds ([`QueryRoots`]):
-//! `Path`-target follows resolve to a root metarecord through the tree cache,
+//! `Path`-target follows resolve to a root metarecord through the forest,
 //! and a single-term `Osm` `Path` resolves to its "term nodes" (the nodes whose
 //! *name* contains the term) by scanning the name partition, which the index
 //! then expands into a subtree union — the exact match set, no per-path check.
@@ -53,7 +53,7 @@ pub type PathRoots = HashMap<(String, String), Uuid>;
 
 /// Pre-resolved `(field, path)` → the metarecord at exactly that TreeRef path,
 /// for the *exact-node* `Eq` operands of a query (doc "Field aspects": a string
-/// operand on a `tree_ref` field). Resolution lives in the tree cache, so — as
+/// operand on a `tree_ref` field). Resolution lives in the forest, so — as
 /// with [`PathRoots`] — the caller does it and hands the node in. Unlike the other two maps the value is an `Option`: an
 /// entry mapping to `None` says "the caller resolved this path and it is not a
 /// node" (an empty result), while a *missing* entry says "nobody resolved it",
@@ -62,7 +62,7 @@ pub type PathRoots = HashMap<(String, String), Uuid>;
 pub type NodeRoots = HashMap<(String, String), Option<Uuid>>;
 
 /// The caller-resolved seeds a query needs the index to evaluate the shapes it
-/// cannot resolve on its own — both are tree-cache lookups: `Path` targets and
+/// cannot resolve on its own — both are forest lookups: `Path` targets and
 /// exact-node `Eq`/`Neq` operands. Bundled so the evaluation threads one
 /// context.
 #[derive(Default)]
@@ -75,7 +75,7 @@ pub struct QueryRoots<'a> {
     /// known once the query has been evaluated. `None` makes a `tree_ref` sort
     /// [`Unsupported`] with a [`Gap::State`]: a daemon bug (the serving path
     /// always hands one in), reported as one.
-    pub keys: Option<&'a crate::tree_cache::SortKeys<'a>>,
+    pub keys: Option<&'a crate::forest::SortKeys<'a>>,
 }
 
 impl QueryRoots<'_> {
@@ -109,7 +109,7 @@ pub fn collect_path_targets(q: &Query, out: &mut Vec<(String, String)>) {
 /// Collects the `(field, path)` of every *exact-node* `Eq`/`Neq` operand in `q`
 /// — a string operand containing the path separator, which on a `tree_ref` field
 /// is a node match rather than a `value_name` compare (doc "Field aspects"). The caller resolves
-/// each through the tree cache into
+/// each through the forest into
 /// [`NodeRoots`]; the index then answers `mfr_path = "/a/b.txt"` from a single
 /// interned id, where the oracle scans every row of the field.
 ///
@@ -161,13 +161,13 @@ pub fn osm_path_indexable(terms: &[String]) -> Option<&str> {
 }
 
 /// One sort key's resolved lookups: the source's representative reader — or,
-/// on a `tree_ref` field, the tree-cache resolver that rebuilds full-path keys.
+/// on a `tree_ref` field, the forest resolver that rebuilds full-path keys.
 struct KeyLookup<'a> {
     reps: Option<RepReader<'a>>,
     /// Set on a `tree_ref` field: `(field name, resolver)`. A tree value sorts
     /// on its whole path, which is not stored anywhere (a directory rename
-    /// would stale it), so it is rebuilt per query from the tree cache.
-    tree: Option<(&'a str, &'a crate::tree_cache::SortKeys<'a>)>,
+    /// would stale it), so it is rebuilt per query from the forest.
+    tree: Option<(&'a str, &'a crate::forest::SortKeys<'a>)>,
     want_max: bool,
 }
 
@@ -205,7 +205,7 @@ fn walk_bound(q: &Query, field: &str, roots: &QueryRoots<'_>) -> Option<Uuid> {
 struct Residual<'q, 'k> {
     leaves: Vec<&'q Query>,
     checks: Vec<(&'q str, regex::Regex)>,
-    keys: &'k crate::tree_cache::SortKeys<'k>,
+    keys: &'k crate::forest::SortKeys<'k>,
 }
 
 impl Residual<'_, '_> {
@@ -444,7 +444,7 @@ impl Eval<'_> {
         rest: &[&Query],
         leaves: Vec<&'q Query>,
         roots: Option<&QueryRoots>,
-        keys: &'k crate::tree_cache::SortKeys<'k>,
+        keys: &'k crate::forest::SortKeys<'k>,
     ) -> Result<(RoaringBitmap, Residual<'q, 'k>), Unsupported> {
         let mut acc: Option<RoaringBitmap> = None;
         for operand in plan::and_order(rest.iter().copied()) {
@@ -774,7 +774,7 @@ impl Eval<'_> {
 
     /// Up to `limit + 1` ids of `matched` in path order (either way) after
     /// `after`: the forest walked in key order from the cursor's node
-    /// ([`crate::tree_cache::SortKeys::walk_sorted`]), then the ids in no
+    /// ([`crate::forest::SortKeys::walk_sorted`]), then the ids in no
     /// forest position, by uuid. `None` to fetch instead: the walk is not
     /// expected to be cheaper, ran over its budget, or refused.
     #[allow(clippy::too_many_arguments)]
@@ -784,7 +784,7 @@ impl Eval<'_> {
         accepts: &dyn Fn(u32, Uuid) -> bool,
         field: &str,
         descending: bool,
-        keys: &crate::tree_cache::SortKeys<'_>,
+        keys: &crate::forest::SortKeys<'_>,
         within: Option<Uuid>,
         limit: usize,
         after: Option<&SortEntry>,
@@ -838,7 +838,7 @@ impl Eval<'_> {
                     }
                     out.len() < want
                 });
-            if over || end == crate::tree_cache::WalkEnd::Refused {
+            if over || end == crate::forest::WalkEnd::Refused {
                 return None;
             }
         }
@@ -1196,7 +1196,7 @@ impl Eval<'_> {
 
     /// Direct `Follows`: referrers of every metarecord matching the sub-query.
     /// Direct referrers of the target metarecords. A `Path` target is resolved
-    /// through `roots` (the tree cache, upstream) to a single root metarecord;
+    /// through `roots` (the forest, upstream) to a single root metarecord;
     /// a `Condition` target is evaluated to its match set.
     /// The root metarecord a `Path` target resolves to, looked up in the
     /// caller-supplied `roots`. `None` roots means the caller did not resolve
@@ -1252,7 +1252,7 @@ impl Eval<'_> {
     }
 
     /// `field:parent = "<path>"`: the direct children of the node the caller
-    /// resolved through the tree cache — the very bucket a path-target
+    /// resolved through the forest — the very bucket a path-target
     /// `Follows` reads, which is what the spec means by "the same set as
     /// `field -> \"<path>\"`, spelled as a comparison".
     ///
@@ -1334,7 +1334,7 @@ impl Eval<'_> {
         roots: Option<&QueryRoots>,
     ) -> Result<RoaringBitmap, Unsupported> {
         // Seed the expansion with the matching roots' dense ids. For a path
-        // target that is the single metarecord resolved through the tree cache;
+        // target that is the single metarecord resolved through the forest;
         // for a condition it is the sub-query's match set. (Resolve the seed
         // before the index-support check so an unsupported sub-query still
         // surfaces rather than being masked by an empty answer.)
@@ -1471,7 +1471,7 @@ impl Eval<'_> {
     /// the oracle's result (the `value_type` filter excludes every `Nothing`
     /// row). The aspects this generic gate lets through: `raw` and `value` read
     /// the row's own data, which the per-field index holds. `path` reads the
-    /// assembled path, which lives in the tree cache, so it is declined here and
+    /// assembled path, which lives in the forest, so it is declined here and
     /// answered before the index runs, by `crate::forest_query` rewriting the
     /// leaf into a `uuid_in` set. So is `parent` *here* — its two servable
     /// shapes (presence and equality) have their own paths
@@ -1512,7 +1512,7 @@ impl Eval<'_> {
         }
         // Exact-node path (doc "Field aspects"): under the default `raw`
         // aspect, an Eq/Neq string operand on a tree_ref field is a path-resolved
-        // node match. The resolution lives in the tree cache, not
+        // node match. The resolution lives in the forest, not
         // the index, so both `Eq` and `Neq` are served only from a caller-supplied
         // [`NodeRoots`] entry (`Neq` as "present minus the node", below); without
         // one, decline rather than answer with the (wrong, value_name-based)

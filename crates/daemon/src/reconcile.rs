@@ -18,13 +18,13 @@ use crate::eligibility::WatchRules;
 use crate::error::ApiError;
 use crate::executor::ensure_parent_metarecords;
 use crate::fingerprint;
+use crate::forest::Forest;
 use crate::fs_meta;
 use crate::log::{OpType, Writer};
 use crate::relpath::{file_name_bytes, RelPath};
 use crate::similarity::{similarity_score, FileSig};
 use crate::state::RepoState;
 use crate::store::Rows;
-use crate::tree_cache::TreeCache;
 
 #[derive(Debug, Serialize)]
 pub struct CandidateMatch {
@@ -777,7 +777,7 @@ fn stat_paths(root: &Path, paths: &[RelPath], reporter: &Reporter) -> Vec<(RelPa
 /// directories and undetectable files get none (doc "File metadata fields").
 pub(crate) fn create_record_for(
     writer: &mut Writer,
-    cache: &TreeCache,
+    cache: &Forest,
     root: &Path,
     rel: &RelPath,
     extra_fields: &[Field],
@@ -801,7 +801,7 @@ pub(crate) fn create_record_for(
 /// stat fields.
 fn apply_move(
     writer: &mut Writer,
-    cache: &TreeCache,
+    cache: &Forest,
     root: &Path,
     uuid: Uuid,
     rel: &RelPath,

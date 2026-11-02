@@ -1,10 +1,10 @@
-//! Integration tests for the forest lookups (doc "The tree cache"):
+//! Integration tests for the forest lookups (doc "Forest lookups"):
 //! path resolution from the store, mutations, descendant collection, case
 //! sensitivity, look-alike names.
 
 use metafolder_core::metarecord::{Field, TreeName, Value};
+use metafolder_daemon::forest::{Forest, PathForm};
 use metafolder_daemon::log::Writer;
-use metafolder_daemon::tree_cache::{PathForm, TreeCache};
 use uuid::Uuid;
 
 use metafolder_daemon::kvstore::KvStore;
@@ -40,7 +40,7 @@ fn build_tree(conn: &mut KvStore) -> (Uuid, Uuid, Uuid, Uuid) {
 fn test_resolve_filesystem_paths() {
     let (mut conn, _dir) = test_conn();
     let (root, music, jazz, file) = build_tree(&mut conn);
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
 
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "").unwrap(), Some(root));
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music").unwrap(), Some(music));
@@ -60,7 +60,7 @@ fn test_resolve_filesystem_paths() {
 fn test_redundant_slashes_resolve_to_the_same_node() {
     let (mut conn, _dir) = test_conn();
     let (root, music, jazz, _file) = build_tree(&mut conn);
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
 
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/").unwrap(), Some(root));
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/").unwrap(), Some(music));
@@ -72,7 +72,7 @@ fn test_resolve_tag_tree_without_leading_slash() {
     let (mut conn, _dir) = test_conn();
     let tag1 = tree_entry(&mut conn, "parent", None, "tag1");
     let tag2 = tree_entry(&mut conn, "parent", Some(tag1), "tag2");
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
 
     assert_eq!(cache.resolve_path(&conn, "parent", "tag1").unwrap(), Some(tag1));
     assert_eq!(cache.resolve_path(&conn, "parent", "tag1/tag2").unwrap(), Some(tag2));
@@ -85,7 +85,7 @@ fn test_resolve_tag_tree_without_leading_slash() {
 fn test_paths_of_single_position() {
     let (mut conn, _dir) = test_conn();
     let (_root, _music, jazz, file) = build_tree(&mut conn);
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
     assert_eq!(cache.paths_of(&conn, "mfr_path", file).unwrap(), vec!["/music/jazz/file.mp3"]);
     assert_eq!(cache.paths_of(&conn, "mfr_path", jazz).unwrap(), vec!["/music/jazz"]);
 }
@@ -95,7 +95,7 @@ fn test_paths_of_root_level_value() {
     let (mut conn, _dir) = test_conn();
     let root = tree_entry(&mut conn, "mfr_path", None, "");
     let top = tree_entry(&mut conn, "mfr_path", Some(root), "top.txt");
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
     assert_eq!(cache.paths_of(&conn, "mfr_path", top).unwrap(), vec!["/top.txt"]);
 }
 
@@ -107,7 +107,7 @@ fn test_paths_of_skips_stale_parent() {
     let child = tree_entry(&mut conn, "mfr_path", Some(dir), "file.txt");
     // Simulate the parent dir being deleted: drop its position from the DB.
     common::kv::delete_rows(&mut conn, dir, "mfr_path");
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
     assert!(cache.paths_of(&conn, "mfr_path", child).unwrap().is_empty());
 }
 
@@ -115,7 +115,7 @@ fn test_paths_of_skips_stale_parent() {
 fn test_paths_of_without_the_field_is_empty() {
     let (mut conn, _dir) = test_conn();
     let m = tree_entry(&mut conn, "parent", None, "x");
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
     assert!(cache.paths_of(&conn, "mfr_path", m).unwrap().is_empty());
 }
 
@@ -130,7 +130,7 @@ fn test_children_of_lists_direct_children() {
     let mut want = vec![("jazz".to_string(), jazz), ("rock".to_string(), rock)];
     want.sort();
 
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
     let mut got = cache.children_of(&conn, "mfr_path", music).unwrap();
     got.sort();
     assert_eq!(got, want, "direct children of music");
@@ -147,7 +147,7 @@ fn test_fields_are_independent_trees() {
     let (mut conn, _dir) = test_conn();
     let fs_root = tree_entry(&mut conn, "mfr_path", None, "");
     let _x = tree_entry(&mut conn, "mfr_path", Some(fs_root), "x");
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
 
     assert_eq!(cache.resolve_path(&conn, "parent", "/x").unwrap(), None);
     assert!(cache.resolve_path(&conn, "mfr_path", "/x").unwrap().is_some());
@@ -159,7 +159,7 @@ fn test_fields_are_independent_trees() {
 fn test_path_of_roundtrip() {
     let (mut conn, _dir) = test_conn();
     let (root, _, _, file) = build_tree(&mut conn);
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
 
     assert_eq!(cache.path_of(&conn, "mfr_path", root).unwrap(), Some("".to_string()));
     assert_eq!(
@@ -176,7 +176,7 @@ fn test_descendants_collects_transitively() {
     let (mut conn, _dir) = test_conn();
     let (root, music, jazz, file) = build_tree(&mut conn);
     let rock = tree_entry(&mut conn, "mfr_path", Some(music), "rock");
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
 
     let mut got = cache.descendants(&conn, "mfr_path", music).unwrap();
     got.sort();
@@ -197,11 +197,11 @@ fn test_case_insensitive_resolution() {
     let root = tree_entry(&mut conn, "mfr_path", None, "");
     let music = tree_entry(&mut conn, "mfr_path", Some(root), "Music");
 
-    let sensitive = TreeCache::new(false);
+    let sensitive = Forest::new(false);
     assert_eq!(sensitive.resolve_path(&conn, "mfr_path", "/music").unwrap(), None);
     assert_eq!(sensitive.resolve_path(&conn, "mfr_path", "/Music").unwrap(), Some(music));
 
-    let insensitive = TreeCache::new(true);
+    let insensitive = Forest::new(true);
     assert_eq!(insensitive.resolve_path(&conn, "mfr_path", "/music").unwrap(), Some(music));
     assert_eq!(insensitive.resolve_path(&conn, "mfr_path", "/MUSIC").unwrap(), Some(music));
 }
@@ -215,13 +215,13 @@ fn test_case_insensitive_resolution_folds_beyond_ascii() {
     let root = tree_entry(&mut conn, "mfr_path", None, "");
     let summer = tree_entry(&mut conn, "mfr_path", Some(root), "Été");
 
-    let insensitive = TreeCache::new(true);
+    let insensitive = Forest::new(true);
     assert_eq!(insensitive.resolve_path(&conn, "mfr_path", "/ÉTÉ").unwrap(), Some(summer));
     assert_eq!(insensitive.resolve_path(&conn, "mfr_path", "/été").unwrap(), Some(summer));
     let rel = metafolder_daemon::relpath::RelPath::from_display("/éTÉ");
     assert_eq!(insensitive.resolve_rel(&conn, "mfr_path", &rel).unwrap(), Some(summer));
 
-    let sensitive = TreeCache::new(false);
+    let sensitive = Forest::new(false);
     assert_eq!(sensitive.resolve_path(&conn, "mfr_path", "/été").unwrap(), None);
 }
 
@@ -250,7 +250,7 @@ fn test_two_siblings_differing_only_in_undecodable_bytes_are_distinct_nodes() {
     let a = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xe9.mp4");
     let b = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xff.mp4");
 
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
 
     let children = cache.children_of(&conn, "mfr_path", root).unwrap();
     assert_eq!(children.len(), 2, "both siblings are cached: {children:?}");
@@ -266,7 +266,7 @@ fn test_a_node_with_an_undecodable_name_resolves_by_its_displayed_path() {
     let root = tree_entry(&mut conn, "mfr_path", None, "");
     let file = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xe9.mp4");
 
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
 
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/caf%E9.mp4").unwrap(), Some(file));
     assert_eq!(cache.path_of(&conn, "mfr_path", file).unwrap().as_deref(), Some("/caf%E9.mp4"));
@@ -280,7 +280,7 @@ fn test_case_folding_still_applies_but_keeps_undecodable_bytes_distinct() {
     let a = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"x\xe9");
     let b = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"x\xff");
 
-    let cache = TreeCache::new(true); // case-insensitive
+    let cache = Forest::new(true); // case-insensitive
 
     // ASCII case still folds...
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/photos").unwrap(), Some(upper));
@@ -300,7 +300,7 @@ fn test_two_undecodable_siblings_each_resolve_on_their_own() {
     let a = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xe9.mp4");
     let b = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xff.mp4");
 
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
 
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/caf%E9.mp4").unwrap(), Some(a));
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/caf%FF.mp4").unwrap(), Some(b));
@@ -314,7 +314,7 @@ fn test_a_name_that_really_contains_the_escape_is_found_verbatim() {
     let root = tree_entry(&mut conn, "mfr_path", None, "");
     let literal = tree_entry(&mut conn, "mfr_path", Some(root), "%E9.txt");
 
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
 
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/%E9.txt").unwrap(), Some(literal));
 }
@@ -327,7 +327,7 @@ fn test_a_path_with_no_escape_is_untouched_by_any_of_this() {
     let root = tree_entry(&mut conn, "mfr_path", None, "");
     let plain = tree_entry(&mut conn, "mfr_path", Some(root), "100%.txt");
 
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
 
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/100%.txt").unwrap(), Some(plain));
 }
@@ -336,11 +336,11 @@ fn test_a_path_with_no_escape_is_untouched_by_any_of_this() {
 
 /// A directory holding both a file *really* named "caf%E9.mp4" and one whose
 /// name is the byte 0xE9 — the only pair that still displays alike.
-fn look_alikes(conn: &mut KvStore) -> (TreeCache, Uuid, Uuid, Uuid) {
+fn look_alikes(conn: &mut KvStore) -> (Forest, Uuid, Uuid, Uuid) {
     let root = tree_entry(conn, "mfr_path", None, "");
     let literal = tree_entry(conn, "mfr_path", Some(root), "caf%E9.mp4");
     let escaped = tree_entry_bytes(conn, "mfr_path", Some(root), b"caf\xe9.mp4");
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
     (cache, root, literal, escaped)
 }
 
@@ -356,7 +356,7 @@ fn test_a_single_uuid_resolution_refuses_to_pick_between_the_two_readings() {
 fn test_naming_the_reading_resolves_it_unambiguously() {
     let (mut conn, _dir) = test_conn();
     let (cache, _, literal, escaped) = look_alikes(&mut conn);
-    let resolve = |cache: &TreeCache, form| {
+    let resolve = |cache: &Forest, form| {
         cache.resolve_path_as(&conn, "mfr_path", "/caf%E9.mp4", form).unwrap()
     };
     assert_eq!(resolve(&cache, PathForm::Verbatim), Some(literal));
@@ -368,7 +368,7 @@ fn test_a_form_that_matches_nothing_resolves_to_nothing() {
     let (mut conn, _dir) = test_conn();
     let root = tree_entry(&mut conn, "mfr_path", None, "");
     let escaped = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xe9.mp4");
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
     // Only the escaped reading exists here.
     let p = "/caf%E9.mp4";
     assert_eq!(cache.resolve_path_as(&conn, "mfr_path", p, PathForm::Verbatim).unwrap(), None);

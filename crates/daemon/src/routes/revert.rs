@@ -141,7 +141,7 @@ fn op_brief(op: &crate::log::OpRow) -> serde_json::Value {
 fn revert_plan_json(
     conn: &dyn crate::store::Store,
     ops: &[crate::log::OpRow],
-    mut fs: Option<(&crate::tree_cache::TreeCache, &std::path::Path)>,
+    mut fs: Option<(&crate::forest::Forest, &std::path::Path)>,
 ) -> Result<serde_json::Value, ApiError> {
     let mut operations = Vec::with_capacity(ops.len());
     let mut requires_lock = false;

@@ -9,13 +9,13 @@
 
 use metafolder_core::query::Query;
 use metafolder_daemon::error::ApiError;
+use metafolder_daemon::forest::{Forest, SortKeys};
 use metafolder_daemon::index::{
     collect_node_paths, collect_path_targets, Eval, PageStrategy, QueryRoots, SortBy,
 };
 use metafolder_daemon::kvstore::KvStore;
 use metafolder_daemon::query_result::{SortKey, SortOrder};
 use metafolder_daemon::store::Store;
-use metafolder_daemon::tree_cache::{SortKeys, TreeCache};
 use metafolder_daemon::{forest_query, query_validate};
 use metafolder_query_oracle as query_exec;
 use uuid::Uuid;
@@ -72,7 +72,7 @@ pub fn indexed(kv: &KvStore, query: &Query, sort: &[SortKey]) -> Vec<Uuid> {
         .iter()
         .map(|k| SortBy { field: k.field.clone(), ascending: k.order == SortOrder::Asc })
         .collect();
-    let no_forest = TreeCache::new(false);
+    let no_forest = Forest::new(false);
     let (roots, indexed) =
         super::kv::with_kv(kv, PageStrategy::Auto, |e, _| prepare(&no_forest, kv, Some(e), query));
     let keys = SortKeys::new(kv);
@@ -91,7 +91,7 @@ pub fn indexed(kv: &KvStore, query: &Query, sort: &[SortKey]) -> Vec<Uuid> {
 /// resolved, its forest leaves rewritten — through `cache`, or `store` where
 /// the cache holds no forest.
 pub fn prepare(
-    cache: &TreeCache,
+    cache: &Forest,
     store: &dyn Store,
     names: Option<&Eval>,
     query: &Query,

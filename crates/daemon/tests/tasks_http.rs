@@ -329,7 +329,7 @@ async fn cancel_unknown_task_is_404() {
 
 #[tokio::test]
 async fn load_runs_an_observable_warmup_task() {
-    // Loading a repository returns immediately and warms it (tree cache + query
+    // Loading a repository returns immediately and warms it (forest + query
     // index) in the background as an observable `load` task, so the GUI can show
     // a load progress bar (the point of the feature). Init then unload to get an
     // on-disk repo to load through the HTTP route.

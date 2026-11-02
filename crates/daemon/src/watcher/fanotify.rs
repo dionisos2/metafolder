@@ -33,8 +33,8 @@ use uuid::Uuid;
 use metafolder_watchd::proto::{self, ClientMsg, Event, ServerMsg};
 
 use crate::executor::FsEvent;
+use crate::forest::Forest;
 use crate::state::RepoState;
-use crate::tree_cache::TreeCache;
 use crate::watcher::{inotify, relative, Gap, Placement, Regime};
 
 /// How long the first connection waits for the broker's handshake before the
@@ -398,7 +398,7 @@ impl crate::watcher::Source for Source {
     fn refresh(
         &self,
         conn: &dyn crate::store::Store,
-        cache: &TreeCache,
+        cache: &Forest,
         root: &Path,
         internal_dir: &Path,
         cap: Option<usize>,

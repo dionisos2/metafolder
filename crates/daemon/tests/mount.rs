@@ -228,7 +228,7 @@ fn the_executor_drops_an_event_landing_in_an_offline_mount() {
 // ── Mount status while the repository is busy ────────────────────────────────
 //
 // A long write — a reconcile, a big watcher flush — holds *both* the database
-// connection and the tree cache for its whole transaction (minutes, on a large
+// connection and the forest for its whole transaction (minutes, on a large
 // repository). `GET /repos/:repo/mounts` used to take the two blocking, and the
 // GUI asks for them on every directory listing: measured behind a full reconcile
 // on a 50 k-metarecord repository, one call took 151 385 ms, all of it in

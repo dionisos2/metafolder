@@ -5,7 +5,7 @@ audience: dev
 summary: The forest resolves path operands to nodes, and rewrites the two leaves no bitmap holds — :path and an order-sensitive osm path — into uuid_in sets.
 
 Before evaluation, `routes::prepare_indexed_query` asks the forest
-([[The tree cache]]) for what only it can answer:
+([[Forest lookups]]) for what only it can answer:
 
 |!Step |!Applies to |!Hands the evaluator |
 |path targets |`->`, `->*`, `=>*` with a path |the node, in `QueryRoots.path` |

@@ -3,8 +3,8 @@
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_daemon::eligibility::is_eligible;
+use metafolder_daemon::forest::Forest;
 use metafolder_daemon::log::Writer;
-use metafolder_daemon::tree_cache::TreeCache;
 use uuid::Uuid;
 
 use metafolder_daemon::kvstore::KvStore;
@@ -27,7 +27,7 @@ const DEFAULT_PATTERNS: &[&str] = &[
 struct Fixture {
     conn: KvStore,
     _dir: common::TempDir,
-    cache: TreeCache,
+    cache: Forest,
     root: Uuid,
 }
 
@@ -46,7 +46,7 @@ impl Fixture {
             .unwrap()
             .uuid;
         w.commit().unwrap();
-        Self { conn, _dir: _conn_dir, cache: TreeCache::new(false), root }
+        Self { conn, _dir: _conn_dir, cache: Forest::new(false), root }
     }
 
     fn entry(&mut self, parent: Uuid, name: &str, extra: Vec<Field>) -> Uuid {
@@ -106,7 +106,7 @@ fn test_default_patterns_ignore_metafolder_and_hidden() {
     w.create_metarecord(fields).unwrap();
     w.commit().unwrap();
 
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
     let elig = |path: &str| is_eligible(&conn, &cache, path).unwrap();
     assert!(!elig("/.metafolder"));
     assert!(!elig("/.metafolder/config.json"));
@@ -137,7 +137,7 @@ fn test_default_patterns_ignore_cargo_build_intermediates() {
     w.create_metarecord(fields).unwrap();
     w.commit().unwrap();
 
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
     let elig = |path: &str| is_eligible(&conn, &cache, path).unwrap();
 
     // Intermediates: ignored.
@@ -254,7 +254,7 @@ fn test_direct_watch_reanchors_ignore_to_its_scope() {
     .unwrap();
     w.commit().unwrap();
 
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
     let elig = |path: &str| is_eligible(&conn, &cache, path).unwrap();
 
     assert!(elig("/.config"), "directly watched → tracked unconditionally");
@@ -302,7 +302,7 @@ fn test_watch_default_is_false_when_no_ancestor_defines_it() {
     )])
     .unwrap();
     w.commit().unwrap();
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
     assert!(!is_eligible(&conn, &cache, "/file.txt").unwrap());
 }
 
@@ -404,7 +404,7 @@ fn test_explain_no_watch_anywhere() {
     )])
     .unwrap();
     w.commit().unwrap();
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
     let e = explain(&conn, &cache, "/file.txt").unwrap();
     assert!(!e.eligible);
     assert_eq!(e.reason, Reason::NoWatch);
@@ -455,7 +455,7 @@ fn test_effective_ignore_set_when_nothing_is_defined() {
     )])
     .unwrap();
     w.commit().unwrap();
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
     let e = effective_ignore(&conn, &cache, "/anywhere").unwrap();
     assert_eq!(e.source, None);
     assert!(!e.direct);

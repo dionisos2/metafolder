@@ -334,7 +334,7 @@ async fn test_the_client_says_what_the_user_asked_for() {
 #[tokio::test]
 async fn test_a_field_write_reports_the_phases_of_a_write() {
     // A write's time can go somewhere a query's never does — the commit's
-    // fsync, the tree-cache settle — so those are named too.
+    // fsync, the forest settle — so those are named too.
     let f = fixture("write", 1).await;
     let (status, body) = request(
         &f.app,

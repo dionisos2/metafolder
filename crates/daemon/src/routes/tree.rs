@@ -98,7 +98,7 @@ pub(super) struct ResolvePathBody {
     /// `%XX` stands for. Absent = both, which resolves to nothing when they
     /// name different files rather than picking one.
     #[serde(default)]
-    form: crate::tree_cache::PathForm,
+    form: crate::forest::PathForm,
 }
 
 /// `POST /repos/:repo/tree/resolve-path`: resolves a repo-root-relative path in

@@ -4,7 +4,7 @@
 //!
 //! It reads the primary data only — the metarecords and their field rows,
 //! through the storage traits ([`Rows`]) — and nothing derived: no index, no
-//! tree cache, no partition. The forest, the paths and the sort keys are
+//! forest lookup, no partition. The forest, the paths and the sort keys are
 //! rebuilt from the rows on every call. That makes it slow and obviously
 //! independent of whatever it checks, which is the whole point of an oracle:
 //! a mistake in a derived structure cannot be reproduced here by sharing it.
@@ -25,6 +25,7 @@ use metafolder_core::metarecord::{escaped_to_bytes, TreeName, Value};
 use metafolder_core::query::{osm_ordered_match, Aspect, FollowTarget, OsmMode, Query};
 
 use metafolder_daemon::error::ApiError;
+use metafolder_daemon::forest::PATH_KEY_SEP;
 use metafolder_daemon::log::MAX_TREE_DEPTH;
 use metafolder_daemon::pagination::{self, Cursor};
 use metafolder_daemon::query_result::{osm_regex, SortKey, SortOrder};
@@ -34,7 +35,6 @@ use metafolder_daemon::query_validate::{
 };
 use metafolder_daemon::rows::FieldRow;
 use metafolder_daemon::store::Rows;
-use metafolder_daemon::tree_cache::PATH_KEY_SEP;
 
 use metafolder_core::hex::encode as hex_encode;
 

@@ -229,7 +229,7 @@ async fn test_type_dependent_rejections_are_made_before_evaluation() {
 #[tokio::test]
 async fn test_exact_node_path_query_is_served_by_the_index() {
     // `mfr_path = "/a/b.txt"` — "find this one file". The route resolves the
-    // node through the tree cache and hands it to the bitmap index, so this must
+    // node through the forest and hands it to the bitmap index, so this must
     // return exactly the metarecord at that path (and nothing for a path that is
     // no node), the same answer the oracle gives. Without the node seed the
     // index reports Unsupported — which used to mean a fall back to a full SQL
@@ -498,7 +498,7 @@ async fn test_query_count_reports_the_full_total() {
 async fn test_query_path_target_sort_and_count() {
     // The GUI's core query (`mfr_path ->* "/dir"` + sort + count) end to end over
     // HTTP. Building the tree through the API also proves manual TreeRef writes
-    // keep the (complete) tree cache in sync: if they did not, the path would
+    // keep the (complete) forest in sync: if they did not, the path would
     // fail to resolve and the result would be wrong/empty.
     let (app, repo, root) = setup("pathsort").await;
     let node = |parent: Option<&str>, name: &str, rate: Option<i64>| {

@@ -7,11 +7,11 @@
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::FollowTarget;
 use metafolder_core::query::{Aspect, OsmMode, Query};
+use metafolder_daemon::forest::{Forest, SortKeys};
 use metafolder_daemon::forest_query;
 use metafolder_daemon::index::{collect_path_targets, Eval, PageStrategy, QueryRoots, SortBy};
 use metafolder_daemon::kvstore::KvStore;
 use metafolder_daemon::log::Writer;
-use metafolder_daemon::tree_cache::{SortKeys, TreeCache};
 use uuid::Uuid;
 
 mod common;
@@ -63,7 +63,7 @@ fn repository_with(n: usize, per_folder: usize, extra: usize) -> (KvStore, TempD
 /// resolution and the path sort keys), prepared as the route prepares it.
 fn reads(kv: &KvStore, q: &Query, sort: &[(&str, bool)], count: bool) -> (usize, u64) {
     let before = kv.reads();
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
     let mut roots = QueryRoots::new();
     let mut targets = Vec::new();
     collect_path_targets(q, &mut targets);
@@ -572,7 +572,7 @@ fn resolve_reads(n: usize, case_insensitive: bool, path: &str) -> (Option<Uuid>,
     let (kv, _dir) = repository_in(n, n);
     let before = kv.reads();
     let found =
-        TreeCache::new(case_insensitive).resolve_rel(&kv, "loc", &RelPath::from(path)).unwrap();
+        Forest::new(case_insensitive).resolve_rel(&kv, "loc", &RelPath::from(path)).unwrap();
     (found, kv.reads() - before)
 }
 

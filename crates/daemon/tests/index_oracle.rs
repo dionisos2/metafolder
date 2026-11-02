@@ -14,6 +14,7 @@
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, FollowTarget, OsmMode, Query};
+use metafolder_daemon::forest::{Forest, SortKeys};
 use metafolder_daemon::forest_query;
 use metafolder_daemon::index::{
     collect_node_paths, collect_path_targets, PageStrategy, QueryRoots, SortBy, Unsupported,
@@ -21,7 +22,6 @@ use metafolder_daemon::index::{
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::query_result::{SortKey, SortOrder};
 use metafolder_daemon::query_validate;
-use metafolder_daemon::tree_cache::{SortKeys, TreeCache};
 use metafolder_query_oracle as query_exec;
 use uuid::Uuid;
 
@@ -86,13 +86,13 @@ impl Index<'_> {
 struct Oracle {
     conn: KvStore,
     _dir: common::TempDir,
-    cache: TreeCache,
+    cache: Forest,
 }
 
 impl Oracle {
     fn new() -> Self {
         let (conn, _conn_dir) = common::kv::store();
-        Self { conn, _dir: _conn_dir, cache: TreeCache::new(false) }
+        Self { conn, _dir: _conn_dir, cache: Forest::new(false) }
     }
 
     fn create(&mut self, fields: Vec<Field>) -> Uuid {
@@ -156,14 +156,14 @@ impl Oracle {
     }
 
     /// Like [`Self::check_paginated`] but supplying the evaluator every seed
-    /// `run_query_filter` resolves through the tree cache: the roots of a
+    /// `run_query_filter` resolves through the forest: the roots of a
     /// `Path`-target follow, and the full-path sort keys of a `tree_ref` sort
     /// key — the forest read from the store. This is the GUI's real scenario (browse a subtree, paginate
     /// by a sort key). The oracle resolves both itself, so it takes the query
     /// unchanged.
     fn check_paginated_with_roots(&mut self, q: &Query, by: &[(&str, bool)], limit: usize) {
         let want = self.oracle_pages(q, by, limit);
-        let no_forest = TreeCache::new(false);
+        let no_forest = Forest::new(false);
         let mut roots = QueryRoots::new();
         let mut targets = Vec::new();
         collect_path_targets(q, &mut targets);
@@ -701,7 +701,7 @@ fn reverse_tree_follows_transitive() {
 #[test]
 fn exact_node_path_equality_declines_without_roots() {
     // On a tree_ref field, an Eq/Neq string operand is an exact-node match
-    // resolved through the tree cache — outside the index. With no
+    // resolved through the forest — outside the index. With no
     // caller-resolved node it must report Unsupported (rather than answer with
     // the wrong value_name-based bitmap); the route resolves every one of them,
     // so a decline here would be a daemon bug reported as such.
@@ -723,7 +723,7 @@ fn exact_node_path_equality_declines_without_roots() {
 #[test]
 fn exact_node_path_equality_matches_the_oracle_with_node_roots() {
     // The shape a "find this one file" query takes (`mfr_path = "/a/b.txt"`).
-    // Once the caller resolves the node through the tree cache and hands it in
+    // Once the caller resolves the node through the forest and hands it in
     // as a node root, the index serves it — and must agree with the oracle,
     // including on a path that resolves to nothing and inside a boolean.
     let (o, [_root, _b, _c, _d]) = forest();
@@ -859,7 +859,7 @@ fn reverse_tree_follows_path_target_matches_the_oracle() {
 fn keyset_pagination_over_path_target_with_sort() {
     // The GUI's real scenario: browse a subtree and paginate by a sort key, with
     // some descendants lacking the key (sort last). The index (path resolved via
-    // the tree cache → PathRoots) must page identically to the oracle.
+    // the forest → PathRoots) must page identically to the oracle.
     let mut o = Oracle::new();
     let root = o.create(vec![tref("loc", None, "root")]);
     // Children of root with varied rate; `c` lacks rate (must sort last).
@@ -1544,7 +1544,7 @@ fn parent_aspect_presence_matches_the_oracle() {
 fn parent_aspect_equality_matches_the_oracle_with_node_roots() {
     // `field:parent = "<path>"` is the direct children of the node at that path
     // — the same set as `field -> "<path>"`, spelled as a comparison. The index
-    // serves it from the node the caller resolved through the tree cache.
+    // serves it from the node the caller resolved through the forest.
     let (mut o, [_root, _b, _c, _d]) = forest();
     let _unrelated = o.create(vec![Field::new("kind", s("file"))]);
 

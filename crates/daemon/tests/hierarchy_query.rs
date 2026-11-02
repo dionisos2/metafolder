@@ -9,10 +9,10 @@ use std::collections::BTreeSet;
 use metafolder_core::dsl::parse_query;
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::Query;
+use metafolder_daemon::forest::Forest;
 use metafolder_daemon::kvstore::KvStore;
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::query_result::{SortKey, SortOrder};
-use metafolder_daemon::tree_cache::TreeCache;
 use uuid::Uuid;
 
 mod common;
@@ -127,7 +127,7 @@ fn sorting_by_a_hierarchy_runs_on_both_engines() {
 #[test]
 fn a_node_has_one_path_per_way_up() {
     let f = fixture();
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
     let mut paths = cache.paths_of(&f.store, "path", f.boston).unwrap();
     paths.sort();
     assert_eq!(paths, vec!["sport/courir/maraton/boston", "évènement/maraton/boston"]);
@@ -136,7 +136,7 @@ fn a_node_has_one_path_per_way_up() {
 
 impl Fixture {
     fn party(&self) -> Uuid {
-        let cache = TreeCache::new(false);
+        let cache = Forest::new(false);
         cache.resolve_path(&self.store, "path", "évènement/fête").unwrap().unwrap()
     }
 }

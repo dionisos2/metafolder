@@ -11,12 +11,12 @@ use std::rc::Rc;
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, Query};
+use metafolder_daemon::forest::{Forest, SortKeys};
 use metafolder_daemon::forest_query;
 use metafolder_daemon::index::{Eval, PageStrategy, QueryRoots, SortBy};
 use metafolder_daemon::interrupt::{self, Reason, POLL_EVERY};
 use metafolder_daemon::kvstore::KvStore;
 use metafolder_daemon::log::Writer;
-use metafolder_daemon::tree_cache::{SortKeys, TreeCache};
 use uuid::Uuid;
 
 mod common;
@@ -58,7 +58,7 @@ fn probe_tripping_at(trip_at: Option<u64>) -> Box<dyn Fn() -> Option<Reason>> {
 fn run(kv: &KvStore, q: &Query, sort: &str, trip_at: Option<u64>) -> (u64, Option<Reason>) {
     let before = kv.reads();
     let (_, reason) = interrupt::run(probe_tripping_at(trip_at), || {
-        let cache = TreeCache::new(false);
+        let cache = Forest::new(false);
         let src = kv.source().unwrap();
         let e = Eval { src: &src, strategy: PageStrategy::Auto };
         // An interrupted preparation fails; the evaluation is not reached.

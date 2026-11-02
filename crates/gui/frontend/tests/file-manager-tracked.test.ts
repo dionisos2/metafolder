@@ -144,7 +144,7 @@ describe('loadDirMetarecord', () => {
     expect(uuid).toBe('aaaa');
   });
 
-  test('a subdirectory resolves its repo-relative path via the tree cache', async () => {
+  test('a subdirectory resolves its repo-relative path via the forest', async () => {
     const daemon = resolveDaemon('bbbb');
     const uuid = await loadDirMetarecord(daemon, 'r1', '/data/repo', '/data/repo/music/jazz');
     expect(daemon.call).toHaveBeenCalledWith('POST', '/repos/r1/tree/resolve-path', {
@@ -169,7 +169,7 @@ describe('loadDirMetarecord', () => {
 
 describe('loadTrackedChildren', () => {
   // The daemon returns a directory node's direct children as {uuid, name} —
-  // served from the tree cache, no query and no per-record fetch.
+  // served from the forest, no query and no per-record fetch.
   const childrenDaemon = (children: { uuid: string; name: string }[]) => ({
     call: vi.fn(async (..._args: any[]) => children),
   });

@@ -28,9 +28,9 @@ use metafolder_core::sync::MutexExt;
 
 use crate::eligibility::{self, WatchRules};
 use crate::executor::{self, ExecutorPinger, FsEvent};
+use crate::forest::Forest;
 use crate::relpath::RelPath;
 use crate::state::RepoState;
-use crate::tree_cache::TreeCache;
 
 pub mod fanotify;
 pub mod inotify;
@@ -81,7 +81,7 @@ pub(crate) trait Source: Send + Sync {
     fn refresh(
         &self,
         conn: &dyn crate::store::Store,
-        cache: &TreeCache,
+        cache: &Forest,
         root: &Path,
         internal_dir: &Path,
         cap: Option<usize>,
@@ -205,7 +205,7 @@ impl WatcherHandle {
     pub fn refresh(
         &self,
         conn: &dyn crate::store::Store,
-        cache: &TreeCache,
+        cache: &Forest,
         root: &Path,
         internal_dir: &Path,
         cap: Option<usize>,
@@ -377,7 +377,7 @@ pub struct WatchedStatus {
 #[allow(clippy::too_many_arguments)]
 pub fn explain_watched(
     conn: &dyn crate::store::Store,
-    cache: &TreeCache,
+    cache: &Forest,
     rules: &WatchRules,
     root: &Path,
     internal_dir: &Path,
@@ -429,7 +429,7 @@ pub fn dirs_on_disk(root: &Path, rel_paths: &[String]) -> Vec<bool> {
 #[allow(clippy::too_many_arguments)]
 fn explain_watched_one(
     conn: &dyn crate::store::Store,
-    cache: &TreeCache,
+    cache: &Forest,
     rules: &WatchRules,
     root: &Path,
     internal_dir: &Path,
@@ -497,7 +497,7 @@ fn explain_watched_one(
 /// denotes one: the metarecord's `mfr_type` when the path is gone (an orphan's
 /// stale path still says what it was), else a file — a not-yet-existing path
 /// is treated as the file that would appear there.
-fn dir_in_store(conn: &dyn crate::store::Store, cache: &TreeCache, rel: &str) -> Result<bool> {
+fn dir_in_store(conn: &dyn crate::store::Store, cache: &Forest, rel: &str) -> Result<bool> {
     match cache.resolve_path(conn, "mfr_path", rel)? {
         Some(uuid) => {
             Ok(conn.string_fields(uuid, "mfr_type")?.first().map(|t| t == "dir").unwrap_or(false))
@@ -536,7 +536,7 @@ fn covers(m: &str, rel: &str) -> bool {
 /// (doc "Watch sources and regimes").
 fn covered_by_tree(
     conn: &dyn crate::store::Store,
-    cache: &TreeCache,
+    cache: &Forest,
     rules: &WatchRules,
     root: &Path,
     internal_dir: &Path,
@@ -808,8 +808,8 @@ mod tests {
         FsEvent, WatchedReason, WatchedStatus,
     };
     use crate::eligibility::WatchRules;
+    use crate::forest::Forest;
     use crate::log::Writer;
-    use crate::tree_cache::TreeCache;
     use metafolder_core::metarecord::{Field, Value};
     use std::collections::HashSet;
     use std::path::{Path, PathBuf};
@@ -820,7 +820,7 @@ mod tests {
     struct Fixture {
         conn: crate::kvstore::KvStore,
         _store_dir: crate::kvstore::TestDir,
-        cache: TreeCache,
+        cache: Forest,
         root: PathBuf,
     }
 
@@ -839,7 +839,7 @@ mod tests {
             ])
             .unwrap();
             w.commit().unwrap();
-            Self { conn, _store_dir: store_dir, cache: TreeCache::new(false), root }
+            Self { conn, _store_dir: store_dir, cache: Forest::new(false), root }
         }
 
         fn internal_dir(&self) -> PathBuf {

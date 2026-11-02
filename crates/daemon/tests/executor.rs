@@ -1392,7 +1392,7 @@ fn test_stopping_a_flush_pauses_ingestion_and_loses_nothing() {
     // moment *after* the task appears, so the flush is caught mid-tree rather
     // than at its first event. That is the interesting case: by then the
     // abandoned group has already inserted directory nodes into the in-memory
-    // tree cache, which rolling the transaction back does not undo.
+    // forest, which rolling the transaction back does not undo.
     let watcher = Arc::clone(&repo);
     let stopper = std::thread::spawn(move || loop {
         if let Some(id) = watcher.tasks.active_id(TaskKind::Flush) {
@@ -1408,7 +1408,7 @@ fn test_stopping_a_flush_pauses_ingestion_and_loses_nothing() {
     assert!(stats.cancelled, "the flush reports it was stopped");
     assert!(repo.is_ingestion_paused(), "stopping a flush pauses ingestion");
     // One event, so one group: abandoning it leaves the tree entirely unwritten
-    // — in the database *and* in the tree cache, which is maintained alongside
+    // — in the database *and* in the forest, which is maintained alongside
     // the writes and would otherwise keep answering with uncommitted uuids.
     assert!(resolve(&repo, "/dropped").is_none(), "the abandoned group wrote nothing");
     assert_eq!(pending_events(&repo), 1, "the event is still buffered");

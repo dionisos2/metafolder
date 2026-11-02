@@ -335,7 +335,7 @@ pub(super) async fn prune_log(
 /// path, for the `from`/`to` of a `move_file` action.
 pub(super) fn snapshot_abs_path(
     conn: &dyn crate::store::Store,
-    cache: &crate::tree_cache::TreeCache,
+    cache: &crate::forest::Forest,
     root: &std::path::Path,
     op_id: i64,
     is_new: i64,

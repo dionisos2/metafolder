@@ -13,9 +13,9 @@ use metafolder_core::metarecord::{TreeName, Value};
 use regex::Regex;
 use uuid::Uuid;
 
+use crate::forest::{normalize_name, Forest};
 use crate::relpath::RelPath;
 use crate::store::{Rows, Store};
-use crate::tree_cache::{normalize_name, TreeCache};
 
 /// The field recording a directory the watch budget could not afford
 /// (doc "The watch budget"). Reserved (`mfr_*`), inherited down
@@ -87,11 +87,7 @@ pub struct EffectiveIgnore {
 /// the root down. A TreeRef child requires its parent metarecord, so the chain
 /// stops at the first unresolved prefix. `rel_path` is repo-root-relative,
 /// `/`-separated, leading slash; `""` is the root.
-fn ancestor_chain(
-    conn: &dyn Store,
-    cache: &TreeCache,
-    rel_path: &str,
-) -> Result<Vec<(usize, Uuid)>> {
+fn ancestor_chain(conn: &dyn Store, cache: &Forest, rel_path: &str) -> Result<Vec<(usize, Uuid)>> {
     let comps: Vec<&str> = rel_path.split('/').collect();
     // Prefixes from the root down: "" for the root, then "/a", "/a/b", …
     let prefixes: Vec<String> = (0..comps.len()).map(|i| comps[..=i].join("/")).collect();
@@ -109,7 +105,7 @@ fn ancestor_chain(
 /// value of the nearest ancestor (including the record itself) that defines
 /// `mf_sync`, defaulting to `internal` when none does. `external` means an
 /// external tool owns the content; anything else (incl. absent) is `internal`.
-pub fn resolve_mf_sync(conn: &dyn Store, cache: &TreeCache, rel_path: &str) -> Result<String> {
+pub fn resolve_mf_sync(conn: &dyn Store, cache: &Forest, rel_path: &str) -> Result<String> {
     let chain = ancestor_chain(conn, cache, rel_path)?;
     for (_, uuid) in chain.iter().rev() {
         if let Some(v) = Rows::string_fields(conn, *uuid, "mf_sync")?.into_iter().next() {
@@ -122,12 +118,12 @@ pub fn resolve_mf_sync(conn: &dyn Store, cache: &TreeCache, rel_path: &str) -> R
 /// Evaluates eligibility for `rel_path` (repo-root-relative, `/`-separated,
 /// leading slash; `""` is the root itself), reading the rules afresh. A caller
 /// with more than one path to ask loads a [`WatchRules`] once instead.
-pub fn is_eligible(conn: &dyn Store, cache: &TreeCache, rel_path: &str) -> Result<bool> {
+pub fn is_eligible(conn: &dyn Store, cache: &Forest, rel_path: &str) -> Result<bool> {
     Ok(explain(conn, cache, rel_path)?.eligible)
 }
 
 /// [`WatchRules::explain`] on rules read afresh.
-pub fn explain(conn: &dyn Store, cache: &TreeCache, rel_path: &str) -> Result<Explanation> {
+pub fn explain(conn: &dyn Store, cache: &Forest, rel_path: &str) -> Result<Explanation> {
     let rules = WatchRules::load(conn, cache.is_case_insensitive())?;
     rules.explain(&rules.rel_of_text(rel_path))
 }
@@ -135,7 +131,7 @@ pub fn explain(conn: &dyn Store, cache: &TreeCache, rel_path: &str) -> Result<Ex
 /// [`WatchRules::effective_ignore`] on rules read afresh.
 pub fn effective_ignore(
     conn: &dyn Store,
-    cache: &TreeCache,
+    cache: &Forest,
     rel_path: &str,
 ) -> Result<EffectiveIgnore> {
     let rules = WatchRules::load(conn, cache.is_case_insensitive())?;
@@ -143,7 +139,7 @@ pub fn effective_ignore(
 }
 
 /// A path as the rule index keys it: its components' exact bytes, folded when
-/// the filesystem is case-insensitive — the tree cache's own key, so a path
+/// the filesystem is case-insensitive — the forest's own key, so a path
 /// finds its rules exactly where the cache would find its metarecord.
 type Key = Vec<Vec<u8>>;
 
@@ -242,7 +238,7 @@ impl WatchRules {
     }
 
     /// A path given as *text* (an API parameter, a path typed by the user),
-    /// read the way the tree cache reads one (`PathForm::Any`): a component
+    /// read the way the forest reads one (`PathForm::Any`): a component
     /// that decodes as an escape (`%E9`) designates either the name that
     /// really is that text or the one holding the bytes it escapes. The rules
     /// only care about the reading that leads to one of them, so that reading

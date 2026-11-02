@@ -38,9 +38,9 @@ use uuid::Uuid;
 
 use crate::eligibility::{self, WatchRules};
 use crate::executor::FsEvent;
+use crate::forest::Forest;
 use crate::relpath::RelPath;
 use crate::state::RepoState;
-use crate::tree_cache::TreeCache;
 use crate::watcher::{Placement, Regime};
 
 /// The name of the notify backend this source runs on — what `GET /watch`
@@ -245,7 +245,7 @@ pub struct WatchPlan {
 /// [`WatcherHandle::refresh`]).
 pub fn compute_watched_dirs_timed(
     conn: &dyn crate::store::Store,
-    cache: &TreeCache,
+    cache: &Forest,
     root: &Path,
     internal_dir: &Path,
     cap: Option<usize>,
@@ -321,7 +321,7 @@ pub fn compute_watched_dirs_timed(
 /// from the broker, and would be recorded twice.
 pub fn compute_watched_dirs_within(
     conn: &dyn crate::store::Store,
-    cache: &TreeCache,
+    cache: &Forest,
     root: &Path,
     internal_dir: &Path,
     cap: Option<usize>,
@@ -417,7 +417,7 @@ fn enter(root: &Path, rel: &RelPath, rules: &WatchRules, walk: &mut Walk) {
 
 /// The paths carrying `mfr_watch_exceeded = false` — the deliberate overrides
 /// inside an excluded subtree.
-fn watch_exceeded_overrides(conn: &dyn crate::store::Store, cache: &TreeCache) -> HashSet<String> {
+fn watch_exceeded_overrides(conn: &dyn crate::store::Store, cache: &Forest) -> HashSet<String> {
     let mut out = HashSet::new();
     let uuids = match crate::store::Questions::holding(
         conn,
@@ -723,7 +723,7 @@ impl crate::watcher::Source for Source {
     fn refresh(
         &self,
         conn: &dyn crate::store::Store,
-        cache: &TreeCache,
+        cache: &Forest,
         root: &Path,
         internal_dir: &Path,
         cap: Option<usize>,
@@ -800,8 +800,8 @@ mod tests {
         budget_cap, budget_report, compute_watched_dirs_timed, compute_watched_dirs_within,
         is_watch_budget_exhausted,
     };
+    use crate::forest::Forest;
     use crate::log::Writer;
-    use crate::tree_cache::TreeCache;
     use metafolder_core::metarecord::{Field, Value};
     use std::collections::HashSet;
     use std::path::{Path, PathBuf};
@@ -813,7 +813,7 @@ mod tests {
     struct Fixture {
         conn: crate::kvstore::KvStore,
         _store_dir: crate::kvstore::TestDir,
-        cache: TreeCache,
+        cache: Forest,
         root: PathBuf,
     }
 
@@ -831,7 +831,7 @@ mod tests {
             ])
             .unwrap();
             w.commit().unwrap();
-            Self { conn, _store_dir: store_dir, cache: TreeCache::new(false), root }
+            Self { conn, _store_dir: store_dir, cache: Forest::new(false), root }
         }
 
         fn internal_dir(&self) -> PathBuf {

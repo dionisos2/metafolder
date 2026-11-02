@@ -44,7 +44,7 @@ pub(super) struct TrashDeleteBody {
 /// trashing does" rather than left to be discovered.
 fn inbound_referrers(
     conn: &dyn crate::store::Store,
-    cache: &crate::tree_cache::TreeCache,
+    cache: &crate::forest::Forest,
     targets: &[Uuid],
 ) -> Result<Vec<Uuid>, ApiError> {
     let fields: Vec<String> = {

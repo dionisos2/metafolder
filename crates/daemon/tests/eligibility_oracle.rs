@@ -9,10 +9,10 @@
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_daemon::eligibility::{Reason, WatchRules};
+use metafolder_daemon::forest::Forest;
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::relpath::RelPath;
 use metafolder_daemon::store::Rows;
-use metafolder_daemon::tree_cache::TreeCache;
 use uuid::Uuid;
 
 use metafolder_daemon::kvstore::KvStore;
@@ -54,7 +54,7 @@ fn prefixes(path: &str) -> Vec<String> {
 
 /// The chain walk (doc "Eligibility"), reading the
 /// store at every step.
-fn oracle(conn: &KvStore, cache: &TreeCache, path: &str) -> Verdict {
+fn oracle(conn: &KvStore, cache: &Forest, path: &str) -> Verdict {
     let comps: Vec<&str> = path.split('/').collect();
     let full_idx = comps.len() - 1;
     let mut chain = Vec::new();
@@ -137,7 +137,7 @@ fn oracle(conn: &KvStore, cache: &TreeCache, path: &str) -> Verdict {
 
 /// The nearest `mfr_watch_exceeded` on the path's own prefixes, the path
 /// included: `Some(prefix)` when it is `true` there.
-fn oracle_exceeded(conn: &KvStore, cache: &TreeCache, path: &str) -> Option<String> {
+fn oracle_exceeded(conn: &KvStore, cache: &Forest, path: &str) -> Option<String> {
     for prefix in prefixes(path).iter().rev() {
         if let Some(u) = cache.resolve_path(conn, "mfr_path", prefix).unwrap() {
             if let Some(v) = Rows::bool_field(conn, u, "mfr_watch_exceeded").unwrap() {
@@ -149,7 +149,7 @@ fn oracle_exceeded(conn: &KvStore, cache: &TreeCache, path: &str) -> Option<Stri
 }
 
 /// The nearest set of patterns on the path's prefixes, the path included.
-fn oracle_effective(conn: &KvStore, cache: &TreeCache, path: &str) -> Option<String> {
+fn oracle_effective(conn: &KvStore, cache: &Forest, path: &str) -> Option<String> {
     for prefix in prefixes(path).iter().rev() {
         if let Some(u) = cache.resolve_path(conn, "mfr_path", prefix).unwrap() {
             if !Rows::string_fields(conn, u, "mf_ignore").unwrap().is_empty() {
@@ -217,7 +217,7 @@ fn the_rule_index_answers_like_the_chain_walk() {
     let mut probes_checked = 0;
     for _ in 0..60 {
         let (conn, _dir, tracked) = generate(&mut rng);
-        let cache = TreeCache::new(false);
+        let cache = Forest::new(false);
         let rules = WatchRules::load(&conn, false).unwrap();
         // Every tracked path, an untracked child of each, and one deeper.
         let mut probes: Vec<String> = Vec::new();
@@ -307,7 +307,7 @@ fn a_name_that_is_not_text_is_matched_by_its_bytes() {
 }
 
 #[test]
-fn a_path_given_as_text_is_read_both_ways_like_the_tree_cache_reads_it() {
+fn a_path_given_as_text_is_read_both_ways_like_the_forest_reads_it() {
     use metafolder_core::metarecord::TreeName;
     let (mut conn, _conn_dir) = common::kv::store();
     let mut w = Writer::begin(&mut conn, None).unwrap();
@@ -345,7 +345,7 @@ fn a_path_given_as_text_is_read_both_ways_like_the_tree_cache_reads_it() {
     assert!(eligible("/other%E9/f").eligible, "no rule down either reading");
 
     // The text-taking entry points read it the same way.
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
     assert!(!metafolder_daemon::eligibility::is_eligible(&conn, &cache, "/d%E9/f").unwrap());
     let oracle_verdict = oracle(&conn, &cache, "/d%E9/f");
     assert_eq!(

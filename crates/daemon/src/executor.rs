@@ -24,12 +24,12 @@ use metafolder_core::metarecord::{Field, TreeName, Value};
 use metafolder_core::sync::MutexExt;
 
 use crate::eligibility::WatchRules;
+use crate::forest::Forest;
 use crate::fs_meta;
 use crate::log::{self, OpType, Writer};
 use crate::relpath::RelPath;
 use crate::state::RepoState;
 use crate::store::Rows;
-use crate::tree_cache::TreeCache;
 
 /// A raw filesystem event, as enqueued by the watcher. Paths are
 /// repo-root-relative with a leading `/`.
@@ -681,7 +681,7 @@ struct Apply<'a, 'c> {
     /// arbitrarily large tree, and the per-event counter cannot show it.
     report: FlushReport<'a>,
     writer: Writer<'c>,
-    cache: &'a TreeCache,
+    cache: &'a Forest,
     root: &'a Path,
     /// Paths renamed *out of* a watched directory in this same batch, whose
     /// destination the watcher never saw. See [`Apply::find_departed_match`].
@@ -1462,7 +1462,7 @@ pub(crate) fn clear_absent_conditional_stat_fields(
 /// path's metarecord.
 pub(crate) fn ensure_parent_metarecords(
     writer: &mut Writer,
-    cache: &TreeCache,
+    cache: &Forest,
     root: &Path,
     rel: &RelPath,
 ) -> Result<Uuid> {

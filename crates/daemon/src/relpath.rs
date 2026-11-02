@@ -4,7 +4,7 @@
 //! path cannot be a `String` without losing the files the daemon exists to
 //! track. It cannot simply be a `PathBuf` either: the repository's display
 //! convention — the root is `""`, everything else is `/`-prefixed — is what the
-//! DSL, the tree cache and every caller speak, and getting it wrong has
+//! DSL, the forest and every caller speak, and getting it wrong has
 //! produced doubled and missing separators before. Both live here, in one
 //! place, so no caller has to remember either rule.
 
@@ -150,7 +150,7 @@ mod tests {
 
     #[test]
     fn test_the_root_displays_as_the_empty_path() {
-        // "" is what the DSL and the tree cache use for the root; "/" is NOT a
+        // "" is what the DSL and the forest use for the root; "/" is NOT a
         // synonym here, and returning one has produced empty query results.
         let root = RelPath::root();
         assert!(root.is_root());

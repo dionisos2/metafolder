@@ -1071,7 +1071,7 @@ macro_rules! kv_reads {
                     let p = parent.map_or(ROOT, |p| *p.as_bytes());
                     Ok($read.children(field, &p)?.into_iter().find_map(|(u, n, _)| {
                         let text = TreeName::from_bytes(n).display().into_owned();
-                        // The fold `tree_cache::normalize_name` keys the rule
+                        // The fold `forest::normalize_name` keys the rule
                         // index with — Unicode, not only ASCII — so both agree
                         // on which names a case-insensitive filesystem equates.
                         let same = if nocase {

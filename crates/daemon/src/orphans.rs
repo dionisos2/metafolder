@@ -351,7 +351,7 @@ fn annotated(conn: &dyn crate::store::Store, uuid: Uuid) -> Result<bool, ApiErro
 /// Moves `orphan` onto the position `holder` occupies, then deletes `holder`.
 fn adopt(
     conn: &mut dyn crate::store::Database,
-    cache: &crate::tree_cache::TreeCache,
+    cache: &crate::forest::Forest,
     root: &Path,
     orphan: Uuid,
     holder: Uuid,

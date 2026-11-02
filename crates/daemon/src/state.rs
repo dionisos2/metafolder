@@ -12,10 +12,10 @@ use crate::config::RepoConfig;
 use crate::daemon_config::DaemonSettings;
 use crate::error::ApiError;
 use crate::executor::FlushProgress;
+use crate::forest::Forest;
 use crate::phase::{Phase, Watchdog};
 use crate::reconcile::ProgressFn;
 use crate::repo::{self, OpenedRepo, RepoLocator};
-use crate::tree_cache::TreeCache;
 
 /// How long one filesystem event must take before the load report names it
 /// with its cost. Below it the event is ordinary and saying so would drown the
@@ -44,7 +44,7 @@ struct RulesSlot {
 /// runs in `spawn_blocking`.
 pub struct RepoState {
     pub conn: Mutex<crate::store::Handle>,
-    tree: TreeCache,
+    tree: Forest,
     pub config: RepoConfig,
     /// The repository's display name. Starts at `config.name` but is mutable
     /// (rename, doc "Repository endpoints") — persisted to `config.json` and
@@ -201,7 +201,7 @@ impl RepoState {
         Self {
             conn: Mutex::new(opened.conn),
             // No forest in memory: the store answers (doc "The forest in the store").
-            tree: TreeCache::new(opened.case_insensitive),
+            tree: Forest::new(opened.case_insensitive),
             config: opened.config,
             name,
             metafolder_dir: opened.metafolder_dir,
@@ -459,7 +459,7 @@ impl RepoState {
     /// The repository's forest lookups. A copy: they hold nothing but the
     /// case sensitivity and read the store on every call, so there is nothing
     /// to share or to lock.
-    pub fn tree(&self) -> TreeCache {
+    pub fn tree(&self) -> Forest {
         self.tree
     }
 
@@ -1073,7 +1073,7 @@ fn root_identity_of(root: &Path) -> Option<(u64, u64)> {
 fn write_watch_frontier(
     repo: &RepoState,
     conn: &mut dyn crate::store::Database,
-    cache: &TreeCache,
+    cache: &Forest,
     root: &Path,
     frontier: &[String],
 ) -> anyhow::Result<()> {
@@ -1652,7 +1652,7 @@ mod tests {
         fn refresh(
             &self,
             _conn: &dyn crate::store::Store,
-            _cache: &TreeCache,
+            _cache: &Forest,
             _root: &Path,
             _internal_dir: &Path,
             _cap: Option<usize>,

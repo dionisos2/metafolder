@@ -8,10 +8,10 @@
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, FollowTarget, OsmMode, Query};
+use metafolder_daemon::forest::{Forest, SortKeys};
 use metafolder_daemon::index::{collect_path_targets, Eval, PageStrategy, QueryRoots, SortBy};
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::query_result::{SortKey, SortOrder};
-use metafolder_daemon::tree_cache::{SortKeys, TreeCache};
 use metafolder_query_oracle as query_exec;
 use uuid::Uuid;
 
@@ -123,7 +123,7 @@ fn fixture() -> (KvStore, common::TempDir) {
     (conn, _conn_dir)
 }
 
-fn queries(conn: &KvStore, cache: &TreeCache) -> Vec<Query> {
+fn queries(conn: &KvStore, cache: &Forest) -> Vec<Query> {
     let present = |f: &str| Query::IsPresent { field: f.into(), aspect: Default::default() };
     let eq =
         |f: &str, v: Value| Query::Eq { field: f.into(), value: v, aspect: Default::default() };
@@ -263,12 +263,12 @@ fn eval_pages(
 fn every_page_strategy_gives_the_oracles_pages() {
     let (conn, _dir) = fixture();
     // As the route prepares a query: the forest is read from the store.
-    let cache = TreeCache::new(false);
+    let cache = Forest::new(false);
     for q in queries(&conn, &cache) {
         for by in sorts() {
             for limit in [10, 50] {
                 let want = oracle_pages(&conn, &q, &by, limit);
-                // What `run_query_filter` resolves through the tree cache.
+                // What `run_query_filter` resolves through the forest.
                 let mut targets = Vec::new();
                 collect_path_targets(&q, &mut targets);
                 let mut roots = QueryRoots::new();

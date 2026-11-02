@@ -30,7 +30,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use uuid::Uuid;
 
-use crate::tree_cache::TreeCache;
+use crate::forest::Forest;
 
 /// The daemon-written field marking a directory metarecord as a mount point.
 pub const FIELD: &str = "mfr_mount";
@@ -136,10 +136,7 @@ pub struct DeclaredMount {
 
 /// The repository's declared mount points, read from the database: every
 /// metarecord carrying [`FIELD`], with the path it sits at.
-pub fn declared_set(
-    conn: &dyn crate::store::Store,
-    cache: &TreeCache,
-) -> Result<Vec<DeclaredMount>> {
+pub fn declared_set(conn: &dyn crate::store::Store, cache: &Forest) -> Result<Vec<DeclaredMount>> {
     let mut out = Vec::new();
     for (uuid, expected) in crate::store::Questions::string_owners(conn, FIELD)? {
         let path = cache.path_of(conn, "mfr_path", uuid)?;
@@ -177,7 +174,7 @@ pub fn states(declared: &[DeclaredMount], root: &Path) -> Vec<MountPoint> {
 /// two halves in one step, for a caller that already holds the repository.
 pub fn declared(
     conn: &dyn crate::store::Store,
-    cache: &TreeCache,
+    cache: &Forest,
     root: &Path,
 ) -> Result<Vec<MountPoint>> {
     Ok(states(&declared_set(conn, cache)?, root))
@@ -227,7 +224,7 @@ impl OfflineMounts {
 /// declared mount point, no walk).
 pub fn offline(
     conn: &dyn crate::store::Store,
-    cache: &TreeCache,
+    cache: &Forest,
     root: &Path,
 ) -> Result<OfflineMounts> {
     let mut paths = Vec::new();
