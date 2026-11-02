@@ -3,7 +3,7 @@ tags: Documentation
 kind: overview
 audience: dev
 aliases: crates design
-summary: Four programs — daemon, mf, GUI, broker — over one HTTP API; seven crates, and what each owns.
+summary: Five programs — daemon, mf, GUI, broker, sync-config — around one HTTP API; seven crates, and what each owns.
 
 !! The programs
 
