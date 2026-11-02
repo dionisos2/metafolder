@@ -24,6 +24,9 @@ pub struct App {
     pub config: Arc<ConfigDir>,
     /// Shared with the GUI HTTP server (temporary /gui/input bindings).
     pub keybindings: Arc<Mutex<KeybindingSet>>,
+    /// The content of `style.css`, read at startup and swapped by
+    /// `config:reload style`.
+    pub style: Mutex<String>,
     /// The simplified-query grammar and its raw source, for local query
     /// expansion and for display in the help panel's query page (doc
     /// "In-app help"). Behind a lock because `config:reload grammar` swaps them:
@@ -119,7 +122,7 @@ pub fn get_initial_state(app: AppHandle) -> Result<InitialState, String> {
         keybindings: app.keybindings.lock_recover().compiled(),
         commands: app.registry.list(),
         panel_types: app.config.list_panel_types()?,
-        style_css: app.config.load_style()?,
+        style_css: app.style.lock_recover().clone(),
         gui_port: app.gui_port,
         daemon_url: app.daemon.base_url(),
         page_sizes: app.page_sizes.clone(),
@@ -1150,6 +1153,7 @@ pub fn config_reload(app: AppHandle, what: String) -> Result<String, String> {
             }
             "style" => {
                 let css = app.config.load_style()?;
+                app.style.lock_recover().clone_from(&css);
                 app.gui.notify(crate::events::STYLE_CHANGED, serde_json::json!({ "css": css }));
             }
             "grammar" => {

@@ -454,6 +454,7 @@ pub fn run(options: Options) {
     // Read again whenever the keybindings panel asks; checked here so that a
     // missing or malformed file fails like the others.
     or_exit(config.load_command_classes());
+    let style = or_exit(config.load_style());
     // The simplified-query grammar (shared, in core): expansion is done locally
     // by the GUI backend, never proxied to the daemon (doc "Why expansion runs in the client").
     let grammar = or_exit(metafolder_core::simplified::load::load_source());
@@ -529,6 +530,7 @@ pub fn run(options: Options) {
                 registry,
                 config: config.clone(),
                 keybindings: keybindings.clone(),
+                style: Mutex::new(style),
                 grammar: Mutex::new(grammar),
 
                 gui_port,

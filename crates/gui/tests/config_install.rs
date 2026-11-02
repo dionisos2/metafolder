@@ -46,6 +46,44 @@ fn test_load_style_errors_without_config() {
     assert!(config.load_style().is_err());
 }
 
+/// The stylesheet is required like the rest: its absence stops the program
+/// before a window exists, with the message on stderr, rather than reaching the
+/// shell's failure banner (doc "No runtime fallback").
+#[test]
+fn test_a_missing_stylesheet_stops_the_gui_before_any_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = ConfigDir::at(dir.path().join("metafolder/gui"));
+    common::install_defaults(&config);
+    std::fs::remove_file(config.style_css_path()).unwrap();
+    // Everything else the GUI requires is there: only the stylesheet can stop it.
+    let core = dir.path().join("metafolder/core");
+    std::fs::create_dir_all(&core).unwrap();
+    std::fs::write(
+        core.join("query-grammar"),
+        include_str!("../../core/default-config/query-grammar"),
+    )
+    .unwrap();
+
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_metafolder-gui"))
+        .arg("--allow-unsandboxed-webview")
+        .env("XDG_CONFIG_HOME", dir.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // A GUI that went past the check would stay up: kill it rather than hang.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while child.try_wait().unwrap().is_none() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let _ = child.kill();
+    let output = child.wait_with_output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("style.css"), "stderr: {stderr}");
+}
+
 #[test]
 fn test_load_keybindings_reads_the_single_file_as_the_full_set() {
     let (_guard, config) = temp_config();
