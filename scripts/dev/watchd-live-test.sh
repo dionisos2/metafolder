@@ -169,7 +169,7 @@ export XDG_RUNTIME_DIR="$xdg" XDG_CONFIG_HOME="$work/config"
 "$bin/metafolder-daemon" -p "$port" -c "$work/daemon.toml" >"$work/daemon.log" 2>&1 &
 daemon_pid=$!
 
-mf() { "$bin/mf" --no-config -p "$port" "$@"; }
+mf() { "$bin/mf" -p "$port" "$@"; }
 if ! wait_for mf repo list >/dev/null 2>&1; then
     show_logs
     die "the daemon did not start (log above)"

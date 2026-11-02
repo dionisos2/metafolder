@@ -200,6 +200,7 @@ fn mf_gui_as_script(gui: &StubGui, args: &[&str], task: &str) -> Out {
 
 fn mf_gui_run(gui: &StubGui, args: &[&str], task: Option<&str>) -> Out {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_mf"));
+    cmd.args(["--config", concat!(env!("CARGO_MANIFEST_DIR"), "/default-config/config.toml")]);
     cmd.arg("gui").arg("--gui-url").arg(&gui.url).args(args);
     cmd.env_remove("METAFOLDER_GUI_URL");
     match task {
@@ -242,6 +243,7 @@ fn test_gui_repo_prints_the_focused_workspace_repo() {
 fn test_gui_url_from_environment() {
     let gui = stub();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_mf"));
+    cmd.args(["--config", concat!(env!("CARGO_MANIFEST_DIR"), "/default-config/config.toml")]);
     cmd.args(["gui", "repo"]).env("METAFOLDER_GUI_URL", &gui.url);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
     let output = cmd.output().unwrap();
@@ -481,6 +483,7 @@ fn test_gui_prompt_with_completions() {
 fn test_gui_prompt_with_completions_from_stdin() {
     let gui = stub();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_mf"));
+    cmd.args(["--config", concat!(env!("CARGO_MANIFEST_DIR"), "/default-config/config.toml")]);
     cmd.args(["gui", "--gui-url", &gui.url, "prompt", "Tag: ", "--completions-stdin"]);
     cmd.env_remove("METAFOLDER_GUI_URL");
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::piped());

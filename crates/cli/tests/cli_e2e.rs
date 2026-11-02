@@ -78,7 +78,8 @@ fn mf_full(args: &[&str], stdin: Option<&str>, envs: &[(&str, &str)], daemon: bo
     cmd.env_remove("METAFOLDER_REPO")
         .env_remove("METAFOLDER_REPO_NAME")
         .env_remove("METAFOLDER_DAEMON_PORT")
-        .env_remove("METAFOLDER_LABEL");
+        .env_remove("METAFOLDER_LABEL")
+        .env("XDG_CONFIG_HOME", config_xdg());
     for (k, v) in envs {
         cmd.env(k, v);
     }
@@ -100,7 +101,17 @@ fn mf(args: &[&str]) -> Out {
     mf_full(args, None, &[], true)
 }
 
-/// `XDG_CONFIG_HOME` for a config dir with the shipped `core/` config
+const SHIPPED_CLI_CONFIG: &str = include_str!("../default-config/config.toml");
+
+/// Installs the shipped `cli/config.toml` under the `XDG_CONFIG_HOME` at `xdg`:
+/// `mf` requires it (doc "No runtime fallback").
+fn install_cli_config(xdg: &std::path::Path) {
+    let cli = xdg.join("metafolder").join("cli");
+    std::fs::create_dir_all(&cli).unwrap();
+    std::fs::write(cli.join("config.toml"), SHIPPED_CLI_CONFIG).unwrap();
+}
+
+/// `XDG_CONFIG_HOME` for a config dir with the shipped `cli/` and `core/` config
 /// installed: the query-grammar (so `mf query --simplified` can expand locally)
 /// and the ignore-presets (so `mf repo init` / `mf ignore` can apply the
 /// `default` preset — the daemon no longer ships ignore patterns); and the
@@ -112,6 +123,7 @@ fn config_xdg() -> &'static str {
     static XDG: OnceLock<String> = OnceLock::new();
     XDG.get_or_init(|| {
         let dir = common::tests_root().join(format!("cli-cfg-{}", std::process::id()));
+        install_cli_config(&dir);
         let core = dir.join("metafolder").join("core");
         std::fs::create_dir_all(&core).unwrap();
         std::fs::copy(
@@ -212,6 +224,7 @@ fn test_update_config_merges_new_defaults_into_the_repository_edits() {
     let (repo, root) = init_repo("update_config");
     // This test's own defaults: the shared ones, plus a schema.
     let xdg = temp_dir("update_config_xdg");
+    install_cli_config(&xdg);
     let defaults = xdg.join("metafolder/daemon/repo-default");
     std::fs::create_dir_all(&defaults).unwrap();
     let map = root.join(".metafolder/config/metadata-map.toml");
@@ -561,13 +574,14 @@ fn test_unreachable_daemon_is_operation_error() {
 
 // ── CLI config file (doc "CLI configuration") ───────────────────────────
 
-/// A fresh `XDG_CONFIG_HOME` holding `metafolder/cli/config.toml` = `contents`.
-/// The guard comes back with the path: dropping it would take the config dir
+/// A fresh `XDG_CONFIG_HOME` holding the shipped `metafolder/cli/config.toml`
+/// with `repo` as its `[repo]` table. The guard comes back with the path: dropping it would take the config dir
 /// away before the command under test reads it.
-fn xdg_with_cli_config(contents: &str) -> (TempDir, String) {
+fn xdg_with_cli_config(repo: &str) -> (TempDir, String) {
     let dir = temp_dir("cli_cfg");
     let cli = dir.join("metafolder").join("cli");
     std::fs::create_dir_all(&cli).unwrap();
+    let contents = SHIPPED_CLI_CONFIG.replace("[repo]\n", &format!("[repo]\n{repo}\n"));
     std::fs::write(cli.join("config.toml"), contents).unwrap();
     let path = dir.to_str().unwrap().to_string();
     (dir, path)
@@ -576,27 +590,44 @@ fn xdg_with_cli_config(contents: &str) -> (TempDir, String) {
 #[test]
 fn test_config_default_repo_used_when_no_selector() {
     let (uuid, _root) = init_repo("cfgrepo");
-    let (_cfg, xdg) = xdg_with_cli_config(&format!("[repo]\nuuid = \"{uuid}\"\n"));
+    let (_cfg, xdg) = xdg_with_cli_config(&format!("uuid = \"{uuid}\""));
     // No -u/-n: the selector comes from the config's default [repo].
     let out = mf_full(&["metarecord", "get"], None, &[("XDG_CONFIG_HOME", &xdg)], true);
     assert_ok(&out);
 }
 
+/// `--config` reads that file instead of the user's: a script is immune to
+/// your settings. The shipped file names no repository → usage error (exit 2).
 #[test]
-fn test_no_config_ignores_the_default_repo() {
-    let (uuid, _root) = init_repo("cfgrepo_noconf");
-    let (_cfg, xdg) = xdg_with_cli_config(&format!("[repo]\nuuid = \"{uuid}\"\n"));
-    // --no-config skips the file, so there is no selector → usage error (exit 2).
-    let out =
-        mf_full(&["--no-config", "metarecord", "get"], None, &[("XDG_CONFIG_HOME", &xdg)], true);
+fn test_an_explicit_config_replaces_the_default_repo() {
+    let (uuid, _root) = init_repo("cfgrepo_explicit");
+    let (_cfg, xdg) = xdg_with_cli_config(&format!("uuid = \"{uuid}\""));
+    let shipped = concat!(env!("CARGO_MANIFEST_DIR"), "/default-config/config.toml");
+    let out = mf_full(
+        &["--config", shipped, "metarecord", "get"],
+        None,
+        &[("XDG_CONFIG_HOME", &xdg)],
+        true,
+    );
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);
+}
+
+/// No built-in copy of the defaults: a missing file stops `mf`, naming it.
+#[test]
+fn test_a_missing_config_is_an_error_naming_it() {
+    let empty = temp_dir("cli_cfg_missing");
+    let out =
+        mf_full(&["repo", "list"], None, &[("XDG_CONFIG_HOME", empty.to_str().unwrap())], false);
+    assert_eq!(out.code, 2, "stderr: {}", out.stderr);
+    assert!(out.stderr.contains("cli/config.toml"), "stderr: {}", out.stderr);
+    assert!(out.stderr.contains("metafolder-sync-config"), "stderr: {}", out.stderr);
 }
 
 #[test]
 fn test_explicit_selector_overrides_the_config_default_repo() {
     let (uuid, _root) = init_repo("cfgrepo_override");
     // The config points at a bogus repo; an explicit -u must still win.
-    let (_cfg, xdg) = xdg_with_cli_config("[repo]\nname = \"does-not-exist\"\n");
+    let (_cfg, xdg) = xdg_with_cli_config("name = \"does-not-exist\"");
     let out =
         mf_full(&["-u", &uuid, "metarecord", "get"], None, &[("XDG_CONFIG_HOME", &xdg)], true);
     assert_ok(&out);
@@ -843,7 +874,11 @@ fn test_get_count_ignores_the_page_size() {
     let cfg = temp_dir("count_cfg");
     let cli = cfg.path().join("metafolder").join("cli");
     std::fs::create_dir_all(&cli).unwrap();
-    std::fs::write(cli.join("config.toml"), "[settings]\npage-size = 2\n").unwrap();
+    std::fs::write(
+        cli.join("config.toml"),
+        SHIPPED_CLI_CONFIG.replace("page-size = 500", "page-size = 2"),
+    )
+    .unwrap();
 
     let out = mf_full(
         &["-u", &repo, "metarecord", "-q", "rating >= 0", "get", "--count"],
@@ -889,7 +924,11 @@ fn test_get_reads_a_scope_by_batches_with_cursor() {
     let cfg = temp_dir("cursor_cfg");
     let cli = cfg.path().join("metafolder").join("cli");
     std::fs::create_dir_all(&cli).unwrap();
-    std::fs::write(cli.join("config.toml"), "[settings]\npage-size = 2\n").unwrap();
+    std::fs::write(
+        cli.join("config.toml"),
+        SHIPPED_CLI_CONFIG.replace("page-size = 500", "page-size = 2"),
+    )
+    .unwrap();
     let xdg = cfg.path().to_str().unwrap();
     let get = |extra: &[&str]| {
         let mut args = vec!["-u", &repo, "metarecord", "-q", "rating >= 0", "get"];
@@ -7182,27 +7221,28 @@ fn script_lists_the_scripts_and_copies_a_template() {
         scripts.join("templates/sort-folder.sh"),
     )
     .unwrap();
+    install_cli_config(cfg.path());
     let xdg = cfg.path().to_str().unwrap();
     let env = [("XDG_CONFIG_HOME", xdg)];
 
-    let out = mf_full(&["--no-config", "script"], None, &env, false);
+    let out = mf_full(&["script"], None, &env, false);
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert!(out.stdout.starts_with(scripts.to_str().unwrap()), "{}", out.stdout);
     assert!(out.stdout.contains("gui-tag-folder.sh"), "{}", out.stdout);
     assert!(out.stdout.contains("sort-folder"), "{}", out.stdout);
 
     // Not on a terminal: naming the template is required.
-    let out = mf_full(&["--no-config", "script", "new"], None, &env, false);
+    let out = mf_full(&["script", "new"], None, &env, false);
     assert_eq!(out.code, 2, "{}", out.stderr);
     assert!(out.stderr.contains("sort-folder"), "{}", out.stderr);
 
-    let out = mf_full(&["--no-config", "script", "new", "sort-folder"], None, &env, false);
+    let out = mf_full(&["script", "new", "sort-folder"], None, &env, false);
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert_eq!(out.stdout.trim(), scripts.join("sort-folder.sh").to_str().unwrap());
     // Copied in, it is offered to run like any script.
-    let out = mf_full(&["--no-config", "script"], None, &env, false);
+    let out = mf_full(&["script"], None, &env, false);
     assert!(out.stdout.contains("sort-folder.sh"), "{}", out.stdout);
 
-    let out = mf_full(&["--no-config", "script", "new", "sort-folder"], None, &env, false);
+    let out = mf_full(&["script", "new", "sort-folder"], None, &env, false);
     assert_eq!(out.code, 1, "a second copy must not overwrite the first");
 }

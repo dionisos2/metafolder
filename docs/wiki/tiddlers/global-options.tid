@@ -1,7 +1,7 @@
 title: Global options
 tags: [[Command line]]
 kind: reference
-summary: -n / -u pick the repository, -p the daemon's port, --no-config ignores your settings — before the command, with environment fallbacks.
+summary: -n / -u pick the repository, -p the daemon's port, --config reads another settings file — before the command, with environment fallbacks.
 
 The repository and the daemon are chosen ''once'', by options that precede the
 command, never per command:
@@ -10,7 +10,7 @@ command, never per command:
 |`-n <name>` |`METAFOLDER_REPO_NAME` |the loaded repository of that name |
 |`-u <uuid>` |`METAFOLDER_REPO` |the loaded repository of that uuid |
 |`-p <port>` |`METAFOLDER_DAEMON_PORT` |the daemon's port on `127.0.0.1` (default 7523) |
-|`--no-config` | |ignore `cli/config.toml` entirely ([[CLI configuration]]) |
+|`--config FILE` | |read this file instead of `cli/config.toml` ([[CLI configuration]]) |
 
 `-n` and `-u` are mutually exclusive. Names are unique among loaded repositories
 — the daemon refuses to load a second one with the same name — so `-n` always

@@ -22,10 +22,10 @@ use uuid::Uuid;
 
 use crate::daemon_client::{DaemonClient, DaemonError};
 
-/// The tag-model field names (the `[tag]` config table). Defaults reproduce the
-/// convention the scripts already use, so an empty config changes nothing.
+/// The tag-model field names (the `[tag]` config table). The shipped files
+/// hold the convention the scripts use.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct TagConfig {
     /// Field name holding the entry-type marker (the schema field by default).
     pub type_field: String,
@@ -46,22 +46,6 @@ pub struct TagConfig {
     pub partition: String,
     /// Bool flag: the classification picks the entry's children one by one.
     pub sparse: String,
-}
-
-impl Default for TagConfig {
-    fn default() -> Self {
-        TagConfig {
-            type_field: "mf_schema".into(),
-            entry_type: "tag".into(),
-            path_field: "path".into(),
-            positive: "tag".into(),
-            negative: "negative_tag".into(),
-            mixed: "mixed_tag".into(),
-            always: "always".into(),
-            partition: "partition".into(),
-            sparse: "sparse".into(),
-        }
-    }
 }
 
 /// The parent path of a tag (`"a/b/c"` → `"a/b"`), or `None` for a top-level tag.
@@ -485,6 +469,13 @@ pub fn apply(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The `[tag]` table of the shipped CLI configuration.
+    fn shipped_config() -> TagConfig {
+        let shipped: toml::Table =
+            toml::from_str(include_str!("../../cli/default-config/config.toml")).unwrap();
+        shipped["tag"].clone().try_into().unwrap()
+    }
     use std::cell::RefCell;
 
     fn vocab() -> Vec<String> {
@@ -612,8 +603,7 @@ mod tests {
     #[test]
     fn add_drops_the_ancestors_and_what_it_contradicts() {
         let stub = music();
-        let n =
-            apply(&stub, "r", &TagConfig::default(), &sel(), Answer::Add, "musique/jazz").unwrap();
+        let n = apply(&stub, "r", &shipped_config(), &sel(), Answer::Add, "musique/jazz").unwrap();
         assert_eq!(n, 3);
         let ops = stub.ops();
         assert!(ops.iter().all(|o| o["query"] == sel()));
@@ -633,7 +623,7 @@ mod tests {
     #[test]
     fn deny_drops_the_descendants_and_what_it_contradicts() {
         let stub = music();
-        apply(&stub, "r", &TagConfig::default(), &sel(), Answer::Deny, "musique/jazz").unwrap();
+        apply(&stub, "r", &shipped_config(), &sel(), Answer::Deny, "musique/jazz").unwrap();
         assert_eq!(
             summary(&stub.ops()),
             vec![
@@ -650,7 +640,7 @@ mod tests {
     #[test]
     fn mixed_drops_the_whole_answers_it_contradicts() {
         let stub = music();
-        apply(&stub, "r", &TagConfig::default(), &sel(), Answer::Mixed, "musique/jazz").unwrap();
+        apply(&stub, "r", &shipped_config(), &sel(), Answer::Mixed, "musique/jazz").unwrap();
         assert_eq!(
             summary(&stub.ops()),
             vec![
@@ -666,7 +656,7 @@ mod tests {
     #[test]
     fn an_answer_creates_the_missing_entries_in_the_same_write() {
         let stub = music();
-        apply(&stub, "r", &TagConfig::default(), &sel(), Answer::Add, "livre/roman").unwrap();
+        apply(&stub, "r", &shipped_config(), &sel(), Answer::Add, "livre/roman").unwrap();
         let ops = stub.ops();
         assert_eq!(ops[0]["op"], "create");
         assert_eq!(ops[0]["fields"][1]["value"]["value"], json!({"parent": null, "name": "livre"}));
@@ -682,7 +672,7 @@ mod tests {
     #[test]
     fn remove_of_an_unknown_tag_writes_nothing() {
         let stub = music();
-        let n = apply(&stub, "r", &TagConfig::default(), &sel(), Answer::Remove, "livre").unwrap();
+        let n = apply(&stub, "r", &shipped_config(), &sel(), Answer::Remove, "livre").unwrap();
         assert_eq!(n, 0);
         assert!(stub.batches.borrow().is_empty());
     }
@@ -697,7 +687,7 @@ mod tests {
             EVENT: ["évènement"],
             MARATON: ["sport/maraton", "évènement/maraton"],
         }));
-        apply(&stub, "r", &TagConfig::default(), &sel(), Answer::Add, "évènement/maraton").unwrap();
+        apply(&stub, "r", &shipped_config(), &sel(), Answer::Add, "évènement/maraton").unwrap();
         let negatives: Vec<_> = summary(&stub.ops())
             .into_iter()
             .filter(|(op, f, _)| op == "remove" && f == "negative_tag")
@@ -741,7 +731,7 @@ mod tests {
             json!({MUSIQUE: ["musique"], JAZZ: ["musique/jazz"], ROCK: ["musique/rock"]}),
             json!({"always": [JAZZ], "partition": [MUSIQUE], "sparse": [MUSIQUE, ROCK]}),
         );
-        let vocab = Vocab::load(&stub, "r", &TagConfig::default()).unwrap();
+        let vocab = Vocab::load(&stub, "r", &shipped_config()).unwrap();
         let flags: Vec<(String, Flags)> =
             vocab.entries().into_iter().map(|(path, _, flags)| (path, flags)).collect();
         assert_eq!(
@@ -757,7 +747,7 @@ mod tests {
     #[test]
     fn add_under_a_partition_drops_the_siblings_and_what_they_imply() {
         let stub = partitioned_music();
-        apply(&stub, "r", &TagConfig::default(), &sel(), Answer::Add, "musique/jazz").unwrap();
+        apply(&stub, "r", &shipped_config(), &sel(), Answer::Add, "musique/jazz").unwrap();
         let removed = removed_positives(&stub.ops());
         // rock, and punk under it (punk is rock), besides the ancestor musique.
         for uuid in [MUSIQUE, ROCK, PUNK] {
@@ -770,8 +760,7 @@ mod tests {
     fn add_below_a_partition_child_excludes_that_childs_siblings() {
         // bebop is jazz, so it excludes rock as jazz does.
         let stub = partitioned_music();
-        apply(&stub, "r", &TagConfig::default(), &sel(), Answer::Add, "musique/jazz/bebop")
-            .unwrap();
+        apply(&stub, "r", &shipped_config(), &sel(), Answer::Add, "musique/jazz/bebop").unwrap();
         let removed = removed_positives(&stub.ops());
         for uuid in [ROCK, PUNK] {
             assert!(removed.iter().any(|r| r == uuid), "{uuid} in {removed:?}");
@@ -794,8 +783,7 @@ mod tests {
             }),
             json!({"partition": [MUSIQUE]}),
         );
-        apply(&stub, "r", &TagConfig::default(), &sel(), Answer::Add, "musique/jazz/fusion")
-            .unwrap();
+        apply(&stub, "r", &shipped_config(), &sel(), Answer::Add, "musique/jazz/fusion").unwrap();
         let ops = stub.ops();
         let removed = removed_positives(&ops);
         assert!(removed.iter().any(|r| r == POP), "{removed:?}");
@@ -812,7 +800,7 @@ mod tests {
         let stub = Stub::new(json!({
             MUSIQUE: ["musique"], JAZZ: ["musique/jazz"], ROCK: ["musique/rock"],
         }));
-        apply(&stub, "r", &TagConfig::default(), &sel(), Answer::Add, "musique/jazz").unwrap();
+        apply(&stub, "r", &shipped_config(), &sel(), Answer::Add, "musique/jazz").unwrap();
         assert_eq!(removed_positives(&stub.ops()), vec![MUSIQUE.to_string()]);
     }
 }

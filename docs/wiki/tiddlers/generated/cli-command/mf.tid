@@ -48,12 +48,12 @@ Options:
           [env: METAFOLDER_REPO]
 
   -p, --port <PORT>
-          Daemon port on 127.0.0.1 (default: `daemon-port` from the config, else 7523)
+          Daemon port on 127.0.0.1 (default: `daemon-port` from the config)
           
           [env: METAFOLDER_DAEMON_PORT]
 
-      --no-config
-          Ignore the config file entirely (use built-in defaults) — for scripts
+      --config <FILE>
+          Read this config file instead of yours — for scripts
 
   -h, --help
           Print help

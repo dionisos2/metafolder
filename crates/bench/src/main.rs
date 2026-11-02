@@ -330,7 +330,13 @@ async fn wait_for_count(
 /// configuration left out (its default repository and port are not the
 /// benchmark's), the daemon by its port, the repository by its uuid.
 fn cli_args(port: u16, repo: Option<Uuid>, args: &[&str]) -> Vec<String> {
-    let mut out = vec!["--no-config".to_string(), "-p".to_string(), port.to_string()];
+    let shipped = repo_root().join("crates/cli/default-config/config.toml");
+    let mut out = vec![
+        "--config".to_string(),
+        shipped.display().to_string(),
+        "-p".to_string(),
+        port.to_string(),
+    ];
     if let Some(r) = repo {
         out.extend(["-u".to_string(), r.simple().to_string()]);
     }

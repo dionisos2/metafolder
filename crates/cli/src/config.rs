@@ -1,28 +1,20 @@
 //! CLI configuration file (doc "Configuration"): `~/.config/metafolder/cli/config.toml`,
-//! read once at startup. Mirrors the daemon's optional `[settings]` model: a
-//! missing file (or key) keeps the built-in default, a malformed file is an
-//! error. `--no-config` skips the file entirely (built-in defaults only), which
-//! makes scripts immune to the user's personal tweaks.
+//! read once at startup. As for the daemon, a missing or malformed file, or a
+//! missing setting, is an error (doc "No runtime fallback"). `--config <file>`
+//! reads that file instead, which makes scripts immune to the user's personal
+//! tweaks.
 //!
 //! Precedence for every knob: an explicit CLI flag (or its env var) wins over
-//! the config file, which wins over the built-in default.
+//! the config file.
 
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-/// Default daemon port on 127.0.0.1 (doc "Global options"). Also the daemon's own default.
-pub const DEFAULT_DAEMON_PORT: u16 = 7523;
-/// Default internal pagination page size for `list`/`get`/`query` streaming.
-pub const DEFAULT_PAGE_SIZE: usize = 500;
-/// Default poll interval (ms) while `mf reconcile` waits for its task.
-pub const DEFAULT_RECONCILE_POLL_INTERVAL_MS: u64 = 200;
-
-/// Tunable UX/performance settings (the `[settings]` table). All optional: a
-/// missing table or key keeps the default below, so an empty config behaves
-/// exactly like no config at all.
+/// Tunable UX/performance settings (the `[settings]` table). Every key is
+/// required: the defaults live in the shipped file alone.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct CliSettings {
     /// Daemon port used when neither `-p/--port` nor `METAFOLDER_DAEMON_PORT`
     /// is given.
@@ -34,16 +26,6 @@ pub struct CliSettings {
     /// Poll interval, in milliseconds, while `mf reconcile` waits for its
     /// background task (used when `--poll-interval` is omitted).
     pub reconcile_poll_interval_ms: u64,
-}
-
-impl Default for CliSettings {
-    fn default() -> Self {
-        CliSettings {
-            daemon_port: DEFAULT_DAEMON_PORT,
-            page_size: DEFAULT_PAGE_SIZE,
-            reconcile_poll_interval_ms: DEFAULT_RECONCILE_POLL_INTERVAL_MS,
-        }
-    }
 }
 
 /// A default repository selector (the `[repo]` table), used when neither
@@ -59,7 +41,7 @@ pub struct RepoDefault {
 }
 
 /// Parsed CLI configuration.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CliConfig {
     /// Tunable UX/performance settings (`[settings]`).
     pub settings: CliSettings,
@@ -72,11 +54,9 @@ pub struct CliConfig {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawConfig {
-    #[serde(default)]
     settings: CliSettings,
     #[serde(default)]
     repo: RepoDefault,
-    #[serde(default)]
     tag: crate::tag::TagConfig,
 }
 
@@ -92,27 +72,18 @@ fn parse_config(contents: &str) -> Result<CliConfig, String> {
     Ok(CliConfig { settings: raw.settings, repo: raw.repo, tag: raw.tag })
 }
 
-/// Reads and validates the configuration file. A missing file is equivalent to
-/// an empty one (all defaults); a malformed file is an error.
+/// Reads and validates the configuration file. A missing or malformed file
+/// is an error.
 pub fn read_config(path: &Path) -> Result<CliConfig, String> {
-    let contents = match std::fs::read_to_string(path) {
-        Ok(contents) => contents,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(CliConfig::default()),
-        Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
-    };
+    let contents = metafolder_core::config::read_required(path)?;
     parse_config(&contents).map_err(|e| format!("in {}: {e}", path.display()))
 }
 
-/// Loads the CLI configuration honouring `--no-config`. With `no_config`, or
-/// when no config path can be resolved (no `$HOME`/`$XDG_CONFIG_HOME`), the
-/// built-in defaults are returned without touching the filesystem.
-pub fn load(no_config: bool) -> Result<CliConfig, String> {
-    if no_config {
-        return Ok(CliConfig::default());
-    }
-    match default_config_path() {
+/// Loads the CLI configuration: the file `--config` names, else the user's.
+pub fn load(explicit: Option<&Path>) -> Result<CliConfig, String> {
+    match explicit.map(Path::to_path_buf).or_else(default_config_path) {
         Some(path) => read_config(&path),
-        None => Ok(CliConfig::default()),
+        None => Err("cannot determine the configuration file: set HOME or use --config".into()),
     }
 }
 
@@ -120,28 +91,50 @@ pub fn load(no_config: bool) -> Result<CliConfig, String> {
 mod tests {
     use super::*;
 
+    const SHIPPED: &str = include_str!("../default-config/config.toml");
+
     #[test]
-    fn test_settings_default_to_the_shipped_values() {
-        let empty = CliConfig::default();
-        assert_eq!(empty.settings.daemon_port, DEFAULT_DAEMON_PORT);
-        assert_eq!(empty.settings.page_size, DEFAULT_PAGE_SIZE);
-        assert_eq!(empty.settings.reconcile_poll_interval_ms, DEFAULT_RECONCILE_POLL_INTERVAL_MS);
-        assert_eq!(empty.repo, RepoDefault::default());
-        // Parsing empty text yields the same defaults.
-        assert_eq!(parse_config("").unwrap(), empty);
+    fn test_the_shipped_file_holds_the_documented_values() {
+        let shipped = parse_config(SHIPPED).unwrap();
+        assert_eq!(shipped.settings.daemon_port, 7523);
+        assert_eq!(shipped.settings.page_size, 500);
+        assert_eq!(shipped.settings.reconcile_poll_interval_ms, 200);
+        assert_eq!(shipped.repo, RepoDefault::default());
+        assert_eq!(shipped.tag.type_field, "mf_schema");
+        assert_eq!(shipped.tag.negative, "negative_tag");
+    }
+
+    /// No built-in copy of the defaults (doc "No runtime fallback"): a key left
+    /// out is an error naming it.
+    #[test]
+    fn test_a_missing_key_is_an_error_naming_it() {
+        for key in ["daemon-port", "page-size", "type-field", "sparse"] {
+            let without: String = SHIPPED
+                .lines()
+                .filter(|l| !l.split('=').next().unwrap().trim().eq(key))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let err = parse_config(&without).expect_err(key);
+            assert!(err.contains(key), "{key}: {err}");
+        }
+        assert!(parse_config("").unwrap_err().contains("settings"));
+    }
+
+    #[test]
+    fn test_no_default_repository_is_valid() {
+        // Nothing in the code stands in for it: without one, a command needing
+        // a repository and given none is a usage error.
+        assert_eq!(parse_config(SHIPPED).unwrap().repo.name, None);
     }
 
     #[test]
     fn test_parses_settings_and_repo_tables() {
-        let config = parse_config(
-            "[settings]\n\
-             daemon-port = 9000\n\
-             page-size = 42\n\
-             reconcile-poll-interval-ms = 750\n\
-             [repo]\n\
-             name = \"music\"\n",
-        )
-        .unwrap();
+        let src = SHIPPED
+            .replace("daemon-port = 7523", "daemon-port = 9000")
+            .replace("page-size = 500", "page-size = 42")
+            .replace("reconcile-poll-interval-ms = 200", "reconcile-poll-interval-ms = 750")
+            .replace("[repo]\n", "[repo]\nname = \"music\"\n");
+        let config = parse_config(&src).unwrap();
         assert_eq!(config.settings.daemon_port, 9000);
         assert_eq!(config.settings.page_size, 42);
         assert_eq!(config.settings.reconcile_poll_interval_ms, 750);
@@ -150,33 +143,27 @@ mod tests {
     }
 
     #[test]
-    fn test_override_one_key_keeps_other_defaults() {
-        let config = parse_config("[settings]\npage-size = 10\n").unwrap();
-        assert_eq!(config.settings.page_size, 10);
-        // Unspecified keys keep their defaults.
-        assert_eq!(config.settings.daemon_port, DEFAULT_DAEMON_PORT);
-        assert_eq!(config.settings.reconcile_poll_interval_ms, DEFAULT_RECONCILE_POLL_INTERVAL_MS);
-    }
-
-    #[test]
     fn test_repo_default_uuid() {
-        let config = parse_config("[repo]\nuuid = \"abc\"\n").unwrap();
+        let src = SHIPPED.replace("[repo]\n", "[repo]\nuuid = \"abc\"\n");
+        let config = parse_config(&src).unwrap();
         assert_eq!(config.repo.uuid.as_deref(), Some("abc"));
         assert_eq!(config.repo.name, None);
     }
 
     #[test]
     fn test_unknown_key_is_rejected() {
-        assert!(parse_config("[settings]\nnope = 1\n").is_err());
-        assert!(parse_config("nope = 1\n").is_err());
+        assert!(parse_config(&SHIPPED.replace("[settings]\n", "[settings]\nnope = 1\n")).is_err());
+        assert!(parse_config(&format!("nope = 1\n{SHIPPED}")).is_err());
     }
 
     #[test]
-    fn test_missing_file_yields_defaults() {
+    fn test_a_missing_file_is_an_error_naming_it() {
         let path = std::env::temp_dir()
             .join("metafolder-tests")
             .join(format!("mf_cli_missing_{}.toml", uuid::Uuid::new_v4()));
-        assert_eq!(read_config(&path).unwrap(), CliConfig::default());
+        let err = read_config(&path).unwrap_err();
+        assert!(err.contains(&path.display().to_string()), "got: {err}");
+        assert!(err.contains("metafolder-sync-config"), "got: {err}");
     }
 
     #[test]
@@ -192,8 +179,12 @@ mod tests {
     }
 
     #[test]
-    fn test_no_config_skips_the_file() {
-        // `load(true)` never touches the filesystem, even if a config exists.
-        assert_eq!(load(true).unwrap(), CliConfig::default());
+    fn test_an_explicit_file_replaces_the_user_configuration() {
+        let dir = std::env::temp_dir().join("metafolder-tests");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("mf_cli_explicit_{}.toml", uuid::Uuid::new_v4()));
+        std::fs::write(&path, SHIPPED.replace("page-size = 500", "page-size = 7")).unwrap();
+        assert_eq!(load(Some(&path)).unwrap().settings.page_size, 7);
+        std::fs::remove_file(&path).unwrap();
     }
 }

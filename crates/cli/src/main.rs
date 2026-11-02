@@ -28,13 +28,13 @@ struct Cli {
     #[arg(short = 'u', long = "uuid", env = "METAFOLDER_REPO")]
     repo_uuid: Option<String>,
 
-    /// Daemon port on 127.0.0.1 (default: `daemon-port` from the config, else 7523)
+    /// Daemon port on 127.0.0.1 (default: `daemon-port` from the config)
     #[arg(short = 'p', long = "port", env = "METAFOLDER_DAEMON_PORT")]
     port: Option<u16>,
 
-    /// Ignore the config file entirely (use built-in defaults) — for scripts
-    #[arg(long = "no-config")]
-    no_config: bool,
+    /// Read this config file instead of yours — for scripts
+    #[arg(long = "config", value_name = "FILE")]
+    config: Option<std::path::PathBuf>,
 
     #[command(subcommand)]
     command: Command,
@@ -1270,9 +1270,9 @@ enum SchemaCommand {
 
 fn main() {
     let cli = Cli::parse();
-    // Load the config first (unless --no-config); a malformed file aborts before
-    // any daemon round-trip. Precedence: an explicit flag/env wins over config.
-    let config = match metafolder_cli::config::load(cli.no_config) {
+    // Load the config first; a missing or malformed file aborts before any
+    // daemon round-trip. Precedence: an explicit flag/env wins over config.
+    let config = match metafolder_cli::config::load(cli.config.as_deref()) {
         Ok(config) => config,
         Err(message) => {
             eprintln!("error: {message}");

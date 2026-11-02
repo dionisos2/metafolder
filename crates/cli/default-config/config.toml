@@ -1,26 +1,27 @@
 # Metafolder CLI (`mf`) settings (doc "Configuration"; doc "Command line").
 # Installed into ~/.config/metafolder/cli/ by metafolder-sync-config.
 #
-# Every key is optional: omit a whole table (or any key) to keep the default
-# shown below. Precedence for each knob is: an explicit command-line flag (or
-# its environment variable) > this file > the built-in default. Run `mf` with
-# `--no-config` to ignore this file entirely and fall back to the built-in
-# defaults — handy in scripts that must not depend on your personal tweaks.
+# Every key is required, but the two of [repo]: mf holds no copy of these values.
+# To go back to a shipped value: git checkout default -- cli/config.toml (from
+# ~/.config/metafolder/). Precedence for each knob is: an explicit command-line
+# flag (or its environment variable) > this file. Run `mf` with `--config <file>`
+# to read that file instead of this one — handy in scripts that must not depend
+# on your personal tweaks.
 
 # Tunable UX/performance settings.
 [settings]
 
 # Daemon port on 127.0.0.1, used when neither `-p/--port` nor the
-# METAFOLDER_DAEMON_PORT environment variable is given. Default: 7523.
+# METAFOLDER_DAEMON_PORT environment variable is given.
 daemon-port = 7523
 
 # Internal pagination page size. `mf` follows the daemon's `next_cursor` and
 # streams results, requesting this many rows per round-trip. Larger values mean
-# fewer round-trips but bigger responses. Default: 500.
+# fewer round-trips but bigger responses.
 page-size = 500
 
 # Poll interval, in milliseconds, while `mf reconcile` waits for its background
-# task to finish (used when `--poll-interval` is omitted). Default: 200.
+# task to finish (used when `--poll-interval` is omitted).
 reconcile-poll-interval-ms = 200
 
 # Default repository, used when no selector (`-n/--name`, `-u/--uuid`, or the
@@ -31,17 +32,16 @@ reconcile-poll-interval-ms = 200
 # name = "music"
 # uuid = "3f7c1e2a4b5d6e7f8a9b0c1d2e3f4a5b"
 
-# Hierarchical-tag field names used by `mf tag` (add/deny/mixed/remove/list).
-# Every key is optional; the defaults below reproduce the convention the shipped
-# tagging scripts use, so an omitted [tag] table changes nothing. Override a key
-# only if your repository names these fields differently.
+# Hierarchical-tag field names used by `mf tag` (add/deny/mixed/remove/list):
+# the convention the shipped tagging scripts use. Change a key only if your
+# repository names these fields differently.
 [tag]
-# type-field  = "mf_schema"       # field marking a metarecord as a tag entry
-# entry-type  = "tag"             # its value
-# path-field  = "path"            # TreeRef: the tag's position in the hierarchy
-# positive    = "tag"             # multi-map ref: the record HAS the tag
-# negative    = "negative_tag"    # multi-map ref: the record does NOT
-# mixed       = "mixed_tag"       # multi-map ref: a folder is mixed
-# always      = "always"          # bool flag: classification adds it unasked
-# partition   = "partition"       # bool flag: its children exclude one another
-# sparse      = "sparse"          # bool flag: classification picks children one by one
+type-field = "mf_schema"       # field marking a metarecord as a tag entry
+entry-type = "tag"             # its value
+path-field = "path"            # TreeRef: the tag's position in the hierarchy
+positive   = "tag"             # multi-map ref: the record HAS the tag
+negative   = "negative_tag"    # multi-map ref: the record does NOT
+mixed      = "mixed_tag"       # multi-map ref: a folder is mixed
+always     = "always"          # bool flag: classification adds it unasked
+partition  = "partition"       # bool flag: its children exclude one another
+sparse     = "sparse"          # bool flag: classification picks children one by one
