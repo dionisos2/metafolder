@@ -10,14 +10,14 @@
 //!
 //! Both carry the files with them: a revert that moves a file, or brings one
 //! back from the trash-bin, or sends one back there, is performed by the shared
-//! coordinated revert ([`metafolder_core::navigation`]), with the GUI's
+//! coordinated revert ([`metafolder_core::coordinated_revert`]), with the GUI's
 //! no-question policies ([`GUI_POLICIES`]).
 
 use crate::blocking_client::BlockingClient;
 use crate::daemon_proxy::DaemonProxy;
 use crate::state::GuiState;
-use metafolder_core::navigation::{
-    self, MovePolicies, NavError, NavigationUi, Policy, Repo, RevertRequest,
+use metafolder_core::coordinated_revert::{
+    self, MovePolicies, Policy, Repo, RevertError, RevertRequest, RevertUi,
 };
 use metafolder_core::undo::{self, Selection};
 use serde_json::{json, Value};
@@ -80,21 +80,21 @@ pub async fn navigate(
 /// The GUI's move policies. It asks nothing while the lock is held — a window
 /// left open would freeze the repository's writes — so a move applies whether
 /// or not the file is where the log says: when it is not, the metadata follows
-/// the navigation and keeps the recorded path (doc "Reverting a label", the CLI's own default when the
+/// the revert and keeps the recorded path (doc "Reverting a label", the CLI's own default when the
 /// file is there).
 pub const GUI_POLICIES: MovePolicies =
     MovePolicies { on_available: Policy::Apply, on_unavailable: Policy::Apply };
 
-/// The GUI's side of a navigation: it never asks, and keeps the notes for the
+/// The GUI's side of a revert: it never asks, and keeps the notes for the
 /// status bar.
 #[derive(Default)]
 struct GuiUi {
     notes: std::sync::Mutex<Vec<String>>,
 }
 
-impl NavigationUi for GuiUi {
-    fn ask_move(&self, _from: &str, _to: &str, _available: bool) -> Result<Policy, NavError> {
-        Err(NavError("the GUI's move policies never ask".into()))
+impl RevertUi for GuiUi {
+    fn ask_move(&self, _from: &str, _to: &str, _available: bool) -> Result<Policy, RevertError> {
+        Err(RevertError("the GUI's move policies never ask".into()))
     }
     fn note(&self, message: &str) {
         self.notes.lock().unwrap_or_else(|p| p.into_inner()).push(message.to_string());
@@ -102,12 +102,12 @@ impl NavigationUi for GuiUi {
 }
 
 /// Runs `work` against the repository on a blocking thread — the shared
-/// navigation (`core::navigation`) is synchronous, like the trash-bin's — and
+/// revert (`core::coordinated_revert`) is synchronous, like the trash-bin's — and
 /// returns its result with the notes it left.
 pub(crate) async fn blocking<T: Send + 'static>(
     daemon: &DaemonProxy,
     repo: &str,
-    work: impl FnOnce(&Repo<'_>, &dyn NavigationUi) -> Result<T, NavError> + Send + 'static,
+    work: impl FnOnce(&Repo<'_>, &dyn RevertUi) -> Result<T, RevertError> + Send + 'static,
 ) -> Result<(T, Vec<String>), String> {
     let base = daemon.base_url();
     let repo = repo.to_string();
@@ -119,7 +119,7 @@ pub(crate) async fn blocking<T: Send + 'static>(
         Ok((out, ui.notes.into_inner().unwrap_or_else(|p| p.into_inner())))
     })
     .await
-    .map_err(|e| format!("the navigation task panicked: {e}"))?
+    .map_err(|e| format!("the revert task panicked: {e}"))?
 }
 
 /// A summary, followed by what the file actions had to say.
@@ -132,7 +132,7 @@ fn with_notes(summary: String, notes: &[String]) -> String {
 }
 
 /// The revert half of an undo: write the inverse at HEAD onto the current
-/// state, files included (`core::navigation::revert_unplanned`: no plan is
+/// state, files included (`core::coordinated_revert::revert_unplanned`: no plan is
 /// read unless a file action needs one). Nothing blocks it: a
 /// later write on the same cell is overwritten (doc "Reverting onto the
 /// current state"), which undo — taking the newest change — almost never meets.
@@ -148,7 +148,7 @@ async fn revert(
     let target = if redo { undo::redo_target(label_id) } else { undo::undo_target(label_id) };
     let result = blocking(daemon, repo, move |repo, ui| {
         let request = RevertRequest { target: &target, metadata_only: false };
-        navigation::revert_unplanned(repo, &request, &GUI_POLICIES, ui)
+        coordinated_revert::revert_unplanned(repo, &request, &GUI_POLICIES, ui)
     })
     .await;
     let (response, notes) = match result {
@@ -219,7 +219,7 @@ pub async fn log_candidates(
 }
 
 /// The log panel's `log:revert`: writes the inverse of `target` at HEAD, files
-/// included (`core::navigation::revert_unplanned`). Answers the daemon's revert response
+/// included (`core::coordinated_revert::revert_unplanned`). Answers the daemon's revert response
 /// (`label`, `reverted_operations`, `skipped_operations`) with the `notes`
 /// the file actions left. The panel reads the plan and confirms an overwrite
 /// of a cell changed since before it gets here.
@@ -231,7 +231,7 @@ pub async fn log_revert(
 ) -> Result<Value, String> {
     let (mut response, notes) = blocking(&app.daemon, &repo, move |repo, ui| {
         let request = RevertRequest { target: &target, metadata_only: false };
-        navigation::revert_unplanned(repo, &request, &GUI_POLICIES, ui)
+        coordinated_revert::revert_unplanned(repo, &request, &GUI_POLICIES, ui)
     })
     .await?;
     response["notes"] = json!(notes);

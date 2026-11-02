@@ -8,7 +8,7 @@ summary: Undo, redo, revert, label and prune from the GUI — confirmations befo
 * `log:prune` — after a confirmation, prunes everything before the selected label, for good ([[Pruning the log]]).
 
 ''Files are carried with the metadata.'' Every revert the GUI writes — undo and redo
-included — goes through the same code as the CLI (`core::navigation`): one atomic request
+included — goes through the same code as the CLI (`core::coordinated_revert`): one atomic request
 when no operation touches a file, otherwise the coordinated form — moving a file back, bringing content back
 from the trash, sending it back there ([[Filesystem coordination]]). Every confirmation
 comes ''before'' the repository is locked, and nothing asks while it is: a move is applied

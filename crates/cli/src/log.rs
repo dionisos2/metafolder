@@ -7,15 +7,15 @@ use std::io::Write as _;
 
 use serde_json::{json, Value as Json};
 
-use metafolder_core::navigation::{self, NavError, NavigationUi, Repo, RevertRequest};
+use metafolder_core::coordinated_revert::{self, Repo, RevertError, RevertRequest, RevertUi};
 use metafolder_core::{date, undo};
 
 use crate::client::CliError;
 use crate::commands::Ctx;
 
 /// The coordinated revert itself is shared with the GUI
-/// (`metafolder_core::navigation`); these are its move policies.
-pub use metafolder_core::navigation::{MovePolicies as RollbackPolicies, Policy};
+/// (`metafolder_core::coordinated_revert`); these are its move policies.
+pub use metafolder_core::coordinated_revert::{MovePolicies, Policy};
 
 // ── Target resolution ─────────────────────────────────────────────────────────
 
@@ -74,7 +74,7 @@ pub fn undo_run(
     redo: bool,
     plan_only: bool,
     label: Option<i64>,
-    policies: RollbackPolicies,
+    policies: MovePolicies,
     opts: UndoOpts,
 ) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
@@ -145,9 +145,9 @@ struct CliUi {
     silent: bool,
 }
 
-impl NavigationUi for CliUi {
-    fn ask_move(&self, from: &str, to: &str, available: bool) -> Result<Policy, NavError> {
-        ask_move(from, to, available).map_err(|e| NavError(e.message().to_string()))
+impl RevertUi for CliUi {
+    fn ask_move(&self, from: &str, to: &str, available: bool) -> Result<Policy, RevertError> {
+        ask_move(from, to, available).map_err(|e| RevertError(e.message().to_string()))
     }
     fn note(&self, message: &str) {
         if !self.silent {
@@ -156,7 +156,7 @@ impl NavigationUi for CliUi {
     }
 }
 
-fn nav_err(e: NavError) -> CliError {
+fn nav_err(e: RevertError) -> CliError {
     CliError::Op(e.0)
 }
 
@@ -587,7 +587,7 @@ pub struct RevertTarget {
 
 impl RevertTarget {
     fn query(&self) -> Vec<(&'static str, String)> {
-        navigation::revert_query(&self.body())
+        coordinated_revert::revert_query(&self.body())
     }
 
     fn body(&self) -> Json {
@@ -632,7 +632,7 @@ pub struct RevertOpts {
     pub confirm_moves: bool,
     pub silent: bool,
     /// Policies for the `move` actions.
-    pub policies: RollbackPolicies,
+    pub policies: MovePolicies,
 }
 
 fn op_line(op: &Json) -> String {
@@ -734,9 +734,14 @@ pub fn revert_run(ctx: &Ctx, target: RevertTarget, opts: &RevertOpts) -> Result<
     let repo = open_repo(ctx)?;
     let body = target.body();
     let request = RevertRequest { target: &body, metadata_only: opts.metadata_only };
-    let resp =
-        navigation::revert(&repo, &request, &plan, &opts.policies, &CliUi { silent: opts.silent })
-            .map_err(nav_err)?;
+    let resp = coordinated_revert::revert(
+        &repo,
+        &request,
+        &plan,
+        &opts.policies,
+        &CliUi { silent: opts.silent },
+    )
+    .map_err(nav_err)?;
     if !opts.silent {
         report_revert(&target, &plan, &resp);
     }

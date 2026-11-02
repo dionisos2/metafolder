@@ -42,6 +42,6 @@ revert written; the buffered watcher events are lost with everything else that h
 while it was down — a reconcile is what recovers that. A move done before the crash
 leaves `mfr_path` stale until a reconcile corrects it.
 
-The execution — policies, trash lookups, retrashing — is `core::navigation`, shared by the
+The execution — policies, trash lookups, retrashing — is `core::coordinated_revert`, shared by the
 CLI and the GUI (which never asks questions under the lock: it applies moves, and applies
 the metadata when the file is gone).

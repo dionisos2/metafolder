@@ -806,8 +806,8 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
           }) as Promise<Metafolder.BulkTrashOutcome>,
       },
 
-      /** Coordinated navigation of the event log, files included — the shared
-       *  `core::navigation` behind `mf log`, through the log Tauri commands. */
+      /** Coordinated revert of the event log, files included — the shared
+       *  `core::coordinated_revert` behind `mf log`, through the log Tauri commands. */
       log: {
         revert: (repo: string, target: Record<string, unknown>) =>
           invoke('log_revert', { repo, target }) as Promise<Metafolder.Reverted>,

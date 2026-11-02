@@ -655,7 +655,7 @@ declare namespace Metafolder {
    *  files included: a revert that moves a file, brings one back from the
    *  trash-bin or sends one back there does it, with no question asked while
    *  the repository is locked. Shared with `mf log` through
-   *  `core::navigation`. Confirm *before* calling. */
+   *  `core::coordinated_revert`. Confirm *before* calling. */
   interface Log {
     /** Writes the inverse of `target` (`{label_id}` or `{op_ids}`) onto the
      *  current state (doc "Reverting onto the current state"). */

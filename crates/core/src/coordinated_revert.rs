@@ -1,7 +1,6 @@
 //! The coordinated revert (doc "Filesystem coordination", doc "Revert"),
 //! shared by the CLI (`mf log revert`/`undo`/`redo`) and the GUI (`log:undo`,
-//! `log:redo`, the log panel). The module keeps the name it had when the log
-//! could be navigated (doc "Why the log stops being a tree").
+//! `log:redo`, the log panel).
 //!
 //! The daemon owns the metadata and never touches a file; it says, operation by
 //! operation, what undoing it requires on disk (`filesystem.action`: move a
@@ -10,7 +9,7 @@
 //! managed, over [`DaemonClient`] and [`crate::trash`]. Written once here, so the
 //! GUI and the CLI cannot disagree about what an undo does to a file.
 //!
-//! What stays each client's own goes through [`NavigationUi`]: how a move
+//! What stays each client's own goes through [`RevertUi`]: how a move
 //! decision left to the user is asked (the CLI reads stdin, the GUI never asks),
 //! and where the notes along the way are shown.
 
@@ -22,25 +21,25 @@ use std::path::{Path, PathBuf};
 
 /// A revert that failed, as the message to show.
 #[derive(Debug, Clone)]
-pub struct NavError(pub String);
+pub struct RevertError(pub String);
 
-impl std::fmt::Display for NavError {
+impl std::fmt::Display for RevertError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
     }
 }
 
-impl std::error::Error for NavError {}
+impl std::error::Error for RevertError {}
 
-impl From<DaemonError> for NavError {
+impl From<DaemonError> for RevertError {
     fn from(e: DaemonError) -> Self {
-        NavError(e.message)
+        RevertError(e.message)
     }
 }
 
-impl From<TrashError> for NavError {
+impl From<TrashError> for RevertError {
     fn from(e: TrashError) -> Self {
-        NavError(e.0)
+        RevertError(e.0)
     }
 }
 
@@ -50,7 +49,7 @@ pub enum Policy {
     Apply,
     Skip,
     Abort,
-    /// Leave it to the user, through [`NavigationUi::ask_move`].
+    /// Leave it to the user, through [`RevertUi::ask_move`].
     Ask,
 }
 
@@ -63,10 +62,10 @@ pub struct MovePolicies {
 }
 
 /// What a coordinated revert needs from the front end driving it.
-pub trait NavigationUi {
+pub trait RevertUi {
     /// Decides a move the policies left to the user ([`Policy::Ask`]). Never
     /// answers `Ask`.
-    fn ask_move(&self, from: &str, to: &str, available: bool) -> Result<Policy, NavError>;
+    fn ask_move(&self, from: &str, to: &str, available: bool) -> Result<Policy, RevertError>;
     /// Something the user should hear about: a file moved or left, content
     /// brought back or not.
     fn note(&self, message: &str);
@@ -85,14 +84,14 @@ pub struct Repo<'a> {
 
 impl<'a> Repo<'a> {
     /// Locates the repository's trash-bin through `GET /repos/:repo`.
-    pub fn open(client: &'a dyn DaemonClient, repo: &str) -> Result<Self, NavError> {
+    pub fn open(client: &'a dyn DaemonClient, repo: &str) -> Result<Self, RevertError> {
         let info = client.get(&format!("/repos/{repo}"))?;
         let internal = info["internal_dir"]
             .as_str()
-            .ok_or_else(|| NavError("daemon did not report the repo internal_dir".into()))?;
+            .ok_or_else(|| RevertError("daemon did not report the repo internal_dir".into()))?;
         let root = info["root"]
             .as_str()
-            .ok_or_else(|| NavError("daemon did not report the repo root".into()))?;
+            .ok_or_else(|| RevertError("daemon did not report the repo root".into()))?;
         Ok(Self {
             client,
             repo: repo.to_string(),
@@ -121,8 +120,8 @@ pub fn decide_move(
     op: &Json,
     policies: &MovePolicies,
     trash: &TrashDir,
-    ui: &dyn NavigationUi,
-) -> Result<bool, NavError> {
+    ui: &dyn RevertUi,
+) -> Result<bool, RevertError> {
     let from = op["from"].as_str().unwrap_or_default();
     let to = op["to"].as_str().unwrap_or_default();
     // `path_present`, not `exists()`: a broken symlink is a file that is
@@ -168,7 +167,7 @@ pub fn decide_move(
                     ui.note(&format!("trashed {to} (id {}) before overwrite", entry.id));
                 }
                 std::fs::rename(from, to)
-                    .map_err(|e| NavError(format!("mv {from} -> {to} failed: {e}")))?;
+                    .map_err(|e| RevertError(format!("mv {from} -> {to} failed: {e}")))?;
                 ui.note(&format!("moved {from} -> {to}"));
             } else {
                 ui.note(&format!("kept rolled-back path for {to} (source {from} is gone)"));
@@ -179,8 +178,8 @@ pub fn decide_move(
             ui.note(&format!("skipped move {from} -> {to}"));
             Ok(true)
         }
-        Policy::Abort => Err(NavError("revert aborted by move policy".into())),
-        Policy::Ask => Err(NavError("the move policy was left undecided".into())),
+        Policy::Abort => Err(RevertError("revert aborted by move policy".into())),
+        Policy::Ask => Err(RevertError("the move policy was left undecided".into())),
     }
 }
 
@@ -192,7 +191,7 @@ pub fn decide_move(
 /// A trash entry covers the step's metarecord when it *is* the entry's
 /// metarecord, or a descendant recorded in its subtree (a trashed directory):
 /// restoring the directory blob brings back the whole subtree's content at
-/// once, whichever order the cascade's ops are navigated in. For a file the
+/// once, whichever order the cascade's ops are reverted in. For a file the
 /// watcher saw go, the entry must also hold the version the record had before
 /// the watcher's flush being undone (`entity_version_before_label`, present only on
 /// inverse steps): the precise per-file correlation. `by_metarecord_only`
@@ -204,9 +203,9 @@ pub fn decide_deleted(
     trash: &TrashDir,
     entries: &mut Vec<TrashEntry>,
     restored: &mut HashSet<String>,
-    ui: &dyn NavigationUi,
+    ui: &dyn RevertUi,
     by_metarecord_only: bool,
-) -> Result<bool, NavError> {
+) -> Result<bool, RevertError> {
     let entity = op["entity_uuid"].as_str().unwrap_or_default();
 
     // Content already brought back by a directory blob restored earlier in this
@@ -260,7 +259,7 @@ pub fn decide_deleted(
 
 /// The repository-relative path of a metarecord's file (`mfr_path`), `None`
 /// when it has none or the metarecord is gone.
-fn path_of(repo: &Repo<'_>, uuid: &str) -> Result<Option<String>, NavError> {
+fn path_of(repo: &Repo<'_>, uuid: &str) -> Result<Option<String>, RevertError> {
     let path = format!("{}/metarecords/{uuid}/fields/mfr_path/resolve-tree", repo.base());
     match repo.client.get(&path) {
         Ok(resp) => Ok(resp["paths"]
@@ -289,8 +288,8 @@ fn retrash(
     repo: &Repo<'_>,
     op: &Json,
     covered: &mut HashSet<String>,
-    ui: &dyn NavigationUi,
-) -> Result<(), NavError> {
+    ui: &dyn RevertUi,
+) -> Result<(), RevertError> {
     let entity = op["entity_uuid"].as_str().unwrap_or_default();
     if covered.contains(entity) {
         return Ok(());
@@ -302,7 +301,7 @@ fn retrash(
     };
     let Some(rel) = path_of(repo, entity)? else { return Ok(()) };
     let abs = crate::fsentry::join_rel(&repo.root, &rel)
-        .ok_or_else(|| NavError(format!("{rel:?} is not a path under the root")))?;
+        .ok_or_else(|| RevertError(format!("{rel:?} is not a path under the root")))?;
     if !crate::fsentry::path_present(&abs) {
         ui.note(&format!("{} is not on disk: nothing to send back to the trash", abs.display()));
         return Ok(());
@@ -370,7 +369,7 @@ pub fn revert_query(target: &Json) -> Vec<(&'static str, String)> {
 }
 
 /// The revert plan for `target` (`GET /revert/plan`), writing nothing.
-pub fn revert_plan(repo: &Repo<'_>, target: &Json) -> Result<Json, NavError> {
+pub fn revert_plan(repo: &Repo<'_>, target: &Json) -> Result<Json, RevertError> {
     let path = with_query(&format!("{}/revert/plan", repo.base()), &revert_query(target));
     Ok(repo.client.get(&path)?)
 }
@@ -392,8 +391,8 @@ pub fn revert_unplanned(
     repo: &Repo<'_>,
     request: &RevertRequest<'_>,
     policies: &MovePolicies,
-    ui: &dyn NavigationUi,
-) -> Result<Json, NavError> {
+    ui: &dyn RevertUi,
+) -> Result<Json, RevertError> {
     let mut body = json!({"target": request.target});
     if request.metadata_only {
         body["skip_filesystem"] = json!(true);
@@ -418,8 +417,8 @@ pub fn revert(
     request: &RevertRequest<'_>,
     plan: &Json,
     policies: &MovePolicies,
-    ui: &dyn NavigationUi,
-) -> Result<Json, NavError> {
+    ui: &dyn RevertUi,
+) -> Result<Json, RevertError> {
     let base = repo.base();
     let client = repo.client;
     let needs_fs = plan["requires_lock"] == json!(true) && !request.metadata_only;
@@ -437,7 +436,7 @@ pub fn revert(
     let mut restored: HashSet<String> = HashSet::new();
     let mut retrashed: HashSet<String> = HashSet::new();
 
-    let outcome = (|| -> Result<Vec<i64>, NavError> {
+    let outcome = (|| -> Result<Vec<i64>, RevertError> {
         // The trashings to redo, shallowest first: a revert's operations are
         // not ordered parent first, and a directory has to be captured before
         // its files, so that it goes to the trash whole, in one entry.
@@ -509,9 +508,9 @@ mod tests {
     struct Quiet {
         notes: RefCell<Vec<String>>,
     }
-    impl NavigationUi for Quiet {
-        fn ask_move(&self, _: &str, _: &str, _: bool) -> Result<Policy, NavError> {
-            Err(NavError("nobody to ask".into()))
+    impl RevertUi for Quiet {
+        fn ask_move(&self, _: &str, _: &str, _: bool) -> Result<Policy, RevertError> {
+            Err(RevertError("nobody to ask".into()))
         }
         fn note(&self, message: &str) {
             self.notes.borrow_mut().push(message.to_string());
@@ -593,8 +592,8 @@ mod tests {
     #[test]
     fn ask_is_the_front_end_s_decision() {
         struct Skipper;
-        impl NavigationUi for Skipper {
-            fn ask_move(&self, _: &str, _: &str, _: bool) -> Result<Policy, NavError> {
+        impl RevertUi for Skipper {
+            fn ask_move(&self, _: &str, _: &str, _: bool) -> Result<Policy, RevertError> {
                 Ok(Policy::Skip)
             }
             fn note(&self, _: &str) {}

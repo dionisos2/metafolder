@@ -49,7 +49,7 @@ duplicate. It also holds every other write back, so the plan taken at `start` ho
 ''Skipping is free.'' An operation whose action the client could not carry out is left out
 of the commit, and not reverted — nothing else is needed: "not this one" is directly
 expressible, and what lands is true when it is written. The execution of the actions is
-`core::navigation`'s, shared by the CLI and the GUI ([[Trash, undo and redo]]).
+`core::coordinated_revert`'s, shared by the CLI and the GUI ([[Trash, undo and redo]]).
 
 A revert of a `file_deleted` the trash satisfied writes a `file_moved` whose before side is
 `nothing`: reverting it in turn would have to make the file vanish, which a move cannot

@@ -1663,8 +1663,8 @@ fn undo_arguments(
 fn move_policies(
     on_available: Option<String>,
     on_unavailable: Option<String>,
-) -> Result<log::RollbackPolicies, metafolder_cli::client::CliError> {
-    Ok(log::RollbackPolicies {
+) -> Result<log::MovePolicies, metafolder_cli::client::CliError> {
+    Ok(log::MovePolicies {
         on_available: on_available
             .as_deref()
             .map(log::parse_policy)
@@ -1740,7 +1740,7 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
                 ));
             }
             let target = log::RevertTarget { label_id, op_ids: op, only: None };
-            let policies = log::RollbackPolicies {
+            let policies = log::MovePolicies {
                 on_available: on_move_available
                     .as_deref()
                     .map(log::parse_policy)

@@ -48,7 +48,7 @@ until September 2026.
 
 The same code does this for `mf log undo`/`redo`/`revert` and for the GUI's
 `log:undo`, `log:redo` and `log:revert`
-(`metafolder_core::navigation`).
+(`metafolder_core::coordinated_revert`).
 
 !! A revert that would overwrite a file
 

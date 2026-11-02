@@ -6,6 +6,7 @@ pub mod config;
 #[cfg(feature = "git")]
 pub mod config_sync;
 pub mod context;
+pub mod coordinated_revert;
 pub mod daemon_client;
 pub mod date;
 pub mod doc_gen;
@@ -15,7 +16,6 @@ pub mod hex;
 pub mod ignore;
 pub mod ignore_presets;
 pub mod metarecord;
-pub mod navigation;
 pub mod order;
 pub mod progress;
 pub mod query;

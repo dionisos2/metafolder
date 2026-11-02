@@ -48,5 +48,5 @@ operations, then 20 000 — rather than one unbounded one: after a large reconci
 millions of rows, and a repository whose last manual change is older than the second
 window is told so rather than scanned whole. Liveness inside the window is exact: a revert
 is always newer than what it reverts, so the window holds every revert of what it holds.
-The revert itself — including the files it moves — is run by `core::navigation`, the
+The revert itself — including the files it moves — is run by `core::coordinated_revert`, the
 same for both clients.
