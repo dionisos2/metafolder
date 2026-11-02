@@ -5,8 +5,8 @@
 # actual queries the scripts build (e.g. a folder tree-path that the daemon
 # resolves to the empty set). See scripts/dev/lib/daemon-fixture.sh.
 #
-# SKIPs cleanly (exit 0) when the daemon/mf binaries are not built or the daemon
-# cannot boot, so it is safe in `check.sh` before a full build.
+# Exits 77 (skipped, and check.sh says so) when the daemon/mf binaries are not
+# built. A daemon that is built and does not start is a failure.
 set -uo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -17,12 +17,13 @@ source "$HERE/lib/daemon-fixture.sh"
 source "$HERE/lib/assert.sh"
 
 if ! df_available; then
-    echo "SKIP: target/debug/metafolder-daemon or mf not built (run make dev)"
-    exit 0
+    echo "SKIP: ${_DF_BIN}/metafolder-daemon or mf not built (run make dev)"
+    exit 77
 fi
 if ! df_start; then
-    echo "SKIP: the isolated daemon did not come up"
-    exit 0
+    echo "FAIL: the isolated daemon did not come up"
+    tail -n 20 "$_DF_TMP/daemon.log"
+    exit 1
 fi
 
 FOLDER="$HERE/../shipped/gui-tag-folder.sh"

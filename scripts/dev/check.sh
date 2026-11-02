@@ -18,9 +18,13 @@
 #   test        the Rust workspace suite, via scripts/dev/run-tests.sh (which adds
 #               the global total cargo never prints).
 #   scripts     the shipped GUI helper scripts (the ones reachable from the
-#               GUI's `script:run`), driven against a mocked `mf` CLI + GUI.
+#               GUI's `script:run`), driven against a mocked `mf` CLI + GUI and
+#               a throwaway daemon. Reported as skipped if the binaries are not
+#               built.
 #   tooling     the project's own build/check/prune scripts (check-deps,
 #               prune-target, run-tests), against stubbed probes.
+#   wiki        the documentation (docs/wiki/): links, fields, catalogs, and the
+#               notes the code cites.
 #   types       tsc --noEmit + svelte-check over the GUI frontend (the latter
 #               is the only thing that reads .svelte at all). Nothing else runs
 #               a compiler: vite strips the types without checking them.
@@ -32,8 +36,8 @@
 #               (eslint.config.js). Catches what tsc will not: a floating
 #               promise, an async handler where a void return is expected.
 #   deny        dependency vulnerabilities, licenses and sources (deny.toml).
-#   hakari      the workspace-hack crate matches the manifests.
 #               Every ignored advisory is justified in that file.
+#   hakari      the workspace-hack crate matches the manifests.
 #   semgrep     the project invariants no type checker can express
 #               (.semgrep/invariants.yml) — writes go through log::Writer,
 #               background tasks hold Weak<RepoState>, decoders run sandboxed,
@@ -61,7 +65,7 @@ for arg in "$@"; do
     case "$arg" in
         --lax) strict=false ;;
         --coverage) coverage=true ;;
-        -h|--help) sed -n '2,40p' "$0" | sed 's/^# \?//'; exit 0 ;;
+        -h|--help) sed -n '2,/^[^#]/p' "$0" | sed -n '/^#/s/^# \?//p'; exit 0 ;;
         *) echo "unknown option: $arg (try --help)" >&2; exit 2 ;;
     esac
 done
@@ -90,6 +94,25 @@ run() {
     printf '%s FAILED%s\n' "$red" "$off"
     failed+=("$name")
     return 1
+}
+
+# run_skippable <name> <command...> — run, for a suite whose exit status 77 means
+# it verified nothing; the first SKIP line of its output is the reason.
+run_skippable() {
+    local name=$1 rc=0; shift
+    printf '%s┄ %-10s%s' "$bold" "$name" "$off"
+    "$@" >"$log/$name" 2>&1 || rc=$?
+    case "$rc" in
+        0) printf '%s ok%s\n' "$green" "$off" ;;
+        77)
+            printf '%s skipped%s — %s\n' "$yellow" "$off" "$(grep -m1 '^SKIP' "$log/$name")"
+            skipped+=("$name")
+            ;;
+        *)
+            printf '%s FAILED%s\n' "$red" "$off"
+            failed+=("$name")
+            ;;
+    esac
 }
 
 skip() {
@@ -146,8 +169,8 @@ run test bash "$repo/scripts/dev/run-tests.sh"
 # One "ok" hides forty suites: surface the wrapper's global total either way.
 sed -n 's/^  \(ok\|FAILED\) — /             /p' "$log/test"
 
-# ── shipped-script tests (fast, hermetic: they mock the `mf` CLI + GUI) ───────
-run scripts bash "$repo/scripts/dev/test-shipped-scripts.sh"
+# ── shipped-script tests (the `mf` CLI + GUI mocked, then a throwaway daemon) ─
+run_skippable scripts bash "$repo/scripts/dev/test-shipped-scripts.sh"
 
 # ── tooling tests (the scripts that build/check/prune the tree itself) ────────
 run tooling bash "$repo/scripts/dev/test-tooling.sh"

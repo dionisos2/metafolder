@@ -47,8 +47,9 @@ isolated daemon — a private `XDG_RUNTIME_DIR`, hence its own token, an empty
 `--config` so that nothing is loaded, a free port — and an `mf` that stubs ''only''
 `mf gui`; the rest reaches the real `mf` against that daemon.
 `scripts/dev/test-scripts-integration.sh` runs the scripts over a small repository and
-asserts what the repository holds afterwards, and their exit codes. It is skipped,
-loudly, when the binaries are not built.
+asserts what the repository holds afterwards, and their exit codes. When the binaries
+are not built it exits 77 and `check.sh` reports `scripts` as skipped, not as passed; a
+built daemon that does not start is a failure, with the end of its log.
 
 |!Function |!Does |
 |`df_available` |whether `target/debug` has the daemon and `mf` |

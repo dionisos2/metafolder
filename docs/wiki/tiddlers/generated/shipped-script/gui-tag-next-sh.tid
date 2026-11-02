@@ -17,7 +17,7 @@ single next question, or nothing (exit 1) when no question remains:
 Sourced, it also offers `gui_tag_children` (the candidates of a pick) and
 `gui_tag_always` (the `always` tags to add without asking). No daemon/GUI
 dependency, so it is unit-testable (scripts/dev/test-gui-tag-next.sh) and is
-*sourced* by scripts/gui-tag-classify.sh to share the hierarchy helpers.
+*sourced* by scripts/shipped/gui-tag-classify.sh to share the hierarchy helpers.
 
 Usage: gui-tag-next.sh <universe_file> <pos_file> <neg_file>
   universe_file : one line per tag path (`mf tag list`):

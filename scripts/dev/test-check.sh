@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Tests for scripts/dev/check.sh — the disk-space warning only.
+# Tests for scripts/dev/check.sh — the disk-space warning, the verdict of a suite
+# that ran nothing, and the help.
 #
 # check.sh never prunes target/ (pruning after clippy and the tests, without
 # the plain build and the sync-config core, would evict those universes every
@@ -65,5 +66,34 @@ assert_contains "the suite runs the hakari check" "$out" "hakari"
 out=$(cd "$fake" && FREE_KIB=$((3 * 1024 * 1024)) METAFOLDER_CHECK_MIN_FREE_GIB=2 \
     PATH="$bin:$PATH" bash scripts/dev/check.sh 2>&1)
 assert_not "under a lower threshold, no warning" grep -q 'free on' <<<"$out"
+
+# ── 4. a suite that verified nothing is not an "ok" ──────────────────────────
+printf '#!/usr/bin/env bash\necho "SKIP: not built"\nexit 77\n' \
+    >"$fake/scripts/dev/test-shipped-scripts.sh"
+out=$(run $((200 * 1024 * 1024))); rc=$?
+assert_eq "a skipped suite does not fail the pass" 0 "$rc"
+assert_contains "it is reported as skipped, with its reason" "$out" "skipped"
+assert_contains "the reason comes from the suite" "$out" "SKIP: not built"
+assert_contains "the summary counts it" "$out" "skipped (scripts"
+
+# Only that suite may say so: 77 from any other check is a plain failure.
+printf '#!/usr/bin/env bash\nexit 77\n' >"$fake/scripts/dev/test-tooling.sh"
+out=$(run $((200 * 1024 * 1024))); rc=$?
+assert_eq "77 from another check fails" 1 "$rc"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$fake/scripts/dev/test-tooling.sh"
+
+# A real failure of that suite stays one.
+printf '#!/usr/bin/env bash\nexit 1\n' >"$fake/scripts/dev/test-shipped-scripts.sh"
+out=$(run $((200 * 1024 * 1024))); rc=$?
+assert_eq "a failing suite fails the pass" 1 "$rc"
+
+# ── 5. --help is the whole header, and the header names every check ──────────
+help=$(bash "$repo/scripts/dev/check.sh" --help)
+assert_contains "--help reaches the end of the header" "$help" "verified nothing"
+assert_not "--help stops at the header" grep -q 'set -uo pipefail' <<<"$help"
+assert_not "--help prints no comment marker" grep -q '^#' <<<"$help"
+for name in $(sed -n 's/^\s*\(run\|skip\) \([a-z]*\) .*/\2/p' "$repo/scripts/dev/check.sh" | sort -u); do
+    assert_contains "the header describes $name" "$help" "$name"
+done
 
 assert_summary
