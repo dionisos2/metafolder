@@ -47,7 +47,7 @@ already. Writing the paths first hands every one of them the ''previous'' metare
 one file on screen, another one read from and written to.
 
 It binds the scripting API as much as the panels: `PUT /gui/panels/:slot/view` with
-`{"type": "file", "path": …}` resolves the metarecord ''before'' it writes either
+`{"type": "viewer", "path": …}` resolves the metarecord ''before'' it writes either
 variable. A script walking a folder one `mf gui view left viewer --path` at a time
 (`gui-tag-folder.sh`) otherwise ran a whole session one answer behind.
 

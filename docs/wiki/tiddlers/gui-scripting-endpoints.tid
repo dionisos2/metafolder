@@ -85,13 +85,13 @@ hides a slot. It answers `{}`.
 `PUT /gui/panels/:slot/view` (`left` or `right`) takes
 
 ```
-{"type": "file", "path": "/abs/file.jpg"}
+{"type": "viewer", "path": "/abs/file.jpg"}
 ```
 
 and answers `{}`. A hidden slot is shown first; one with no workspace
 takes the focused slot's, and `409` when there is none.
 
-`path` counts only with `"type": "file"`, and selects that file in the slot's
+`path` counts only with `"type": "viewer"`, and selects that file in the slot's
 workspace:
 
 * a path sets `selected_metarecord` to the metarecord at that path — `null` for an untracked file, or when the daemon does not answer — then `selected_paths` to `[path]`. In that order, the lookup done before either write: a panel reacting to the path reads the metarecord right then ([[Cross-panel selection]]).
@@ -101,7 +101,7 @@ workspace:
 Any other member of the body is ignored: there is no way to hand a panel an initial
 state.
 
-`GET /gui/panels/:slot/view` answers `{"type": "file", "status": "ready"}` — or
+`GET /gui/panels/:slot/view` answers `{"type": "viewer", "status": "ready"}` — or
 `"loading"` until the panel has mounted — and `404` for a slot showing nothing.
 
 !! Commands

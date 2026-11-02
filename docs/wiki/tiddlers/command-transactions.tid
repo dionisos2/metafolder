@@ -82,7 +82,8 @@ A write into a workspace closed meanwhile is dropped.
 !! Limits
 
 * A builtin runs in no transaction: it writes directly, so one writing several variables a panel follows writes them with `setMany`.
-* A panel's own writes outside its commands (a click moving the selection) and a script's `mf gui var` are not in any transaction: they are delivered at once — `setMany` is for them too.
+* A panel's own writes outside its commands (a click moving the selection) are not in any transaction: they are delivered at once — `setMany` is for them too.
+* A script has no command to write a variable. `mf gui view <slot> viewer --path` writes the selection pair outside any transaction, each variable delivered at once, the metarecord first ([[Workspace variables]]); what `mf gui command` writes follows the rules of the command it runs.
 * A snapshot is taken per workspace, at the first read of that workspace: a command reading two workspaces may see them at two moments.
 
 !! How it is built
