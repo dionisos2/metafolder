@@ -12,7 +12,7 @@ summary: Five programs — daemon, mf, GUI, broker, sync-config — around one H
 |`mf` |`cli` |a thin client of the daemon ([[Command line]]); `mf gui` is a client of the GUI's scripting API instead ([[Scripting the GUI]]) |
 |`metafolder-gui` |`gui` |a Tauri v2 desktop application, client of the daemon, with its own HTTP server on `127.0.0.1:7524` for its panels' files and for scripts ([[GUI]]) |
 |`metafolder-watchd` |`watchd` |an optional privileged service watching whole filesystems for every daemon of the machine, over a Unix socket ([[The fanotify broker]]) |
-|`metafolder-sync-config` |`core`, behind the `sync-config` feature |the install step that applies the shipped defaults to the configuration repository; the only program that uses git ([[Updating the configuration]]) |
+|`metafolder-sync-config` |`core`, behind the `sync-config` feature |the install step that applies the shipped defaults to the configuration repository ([[Updating the configuration]]). The clients write configuration through git: this program the user's, `mf` and the GUI a repository's ([[Repository configuration]]); the daemon never links git and only reads the files |
 
 Everything is local: the servers listen on loopback, behind session tokens, and
 nothing calls a remote host ([[Security]], [[No network access]]).

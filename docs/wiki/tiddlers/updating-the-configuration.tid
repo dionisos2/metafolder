@@ -10,9 +10,9 @@ make dev                                  # builds everything, then syncs
 target/debug/metafolder-sync-config       # the sync alone, from the checkout root
 ```
 
-`metafolder-sync-config` is the only program that touches the configuration's git
-history (a repository's own configuration is `mf repo update-config`'s:
-[[Repository configuration]]); it is an install step, never run by a long-lived process. `--source <dir>`
+`metafolder-sync-config` is the only program that touches the user configuration's git
+history (a repository's own configuration is written by `mf` and the GUI:
+[[Repository configuration]]). It is an install step, never run by a long-lived process. `--source <dir>`
 is the checkout to read the defaults from (default: the current directory),
 `--config-dir <dir>` the configuration to update (default: `~/.config/metafolder/`).
 It refuses a checkout whose documentation has not been rendered
