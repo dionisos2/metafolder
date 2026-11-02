@@ -106,19 +106,16 @@ pub(crate) fn find_binary(name: &str) -> Result<PathBuf> {
 
 // ─── Daemon management ────────────────────────────────────────────────────────
 
-/// Spawns a daemon on `port` with an empty configuration. Pointing `--config`
-/// at a path that does not exist makes the daemon read an empty config (no repo
-/// auto-load) instead of the user's, keeping the benchmark isolated from any
-/// repos held under the user's daemon lock.
+/// Spawns a daemon on `port` with the shipped configuration (no repo auto-load)
+/// instead of the user's, keeping the benchmark isolated from any repos held
+/// under the user's daemon lock.
 pub(crate) fn spawn_isolated_daemon(port: u16) -> Result<Child> {
     let bin = find_binary("metafolder-daemon")?;
-    let empty_config = std::env::temp_dir()
-        .join(format!("metafolder-bench-no-config-{}-{port}.json", std::process::id()));
-    let _ = std::fs::remove_file(&empty_config);
+    let shipped = repo_root().join("crates/daemon/default-config/config.toml");
     Command::new(&bin)
         .args(["--port", &port.to_string()])
         .arg("--config")
-        .arg(&empty_config)
+        .arg(&shipped)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()

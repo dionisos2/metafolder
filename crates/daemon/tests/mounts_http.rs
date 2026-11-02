@@ -39,7 +39,7 @@ async fn request(
 
 #[tokio::test]
 async fn mounts_lists_declared_mount_points_with_their_state() {
-    let app = routes::build(std::sync::Arc::new(AppState::new()));
+    let app = routes::build(std::sync::Arc::new(AppState::new(common::settings())));
     let root = TempDir::new("mhttp_list");
     common::seed_config(&root);
     let (status, body) =

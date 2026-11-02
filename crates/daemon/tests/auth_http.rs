@@ -10,10 +10,12 @@ use metafolder_daemon::routes;
 use metafolder_daemon::state::AppState;
 use tower::util::ServiceExt;
 
+mod common;
+
 const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 fn app() -> Router {
-    routes::build_authenticated(Arc::new(AppState::new()), TOKEN.into())
+    routes::build_authenticated(Arc::new(AppState::new(common::settings())), TOKEN.into())
 }
 
 async fn status_with_auth(authorization: Option<&str>) -> StatusCode {

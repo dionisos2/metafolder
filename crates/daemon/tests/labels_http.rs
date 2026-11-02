@@ -43,7 +43,7 @@ async fn send(
 }
 
 async fn setup(prefix: &str) -> (Router, String, TempDir) {
-    let app = routes::build(Arc::new(AppState::new()));
+    let app = routes::build(Arc::new(AppState::new(common::settings())));
     let root = TempDir::new(&format!("labels_{prefix}"));
     common::seed_config(&root);
     let (status, body) =

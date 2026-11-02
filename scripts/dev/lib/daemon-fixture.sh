@@ -5,7 +5,7 @@
 # against it with only the `mf gui …` half stubbed — so a script that issues a
 # query the daemon rejects, or one whose result is empty, is caught for real.
 #
-# Isolation: a private XDG_RUNTIME_DIR (own auth token) and an empty --config
+# Isolation: a private XDG_RUNTIME_DIR (own auth token) and the shipped --config
 # (no auto-load), on an ephemeral port — it never touches the user's daemon or
 # repositories.
 #
@@ -40,7 +40,8 @@ df_mf() { "$_DF_MF" -p "$DF_PORT" "$@"; }
 df_start() {
     _DF_TMP=$(mktemp -d "${TMPDIR:-/tmp}/mf-df.XXXXXX")
     mkdir -p "$_DF_TMP/run" "$_DF_TMP/cfg"
-    : >"$_DF_TMP/cfg/config.toml"                 # empty: no repos auto-loaded
+    # The shipped file: no repos auto-loaded.
+    cp "$(dirname "${BASH_SOURCE[0]}")/../../../crates/daemon/default-config/config.toml" "$_DF_TMP/cfg/config.toml"
     export XDG_RUNTIME_DIR="$_DF_TMP/run"          # private auth-token dir
     DF_PORT=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')
     "$_DF_DAEMON" --port "$DF_PORT" --config "$_DF_TMP/cfg/config.toml" \

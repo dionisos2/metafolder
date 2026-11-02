@@ -24,16 +24,16 @@ struct Args {
 async fn main() {
     let args = Args::parse();
 
-    let config_path = args.config.or_else(daemon_config::default_config_path);
-    let config = match &config_path {
-        Some(path) => match daemon_config::read_config(path) {
-            Ok(config) => config,
-            Err(e) => {
-                eprintln!("[daemon] Invalid configuration: {e:#}");
-                std::process::exit(1);
-            }
-        },
-        None => Default::default(),
+    let Some(config_path) = args.config.or_else(daemon_config::default_config_path) else {
+        eprintln!("[daemon] Cannot determine the configuration file: set HOME or use --config");
+        std::process::exit(1);
+    };
+    let config = match daemon_config::read_config(&config_path) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("[daemon] Invalid configuration: {e:#}");
+            std::process::exit(1);
+        }
     };
     for warning in config.settings.obsolete() {
         eprintln!("[daemon] Warning: {warning}");
@@ -44,11 +44,7 @@ async fn main() {
     // repository in memory"): RAM, until the next boot otherwise.
     metafolder_daemon::kvstore::memory::clean_stale(&config.settings.memory_dir);
 
-    let mut state = AppState::new().with_settings(config.settings.clone());
-    if let Some(path) = config_path {
-        state = state.with_config_file(path);
-    }
-    let state = Arc::new(state);
+    let state = Arc::new(AppState::new(config.settings.clone()).with_config_file(config_path));
 
     let startup_state = state.clone();
     // `apply` reports each repository — loaded or failed — as it goes.

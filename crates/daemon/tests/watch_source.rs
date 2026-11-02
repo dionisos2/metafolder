@@ -161,7 +161,7 @@ fn wire(root: &Path, rest: &str) -> proto::WirePath {
 }
 
 fn fanotify_settings(socket: &Path) -> DaemonSettings {
-    DaemonSettings { watchd_socket: socket.to_path_buf(), ..DaemonSettings::default() }
+    DaemonSettings { watchd_socket: socket.to_path_buf(), ..common::settings() }
 }
 
 fn dead_socket() -> PathBuf {

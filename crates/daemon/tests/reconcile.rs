@@ -23,7 +23,7 @@ fn setup(prefix: &str) -> (Arc<RepoState>, TempDir) {
     let root = temp_dir(prefix);
     common::seed_config(&root);
     let opened = repo::init_repository(&root, None, None, false).unwrap();
-    let repo_state = Arc::new(RepoState::from_opened(opened));
+    let repo_state = Arc::new(RepoState::from_opened_with(opened, &common::settings()));
     // Its metadata map, as a load reads it.
     repo_state.load_config().unwrap();
     let root_uuid = {

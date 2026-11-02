@@ -48,7 +48,7 @@ async fn eventually(what: &str, cond: impl Fn() -> bool) {
 #[allow(clippy::await_holding_lock)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_client_hanging_up_cancels_its_query() {
-    let state = Arc::new(AppState::new());
+    let state = Arc::new(AppState::new(common::settings()));
     let app = routes::build(state.clone());
     let root = TempDir::new("hangup");
     common::seed_config(&root);

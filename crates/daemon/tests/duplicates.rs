@@ -22,7 +22,7 @@ fn setup(prefix: &str) -> (Arc<RepoState>, TempDir) {
     let root = TempDir::new(&format!("dup_{prefix}"));
     common::seed_config(&root);
     let opened = repo::init_repository(&root, None, None, false).unwrap();
-    let repo_state = Arc::new(RepoState::from_opened(opened));
+    let repo_state = Arc::new(RepoState::from_opened_with(opened, &common::settings()));
     let root_uuid = {
         let conn = repo_state.conn.lock().unwrap();
         metafolder_daemon::store::Rows::child_by_bytes(&*conn, "mfr_path", None, b"")

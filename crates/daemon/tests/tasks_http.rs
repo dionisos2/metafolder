@@ -56,7 +56,7 @@ async fn send(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (St
 /// Returns (router, state, repo_uuid hex, the guard keeping its root on disk —
 /// a repository whose root is gone answers nothing).
 fn app_with_repo(prefix: &str) -> (Router, Arc<AppState>, String, TempDir) {
-    let state = Arc::new(AppState::new());
+    let state = Arc::new(AppState::new(common::settings()));
     let app = routes::build(state.clone());
     let root = temp_dir(prefix);
     common::seed_config(&root);
@@ -333,7 +333,7 @@ async fn load_runs_an_observable_warmup_task() {
     // index) in the background as an observable `load` task, so the GUI can show
     // a load progress bar (the point of the feature). Init then unload to get an
     // on-disk repo to load through the HTTP route.
-    let state = Arc::new(AppState::new());
+    let state = Arc::new(AppState::new(common::settings()));
     let app = routes::build(state.clone());
     let root = temp_dir("loadwarmup");
     common::seed_config(&root);
@@ -366,7 +366,7 @@ async fn load_response_carries_the_warmup_task_id() {
     // `mf repo load` waits for the warmup by polling its task; the load
     // response hands the task id back directly so the client does not have to
     // discover it through the task list (doc "Creating and loading a repository").
-    let state = Arc::new(AppState::new());
+    let state = Arc::new(AppState::new(common::settings()));
     let app = routes::build(state.clone());
     let root = temp_dir("loadtaskid");
     common::seed_config(&root);
@@ -390,7 +390,7 @@ async fn load_response_carries_the_warmup_task_id() {
 async fn redundant_load_of_a_warm_repo_returns_no_task_id() {
     // Init warms synchronously, so re-loading an already-loaded warm repo
     // spawns no warmup: the response carries no task id (nothing to wait on).
-    let state = Arc::new(AppState::new());
+    let state = Arc::new(AppState::new(common::settings()));
     let app = routes::build(state.clone());
     let root = temp_dir("loadwarm");
     common::seed_config(&root);
@@ -445,7 +445,7 @@ async fn global_tasks_lists_across_repos() {
 /// `load` task to know when to come back (doc "Creating and loading a repository").
 #[tokio::test]
 async fn a_warming_repository_refuses_data_and_reports_its_state() {
-    let state = Arc::new(AppState::new());
+    let state = Arc::new(AppState::new(common::settings()));
     let app = routes::build(state.clone());
     let root = temp_dir("warming");
     common::seed_config(&root);
@@ -499,7 +499,7 @@ async fn load_in_memory(app: &Router, root: &std::path::Path, repo: &str) -> Val
 async fn a_repository_loaded_in_memory_says_what_it_holds() {
     // doc "Holding a repository in memory": the store is copied into RAM at
     // load, and `GET /repos` says how much it takes there.
-    let state = Arc::new(AppState::new());
+    let state = Arc::new(AppState::new(common::settings()));
     let app = routes::build(state.clone());
     let root = temp_dir("inmemory");
     common::seed_config(&root);
@@ -555,7 +555,7 @@ async fn a_repository_loaded_in_memory_says_what_it_holds() {
 async fn loading_in_memory_a_repository_already_loaded_otherwise_is_refused() {
     // Nothing would be read in: the load of an already loaded repository does
     // nothing. Said rather than silently answered 200.
-    let state = Arc::new(AppState::new());
+    let state = Arc::new(AppState::new(common::settings()));
     let app = routes::build(state.clone());
     let root = temp_dir("inmemoryloaded");
     common::seed_config(&root);
@@ -581,7 +581,7 @@ async fn loading_in_memory_a_repository_already_loaded_otherwise_is_refused() {
 async fn a_repository_taken_out_of_service_is_unloaded_and_says_why() {
     // doc "Holding a repository in memory": a copy that fell behind its disk
     // takes the repository out of service, as a lost root does.
-    let state = Arc::new(AppState::new());
+    let state = Arc::new(AppState::new(common::settings()));
     let app = routes::build(state.clone());
     let root = temp_dir("outofservice");
     common::seed_config(&root);
@@ -619,7 +619,7 @@ async fn set_memory(app: &Router, repo: &str, on: bool) -> (StatusCode, Value) {
 async fn a_loaded_repository_is_held_in_memory_and_let_go_without_unloading() {
     // doc "Holding a repository in memory": the switch reads the store in (or
     // lets go of it) on the loaded repository, which keeps answering.
-    let state = Arc::new(AppState::new());
+    let state = Arc::new(AppState::new(common::settings()));
     let app = routes::build(state.clone());
     let root = temp_dir("memoryswitch");
     common::seed_config(&root);
@@ -660,7 +660,7 @@ async fn a_loaded_repository_is_held_in_memory_and_let_go_without_unloading() {
 
 #[tokio::test]
 async fn the_memory_switch_wants_a_known_repository_and_a_flag() {
-    let state = Arc::new(AppState::new());
+    let state = Arc::new(AppState::new(common::settings()));
     let app = routes::build(state.clone());
     let root = temp_dir("memoryswitchbad");
     common::seed_config(&root);
@@ -676,7 +676,7 @@ async fn the_repository_list_says_whether_each_repository_is_ready() {
     // A loaded repository answers its data routes with 503 until its warmup is
     // done; `GET /repos` says so, so a client offers to open it only once it
     // can be used (doc "Repository endpoints").
-    let state = Arc::new(AppState::new());
+    let state = Arc::new(AppState::new(common::settings()));
     let app = routes::build(state.clone());
     let root = temp_dir("listready");
     common::seed_config(&root);

@@ -39,13 +39,13 @@ async fn fixture(prefix: &str, threshold_ms: u64) -> Fixture {
     let settings = DaemonSettings {
         slow_operation_threshold_ms: threshold_ms,
         slow_read_threshold_ms: 0,
-        ..Default::default()
+        ..common::settings()
     };
     fixture_with(prefix, settings).await
 }
 
 async fn fixture_with(prefix: &str, settings: DaemonSettings) -> Fixture {
-    let state = Arc::new(AppState::new().with_settings(settings));
+    let state = Arc::new(AppState::new(settings));
     let app = routes::build(state.clone());
     let root = TempDir::new(&format!("slowlog_{prefix}"));
     common::seed_config(&root);
@@ -151,9 +151,9 @@ async fn test_a_query_that_read_past_the_reads_threshold_is_logged_with_its_read
     let settings = DaemonSettings {
         slow_operation_threshold_ms: 3_600_000,
         slow_operation_reads_threshold: 1,
-        ..Default::default()
+        ..common::settings()
     };
-    let state = Arc::new(AppState::new().with_settings(settings));
+    let state = Arc::new(AppState::new(settings));
     let app = routes::build(state.clone());
     let root = TempDir::new("slowlog_reads");
     common::seed_config(&root);
@@ -192,7 +192,7 @@ async fn test_a_read_is_held_to_the_read_threshold_and_a_write_is_not() {
         slow_operation_threshold_ms: 3_600_000,
         slow_read_threshold_ms: 1,
         slow_operation_reads_threshold: 0,
-        ..Default::default()
+        ..common::settings()
     };
     let f = fixture_with("read_threshold", settings).await;
     let (status, body) = request(
@@ -450,7 +450,7 @@ fn test_a_slow_watcher_flush_names_itself() {
     let root = TempDir::new("slowlog_flush");
     common::seed_config(&root);
     let opened = repo::init_repository(&root, None, None, false).unwrap();
-    let settings = DaemonSettings { slow_operation_threshold_ms: 1, ..Default::default() };
+    let settings = DaemonSettings { slow_operation_threshold_ms: 1, ..common::settings() };
     let repo_state = Arc::new(RepoState::from_opened_with(opened, &settings));
     {
         let mut conn = repo_state.conn.lock().unwrap();
@@ -592,7 +592,7 @@ async fn test_a_load_warmup_is_logged() {
         slow_operation_threshold_ms: 1,
         slow_operation_reads_threshold: 1,
         slow_read_threshold_ms: 0,
-        ..Default::default()
+        ..common::settings()
     };
     let f = fixture_with("task_load", settings).await;
     let root = f._root.to_str().unwrap().to_string();
@@ -624,7 +624,7 @@ fn test_the_automatic_backup_names_itself() {
     let settings = DaemonSettings {
         slow_operation_threshold_ms: 1,
         slow_read_threshold_ms: 0,
-        ..Default::default()
+        ..common::settings()
     };
     let repo_state = Arc::new(RepoState::from_opened_with(opened, &settings));
 
@@ -662,7 +662,7 @@ fn test_a_remount_names_itself() {
     let settings = DaemonSettings {
         slow_operation_threshold_ms: 1,
         slow_read_threshold_ms: 0,
-        ..Default::default()
+        ..common::settings()
     };
     let repo_state = Arc::new(RepoState::from_opened_with(opened, &settings));
 

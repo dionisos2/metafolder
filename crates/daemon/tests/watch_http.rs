@@ -48,7 +48,7 @@ async fn init_repo(app: &Router, root: &TempDir) -> String {
 
 #[tokio::test]
 async fn watch_reports_running_and_pause_resume_flip_it() {
-    let app = routes::build(std::sync::Arc::new(AppState::new()));
+    let app = routes::build(std::sync::Arc::new(AppState::new(common::settings())));
     let root = TempDir::new("watch_http");
     let repo = init_repo(&app, &root).await;
 
@@ -59,10 +59,7 @@ async fn watch_reports_running_and_pause_resume_flip_it() {
     // How long the executor waits before applying what it buffered: what a
     // client needs to know to re-read once the watcher has recorded a change
     // it just made on disk.
-    assert_eq!(
-        body["quiet_period_ms"],
-        json!(metafolder_daemon::daemon_config::DEFAULT_WATCH_QUIET_PERIOD_MS)
-    );
+    assert_eq!(body["quiet_period_ms"], json!(common::settings().watch_quiet_period_ms));
 
     let (status, body) =
         request(&app, "POST", &format!("/repos/{repo}/watch/pause"), Some(json!({}))).await;
@@ -87,7 +84,7 @@ async fn watch_reports_running_and_pause_resume_flip_it() {
 
 #[tokio::test]
 async fn watch_on_an_unknown_repository_is_404() {
-    let app = routes::build(std::sync::Arc::new(AppState::new()));
+    let app = routes::build(std::sync::Arc::new(AppState::new(common::settings())));
     let unknown = uuid::Uuid::new_v4().as_simple().to_string();
     let (status, _) = request(&app, "GET", &format!("/repos/{unknown}/watch"), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -140,7 +137,7 @@ async fn put_field(app: &Router, repo: &str, uuid: &str, name: &str, value: Valu
 // nothing until something else touches those fields.
 #[tokio::test]
 async fn a_revert_that_restores_tracking_watches_again() {
-    let app = routes::build(std::sync::Arc::new(AppState::new()));
+    let app = routes::build(std::sync::Arc::new(AppState::new(common::settings())));
     let root = TempDir::new("watch_revert");
     std::fs::create_dir_all(root.join("docs/notes")).unwrap();
     std::fs::write(root.join("docs/notes/todo.txt"), b"todo").unwrap();
@@ -209,7 +206,7 @@ async fn a_revert_that_restores_tracking_watches_again() {
 async fn watch_check_on_a_fresh_repo_reports_nothing_watched() {
     // A fresh repository is opt-in: `mf_watch = false` on the root decides for
     // everything, and the check says so rather than blaming the budget.
-    let app = routes::build(std::sync::Arc::new(AppState::new()));
+    let app = routes::build(std::sync::Arc::new(AppState::new(common::settings())));
     let root = TempDir::new("watch_check_fresh");
     let repo = init_repo(&app, &root).await;
     std::fs::write(root.join("a.txt"), b"x").unwrap();
@@ -227,7 +224,7 @@ async fn watch_check_on_a_fresh_repo_reports_nothing_watched() {
 
 #[tokio::test]
 async fn watch_check_reports_the_live_watch_set() {
-    let app = routes::build(std::sync::Arc::new(AppState::new()));
+    let app = routes::build(std::sync::Arc::new(AppState::new(common::settings())));
     let root = TempDir::new("watch_check_live");
     std::fs::create_dir_all(root.join("docs/notes")).unwrap();
     std::fs::write(root.join("docs/notes/todo.txt"), b"todo").unwrap();
@@ -342,7 +339,7 @@ async fn watch_check_reports_the_live_watch_set() {
 
 #[tokio::test]
 async fn watch_check_validates_its_input() {
-    let app = routes::build(std::sync::Arc::new(AppState::new()));
+    let app = routes::build(std::sync::Arc::new(AppState::new(common::settings())));
     let root = TempDir::new("watch_check_validation");
     let repo = init_repo(&app, &root).await;
 
@@ -391,7 +388,7 @@ fn deliver(state: &AppState, repo: &str, paths: &[&str]) {
 
 #[tokio::test]
 async fn watch_activity_counts_recursively_per_path() {
-    let state = std::sync::Arc::new(AppState::new());
+    let state = std::sync::Arc::new(AppState::new(common::settings()));
     let app = routes::build(state.clone());
     let root = TempDir::new("watch_activity");
     let repo = init_repo(&app, &root).await;
@@ -432,7 +429,7 @@ async fn watch_activity_counts_recursively_per_path() {
 
 #[tokio::test]
 async fn watch_activity_lists_the_busiest_children_and_resets() {
-    let state = std::sync::Arc::new(AppState::new());
+    let state = std::sync::Arc::new(AppState::new(common::settings()));
     let app = routes::build(state.clone());
     let root = TempDir::new("watch_activity_children");
     let repo = init_repo(&app, &root).await;
@@ -477,7 +474,7 @@ fn wrote(state: &AppState, repo: &str, written: &[(&str, u64)]) {
 
 #[tokio::test]
 async fn watch_activity_reports_operations_and_ranks_by_them_on_request() {
-    let state = std::sync::Arc::new(AppState::new());
+    let state = std::sync::Arc::new(AppState::new(common::settings()));
     let app = routes::build(state.clone());
     let root = TempDir::new("watch_activity_operations");
     let repo = init_repo(&app, &root).await;
@@ -525,7 +522,7 @@ async fn watch_activity_reports_operations_and_ranks_by_them_on_request() {
 
 #[tokio::test]
 async fn watch_activity_validates_its_input() {
-    let app = routes::build(std::sync::Arc::new(AppState::new()));
+    let app = routes::build(std::sync::Arc::new(AppState::new(common::settings())));
     let root = TempDir::new("watch_activity_validate");
     let repo = init_repo(&app, &root).await;
     let (status, _) = request(
@@ -562,9 +559,9 @@ async fn an_exhausted_watch_budget_marks_the_subtrees_it_left_out() {
         watch_budget_share: 0,
         // The budget is the inotify regime's: no broker, whatever this host runs.
         watchd_socket: common::tests_root().join("no-broker-here.sock"),
-        ..Default::default()
+        ..common::settings()
     };
-    let app = routes::build(std::sync::Arc::new(AppState::new().with_settings(settings)));
+    let app = routes::build(std::sync::Arc::new(AppState::new(settings)));
     let root = TempDir::new("watch_budget");
     std::fs::create_dir_all(root.join("music/jazz")).unwrap();
     std::fs::create_dir_all(root.join("photos")).unwrap();

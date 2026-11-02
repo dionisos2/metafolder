@@ -1,6 +1,6 @@
 # Metafolder daemon settings (doc "Configuration"; doc "Daemon configuration").
 # Installed into ~/.config/metafolder/daemon/ by metafolder-sync-config.
-# The --config CLI flag overrides this path; a malformed file aborts startup.
+# The --config CLI flag overrides this path; a missing or malformed file aborts startup.
 
 # Repositories known by name but NOT loaded at startup (doc "Known
 # repositories"): same shape as [[load]] below. `mf -n <name> repo load` (or the
@@ -27,8 +27,9 @@
 # [[load]]
 # metafolder = "/ssd/meta/photos/.metafolder"
 
-# Tunable UX/performance settings. Every key is optional: omit the whole
-# [settings] table (or any key) to keep the default shown below.
+# Tunable UX/performance settings. Every key is required, except memory-dir:
+# the daemon holds no copy of these values. To go back to a shipped value:
+# git checkout default -- daemon/config.toml (from ~/.config/metafolder/).
 [settings]
 
 # Quiet period, in milliseconds, before the watcher's executor flushes the

@@ -43,7 +43,7 @@ async fn request(
 }
 
 async fn setup(prefix: &str) -> (Router, String, TempDir) {
-    let app = routes::build(std::sync::Arc::new(AppState::new()));
+    let app = routes::build(std::sync::Arc::new(AppState::new(common::settings())));
     let root = temp_dir(prefix);
     common::seed_config(&root);
     let (status, body) =
@@ -1656,7 +1656,7 @@ async fn test_in_values_are_validated_like_eq() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_a_query_running_on_one_repo_does_not_block_another_repo() {
     use std::time::Duration;
-    let state = std::sync::Arc::new(AppState::new());
+    let state = std::sync::Arc::new(AppState::new(common::settings()));
     let app = routes::build(state.clone());
     let init = |prefix: &'static str| {
         let app = app.clone();

@@ -25,8 +25,14 @@ fn daemon_url() -> &'static str {
                 let listener = tokio::net::TcpListener::from_std(listener).unwrap();
                 // Expansion is client-side now: the daemon needs no grammar.
                 // Its config.toml names the known repositories (doc "Known
-                // repositories"): absent, nothing is known.
-                let app_state = metafolder_daemon::state::AppState::new()
+                // repositories").
+                let settings = metafolder_daemon::daemon_config::parse_config(
+                    SHIPPED_DAEMON_CONFIG,
+                    std::path::Path::new("shipped"),
+                )
+                .unwrap()
+                .settings;
+                let app_state = metafolder_daemon::state::AppState::new(settings)
                     .with_config_file(daemon_config_file().to_path_buf());
                 let app = metafolder_daemon::routes::build(std::sync::Arc::new(app_state));
                 axum::serve(listener, app).await.unwrap();
@@ -36,6 +42,8 @@ fn daemon_url() -> &'static str {
     })
 }
 
+const SHIPPED_DAEMON_CONFIG: &str = include_str!("../../daemon/default-config/config.toml");
+
 /// The shared daemon's `config.toml`, written by the one test of known
 /// repositories (no other test may: they run concurrently).
 fn daemon_config_file() -> &'static std::path::Path {
@@ -43,7 +51,9 @@ fn daemon_config_file() -> &'static std::path::Path {
     PATH.get_or_init(|| {
         let dir = common::tests_root().join(format!("cli-daemon-cfg-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        dir.join("config.toml")
+        let path = dir.join("config.toml");
+        std::fs::write(&path, SHIPPED_DAEMON_CONFIG).unwrap();
+        path
     })
 }
 
@@ -390,8 +400,11 @@ fn test_a_known_repository_is_loaded_by_its_name() {
     let (repo, root) = init_repo("known");
     let name = root.file_name().unwrap().to_str().unwrap().to_string();
     assert_ok(&mf(&["-u", &repo, "repo", "unload"]));
-    std::fs::write(daemon_config_file(), format!("[[known]]\nroot = {:?}\n", root.to_path_buf()))
-        .unwrap();
+    std::fs::write(
+        daemon_config_file(),
+        format!("{SHIPPED_DAEMON_CONFIG}\n[[known]]\nroot = {:?}\n", root.to_path_buf()),
+    )
+    .unwrap();
 
     let out = mf(&["repo", "known"]);
     assert_ok(&out);

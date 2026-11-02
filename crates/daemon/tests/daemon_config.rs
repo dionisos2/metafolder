@@ -14,18 +14,50 @@ fn temp_dir(prefix: &str) -> TempDir {
     TempDir::new(&format!("metafolder_{prefix}"))
 }
 
-fn write_config(dir: &Path, contents: &str) -> PathBuf {
+fn write_raw(dir: &Path, contents: &str) -> PathBuf {
     let path = dir.join("config.toml");
     std::fs::write(&path, contents).unwrap();
     path
 }
 
+/// The shipped file with `contents` added: every setting is required.
+fn write_config(dir: &Path, contents: &str) -> PathBuf {
+    write_raw(dir, &format!("{}\n{contents}", common::SHIPPED_CONFIG))
+}
+
+/// No built-in copy of the defaults (doc "No runtime fallback"): a missing
+/// file stops the daemon, naming the file and what installs it.
 #[test]
-fn test_missing_file_is_empty_config() {
+fn test_a_missing_file_is_an_error_naming_it() {
     let dir = temp_dir("cfg_missing");
-    let config = daemon_config::read_config(&dir.join("config.toml")).unwrap();
-    assert!(config.load.is_empty());
-    std::fs::remove_dir_all(dir).unwrap();
+    let path = dir.join("config.toml");
+    let err = format!("{:#}", daemon_config::read_config(&path).unwrap_err());
+    assert!(err.contains(&path.display().to_string()), "got: {err}");
+    assert!(err.contains("metafolder-sync-config"), "got: {err}");
+}
+
+/// A setting left out has no default to fall back on: the error names it.
+#[test]
+fn test_a_missing_setting_is_an_error_naming_it() {
+    let dir = temp_dir("cfg_missing_key");
+    let shipped = include_str!("../default-config/config.toml");
+    let without: String = shipped
+        .lines()
+        .filter(|l| !l.starts_with("auto-backup-days"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let err = format!("{:#}", daemon_config::read_config(&write_raw(&dir, &without)).unwrap_err());
+    assert!(err.contains("auto-backup-days"), "got: {err}");
+}
+
+/// `memory-dir` is the one setting a shipped file cannot spell: its default
+/// holds the user's uid, so it is computed when left out.
+#[test]
+fn test_the_memory_dir_is_computed_when_left_out() {
+    let dir = temp_dir("cfg_memory_dir");
+    let path = write_raw(&dir, common::SHIPPED_CONFIG);
+    let config = daemon_config::read_config(&path).unwrap();
+    assert_eq!(config.settings.memory_dir, metafolder_daemon::kvstore::memory::default_dir());
 }
 
 #[test]
@@ -87,10 +119,11 @@ fn test_apply_holds_in_memory_what_the_entry_asks() {
     let opened = repo::init_repository(&root, None, None, false).unwrap();
     drop(opened);
 
-    let state = AppState::new();
+    let state = AppState::new(common::settings());
     let config = DaemonConfig {
         load: vec![LoadEntry { locator: RepoLocator::Root(root.to_path_buf()), in_memory: true }],
-        ..Default::default()
+        known: Vec::new(),
+        settings: common::settings(),
     };
     let warnings = daemon_config::apply(&state, config);
     assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
@@ -102,18 +135,9 @@ fn test_apply_holds_in_memory_what_the_entry_asks() {
 }
 
 #[test]
-fn test_empty_file_is_valid() {
-    let dir = temp_dir("cfg_empty");
-    let path = write_config(&dir, "");
-    let config = daemon_config::read_config(&path).unwrap();
-    assert!(config.load.is_empty());
-    std::fs::remove_dir_all(dir).unwrap();
-}
-
-#[test]
 fn test_malformed_toml_is_an_error() {
     let dir = temp_dir("cfg_bad_toml");
-    let path = write_config(&dir, "load = [");
+    let path = write_raw(&dir, "load = [");
     assert!(daemon_config::read_config(&path).is_err());
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -157,10 +181,11 @@ fn test_apply_loads_listed_repos() {
     let repo_uuid = opened.config.repo_uuid;
     drop(opened); // release the exclusive lock
 
-    let state = AppState::new();
+    let state = AppState::new(common::settings());
     let config = DaemonConfig {
         load: vec![RepoLocator::Root(root.to_path_buf()).into()],
-        ..Default::default()
+        known: Vec::new(),
+        settings: common::settings(),
     };
     let warnings = daemon_config::apply(&state, config);
     assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
@@ -179,13 +204,14 @@ fn test_apply_warns_on_failure_and_loads_the_rest() {
     let opened = repo::init_repository(&root, None, None, false).unwrap();
     drop(opened);
 
-    let state = AppState::new();
+    let state = AppState::new(common::settings());
     let config = DaemonConfig {
         load: vec![
             RepoLocator::Root(PathBuf::from("/nonexistent/metafolder/repo")).into(),
             RepoLocator::Root(root.to_path_buf()).into(),
         ],
-        ..Default::default()
+        known: Vec::new(),
+        settings: common::settings(),
     };
     let warnings = daemon_config::apply(&state, config);
     assert_eq!(warnings.len(), 1);
@@ -197,23 +223,11 @@ fn test_apply_warns_on_failure_and_loads_the_rest() {
 }
 
 /// `auto-backup-days` sets how often each repository's automatic backup is
-/// taken; seven days by default, 0 turns it off.
+/// taken; 0 turns it off.
 #[test]
 fn test_auto_backup_days_setting() {
     let dir = temp_dir("autobackup");
-    let default = daemon_config::read_config(&write_config(&dir, "")).unwrap();
-    assert_eq!(default.settings.auto_backup_days, 7);
-    let every_two =
-        daemon_config::read_config(&write_config(&dir, "[settings]\nauto-backup-days = 2\n"));
+    let src = common::SHIPPED_CONFIG.replace("auto-backup-days = 7", "auto-backup-days = 2");
+    let every_two = daemon_config::read_config(&write_raw(&dir, &src));
     assert_eq!(every_two.unwrap().settings.auto_backup_days, 2);
-}
-
-/// The slow log's time thresholds by default (doc "Slow log configuration"):
-/// 1.5 s for what writes, 500 ms for what only reads.
-#[test]
-fn test_slow_log_thresholds_by_default() {
-    let dir = temp_dir("slowthresholds");
-    let default = daemon_config::read_config(&write_config(&dir, "")).unwrap();
-    assert_eq!(default.settings.slow_operation_threshold_ms, 1500);
-    assert_eq!(default.settings.slow_read_threshold_ms, 500);
 }

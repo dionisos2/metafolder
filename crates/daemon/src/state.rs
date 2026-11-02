@@ -180,12 +180,6 @@ impl RepoState {
         self.metafolder_dir.join(repo::INTERNAL_DIR)
     }
 
-    /// Builds a `RepoState` with the default daemon settings (used by tests and
-    /// by [`Self::from_opened_with`]).
-    pub fn from_opened(opened: OpenedRepo) -> Self {
-        Self::from_opened_with(opened, &DaemonSettings::default())
-    }
-
     /// Builds a `RepoState`, applying the tunable daemon settings (log
     /// retention, watcher quiet period).
     pub fn from_opened_with(opened: OpenedRepo, settings: &DaemonSettings) -> Self {
@@ -1126,7 +1120,6 @@ pub struct RepoHandles {
     pub executor: crate::executor::ExecutorHandle,
 }
 
-#[derive(Default)]
 pub struct AppState {
     /// Shared, weakly, with each repository's root-lost hook ([`AppState::register`]),
     /// which unloads it without holding the state itself.
@@ -1135,7 +1128,7 @@ pub struct AppState {
     lost: Arc<Mutex<HashMap<Uuid, LostRepo>>>,
     /// Tunable UX/performance settings from `config.toml`'s `[settings]`, applied
     /// to every repository this state opens (log retention, watcher quiet
-    /// period, watch budget share). Defaults when unset (tests, no config file).
+    /// period, watch budget share).
     settings: DaemonSettings,
     /// The daemon's `config.toml`, read again at each lookup of a repository
     /// known by name (doc "Known repositories"); none: nothing is known.
@@ -1183,15 +1176,15 @@ struct LostRepo {
 }
 
 impl AppState {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Sets the tunable settings (`config.toml` `[settings]`) applied to every
-    /// repository this state opens.
-    pub fn with_settings(mut self, settings: DaemonSettings) -> Self {
-        self.settings = settings;
-        self
+    /// A state applying the tunable settings (`config.toml` `[settings]`) to
+    /// every repository it opens.
+    pub fn new(settings: DaemonSettings) -> Self {
+        AppState {
+            repos: Default::default(),
+            lost: Default::default(),
+            settings,
+            config_file: None,
+        }
     }
 
     /// Sets the configuration file whose `[[load]]` and `[[known]]` entries
@@ -1694,7 +1687,14 @@ mod tests {
             .join("metafolder-tests")
             .join(format!("mf_state_watch_view_{}", Uuid::new_v4()));
         crate::repo::seed_test_config(&root);
-        let state = AppState::new();
+        let state = AppState::new(
+            crate::daemon_config::parse_config(
+                include_str!("../default-config/config.toml"),
+                std::path::Path::new("shipped"),
+            )
+            .unwrap()
+            .settings,
+        );
         let uuid = state.init_repo(&root, None, None, false).unwrap();
         let repo = state.repo(uuid).unwrap();
 

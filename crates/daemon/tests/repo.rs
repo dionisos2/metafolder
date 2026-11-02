@@ -21,7 +21,7 @@ fn test_init_writes_no_configuration_file() {
     let root = temp_dir("noseed");
     common::seed_config(&root);
     let before: Vec<_> = std::fs::read_dir(root.join(".metafolder/config")).unwrap().collect();
-    AppState::new().init_repo(&root, None, None, false).unwrap();
+    AppState::new(common::settings()).init_repo(&root, None, None, false).unwrap();
     let after: Vec<_> = std::fs::read_dir(root.join(".metafolder/config")).unwrap().collect();
     assert_eq!(before.len(), after.len());
     assert!(!root.join(".metafolder/schema.json").exists());
@@ -210,7 +210,7 @@ fn test_unload_refused_while_a_task_is_in_flight() {
     use metafolder_daemon::tasks::TaskKind;
 
     let root = temp_dir("unload_task");
-    let state = AppState::new();
+    let state = AppState::new(common::settings());
     common::seed_config(&root);
     let uuid = state.init_repo(&root, None, None, false).unwrap();
 
@@ -236,7 +236,7 @@ fn test_unload_refused_during_a_coordinated_revert() {
     use metafolder_daemon::state::{AppState, RevertLock};
 
     let root = temp_dir("unload_revert");
-    let state = AppState::new();
+    let state = AppState::new(common::settings());
     common::seed_config(&root);
     let uuid = state.init_repo(&root, None, None, false).unwrap();
 

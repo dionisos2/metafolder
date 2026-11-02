@@ -592,16 +592,21 @@ fn now_ms() -> i64 {
 
 // ─── The environment ──────────────────────────────────────────────────────────
 
-/// The daemon's configuration: every threshold of the slow log at its floor,
-/// so every operation lands in it with its phases and keys; no automatic
-/// backup in the middle of a step.
-const DAEMON_CONFIG: &str = "\
-[settings]
-slow-operation-threshold-ms = 1
-slow-read-threshold-ms = 1
-slow-operation-reads-threshold = 1
-auto-backup-days = 0
-";
+/// The session's daemon configuration: the shipped file, its slow log logging
+/// everything and no automatic backup.
+fn daemon_config_text() -> Result<String> {
+    let path = crate::repo_root().join("crates/daemon/default-config/config.toml");
+    let mut text = std::fs::read_to_string(&path).context("no shipped daemon config.toml")?;
+    for (key, value) in [
+        ("slow-operation-threshold-ms", "1"),
+        ("slow-read-threshold-ms", "1"),
+        ("slow-operation-reads-threshold", "1"),
+        ("auto-backup-days", "0"),
+    ] {
+        text = set_toml_key(&text, "settings", key, value);
+    }
+    Ok(text)
+}
 
 fn copy_dir(src: &Path, dest: &Path) -> Result<()> {
     std::fs::create_dir_all(dest)?;
@@ -766,7 +771,7 @@ pub async fn run(opts: &Options) -> Result<i32> {
     let config_home = work.join("config");
     build_config_home(&config_home)?;
     let daemon_config = work.join("daemon.toml");
-    std::fs::write(&daemon_config, DAEMON_CONFIG)?;
+    std::fs::write(&daemon_config, daemon_config_text()?)?;
 
     let port = free_port()?;
     let daemon_bin = crate::find_binary("metafolder-daemon")?;

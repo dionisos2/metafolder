@@ -125,7 +125,7 @@ fn test_a_repository_writes_with_its_configured_retention() {
     let settings = DaemonSettings {
         log_retention_watcher_ops: 900,
         log_retention_user_ops: 900,
-        ..DaemonSettings::default()
+        ..common::settings()
     };
     let state = RepoState::from_opened_with(opened, &settings);
     assert_eq!(

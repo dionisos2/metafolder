@@ -41,7 +41,7 @@ async fn request(
 }
 
 fn app() -> Router {
-    routes::build(Arc::new(AppState::new()))
+    routes::build(Arc::new(AppState::new(common::settings())))
 }
 
 fn film_schema() -> Value {

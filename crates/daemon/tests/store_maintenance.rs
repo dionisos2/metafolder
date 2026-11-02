@@ -43,7 +43,7 @@ async fn request(
 }
 
 async fn setup(prefix: &str) -> (Router, String, TempDir, std::sync::Arc<AppState>) {
-    let state = std::sync::Arc::new(AppState::new());
+    let state = std::sync::Arc::new(AppState::new(common::settings()));
     let app = routes::build(state.clone());
     let root = temp_dir(prefix);
     common::seed_config(&root);
@@ -165,7 +165,7 @@ async fn notes(app: &Router, repo: &str) -> Vec<String> {
 /// change feed sees the head move back.
 #[tokio::test]
 async fn a_loaded_repository_is_restored_and_answers() {
-    let state = std::sync::Arc::new(AppState::new());
+    let state = std::sync::Arc::new(AppState::new(common::settings()));
     let app = routes::build(state.clone());
     let root = temp_dir("restore");
     let repo = backed_up(&app, &root).await;
@@ -190,7 +190,7 @@ async fn a_loaded_repository_is_restored_and_answers() {
 /// whose store is gone, so it could not be loaded — and loads it.
 #[tokio::test]
 async fn an_unloadable_repository_is_restored_by_its_path() {
-    let state = std::sync::Arc::new(AppState::new());
+    let state = std::sync::Arc::new(AppState::new(common::settings()));
     let app = routes::build(state.clone());
     let root = temp_dir("restore_path");
     let repo = backed_up(&app, &root).await;
@@ -213,7 +213,7 @@ async fn an_unloadable_repository_is_restored_by_its_path() {
 /// The path form of a loaded repository takes the loaded route.
 #[tokio::test]
 async fn a_loaded_repository_is_restored_by_its_path_too() {
-    let state = std::sync::Arc::new(AppState::new());
+    let state = std::sync::Arc::new(AppState::new(common::settings()));
     let app = routes::build(state.clone());
     let root = temp_dir("restore_loaded_path");
     let repo = backed_up(&app, &root).await;
@@ -226,7 +226,7 @@ async fn a_loaded_repository_is_restored_by_its_path_too() {
 
 #[tokio::test]
 async fn a_restore_names_its_errors() {
-    let state = std::sync::Arc::new(AppState::new());
+    let state = std::sync::Arc::new(AppState::new(common::settings()));
     let app = routes::build(state.clone());
     let root = temp_dir("restore_errors");
     common::seed_config(&root);

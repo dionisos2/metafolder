@@ -13,67 +13,12 @@ use uuid::Uuid;
 use crate::repo::RepoLocator;
 use crate::state::AppState;
 
-/// Default watcher quiet period (ms): how long the executor waits with no new
-/// filesystem event before flushing the pending buffer. See [`DaemonSettings`].
-/// Two seconds rather than the former half second: an editor's save, a copy,
-/// an archive extraction arrive as bursts spread over more than 500 ms, and
-/// each flush is a write of its own — they buried the user's own changes
-/// in the log and ate the log-retention budget.
-pub const DEFAULT_WATCH_QUIET_PERIOD_MS: u64 = 2000;
-
-/// Default share of the kernel's per-user watch limit one daemon will spend.
-/// Half, so a second metafolder daemon and every other program that watches
-/// files still have somewhere to go.
-pub const DEFAULT_WATCH_BUDGET_SHARE: u8 = 50;
-
-/// Default socket of the fanotify broker (doc "The fanotify broker"): probed at load — reachable,
-/// and the source becomes fanotify;
-/// absent, and the daemon says so and watches with inotify.
-pub const DEFAULT_WATCHD_SOCKET: &str = "/run/metafolder/watchd.sock";
-
-/// Default retention of the watcher's operations (doc "Automatic
-/// retention"): its churn — every save, copy and extraction under a watched
-/// tree — is what fills a log, and little of it is ever undone.
-pub const DEFAULT_LOG_RETENTION_WATCHER_OPS: u64 = 50_000;
-
-/// Default retention of every other operation: the user's own history, kept
-/// long (user decision, October 2026).
-pub const DEFAULT_LOG_RETENTION_USER_OPS: u64 = 1_000_000;
-
-/// Default threshold for the slow-operation log (doc "Slow log"): an operation
-/// past it is written to the repository's log with its phase breakdown. A
-/// second and a half is well above anything the daemon does routinely, so what
-/// lands in the log is what someone waited on.
-pub const DEFAULT_SLOW_OPERATION_THRESHOLD_MS: u64 = metafolder_core::slowlog::DEFAULT_THRESHOLD_MS;
-
-/// Default keys-read threshold for the slow-operation log: an operation that
-/// read this many keys is logged however quick it was. Every bounded read —
-/// a page, a folder, a search — stays far below it; reading a sizeable part
-/// of a large repository does not.
-pub const DEFAULT_SLOW_OPERATION_READS_THRESHOLD: u64 = 100_000;
-
-/// Default time threshold for an operation that wrote nothing: a query is
-/// felt long before a write or a watcher flush is — the GUI's finder sends one
-/// per keystroke. Half a second: at a tenth, the log filled with reads that
-/// were only a little slow and buried the ones someone waited on.
-pub const DEFAULT_SLOW_READ_THRESHOLD_MS: u64 = 500;
-
-/// Default mass-orphan circuit breaker: the largest cascade of
-/// `mfr_path = Nothing` a single watcher batch may apply (doc "Orphan scan").
-/// `0` disables the check.
-pub const DEFAULT_ORPHAN_CASCADE_LIMIT: usize = 10_000;
-
-/// Every how many days each repository's automatic backup is taken
-/// (doc "Backups and restore").
-pub const DEFAULT_AUTO_BACKUP_DAYS: u32 = 7;
-
-/// Tunable daemon settings (the `[settings]` table of `config.toml`). These are
-/// UX/performance knobs, all optional: a missing table or key keeps the default
-/// below, so an empty config behaves exactly as before. An unknown key is an
-/// error, like anywhere else in the file: a misspelt setting must not be read
-/// as "the default".
+/// Tunable daemon settings (the `[settings]` table of `config.toml`). Their
+/// default values live in the shipped file alone (doc "No runtime fallback"):
+/// a missing key is an error, as is an unknown one — a misspelt setting must
+/// not be read as a default.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct DaemonSettings {
     /// Quiet period before the watcher's executor flushes buffered filesystem
     /// events (compaction + one write per group). Larger values batch more
@@ -100,8 +45,10 @@ pub struct DaemonSettings {
     /// The retention of writes before October 2026, gone with them: read
     /// so an edited config still loads, ignored with a warning
     /// ([`DaemonSettings::obsolete`]).
+    #[serde(default)]
     pub log_retention_revisions: Option<toml::Value>,
     /// See `log_retention_revisions`.
+    #[serde(default)]
     pub log_retention_keep_labels: Option<toml::Value>,
     /// Largest number of metarecords one watcher-driven cascade may orphan.
     /// Beyond it the cascade is skipped and a warning logged: a batch that
@@ -123,27 +70,10 @@ pub struct DaemonSettings {
     pub auto_backup_days: u32,
     /// Where the store of a repository held in memory is copied (doc
     /// "Holding a repository in memory"): a directory in RAM — a `tmpfs`.
+    /// The one setting computed when left out: its default holds the user's
+    /// uid, which a shipped file cannot spell.
+    #[serde(default = "crate::kvstore::memory::default_dir")]
     pub memory_dir: PathBuf,
-}
-
-impl Default for DaemonSettings {
-    fn default() -> Self {
-        DaemonSettings {
-            watch_quiet_period_ms: DEFAULT_WATCH_QUIET_PERIOD_MS,
-            watch_budget_share: DEFAULT_WATCH_BUDGET_SHARE,
-            watchd_socket: PathBuf::from(DEFAULT_WATCHD_SOCKET),
-            orphan_cascade_limit: DEFAULT_ORPHAN_CASCADE_LIMIT,
-            log_retention_watcher_ops: DEFAULT_LOG_RETENTION_WATCHER_OPS,
-            log_retention_user_ops: DEFAULT_LOG_RETENTION_USER_OPS,
-            log_retention_revisions: None,
-            log_retention_keep_labels: None,
-            slow_operation_threshold_ms: DEFAULT_SLOW_OPERATION_THRESHOLD_MS,
-            slow_operation_reads_threshold: DEFAULT_SLOW_OPERATION_READS_THRESHOLD,
-            slow_read_threshold_ms: DEFAULT_SLOW_READ_THRESHOLD_MS,
-            auto_backup_days: DEFAULT_AUTO_BACKUP_DAYS,
-            memory_dir: crate::kvstore::memory::default_dir(),
-        }
-    }
 }
 
 impl DaemonSettings {
@@ -181,7 +111,7 @@ impl DaemonSettings {
 }
 
 /// Parsed daemon configuration.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct DaemonConfig {
     /// Repositories to load at startup.
     pub load: Vec<LoadEntry>,
@@ -199,7 +129,6 @@ struct RawConfig {
     load: Vec<RawLoadEntry>,
     #[serde(default)]
     known: Vec<RawLoadEntry>,
-    #[serde(default)]
     settings: DaemonSettings,
 }
 
@@ -237,16 +166,17 @@ pub fn default_config_path() -> Option<PathBuf> {
     metafolder_core::config::crate_config_dir("daemon").map(|dir| dir.join("config.toml"))
 }
 
-/// Reads and validates the configuration file. A missing file is
-/// equivalent to an empty one; a malformed file is an error.
+/// Reads and validates the configuration file. A missing or malformed file
+/// is an error (doc "No runtime fallback").
 pub fn read_config(path: &Path) -> Result<DaemonConfig> {
-    let contents = match std::fs::read_to_string(path) {
-        Ok(contents) => contents,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(DaemonConfig::default()),
-        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
-    };
+    let contents = metafolder_core::config::read_required(path).map_err(anyhow::Error::msg)?;
+    parse_config(&contents, path)
+}
+
+/// Parses the text of the configuration file at `path` (named in the errors).
+pub fn parse_config(contents: &str, path: &Path) -> Result<DaemonConfig> {
     let raw: RawConfig =
-        toml::from_str(&contents).with_context(|| format!("parsing {}", path.display()))?;
+        toml::from_str(contents).with_context(|| format!("parsing {}", path.display()))?;
     let load = entries(raw.load, "load", path)?;
     let known = entries(raw.known, "known", path)?;
     Ok(DaemonConfig { load, known, settings: raw.settings })
@@ -434,30 +364,65 @@ mod tests {
         path
     }
 
+    /// The shipped file's text, with `key` set to `value` in `[settings]`.
+    fn shipped_with(key: &str, value: &str) -> String {
+        let shipped = include_str!("../default-config/config.toml");
+        let line = format!("{key} = ");
+        let mut found = false;
+        let out: Vec<String> = shipped
+            .lines()
+            .map(|l| {
+                if l.starts_with(&line) {
+                    found = true;
+                    format!("{key} = {value}")
+                } else {
+                    l.to_string()
+                }
+            })
+            .collect();
+        let mut out = out.join("\n");
+        if !found {
+            out = out.replace("[settings]\n", &format!("[settings]\n{key} = {value}\n"));
+        }
+        out
+    }
+
+    fn shipped_settings() -> DaemonSettings {
+        parse_config(include_str!("../default-config/config.toml"), Path::new("shipped"))
+            .unwrap()
+            .settings
+    }
+
+    fn config_loading(load: Vec<LoadEntry>) -> DaemonConfig {
+        DaemonConfig { load, known: Vec::new(), settings: shipped_settings() }
+    }
+
     #[test]
-    fn test_settings_default_to_the_shipped_values() {
-        // An empty config (and a missing file) yields the documented defaults.
-        let empty: DaemonSettings = toml::from_str("").unwrap();
-        assert_eq!(empty.watch_quiet_period_ms, DEFAULT_WATCH_QUIET_PERIOD_MS);
-        assert_eq!(empty.watch_quiet_period(), Duration::from_millis(2000));
-        assert_eq!(empty.orphan_cascade_limit, DEFAULT_ORPHAN_CASCADE_LIMIT);
-        assert_eq!(empty.watchd_socket, PathBuf::from(DEFAULT_WATCHD_SOCKET));
+    fn test_the_shipped_file_holds_the_documented_values() {
+        let s = shipped_settings();
+        assert_eq!(s.watch_quiet_period(), Duration::from_millis(2000));
+        assert_eq!(s.watch_budget_share, 50);
+        assert_eq!(s.orphan_cascade_limit, 10_000);
+        assert_eq!(s.watchd_socket, PathBuf::from("/run/metafolder/watchd.sock"));
+        assert_eq!(s.slow_operation_threshold_ms, 1500);
+        assert_eq!(s.slow_read_threshold_ms, 500);
+        assert_eq!(s.slow_operation_reads_threshold, 100_000);
+        assert_eq!(s.auto_backup_days, 7);
         assert_eq!(
-            empty.log_retention(),
+            s.log_retention(),
             crate::log::Retention { watcher_ops: 50_000, user_ops: 1_000_000 },
             "history is bounded out of the box, the user's far longer than the watcher's"
         );
-        assert_eq!(DaemonConfig::default().settings, DaemonSettings::default());
     }
 
     #[test]
     fn test_the_retention_of_revisions_is_read_and_ignored() {
         // Shipped until October 2026: a config the user edited still has it,
         // and must load — with a warning naming what replaced it.
-        let s: DaemonSettings =
-            toml::from_str("log-retention-revisions = 200\nlog-retention-keep-labels = true")
-                .unwrap();
-        assert_eq!(s.log_retention(), DaemonSettings::default().log_retention());
+        let src = shipped_with("log-retention-revisions", "200");
+        let src = src.replace("[settings]\n", "[settings]\nlog-retention-keep-labels = true\n");
+        let s = read_config(&write_config(&src)).unwrap().settings;
+        assert_eq!(s.log_retention(), shipped_settings().log_retention());
         let warnings = s.obsolete();
         assert_eq!(warnings.len(), 2, "{warnings:?}");
         assert!(warnings[0].contains("log-retention-watcher-ops"), "{warnings:?}");
@@ -468,17 +433,19 @@ mod tests {
         // No watch-backend knob: the socket is probed and the source follows
         // (doc "Watch sources and regimes"). A path where
         // nothing listens is how one stays on inotify.
-        let s: DaemonSettings = toml::from_str("watchd-socket = \"/tmp/w.sock\"").unwrap();
+        let src = shipped_with("watchd-socket", "\"/tmp/w.sock\"");
+        let s = read_config(&write_config(&src)).unwrap().settings;
         assert_eq!(s.watchd_socket, PathBuf::from("/tmp/w.sock"));
     }
 
     #[test]
     fn test_read_config_parses_the_settings_table() {
-        let path = write_config(
-            "[settings]\nwatch-quiet-period-ms = 1500\n\
-             orphan-cascade-limit = 7\nlog-retention-watcher-ops = 500\n\
-             log-retention-user-ops = 0\n",
-        );
+        let src = shipped_with("watch-quiet-period-ms", "1500");
+        let src = src.replace("orphan-cascade-limit = 10000", "orphan-cascade-limit = 7");
+        let src =
+            src.replace("log-retention-watcher-ops = 50000", "log-retention-watcher-ops = 500");
+        let src = src.replace("log-retention-user-ops = 1000000", "log-retention-user-ops = 0");
+        let path = write_config(&src);
         let config = read_config(&path).unwrap();
         assert_eq!(config.settings.watch_quiet_period_ms, 1500);
         assert_eq!(config.settings.orphan_cascade_limit, 7);
@@ -497,45 +464,24 @@ mod tests {
         // gone). Ignoring it would read as "the default" with nothing to say
         // the file was not understood, so it aborts startup like any other
         // malformed config, naming the key.
-        for src in
-            ["[settings]\nwatch-quiet-period = 250\n", "[settings]\ntree-cache-max-nodes = 42\n"]
-        {
-            let path = write_config(src);
-            let err = format!("{:#}", read_config(&path).expect_err(src));
-            assert!(err.contains("unknown field"), "{src}: {err}");
+        for key in ["watch-quiet-period", "tree-cache-max-nodes"] {
+            let src = shipped_with(key, "42");
+            let path = write_config(&src);
+            let err = format!("{:#}", read_config(&path).expect_err(key));
+            assert!(err.contains("unknown field"), "{key}: {err}");
             std::fs::remove_file(&path).unwrap();
         }
     }
 
     #[test]
-    fn test_settings_override_one_key_keeps_other_default() {
-        let parsed: DaemonSettings = toml::from_str("watch-quiet-period-ms = 250\n").unwrap();
-        assert_eq!(parsed.watch_quiet_period_ms, 250);
-        // The unspecified key keeps its default.
-        assert_eq!(parsed.orphan_cascade_limit, DEFAULT_ORPHAN_CASCADE_LIMIT);
-    }
-
-    #[test]
-    fn test_the_shipped_default_config_parses_with_the_documented_values() {
+    fn test_the_shipped_default_config_loads_nothing() {
         // The file metafolder-sync-config installs must stay readable by the
-        // daemon that reads it: a key renamed here and not there (or the other
-        // way round) is silently ignored at runtime, never reported.
+        // daemon that reads it, and auto-loads nothing until the user says so.
         let path = write_config(include_str!("../default-config/config.toml"));
         let config = read_config(&path).unwrap();
-        assert_eq!(config.settings, DaemonSettings::default());
         assert!(config.load.is_empty());
         assert!(config.known.is_empty());
         std::fs::remove_file(&path).unwrap();
-    }
-
-    #[test]
-    fn test_missing_file_yields_defaults() {
-        let path = std::env::temp_dir()
-            .join("metafolder-tests")
-            .join(format!("mf_daemon_missing_{}.toml", uuid::Uuid::new_v4()));
-        let config = read_config(&path).unwrap();
-        assert_eq!(config.settings, DaemonSettings::default());
-        assert!(config.load.is_empty());
     }
 
     /// An on-disk repository ready to be auto-loaded (init then unload), plus
@@ -545,7 +491,7 @@ mod tests {
             .join("metafolder-tests")
             .join(format!("mf_daemon_apply_{prefix}_{}", uuid::Uuid::new_v4()));
         crate::repo::seed_test_config(&root);
-        let state = crate::state::AppState::new();
+        let state = crate::state::AppState::new(shipped_settings());
         let uuid = state.init_repo(&root, None, None, false).unwrap();
         state.unload_repo(uuid).unwrap();
         let name = root.file_name().unwrap().to_str().unwrap().to_string();
@@ -555,8 +501,7 @@ mod tests {
     #[test]
     fn test_apply_interactive_renders_a_progress_bar_and_a_loaded_line() {
         let (state, root, name) = on_disk_repo("tty");
-        let config =
-            DaemonConfig { load: vec![RepoLocator::Root(root).into()], ..Default::default() };
+        let config = config_loading(vec![RepoLocator::Root(root).into()]);
         let mut out = Vec::new();
         let warnings = apply_with_progress(&state, config, &mut out, true);
         assert!(warnings.is_empty(), "{warnings:?}");
@@ -577,10 +522,10 @@ mod tests {
         // no clue about what is being waited for.
         let (state, root, name) = on_disk_repo("failing");
         let missing = root.parent().unwrap().join("mf_daemon_apply_absent");
-        let config = DaemonConfig {
-            load: vec![RepoLocator::Root(missing.clone()).into(), RepoLocator::Root(root).into()],
-            ..Default::default()
-        };
+        let config = config_loading(vec![
+            RepoLocator::Root(missing.clone()).into(),
+            RepoLocator::Root(root).into(),
+        ]);
         let mut out = Vec::new();
         let warnings = apply_with_progress(&state, config, &mut out, false);
         assert_eq!(warnings.len(), 1, "{warnings:?}");
@@ -598,8 +543,7 @@ mod tests {
         // nothing at all: name the repository *before* the work starts.
         let (state, root, name) = on_disk_repo("announce");
         let path = root.display().to_string();
-        let config =
-            DaemonConfig { load: vec![RepoLocator::Root(root).into()], ..Default::default() };
+        let config = config_loading(vec![RepoLocator::Root(root).into()]);
         let mut out = Vec::new();
         apply_with_progress(&state, config, &mut out, false);
         let out = String::from_utf8(out).unwrap();
@@ -614,8 +558,7 @@ mod tests {
     fn test_apply_non_interactive_prints_only_the_loaded_line() {
         let (state, root, name) = on_disk_repo("pipe");
         let path = root.display().to_string();
-        let config =
-            DaemonConfig { load: vec![RepoLocator::Root(root).into()], ..Default::default() };
+        let config = config_loading(vec![RepoLocator::Root(root).into()]);
         let mut out = Vec::new();
         let warnings = apply_with_progress(&state, config, &mut out, false);
         assert!(warnings.is_empty(), "{warnings:?}");

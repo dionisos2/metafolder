@@ -56,8 +56,8 @@ fn on_disk_repo(dir: &Path, name: &str) -> PathBuf {
 
 fn app_with_config(dir: &Path, contents: &str) -> Router {
     let path = dir.join("config.toml");
-    std::fs::write(&path, contents).unwrap();
-    routes::build(Arc::new(AppState::new().with_config_file(path)))
+    std::fs::write(&path, format!("{}\n{contents}", common::SHIPPED_CONFIG)).unwrap();
+    routes::build(Arc::new(AppState::new(common::settings()).with_config_file(path)))
 }
 
 #[test]
@@ -66,7 +66,8 @@ fn test_known_entries_parse_like_load_entries() {
     let path = dir.join("config.toml");
     std::fs::write(
         &path,
-        r#"
+        format!(
+            r#"{}
 [[known]]
 root = "/data/music"
 
@@ -74,6 +75,8 @@ root = "/data/music"
 metafolder = "/ssd/meta/photos/.metafolder"
 in-memory = true
 "#,
+            common::SHIPPED_CONFIG
+        ),
     )
     .unwrap();
     let config = daemon_config::read_config(&path).unwrap();
@@ -94,7 +97,11 @@ in-memory = true
 fn test_a_known_entry_with_both_locators_is_an_error() {
     let dir = TempDir::new("known_both");
     let path = dir.join("config.toml");
-    std::fs::write(&path, "[[known]]\nroot = \"/a\"\nmetafolder = \"/b\"\n").unwrap();
+    std::fs::write(
+        &path,
+        format!("{}\n[[known]]\nroot = \"/a\"\nmetafolder = \"/b\"\n", common::SHIPPED_CONFIG),
+    )
+    .unwrap();
     let err = format!("{:#}", daemon_config::read_config(&path).unwrap_err());
     assert!(err.contains("'known'"), "{err}");
 }
@@ -150,7 +157,11 @@ async fn test_the_configuration_is_read_again_at_each_lookup() {
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert!(body["error"].as_str().unwrap().contains("books"), "{body}");
 
-    std::fs::write(dir.join("config.toml"), format!("[[known]]\nroot = {:?}\n", root)).unwrap();
+    std::fs::write(
+        dir.join("config.toml"),
+        format!("{}\n[[known]]\nroot = {:?}\n", common::SHIPPED_CONFIG, root),
+    )
+    .unwrap();
     let (status, body) = request(&app, "POST", "/repos/load", Some(json!({"name": "books"}))).await;
     assert_eq!(status, StatusCode::OK, "{body}");
 }
@@ -214,8 +225,12 @@ async fn test_a_known_entry_in_memory_loads_in_memory() {
     let dir = TempDir::new("known_memory");
     let root = on_disk_repo(&dir, "music");
     let path = dir.join("config.toml");
-    std::fs::write(&path, format!("[[known]]\nroot = {:?}\nin-memory = true\n", root)).unwrap();
-    let state = Arc::new(AppState::new().with_config_file(path));
+    std::fs::write(
+        &path,
+        format!("{}\n[[known]]\nroot = {:?}\nin-memory = true\n", common::SHIPPED_CONFIG, root),
+    )
+    .unwrap();
+    let state = Arc::new(AppState::new(common::settings()).with_config_file(path));
     let app = routes::build(state.clone());
     let (_, body) = request(&app, "GET", "/repos/known", None).await;
     assert_eq!(body[0]["in_memory"], true, "{body}");
@@ -242,7 +257,7 @@ async fn test_a_load_names_exactly_one_of_root_metafolder_or_name() {
 
 #[tokio::test]
 async fn test_without_a_configuration_file_nothing_is_known() {
-    let app = routes::build(Arc::new(AppState::new()));
+    let app = routes::build(Arc::new(AppState::new(common::settings())));
     let (status, body) = request(&app, "GET", "/repos/known", None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body, json!([]));

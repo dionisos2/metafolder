@@ -107,7 +107,7 @@ async fn request(app: &Router, method: &str, uri: &str, body: Option<Json>) -> (
 
 async fn load(label: &str, scale: usize) -> Repo {
     let (root, repo) = build(label, 25 * scale, 200 * scale, 200 * scale);
-    let state = Arc::new(AppState::new());
+    let state = Arc::new(AppState::new(common::settings()));
     let app = routes::build(state.clone());
     let (status, body) =
         request(&app, "POST", "/repos/load", Some(json!({"root": root.path()}))).await;

@@ -225,8 +225,18 @@ pub fn in_userns(test: &str) -> bool {
 /// Whether a fanotify broker answers at the daemon's default socket — the
 /// condition for the `fanotify::` variants to run rather than skip.
 pub fn broker_available() -> bool {
-    std::os::unix::net::UnixStream::connect(metafolder_daemon::daemon_config::DEFAULT_WATCHD_SOCKET)
-        .is_ok()
+    std::os::unix::net::UnixStream::connect(settings().watchd_socket).is_ok()
+}
+
+/// The text of the shipped `daemon/config.toml`, which the tests start from:
+/// the daemon holds no copy of these values (doc "No runtime fallback").
+pub const SHIPPED_CONFIG: &str = include_str!("../../default-config/config.toml");
+
+/// The settings of the shipped file.
+pub fn settings() -> metafolder_daemon::daemon_config::DaemonSettings {
+    metafolder_daemon::daemon_config::parse_config(SHIPPED_CONFIG, std::path::Path::new("shipped"))
+        .unwrap()
+        .settings
 }
 
 /// A daemon state for the tests that drive the live watcher, on `regime`.
@@ -238,12 +248,12 @@ pub fn broker_available() -> bool {
 /// socket at a path where nothing listens; `Fanotify` keeps the default.
 ///
 /// The quiet period is the 500 ms these suites were written and timed against,
-/// not the shipped default (2 s, `DEFAULT_WATCH_QUIET_PERIOD_MS`). What they
+/// not the shipped default (2 s). What they
 /// check is what the watcher records, not how long it waits first — and their
 /// settle budgets (a few seconds per step) leave the 2 s default no margin on
 /// a loaded machine.
 pub fn watching_state_on(regime: Regime) -> metafolder_daemon::state::AppState {
-    let defaults = metafolder_daemon::daemon_config::DaemonSettings::default();
+    let defaults = settings();
     let watchd_socket = match regime {
         Regime::Inotify => tests_root().join("no-broker-here.sock"),
         Regime::Fanotify => defaults.watchd_socket.clone(),
@@ -254,7 +264,7 @@ pub fn watching_state_on(regime: Regime) -> metafolder_daemon::state::AppState {
         watchd_socket,
         ..defaults
     };
-    metafolder_daemon::state::AppState::new().with_settings(settings)
+    metafolder_daemon::state::AppState::new(settings)
 }
 
 /// [`watching_state_on`] the inotify source: the deterministic default for a
@@ -286,7 +296,7 @@ macro_rules! on_every_regime {
                         eprintln!(
                             "SKIP fanotify::{}: no broker at {}",
                             stringify!($name),
-                            metafolder_daemon::daemon_config::DEFAULT_WATCHD_SOCKET,
+                            super::common::settings().watchd_socket.display(),
                         );
                         return;
                     }

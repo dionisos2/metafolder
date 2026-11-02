@@ -21,7 +21,7 @@ fn setup(prefix: &str) -> (Arc<RepoState>, TempDir, Uuid) {
     let root = TempDir::new(&format!("exec_{prefix}"));
     common::seed_config(&root);
     let opened = repo::init_repository(&root, None, None, false).unwrap();
-    let repo_state = Arc::new(RepoState::from_opened(opened));
+    let repo_state = Arc::new(RepoState::from_opened_with(opened, &common::settings()));
 
     let root_uuid = {
         let conn = repo_state.conn.lock().unwrap();
@@ -1281,7 +1281,7 @@ fn test_a_cascade_larger_than_the_limit_is_refused() {
     let opened = repo::init_repository(&root, None, None, false).unwrap();
     let settings = metafolder_daemon::daemon_config::DaemonSettings {
         orphan_cascade_limit: 3,
-        ..Default::default()
+        ..common::settings()
     };
     let repo_state = Arc::new(RepoState::from_opened_with(opened, &settings));
     let root_uuid = {

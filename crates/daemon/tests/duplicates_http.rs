@@ -40,7 +40,7 @@ async fn request(
 }
 
 async fn setup(prefix: &str) -> (Router, String, TempDir) {
-    let app = routes::build(std::sync::Arc::new(AppState::new()));
+    let app = routes::build(std::sync::Arc::new(AppState::new(common::settings())));
     let root = TempDir::new(&format!("duphttp_{prefix}"));
     common::seed_config(&root);
     let (status, body) =

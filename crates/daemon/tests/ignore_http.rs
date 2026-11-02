@@ -43,7 +43,7 @@ async fn request(
 /// guard keeps the root on disk: a repository whose root is gone answers
 /// nothing (doc "When the root moves").
 async fn setup() -> (Router, String, TempDir) {
-    let app = routes::build(std::sync::Arc::new(AppState::new()));
+    let app = routes::build(std::sync::Arc::new(AppState::new(common::settings())));
     let root = TempDir::new("ignhttp");
     std::fs::create_dir_all(root.join("work")).unwrap();
     common::seed_config(&root);

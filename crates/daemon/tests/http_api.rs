@@ -19,7 +19,7 @@ fn temp_dir(prefix: &str) -> TempDir {
 }
 
 fn app() -> Router {
-    routes::build(std::sync::Arc::new(AppState::new()))
+    routes::build(std::sync::Arc::new(AppState::new(common::settings())))
 }
 
 async fn request(

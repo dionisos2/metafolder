@@ -90,7 +90,7 @@ fn a_damaged_store_leaves_the_previous_backup_in_place() {
 fn the_automatic_backup_is_taken_when_due() {
     const DAY: i64 = 24 * 3600 * 1000;
     let (opened, _root) = repository();
-    let state = RepoState::from_opened(opened);
+    let state = RepoState::from_opened_with(opened, &common::settings());
     let now = metafolder_core::date::now_ms();
     assert!(state.auto_backup_if_due(now, 0).unwrap().is_none(), "off");
     let first = state.auto_backup_if_due(now, 1).unwrap().expect("none yet: due");
@@ -298,7 +298,7 @@ fn a_backup_in_progress_is_a_task() {
     use std::time::{Duration, Instant};
 
     let (opened, _root) = repository();
-    let state = Arc::new(RepoState::from_opened(opened));
+    let state = Arc::new(RepoState::from_opened_with(opened, &common::settings()));
     let held = state.conn.lock().unwrap();
     let backing_up = state.clone();
     let backup = std::thread::spawn(move || {
