@@ -645,47 +645,96 @@ async fn bench_repo_watcher(url: &str, repo: &DataRepo) -> Result<()> {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    // `[mode] [--small DIR] [--big DIR] [scenario...]`. mode: data (default),
-    // gui, attach. Trailing names are GUI scenarios (attach mode only).
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let mut mode: Option<String> = None;
-    let mut small = PathBuf::from(DEFAULT_SMALL_DIR);
-    let mut big = PathBuf::from(DEFAULT_BIG_DIR);
-    let mut rest: Vec<String> = Vec::new();
-    let mut opts = regression::Options::default();
-    let mut session_opts = session::Options::default();
+const USAGE: &str = "\
+Usage: metafolder-bench [mode] [options] [scenario...]
+
+Modes:
+  data         the daemon-side suite on both data folders (default)
+  gui          the same, plus the GUI scenarios (a window opens)
+  attach       drive an already-running GUI; takes scenario names
+  regression   the timed regression suite (doc \"The timed regression suite\")
+  session      the session scenario (doc \"The session scenario\")
+
+data, gui:
+  --small DIR, --big DIR    the two data folders
+
+regression:
+  --quick, --big, --real, --api, --no-history, --report
+  --filter PREFIX, --tolerance FRACTION
+
+session:
+  --data DIR, --unsandboxed, --calibrate, --record, --force, --keep
+";
+
+/// The command line, parsed.
+#[derive(Default)]
+struct Args {
+    mode: Option<String>,
+    small: Option<PathBuf>,
+    big: Option<PathBuf>,
+    /// GUI scenarios (attach mode only).
+    scenarios: Vec<String>,
+    help: bool,
+    regression: regression::Options,
+    session: session::Options,
+}
+
+/// Parses `[mode] [--small DIR] [--big DIR] [scenario...]`. mode: data (default),
+/// gui, attach, regression, session.
+fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args> {
+    let mut parsed = Args::default();
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         match a.as_str() {
-            "--small" => small = it.next().context("--small needs a path")?.into(),
-            "--big" if mode.as_deref() != Some("regression") => {
-                big = it.next().context("--big needs a path")?.into()
+            "--small" => parsed.small = Some(it.next().context("--small needs a path")?.into()),
+            "--big" if parsed.mode.as_deref() != Some("regression") => {
+                parsed.big = Some(it.next().context("--big needs a path")?.into())
             }
             // Regression-suite options (doc "The timed regression suite").
-            "--quick" => opts.quick = true,
-            "--big" => opts.big = true,
-            "--real" => opts.real = true,
-            "--api" => opts.api = true,
-            "--no-history" => opts.no_history = true,
-            "--report" => opts.report = true,
-            "--filter" => opts.filter = Some(it.next().context("--filter needs a prefix")?),
+            "--quick" => parsed.regression.quick = true,
+            "--big" => parsed.regression.big = true,
+            "--real" => parsed.regression.real = true,
+            "--api" => parsed.regression.api = true,
+            "--no-history" => parsed.regression.no_history = true,
+            "--report" => parsed.regression.report = true,
+            "--filter" => {
+                parsed.regression.filter = Some(it.next().context("--filter needs a prefix")?)
+            }
             "--tolerance" => {
-                opts.tolerance =
+                parsed.regression.tolerance =
                     it.next().context("--tolerance needs a fraction")?.parse::<f64>()?
             }
             // Session options (doc "The session scenario").
-            "--data" => session_opts.data = it.next().context("--data needs a path")?.into(),
-            "--unsandboxed" => session_opts.unsandboxed = true,
-            "--calibrate" => session_opts.calibrate = true,
-            "--record" => session_opts.record = true,
-            "--force" => session_opts.force = true,
-            "--keep" => session_opts.keep = true,
-            s if mode.is_none() && !s.starts_with('-') => mode = Some(s.to_string()),
-            _ => rest.push(a),
+            "--data" => parsed.session.data = it.next().context("--data needs a path")?.into(),
+            "--unsandboxed" => parsed.session.unsandboxed = true,
+            "--calibrate" => parsed.session.calibrate = true,
+            "--record" => parsed.session.record = true,
+            "--force" => parsed.session.force = true,
+            "--keep" => parsed.session.keep = true,
+            "-h" | "--help" => parsed.help = true,
+            s if s.starts_with('-') => bail!("unknown option '{s}' (try --help)"),
+            s if parsed.mode.is_none() => parsed.mode = Some(s.to_string()),
+            _ => parsed.scenarios.push(a),
         }
     }
+    if let Some(stray) = parsed.scenarios.first() {
+        if parsed.mode.as_deref() != Some("attach") {
+            bail!("unexpected argument '{stray}': only attach takes scenario names");
+        }
+    }
+    Ok(parsed)
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let Args { mode, small, big, scenarios: rest, help, regression: opts, session: session_opts } =
+        parse_args(std::env::args().skip(1))?;
+    if help {
+        print!("{USAGE}");
+        return Ok(());
+    }
+    let small = small.unwrap_or_else(|| PathBuf::from(DEFAULT_SMALL_DIR));
+    let big = big.unwrap_or_else(|| PathBuf::from(DEFAULT_BIG_DIR));
 
     match mode.as_deref().unwrap_or("data") {
         "data" => run_data_suite(&small, &big, false).await,
@@ -792,5 +841,55 @@ mod tests {
             let full = cli_args(DAEMON_PORT, Some(Uuid::nil()), &args);
             assert!(accepts(&mf, &full), "{label}: mf refuses {full:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod args_tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<Args> {
+        parse_args(args.iter().map(|a| a.to_string()))
+    }
+
+    fn error(args: &[&str]) -> String {
+        match parse(args) {
+            Ok(_) => panic!("{args:?} was accepted"),
+            Err(e) => e.to_string(),
+        }
+    }
+
+    #[test]
+    fn an_unknown_option_is_an_error_naming_it() {
+        assert!(error(&["--nonsense"]).contains("--nonsense"));
+        assert!(error(&["regression", "--nonsense"]).contains("--nonsense"));
+    }
+
+    #[test]
+    fn a_name_after_the_mode_is_refused_outside_attach() {
+        assert!(error(&["data", "stray"]).contains("stray"));
+        assert!(error(&["regression", "stray"]).contains("stray"));
+    }
+
+    #[test]
+    fn attach_takes_scenario_names() {
+        let parsed = parse(&["attach", "one", "two"]).unwrap();
+        assert_eq!(parsed.scenarios, ["one", "two"]);
+    }
+
+    #[test]
+    fn help_is_asked_for_and_runs_nothing() {
+        assert!(parse(&["--help"]).unwrap().help);
+        assert!(parse(&["-h"]).unwrap().help);
+        assert!(parse(&["regression", "--help"]).unwrap().help);
+    }
+
+    #[test]
+    fn the_known_options_still_parse() {
+        let parsed = parse(&["regression", "--big", "--quick", "--filter", "log"]).unwrap();
+        assert!(parsed.regression.big && parsed.regression.quick);
+        assert_eq!(parsed.regression.filter.as_deref(), Some("log"));
+        let parsed = parse(&["--small", "a", "--big", "b"]).unwrap();
+        assert_eq!(parsed.big, Some(PathBuf::from("b")));
     }
 }
