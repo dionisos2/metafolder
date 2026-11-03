@@ -39,19 +39,36 @@ would type into whatever the user is doing. A desktop's own shortcuts can catch
 keys too. On the first tries, on a real display under bépo, every `e` that `xdotool`
 typed opened the file manager (Xfce binds Super+E to it) instead of reaching the GUI.
 Later, with the same keymap, the same keys came through intact; the cause was not
-found. On `Xvfb` nothing else listens to the keys, and its keymap is US. Without `Xvfb`
-or `xdotool`, these scenarios are a loud `SKIP`.
+found. On `Xvfb` nothing else listens to the keys, and its keymap is US. Without `Xvfb`,
+`xdotool`, `node` or the inspector, these scenarios are a loud `SKIP`.
 
-A key changes nothing the scenario can read until the GUI has acted on it, and some of
-those moments leave no trace: a command-input prompt opening, `ctrl+p` loading the
-history. So a scenario arranges for a key pressed too early to do nothing:
+A key changes nothing until the GUI has acted on it, and what it does may finish later
+still: a field taking the focus, a question opening, `ctrl+p` reading the history. Keys
+that depend on it wait for the state it leaves, read through the inspector, never for a
+duration: `sleep 1` passes on an idle machine and fails on a loaded one, where this suite
+used to fail in every run (with twice as many busy loops as cores).
 
-* `Escape` with no prompt open runs nothing. The `open-with` scenario presses it until its command ends: once it ends, the prompt was there.
-* A harmless command typed first: if the history's recall is late, `Return` runs `status:clear`. An empty line would run the first completion offered.
+* `focused <selector>`, `no_field`: where the keyboard is.
+* `leave_fields`: `Escape`, then waits until no text field holds the focus. Pressed just before a panel changes, an `Escape` not yet handled left the focus in a field, where the next binding does not fire.
+* `command_line`: `leave_fields`, then `:`, then waits for the command input's focus.
+* `answer <text>`: waits for a question open in the command input, with nothing typed, then types. The line empties when the previous answer is taken, so the question just answered is not mistaken for the next.
+* `until_ok 10 reads <text> <selector>` before `Return`, when a key fills a field.
+* `saving <check…>`: `ctrl+s` pressed again until the check holds, since the keybindings form saves nothing until its own check has answered, which leaves no trace.
+
+`until_ok` gives three times the seconds it names: a wait that holds ends at once, so the time goes only to one that fails. `show_panel` waits two minutes per try, because a try given up on goes on in the GUI: late in the suite, with some fifty repositories, `view:refresh repos` took 18 s on a loaded machine, and retried every 10 s the refreshes piled up until the panel stopped answering at all.
 
 A letter pressed with no text field focused is a binding (`n` switches workspace, `t h`
 opens the help). That is why a scenario never types text before a field is known to
-hold the focus.
+hold the focus. And a key pressed right after a field's `Return` may still land in the
+field: wait for `no_field` first.
+
+Where the wait is that nothing happens (a refused key, a binding that writes nothing)
+there is no state to read: a `sleep` remains, and at worst it lets a regression pass.
+
+A key pressed too early can also be made harmless:
+
+* `Escape` with no prompt open runs nothing. The `open-with` scenario presses it until its command ends: once it ends, the prompt was there.
+* A harmless command typed first: if the history's recall fails, `Return` runs `status:clear`. An empty line would run the first completion offered.
 
 !! Clicks
 
@@ -103,9 +120,9 @@ message of the command before it.
 
 It needs the binaries and the frontend built ([[Building]]), the configuration
 installed (the GUI reads its panels from it — [[Updating the configuration]]), and
-`Xvfb` or a display; the keyboard scenarios need `Xvfb` and `xdotool`. `--unsandboxed` passes `--allow-unsandboxed-webview`, for a container that
-forbids WebKit's sandbox ([[Sandboxing the media decoders]]). A run takes about ten
-seconds, most of it the GUI starting. It is not part of `scripts/dev/check.sh`, which runs
+`Xvfb` or a display; the keyboard scenarios need `Xvfb`, `xdotool` and `node`. `--unsandboxed` passes `--allow-unsandboxed-webview`, for a container that
+forbids WebKit's sandbox ([[Sandboxing the media decoders]]). A full run takes about three
+minutes on an idle machine. It is not part of `scripts/dev/check.sh`, which runs
 without a display. `METAFOLDER_BIN_DIR` (default `target/debug`) names the directory of
 the binaries; [[Measuring coverage]] points it at instrumented ones, and the run ends
 by quitting the GUI through its `quit` command — never a kill — so that their profiles
@@ -128,7 +145,7 @@ then `status_is <name> <kind> <glob>`, `command_ok`, or the `assert_*` of
 selection (through the `viewer` panel); `show_panel <slot> <type> <command>` shows a
 panel and waits until one of its commands answers. A keyboard scenario starts with
 `needs_keyboard <name> || return 0`, then presses keys with `keys` (`xdotool` names:
-`colon`, `Return`, `ctrl+p`) and types text with `typed`. A clicking one starts with
+`colon`, `Return`, `ctrl+p`) and types text with `typed`, once the field is known to have the focus (see Keys pressed). A clicking one starts with
 `needs_clicks <name> || return 0` and clicks with `until_ok 10 click …`;
 `shows <selector> <text>` is true when exactly one such element is visible, `webview text …`
 prints it. Add the name to the default

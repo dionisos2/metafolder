@@ -17,7 +17,8 @@
 # keybindings open-with) need it and xdotool: they press keys where no command
 # reaches — the keybindings panel, the command input — and on a real display they
 # would type into whatever the user is doing, or into the desktop's own
-# shortcuts. Without both they are a loud SKIP.
+# shortcuts. They also need node and the inspector below, to know when a key has
+# acted. Without all of them they are a loud SKIP.
 #
 # What only a mouse reaches (a tab's close button, the field editor's picker
 # button, the keybindings panel's Remove) is clicked through WebKit's remote
@@ -38,7 +39,7 @@
 #   - Xvfb (Arch: xorg-server-xvfb), else a display ($DISPLAY or
 #     $WAYLAND_DISPLAY) and no keyboard scenario;
 #   - xdotool, for the keyboard scenarios;
-#   - node, for the clicking ones.
+#   - node, for the keyboard and clicking ones.
 #
 # METAFOLDER_BIN_DIR (default target/debug) names the directory of the three
 # binaries; scripts/dev/coverage.sh points it at instrumented ones, which is why
@@ -278,8 +279,10 @@ show_panel() {
     # (`view:refresh repos`).
     local command="$*"
     mfg view "$slot" "$type" >/dev/null || die "view $slot $type"
+    # A generous timeout: it only retries a panel not mounted yet. A try given up on
+    # goes on in the GUI, and a slow panel's next one would pile on top of it.
     for _ in $(seq 1 40); do
-        mfg command --timeout-ms 10000 "$command" >/dev/null 2>&1 && return 0
+        mfg command --timeout-ms 120000 "$command" >/dev/null 2>&1 && return 0
         sleep 0.25
     done
     die "the $type panel never answered $command"
@@ -330,8 +333,8 @@ command_ok() { assert_eq "$1" "0" "$LAST_RC"; }
 # needs_keyboard <scenario> — false, and a loud SKIP, when keys cannot be
 # pressed: no private X server or no xdotool (see the header).
 needs_keyboard() {
-    $KEYBOARD && return 0
-    printf 'SKIP %s: needs Xvfb and xdotool (keys are only pressed on a private display)\n' "$1"
+    $KEYBOARD && inspector_answers && return 0
+    printf 'SKIP %s: needs Xvfb and xdotool (keys are only pressed on a private display), and node and the WebKit inspector (to know when a key has acted)\n' "$1"
     return 1
 }
 
@@ -342,13 +345,16 @@ typed() { xdotool windowfocus --sync "$GUI_WIN" type --delay 30 -- "$1"; }
 
 # needs_clicks <scenario> — false, and a loud SKIP, when nothing can click.
 CLICKS=""
-needs_clicks() {
-    # Asked once: the inspector answers for the shell's page.
+# Asked once: the inspector answers for the shell's page.
+inspector_answers() {
     if [ -z "$CLICKS" ]; then
         CLICKS=false
         command -v node >/dev/null && webview ready >/dev/null 2>&1 && CLICKS=true
     fi
-    $CLICKS && return 0
+    $CLICKS
+}
+needs_clicks() {
+    inspector_answers && return 0
     printf 'SKIP %s: needs node and the WebKit inspector (clicks go through it)\n' "$1"
     return 1
 }
@@ -373,6 +379,38 @@ not_reads() {
     shift
     got=$(webview text "$@" 2>/dev/null) && [ "$got" != "$want" ]
 }
+
+# A key acts when the GUI gets to it, and what it does may finish later still (a
+# field taking the focus, a question opening). Keys that depend on it wait for the
+# state it leaves, never for a duration: on a loaded machine any duration is short.
+COMMAND_LINE='.command-input input'
+# focused <selector…> — that element holds the keyboard focus.
+focused() { webview focused "$@" >/dev/null 2>&1; }
+# no_field — no text field holds the focus: a letter pressed now is a binding.
+no_field() { webview no-field >/dev/null 2>&1; }
+# leave_fields — presses Escape and waits until it has left any text field.
+leave_fields() {
+    keys Escape
+    assert "keys: Escape leaves the field" until_ok 10 no_field
+}
+# command_line — the command input, focused through its `:` binding.
+command_line() {
+    leave_fields
+    keys colon
+    assert "keys: the colon focuses the command input" until_ok 10 focused "$COMMAND_LINE"
+}
+# question_open — a question waits in the command input, which holds the focus.
+question_open() {
+    not_reads ":" '.command-input .prompt' && focused "$COMMAND_LINE"
+}
+# answer <text> — once a question is open with nothing typed, types the answer.
+# The line empties when the previous answer is taken, so this cannot mistake the
+# question just answered for the next one.
+answer() {
+    assert "keys: the question opens" until_ok 10 question_empty
+    typed "$1"
+}
+question_empty() { reads "" "$COMMAND_LINE" && question_open; }
 
 # ── scenarios ────────────────────────────────────────────────────────────────
 
@@ -401,8 +439,9 @@ scenario_duplicates() {
     run mf:duplicate scan
     command_ok "duplicate scan: the command resolves"
     status_is "duplicate scan: one group of two" info "Duplicates: 1 groups, 2 files, 11B reclaimable."
+    # Not --last 1: the repository's watcher may report its start after the scan.
     assert_contains "duplicate scan: the detail is in the log" \
-        "$(mfg messages --workspace "$WS" --last 1)" '"groups": 1'
+        "$(mfg messages --workspace "$WS" --last 5)" '"groups": 1'
 }
 
 scenario_orphans() {
@@ -446,12 +485,11 @@ scenario_edit_text() {
     assert_eq "edit-text: the file is untouched" "one" "$(cat "$REPO_DIR/f.txt")"
 
     needs_keyboard edit-text || return 0
-    # The panel reads the file after the selection moves, and nothing says when:
-    # the wait keeps a letter from being taken for a binding.
-    sleep 1
+    # The panel reads the file after the selection moves: the field shows it first.
+    until_ok 10 reads one '[data-mf-focus="viewer-text"]'
     run viewer:focus text
     command_ok "edit-text: viewer:focus text runs"
-    sleep 0.5
+    assert "edit-text: the field takes the focus" until_ok 10 focused '[data-mf-focus="viewer-text"]'
     keys ctrl+e
     typed "two"
     keys ctrl+s
@@ -459,9 +497,9 @@ scenario_edit_text() {
 
     # file:new makes empty files: they must open for editing too.
     select_path "$REPO_DIR/empty.txt"
-    sleep 1
+    until_ok 10 reads "" '[data-mf-focus="viewer-text"]'
     run viewer:focus text
-    sleep 0.5
+    assert "edit-text: the empty file's field takes the focus" until_ok 10 focused '[data-mf-focus="viewer-text"]'
     typed "new"
     keys ctrl+s
     assert "edit-text: an empty file can be edited" until_ok 5 grep -q new "$REPO_DIR/empty.txt"
@@ -532,21 +570,20 @@ scenario_field_keys() {
     local f
     f=$(record "$REPO_DIR/f.txt")
     select_path "$REPO_DIR/f.txt"
-    sleep 1
+    assert "field keys: the viewer shows it" until_ok 10 selected_is "$f"
+    leave_fields
     keys m a
-    sleep 1
-    typed "e2e_tag"
+    answer "e2e_tag"
     keys Return
-    sleep 0.5
-    typed "string"
+    answer "string"
     keys Return
-    sleep 0.5
-    typed "from-the-file-panel"
+    answer "from-the-file-panel"
     keys Return
     assert "field keys: m a adds a field from the viewer panel" \
         until_ok 10 field_is "$f" e2e_tag from-the-file-panel
 }
 field_is() { [ "$(df_mf metarecord -i "$1" field get "$2" 2>/dev/null)" = "$3" ]; }
+selected_is() { [[ "$(ws_var selected_metarecord)" == *"$1"* ]]; }
 
 scenario_reconcile() {
     new_repo reconcile
@@ -914,9 +951,12 @@ scenario_layout() {
     mfg layout left "$WS" >/dev/null
 }
 
-# until <seconds> <command…> — polls until the command succeeds.
+# until_ok <seconds> <command…> — polls until the command succeeds. Each second
+# named is three: a wait that holds ends as soon as it holds, and the time goes only
+# to one that fails, while late in the suite on a loaded machine a panel takes that
+# long. The tries are counted, not timed: the command itself may take a while.
 until_ok() {
-    local tries=$(($1 * 4))
+    local tries=$(($1 * 12))
     shift
     for _ in $(seq 1 "$tries"); do
         "$@" && return 0
@@ -1176,9 +1216,7 @@ scenario_history() {
     new_repo history
     local file="$REPO_DIR/.metafolder/gui/history/shell:command"
 
-    # Escape first: with no text field focused, ':' is the binding that
-    # focuses the command input, not a character typed somewhere.
-    keys Escape colon
+    command_line
     typed "workspace:rename Typed name"
     keys Return
     assert "history: the typed command runs" until_ok 10 named "Typed name"
@@ -1186,14 +1224,14 @@ scenario_history() {
         grep -qx "workspace:rename Typed name" "$file"
 
     run workspace:rename Other
-    # ctrl+p reads the history before it recalls: return waits a second for
-    # it. Typed first, `status:clear` is what return runs if the recall is
-    # late — a failure that changes nothing, where an empty line would run
+    # ctrl+p reads the history before it recalls: return waits for the line to
+    # show it. Typed first, `status:clear` is what return runs if the recall
+    # fails — a failure that changes nothing, where an empty line would run
     # whatever the completion list offers first.
-    keys Escape colon
+    command_line
     typed "status:clear"
     keys ctrl+p
-    sleep 1
+    until_ok 10 reads "workspace:rename Typed name" "$COMMAND_LINE"
     keys Return
     assert "history: ctrl+p recalls it" until_ok 10 named "Typed name"
 
@@ -1308,13 +1346,16 @@ scenario_macro() {
     needs_keyboard macro || return 0
     new_repo macro
     local file="$CONFIG_HOME/metafolder/gui/macros.js"
+    local RECORDING="recording a macro: macro:toggle-recording again to stop"
 
     keys Escape F3
-    keys colon
+    until_ok 10 says "$RECORDING"
+    command_line
     typed "workspace:rename Recorded"
     keys Return
     assert "macro: the typed command runs while recording" until_ok 10 named "Recorded"
     keys Escape F3
+    until_ok 10 says "macro recorded: 1 command"
     status_is "macro: stopping keeps one command" info "macro recorded: 1 command"
 
     run workspace:rename Other
@@ -1334,25 +1375,31 @@ scenario_macro() {
     assert_eq "macro: a name taken is refused" "1" "$LAST_RC"
 
     # Marked with ctrl+g, the new name is asked at each run.
-    keys Escape F3 colon
+    keys Escape F3
+    until_ok 10 says "$RECORDING"
+    command_line
     typed "workspace:rename"
     keys Return
     # The question opens in the command input, which takes the keys.
-    sleep 1
+    assert "macro: the rename asks" until_ok 10 question_open
     keys ctrl+g ctrl+a ctrl+k
     typed "First"
     keys Return
     assert "macro: the marked rename ran" until_ok 10 named "First"
     keys Escape F3
+    until_ok 10 says "macro recorded: 1 command"
     mfg command --timeout-ms 20000 macro:run >/dev/null 2>&1 &
     local runner=$!
-    sleep 1
+    assert "macro: the run asks" until_ok 10 question_open
     keys ctrl+a ctrl+k
     typed "Second"
     keys Return
     wait "$runner"
     assert_eq "macro: the run took the new answer" "Second" "$(ws_name)"
 }
+# saving <check…> — ctrl+s, pressed again until the check holds: the form saves
+# nothing until its own check of what was typed has answered, which leaves no trace.
+saving() { "$@" && return 0; keys ctrl+s; "$@"; }
 # bound <combo> — keybindings.toml has an entry for the combo.
 bound() { grep -q "^\"$1\" =" "$CONFIG_HOME/metafolder/gui/keybindings.toml"; }
 unbound() { ! bound "$1"; }
@@ -1373,9 +1420,8 @@ scenario_keybindings() {
     keys Return
     sleep 1
     assert_not "keybindings: Enter does not write the binding" grep -q '"ctrl+alt+u"' "$file"
-    keys ctrl+s
     assert "keybindings: ctrl+s writes the binding" \
-        until_ok 10 grep -qx '"ctrl+alt+u" = { command = "status:clear" }' "$file"
+        until_ok 10 saving grep -qx '"ctrl+alt+u" = { command = "status:clear" }' "$file"
     # A row's checkbox: Save appears once changed, and writes it.
     if needs_clicks keybindings; then
         assert "keybindings: a row's text-input checkbox changes" \
@@ -1416,7 +1462,7 @@ scenario_keybindings() {
     keys ctrl+s
     sleep 1
     assert_not "keybindings: an unknown command is not saved" grep -q '"ctrl+alt+j"' "$file"
-    keys Escape
+    leave_fields
 
     show_panel left e2e-keys e2e-keys:ping
     mfg message --workspace "$WS" "e2e: before ctrl+alt+y" >/dev/null
@@ -1442,6 +1488,7 @@ scenario_validate_keys() {
     keys Return
     assert "validate: Enter applies the simplified query" \
         until_ok 10 query_is 'note = "hello"'
+    until_ok 10 no_field
     typed "z"
     assert "validate: Enter has left the field" reads "note=hello" '#query-input'
 
@@ -1458,6 +1505,7 @@ scenario_validate_keys() {
     run config:focus filter
     typed "cli"
     keys Return
+    until_ok 10 no_field
     typed "z"
     assert "validate: Enter leaves a filter" reads "cli" '#file-filter'
 }
@@ -1599,14 +1647,19 @@ scenario_repos_memory() {
     local dir="$WORK/repos/held"
     mkdir -p "$dir"
     df_mf repo init --name held "$dir" >/dev/null
-    # -u: the fixture exports METAFOLDER_REPO, which -n would contradict.
-    df_mf -u "$(repo_named held)" repo unload >/dev/null
+    # -u: the fixture exports METAFOLDER_REPO, which -n would contradict. Refused
+    # while it warms up; still loaded, Load in memory would change nothing.
+    local held_uuid
+    held_uuid=$(repo_named held)
+    assert "repos memory: the new repository is let go of" \
+        until_ok 30 df_mf -u "$held_uuid" repo unload
     show_panel left repos view:refresh repos
 
     # The load form's own button loads it with its store held in memory (doc
     # "Holding a repository in memory").
     assert "repos memory: the load form opens" until_ok 10 click '#show-load'
     assert "repos memory: its root field takes the keyboard" until_ok 10 click '#load-root'
+    assert "repos memory: the field holds the focus" until_ok 10 focused '#load-root'
     typed "$dir"
     assert "repos memory: Load in memory is clicked" until_ok 10 click '#load-memory'
     assert "repos memory: the daemon holds the store in memory" until_ok 10 held held
@@ -1747,9 +1800,8 @@ scenario_suggested_key() {
     typed "e2e-keys:ping"
     keys Tab
     typed "e2e-keys"
-    keys ctrl+s
     assert "suggested key: saving writes it to the file" \
-        until_ok 10 grep -q '^"ctrl+alt+y"' "$file"
+        until_ok 10 saving grep -q '^"ctrl+alt+y"' "$file"
 
     mfg message --workspace "$WS" "e2e: before ctrl+alt+y" >/dev/null
     run e2e-keys:ping
@@ -1894,16 +1946,21 @@ scenario_help_keys() {
     # `p E`: the panel's field, edited from empty (doc "Choosing keybindings").
     keys p shift+e
     # Emptied and focused in one step: typed earlier, the letters would be keys.
-    until_ok 10 reads "" "#help-search"
+    until_ok 10 focused "#help-search"
     typed "trash"
     assert "help-keys: p E empties the box and goes into it" until_ok 10 reads "trash" "#help-search"
-    keys Return p shift+e
+    keys Return
+    assert "help-keys: Enter leaves the box" until_ok 10 no_field
+    keys p shift+e
     assert "help-keys: p E empties the box again" until_ok 10 reads "" "#help-search"
+    assert "help-keys: p E goes into it again" until_ok 10 focused "#help-search"
     # `Ctrl+h k` while typing: the two keys and the key asked about stay out of the
     # box, and `h` alone is still text (doc "Keybinding variables").
     typed "ah"
     until_ok 10 reads "ah" "#help-search"
-    keys ctrl+h k q
+    keys ctrl+h k
+    until_ok 10 says "Describe which key? (escape cancels)"
+    keys q
     sleep 0.5
     assert "help-keys: Ctrl+h k in a field asks about the next key, typing nothing" \
         until_ok 10 reads "ah" "#help-search"
@@ -2184,10 +2241,10 @@ scenario_walk() {
 
     run cursor:find file-manager walk a/
     assert "walk: a directory named is entered" until_ok 10 fm_at /a
-    typed "b"
+    answer "b"
     keys Return
     assert "walk: and the question asked again inside it" until_ok 10 fm_at /a/b
-    typed "c.txt"
+    answer "c.txt"
     keys Return
     assert "walk: a file named is selected" until_ok 10 fm_at /a/b c.txt
 
@@ -2195,7 +2252,7 @@ scenario_walk() {
     run cursor:parent file-manager
     run cursor:find file-manager walk a/
     assert "walk: again from the root" until_ok 10 fm_at /a
-    typed "b"
+    answer "b"
     keys shift+Return
     assert "walk: shift+return stops on the directory, selected" until_ok 10 fm_at /a b
 
@@ -2207,22 +2264,18 @@ scenario_walk() {
     run path-ref:set field mfr_path
     run cursor:find path-ref walk /
     for name in a b; do
-        sleep 1
-        typed "$name"
+        answer "$name"
         keys Return
     done
-    sleep 1
-    typed "c.txt"
+    answer "c.txt"
     keys Return
     assert "walk (path-ref): a leaf named is selected" until_ok 10 tree_at /a/b/c.txt
 
     run cursor:root path-ref
     run cursor:find path-ref walk /
-    sleep 1
-    typed "a"
+    answer "a"
     keys Return
-    sleep 1
-    typed "b"
+    answer "b"
     keys shift+Return
     assert "walk (path-ref): shift+return stops on the node, selected" until_ok 10 tree_at /a/b
 }

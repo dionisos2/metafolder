@@ -26,6 +26,11 @@
 //       prints the CSS zoom of the panel body holding that element
 //   scroll <selector> [<text> [<inner selector> [<inner text>]]]
 //       prints how far that element is scrolled down (its scrollTop, rounded)
+//   focused <selector> [<text> [<inner selector> [<inner text>]]]
+//       succeeds when that element holds the keyboard focus
+//   no-field
+//       succeeds when no text field holds the keyboard focus, so a letter pressed
+//       now is a binding
 // Exit status: 0 done, 1 not exactly one element matches (nothing clicked),
 // 2 no page or a protocol error.
 
@@ -44,6 +49,16 @@ function inPage(action, args) {
   const visible = (e) => e.getClientRects().length > 0;
   const holds = (e, t) => t === undefined || t === '' || (e.textContent ?? '').includes(t);
   if (action === 'ready') return 'ready';
+  let active = document.activeElement;
+  while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+  if (action === 'no-field') {
+    const inField =
+      active instanceof HTMLInputElement ||
+      active instanceof HTMLTextAreaElement ||
+      active instanceof HTMLSelectElement ||
+      /** @type {HTMLElement|null} */ (active)?.isContentEditable;
+    return inField ? { miss: `the focus is in ${active.tagName}` } : 'no field';
+  }
   let hits = deep(document, selector).filter((e) => visible(e) && holds(e, text));
   if (inner !== undefined) {
     hits = hits
@@ -59,6 +74,9 @@ function inPage(action, args) {
     return 'clicked';
   }
   const hit = hits[0];
+  if (action === 'focused') {
+    return hit === active ? 'focused' : { miss: `the focus is in ${active?.tagName}` };
+  }
   if (action === 'bounds') {
     const rect = hit.getBoundingClientRect();
     return [rect.left, rect.top, rect.right, rect.bottom].map(Math.round).join(' ');
@@ -89,8 +107,8 @@ function fail(code, message) {
   process.exit(code);
 }
 
-if (!['ready', 'click', 'bounds', 'contextmenu', 'text', 'zoom', 'scroll'].includes(action)) fail(2, `unknown action ${action}`);
-if (action !== 'ready' && !args[0]) fail(2, `${action} needs a selector`);
+if (!['ready', 'no-field', 'click', 'bounds', 'contextmenu', 'text', 'zoom', 'scroll', 'focused'].includes(action)) fail(2, `unknown action ${action}`);
+if (action !== 'ready' && action !== 'no-field' && !args[0]) fail(2, `${action} needs a selector`);
 
 const timer = setTimeout(() => fail(2, `no answer from the page within ${TIMEOUT_MS} ms`), TIMEOUT_MS);
 const socket = new WebSocket(`ws://${address}/socket/1/1/WebPage`);
