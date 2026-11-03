@@ -849,6 +849,9 @@ async fn test_a_move_plan_carries_the_exact_bytes_of_its_paths() {
 /// before either can take it; the look and the taking were two steps, and both
 /// starts succeeded, the second replacing the first's operations.
 #[tokio::test(flavor = "multi_thread")]
+// Holding the store across the wait is the test: the starts run on other
+// threads and block on it.
+#[allow(clippy::await_holding_lock)]
 async fn test_two_concurrent_starts_enter_the_lock_once() {
     let state = Arc::new(common::watching_state());
     let app = routes::build(state.clone());
