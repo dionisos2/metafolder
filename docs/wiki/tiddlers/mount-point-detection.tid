@@ -18,7 +18,11 @@ snapshot whenever the kernel signals a change of the table, which it follows for
 watch set ([[Offline subtrees]]). Paths are matched verbatim
 against the table's canonical form: every path the daemon builds starts at the
 canonicalised root and never crosses a symlinked directory, so no per-probe
-`canonicalize` is needed.
+`canonicalize` is needed. The table is read as bytes: the kernel writes a mount point's
+name as it is (escaping only space, tab, newline and backslash), so one name that is not
+UTF-8, anywhere on the machine, made a table read as text unreadable — and every
+repository fell back to the device comparison, its network filesystem check included
+([[Storage safety]]).
 
 ''Other Unix (macOS), or Linux without a readable `/proc`'': compare the directory's
 device id with its parent's (`st_dev`), with the two blind spots above. An empty table

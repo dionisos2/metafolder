@@ -31,7 +31,7 @@ the watcher and its buffered events, the executor. A path the daemon ''reads bac
 from the store to touch the disk is rebuilt from the bytes too (`Forest::rel_path_of`),
 never from the displayed path, whose `%E9` names no file: the orphan scan and clear,
 relink, reconcile's question whether a file it did not meet is gone, the duplicate
-scan, the watch budget's frontier.
+scan, the watch budget's frontier, the probe of a declared mount point.
 
 A path a ''client'' acts on crosses the wire as its bytes too (below, "On the wire"):
 the paths of `resolve-tree`, the names of a forest listing, a revert plan's moves; and a

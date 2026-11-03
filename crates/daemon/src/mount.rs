@@ -128,8 +128,12 @@ pub struct MountPoint {
 #[derive(Debug, Clone)]
 pub struct DeclaredMount {
     pub uuid: Uuid,
-    /// Repo-root-relative path, or `None` when `mfr_path` no longer resolves.
+    /// Repo-root-relative path, as displayed, or `None` when `mfr_path` no
+    /// longer resolves.
     pub path: Option<String>,
+    /// The same path as its exact bytes: what is probed on disk. The displayed
+    /// path of a name that is not UTF-8 names nothing there (doc "Tree names").
+    pub rel: Option<crate::relpath::RelPath>,
     /// The stored `mfr_mount` value.
     pub expected: String,
 }
@@ -139,8 +143,9 @@ pub struct DeclaredMount {
 pub fn declared_set(conn: &dyn crate::store::Store, cache: &Forest) -> Result<Vec<DeclaredMount>> {
     let mut out = Vec::new();
     for (uuid, expected) in crate::store::Questions::string_owners(conn, FIELD)? {
-        let path = cache.path_of(conn, "mfr_path", uuid)?;
-        out.push(DeclaredMount { uuid, path, expected });
+        let rel = cache.rel_path_of(conn, uuid)?;
+        let path = rel.as_ref().map(crate::relpath::RelPath::display);
+        out.push(DeclaredMount { uuid, path, rel, expected });
     }
     Ok(out)
 }
@@ -151,7 +156,7 @@ pub fn states(declared: &[DeclaredMount], root: &Path) -> Vec<MountPoint> {
     let mut out: Vec<MountPoint> = declared
         .iter()
         .map(|m| {
-            let current = m.path.as_deref().and_then(|rel| probe(&abs_of(root, rel)));
+            let current = m.rel.as_ref().and_then(|rel| probe(&rel.to_abs(root)));
             let state = match &current {
                 None => MountState::Offline,
                 Some(current) if *current == m.expected => MountState::Online,
@@ -178,11 +183,6 @@ pub fn declared(
     root: &Path,
 ) -> Result<Vec<MountPoint>> {
     Ok(states(&declared_set(conn, cache)?, root))
-}
-
-/// The absolute path of a repo-root-relative `mfr_path` string.
-fn abs_of(root: &Path, rel: &str) -> PathBuf {
-    root.join(rel.trim_start_matches('/'))
 }
 
 /// The repo-root-relative paths of the mount points nothing may enter: the
@@ -231,11 +231,13 @@ pub fn offline(
     for (uuid, _) in crate::store::Questions::string_owners(conn, FIELD)? {
         // A mount point whose own `mfr_path` is gone freezes nothing: there is
         // no subtree left to protect, and its records are ordinary orphans.
-        let Some(rel) = cache.path_of(conn, "mfr_path", uuid)? else {
+        // Probed at its exact bytes, kept as displayed: what `contains` is
+        // asked with.
+        let Some(rel) = cache.rel_path_of(conn, uuid)? else {
             continue;
         };
-        if !is_mount_point(&abs_of(root, &rel)) {
-            paths.push(rel);
+        if !is_mount_point(&rel.to_abs(root)) {
+            paths.push(rel.display());
         }
     }
     let second = table::current()
@@ -303,8 +305,15 @@ pub struct MountTable {
 
 impl MountTable {
     /// Parses `/proc/self/mountinfo` content.
+    #[cfg(test)]
     fn from_text(text: &str) -> Self {
-        MountTable { by_path: parse_mountinfo(text) }
+        Self::from_bytes(text.as_bytes())
+    }
+
+    /// Parses `/proc/self/mountinfo` content as its bytes: the kernel writes a
+    /// mount point's name as it is, UTF-8 or not.
+    fn from_bytes(bytes: &[u8]) -> Self {
+        MountTable { by_path: parse_mountinfo(bytes) }
     }
 
     /// Whether `abs` is itself a mount point (not merely below one).
@@ -425,8 +434,10 @@ pub mod table {
 
     #[cfg(target_os = "linux")]
     fn read_table() -> MountTable {
-        match std::fs::read_to_string("/proc/self/mountinfo") {
-            Ok(text) => MountTable::from_text(&text),
+        // Bytes, never text: one mount point anywhere whose name is not
+        // UTF-8 made the whole table unreadable as text.
+        match std::fs::read("/proc/self/mountinfo") {
+            Ok(bytes) => MountTable::from_bytes(&bytes),
             Err(_) => MountTable::default(),
         }
     }
@@ -596,14 +607,18 @@ struct MountInfoEntry {
 /// Parses `/proc/self/mountinfo`: `id parent major:minor root mountpoint
 /// options [optional fields] - fstype source superoptions`. Later lines win, so
 /// a directory mounted over twice reports the volume actually visible.
-fn parse_mountinfo(text: &str) -> HashMap<PathBuf, MountInfoEntry> {
+fn parse_mountinfo(bytes: &[u8]) -> HashMap<PathBuf, MountInfoEntry> {
+    use std::os::unix::ffi::OsStringExt;
+    let path = |field: &[u8]| PathBuf::from(std::ffi::OsString::from_vec(unescape(field)));
     let mut out = HashMap::new();
-    for (order, line) in text.lines().enumerate() {
-        let fields: Vec<&str> = line.split(' ').collect();
+    for (order, line) in bytes.split(|b| *b == b'\n').enumerate() {
+        let fields: Vec<&[u8]> = line.split(|b| *b == b' ').collect();
         if fields.len() < 7 {
             continue;
         }
-        let Some((major, minor)) = fields[2].split_once(':') else {
+        let Some((major, minor)) =
+            std::str::from_utf8(fields[2]).ok().and_then(|f| f.split_once(':'))
+        else {
             continue;
         };
         let (Ok(major), Ok(minor)) = (major.parse(), minor.parse()) else {
@@ -611,21 +626,21 @@ fn parse_mountinfo(text: &str) -> HashMap<PathBuf, MountInfoEntry> {
         };
         // The variable-length optional fields end at a lone `-`; the mount
         // source is the second field after it.
-        let Some(sep) = fields.iter().position(|f| *f == "-") else {
+        let Some(sep) = fields.iter().position(|f| *f == b"-") else {
             continue;
         };
         let (Some(fstype), Some(source)) = (fields.get(sep + 1), fields.get(sep + 2)) else {
             continue;
         };
         out.insert(
-            PathBuf::from(unescape(fields[4])),
+            path(fields[4]),
             MountInfoEntry {
                 major,
                 minor,
-                root: PathBuf::from(unescape(fields[3])),
+                root: path(fields[3]),
                 order,
-                fstype: fstype.to_string(),
-                source: unescape(source),
+                fstype: String::from_utf8_lossy(fstype).into_owned(),
+                source: String::from_utf8_lossy(&unescape(source)).into_owned(),
             },
         );
     }
@@ -634,10 +649,9 @@ fn parse_mountinfo(text: &str) -> HashMap<PathBuf, MountInfoEntry> {
 
 /// Unescapes the octal sequences the kernel writes in mountinfo paths
 /// (`\040` space, `\011` tab, `\012` newline, `\134` backslash).
-fn unescape(s: &str) -> String {
-    let bytes = s.as_bytes();
-    // Bytes, not chars: a path may hold any non-ASCII UTF-8 sequence, and
-    // rebuilding it char by char from single bytes would mangle it.
+fn unescape(bytes: &[u8]) -> Vec<u8> {
+    // Bytes, not chars: a path may hold any byte but NUL, UTF-8 or not, and
+    // rebuilding it char by char would mangle it.
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
@@ -654,7 +668,7 @@ fn unescape(s: &str) -> String {
         out.push(bytes[i]);
         i += 1;
     }
-    String::from_utf8_lossy(&out).into_owned()
+    out
 }
 
 /// Splits a Linux `dev_t` into `(major, minor)` (the glibc encoding, which
@@ -674,6 +688,25 @@ mod tests {
 36 25 8:17 / /media/my\\040disk rw,relatime - ext4 /dev/sdb1 rw
 40 36 0:33 /sub /media/bind rw shared:9 master:2 - tmpfs tmpfs rw,size=1k
 ";
+
+    /// The kernel writes a mount point's bytes as they are, escaping only
+    /// space, tab, newline and backslash: a name that is not UTF-8 is a line
+    /// of the table like any other. Read as text, it made the whole table
+    /// unreadable — every repository then fell back to the device-id probe,
+    /// and the refusal of a network filesystem was off; decoded lossily, the
+    /// mount point matched no path.
+    #[test]
+    fn a_mount_point_that_is_not_utf8_is_read_as_its_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+        let table = MountTable::from_bytes(
+            b"1 0 8:1 / / rw - ext4 /dev/sda1 rw\n\
+2 1 8:17 / /media/caf\xe9 rw - ext4 /dev/sdb1 rw\n\
+3 1 0:40 / /mnt/nas rw - nfs4 nas:/export rw\n",
+        );
+        let latin1 = Path::new(std::ffi::OsStr::from_bytes(b"/media/caf\xe9"));
+        assert!(table.contains(latin1), "the mount point, exactly");
+        assert_eq!(table.filesystem_of(Path::new("/mnt/nas/x")), Some("nfs4"), "and the rest");
+    }
 
     #[test]
     fn a_path_is_on_the_filesystem_of_its_nearest_mount_point() {
@@ -701,7 +734,7 @@ mod tests {
 
     #[test]
     fn mountinfo_parses_devices_sources_and_escaped_paths() {
-        let mounts = parse_mountinfo(SAMPLE);
+        let mounts = parse_mountinfo(SAMPLE.as_bytes());
         assert_eq!(mounts.len(), 3);
 
         let disk = mounts.get(Path::new("/media/my disk")).expect("escaped mount point");
@@ -777,7 +810,10 @@ mod tests {
     #[test]
     fn mountinfo_last_line_wins_for_an_overmounted_directory() {
         let text = "1 0 8:1 / /mnt rw - ext4 /dev/sda1 rw\n2 0 8:2 / /mnt rw - ext4 /dev/sda2 rw\n";
-        assert_eq!(parse_mountinfo(text).get(Path::new("/mnt")).unwrap().source, "/dev/sda2");
+        assert_eq!(
+            parse_mountinfo(text.as_bytes()).get(Path::new("/mnt")).unwrap().source,
+            "/dev/sda2"
+        );
     }
 
     #[test]

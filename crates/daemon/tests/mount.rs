@@ -198,6 +198,31 @@ fn declared_mount_points_report_their_state_and_expected_volume() {
     assert_eq!(m.state, MountState::Offline);
 }
 
+/// A declared mount point is probed at its exact bytes (doc "Tree names"):
+/// probed at its displayed path, a name that is not UTF-8 named nothing on
+/// disk, and the volume read offline — its subtree frozen — while mounted.
+/// What can be checked without root: the path probed is the one on disk.
+#[test]
+fn a_declared_mount_point_is_probed_at_its_exact_bytes() {
+    use std::os::unix::ffi::OsStrExt;
+    let (repo, root) = setup("not_utf8");
+    let dir = root.join(std::ffi::OsStr::from_bytes(b"caf\xe9"));
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), b"content").unwrap();
+    reconcile::reconcile(&repo).unwrap();
+    let vol = resolve(&repo, "/caf%E9").unwrap();
+    declare_mount(&repo, vol, "uuid:1234-ABCD");
+
+    let declared = {
+        let conn = repo.conn.lock().unwrap();
+        mount::declared_set(&conn, &repo.tree()).unwrap()
+    };
+    assert_eq!(declared.len(), 1);
+    assert_eq!(declared[0].path.as_deref(), Some("/caf%E9"), "displayed as before");
+    let probed = declared[0].rel.as_ref().expect("an exact path").to_abs(&root);
+    assert_eq!(probed, dir, "probed where the directory is");
+}
+
 #[test]
 fn the_executor_drops_an_event_landing_in_an_offline_mount() {
     let (repo, root) = setup("events");
