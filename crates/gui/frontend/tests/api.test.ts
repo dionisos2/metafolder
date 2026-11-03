@@ -7,6 +7,7 @@ import { argSpecFor, clearArgSpecs } from '../src/lib/commands';
 import { createPanelApi } from '../src/lib/panels/api';
 import { globalMirror } from '../src/lib/globals';
 import { store } from '../src/lib/store.svelte';
+import { foregroundWork } from '../src/lib/working';
 
 function setup() {
   const invoke = vi.fn(async (_cmd: string, _args?: unknown) => ({ status: 200, body: null }) as unknown);
@@ -706,5 +707,50 @@ describe('panel api — no duplicate members', () => {
       .map((c) => (c[1] as { path: string }).path)
       .filter((p) => !p.endsWith('/log/since'));
     expect(paths).toEqual(['/repos/r9/tree/resolve', '/repos/r9/metarecords/batch']);
+  });
+});
+
+// A panel's load runs through the GUI as well as the daemon: its query parsed, the
+// selection published. A command is not over until those are (doc "When a command
+// has finished"), or it resolves between two daemon reads.
+describe('panel api — what a command waits for', () => {
+  test.each([
+    ['workspace.get', (api: any) => api.workspace.get('active_repo')],
+    ['workspace.set', (api: any) => api.workspace.set('some_key', 1)],
+    ['workspace.setMany', (api: any) => api.workspace.setMany({ some_key: 1 })],
+    ['workspace.all', (api: any) => api.workspace.all()],
+    ['query.parse', (api: any) => api.query.parse('a = 1')],
+    ['query.expand', (api: any) => api.query.expand('a=1')],
+  ])('%s counts as work in flight until it answers', async (_name, call) => {
+    const { api, invoke } = setup();
+    let answer!: (value: unknown) => void;
+    invoke.mockImplementation(() => new Promise((resolve) => (answer = resolve)));
+    const before = foregroundWork.pending();
+    const running = call(api);
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalled());
+    expect(foregroundWork.pending()).toBe(before + 1);
+    answer(null);
+    await running;
+    expect(foregroundWork.pending()).toBe(before);
+  });
+});
+
+describe('foregroundWork', () => {
+  test('idle waits for the daemon calls and the GUI calls alike', async () => {
+    const { daemonWork, guiWork } = await import('../src/lib/working');
+    let endDaemon!: () => void;
+    let endGui!: () => void;
+    const daemon = daemonWork.track(new Promise<void>((r) => (endDaemon = r)), 'daemon');
+    const gui = guiWork.track(new Promise<void>((r) => (endGui = r)), 'gui');
+    let idle = false;
+    const waiting = foregroundWork.idle().then(() => (idle = true));
+    endDaemon();
+    await daemon;
+    await new Promise((r) => setTimeout(r, 0));
+    expect(idle).toBe(false);
+    endGui();
+    await gui;
+    await waiting;
+    expect(idle).toBe(true);
   });
 });

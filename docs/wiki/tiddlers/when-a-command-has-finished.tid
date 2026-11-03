@@ -16,7 +16,7 @@ So a command resolves only once:
 # every event the GUI emitted for it is applied — the layout, the workspace variables (the selection a viewer follows), which a user command delivers when it ends ([[Command transactions]]);
 # a frame has passed, so the panels on screen are placed and told whether they are visible;
 # the panels on screen are mounted;
-# no daemon read a panel or a command made is in flight — and this stays true for two frames running, since a panel often starts its read a timer after the frame that shows it.
+# no daemon read a panel or a command made is in flight, nor a panel's quick call to the GUI (a workspace variable read or written, a query parsed, which come between a load's reads and publish its selection) — and this stays true for two frames running, since a panel often starts its read a timer after the frame that shows it.
 
 Step 4 is repeated as long as a round finds a read in flight: the answer of one read
 may start the next (a list's page, then the viewer following its new cursor).
@@ -36,7 +36,7 @@ too early is not.
 !! Limits
 
 * A panel that reads without end — a poll — would never be quiet: after twenty rounds the command resolves anyway.
-* What does not go through `metafolder.daemon` is not waited for: an image or a video the panel is still decoding, a typed text a panel applies after a delay of its own (the [[metarecord-list panel]]'s finder waits for typing to pause).
+* What goes through neither `metafolder.daemon` nor those quick calls is not waited for (a directory a panel reads with `metafolder.fs`, a question a command asks): an image or a video the panel is still decoding, a typed text a panel applies after a delay of its own (the [[metarecord-list panel]]'s finder waits for typing to pause).
 * The background polls — the change feed, the task list — are not foreground reads and are not waited for: a change written ''outside'' the GUI shows when the feed sees it ([[Daemon data in panels]]).
 * A key does not wait for the previous key's command: pressing `j` three times runs three commands at once, as before. Only a sequence that awaits each command — a user command's `mf.invoke`, a script — is ordered by this.
 

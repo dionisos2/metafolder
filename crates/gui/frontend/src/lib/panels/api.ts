@@ -13,7 +13,7 @@ import { store } from '../store.svelte';
 import { checkTarget, resolveTarget } from '../targets';
 import { transactional } from '../txn';
 import type { ExecContext } from '../types';
-import { daemonWork } from '../working';
+import { daemonWork, guiWork } from '../working';
 import { confirmSelectionWrite, mayMoveSelection } from '../unsavedEdits';
 import { globalMirror } from '../globals';
 import { changeFeed, type ChangeEvent } from './changes';
@@ -463,7 +463,11 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
    * doc "Command transactions"). The per-instance state above is shared.
    */
   function build(invoke: PanelApiDeps['invoke'], context: () => ExecContext): MetafolderApi {
-    const readVar = (key: string) => invoke('ws_get_var', { wsId: ctx.wsId, key });
+    // What a panel's load goes through between two daemon reads: a command waits
+    // for it too (doc "When a command has finished").
+    const quick = (command: string, args: Record<string, unknown>) =>
+      guiWork.track(Promise.resolve(invoke(command, args)), command);
+    const readVar = (key: string) => quick('ws_get_var', { wsId: ctx.wsId, key });
     return {
       // `mount` runs after init, so nothing to wait for; kept for compatibility.
       ready: Promise.resolve(),
@@ -584,8 +588,8 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
 
       // Pure query transformations — run locally in the GUI backend (core).
       query: {
-        parse: (dsl: string) => invoke('parse_query', { dsl }),
-        expand: (text: string) => invoke('expand_query', { text }),
+        parse: (dsl: string) => quick('parse_query', { dsl }),
+        expand: (text: string) => quick('expand_query', { text }),
         // The simplified-query grammar source as loaded at startup (help page).
         grammarSource: () => invoke('grammar_source') as Promise<string>,
       },
@@ -632,10 +636,10 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       },
 
       workspace: {
-        get: (key: string) => invoke('ws_get_var', { wsId: ctx.wsId, key }),
+        get: (key: string) => quick('ws_get_var', { wsId: ctx.wsId, key }),
         set: async (key: string, value: unknown) => {
           if (!(await confirmSelectionWrite(ctx.wsId, key, value, readVar))) return;
-          await invoke('ws_set_var', { wsId: ctx.wsId, key, value });
+          await quick('ws_set_var', { wsId: ctx.wsId, key, value });
         },
         // All in before any listener hears of one (`workspace_send` on this
         // workspace): a panel following several variables never reads half.
@@ -645,10 +649,10 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
             if (await confirmSelectionWrite(ctx.wsId, key, value, readVar)) allowed[key] = value;
           }
           if (Object.keys(allowed).length === 0) return;
-          await invoke('workspace_send', { wsId: ctx.wsId, vars: allowed });
+          await quick('workspace_send', { wsId: ctx.wsId, vars: allowed });
         },
         mayMoveSelection: () => mayMoveSelection(ctx.wsId),
-        all: () => invoke('ws_vars', { wsId: ctx.wsId }) as Promise<Record<string, unknown>>,
+        all: () => quick('ws_vars', { wsId: ctx.wsId }) as Promise<Record<string, unknown>>,
         adoptRepo: (repo: string) => invoke('adopt_repo', { wsId: ctx.wsId, repo }) as Promise<void>,
         // The workspace primitives (doc "Workspaces"): an empty workspace, the
         // one channel between workspaces, and a copy.

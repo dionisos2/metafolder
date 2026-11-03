@@ -99,6 +99,20 @@ export function createWorkingTracker(graceMs = WORKING_GRACE_MS): WorkingTracker
 /** The shell's single tracker, shared by the panel API and the command layer. */
 export const daemonWork = createWorkingTracker();
 
+/** What panels ask of the GUI itself while they load: a workspace variable read
+ *  or written, a query parsed. Too quick to announce, so nothing subscribes to it,
+ *  but a load's next step comes after it. */
+export const guiWork = createWorkingTracker();
+
+/** The calls a command waits for before it resolves (doc "When a command has
+ *  finished"). */
+export const foregroundWork = {
+  pending: () => daemonWork.pending() + guiWork.pending(),
+  idle: async () => {
+    await Promise.all([daemonWork.idle(), guiWork.idle()]);
+  },
+};
+
 // ── Daemon tasks ─────────────────────────────────────────────────────────────
 //
 // The same rule, for the task bar. The bar is a row of the shell's column

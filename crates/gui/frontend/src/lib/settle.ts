@@ -8,10 +8,11 @@
 //
 // No command declares what it sets off: the wait is the same for all of them,
 // over what the shell can observe — every foreground daemon call goes through
-// `daemonWork`, and every panel instance has its `mounted` promise.
+// `daemonWork`, a panel's quick calls to the GUI through `guiWork`, and every
+// panel instance has its `mounted` promise.
 
 import { invoke, listen } from './ipc';
-import { daemonWork } from './working';
+import { foregroundWork } from './working';
 
 export interface SettleDeps {
   /** Resolves once every event Rust emitted before the call is applied. */
@@ -20,7 +21,7 @@ export interface SettleDeps {
   frame(): Promise<void>;
   /** Resolves once the panels on screen are mounted. */
   mounts(): Promise<void>;
-  /** The foreground daemon calls in flight. */
+  /** The foreground calls in flight, to the daemon and to the GUI. */
   busy(): number;
   /** Resolves once none is in flight. */
   idle(): Promise<void>;
@@ -105,7 +106,7 @@ export function settleShell(): Promise<void> {
     barrier,
     frame,
     mounts: () => mountsProvider?.() ?? Promise.resolve(),
-    busy: () => daemonWork.pending(),
-    idle: () => daemonWork.idle(),
+    busy: () => foregroundWork.pending(),
+    idle: () => foregroundWork.idle(),
   });
 }
