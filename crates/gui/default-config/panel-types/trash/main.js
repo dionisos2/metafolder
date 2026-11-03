@@ -3,8 +3,16 @@
 // Filesystem operations go through metafolder.trash (shared with the CLI,
 // no daemon endpoint).
 
-import { byId, el, formatAge, formatSize } from '/__ui.js';
+import { byId, el, formatAge, formatSize, wireText } from '/__ui.js';
 import { createListCursor } from '/__list-cursor.js';
+
+/** The path an entry was trashed from, as shown — a directory with a
+ *  trailing "/". Its exact form is the trash's own: the panel never acts on it.
+ *  @param {Metafolder.TrashEntry} entry */
+function shownPath(entry) {
+  const path = wireText(entry.original_path) ?? '';
+  return entry.is_dir ? `${path}/` : path;
+}
 
 /**
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder
@@ -55,7 +63,7 @@ export function mount(root, metafolder) {
           el('span', { class: 'size' }, formatSize(entry.size)),
           el('span', { class: 'age' }, formatAge(entry.trashed_at, now)),
           el('span', { class: 'reason' }, entry.reason),
-          el('span', { class: 'path' }, entry.is_dir ? `${entry.original_path}/` : entry.original_path),
+          el('span', { class: 'path' }, shownPath(entry)),
         ),
       ),
     );
@@ -202,7 +210,7 @@ export function mount(root, metafolder) {
     entries: () =>
       entries.map((entry) => {
         const name = entry.original_name || entry.id;
-        const path = entry.is_dir ? `${entry.original_path}/` : entry.original_path;
+        const path = shownPath(entry);
         return { name, label: `${name} — ${path}` };
       }),
   });

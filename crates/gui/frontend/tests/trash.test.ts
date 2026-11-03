@@ -147,6 +147,23 @@ describe('trash panel actions', () => {
     expect(statusBar.message).toHaveBeenCalled();
   });
 
+  // A path that is not text comes as `{text, bytes}` (doc "Tree names"): the
+  // row shows its text, never "[object Object]".
+  test('an entry whose path is not text shows its text', async () => {
+    const { api, trash } = stub();
+    trash.list.mockResolvedValueOnce([
+      {
+        ...ENTRIES[0],
+        original_path: { text: '/r/caf%E9.txt', bytes: '2f722f636166e92e747874' },
+        original_name: 'caf%E9.txt',
+      } as never,
+    ]);
+    const shadow = shadowForTrash();
+    mount(shadow, withRuns(api) as never);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(shadow.querySelector('#entries > li .path')?.textContent).toBe('/r/caf%E9.txt');
+  });
+
   test('cursor:find completes over the entries and moves the cursor', async () => {
     const { api } = stub();
     const shadow = shadowForTrash();

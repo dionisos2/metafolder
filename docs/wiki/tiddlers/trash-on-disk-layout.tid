@@ -28,8 +28,8 @@ An entry holds:
 
 |!Field |!Meaning |
 |`id` |the blob's name |
-|`original_path` |the absolute path it was trashed from: the restore target |
-|`original_name` |its basename, for display |
+|`original_path` |the absolute path it was trashed from, as its exact bytes: the restore target |
+|`original_name` |its basename as shown — an undecodable byte as `%XX` —, for display only |
 |`trashed_at` |unix milliseconds |
 |`size` |bytes; for a directory, the recursive total of its regular files |
 |`is_dir` |the blob is a whole subtree |
@@ -37,7 +37,18 @@ An entry holds:
 |`revision` |the operation that trashed it, when there is one |
 |`metarecord` |the metarecord it belonged to — how an undo finds the entry |
 |`version` |that metarecord's version when trashed |
-|`subtree` |the captured metarecords: `uuid`, `parent`, `name` (its `mfr_path`), `fields` (as the daemon renders them), `trashed` (deleted with the entry, or an ancestor recorded for context) |
+|`subtree` |the captured metarecords: `uuid`, `parent`, `name` (its `mfr_path` name, exact), `fields` (as the daemon renders them), `trashed` (deleted with the entry, or an ancestor recorded for context) |
+
+A path or a name takes the wire form of [[Tree names]]: a string while it is text,
+`{"text", "bytes"}` otherwise. A path that is not text is restored at its bytes, and a
+name that is not text is captured like any other (it used to be dropped, leaving its
+metarecord behind). An entry written before November 2026 holds strings, which read as
+the same text: nothing to convert — but a name that was not text was recorded lossily
+then, and its entry restores to that lossy name.
+
+The trashing finds what to capture by the target's ''uuid'' and its ''exact'' path
+(`tree/resolve-path` with `form: "verbatim"`), never by a query on the text of its
+path, which a sibling really named `caf%E9` would also match.
 
 The fields are kept as JSON, unlike field rows and log snapshots, which the
 daemon splits into typed columns because it queries them. Nothing queries these:

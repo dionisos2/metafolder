@@ -64,6 +64,23 @@ pub fn join_tree(root: &Path, rel: &crate::metarecord::TreePath) -> Option<std::
     Some(out)
 }
 
+/// The inverse of [`join_tree`]: the repository path of `abs` under `root`
+/// (`/a/b`, `""` for the root itself) as its exact bytes, or `None` when `abs`
+/// is not under `root`. Both must be in the same form (canonical, or neither).
+pub fn tree_path_under(root: &Path, abs: &Path) -> Option<crate::metarecord::TreePath> {
+    let rel = abs.strip_prefix(root).ok()?;
+    let mut bytes = Vec::new();
+    for component in rel.components() {
+        if let std::path::Component::Normal(name) = component {
+            bytes.push(b'/');
+            bytes.extend_from_slice(
+                crate::metarecord::TreePath::from_path(Path::new(name)).as_bytes(),
+            );
+        }
+    }
+    Some(crate::metarecord::TreePath::from_bytes(bytes))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,6 +106,24 @@ mod tests {
             use std::os::unix::ffi::OsStrExt;
             let got = join_tree(root, &TreePath::from_bytes(b"/caf\xe9".to_vec())).unwrap();
             assert_eq!(got.as_os_str().as_bytes(), b"/repo/caf\xe9");
+        }
+    }
+
+    #[test]
+    fn tree_path_under_is_the_inverse_of_join_tree() {
+        use crate::metarecord::TreePath;
+        let root = Path::new("/repo");
+        assert_eq!(tree_path_under(root, root), Some(TreePath::from("")));
+        assert_eq!(tree_path_under(root, &root.join("a/b.txt")), Some(TreePath::from("/a/b.txt")));
+        assert_eq!(tree_path_under(root, Path::new("/elsewhere/a")), None);
+        assert_eq!(tree_path_under(root, Path::new("/repository/a")), None);
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let abs = root.join(std::ffi::OsStr::from_bytes(b"d/caf\xe9"));
+            let rel = tree_path_under(root, &abs).unwrap();
+            assert_eq!(rel.as_bytes(), b"/d/caf\xe9");
+            assert_eq!(join_tree(root, &rel), Some(abs));
         }
     }
 

@@ -44,9 +44,10 @@ displayed paths), and what is only shown — reconcile candidates, orphan listin
 activity — stays the displayed form.
 
 Gaps remain ([[Path representation]]): a path ''argument'' (`mf metarecord add --path`,
-`mf uuid`) crosses the JSON API as a string, so it must be valid UTF-8; the GUI holds
-paths as the text it shows, and its file handles read an escape back by looking at the
-disk (`fs_path.rs`); and the trash records a path as text.
+`mf uuid`) crosses the JSON API as a string, so it must be valid UTF-8; and the GUI
+holds paths as the text it shows, and its file handles read an escape back by looking
+at the disk (`fs_path.rs`). The trash records and restores a path at its bytes
+([[Trash on-disk layout]]).
 
 !! Looking a name up
 

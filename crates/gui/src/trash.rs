@@ -9,6 +9,7 @@ use crate::blocking_client::BlockingClient;
 use crate::commands::App;
 use crate::daemon_proxy::DaemonProxy;
 use metafolder_core::daemon_client::DaemonClient;
+use metafolder_core::metarecord::TreePath;
 use metafolder_core::trash::{PruneMode, Reason, TrashDir, TrashEntry};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -40,12 +41,11 @@ fn trash_dir(internal: &str) -> TrashDir {
     TrashDir::new(Path::new(internal).join("trash"))
 }
 
-/// Absolute path of a repo-root-relative path returned by `resolve-tree` (the
-/// [`paths_of`] shape — leading-`/`-rooted for the filesystem forest; the
-/// leading `/` is trimmed here so it joins onto `root`).
-fn abs_path(root: &str, rel: &str) -> Result<PathBuf, String> {
-    metafolder_core::fsentry::join_rel(Path::new(root), rel)
-        .ok_or_else(|| format!("{rel:?} is not a path under the root"))
+/// Absolute path of a repository path returned by `resolve-tree` (`/a/b`), at
+/// its exact bytes (doc "Tree names").
+fn abs_path(root: &str, rel: &TreePath) -> Result<PathBuf, String> {
+    metafolder_core::fsentry::join_tree(Path::new(root), rel)
+        .ok_or_else(|| format!("{:?} is not a path under the root", rel.display()))
 }
 
 /// Parses a `selected_metarecord` workspace var (`{uuid, repo}` | null).
@@ -61,14 +61,11 @@ fn first_mfr_path(
     client: &BlockingClient,
     repo: &str,
     uuid: &str,
-) -> Result<Option<String>, String> {
+) -> Result<Option<TreePath>, String> {
     let resp = client
         .get(&format!("/repos/{repo}/metarecords/{uuid}/fields/mfr_path/resolve-tree"))
         .map_err(|e| e.message)?;
-    // As text: the GUI's trashing joins displayed paths (doc "Tree names").
-    Ok(metafolder_core::sync::lookup::paths_in(&resp["paths"])
-        .first()
-        .map(|p| p.display().into_owned()))
+    Ok(metafolder_core::sync::lookup::paths_in(&resp["paths"]).into_iter().next())
 }
 
 /// Trashes `abs`, taking the repository's metarecords for it with it. Returns
@@ -101,7 +98,7 @@ pub fn trash_tracked(
     let client = BlockingClient::new(base.to_string());
     // The path the repository knows this file by. `strip_prefix` fails for a
     // path outside the root — nothing there is tracked.
-    let rel = root.and_then(|r| abs.strip_prefix(r).ok()).map(|p| p.to_string_lossy().into_owned());
+    let rel = root.and_then(|r| metafolder_core::fsentry::tree_path_under(r, abs));
     let uuid = match (uuid, &rel) {
         (Some(u), _) => Some(u),
         (None, Some(rel)) => {
@@ -112,15 +109,15 @@ pub fn trash_tracked(
 
     let mut version = None;
     let mut subtree = Vec::new();
-    if let (Some(uuid), Some(rel)) = (&uuid, &rel) {
+    if let Some(uuid) = &uuid {
         // Capture first: once the metarecords are gone there is nothing left to
         // read. This takes the target and everything under it — which the
         // trashing deletes — plus its ancestors, which it does not.
         let record =
             client.get(&format!("/repos/{repo}/metarecords/{uuid}")).map_err(|e| e.message)?;
         version = record["version"].as_u64();
-        subtree = metafolder_core::trash::capture_nodes(&client, repo, &record, rel)
-            .map_err(|e| e.message)?;
+        subtree =
+            metafolder_core::trash::capture_nodes(&client, repo, &record).map_err(|e| e.message)?;
         // Then the metadata half, then the bytes. Not forced: something else
         // still pointing at this record is a refusal the user should see, not
         // a reference the GUI silently breaks on their behalf.
@@ -170,21 +167,27 @@ pub struct BulkTrashOutcome {
 /// before what it holds.
 fn plan_bulk_trash(
     paths: &serde_json::Map<String, Value>,
-) -> (Vec<(String, String)>, BulkTrashOutcome) {
+) -> (Vec<(String, TreePath)>, BulkTrashOutcome) {
     let mut outcome = BulkTrashOutcome::default();
-    let mut items: Vec<(String, String)> = Vec::new();
+    let mut items: Vec<(TreePath, String)> = Vec::new();
     for (uuid, list) in paths {
-        let first = metafolder_core::sync::lookup::paths_in(list).into_iter().next();
-        match first.as_ref().map(|p| p.display()) {
+        match metafolder_core::sync::lookup::paths_in(list).into_iter().next() {
             None => outcome.without_file += 1,
             Some(rel) if rel.is_empty() => outcome.root_kept = true,
-            Some(rel) => items.push((rel.into_owned(), uuid.clone())),
+            Some(rel) => items.push((rel, uuid.clone())),
         }
     }
+    // By bytes: a directory sorts before what it holds, and "under" is a byte
+    // prefix — never the text, which two names can share (doc "Tree names").
     items.sort();
-    let mut kept: Vec<(String, String)> = Vec::new();
+    let mut kept: Vec<(TreePath, String)> = Vec::new();
     for (rel, uuid) in items {
-        let under = kept.iter().any(|(dir, _)| rel.starts_with(&format!("{dir}/")));
+        let under = kept.iter().any(|(dir, _)| {
+            let bytes = rel.as_bytes();
+            bytes.len() > dir.as_bytes().len()
+                && bytes.starts_with(dir.as_bytes())
+                && bytes[dir.as_bytes().len()] == b'/'
+        });
         if under {
             outcome.inside += 1;
         } else {
@@ -231,8 +234,8 @@ pub fn trash_query(base: &str, repo: &str, query: &Value) -> Result<BulkTrashOut
         };
         let record =
             client.get(&format!("/repos/{repo}/metarecords/{uuid}")).map_err(|e| e.message)?;
-        let subtree = metafolder_core::trash::capture_nodes(&client, repo, &record, rel)
-            .map_err(|e| e.message)?;
+        let subtree =
+            metafolder_core::trash::capture_nodes(&client, repo, &record).map_err(|e| e.message)?;
         for node in subtree.iter().filter(|n| n.trashed) {
             if seen.insert(node.uuid.clone()) {
                 doomed.push(node.clone());
@@ -254,7 +257,7 @@ pub fn trash_query(base: &str, repo: &str, query: &Value) -> Result<BulkTrashOut
             });
         match moved {
             Ok(()) => outcome.trashed += 1,
-            Err(e) => outcome.failed.push(format!("{rel}: {}", e.0)),
+            Err(e) => outcome.failed.push(format!("{}: {}", rel.display(), e.0)),
         }
     }
     Ok(outcome)
@@ -273,11 +276,13 @@ pub fn restore_blocking(base: String, repo: String, id: String) -> Result<String
     // metarecord to a path a refused restore never fills); re-link *before* the
     // move so the metarecord already claims the path (doc "Trash").
     dir.preflight_restore(&id).map_err(|e| e.0)?;
-    let rel = Path::new(&entry.original_path)
-        .strip_prefix(&root)
-        .ok()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| entry.original_name.clone());
+    // Outside the root there is no path to re-link the single-metarecord
+    // fallback to: the empty path re-links nothing.
+    let rel = metafolder_core::fsentry::tree_path_under(
+        Path::new(&root),
+        &entry.original_path.to_path_buf(),
+    )
+    .unwrap_or_default();
     metafolder_core::trash::restore_relink(&client, &repo, &entry, &rel).map_err(|e| e.message)?;
 
     let restored = dir.restore(&id).map_err(|e| e.0)?;
@@ -516,12 +521,18 @@ mod tests {
     #[test]
     fn abs_path_joins_root_relative() {
         let ok = |p: &str| Ok(PathBuf::from(p));
-        assert_eq!(abs_path("/data", "music/song.mp3"), ok("/data/music/song.mp3"));
-        // Defensive against a leading slash.
-        assert_eq!(abs_path("/data", "/song.mp3"), ok("/data/song.mp3"));
-        assert_eq!(abs_path("/data", "song.mp3"), ok("/data/song.mp3"));
+        let at = |p: &str| abs_path("/data", &TreePath::from(p));
+        assert_eq!(at("/music/song.mp3"), ok("/data/music/song.mp3"));
+        assert_eq!(at("/song.mp3"), ok("/data/song.mp3"));
         // Never outside the root.
-        assert!(abs_path("/data", "/../etc/passwd").is_err());
+        assert!(at("/../etc/passwd").is_err());
+        // A name that is not text is joined at its bytes, not its escape.
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let got = abs_path("/data", &TreePath::from_bytes(b"/caf\xe9".to_vec())).unwrap();
+            assert_eq!(got.as_os_str().as_bytes(), b"/data/caf\xe9");
+        }
     }
 
     #[test]
@@ -554,11 +565,25 @@ mod tests {
         assert_eq!(
             items,
             [("a", "/a.txt"), ("d", "/dir"), ("x", "/dirx/c.txt")]
-                .map(|(u, p)| (u.to_string(), p.to_string()))
+                .map(|(u, p)| (u.to_string(), TreePath::from(p)))
         );
         assert_eq!(outcome.inside, 1, "only what is under /dir/, not /dirx");
         assert_eq!(outcome.without_file, 1);
         assert!(outcome.root_kept);
+    }
+
+    /// A path that is not text keeps its bytes: two names shown the same are
+    /// two files, and neither is "under" the other's text.
+    #[test]
+    fn plan_bulk_trash_keeps_the_exact_bytes() {
+        let paths = json!({
+            "raw": [{"text": "/caf%E9", "bytes": "2f636166e9"}],
+            "lit": ["/caf%E9/x.txt"],
+        });
+        let (items, outcome) = plan_bulk_trash(paths.as_object().unwrap());
+        assert_eq!(outcome.inside, 0);
+        let raw = items.iter().find(|(u, _)| u == "raw").unwrap();
+        assert_eq!(raw.1.as_bytes(), b"/caf\xe9");
     }
 
     #[test]

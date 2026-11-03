@@ -37,5 +37,5 @@ repository form, on every platform.
 !! Limits
 
 * A path ''argument'' must be valid UTF-8: the API carries it as a JSON string, and `mf` refuses one that is not ("non-UTF-8 path is not supported"). Such a file is tracked by reconcile and the watcher, but cannot be named to `mf metarecord add --path`.
-* The clients that touch files take a path from the daemon as its exact bytes ([[Tree names]]): the sync and the coordinated revert reach the file whatever its name. The GUI does not yet — it holds paths as the text it shows — nor does the trash, which records a path as text.
+* The clients that touch files take a path from the daemon as its exact bytes ([[Tree names]]): the sync, the coordinated revert and the trash reach the file whatever its name. The GUI does not yet: it holds paths as the text it shows.
 * A symlink's target (`mfr_symlink_target`) is stored as text; an undecodable byte in it becomes U+FFFD ([[Symbolic links]]).

@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as Json};
 
 use crate::daemon_client::{DaemonClient, DaemonError};
+use crate::metarecord::{TreeName, TreePath};
 use std::io;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -69,9 +70,12 @@ impl Reason {
 pub struct TrashEntry {
     /// The blob file name (a fresh 32-char lowercase hex UUID).
     pub id: String,
-    /// Absolute path the file was at when trashed — the default restore target.
-    pub original_path: String,
-    /// Basename of `original_path`, for display.
+    /// Absolute path the file was at when trashed — the default restore
+    /// target — as its exact bytes (doc "Tree names"). An entry written while
+    /// it was text reads as that text.
+    pub original_path: TreePath,
+    /// Basename of `original_path`, as shown (an undecodable byte as `%XX`):
+    /// for display only.
     pub original_name: String,
     /// When it was trashed (unix-ms) — drives `prune -d` and list ordering.
     pub trashed_at: i64,
@@ -114,8 +118,8 @@ pub struct TrashedNode {
     /// Parent metarecord uuid in the `mfr_path` forest; None for a forest root.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
-    /// The TreeRef name (the path component).
-    pub name: String,
+    /// The TreeRef name (the path component), as its exact bytes.
+    pub name: TreeName,
     /// The metarecord's fields, as the daemon renders them and as they will be
     /// sent back to `POST …/metarecords/bulk`. `None` on an entry captured
     /// before the capture existed: nothing can be recreated from it.
@@ -381,10 +385,10 @@ impl TrashDir {
 
         let entry = TrashEntry {
             id: id.clone(),
-            original_path: path.to_string_lossy().into_owned(),
+            original_path: TreePath::from_path(path),
             original_name: path
                 .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
+                .map(|n| TreePath::from_path(Path::new(n)).display().into_owned())
                 .unwrap_or_default(),
             trashed_at: date::now_ms(),
             size,
@@ -436,7 +440,7 @@ impl TrashDir {
     /// before moving anything). Returns the restored path.
     pub fn restore(&self, id: &str) -> Result<PathBuf, TrashError> {
         let entry = self.entry(id)?;
-        let target = PathBuf::from(&entry.original_path);
+        let target = entry.original_path.to_path_buf();
         let blob = self.blob_path(id);
 
         match plan_restore(&blob, &target)? {
@@ -468,7 +472,7 @@ impl TrashDir {
     /// metarecords) before calling `restore`, without moving bytes.
     pub fn preflight_restore(&self, id: &str) -> Result<(), TrashError> {
         let entry = self.entry(id)?;
-        let target = PathBuf::from(&entry.original_path);
+        let target = entry.original_path.to_path_buf();
         plan_restore(&self.blob_path(id), &target).map(|_| ())
     }
 
@@ -771,7 +775,7 @@ fn subtree_node(record: &Json, trashed: bool) -> Option<TrashedNode> {
     Some(TrashedNode {
         uuid: uuid.to_string(),
         parent: value["value"]["parent"].as_str().map(str::to_owned),
-        name: value["value"]["name"].as_str()?.to_string(),
+        name: serde_json::from_value(value["value"]["name"].clone()).ok()?,
         fields: Some(record["fields"].clone()),
         trashed,
     })
@@ -785,11 +789,6 @@ fn has_present_mfr_path(record: &Json) -> bool {
             .iter()
             .any(|f| f["name"] == "mfr_path" && f["value"]["type"].as_str() != Some("nothing"))
     })
-}
-
-/// The non-empty components of a repo-relative path (`"a/b/c"` → `["a","b","c"]`).
-fn path_components(rel: &str) -> Vec<&str> {
-    rel.split('/').filter(|c| !c.is_empty()).collect()
 }
 
 /// Walks the `mfr_path` parent chain from `parent` upward, capturing each
@@ -817,7 +816,7 @@ fn capture_ancestors(
 }
 
 /// Captures the metarecords a trash entry has to remember: the target `top` (a
-/// metarecord JSON `{uuid, fields}` at repo-relative path `rel`) and its
+/// metarecord JSON `{uuid, fields}`) and its
 /// descendants — which the trashing deletes and a restore recreates — plus its
 /// ancestor directories, which it does *not*. Empty when `top` carries no
 /// present `mfr_path`.
@@ -830,7 +829,6 @@ pub fn capture_nodes(
     client: &dyn DaemonClient,
     repo: &str,
     top: &Json,
-    rel: &str,
 ) -> Result<Vec<TrashedNode>, DaemonError> {
     let mut nodes = Vec::new();
     let Some(top_node) = subtree_node(top, true) else { return Ok(nodes) };
@@ -838,8 +836,10 @@ pub fn capture_nodes(
     // Ancestors, so restoring this item re-links its parent directories if they
     // were trashed too; live ancestors are skipped at re-link time.
     nodes.extend(capture_ancestors(client, repo, top_node.parent.clone())?);
-    // Descendants: a transitive follow of the target's tree path.
-    let target = format!("/{}", path_components(rel).join("/"));
+    // Descendants: a transitive follow of the target itself, by uuid — the
+    // text of its path would also reach a sibling shown the same (doc "Tree
+    // names").
+    let target = json!({"type": "uuid_in", "uuids": [top_node.uuid]});
     let query = json!({"type": "follows_transitive", "field": "mfr_path", "target": target});
     let mut cursor: Option<String> = None;
     loop {
@@ -863,29 +863,21 @@ pub fn capture_nodes(
     Ok(nodes)
 }
 
-/// Resolves a repo-relative path to the uuid of the metarecord whose `mfr_path`
-/// tracks it (the exact-path query idiom `field -> "/parent" AND field =
-/// "name"`). `None` when nothing matches or `rel` is the root.
+/// The uuid of the metarecord whose `mfr_path` sits at `rel` — a repository
+/// path in the `mfr_path` convention (`/a/b`) — at exactly its bytes, never a
+/// reading of its text (doc "Tree names"). `None` when nothing is there, and
+/// for the root (`""`), which no path names.
 pub fn metarecord_at_path(
     client: &dyn DaemonClient,
     repo: &str,
-    rel: &str,
+    rel: &TreePath,
 ) -> Result<Option<String>, DaemonError> {
-    let comps = path_components(rel);
-    if comps.is_empty() {
+    if rel.is_empty() {
         return Ok(None);
     }
-    // Exact-node equality: on a TreeRef field an `Eq` string operand is the path
-    // of the one node sitting there (doc "Field aspects"), resolved
-    // through the daemon's forest. `mfr_path` is "/"-rooted. This replaces
-    // the "direct child of the parent *and* named like the leaf" intersection
-    // the separator-gated equality used to force.
-    let path = format!("/{}", comps.join("/"));
-    let query =
-        json!({"type": "eq", "field": "mfr_path", "value": {"type": "string", "value": path}});
-    let resp =
-        client.post(&format!("/repos/{repo}/query"), &json!({"query": query, "limit": 1}))?;
-    Ok(resp["results"].as_array().and_then(|a| a.first()).and_then(Json::as_str).map(str::to_owned))
+    let body = json!({"field": "mfr_path", "path": rel, "form": "verbatim"});
+    let resp = client.post(&format!("/repos/{repo}/tree/resolve-path"), &body)?;
+    Ok(resp["uuid"].as_str().map(str::to_owned))
 }
 
 /// Whether a re-link error is a benign "this link cannot be made right now" case
@@ -900,8 +892,8 @@ fn is_benign_relink_error(err: &DaemonError) -> bool {
 }
 
 /// The JSON `mfr_path` field value for a TreeRef `{parent, name}`.
-fn tree_ref_value(parent: Option<Uuid>, name: &str) -> Json {
-    serde_json::to_value(crate::metarecord::Value::TreeRef { parent, name: name.into() })
+fn tree_ref_value(parent: Option<Uuid>, name: &TreeName) -> Json {
+    serde_json::to_value(crate::metarecord::Value::TreeRef { parent, name: name.clone() })
         .expect("tree_ref serialization")
 }
 
@@ -940,13 +932,13 @@ fn relink_subtree(
 }
 
 /// Fallback re-link for a pre-subtree entry: re-link the single `metarecord`
-/// (if still orphaned) to the restored repo-relative path `rel`, resolving its
+/// (if still orphaned) to the restored repository path `rel` (`/a/b`), resolving its
 /// parent like reconcile does. A benign forest rejection is skipped.
 fn relink_after_restore(
     client: &dyn DaemonClient,
     repo: &str,
     metarecord: &str,
-    rel: &str,
+    rel: &TreePath,
 ) -> Result<(), DaemonError> {
     let Ok(rec) = client.get(&format!("/repos/{repo}/metarecords/{metarecord}")) else {
         return Ok(()); // gone: the watcher re-tracks
@@ -954,14 +946,13 @@ fn relink_after_restore(
     if has_present_mfr_path(&rec) {
         return Ok(());
     }
-    let comps = path_components(rel);
-    let Some(name) = comps.last().copied() else { return Ok(()) };
-    let parent = if comps.len() == 1 {
+    let Some((Some(parent_path), name)) = rel.split_last() else { return Ok(()) };
+    let parent = if parent_path.is_empty() {
         // A top-level restore re-links under the filesystem root, not under
         // the root sentinel.
         Some(crate::daemon_client::repo_root_metarecord(client, repo)?)
     } else {
-        match metarecord_at_path(client, repo, &comps[..comps.len() - 1].join("/"))? {
+        match metarecord_at_path(client, repo, &parent_path)? {
             Some(hex) => Some(
                 Uuid::parse_str(&hex)
                     .map_err(|_| DaemonError::local("daemon returned an invalid parent uuid"))?,
@@ -969,7 +960,7 @@ fn relink_after_restore(
             None => return Ok(()), // parent untracked — leave it unlinked
         }
     };
-    let body = json!({"value": tree_ref_value(parent, name), "force": true});
+    let body = json!({"value": tree_ref_value(parent, &name), "force": true});
     match client.put(&format!("/repos/{repo}/metarecords/{metarecord}/fields/mfr_path"), &body) {
         Ok(_) => Ok(()),
         Err(e) if is_benign_relink_error(&e) => Ok(()),
@@ -1073,14 +1064,14 @@ pub fn recreate_subtree(
 
 /// Puts a restored entry's metarecords back: recreates the captured subtree and
 /// re-links what survived when it was captured, else the single-`metarecord`
-/// fallback resolved from the restored repo-relative path `rel`. Called *before*
+/// fallback resolved from the restored repository path `rel` (`/a/b`). Called *before*
 /// the blob is moved into place, so the metarecords already claim their paths
 /// and the watcher sees a plain refresh (doc "What restoring does").
 pub fn restore_relink(
     client: &dyn DaemonClient,
     repo: &str,
     entry: &TrashEntry,
-    rel: &str,
+    rel: &TreePath,
 ) -> Result<(), DaemonError> {
     if !entry.subtree.is_empty() {
         // Metadata first, bytes second: recreate what the trashing deleted, then
@@ -1099,6 +1090,7 @@ pub fn restore_relink(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metarecord::{TreeName, TreePath};
     use std::fs;
 
     /// An entry written while the log was a tree says why with `rollback`:
@@ -1170,18 +1162,24 @@ mod tests {
             &put("tree position already occupied for field 'mfr_path'", 400),
             "r",
             &entry,
-            "f"
+            &TreePath::from("/f")
         )
         .is_ok());
         assert!(restore_relink(
             &put("invalid TreeRef parent x: no such metarecord", 400),
             "r",
             &entry,
-            "f"
+            &TreePath::from("/f")
         )
         .is_ok());
         // A genuine error is surfaced.
-        assert!(restore_relink(&put("database is locked", 500), "r", &entry, "f").is_err());
+        assert!(restore_relink(
+            &put("database is locked", 500),
+            "r",
+            &entry,
+            &TreePath::from("/f")
+        )
+        .is_err());
     }
 
     #[test]
@@ -1197,7 +1195,7 @@ mod tests {
             )],
         };
         let uuids: Vec<String> =
-            capture_nodes(&mock, "r", &top, "A").unwrap().into_iter().map(|n| n.uuid).collect();
+            capture_nodes(&mock, "r", &top).unwrap().into_iter().map(|n| n.uuid).collect();
         assert!(uuids.contains(&"top".to_string()) && uuids.contains(&"c".to_string()));
     }
 
@@ -1233,6 +1231,94 @@ mod tests {
         }
     }
 
+    /// A name no text can represent is captured like any other, with its
+    /// exact bytes — it used to be dropped, so the trashing left its
+    /// metarecord behind for the watcher to orphan.
+    #[test]
+    fn a_node_whose_name_is_not_text_is_captured_with_its_bytes() {
+        let top = json!({"uuid": "top", "fields": [
+            {"name": "mfr_path", "value": {"type": "tree_ref", "value": {"parent": null,
+                "name": {"text": "caf%E9", "bytes": "636166e9"}}}}]});
+        let mock = Mock { rules: vec![] };
+        let nodes = capture_nodes(&mock, "r", &top).unwrap();
+        let node = nodes.iter().find(|n| n.uuid == "top").expect("captured");
+        assert_eq!(node.name.as_bytes(), b"caf\xe9");
+    }
+
+    /// The descendants are found by the target's uuid: a query on the text of
+    /// its path would also take those of a sibling really named `caf%E9`.
+    #[test]
+    fn descendants_are_captured_by_the_target_uuid_not_its_path_text() {
+        let top = json!({"uuid": "0a", "fields": [
+            {"name": "mfr_path", "value": {"type": "tree_ref", "value": {"parent": null, "name": "A"}}}]});
+        let recorder = Recorder { seen: Default::default() };
+        capture_nodes(&recorder, "r", &top).unwrap();
+        let seen = recorder.seen.borrow();
+        let (_, _, body) = seen.iter().find(|(_, p, _)| p == "/repos/r/query").expect("a query");
+        assert_eq!(
+            body.as_ref().unwrap()["query"]["target"],
+            json!({"type": "uuid_in", "uuids": ["0a"]})
+        );
+    }
+
+    /// The metarecord at a path is looked up at exactly its bytes.
+    #[test]
+    fn the_metarecord_at_a_path_is_resolved_by_its_exact_bytes() {
+        let recorder = Recorder { seen: Default::default() };
+        let path = TreePath::from_bytes(b"/d/caf\xe9.txt".to_vec());
+        metarecord_at_path(&recorder, "r", &path).unwrap();
+        let seen = recorder.seen.borrow();
+        let (method, route, body) = &seen[0];
+        assert_eq!((method.as_str(), route.as_str()), ("POST", "/repos/r/tree/resolve-path"));
+        let body = body.as_ref().unwrap();
+        assert_eq!(body["path"], serde_json::to_value(&path).unwrap());
+        assert_eq!(body["form"], "verbatim");
+    }
+
+    /// The repository root has no metarecord at a path: none is asked for.
+    #[test]
+    fn the_root_has_no_metarecord_at_a_path() {
+        let recorder = Recorder { seen: Default::default() };
+        assert_eq!(metarecord_at_path(&recorder, "r", &TreePath::from("")).unwrap(), None);
+        assert!(recorder.seen.borrow().is_empty());
+    }
+
+    /// An entry written while paths and names were text still reads, as the
+    /// same text.
+    #[test]
+    fn an_entry_recorded_with_text_paths_still_reads() {
+        let old = r#"{"id":"1","original_path":"/r/a.txt","original_name":"a.txt",
+            "trashed_at":0,"size":0,"reason":"manual",
+            "subtree":[{"uuid":"0a","name":"a.txt","trashed":true}]}"#;
+        let entry: TrashEntry = serde_json::from_str(old).unwrap();
+        assert_eq!(entry.original_path, "/r/a.txt");
+        assert_eq!(entry.subtree[0].name, TreeName::from("a.txt"));
+    }
+
+    /// A file whose name is not text is trashed and restored at its exact
+    /// bytes, leaving a file really named like its escape alone.
+    #[cfg(unix)]
+    #[test]
+    fn a_file_whose_name_is_not_text_is_restored_at_its_exact_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+        let base = tmp();
+        let trash = TrashDir::new(base.join("trash"));
+        let raw = base.join(std::ffi::OsStr::from_bytes(b"caf\xe9.txt"));
+        let literal = base.join("caf%E9.txt");
+        fs::write(&raw, b"raw").unwrap();
+
+        let entry = trash.trash_path(&raw, Reason::Manual, None, None, None).unwrap();
+        assert_eq!(entry.original_name, "caf%E9.txt", "the name is shown escaped");
+        let loaded = trash.entry(&entry.id).unwrap();
+        assert_eq!(loaded.original_path.to_path_buf(), raw);
+
+        fs::write(&literal, b"literal").unwrap();
+        assert_eq!(trash.restore(&entry.id).unwrap(), raw);
+        assert_eq!(fs::read(&raw).unwrap(), b"raw");
+        assert_eq!(fs::read(&literal).unwrap(), b"literal");
+        fs::remove_dir_all(&base).ok();
+    }
+
     #[test]
     fn capture_nodes_records_the_fields_and_marks_only_what_is_trashed() {
         // The capture reaches past the trashed subtree: it walks *up* to record
@@ -1253,7 +1339,7 @@ mod tests {
                 ("POST /repos/r/query", Ok(json!({"results": [child], "next_cursor": null}))),
             ],
         };
-        let nodes = capture_nodes(&mock, "r", &top, "A").unwrap();
+        let nodes = capture_nodes(&mock, "r", &top).unwrap();
         let by = |u: &str| nodes.iter().find(|n| n.uuid == u).expect("captured").clone();
 
         assert!(by("top").trashed, "the target goes");
@@ -1661,7 +1747,7 @@ mod tests {
 
         assert!(!file.exists(), "the original file should be gone");
         assert_eq!(fs::read(trash.blob_path(&entry.id)).unwrap(), b"content");
-        assert_eq!(entry.original_path, file.to_string_lossy());
+        assert_eq!(entry.original_path.to_path_buf(), file);
         assert_eq!(entry.original_name, "doc.txt");
         assert_eq!(entry.size, 7);
         assert_eq!(entry.reason, Reason::Revert);

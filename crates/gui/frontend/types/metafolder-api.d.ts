@@ -591,10 +591,15 @@ declare namespace Metafolder {
     desktop: boolean;
   }
 
+  /** A path or a name as its exact bytes (doc "Tree names"): a plain string
+   *  while it is text, `{text, bytes}` (bytes in lowercase hex) when it is not.
+   *  Shown by its text (`wireText`), never acted on by it. */
+  type WirePath = string | { text: string; bytes: string };
+
   /** One entry in a repository's trash-bin (doc "Trash"). */
   interface TrashEntry {
     id: string;
-    original_path: string;
+    original_path: WirePath;
     original_name: string;
     trashed_at: number;
     size: number;

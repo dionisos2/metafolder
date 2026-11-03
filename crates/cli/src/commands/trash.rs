@@ -25,6 +25,16 @@ pub(super) fn repo_id(ctx: &Ctx) -> Result<String, CliError> {
     Ok(ctx.repo_base()?.trim_start_matches("/repos/").to_string())
 }
 
+/// [`repo_rel`] as the exact bytes, in the `mfr_path` convention (`/a/b`):
+/// the path to look a metarecord up by (doc "Tree names").
+pub(super) fn repo_path(
+    root: &Path,
+    abs: &Path,
+) -> Result<metafolder_core::metarecord::TreePath, CliError> {
+    metafolder_core::fsentry::tree_path_under(root, abs)
+        .ok_or_else(|| CliError::Op(format!("{} is outside the repository", abs.display())))
+}
+
 /// Repo-relative path (`"a/b"`) of `abs` under `root`, dropping any non-normal
 /// components.
 pub(super) fn repo_rel(root: &Path, abs: &Path) -> Result<String, CliError> {
@@ -51,7 +61,7 @@ pub fn trash_add(ctx: &Ctx, path: &Path, force: bool) -> Result<i32, CliError> {
         .ok_or_else(|| CliError::Op("daemon did not report the repo root".into()))?;
     let trash = trash_dir_of(&info)?;
     let abs = path.canonicalize().map_err(|e| CliError::Op(format!("{}: {e}", path.display())))?;
-    let rel = repo_rel(Path::new(root), &abs)?;
+    let rel = repo_path(Path::new(root), &abs)?;
 
     let repo = repo_id(ctx)?;
     let client = &ctx.client;
@@ -68,8 +78,8 @@ pub fn trash_add(ctx: &Ctx, path: &Path, force: bool) -> Result<i32, CliError> {
         .request_daemon("GET", &format!("/repos/{repo}/metarecords/{uuid}"), None)
         .map_err(trash_daemon_err)?;
     let version = rec["version"].as_u64();
-    let subtree = metafolder_core::trash::capture_nodes(client, &repo, &rec, &rel)
-        .map_err(trash_daemon_err)?;
+    let subtree =
+        metafolder_core::trash::capture_nodes(client, &repo, &rec).map_err(trash_daemon_err)?;
 
     // Then the metadata half, then the bytes (doc "What trashing does"):
     // deleting before moving is what leaves the watcher nothing to orphan when
@@ -94,7 +104,8 @@ pub fn trash_list(ctx: &Ctx) -> Result<i32, CliError> {
     }
     for e in &entries {
         // A trailing "/" marks a directory entry.
-        let path = if e.is_dir { format!("{}/", e.original_path) } else { e.original_path.clone() };
+        let shown = e.original_path.display();
+        let path = if e.is_dir { format!("{shown}/") } else { shown.into_owned() };
         println!(
             "{}  {:>9}  {:>10}  {:<8}  {}",
             e.id,
@@ -120,10 +131,16 @@ pub fn trash_restore(ctx: &Ctx, id: &str) -> Result<i32, CliError> {
     // already claims the path and the watcher sees a refresh rather than
     // fingerprint-searching or creating a duplicate (doc "Trash").
     dir.preflight_restore(id)?;
+    // Outside the root (or no root reported), there is no path to re-link
+    // the single-metarecord fallback to: the empty path re-links nothing.
     let rel = root
-        .and_then(|r| Path::new(&entry.original_path).strip_prefix(r).ok())
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| entry.original_name.clone());
+        .and_then(|r| {
+            metafolder_core::fsentry::tree_path_under(
+                Path::new(r),
+                &entry.original_path.to_path_buf(),
+            )
+        })
+        .unwrap_or_default();
     let repo = repo_id(ctx)?;
     metafolder_core::trash::restore_relink(&ctx.client, &repo, &entry, &rel)
         .map_err(trash_daemon_err)?;
@@ -140,7 +157,7 @@ pub fn trash_prune(ctx: &Ctx, mode: PruneMode, dry_run: bool) -> Result<i32, Cli
     let reclaimed: u64 = removed.iter().map(|e| e.size).sum();
     if dry_run {
         for e in &removed {
-            println!("would remove {}  {}", format_size(e.size), e.original_path);
+            println!("would remove {}  {}", format_size(e.size), e.original_path.display());
         }
         println!(
             "{} entrie(s), {} would be reclaimed (dry-run).",

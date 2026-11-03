@@ -311,15 +311,14 @@ fn retrash(
         Err(e) => return Err(e.into()),
     };
     let Some(path) = path_of(repo, entity)? else { return Ok(()) };
-    // The bytes are the file; the trash records the path as text.
+    // The bytes are the file, and what the trash records.
     let abs = crate::fsentry::join_tree(&repo.root, &path)
         .ok_or_else(|| RevertError(format!("{:?} is not a path under the root", path.display())))?;
-    let rel = path.display().into_owned();
     if !crate::fsentry::path_present(&abs) {
         ui.note(&format!("{} is not on disk: nothing to send back to the trash", abs.display()));
         return Ok(());
     }
-    let subtree = crate::trash::capture_nodes(repo.client, &repo.repo, &record, &rel)?;
+    let subtree = crate::trash::capture_nodes(repo.client, &repo.repo, &record)?;
     let entry = repo.trash.trash_path(
         &abs,
         Reason::Manual,

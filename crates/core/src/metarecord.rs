@@ -356,6 +356,20 @@ impl TreePath {
         }
     }
 
+    /// The path these bytes of the disk are — the inverse of
+    /// [`Self::to_path_buf`].
+    pub fn from_path(path: &std::path::Path) -> Self {
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            Self(path.as_os_str().as_bytes().to_vec())
+        }
+        #[cfg(not(unix))]
+        {
+            Self(path.to_string_lossy().into_owned().into_bytes())
+        }
+    }
+
     /// The names, the root's first (`""` for the filesystem root).
     pub fn names(&self) -> Vec<TreeName> {
         self.0.split(|b| *b == b'/').map(|n| TreeName::from_bytes(n.to_vec())).collect()

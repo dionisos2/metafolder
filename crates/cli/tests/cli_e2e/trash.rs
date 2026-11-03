@@ -1092,3 +1092,35 @@ fn test_undo_and_redo_of_a_trashing_across_watcher_writes() {
     assert!(uuids_at(&repo, "doc.txt").is_empty());
     assert_eq!(repo_trash(&root).entries().unwrap().len(), 1);
 }
+
+/// A file whose name is not UTF-8 goes to the trash with its folder and comes
+/// back at its exact bytes, its metarecord with it — the capture used to drop
+/// a node whose name is not text, leaving its metarecord behind (doc "Tree
+/// names").
+#[cfg(unix)]
+#[test]
+fn test_trash_takes_and_restores_a_name_that_is_not_utf8() {
+    use std::os::unix::ffi::OsStrExt;
+    let (repo, root) = super::sync::tracked_repo("trash_bytes", &[]);
+    let dir = root.join("folder");
+    std::fs::create_dir(&dir).unwrap();
+    let file = dir.join(std::ffi::OsStr::from_bytes(b"caf\xe9.txt"));
+    std::fs::write(&file, b"raw").unwrap();
+    assert_ok(&mf(&["-u", &repo, "reconcile"]));
+    let out = mf(&["-u", &repo, "metarecord", "-q", r#"mfr_path = "/folder/caf%E9.txt""#, "get"]);
+    assert_ok(&out);
+    let uuid = out.stdout.trim().to_string();
+    assert!(is_hex_uuid(&uuid), "{}", out.stdout);
+
+    assert_ok(&mf(&["-u", &repo, "trash", "-f", dir.to_str().unwrap()]));
+    assert!(!dir.exists());
+    let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "get"]);
+    assert_ne!(out.code, 0, "the file's metarecord went with it: {}", out.stdout);
+
+    let entry = repo_trash(&root).entries().unwrap().remove(0);
+    assert_ok(&mf(&["-u", &repo, "trash", "restore", &entry.id]));
+    assert_eq!(std::fs::read(&file).unwrap(), b"raw");
+    let out = mf(&["-u", &repo, "path", "--relative", &uuid]);
+    assert_ok(&out);
+    assert_eq!(out.stdout_bytes, b"/folder/caf\xe9.txt\n");
+}
