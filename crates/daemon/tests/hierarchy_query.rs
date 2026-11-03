@@ -107,6 +107,19 @@ fn the_path_aspect_reads_every_path() {
     assert_eq!(f.run(r#"path:parent IS ABSENT"#), set(&[f.sport, f.event]));
 }
 
+/// `!=` asks for one differing path, not for none equal: the marathon's other
+/// path differs from the one named, so it matches — and so does its child,
+/// whose paths all differ.
+#[test]
+fn a_differing_path_is_one_of_the_node_s_paths() {
+    let f = fixture();
+    let got = f.run(r#"path:path != "évènement/maraton""#);
+    assert!(got.contains(&f.maraton), "the marathon's other path differs");
+    assert!(got.contains(&f.boston));
+    let both = f.run(r#"path:path = "évènement/maraton" AND path:path != "évènement/maraton""#);
+    assert_eq!(both, set(&[f.maraton]));
+}
+
 #[test]
 fn an_osm_path_matches_any_path() {
     let f = fixture();

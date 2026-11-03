@@ -173,12 +173,20 @@ fn path_leaf_matches(
             }
         }
         Narrow::Range(op, operand) => seek_all(PathSeek::Below(below(operand, *op).as_ref()))?,
-        // Every node has one path: all but the one at the operand.
+        // All but the node at the operand — unless that node, in a hierarchy,
+        // has another path, which differs (doc "Hierarchy references").
         Narrow::Differs(path) => {
             let present = Query::IsPresent { field: field.to_string(), aspect: Aspect::Path };
-            let at = cache
+            let mut at = Vec::new();
+            for uuid in cache
                 .path_matches_seeking(store, field, PathSeek::Exact(path), &|_| true)
-                .map_err(ApiError::from)?;
+                .map_err(ApiError::from)?
+            {
+                let paths = cache.paths_of(store, field, uuid).map_err(ApiError::from)?;
+                if paths.iter().all(|p| p.display() == path.as_str()) {
+                    at.push(uuid);
+                }
+            }
             if at.is_empty() {
                 return Ok(Some(present));
             }
