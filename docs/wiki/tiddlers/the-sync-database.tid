@@ -22,6 +22,12 @@ merges two), in neither is an empty pair. Its `meta` table names the pair, check
 on every opening (`409` on a mismatch — a store copied from another pair), and the
 host, updated when the directory was moved by hand.
 
+The daemon keeps a store open once a request has opened it — two requests on one pair
+share it, LMDB allowing one opening of a file per process — and closes it when the host
+repository is let go (unloaded, or lost when its root moved). Kept for the life of the
+process, a store that moved with its root was opened a second time at the new place
+once the repository was loaded there.
+
 !! What
 
 |!Table |!Key |!Value |

@@ -173,6 +173,13 @@ pub struct RevertLock {
     pub ops: Vec<i64>,
 }
 
+/// The pair stores a repository hosts close with it (doc "The sync database").
+impl Drop for RepoState {
+    fn drop(&mut self) {
+        crate::sync::forget_under(&self.internal_dir());
+    }
+}
+
 impl RepoState {
     /// Absolute path of `.metafolder/internal/` — the only part of the
     /// repository excluded from tracking (watcher and reconcile).

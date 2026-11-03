@@ -63,17 +63,19 @@ pub struct SyncDb {
     snaps: Database<'static, Bytes, Bytes>,
 }
 
-/// The stores this process has open, by path. LMDB allows one environment
-/// per file in a process (heed refuses a second opening), and two requests on
-/// one pair can run at once: they share it.
-static OPEN: LazyLock<Mutex<HashMap<PathBuf, SyncDb>>> = LazyLock::new(Default::default);
+/// The stores this process has open, by canonical path, with the path they
+/// were opened at. LMDB allows one environment per file in a process (heed
+/// refuses a second opening), and two requests on one pair can run at once:
+/// they share it. A repository let go closes the ones it hosts
+/// ([`forget_under`]).
+static OPEN: LazyLock<Mutex<HashMap<PathBuf, (PathBuf, SyncDb)>>> = LazyLock::new(Default::default);
 
 /// Opens (creating it if new) a pair's sync store.
 pub fn open(path: &Path) -> Result<SyncDb> {
     std::fs::create_dir_all(path).with_context(|| format!("create {}", path.display()))?;
     let key = path.canonicalize().with_context(|| format!("resolve {}", path.display()))?;
     let mut open = OPEN.lock_recover();
-    if let Some(db) = open.get(&key) {
+    if let Some((_, db)) = open.get(&key) {
         return Ok(db.clone());
     }
     // SAFETY: the registry above makes this the environment's one opening in
@@ -93,8 +95,26 @@ pub fn open(path: &Path) -> Result<SyncDb> {
     })?;
     let [meta, links, by_a, by_b, snaps] = created.commit().expect("the databases are committed");
     let db = SyncDb { env, meta, links, by_a, by_b, snaps };
-    open.insert(key, db.clone());
+    open.insert(key, (path.to_path_buf(), db.clone()));
     Ok(db)
+}
+
+/// Closes the stores opened under `dir` — a repository's `internal/`, when
+/// the repository is let go. Kept open for the life of the process, a store
+/// that moved with its repository's root was opened a second time at the new
+/// place, where LMDB allows one opening of a file per process. The
+/// environment closes once a request still holding it is done.
+pub fn forget_under(dir: &Path) {
+    let canonical = dir.canonicalize().ok();
+    OPEN.lock_recover().retain(|key, (given, _)| {
+        !(given.starts_with(dir) || canonical.as_ref().is_some_and(|c| key.starts_with(c)))
+    });
+}
+
+/// Whether the store at `path` is open in this process.
+#[cfg(test)]
+fn is_open(path: &Path) -> bool {
+    OPEN.lock_recover().values().any(|(given, _)| given == path)
 }
 
 /// Writes the identification `meta` rows into a sync store.
@@ -426,6 +446,26 @@ mod tests {
         let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
         let link = create_link(&first, a, b).unwrap();
         assert_eq!(get_link(&second, link.uuid).unwrap().unwrap().record_b, b);
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    /// A repository let go closes the pair stores it hosts: kept open for the
+    /// life of the process, a store moved with its repository's root was
+    /// opened a second time at the new place — two openings of one LMDB file
+    /// in a process, which breaks its locking.
+    #[test]
+    fn the_stores_under_a_directory_are_forgotten_with_it() {
+        let root = dir("forget");
+        let (host, other) = (root.join("host/internal"), root.join("other/internal"));
+        let hosted = host.join(sync_db_filename(Uuid::new_v4(), Uuid::new_v4()));
+        let elsewhere = other.join(sync_db_filename(Uuid::new_v4(), Uuid::new_v4()));
+        drop(open(&hosted).unwrap());
+        drop(open(&elsewhere).unwrap());
+        assert!(is_open(&hosted) && is_open(&elsewhere));
+
+        forget_under(&host);
+        assert!(!is_open(&hosted), "the host's store is closed");
+        assert!(is_open(&elsewhere), "another repository's is not");
         std::fs::remove_dir_all(root).ok();
     }
 
