@@ -1767,8 +1767,14 @@ export async function mount(root, metafolder) {
     pasteTarget: async (mf) => (await selectedPathsOf(mf))[0] ?? null,
   });
 
-  workspace.onChange('selected_paths', (value) => void update(value));
-  await update(await workspace.get('selected_paths'));
+  // A change told while the first read is under way is newer than its answer.
+  let toldOfChange = false;
+  workspace.onChange('selected_paths', (value) => {
+    toldOfChange = true;
+    void update(value);
+  });
+  const initialPaths = await workspace.get('selected_paths');
+  if (!toldOfChange) await update(initialPaths);
 
   // Release the media pipeline if the panel is unmounted (workspace closed or
   // panel type switched) so it cannot keep decoding in the background.

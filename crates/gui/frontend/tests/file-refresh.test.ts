@@ -93,3 +93,42 @@ describe('viewer panel — view:refresh', () => {
     expect(viewer.querySelector('pre')?.textContent).toBe('after\n');
   });
 });
+
+describe('viewer panel — the selection when it mounts', () => {
+  test('a change told while the first read is under way is not undone by its answer', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        arrayBuffer: async () => new TextEncoder().encode('text\n').buffer,
+      })),
+    );
+    const root = shadowRoot();
+    const { api } = stub('/ignored.txt');
+    const listeners: ((value: unknown) => void)[] = [];
+    api.workspace.onChange = ((_key: string, listener: (value: unknown) => void) => {
+      listeners.push(listener);
+    }) as typeof api.workspace.onChange;
+    let answerFirstRead = (_: unknown) => {};
+    const get = api.workspace.get;
+    api.workspace.get = (key: string) =>
+      key === 'selected_paths'
+        ? new Promise<object | null>((resolve) => {
+            answerFirstRead = (value) => resolve(value as object | null);
+          })
+        : get(key);
+
+    const mod = await import('../../default-config/panel-types/viewer/main.js');
+    const mounted = mod.mount(root, api as never);
+    await flush();
+    for (const listener of listeners) listener(['/notes.txt']);
+    await flush();
+    answerFirstRead([]); // read before the change, answered after it
+    await mounted;
+    await flush();
+
+    expect(root.getElementById('viewer')!.querySelector('pre')?.textContent).toBe('text\n');
+  });
+});

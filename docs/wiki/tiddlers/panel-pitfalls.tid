@@ -34,6 +34,7 @@ the semgrep rule the second item, and nothing the first.
 * ''Opening a panel never takes the focus of a text field.'' Neither at `mount` nor when it is shown: the panel's keys must work at once after `panel:open`. A field gets the focus when asked, by a `<panel>:focus <zone>` command ([[Command naming]]), usually on `{panel} {edit}`, or by a command made for that, like `help:open`.
 * ''Unknown is not absent.'' A path, a schema or a count that has not been read yet is not an empty one ([[Daemon data in panels]]).
 * ''A resolved path is used as it is'': never prepend a `/` ([[TreeRef path conventions]]).
+* ''A first read can be older than the change that overtakes it.'' A panel that subscribes with `onChange`, then reads the variable, may be told of a change before the read answers with the previous value: applying the answer afterwards undoes the change for good. Skip the answer when a change came first, as the [[viewer panel]] does for `selected_paths`.
 
 !! Reloading
 
