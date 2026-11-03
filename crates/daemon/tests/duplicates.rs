@@ -634,3 +634,21 @@ fn a_write_gives_the_store_back_once_it_held_it_its_allowed_time() {
     let rehash = ScanOptions { rehash: true, ..ScanOptions::default() };
     assert_eq!(store_takes(&repo, &rehash), 2, "a short write is one take: the reads, then it");
 }
+
+/// A file whose name is not UTF-8 is hashed by its exact bytes, like any other
+/// (doc "Tree names") — not skipped as unreadable.
+#[cfg(unix)]
+#[test]
+fn files_whose_names_are_not_utf8_are_grouped() {
+    use std::os::unix::ffi::OsStrExt;
+    let (repo, root) = setup("non-utf8");
+    std::fs::write(root.join(std::ffi::OsStr::from_bytes(b"caf\xe9.txt")), b"the same bytes")
+        .unwrap();
+    write_file(&root, "plain.txt", b"the same bytes");
+
+    let result = populate_and_scan(&repo);
+    assert_eq!((result.groups, result.skipped), (1, 0), "{result:?}");
+    let latin = resolve(&repo, "/caf%E9.txt");
+    assert_eq!(group_of(&repo, latin), group_of(&repo, resolve(&repo, "/plain.txt")));
+    assert!(group_of(&repo, latin).is_some());
+}

@@ -601,7 +601,7 @@ impl RepoState {
     /// Only the frontier reaches here — the subtrees the placement did not
     /// enter — so a repository too large to watch does not also pay one write
     /// per directory to say so.
-    pub fn record_watch_frontier(&self, frontier: &[String]) {
+    pub fn record_watch_frontier(&self, frontier: &[crate::relpath::RelPath]) {
         let mut conn = self.conn.lock_recover();
         let cache = self.tree();
         if let Err(err) = write_watch_frontier(self, &mut conn, &cache, &self.config.root, frontier)
@@ -1075,18 +1075,19 @@ fn write_watch_frontier(
     conn: &mut dyn crate::store::Database,
     cache: &Forest,
     root: &Path,
-    frontier: &[String],
+    frontier: &[crate::relpath::RelPath],
 ) -> anyhow::Result<()> {
     let mut writer = repo.writer(conn, crate::log::WriteContext::new("watch budget"))?;
-    for rel in frontier {
-        let path = crate::relpath::RelPath::from_display(rel);
-        let uuid = match cache.resolve_path(writer.store(), "mfr_path", rel)? {
+    // By exact bytes: a name that is not UTF-8 resolved through its display
+    // made a phantom directory named after the escape (doc "Tree names").
+    for path in frontier {
+        let uuid = match cache.resolve_rel(writer.store(), "mfr_path", path)? {
             Some(uuid) => uuid,
             None => {
                 // Not tracked yet — a directory the placement met before
                 // reconcile did. It gets the metarecord its exclusion hangs on.
                 let parent =
-                    crate::executor::ensure_parent_metarecords(&mut writer, cache, root, &path)?;
+                    crate::executor::ensure_parent_metarecords(&mut writer, cache, root, path)?;
                 let name = path.name().cloned().unwrap_or_default();
                 let created = writer.create_metarecord(vec![
                     metafolder_core::metarecord::Field::new(

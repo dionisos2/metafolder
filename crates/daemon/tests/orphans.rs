@@ -430,3 +430,33 @@ fn record_version(repo: &RepoState, uuid: Uuid) -> u64 {
     let conn = repo.conn.lock().unwrap();
     metafolder_daemon::store::Rows::metarecord(&*conn, uuid).unwrap().unwrap().version
 }
+
+// A name that is not UTF-8 is displayed escaped (`%E9`), and the disk must be
+// asked with the exact bytes, not with that display (doc "Tree names").
+#[cfg(unix)]
+#[test]
+fn an_existing_file_whose_name_is_not_utf8_is_no_orphan() {
+    use std::os::unix::ffi::OsStrExt;
+    let (repo, root) = setup("latin1-present");
+    std::fs::write(root.join(std::ffi::OsStr::from_bytes(b"caf\xe9.mp4")), b"movie").unwrap();
+    reconcile::reconcile(&repo).unwrap();
+    let uuid = resolve(&repo, "/caf%E9.mp4").unwrap();
+
+    assert!(scan_uuids(&repo).is_empty(), "the file is on disk");
+    assert_eq!(orphans::clear_orphans(&repo, &[uuid]).unwrap(), 0);
+    assert_ne!(field_value(&repo, uuid, "mfr_path"), Some(Value::Nothing));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_deleted_file_whose_name_is_not_utf8_is_an_orphan() {
+    use std::os::unix::ffi::OsStrExt;
+    let (repo, root) = setup("latin1-gone");
+    let name = std::ffi::OsStr::from_bytes(b"caf\xe9.mp4");
+    std::fs::write(root.join(name), b"movie").unwrap();
+    reconcile::reconcile(&repo).unwrap();
+    let uuid = resolve(&repo, "/caf%E9.mp4").unwrap();
+    std::fs::remove_file(root.join(name)).unwrap();
+
+    assert_eq!(scan_uuids(&repo), vec![uuid]);
+}

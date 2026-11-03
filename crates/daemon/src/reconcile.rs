@@ -209,15 +209,17 @@ pub fn reconcile_full_reported(
         if found.contains(&uuid) {
             continue; // Found on disk by the walk: not an orphan.
         }
-        let path = metafolder_core::slowlog::timed("path_of", || {
-            cache.path_of(writer.store(), "mfr_path", uuid)
-        })?;
-        let Some(path) = path else {
+        // The exact bytes: the displayed path of a name that is not UTF-8
+        // names no file, and the file would read as gone (doc "Tree names").
+        let rel =
+            metafolder_core::slowlog::timed("path_of", || cache.rel_path_of(writer.store(), uuid))?;
+        let Some(rel) = rel else {
             continue;
         };
-        if path.is_empty() {
+        if rel.is_root() {
             continue; // The root entry.
         }
+        let path = rel.display();
         if offline.contains(&path) {
             continue; // Unavailable, not absent: its existence is unknown.
         }
@@ -226,7 +228,7 @@ pub fn reconcile_full_reported(
         // stats with `symlink_metadata` too — read as gone and was handed to
         // the fingerprint phase as an orphan to re-attach elsewhere. Same rule
         // as `orphans::is_definitely_gone` ("a broken symlink still counts").
-        if !metafolder_core::fsentry::path_present(&root.join(path.trim_start_matches('/'))) {
+        if !metafolder_core::fsentry::path_present(&rel.to_abs(&root)) {
             orphans.push((uuid, path));
         }
     }
@@ -244,6 +246,8 @@ pub fn reconcile_full_reported(
         is_dir: bool,
         size: Option<i64>,
         matches: Vec<CandidateMatch>,
+        /// The exact paths of `matches`, which display them.
+        matched: Vec<RelPath>,
         moved: bool,
     }
     let mut states: Vec<OrphanState> = Vec::with_capacity(orphans.len());
@@ -265,6 +269,7 @@ pub fn reconcile_full_reported(
             is_dir,
             size,
             matches: Vec::new(),
+            matched: Vec::new(),
             moved: false,
         };
 
@@ -288,11 +293,14 @@ pub fn reconcile_full_reported(
             }
             let abs = rel.to_abs(&root);
             match &stored_partial {
-                None => state.matches.push(CandidateMatch {
-                    path: rel.display(),
-                    fingerprint: "size",
-                    score: None,
-                }),
+                None => {
+                    state.matches.push(CandidateMatch {
+                        path: rel.display(),
+                        fingerprint: "size",
+                        score: None,
+                    });
+                    state.matched.push(rel.clone());
+                }
                 Some(stored_partial) => {
                     let partial = match partial_cache.get(rel) {
                         Some(p) => p.clone(),
@@ -306,11 +314,14 @@ pub fn reconcile_full_reported(
                         continue;
                     }
                     match &stored_full {
-                        None => state.matches.push(CandidateMatch {
-                            path: rel.display(),
-                            fingerprint: "partial_hash",
-                            score: None,
-                        }),
+                        None => {
+                            state.matches.push(CandidateMatch {
+                                path: rel.display(),
+                                fingerprint: "partial_hash",
+                                score: None,
+                            });
+                            state.matched.push(rel.clone());
+                        }
                         Some(stored_full) => {
                             let full = match full_cache.get(rel) {
                                 Some(f) => f.clone(),
@@ -337,9 +348,7 @@ pub fn reconcile_full_reported(
             result.moved += 1;
         } else {
             // Fingerprint candidate files wait for confirmation: not auto-created.
-            for m in &state.matches {
-                claimed.insert(RelPath::from_display(&m.path));
-            }
+            claimed.extend(state.matched.iter().cloned());
         }
         states.push(state);
     }
@@ -517,11 +526,12 @@ pub fn reconcile_metarecord_reported(
     if Rows::version(&*conn, uuid)?.is_none() {
         return Err(ApiError::not_found(format!("Metarecord not found: {uuid}")));
     }
-    let Some(base) = cache.path_of(&conn, "mfr_path", uuid)? else {
+    let Some(base_rel) = cache.rel_path_of(&conn, uuid)? else {
         return Err(ApiError::bad_request(format!(
             "entry {uuid} has no valid mfr_path (Nothing or unknown)"
         )));
     };
+    let base = base_rel.display();
 
     let offline = crate::mount::offline(&conn, &cache, &root)?;
     if offline.contains(&base) {
@@ -543,7 +553,6 @@ pub fn reconcile_metarecord_reported(
     // eligibility questions read nothing from the store.
     let rules = repo.watch_rules(writer.store())?;
     let mut paths: Vec<RelPath> = Vec::new();
-    let base_rel = RelPath::from_display(&base);
     let abs_base = base_rel.to_abs(&root);
     // `path_present`: a broken symlink is on disk and has fields to refresh,
     // even though `exists()` follows it to nothing (see the orphan scan above).

@@ -228,7 +228,7 @@ pub struct WatchPlan {
     /// *frontier* — the subtrees the walk did not enter — never every directory
     /// beneath: a repository too large to watch is also too large to annotate
     /// one metarecord at a time.
-    pub frontier: Vec<String>,
+    pub frontier: Vec<RelPath>,
     pub total: std::time::Duration,
     pub eligibility: std::time::Duration,
 }
@@ -411,7 +411,7 @@ fn enter(root: &Path, rel: &RelPath, rules: &WatchRules, walk: &mut Walk) {
         walk.out.insert(at.to_abs(root));
         collect_from(root, at, false, rules, walk);
     } else {
-        walk.frontier.push(at.display());
+        walk.frontier.push(at.clone());
     }
 }
 
@@ -449,7 +449,7 @@ struct Walk<'a> {
     stop_at: &'a HashSet<PathBuf>,
     cap: Option<usize>,
     out: &'a mut HashSet<PathBuf>,
-    frontier: &'a mut Vec<String>,
+    frontier: &'a mut Vec<RelPath>,
     elig: &'a mut std::time::Duration,
 }
 
@@ -522,7 +522,7 @@ fn collect_from(root: &Path, base: RelPath, excluded: bool, rules: &WatchRules, 
                     } else {
                         // The budget is spent: this subtree is the frontier —
                         // recorded, and not entered.
-                        walk.frontier.push(display);
+                        walk.frontier.push(rel.clone());
                     }
                 }
                 Ok(false) => {} // Ineligible directory: pruned (cascading skip).
@@ -573,7 +573,7 @@ fn maintain_watches(
     // notify's event loop, which must never be made to wait for the connection
     // (see the module documentation).
     let mut subtree = HashSet::new();
-    let mut frontier: Vec<String> = Vec::new();
+    let mut frontier: Vec<RelPath> = Vec::new();
     let cap = budget_cap_for(repo.watch_budget_share());
     // Serving the fanotify source, only what arrives inside an uncovered mount
     // is watched here (doc "Uncovered mounts").

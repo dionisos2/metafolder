@@ -137,7 +137,7 @@ pub struct Placement {
     pub starved: usize,
     /// Subtree roots the daemon's own ceiling could not afford, to record as
     /// `mfr_watch_exceeded`.
-    pub frontier: Vec<String>,
+    pub frontier: Vec<RelPath>,
 }
 
 #[derive(Clone)]

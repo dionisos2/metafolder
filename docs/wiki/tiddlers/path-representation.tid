@@ -37,5 +37,5 @@ repository form, on every platform.
 !! Limits
 
 * A path ''argument'' must be valid UTF-8: the API carries it as a JSON string, and `mf` refuses one that is not ("non-UTF-8 path is not supported"). Such a file is tracked by reconcile and the watcher, but cannot be named to `mf metarecord add --path`.
-* Those clients join the ''displayed'' path, as the API returns it, onto the root: for a name that is not valid UTF-8 they reach `caf%E9.mp4`, not the file — a revert reports it "not on disk", a sync cannot copy or move it.
+* A sync joins the ''displayed'' path, as the API returns it, onto the root: for a name that is not valid UTF-8 it reaches `caf%E9.mp4`, not the file, and cannot copy or move it. A revert does not: its plan carries the exact bytes of the paths it moves ([[Tree names]]).
 * A symlink's target (`mfr_symlink_target`) is stored as text; an undecodable byte in it becomes U+FFFD ([[Symbolic links]]).

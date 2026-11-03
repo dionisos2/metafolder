@@ -45,13 +45,16 @@ pub fn scan_orphans(repo: &RepoState) -> Result<Vec<OrphanEntry>, ApiError> {
     let offline = crate::mount::offline(&conn, &cache, root)?;
     let mut orphans = Vec::new();
     for uuid in crate::store::Rows::placed(&conn, "mfr_path")? {
-        let Some(path) = cache.path_of(&conn, "mfr_path", uuid)? else {
+        // The exact bytes: the displayed path of a name that is not UTF-8
+        // names no file (doc "Tree names").
+        let Some(rel) = cache.rel_path_of(&conn, uuid)? else {
             continue; // No resolvable path (e.g. already Nothing): not this scan.
         };
-        if path.is_empty() {
+        if rel.is_root() {
             continue; // The filesystem root entry.
         }
-        if !offline.contains(&path) && is_definitely_gone(root, &path, &mut dirs) {
+        let path = rel.display();
+        if !offline.contains(&path) && is_definitely_gone(root, &rel, &mut dirs) {
             orphans.push(OrphanEntry { uuid, stale_path: path });
         }
     }
@@ -74,16 +77,17 @@ pub fn clear_orphans(repo: &RepoState, uuids: &[Uuid]) -> Result<usize, ApiError
     let mut cleared = 0;
 
     for &uuid in uuids {
-        let Some(path) = cache.path_of(writer.store(), "mfr_path", uuid)? else {
+        let Some(rel) = cache.rel_path_of(writer.store(), uuid)? else {
             continue; // Already Nothing (e.g. cascaded by an earlier iteration).
         };
-        if path.is_empty() {
+        if rel.is_root() {
             continue; // Never orphan the filesystem root entry.
         }
+        let path = rel.display();
         // Re-verify against the disk: a scan is a snapshot, and the file may have
         // returned since. Only orphan what is still definitely gone — and never
         // a path whose volume was unplugged in the meantime.
-        if offline.contains(&path) || !is_definitely_gone(&root, &path, &mut dirs) {
+        if offline.contains(&path) || !is_definitely_gone(&root, &rel, &mut dirs) {
             continue;
         }
         // Snapshot every path *before* any write: clearing a parent's `mfr_path`
@@ -133,7 +137,7 @@ fn dir_state(dir: &Path, cache: &mut HashMap<PathBuf, DirState>) -> DirState {
     state
 }
 
-/// Is the record at `rel` (an `mfr_path`-form path) *definitely* gone from disk?
+/// Is the record at `rel` (its exact bytes) *definitely* gone from disk?
 ///
 /// `true` only when some ancestor directory is readable and yet `rel` is absent
 /// below it — proof the file no longer exists. If the file is present (even a
@@ -141,8 +145,12 @@ fn dir_state(dir: &Path, cache: &mut HashMap<PathBuf, DirState>) -> DirState {
 /// walk climbs out of the repository root without finding a readable ancestor,
 /// the answer is `false` (unknown), so a permission drop or an unmounted mount
 /// never mass-orphans a subtree (doc "Orphan scan").
-fn is_definitely_gone(root: &Path, rel: &str, cache: &mut HashMap<PathBuf, DirState>) -> bool {
-    let abs = root.join(rel.trim_start_matches('/'));
+fn is_definitely_gone(
+    root: &Path,
+    rel: &crate::relpath::RelPath,
+    cache: &mut HashMap<PathBuf, DirState>,
+) -> bool {
+    let abs = rel.to_abs(root);
     if std::fs::symlink_metadata(&abs).is_ok() {
         return false; // Present on disk (a broken symlink still counts).
     }
@@ -297,8 +305,9 @@ pub fn relink_reported(
         }
         reporter.progress("relink", Some(done as u64), Some(total));
 
-        let Some(rel) = cache.path_of(&conn, "mfr_path", uuid)? else { continue };
-        let abs = crate::relpath::RelPath::from_display(&rel).to_abs(&root);
+        // The exact bytes: a displayed name that is not UTF-8 opens nothing.
+        let Some(rel) = cache.rel_path_of(&conn, uuid)? else { continue };
+        let abs = rel.to_abs(&root);
         let Some(orphan) = confirm(&abs, by_size.get(&size).map_or(&[][..], |v| v)) else {
             continue;
         };
@@ -355,7 +364,7 @@ fn adopt(
     root: &Path,
     orphan: Uuid,
     holder: Uuid,
-    rel: &str,
+    path: &crate::relpath::RelPath,
     retention: crate::log::Retention,
 ) -> Result<(), ApiError> {
     let context = crate::log::current_context().named("orphan relink");
@@ -363,8 +372,7 @@ fn adopt(
     // The holder leaves the position first: one metarecord holds a given tree
     // position, so the orphan cannot take it while the holder is still there.
     writer.delete_metarecord(holder)?;
-    let path = crate::relpath::RelPath::from_display(rel);
-    let parent = crate::executor::ensure_parent_metarecords(&mut writer, cache, root, &path)?;
+    let parent = crate::executor::ensure_parent_metarecords(&mut writer, cache, root, path)?;
     let name = path.name().cloned().unwrap_or_default();
     writer.set_field_as(
         OpType::FileMoved,

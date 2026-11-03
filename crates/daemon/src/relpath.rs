@@ -24,6 +24,11 @@ impl RelPath {
         Self::default()
     }
 
+    /// The path made of these components, outermost first.
+    pub fn from_components(components: Vec<TreeName>) -> Self {
+        Self { components }
+    }
+
     /// A child of this path.
     pub fn child(&self, name: TreeName) -> Self {
         let mut components = self.components.clone();

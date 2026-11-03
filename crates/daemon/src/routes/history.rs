@@ -331,25 +331,27 @@ pub(super) async fn prune_log(
     .await
 }
 
-/// Resolves the `mfr_path` of one operation snapshot to an OS-native absolute
-/// path, for the `from`/`to` of a `move_file` action.
+/// Resolves the `mfr_path` of one operation snapshot to an absolute path, for
+/// the `from`/`to` of a `move_file` action: as it is shown (an undecodable
+/// byte reads `%E9`), and as its exact bytes, which is what a client opens
+/// (doc "Tree names").
 pub(super) fn snapshot_abs_path(
     conn: &dyn crate::store::Store,
     cache: &crate::forest::Forest,
     root: &std::path::Path,
     op_id: i64,
     is_new: i64,
-) -> Result<Option<String>, ApiError> {
+) -> Result<Option<(String, std::path::PathBuf)>, ApiError> {
     for row in conn.snapshots(op_id, is_new != 0)? {
         if row.name == "mfr_path" {
             if let Value::TreeRef { parent, name } = row.value {
                 let parent_rel = match parent {
-                    Some(p) => cache.path_of(conn, "mfr_path", p)?.unwrap_or_default(),
-                    None => String::new(),
+                    Some(p) => cache.rel_path_of(conn, p)?.unwrap_or_default(),
+                    None => crate::relpath::RelPath::root(),
                 };
-                let rel = format!("{parent_rel}/{name}");
-                let abs = root.join(rel.trim_start_matches('/'));
-                return Ok(Some(abs.to_string_lossy().into_owned()));
+                let rel = parent_rel.child(name);
+                let shown = root.join(rel.display().trim_start_matches('/'));
+                return Ok(Some((shown.to_string_lossy().into_owned(), rel.to_abs(root))));
             }
         }
     }

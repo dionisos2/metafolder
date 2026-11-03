@@ -175,6 +175,40 @@ impl Forest {
         anyhow::bail!("TreeRef chain deeper than {MAX_TREE_DEPTH} for entry {uuid}")
     }
 
+    /// The `mfr_path` of a metarecord as its **exact bytes**, below the
+    /// repository root — what opens the file. [`Self::path_of`] gives the
+    /// *displayed* path, where an undecodable byte reads `%E9`: joined to the
+    /// root, it names a file that is not there (doc "Tree names").
+    pub fn rel_path_of(
+        &self,
+        store: &dyn Rows,
+        uuid: Uuid,
+    ) -> Result<Option<crate::relpath::RelPath>> {
+        let mut components = Vec::new();
+        let mut cur = uuid;
+        for _ in 0..MAX_TREE_DEPTH {
+            let Some((parent, name)) = store
+                .rows_named(cur, "mfr_path")?
+                .into_iter()
+                .find_map(|r| r.value.position().map(|(p, n)| (p, n.clone())))
+            else {
+                return Ok(None);
+            };
+            match parent {
+                Some(p) => {
+                    components.push(name);
+                    cur = p;
+                }
+                // The root's own name is empty: not a component of the path.
+                None => {
+                    components.reverse();
+                    return Ok(Some(crate::relpath::RelPath::from_components(components)));
+                }
+            }
+        }
+        anyhow::bail!("TreeRef chain deeper than {MAX_TREE_DEPTH} for entry {uuid}")
+    }
+
     /// All filesystem-style paths of a metarecord in `field`'s forest: one
     /// per way up to a root, through every position of every node on the way
     /// — one in a forest (doc "One position per forest"), several in a

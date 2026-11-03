@@ -910,3 +910,24 @@ fn an_idle_reconcile_reads_the_same_keys_per_path_and_names_them() {
     assert!(small_unnamed <= 10, "{small_unnamed} keys read outside any phase");
     assert!(large_unnamed <= 10, "{large_unnamed} keys read outside any phase on 8x the files");
 }
+
+/// A tracked file the walk does not meet — here made ineligible — is asked of
+/// the disk directly; for a name that is not UTF-8 that question must carry the
+/// exact bytes, or the file reads as gone and a copy of it elsewhere is
+/// offered as where it went.
+#[cfg(unix)]
+#[test]
+fn test_reconcile_does_not_take_an_unwalked_non_utf8_file_for_an_orphan() {
+    use std::os::unix::ffi::OsStrExt;
+    let (repo, root) = setup("non-utf8-unwalked");
+    std::fs::write(root.path().join(std::ffi::OsStr::from_bytes(b"caf\xe9.mp4")), b"movie")
+        .unwrap();
+    run(&repo);
+    let uuid = resolve(&repo, "/caf%E9.mp4").unwrap();
+    set_field(&repo, uuid, "mf_watch", Value::Bool(false));
+    write_file(&root, "copy.mp4", b"movie");
+
+    let result = run(&repo);
+    assert!(result.candidates.is_empty(), "the file is still there: {:?}", result.candidates);
+    assert_eq!(result.created, 1, "the copy is a new file");
+}

@@ -95,8 +95,8 @@ pub struct ScanResult {
 /// One file the scan is considering.
 struct Candidate {
     uuid: Uuid,
-    /// Repo-root-relative, leading `/`.
-    rel: String,
+    /// Repo-root-relative, as its exact bytes (doc "Tree names").
+    rel: crate::relpath::RelPath,
     size: i64,
     /// `"<dev>:<ino>"` when the file has more than one name.
     inode: Option<String>,
@@ -174,13 +174,13 @@ pub fn scan_reported(
     for (size, uuids) in by_size {
         let mut members = Vec::with_capacity(uuids.len());
         for uuid in uuids {
-            let Some(rel) = cache.path_of(&conn, "mfr_path", uuid)? else {
+            let Some(rel) = cache.rel_path_of(&conn, uuid)? else {
                 continue;
             };
             // The filesystem root itself is a directory; an offline volume
             // reads back as an empty directory and must be left frozen, not
             // scanned.
-            if rel.is_empty() || offline.contains(&rel) {
+            if rel.is_root() || offline.contains(&rel.display()) {
                 continue;
             }
             members.push(Candidate {
@@ -393,7 +393,7 @@ impl Writes<'_> {
         for (size, mut members) in self.classes.drain(..) {
             let mut kept = Vec::with_capacity(members.len());
             for member in members.drain(..) {
-                let abs = root.join(member.rel.trim_start_matches('/'));
+                let abs = member.rel.to_abs(root);
                 let live = std::fs::symlink_metadata(&abs).ok().map(|meta| {
                     (meta.modified().map(ms_from_systemtime).unwrap_or_default(), meta.len() as i64)
                 });
@@ -471,7 +471,7 @@ fn hash_step(
     opts: &ScanOptions,
     which: Fingerprint,
 ) -> anyhow::Result<Step> {
-    let abs = root.join(member.rel.trim_start_matches('/'));
+    let abs = member.rel.to_abs(root);
     let meta = std::fs::symlink_metadata(&abs)?;
     let live = (meta.modified().map(ms_from_systemtime).unwrap_or_default(), meta.len() as i64);
 

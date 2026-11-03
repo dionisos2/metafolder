@@ -1740,3 +1740,29 @@ fn test_a_whole_directory_moved_into_a_new_directory_keeps_its_subtree() {
     assert_eq!(resolve(&repo, "/sorted/trip/x.jpg"), Some(x));
     assert_eq!(metarecord_count(&repo), before + 1, "only the new directory was created");
 }
+
+/// The watch budget records its frontier on the directory itself, by its
+/// exact bytes: from the displayed path of a name that is not UTF-8 it created
+/// a second, phantom directory named after the escape.
+#[cfg(unix)]
+#[test]
+fn test_the_watch_frontier_marks_a_non_utf8_directory_itself() {
+    use metafolder_core::metarecord::TreeName;
+    use metafolder_daemon::relpath::RelPath;
+    use std::os::unix::ffi::OsStrExt;
+    let (repo, root, _) = setup("frontier-latin1");
+    let name = b"d\xe9".to_vec();
+    std::fs::create_dir(root.join(std::ffi::OsStr::from_bytes(&name))).unwrap();
+
+    repo.record_watch_frontier(&[RelPath::root().child(TreeName::from_bytes(name.clone()))]);
+
+    let uuid = resolve(&repo, "/d%E9").expect("the directory has a metarecord");
+    let Some(Value::TreeRef { name: stored, .. }) = field_value(&repo, uuid, "mfr_path") else {
+        panic!("no mfr_path");
+    };
+    assert_eq!(stored.as_bytes(), &name[..], "the record holds the real name");
+    assert_eq!(
+        field_value(&repo, uuid, metafolder_daemon::eligibility::WATCH_EXCEEDED),
+        Some(Value::Bool(true))
+    );
+}

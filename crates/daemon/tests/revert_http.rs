@@ -788,3 +788,58 @@ async fn test_a_revert_of_a_trashing_revert_trashes_the_bytes_again() {
     assert_eq!(second["requires_lock"], true, "{second}");
     assert_eq!(second["operations"][0]["filesystem"]["action"], "trash_content", "{second}");
 }
+
+/// The plan's paths are text on the wire, where a name that is not UTF-8 can
+/// only be shown: the `move` action also carries the exact bytes of both
+/// paths, in hex, for the client to `mv` with (doc "Tree names").
+#[cfg(unix)]
+#[tokio::test]
+async fn test_a_move_plan_carries_the_exact_bytes_of_its_paths() {
+    use std::os::unix::ffi::OsStrExt;
+    let (app, repo, root) = setup("fs_move_bytes").await;
+    let (_, roots) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "is_present", "field": "mf_watch"}})),
+    )
+    .await;
+    let root_uuid = roots[0].as_str().unwrap().to_string();
+    request(
+        &app,
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{root_uuid}/fields/mf_ignore"),
+        Some(json!({"value": {"type": "string", "value": r"\.metafolder(/.*)?$"}})),
+    )
+    .await;
+    request(
+        &app,
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{root_uuid}/fields/mf_watch"),
+        Some(json!({"value": {"type": "bool", "value": true}})),
+    )
+    .await;
+    let old = root.join(std::ffi::OsStr::from_bytes(b"old\xe9.txt"));
+    let new = root.join(std::ffi::OsStr::from_bytes(b"new\xe9.txt"));
+    std::fs::write(&old, b"content").unwrap();
+    reconcile(&app, &repo).await;
+    std::fs::rename(&old, &new).unwrap();
+    wait_for_file_moved(&app, &repo).await;
+
+    let (_, log) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;
+    let op_id = log["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["op_type"] == "file_moved")
+        .unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    let (status, plan) = start(&app, &repo, json!({"target": {"op_ids": [op_id]}})).await;
+    assert_eq!(status, StatusCode::OK, "start failed: {plan}");
+    let action = &plan["operations"][0]["filesystem"];
+    let hex = |p: &std::path::Path| metafolder_core::hex::encode(p.as_os_str().as_bytes());
+    assert_eq!(action["from_bytes"], json!(hex(&new)), "{action}");
+    assert_eq!(action["to_bytes"], json!(hex(&old)), "{action}");
+    request(&app, "POST", &format!("/repos/{repo}/revert/abort"), None).await;
+}

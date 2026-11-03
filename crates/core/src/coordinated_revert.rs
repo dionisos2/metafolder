@@ -114,6 +114,18 @@ fn takes_a_whole_metarecord(op: &Json) -> bool {
     matches!(op["op_type"].as_str(), Some("delete_metarecord") | Some("create_metarecord"))
 }
 
+/// The path `op[bytes_key]` spells in hex — the exact bytes — or, for a plan
+/// without it, the text `shown`.
+fn exact_path(op: &Json, bytes_key: &str, shown: &str) -> std::path::PathBuf {
+    #[cfg(unix)]
+    if let Some(bytes) = op[bytes_key].as_str().and_then(crate::hex::decode) {
+        use std::os::unix::ffi::OsStrExt;
+        return std::ffi::OsStr::from_bytes(&bytes).into();
+    }
+    let _ = bytes_key;
+    std::path::PathBuf::from(shown)
+}
+
 /// Decides a `move` step, executing the `mv` for the apply policy. Returns
 /// whether to `skip` (no filesystem move) when calling `step`.
 pub fn decide_move(
@@ -124,9 +136,13 @@ pub fn decide_move(
 ) -> Result<bool, RevertError> {
     let from = op["from"].as_str().unwrap_or_default();
     let to = op["to"].as_str().unwrap_or_default();
+    // The text only shows a name that is not UTF-8 (`%E9`); the move is made
+    // with the exact bytes, when the plan gives them (doc "Tree names").
+    let from_path = exact_path(op, "from_bytes", from);
+    let to_path = exact_path(op, "to_bytes", to);
     // `path_present`, not `exists()`: a broken symlink is a file that is
     // there, and one this step can move (see `crate::fsentry::path_present`).
-    let available = crate::fsentry::path_present(Path::new(from));
+    let available = crate::fsentry::path_present(&from_path);
     let mut policy = if available { policies.on_available } else { policies.on_unavailable };
     if policy == Policy::Ask {
         policy = ui.ask_move(from, to, available)?;
@@ -139,7 +155,7 @@ pub fn decide_move(
         // not at (doc "Reverting a label").
         Policy::Apply => {
             if available {
-                let dest = Path::new(to);
+                let dest = to_path.as_path();
                 // A directory at `to` can be neither overwritten by an `mv`
                 // (rename would fail) nor trashed in its place without taking a
                 // whole subtree the log says nothing about. Rather than abort
@@ -166,7 +182,7 @@ pub fn decide_move(
                         trash.trash_path(dest, Reason::Revert, op["id"].as_i64(), None, None)?;
                     ui.note(&format!("trashed {to} (id {}) before overwrite", entry.id));
                 }
-                std::fs::rename(from, to)
+                std::fs::rename(&from_path, &to_path)
                     .map_err(|e| RevertError(format!("mv {from} -> {to} failed: {e}")))?;
                 ui.note(&format!("moved {from} -> {to}"));
             } else {
@@ -460,8 +476,11 @@ pub fn revert(
             // means "leave this operation out".
             let leave_out = match op["filesystem"]["action"].as_str() {
                 Some("move") => {
-                    let step =
-                        json!({"from": op["filesystem"]["from"], "to": op["filesystem"]["to"]});
+                    let fs = &op["filesystem"];
+                    let step = json!({
+                        "from": fs["from"], "to": fs["to"],
+                        "from_bytes": fs["from_bytes"], "to_bytes": fs["to_bytes"],
+                    });
                     decide_move(&step, policies, &repo.trash, ui)?
                 }
                 Some("restore_content") => decide_deleted(
@@ -623,6 +642,30 @@ mod tests {
             &Quiet::default(),
         )
         .unwrap();
+        assert!(!skip);
+        assert!(!from.exists() && to.exists(), "the file should have been moved");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    // A name that is not UTF-8 only *shows* in the text `from`/`to` (`%E9`):
+    // the move is made with the exact bytes the plan also carries.
+    #[cfg(unix)]
+    #[test]
+    fn apply_moves_by_the_exact_bytes_when_the_plan_gives_them() {
+        use std::os::unix::ffi::OsStrExt;
+        let tmp = scratch("bytes");
+        let from = tmp.join(std::ffi::OsStr::from_bytes(b"here\xe9.txt"));
+        let to = tmp.join(std::ffi::OsStr::from_bytes(b"moved\xe9.txt"));
+        std::fs::write(&from, b"x").unwrap();
+        let hex = |p: &Path| crate::hex::encode(p.as_os_str().as_bytes());
+        let op = json!({
+            "from": tmp.join("here%E9.txt"), "to": tmp.join("moved%E9.txt"),
+            "from_bytes": hex(&from), "to_bytes": hex(&to),
+        });
+        let trash = TrashDir::new(tmp.join("trash"));
+        let skip =
+            decide_move(&op, &policies(Policy::Apply, Policy::Skip), &trash, &Quiet::default())
+                .unwrap();
         assert!(!skip);
         assert!(!from.exists() && to.exists(), "the file should have been moved");
         std::fs::remove_dir_all(&tmp).ok();
