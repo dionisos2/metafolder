@@ -673,15 +673,14 @@ pub(super) async fn watch_exceeded_set(
                 )));
             }
         }
-        let uuid = {
-            let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-            let cache = repo_state.tree();
-            cache
-                .resolve_path(&conn, "mfr_path", &body.path)?
-                .ok_or_else(|| ApiError::not_found(format!("No metarecord at {}", body.path)))?
-        };
         {
+            // Resolved and written under one hold of the store: the directory
+            // cannot be deleted between the two.
             let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+            let cache = repo_state.tree();
+            let uuid = cache
+                .resolve_path(&conn, "mfr_path", &body.path)?
+                .ok_or_else(|| ApiError::not_found(format!("No metarecord at {}", body.path)))?;
             let mut writer = repo_state.writer(&mut conn, request_context())?;
             if body.exceeded {
                 writer.set_field(
