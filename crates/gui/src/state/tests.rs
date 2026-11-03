@@ -1225,7 +1225,7 @@ fn test_a_shell_cd_holds_while_the_selection_stays() {
     let (notifier, state) = state();
     state.set_var("ws-1", "selected_paths", json!(["/data/a.txt"])).unwrap();
     let place = state.shell_place("ws-1").unwrap();
-    assert_eq!(place.selected_path.as_deref(), Some("/data/a.txt"));
+    assert_eq!(place.selected_path.as_deref(), Some(std::path::Path::new("/data/a.txt")));
     assert_eq!(place.cd, None);
 
     notifier.clear();

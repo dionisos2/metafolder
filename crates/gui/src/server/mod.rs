@@ -296,7 +296,9 @@ fn javascript(source: &'static str) -> axum::response::Response {
 
 #[derive(serde::Deserialize)]
 struct MediaProbeParams {
-    path: String,
+    path: Option<String>,
+    /// The path's bytes in hex, for one that is not text (`fs_path::from_query`).
+    path_bytes: Option<String>,
 }
 
 /// `GET /__media-probe?path=…` — per-file codec probe for the `viewer` panel,
@@ -308,10 +310,12 @@ async fn media_probe(
     axum::extract::Query(params): axum::extract::Query<MediaProbeParams>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let probe = tokio::task::spawn_blocking(move || {
-        crate::media_support::probe_file(&crate::fs_path::from_handle(&params.path))
-    })
-    .await;
+    let Some(path) =
+        crate::fs_path::from_query(params.path.as_deref(), params.path_bytes.as_deref())
+    else {
+        return axum::http::StatusCode::BAD_REQUEST.into_response();
+    };
+    let probe = tokio::task::spawn_blocking(move || crate::media_support::probe_file(&path)).await;
     match probe {
         Ok(probe) => axum::Json(probe).into_response(),
         Err(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response(),

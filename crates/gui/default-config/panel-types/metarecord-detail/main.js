@@ -1,7 +1,7 @@
 // metarecord-detail panel: shows and edits all fields of selected_metarecord
 // (doc "metarecord-detail panel").
 
-import { byId, el, messageOf, openButton, valueEl } from '/__ui.js';
+import { byId, el, messageOf, openButton, pathText, valueEl } from '/__ui.js';
 import { createListCursor } from '/__list-cursor.js';
 import { createTypePicker, widgetFor, createPickRunner } from '/__value-widget.js';
 import { loadSchema as loadSharedSchema, schemaTypes, templateFields } from '/__schema-template.js';
@@ -47,7 +47,7 @@ export async function mount(root, metafolder) {
   /** @type {string|null} uuid last recorded in the recently-viewed list, to
    *  avoid re-touching the same record on a `metarecords:dirty` reload. */
   let lastViewedUuid = null;
-  /** @type {string[]} the DISPLAYED record's own file path(s), resolved from
+  /** The DISPLAYED record's own file path(s), resolved from
    *  its `mfr_path` — deliberately NOT mirrored from `selected_paths`. The two
    *  are independent variables and a panel may move `selected_metarecord`
    *  alone (a reference followed here, a path-ref node, a duplicates row), so
@@ -56,6 +56,7 @@ export async function mount(root, metafolder) {
    *  "File" half. Emptied on every load and refilled from the loaded record,
    *  so the worst case is a menu without file actions, never one aimed at the
    *  wrong file. */
+  /** @type {Metafolder.WirePath[]} */
   let currentPaths = [];
   /** @type {number|null} field id being edited, or null */
   let editingField = null;
@@ -130,7 +131,8 @@ export async function mount(root, metafolder) {
    *  null when it is not one. @param {string} field */
   function hierarchyName(field) {
     for (const f of metarecord?.fields ?? []) {
-      if (f.name === field && f.value.type === 'hierarchy_ref') return f.value.value.name;
+      // A hierarchy name is typed text: its text.
+      if (f.name === field && f.value.type === 'hierarchy_ref') return pathText(f.value.value.name);
     }
     return null;
   }

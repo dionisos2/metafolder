@@ -2,7 +2,21 @@
 // daemon), distinguish tracked metarecords, add paths to the DB
 // (doc "file-manager panel").
 
-import { byId, el, fileTypeGlyph, viewerButtons, whereArg } from '/__ui.js';
+import {
+  PathMap,
+  byId,
+  isBytePath,
+  pathKey,
+  el,
+  fileTypeGlyph,
+  pathText,
+  samePath,
+  viewerButtons,
+  whereArg,
+} from '/__ui.js';
+
+/** A path, exact (doc "Tree names"): shown by its text, acted on as it is.
+ *  @typedef {Metafolder.WirePath} Path */
 import { copyText } from '/__menu.js';
 import { createPagedList } from '/__paged-list.js';
 import { createMultiSelect, createPathSelect } from '/__multi-select.js';
@@ -66,7 +80,7 @@ export async function mount(root, metafolder) {
   let repoRoot = null;
   /** @type {string|null} .metafolder/internal: hard-excluded from tracking */
   let internalDir = null;
-  /** @type {string|null} */
+  /** @type {Path|null} */
   let currentDir = null;
   /** @type {string|null} uuid of the folder last recorded in the
    *  recently-viewed list, so a re-listing of it is not another view */
@@ -98,13 +112,13 @@ export async function mount(root, metafolder) {
    *  `listing` is rebuilt from when the activity order changes.
    *  @type {Entry[]} */
   let dirEntries = [];
-  /** @type {Map<string, string>} absolute path -> metarecord uuid (children of currentDir only) */
-  let trackedPaths = new Map();
+  /** @type {PathMap<string>} absolute path -> metarecord uuid (children of currentDir only) */
+  let trackedPaths = new PathMap();
   /** Entries of the current listing left untracked on purpose — by an
    *  `mf_ignore` pattern or where an `mf_watch = false` starts — and why
    *  (doc "Setting ignore patterns"). Absolute path -> exclusion.
-   *  @type {Map<string, import('./ignored.js').Exclusion>} */
-  let excludedPaths = new Map();
+   *  @type {PathMap<import('./ignored.js').Exclusion>} */
+  let excludedPaths = new PathMap();
   /** How many watcher events arrived under each listed entry since the load
    *  (doc "Watch activity"; recursive counts). Null when unknown — the
    *  daemon did not answer — which shows nothing rather than zeros.
@@ -138,12 +152,12 @@ export async function mount(root, metafolder) {
   const statusLine = byId(root, 'status-line');
   const listingElement = byId(root, 'listing');
 
-  /** @param {string} path */
+  /** @param {Path} path */
   function insideRoot(path) {
     return isWithin(path, repoRoot);
   }
 
-  /** @param {string} path */
+  /** @param {Path} path */
   function trackable(path) {
     return insideRoot(path) && !isWithin(path, internalDir);
   }
@@ -219,7 +233,7 @@ export async function mount(root, metafolder) {
       mf.workspace.get('selected_metarecord'),
       mf.workspace.get('selected_paths'),
     ]);
-    const ours = Array.isArray(paths) && paths.length === 1 && paths[0] === item.path;
+    const ours = Array.isArray(paths) && paths.length === 1 && samePath(paths[0], item.path);
     const known = /** @type {{uuid?: string} | null} */ (selected)?.uuid === uuid;
     if (ours && !known) await listCursor.publish(cursorIndex, mf);
   }
@@ -246,9 +260,10 @@ export async function mount(root, metafolder) {
     if (currentDir !== dir) return;
     /** @type {string[]} */
     const rels = [];
+    // Activity is only shown: asked for, and keyed, by the text.
     for (const item of listing.slice(0, rendered)) {
       const rel = relPath(item.path, repoRoot);
-      if (rel !== null && !rels.includes(rel)) rels.push(rel);
+      if (rel !== null && !rels.includes(pathText(rel))) rels.push(pathText(rel));
     }
     const found = await fetchActivity(daemon, repo, rels);
     if (currentDir === dir) activity = found;
@@ -261,7 +276,8 @@ export async function mount(root, metafolder) {
   async function applyActivityOrder() {
     const dir = currentDir;
     if (dir === null) return;
-    const dirRel = relPath(dir, repoRoot);
+    const exactDir = relPath(dir, repoRoot);
+    const dirRel = exactDir === null ? null : pathText(exactDir);
     const children =
       sortBy !== null && dirRel !== null
         ? await fetchActivityChildren(daemon, repo, dirRel, Math.max(1, dirEntries.length), sortBy)
@@ -270,36 +286,36 @@ export async function mount(root, metafolder) {
     const body = children
       ? orderByActivity(dirEntries, (item) => {
           const rel = relPath(item.path, repoRoot);
-          return (rel !== null && children.get(rel)) || 0;
+          return (rel !== null && children.get(pathText(rel))) || 0;
         })
       : dirEntries;
     const cursorPath = listing[cursorIndex]?.path;
     listing = [...listing.slice(0, syntheticCount), ...body];
     if (cursorPath !== undefined) {
-      cursorIndex = listing.findIndex((item) => item.path === cursorPath);
+      cursorIndex = listing.findIndex((item) => samePath(item.path, cursorPath));
       if (cursorIndex >= rendered) rendered = cursorIndex + 1;
     }
   }
 
   /** The count of an absolute path, or 0 when unknown or quiet.
-   *  @param {string} path */
+   *  @param {Path} path */
   function activityOf(path) {
     const rel = activity ? relPath(path, repoRoot) : null;
-    return (rel !== null && activity?.counts.get(rel)) || 0;
+    return (rel !== null && activity?.counts.get(pathText(rel))) || 0;
   }
 
   /** The operations written for an absolute path, or 0 when unknown or none.
-   *  @param {string} path */
+   *  @param {Path} path */
   function operationsOf(path) {
     const rel = activity ? relPath(path, repoRoot) : null;
-    return (rel !== null && activity?.operations.get(rel)) || 0;
+    return (rel !== null && activity?.operations.get(pathText(rel))) || 0;
   }
 
   // Re-query the tracked status of the current directory (after a write, or an
   // external change): drop the stale map and refill it from the daemon.
   /** @param {MetafolderApi} [mf] the command run asking, if one does */
   async function reenrichVisible(mf = metafolder) {
-    trackedPaths = new Map();
+    trackedPaths = new PathMap();
     const dirUuid = await enrichSelfParent();
     await enrichChildren(dirUuid, mf);
     await refreshEligibility();
@@ -313,13 +329,13 @@ export async function mount(root, metafolder) {
   /** Lists `dir` and highlights `cursor` in it — by default, when going back
    *  up, the folder left (doc "file-manager panel"), so the way back down is
    *  one Enter away.
-   *  @param {MetafolderApi} mf @param {string} dir @param {string|null} [cursor]
+   *  @param {MetafolderApi} mf @param {Path} dir @param {string|null} [cursor]
    *  @returns {Promise<void>} */
   function open(mf, dir, cursor) {
     return bench.measure('mf:fm:load', () => openNow(mf, dir, cursor));
   }
 
-  /** @param {MetafolderApi} mf @param {string} dir @param {string|null} [cursor] */
+  /** @param {MetafolderApi} mf @param {Path} dir @param {string|null} [cursor] */
   async function openNow(mf, dir, cursor) {
     if (constrainToRoot && repoRoot !== null && !insideRoot(dir)) {
       void statusBar.message('navigation is constrained to the repo root', 4000);
@@ -347,8 +363,8 @@ export async function mount(root, metafolder) {
     dirEntries = filterHidden(items, showHidden);
     listing = [...synthetic, ...dirEntries];
     currentDir = dir;
-    trackedPaths = new Map();
-    excludedPaths = new Map();
+    trackedPaths = new PathMap();
+    excludedPaths = new PathMap();
     watchScope = null;
     activity = null;
     cursorIndex = -1;
@@ -391,11 +407,12 @@ export async function mount(root, metafolder) {
 
   /**
    * The offline mount point an absolute path sits on, or null.
-   * @param {string} path
+   * @param {Path} path
    */
   function offlineFor(path) {
     if (mounts.length === 0 || repoRoot === null) return null;
-    return offlineMountFor(mounts, relativeTo(repoRoot, path));
+    // Mount points are matched by their text, as they are shown.
+    return offlineMountFor(mounts, relativeTo(repoRoot, pathText(path)));
   }
 
   function render() {
@@ -403,7 +420,7 @@ export async function mount(root, metafolder) {
   }
 
   function renderNow() {
-    pathElement.textContent = currentDir ?? '';
+    pathElement.textContent = currentDir === null ? '' : pathText(currentDir);
     // The placeholder shows only for a load failure (otherwise the listing owns
     // the body); a successful listing hides it, empty or not.
     const showError = loadError !== null;
@@ -648,7 +665,7 @@ export async function mount(root, metafolder) {
   async function checkAll(mf) {
     /** @type {string[]} */
     const uuids = [];
-    /** @type {string[]} */
+    /** @type {Path[]} */
     const paths = [];
     for (const item of listing.slice(syntheticCount)) {
       const uuid = trackedPaths.get(item.path);
@@ -672,7 +689,7 @@ export async function mount(root, metafolder) {
   // Confirm a folder-path pick with `path` (doc "Value picker"): publish it
   // as the selection and run the global confirm command, which hands it back to
   // the caller (e.g. the repos panel) as `pick_result`.
-  /** @param {string} path */
+  /** @param {Path} path */
   async function pickThisFolder(path) {
     await workspace.set('selected_paths', [path]);
     await commands.invoke(['pick:confirm']);
@@ -750,8 +767,9 @@ export async function mount(root, metafolder) {
         {
           label: 'Copy full path',
           action: () => {
-            void copyText(item.path);
-            void statusBar.message(`Copied ${item.path}`, statusMessageMs);
+            // The text: what a clipboard of text holds.
+            void copyText(pathText(item.path));
+            void statusBar.message(`Copied ${pathText(item.path)}`, statusMessageMs);
           },
         },
         // Delete's own command, on the clicked entry (doc "Deleting an item").
@@ -802,7 +820,7 @@ export async function mount(root, metafolder) {
 
   /** @param {MetafolderApi} mf */
   async function goUp(mf) {
-    if (!currentDir || currentDir === '/') return;
+    if (!currentDir || pathText(currentDir) === '/') return;
     await open(mf, parentDir(currentDir));
   }
 
@@ -818,8 +836,10 @@ export async function mount(root, metafolder) {
       void statusBar.message('no active repository', 4000);
       return;
     }
-    const dirRel = relPath(currentDir, repoRoot);
-    if (dirRel === null) return;
+    // Patterns are text, matched against paths as they show.
+    const exactDir = relPath(currentDir, repoRoot);
+    if (exactDir === null) return;
+    const dirRel = pathText(exactDir);
     try {
       const target = await ignoreTarget({
         call: (method, path, body) => daemon.call(method, path, body),
@@ -865,9 +885,12 @@ export async function mount(root, metafolder) {
    *  @param {Entry} item @returns {Metafolder.MenuItem[]} */
   function ignoreMenuItems(item) {
     if (!repo || currentDir === null || repoRoot === null) return [];
-    const rel = relPath(item.path, repoRoot);
-    const dirRel = relPath(currentDir, repoRoot);
-    if (rel === null || dirRel === null) return [];
+    // Patterns are text, matched against paths as they show.
+    const exactRel = relPath(item.path, repoRoot);
+    const exactDir = relPath(currentDir, repoRoot);
+    if (exactRel === null || exactDir === null) return [];
+    const rel = pathText(exactRel);
+    const dirRel = pathText(exactDir);
     /** @type {Metafolder.MenuItem[]} */
     const items = [{ header: 'Ignore' }];
     items.push({
@@ -920,7 +943,7 @@ export async function mount(root, metafolder) {
   // opening the folder of a half-written location writes `cursor = null` over
   // the cursor still to come.
 
-  /** @type {{dir: string|null, cursor: string|null}} */
+  /** @type {{dir: Path|null, cursor: string|null}} */
   let appliedLocation = { dir: null, cursor: null };
   // A read of the variables that overlaps the panel's own move is stale: begun
   // before it, it finds where the panel WAS (and going there undid a
@@ -941,7 +964,10 @@ export async function mount(root, metafolder) {
    *  the last value.
    *  @param {'dir'|'cursor'} key @param {unknown} value */
   function isOwnWrite(key, value) {
-    const at = ownWrites[key].indexOf(value);
+    // By exact key: a path that is not text comes back as a new object.
+    const same = (/** @type {unknown} */ v) =>
+      isBytePath(v) ? pathKey(v) : v;
+    const at = ownWrites[key].findIndex((v) => same(v) === same(value));
     if (at < 0) return false;
     ownWrites[key].splice(0, at + 1);
     return true;
@@ -949,7 +975,7 @@ export async function mount(root, metafolder) {
 
   /** Moves the panel's location to `location`, writing the named variables.
    *  @param {MetafolderApi} mf
-   *  @param {{dir: string|null, cursor: string|null}} location
+   *  @param {{dir: Path|null, cursor: string|null}} location
    *  @param {('dir'|'cursor')[]} keys */
   async function writeLocation(mf, location, keys) {
     appliedLocation = location;
@@ -969,14 +995,14 @@ export async function mount(root, metafolder) {
     }
   }
 
-  /** @returns {Promise<{dir: string|null, cursor: string|null}>} */
+  /** @returns {Promise<{dir: Path|null, cursor: string|null}>} */
   async function variableLocation() {
     const [dir, cursor] = await Promise.all([
       workspace.get('file-manager:dir'),
       workspace.get('file-manager:cursor'),
     ]);
     return {
-      dir: typeof dir === 'string' && dir ? dir : null,
+      dir: (typeof dir === 'string' && dir !== '') || isBytePath(dir) ? dir : null,
       cursor: typeof cursor === 'string' && cursor ? cursor : null,
     };
   }
@@ -984,13 +1010,13 @@ export async function mount(root, metafolder) {
   /** Goes to `dir` and highlights `cursor` in it. A folder outside the
    *  constrained repository root is an explicit request: the constraint is
    *  dropped rather than the request refused.
-   *  @param {string} dir @param {string|null} cursor */
+   *  @param {Path} dir @param {string|null} cursor */
   async function showLocation(dir, cursor) {
     if (constrainToRoot && repoRoot !== null && !insideRoot(dir)) {
       constrainToRoot = false;
       constrainBox.checked = false;
     }
-    if (dir !== currentDir) await open(metafolder, dir, cursor);
+    if (currentDir === null || !samePath(dir, currentDir)) await open(metafolder, dir, cursor);
     else if (cursor) await selectByName(metafolder, cursor);
   }
 
@@ -1002,7 +1028,9 @@ export async function mount(root, metafolder) {
       return;
     }
     if (next.dir === null) return;
-    if (next.dir === appliedLocation.dir && next.cursor === appliedLocation.cursor) return;
+    const sameDir =
+      appliedLocation.dir !== null && samePath(next.dir, appliedLocation.dir);
+    if (sameDir && next.cursor === appliedLocation.cursor) return;
     await showLocation(next.dir, next.cursor);
   }
 
@@ -1032,10 +1060,11 @@ export async function mount(root, metafolder) {
 
   /** The name of `dir`'s child that `path` lies in, or null when `path` is not
    *  strictly below `dir`.
-   *  @param {string} dir @param {string|null} path */
+   *  @param {Path} dir @param {Path|null} path */
   function childOnTheWay(dir, path) {
-    if (path === null || path === dir || !isWithin(path, dir)) return null;
-    const below = path.slice(dir.replace(/\/+$/, '').length + 1);
+    if (path === null || samePath(path, dir) || !isWithin(path, dir)) return null;
+    // A name as listed: its text.
+    const below = pathText(path).slice(pathText(dir).replace(/\/+$/, '').length + 1);
     return below.split('/')[0] || null;
   }
 
@@ -1207,7 +1236,7 @@ export async function mount(root, metafolder) {
     },
   });
   /** `item:delete` on `path`, the entry a context menu was opened on.
-   *  @param {string} path */
+   *  @param {Path} path */
   async function deleteEntry(path) {
     await metafolder.workspace.set('selected_paths', [path]);
     await commands.invoke(['item:delete']);

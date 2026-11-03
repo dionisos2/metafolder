@@ -89,7 +89,7 @@ describe('item:delete — the item under the cursor', () => {
     // The tree explorer publishes the metarecord alone: its file is looked
     // up, so a metarecord with a file is never deleted without it.
     vars.selected_metarecord = { repo: 'r1', uuid: 'u3' };
-    vars.file = ['music/a.flac'];
+    vars.file = ['/music/a.flac'];
     await run();
     expect(calls.trash).toEqual([['r1', '/srv/music/a.flac']]);
     expect(calls.daemon).toEqual([]);

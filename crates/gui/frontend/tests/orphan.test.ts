@@ -21,8 +21,8 @@ const metarecord = (...values: Metafolder.Value[]): Metafolder.Metarecord => ({
 
 function ctx(paths: string[], existing: string[]) {
   return {
-    metarecordPaths: vi.fn(async () => paths),
-    exists: vi.fn(async (path: string) => existing.includes(path)),
+    metarecordPaths: vi.fn(async (): Promise<Metafolder.WirePath[]> => paths),
+    exists: vi.fn(async (path: Metafolder.WirePath) => existing.includes(path as string)),
   };
 }
 

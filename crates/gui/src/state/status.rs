@@ -68,12 +68,17 @@ impl GuiState {
             .as_ref()
             .filter(|(_, under)| *under == selection)
             .map(|(dir, _)| dir.clone());
+        // A string, or `{text, bytes}` for a path that is not text: its
+        // bytes, exactly (doc "Tree names").
         let selected_path = ws
             .vars
             .get("selected_paths")
             .and_then(|paths| paths.get(0))
-            .and_then(Value::as_str)
-            .map(str::to_string);
+            .and_then(|path| {
+                serde_json::from_value::<metafolder_core::metarecord::TreePath>(path.clone()).ok()
+            })
+            .filter(|path| !path.is_empty())
+            .map(|path| path.to_path_buf());
         Ok(ShellPlace { selection, cd, selected_path })
     }
 

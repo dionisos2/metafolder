@@ -51,15 +51,30 @@ export function placeholderKey(ph: Placeholder): string {
   return ph.mod ? `${ph.name}:${ph.mod}` : ph.name;
 }
 
-/** POSIX single-quote: wrap in '…' and escape embedded quotes as '\''. */
-export function shellQuote(value: string): string {
+/** POSIX single-quote: wrap in '…' and escape embedded quotes as '\''. A
+ *  path that is not text (`{text, bytes}`, doc "Tree names") is written in
+ *  bash's ANSI-C quoting, `$'caf\xe9'`, which gives the shell its exact
+ *  bytes. */
+export function shellQuote(value: string | Metafolder.WirePath): string {
+  if (typeof value !== "string") {
+    let out = "$'";
+    for (let i = 0; i < value.bytes.length; i += 2) {
+      const byte = parseInt(value.bytes.slice(i, i + 2), 16);
+      const printable = byte >= 0x20 && byte < 0x7f && byte !== 0x27 && byte !== 0x5c;
+      out += printable ? String.fromCharCode(byte) : `\\x${value.bytes.slice(i, i + 2)}`;
+    }
+    return `${out}'`;
+  }
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 /** Rebuild the command line, shell-quoting each substituted value. Fails if a
  *  placeholder has no entry in `resolved` (a defensive guard — the orchestrator
  *  resolves every token first). */
-export function substitute(segments: Segment[], resolved: Map<string, string>): ExpandOutcome {
+export function substitute(
+  segments: Segment[],
+  resolved: Map<string, string | Metafolder.WirePath>,
+): ExpandOutcome {
   let out = '';
   for (const seg of segments) {
     if ('lit' in seg) {
@@ -93,10 +108,10 @@ export interface ExpandDeps {
   selected(): Promise<{ uuid: string; repo: string } | null>;
   /** Fetch the full metarecord (version + fields). */
   metarecord(repo: string, uuid: string): Promise<FetchedMetarecord>;
-  /** Resolve a TreeRef field to its absolute paths. */
-  treePaths(repo: string, uuid: string, field: string): Promise<string[]>;
-  /** The current `selected_paths` workspace var (absolute paths). */
-  selectedPaths(): Promise<string[]>;
+  /** Resolve a TreeRef field to its absolute paths, exact. */
+  treePaths(repo: string, uuid: string, field: string): Promise<Metafolder.WirePath[]>;
+  /** The current `selected_paths` workspace var (absolute paths, exact). */
+  selectedPaths(): Promise<Metafolder.WirePath[]>;
   /** The active repository's UUID (`active_repo` workspace var), or null. */
   activeRepo(): Promise<string | null>;
   /** The display name of a repository, given its UUID. */
@@ -133,7 +148,7 @@ function formatScalar(name: string, value: { type: string; value?: unknown }): s
 }
 
 /** The single value of a path list, or throw if there are none or several. */
-function singlePath(paths: string[], what: string): string {
+function singlePath(paths: Metafolder.WirePath[], what: string): Metafolder.WirePath {
   if (paths.length === 0) throw new ResolveError(`${what} has no value`);
   if (paths.length > 1) throw new ResolveError(`${what} has multiple values`);
   return paths[0];
@@ -162,7 +177,7 @@ export async function expandShellPlaceholders(input: string, deps: ExpandDeps): 
     return r;
   });
 
-  async function resolveOne(ph: Placeholder): Promise<string> {
+  async function resolveOne(ph: Placeholder): Promise<string | Metafolder.WirePath> {
     const { name, mod } = ph;
     // Reserved shorthands (not field names).
     if (name === 'u' || name === 'v' || name === 'p' || name === 'r') {
@@ -191,7 +206,7 @@ export async function expandShellPlaceholders(input: string, deps: ExpandDeps): 
     return formatScalar(name, rows[0].value);
   }
 
-  const resolved = new Map<string, string>();
+  const resolved = new Map<string, string | Metafolder.WirePath>();
   try {
     for (const ph of placeholders) {
       const key = placeholderKey(ph);

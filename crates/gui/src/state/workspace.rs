@@ -122,8 +122,8 @@ pub struct ShellPlace {
     pub selection: Value,
     /// Where a `cd` left the shell, if made under this very selection.
     pub cd: Option<PathBuf>,
-    /// The first of `selected_paths`.
-    pub selected_path: Option<String>,
+    /// The first of `selected_paths`, at its exact bytes.
+    pub selected_path: Option<std::path::PathBuf>,
 }
 
 /// What a shell-log line is.

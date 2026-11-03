@@ -4,9 +4,22 @@
 // When the active path is a directory, its contents are shown as a
 // thumbnail grid the user can click into (drill-in, with a back button).
 
-import { byId, el, looksLikeText, messageOf, thumbnail } from '/__ui.js';
+import {
+  byId,
+  el,
+  isBytePath,
+  looksLikeText,
+  messageOf,
+  pathQuery,
+  pathText,
+  samePath,
+  thumbnail,
+} from '/__ui.js';
+
+/** A path, exact (doc "Tree names"): shown by its text, acted on as it is.
+ *  @typedef {Metafolder.WirePath} Path */
 import { createPagedList } from '/__paged-list.js';
-import { fileMenuItems, parentDir } from '/__file-actions.js';
+import { fileMenuItems, parentDir, underRoot } from '/__file-actions.js';
 import {
   SAVE_INTERVAL_MS,
   MIN_DELTA,
@@ -90,16 +103,17 @@ function nonNegativeNumber(configured, key) {
  * `path: null` = the walk reached the selected path, so follow the selection
  * again instead of holding a drill-in of our own.
  *
- * @param {string|null} local the drill-in path, or null while following
- * @param {string|undefined} selectedPath the followed selection's path
- * @returns {{move: false} | {move: true, path: string|null}}
+ * @param {Path|null} local the drill-in path, or null while following
+ * @param {Path|undefined} selectedPath the followed selection's path
+ * @returns {{move: false} | {move: true, path: Path|null}}
  */
 export function backTarget(local, selectedPath) {
   const current = local ?? selectedPath;
-  if (!current) return { move: false };
+  if (!current || pathText(current) === '') return { move: false };
   const parent = parentDir(current);
-  if (parent === current) return { move: false }; // at the filesystem root
-  return { move: true, path: parent === selectedPath ? null : parent };
+  if (samePath(parent, current)) return { move: false }; // at the filesystem root
+  const back = selectedPath !== undefined && samePath(parent, selectedPath);
+  return { move: true, path: back ? null : parent };
 }
 
 /**
@@ -136,7 +150,7 @@ export async function mount(root, metafolder) {
   const slideshowGapMs =
     nonNegativeNumber(defaults.slideshowGapSeconds, 'slideshow-gap-seconds') * 1000;
 
-  /** @type {string[]} */
+  /** @type {Path[]} the selection followed, exact */
   let paths = [];
   let activeIndex = 0;
   // The metarecord the selection points at ({ uuid, repo }), published by
@@ -154,7 +168,7 @@ export async function mount(root, metafolder) {
    *  following the same selection again (or a re-render) does not churn the
    *  list. */
   let lastViewedUuid = null;
-  /** @type {string|null} Local drill-in path: set when the user clicks into a
+  /** @type {Path|null} Local drill-in path: set when the user clicks into a
    *  directory's listing, overriding the selection until it changes.
    *  null = follow the selection. */
   let localPath = null;
@@ -233,12 +247,12 @@ export async function mount(root, metafolder) {
    *  keep firing. */
   let detachDirScroll = null;
 
-  /** @param {string} path */
+  /** @param {Path} path */
   function rawUrl(path) {
     const auth = metafolder.sessionToken
       ? `&token=${encodeURIComponent(metafolder.sessionToken)}`
       : '';
-    return `${metafolder.guiServer}/fsraw?path=${encodeURIComponent(path)}${auth}`;
+    return `${metafolder.guiServer}/fsraw?${pathQuery(path)}${auth}`;
   }
 
   /**
@@ -247,16 +261,16 @@ export async function mount(root, metafolder) {
    * the element stays the zoom target, so a zoom the user set survives the
    * page turn (and the viewer does not flash).
    *
-   * @type {{path: string, page: number, pages: number, img: HTMLImageElement}|null}
+   * @type {{path: Path, page: number, pages: number, img: HTMLImageElement}|null}
    */
   let document_ = null;
 
-  /** @param {string} path @param {number} page */
+  /** @param {Path} path @param {number} page */
   function documentUrl(path, page) {
     const auth = metafolder.sessionToken
       ? `&token=${encodeURIComponent(metafolder.sessionToken)}`
       : '';
-    return `${metafolder.guiServer}/document?path=${encodeURIComponent(path)}` +
+    return `${metafolder.guiServer}/document?${pathQuery(path)}` +
       `&page=${page}&dpi=${documentDpi}${auth}`;
   }
 
@@ -374,7 +388,7 @@ export async function mount(root, metafolder) {
   // The media file shown as a poster, waiting for playback to be asked for
   // before its element is built (see `renderMedia`), or null when none is (or
   // when it has already been mounted).
-  /** @type {{kind: 'audio'|'video', path: string, url: string, generation: number}|null} */
+  /** @type {{kind: 'audio'|'video', path: Path, url: string, generation: number}|null} */
   let pendingMedia = null;
 
   // --- Playback position ------------------------------------------------
@@ -511,13 +525,13 @@ export async function mount(root, metafolder) {
   }
 
   // The path currently shown: the local drill-in target, or the selection.
-  /** @returns {string|undefined} */
+  /** @returns {Path|undefined} */
   function viewedPath() {
     return localPath ?? paths[activeIndex];
   }
 
   // Drill into a directory entry / preview a file from the listing.
-  /** @param {string} path */
+  /** @param {Path} path */
   function navigateInto(path) {
     localPath = path;
     rerender();
@@ -589,7 +603,7 @@ export async function mount(root, metafolder) {
   // the full decode pipeline), and whether the decoder it would pick is too
   // slow for the stream. Returns null when the probe is unreachable.
   /**
-   * @param {string} path
+   * @param {Path} path
    * @returns {Promise<{missing: string[], slow: string|null}|null>}
    */
   async function probeFile(path) {
@@ -598,7 +612,7 @@ export async function mount(root, metafolder) {
         ? `&token=${encodeURIComponent(metafolder.sessionToken)}`
         : '';
       const response = await fetch(
-        `${metafolder.guiServer}/__media-probe?path=${encodeURIComponent(path)}${auth}`,
+        `${metafolder.guiServer}/__media-probe?${pathQuery(path)}${auth}`,
       );
       if (response.ok)
         return /** @type {{missing: string[], slow: string|null}} */ (await response.json());
@@ -620,7 +634,7 @@ export async function mount(root, metafolder) {
   // the type glyph for audio (nothing to extract a frame from). Clicking it —
   // like `viewer:play-pause` — is what loads the player.
   /**
-   * @param {'audio'|'video'} kind @param {string} path @param {string} url
+   * @param {'audio'|'video'} kind @param {Path} path @param {string} url
    * @param {number} generation
    */
   function renderMedia(kind, path, url, generation) {
@@ -714,7 +728,7 @@ export async function mount(root, metafolder) {
   // Directory view: a thumbnail grid of the folder's entries, rendered in
   // windows of `dirPage` (more appended as the grid is scrolled) so a huge
   // folder neither freezes on open nor holds thousands of <img> at once.
-  /** @param {string} dir @param {number} generation */
+  /** @param {Path} dir @param {number} generation */
   async function renderDirectory(dir, generation) {
     /** @type {Metafolder.FsEntry[]} */
     let entries;
@@ -785,7 +799,7 @@ export async function mount(root, metafolder) {
   // the decode is non-fatal: stray/latin-1 bytes become replacement chars
   // rather than throwing.
   /** @param {string} url @param {number} generation @param {boolean} force
-   *  @param {string} path @param {Stamp|null} stamp the file before this read */
+   *  @param {Path} path @param {Stamp|null} stamp the file before this read */
   async function renderText(url, generation, force, path, stamp) {
     const current = () => generation === renderGeneration;
     try {
@@ -830,7 +844,7 @@ export async function mount(root, metafolder) {
    * says why); `stamp` is the file as last read or written, for telling that
    * something else wrote to it.
    * @typedef {{mtime?: number, size?: number}} Stamp
-   * @type {{path: string, preview: string, saved: string|null, current: string|null,
+   * @type {{path: Path, preview: string, saved: string|null, current: string|null,
    *         eol: '\n'|'\r\n', stamp: Stamp|null, refusal: string|null}|null}
    */
   let textShown = null;
@@ -849,7 +863,7 @@ export async function mount(root, metafolder) {
   function holdingChanges() {
     if (!textChanged()) return false;
     void statusBar.message(
-      `Unsaved changes in ${textShown?.path}: the panel stays on it until they are saved or reloaded.`,
+      `Unsaved changes in ${textShown ? pathText(textShown.path) : ''}: the panel stays on it until they are saved or reloaded.`,
       statusMessageMs,
     );
     return true;
@@ -898,7 +912,7 @@ export async function mount(root, metafolder) {
   /** @param {boolean} on */
   function setEditingText(on) {
     if (on && textShown?.refusal) {
-      void statusBar.message(`${textShown.path}: ${textShown.refusal}`, statusMessageMs);
+      void statusBar.message(`${pathText(textShown.path)}: ${textShown.refusal}`, statusMessageMs);
       updateTextToolbar();
       return;
     }
@@ -927,7 +941,7 @@ export async function mount(root, metafolder) {
         const now = /** @type {Stamp} */ (await fs.stat(shown.path));
         if (now.mtime !== shown.stamp?.mtime || now.size !== shown.stamp?.size) {
           void statusBar.error(
-            `${shown.path} changed on disk since it was read: viewer:save force overwrites it, viewer:reload drops your changes.`,
+            `${pathText(shown.path)} changed on disk since it was read: viewer:save force overwrites it, viewer:reload drops your changes.`,
           );
           return;
         }
@@ -942,7 +956,7 @@ export async function mount(root, metafolder) {
     }
     shown.saved = text;
     shown.preview = text;
-    void statusBar.message(`Saved ${shown.path}.`, statusMessageMs);
+    void statusBar.message(`Saved ${pathText(shown.path)}.`, statusMessageMs);
     updateTextToolbar();
     // Typed on while it was being written: those changes still hold the file.
     if (!textChanged()) afterChangesGone();
@@ -959,7 +973,7 @@ export async function mount(root, metafolder) {
   // document in this origin — `/fsraw` carries the session token in its URL
   // (see `server/fsraw.rs` and the panel-invariants test). The page count comes
   // first, so navigation knows where the document ends.
-  /** @param {string} path @param {number} generation */
+  /** @param {Path} path @param {number} generation */
   async function renderDocument(path, generation) {
     const auth = metafolder.sessionToken
       ? `&token=${encodeURIComponent(metafolder.sessionToken)}`
@@ -967,7 +981,7 @@ export async function mount(root, metafolder) {
     let pages;
     try {
       const response = await fetch(
-        `${metafolder.guiServer}/document/info?path=${encodeURIComponent(path)}${auth}`,
+        `${metafolder.guiServer}/document/info?${pathQuery(path)}${auth}`,
       );
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       pages = Number((await response.json()).pages) || 0;
@@ -1061,7 +1075,7 @@ export async function mount(root, metafolder) {
       await renderDirectory(path, generation);
       return;
     }
-    const extension = (path.split('.').pop() ?? '').toLowerCase();
+    const extension = (pathText(path).split('.').pop() ?? '').toLowerCase();
     const url = rawUrl(path);
 
     // The kind is the content's. A name that lies — or says nothing — changes
@@ -1117,7 +1131,7 @@ export async function mount(root, metafolder) {
    * repository is active, or when the daemon cannot answer: an unavailable
    * volume is a nicer message, never a precondition for previewing a file.
    *
-   * @param {string} path absolute path
+   * @param {Path} path absolute path
    */
   async function unavailableMount(path) {
     try {
@@ -1125,7 +1139,8 @@ export async function mount(root, metafolder) {
       if (typeof repo !== 'string' || repo === '') return null;
       const mounts = await fetchMounts(daemon, repo);
       if (mounts.length === 0) return null;
-      return offlineMountFor(mounts, relativeTo(await daemon.repoRoot(repo), path));
+      // Mount points are matched by their text, as they are shown.
+      return offlineMountFor(mounts, relativeTo(await daemon.repoRoot(repo), pathText(path)));
     } catch {
       return null;
     }
@@ -1144,7 +1159,9 @@ export async function mount(root, metafolder) {
       heldSelection = newPaths;
       return;
     }
-    paths = Array.isArray(newPaths) ? newPaths : [];
+    paths = Array.isArray(newPaths)
+      ? newPaths.filter((path) => typeof path === 'string' || isBytePath(path))
+      : [];
     activeIndex = 0;
     localPath = null;
     // Read the metarecord that goes with these paths: every panel that
@@ -1516,21 +1533,21 @@ export async function mount(root, metafolder) {
     return true;
   }
 
-  /** The absolute paths of a metarecord's file. @param {string} repo
-   *  @param {string} uuid @returns {Promise<string[]>} */
+  /** The absolute paths of a metarecord's file, exact. @param {string} repo
+   *  @param {string} uuid @returns {Promise<Path[]>} */
   async function filePaths(repo, uuid) {
     try {
       const relative = (await daemon.treePaths(repo, 'mfr_path', [uuid]))[uuid] ?? [];
       const rootPath = await daemon.repoRoot(repo);
       // Resolved paths are "/"-rooted, '' being the root itself.
-      return relative.map((p) => (p === '' ? rootPath : `${rootPath}${p}`));
+      return relative.map((p) => underRoot(rootPath, p));
     } catch {
       return [];
     }
   }
 
   /** The content's kind of a file, null for a folder or what cannot be read.
-   *  @param {string} path */
+   *  @param {Path} path */
   async function kindOf(path) {
     try {
       const info = /** @type {{is_dir?: boolean, kind?: string|null}} */ (await fs.stat(path));
@@ -1721,7 +1738,7 @@ export async function mount(root, metafolder) {
     // need a repository for its trash.
     const repo = selected?.repo ?? activeRepo;
     const path = viewedPath();
-    if (!repo || typeof path !== 'string' || path === '') return [];
+    if (!repo || path === undefined || pathText(path) === '') return [];
     return fileMenuItems({
       metafolder,
       repo,
@@ -1742,7 +1759,7 @@ export async function mount(root, metafolder) {
   // poster, its position kept for the next play — as when the selection moves.
   // The shell asks before losing them (doc "Edits in progress").
   metafolder.provide({
-    unsaved: () => (textChanged() ? (textShown?.path ?? null) : null),
+    unsaved: () => (textChanged() && textShown ? pathText(textShown.path) : null),
     discard: () => {
       if (textShown) textShown.current = textShown.saved;
       showTextFile();
@@ -1753,7 +1770,7 @@ export async function mount(root, metafolder) {
   metafolder.provide({
     refresh: () => {
       if (textChanged()) {
-        if (!confirm(`Drop the unsaved changes in ${textShown?.path}?`)) return;
+        if (!confirm(`Drop the unsaved changes in ${textShown ? pathText(textShown.path) : ''}?`)) return;
         reloadText();
         return;
       }
@@ -1788,9 +1805,11 @@ export async function mount(root, metafolder) {
 
 /** The message of a thrown error (the fs/daemon seams throw Error). */
 
-/** The workspace's selected paths, as the `paths` a panel provides.
- *  @param {MetafolderApi} mf @returns {Promise<string[]>} */
+/** The workspace's selected paths, as the `paths` a panel provides — exact.
+ *  @param {MetafolderApi} mf @returns {Promise<Path[]>} */
 async function selectedPathsOf(mf) {
   const value = await mf.workspace.get('selected_paths');
-  return Array.isArray(value) ? value.filter((path) => typeof path === 'string') : [];
+  return Array.isArray(value)
+    ? value.filter((path) => typeof path === 'string' || isBytePath(path))
+    : [];
 }

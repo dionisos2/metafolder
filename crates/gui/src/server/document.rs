@@ -22,7 +22,9 @@ use axum::response::{IntoResponse, Response};
 
 #[derive(serde::Deserialize)]
 pub struct PageParams {
-    path: String,
+    path: Option<String>,
+    /// The path's bytes in hex, for one that is not text (`fs_path::from_query`).
+    path_bytes: Option<String>,
     /// 1-based page number; the first page when absent.
     page: Option<u32>,
     /// Render resolution, clamped by `documents`; the panel's configured
@@ -32,16 +34,22 @@ pub struct PageParams {
 
 #[derive(serde::Deserialize)]
 pub struct InfoParams {
-    path: String,
+    path: Option<String>,
+    /// The path's bytes in hex, for one that is not text (`fs_path::from_query`).
+    path_bytes: Option<String>,
 }
 
 /// Resolution used when the panel names none.
 const DEFAULT_DPI: u32 = 150;
 
 pub async fn page(State(state): State<ServerState>, Query(params): Query<PageParams>) -> Response {
-    // The panels hand back the escaped handle they were given, so the exact
-    // bytes come back here (doc "Tree names").
-    let path = crate::fs_path::from_handle(&params.path);
+    // The panels hand back the handle they were given, so the exact bytes
+    // come back here (doc "Tree names").
+    let Some(path) =
+        crate::fs_path::from_query(params.path.as_deref(), params.path_bytes.as_deref())
+    else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
     if let Some(refused) = refusal(&path) {
         return refused.into_response();
     }
@@ -77,7 +85,11 @@ pub async fn page(State(state): State<ServerState>, Query(params): Query<PagePar
 }
 
 pub async fn info(Query(params): Query<InfoParams>) -> Response {
-    let path = crate::fs_path::from_handle(&params.path);
+    let Some(path) =
+        crate::fs_path::from_query(params.path.as_deref(), params.path_bytes.as_deref())
+    else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
     if let Some(refused) = refusal(&path) {
         return refused.into_response();
     }

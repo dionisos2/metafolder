@@ -16,8 +16,8 @@
  * (the path vanished while untracked; reconcile leaves it in place).
  *
  * @param {Metafolder.Metarecord} metarecord
- * @param {{metarecordPaths: (m: Metafolder.Metarecord) => Promise<string[]>,
- *          exists: (path: string) => Promise<boolean>}} ctx
+ * @param {{metarecordPaths: (m: Metafolder.Metarecord) => Promise<Metafolder.WirePath[]>,
+ *          exists: (path: Metafolder.WirePath) => Promise<boolean>}} ctx
  * @returns {Promise<'deleted'|'missing'|null>}
  */
 export async function orphanState(metarecord, ctx) {

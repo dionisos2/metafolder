@@ -10,7 +10,8 @@
 //   exists(path)  -> whether a path is on disk (orphan check)
 //   render()      -> repaint (when the mount points arrive)
 
-import { fields } from '/__ui.js';
+import { fields, pathKey, pathText } from '/__ui.js';
+import { underRoot } from '/__file-actions.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { fetchMounts, offlineMountFor, relativeTo, unavailableLabel } from '/__mounts.js';
 import { fetchWatched, summarizeWatched } from '/__watched.js';
@@ -56,7 +57,7 @@ function hasTreeRef(metarecord, field) {
  * @param {{
  *   daemon: MetafolderApi['daemon'],
  *   bench: MetafolderApi['bench'],
- *   exists: (path: string) => Promise<boolean>,
+ *   exists: (path: Metafolder.WirePath) => Promise<boolean>,
  *   getRepo: () => string|null,
  *   getColumns: () => Column[],
  *   render: () => void,
@@ -67,7 +68,8 @@ export function createDisplayData({ daemon, bench, exists, getRepo, getColumns, 
   let repoRoot = null;
   /** `${field}|${uuid}` → the metarecord's resolved paths in that TreeRef field
    *  (the displayed rows *and* the followed Ref targets). */
-  /** @type {ReturnType<typeof createDisplayStore<string[]>>} */
+  /** Exact (doc "Tree names"): shown by their text, acted on as they are.
+   *  @type {ReturnType<typeof createDisplayStore<Metafolder.WirePath[]>>} */
   const treePaths = createDisplayStore();
   /** uuid → a followed Ref target (`null`: it does not exist). */
   /** @type {ReturnType<typeof createDisplayStore<Metafolder.Metarecord|null>>} */
@@ -112,7 +114,8 @@ export function createDisplayData({ daemon, bench, exists, getRepo, getColumns, 
         // A row's orphan state was judged from its path: a new path (its own
         // move, or an ancestor's rename) needs a new judgement.
         const before = pathsIn(field, uuid);
-        if (field === 'mfr_path' && before && before.join('\n') !== paths.join('\n')) {
+        const keys = (/** @type {Metafolder.WirePath[]} */ list) => list.map(pathKey).join('\n');
+        if (field === 'mfr_path' && before && keys(before) !== keys(paths)) {
           orphanCache.delete(uuid);
         }
         treePaths.put(`${field}|${uuid}`, seq, paths);
@@ -148,12 +151,13 @@ export function createDisplayData({ daemon, bench, exists, getRepo, getColumns, 
     // without the endpoint — or a down one — leaves every row unmarked; a
     // fetch failure must not read as "unwatched"). The per-uuid summary is
     // "watched when any of its paths is", decided by /__watched.js.
-    const watchRels = new Set();
+    /** @type {Map<string, Metafolder.WirePath>} by exact key */
+    const watchRels = new Map();
     for (const m of subset) {
       if (!hasTreeRef(m, 'mfr_path')) continue;
-      for (const rel of pathsIn('mfr_path', m.uuid) ?? []) watchRels.add(rel);
+      for (const rel of pathsIn('mfr_path', m.uuid) ?? []) watchRels.set(pathKey(rel), rel);
     }
-    const byPath = await fetchWatched(daemon, r, [...watchRels]);
+    const byPath = await fetchWatched(daemon, r, [...watchRels.values()]);
     for (const m of subset) {
       const rels = hasTreeRef(m, 'mfr_path') ? pathsIn('mfr_path', m.uuid) : [];
       if (rels === undefined || rels.length === 0) {
@@ -170,7 +174,7 @@ export function createDisplayData({ daemon, bench, exists, getRepo, getColumns, 
   /** @param {Metafolder.Metarecord[]} subset */
   function fillFromDisplayData(subset) {
     const columns = getColumns();
-    /** @type {Record<string, Record<string, string[]>>} */
+    /** @type {Record<string, Record<string, Metafolder.WirePath[]>>} */
     const pathsByField = {};
     for (const field of treeFieldsOf()) {
       pathsByField[field] = {};
@@ -183,7 +187,7 @@ export function createDisplayData({ daemon, bench, exists, getRepo, getColumns, 
     /** @type {Map<string, Metafolder.Metarecord|null>} */
     const targets = new Map();
     for (const uuid of targetUuids) targets.set(uuid, targetRecords.get(uuid) ?? null);
-    /** @type {Record<string, Record<string, string[]>>} */
+    /** @type {Record<string, Record<string, Metafolder.WirePath[]>>} */
     const followedPathsByField = {};
     for (const field of followedTreeFields(columns)) {
       followedPathsByField[field] = {};
@@ -197,15 +201,15 @@ export function createDisplayData({ daemon, bench, exists, getRepo, getColumns, 
 
   // Absolute filesystem paths of a metarecord's mfr_path positions (read-only,
   // from the display data + the repo root).
-  /** @param {Metafolder.Metarecord} metarecord @returns {string[]} */
+  /** Exact (doc "Tree names").
+   *  @param {Metafolder.Metarecord} metarecord @returns {Metafolder.WirePath[]} */
   function pathsOf(metarecord) {
     const rootPath = repoRoot;
     if (!getRepo() || rootPath === null) return [];
     const rel = pathsIn('mfr_path', metarecord.uuid);
     if (rel === undefined) return [];
-    // Resolved paths are leading-"/"-rooted ('' is the repo root itself), so the
-    // absolute path is a plain concatenation with the repo root.
-    return rel.map((p) => (p === '' ? rootPath : `${rootPath}${p}`));
+    // Resolved paths are leading-"/"-rooted ('' is the repo root itself).
+    return rel.map((p) => underRoot(rootPath, p));
   }
 
   // Whether the panel has read a metarecord's mfr_path positions. False until
@@ -254,7 +258,8 @@ export function createDisplayData({ daemon, bench, exists, getRepo, getColumns, 
     const rootPath = repoRoot;
     const paths = pathsOf(metarecord);
     if (paths.length === 0) return null;
-    const found = paths.map((abs) => offlineMountFor(mounts, relativeTo(rootPath, abs)));
+    // Mount points are matched by their text, as they are shown.
+    const found = paths.map((abs) => offlineMountFor(mounts, relativeTo(rootPath, pathText(abs))));
     return found.every(Boolean) ? found[0] : null;
   }
 

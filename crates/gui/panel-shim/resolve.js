@@ -6,7 +6,7 @@
 // directory above it is renamed. The shim exposes this per repo as
 // metafolder.daemon.resolvePath / resolveTreeRef.
 
-import { wireText } from '/__ui.js';
+import { joinPath } from '/__file-actions.js';
 
 /**
  * A `tree_ref` value as the daemon serialises it: the parent metarecord (null
@@ -17,7 +17,8 @@ import { wireText } from '/__ui.js';
  */
 
 /**
- * @param {(uuids: string[], field: string) => Promise<Record<string, string[]>>} resolvePaths
+ * @param {(uuids: string[], field: string) =>
+ *   Promise<Record<string, import('/__ui.js').WirePath[]>>} resolvePaths
  *   one daemon round-trip resolving uuids to their paths in `field`'s forest
  */
 export function createPathResolver(resolvePaths) {
@@ -33,14 +34,14 @@ export function createPathResolver(resolvePaths) {
   /** The path a `tree_ref` value names. Its parent sits in the same forest as
    *  the value: `field` is the field the value was read from.
    *  @param {TreeRefValue} value @param {string} [field] */
-  async function resolveTreeRef({ parent, name: wire }, field = 'mfr_path') {
-    const name = wireText(wire) ?? '';
+  async function resolveTreeRef({ parent, name }, field = 'mfr_path') {
     if (!parent) return name; // tree root (empty name for the repo root)
     const parentPath = await resolveUuid(parent, field);
     // An empty parent path is the filesystem repo root (name ""), so a top-level
     // node is leading-"/"-rooted (`/name`) — matching the daemon's `paths_of` and
     // the DSL. A named-root forest (parentPath non-empty, e.g. tags) has no "/".
-    return parentPath === '' ? `/${name}` : `${parentPath}/${name}`;
+    // Exact either way: a name that is not text keeps its bytes (doc "Tree names").
+    return joinPath(parentPath, name);
   }
 
   return { resolveUuid, resolveTreeRef };

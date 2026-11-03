@@ -1,71 +1,49 @@
 //! Carrying a filesystem path across the Tauri boundary.
 //!
-//! The frontend speaks JSON, so every path it holds is a *string* — but a POSIX
-//! path is a byte string that need not be UTF-8 (doc "Tree names").
-//! Converting it lossily, as this used to, produced a path that names nothing:
-//! the row appeared in the file manager and every action on it failed, because
-//! `caf<?>.mp4` is three bytes where the disk has one.
+//! The frontend speaks JSON, but a POSIX path is a byte string that need not
+//! be UTF-8 (doc "Tree names"). So the handle the frontend gets is the path's
+//! *wire form*, the daemon's own ([`TreePath`]): a plain string while the path
+//! is text — which is every path but a rare few, so the panels slice and join
+//! it as they always did — and `{text, bytes}` when it is not. The frontend
+//! shows the `text` and hands the handle back unchanged; [`from_handle`] takes
+//! the bytes, exactly.
 //!
-//! The handle the frontend gets is therefore the *escaped* form the rest of
-//! metafolder displays — `caf%E9.mp4` — which is text, so it survives JSON, and
-//! which the panels can still slice and join like the plain paths they are.
-//! [`from_handle`] turns it back into the exact bytes before anything touches
-//! the disk.
+//! The handle used to be the escaped *text* (`caf%E9.mp4`), read back by
+//! looking at the disk: a file really named `caf%E9.mp4` shows the same, so
+//! the reading was a guess, and a rename to a new name could not be told from
+//! either. A handle that is a string now means that string's bytes, always.
 
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use metafolder_core::metarecord::{escaped_to_bytes, TreeName};
+use metafolder_core::metarecord::TreePath;
 
-/// The handle for a path: itself when the path is text, its escaped form
-/// otherwise.
-pub fn to_handle(path: &Path) -> String {
-    TreeName::from_bytes(path_bytes(path)).display().into_owned()
+/// The handle for a path: its exact bytes, in the wire form.
+pub fn to_handle(path: &Path) -> TreePath {
+    TreePath::from_path(path)
 }
 
-/// The path a handle names.
-///
-/// A handle that spells an escape has two readings — a file *really* named
-/// `caf%E9.mp4` and one named with the byte `0xE9` — and unlike a query, an
-/// operation on the disk needs exactly one. Existence decides: the literal
-/// reading wins when it is a real file, which is both the commoner case and the
-/// one the user typed if they typed anything. Neither existing is not an error
-/// here — the caller reports what the operation itself returns (a rename to a
-/// new name goes through this too).
-pub fn from_handle(handle: &str) -> PathBuf {
-    let verbatim = PathBuf::from(handle);
-    match escaped_to_bytes(handle) {
-        Some(bytes) if !verbatim.exists() => from_bytes(bytes),
-        _ => verbatim,
+/// The path a handle names: its bytes, exactly — never a reading of an
+/// escape.
+pub fn from_handle(handle: &TreePath) -> PathBuf {
+    handle.to_path_buf()
+}
+
+/// The path a URL names (`/fsraw`, `/thumbnail`, …): `path_bytes` (lowercase
+/// hex) for a path that is not text, else `path`, the string's own bytes.
+/// `None` when neither is given, or the hex is malformed.
+pub fn from_query(path: Option<&str>, path_bytes: Option<&str>) -> Option<PathBuf> {
+    match path_bytes {
+        Some(hex) => {
+            metafolder_core::hex::decode(hex).map(|b| TreePath::from_bytes(b).to_path_buf())
+        }
+        None => path.map(PathBuf::from),
     }
 }
 
 /// Whether this path needs escaping to be shown — what marks a row in the file
 /// manager as carrying a name no text can represent.
 pub fn is_escaped(path: &Path) -> bool {
-    std::str::from_utf8(&path_bytes(path)).is_err()
-}
-
-#[cfg(unix)]
-fn path_bytes(path: &Path) -> Vec<u8> {
-    use std::os::unix::ffi::OsStrExt;
-    path.as_os_str().as_bytes().to_vec()
-}
-
-#[cfg(not(unix))]
-fn path_bytes(path: &Path) -> Vec<u8> {
-    path.to_string_lossy().into_owned().into_bytes()
-}
-
-#[cfg(unix)]
-fn from_bytes(bytes: Vec<u8>) -> PathBuf {
-    use std::os::unix::ffi::OsStringExt;
-    PathBuf::from(OsString::from_vec(bytes))
-}
-
-#[cfg(not(unix))]
-fn from_bytes(bytes: Vec<u8>) -> PathBuf {
-    PathBuf::from(String::from_utf8_lossy(&bytes).into_owned())
+    std::str::from_utf8(to_handle(path).as_bytes()).is_err()
 }
 
 #[cfg(test)]
@@ -75,18 +53,16 @@ mod tests {
     #[cfg(unix)]
     fn latin1_path(dir: &Path) -> PathBuf {
         use std::os::unix::ffi::OsStrExt;
-        dir.join(OsStr::from_bytes(b"caf\xe9.mp4"))
+        dir.join(std::ffi::OsStr::from_bytes(b"caf\xe9.mp4"))
     }
-    #[cfg(unix)]
-    use std::ffi::OsStr;
 
     #[test]
     fn test_an_ordinary_path_is_its_own_handle() {
-        // The common case must be untouched — "%" included, since a lone "%"
-        // is not an escape.
-        for text in ["/home/a/vidéo.mp4", "/tmp/100%.txt", "/tmp/%1234.txt"] {
-            assert_eq!(to_handle(Path::new(text)), text);
-            assert_eq!(from_handle(text), PathBuf::from(text));
+        // The common case must be untouched — "%" included.
+        for text in ["/home/a/vidéo.mp4", "/tmp/100%.txt", "/tmp/caf%E9.mp4"] {
+            let handle = to_handle(Path::new(text));
+            assert_eq!(serde_json::to_value(&handle).unwrap(), serde_json::json!(text));
+            assert_eq!(from_handle(&handle), PathBuf::from(text));
         }
     }
 
@@ -95,39 +71,34 @@ mod tests {
     fn test_an_undecodable_path_round_trips_through_its_handle() {
         let path = latin1_path(Path::new("/tmp"));
         let handle = to_handle(&path);
-        assert_eq!(handle, "/tmp/caf%E9.mp4");
-        // What matters: the bytes come back, so the file can actually be opened.
-        assert_eq!(from_handle(&handle), path);
+        let wire = serde_json::to_value(&handle).unwrap();
+        assert_eq!(wire["text"], "/tmp/caf%E9.mp4", "shown escaped");
+        let back: TreePath = serde_json::from_value(wire).unwrap();
+        assert_eq!(from_handle(&back), path, "the bytes come back");
     }
 
+    /// No guess: a string handle is that string, even when a file whose bytes
+    /// its escape decodes to is there and the literal one is not.
     #[cfg(unix)]
     #[test]
-    fn test_a_file_really_named_like_an_escape_wins_when_it_exists() {
-        // The one collision: existence decides, and the literal file is what
-        // the handle names when it is there.
+    fn test_a_string_handle_never_reads_an_escape() {
         let dir = tempfile::tempdir().unwrap();
+        let raw = latin1_path(dir.path());
+        std::fs::write(&raw, b"x").unwrap();
         let literal = dir.path().join("caf%E9.mp4");
-        std::fs::write(&literal, b"x").unwrap();
-
-        let handle = to_handle(&literal);
+        let handle: TreePath =
+            serde_json::from_value(serde_json::json!(literal.to_str().unwrap())).unwrap();
         assert_eq!(from_handle(&handle), literal);
     }
 
     #[cfg(unix)]
     #[test]
-    fn test_the_escaped_reading_is_used_when_the_literal_one_does_not_exist() {
-        let dir = tempfile::tempdir().unwrap();
-        let raw = latin1_path(dir.path());
-        std::fs::write(&raw, b"x").unwrap();
-
-        assert_eq!(from_handle(&to_handle(&raw)), raw);
-    }
-
-    #[test]
-    fn test_a_handle_for_a_path_that_does_not_exist_yet_stays_verbatim() {
-        // Creating "new%file.txt" must not silently become something else.
-        let handle = "/tmp/does-not-exist/new%file.txt";
-        assert_eq!(from_handle(handle), PathBuf::from(handle));
+    fn test_a_url_names_a_path_by_its_text_or_its_bytes() {
+        assert_eq!(from_query(Some("/tmp/caf%E9.mp4"), None), Some("/tmp/caf%E9.mp4".into()));
+        let hex = metafolder_core::hex::encode(b"/tmp/caf\xe9.mp4");
+        assert_eq!(from_query(Some("ignored"), Some(&hex)), Some(latin1_path(Path::new("/tmp"))));
+        assert_eq!(from_query(None, Some("zz")), None);
+        assert_eq!(from_query(None, None), None);
     }
 
     #[cfg(unix)]

@@ -1,6 +1,7 @@
 //! `metafolder.fs` backend: direct filesystem access for panel types
 //! (doc "The metafolder API"). Not routed through the daemon.
 
+use metafolder_core::metarecord::TreePath;
 use metafolder_core::trash::{copy_path, move_path};
 use serde::Serialize;
 use std::ffi::OsStr;
@@ -11,8 +12,11 @@ use crate::fs_path::{from_handle, is_escaped, to_handle};
 
 #[derive(Serialize, Debug, PartialEq)]
 pub struct DirEntry {
+    /// The name as shown and typed: itself when it is text, its `%XX`
+    /// escaped form otherwise. For display — never to act on.
     pub name: String,
-    pub path: String,
+    /// The handle: the exact bytes, in the wire form (`fs_path`).
+    pub path: TreePath,
     pub is_dir: bool,
     /// The name holds bytes no text can represent, so what is shown is its
     /// escaped form and not literally what the disk says (doc "Tree names").
@@ -22,7 +26,7 @@ pub struct DirEntry {
 
 #[derive(Serialize, Debug, PartialEq)]
 pub struct StatInfo {
-    pub path: String,
+    pub path: TreePath,
     pub is_dir: bool,
     pub size: u64,
     /// Milliseconds since the Unix epoch.
@@ -34,41 +38,41 @@ pub struct StatInfo {
 }
 
 #[tauri::command]
-pub fn fs_read_dir(path: String) -> Result<Vec<DirEntry>, String> {
+pub fn fs_read_dir(path: TreePath) -> Result<Vec<DirEntry>, String> {
     let dir = from_handle(&path);
     let entries = std::fs::read_dir(&dir).map_err(|e| format!("cannot read {path}: {e}"))?;
     let mut listed = Vec::new();
     for entry in entries.flatten() {
         let entry_path = entry.path();
         listed.push(DirEntry {
-            // Both are escaped forms, so a name that no text can represent is
-            // still shown, still typeable, and — unlike the lossy rendering this
-            // replaced — still names the file it came from.
-            name: to_handle(Path::new(&entry.file_name())),
+            // The name is shown escaped, so a name that no text can represent
+            // is still shown and typeable; the path is the exact handle.
+            name: to_handle(Path::new(&entry.file_name())).display().into_owned(),
             path: to_handle(&entry_path),
             is_dir: entry.file_type().map(|t| t.is_dir()).unwrap_or(false),
             escaped: is_escaped(&entry_path),
         });
     }
-    listed.sort_by(|a, b| a.name.cmp(&b.name));
+    // By the name shown, then by bytes: two names can show alike.
+    listed.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.path.cmp(&b.path)));
     Ok(listed)
 }
 
 /// The user's home directory, used as the default starting point for the
 /// folder picker. Falls back to the filesystem root when `$HOME` is unset.
 #[tauri::command]
-pub fn fs_home_dir() -> String {
+pub fn fs_home_dir() -> TreePath {
     home_dir_from(std::env::var_os("HOME").as_deref())
 }
 
-fn home_dir_from(home: Option<&OsStr>) -> String {
-    home.map(|h| h.to_string_lossy().into_owned())
-        .filter(|p| !p.is_empty())
-        .unwrap_or_else(|| "/".to_string())
+fn home_dir_from(home: Option<&OsStr>) -> TreePath {
+    home.filter(|h| !h.is_empty())
+        .map(|h| to_handle(Path::new(h)))
+        .unwrap_or_else(|| TreePath::from("/"))
 }
 
 #[tauri::command]
-pub fn fs_stat(path: String) -> Result<StatInfo, String> {
+pub fn fs_stat(path: TreePath) -> Result<StatInfo, String> {
     let metadata =
         std::fs::metadata(from_handle(&path)).map_err(|e| format!("cannot stat {path}: {e}"))?;
     let mtime = metadata
@@ -91,7 +95,7 @@ pub fn fs_stat(path: String) -> Result<StatInfo, String> {
 
 /// Whether a path already exists (following no symlink, so a dangling symlink
 /// still counts as present — we must not silently overwrite it).
-fn exists(path: &str) -> bool {
+fn exists(path: &TreePath) -> bool {
     std::fs::symlink_metadata(from_handle(path)).is_ok()
 }
 
@@ -104,14 +108,14 @@ fn exists(path: &str) -> bool {
 /// there — the daemon's own scan says the opposite (`orphans.rs`,
 /// "a broken symlink still counts").
 #[tauri::command]
-pub fn fs_exists(path: String) -> bool {
+pub fn fs_exists(path: TreePath) -> bool {
     exists(&path)
 }
 
 /// Creates a single new directory `path` (its parent must already exist).
 /// Errors if it already exists.
 #[tauri::command]
-pub fn fs_mkdir(path: String) -> Result<(), String> {
+pub fn fs_mkdir(path: TreePath) -> Result<(), String> {
     std::fs::create_dir(from_handle(&path))
         .map_err(|e| format!("cannot create directory {path}: {e}"))
 }
@@ -119,7 +123,7 @@ pub fn fs_mkdir(path: String) -> Result<(), String> {
 /// Creates a new empty file `path`. Errors if it already exists (never
 /// truncates an existing file).
 #[tauri::command]
-pub fn fs_create_file(path: String) -> Result<(), String> {
+pub fn fs_create_file(path: TreePath) -> Result<(), String> {
     std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -133,7 +137,7 @@ pub fn fs_create_file(path: String) -> Result<(), String> {
 /// onto a tracked path as that file destroyed, and would orphan its metarecord; a
 /// write keeps the inode, so also the permissions, the hard links and a symlink.
 #[tauri::command]
-pub fn fs_write_text(path: String, text: String) -> Result<(), String> {
+pub fn fs_write_text(path: TreePath, text: String) -> Result<(), String> {
     use std::io::Write;
     std::fs::OpenOptions::new()
         .write(true)
@@ -146,7 +150,7 @@ pub fn fs_write_text(path: String, text: String) -> Result<(), String> {
 /// Moves/renames `from` to `to` (cross-filesystem safe). Refuses to overwrite an
 /// existing `to`.
 #[tauri::command]
-pub fn fs_move(from: String, to: String) -> Result<(), String> {
+pub fn fs_move(from: TreePath, to: TreePath) -> Result<(), String> {
     if exists(&to) {
         return Err(format!("{to} already exists"));
     }
@@ -157,7 +161,7 @@ pub fn fs_move(from: String, to: String) -> Result<(), String> {
 /// Copies `from` (a file or a whole directory) to `to`, leaving the source in
 /// place. Refuses to overwrite an existing `to`.
 #[tauri::command]
-pub fn fs_copy(from: String, to: String) -> Result<(), String> {
+pub fn fs_copy(from: TreePath, to: TreePath) -> Result<(), String> {
     if exists(&to) {
         return Err(format!("{to} already exists"));
     }
@@ -169,7 +173,7 @@ pub fn fs_copy(from: String, to: String) -> Result<(), String> {
 /// file-manager only reaches this when no repository is active; with a repo the
 /// panel routes deletions through the trash instead.
 #[tauri::command]
-pub fn fs_delete(path: String) -> Result<(), String> {
+pub fn fs_delete(path: TreePath) -> Result<(), String> {
     let target = from_handle(&path);
     let is_dir = std::fs::symlink_metadata(&target)
         .map_err(|e| format!("cannot stat {path}: {e}"))?
@@ -190,13 +194,13 @@ mod tests {
         std::fs::write(dir.path().join("b.txt"), "x").unwrap();
         std::fs::create_dir(dir.path().join("a-dir")).unwrap();
 
-        let entries = fs_read_dir(dir.path().display().to_string()).unwrap();
+        let entries = fs_read_dir(to_handle(dir.path())).unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].name, "a-dir");
         assert!(entries[0].is_dir);
         assert_eq!(entries[1].name, "b.txt");
         assert!(!entries[1].is_dir);
-        assert_eq!(entries[1].path, dir.path().join("b.txt").display().to_string());
+        assert_eq!(entries[1].path, to_handle(&dir.path().join("b.txt")));
     }
 
     #[test]
@@ -210,12 +214,12 @@ mod tests {
         let file = dir.path().join("f.bin");
         std::fs::write(&file, [0u8; 5]).unwrap();
 
-        let info = fs_stat(file.display().to_string()).unwrap();
+        let info = fs_stat(to_handle(&file)).unwrap();
         assert!(!info.is_dir);
         assert_eq!(info.size, 5);
         assert!(info.mtime > 0);
 
-        let dir_info = fs_stat(dir.path().display().to_string()).unwrap();
+        let dir_info = fs_stat(to_handle(dir.path())).unwrap();
         assert!(dir_info.is_dir);
     }
 
@@ -226,12 +230,12 @@ mod tests {
         let stat = |name: &str, bytes: &[u8]| {
             let file = dir.path().join(name);
             std::fs::write(&file, bytes).unwrap();
-            fs_stat(file.display().to_string()).unwrap().kind
+            fs_stat(to_handle(&file)).unwrap().kind
         };
         assert_eq!(stat("report.bin", b"%PDF-1.4\n"), Some("document"));
         assert_eq!(stat("main.ts", b"export const answer = 42;\n"), None);
         assert_eq!(stat("anim", b"GIF89a\x01\x00\x01\x00"), Some("gif"));
-        assert_eq!(fs_stat(dir.path().display().to_string()).unwrap().kind, None);
+        assert_eq!(fs_stat(to_handle(dir.path())).unwrap().kind, None);
     }
 
     #[test]
@@ -250,35 +254,35 @@ mod tests {
         assert_eq!(home_dir_from(Some(OsStr::new(""))), "/");
     }
 
-    fn p(base: &Path, name: &str) -> String {
-        base.join(name).display().to_string()
+    fn p(base: &Path, name: &str) -> std::path::PathBuf {
+        base.join(name)
     }
 
     #[test]
     fn test_mkdir_creates_and_refuses_existing() {
         let dir = tempfile::tempdir().unwrap();
         let sub = p(dir.path(), "new-dir");
-        fs_mkdir(sub.clone()).unwrap();
+        fs_mkdir(to_handle(&sub)).unwrap();
         assert!(Path::new(&sub).is_dir());
         // A second time is an error (never silently succeeds on an existing dir).
-        assert!(fs_mkdir(sub).is_err());
+        assert!(fs_mkdir(to_handle(&sub)).is_err());
     }
 
     #[test]
     fn test_mkdir_missing_parent_errors() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(fs_mkdir(p(dir.path(), "no/such/parent")).is_err());
+        assert!(fs_mkdir(to_handle(&p(dir.path(), "no/such/parent"))).is_err());
     }
 
     #[test]
     fn test_create_file_creates_empty_and_refuses_existing() {
         let dir = tempfile::tempdir().unwrap();
         let file = p(dir.path(), "note.txt");
-        fs_create_file(file.clone()).unwrap();
+        fs_create_file(to_handle(&file)).unwrap();
         assert_eq!(std::fs::read(&file).unwrap().len(), 0);
         // Must never truncate an existing file.
         std::fs::write(&file, b"keep").unwrap();
-        assert!(fs_create_file(file.clone()).is_err());
+        assert!(fs_create_file(to_handle(&file)).is_err());
         assert_eq!(std::fs::read(&file).unwrap(), b"keep");
     }
 
@@ -288,14 +292,14 @@ mod tests {
         let from = p(dir.path(), "a.txt");
         let to = p(dir.path(), "b.txt");
         std::fs::write(&from, b"x").unwrap();
-        fs_move(from.clone(), to.clone()).unwrap();
+        fs_move(to_handle(&from), to_handle(&to)).unwrap();
         assert!(!Path::new(&from).exists());
         assert_eq!(std::fs::read(&to).unwrap(), b"x");
 
         // A destination that already exists is refused, source left intact.
         let other = p(dir.path(), "c.txt");
         std::fs::write(&other, b"y").unwrap();
-        assert!(fs_move(other.clone(), to.clone()).is_err());
+        assert!(fs_move(to_handle(&other), to_handle(&to)).is_err());
         assert_eq!(std::fs::read(&other).unwrap(), b"y");
         assert_eq!(std::fs::read(&to).unwrap(), b"x");
     }
@@ -306,18 +310,18 @@ mod tests {
         let from = p(dir.path(), "src.txt");
         let to = p(dir.path(), "dst.txt");
         std::fs::write(&from, b"data").unwrap();
-        fs_copy(from.clone(), to.clone()).unwrap();
+        fs_copy(to_handle(&from), to_handle(&to)).unwrap();
         assert_eq!(std::fs::read(&from).unwrap(), b"data");
         assert_eq!(std::fs::read(&to).unwrap(), b"data");
         // Refuses to overwrite.
-        assert!(fs_copy(from.clone(), to).is_err());
+        assert!(fs_copy(to_handle(&from), to_handle(&to)).is_err());
 
         // A whole directory tree is copied recursively.
         let tree = dir.path().join("tree");
         std::fs::create_dir(&tree).unwrap();
         std::fs::write(tree.join("inner.txt"), b"deep").unwrap();
         let tree_copy = p(dir.path(), "tree-copy");
-        fs_copy(tree.display().to_string(), tree_copy.clone()).unwrap();
+        fs_copy(to_handle(&tree), to_handle(&tree_copy)).unwrap();
         assert_eq!(std::fs::read(Path::new(&tree_copy).join("inner.txt")).unwrap(), b"deep");
         assert!(tree.join("inner.txt").exists()); // source kept
     }
@@ -327,16 +331,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = p(dir.path(), "gone.txt");
         std::fs::write(&file, b"x").unwrap();
-        fs_delete(file.clone()).unwrap();
+        fs_delete(to_handle(&file)).unwrap();
         assert!(!Path::new(&file).exists());
 
         let tree = dir.path().join("d");
         std::fs::create_dir(&tree).unwrap();
         std::fs::write(tree.join("c.txt"), b"x").unwrap();
-        fs_delete(tree.display().to_string()).unwrap();
+        fs_delete(to_handle(&tree)).unwrap();
         assert!(!tree.exists());
 
-        assert!(fs_delete(p(dir.path(), "nope")).is_err());
+        assert!(fs_delete(to_handle(&p(dir.path(), "nope"))).is_err());
     }
 
     #[test]
@@ -346,7 +350,7 @@ mod tests {
         let file = dir.path().join("f.txt");
         std::fs::write(&file, "a longer content").unwrap();
         let inode = std::fs::metadata(&file).unwrap().ino();
-        fs_write_text(file.display().to_string(), "short".into()).unwrap();
+        fs_write_text(to_handle(&file), "short".into()).unwrap();
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "short");
         // Same file: a rename over it would orphan its metarecord (doc "Editing
         // a text file").
@@ -360,7 +364,7 @@ mod tests {
         let link = dir.path().join("l.txt");
         std::fs::write(&file, "old").unwrap();
         std::os::unix::fs::symlink(&file, &link).unwrap();
-        fs_write_text(link.display().to_string(), "new".into()).unwrap();
+        fs_write_text(to_handle(&link), "new".into()).unwrap();
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "new");
         assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
     }
@@ -369,7 +373,7 @@ mod tests {
     fn write_text_never_creates_a_file() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("gone.txt");
-        assert!(fs_write_text(file.display().to_string(), "x".into()).is_err());
+        assert!(fs_write_text(to_handle(&file), "x".into()).is_err());
         assert!(!file.exists());
     }
 
@@ -380,9 +384,30 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let link = dir.path().join("link");
         std::os::unix::fs::symlink("nowhere", &link).unwrap();
-        let link = link.display().to_string();
+        let link = to_handle(&link);
 
         assert!(fs_exists(link.clone()), "the link itself is on disk");
-        assert!(fs_stat(link).is_err(), "…while stat follows it to nothing");
+        assert!(fs_stat(link.clone()).is_err(), "…while stat follows it to nothing");
+    }
+
+    /// A name that is not text is listed with its exact handle, and acting on
+    /// it reaches that file — not a sibling really named like its escape.
+    #[cfg(unix)]
+    #[test]
+    fn test_a_name_that_is_not_text_is_acted_on_at_its_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = tempfile::tempdir().unwrap();
+        let raw = dir.path().join(OsStr::from_bytes(b"caf\xe9.txt"));
+        let literal = dir.path().join("caf%E9.txt");
+        std::fs::write(&raw, b"raw").unwrap();
+        std::fs::write(&literal, b"literal").unwrap();
+
+        let entries = fs_read_dir(to_handle(dir.path())).unwrap();
+        let listed: Vec<_> = entries.iter().map(|e| (e.name.as_str(), e.escaped)).collect();
+        assert_eq!(listed, [("caf%E9.txt", false), ("caf%E9.txt", true)], "both shown alike");
+        let handle = entries.iter().find(|e| e.escaped).unwrap().path.clone();
+        fs_move(handle, to_handle(&p(dir.path(), "renamed.txt"))).unwrap();
+        assert_eq!(std::fs::read(dir.path().join("renamed.txt")).unwrap(), b"raw");
+        assert_eq!(std::fs::read(&literal).unwrap(), b"literal", "the sibling untouched");
     }
 }

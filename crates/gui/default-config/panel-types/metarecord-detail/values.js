@@ -6,7 +6,7 @@
 // knows nothing of which metarecord the panel shows.
 
 import { parseRawValue, rawValueCompletions, TYPES } from '/__value-widget.js';
-import { wireText, wireTexts } from '/__ui.js';
+import { pathText, wireText, wireTexts } from '/__ui.js';
 import { createRefSeeds } from './ref-seeds.js';
 
 /** The one-line form of an explicit absence in a value slot — the glyph
@@ -136,7 +136,14 @@ export function createValues({ daemon, config, parseQuery }) {
         );
         return { records: body.results ?? [], total: body.total ?? null };
       },
-      resolvePaths: (f, uuids) => daemon.treePaths(repo, f, uuids),
+      // A seed's label is typed text: the paths as they show.
+      resolvePaths: async (f, uuids) =>
+        Object.fromEntries(
+          Object.entries(await daemon.treePaths(repo, f, uuids)).map(([uuid, paths]) => [
+            uuid,
+            paths.map(pathText),
+          ]),
+        ),
       getMetarecords: async (uuids) => Object.fromEntries(await daemon.metarecords(repo, uuids)),
     });
   }

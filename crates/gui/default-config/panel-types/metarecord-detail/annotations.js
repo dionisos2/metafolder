@@ -14,9 +14,13 @@
 // lives in a TreeRef `path` and whose `name`/`label` is optional — without it
 // a `tag` value shows nothing but its uuid.
 
+import { pathText } from '/__ui.js';
+import { joinPath } from '/__file-actions.js';
+
 /**
  * @param {{
- *   resolvePaths: (field: string, uuids: string[]) => Promise<Record<string, string[]>>,
+ *   resolvePaths: (field: string, uuids: string[]) =>
+ *     Promise<Record<string, Metafolder.WirePath[]>>,
  *   getMetarecords: (uuids: string[]) => Promise<Record<string, Metafolder.Metarecord>>,
  *   refLabel: (field: string, uuid: string) => Promise<string|null>,
  * }} ctx
@@ -31,7 +35,8 @@ export function createAnnotator({ resolvePaths, getMetarecords, refLabel }) {
     // Empty parent path = the filesystem repo root, so a top-level node is
     // leading-"/"-rooted (matching the daemon's `paths_of` and the DSL); a
     // named-root forest (parentPath non-empty) has no leading "/".
-    return parentPath === '' ? `/${name}` : `${parentPath}/${name}`;
+    // Exact, for whoever acts on it; shown by its text.
+    return joinPath(parentPath, name);
   }
 
   /** @param {string} uuid @returns {Promise<string|null>} */
@@ -65,7 +70,8 @@ export function createAnnotator({ resolvePaths, getMetarecords, refLabel }) {
         // A rootless node's path is its name, already displayed. A row of a
         // hierarchy reads as the path through its own parent.
         if (value.value.parent === null) return null;
-        return await treeRefPath(fieldName, value.value);
+        const path = await treeRefPath(fieldName, value.value);
+        return path === null ? null : pathText(path);
       }
       // A seeded ref reads back as its path; anything else (or a target outside
       // the seed forest) falls back to the target's "name".

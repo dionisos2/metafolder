@@ -8,7 +8,7 @@
 //   exists(path)  -> whether a path is on disk (orphan check)
 //   render()      -> repaint (the reconcile button follows the watch verdict)
 
-import { byId } from '/__ui.js';
+import { byId, pathText } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { fetchMounts, offlineMountFor, relativeTo, unavailableLabel } from '/__mounts.js';
 import { fetchWatched, summarizeWatched } from '/__watched.js';
@@ -18,7 +18,7 @@ import { activityTitle, fetchActivity, isHot, operationsTitle } from '/__activit
  * @param {{
  *   root: ShadowRoot,
  *   daemon: MetafolderApi['daemon'],
- *   exists: (path: string) => Promise<boolean>,
+ *   exists: (path: Metafolder.WirePath) => Promise<boolean>,
  *   shown: () => Metafolder.Metarecord|null,
  *   render: () => void,
  * }} ctx
@@ -29,7 +29,7 @@ export function createNotes({ root, daemon, exists, shown: shownNow, render }) {
   const watchNote = byId(root, 'watch-note');
   const activityNote = byId(root, 'activity-note');
 
-  /** @type {{shown: Metafolder.Metarecord|null, promise: Promise<string[]>}} */
+  /** @type {{shown: Metafolder.Metarecord|null, promise: Promise<Metafolder.WirePath[]>}} */
   let pathsMemo = { shown: null, promise: Promise.resolve([]) };
 
   /** The loaded record's absolute file path(s), resolved once per load — the
@@ -85,7 +85,8 @@ export function createNotes({ root, daemon, exists, shown: shownNow, render }) {
       recordPaths(repo, shown),
     ]);
     if (paths.length === 0) return null;
-    const found = paths.map((abs) => offlineMountFor(mounts, relativeTo(rootDir, abs)));
+    // Mount points are matched by their text, as they are shown.
+    const found = paths.map((abs) => offlineMountFor(mounts, relativeTo(rootDir, pathText(abs))));
     return found.every(Boolean) ? found[0] : null;
   }
 
@@ -118,12 +119,13 @@ export function createNotes({ root, daemon, exists, shown: shownNow, render }) {
     if (rels && rels.length > 0) {
       const byPath = await fetchWatched(daemon, repo, rels);
       info = summarizeWatched(rels.map((rel) => byPath.get(rel)));
-      activity = await fetchActivity(daemon, repo, rels);
+      // Activity is only shown: asked for by text.
+      activity = await fetchActivity(daemon, repo, rels.map(pathText));
     }
     if (shownNow() !== shown) return;
     watchMemo = { shown, info };
     applyWatchNote(info);
-    applyActivityNote(activity, rels ?? []);
+    applyActivityNote(activity, (rels ?? []).map(pathText));
     // The reconcile button's label follows the fetched answer (needsWatch):
     // "Watch and reconcile" only when the record is genuinely not watched.
     render();

@@ -4,8 +4,9 @@
 // like the path-ref panel, and into an operation for what it changed, field by
 // field; revert and prune (doc "log panel", doc "Labels and contexts").
 
-import { byId, el, formatValue, openButton, qs } from '/__ui.js';
+import { byId, el, formatValue, openButton, pathText, qs } from '/__ui.js';
 import { createListCursor } from '/__list-cursor.js';
+import { underRoot } from '/__file-actions.js';
 import { fieldChanges } from './snapshots.js';
 import { buildTree, keyOf, marksOf, nodesAlong, pathTo, revertTarget, rowsAt } from './tree.js';
 
@@ -364,7 +365,7 @@ export async function mount(root, metafolder) {
     const paths =
       rootPath === null || relPath === null
         ? []
-        : [relPath === '' ? rootPath : `${rootPath}${relPath}`];
+        : [underRoot(rootPath, relPath)];
     await workspace.set('selected_metarecord', { uuid, repo: at });
     await workspace.set('selected_paths', paths);
     await commands.invoke(['panel:open', 'other', 'metarecord-detail']);
@@ -378,7 +379,7 @@ export async function mount(root, metafolder) {
       daemon
         .resolvePath(repo, uuid)
         .then((path) => {
-          where.textContent = ` — ${path === '' ? '/' : path}`;
+          where.textContent = ` — ${pathText(path) || '/'}`;
         })
         .catch(() => {
           where.textContent = ' — (no current path)';
@@ -414,8 +415,8 @@ export async function mount(root, metafolder) {
       daemon
         .resolveTreeRef(repo, tree, field)
         .then((path) => {
-          span.textContent = path === '' ? '/' : path;
-          span.title = `${field}: parent ${tree.parent ?? '(root)'}, name "${tree.name}"`;
+          span.textContent = pathText(path) === '' ? '/' : pathText(path);
+          span.title = `${field}: parent ${tree.parent ?? '(root)'}, name "${pathText(tree.name)}"`;
         })
         .catch(() => {});
     }

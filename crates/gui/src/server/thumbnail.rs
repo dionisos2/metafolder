@@ -22,13 +22,19 @@ use std::time::Duration;
 
 #[derive(serde::Deserialize)]
 pub struct Params {
-    path: String,
+    path: Option<String>,
+    /// The path's bytes in hex, for one that is not text (`fs_path::from_query`).
+    path_bytes: Option<String>,
 }
 
 pub async fn serve(State(state): State<ServerState>, Query(params): Query<Params>) -> Response {
-    // The panels hand back the escaped handle they were given, so the exact
-    // bytes come back here (doc "Tree names").
-    let path = crate::fs_path::from_handle(&params.path);
+    // The panels hand back the handle they were given, so the exact bytes
+    // come back here (doc "Tree names").
+    let Some(path) =
+        crate::fs_path::from_query(params.path.as_deref(), params.path_bytes.as_deref())
+    else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
 
     // Resolve the file's repository (its cache directory). A file outside any
     // repo gets no thumbnail — no ffmpeg, nothing written; the panel shows a

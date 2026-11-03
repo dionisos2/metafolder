@@ -27,6 +27,12 @@ live. What belongs to no workspace in particular — the file clipboard — is i
 |`pick_result` |object or `null` |the picker's answer, delivered to the workspace that asked |
 |`view.zoom.<panel type>` |a number, 1 = 100 % |the zoom of that panel in the workspace ([[view:zoom]]); the panel follows a write |
 
+A path in a variable — `selected_paths`, `selected_untracked_paths`, the file
+manager's `file-manager:dir`, the `clipboard` global — is exact, in the wire form of
+[[Tree names]]: a string while it is text, `{text, bytes}` otherwise. A script reading
+one must take both forms; a saved workspace or a variable written before November 2026
+holds strings, read as before.
+
 A panel keeps its own variables under its name — `metarecord-list:query`,
 `file-manager:dir`, `path-ref:scope`. Some of them are its ''state'': the panel shows
 what they hold, so another panel or a command shows something there by writing them,

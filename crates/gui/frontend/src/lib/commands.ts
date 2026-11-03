@@ -2,9 +2,10 @@
 // (doc "The command input"). Parsing and filtering are pure and unit
 // tested; dispatch routes to Tauri commands and panel instances.
 
-import { wireTexts } from "./treePath";
+import { isWirePath, wirePaths } from "./treePath";
 import { confirmClosing } from "./unsavedEdits";
 import { recordPath } from "../../../panel-shim/file-actions.js";
+import { pathText } from "../../../panel-shim/ui.js";
 import { type FileOps } from "./fileCommands";
 import { cycleStep } from "./focusCycle";
 import { bindView, completionLabels } from "./completions";
@@ -451,8 +452,9 @@ async function openWith(commandLine: string, ws: string | null): Promise<void> {
   if (!program) return;
   if (!ws) return;
   const paths = await invoke("ws_get_var", { wsId: ws, key: "selected_paths" });
+  // Exact (doc "Tree names"): a path that is not text is quoted as its bytes.
   const files = (Array.isArray(paths) ? paths : []).filter(
-    (p): p is string => typeof p === "string" && p !== "",
+    (p): p is Metafolder.WirePath => isWirePath(p) && p !== "",
   );
   if (files.length === 0) {
     await status("no file or folder is selected");
@@ -1081,12 +1083,12 @@ function shellExpandDeps(ws: string | null): ExpandDeps {
       const body = (await daemon(
         `/repos/${repo}/metarecords/${uuid}/fields/${encodeURIComponent(field)}/resolve-tree`,
       )) as { paths?: unknown };
-      return wireTexts(body.paths);
+      return wirePaths(body.paths);
     },
     async selectedPaths() {
       const value = await wsVar("selected_paths");
       return Array.isArray(value)
-        ? value.filter((p): p is string => typeof p === "string")
+        ? value.filter(isWirePath)
         : [];
     },
     async activeRepo() {
@@ -2104,7 +2106,7 @@ async function runCommand(
         });
         const what =
           paths.length === 1
-            ? paths[0].replace(/\/+$/, "").split("/").pop()
+            ? pathText(paths[0]).replace(/\/+$/, "").split("/").pop()
             : `${paths.length} files`;
         await invoke("post_status", {
           wsId: ws,

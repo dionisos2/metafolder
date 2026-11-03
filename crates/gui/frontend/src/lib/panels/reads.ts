@@ -8,7 +8,7 @@
 // elsewhere discarding a read in flight, a POST read taken for a write, a
 // renamed directory leaving its descendants' paths behind.
 
-import { wireTexts } from "../treePath";
+import { wirePaths } from "../treePath";
 
 /** A daemon proxy response: `{ status, body }` (the shape `daemon_request` returns). */
 export interface DaemonResponse {
@@ -62,8 +62,8 @@ async function treeResolve(
   });
   if (res.status !== 200) return res;
   const fetched = (res.body as Record<string, unknown>) ?? {};
-  const out: Record<string, string[]> = {};
-  for (const uuid of uuids) out[uuid] = wireTexts(fetched[uuid]);
+  const out: Record<string, Metafolder.WirePath[]> = {};
+  for (const uuid of uuids) out[uuid] = wirePaths(fetched[uuid]);
   return ok(out);
 }
 
@@ -100,7 +100,11 @@ export function createReads(raw: RawFetcher) {
 
     /** Each named metarecord's resolved positions in a TreeRef field (`[]` for
      *  one without any). */
-    async treePaths(repo: string, field: string, uuids: string[]): Promise<Record<string, string[]>> {
+    async treePaths(
+      repo: string,
+      field: string,
+      uuids: string[],
+    ): Promise<Record<string, Metafolder.WirePath[]>> {
       if (uuids.length === 0) return {};
       return check(await treeResolve(repo, field, uuids, raw)) as Record<string, string[]>;
     },

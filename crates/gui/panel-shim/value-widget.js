@@ -8,7 +8,7 @@
 // panel and the WebKitGTK popup opens downward off-screen, while the HTML menu
 // (/__menu.js) flips above the button when space runs out.
 
-import { el } from '/__ui.js';
+import { el, pathText } from '/__ui.js';
 import { showMenu } from '/__menu.js';
 
 /**
@@ -300,7 +300,7 @@ function pathWidget(type, seed, path, pick) {
   if (seed) {
     const shown = input.value;
     void path
-      .through(seed.parent, seed.name)
+      .through(seed.parent, pathText(seed.name))
       .then((full) => {
         // Not over what the user has started typing meanwhile.
         if (input.value === shown) input.value = full;

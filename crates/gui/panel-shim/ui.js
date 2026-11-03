@@ -17,7 +17,7 @@
  * and null/undefined/false are dropped — so `cond && el(...)` works inline.
  * The array arm is `any[]` because a JSDoc typedef cannot reference itself.
  *
- * @typedef {Node|string|number|false|null|undefined|any[]} ElChild
+ * @typedef {Node|string|number|false|null|undefined|{text: string, bytes: string}|any[]} ElChild
  */
 
 /**
@@ -28,7 +28,10 @@
  * keys attach event listeners; existing IDL properties (value, checked,
  * colSpan, hidden, ...) are assigned, anything else becomes an attribute.
  * Children: nested arrays are flattened; null/undefined/false are
- * skipped; strings become text nodes.
+ * skipped; strings become text nodes, and so does a path that is not text
+ * (`{text, bytes}`, doc "Tree names"), by its text. As a prop value, such a
+ * path sets the attribute to its text and `<name>-bytes` to its bytes
+ * (`datasetPath` reads the pair back).
  *
  * Generic over the tag, so `el('input', …)` is an `HTMLInputElement` at the
  * call site with nothing to annotate.
@@ -42,7 +45,12 @@
 export function el(tag, props = {}, ...children) {
   const element = document.createElement(tag);
   for (const [key, value] of Object.entries(props)) {
-    if (key === 'class') {
+    if (isBytePath(value)) {
+      // A path that is not text (doc "Tree names"): the attribute shows its
+      // text, and `<key>-bytes` keeps what it is (read back by `datasetPath`).
+      element.setAttribute(key, value.text);
+      element.setAttribute(`${key}-bytes`, value.bytes);
+    } else if (key === 'class') {
       element.className = Array.isArray(value) ? value.filter(Boolean).join(' ') : value;
     } else if (key.startsWith('on')) {
       element.addEventListener(key.slice(2).toLowerCase(), value);
@@ -53,7 +61,11 @@ export function el(tag, props = {}, ...children) {
     }
   }
   element.append(
-    ...children.flat(Infinity).filter((c) => c !== null && c !== undefined && c !== false),
+    ...children
+      .flat(Infinity)
+      .filter((c) => c !== null && c !== undefined && c !== false)
+      // A path that is not text shows as its text, never "[object Object]".
+      .map((c) => (isBytePath(c) ? c.text : c)),
   );
   return element;
 }
@@ -267,16 +279,19 @@ export function fileTypeGlyph(pathOrName, fallback = '📄') {
  * `/fsraw` and `/thumbnail` routes — doc "Session tokens").
  *
  * @param {string} guiServer
- * @param {string|null} path
+ * @param {WirePath|null|undefined} handle the file, exact (doc "Tree names"):
+ *   its text says the type, its handle names it in the URL
  * @param {{isDir?: boolean, dirGlyph?: string, fileGlyph?: string,
  *          glyphClass?: string, token?: string}} [options]
  * @returns {HTMLElement}
  */
-export function thumbnail(guiServer, path, options = {}) {
+export function thumbnail(guiServer, handle, options = {}) {
   const { isDir = false, dirGlyph = '📁', fileGlyph = '📄', glyphClass = '', token = '' } = options;
   /** @param {string} text */
   const glyph = (text) => el('span', glyphClass ? { class: glyphClass } : {}, text);
   if (isDir) return glyph(dirGlyph);
+  if (!handle) return glyph(fileGlyph);
+  const path = pathText(handle);
   if (!path) return glyph(fileGlyph);
   const gif = extensionOf(path) === 'gif';
   const image = isThumbnailable(path);
@@ -285,14 +300,14 @@ export function thumbnail(guiServer, path, options = {}) {
     const auth = token ? `&token=${encodeURIComponent(token)}` : '';
     const img = el('img', {
       loading: 'lazy',
-      src: `${guiServer}/${endpoint}?path=${encodeURIComponent(path)}${auth}`,
+      src: `${guiServer}/${endpoint}?${pathQuery(handle)}${auth}`,
     });
     const glyphFallback = () => img.replaceWith(glyph(fileTypeGlyph(path, fileGlyph)));
     img.onerror = !gif
       ? glyphFallback
       : () => {
           img.onerror = glyphFallback;
-          img.src = `${guiServer}/fsraw?path=${encodeURIComponent(path)}${auth}`;
+          img.src = `${guiServer}/fsraw?${pathQuery(handle)}${auth}`;
         };
     return img;
   }
@@ -323,7 +338,7 @@ export function formatValue(field) {
       return '∅';
     case 'tree_ref':
     case 'hierarchy_ref':
-      return `${field.value.parent ?? '(root)'} / ${field.value.name}`;
+      return `${field.value.parent ?? '(root)'} / ${pathText(field.value.name)}`;
     case 'externalref':
       return `${field.value.repo} :: ${field.value.metarecord}`;
     default:
@@ -410,7 +425,7 @@ export function valueEl(value, onOpen) {
         'span',
         {},
         value.value.parent === null ? '(root)' : link(value.value.parent),
-        ` / ${value.value.name}`,
+        ` / ${pathText(value.value.name)}`,
       );
     case 'externalref':
       return el(
@@ -701,4 +716,187 @@ export function wireText(value) {
 export function wireTexts(values) {
   if (!Array.isArray(values)) return [];
   return values.map(wireText).filter((t) => t !== undefined);
+}
+
+// ── Exact paths (doc "Tree names") ──────────────────────────────────────────
+//
+// A path the GUI acts on is its exact bytes, in the daemon's wire form: a
+// plain string while it is text — every path but a rare few, which the panels
+// slice and join as strings —, `{text, bytes}` (bytes in lowercase hex) when it
+// is not. The text is for showing; the handle goes back to the backend
+// unchanged. These helpers do on bytes what a panel does on strings, and give
+// back a string whenever the result is text, so a path that is text never
+// becomes an object.
+
+/** @typedef {string | {text: string, bytes: string}} WirePath */
+
+const utf8 = new TextEncoder();
+const strictUtf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+
+/** Whether `value` is the object form of a path or a name.
+ *  @param {unknown} value @returns {value is {text: string, bytes: string}} */
+export function isBytePath(value) {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    typeof (/** @type {{bytes?: unknown}} */ (value).bytes) === 'string' &&
+    typeof (/** @type {{text?: unknown}} */ (value).text) === 'string'
+  );
+}
+
+/** Lowercase hex of `bytes`. @param {Uint8Array} bytes */
+function toHex(bytes) {
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** The bytes a lowercase hex string spells. @param {string} hex */
+function fromHex(hex) {
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i += 1) out[i] = parseInt(hex.slice(2 * i, 2 * i + 2), 16);
+  return out;
+}
+
+/** The exact bytes of a path: a string's UTF-8, an object's `bytes`.
+ *  @param {WirePath} path @returns {Uint8Array} */
+export function pathBytes(path) {
+  return typeof path === 'string' ? utf8.encode(path) : fromHex(path.bytes);
+}
+
+/** The length of the valid UTF-8 sequence starting at `i`, 0 for none (the
+ *  ranges Rust's `str::from_utf8` accepts: no overlong form, no surrogate,
+ *  nothing past U+10FFFF). @param {Uint8Array} b @param {number} i */
+function sequenceAt(b, i) {
+  const lead = b[i];
+  if (lead < 0x80) return 1;
+  let length;
+  let low = 0x80;
+  let high = 0xbf;
+  if (lead >= 0xc2 && lead <= 0xdf) length = 2;
+  else if (lead >= 0xe0 && lead <= 0xef) {
+    length = 3;
+    if (lead === 0xe0) low = 0xa0;
+    if (lead === 0xed) high = 0x9f;
+  } else if (lead >= 0xf0 && lead <= 0xf4) {
+    length = 4;
+    if (lead === 0xf0) low = 0x90;
+    if (lead === 0xf4) high = 0x8f;
+  } else return 0;
+  if (i + length > b.length || b[i + 1] < low || b[i + 1] > high) return 0;
+  for (let k = 2; k < length; k += 1) if (b[i + k] < 0x80 || b[i + k] > 0xbf) return 0;
+  return length;
+}
+
+/** The text of bytes as metafolder shows it: valid UTF-8 as is, each byte no
+ *  text can represent as `%XX` — the daemon's own rendering.
+ *  @param {Uint8Array} bytes */
+export function escapeBytes(bytes) {
+  let out = '';
+  let run = 0;
+  let i = 0;
+  while (i < bytes.length) {
+    const length = sequenceAt(bytes, i);
+    if (length > 0) {
+      i += length;
+      continue;
+    }
+    out += strictUtf8.decode(bytes.subarray(run, i));
+    out += `%${bytes[i].toString(16).toUpperCase().padStart(2, '0')}`;
+    i += 1;
+    run = i;
+  }
+  return out + strictUtf8.decode(bytes.subarray(run));
+}
+
+/** The wire form of these bytes: a string when they are text, else
+ *  `{text, bytes}`. @param {Uint8Array} bytes @returns {WirePath} */
+export function pathOfBytes(bytes) {
+  try {
+    return strictUtf8.decode(bytes);
+  } catch {
+    return { text: escapeBytes(bytes), bytes: toHex(bytes) };
+  }
+}
+
+/** The text a path shows ({@link wireText} for a path known to be one).
+ *  @param {WirePath} path @returns {string} */
+export function pathText(path) {
+  return typeof path === 'string' ? path : path.text;
+}
+
+/** A string that identifies a path exactly — a Map key, a Set member, an
+ *  equality. Text is itself; bytes are prefixed with NUL, which no real path
+ *  holds, so the two never meet. @param {WirePath} path @returns {string} */
+export function pathKey(path) {
+  return typeof path === 'string' ? path : `\u0000${path.bytes}`;
+}
+
+/** Whether two paths are the same bytes. @param {WirePath} a @param {WirePath} b */
+export function samePath(a, b) {
+  return pathKey(a) === pathKey(b);
+}
+
+/** The query parameter naming a path in a GUI server URL (`/fsraw`,
+ *  `/thumbnail`, …): `path=` for text, `path_bytes=` (hex) otherwise.
+ *  @param {WirePath} path */
+export function pathQuery(path) {
+  return typeof path === 'string'
+    ? `path=${encodeURIComponent(path)}`
+    : `path_bytes=${path.bytes}`;
+}
+
+/** The path a `data-*` attribute pair holds (`el` writes a byte path as the
+ *  text plus `<name>-bytes`): `dataset.mfPath` / `dataset.mfPathBytes`.
+ *  @param {DOMStringMap} dataset @param {string} key e.g. `mfPath`
+ *  @returns {WirePath | undefined} */
+export function datasetPath(dataset, key) {
+  const text = dataset[key];
+  if (typeof text !== 'string') return undefined;
+  const bytes = dataset[`${key}Bytes`];
+  return typeof bytes === 'string' && bytes !== '' ? { text, bytes } : text;
+}
+
+/**
+ * A Map keyed by exact path ({@link pathKey}): two paths that show alike are
+ * two keys, and iterating gives the paths back as they were set.
+ * @template V
+ */
+export class PathMap {
+  /** @param {Iterable<[WirePath, V]>} [entries] */
+  constructor(entries = []) {
+    /** @type {Map<string, [WirePath, V]>} */
+    this.inner = new Map();
+    for (const [path, value] of entries) this.set(path, value);
+  }
+  /** @param {WirePath} path */
+  get(path) {
+    return this.inner.get(pathKey(path))?.[1];
+  }
+  /** @param {WirePath} path */
+  has(path) {
+    return this.inner.has(pathKey(path));
+  }
+  /** @param {WirePath} path @param {V} value */
+  set(path, value) {
+    this.inner.set(pathKey(path), [path, value]);
+    return this;
+  }
+  /** @param {WirePath} path */
+  delete(path) {
+    return this.inner.delete(pathKey(path));
+  }
+  get size() {
+    return this.inner.size;
+  }
+  /** @returns {IterableIterator<[WirePath, V]>} */
+  entries() {
+    return this.inner.values();
+  }
+  /** @returns {IterableIterator<[WirePath, V]>} */
+  [Symbol.iterator]() {
+    return this.inner.values();
+  }
+  /** @returns {WirePath[]} */
+  keys() {
+    return [...this.inner.values()].map(([path]) => path);
+  }
 }

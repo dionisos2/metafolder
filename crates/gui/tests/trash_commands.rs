@@ -51,16 +51,18 @@ async fn spawn_stub_at(tracked: bool, root: String) -> (String, Stub) {
             }),
         )
         .route(
-            "/repos/{repo}/query",
+            "/repos/{repo}/tree/resolve-path",
+            // What tracks this path, asked at its exact bytes.
             post(|State(stub): State<Stub>, Json(body): Json<Value>| async move {
-                // Two questions reach this route: "what tracks this path"
-                // (`eq`) and "what lives under it" (`follows_transitive`).
-                let hits = match body["query"]["type"].as_str() {
-                    Some("eq") if stub.tracked => json!([UUID]),
-                    _ => json!([]),
-                };
-                Json(json!({"results": hits, "next_cursor": null}))
+                assert_eq!(body["form"], "verbatim", "{body}");
+                let uuid = if stub.tracked { json!(UUID) } else { Value::Null };
+                Json(json!({"uuid": uuid}))
             }),
+        )
+        .route(
+            "/repos/{repo}/query",
+            // What lives under the record (`follows_transitive`): nothing.
+            post(|| async move { Json(json!({"results": [], "next_cursor": null})) }),
         )
         .route(
             "/repos/{repo}/metarecords/{uuid}",

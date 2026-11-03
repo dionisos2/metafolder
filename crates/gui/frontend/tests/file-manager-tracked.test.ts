@@ -140,6 +140,7 @@ describe('loadDirMetarecord', () => {
     expect(daemon.call).toHaveBeenCalledWith('POST', '/repos/r1/tree/resolve-path', {
       field: 'mfr_path',
       path: '',
+      form: 'verbatim',
     });
     expect(uuid).toBe('aaaa');
   });
@@ -150,6 +151,7 @@ describe('loadDirMetarecord', () => {
     expect(daemon.call).toHaveBeenCalledWith('POST', '/repos/r1/tree/resolve-path', {
       field: 'mfr_path',
       path: '/music/jazz',
+      form: 'verbatim',
     });
     expect(uuid).toBe('bbbb');
   });

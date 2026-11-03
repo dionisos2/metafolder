@@ -12,6 +12,7 @@
 //                      the API of the command's run (doc "Command transactions")
 
 import { TYPES } from '/__value-widget.js';
+import { pathText } from '/__ui.js';
 import { settledType, splitTypeValue } from './field-args.js';
 import { CONCRETE_TYPES, NOTHING, distinctValues, sameValue } from './values.js';
 
@@ -79,7 +80,7 @@ export function registerFieldCommand({
    *  @param {string} field @returns {string|null} */
   function hierarchyName(field) {
     const row = rowsOfName(field).find((f) => f.value.type === 'hierarchy_ref');
-    return row && row.value.type === 'hierarchy_ref' ? row.value.value.name : null;
+    return row && row.value.type === 'hierarchy_ref' ? pathText(row.value.value.name) : null;
   }
   /** @param {string} field @param {string} name */
   const parentPrompt = (field, name) => `New parent of "${name}" in "${field}"?`;
@@ -432,7 +433,7 @@ export function registerFieldCommand({
         const as = row.value.type !== 'nothing' ? row.value.type : type;
         const value =
           row.value.type === 'hierarchy_ref'
-            ? await vocab.parseParent(cur.repo, field, raw, row.value.value.name)
+            ? await vocab.parseParent(cur.repo, field, raw, pathText(row.value.value.name))
             : await vocab.parse(cur.repo, field, as, raw);
         const force = forceFor(field);
         await daemon.call('PATCH', `/repos/${cur.repo}/fields/${row.id}`, { value, ...force });

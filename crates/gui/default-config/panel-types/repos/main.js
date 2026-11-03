@@ -1,7 +1,7 @@
 // repos panel: list loaded repositories, init/load new ones, open a
 // repository in a workspace (doc "repos panel").
 
-import { byId, el, messageOf, qsa } from '/__ui.js';
+import { byId, el, messageOf, pathText, qsa } from '/__ui.js';
 import { createPickRunner } from '/__value-widget.js';
 import { createSelect } from '/__select.js';
 
@@ -93,7 +93,7 @@ export async function mount(root, metafolder) {
   // Reuses the value-picker system (doc "Value picker"): "Browse…" opens
   // the file-manager in the other slot and returns the chosen folder path.
   const pickRunner = createPickRunner(metafolder);
-  /** @type {string|null} cached; the default start when the input is empty */
+  /** @type {Metafolder.WirePath|null} cached; the default start when the input is empty */
   let homeDir = null;
 
   /** @param {string} path */
@@ -131,7 +131,9 @@ export async function mount(root, metafolder) {
         'Highlight a folder (“.” = current directory) — Ctrl+Enter to confirm, Ctrl+Esc to cancel',
     });
     if (!path) return; // cancelled
-    targetInput.value = path;
+    // A repository root is typed text (doc "Path representation"): the field
+    // shows the path's text.
+    targetInput.value = pathText(path);
     // Prefill the init name with the folder name when left blank.
     if (targetInput.id === 'init-root') {
       const nameInput = byId(root, 'init-name', HTMLInputElement);

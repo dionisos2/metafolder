@@ -33,7 +33,7 @@ function create(daemon: ReturnType<typeof stubDaemon>, exists: (p: string) => bo
   return createDisplayData({
     daemon: daemon as never,
     bench: { measure: (_n: string, fn: () => unknown) => fn() } as never,
-    exists: async (p: string) => exists(p),
+    exists: async (p: Metafolder.WirePath) => exists(typeof p === 'string' ? p : p.text),
     getRepo: () => 'r',
     getColumns: () => [],
     render: () => {},

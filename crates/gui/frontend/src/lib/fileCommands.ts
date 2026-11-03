@@ -18,19 +18,24 @@ import {
   pasteDir,
   trashedMessage,
 } from '../../../panel-shim/file-actions.js';
+import { pathText, samePath } from '../../../panel-shim/ui.js';
+
+/** A path in its wire form (doc "Tree names"): a string while it is text,
+ *  `{text, bytes}` otherwise. Shown by its text, acted on as it is. */
+type Path = Metafolder.WirePath;
 
 /** What the `file:` commands do their work with. */
 export interface FileOps {
-  readDir(dir: string): Promise<{ name: string }[]>;
-  move(from: string, to: string): Promise<void>;
-  copy(from: string, to: string): Promise<void>;
-  mkdir(path: string): Promise<void>;
-  createFile(path: string): Promise<void>;
+  readDir(dir: Path): Promise<{ name: string }[]>;
+  move(from: Path, to: Path): Promise<void>;
+  copy(from: Path, to: Path): Promise<void>;
+  mkdir(path: Path): Promise<void>;
+  createFile(path: Path): Promise<void>;
   /** Sends `path` to the active repository's trash, its metarecords with it,
    *  or to the desktop's when no repository holds it; true for the desktop's. */
-  trash(path: string): Promise<boolean>;
+  trash(path: Path): Promise<boolean>;
   /** Gives `path` its metarecord; false when the user gave up. */
-  record(path: string): Promise<boolean>;
+  record(path: Path): Promise<boolean>;
   /** Asks before a trashing; true to go ahead. One file is asked about
    *  unless the user switched the question off, `many` always (doc
    *  "Confirming a trashing"). */
@@ -38,7 +43,7 @@ export interface FileOps {
   /** Asks for a text in the command input; null when given up. */
   ask(question: string, initial?: string): Promise<string | null>;
   /** The file clipboard (doc "Global GUI variables"). */
-  clipboard(): Promise<{ paths: string[]; mode: 'copy' | 'cut' } | null>;
+  clipboard(): Promise<{ paths: Path[]; mode: 'copy' | 'cut' } | null>;
   clearClipboard(): Promise<void>;
   status(text: string): Promise<void>;
   /** Tells the other panels the files changed (`metarecords:dirty`). */
@@ -47,13 +52,13 @@ export interface FileOps {
 
 /** The functions of the panel a `file:` command runs on. */
 export interface FileFunctions {
-  paths?: () => string[] | Promise<string[]>;
+  paths?: () => Path[] | Promise<Path[]>;
   /** What `file:record` takes, when it is not `paths`: those of them without
    *  a metarecord. */
-  recordable?: () => string[] | Promise<string[]>;
-  directory?: () => string | null | Promise<string | null>;
+  recordable?: () => Path[] | Promise<Path[]>;
+  directory?: () => Path | null | Promise<Path | null>;
   /** The file or folder `clipboard:paste` lands at. */
-  pasteTarget?: () => string | null | Promise<string | null>;
+  pasteTarget?: () => Path | null | Promise<Path | null>;
   refresh?: () => unknown;
   /** Puts the cursor on the entry `name` of the folder shown. */
   reveal?: (name: string) => unknown;
@@ -73,19 +78,20 @@ export const NEW_KINDS = ['folder', 'file'];
 
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
 
-async function designated(fns: FileFunctions): Promise<string[]> {
+async function designated(fns: FileFunctions): Promise<Path[]> {
   const paths = (await fns.paths?.()) ?? [];
   if (paths.length === 0) throw new Error('no file here');
   return paths;
 }
 
-async function folder(fns: FileFunctions): Promise<string> {
+async function folder(fns: FileFunctions): Promise<Path> {
   const dir = (await fns.directory?.()) ?? null;
   if (dir === null) throw new Error('no folder here');
   return dir;
 }
 
-async function takenNames(ops: FileOps, dir: string): Promise<Set<string>> {
+/** The names in `dir` as listed: their text. */
+async function takenNames(ops: FileOps, dir: Path): Promise<Set<string>> {
   return new Set((await ops.readDir(dir)).map((entry) => entry.name));
 }
 
@@ -107,11 +113,12 @@ export async function runFileCommand(
   switch (name) {
     case 'file:trash': {
       const paths = await designated(fns);
-      const named = paths.length === 1 ? `"${baseName(paths[0])}"` : plural(paths.length, 'file');
+      const named =
+        paths.length === 1 ? `"${pathText(baseName(paths[0]))}"` : plural(paths.length, 'file');
       if (!(await ops.confirm(`Send ${named} to the trash?`, paths.length > 1))) return;
       const desktop = [];
       for (const path of paths) desktop.push(await ops.trash(path));
-      const what = paths.length === 1 ? baseName(paths[0]) : plural(paths.length, 'file');
+      const what = paths.length === 1 ? pathText(baseName(paths[0])) : plural(paths.length, 'file');
       await ops.status(trashedMessage(what, paths.length > 1, desktop));
       await after(ops, fns, null);
       return;
@@ -120,7 +127,8 @@ export async function runFileCommand(
       const paths = await designated(fns);
       if (paths.length > 1) throw new Error('rename one file at a time');
       const [path] = paths;
-      const old = baseName(path);
+      // The text is what is edited: what is typed is a new name.
+      const old = pathText(baseName(path));
       // Renaming edits the name there is: it is offered (doc "Interactive
       // command arguments").
       const typed = rest.length > 0 ? rest.join(' ') : await ops.ask('Rename to:', old);
@@ -136,7 +144,9 @@ export async function runFileCommand(
       let recorded = 0;
       for (const path of paths) if (await ops.record(path)) recorded += 1;
       if (recorded === 0) return;
-      await ops.status(`Recorded ${recorded === 1 ? baseName(paths[0]) : plural(recorded, 'file')} (mf_watch = false)`);
+      await ops.status(
+        `Recorded ${recorded === 1 ? pathText(baseName(paths[0])) : plural(recorded, 'file')} (mf_watch = false)`,
+      );
       await after(ops, fns, null);
       return;
     }
@@ -168,22 +178,23 @@ export async function runFileCommand(
       for (const src of clip.paths) {
         // Never a folder into itself or one of its descendants.
         if (isWithin(dir, src)) {
-          await ops.status(`cannot paste ${baseName(src)} into itself`);
+          await ops.status(`cannot paste ${pathText(baseName(src))} into itself`);
           continue;
         }
         const target = dedupeName(baseName(src), taken);
         if (clip.mode === 'cut') await ops.move(src, joinPath(dir, target));
         else await ops.copy(src, joinPath(dir, target));
-        taken.add(target);
+        taken.add(pathText(target));
         pasted += 1;
-        last = target;
+        last = pathText(target);
       }
       // What was cut has moved: there is nothing left to paste.
       if (clip.mode === 'cut') await ops.clearClipboard();
       if (pasted === 0) return;
       await ops.status(`Pasted ${plural(pasted, 'item')}`);
       // The cursor can only go on what was made in the folder the panel shows.
-      const shown = (await fns.directory?.()) === dir;
+      const showing = (await fns.directory?.()) ?? null;
+      const shown = showing !== null && samePath(showing, dir);
       await after(ops, fns, shown && pasted === 1 ? last : null);
       return;
     }

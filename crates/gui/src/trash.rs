@@ -440,9 +440,10 @@ pub fn trash_to_desktop(abs: &Path) -> Result<String, String> {
 pub async fn trash_path(
     app: tauri::State<'_, Arc<App>>,
     repo: Option<String>,
-    path: String,
+    path: TreePath,
 ) -> Result<Trashed, String> {
-    let abs = PathBuf::from(&path);
+    // The handle's bytes, exactly (doc "Tree names").
+    let abs = crate::fs_path::from_handle(&path);
     let held = match repo {
         Some(repo) => {
             let info = repo_info(&app.daemon, &repo).await?;

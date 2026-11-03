@@ -11,10 +11,13 @@
 // paths (`POST /repos/:repo/watch/check`, chunked); these helpers carry the
 // answers to the panels and phrase them.
 
+import { PathMap, pathText } from '/__ui.js';
+
 /**
- * One path's answer, as `POST /repos/:repo/watch/check` reports it.
+ * One path's answer, as `POST /repos/:repo/watch/check` reports it. `path`
+ * echoes the path asked, in the same form (doc "Tree names").
  * @typedef {{
- *   path: string, watched: boolean, reason: string, watched_dir: string,
+ *   path: import('/__ui.js').WirePath, watched: boolean, reason: string, watched_dir: string,
  *   eligible: boolean, eligibility_reason: string,
  *   watch_scope: string|null, ignore_source: string|null, pattern: string|null,
  *   dir_eligible: boolean, dir_eligibility_reason: string,
@@ -35,16 +38,19 @@ const MAX_PATHS_PER_CALL = 500;
 
 /**
  * Fetches the watch state of repo-root-relative paths (leading slash, "" is
- * the root), as a Map path → result. Split into daemon-sized chunks (a listing
+ * the root), as a map path → result. The paths are exact — a string's own
+ * bytes, or `{text, bytes}` —, and so are the map's keys (a `PathMap`). Split into daemon-sized chunks (a listing
  * is one call at any sane size) and merged; a failed call — the daemon down,
  * or an older one without the endpoint — yields an empty Map: callers must
  * read a missing answer as "unknown", never as "unwatched".
  *
- * @param {Daemon} daemon @param {string|null} repo @param {string[]} relPaths
- * @returns {Promise<Map<string, Result>>}
+ * @param {Daemon} daemon @param {string|null} repo
+ * @param {import('/__ui.js').WirePath[]} relPaths
+ * @returns {Promise<PathMap<Result>>}
  */
 export async function fetchWatched(daemon, repo, relPaths) {
-  const out = new Map();
+  /** @type {PathMap<Result>} */
+  const out = new PathMap();
   if (!repo || relPaths.length === 0) return out;
   for (let at = 0; at < relPaths.length; at += MAX_PATHS_PER_CALL) {
     const chunk = relPaths.slice(at, at + MAX_PATHS_PER_CALL);
@@ -55,7 +61,7 @@ export async function fetchWatched(daemon, repo, relPaths) {
       for (const r of body?.results ?? []) out.set(r.path, r);
     } catch {
       /* no answer: the panels leave every record unmarked */
-      return new Map();
+      return new PathMap();
     }
   }
   return out;
@@ -151,6 +157,6 @@ export function summarizeWatched(results) {
   const title =
     known.length === 1
       ? watchedLabel(known[0])
-      : known.map((r) => `${r.path === '' ? '/' : r.path}: ${watchedLabel(r)}`).join('\n');
+      : known.map((r) => `${pathText(r.path) || '/'}: ${watchedLabel(r)}`).join('\n');
   return { watched, title };
 }

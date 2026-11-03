@@ -40,7 +40,8 @@ declare namespace Metafolder {
    *  references") —: the parent metarecord (null at a forest root) + name. */
   interface TreeRef {
     parent: string | null;
-    name: string;
+    /** The name, exact ({@link WirePath}): shown by its text. */
+    name: WirePath;
   }
 
   /** One field row. Fields are a multi-map: several may share a name. */
@@ -124,16 +125,17 @@ declare namespace Metafolder {
     request(method: string, path: string, body?: unknown, opts?: ReadOptions): Promise<DaemonResponse>;
     /** As `request`, but throws the daemon's `{"error": …}` message on >= 400. */
     call(method: string, path: string, body?: unknown, opts?: ReadOptions): Promise<unknown>;
-    /** The repo-root-relative path of a metarecord's `mfr_path`. */
-    resolvePath(repo: string, uuid: string): Promise<string>;
+    /** The repo-root-relative path of a metarecord's `mfr_path`, exact
+     *  ({@link WirePath}). */
+    resolvePath(repo: string, uuid: string): Promise<WirePath>;
     /** The path a `tree_ref` value names, in the forest of `field` — the field
-     *  the value was read from (default `mfr_path`). */
-    resolveTreeRef(repo: string, value: TreeRef, field?: string): Promise<string>;
+     *  the value was read from (default `mfr_path`). Exact. */
+    resolveTreeRef(repo: string, value: TreeRef, field?: string): Promise<WirePath>;
     repoRoot(repo: string): Promise<string>;
     repoInternalDir(repo: string): Promise<string>;
     /** Absolute paths — one, since `mfr_path` is single-valued; a list for the
      *  shape of the endpoint. */
-    metarecordPaths(repo: string, metarecord: { uuid: string }): Promise<string[]>;
+    metarecordPaths(repo: string, metarecord: { uuid: string }): Promise<WirePath[]>;
     /** Creates a repository *and* applies its ignore preset (doc "Ignore presets"),
      * the same orchestration `mf repo init` uses; returns the
      *  new repo's uuid. `call('POST', '/repos/init', …)` would skip the ignore
@@ -162,8 +164,9 @@ declare namespace Metafolder {
     /** The named metarecords that exist, by uuid. */
     metarecords(repo: string, uuids: string[]): Promise<Map<string, Metarecord>>;
     /** Each named metarecord's resolved positions in a TreeRef field (`[]`
-     *  for one without any). */
-    treePaths(repo: string, field: string, uuids: string[]): Promise<Record<string, string[]>>;
+     *  for one without any), exact ({@link WirePath}): shown by their text,
+     *  acted on as they are. */
+    treePaths(repo: string, field: string, uuids: string[]): Promise<Record<string, WirePath[]>>;
     /** The repository's field catalogue: each distinct name and its type. */
     fields(repo: string): Promise<{ name: string; type: string }[]>;
   }
@@ -476,20 +479,21 @@ declare namespace Metafolder {
     parent?(mf: Api): unknown;
     /** Goes to the top — the root directory, a forest's roots (`cursor:root`). */
     root?(mf: Api): unknown;
-    /** The absolute paths of the files the panel designates
+    /** The absolute paths of the files the panel designates, exact
+     *  ({@link WirePath}) — every path below is —
      *  (`clipboard:copy`/`clipboard:cut`, the `file:` commands): the checked
      *  metarecords' (and the file manager's checked paths) when some are
      *  checked, else the row under the cursor's. */
-    paths?(mf: Api): string[] | Promise<string[]>;
+    paths?(mf: Api): WirePath[] | Promise<WirePath[]>;
     /** What `file:record` takes, when it is not `paths`: the designated files
      *  that have no metarecord yet. */
-    recordable?(mf: Api): string[] | Promise<string[]>;
+    recordable?(mf: Api): WirePath[] | Promise<WirePath[]>;
     /** The folder the panel shows, where `file:new` works; null when it shows
      *  none right now (doc "File commands"). */
-    directory?(mf: Api): string | null | Promise<string | null>;
+    directory?(mf: Api): WirePath | null | Promise<WirePath | null>;
     /** The file or folder `clipboard:paste` lands at: the one under the cursor,
      *  whatever is checked; null when there is none (doc "File commands"). */
-    pasteTarget?(mf: Api): string | null | Promise<string | null>;
+    pasteTarget?(mf: Api): WirePath | null | Promise<WirePath | null>;
     /** Puts the cursor on the entry `name` of the folder shown — what a
      *  `file:` command just made. */
     reveal?(mf: Api, name: string): unknown;
@@ -545,42 +549,45 @@ declare namespace Metafolder {
     /** The name as it is shown and typed: itself when the name is text, its
      *  `%XX` escaped form when it holds bytes no text can represent. */
     name: string;
-    /** The same escaping applied to the whole path. It is a *handle*: hand it
-     *  back unchanged (fs commands, `?path=` URLs) and the backend turns it
-     *  into the exact bytes. Slicing and joining it works as for a plain
-     *  path. */
-    path: string;
+    /** The handle: the exact path in its wire form ({@link WirePath}) — a
+     *  string while it is text, `{text, bytes}` otherwise. Hand it back
+     *  unchanged (fs commands, `pathQuery` URLs); slice and join it with the
+     *  shim's helpers (`joinPath`, `parentDir`, `baseName`), which take both
+     *  forms. */
+    path: WirePath;
     is_dir: boolean;
     /** The name needed escaping, so what is shown is not literally what the
      *  disk holds — the row is marked and the file is worth renaming. */
     escaped?: boolean;
   }
 
+  /** Every path of {@link Fs} is a {@link WirePath}: a string (its own bytes,
+   *  never a reading of a `%XX`), or `{text, bytes}`. */
   interface Fs {
-    readDir(path: string): Promise<FsEntry[]>;
+    readDir(path: WirePath): Promise<FsEntry[]>;
     /** `{path, is_dir, size, mtime, kind}`, following links. `kind` is what
      *  the file *is*, read from its first bytes: `image`, `gif`, `video`,
      *  `audio`, `document`, or null (a directory, text, anything else). */
-    stat(path: string): Promise<unknown>;
+    stat(path: WirePath): Promise<unknown>;
     /** Is anything at `path` — the entry itself, a broken symlink included?
      *  `stat` follows links (so a link to a directory reads as a directory);
      *  this is the one to ask "is it still there?". */
-    exists(path: string): Promise<boolean>;
-    homeDir(): Promise<string>;
+    exists(path: WirePath): Promise<boolean>;
+    homeDir(): Promise<WirePath>;
     /** Creates a single new directory (its parent must exist); errors if it
      *  already exists. */
-    mkdir(path: string): Promise<void>;
+    mkdir(path: WirePath): Promise<void>;
     /** Creates a new empty file; errors if it already exists (never truncates). */
-    createFile(path: string): Promise<void>;
+    createFile(path: WirePath): Promise<void>;
     /** Replaces the content of an existing file, in place (doc "Editing a text
      *  file"); errors if there is none. The one call that overwrites. */
-    writeText(path: string, text: string): Promise<void>;
+    writeText(path: WirePath, text: string): Promise<void>;
     /** Moves/renames a path (cross-filesystem safe); refuses to overwrite `to`. */
-    move(from: string, to: string): Promise<void>;
+    move(from: WirePath, to: WirePath): Promise<void>;
     /** Copies a file or directory tree, leaving the source; refuses to overwrite. */
-    copy(from: string, to: string): Promise<void>;
+    copy(from: WirePath, to: WirePath): Promise<void>;
     /** Permanently deletes a file, symlink, or directory tree. */
-    remove(path: string): Promise<void>;
+    remove(path: WirePath): Promise<void>;
   }
 
   /** Where a trashing put a path (doc "Trash"). */
@@ -625,7 +632,7 @@ declare namespace Metafolder {
      *  metarecords on the way (captured and deleted before the bytes move, doc
      *  "Trash") — the desktop's otherwise (no repository, or a path outside its
      *  root). `item:delete` and `file:trash`. */
-    trashPath(repo: string | null, path: string): Promise<Trashed>;
+    trashPath(repo: string | null, path: WirePath): Promise<Trashed>;
     /** Sends the files of every metarecord `query` matches to the trash, their
      *  metarecords deleted in one write (doc "Sending files to the trash").
      *  Posts the outcome to the status bar itself. `metarecord:bulk <target>

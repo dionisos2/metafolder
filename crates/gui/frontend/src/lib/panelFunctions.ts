@@ -65,16 +65,16 @@ export interface PanelFunctions {
   /** The absolute paths of the files the panel designates, for
    *  `clipboard:copy`/`clipboard:cut`: the checked metarecords' when some are
    *  checked, else the row under the cursor's. */
-  paths?: () => string[] | Promise<string[]>;
+  paths?: () => Metafolder.WirePath[] | Promise<Metafolder.WirePath[]>;
   /** What `file:record` takes, when it is not `paths`: the designated files
    *  that have no metarecord yet. */
-  recordable?: () => string[] | Promise<string[]>;
+  recordable?: () => Metafolder.WirePath[] | Promise<Metafolder.WirePath[]>;
   /** The folder the panel shows, where `file:new` works; null when it shows
    *  none right now. */
-  directory?: () => string | null | Promise<string | null>;
+  directory?: () => Metafolder.WirePath | null | Promise<Metafolder.WirePath | null>;
   /** The file or folder `clipboard:paste` lands at: the one under the cursor,
    *  whatever is checked; null when there is none. */
-  pasteTarget?: () => string | null | Promise<string | null>;
+  pasteTarget?: () => Metafolder.WirePath | null | Promise<Metafolder.WirePath | null>;
   /** Puts the cursor on the entry `name` of the folder shown — the one a
    *  `file:` command just made. */
   reveal?: (name: string) => unknown;
@@ -221,7 +221,7 @@ export interface GenericContext {
   reinvoke: (invocation: string) => void;
   /** Puts `paths` in the file clipboard (the global GUI variable `clipboard`),
    *  in the command's run. */
-  clip: (paths: string[], mode: 'copy' | 'cut') => Promise<void>;
+  clip: (paths: Metafolder.WirePath[], mode: 'copy' | 'cut') => Promise<void>;
   /** What the `file:` commands work with. */
   files?: FileOps;
 }

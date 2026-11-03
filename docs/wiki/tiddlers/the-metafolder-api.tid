@@ -177,16 +177,28 @@ changed here is recorded when the watcher sees it or at the next reconcile.
 Apart from `writeText`, whose purpose it is, none of them overwrites: `mkdir`,
 `createFile`, `move` and `copy` fail when the destination exists.
 
-''A path is a handle.'' The frontend speaks JSON, so a path it holds is text, while
-a path on disk is bytes that need not be UTF-8. Every path crossing this boundary
-is in the `%XX` form of [[Tree names]]: itself when it is text, `/dir/caf%E9.mp4`
-when it holds a byte no text can represent. A panel slices and joins it like a
-plain path and hands it back unchanged — to `fs`, or as `?path=` to `/fsraw`,
-`/thumbnail`, `/document` — and the Rust side turns it back into the exact bytes.
-A handle that spells an escape has two readings; the one that exists on disk is
-taken, the literal one first, and a path that exists under neither is taken
-literally, so creating `new%file.txt` creates exactly that. `readDir` marks with
-`escaped: true` an entry whose name needed escaping.
+''A path is a handle, exact.'' A path on disk is bytes that need not be UTF-8, so
+every path the panels hold takes the daemon's wire form ([[Tree names]]): a plain
+string while it is text — every path but a rare few —, `{text, bytes}` (bytes in
+lowercase hex) when it holds a byte no text can represent. A string is its own
+bytes, never a reading of a `%XX`: `caf%E9.mp4` names the file really so named. A
+panel shows a path by its text (`pathText`) and hands the handle back unchanged —
+to `fs`, the trash, a workspace variable, or a URL of `/fsraw`, `/thumbnail`,
+`/document` (`pathQuery` writes `path=` or `path_bytes=`). It slices and joins it with
+the helpers of `/__file-actions.js` — `joinPath`, `parentDir`, `baseName`,
+`isWithin` —, which take both forms and give a string back whenever the result is
+text; compares two with `samePath`, and keys a map by `pathKey` (or uses `PathMap`
+of `/__ui.js`). `el` shows a `{text, bytes}` child by its text, and as an attribute
+value writes the text and a `-bytes` attribute (`datasetPath` reads the pair back).
+A name the user types is a string, and so is a name as `readDir` lists it (`name`,
+its text): only `path` is the handle. `readDir` marks with `escaped: true` an entry
+whose name is not text. What is only ''shown'' — eligibility, watch activity,
+mounts — the panels ask the daemon about by the text; what they act on, by the
+handle. A path not UTF-8 cannot be ''recorded'' by its path yet: the daemon takes a
+path argument as text ([[Path representation]]), and `recordPath` refuses it.
+
+A shell line names such a path in bash's ANSI-C quoting, `$'caf\xe9.mp4'`, which
+gives the shell its bytes (`file:open-with`, the `%p` placeholders).
 
 !! Other members
 

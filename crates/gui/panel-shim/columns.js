@@ -25,7 +25,7 @@
 // `followedTreeFields` say what to fetch, `fillColumns` fills the display text
 // from the resolved data, and `cellText` reads it synchronously.
 
-import { fields, formatValue } from '/__ui.js';
+import { fields, formatValue, pathText } from '/__ui.js';
 
 /**
  * One alternative of a field column: a base field, an optional followed field
@@ -40,9 +40,9 @@ import { fields, formatValue } from '/__ui.js';
  * @typedef {MetaColumn|FieldColumn} Column
  *
  * Resolved display data, fetched by main.js after a page loads.
- * @typedef {{pathsByField?: Record<string, Record<string, string[]>>,
+ * @typedef {{pathsByField?: Record<string, Record<string, Metafolder.WirePath[]>>,
  *            targets?: Map<string, Metafolder.Metarecord|null>,
- *            followedPathsByField?: Record<string, Record<string, string[]>>}} Data
+ *            followedPathsByField?: Record<string, Record<string, Metafolder.WirePath[]>>}} Data
  */
 
 const META_COLUMNS = ['uuid', 'version'];
@@ -152,21 +152,21 @@ export function isSortable(column) {
 /**
  * Projects a value through a display aspect. `resolvedPaths` feeds `:path`.
  * @param {Metafolder.Value} value @param {string} mode
- * @param {string[]|undefined} resolvedPaths
+ * @param {Metafolder.WirePath[]|undefined} resolvedPaths
  */
 function projectValue(value, mode, resolvedPaths) {
   // Explicit, so the check narrows the value to a position.
   if (value.type === 'tree_ref' || value.type === 'hierarchy_ref') {
     switch (mode) {
       case 'value':
-        return value.value.name || '(root)';
+        return pathText(value.value.name) || '(root)';
       case 'parent':
         return value.value.parent ?? '(root)';
       case 'path':
         if (resolvedPaths && resolvedPaths.length > 0) {
-          return resolvedPaths.map((p) => (p === '' ? '/' : p)).join(', ');
+          return resolvedPaths.map((p) => pathText(p) || '/').join(', ');
         }
-        return value.value.name || '(root)'; // leaf name until resolved
+        return pathText(value.value.name) || '(root)'; // leaf name until resolved
       default:
         return formatValue(value);
     }

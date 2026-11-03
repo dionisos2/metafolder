@@ -83,9 +83,12 @@ async fn spawn_stub(root: String, internal: String) -> (String, Stub) {
         .route(
             "/repos/{repo}/query",
             post(|Json(body): Json<Value>| async move {
-                // What lives under a path: only `dir` has a descendant.
-                let hits = match body["query"]["target"].as_str() {
-                    Some("/dir") => json!([record_of(B)]),
+                // What lives under a metarecord, named by its uuid (never
+                // by the text of its path): only `dir` has a descendant.
+                let target = &body["query"]["target"];
+                assert_eq!(target["type"], "uuid_in", "{body}");
+                let hits = match target["uuids"][0].as_str() {
+                    Some(D) => json!([record_of(B)]),
                     _ => json!([]),
                 };
                 Json(json!({"results": hits, "next_cursor": null}))

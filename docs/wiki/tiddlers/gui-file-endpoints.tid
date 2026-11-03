@@ -8,8 +8,10 @@ summary: The routes of the GUI's server that hand files to panels — /fsraw, /t
 Served by the GUI's own server on the loopback (`crates/gui/src/server/`), for panels:
 the web view cannot read a local file. All but `/__media-support` need the session
 token, and accept it as `?token=` — an `<img>` or `<video>` source cannot send a
-header ([[Session tokens]]). `path` is an absolute path, in the escaped form the
-panels are given ([[Tree names]]).
+header ([[Session tokens]]). The file is an absolute path: `path` is its text, taken
+as its own bytes, or `path_bytes` its bytes in hex, for a path that is not text — the
+handle the panels hold ([[Tree names]], [[The metafolder API]]). `pathQuery` of
+`/__ui.js` writes the one that fits.
 
 |!Route |!Answers |
 |<<cmd "GET /fsraw">> `?path=` |the file's bytes, with `Range` support (seeking in a video, the first bytes of a text) |

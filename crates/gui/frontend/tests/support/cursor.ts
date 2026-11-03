@@ -17,8 +17,10 @@ type ProvideMock = { mock: { calls: unknown[][]; contexts: unknown[] } };
 /** What `stubFileOps` reads of a stub API (whichever parts it has). */
 type StubApi = {
   global?: { get?(k: string): unknown; set(k: string, v: unknown): unknown };
-  fs?: Partial<Record<'readDir' | 'move' | 'copy' | 'mkdir' | 'createFile', (...a: string[]) => unknown>>;
-  trash?: { trashPath?(repo: string | null, path: string): unknown };
+  fs?: Partial<
+    Record<'readDir' | 'move' | 'copy' | 'mkdir' | 'createFile', (...a: Metafolder.WirePath[]) => unknown>
+  >;
+  trash?: { trashPath?(repo: string | null, path: Metafolder.WirePath): unknown };
   statusBar?: { message?(text: string, ms?: number): unknown };
   workspace?: { set?(k: string, v: unknown): unknown };
 };

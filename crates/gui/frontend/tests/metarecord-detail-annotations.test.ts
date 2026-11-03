@@ -29,7 +29,7 @@ function annotatorFor(entries: Entry[], seeds: Record<string, string> = {}) {
         ?.fields.find((x) => x.name === field && x.value.type === 'tree_ref');
       if (f?.value.type !== 'tree_ref') return null;
       const { parent, name }: Metafolder.TreeRef = f.value.value;
-      components.push(name);
+      components.push(typeof name === 'string' ? name : name.text);
       cur = parent;
     }
     return components.reverse().join('/');

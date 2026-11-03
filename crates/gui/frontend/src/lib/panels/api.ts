@@ -6,6 +6,7 @@
 
 import { createPathResolver } from '../../../../panel-shim/resolve.js';
 import { showMenu } from '../../../../panel-shim/menu.js';
+import { underRoot } from '../../../../panel-shim/file-actions.js';
 import { commonPrefix, insertCandidate } from '../bash';
 import { ask, type ArgSpec, type InvocationParts, invokerOver, withTopLevelInvoke } from '../commands';
 import { invoke as ipcInvoke } from '../ipc';
@@ -565,7 +566,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         metarecordPaths: async (repo: string, metarecord: { uuid: string }) => {
           const root = (await repoInfo(repo)).root as string;
           const relatives = (await reads.treePaths(repo, 'mfr_path', [metarecord.uuid]))[metarecord.uuid];
-          return relatives.map((rel) => (rel === '' ? root : `${root}/${rel}`));
+          return relatives.map((rel) => underRoot(root, rel));
         },
         // Reads that return what they read (nothing is kept — lib/panels/reads.ts).
         query: (repo: string, body: Record<string, unknown>, opts?: ReadOptions) =>
@@ -779,17 +780,17 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       },
 
       fs: {
-        readDir: (path: string) => invoke('fs_read_dir', { path }) as Promise<Metafolder.FsEntry[]>,
-        stat: (path: string) => invoke('fs_stat', { path }),
-        exists: (path: string) => invoke('fs_exists', { path }) as Promise<boolean>,
-        homeDir: () => invoke('fs_home_dir') as Promise<string>,
-        mkdir: (path: string) => invoke('fs_mkdir', { path }) as Promise<void>,
-        createFile: (path: string) => invoke('fs_create_file', { path }) as Promise<void>,
-        writeText: (path: string, text: string) =>
+        readDir: (path: Metafolder.WirePath) => invoke('fs_read_dir', { path }) as Promise<Metafolder.FsEntry[]>,
+        stat: (path: Metafolder.WirePath) => invoke('fs_stat', { path }),
+        exists: (path: Metafolder.WirePath) => invoke('fs_exists', { path }) as Promise<boolean>,
+        homeDir: () => invoke('fs_home_dir') as Promise<Metafolder.WirePath>,
+        mkdir: (path: Metafolder.WirePath) => invoke('fs_mkdir', { path }) as Promise<void>,
+        createFile: (path: Metafolder.WirePath) => invoke('fs_create_file', { path }) as Promise<void>,
+        writeText: (path: Metafolder.WirePath, text: string) =>
           invoke('fs_write_text', { path, text }) as Promise<void>,
-        move: (from: string, to: string) => invoke('fs_move', { from, to }) as Promise<void>,
-        copy: (from: string, to: string) => invoke('fs_copy', { from, to }) as Promise<void>,
-        remove: (path: string) => invoke('fs_delete', { path }) as Promise<void>,
+        move: (from: Metafolder.WirePath, to: Metafolder.WirePath) => invoke('fs_move', { from, to }) as Promise<void>,
+        copy: (from: Metafolder.WirePath, to: Metafolder.WirePath) => invoke('fs_copy', { from, to }) as Promise<void>,
+        remove: (path: Metafolder.WirePath) => invoke('fs_delete', { path }) as Promise<void>,
       },
 
       /** Repository trash-bin (doc "Trash"): filesystem operations shared with
@@ -800,7 +801,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
           invoke('trash_restore', { repo, id }) as Promise<string>,
         remove: (repo: string, id: string) => invoke('trash_remove', { repo, id }) as Promise<void>,
         empty: (repo: string) => invoke('trash_empty', { repo }) as Promise<number>,
-        trashPath: (repo: string | null, path: string) =>
+        trashPath: (repo: string | null, path: Metafolder.WirePath) =>
           invoke('trash_path', { repo, path }) as Promise<Metafolder.Trashed>,
         trashQuery: (repo: string, query: unknown) =>
           invoke('trash_query_metarecords', {

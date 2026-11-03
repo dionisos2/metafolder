@@ -172,7 +172,7 @@ pub fn working_dir(place: &ShellPlace, root: Option<&Path>) -> Option<PathBuf> {
         return Some(cd.clone());
     }
     if let Some(path) = &place.selected_path {
-        let found = Path::new(path).ancestors().find(|dir| dir.is_dir());
+        let found = path.ancestors().find(|dir| dir.is_dir());
         if let Some(dir) = found.filter(|dir| dir.is_absolute()) {
             return Some(dir.to_path_buf());
         }
@@ -534,7 +534,7 @@ mod tests {
         let place = |path: Option<std::path::PathBuf>| crate::state::workspace::ShellPlace {
             selection: serde_json::Value::Null,
             cd: None,
-            selected_path: path.map(|p| p.to_string_lossy().into_owned()),
+            selected_path: path,
         };
         let root = Some(dir.as_path());
         assert_eq!(working_dir(&place(Some(dir.join("sub"))), root), Some(dir.join("sub")));

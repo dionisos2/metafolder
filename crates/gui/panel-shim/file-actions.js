@@ -18,12 +18,16 @@
 // menu the list does.
 
 import { copyText } from '/__menu.js';
+import { datasetPath, pathBytes, pathOfBytes, pathText, samePath } from '/__ui.js';
+
+/** @typedef {import('/__ui.js').WirePath} WirePath */
 
 /** The global GUI variable holding the file clipboard: `{ paths, mode }`, or
  *  `null` — emptied after a cut is pasted, since the sources have moved. */
 export const CLIPBOARD = 'clipboard';
 
-/** @typedef {{ paths: string[], mode: 'copy'|'cut' }} Clipboard */
+/** The paths in their wire form (doc "Tree names").
+ *  @typedef {{ paths: WirePath[], mode: 'copy'|'cut' }} Clipboard */
 
 /** What the clipboard holds, as `metafolder` reads it (in its transaction).
  *  @param {MetafolderApi} metafolder @returns {Promise<Clipboard|null>} */
@@ -47,8 +51,8 @@ export function hasClipboard(metafolder) {
  * "Cross-panel selection"), in check order — one without a file has none to
  * give —, else `cursor()`, the row under the cursor's.
  * @param {MetafolderApi} mf @param {string|null} repo
- * @param {string[]} checked @param {() => string[]} cursor
- * @returns {Promise<string[]>}
+ * @param {string[]} checked @param {() => WirePath[]} cursor
+ * @returns {Promise<WirePath[]>}
  */
 export async function clipboardPaths(mf, repo, checked, cursor) {
   if (!repo || checked.length === 0) return cursor();
@@ -56,34 +60,73 @@ export async function clipboardPaths(mf, repo, checked, cursor) {
     mf.daemon.repoRoot(repo),
     mf.daemon.treePaths(repo, 'mfr_path', checked),
   ]);
-  // Resolved paths are leading-"/"-rooted ('' is the repo root itself).
-  const base = root.replace(/\/+$/, '');
-  return checked.flatMap((uuid) =>
-    (byUuid[uuid] ?? []).map((path) => (path === '' ? root : `${base}${path}`)),
-  );
+  return checked.flatMap((uuid) => (byUuid[uuid] ?? []).map((path) => underRoot(root, path)));
+}
+
+/** The absolute path of a repository path the daemon gave (`/a/b`, `''` the
+ *  root), at its exact bytes. @param {string} root @param {WirePath} path */
+export function underRoot(root, path) {
+  if (pathText(path) === '') return root;
+  if (typeof path === 'string') return `${root.replace(/\/+$/, '')}${path}`;
+  return joinPath(root.replace(/\/+$/, '') || '/', pathOfBytes(pathBytes(path).subarray(1)));
 }
 
 // ── Pure path helpers (own copies so the shim depends on nothing panel-local) ──
+//
+// Each takes a path in its wire form (doc "Tree names"): a string, or
+// `{text, bytes}` for one that is not text. A string goes the string way; an
+// object goes through its bytes, and the result is a string again whenever it
+// is text (`pathOfBytes`) — so the parent of `/a/caf\xE9` is the string `/a`.
 
-/** The last path segment of `path`. @param {string} path */
+const SLASH = 0x2f;
+
+/** `bytes` without its trailing slashes. @param {Uint8Array} bytes */
+function trimSlashes(bytes) {
+  let end = bytes.length;
+  while (end > 0 && bytes[end - 1] === SLASH) end -= 1;
+  return bytes.subarray(0, end);
+}
+
+/** The last path segment of `path`.
+ *  @template {WirePath} P @param {P} path @returns {P extends string ? string : WirePath} */
 export function baseName(path) {
-  const trimmed = path.replace(/\/+$/, '');
-  const slash = trimmed.lastIndexOf('/');
-  return slash < 0 ? trimmed : trimmed.slice(slash + 1);
+  if (typeof path === 'string') {
+    const trimmed = path.replace(/\/+$/, '');
+    const slash = trimmed.lastIndexOf('/');
+    return /** @type {any} */ (slash < 0 ? trimmed : trimmed.slice(slash + 1));
+  }
+  const trimmed = trimSlashes(pathBytes(path));
+  return /** @type {any} */ (pathOfBytes(trimmed.subarray(trimmed.lastIndexOf(SLASH) + 1)));
 }
 
 /** The parent directory of `path` (the filesystem root is its own parent).
- *  @param {string} path */
+ *  @template {WirePath} P @param {P} path @returns {P extends string ? string : WirePath} */
 export function parentDir(path) {
-  const trimmed = path.replace(/\/+$/, '');
-  const slash = trimmed.lastIndexOf('/');
-  return slash <= 0 ? '/' : trimmed.slice(0, slash);
+  if (typeof path === 'string') {
+    const trimmed = path.replace(/\/+$/, '');
+    const slash = trimmed.lastIndexOf('/');
+    return /** @type {any} */ (slash <= 0 ? '/' : trimmed.slice(0, slash));
+  }
+  const trimmed = trimSlashes(pathBytes(path));
+  const slash = trimmed.lastIndexOf(SLASH);
+  return /** @type {any} */ (slash <= 0 ? '/' : pathOfBytes(trimmed.subarray(0, slash)));
 }
 
 /** Absolute path of `name` inside `dir` (the root does not double its slash).
- *  @param {string} dir @param {string} name */
+ *  A name the user typed is a string; one taken from another path keeps its
+ *  bytes. @param {WirePath} dir @param {WirePath} name @returns {WirePath} */
 export function joinPath(dir, name) {
-  return dir === '/' ? `/${name}` : `${dir}/${name}`;
+  if (typeof dir === 'string' && typeof name === 'string') {
+    return dir === '/' ? `/${name}` : `${dir}/${name}`;
+  }
+  const head = pathBytes(dir);
+  const tail = pathBytes(name);
+  const root = head.length === 1 && head[0] === SLASH;
+  const out = new Uint8Array(head.length + (root ? 0 : 1) + tail.length);
+  out.set(head, 0);
+  if (!root) out[head.length] = SLASH;
+  out.set(tail, head.length + (root ? 0 : 1));
+  return pathOfBytes(out);
 }
 
 /** Splits a filename into [stem, extension-including-dot]; a leading dot is a
@@ -95,10 +138,13 @@ export function splitExt(name) {
 }
 
 /** A collision-free name: unchanged when free, else " copy" (" copy 2"…) before
- *  the extension, mirroring a desktop file manager.
- *  @param {string} name @param {Set<string>} taken @returns {string} */
+ *  the extension, mirroring a desktop file manager. `taken` holds the names as
+ *  listed (their text); a name that is not text keeps its bytes.
+ *  @template {WirePath} N @param {N} name @param {Set<string>} taken
+ *  @returns {N extends string ? string : WirePath} */
 export function dedupeName(name, taken) {
-  if (!taken.has(name)) return name;
+  if (typeof name !== 'string') return /** @type {any} */ (dedupeBytes(name, taken));
+  if (!taken.has(name)) return /** @type {any} */ (name);
   const [stem, ext] = splitExt(name);
   let candidate = `${stem} copy${ext}`;
   let n = 2;
@@ -106,16 +152,42 @@ export function dedupeName(name, taken) {
     candidate = `${stem} copy ${n}${ext}`;
     n += 1;
   }
-  return candidate;
+  return /** @type {any} */ (candidate);
+}
+
+/** {@link dedupeName} on a name that is not text: the suffix goes in before
+ *  the bytes of the extension. @param {WirePath} name @param {Set<string>} taken */
+function dedupeBytes(name, taken) {
+  if (!taken.has(pathText(name))) return name;
+  const bytes = pathBytes(name);
+  const dot = bytes.lastIndexOf(0x2e);
+  const cut = dot <= 0 || dot === bytes.length - 1 ? bytes.length : dot;
+  const encode = (/** @type {string} */ text) => new TextEncoder().encode(text);
+  for (let n = 1; ; n += 1) {
+    const suffix = encode(n === 1 ? ' copy' : ` copy ${n}`);
+    const out = new Uint8Array(bytes.length + suffix.length);
+    out.set(bytes.subarray(0, cut), 0);
+    out.set(suffix, cut);
+    out.set(bytes.subarray(cut), cut + suffix.length);
+    const candidate = pathOfBytes(out);
+    if (!taken.has(pathText(candidate))) return candidate;
+  }
 }
 
 /** Whether `path` is `dir` itself or lies below it (used to reject pasting a
- *  directory into itself); nothing is within a `null` directory.
- *  @param {string} path @param {string|null} dir */
+ *  directory into itself); nothing is within a `null` directory. By bytes:
+ *  two paths that show alike are not one another.
+ *  @param {WirePath} path @param {WirePath|null} dir */
 export function isWithin(path, dir) {
   if (dir === null) return false;
-  const trimmed = dir.replace(/\/+$/, '');
-  return path === dir || path === trimmed || path.startsWith(`${trimmed}/`);
+  if (typeof path === 'string' && typeof dir === 'string') {
+    const trimmed = dir.replace(/\/+$/, '');
+    return path === dir || path === trimmed || path.startsWith(`${trimmed}/`);
+  }
+  const p = trimSlashes(pathBytes(path));
+  const d = trimSlashes(pathBytes(dir));
+  if (p.length < d.length || !d.every((b, i) => p[i] === b)) return false;
+  return p.length === d.length || p[d.length] === SLASH || d.length === 0;
 }
 
 /**
@@ -124,12 +196,15 @@ export function isWithin(path, dir) {
  * (nothing to highlight); a file opens its containing folder, with the file
  * highlighted. `isDir` is the caller's already-known type (the file manager
  * stats the path first).
- * @param {string} path an absolute OS path
+ * @param {WirePath} path an absolute OS path
  * @param {boolean} isDir whether `path` is itself a directory
- * @returns {{ dir: string, select: string|null }}
+ * @returns {{ dir: WirePath, select: string|null }} `select` is the name as
+ *   listed (its text)
  */
 export function revealFolder(path, isDir) {
-  return isDir ? { dir: path, select: null } : { dir: parentDir(path), select: baseName(path) };
+  return isDir
+    ? { dir: path, select: null }
+    : { dir: parentDir(path), select: pathText(baseName(path)) };
 }
 
 // ── Operations ────────────────────────────────────────────────────────────────
@@ -145,10 +220,13 @@ function errorMs(metafolder) {
  *  otherwise its parent. When `isDir` is unknown, probe by listing. A folder
  *  copied and pasted on itself lands beside itself: there is nothing else it
  *  can mean (doc "File commands").
- *  @param {{ readDir(path: string): Promise<unknown> }} fs @param {string} path
- *  @param {boolean|undefined} isDir @param {{ paths: string[], mode: string }} clip */
+ *  @param {{ readDir(path: WirePath): Promise<unknown> }} fs @param {WirePath} path
+ *  @param {boolean|undefined} isDir @param {{ paths: WirePath[], mode: string }} clip
+ *  @returns {Promise<WirePath>} */
 export async function pasteDir(fs, path, isDir, clip) {
-  if (clip.mode === 'copy' && clip.paths.length === 1 && clip.paths[0] === path) return parentDir(path);
+  if (clip.mode === 'copy' && clip.paths.length === 1 && samePath(clip.paths[0], path)) {
+    return parentDir(path);
+  }
   if (isDir === true) return path;
   if (isDir === false) return parentDir(path);
   try {
@@ -160,7 +238,7 @@ export async function pasteDir(fs, path, isDir, clip) {
 }
 
 /**
- * @param {MetafolderApi} metafolder @param {string} targetPath
+ * @param {MetafolderApi} metafolder @param {WirePath} targetPath
  * @param {boolean|undefined} isDir @param {() => void|Promise<void>} onChanged
  * @param {number} statusMs
  */
@@ -184,7 +262,10 @@ async function pasteInto(metafolder, targetPath, isDir, onChanged, statusMs) {
   let pasted = 0;
   for (const src of cb.paths) {
     if (isWithin(dir, src)) {
-      await statusBar.error(`cannot paste ${baseName(src)} into itself`, errorMs(metafolder));
+      await statusBar.error(
+        `cannot paste ${pathText(baseName(src))} into itself`,
+        errorMs(metafolder),
+      );
       continue;
     }
     const name = dedupeName(baseName(src), taken);
@@ -192,7 +273,7 @@ async function pasteInto(metafolder, targetPath, isDir, onChanged, statusMs) {
     try {
       if (cb.mode === 'cut') await fs.move(src, dest);
       else await fs.copy(src, dest);
-      taken.add(name);
+      taken.add(pathText(name));
       pasted += 1;
     } catch (error) {
       await statusBar.error(error, errorMs(metafolder));
@@ -206,12 +287,13 @@ async function pasteInto(metafolder, targetPath, isDir, onChanged, statusMs) {
 }
 
 /**
- * @param {MetafolderApi} metafolder @param {string} path
+ * @param {MetafolderApi} metafolder @param {WirePath} path
  * @param {() => void|Promise<void>} onChanged @param {number} statusMs
  */
 async function renamePath(metafolder, path, onChanged, statusMs) {
   const { fs, statusBar } = metafolder;
-  const current = baseName(path);
+  // The name the user edits is its text: what they type is a new name.
+  const current = pathText(baseName(path));
   const next = (prompt('Rename to:', current) ?? '').trim();
   if (!next || next === current) return;
   try {
@@ -251,7 +333,7 @@ export function confirmTrash(metafolder, question) {
 /**
  * `Move to trash` is Delete on the clicked file: `item:delete` once the file is
  * the selection, so the menu and the key cannot drift apart (doc "Deleting an
- * item"). @param {MetafolderApi} metafolder @param {string} path
+ * item"). @param {MetafolderApi} metafolder @param {WirePath} path
  */
 async function deleteViaItem(metafolder, path) {
   await metafolder.workspace.set('selected_paths', [path]);
@@ -262,7 +344,7 @@ async function deleteViaItem(metafolder, path) {
  * Opens `path` with an external program: publishes it as the selection, then
  * runs the `file:open-with` builtin, which asks for the program in the command
  * input (completing over the configured `open-with` list).
- * @param {MetafolderApi} metafolder @param {string} path
+ * @param {MetafolderApi} metafolder @param {WirePath} path
  */
 async function openWithExternal(metafolder, path) {
   await metafolder.workspace.set('selected_paths', [path]);
@@ -274,14 +356,14 @@ async function openWithExternal(metafolder, path) {
  * items for a metarecord's file at `path`. `isDir` (when known) picks the paste target;
  * `onChanged` is called after any successful mutation.
  *
- * @param {{ metafolder: MetafolderApi, repo?: string, path: string,
+ * @param {{ metafolder: MetafolderApi, repo?: string, path: WirePath,
  *   name?: string, isDir?: boolean, onChanged?: () => void|Promise<void> }} args
  * @returns {Metafolder.MenuItem[]}
  */
 export function fileMenuItems({ metafolder, path, name, isDir, onChanged }) {
   const { statusBar } = metafolder;
   const statusMs = metafolder.settings.statusMessageMs;
-  const label = name || baseName(path);
+  const label = name || pathText(baseName(path));
   const nudge =
     onChanged ?? (() => void metafolder.workspace.set('metarecords:dirty', Date.now()));
   // One "File" category, in the order doc "Context menus" lists it, and with no separator
@@ -327,8 +409,9 @@ export function fileMenuItems({ metafolder, path, name, isDir, onChanged }) {
     {
       label: 'Copy full path',
       action: () => {
-        void copyText(path);
-        void statusBar.message(`Copied ${path}`, statusMs);
+        // The text: what a clipboard of text can hold (doc "Tree names").
+        void copyText(pathText(path));
+        void statusBar.message(`Copied ${pathText(path)}`, statusMs);
       },
     },
     {
@@ -408,12 +491,13 @@ export function fileActionsProvider(metafolder, getRepo) {
     if (!repo) return [];
     for (const node of event.composedPath()) {
       const dataset = /** @type {HTMLElement} */ (node)?.dataset;
-      if (dataset && typeof dataset.mfPath === 'string' && dataset.mfPath !== '') {
+      const path = dataset ? datasetPath(dataset, 'mfPath') : undefined;
+      if (path !== undefined && pathText(path) !== '') {
         const isDir = dataset.mfIsdir === '1' ? true : dataset.mfIsdir === '0' ? false : undefined;
         return fileMenuItems({
           metafolder,
           repo,
-          path: dataset.mfPath,
+          path,
           name: dataset.mfName,
           isDir,
         });
@@ -447,8 +531,8 @@ export function rowActionsProvider(metafolder, getRepo) {
       const dataset = /** @type {HTMLElement} */ (node)?.dataset;
       if (!dataset) continue;
       const uuid = dataset.mfUuid;
-      const path = dataset.mfPath;
-      const hasFile = typeof path === 'string' && path !== '';
+      const path = datasetPath(dataset, 'mfPath');
+      const hasFile = path !== undefined && pathText(path) !== '';
       if (!uuid && !hasFile) continue; // neither a metarecord nor a file row
       /** @type {Metafolder.MenuItem[]} */
       const items = [];
@@ -462,7 +546,15 @@ export function rowActionsProvider(metafolder, getRepo) {
       if (hasFile) {
         const isDir = dataset.mfIsdir === '1' ? true : dataset.mfIsdir === '0' ? false : undefined;
         // No separator to push: orderMenu derives one at the category boundary.
-        items.push(...fileMenuItems({ metafolder, repo, path, name: dataset.mfName, isDir }));
+        items.push(
+          ...fileMenuItems({
+            metafolder,
+            repo,
+            path: /** @type {WirePath} */ (path),
+            name: dataset.mfName,
+            isDir,
+          }),
+        );
       }
       return items;
     }
@@ -477,11 +569,16 @@ export function rowActionsProvider(metafolder, getRepo) {
  *
  * @param {Pick<Metafolder.Daemon, 'request'>} daemon
  * @param {string} repo
- * @param {string} path absolute filesystem path
+ * @param {WirePath} path absolute filesystem path
  * @param {(question: string) => boolean} confirm
  * @returns {Promise<{uuid: string} | {cancelled: true} | {error: string}>}
  */
 export async function recordPath(daemon, repo, path, confirm) {
+  // The daemon takes a path argument as text (doc "Path representation"): a
+  // path that is not text cannot be named to it — its text names another file.
+  if (typeof path !== 'string') {
+    return { error: `${path.text}: a path that is not UTF-8 cannot be recorded by its path` };
+  }
   const url = `/repos/${repo}/metarecords`;
   let response = await daemon.request('POST', url, { path, fields: [] });
   /** @type {{uuid?: string, error?: string, missing_parents?: string[]}} */

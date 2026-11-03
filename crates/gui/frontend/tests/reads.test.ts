@@ -57,10 +57,14 @@ describe('reads — nothing is kept', () => {
   // A path that is not text comes as {text, bytes} (doc "Tree names"): the
   // GUI holds paths as the text it shows, so it is read as its text, never
   // dropped and never shown as an object.
-  test('treePaths: a path that is not text is read as its text', async () => {
-    const raw = answering(ok({ a1: [{ text: '/caf%E9', bytes: '2f636166e9' }, '/x'] }));
+  // A path is acted on as it is (doc "Tree names"): the object form of one
+  // that is not text is kept, never read as its text.
+  test('treePaths: a path that is not text keeps its bytes', async () => {
+    const raw = answering(ok({ a1: [{ text: '/caf%E9', bytes: '2f636166e9' }, '/x', 3] }));
     const reads = createReads(raw);
-    expect(await reads.treePaths('r', 'mfr_path', ['a1'])).toEqual({ a1: ['/caf%E9', '/x'] });
+    expect(await reads.treePaths('r', 'mfr_path', ['a1'])).toEqual({
+      a1: [{ text: '/caf%E9', bytes: '2f636166e9' }, '/x'],
+    });
   });
 
   test('a failed read throws the daemon error', async () => {

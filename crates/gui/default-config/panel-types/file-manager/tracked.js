@@ -3,8 +3,10 @@
 // instead of paginating the whole repository.
 
 // Parent directory and containment of absolute paths: the file actions' own.
-import { isWithin, parentDir, recordPath } from '/__file-actions.js';
-import { wireText } from '/__ui.js';
+import { isWithin, joinPath, parentDir, recordPath } from '/__file-actions.js';
+import { PathMap, pathBytes, pathOfBytes, samePath } from '/__ui.js';
+
+/** A path, exact (doc "Tree names"). @typedef {Metafolder.WirePath} Path */
 
 export { isWithin, parentDir, recordPath };
 
@@ -47,28 +49,33 @@ export function filterHidden(items, showHidden) {
 // `repoRoot` is null when no repo is active (free disk browsing), and then
 // ".." is always kept.
 /**
- * @param {string} dir @param {string|null} repoRoot @param {boolean} constrainToRoot
+ * @param {Path} dir @param {string|null} repoRoot @param {boolean} constrainToRoot
  * @returns {Entry[]}
  */
 export function syntheticRows(dir, repoRoot, constrainToRoot) {
   /** @type {Entry} */
   const self = { name: '.', path: dir, is_dir: true };
-  if (constrainToRoot && repoRoot !== null && dir === repoRoot) return [self];
+  if (constrainToRoot && repoRoot !== null && samePath(dir, repoRoot)) return [self];
   return [self, { name: '..', path: parentDir(dir), is_dir: true }];
 }
 
 
 // Repo-relative path of `dir` ("" for the root itself, "/sub/dir" below
-// it, null outside the root) — the format Follows path targets expect.
+// it, null outside the root) — the format Follows path targets expect. Exact:
+// a path that is not text keeps its bytes (doc "Tree names").
 /**
- * @param {string} dir @param {string|null} repoRoot
- * @returns {string|null}
+ * @template {Path} P @param {P} dir @param {string|null} repoRoot
+ * @returns {(P extends string ? string : Path)|null}
  */
 export function relPath(dir, repoRoot) {
   if (repoRoot === null) return null;
-  if (dir === repoRoot) return '';
-  if (!dir.startsWith(`${repoRoot}/`)) return null;
-  return dir.slice(repoRoot.length);
+  if (typeof dir === 'string') {
+    if (dir === repoRoot) return /** @type {any} */ ('');
+    if (!dir.startsWith(`${repoRoot}/`)) return null;
+    return /** @type {any} */ (dir.slice(repoRoot.length));
+  }
+  if (!isWithin(dir, repoRoot)) return null;
+  return /** @type {any} */ (pathOfBytes(pathBytes(dir).subarray(pathBytes(repoRoot).length)));
 }
 
 // Uuid of the metarecord of `dir` itself (the "." row), or null when untracked
@@ -77,14 +84,19 @@ export function relPath(dir, repoRoot) {
 // query. The root maps to the empty path.
 /**
  * @param {Daemon} daemon @param {string|null} repo
- * @param {string|null} repoRoot @param {string} dir
+ * @param {string|null} repoRoot @param {Path} dir
  * @returns {Promise<string|null>}
  */
 export async function loadDirMetarecord(daemon, repo, repoRoot, dir) {
   const rel = relPath(dir, repoRoot);
   if (!repo || rel === null) return null;
+  // Exactly these bytes: a string's own (`verbatim`), an object's `bytes`.
   const res = /** @type {{uuid: string|null}} */ (
-    await daemon.call('POST', `/repos/${repo}/tree/resolve-path`, { field: 'mfr_path', path: rel })
+    await daemon.call('POST', `/repos/${repo}/tree/resolve-path`, {
+      field: 'mfr_path',
+      path: rel,
+      form: 'verbatim',
+    })
   );
   return res?.uuid ?? null;
 }
@@ -99,24 +111,21 @@ export async function loadDirMetarecord(daemon, repo, repoRoot, dir) {
 /**
  * One `{uuid, name}` direct child, as `GET /tree/children` returns it: the
  * name a string, or `{text, bytes}` when it is not text (doc "Tree names") —
- * read as its text, which is what the GUI's file handles are.
- * @typedef {{uuid: string, name: string | {text: string, bytes: string}}} Child
+ * joined at its bytes, the form the GUI's file handles have.
+ * @typedef {{uuid: string, name: Path}} Child
  *
  * @param {Daemon} daemon @param {string|null} repo
- * @param {string|null} repoRoot @param {string} dir @param {string|null} dirUuid
- * @returns {Promise<Map<string, string>>}
+ * @param {string|null} repoRoot @param {Path} dir @param {string|null} dirUuid
+ * @returns {Promise<PathMap<string>>}
  */
 export async function loadTrackedChildren(daemon, repo, repoRoot, dir, dirUuid) {
-  /** @type {Map<string, string>} absolute child path → metarecord uuid */
-  const tracked = new Map();
+  /** @type {PathMap<string>} absolute child path → metarecord uuid */
+  const tracked = new PathMap();
   const rel = relPath(dir, repoRoot);
   if (!repo || rel === null || dirUuid === null) return tracked;
-  const prefix = dir.endsWith('/') ? dir : `${dir}/`;
   const children = /** @type {Child[]} */ (
     (await daemon.call('GET', `/repos/${repo}/tree/children?field=mfr_path&uuid=${dirUuid}`)) ?? []
   );
-  for (const child of children) {
-    tracked.set(prefix + (wireText(child.name) ?? ''), child.uuid);
-  }
+  for (const child of children) tracked.set(joinPath(dir, child.name), child.uuid);
   return tracked;
 }

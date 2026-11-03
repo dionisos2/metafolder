@@ -18,8 +18,20 @@
 
 // The shared panel helpers (doc "The metafolder API"): `frecency` is the
 // score of a recently-viewed entry, the same in the recent panel.
-import { frecency, formatScore, listQueryVariables, queryModeArg, queryTerms, requireQueryMode, wireTexts } from '/__ui.js';
-import { baseName, confirmTrash, trashedMessage } from '/__file-actions.js';
+import { frecency, formatScore, isBytePath, listQueryVariables, pathText, queryModeArg, queryTerms, requireQueryMode, wireTexts } from '/__ui.js';
+import {
+  baseName,
+  confirmTrash,
+  parentDir as exactParent,
+  trashedMessage,
+  underRoot,
+} from '/__file-actions.js';
+
+/** @typedef {import('/__ui.js').WirePath} WirePath */
+
+/** Whether `value` is a path in either wire form (doc "Tree names").
+ *  @param {unknown} value @returns {value is WirePath} */
+const isPath = (value) => typeof value === 'string' || isBytePath(value);
 
 /** The fields of the tag model (doc "Hierarchical tags"): what a record has,
  *  what it has not, and what a folder partly has. */
@@ -78,9 +90,10 @@ export async function selectedMetarecord(mf) {
 }
 
 /**
- * The metarecord's file as a present `mfr_path`, root-relative — undefined
- * when the field is absent or Nothing, which is exactly the reading the trash
- * takes of "the selected metarecord has no file".
+ * The metarecord's file as a present `mfr_path`, root-relative and exact
+ * (doc "Tree names") — undefined when the field is absent or Nothing, which is
+ * exactly the reading the trash takes of "the selected metarecord has no
+ * file".
  * @param {MetafolderApi} mf
  * @param {string} repo
  * @param {string} uuid
@@ -91,7 +104,7 @@ export async function metarecordFile(mf, repo, uuid) {
   const resolved = /** @type {{ paths?: unknown }} */ (
     await mf.daemon.call('GET', `/repos/${repo}/metarecords/${uuid}/fields/mfr_path/resolve-tree`)
   );
-  return wireTexts(resolved.paths)[0];
+  return (Array.isArray(resolved.paths) ? resolved.paths : []).find(isPath);
 }
 
 /**
@@ -187,13 +200,15 @@ async function normalQueryTerms(mf) {
  * @param {MetafolderApi} mf
  * @param {string} repo
  * @param {{ uuid: string, repo: string } | null} selection
- * @param {string | null} selectedPath
- * @param {string | null} fmDir
+ * @param {WirePath | null} selectedPath
+ * @param {WirePath | null} fmDir
  */
 async function selectionFolder(mf, repo, selection, selectedPath, fmDir) {
   const repoRoot = await mf.daemon.repoRoot(repo);
   if (selection) {
-    const path = await metarecordFile(mf, repo, selection.uuid);
+    const exact = await metarecordFile(mf, repo, selection.uuid);
+    // The folder goes into a query: its text (doc "Tree names").
+    const path = exact === undefined ? undefined : pathText(exact);
     if (typeof path === 'string') {
       const record = /** @type {{ fields?: { name: string, value?: { value?: unknown } }[] }} */ (
         await mf.daemon.call('GET', `/repos/${repo}/metarecords/${selection.uuid}`)
@@ -205,10 +220,11 @@ async function selectionFolder(mf, repo, selection, selectedPath, fmDir) {
   }
   if (selectedPath) {
     const stat = /** @type {{ is_dir?: boolean } | null} */ (await mf.fs.stat(selectedPath));
-    return relativeToRoot(repoRoot, stat?.is_dir ? selectedPath : parentDir(selectedPath));
+    const folder = stat?.is_dir ? pathText(selectedPath) : parentDir(pathText(selectedPath));
+    return relativeToRoot(repoRoot, folder);
   }
   if (fmDir) {
-    const rel = relativeToRoot(repoRoot, fmDir);
+    const rel = relativeToRoot(repoRoot, pathText(fmDir));
     if (rel !== null) return rel;
   }
   return '';
@@ -293,9 +309,10 @@ async function frecentFolders(mf, repo) {
     scores.set(folder, Math.max(scores.get(folder) ?? 0, score));
   }
   const paths = await mf.daemon.treePaths(repo, 'mfr_path', [...scores.keys()]);
+  // The folder goes into a query and a completion: its text.
   return [...scores]
-    .filter(([uuid]) => typeof paths[uuid]?.[0] === 'string')
-    .map(([uuid, score]) => ({ path: paths[uuid][0], score }))
+    .filter(([uuid]) => paths[uuid]?.[0] !== undefined)
+    .map(([uuid, score]) => ({ path: pathText(paths[uuid][0]), score }))
     .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
 }
 
@@ -337,8 +354,8 @@ export async function selectedFile(mf) {
   const root = await mf.daemon.repoRoot(selection.repo);
   return {
     repo: selection.repo,
-    path: rel === '' ? root : `${root}/${rel}`,
-    name: rel === '' ? root : (rel.split('/').pop() ?? rel),
+    path: underRoot(root, rel),
+    name: pathText(rel) === '' ? root : pathText(baseName(rel)),
   };
 }
 
@@ -354,10 +371,9 @@ async function deleteItem(mf, repo, selection) {
   // A panel may publish the metarecord alone (the tree explorer): its file is
   // looked up, so that a metarecord is never deleted away from its file.
   const path =
-    (Array.isArray(paths) ? paths.find((p) => typeof p === 'string') : undefined) ??
-    (await selectedFile(mf))?.path;
-  if (path) {
-    if (!confirmTrash(mf, `Send "${baseName(path)}" to the trash?`)) return;
+    (Array.isArray(paths) ? paths.find(isPath) : undefined) ?? (await selectedFile(mf))?.path;
+  if (path !== undefined && pathText(path) !== '') {
+    if (!confirmTrash(mf, `Send "${pathText(baseName(path))}" to the trash?`)) return;
     const trashed = await mf.trash.trashPath(repo, path);
     await mf.statusBar.message(trashedMessage(trashed.name, false, [trashed.desktop]));
   } else if (selection && repo) {
@@ -504,8 +520,8 @@ export default {
     args: [whereArg()],
     run: async (/** @type {MetafolderApi} */ mf, /** @type {string} */ where = 'here') => {
       const paths = await mf.workspace.get('selected_paths');
-      const path = Array.isArray(paths) ? paths.find((p) => typeof p === 'string') : undefined;
-      if (!path) {
+      const path = Array.isArray(paths) ? paths.find(isPath) : undefined;
+      if (path === undefined || pathText(path) === '') {
         await mf.statusBar.error('no file or folder is selected');
         return;
       }
@@ -515,8 +531,9 @@ export default {
       } catch {
         /* gone: taken for a file, so its folder opens */
       }
-      const dir = isDir ? path : parentDir(path);
-      const cursor = isDir ? null : path.slice(path.lastIndexOf('/') + 1);
+      const dir = isDir ? path : exactParent(path);
+      // The cursor names the entry as listed: its text.
+      const cursor = isDir ? null : pathText(baseName(path));
       await mf.atTarget(where, async (/** @type {MetafolderApi} */ mf) => {
         // At once: the panel follows both, and opening the folder of a
         // half-written location clears the cursor over the one still to come.
@@ -553,16 +570,8 @@ export default {
         mf.workspace.get('selected_paths'),
         mf.workspace.get('file-manager:dir'),
       ]);
-      const selectedPath = Array.isArray(paths)
-        ? paths.find((p) => typeof p === 'string') ?? null
-        : null;
-      const folder = await selectionFolder(
-        mf,
-        repo,
-        selection,
-        selectedPath,
-        typeof fmDir === 'string' ? fmDir : null,
-      );
+      const selectedPath = Array.isArray(paths) ? paths.find(isPath) ?? null : null;
+      const folder = await selectionFolder(mf, repo, selection, selectedPath, isPath(fmDir) ? fmDir : null);
       if (folder === null) {
         await mf.statusBar.error('the selection lies outside the repository');
         return;
@@ -789,7 +798,7 @@ export default {
           /** @type {string[]} */
           const lines = [];
           for (const { uuid, score } of scored) {
-            const line = recentLine(records.get(uuid), paths[uuid]?.[0] ?? '', uuid, score);
+            const line = recentLine(records.get(uuid), pathText(paths[uuid]?.[0] ?? ''), uuid, score);
             if (!recentChoices.has(line)) recentChoices.set(line, uuid); // first listed wins on a collision
             lines.push(line);
           }
@@ -957,7 +966,9 @@ export default {
           // One candidate per path, each valued with its tag: a tag under two
           // parents is found by either.
           return uuids
-            .flatMap((uuid) => (paths[uuid] ?? []).map((label) => ({ label, value: uuid })))
+            .flatMap((uuid) =>
+              (paths[uuid] ?? []).map((path) => ({ label: pathText(path), value: uuid })),
+            )
             .sort((a, b) => a.label.localeCompare(b.label));
         },
       },

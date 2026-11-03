@@ -34,13 +34,17 @@ use tower::util::ServiceExt;
 use tower_http::services::ServeFile;
 
 pub async fn serve(request: Request<Body>) -> Response {
-    let path = request.uri().query().and_then(path_param);
+    let query = request.uri().query().unwrap_or_default();
+    // The `viewer` panel hands back the handle it was given — `path_bytes` for
+    // a path that is not text —, so a name no text can represent still reaches
+    // the disk exactly (doc "Tree names").
+    let path = crate::fs_path::from_query(
+        param(query, "path").as_deref(),
+        param(query, "path_bytes").as_deref(),
+    );
     let Some(path) = path else {
         return (StatusCode::BAD_REQUEST, "missing 'path' query parameter").into_response();
     };
-    // The `viewer` panel hands back the escaped handle it was given, so a name no
-    // text can represent still reaches the disk exactly (doc "Tree names").
-    let path = crate::fs_path::from_handle(&path);
     if !path.is_file() {
         return StatusCode::NOT_FOUND.into_response();
     }
@@ -76,13 +80,16 @@ pub async fn inert(mut response: Response) -> Response {
     response
 }
 
-/// The `path` query parameter, percent-decoded.
+/// The query parameter `name` (`path`, `path_bytes`), percent-decoded.
 ///
 /// The query is split into pairs **before** decoding: a file name may itself
 /// contain a `&` (percent-encoded as `%26`), and decoding the whole string
 /// first would then cut the path short at that character.
-fn path_param(query: &str) -> Option<String> {
-    query.split('&').find_map(|pair| pair.strip_prefix("path=")).map(url_decode)
+fn param(query: &str, name: &str) -> Option<String> {
+    query
+        .split('&')
+        .find_map(|pair| pair.strip_prefix(name).and_then(|rest| rest.strip_prefix('=')))
+        .map(url_decode)
 }
 
 /// Minimal percent-decoding for the `path` query parameter.
@@ -130,18 +137,29 @@ mod tests {
         // half — the file would 404 and the panel would report the media as
         // unplayable.
         assert_eq!(
-            path_param("path=%2Ftmp%2Fa%20%26%20b.mp4&token=deadbeef").as_deref(),
+            param_path("path=%2Ftmp%2Fa%20%26%20b.mp4&token=deadbeef").as_deref(),
             Some("/tmp/a & b.mp4"),
         );
     }
 
+    fn param_path(query: &str) -> Option<String> {
+        param(query, "path")
+    }
+
+    #[test]
+    fn test_param_tells_path_from_path_bytes() {
+        let query = "path_bytes=2f61e9&token=x";
+        assert_eq!(param(query, "path"), None);
+        assert_eq!(param(query, "path_bytes").as_deref(), Some("2f61e9"));
+    }
+
     #[test]
     fn test_path_param_reads_the_parameter_wherever_it_sits() {
-        assert_eq!(path_param("path=%2Ftmp%2Fa.txt").as_deref(), Some("/tmp/a.txt"));
-        assert_eq!(path_param("token=abc&path=%2Ftmp%2Fa.txt").as_deref(), Some("/tmp/a.txt"));
-        assert_eq!(path_param("token=abc").as_deref(), None);
+        assert_eq!(param_path("path=%2Ftmp%2Fa.txt").as_deref(), Some("/tmp/a.txt"));
+        assert_eq!(param_path("token=abc&path=%2Ftmp%2Fa.txt").as_deref(), Some("/tmp/a.txt"));
+        assert_eq!(param_path("token=abc").as_deref(), None);
         // "pathological=x" must not be mistaken for the "path" parameter.
-        assert_eq!(path_param("pathological=x").as_deref(), None);
+        assert_eq!(param_path("pathological=x").as_deref(), None);
     }
 
     #[test]

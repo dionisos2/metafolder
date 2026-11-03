@@ -109,10 +109,12 @@ impl GuiState {
         let result = if !confirm {
             json!({ "token": token, "cancelled": true })
         } else if result_kind == "path" {
+            // As it is: a string, or `{text, bytes}` for a path that is not
+            // text (doc "Tree names").
             let path = paths
                 .as_array()
                 .and_then(|a| a.first())
-                .and_then(Value::as_str)
+                .filter(|p| p.is_string() || p.get("bytes").is_some_and(Value::is_string))
                 .ok_or("no path selected in the picker")?;
             json!({ "token": token, "path": path })
         } else {

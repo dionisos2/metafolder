@@ -351,22 +351,28 @@ async fn test_fsraw_serves_files_with_hostile_names() {
 #[cfg(unix)]
 #[tokio::test]
 async fn test_fsraw_serves_a_file_whose_name_is_not_utf8() {
-    // The panels are handed an escaped handle (`caf%E9.mp4`) because JSON only
-    // carries text; it must reach the disk as the byte it stands for. Serving
-    // the handle literally would 404 — the file manager would list the file and
-    // the preview would refuse it.
+    // A path that is not text travels as its bytes (`path_bytes`, hex): the
+    // escaped text it shows as (`caf%E9.mp4`) names another file — here a
+    // sibling really so named, which must not be served instead.
     use std::os::unix::ffi::OsStrExt;
     let (_guard, _config, router) = setup();
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join(std::ffi::OsStr::from_bytes(b"caf\xe9.mp4"));
     std::fs::write(&file, "movie").unwrap();
+    std::fs::write(dir.path().join("caf%E9.mp4"), "literal").unwrap();
 
     let handle = metafolder_gui::fs_path::to_handle(&file);
-    assert!(handle.ends_with("caf%E9.mp4"), "handle should be escaped: {handle}");
-    let (status, _, body) =
-        get(&router, &format!("/fsraw?path={}", encode_uri_component(&handle))).await;
+    assert!(handle.display().ends_with("caf%E9.mp4"), "shown escaped: {handle}");
+    let hex = metafolder_core::hex::encode(handle.as_bytes());
+    let (status, _, body) = get(&router, &format!("/fsraw?path_bytes={hex}")).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, b"movie");
+
+    // The text is the literal file's name, and names it alone.
+    let text = encode_uri_component(&handle.display());
+    let (status, _, body) = get(&router, &format!("/fsraw?path={text}")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, b"literal");
 }
 
 #[tokio::test]

@@ -2,6 +2,7 @@
 // daemon access — unit-tested in frontend/tests/path-ref-queries.test.js.
 
 import { dslString } from '/__finder.js';
+import { pathText } from '/__ui.js';
 
 // The Query IR matching the direct children of a node in `field`'s forest. The
 // node is addressed by a `uuid_in` sub-query (Follows matches metarecords whose
@@ -40,7 +41,9 @@ export function treeRefPath(names) {
 export function treeNameOf(metarecord, field) {
   for (const f of metarecord?.fields ?? []) {
     if (f.name !== field) continue;
-    if (f.value.type === 'tree_ref' || f.value.type === 'hierarchy_ref') return f.value.value.name;
+    if (f.value.type === 'tree_ref' || f.value.type === 'hierarchy_ref') {
+      return pathText(f.value.value.name);
+    }
   }
   return null;
 }

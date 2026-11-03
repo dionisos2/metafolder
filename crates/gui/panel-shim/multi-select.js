@@ -13,6 +13,11 @@
 // query, the file manager checks rows of its own into the same set, and every
 // panel of the workspace mirrors the one variable.
 
+import { isBytePath, pathKey } from '/__ui.js';
+
+/** A checked value: a uuid, or a path in its wire form.
+ *  @typedef {import('/__ui.js').WirePath} Value */
+
 /**
  * The one API method the pruning query needs.
  * @typedef {Pick<Metafolder.Daemon, 'call'>} Daemon
@@ -47,7 +52,7 @@ export function createMultiSelect({ workspace, daemon, render = () => {} }) {
     count: mirror.count,
 
     /** Every checked uuid, in check order. */
-    values: mirror.values,
+    values: () => /** @type {string[]} */ (mirror.values()),
 
     /** Checks one metarecord, or unchecks it when it already is. */
     toggle: mirror.toggle,
@@ -90,7 +95,7 @@ export function createMultiSelect({ workspace, daemon, render = () => {} }) {
           )
           .filter((uuid) => typeof uuid === 'string'),
       );
-      await mirror.keep((uuid) => alive.has(uuid), mf);
+      await mirror.keep((uuid) => typeof uuid === 'string' && alive.has(uuid), mf);
     },
   };
 }
@@ -104,12 +109,12 @@ export function createMultiSelect({ workspace, daemon, render = () => {} }) {
  *   render?: () => void}} deps
  * @returns {{
  *   load: () => Promise<void>,
- *   has: (path: string) => boolean,
+ *   has: (path: Value) => boolean,
  *   count: () => number,
- *   values: () => string[],
- *   toggle: (path: string, mf?: MetafolderApi) => Promise<void>,
- *   add: (paths: string[], mf?: MetafolderApi) => Promise<void>,
- *   remove: (paths: string[], mf?: MetafolderApi) => Promise<void>,
+ *   values: () => Value[],
+ *   toggle: (path: Value, mf?: MetafolderApi) => Promise<void>,
+ *   add: (paths: Value[], mf?: MetafolderApi) => Promise<void>,
+ *   remove: (paths: Value[], mf?: MetafolderApi) => Promise<void>,
  *   clear: (mf?: MetafolderApi) => Promise<void>,
  *   pruneVanished: (mf?: MetafolderApi) => Promise<void>,
  * }}
@@ -125,8 +130,8 @@ export function createPathSelect({ workspace, fs, render = () => {} }) {
     add: mirror.add,
     /** Unchecks these paths — those recorded since, or trashed. */
     async remove(paths, mf) {
-      const gone = new Set(paths);
-      await mirror.keep((path) => !gone.has(path), mf);
+      const gone = new Set(paths.map(pathKey));
+      await mirror.keep((path) => !gone.has(pathKey(path)), mf);
     },
     clear: mirror.clear,
     /** Drops the paths no longer on disk (trashed, moved by a paste): they
@@ -144,13 +149,15 @@ export function createPathSelect({ workspace, fs, render = () => {} }) {
           }
         }),
       );
-      const alive = new Set(list.filter((_, i) => present[i]));
-      await mirror.keep((path) => alive.has(path), mf);
+      const alive = new Set(list.filter((_, i) => present[i]).map(pathKey));
+      await mirror.keep((path) => alive.has(pathKey(path)), mf);
     },
   };
 }
 
-// The mirror of one workspace variable holding a list of strings.
+// The mirror of one workspace variable holding a list of strings — uuids, or
+// paths in their wire form (a string, or `{text, bytes}` for one that is not
+// text, doc "Tree names"), told apart by their exact key (`pathKey`).
 //
 // The delicate part. `workspace.set` is a plain write, and the backend
 // announces every change to *every* instance of the workspace — the writing
@@ -166,16 +173,20 @@ export function createPathSelect({ workspace, fs, render = () => {} }) {
  * @param {() => void} render
  */
 function createMirror(workspace, key, render) {
-  /** @type {Set<string>} the checked values, in check order */
-  let values = new Set();
+  /** @type {Map<string, Value>} the checked values by exact key, in check order */
+  let values = new Map();
   /** @type {string|null} the repository the selection belongs to */
   let repo = null;
   /** @type {Map<string, number>} payload JSON → writes still awaiting their echo */
   const pending = new Map();
 
-  /** @param {unknown} value @returns {string[]} */
+  /** @param {unknown} value @returns {Value[]} */
   const strings = (value) =>
-    /** @type {string[]} */ ((Array.isArray(value) ? value : []).filter((v) => typeof v === 'string'));
+    /** @type {Value[]} */ (
+      (Array.isArray(value) ? value : []).filter((v) => typeof v === 'string' || isBytePath(v))
+    );
+  /** @param {Value[]} list */
+  const keyed = (list) => new Map(list.map((v) => [pathKey(v), v]));
 
   /** @param {string} json */
   function dropPending(json) {
@@ -185,11 +196,11 @@ function createMirror(workspace, key, render) {
   }
 
   /** Publishes `list` as the new state, through `mf` when a command run
-   *  makes the change. @param {string[]} list @param {MetafolderApi} [mf] */
+   *  makes the change. @param {Value[]} list @param {MetafolderApi} [mf] */
   async function write(list, mf) {
     const json = JSON.stringify(list);
     pending.set(json, (pending.get(json) ?? 0) + 1);
-    values = new Set(list);
+    values = keyed(list);
     render();
     try {
       await (mf?.workspace ?? workspace).set(key, list);
@@ -206,7 +217,7 @@ function createMirror(workspace, key, render) {
       dropPending(json);
       return; // our own write echoing back: the mirror already holds it
     }
-    values = new Set(list);
+    values = keyed(list);
     render();
   });
 
@@ -232,37 +243,35 @@ function createMirror(workspace, key, render) {
         workspace.get(key),
       ]);
       repo = typeof activeRepo === 'string' ? activeRepo : null;
-      values = new Set(strings(selected));
+      values = keyed(strings(selected));
       render();
     },
 
-    /** @param {string} value */
-    has: (value) => values.has(value),
+    /** @param {Value} value */
+    has: (value) => values.has(pathKey(value)),
 
     count: () => values.size,
 
-    values: () => [...values],
+    values: () => [...values.values()],
 
     /** Checks one value, or unchecks it when it already is.
-     *  @param {string} value @param {MetafolderApi} [mf] */
+     *  @param {Value} value @param {MetafolderApi} [mf] */
     toggle: async (value, mf) => {
-      const next = [...values];
-      const at = next.indexOf(value);
-      if (at >= 0) next.splice(at, 1);
-      else next.push(value);
-      await write(next, mf);
+      const next = new Map(values);
+      if (!next.delete(pathKey(value))) next.set(pathKey(value), value);
+      await write([...next.values()], mf);
     },
 
     /** Checks these on top of what is already checked.
-     *  @param {string[]} list @param {MetafolderApi} [mf] */
+     *  @param {Value[]} list @param {MetafolderApi} [mf] */
     add: async (list, mf) => {
-      const next = new Set(values);
+      const next = new Map(values);
       const before = next.size;
       for (const value of list) {
-        if (typeof value === 'string') next.add(value);
+        if (typeof value === 'string' || isBytePath(value)) next.set(pathKey(value), value);
       }
       if (next.size === before) return; // nothing new: publish nothing
-      await write([...next], mf);
+      await write([...next.values()], mf);
     },
 
     /** Unchecks everything. @param {MetafolderApi} [mf] */
@@ -272,9 +281,9 @@ function createMirror(workspace, key, render) {
     },
 
     /** Keeps only the values `alive` says so of, publishing only a change.
-     *  @param {(value: string) => boolean} alive @param {MetafolderApi} [mf] */
+     *  @param {(value: Value) => boolean} alive @param {MetafolderApi} [mf] */
     keep: async (alive, mf) => {
-      const list = [...values];
+      const list = [...values.values()];
       const kept = list.filter(alive);
       if (kept.length === list.length) return;
       await write(kept, mf);
