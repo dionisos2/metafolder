@@ -1766,3 +1766,32 @@ fn test_the_watch_frontier_marks_a_non_utf8_directory_itself() {
         Some(Value::Bool(true))
     );
 }
+
+/// `rm a; mv b a; rm a` in one batch: both files are gone, so `b`'s metarecord
+/// is orphaned — not left tracked at `/a`, where the move put it before the
+/// removal of what it brought there (doc "Event batching").
+#[test]
+fn test_a_removal_after_a_move_onto_its_path_is_applied_after_it() {
+    let (repo, root, _) = setup("remove-after-move");
+    write_file(&root, "a", b"A");
+    write_file(&root, "b", b"BB");
+    metafolder_daemon::reconcile::reconcile(&repo).unwrap();
+    let a = resolve(&repo, "/a").unwrap();
+    let b = resolve(&repo, "/b").unwrap();
+    std::fs::remove_file(root.join("a")).unwrap();
+    std::fs::rename(root.join("b"), root.join("a")).unwrap();
+    std::fs::remove_file(root.join("a")).unwrap();
+    enqueue(
+        &repo,
+        &[
+            FsEvent::Remove("/a".into()),
+            FsEvent::Rename("/b".into(), "/a".into()),
+            FsEvent::Remove("/a".into()),
+        ],
+    );
+
+    executor::flush_pending(&repo).unwrap();
+
+    assert_eq!(field_value(&repo, a, "mfr_path"), Some(Value::Nothing));
+    assert_eq!(field_value(&repo, b, "mfr_path"), Some(Value::Nothing), "b was deleted too");
+}

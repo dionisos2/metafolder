@@ -59,7 +59,7 @@ to apply: swapping two files through a temporary name (`A→TMP`, `B→A`, `TMP�
 collapse to the cycle `A→B`, `B→A`, which no order can apply. The hop through the
 temporary name breaks the cycle, as it did on disk.
 
-''Step 3 — split by kind.'' The compacted operations are grouped by resulting operation type; each group is one write, committed in the order of its first event. So a batch of 5 creations and 2 modifications is two writes — never a mix of kinds, each undone on its own. A very large copy arriving over more than the window may be split across flushes; each part is still undone on its own.
+''Step 3 — split by kind.'' The compacted operations are grouped by resulting operation type; each group is one write, committed in the order of its first event. So a batch of 5 creations and 2 modifications is two writes — never a mix of kinds, each undone on its own. Grouping moves an event in front of the writes between its own and the group it joins, so it joins only if none of their events touches its paths — the same path, one above or below it; otherwise it opens a write of its own after them. Pulled into the first removal's write, the second removal of `rm a; mv b a; rm a` ran before the move, which then left `b` tracked at `/a`, where nothing is. A very large copy arriving over more than the window may be split across flushes; each part is still undone on its own.
 
 The writes carry `origin = watcher`, which is how an undo tells your changes from the
 watcher's. What each event does: [[Event semantics]].

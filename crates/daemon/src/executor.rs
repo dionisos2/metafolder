@@ -11,7 +11,7 @@
 //! the executor could not apply survive a restart, wedging tracking for good;
 //! it needed a failure budget of its own to be survivable.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -267,6 +267,85 @@ fn group_kind(ev: &FsEvent) -> GroupKind {
     }
 }
 
+/// Splits a compacted batch into writes of one kind each (doc "Event
+/// batching", step 3), applied in order.
+///
+/// An event joins the latest write of its kind that it can be moved in front
+/// of: one that no event of a later write shares a path with — the same path,
+/// or one above or below it. Unrelated events of a kind share a write, as
+/// before; related ones keep their order on disk. Pulled into the first write
+/// of its kind, the second removal of `rm a; mv b a; rm a` ran before the
+/// move, which then left `b` tracked at `/a`, where nothing is.
+fn group(events: Vec<FsEvent>) -> Vec<(GroupKind, Vec<FsEvent>)> {
+    /// One write being built, and what its events touch: their paths, and
+    /// every ancestor of them — so "shares a path" is two set lookups.
+    struct Write {
+        kind: GroupKind,
+        events: Vec<FsEvent>,
+        paths: HashSet<RelPath>,
+        above: HashSet<RelPath>,
+    }
+    impl Write {
+        fn shares_a_path(&self, paths: &[&RelPath]) -> bool {
+            paths.iter().any(|p| {
+                // `p` is touched, or lies above something touched…
+                self.above.contains(*p)
+                    // …or lies below something touched.
+                    || std::iter::successors(Some(p.parent()), |a| {
+                        (!a.is_root()).then(|| a.parent())
+                    })
+                    .any(|a| self.paths.contains(&a))
+            })
+        }
+        fn add(&mut self, ev: FsEvent) {
+            for p in crate::watch_activity::event_paths(&ev) {
+                self.paths.insert(p.clone());
+                let mut cur = p.clone();
+                loop {
+                    self.above.insert(cur.clone());
+                    if cur.is_root() {
+                        break;
+                    }
+                    cur = cur.parent();
+                }
+            }
+            self.events.push(ev);
+        }
+    }
+
+    let mut writes: Vec<Write> = Vec::new();
+    for ev in events {
+        let kind = group_kind(&ev);
+        let paths = crate::watch_activity::event_paths(&ev);
+        // From the last write back, as long as the event may move in front of
+        // the writes it passes.
+        let mut target = None;
+        for (i, write) in writes.iter().enumerate().rev() {
+            if write.kind == kind {
+                target = Some(i);
+                break;
+            }
+            if write.shares_a_path(&paths) {
+                break;
+            }
+        }
+        match target {
+            Some(i) => writes[i].add(ev),
+            None => {
+                let mut write = Write {
+                    kind,
+                    events: Vec::new(),
+                    paths: HashSet::new(),
+                    above: HashSet::new(),
+                };
+                write.add(ev);
+                writes.push(write);
+            }
+        }
+    }
+    writes.into_iter().map(|w| (w.kind, w.events)).collect()
+}
+
 #[derive(Debug, Default)]
 pub struct FlushStats {
     pub events: usize,
@@ -499,15 +578,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
         .flatten()
         .collect();
 
-    // Group by kind, keeping groups ordered by first occurrence.
-    let mut groups: Vec<(GroupKind, Vec<FsEvent>)> = Vec::new();
-    for ev in events {
-        let kind = group_kind(&ev);
-        match groups.iter_mut().find(|(k, _)| *k == kind) {
-            Some((_, list)) => list.push(ev),
-            None => groups.push((kind, vec![ev])),
-        }
-    }
+    let groups = group(events);
 
     // The declared-but-unmounted mount points, resolved once for the whole
     // flush: one stat pair per mount point, and none at all in the usual case
@@ -1663,6 +1734,42 @@ mod tests {
     }
     fn mmeta(p: &str) -> FsEvent {
         FsEvent::ModifyMeta(p.into())
+    }
+
+    fn kinds(groups: &[(GroupKind, Vec<FsEvent>)]) -> Vec<(GroupKind, usize)> {
+        groups.iter().map(|(k, g)| (*k, g.len())).collect()
+    }
+
+    // Unrelated events of one kind share a write, whatever lies between them
+    // (doc "Event batching", step 3).
+    #[test]
+    fn group_gathers_unrelated_events_of_a_kind() {
+        let groups = group(vec![create("/a"), mdata("/b"), create("/c"), mdata("/d")]);
+        assert_eq!(kinds(&groups), vec![(GroupKind::Create, 2), (GroupKind::Modify, 2)]);
+    }
+
+    // `rm a; mv b a; rm a`: the second removal is of the file the move brought.
+    // Pulled into the first removal's write, it ran before the move, which then
+    // left `b` tracked at `/a`, a path nothing is at.
+    #[test]
+    fn group_keeps_an_event_after_one_it_follows_on_the_same_path() {
+        let groups = group(vec![remove("/a"), rename("/b", "/a"), remove("/a")]);
+        assert_eq!(
+            kinds(&groups),
+            vec![(GroupKind::Delete, 1), (GroupKind::Move, 1), (GroupKind::Delete, 1)]
+        );
+    }
+
+    // A directory and what is below it are the same story too.
+    #[test]
+    fn group_keeps_the_order_between_a_directory_and_its_entries() {
+        let groups = group(vec![remove("/d/x"), create("/d"), remove("/d")]);
+        assert_eq!(
+            kinds(&groups),
+            vec![(GroupKind::Delete, 1), (GroupKind::Create, 1), (GroupKind::Delete, 1)]
+        );
+        let groups = group(vec![remove("/d"), create("/d/x"), remove("/e")]);
+        assert_eq!(kinds(&groups), vec![(GroupKind::Delete, 2), (GroupKind::Create, 1)]);
     }
 
     #[test]
