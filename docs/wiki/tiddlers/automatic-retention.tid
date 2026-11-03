@@ -31,7 +31,11 @@ startup; a repository's `config.json` drops them silently the next time it is wr
 !! What a trim does
 
 For each origin past its limit, the trim deletes the oldest operations down to the limit,
-with their snapshots, and the revisions left with no operation ([[Pruning the log]]). The
+with their snapshots, and the revisions left with no operation ([[Pruning the log]]).
+It never reaches into the write that triggered it: a write larger than the limit — a
+reconcile of more than a million files — is kept whole, and the log stays past its limit
+until the next write trims it. Cut by its own commit, such a write lost its oldest
+operations, and undoing it undid only part of it, without a word. The
 log keeps the operations of each origin in a table of its own ([[Store tables]]), so
 finding the oldest ones reads only what is deleted (`tests/log_cost.rs`). The trim runs
 ''inside the transaction of the write that triggered it'': cheaper than the append that

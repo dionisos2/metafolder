@@ -1872,7 +1872,7 @@ impl WriteTxn for KvTxn<'_> {
     /// first keys of its table — and the labels left empty. Reads what it deletes and two statistics,
     /// never the operations it keeps (`tests/log_cost.rs`): it runs once every
     /// `slack` writes, and what is kept may be a reconcile's.
-    fn trim(&self, retention: Retention, _head: i64) -> Result<usize> {
+    fn trim(&self, retention: Retention, keep_from: i64) -> Result<usize> {
         if !retention.enabled() {
             return Ok(0);
         }
@@ -1894,10 +1894,19 @@ impl WriteTxn for KvTxn<'_> {
                 continue;
             }
             let cut = (total - limit) as usize;
+            let mut read = 0;
             for e in table.iter(&txn)?.take(cut) {
-                doomed.push(from_be(e?.0));
+                read += 1;
+                let id = from_be(e?.0);
+                // The write committing is kept whole: trimmed by its own
+                // commit, a write larger than the limit lost its oldest
+                // operations, and an undo of it undid only part.
+                if id >= keep_from {
+                    break;
+                }
+                doomed.push(id);
             }
-            count(cut);
+            count(read);
         }
         if doomed.is_empty() {
             return Ok(0);

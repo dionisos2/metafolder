@@ -468,6 +468,9 @@ pub struct Writer<'c> {
     chain_head: Option<i64>,
     /// Number of operations already flushed to the database.
     flushed: i64,
+    /// The id of this write's first operation, once flushed: where the
+    /// retention trim stops (see [`Self::commit`]).
+    first_op: Option<i64>,
     pending: Vec<NewOp>,
     /// Per-write cache of each field name's established (non-`Nothing`) value
     /// type, populated lazily on the first checked write of a name. Collapses the
@@ -602,6 +605,7 @@ impl<'c> Writer<'c> {
             timestamp,
             chain_head: head,
             flushed: 0,
+            first_op: None,
             pending: Vec::new(),
             field_types: HashMap::new(),
             deferred_types: None,
@@ -1216,10 +1220,11 @@ impl<'c> Writer<'c> {
         } else {
             self.flush_pending()?;
             self.tx.set_head(self.chain_head)?;
-            if let Some(head) = self.chain_head {
+            if let Some(first) = self.first_op {
                 // In this transaction, deliberately: the trim then rides the
-                // commit the write was going to pay for anyway.
-                self.tx.trim(self.retention, head)?;
+                // commit the write was going to pay for anyway. Never into
+                // this write itself.
+                self.tx.trim(self.retention, first)?;
             }
         }
         self.tx.commit()
@@ -1298,6 +1303,7 @@ impl<'c> Writer<'c> {
         }
         let pending = std::mem::take(&mut self.pending);
         let last = self.tx.append_ops(self.label_id, self.timestamp, &pending)?;
+        self.first_op.get_or_insert(last - pending.len() as i64 + 1);
         self.flushed += pending.len() as i64;
         self.chain_head = Some(last);
         Ok(())

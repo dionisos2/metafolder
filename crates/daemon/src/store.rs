@@ -834,8 +834,10 @@ pub trait WriteTxn: Store {
     fn append_ops(&self, label: i64, timestamp: i64, ops: &[NewOp]) -> Result<i64>;
     /// Records the newest operation (the change feed's cursor).
     fn set_head(&self, op: Option<i64>) -> Result<()>;
-    /// Drops the history `retention` no longer keeps behind `head`.
-    fn trim(&self, retention: Retention, head: i64) -> Result<usize>;
+    /// Drops the history `retention` no longer keeps, never an operation
+    /// numbered `keep_from` or later — the write committing, kept whole
+    /// (doc "Automatic retention").
+    fn trim(&self, retention: Retention, keep_from: i64) -> Result<usize>;
     /// Removes every metarecord.
     fn clear_metarecords(&self) -> Result<()>;
     /// Deletes operations and their snapshots, and the labels they leave

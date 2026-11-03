@@ -145,3 +145,23 @@ fn test_a_repository_writes_with_its_configured_retention() {
     let kept = metafolder_daemon::store::Log::counts(&*conn).unwrap().0;
     assert!(kept <= 4 + Retention::slack(4) as i64, "kept {kept} operations");
 }
+
+/// A write larger than the limit is kept whole: trimmed by its own commit, it
+/// lost its oldest operations, and undoing it undid only part of it — without
+/// a word. What came before it goes; the log is back under its limit after the
+/// next write.
+#[test]
+fn test_a_write_is_never_trimmed_by_its_own_commit() {
+    let (mut conn, _dir) = test_conn();
+    let retention = keep(0, 10);
+    let older = write(&mut conn, retention, false);
+    let mut w = Writer::begin_with_retention(&mut conn, None, retention).unwrap();
+    let label = w.label_id();
+    for i in 0..30 {
+        w.create_metarecord(vec![Field::new("n", Value::Int(i))]).unwrap();
+    }
+    w.commit().unwrap();
+
+    assert_eq!(conn.label_ops(label).unwrap().len(), 30, "the big write is whole");
+    assert!(conn.op(older).unwrap().is_none(), "what came before it is trimmed");
+}
