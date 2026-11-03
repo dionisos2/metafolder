@@ -363,7 +363,9 @@ pub struct WatchedStatus {
     pub second_mount: Option<String>,
 }
 
-/// The watched state of a batch of repo-root-relative paths, answering
+/// The watched state of a batch of repository paths — exact, as
+/// [`RelPath`]s: the disk and the watch set are reached by their bytes —
+/// answering
 /// `POST /repos/:repo/watch/check`. `watched` is the *live watch set's* truth —
 /// one step past eligibility: a change at a path is recorded when the path is
 /// eligible AND the covering directory holds a watch, so a tracked file inside
@@ -382,7 +384,7 @@ pub fn explain_watched(
     root: &Path,
     internal_dir: &Path,
     coverage: Coverage<'_>,
-    rel_paths: &[String],
+    rel_paths: &[RelPath],
     on_disk: &[bool],
 ) -> Result<Vec<WatchedStatus>> {
     let mut offline = None;
@@ -410,11 +412,11 @@ pub fn explain_watched(
 /// (symlink metadata — a symlinked directory is never watched, matching the
 /// walk's `file_type().is_dir()`). Touches no store: what
 /// [`explain_watched`] needs from the disk, read before the connection.
-pub fn dirs_on_disk(root: &Path, rel_paths: &[String]) -> Vec<bool> {
+pub fn dirs_on_disk(root: &Path, rel_paths: &[RelPath]) -> Vec<bool> {
     rel_paths
         .iter()
         .map(|rel| {
-            std::fs::symlink_metadata(abs_of(root, rel))
+            std::fs::symlink_metadata(rel.to_abs(root))
                 .map(|md| md.file_type().is_dir())
                 .unwrap_or(false)
         })
@@ -434,25 +436,26 @@ fn explain_watched_one(
     root: &Path,
     internal_dir: &Path,
     coverage: Coverage<'_>,
-    rel_path: &str,
+    rel_path: &RelPath,
     is_dir: bool,
     offline: &mut Option<crate::mount::OfflineMounts>,
 ) -> Result<WatchedStatus> {
-    let cover = if is_dir { rel_path.to_string() } else { parent_of(rel_path) };
+    let cover = if is_dir { rel_path.clone() } else { rel_path.parent() };
+    let cover_abs = cover.to_abs(root);
+    // Offline mount points are matched by their displayed text, as
+    // `OfflineMounts` holds them.
+    let cover_shown = cover.display();
     let covered = match coverage {
-        Coverage::Watches(set) => set.contains(&abs_of(root, &cover)),
-        Coverage::Tree { gaps, watches }
-            if gaps.iter().any(|g| abs_of(root, &cover).starts_with(g)) =>
-        {
-            watches.contains(&abs_of(root, &cover))
+        Coverage::Watches(set) => set.contains(&cover_abs),
+        Coverage::Tree { gaps, watches } if gaps.iter().any(|g| cover_abs.starts_with(g)) => {
+            watches.contains(&cover_abs)
         }
         Coverage::Tree { .. } => {
             covered_by_tree(conn, cache, rules, root, internal_dir, &cover, offline)
         }
     };
-    let eligibility = rules.explain(&rules.rel_of_text(rel_path))?;
-    let dir_eligibility =
-        if is_dir { eligibility.clone() } else { rules.explain(&rules.rel_of_text(&cover))? };
+    let eligibility = rules.explain(rel_path)?;
+    let dir_eligibility = if is_dir { eligibility.clone() } else { rules.explain(&cover)? };
     let watched = covered && eligibility.eligible;
     let mut second_mount = None;
     let (reason, excluded_by, offline_mount) = if watched {
@@ -463,19 +466,19 @@ fn explain_watched_one(
         // directory is (a pattern matched the directory alone, so the walk
         // pruned it and the file beneath can never be reached).
         (WatchedReason::Untracked, None, None)
-    } else if abs_of(root, &cover).starts_with(internal_dir) {
+    } else if cover_abs.starts_with(internal_dir) {
         (WatchedReason::Internal, None, None)
     } else {
         let mounts = offline.get_or_insert_with(|| {
             let _phase = metafolder_core::slowlog::phase("mounts.offline");
             crate::mount::offline(conn, cache, root).unwrap_or_default()
         });
-        if let Some(mount) = mounts.paths().iter().find(|m| covers(m, &cover)) {
+        if let Some(mount) = mounts.paths().iter().find(|m| covers(m, &cover_shown)) {
             (WatchedReason::Offline, None, Some((*mount).clone()))
-        } else if let Some(mount) = mounts.second().iter().find(|m| covers(m, &cover)) {
+        } else if let Some(mount) = mounts.second().iter().find(|m| covers(m, &cover_shown)) {
             second_mount = Some(mount.clone());
             (WatchedReason::SecondMount, None, None)
-        } else if let Some(by) = rules.exceeded_by(&rules.rel_of_text(&cover)) {
+        } else if let Some(by) = rules.exceeded_by(&cover) {
             (WatchedReason::Excluded, Some(by), None)
         } else {
             (WatchedReason::Unwatched, None, None)
@@ -484,7 +487,7 @@ fn explain_watched_one(
     Ok(WatchedStatus {
         watched,
         reason,
-        watched_dir: cover,
+        watched_dir: cover_shown,
         eligibility,
         dir_eligibility,
         excluded_by,
@@ -497,30 +500,13 @@ fn explain_watched_one(
 /// denotes one: the metarecord's `mfr_type` when the path is gone (an orphan's
 /// stale path still says what it was), else a file — a not-yet-existing path
 /// is treated as the file that would appear there.
-fn dir_in_store(conn: &dyn crate::store::Store, cache: &Forest, rel: &str) -> Result<bool> {
-    match cache.resolve_path(conn, "mfr_path", rel)? {
+fn dir_in_store(conn: &dyn crate::store::Store, cache: &Forest, rel: &RelPath) -> Result<bool> {
+    let path = metafolder_core::metarecord::TreePath::from_bytes(rel.to_bytes());
+    match cache.resolve_exact(conn, "mfr_path", &path)? {
         Some(uuid) => {
             Ok(conn.string_fields(uuid, "mfr_type")?.first().map(|t| t == "dir").unwrap_or(false))
         }
         None => Ok(false),
-    }
-}
-
-/// The parent directory of a repo-root-relative path (`""` for the root and
-/// for a top-level entry — the root's own parent).
-fn parent_of(rel: &str) -> String {
-    match rel.rfind('/') {
-        Some(0) | None => String::new(),
-        Some(i) => rel[..i].to_string(),
-    }
-}
-
-/// The absolute path of a repo-root-relative `rel` (`""` is the root itself).
-fn abs_of(root: &Path, rel: &str) -> PathBuf {
-    if rel.is_empty() {
-        root.to_path_buf()
-    } else {
-        root.join(rel.trim_start_matches('/'))
     }
 }
 
@@ -540,20 +526,21 @@ fn covered_by_tree(
     rules: &WatchRules,
     root: &Path,
     internal_dir: &Path,
-    cover: &str,
+    cover: &RelPath,
     offline: &mut Option<crate::mount::OfflineMounts>,
 ) -> bool {
-    if abs_of(root, cover).starts_with(internal_dir) {
+    if cover.to_abs(root).starts_with(internal_dir) {
         return false;
     }
+    let cover_shown = cover.display();
     let mounts = offline.get_or_insert_with(|| {
         let _phase = metafolder_core::slowlog::phase("mounts.offline");
         crate::mount::offline(conn, cache, root).unwrap_or_default()
     });
-    if mounts.paths().iter().chain(mounts.second()).any(|m| covers(m, cover)) {
+    if mounts.paths().iter().chain(mounts.second()).any(|m| covers(m, &cover_shown)) {
         return false;
     }
-    rules.exceeded_by(&rules.rel_of_text(cover)).is_none()
+    rules.exceeded_by(cover).is_none()
 }
 
 /// Converts an absolute path to the internal repo-root-relative form, keeping
@@ -847,10 +834,19 @@ mod tests {
         }
 
         fn explain(&mut self, coverage: Coverage<'_>, paths: &[&str]) -> Vec<WatchedStatus> {
+            let paths: Vec<super::RelPath> =
+                paths.iter().map(|p| super::RelPath::from_display(p)).collect();
+            self.explain_rels(coverage, &paths)
+        }
+
+        fn explain_rels(
+            &mut self,
+            coverage: Coverage<'_>,
+            paths: &[super::RelPath],
+        ) -> Vec<WatchedStatus> {
             let internal = self.internal_dir();
-            let paths: Vec<String> = paths.iter().map(|p| p.to_string()).collect();
             let rules = self.rules();
-            let on_disk = super::dirs_on_disk(&self.root, &paths);
+            let on_disk = super::dirs_on_disk(&self.root, paths);
             explain_watched(
                 &self.conn,
                 &self.cache,
@@ -858,7 +854,7 @@ mod tests {
                 &self.root,
                 &internal,
                 coverage,
-                &paths,
+                paths,
                 &on_disk,
             )
             .unwrap()
@@ -965,6 +961,25 @@ mod tests {
         // Tracked, uncovered, no recorded reason: the starved answer — the one
         // reason the coverage regime can never give.
         assert_eq!(got[1].reason, WatchedReason::Unwatched, "{:?}", got[1]);
+    }
+
+    /// A directory whose name is not UTF-8 is found on disk and in the watch
+    /// set at its exact bytes — the `%E9` it shows as names no directory, so it
+    /// read as unwatched (doc "Tree names").
+    #[cfg(unix)]
+    #[test]
+    fn test_a_path_that_is_not_text_is_checked_at_its_exact_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+        let mut fx = Fixture::new();
+        let raw = fx.root.join(std::ffi::OsStr::from_bytes(b"caf\xe9"));
+        std::fs::create_dir(&raw).unwrap();
+        let set: HashSet<PathBuf> = [raw].into();
+        let dir = super::RelPath::from_bytes(b"/caf\xe9");
+        let file = super::RelPath::from_bytes(b"/caf\xe9/x");
+        let got = fx.explain_rels(Coverage::Watches(&set), &[dir, file]);
+        assert!(got[0].watched, "the directory itself: {:?}", got[0]);
+        assert_eq!(got[0].watched_dir, "/caf%E9", "shown escaped");
+        assert!(got[1].watched, "a file inside it: {:?}", got[1]);
     }
 
     #[test]

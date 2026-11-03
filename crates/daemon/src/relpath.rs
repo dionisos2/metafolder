@@ -68,8 +68,8 @@ impl RelPath {
         self.components.is_empty()
     }
 
-    /// The displayed form: `""` at the root, `/a/b` below it. Undecodable bytes
-    /// show as U+FFFD, as every file manager shows them.
+    /// The displayed form: `""` at the root, `/a/b` below it. An undecodable
+    /// byte shows as `%XX` (doc "Tree names"): for display, never to act on.
     pub fn display(&self) -> String {
         let mut out = String::new();
         for component in &self.components {

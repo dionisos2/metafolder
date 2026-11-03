@@ -298,7 +298,9 @@ pub(super) async fn watch_activity_reset(
 
 #[derive(Deserialize)]
 pub(super) struct WatchCheckBody {
-    paths: Vec<String>,
+    /// Each a string — text, as typed — or `{text, bytes}`: those bytes,
+    /// exactly (doc "Tree names").
+    paths: Vec<metafolder_core::metarecord::TreePath>,
 }
 
 /// `POST /repos/:repo/watch/check`: the watcher's own answer for a batch of
@@ -321,9 +323,10 @@ pub(super) async fn watch_check(
         )));
     }
     for path in &body.paths {
-        if !path.is_empty() && !path.starts_with('/') {
+        if !path.is_empty() && !path.as_bytes().starts_with(b"/") {
             return Err(ApiError::bad_request(format!(
-                "path must be repo-root-relative with a leading slash: {path:?}"
+                "path must be repo-root-relative with a leading slash: {:?}",
+                path.display()
             )));
         }
     }
@@ -339,11 +342,19 @@ pub(super) async fn watch_check(
         } else {
             crate::watcher::Coverage::Tree { gaps: &gaps, watches: &watched }
         };
+        // Each path at its exact bytes — a string's own, an object's `bytes` —
+        // never a reading of an escape: what a client checks is a path it
+        // holds (doc "Tree names").
+        let rels: Vec<crate::relpath::RelPath> = body
+            .paths
+            .iter()
+            .map(|path| crate::relpath::RelPath::from_bytes(path.as_bytes()))
+            .collect();
         // The disk first, outside the connection: a stat per path is most of
         // a check on a cold disk, and every other request of the repository
         // would wait behind it.
         let on_disk = slowlog::timed("disk.stat", || {
-            crate::watcher::dirs_on_disk(&repo_state.config.root, &body.paths)
+            crate::watcher::dirs_on_disk(&repo_state.config.root, &rels)
         });
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let rules = repo_state.watch_rules(&conn)?;
@@ -356,7 +367,7 @@ pub(super) async fn watch_check(
                 &repo_state.config.root,
                 repo_state.internal_dir().as_path(),
                 coverage,
-                &body.paths,
+                &rels,
                 &on_disk,
             )
         })?;

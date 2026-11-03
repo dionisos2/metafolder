@@ -45,15 +45,24 @@ pub fn tag_list(ctx: &Ctx) -> Result<i32, CliError> {
     Ok(0)
 }
 
-/// The metarecord standing for a path argument (see [`path_arg_rel`]), if any:
-/// the exact-node equality on `mfr_path` (doc "Field aspects").
+/// The metarecord standing for a path argument (see [`path_arg`]), if any: a
+/// path found on disk at its exact bytes, a typed one by the exact-node
+/// equality on `mfr_path` (doc "Field aspects"), which searches both readings
+/// of an escape.
 pub(super) fn uuid_at(ctx: &Ctx, raw: &str) -> Result<Option<String>, CliError> {
     let base = ctx.repo_base()?;
     let info = ctx.repo_info()?;
     let root = info["root"]
         .as_str()
         .ok_or_else(|| CliError::Op("daemon did not report the repo root".into()))?;
-    let rel = path_arg_rel(Path::new(root), raw)?;
+    let rel = match path_arg(Path::new(root), raw)? {
+        PathArg::Exact(path) => {
+            let body = json!({"field": "mfr_path", "path": path, "form": "verbatim"});
+            let resp = ctx.client.post(&format!("{base}/tree/resolve-path"), &body)?;
+            return Ok(resp["uuid"].as_str().map(String::from));
+        }
+        PathArg::Typed(text) => text,
+    };
     let query =
         json!({"type": "eq", "field": "mfr_path", "value": {"type": "string", "value": rel}});
     let resp = ctx.client.post(&format!("{base}/query"), &json!({"query": query, "limit": 1}))?;

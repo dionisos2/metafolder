@@ -353,6 +353,32 @@ fn test_reconcile_computes_and_can_disable_mime() {
 
 // ── Watch check and the watch budget's exclusions ─────────────────────────────
 
+/// A path that leads into a directory whose name is not UTF-8 (here through a
+/// symlink, which canonicalisation follows) is checked at its exact bytes —
+/// read as text, it named nothing and was "not watched" (doc "Tree names").
+#[cfg(unix)]
+#[test]
+fn test_watch_check_and_uuid_reach_a_name_that_is_not_utf8() {
+    use std::os::unix::ffi::OsStrExt;
+    let (repo, root) = super::sync::tracked_repo("watchbytes", &[]);
+    let raw = root.join(std::ffi::OsStr::from_bytes(b"caf\xe9"));
+    std::fs::create_dir(&raw).unwrap();
+    std::fs::write(raw.join("x.txt"), b"x").unwrap();
+    std::os::unix::fs::symlink(&raw, root.join("link")).unwrap();
+    assert_ok(&mf(&["-u", &repo, "reconcile"]));
+    let through = root.join("link/x.txt");
+    let through = through.to_str().unwrap();
+
+    let out = mf(&["-u", &repo, "watch", "check", through]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("/caf%E9/x.txt"), "shown escaped: {}", out.stdout);
+
+    let x = query_one(&repo, r#"mfr_path = "/caf%E9/x.txt""#);
+    let out = mf(&["-u", &repo, "uuid", through]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), x);
+}
+
 /// `mf watch check` answers one line per path, and says why a path is not
 /// watched in terms a person can act on; any path not watched makes it exit 1.
 #[test]

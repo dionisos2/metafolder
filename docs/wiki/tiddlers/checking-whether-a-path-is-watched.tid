@@ -15,8 +15,10 @@ NOT watched  	/archive/x.tgz	— inside /archive (mfr_watch_exceeded — deliber
 ```
 
 Paths are filesystem paths (absolute or relative to the current directory), made
-repository-relative; a `/`-leading path that no longer exists is taken as already
-repository-relative (an orphan's stale path). The exit code is 1 when any path is not
+repository-relative at their exact bytes — a name that is not UTF-8 is reached, and
+shown escaped ([[Tree names]]); a `/`-leading path that no longer exists is taken as
+already repository-relative (an orphan's stale path), exactly as typed. `mf uuid` reads
+its arguments the same way. The exit code is 1 when any path is not
 watched, so a script can assert on it. `--json` prints the raw answer.
 
 The reasons, in the order they decide:

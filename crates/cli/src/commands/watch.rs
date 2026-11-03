@@ -212,6 +212,33 @@ pub(super) fn path_arg_rel(root: &Path, raw: &str) -> Result<String, CliError> {
     )))
 }
 
+/// A path argument, as the daemon is to read it (doc "Tree names").
+pub(super) enum PathArg {
+    /// A path found on disk: its exact bytes, whatever the text of its name.
+    Exact(metafolder_core::metarecord::TreePath),
+    /// A path typed for one gone from disk (an orphan's stale path): text, both
+    /// readings of an escape searched.
+    Typed(String),
+}
+
+impl PathArg {
+    /// The JSON form: the exact path's wire form, or the typed string.
+    pub(super) fn to_wire(&self) -> serde_json::Value {
+        match self {
+            PathArg::Exact(path) => json!(path),
+            PathArg::Typed(text) => json!(text),
+        }
+    }
+}
+
+/// [`path_arg_rel`], keeping the exact bytes of a path found on disk.
+pub(super) fn path_arg(root: &Path, raw: &str) -> Result<PathArg, CliError> {
+    if let Ok(abs) = std::fs::canonicalize(raw) {
+        return Ok(PathArg::Exact(super::trash::repo_path(root, &abs)?));
+    }
+    path_arg_rel(root, raw).map(PathArg::Typed)
+}
+
 /// A repo-root-relative path from the response, with `""` (the root) shown as
 /// `/` — the empty string would read as nothing.
 pub(super) fn shown_path<'a>(entry: &'a serde_json::Value, key: &str) -> &'a str {
@@ -293,7 +320,7 @@ pub fn watch_check(ctx: &Ctx, paths: &[String], raw_json: bool) -> Result<i32, C
         .ok_or_else(|| CliError::Op("daemon did not report the repo root".into()))?;
     let rels = paths
         .iter()
-        .map(|raw| path_arg_rel(Path::new(root), raw))
+        .map(|raw| path_arg(Path::new(root), raw).map(|arg| arg.to_wire()))
         .collect::<Result<Vec<_>, _>>()?;
     let resp = ctx.client.request(
         "POST",
@@ -308,8 +335,13 @@ pub fn watch_check(ctx: &Ctx, paths: &[String], raw_json: bool) -> Result<i32, C
     let results = resp["results"].as_array().cloned().unwrap_or_default();
     let mut unwatched = 0usize;
     for entry in &results {
-        let path = entry["path"].as_str().unwrap_or_default();
-        let shown = if path.is_empty() { "/" } else { path };
+        // A path that is not text comes back as `{text, bytes}`: shown by its
+        // text.
+        let path = metafolder_core::sync::lookup::paths_in(&json!([entry["path"]]))
+            .first()
+            .map(|p| p.display().into_owned())
+            .unwrap_or_default();
+        let shown = if path.is_empty() { "/" } else { path.as_str() };
         if entry["watched"].as_bool().unwrap_or(false) {
             let dir = shown_path(entry, "watched_dir");
             println!("watched      \t{shown}\t(changes under {dir} are recorded)");
