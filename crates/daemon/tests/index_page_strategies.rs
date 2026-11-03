@@ -288,3 +288,32 @@ fn every_page_strategy_gives_the_oracles_pages() {
         }
     }
 }
+
+/// A node of two forests has a key in each: sorting on both must not take
+/// one forest's key of a folder for the other's. `d` is `r` in forest `a` and
+/// `z` in forest `b`; `x1` and `x2` are in `b` only, so `a` ties them and `b`
+/// decides — `x2` (`s/n`) before `x1` (`z/m`). `k`, in `a` below `d`, sorts
+/// first.
+#[test]
+fn a_node_in_two_forests_sorts_on_each_forest_s_own_key() {
+    let (mut conn, _dir) = common::kv::store();
+    let pos = |f: &str, parent: Option<Uuid>, name: &str| {
+        Field::new(f, Value::TreeRef { parent, name: name.into() })
+    };
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    let mut new = |fields: Vec<Field>| w.create_metarecord(fields).unwrap().uuid;
+    let d = new(vec![pos("a", None, "r"), pos("b", None, "z")]);
+    let k = new(vec![pos("a", Some(d), "k")]);
+    let e = new(vec![pos("b", None, "s")]);
+    let x1 = new(vec![pos("b", Some(d), "m")]);
+    let x2 = new(vec![pos("b", Some(e), "n")]);
+    w.commit().unwrap();
+    // `k` first: its key in `a` is what reads `d`'s there.
+    let query = Query::UuidIn { uuids: vec![k, x1, x2] };
+    let sort = [
+        SortKey { field: "a".into(), order: SortOrder::Asc },
+        SortKey { field: "b".into(), order: SortOrder::Asc },
+    ];
+    let got = common::engines::both(&conn, &query, &sort);
+    assert_eq!(got, vec![k, x2, x1]);
+}

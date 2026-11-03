@@ -601,8 +601,9 @@ impl Forest {
 /// node's, is its bare name.
 pub struct SortKeys<'a> {
     store: &'a dyn Rows,
-    /// A metarecord's key at its first position, memoised.
-    firsts: RefCell<HashMap<Uuid, Option<Arc<str>>>>,
+    /// A metarecord's key at its first position, memoised per field: a node
+    /// of two forests has a key in each.
+    firsts: RefCell<HashMap<String, HashMap<Uuid, Option<Arc<str>>>>>,
     /// The first read error, which leaves keys missing.
     error: RefCell<Option<anyhow::Error>>,
 }
@@ -630,10 +631,27 @@ impl<'a> SortKeys<'a> {
         }
     }
 
+    /// The memoised key of `uuid` in `field`: `None` when not yet known.
+    fn known(&self, field: &str, uuid: Uuid) -> Option<Option<Arc<str>>> {
+        self.firsts.borrow().get(field).and_then(|m| m.get(&uuid)).cloned()
+    }
+
+    fn remember(&self, field: &str, uuid: Uuid, key: Option<Arc<str>>) {
+        let mut firsts = self.firsts.borrow_mut();
+        match firsts.get_mut(field) {
+            Some(memo) => {
+                memo.insert(uuid, key);
+            }
+            None => {
+                firsts.insert(field.to_string(), HashMap::from([(uuid, key)]));
+            }
+        }
+    }
+
     /// The key of `uuid` at its first position (memoised).
     fn first_key(&self, store: &dyn Rows, field: &str, uuid: Uuid) -> Option<Arc<str>> {
-        if let Some(k) = self.firsts.borrow().get(&uuid) {
-            return k.clone();
+        if let Some(k) = self.known(field, uuid) {
+            return k;
         }
         // Up the chain of first positions to a known key or a root, then
         // down again, memoising each.
@@ -645,7 +663,7 @@ impl<'a> SortKeys<'a> {
             let Some(first) = self.read(store.positions(field, cur))?.into_iter().next() else {
                 // No position: `cur` is in no path.
                 if chain.is_empty() {
-                    self.firsts.borrow_mut().insert(uuid, None);
+                    self.remember(field, uuid, None);
                     return None;
                 }
                 ended = true;
@@ -658,8 +676,8 @@ impl<'a> SortKeys<'a> {
                     break;
                 }
                 Some(p) => {
-                    if let Some(k) = self.firsts.borrow().get(&p) {
-                        base = k.clone();
+                    if let Some(k) = self.known(field, p) {
+                        base = k;
                         ended = true;
                         break;
                     }
@@ -678,7 +696,7 @@ impl<'a> SortKeys<'a> {
                 None => Arc::from(name.as_str()),
                 Some(parent) => join_key(parent, name),
             };
-            self.firsts.borrow_mut().insert(*node, Some(k.clone()));
+            self.remember(field, *node, Some(k.clone()));
             key = Some(k);
         }
         key
