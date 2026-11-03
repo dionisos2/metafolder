@@ -125,12 +125,6 @@ fn revert_name_of(ids: &[i64]) -> String {
     }
 }
 
-/// The exact bytes of a path, in hex.
-fn path_hex(path: &std::path::Path) -> String {
-    use std::os::unix::ffi::OsStrExt;
-    metafolder_core::hex::encode(path.as_os_str().as_bytes())
-}
-
 fn op_brief(op: &crate::log::OpRow) -> serde_json::Value {
     json!({
         "op_id": op.id,
@@ -174,13 +168,9 @@ fn revert_plan_json(
                     // (`is_new=1`) back to where it was (`is_new=0`).
                     let from = snapshot_abs_path(conn, cache, root, op.id, 1)?;
                     let to = snapshot_abs_path(conn, cache, root, op.id, 0)?;
-                    if let (Some((from, from_abs)), Some((to, to_abs))) = (from, to) {
+                    if let (Some(from), Some(to)) = (from, to) {
                         v["from"] = json!(from);
                         v["to"] = json!(to);
-                        // The text above only shows a name that is not UTF-8;
-                        // these are what the client moves.
-                        v["from_bytes"] = json!(path_hex(&from_abs));
-                        v["to_bytes"] = json!(path_hex(&to_abs));
                     }
                 }
                 v

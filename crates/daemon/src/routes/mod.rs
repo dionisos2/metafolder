@@ -91,6 +91,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/{repo}/tree/roots", get(tree_roots))
         .route("/repos/{repo}/tree/children", get(tree_children))
         .route("/repos/{repo}/tree/resolve-path", post(resolve_tree_path))
+        .route("/repos/{repo}/tree/resolve-paths", post(resolve_tree_paths))
         // ── Set layer (by predicate) ─────────────────────────────────────────
         .route("/repos/{repo}/query", post(run_query))
         .route("/repos/{repo}/query/profile", post(profile_query))

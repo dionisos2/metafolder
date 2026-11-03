@@ -17,7 +17,7 @@
 // reads the groups again at once: the daemon re-counts a group — or dissolves
 // it — in the trashing's own write (doc "Duplicate groups").
 
-import { byId, el, field, formatSize, formatValue, viewerButtons, whereArg } from '/__ui.js';
+import { byId, el, field, formatSize, formatValue, viewerButtons, whereArg, wireTexts } from '/__ui.js';
 import { createListCursor } from '/__list-cursor.js';
 import { rowActionsProvider, baseName } from '/__file-actions.js';
 
@@ -232,11 +232,11 @@ export function mount(root, metafolder) {
         })
       );
       const records = page.results ?? [];
-      const paths = /** @type {Record<string, string[]>} */ (
+      const paths = /** @type {Record<string, unknown>} */ (
         await daemon.call('POST', `/repos/${r}/query/fields/resolve-tree`, { query })
       );
       group.members = records.map((rec) => {
-        const rel = paths[rec.uuid]?.[0] ?? '';
+        const rel = wireTexts(paths[rec.uuid])[0] ?? '';
         return {
           uuid: rec.uuid,
           path: rel === '' ? '(no path)' : rel,

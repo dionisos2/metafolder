@@ -789,9 +789,8 @@ async fn test_a_revert_of_a_trashing_revert_trashes_the_bytes_again() {
     assert_eq!(second["operations"][0]["filesystem"]["action"], "trash_content", "{second}");
 }
 
-/// The plan's paths are text on the wire, where a name that is not UTF-8 can
-/// only be shown: the `move` action also carries the exact bytes of both
-/// paths, in hex, for the client to `mv` with (doc "Tree names").
+/// A plan's paths are what the client moves: a path that is not text comes as
+/// `{text, bytes}`, the bytes being the file (doc "Tree names").
 #[cfg(unix)]
 #[tokio::test]
 async fn test_a_move_plan_carries_the_exact_bytes_of_its_paths() {
@@ -839,8 +838,10 @@ async fn test_a_move_plan_carries_the_exact_bytes_of_its_paths() {
     assert_eq!(status, StatusCode::OK, "start failed: {plan}");
     let action = &plan["operations"][0]["filesystem"];
     let hex = |p: &std::path::Path| metafolder_core::hex::encode(p.as_os_str().as_bytes());
-    assert_eq!(action["from_bytes"], json!(hex(&new)), "{action}");
-    assert_eq!(action["to_bytes"], json!(hex(&old)), "{action}");
+    assert_eq!(action["from"]["bytes"], json!(hex(&new)), "{action}");
+    assert_eq!(action["to"]["bytes"], json!(hex(&old)), "{action}");
+    assert!(action["from"]["text"].as_str().unwrap().ends_with("new%E9.txt"), "{action}");
+    assert!(action.get("from_bytes").is_none(), "one convention: {action}");
     request(&app, "POST", &format!("/repos/{repo}/revert/abort"), None).await;
 }
 

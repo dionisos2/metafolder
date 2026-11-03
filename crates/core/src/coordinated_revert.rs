@@ -114,16 +114,14 @@ fn takes_a_whole_metarecord(op: &Json) -> bool {
     matches!(op["op_type"].as_str(), Some("delete_metarecord") | Some("create_metarecord"))
 }
 
-/// The path `op[bytes_key]` spells in hex — the exact bytes — or, for a plan
-/// without it, the text `shown`.
-fn exact_path(op: &Json, bytes_key: &str, shown: &str) -> std::path::PathBuf {
-    #[cfg(unix)]
-    if let Some(bytes) = op[bytes_key].as_str().and_then(crate::hex::decode) {
-        use std::os::unix::ffi::OsStrExt;
-        return std::ffi::OsStr::from_bytes(&bytes).into();
+/// The path `op[key]` names, as the plan gives it — a string, or
+/// `{text, bytes}` for a path that is not text (doc "Tree names") — with the
+/// text it shows.
+fn plan_path(op: &Json, key: &str) -> (String, std::path::PathBuf) {
+    match serde_json::from_value::<crate::metarecord::TreePath>(op[key].clone()) {
+        Ok(path) => (path.display().into_owned(), path.to_path_buf()),
+        Err(_) => (String::new(), std::path::PathBuf::new()),
     }
-    let _ = bytes_key;
-    std::path::PathBuf::from(shown)
 }
 
 /// Decides a `move` step, executing the `mv` for the apply policy. Returns
@@ -134,12 +132,10 @@ pub fn decide_move(
     trash: &TrashDir,
     ui: &dyn RevertUi,
 ) -> Result<bool, RevertError> {
-    let from = op["from"].as_str().unwrap_or_default();
-    let to = op["to"].as_str().unwrap_or_default();
-    // The text only shows a name that is not UTF-8 (`%E9`); the move is made
-    // with the exact bytes, when the plan gives them (doc "Tree names").
-    let from_path = exact_path(op, "from_bytes", from);
-    let to_path = exact_path(op, "to_bytes", to);
+    // The text is for the messages; the move is made with the bytes.
+    let (from, from_path) = plan_path(op, "from");
+    let (to, to_path) = plan_path(op, "to");
+    let (from, to) = (from.as_str(), to.as_str());
     // `path_present`, not `exists()`: a broken symlink is a file that is
     // there, and one this step can move (see `crate::fsentry::path_present`).
     let available = crate::fsentry::path_present(&from_path);
@@ -275,14 +271,13 @@ pub fn decide_deleted(
 
 /// The repository-relative path of a metarecord's file (`mfr_path`), `None`
 /// when it has none or the metarecord is gone.
-fn path_of(repo: &Repo<'_>, uuid: &str) -> Result<Option<String>, RevertError> {
+fn path_of(
+    repo: &Repo<'_>,
+    uuid: &str,
+) -> Result<Option<crate::metarecord::TreePath>, RevertError> {
     let path = format!("{}/metarecords/{uuid}/fields/mfr_path/resolve-tree", repo.base());
     match repo.client.get(&path) {
-        Ok(resp) => Ok(resp["paths"]
-            .as_array()
-            .and_then(|paths| paths.first())
-            .and_then(Json::as_str)
-            .map(str::to_string)),
+        Ok(resp) => Ok(crate::sync::lookup::paths_in(&resp["paths"]).into_iter().next()),
         Err(e) if e.is_not_found() => Ok(None),
         Err(e) => Err(e.into()),
     }
@@ -315,9 +310,11 @@ fn retrash(
         Err(e) if e.is_not_found() => return Ok(()),
         Err(e) => return Err(e.into()),
     };
-    let Some(rel) = path_of(repo, entity)? else { return Ok(()) };
-    let abs = crate::fsentry::join_rel(&repo.root, &rel)
-        .ok_or_else(|| RevertError(format!("{rel:?} is not a path under the root")))?;
+    let Some(path) = path_of(repo, entity)? else { return Ok(()) };
+    // The bytes are the file; the trash records the path as text.
+    let abs = crate::fsentry::join_tree(&repo.root, &path)
+        .ok_or_else(|| RevertError(format!("{:?} is not a path under the root", path.display())))?;
+    let rel = path.display().into_owned();
     if !crate::fsentry::path_present(&abs) {
         ui.note(&format!("{} is not on disk: nothing to send back to the trash", abs.display()));
         return Ok(());
@@ -460,7 +457,8 @@ pub fn revert(
         for op in started["operations"].as_array().into_iter().flatten() {
             if op["filesystem"]["action"] == "trash_content" {
                 let entity = op["entity_uuid"].as_str().unwrap_or_default();
-                let depth = path_of(repo, entity)?.map_or(0, |p| p.matches('/').count());
+                let depth = path_of(repo, entity)?
+                    .map_or(0, |p| p.as_bytes().iter().filter(|b| **b == b'/').count());
                 to_retrash.push((depth, op));
             }
         }
@@ -476,11 +474,8 @@ pub fn revert(
             // means "leave this operation out".
             let leave_out = match op["filesystem"]["action"].as_str() {
                 Some("move") => {
-                    let fs = &op["filesystem"];
-                    let step = json!({
-                        "from": fs["from"], "to": fs["to"],
-                        "from_bytes": fs["from_bytes"], "to_bytes": fs["to_bytes"],
-                    });
+                    let step =
+                        json!({"from": op["filesystem"]["from"], "to": op["filesystem"]["to"]});
                     decide_move(&step, policies, &repo.trash, ui)?
                 }
                 Some("restore_content") => decide_deleted(
@@ -647,8 +642,8 @@ mod tests {
         std::fs::remove_dir_all(&tmp).ok();
     }
 
-    // A name that is not UTF-8 only *shows* in the text `from`/`to` (`%E9`):
-    // the move is made with the exact bytes the plan also carries.
+    // A path that is not text comes as `{text, bytes}`: the move is made with
+    // the bytes (doc "Tree names").
     #[cfg(unix)]
     #[test]
     fn apply_moves_by_the_exact_bytes_when_the_plan_gives_them() {
@@ -659,8 +654,8 @@ mod tests {
         std::fs::write(&from, b"x").unwrap();
         let hex = |p: &Path| crate::hex::encode(p.as_os_str().as_bytes());
         let op = json!({
-            "from": tmp.join("here%E9.txt"), "to": tmp.join("moved%E9.txt"),
-            "from_bytes": hex(&from), "to_bytes": hex(&to),
+            "from": {"text": tmp.join("here%E9.txt"), "bytes": hex(&from)},
+            "to": {"text": tmp.join("moved%E9.txt"), "bytes": hex(&to)},
         });
         let trash = TrashDir::new(tmp.join("trash"));
         let skip =

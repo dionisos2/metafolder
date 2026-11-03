@@ -293,6 +293,7 @@ fn is_file_op(kind: &str) -> bool {
 fn op_context(ctx: &Ctx, op: &Op) -> Result<String, CliError> {
     let path = lookup::mfr_path_of(ctx, op.a, op.rec_a)?
         .or(lookup::mfr_path_of(ctx, op.b, op.rec_b)?)
+        .map(|p| p.display().into_owned())
         .unwrap_or_else(|| op.rec_a.as_simple().to_string());
     Ok(match &op.field {
         Some(f) => format!("{path} [{f}]"),
@@ -507,9 +508,12 @@ impl<'a> Run<'a> {
     fn abs_path(&self, op: &Op, side: Side) -> Result<Option<(String, PathBuf)>, CliError> {
         let key = self.key(op, side);
         lookup::mfr_path_of(self.ctx, key.0, key.1)?
-            .map(|p| match crate::fsentry::join_rel(&self.roots[&key.0], &p) {
-                Some(abs) => Ok((p, abs)),
-                None => Err(CliError::Op(format!("{p:?} is not a path under the root"))),
+            // The bytes are the file; the text is for what the run reports.
+            .map(|p| match crate::fsentry::join_tree(&self.roots[&key.0], &p) {
+                Some(abs) => Ok((p.display().into_owned(), abs)),
+                None => {
+                    Err(CliError::Op(format!("{:?} is not a path under the root", p.display())))
+                }
             })
             .transpose()
     }
@@ -553,7 +557,7 @@ impl<'a> Run<'a> {
             fields.dedup();
             for field in fields {
                 for p in lookup::tree_paths(self.ctx, repo, rec, field).unwrap_or_default() {
-                    deepest = deepest.max(p.split('/').filter(|c| !c.is_empty()).count());
+                    deepest = deepest.max(p.names().iter().filter(|n| !n.is_empty()).count());
                 }
             }
         }

@@ -221,34 +221,47 @@ impl Forest {
     /// form the DSL and `resolve_path` use, so the two round-trip. A
     /// named-root forest (e.g. tags) has a non-empty root name and so no
     /// leading "/".
-    pub fn paths_of(&self, store: &dyn Rows, field: &str, uuid: Uuid) -> Result<Vec<String>> {
+    pub fn paths_of(
+        &self,
+        store: &dyn Rows,
+        field: &str,
+        uuid: Uuid,
+    ) -> Result<Vec<metafolder_core::metarecord::TreePath>> {
         let mut memo = HashMap::new();
         let mut paths = self.paths_within(store, field, uuid, 0, &mut memo)?;
         paths.truncate(MAX_PATHS);
-        Ok(paths)
+        Ok(paths.into_iter().map(metafolder_core::metarecord::TreePath::from_bytes).collect())
     }
 
+    /// The paths of `uuid` as their exact bytes (see [`Self::paths_of`]).
     fn paths_within(
         &self,
         store: &dyn Rows,
         field: &str,
         uuid: Uuid,
         depth: usize,
-        memo: &mut HashMap<Uuid, Vec<String>>,
-    ) -> Result<Vec<String>> {
+        memo: &mut HashMap<Uuid, Vec<Vec<u8>>>,
+    ) -> Result<Vec<Vec<u8>>> {
         if let Some(paths) = memo.get(&uuid) {
             return Ok(paths.clone());
         }
         if depth >= MAX_TREE_DEPTH {
             anyhow::bail!("TreeRef chain deeper than {MAX_TREE_DEPTH} for entry {uuid}");
         }
+        let positions: Vec<(Option<Uuid>, TreeName)> = store
+            .rows_named(uuid, field)?
+            .into_iter()
+            .filter_map(|r| r.value.position().map(|(p, n)| (p, n.clone())))
+            .collect();
         let mut paths = Vec::new();
-        for (parent, name) in store.positions(field, uuid)? {
+        for (parent, name) in positions {
             match parent {
-                None => paths.push(name),
+                None => paths.push(name.as_bytes().to_vec()),
                 Some(parent) => {
-                    for parent_path in self.paths_within(store, field, parent, depth + 1, memo)? {
-                        paths.push(format!("{parent_path}/{name}"));
+                    for mut path in self.paths_within(store, field, parent, depth + 1, memo)? {
+                        path.push(b'/');
+                        path.extend_from_slice(name.as_bytes());
+                        paths.push(path);
                     }
                 }
             }
@@ -258,6 +271,46 @@ impl Forest {
         }
         memo.insert(uuid, paths.clone());
         Ok(paths)
+    }
+
+    /// The node at `path` in `field`'s forest, by its **exact bytes** — the
+    /// inverse of [`Self::paths_of`], for a path a program holds rather than
+    /// one a user typed ([`Self::resolve_path_as`] reads that). A
+    /// case-insensitive repository still folds a name that is text, as the
+    /// filesystem does (doc "Case sensitivity").
+    pub fn resolve_exact(
+        &self,
+        store: &dyn Rows,
+        field: &str,
+        path: &metafolder_core::metarecord::TreePath,
+    ) -> Result<Option<Uuid>> {
+        let mut cur = None;
+        for (i, name) in path.names().iter().enumerate() {
+            // A redundant slash, as in the typed form: only the first name — a
+            // root's — may be empty.
+            if i > 0 && name.is_empty() {
+                continue;
+            }
+            let mut found = store.child_by_bytes(field, cur, name.as_bytes())?;
+            if found.is_none() && self.case_insensitive && name.is_exact() {
+                found = store.child_by_text(field, cur, &name.display(), true)?;
+            }
+            match found {
+                Some(uuid) => cur = Some(uuid),
+                None => return Ok(None),
+            }
+        }
+        Ok(cur)
+    }
+
+    /// The direct children of `uuid`, each name as its exact bytes.
+    pub fn children_named(
+        &self,
+        store: &dyn Rows,
+        field: &str,
+        uuid: Uuid,
+    ) -> Result<Vec<(TreeName, Uuid)>> {
+        Ok(store.children_named(field, uuid)?.into_iter().map(|(u, n)| (n, u)).collect())
     }
 
     /// The nodes of `field`'s forest with a path satisfying `pred`: a walk of

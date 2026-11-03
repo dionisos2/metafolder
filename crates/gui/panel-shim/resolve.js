@@ -6,11 +6,14 @@
 // directory above it is renamed. The shim exposes this per repo as
 // metafolder.daemon.resolvePath / resolveTreeRef.
 
+import { wireText } from '/__ui.js';
+
 /**
  * A `tree_ref` value as the daemon serialises it: the parent metarecord (null
- * at a forest root) and this node's name.
+ * at a forest root) and this node's name — a string, or `{text, bytes}` for a
+ * name that is not text (doc "Tree names").
  *
- * @typedef {{parent: string|null, name: string}} TreeRefValue
+ * @typedef {{parent: string|null, name: string | {text: string, bytes: string}}} TreeRefValue
  */
 
 /**
@@ -30,7 +33,8 @@ export function createPathResolver(resolvePaths) {
   /** The path a `tree_ref` value names. Its parent sits in the same forest as
    *  the value: `field` is the field the value was read from.
    *  @param {TreeRefValue} value @param {string} [field] */
-  async function resolveTreeRef({ parent, name }, field = 'mfr_path') {
+  async function resolveTreeRef({ parent, name: wire }, field = 'mfr_path') {
+    const name = wireText(wire) ?? '';
     if (!parent) return name; // tree root (empty name for the repo root)
     const parentPath = await resolveUuid(parent, field);
     // An empty parent path is the filesystem repo root (name ""), so a top-level

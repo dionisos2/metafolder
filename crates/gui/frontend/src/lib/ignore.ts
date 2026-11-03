@@ -15,6 +15,7 @@ export {
 
 // The repo-root-relative path helper lives in folder.ts — one convention, one
 // implementation.
+import { wireTexts } from './treePath';
 import { relativeToRoot } from './folder';
 
 /** One installed preset, already expanded by the backend. */
@@ -120,8 +121,8 @@ async function selectedDir({ call, repo, selected }: TargetDirOptions): Promise<
   const resolved = (await call(
     'GET',
     `/repos/${repo}/metarecords/${selected.uuid}/fields/mfr_path/resolve-tree`,
-  )) as { paths?: string[] };
-  const path: string | undefined = resolved?.paths?.[0];
+  )) as { paths?: unknown };
+  const path: string | undefined = wireTexts(resolved?.paths)[0];
   if (typeof path !== 'string') return null;
   if (type === 'dir') return path;
   const cut = path.lastIndexOf('/');

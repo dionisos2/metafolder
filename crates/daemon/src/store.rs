@@ -90,6 +90,14 @@ macro_rules! forward_to_store {
                 let $me = self;
                 Rows::children($conn, field, parent)
             }
+            fn children_named(
+                &self,
+                field: &str,
+                parent: Uuid,
+            ) -> Result<Vec<(Uuid, metafolder_core::metarecord::TreeName)>> {
+                let $me = self;
+                Rows::children_named($conn, field, parent)
+            }
             fn children_page(
                 &self,
                 field: &str,
@@ -306,6 +314,13 @@ pub trait Rows {
     fn holders(&self, name: &str) -> Result<Vec<Uuid>>;
     /// The direct children of `parent` in `field`'s forest, `(uuid, name)`.
     fn children(&self, field: &str, parent: Uuid) -> Result<Vec<(Uuid, String)>>;
+    /// [`Self::children`] with each name as its exact bytes — what a client is
+    /// given to act on (doc "Tree names").
+    fn children_named(
+        &self,
+        field: &str,
+        parent: Uuid,
+    ) -> Result<Vec<(Uuid, metafolder_core::metarecord::TreeName)>>;
     /// A page of `parent`'s children in `field`'s forest in the byte order of
     /// their names — reversed when `descending` — strictly after `after` in
     /// that order: `(uuid, name bytes)`. The default reads every child; a

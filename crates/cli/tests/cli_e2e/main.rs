@@ -89,6 +89,8 @@ fn daemon_port() -> &'static str {
 struct Out {
     code: i32,
     stdout: String,
+    /// The exact bytes, for output that need not be UTF-8 (a path).
+    stdout_bytes: Vec<u8>,
     stderr: String,
 }
 
@@ -116,6 +118,7 @@ fn mf_full(args: &[&str], stdin: Option<&str>, envs: &[(&str, &str)], daemon: bo
     Out {
         code: output.status.code().unwrap_or(-1),
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stdout_bytes: output.stdout.clone(),
         stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
     }
 }

@@ -189,12 +189,9 @@ pub(super) fn resolve_tree_paths(
         let mut rows: Vec<(String, String)> = resolved
             .iter()
             .flat_map(|(uuid, paths)| {
-                paths
-                    .as_array()
-                    .cloned()
-                    .unwrap_or_default()
+                metafolder_core::sync::lookup::paths_in(paths)
                     .into_iter()
-                    .filter_map(move |p| p.as_str().map(|p| (p.to_string(), uuid.clone())))
+                    .map(move |p| (p.display().into_owned(), uuid.clone()))
             })
             .collect();
         rows.sort();
@@ -206,8 +203,8 @@ pub(super) fn resolve_tree_paths(
     }
     let mut paths: Vec<String> = resolved
         .into_iter()
-        .flat_map(|(_, paths)| paths.as_array().cloned().unwrap_or_default())
-        .filter_map(|p| p.as_str().map(str::to_string))
+        .flat_map(|(_, paths)| metafolder_core::sync::lookup::paths_in(&paths))
+        .map(|p| p.display().into_owned())
         .collect();
     paths.sort();
     paths.dedup();
@@ -481,8 +478,10 @@ pub fn field_get(
             &json!({"query": ref_query, "field": target}),
         )?;
         for r in &refs {
-            let paths = resolved[r].as_array().into_iter().flatten();
-            let paths: Vec<String> = paths.filter_map(|p| p.as_str().map(String::from)).collect();
+            let paths: Vec<String> = metafolder_core::sync::lookup::paths_in(&resolved[r])
+                .iter()
+                .map(|p| p.display().into_owned())
+                .collect();
             if !paths.is_empty() {
                 by_uuid.insert(r.clone(), paths);
             }

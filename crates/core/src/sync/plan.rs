@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::daemon_client::with_query;
 use crate::dsl;
-use crate::metarecord::{MetaRecord, Value};
+use crate::metarecord::{MetaRecord, TreePath, Value};
 
 use super::intents::{self, Intents, Settings};
 use super::lookup::{self, LinkRow, LinkTable, Pair, Translator};
@@ -146,18 +146,18 @@ struct LinkingResult {
 #[derive(Default)]
 struct Reads {
     records: HashMap<(Uuid, Uuid), Json>,
-    paths: HashMap<(Uuid, Uuid), Vec<(String, String)>>,
+    paths: HashMap<(Uuid, Uuid), Vec<(String, TreePath)>>,
     /// The records the bulk pass covered. For these, `paths` is authoritative:
     /// an absent entry means "no TreeRef identity", not "not loaded yet".
     preloaded: HashSet<(Uuid, Uuid)>,
     /// The occupant of a `(repo, field, path)` position, read by set. Present
     /// means answered (`None` = free); absent means "ask the daemon".
-    occupants: HashMap<(Uuid, String, String), Option<Uuid>>,
+    occupants: HashMap<(Uuid, String, TreePath), Option<Uuid>>,
 }
 
-/// Positions per occupant request: one `eq` operand each, under the daemon's
-/// cap on a combinator's operands (`MAX_COMBINATOR_OPERANDS`, 200).
-const OCCUPANT_CHUNK: usize = 200;
+/// Positions per occupant request (`tree/resolve-paths`, which takes up to
+/// 10 000): bounds the request body.
+const OCCUPANT_CHUNK: usize = 1000;
 
 /// Records per bulk request. The `uuid_in` predicate is a single query node
 /// whatever its length, so this bounds the request *body*, not the query.
@@ -211,7 +211,7 @@ impl Reads {
             // once *every* field came back, because from then on an absent entry
             // means "carries no TreeRef" — and a record wrongly read that way
             // would be linked by field equality instead of by its path.
-            let mut paths: HashMap<Uuid, Vec<(String, String)>> = HashMap::new();
+            let mut paths: HashMap<Uuid, Vec<(String, TreePath)>> = HashMap::new();
             for field in &fields {
                 let body = json!({"query": selector, "field": field});
                 let Ok(resp) = ctx.client.post(&format!("{base}/query/fields/resolve-tree"), &body)
@@ -221,10 +221,8 @@ impl Reads {
                 for (hex, found) in resp.as_object().into_iter().flatten() {
                     let Ok(uuid) = Uuid::parse_str(hex) else { continue };
                     let entry = paths.entry(uuid).or_default();
-                    for path in found.as_array().into_iter().flatten() {
-                        if let Some(path) = path.as_str() {
-                            entry.push((field.clone(), path.to_string()));
-                        }
+                    for path in lookup::paths_in(found) {
+                        entry.push((field.clone(), path));
                     }
                 }
             }
@@ -238,20 +236,14 @@ impl Reads {
     }
 
     /// Reads the occupants of `positions` (`(field, path)`) in `repo` by set:
-    /// an `or` of exact-node equalities (`field = "path"`, which the daemon
-    /// resolves through its forest like `tree/resolve-path`), and one
-    /// `query/fields/resolve-tree` per field to map the answers back to the
-    /// positions they hold.
+    /// `tree/resolve-paths`, each path exactly as the other side gave it —
+    /// never its text, which reads a name that is not UTF-8 two ways (doc
+    /// "Tree names") — and answered in the order asked.
     ///
-    /// Best-effort, like [`Self::preload`]. And the mapping back is by path
-    /// text, which the daemon may spell differently from the question (a
-    /// case-insensitive repository): a chunk whose answers do not all map back
-    /// records only its occupied positions, leaving the rest to the
-    /// single-position request — "free" is recorded only when every occupant
-    /// the daemon found is accounted for.
-    fn preload_occupants(&mut self, ctx: &Ctx, repo: Uuid, positions: &[(String, String)]) {
-        let url = format!("/repos/{}/query/fields/resolve-tree", repo.as_simple());
-        let mut by_field: Vec<(&str, Vec<&str>)> = Vec::new();
+    /// Best-effort, like [`Self::preload`]: a chunk the daemon refuses is left
+    /// to the single-position request.
+    fn preload_occupants(&mut self, ctx: &Ctx, repo: Uuid, positions: &[(String, TreePath)]) {
+        let mut by_field: Vec<(&str, Vec<&TreePath>)> = Vec::new();
         for (field, path) in positions {
             if self.occupants.contains_key(&(repo, field.clone(), path.clone())) {
                 continue;
@@ -261,42 +253,13 @@ impl Reads {
                 None => by_field.push((field, vec![path])),
             }
         }
-        for (field, paths) in by_field {
-            let mut paths = paths;
+        for (field, mut paths) in by_field {
             paths.sort_unstable();
             paths.dedup();
             for chunk in paths.chunks(OCCUPANT_CHUNK) {
-                let operands: Vec<Json> = chunk
-                    .iter()
-                    .map(|p| {
-                        json!({"type": "eq", "field": field,
-                               "value": {"type": "string", "value": p}})
-                    })
-                    .collect();
-                let body = json!({"query": {"type": "or", "operands": operands}, "field": field});
-                let Ok(resp) = ctx.client.post(&url, &body) else { continue };
-                let asked: HashSet<&str> = chunk.iter().copied().collect();
-                let mut found: HashMap<&str, Uuid> = HashMap::new();
-                let mut all_mapped = true;
-                for (hex, held) in resp.as_object().into_iter().flatten() {
-                    let Ok(uuid) = Uuid::parse_str(hex) else {
-                        all_mapped = false;
-                        continue;
-                    };
-                    let mut mapped = false;
-                    for p in held.as_array().into_iter().flatten().filter_map(Json::as_str) {
-                        if let Some(&q) = asked.get(p) {
-                            found.insert(q, uuid);
-                            mapped = true;
-                        }
-                    }
-                    all_mapped &= mapped;
-                }
-                for &p in chunk {
-                    let occupant = found.get(p).copied();
-                    if occupant.is_some() || all_mapped {
-                        self.occupants.insert((repo, field.to_string(), p.to_string()), occupant);
-                    }
+                let Ok(found) = lookup::resolve_paths(ctx, repo, field, chunk) else { continue };
+                for (path, occupant) in chunk.iter().zip(found) {
+                    self.occupants.insert((repo, field.to_string(), (*path).clone()), occupant);
                 }
             }
         }
@@ -309,9 +272,9 @@ impl Reads {
         ctx: &Ctx,
         repo: Uuid,
         field: &str,
-        path: &str,
+        path: &TreePath,
     ) -> Result<Option<Uuid>, CliError> {
-        if let Some(o) = self.occupants.get(&(repo, field.to_string(), path.to_string())) {
+        if let Some(o) = self.occupants.get(&(repo, field.to_string(), path.clone())) {
             return Ok(*o);
         }
         lookup::resolve_path(ctx, repo, field, path)
@@ -393,7 +356,7 @@ fn linking_phase(
     // Then the occupant, on the other side, of every identity position the
     // scope holds: what `resolve_link` asks per record otherwise.
     for (from, to, scope) in [(a, b, &scope_a_all), (b, a, &scope_b_all)] {
-        let positions: Vec<(String, String)> =
+        let positions: Vec<(String, TreePath)> =
             scope.iter().filter_map(|&u| reads.paths.get(&(from, u))).flatten().cloned().collect();
         reads.preload_occupants(ctx, to, &positions);
     }
@@ -628,8 +591,9 @@ impl<'a> Planner<'a> {
         let Some(root) = self.roots.get(&end.repo) else { return Ok(None) };
         lookup::mfr_path_of(self.ctx, end.repo, end.record)?
             .map(|p| {
-                crate::fsentry::join_rel(root, &p)
-                    .ok_or_else(|| CliError::Op(format!("{p:?} is not a path under the root")))
+                crate::fsentry::join_tree(root, &p).ok_or_else(|| {
+                    CliError::Op(format!("{:?} is not a path under the root", p.display()))
+                })
             })
             .transpose()
     }
@@ -778,7 +742,10 @@ impl<'a> Planner<'a> {
     fn shown(&self, end: &End, field: &str, values: &[Value]) -> Result<Vec<Value>, CliError> {
         if end.baseline.is_some() && values.iter().any(|v| matches!(v, Value::TreeRef { .. })) {
             let paths = lookup::tree_paths(self.ctx, end.repo, end.record, field)?;
-            return Ok(paths.into_iter().map(Value::String).collect());
+            return Ok(paths
+                .into_iter()
+                .map(|p| Value::String(p.display().into_owned()))
+                .collect());
         }
         if field == CONTENT_FIELD {
             let rec = self.record(end)?;
@@ -834,7 +801,8 @@ impl<'a> Planner<'a> {
                 let path = [end_a, end_b]
                     .iter()
                     .filter(|e| e.baseline.is_some())
-                    .find_map(|e| lookup::mfr_path_of(self.ctx, e.repo, e.record).ok().flatten());
+                    .find_map(|e| lookup::mfr_path_of(self.ctx, e.repo, e.record).ok().flatten())
+                    .map(|p| p.display().into_owned());
                 let record = path.unwrap_or_else(|| end_a.record.as_simple().to_string());
                 self.ctx.prompter.resolve_conflict(&ConflictQuestion {
                     field,
@@ -1002,7 +970,7 @@ fn resolve_link(
     }
 
     // Occupant of each identity position on the target side.
-    let mut occ: Vec<(String, String, Option<Uuid>)> = Vec::with_capacity(ids.len());
+    let mut occ: Vec<(String, TreePath, Option<Uuid>)> = Vec::with_capacity(ids.len());
     for (field, path) in &ids {
         occ.push((field.clone(), path.clone(), reads.occupant(ctx, target_repo, field, path)?));
     }
@@ -1067,7 +1035,7 @@ fn identity_paths_in(
     reads: &Reads,
     repo: Uuid,
     record: Uuid,
-) -> Result<Vec<(String, String)>, CliError> {
+) -> Result<Vec<(String, TreePath)>, CliError> {
     if reads.preloaded.contains(&(repo, record)) {
         return Ok(reads.paths.get(&(repo, record)).cloned().unwrap_or_default());
     }
@@ -1090,10 +1058,8 @@ fn identity_paths_in(
             record.as_simple(),
             field
         ))?;
-        for p in resp["paths"].as_array().cloned().unwrap_or_default() {
-            if let Some(path) = p.as_str() {
-                out.push((field.clone(), path.to_string()));
-            }
+        for path in lookup::paths_in(&resp["paths"]) {
+            out.push((field.clone(), path));
         }
     }
     Ok(out)
@@ -1229,7 +1195,7 @@ fn ref_targets(ctx: &Ctx, reads: &Reads, repo: Uuid, record: Uuid) -> Result<Vec
 
 /// Builds the plan-aborting incoherence error for a record (doc "Matching
 /// records across repositories").
-fn incoherence(record: Uuid, occ: &[(String, String, Option<Uuid>)], why: &str) -> CliError {
+fn incoherence(record: Uuid, occ: &[(String, TreePath, Option<Uuid>)], why: &str) -> CliError {
     let positions: Vec<String> = occ
         .iter()
         .map(|(f, p, o)| match o {
@@ -1482,25 +1448,20 @@ mod tests {
             if path.ends_with("/status") {
                 return Ok(json!({"links": []}));
             }
+            if path.ends_with("/tree/resolve-paths") {
+                // The occupants of a set of positions on the other side, in the
+                // order asked. When occupied, one record holds every position.
+                let n = body.and_then(|b| b["paths"].as_array().map(Vec::len)).unwrap_or(0);
+                let one = if self.occupied {
+                    json!(uuid(0x77).as_simple().to_string())
+                } else {
+                    Json::Null
+                };
+                return Ok(json!({ "uuids": vec![one; n] }));
+            }
             if path.ends_with("/query/fields/resolve-tree") {
                 if self.bulk_fails {
                     return Err(crate::daemon_client::DaemonError::local("no bulk form here"));
-                }
-                let query = body.map(|b| b["query"].clone()).unwrap_or_default();
-                if query["type"] == "or" {
-                    // The occupants of a set of positions on the other side: an
-                    // `or` of exact-node equalities, answered by uuid like any
-                    // set. When occupied, one record holds every position asked.
-                    if !self.occupied {
-                        return Ok(json!({}));
-                    }
-                    let asked: Vec<Json> = query["operands"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .map(|o| o["value"]["value"].clone())
-                        .collect();
-                    return Ok(json!({ uuid(0x77).as_simple().to_string(): asked }));
                 }
                 // The bulk form answers a flat object keyed by uuid hex, as the
                 // daemon does — not a `{"paths": …}` envelope.
@@ -1695,43 +1656,51 @@ mod tests {
         assert_eq!(*client.query_calls.borrow(), 1, "the walk should stop on the second match");
     }
 
-    /// The set read maps its answers back by path text. A case-insensitive
-    /// daemon may answer `/A.txt` for the position asked as `/a.txt`: the
-    /// occupant must then come from the single-position request, never be read
-    /// as "free" — a free position is planned as a new record, beside the one
-    /// that is there.
+    /// The occupants of a scope's positions are read by set, each path sent
+    /// exactly as the other side gave it — the bytes of a name that is not
+    /// UTF-8, `verbatim` for text — and answered in the order asked: nothing to
+    /// map back by a text the daemon may spell otherwise, and no reading of an
+    /// escape to guess (doc "Tree names").
     #[test]
-    fn an_occupant_spelled_differently_is_asked_again_not_read_as_free() {
-        struct CaseFolding {
-            singles: RefCell<usize>,
+    fn occupants_are_read_by_set_exactly_and_in_order() {
+        struct Exact {
+            asked: RefCell<Vec<Json>>,
         }
-        impl DaemonClient for CaseFolding {
+        impl DaemonClient for Exact {
             fn request(
                 &self,
                 _method: &str,
                 path: &str,
                 body: Option<&Json>,
             ) -> Result<Json, crate::daemon_client::DaemonError> {
-                if path.ends_with("/query/fields/resolve-tree") {
-                    return Ok(json!({ uuid(0x77).as_simple().to_string(): ["/A.txt"] }));
-                }
-                assert!(path.ends_with("/tree/resolve-path"), "unexpected {path}");
-                *self.singles.borrow_mut() += 1;
-                let asked = body.unwrap()["path"].as_str().unwrap().to_string();
-                let held = asked == "/a.txt";
-                Ok(json!({"uuid": held.then(|| uuid(0x77).as_simple().to_string())}))
+                assert!(path.ends_with("/tree/resolve-paths"), "unexpected {path}");
+                let body = body.unwrap().clone();
+                assert_eq!(body["form"], "verbatim");
+                let answers: Vec<Json> = body["paths"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|p| match p {
+                        Json::Object(_) => json!(uuid(0x77).as_simple().to_string()),
+                        _ => Json::Null,
+                    })
+                    .collect();
+                self.asked.borrow_mut().push(body);
+                Ok(json!({ "uuids": answers }))
             }
         }
-        let client = CaseFolding { singles: RefCell::new(0) };
+        let client = Exact { asked: RefCell::new(Vec::new()) };
         let prompter = NoopPrompter;
         let ctx = SyncCtx { client: &client, prompter: &prompter, page_size: 500 };
         let repo = uuid(0xBB);
+        let latin = TreePath::from_bytes(b"/caf\xe9.txt".to_vec());
+        let literal = TreePath::from("/caf%E9.txt");
         let mut reads = Reads::default();
         let positions =
-            vec![("mfr_path".to_string(), "/a.txt".to_string()), ("mfr_path".into(), "/b".into())];
+            vec![("mfr_path".to_string(), latin.clone()), ("mfr_path".into(), literal.clone())];
         reads.preload_occupants(&ctx, repo, &positions);
-        assert_eq!(reads.occupant(&ctx, repo, "mfr_path", "/a.txt").unwrap(), Some(uuid(0x77)));
-        assert_eq!(reads.occupant(&ctx, repo, "mfr_path", "/b").unwrap(), None);
-        assert_eq!(*client.singles.borrow(), 2, "neither position could be read from the set");
+        assert_eq!(reads.occupant(&ctx, repo, "mfr_path", &latin).unwrap(), Some(uuid(0x77)));
+        assert_eq!(reads.occupant(&ctx, repo, "mfr_path", &literal).unwrap(), None);
+        assert_eq!(client.asked.borrow().len(), 1, "one request for the set");
     }
 }

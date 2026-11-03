@@ -8,8 +8,17 @@ summary: Walking a forest top-down (roots, children), and turning paths into nod
 |<<cmd "GET /repos/:repo/tree/roots">> `[?field=<f>]` |the roots of a forest (default `mfr_path`): `[{"uuid", "name"}, …]` by name |
 |<<cmd "GET /repos/:repo/tree/children">> `?field=<f>&uuid=<hex>` |the direct children of one node, same shape, by name |
 |<<cmd "POST /repos/:repo/tree/resolve-path">> |`{"field"?, "path", "form"?}` → `{"uuid": <hex> or null}` |
+|<<cmd "POST /repos/:repo/tree/resolve-paths">> |`{"field"?, "paths": […], "form"?}` → `{"uuids": [<hex> or null, …]}`, in the order asked; at most 10 000 paths |
 |<<cmd "GET /repos/:repo/metarecords/:uuid/fields/:name/resolve-tree">> |one metarecord's path in that forest: `{"paths": […]}` |
 |<<cmd "POST /repos/:repo/query/fields/resolve-tree">> |`{"query", "field"?}` → `{"<uuid>": ["<path>"], …}` for every match |
+
+''A path or a name is its exact bytes'' ([[Tree names]]): a plain string while it is
+text, `{"text", "bytes"}` (bytes in lowercase hex, `/`-joined for a path) when it is
+not — a `name` of `roots` and `children`, a path of `resolve-tree`, the same form as a
+`tree_ref` value's name. A client that acts on what it is given — opens the file,
+looks the node up again — uses the bytes, or the string as it is; reading the text of
+the object form back would be a guess, since a file really named `caf%E9` shows the
+same. Since `API_VERSION` 25; before, every path and name was its text.
 
 ''Roots'' are the entry point a query cannot express: the tag hierarchy's top-level
 nodes are reachable only from here. A tree walker then descends with ''children'':
@@ -21,9 +30,14 @@ The file-manager's tracked listing is one call per directory opened.
 ''resolve-path'' is the inverse of ''resolve-tree'': a path
 ([[TreeRef path conventions]]) to the uuid of its node, or `null` for none. It is how
 a client ''sets'' a `tree_ref` from a path: resolve the parent path, then write
-`(parent, name)`. Siblings are unique, so at most one node matches — per reading of an
-escaped name; `form` (`verbatim` or `escaped`) says which is meant, and without it an
-ambiguous path answers `null` ([[Tree names]]).
+`(parent, name)`. A `path` is either form:
+
+* a ''string'' is text, as a user typed it. Siblings are unique, so at most one node matches — per reading of an escaped name; `form` (`verbatim` or `escaped`) says which is meant, and without it an ambiguous path answers `null` ([[Tree names]]). `verbatim` is the string's own bytes, exactly: what a client sends back for a string the daemon gave it;
+* a ''`{text, bytes}` object'' is those bytes, exactly, whatever `form` says.
+
+''resolve-paths'' is the same for many paths of one forest at once, answered in the
+order asked — the occupants of a whole scope's positions in one request, as the
+sync plan reads them ([[Matching records across repositories]]).
 
 ''resolve-tree'' answers an empty list for a metarecord without a position, or whose
 chain is broken. Its set form resolves every match of a query in one request —

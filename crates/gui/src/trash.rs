@@ -65,11 +65,10 @@ fn first_mfr_path(
     let resp = client
         .get(&format!("/repos/{repo}/metarecords/{uuid}/fields/mfr_path/resolve-tree"))
         .map_err(|e| e.message)?;
-    Ok(resp["paths"]
-        .as_array()
-        .and_then(|paths| paths.first())
-        .and_then(Value::as_str)
-        .map(str::to_string))
+    // As text: the GUI's trashing joins displayed paths (doc "Tree names").
+    Ok(metafolder_core::sync::lookup::paths_in(&resp["paths"])
+        .first()
+        .map(|p| p.display().into_owned()))
 }
 
 /// Trashes `abs`, taking the repository's metarecords for it with it. Returns
@@ -175,10 +174,11 @@ fn plan_bulk_trash(
     let mut outcome = BulkTrashOutcome::default();
     let mut items: Vec<(String, String)> = Vec::new();
     for (uuid, list) in paths {
-        match list.as_array().and_then(|l| l.first()).and_then(Value::as_str) {
+        let first = metafolder_core::sync::lookup::paths_in(list).into_iter().next();
+        match first.as_ref().map(|p| p.display()) {
             None => outcome.without_file += 1,
-            Some("") => outcome.root_kept = true,
-            Some(rel) => items.push((rel.to_string(), uuid.clone())),
+            Some(rel) if rel.is_empty() => outcome.root_kept = true,
+            Some(rel) => items.push((rel.into_owned(), uuid.clone())),
         }
     }
     items.sort();

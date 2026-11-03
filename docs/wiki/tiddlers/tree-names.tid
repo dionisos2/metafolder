@@ -31,12 +31,22 @@ the watcher and its buffered events, the executor. A path the daemon ''reads bac
 from the store to touch the disk is rebuilt from the bytes too (`Forest::rel_path_of`),
 never from the displayed path, whose `%E9` names no file: the orphan scan and clear,
 relink, reconcile's question whether a file it did not meet is gone, the duplicate
-scan, the watch budget's frontier. Where text is meant, text is used:
-`mf_ignore` patterns are regexes over displayed paths, and responses report the
-displayed form. A revert plan's `move` gives both: the displayed paths, and their bytes
-in hex, which the client moves (doc "Revert endpoints"). Two gaps remain ([[Path representation]]): a path ''argument''
-(`mf metarecord add --path`, `mf uuid`) crosses the JSON API as a string, so it must be valid
-UTF-8; and a sync joins the displayed path onto the root, which misses such a file.
+scan, the watch budget's frontier.
+
+A path a ''client'' acts on crosses the wire as its bytes too (below, "On the wire"):
+the paths of `resolve-tree`, the names of a forest listing, a revert plan's moves; and a
+client looks a node up by the path it was given, exactly (`tree/resolve-path` with a
+path object, or `form: "verbatim"`; [[Tree endpoints]]). So nothing a program holds is
+ever read back from its text: the sync — its plan and its run — and the coordinated
+revert open files and find nodes by their bytes, and `mf path` prints them. Where text
+is meant, text is used: what a user types (a query, `mf_ignore` patterns, regexes over
+displayed paths), and what is only shown — reconcile candidates, orphan listings, watch
+activity — stays the displayed form.
+
+Gaps remain ([[Path representation]]): a path ''argument'' (`mf metarecord add --path`,
+`mf uuid`) crosses the JSON API as a string, so it must be valid UTF-8; the GUI holds
+paths as the text it shows, and its file handles read an escape back by looking at the
+disk (`fs_path.rs`); and the trash records a path as text.
 
 !! Looking a name up
 
@@ -65,3 +75,7 @@ hex) is authoritative:
 
 A client that assumed a string meets a different shape rather than a silently wrong
 name.
+
+A whole ''path'' takes the same form — a string while every name in it is text,
+`{"text", "bytes"}` otherwise, the bytes `/`-joined. A boolean "was escaped" beside the
+text would not do: in `/100%E9/caf%E9.jpg` it cannot tell which escape is one.

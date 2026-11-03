@@ -272,22 +272,21 @@ pub fn run(
     let base = format!("/repos/{repo}");
     let folder = client.get(&format!("{base}/metarecords/{folder_uuid}"))?;
 
-    // The endpoint returns the folder's path in the leading-"/"-rooted form that
-    // `Follows` path targets expect (the repo root resolves to the empty string,
-    // which targets the root itself).
-    let resolved = client.post(
-        &format!("{base}/query/fields/resolve-tree"),
-        &json!({ "query": {"type": "uuid_in", "uuids": [folder_uuid]} }),
-    )?;
-    let path = resolved[folder_uuid]
-        .as_array()
-        .and_then(|paths| paths.first())
-        .and_then(|p| p.as_str())
+    // The folder's path, to report: shown, never acted on.
+    let folder_set = json!({"type": "uuid_in", "uuids": [folder_uuid]});
+    let resolved = client
+        .post(&format!("{base}/query/fields/resolve-tree"), &json!({ "query": folder_set }))?;
+    let path = crate::sync::lookup::paths_in(&resolved[folder_uuid])
+        .into_iter()
+        .next()
         .ok_or_else(|| DaemonError::local("the folder has no resolvable mfr_path"))?
-        .to_string();
+        .display()
+        .into_owned();
 
-    // Direct children, with all their fields, in one paginated pass.
-    let query = json!({ "type": "follows", "field": "mfr_path", "target": path });
+    // Direct children, with all their fields, in one paginated pass — of the
+    // folder itself: its path is text in a query, and a name that is not
+    // UTF-8 shows an escape there that reads two ways (doc "Tree names").
+    let query = json!({ "type": "follows", "field": "mfr_path", "target": folder_set });
     let mut files: Vec<Item> = Vec::new();
     let mut dirs: Vec<Item> = Vec::new();
     let mut names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
@@ -581,6 +580,21 @@ mod orchestration_tests {
                 child("c", "extra", "dir"),
             ]
         })
+    }
+
+    /// The children are asked of the folder by its uuid: a path is text in a
+    /// query, and a folder whose name is not UTF-8 shows an escape there that
+    /// reads two ways (doc "Tree names").
+    #[test]
+    fn test_the_children_are_found_by_the_folder_itself_not_its_path() {
+        let stub = Stub::new(json!({"uuid": "folder", "fields": []}), children());
+        run(&stub, "repo", "folder", "mfr_meta_track", DEFAULT_MAX_GAP, 500, false).unwrap();
+        let calls = stub.calls.lock().unwrap();
+        let (_, _, body) = calls.iter().find(|(_, p, _)| p.ends_with("/query")).unwrap();
+        assert_eq!(
+            body.as_ref().unwrap()["query"]["target"],
+            json!({"type": "uuid_in", "uuids": ["folder"]})
+        );
     }
 
     #[test]

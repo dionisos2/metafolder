@@ -35,7 +35,7 @@ The revert writes in the request's context like any write: the label named in
 ```
 
 * `writes` — the type the revert would record ([[What a revert writes]]); `restores` — the state it would write, in snapshot form (empty: the cell is removed).
-* `filesystem` — `null`, or `{"action": "move", "from", "to", "from_bytes", "to_bytes"}` (`from` and `to` as shown; `from_bytes` and `to_bytes` their exact bytes in lowercase hex, which a name that is not UTF-8 needs — the paths to `mv`), `{"action": "restore_content"}` (from the trash), `{"action": "trash_content"}` (back to the trash). The daemon does not look whether the content is there. `requires_lock` is true when any operation has one.
+* `filesystem` — `null`, or `{"action": "move", "from", "to"}` (the absolute paths to `mv`, each a string, or `{text, bytes}` for one that is not text — [[Tree names]]), `{"action": "restore_content"}` (from the trash), `{"action": "trash_content"}` (back to the trash). The daemon does not look whether the content is there. `requires_lock` is true when any operation has one.
 * `changed_since` — `null` when the cell still holds what the operation left there; otherwise the newest logged operation that wrote it since (`{}` when that one is no longer in the log). A warning: the revert overwrites that write. A client confirms before doing so.
 
 !! POST /revert

@@ -72,11 +72,8 @@ pub(super) async fn get_record_mf_sync(
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let cache = repo_state.tree();
-        let paths = cache.paths_of(&conn, "mfr_path", uuid)?;
-        let mode = match paths.first() {
-            // `paths_of` and `resolve_mf_sync` (eligibility) share the same
-            // leading-"/"-rooted form (`""` = root, `/a/b` = nested).
-            Some(p) => crate::eligibility::resolve_mf_sync(&conn, &cache, p)?,
+        let mode = match cache.rel_path_of(&conn, uuid)? {
+            Some(_) => crate::eligibility::mf_sync_of(&conn, uuid)?,
             None => "internal".to_string(),
         };
         Ok(Json(json!({ "mf_sync": mode })))
@@ -91,8 +88,9 @@ pub(super) struct ResolvePathBody {
     /// Repo-root-relative path (components split on `/`, in the Path string
     /// format): leading-`/`-rooted for the filesystem forest (e.g. `/music/jazz`,
     /// whose first component is the empty root name), no leading `/` for a
-    /// named-root forest such as tags (e.g. `tag1/tag2`).
-    path: String,
+    /// named-root forest such as tags (e.g. `tag1/tag2`). A string is text, read
+    /// as `form` says; a `{text, bytes}` object is the path exactly.
+    path: PathArg,
     /// Which reading of the path to resolve (doc "Tree names"):
     /// `verbatim` for the characters as written, `escaped` for the bytes a
     /// `%XX` stands for. Absent = both, which resolves to nothing when they
@@ -123,8 +121,78 @@ pub(super) async fn resolve_tree_path(
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let cache = repo_state.tree();
-        let uuid = cache.resolve_path_as(&conn, &body.field, &body.path, body.form)?;
+        let uuid = body.path.resolve(&cache, &conn, &body.field, body.form)?;
         Ok(Json(json!({ "uuid": uuid.map(hex) })))
+    })
+    .await
+}
+
+/// A path a request names: typed text, or a path object, exact (doc "Tree
+/// names").
+#[derive(Deserialize)]
+#[serde(untagged)]
+pub(super) enum PathArg {
+    Text(String),
+    Exact(metafolder_core::metarecord::TreePath),
+}
+
+impl PathArg {
+    /// The node this path names. Typed text is read as `form` says — both
+    /// readings by default, and none when they name two different nodes;
+    /// `verbatim` text and a path object are the bytes they spell, exactly.
+    fn resolve(
+        &self,
+        cache: &crate::forest::Forest,
+        conn: &dyn crate::store::Rows,
+        field: &str,
+        form: crate::forest::PathForm,
+    ) -> anyhow::Result<Option<Uuid>> {
+        match self {
+            PathArg::Text(text) if form == crate::forest::PathForm::Verbatim => cache
+                .resolve_exact(conn, field, &metafolder_core::metarecord::TreePath::from(&**text)),
+            PathArg::Text(text) => cache.resolve_path_as(conn, field, text, form),
+            PathArg::Exact(path) => cache.resolve_exact(conn, field, path),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub(super) struct ResolvePathsBody {
+    #[serde(default = "default_tree_field")]
+    field: String,
+    paths: Vec<PathArg>,
+    #[serde(default)]
+    form: crate::forest::PathForm,
+}
+
+/// The most paths one `resolve-paths` takes: the request is one store lock.
+const MAX_RESOLVE_PATHS: usize = 10_000;
+
+/// `POST /repos/:repo/tree/resolve-paths`: [`resolve_tree_path`] for many
+/// paths at once, answered in the order asked (`{"uuids": [hex | null, …]}`) —
+/// how a client finds the occupants of a set of positions in one round-trip,
+/// each exactly as it holds it.
+pub(super) async fn resolve_tree_paths(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<ResolvePathsBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    let Json(body) = payload?;
+    if body.paths.len() > MAX_RESOLVE_PATHS {
+        return Err(ApiError::bad_request(format!(
+            "at most {MAX_RESOLVE_PATHS} paths a request, not {}",
+            body.paths.len()
+        )));
+    }
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let cache = repo_state.tree();
+        let mut uuids = Vec::with_capacity(body.paths.len());
+        for path in &body.paths {
+            uuids.push(path.resolve(&cache, &conn, &body.field, body.form)?.map(hex));
+        }
+        Ok(Json(json!({ "uuids": uuids })))
     })
     .await
 }
@@ -206,7 +274,7 @@ pub(super) async fn tree_roots(
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         // Roots are stored with `value_uuid = ZERO_UUID` (the sentinel).
-        let mut roots = Rows::children(&*conn, &params.field, ZERO_UUID)?;
+        let mut roots = Rows::children_named(&*conn, &params.field, ZERO_UUID)?;
         roots.sort_by(|a, b| a.1.cmp(&b.1));
         let out: Vec<serde_json::Value> = roots
             .into_iter()
@@ -232,7 +300,7 @@ pub(super) async fn tree_children(
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let cache = repo_state.tree();
-        let mut children = cache.children_of(&conn, &params.field, parent)?;
+        let mut children = cache.children_named(&conn, &params.field, parent)?;
         children.sort_by(|a, b| a.0.cmp(&b.0));
         let out: Vec<serde_json::Value> = children
             .into_iter()

@@ -2,6 +2,7 @@
 // (doc "The command input"). Parsing and filtering are pure and unit
 // tested; dispatch routes to Tauri commands and panel instances.
 
+import { wireTexts } from "./treePath";
 import { confirmClosing } from "./unsavedEdits";
 import { recordPath } from "../../../panel-shim/file-actions.js";
 import { type FileOps } from "./fileCommands";
@@ -1079,8 +1080,8 @@ function shellExpandDeps(ws: string | null): ExpandDeps {
     async treePaths(repo, uuid, field) {
       const body = (await daemon(
         `/repos/${repo}/metarecords/${uuid}/fields/${encodeURIComponent(field)}/resolve-tree`,
-      )) as { paths?: string[] };
-      return body.paths ?? [];
+      )) as { paths?: unknown };
+      return wireTexts(body.paths);
     },
     async selectedPaths() {
       const value = await wsVar("selected_paths");

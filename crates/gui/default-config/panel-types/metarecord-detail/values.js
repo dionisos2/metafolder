@@ -6,6 +6,7 @@
 // knows nothing of which metarecord the panel shows.
 
 import { parseRawValue, rawValueCompletions, TYPES } from '/__value-widget.js';
+import { wireText, wireTexts } from '/__ui.js';
 import { createRefSeeds } from './ref-seeds.js';
 
 /** The one-line form of an explicit absence in a value slot — the glyph
@@ -169,19 +170,19 @@ export function createValues({ daemon, config, parseQuery }) {
       case 'refbase':
         return String(value.value);
       case 'tree_ref': {
-        const body = /** @type {{paths?: string[]}} */ (
+        const body = /** @type {{paths?: unknown}} */ (
           await daemon.call(
             'GET',
             `/repos/${repo}/metarecords/${uuid}/fields/${encodeURIComponent(field)}/resolve-tree`,
           )
         );
-        return body.paths?.[0] ?? value.value.name;
+        return wireTexts(body.paths)[0] ?? wireText(value.value.name) ?? '';
       }
       case 'hierarchy_ref':
         // One row per parent (doc "Hierarchy references"): the row reads as
         // the path through its own parent, which the node's first path may
         // not go through.
-        return pathThrough(repo, field, value.value.parent, value.value.name);
+        return pathThrough(repo, field, value.value.parent, wireText(value.value.name) ?? '');
       case 'externalref':
         // Same one-line form as formatValue (ui.js); the value is an object, so
         // the default String(...) would render "[object Object]".
@@ -206,13 +207,13 @@ export function createValues({ daemon, config, parseQuery }) {
    *  null when it has none. @param {string} repo @param {string} field
    *  @param {string} uuid @returns {Promise<string|null>} */
   async function nodePath(repo, field, uuid) {
-    const body = /** @type {{paths?: string[]}} */ (
+    const body = /** @type {{paths?: unknown}} */ (
       await daemon.call(
         'GET',
         `/repos/${repo}/metarecords/${uuid}/fields/${encodeURIComponent(field)}/resolve-tree`,
       )
     );
-    return body.paths?.[0] ?? null;
+    return wireTexts(body.paths)[0] ?? null;
   }
 
   /** A hierarchy row from its parent alone (doc "Hierarchy references"): a
@@ -291,14 +292,14 @@ export function createValues({ daemon, config, parseQuery }) {
     const hit = treePathsCache.get(key);
     if (hit) return hit;
     const pending = (async () => {
-      const body = /** @type {Record<string, string[]>} */ (
+      const body = /** @type {Record<string, unknown>} */ (
         await daemon.call('POST', `/repos/${repo}/query/fields/resolve-tree`, {
           query: { type: 'is_present', field },
           field,
         })
       );
       const paths = new Set();
-      for (const list of Object.values(body)) for (const p of list) paths.add(p);
+      for (const list of Object.values(body)) for (const p of wireTexts(list)) paths.add(p);
       return [...paths].sort();
     })();
     // A failed build must not be cached, or the field completes to nothing

@@ -18,7 +18,7 @@
 
 // The shared panel helpers (doc "The metafolder API"): `frecency` is the
 // score of a recently-viewed entry, the same in the recent panel.
-import { frecency, formatScore, listQueryVariables, queryModeArg, queryTerms, requireQueryMode } from '/__ui.js';
+import { frecency, formatScore, listQueryVariables, queryModeArg, queryTerms, requireQueryMode, wireTexts } from '/__ui.js';
 import { baseName, confirmTrash, trashedMessage } from '/__file-actions.js';
 
 /** The fields of the tag model (doc "Hierarchical tags"): what a record has,
@@ -50,14 +50,14 @@ export async function tagPaths(mf) {
   if (!repo) return [];
   // `daemon.call` is untyped on purpose — the daemon's JSON is not a
   // TypeScript type — so the shape is asserted at the one place it is read.
-  const body = /** @type {Record<string, string[]>} */ (
+  const body = /** @type {Record<string, unknown>} */ (
     await mf.daemon.call('POST', `/repos/${repo}/query/fields/resolve-tree`, {
       query: { type: 'eq', field: 'mf_schema', value: { type: 'string', value: 'tag' } },
       field: 'path',
     })
   );
   const paths = new Set();
-  for (const list of Object.values(body ?? {})) for (const p of list) paths.add(p);
+  for (const list of Object.values(body ?? {})) for (const p of wireTexts(list)) paths.add(p);
   return [...paths].sort();
 }
 
@@ -88,10 +88,10 @@ export async function selectedMetarecord(mf) {
 export async function metarecordFile(mf, repo, uuid) {
   // `daemon.call` is untyped on purpose — the daemon's JSON is not a
   // TypeScript type — so the shape is asserted at the one place it is read.
-  const resolved = /** @type {{ paths?: string[] }} */ (
+  const resolved = /** @type {{ paths?: unknown }} */ (
     await mf.daemon.call('GET', `/repos/${repo}/metarecords/${uuid}/fields/mfr_path/resolve-tree`)
   );
-  return resolved.paths?.[0];
+  return wireTexts(resolved.paths)[0];
 }
 
 /**

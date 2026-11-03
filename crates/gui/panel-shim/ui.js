@@ -673,3 +673,32 @@ export function keysStartWith(keys, typed) {
     index < typed.length - 1 ? keys[index] === chord : keys[index].startsWith(chord),
   );
 }
+
+/**
+ * The text a path or a name shows, as the daemon gives it (doc "Tree
+ * names"): a plain string while it is text, `{text, bytes}` when it is not.
+ * The GUI holds paths as the text it shows, so the object form is read as its
+ * text — never dropped, never shown as an object. `undefined` for anything
+ * else.
+ * @param {unknown} value
+ * @returns {string | undefined}
+ */
+export function wireText(value) {
+  if (typeof value === 'string') return value;
+  if (value && typeof value === 'object') {
+    const text = /** @type {{ text?: unknown }} */ (value).text;
+    if (typeof text === 'string') return text;
+  }
+  return undefined;
+}
+
+/**
+ * The texts of a list of paths ({@link wireText}), skipping what is neither
+ * form.
+ * @param {unknown} values
+ * @returns {string[]}
+ */
+export function wireTexts(values) {
+  if (!Array.isArray(values)) return [];
+  return values.map(wireText).filter((t) => t !== undefined);
+}

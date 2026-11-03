@@ -332,16 +332,15 @@ pub(super) async fn prune_log(
 }
 
 /// Resolves the `mfr_path` of one operation snapshot to an absolute path, for
-/// the `from`/`to` of a `move_file` action: as it is shown (an undecodable
-/// byte reads `%E9`), and as its exact bytes, which is what a client opens
-/// (doc "Tree names").
+/// the `from`/`to` of a `move_file` action — as its exact bytes, which is what
+/// a client moves (doc "Tree names").
 pub(super) fn snapshot_abs_path(
     conn: &dyn crate::store::Store,
     cache: &crate::forest::Forest,
     root: &std::path::Path,
     op_id: i64,
     is_new: i64,
-) -> Result<Option<(String, std::path::PathBuf)>, ApiError> {
+) -> Result<Option<metafolder_core::metarecord::TreePath>, ApiError> {
     for row in conn.snapshots(op_id, is_new != 0)? {
         if row.name == "mfr_path" {
             if let Value::TreeRef { parent, name } = row.value {
@@ -349,9 +348,11 @@ pub(super) fn snapshot_abs_path(
                     Some(p) => cache.rel_path_of(conn, p)?.unwrap_or_default(),
                     None => crate::relpath::RelPath::root(),
                 };
-                let rel = parent_rel.child(name);
-                let shown = root.join(rel.display().trim_start_matches('/'));
-                return Ok(Some((shown.to_string_lossy().into_owned(), rel.to_abs(root))));
+                let abs = parent_rel.child(name).to_abs(root);
+                use std::os::unix::ffi::OsStrExt;
+                return Ok(Some(metafolder_core::metarecord::TreePath::from_bytes(
+                    abs.as_os_str().as_bytes().to_vec(),
+                )));
             }
         }
     }

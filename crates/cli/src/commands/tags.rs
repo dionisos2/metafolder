@@ -91,24 +91,25 @@ pub fn path(ctx: &Ctx, uuid: &str, relative: bool) -> Result<i32, CliError> {
         &format!("{base}/query/fields/resolve-tree"),
         &json!({ "query": {"type": "uuid_in", "uuids": [key]} }),
     )?;
-    let rel = resp[&key]
-        .as_array()
-        .and_then(|paths| paths.first())
-        .and_then(|p| p.as_str())
+    let rel = metafolder_core::sync::lookup::paths_in(&resp[&key])
+        .into_iter()
+        .next()
         .ok_or_else(|| CliError::Op(format!("entry {key} has no resolvable mfr_path")))?;
     // The endpoint returns filesystem paths leading-"/"-rooted already; the root
     // metarecord itself resolves to the empty string, which `mf path` shows as "/".
-    let rel = if rel.is_empty() { "/".to_string() } else { rel.to_string() };
-    if relative {
-        println!("{rel}");
-    } else {
-        let root = repo_root(ctx)?;
-        if rel == "/" {
-            println!("{root}");
-        } else {
-            println!("{root}{rel}");
-        }
+    // Written as its exact bytes: the output is a path for a shell to use, and
+    // the `%E9` a name that is not UTF-8 shows as names no file.
+    let rel = if rel.is_empty() { b"/".to_vec() } else { rel.as_bytes().to_vec() };
+    let mut line = Vec::new();
+    if !relative {
+        line.extend_from_slice(repo_root(ctx)?.as_bytes());
     }
+    if relative || rel != b"/" {
+        line.extend_from_slice(&rel);
+    }
+    line.push(b'\n');
+    use std::io::Write;
+    std::io::stdout().write_all(&line).map_err(|e| CliError::Op(format!("stdout: {e}")))?;
     Ok(0)
 }
 

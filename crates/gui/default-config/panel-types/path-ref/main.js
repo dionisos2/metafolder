@@ -13,7 +13,7 @@
 // new node under the current one (schema type first, then the name), the way
 // the file manager creates a folder. doc "path-ref panel".
 
-import { byId, el, listQueryVariables, openButton, queryModeArg, requireQueryMode, viewerButtons, whereArg } from '/__ui.js';
+import { byId, el, listQueryVariables, openButton, queryModeArg, requireQueryMode, viewerButtons, whereArg, wireText } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
 import { createListCursor } from '/__list-cursor.js';
 import { createSelect } from '/__select.js';
@@ -326,7 +326,7 @@ export async function mount(root, metafolder) {
                 `/repos/${r}/tree/roots?field=${encodeURIComponent(field)}`,
               )) ?? []
             );
-            children = roots.map((r) => ({ uuid: r.uuid, name: r.name }));
+            children = roots.map((r) => ({ uuid: r.uuid, name: wireText(r.name) ?? '' }));
             nextCursor = null;
           }
         } else {

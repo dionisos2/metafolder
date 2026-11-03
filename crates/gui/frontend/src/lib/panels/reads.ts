@@ -8,6 +8,8 @@
 // elsewhere discarding a read in flight, a POST read taken for a write, a
 // renamed directory leaving its descendants' paths behind.
 
+import { wireTexts } from "../treePath";
+
 /** A daemon proxy response: `{ status, body }` (the shape `daemon_request` returns). */
 export interface DaemonResponse {
   status: number;
@@ -59,9 +61,9 @@ async function treeResolve(
     field,
   });
   if (res.status !== 200) return res;
-  const fetched = (res.body as Record<string, string[]>) ?? {};
+  const fetched = (res.body as Record<string, unknown>) ?? {};
   const out: Record<string, string[]> = {};
-  for (const uuid of uuids) out[uuid] = fetched[uuid] ?? [];
+  for (const uuid of uuids) out[uuid] = wireTexts(fetched[uuid]);
   return ok(out);
 }
 

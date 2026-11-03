@@ -65,6 +65,7 @@ pub const SCENARIOS: &[Scenario] = &[
     s("api.tree.roots", &[(G, "/repos/:repo/tree/roots")]),
     s("api.tree.children", &[(G, "/repos/:repo/tree/children")]),
     s("api.tree.resolve_path", &[(P, "/repos/:repo/tree/resolve-path")]),
+    s("api.tree.resolve_paths", &[(P, "/repos/:repo/tree/resolve-paths")]),
     s("api.query.page", &[(P, "/repos/:repo/query")]),
     s("api.query.profile", &[(P, "/repos/:repo/query/profile")]),
     s("api.query.resolve_tree", &[(P, "/repos/:repo/query/fields/resolve-tree")]),
@@ -295,6 +296,16 @@ pub async fn run(id: &str, c: &Ctx) -> Result<()> {
         }
         "api.tree.resolve_path" => {
             post(&format!("{base}/tree/resolve-path"), json!({"path": "/dir0/dir1"})).await?;
+        }
+        // A sync plan's read of its scope's positions (doc "Matching records
+        // across repositories"): a hundred paths, exactly, in one request.
+        "api.tree.resolve_paths" => {
+            let paths: Vec<String> = (0..100).map(|i| format!("/dir0/dir1/f{i}")).collect();
+            post(
+                &format!("{base}/tree/resolve-paths"),
+                json!({"paths": paths, "form": "verbatim"}),
+            )
+            .await?;
         }
         "api.query.page" => {
             let q = json!({"type": "eq", "field": "kind", "value": string("photo")});

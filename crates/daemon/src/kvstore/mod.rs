@@ -1041,6 +1041,16 @@ macro_rules! kv_reads {
                         .collect())
                 })
             }
+            fn children_named(&self, field: &str, parent: Uuid) -> Result<Vec<(Uuid, TreeName)>> {
+                let $me = self;
+                $with(&mut |$read: &Read| {
+                    Ok($read
+                        .children(field, parent.as_bytes())?
+                        .into_iter()
+                        .map(|(u, n, _)| (u, TreeName::from_bytes(n)))
+                        .collect())
+                })
+            }
             fn child_by_bytes(
                 &self,
                 field: &str,

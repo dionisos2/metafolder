@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use serde_json::{json, Value as Json};
 use uuid::Uuid;
 
-use crate::metarecord::{MetaRecord, TreeName, Value};
+use crate::metarecord::{MetaRecord, TreePath, Value};
 
 use super::model::{Lookup, Side, Translate};
 use super::{SyncCtx as Ctx, SyncError};
@@ -113,58 +113,78 @@ pub fn get_record(ctx: &Ctx, repo: Uuid, uuid: Uuid) -> Result<Option<MetaRecord
     }
 }
 
-/// The paths of `record` in `field`'s forest (several only in an older
-/// repository, where a record could hold two positions).
+/// The paths a daemon answer lists, each as its exact bytes (doc "Tree
+/// names"). A path the client cannot read is skipped, as a missing one.
+pub fn paths_in(found: &Json) -> Vec<TreePath> {
+    found
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|p| serde_json::from_value(p.clone()).ok())
+        .collect()
+}
+
+/// The paths of `record` in `field`'s forest, as their exact bytes (several
+/// only in a hierarchy, or an older repository where a record could hold two
+/// positions in a forest).
 pub fn tree_paths(
     ctx: &Ctx,
     repo: Uuid,
     record: Uuid,
     field: &str,
-) -> Result<Vec<String>, SyncError> {
+) -> Result<Vec<TreePath>, SyncError> {
     let resp = ctx.client.get(&format!(
         "/repos/{}/metarecords/{}/fields/{}/resolve-tree",
         repo.as_simple(),
         record.as_simple(),
         field
     ))?;
-    Ok(resp["paths"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|p| p.as_str().map(String::from))
-        .collect())
+    Ok(paths_in(&resp["paths"]))
 }
 
 /// A record's `mfr_path`, as a path (`None` when it has none).
-pub fn mfr_path_of(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Option<String>, SyncError> {
+pub fn mfr_path_of(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Option<TreePath>, SyncError> {
     Ok(tree_paths(ctx, repo, record, "mfr_path")?.into_iter().next())
 }
 
 /// The record at `path` in `field`'s forest, whatever the forest's root
-/// convention (doc "TreeRef path conventions").
+/// convention (doc "TreeRef path conventions") — at exactly these bytes, never
+/// a reading of their text.
 pub fn resolve_path(
     ctx: &Ctx,
     repo: Uuid,
     field: &str,
-    path: &str,
+    path: &TreePath,
 ) -> Result<Option<Uuid>, SyncError> {
     let resp = ctx.client.post(
         &format!("/repos/{}/tree/resolve-path", repo.as_simple()),
-        &json!({"field": field, "path": path}),
+        &json!({"field": field, "path": path, "form": "verbatim"}),
     )?;
     Ok(uuid_at(&resp["uuid"]))
 }
 
-/// A path's parent path and last name. `None` for the filesystem root (`""`),
-/// which is never created; a parent of `None` for a named root (`music`).
-fn split_path(path: &str) -> Option<(Option<&str>, &str)> {
-    if path.is_empty() {
-        return None;
+/// [`resolve_path`] for many paths of one forest, in one request: the
+/// occupant of each, in the order given.
+pub fn resolve_paths(
+    ctx: &Ctx,
+    repo: Uuid,
+    field: &str,
+    paths: &[&TreePath],
+) -> Result<Vec<Option<Uuid>>, SyncError> {
+    let resp = ctx.client.post(
+        &format!("/repos/{}/tree/resolve-paths", repo.as_simple()),
+        &json!({"field": field, "paths": paths, "form": "verbatim"}),
+    )?;
+    let uuids: Vec<Option<Uuid>> =
+        resp["uuids"].as_array().into_iter().flatten().map(uuid_at).collect();
+    if uuids.len() != paths.len() {
+        return Err(SyncError::Op(format!(
+            "the daemon answered {} positions for {} asked",
+            uuids.len(),
+            paths.len()
+        )));
     }
-    Some(match path.rsplit_once('/') {
-        Some((parent, name)) => (Some(parent), name),
-        None => (None, path),
-    })
+    Ok(uuids)
 }
 
 /// The daemon-backed [`Translate`]: link-first, then the record at the same
@@ -179,7 +199,7 @@ pub struct Translator<'a> {
     /// What `create` made, by repository: directories among them have no file
     /// yet, and the run refreshes them once its disk operations have made one.
     created: RefCell<Vec<(Uuid, Uuid)>>,
-    paths: RefCell<HashMap<(Uuid, Uuid, String), Option<String>>>,
+    paths: RefCell<HashMap<(Uuid, Uuid, String), Option<TreePath>>>,
 }
 
 impl<'a> Translator<'a> {
@@ -207,7 +227,12 @@ impl<'a> Translator<'a> {
         std::mem::take(&mut self.created.borrow_mut())
     }
 
-    fn path_in(&self, repo: Uuid, record: Uuid, field: &str) -> Result<Option<String>, SyncError> {
+    fn path_in(
+        &self,
+        repo: Uuid,
+        record: Uuid,
+        field: &str,
+    ) -> Result<Option<TreePath>, SyncError> {
         let key = (repo, record, field.to_string());
         if let Some(p) = self.paths.borrow().get(&key) {
             return Ok(p.clone());
@@ -224,7 +249,7 @@ impl<'a> Translator<'a> {
         &self,
         repo: Uuid,
         record: Uuid,
-    ) -> Result<Option<(String, String, bool)>, SyncError> {
+    ) -> Result<Option<(String, TreePath, bool)>, SyncError> {
         let Some(rec) = get_record(self.ctx, repo, record)? else { return Ok(None) };
         let mut fields: Vec<(&str, bool)> = rec
             .fields
@@ -247,23 +272,22 @@ impl<'a> Translator<'a> {
         &self,
         repo: Uuid,
         field: &str,
-        path: &str,
+        path: &TreePath,
         hierarchy: bool,
     ) -> Result<Uuid, SyncError> {
         if let Some(u) = resolve_path(self.ctx, repo, field, path)? {
             return Ok(u);
         }
-        let Some((parent_path, name)) = split_path(path) else {
+        let Some((parent_path, name)) = path.split_last() else {
             return Err(SyncError::Op(format!(
                 "no root of the {field} forest in {}",
                 repo.as_simple()
             )));
         };
         let parent = match parent_path {
-            Some(p) => Some(self.find_or_create(repo, field, p, hierarchy)?),
+            Some(p) => Some(self.find_or_create(repo, field, &p, hierarchy)?),
             None => None,
         };
-        let name = TreeName::from(name);
         let value = if hierarchy {
             Value::HierarchyRef { parent, name }
         } else {
@@ -303,19 +327,5 @@ impl Translate for Translator<'_> {
         } else {
             resolve_path(self.ctx, dst, &field, &path)
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::split_path;
-
-    #[test]
-    fn paths_split_by_the_root_convention_of_their_forest() {
-        assert_eq!(split_path(""), None, "the filesystem root is never made");
-        assert_eq!(split_path("/projects"), Some((Some(""), "projects")));
-        assert_eq!(split_path("/projects/rust"), Some((Some("/projects"), "rust")));
-        assert_eq!(split_path("music"), Some((None, "music")), "a named root");
-        assert_eq!(split_path("music/jazz"), Some((Some("music"), "jazz")));
     }
 }

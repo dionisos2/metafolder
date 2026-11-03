@@ -115,6 +115,23 @@ pub fn resolve_mf_sync(conn: &dyn Store, cache: &Forest, rel_path: &str) -> Resu
     Ok("internal".to_string())
 }
 
+/// [`resolve_mf_sync`] for a record known by its uuid: up its own `mfr_path`
+/// ancestors, never through a path's text (doc "Tree names").
+pub fn mf_sync_of(conn: &dyn Store, uuid: uuid::Uuid) -> Result<String> {
+    let mut cur = Some(uuid);
+    for _ in 0..crate::log::MAX_TREE_DEPTH {
+        let Some(node) = cur else { break };
+        if let Some(v) = Rows::string_fields(conn, node, "mf_sync")?.into_iter().next() {
+            return Ok(if v == "external" { v } else { "internal".to_string() });
+        }
+        cur = Rows::rows_named(conn, node, "mfr_path")?
+            .into_iter()
+            .find_map(|r| r.value.position().map(|(p, _)| p))
+            .flatten();
+    }
+    Ok("internal".to_string())
+}
+
 /// Evaluates eligibility for `rel_path` (repo-root-relative, `/`-separated,
 /// leading slash; `""` is the root itself), reading the rules afresh. A caller
 /// with more than one path to ask loads a [`WatchRules`] once instead.

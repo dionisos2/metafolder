@@ -638,6 +638,29 @@ fn test_path_resolves_tracked_file() {
     assert_eq!(out.stdout.trim(), "/sub/file.txt");
 }
 
+/// `mf path` prints a path for a shell to use (`cd "$(mf path …)"`): the
+/// exact bytes of a name that is not UTF-8, not the `%E9` it is shown as.
+#[cfg(unix)]
+#[test]
+fn test_path_prints_the_exact_bytes_of_a_name_that_is_not_utf8() {
+    use std::os::unix::ffi::OsStrExt;
+    let (repo, root) = super::sync::tracked_repo("path_bytes", &[]);
+    let file = root.join(std::ffi::OsStr::from_bytes(b"caf\xe9.txt"));
+    std::fs::write(&file, b"x").unwrap();
+    assert_ok(&mf(&["-u", &repo, "reconcile"]));
+    let out = mf(&["-u", &repo, "metarecord", "-q", r#"mfr_path = "/caf%E9.txt""#, "get"]);
+    assert_ok(&out);
+    let uuid = out.stdout.trim().to_string();
+
+    let out = mf(&["-u", &repo, "path", &uuid]);
+    assert_ok(&out);
+    let mut expected = file.as_os_str().as_bytes().to_vec();
+    expected.push(b'\n');
+    assert_eq!(out.stdout_bytes, expected);
+    let out = mf(&["-u", &repo, "path", "--relative", &uuid]);
+    assert_eq!(out.stdout_bytes, b"/caf\xe9.txt\n");
+}
+
 #[test]
 fn test_path_of_the_root_entry() {
     let (repo, root) = init_repo("path_root");

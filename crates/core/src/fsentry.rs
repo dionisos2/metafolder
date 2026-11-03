@@ -47,6 +47,23 @@ pub fn join_rel(root: &Path, rel: &str) -> Option<std::path::PathBuf> {
     Some(out)
 }
 
+/// [`join_rel`] for a path held as its exact bytes, as the daemon gives one
+/// (doc "Tree names"): `root` joined with each name of `rel` — never through
+/// a displayed text, which names no file when a name is not UTF-8.
+pub fn join_tree(root: &Path, rel: &crate::metarecord::TreePath) -> Option<std::path::PathBuf> {
+    let mut out = root.to_path_buf();
+    for (i, name) in rel.names().iter().enumerate() {
+        if i == 0 && name.is_empty() {
+            continue; // the filesystem forest's root, named ""
+        }
+        if !name.is_component(false) {
+            return None;
+        }
+        out.push(crate::metarecord::TreePath::from_bytes(name.as_bytes().to_vec()).to_path_buf());
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -57,6 +74,22 @@ mod tests {
             .join(format!("mf-fsentry-{}", uuid::Uuid::new_v4().as_simple()));
         std::fs::create_dir_all(&p).unwrap();
         p
+    }
+
+    #[test]
+    fn join_tree_keeps_the_exact_bytes_and_stays_under_the_root() {
+        use crate::metarecord::TreePath;
+        let root = Path::new("/repo");
+        assert_eq!(join_tree(root, &TreePath::from("")), Some(root.to_path_buf()));
+        assert_eq!(join_tree(root, &TreePath::from("/a/b.txt")), Some(root.join("a/b.txt")));
+        assert_eq!(join_tree(root, &TreePath::from("/a/../b")), None);
+        assert_eq!(join_tree(root, &TreePath::from("/a//b")), None, "an empty name");
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let got = join_tree(root, &TreePath::from_bytes(b"/caf\xe9".to_vec())).unwrap();
+            assert_eq!(got.as_os_str().as_bytes(), b"/repo/caf\xe9");
+        }
     }
 
     #[test]

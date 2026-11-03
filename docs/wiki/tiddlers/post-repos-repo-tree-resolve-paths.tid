@@ -1,0 +1,7 @@
+title: POST /repos/:repo/tree/resolve-paths
+tags: [[HTTP endpoint]] [[Tree endpoints]]
+kind: reference
+audience: dev
+summary: Many paths of one forest to their nodes, in the order asked.
+
+Bodies, answers and errors: [[Tree endpoints]].

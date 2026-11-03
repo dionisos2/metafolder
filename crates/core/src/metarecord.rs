@@ -289,6 +289,158 @@ impl<'de> Deserialize<'de> for TreeName {
     }
 }
 
+/// A path in a forest as its **exact bytes**: the names from the root down,
+/// joined by `/` (doc "TreeRef path conventions" — `/music/a.flac` in the
+/// filesystem forest, whose root is named `""`; `music/jazz` in a forest with a
+/// named root). A name never holds a `/`, so the bytes split back into names
+/// exactly.
+///
+/// What a program acts on — the file it opens, the node it looks up — is the
+/// bytes, never the text: the text of a name that is not UTF-8 escapes it
+/// (`caf%E9.mp4`), and a file really named `caf%E9.mp4` shows the same, so
+/// reading the text back is a guess (doc "Tree names").
+///
+/// Wire form: the same as a [`TreeName`]'s — a plain string while the whole
+/// path is text, `{"text", "bytes"}` (bytes in lowercase hex) when it is not.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct TreePath(Vec<u8>);
+
+impl TreePath {
+    /// The path from its exact bytes.
+    pub fn from_bytes(bytes: impl Into<Vec<u8>>) -> Self {
+        Self(bytes.into())
+    }
+
+    /// The path from its names, the root's first.
+    pub fn from_names<'a>(names: impl IntoIterator<Item = &'a TreeName>) -> Self {
+        let mut out = Vec::new();
+        for (i, name) in names.into_iter().enumerate() {
+            if i > 0 {
+                out.push(b'/');
+            }
+            out.extend_from_slice(name.as_bytes());
+        }
+        Self(out)
+    }
+
+    /// The exact bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    /// The path as metafolder shows it: each byte no text can represent as
+    /// `%XX`, everything else as it is. For display — never to act on.
+    pub fn display(&self) -> std::borrow::Cow<'_, str> {
+        match std::str::from_utf8(&self.0) {
+            Ok(text) => std::borrow::Cow::Borrowed(text),
+            Err(_) => std::borrow::Cow::Owned(escape_bytes(&self.0)),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The path on disk these bytes are — for an absolute path the daemon
+    /// gave (a revert plan's moves). A repository path goes through
+    /// [`crate::fsentry::join_tree`], which keeps it under the root.
+    pub fn to_path_buf(&self) -> std::path::PathBuf {
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            std::ffi::OsStr::from_bytes(&self.0).into()
+        }
+        #[cfg(not(unix))]
+        {
+            std::path::PathBuf::from(self.display().into_owned())
+        }
+    }
+
+    /// The names, the root's first (`""` for the filesystem root).
+    pub fn names(&self) -> Vec<TreeName> {
+        self.0.split(|b| *b == b'/').map(|n| TreeName::from_bytes(n.to_vec())).collect()
+    }
+
+    /// The parent path and the last name. `None` for the filesystem root
+    /// (`""`) — it has no parent and is never made; a parent of `None` for a
+    /// named root (`music`).
+    pub fn split_last(&self) -> Option<(Option<TreePath>, TreeName)> {
+        if self.0.is_empty() {
+            return None;
+        }
+        Some(match self.0.iter().rposition(|b| *b == b'/') {
+            Some(i) => {
+                (Some(Self(self.0[..i].to_vec())), TreeName::from_bytes(self.0[i + 1..].to_vec()))
+            }
+            None => (None, TreeName::from_bytes(self.0.clone())),
+        })
+    }
+}
+
+impl From<&str> for TreePath {
+    /// The path these characters are, exactly — not a reading of an escape.
+    fn from(text: &str) -> Self {
+        Self(text.as_bytes().to_vec())
+    }
+}
+
+/// Equal to a string whose bytes it is — exactly, never through a reading of
+/// an escape.
+impl PartialEq<&str> for TreePath {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == other.as_bytes()
+    }
+}
+
+impl PartialEq<str> for TreePath {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other.as_bytes()
+    }
+}
+
+impl std::fmt::Display for TreePath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.display(), f)
+    }
+}
+
+impl Serialize for TreePath {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match std::str::from_utf8(&self.0) {
+            Ok(text) => s.serialize_str(text),
+            Err(_) => {
+                use serde::ser::SerializeStruct;
+                let mut object = s.serialize_struct("TreePath", 2)?;
+                object.serialize_field("text", &self.display())?;
+                object.serialize_field("bytes", &crate::hex::encode(&self.0))?;
+                object.end()
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for TreePath {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        /// `bytes` is authoritative; `text` is for readers that only show it.
+        #[derive(Deserialize)]
+        struct Encoded {
+            bytes: String,
+        }
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Wire {
+            Text(String),
+            Encoded(Encoded),
+        }
+        match Wire::deserialize(d)? {
+            Wire::Text(text) => Ok(Self(text.into_bytes())),
+            Wire::Encoded(encoded) => crate::hex::decode(&encoded.bytes)
+                .map(Self)
+                .ok_or_else(|| serde::de::Error::custom("invalid hex in tree path bytes")),
+        }
+    }
+}
+
 /// A field value. `Nothing` represents an explicit absence ("this field does
 /// not apply"), distinct from the absence of the field itself ("unknown").
 ///
@@ -640,6 +792,53 @@ impl MetaRecord {
     /// Returns the first value for the field with this name, or None.
     pub fn get(&self, name: &str) -> Option<&Value> {
         self.fields.iter().find(|f| f.name == name).map(|f| &f.value)
+    }
+}
+
+#[cfg(test)]
+mod tree_path_tests {
+    use super::*;
+
+    #[test]
+    fn a_text_path_is_a_plain_string_on_the_wire() {
+        let path = TreePath::from("/music/caf%E9.mp3");
+        assert_eq!(serde_json::to_value(&path).unwrap(), serde_json::json!("/music/caf%E9.mp3"));
+        let back: TreePath =
+            serde_json::from_value(serde_json::json!("/music/caf%E9.mp3")).unwrap();
+        assert_eq!(back.as_bytes(), b"/music/caf%E9.mp3", "a string is its own bytes, % and all");
+    }
+
+    #[test]
+    fn a_path_that_is_not_text_carries_its_bytes() {
+        let path = TreePath::from_bytes(b"/music/caf\xe9.mp3".to_vec());
+        let wire = serde_json::to_value(&path).unwrap();
+        assert_eq!(wire["text"], "/music/caf%E9.mp3");
+        assert_eq!(wire["bytes"], crate::hex::encode(b"/music/caf\xe9.mp3"));
+        let back: TreePath = serde_json::from_value(wire).unwrap();
+        assert_eq!(back, path);
+    }
+
+    #[test]
+    fn a_path_splits_by_the_root_convention_of_its_forest() {
+        let split = |p: &str| {
+            TreePath::from(p).split_last().map(|(parent, name)| {
+                (parent.map(|p| p.display().into_owned()), name.display().into_owned())
+            })
+        };
+        assert_eq!(split(""), None, "the filesystem root is never made");
+        assert_eq!(split("/projects"), Some((Some("".into()), "projects".into())));
+        assert_eq!(split("/projects/rust"), Some((Some("/projects".into()), "rust".into())));
+        assert_eq!(split("music"), Some((None, "music".into())), "a named root");
+        assert_eq!(split("music/jazz"), Some((Some("music".into()), "jazz".into())));
+    }
+
+    #[test]
+    fn names_join_and_split_back_exactly() {
+        let names =
+            [TreeName::from(""), TreeName::from_bytes(b"d\xe9".to_vec()), TreeName::from("f")];
+        let path = TreePath::from_names(&names);
+        assert_eq!(path.as_bytes(), b"/d\xe9/f");
+        assert_eq!(path.names(), names.to_vec());
     }
 }
 

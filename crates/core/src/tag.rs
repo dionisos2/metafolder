@@ -192,12 +192,11 @@ impl Vocab {
             }
         }
         for (uuid, paths) in resolved.as_object().into_iter().flatten() {
-            let paths: Vec<String> = paths
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|p| p.as_str())
-                .map(String::from)
+            // A tag vocabulary is what the user types: the paths as shown. One
+            // that is not text comes as `{text, bytes}` and is kept, by its text.
+            let paths: Vec<String> = crate::sync::lookup::paths_in(paths)
+                .iter()
+                .map(|p| p.display().into_owned())
                 .collect();
             for path in &paths {
                 vocab.name2uuid.insert(path.clone(), uuid.to_string());

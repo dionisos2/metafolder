@@ -4,6 +4,7 @@
 
 // Parent directory and containment of absolute paths: the file actions' own.
 import { isWithin, parentDir, recordPath } from '/__file-actions.js';
+import { wireText } from '/__ui.js';
 
 export { isWithin, parentDir, recordPath };
 
@@ -96,8 +97,10 @@ export async function loadDirMetarecord(daemon, repo, repoRoot, dir) {
 // `dirUuid` is the directory node's metarecord uuid (from `loadDirMetarecord`);
 // a `null` uuid means the directory is untracked, so it has no tracked children.
 /**
- * One `{uuid, name}` direct child, as `GET /tree/children` returns it.
- * @typedef {{uuid: string, name: string}} Child
+ * One `{uuid, name}` direct child, as `GET /tree/children` returns it: the
+ * name a string, or `{text, bytes}` when it is not text (doc "Tree names") —
+ * read as its text, which is what the GUI's file handles are.
+ * @typedef {{uuid: string, name: string | {text: string, bytes: string}}} Child
  *
  * @param {Daemon} daemon @param {string|null} repo
  * @param {string|null} repoRoot @param {string} dir @param {string|null} dirUuid
@@ -113,7 +116,7 @@ export async function loadTrackedChildren(daemon, repo, repoRoot, dir, dirUuid) 
     (await daemon.call('GET', `/repos/${repo}/tree/children?field=mfr_path&uuid=${dirUuid}`)) ?? []
   );
   for (const child of children) {
-    tracked.set(prefix + child.name, child.uuid);
+    tracked.set(prefix + (wireText(child.name) ?? ''), child.uuid);
   }
   return tracked;
 }

@@ -123,11 +123,9 @@ pub(super) fn print_group_members(ctx: &Ctx, base: &str, group: &str) -> Result<
             .as_array()
             .is_some_and(|fields| fields.iter().any(|f| f["name"] == "mfr_inode"));
         let mark = if linked { '+' } else { ' ' };
-        let path = resolved[uuid]
-            .as_array()
-            .and_then(|paths| paths.first())
-            .and_then(|p| p.as_str())
-            .unwrap_or("(no path)");
+        let path = metafolder_core::sync::lookup::paths_in(&resolved[uuid])
+            .first()
+            .map_or_else(|| "(no path)".to_string(), |p| p.display().into_owned());
         println!("  {mark} {path}");
     }
     Ok(())
