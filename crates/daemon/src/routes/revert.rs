@@ -223,6 +223,23 @@ pub(super) async fn revert_plan(
     Query(params): Query<RevertPlanParams>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
+    // Every id is one or the request is refused: dropping the ones that are
+    // not gave the plan of another target than the one asked for.
+    let op_ids = params
+        .target_op_ids
+        .as_ref()
+        .map(|s| {
+            s.split(',')
+                .map(|p| {
+                    p.trim().parse::<i64>().map_err(|_| {
+                        ApiError::bad_request(format!(
+                            "target_op_ids: {p:?} is not an operation id"
+                        ))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?;
     let target = RevertTarget {
         // `head` is a legal label_id here as it is in the body, so a plan and
         // the revert it describes take the same target spelling.
@@ -230,10 +247,7 @@ pub(super) async fn revert_plan(
             Ok(n) => serde_json::Value::from(n),
             Err(_) => serde_json::Value::String(s.clone()),
         }),
-        op_ids: params
-            .target_op_ids
-            .as_ref()
-            .map(|s| s.split(',').filter_map(|p| p.trim().parse::<i64>().ok()).collect::<Vec<_>>()),
+        op_ids,
         only: params.only,
     };
     with_repo(&state, repo_uuid, move |repo_state| {

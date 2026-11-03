@@ -897,7 +897,10 @@ impl<'c> Writer<'c> {
             out_fields.push(Field { id: Some(id), ..f });
         }
         self.log_op(OpType::SetRecord, uuid, None, Some(version_before), before, after)?;
-        Ok(MetaRecord { uuid, version: version_before + 1, fields: out_fields })
+        // A hash of the content (doc "Metarecord version"): read back, never
+        // derived from the old one.
+        let version = self.current_version(uuid)?;
+        Ok(MetaRecord { uuid, version, fields: out_fields })
     }
 
     /// Replaces all rows for `(uuid, name)` with a single value.

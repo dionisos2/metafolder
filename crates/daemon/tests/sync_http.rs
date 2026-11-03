@@ -411,3 +411,20 @@ async fn root_uuid_of(app: &Router, repo: &str) -> String {
         request(app, "GET", &format!("/repos/{repo}/tree/roots?field=mfr_path"), None).await;
     body[0]["uuid"].as_str().unwrap().to_string()
 }
+
+/// A commit naming a link the pair does not have is the client's mistake,
+/// `404` — it answered `500`, as a daemon failure.
+#[tokio::test]
+async fn test_a_commit_of_an_unknown_link_is_not_found() {
+    let app = app();
+    let (a, _ar, b, _br) = two_repos(&app).await;
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/sync/{a}/{b}/links/commit"),
+        Some(json!({"commits": [{"link": Uuid::new_v4().simple().to_string(),
+                                 "version_a": 1, "version_b": 1}]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+}

@@ -407,7 +407,9 @@ pub fn commit_batch(db: &SyncDb, commits: &[Commit]) -> Result<()> {
         let Some(mut link) =
             db.links.get(&w, c.link.as_bytes())?.map(|v| dec_link(c.link, v)).transpose()?
         else {
-            bail!("link not found: {}", c.link);
+            return Err(
+                crate::error::DomainError::NotFound(format!("link not found: {}", c.link)).into()
+            );
         };
         link.version_a = Some(c.version_a);
         link.version_b = Some(c.version_b);

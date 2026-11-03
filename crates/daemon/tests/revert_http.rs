@@ -925,3 +925,13 @@ async fn test_a_task_does_not_write_under_a_revert_lock() {
     assert_eq!(head(&repo_state), before, "nothing was written");
     request(&app, "POST", &format!("/repos/{repo}/revert/abort"), None).await;
 }
+
+/// A plan names what it was asked for or refuses: `1,x` gave the plan of
+/// operation 1 alone, as if `x` had not been written.
+#[tokio::test]
+async fn test_a_plan_refuses_an_operation_id_that_is_not_a_number() {
+    let (app, repo, _root) = setup("plan_bad_id").await;
+    let (status, body) =
+        request(&app, "GET", &format!("/repos/{repo}/revert/plan?target_op_ids=1,x"), None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+}

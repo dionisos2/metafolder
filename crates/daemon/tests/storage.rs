@@ -1430,3 +1430,15 @@ fn test_retype_collapses_rows_that_convert_to_the_same_value() {
 
     assert_eq!(values_of(&conn, m.uuid, "n"), vec![Value::Int(1)], "two values became one row");
 }
+
+/// `set_record` answers with the version the record now holds — a hash of
+/// its content (doc "Metarecord version"), not the old one plus one.
+#[test]
+fn test_set_record_returns_the_version_it_leaves() {
+    let (mut conn, _dir) = test_conn();
+    let uuid = create(&mut conn, vec![Field::new("a", Value::Int(1))]).uuid;
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    let returned = w.set_record(uuid, vec![Field::new("b", Value::Int(2))]).unwrap().version;
+    w.commit().unwrap();
+    assert_eq!(Some(returned), conn.version(uuid).unwrap());
+}

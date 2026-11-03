@@ -18,7 +18,7 @@ repositories must be loaded (`404`); a repository paired with itself is a `400`.
 |<<cmd "GET /sync/:a/:b/links/:link">> |`{"link", "snapshot": [{"name", "value", "value_b", "side"}], "record_a", "record_b"}` — the snapshot decoded, both records inline (`null` when gone) |
 |<<cmd "DELETE /sync/:a/:b/links/:link">> |deletes the link → `{"deleted": true}`; with `?with_endpoint=` (`a` or `b`), that side's record first, fenced by `&expected_version=` when given ([[Deletion propagation]]) |
 |<<cmd "GET /sync/:a/:b/status">> |`{"repo_a", "repo_b", "links": [{"uuid", "state", "e_a_version", "e_b_version", "version_a", "version_b"}]}` — each link's state ([[Change detection in sync]]) |
-|<<cmd "POST /sync/:a/:b/links/commit">> |`{"commits": [{"link", "version_a", "version_b", "snapshot": […]}]}` → `{"committed": N}`, all in one transaction |
+|<<cmd "POST /sync/:a/:b/links/commit">> |`{"commits": [{"link", "version_a", "version_b", "snapshot": […]}]}` → `{"committed": N}`, all in one transaction; a link the pair does not have is `404`, and nothing is committed |
 
 A commit sets each link's two versions and replaces its snapshot ([[The sync database]]). A snapshot entry is `{"name", "value"}` plus, for a common one, the
 B-perspective uuid `value_b` of a `ref` target or a `tree_ref` parent, or a `side`
