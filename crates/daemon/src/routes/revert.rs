@@ -417,8 +417,8 @@ pub(super) async fn revert_commit(
                 }));
             }
             let applied: Vec<i64> = kept.iter().map(|o| o.id).collect();
-            let mut writer =
-                repo_state.writer(&mut conn, request_context().named(revert_name_of(&locked)))?;
+            let mut writer = repo_state
+                .revert_writer(&mut conn, request_context().named(revert_name_of(&locked)))?;
             crate::revert::apply(&mut writer, &kept)?;
             let label_id = writer.label_id();
             let effects = writer.effects();

@@ -306,7 +306,29 @@ impl RepoState {
     /// repository is written: it is what applies the configured log retention,
     /// so a path that reaches for [`crate::log::Writer::begin`] directly keeps
     /// the whole history whatever the configuration says.
+    ///
+    /// Refused with `423` while a coordinated revert holds the repository
+    /// (doc "Filesystem coordination"). Asked here, with the store in hand —
+    /// `revert/start` takes the lock under the store too — and not only when
+    /// the work was asked for: a task checked when it was started, before it
+    /// had the store, and wrote under a lock taken in between.
     pub fn writer<'c>(
+        &self,
+        conn: &'c mut dyn crate::store::Database,
+        context: crate::log::WriteContext,
+    ) -> anyhow::Result<crate::log::Writer<'c>> {
+        if self.is_revert_locked() {
+            return Err(crate::error::DomainError::Locked(
+                "repository is in a coordinated revert; commit or abort it first".into(),
+            )
+            .into());
+        }
+        crate::log::Writer::begin_in(conn, context, self.log_retention)
+    }
+
+    /// [`Self::writer`] for the one write a revert lock lets through: the
+    /// revert's own commit.
+    pub fn revert_writer<'c>(
         &self,
         conn: &'c mut dyn crate::store::Database,
         context: crate::log::WriteContext,

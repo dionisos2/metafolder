@@ -20,7 +20,7 @@ use metafolder_core::sync::MutexExt;
 use uuid::Uuid;
 
 use crate::error::ApiError;
-use crate::log::{OpType, Writer};
+use crate::log::OpType;
 use crate::rows;
 use crate::state::RepoState;
 
@@ -316,7 +316,7 @@ pub fn relink_reported(
             result.conflicts += 1;
             continue;
         }
-        adopt(&mut conn, &cache, &root, orphan, uuid, &rel, repo.log_retention())?;
+        adopt(repo, &mut conn, &cache, &root, orphan, uuid, &rel)?;
         // Each orphan re-homes once.
         if let Some(list) = by_size.get_mut(&size) {
             list.retain(|c| c.uuid != orphan);
@@ -359,16 +359,16 @@ fn annotated(conn: &dyn crate::store::Store, uuid: Uuid) -> Result<bool, ApiErro
 
 /// Moves `orphan` onto the position `holder` occupies, then deletes `holder`.
 fn adopt(
+    repo: &RepoState,
     conn: &mut dyn crate::store::Database,
     cache: &crate::forest::Forest,
     root: &Path,
     orphan: Uuid,
     holder: Uuid,
     path: &crate::relpath::RelPath,
-    retention: crate::log::Retention,
 ) -> Result<(), ApiError> {
     let context = crate::log::current_context().named("orphan relink");
-    let mut writer = Writer::begin_in(conn, context, retention)?;
+    let mut writer = repo.writer(conn, context)?;
     // The holder leaves the position first: one metarecord holds a given tree
     // position, so the orphan cannot take it while the holder is still there.
     writer.delete_metarecord(holder)?;

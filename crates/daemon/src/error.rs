@@ -97,14 +97,18 @@ pub enum DomainError {
     Conflict(String),
     /// 400 — the request itself is invalid (bad path, TreeRef cycle/depth…).
     BadRequest(String),
+    /// 423 — a coordinated revert holds the repository (doc "Filesystem
+    /// coordination").
+    Locked(String),
 }
 
 impl std::fmt::Display for DomainError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DomainError::NotFound(m) | DomainError::Conflict(m) | DomainError::BadRequest(m) => {
-                f.write_str(m)
-            }
+            DomainError::NotFound(m)
+            | DomainError::Conflict(m)
+            | DomainError::BadRequest(m)
+            | DomainError::Locked(m) => f.write_str(m),
         }
     }
 }
@@ -120,6 +124,7 @@ impl From<anyhow::Error> for ApiError {
             Some(domain @ DomainError::NotFound(_)) => ApiError::not_found(domain.to_string()),
             Some(domain @ DomainError::Conflict(_)) => ApiError::conflict(domain.to_string()),
             Some(domain @ DomainError::BadRequest(_)) => ApiError::bad_request(domain.to_string()),
+            Some(domain @ DomainError::Locked(_)) => ApiError::locked(domain.to_string()),
             None => ApiError::internal(format!("{err:#}")),
         }
     }

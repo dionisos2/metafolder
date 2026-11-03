@@ -516,6 +516,11 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
     // waiting for it (doc "Slow log").
     let _timed = metafolder_core::slowlog::begin(repo.slowlog.clone(), "watcher.flush");
     let mut conn = metafolder_core::slowlog::timed("wait:conn", || repo.conn.lock_recover());
+    // Asked again with the store in hand: a `revert/start` takes the lock
+    // under the store, and may have come in while this flush waited for it.
+    if repo.is_revert_locked() {
+        return Ok(FlushStats::default());
+    }
     let cache = repo.tree();
 
     // Taken whole: whatever the watcher buffers while this flush runs lands in

@@ -884,3 +884,41 @@ async fn test_two_concurrent_starts_enter_the_lock_once() {
     statuses.sort();
     assert_eq!(statuses, vec![StatusCode::OK, StatusCode::CONFLICT]);
 }
+
+/// Under a revert lock nothing writes, a task included: a reconcile or a
+/// duplicate scan checked the lock when it was asked for, before it had the
+/// store, so a `revert/start` landing in between let it write under the lock.
+/// The writer itself now refuses, with the store in hand.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_a_task_does_not_write_under_a_revert_lock() {
+    let state = Arc::new(common::watching_state());
+    let app = routes::build(state.clone());
+    let root = TempDir::new("revert_task_under_lock");
+    common::seed_config(&root);
+    let (_, body) =
+        request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
+    let repo = body["repo_uuid"].as_str().unwrap().to_string();
+    let uuid =
+        create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}]))
+            .await;
+    set_field(&app, &repo, &uuid, "rating", json!({"type": "int", "value": 5})).await;
+    let rev = last_revision(&app, &repo).await;
+    let (status, _) = start(&app, &repo, json!({"target": {"label_id": rev}})).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let repo_state = state.repo(repo.parse().unwrap()).unwrap();
+    std::fs::write(root.join("new.txt"), b"x").unwrap();
+    let head = |r: &metafolder_daemon::state::RepoState| {
+        metafolder_daemon::store::Log::head(&*r.conn.lock().unwrap()).unwrap()
+    };
+    let before = head(&repo_state);
+    let rs = repo_state.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
+        metafolder_daemon::reconcile::reconcile(&rs).map(|_| ())
+    })
+    .await
+    .unwrap();
+    assert_eq!(outcome.err().map(|e| e.status), Some(StatusCode::LOCKED));
+    assert_eq!(head(&repo_state), before, "nothing was written");
+    request(&app, "POST", &format!("/repos/{repo}/revert/abort"), None).await;
+}

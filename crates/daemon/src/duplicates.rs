@@ -357,8 +357,7 @@ impl Writes<'_> {
             let mut conn =
                 metafolder_core::slowlog::timed("wait:conn", || repo.conn.lock_recover());
             let held = Instant::now();
-            let mut writer =
-                Writer::begin_in(&mut *conn, self.context.clone(), repo.log_retention())?;
+            let mut writer = repo.writer(&mut *conn, self.context.clone())?;
             while let Some((uuid, field, hash, stamp)) = hashes.next() {
                 if crate::store::Rows::version(writer.store(), uuid)?.is_some() {
                     write_hash(&mut writer, uuid, field, &hash, stamp)?;

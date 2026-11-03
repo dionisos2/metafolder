@@ -34,7 +34,7 @@ operation out of the commit: it is not reverted, and nothing needs correcting af
 `revert/start` enters the ''coordinated-revert lock'':
 
 * the watcher keeps running and buffering, but ''nothing is executed'' — so a move the client just made is not ingested as a new file before the metadata explaining it lands;
-* every write endpoint answers `423 Locked`; reads work as usual;
+* every write endpoint answers `423 Locked`; reads work as usual. The refusal is the writer's, asked with the store in hand (`RepoState::writer`; `revert/start` takes the lock under the store), so it holds for a task too: a reconcile or relink that had not yet begun writing is refused, a duplicate scan stops at its next take — its hashes so far kept, for a scan run again to reuse — and the revert's own `commit` is the one write let through;
 * `revert/commit`, or `revert/abort`, releases it; then the held events are applied as a new write, with the watcher's usual compaction and batching ([[Event batching]]).
 
 The lock is not stored. A daemon that crashes restarts unlocked, with nothing of the
