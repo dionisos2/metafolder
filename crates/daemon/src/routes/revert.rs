@@ -354,19 +354,22 @@ pub(super) async fn revert_start(
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        if repo_state.is_revert_locked() {
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        // Looked at and taken in one step, under the store: two starts looking
+        // first and taking after both entered it, the second replacing the
+        // first's operations. The order is the store, then the lock — the one
+        // every holder of both keeps.
+        let mut lock = repo_state.revert_lock.lock_recover();
+        if lock.is_some() {
             return Err(ApiError::conflict("a coordinated revert is already in progress"));
         }
-        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let head = crate::store::Log::head(&*conn)?;
         let effective = resolve_revert_target(&conn, head, &body.target)?;
         let plan = {
             let cache = repo_state.tree();
             revert_plan_json(&conn, &effective, Some((&cache, &repo_state.config.root)))?
         };
-        drop(conn);
-        *repo_state.revert_lock.lock_recover() =
-            Some(RevertLock { ops: effective.iter().map(|o| o.id).collect() });
+        *lock = Some(RevertLock { ops: effective.iter().map(|o| o.id).collect() });
         Ok(Json(plan))
     })
     .await

@@ -60,6 +60,6 @@ a 327 000-key undo of 25 000 operations ([[The session scenario]], 13 October 20
 so reading it first nearly doubled an undo that moves no file. The CLI reads it: it
 confirms an overwrite (`changed_since`) and reports per operation.
 
-`commit` may only narrow the target fixed at `start` (an id outside it is `400`);
+One coordinated revert at a time: a `start` while the lock is held is `409`, two arriving together included — the lock is looked at and taken in one step, under the store. `commit` may only narrow the target fixed at `start` (an id outside it is `400`);
 operations left out are reported with `reason: "client_skipped"`. After `abort`, reversing any file action already done (or
 reconciling) is the client's job.

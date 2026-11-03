@@ -843,3 +843,44 @@ async fn test_a_move_plan_carries_the_exact_bytes_of_its_paths() {
     assert_eq!(action["to_bytes"], json!(hex(&old)), "{action}");
     request(&app, "POST", &format!("/repos/{repo}/revert/abort"), None).await;
 }
+
+/// Two `revert/start` at once: one enters the lock, the other is refused. The
+/// test holds the store so both requests are past their first look at the lock
+/// before either can take it; the look and the taking were two steps, and both
+/// starts succeeded, the second replacing the first's operations.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_two_concurrent_starts_enter_the_lock_once() {
+    let state = Arc::new(common::watching_state());
+    let app = routes::build(state.clone());
+    let root = TempDir::new("revert_two_starts");
+    common::seed_config(&root);
+    let (_, body) =
+        request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
+    let repo = body["repo_uuid"].as_str().unwrap().to_string();
+    let uuid =
+        create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}]))
+            .await;
+    set_field(&app, &repo, &uuid, "rating", json!({"type": "int", "value": 5})).await;
+    let rev = last_revision(&app, &repo).await;
+
+    let repo_state = state.repo(repo.parse().unwrap()).unwrap();
+    let held = repo_state.conn.lock().unwrap();
+    let starts: Vec<_> = (0..2)
+        .map(|_| {
+            let (app, repo) = (app.clone(), repo.clone());
+            tokio::spawn(
+                async move { start(&app, &repo, json!({"target": {"label_id": rev}})).await.0 },
+            )
+        })
+        .collect();
+    // Time for both to reach the store; a slower machine only weakens the
+    // test, it cannot make it fail.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    drop(held);
+    let mut statuses = Vec::new();
+    for s in starts {
+        statuses.push(s.await.unwrap());
+    }
+    statuses.sort();
+    assert_eq!(statuses, vec![StatusCode::OK, StatusCode::CONFLICT]);
+}
