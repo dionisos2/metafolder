@@ -395,6 +395,11 @@ pub(super) async fn revert_commit(
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
+        // The lock is read, and released, under the store, as `start` takes it:
+        // read before, a commit waiting for the store wrote the revert after an
+        // `abort` had answered, or after another commit had written it, and
+        // released the lock of a revert started in between.
+        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let locked: Vec<i64> = match repo_state.revert_lock.lock_recover().as_ref() {
             Some(RevertLock { ops }) => ops.clone(),
             None => {
@@ -403,7 +408,6 @@ pub(super) async fn revert_commit(
         };
 
         let result = (|| -> Result<serde_json::Value, ApiError> {
-            let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
             let head = crate::store::Log::head(&*conn)?;
             let mut effective = Vec::with_capacity(locked.len());
             for id in &locked {
@@ -443,6 +447,7 @@ pub(super) async fn revert_commit(
         // or to abort.
         let value = result?;
         *repo_state.revert_lock.lock_recover() = None;
+        drop(conn);
         crate::executor::flush_pending(repo_state)?;
         Ok(Json(value))
     })
@@ -458,6 +463,8 @@ pub(super) async fn revert_abort(
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         {
+            // Under the store, as every ending of a revert (see `revert_commit`).
+            let _conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
             let mut guard = repo_state.revert_lock.lock_recover();
             if guard.is_none() {
                 return Err(ApiError::conflict("no revert in progress"));

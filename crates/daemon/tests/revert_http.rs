@@ -936,3 +936,72 @@ async fn test_a_plan_refuses_an_operation_id_that_is_not_a_number() {
         request(&app, "GET", &format!("/repos/{repo}/revert/plan?target_op_ids=1,x"), None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 }
+
+/// Two endings of one coordinated revert at once — `commit` and `abort`, or two
+/// `commit`s: one ends it, the other is refused, and what is written is what
+/// the one that ended it said. The test holds the store so both requests are
+/// past their first look at the lock before either has the store; the lock was
+/// read and released outside it, so an `abort` answered "nothing written"
+/// while the `commit` waiting behind it wrote the revert, and two `commit`s
+/// both wrote it.
+#[tokio::test(flavor = "multi_thread")]
+// Holding the store across the wait is the test: the requests run on other
+// threads and block on it.
+#[allow(clippy::await_holding_lock)]
+async fn test_two_concurrent_endings_end_the_revert_once() {
+    for second in ["abort", "commit"] {
+        let state = Arc::new(common::watching_state());
+        let app = routes::build(state.clone());
+        let root = TempDir::new("revert_two_endings");
+        common::seed_config(&root);
+        let (_, body) =
+            request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()})))
+                .await;
+        let repo = body["repo_uuid"].as_str().unwrap().to_string();
+        let uuid =
+            create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}]))
+                .await;
+        set_field(&app, &repo, &uuid, "rating", json!({"type": "int", "value": 5})).await;
+        let rev = last_revision(&app, &repo).await;
+        let (status, plan) = start(&app, &repo, json!({"target": {"label_id": rev}})).await;
+        assert_eq!(status, StatusCode::OK, "start failed: {plan}");
+        let op = plan["operations"][0]["id"].as_i64().unwrap();
+        let (_, log) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;
+        let operations_before = log["operations"].as_array().unwrap().len();
+
+        let repo_state = state.repo(repo.parse().unwrap()).unwrap();
+        let held = repo_state.conn.lock().unwrap();
+        let ending = |what: &'static str| {
+            let (app, repo) = (app.clone(), repo.clone());
+            tokio::spawn(async move {
+                let body = (what == "commit").then(|| json!({"apply": [op]}));
+                (what, request(&app, "POST", &format!("/repos/{repo}/revert/{what}"), body).await.0)
+            })
+        };
+        let first = ending("commit");
+        // Time for each to reach the store; a slower machine only weakens the
+        // test, it cannot make it fail.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let other = ending(second);
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        drop(held);
+        drop(repo_state);
+        let outcomes = [first.await.unwrap(), other.await.unwrap()];
+        let ended: Vec<_> = outcomes.iter().filter(|(_, s)| *s == StatusCode::OK).collect();
+        assert_eq!(ended.len(), 1, "{second}: one ending ends it, not {outcomes:?}");
+        assert!(
+            outcomes.iter().any(|(_, s)| *s == StatusCode::CONFLICT),
+            "{second}: the other is refused: {outcomes:?}"
+        );
+        let expected = if ended[0].0 == "commit" { 3 } else { 5 };
+        assert_eq!(
+            field_of(&app, &repo, &uuid, "rating").await,
+            Some(json!({"type": "int", "value": expected})),
+            "{second}: written as {} said",
+            ended[0].0
+        );
+        let (_, log) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;
+        let written = log["operations"].as_array().unwrap().len() - operations_before;
+        assert_eq!(written, usize::from(ended[0].0 == "commit"), "{second}: written once: {log}");
+    }
+}
