@@ -73,7 +73,8 @@ the file, is refused.
 The entry is what one would write by hand in `user-commands.js` ([[User commands]]):
 read it to see how, and edit it as you like — a condition, a loop, a step removed.
 The GUI never rewrites the file: it adds each new entry before the `};` that closes
-it, and refuses to save when the file no longer ends that way. After editing it by
+it — giving the last entry the comma it lacks, when it was written without one — and
+refuses to save when the file no longer ends that way. After editing it by
 hand, `config:reload commands`. An entry named like one of `user-commands.js` is left
 out, the first one standing.
 

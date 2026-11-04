@@ -8,7 +8,8 @@
 
 use std::path::Path;
 
-/// `source` with `entry` added at the end of its exported object.
+/// `source` with `entry` added at the end of its exported object — after a
+/// comma given to the last entry when it has none.
 ///
 /// Refused when `name` is already a key of the file, or when the file no
 /// longer ends with the `};` closing the object — an edit the GUI cannot
@@ -23,8 +24,16 @@ pub fn insert_macro(source: &str, name: &str, entry: &str) -> Result<String, Str
                     the macro cannot be added at its end"
             .to_string());
     };
-    let mut out = String::with_capacity(source.len() + entry.len() + 2);
-    out.push_str(head);
+    let mut out = String::with_capacity(source.len() + entry.len() + 3);
+    // The last entry, written by hand without its comma, is given one: the new
+    // entry follows it.
+    let last = head.trim_end();
+    if last.ends_with(',') || last.ends_with('{') {
+        out.push_str(head);
+    } else {
+        out.push_str(last);
+        out.push_str(",\n");
+    }
     if !out.ends_with('\n') {
         out.push('\n');
     }
@@ -81,6 +90,21 @@ mod tests {
         assert!(out.starts_with(
             "export default {\n  // mine\n  'user:x': { run: (mf) => mf.invoke(['quit']) },\n"
         ));
+    }
+
+    #[test]
+    fn test_a_last_entry_written_without_its_comma_is_given_one() {
+        // The natural way to end an object by hand: without it, the new entry
+        // would follow the last one with no comma, and the file — loaded at
+        // startup — would no longer parse.
+        let edited = "export default {\n  'user:x': { run: (mf) => mf.invoke(['quit']) }\n};\n";
+        let out = insert_macro(edited, "user:a", ENTRY).unwrap();
+        assert_eq!(
+            out,
+            format!(
+                "export default {{\n  'user:x': {{ run: (mf) => mf.invoke(['quit']) }},\n{ENTRY}}};\n"
+            )
+        );
     }
 
     #[test]
