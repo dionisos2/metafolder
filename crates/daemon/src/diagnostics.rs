@@ -63,6 +63,15 @@ pub struct Page {
     /// Entries that fell out of the ring before this poll could read them, so
     /// the client can say so instead of quietly missing them.
     pub dropped: u64,
+    /// This run of the daemon: ids start again at 1 with every run, so a
+    /// client that sees it change reads the feed again from 0.
+    pub run: String,
+}
+
+/// The id of this run of the daemon, drawn once.
+fn run_id() -> &'static str {
+    static RUN: OnceLock<String> = OnceLock::new();
+    RUN.get_or_init(|| Uuid::new_v4().as_simple().to_string())
 }
 
 #[derive(Default)]
@@ -98,6 +107,9 @@ impl Feed {
 
     /// Entries recorded after `since`, oldest first, at most `limit` of them.
     pub fn since(&self, since: u64, limit: usize) -> Page {
+        // Past the head, `since` is a cursor of an earlier run of the daemon
+        // (ids start again at 1): everything held is new to that client.
+        let since = if since > self.next_id { 0 } else { since };
         // `since` is the last id the client saw, so it expects `since + 1` next.
         // Anything the ring dropped below that is what it missed.
         let oldest_available = match self.entries.front() {
@@ -109,7 +121,7 @@ impl Feed {
         let entries: Vec<Diagnostic> =
             self.entries.iter().filter(|e| e.id > since).take(limit).cloned().collect();
         let next_since = entries.last().map_or(since, |e| e.id);
-        Page { entries, next_since, dropped }
+        Page { entries, next_since, dropped, run: run_id().to_string() }
     }
 
     /// The id a fresh reader should start from to see only what comes next
@@ -169,7 +181,9 @@ pub fn error_for(scope: &str, message: impl Into<String>, repo: Uuid) {
 pub fn read(since: u64, limit: usize) -> Page {
     match feed().lock() {
         Ok(feed) => feed.since(since, limit),
-        Err(_) => Page { entries: Vec::new(), next_since: since, dropped: 0 },
+        Err(_) => {
+            Page { entries: Vec::new(), next_since: since, dropped: 0, run: run_id().to_string() }
+        }
     }
 }
 
@@ -190,6 +204,19 @@ mod tests {
         assert!(page.entries.is_empty());
         assert_eq!(page.dropped, 0);
         assert_eq!(page.next_since, 0);
+    }
+
+    #[test]
+    fn test_a_cursor_from_an_earlier_run_reads_everything() {
+        // Ids start again at 1 with every daemon run: a client that kept the
+        // cursor of the previous one (57) would skip the first 57 entries.
+        let mut feed = Feed::new();
+        record_n(&mut feed, 3);
+        let page = feed.since(57, 10);
+        let ids: Vec<u64> = page.entries.iter().map(|e| e.id).collect();
+        assert_eq!(ids, [1, 2, 3]);
+        assert_eq!(page.next_since, 3);
+        assert_eq!(page.dropped, 0);
     }
 
     #[test]

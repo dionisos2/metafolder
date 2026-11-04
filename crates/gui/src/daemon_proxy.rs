@@ -53,8 +53,9 @@ pub struct DaemonProxy {
     /// Cursor into the daemon's diagnostics feed: the last entry id drained
     /// into the message panels. Starts at 0 so the first poll picks up whatever
     /// the daemon already warned about — including why a repository failed to
-    /// load, which happens before the GUI is up.
-    diagnostics_since: Mutex<u64>,
+    /// load, which happens before the GUI is up. With the run of the daemon
+    /// it belongs to (`run` of the page): ids start again at 1 with every run.
+    diagnostics_since: Mutex<(Option<String>, u64)>,
     /// Timing of the calls made through this proxy (doc "Correlating the GUI and the daemon"): what
     /// the *user* waited for, next to what the daemon spent.
     slow: crate::slow::SlowLog,
@@ -123,7 +124,7 @@ impl DaemonProxy {
             base_url: Mutex::new(base_url),
             health: Mutex::new(None),
             token: Mutex::new(None),
-            diagnostics_since: Mutex::new(0),
+            diagnostics_since: Mutex::new((None, 0)),
             slow: crate::slow::SlowLog::new(slow_threshold_ms),
             internal_dirs: Mutex::new(std::collections::HashMap::new()),
             aborts: Mutex::new(Aborts::default()),
@@ -389,14 +390,26 @@ impl DaemonProxy {
     /// Best effort: an unreachable or unexpected answer leaves the cursor where
     /// it was, so nothing is skipped and the next poll retries the same spot.
     pub async fn drain_diagnostics(&self, gui: &GuiState) {
-        let since = *self.diagnostics_since.lock_recover();
-        let Ok(ProxyResponse { status: 200, body }) =
-            self.request("GET", &format!("/diagnostics?since={since}"), None).await
-        else {
-            return;
-        };
+        let (run, mut since) = self.diagnostics_since.lock_recover().clone();
+        let mut body = None;
+        // At most twice: once more from 0 when the page is another run's.
+        for _ in 0..2 {
+            let Ok(ProxyResponse { status: 200, body: page }) =
+                self.request("GET", &format!("/diagnostics?since={since}"), None).await
+            else {
+                return;
+            };
+            let page_run = page["run"].as_str().map(str::to_string);
+            let restarted = since > 0 && run.is_some() && page_run.is_some() && page_run != run;
+            body = Some((page_run, page));
+            if !restarted {
+                break;
+            }
+            since = 0;
+        }
+        let Some((run, body)) = body else { return };
         let (lines, next) = crate::diagnostics::lines_from_page(&body, since);
-        *self.diagnostics_since.lock_recover() = next;
+        *self.diagnostics_since.lock_recover() = (run, next);
         if lines.is_empty() {
             return;
         }

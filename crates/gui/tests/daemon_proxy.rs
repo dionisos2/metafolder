@@ -10,6 +10,7 @@ use metafolder_gui::events;
 use metafolder_gui::notifier::RecordingNotifier;
 use metafolder_gui::state::GuiState;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Default)]
@@ -381,6 +382,70 @@ async fn test_daemon_diagnostics_reach_the_message_log() {
     // The cursor advanced: a second poll adds nothing (no duplicate lines).
     proxy.drain_diagnostics(&gui).await;
     assert_eq!(gui.messages(&ws).unwrap().len(), 2);
+}
+
+/// A daemon with `count` diagnostics (ids 1..=count) that answers its health,
+/// recording every `since` it is asked for.
+async fn spawn_feed_stub(count: u64, asked: Arc<std::sync::Mutex<Vec<u64>>>) -> String {
+    static RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let run = format!("run-{}", RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+    let router = axum::Router::new()
+        .route(
+            "/health",
+            get(|| async {
+                Json(json!({"status": "ok", "api_version": metafolder_core::API_VERSION}))
+            }),
+        )
+        .route(
+            "/diagnostics",
+            get(move |axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>| {
+                let (asked, run) = (asked.clone(), run.clone());
+                async move {
+                    let since: u64 = q["since"].parse().unwrap();
+                    asked.lock().unwrap().push(since);
+                    let entries: Vec<Value> = (since + 1..=count)
+                        .map(
+                            |id| json!({"id": id, "scope": "watcher", "message": format!("m{id}")}),
+                        )
+                        .collect();
+                    Json(json!({"entries": entries, "next_since": count.max(since), "dropped": 0,
+                                "run": run}))
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    format!("http://127.0.0.1:{port}")
+}
+
+/// Ids start again at 1 with every daemon run (doc "Health and diagnostics"):
+/// reconnecting to a daemon started again, the GUI reads its feed from the
+/// start, or its first warnings — those of its startup — never show.
+#[tokio::test]
+async fn test_a_daemon_started_again_is_read_from_the_start_of_its_feed() {
+    let first = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let proxy = DaemonProxy::new(spawn_feed_stub(5, first.clone()).await);
+    let (_notifier, gui) = gui_with_notifier();
+    let ws = gui.workspaces().first().expect("a workspace exists").id.clone();
+    assert!(proxy.check_health(&gui).await);
+    proxy.drain_diagnostics(&gui).await;
+    assert_eq!(gui.messages(&ws).unwrap().len(), 5);
+
+    // Another run of the daemon, between two polls: told by the page's `run`.
+    let second = Arc::new(std::sync::Mutex::new(Vec::new()));
+    proxy.set_url(spawn_feed_stub(7, second.clone()).await);
+    proxy.drain_diagnostics(&gui).await;
+
+    assert_eq!(*second.lock().unwrap(), [5, 0]);
+    assert_eq!(gui.messages(&ws).unwrap().len(), 12);
+
+    // The same run again: read on from where it was, nothing twice.
+    proxy.drain_diagnostics(&gui).await;
+    assert_eq!(*second.lock().unwrap(), [5, 0, 7]);
+    assert_eq!(gui.messages(&ws).unwrap().len(), 12);
 }
 
 #[tokio::test]

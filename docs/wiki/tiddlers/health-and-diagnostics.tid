@@ -21,7 +21,7 @@ session token.
 
 ```
 GET /diagnostics?since=<id>&limit=<n>
-→ {"entries": [...], "next_since": <id>, "dropped": <n>}
+→ {"entries": [...], "next_since": <id>, "dropped": <n>, "run": "<hex>"}
 ```
 
 The warnings the daemon prints on stderr, also kept in memory so that a client can
@@ -36,8 +36,9 @@ watcher flush leaves behind — rather than what went wrong. `scope` names the p
 that spoke (`watcher`, `reconcile`, `executor`, `prune`, `warmup`…); `repo` the
 repository, when there is one.
 
-* `since` is the last id the client saw, `0` for everything still held. Ids start at 1 and grow ''per daemon run'': a reconnecting client starts from 0 again.
+* `since` is the last id the client saw, `0` for everything still held. Ids start at 1 and grow ''per daemon run'': a `since` beyond the newest id is a cursor of an earlier run, and is read as `0`.
 * `next_since` is where to resume; the client passes it back as it is.
+* `run` names this run of the daemon. A client that sees it change between two reads — a daemon started again between two polls, whose ids may already have passed the old cursor — reads again from `0`; the GUI does.
 * `dropped` counts entries that fell out of memory before this read, so a client that fell behind can say so.
 
 It holds 500 entries, and a page is at most 500. It is an aid, not a control
