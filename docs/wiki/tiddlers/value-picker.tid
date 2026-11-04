@@ -17,7 +17,9 @@ panels and keys, then hand it back to the form.
 * <<key "pick:confirm" "ctrl+enter">> confirms; <<key "pick:cancel" "ctrl+escape">> gives up. Closing the picker like any workspace gives up too.
 
 Either way the picker disappears, the slot shows again what it showed before — or
-is hidden again — and the focus returns to the form.
+is hidden again, also when the workspace it showed was closed meanwhile — and the
+focus returns to the form. If the picker was put in the form's slot as well, the
+form's workspace comes back there.
 
 The two keys are chords so that plain `Enter` and `Escape` keep their meaning in
 the picker's panels. Confirming with nothing highlighted is refused, and the picker
@@ -52,7 +54,8 @@ would otherwise narrow the seed — sends it the panel's variables and
 and shows it in the slot other than the caller's. A picker is not forked
 ([[workspace:fork]]).
 
-On confirmation it reads the selection, closes the picker, restores the slot and
+On confirmation it reads the selection, closes the picker (and ends its shell, as
+closing any workspace does: ids are reused), restores the slot and
 sends `pick_result` to the ''caller's'' workspace: `{token, uuid}` or
 `{token, path}`, and `{token, cancelled: true}` for a cancellation. Like every write
 across workspaces, it goes through `workspace:send` — a panel's `workspace` reads and

@@ -132,21 +132,39 @@ impl GuiState {
             if let Some(index) = inner.workspaces.iter().position(|w| w.id == picker_ws) {
                 inner.workspaces.remove(index);
             }
-            // Restore the picker slot to exactly what it showed before the pick.
-            let slot = inner.slot_mut(picker_slot);
-            slot.workspace = restore["workspace"].as_str().map(str::to_string);
-            slot.panel_type = restore["panel_type"].as_str().map(str::to_string);
-            slot.visible = restore["visible"].as_bool().unwrap_or(false);
+            // Restore the picker slot to exactly what it showed before the pick
+            // — unless that workspace was closed meanwhile: the slot is then
+            // left empty and hidden, never naming a workspace that is gone.
+            let prior = restore["workspace"].as_str().filter(|ws| inner.workspace(ws).is_ok());
+            let slot = SlotPayload {
+                workspace_id: prior.map(str::to_string),
+                panel_type: prior.and(restore["panel_type"].as_str()).map(str::to_string),
+                visible: prior.is_some() && restore["visible"].as_bool().unwrap_or(false),
+            };
+            let picker_slot_mut = inner.slot_mut(picker_slot);
+            picker_slot_mut.workspace = slot.workspace_id;
+            picker_slot_mut.panel_type = slot.panel_type;
+            picker_slot_mut.visible = slot.visible;
             // Focus returns to the caller's slot — shown again if it was hidden
             // while picking and the restored slot is hidden too: the window
             // would show nothing.
             let caller_slot = picker_slot.other();
             inner.focused = caller_slot;
+            // The picker was put in the caller's slot too (a tab click, or the
+            // workspace closed there): the caller comes back in its place, to
+            // be given the result.
+            if inner.slot(caller_slot).workspace.as_deref() == Some(picker_ws) {
+                let visible = inner.slot(caller_slot).visible;
+                inner.assign(&caller_ws, caller_slot)?;
+                inner.slot_mut(caller_slot).visible = visible;
+            }
             if !inner.slot(picker_slot).visible && inner.slot(caller_slot).workspace.is_some() {
                 inner.slot_mut(caller_slot).visible = true;
             }
             Ok(((), Emit::BOTH))
         })?;
+        // As closing a terminal ends its shell, closing the picker ends its own.
+        self.shells.close(picker_ws);
 
         // Deliver the result through the one channel between workspaces
         // (emits WORKSPACE_VAR_CHANGED for the caller).

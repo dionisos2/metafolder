@@ -832,6 +832,23 @@ mod tests {
         assert_eq!(runs(&gui), [vec![out(&format!("in:{context}"))], vec![out("in:none")]]);
     }
 
+    /// A value picker's shell ends with the picker, confirmed or cancelled:
+    /// workspace ids are reused, so the next workspace of its number would
+    /// otherwise be handed the picker's shell, where it was left.
+    #[tokio::test]
+    async fn test_finishing_a_picker_ends_its_shell() {
+        let gui = gui();
+        let spec: crate::state::PickSpec = serde_json::from_value(json!({
+            "callerWs": "ws-1", "token": 1, "panel": {"type": "metarecord-list"}
+        }))
+        .unwrap();
+        let picker = gui.pick_start(spec).unwrap();
+        gui.shells().run(&gui, &picker, "true", None, None, None).await.unwrap();
+        assert!(gui.shells().live(&picker).is_some());
+        gui.pick_cancel().unwrap();
+        assert!(gui.shells().live(&picker).is_none(), "the picker's shell is still held");
+    }
+
     /// Closing the workspace ends its shell.
     #[tokio::test]
     async fn test_closing_the_workspace_ends_its_shell() {

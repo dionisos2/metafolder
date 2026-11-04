@@ -285,7 +285,8 @@ fn test_closing_a_picker_never_leaves_the_focus_on_a_hidden_slot() {
 }
 
 /// Whatever the user does, the keys never go to a slot they cannot see
-/// while another one is shown. A seeded walk through the layout commands.
+/// while another one is shown, and no slot names a workspace that is gone. A
+/// seeded walk through the layout commands.
 #[test]
 fn test_the_focus_is_always_on_a_shown_slot() {
     let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
@@ -305,7 +306,7 @@ fn test_the_focus_is_always_on_a_shown_slot() {
                 .map(|w| w.id.clone())
                 .unwrap_or_default();
             let side = if rnd(2) == 0 { SlotId::Left } else { SlotId::Right };
-            let op = rnd(14);
+            let op = rnd(16);
             let _ = match op {
                 0 => {
                     state.workspace_new(None);
@@ -332,13 +333,26 @@ fn test_the_focus_is_always_on_a_shown_slot() {
                 10 => state.fork(&some_ws).map(drop),
                 11 => state.workspace_create(None, None, Some(side)).map(drop),
                 12 => state.workspace_goto(rnd(4) as usize + 1),
-                _ => match state.focused_workspace_id() {
+                13 => match state.focused_workspace_id() {
                     Some(caller) => state.pick_start(pick_spec(&caller)).map(drop),
                     None => Ok(()),
                 },
+                14 => {
+                    let _ = state.set_var(&some_ws, "selected_metarecord", json!({"uuid": "u"}));
+                    state.pick_confirm()
+                }
+                _ => state.pick_cancel(),
             };
             let layout = state.layout();
             trace.push(format!("op {op} -> {layout:?}"));
+            let open: Vec<String> = state.workspaces().into_iter().map(|w| w.id).collect();
+            for slot in [&layout.left, &layout.right] {
+                assert!(
+                    slot.workspace_id.as_ref().is_none_or(|ws| open.contains(ws)),
+                    "a slot names a closed workspace:\n{}",
+                    trace.join("\n")
+                );
+            }
             let focused = if layout.focused == SlotId::Left { &layout.left } else { &layout.right };
             assert!(
                 focused.visible || !(layout.left.visible || layout.right.visible),
@@ -1128,6 +1142,43 @@ fn test_closing_a_picker_by_hand_is_a_cancel() {
     let layout = state.layout();
     assert_eq!(layout.right.workspace_id.as_deref(), Some(other.as_str()));
     assert_eq!(layout.right.panel_type.as_deref(), Some("metarecord-detail"));
+    assert_eq!(layout.focused, SlotId::Left);
+}
+
+#[test]
+fn test_a_picker_shown_in_the_callers_slot_gives_it_back_to_the_caller() {
+    let (_, state) = state();
+    let caller = state.workspace_new(Some("repo-1".into())); // ws-2, left
+    let picker = state.pick_start(pick_spec(&caller)).unwrap(); // right, focused
+    state.tab_assign(&picker, SlotId::Left).unwrap(); // the picker in both slots
+    state.pick_cancel().unwrap();
+
+    let layout = state.layout();
+    assert_eq!(layout.left.workspace_id.as_deref(), Some(caller.as_str()));
+    assert!(layout.left.visible);
+    assert_eq!(layout.focused, SlotId::Left);
+    assert_eq!(
+        state.get_var(&caller, "pick_result").unwrap(),
+        json!({ "token": 7, "cancelled": true })
+    );
+}
+
+#[test]
+fn test_a_picker_never_restores_a_workspace_closed_while_picking() {
+    let (_, state) = state();
+    let caller = state.workspace_new(Some("repo-1".into())); // ws-2, left
+    let shown = state.workspace_create(Some("repo-1".into()), None, Some(SlotId::Right)).unwrap();
+    state.focus_slot(SlotId::Left);
+    let picker = state.pick_start(pick_spec(&caller)).unwrap(); // over `shown`, right
+    state.close_workspace(&shown).unwrap();
+    state.set_var(&picker, "selected_metarecord", json!({ "uuid": "abc" })).unwrap();
+    state.focus_slot(SlotId::Right);
+    state.pick_confirm().unwrap();
+
+    let layout = state.layout();
+    assert_eq!(layout.right.workspace_id, None, "{layout:?}");
+    assert!(!layout.right.visible);
+    assert_eq!(layout.left.workspace_id.as_deref(), Some(caller.as_str()));
     assert_eq!(layout.focused, SlotId::Left);
 }
 
