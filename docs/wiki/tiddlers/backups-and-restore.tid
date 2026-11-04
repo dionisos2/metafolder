@@ -39,7 +39,10 @@ mf repo restore --metafolder <dir>            # … with an external .metafolder
 
 The usual reason to restore is a store that no longer loads, hence the forms naming
 a repository by its path. A loaded repository is unloaded, restored and loaded back;
-an unloaded one is loaded once restored.
+an unloaded one is loaded once restored. A loaded repository that some work still
+holds a minute after its unload is not restored: the `409` says it is left unloaded,
+to load again once that work is done (its store stays locked until then, so loading
+it back could only fail).
 
 The backup is `--from`, or the most recent under `internal/backups/` (by the time in
 its `backup.json`; a directory without one is not a backup). It must be the ''same''

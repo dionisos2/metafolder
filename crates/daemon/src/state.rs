@@ -1093,6 +1093,14 @@ fn let_go(repo: Arc<RepoState>) {
     drop(handles);
 }
 
+/// How a client names the repository at `locator` to load it again.
+fn locator_text(locator: &RepoLocator) -> String {
+    match locator {
+        RepoLocator::Root(root) => root.display().to_string(),
+        RepoLocator::Metafolder(dir) => format!("--metafolder {}", dir.display()),
+    }
+}
+
 /// Unloads `repo`, whose root went away, listing it as lost — if it is still
 /// the one loaded under `uuid`. The hook calling this runs on a thread of its
 /// own: by then a `load` that found the root lost may have put the
@@ -1473,16 +1481,30 @@ impl AppState {
     /// its lock) goes with the last reference. Answers where it lives, to
     /// load it back.
     fn release(&self, repo_uuid: Uuid) -> Result<RepoLocator, ApiError> {
+        self.release_within(repo_uuid, std::time::Duration::from_secs(60))
+    }
+
+    /// [`Self::release`], giving up after `patience`.
+    fn release_within(
+        &self,
+        repo_uuid: Uuid,
+        patience: std::time::Duration,
+    ) -> Result<RepoLocator, ApiError> {
         let repo_state = self.repo(repo_uuid)?;
         let locator = RepoLocator::Metafolder(repo_state.metafolder_dir.clone());
         let released = Arc::downgrade(&repo_state);
         drop(repo_state);
         self.unload_repo(repo_uuid)?;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let deadline = std::time::Instant::now() + patience;
         while released.strong_count() > 0 {
             if std::time::Instant::now() > deadline {
-                let _ = self.reload(locator.clone());
-                return Err(ApiError::conflict("the repository is still in use; try again"));
+                // Not loaded back: whatever still holds it holds the store's
+                // exclusive lock too, so a reload could only fail.
+                return Err(ApiError::conflict(format!(
+                    "the repository is unloaded, but still in use: nothing was restored; \
+                     load it again (`mf repo load {}`) once the work holding it is done",
+                    locator_text(&locator)
+                )));
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
@@ -1803,6 +1825,35 @@ mod tests {
         let (_, backend, budget, _) = answered.expect("the watch view waited for the placement");
         assert_eq!(backend, "blocking");
         assert!(budget);
+    }
+
+    /// A release that gives up says the repository is unloaded — it is, and
+    /// loading it back could only fail while the store is held.
+    #[test]
+    fn a_release_that_gives_up_says_the_repository_is_unloaded() {
+        let settings = crate::daemon_config::parse_config(
+            include_str!("../default-config/config.toml"),
+            std::path::Path::new("shipped"),
+        )
+        .unwrap()
+        .settings;
+        let state = AppState::new(settings);
+        let root = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf_state_release_{}", Uuid::new_v4()));
+        crate::repo::seed_test_config(&root);
+        let uuid = state.init_repo(&root, None, None, false).unwrap();
+        let held = state.repo(uuid).unwrap();
+
+        let answer = state.release_within(uuid, Duration::from_millis(20));
+        let loaded = state.repos.lock_recover().contains_key(&uuid);
+        drop(held);
+        let _ = std::fs::remove_dir_all(&root);
+
+        let error = answer.expect_err("the release gave up");
+        assert!(error.message.contains("unloaded"), "{}", error.message);
+        assert!(error.message.contains("mf repo load"), "{}", error.message);
+        assert!(!loaded, "the repository is listed loaded");
     }
 
     /// The hook a lost root sets off runs on a thread of its own, so it can
