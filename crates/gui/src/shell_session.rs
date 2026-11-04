@@ -379,6 +379,7 @@ fn start(
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
+        .envs(gui.script_env().iter().map(|(name, value)| (name, value)))
         .env_remove(metafolder_core::context::LABEL_ENV);
     if let Some(dir) = &dir {
         // `PWD` too, or `pwd` names the GUI's directory's resolution of it.
@@ -597,6 +598,16 @@ mod tests {
         let sub = sub.to_string_lossy().into_owned();
         assert_eq!(runs(&gui), [vec![], vec![out("1"), out("func"), out("kk"), out(&sub)]]);
         assert_eq!(gui.shell_place("ws-1").unwrap().cd, Some(dir.0.join("sub")));
+    }
+
+    /// The persistent shell, and so every line typed in it, is told which GUI
+    /// and which daemon started it (see `shell_exec`'s twin test).
+    #[tokio::test]
+    async fn test_the_shell_is_told_its_gui_and_daemon() {
+        let gui = gui();
+        gui.set_script_env(7911, 7912);
+        run(&gui, "echo \"$METAFOLDER_GUI_URL $METAFOLDER_DAEMON_PORT\"", None).await;
+        assert_eq!(runs(&gui), [vec![out("http://127.0.0.1:7911 7912")]]);
     }
 
     /// The rc file is loaded once, by the line that starts the shell, through

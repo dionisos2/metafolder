@@ -480,10 +480,8 @@ pub fn run(options: Options) {
     let panel_settings = gui_config.panels.clone();
     let panel_defaults = gui_config.panel_defaults.clone();
     let health_poll_interval = settings.daemon_health_poll();
-    let daemon_url = match options.daemon_port {
-        Some(port) => format!("http://127.0.0.1:{port}"),
-        None => gui_config.daemon_base_url(),
-    };
+    let daemon_port = options.daemon_port.unwrap_or(gui_config.daemon_port);
+    let daemon_url = format!("http://127.0.0.1:{daemon_port}");
     let daemon = Arc::new(daemon_proxy::DaemonProxy::with_slow_threshold(
         daemon_url,
         settings.slow_operation_threshold_ms,
@@ -513,6 +511,7 @@ pub fn run(options: Options) {
         .setup(move |tauri_app| {
             let notifier = Arc::new(TauriNotifier(tauri_app.handle().clone()));
             let gui = Arc::new(GuiState::new(notifier));
+            gui.set_script_env(gui_port, daemon_port);
             // The slot headers show the work context in force on their
             // repository (doc "The GUI's work context").
             let weak = Arc::downgrade(&gui);

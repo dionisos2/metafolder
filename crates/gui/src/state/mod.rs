@@ -95,6 +95,9 @@ pub struct GuiState {
     next_txn: AtomicU64,
     /// The workspaces' persistent shells (doc "shell panel").
     shells: crate::shell_session::ShellSessions,
+    /// What every script and shell the GUI starts is told of where it runs
+    /// ([`GuiState::set_script_env`]); empty until set.
+    script_env: std::sync::OnceLock<Vec<(&'static str, String)>>,
     notifier: Arc<dyn FrontendNotifier>,
 }
 
@@ -403,8 +406,26 @@ impl GuiState {
             txns: Mutex::new(HashMap::new()),
             next_txn: AtomicU64::new(1),
             shells: Default::default(),
+            script_env: std::sync::OnceLock::new(),
             notifier,
         }
+    }
+
+    /// Names this GUI and its daemon to what it starts: `METAFOLDER_GUI_URL`
+    /// for `mf gui …`, `METAFOLDER_DAEMON_PORT` for every other `mf`, so a
+    /// script reaches the GUI that launched it and that GUI's daemon, even when
+    /// they run on ports other than the configuration files' (doc "Scripting
+    /// the GUI"). Set once, at startup; a later call is ignored.
+    pub fn set_script_env(&self, gui_port: u16, daemon_port: u16) {
+        let _ = self.script_env.set(vec![
+            ("METAFOLDER_GUI_URL", format!("http://127.0.0.1:{gui_port}")),
+            ("METAFOLDER_DAEMON_PORT", daemon_port.to_string()),
+        ]);
+    }
+
+    /// The variables [`GuiState::set_script_env`] set, to pass to a child.
+    pub fn script_env(&self) -> &[(&'static str, String)] {
+        self.script_env.get().map_or(&[], Vec::as_slice)
     }
 
     /// The workspaces' persistent shells, where the lines the user types run.

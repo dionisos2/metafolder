@@ -36,8 +36,9 @@ through events, so a script and the window always agree ([[GUI]]).
 !! The run id
 
 A script the GUI starts — `script:run`, a `!` line, `file:open-with` — runs in its own
-process group with `METAFOLDER_GUI_TASK` set to its run id (`script-3`, counted from
-the GUI's start). `mf gui` sends it as `task` on the four requests that take one. It
+process group with `METAFOLDER_GUI_TASK` set to its run id (and
+`METAFOLDER_GUI_URL`, `METAFOLDER_DAEMON_PORT` naming this GUI and its daemon,
+[[Scripting the GUI]]); the run id is `script-3`, counted from the GUI's start. `mf gui` sends it as `task` on the four requests that take one. It
 is what ties a request to a script: the workspaces it owns, its task-bar entry, the
 process group to signal ([[Script sessions]]). An absent or unknown `task` is never an
 error — the request then belongs to nobody — so the same script runs from a terminal.

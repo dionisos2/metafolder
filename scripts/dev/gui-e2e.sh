@@ -195,10 +195,10 @@ PANEL
 
 gui_args=(--gui-port "$GUI_PORT" --daemon-port "$DF_PORT")
 $UNSANDBOXED && gui_args+=(--allow-unsandboxed-webview)
-# What the GUI runs (scripts) finds this mf first, and this GUI with it.
+# What the GUI runs (scripts) finds this mf first; the GUI itself tells it which
+# GUI and daemon to reach (doc "Scripting the GUI").
 WEBKIT_INSPECTOR_HTTP_SERVER="127.0.0.1:$INSPECTOR_PORT" \
     XDG_CONFIG_HOME="$CONFIG_HOME" PATH="$(cd "$(dirname "$_DF_MF")" && pwd):$PATH" \
-    METAFOLDER_GUI_URL="http://127.0.0.1:$GUI_PORT" \
     "$GUI_BIN" "${gui_args[@]}" >"$WORK/gui.log" 2>&1 &
 GUI_PID=$!
 

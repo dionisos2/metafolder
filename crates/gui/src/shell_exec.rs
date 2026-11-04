@@ -75,6 +75,7 @@ pub async fn run_in(
         command.current_dir(&dir).env("PWD", &dir);
     }
     command
+        .envs(gui.script_env().iter().map(|(name, value)| (name, value)))
         .env("METAFOLDER_GUI_TASK", &task_id)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -453,6 +454,21 @@ mod tests {
         let out: Vec<&str> =
             log.iter().filter(|e| e.kind == ShellLine::Stdout).map(|e| e.text.as_str()).collect();
         assert_eq!(out, [format!("in:{context}").as_str(), "in:none"]);
+    }
+
+    /// A run is told which GUI and which daemon started it, so that its `mf
+    /// gui …` and `mf …` reach them and not the ports of the configuration
+    /// files (a GUI started with `--gui-port` / `--daemon-port`).
+    #[tokio::test]
+    async fn test_a_run_is_told_its_gui_and_daemon() {
+        let gui = gui();
+        gui.set_script_env(7911, 7912);
+        let line = "echo \"$METAFOLDER_GUI_URL $METAFOLDER_DAEMON_PORT\"";
+        run_to_completion(gui.clone(), "ws-1".into(), line.into()).await.unwrap();
+        let log = gui.shell_log("ws-1").unwrap();
+        let out: Vec<&str> =
+            log.iter().filter(|e| e.kind == ShellLine::Stdout).map(|e| e.text.as_str()).collect();
+        assert_eq!(out, ["http://127.0.0.1:7911 7912"]);
     }
 
     /// A plain `!` line runs in the work context in force on the workspace's

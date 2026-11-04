@@ -45,6 +45,11 @@ the GUI is only the screen and the keyboard.
 the same user ([[Session tokens]]). The API answers for as long as the GUI runs,
 whether or not the daemon does.
 
+What the GUI starts — a script, a `!` line, the workspace's shell — is told where it
+runs: `METAFOLDER_GUI_URL` names that GUI and `METAFOLDER_DAEMON_PORT` its daemon's
+port, so its `mf gui …` and `mf …` reach them even when the GUI was started with
+`--gui-port` or `--daemon-port`, rather than the ports of the configuration files.
+
 <<list-kind guide>>
 
 <<list-kind reference>>

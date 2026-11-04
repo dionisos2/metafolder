@@ -182,13 +182,6 @@ impl TryFrom<RefSeedWire> for RefSeed {
 }
 
 impl GuiConfig {
-    /// The daemon base URL the GUI connects to (loopback + the configured port).
-    pub fn daemon_base_url(&self) -> String {
-        format!("http://127.0.0.1:{}", self.daemon_port)
-    }
-}
-
-impl GuiConfig {
     /// The checks a value's type cannot make: a malformed file is a hard
     /// startup error (doc "No runtime fallback"), not a silently clamped one.
     pub fn validate(&self) -> Result<(), String> {
@@ -827,7 +820,6 @@ mod tests {
     fn test_the_shipped_ports_are_the_daemon_default_port_and_the_gui_default_port() {
         let parsed = over_shipped("").unwrap();
         assert_eq!(parsed.daemon_port, 7523);
-        assert_eq!(parsed.daemon_base_url(), "http://127.0.0.1:7523");
         assert_eq!(parsed.gui_port, 7524);
     }
 
