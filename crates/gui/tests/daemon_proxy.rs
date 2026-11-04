@@ -282,6 +282,75 @@ async fn test_reconcile_run_posts_status_and_logs() {
     assert_eq!(gui.messages(&ws).unwrap().len(), 3);
 }
 
+/// A reconcile stub whose task answers `task` with HTTP `status`.
+async fn spawn_reconcile_task_stub(status: u16, task: Value) -> String {
+    let router = axum::Router::new()
+        .route(
+            "/repos/abc123/reconcile",
+            axum::routing::post(|| async {
+                (axum::http::StatusCode::ACCEPTED, Json(json!({"task_id": "t1"})))
+            }),
+        )
+        .route(
+            "/repos/abc123/tasks/t1",
+            get(move || {
+                let task = task.clone();
+                async move { (axum::http::StatusCode::from_u16(status).unwrap(), Json(task)) }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    format!("http://127.0.0.1:{port}")
+}
+
+/// A reconcile cancelled from the task bar ends `reconcile:run`, said as such:
+/// polled on, the task would be evicted and answer 404 for ever.
+#[tokio::test]
+async fn test_a_cancelled_reconcile_ends_the_run() {
+    let url = spawn_reconcile_task_stub(200, json!({"id": "t1", "status": "cancelled"})).await;
+    let (notifier, gui) = gui_with_notifier();
+    let ws = gui.workspace_new(Some("abc123".into()));
+    let run = metafolder_gui::reconcile::run(
+        gui.clone(),
+        Arc::new(DaemonProxy::new(url)),
+        ws,
+        Default::default(),
+    );
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), run)
+        .await
+        .expect("the run ends")
+        .unwrap();
+
+    let statuses = notifier.payloads(events::STATUS_MESSAGE);
+    let last = statuses.last().unwrap();
+    assert_eq!(last["kind"], "info");
+    assert!(last["text"].as_str().unwrap().contains("cancelled"), "{last}");
+}
+
+/// A task the daemon no longer knows ends the run with its error.
+#[tokio::test]
+async fn test_a_reconcile_task_the_daemon_no_longer_knows_ends_the_run() {
+    let url = spawn_reconcile_task_stub(404, json!({"error": "no such task: t1"})).await;
+    let (_, gui) = gui_with_notifier();
+    let ws = gui.workspace_new(Some("abc123".into()));
+    let run = metafolder_gui::reconcile::run(
+        gui.clone(),
+        Arc::new(DaemonProxy::new(url)),
+        ws,
+        Default::default(),
+    );
+
+    let error = tokio::time::timeout(std::time::Duration::from_secs(5), run)
+        .await
+        .expect("the run ends")
+        .unwrap_err();
+    assert!(error.contains("no such task"), "error: {error}");
+}
+
 #[tokio::test]
 async fn test_set_url_is_visible() {
     let proxy = DaemonProxy::new("http://127.0.0.1:7523".into());

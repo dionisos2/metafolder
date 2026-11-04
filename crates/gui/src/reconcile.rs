@@ -67,35 +67,67 @@ pub async fn run(
         .ok_or_else(|| "reconcile: missing task_id in response".to_string())?
         .to_string();
 
+    match wait_task(&gui, &daemon, &ws_id, &repo, &task_id, &timings, "reconcile").await? {
+        TaskEnd::Done(result) => {
+            gui.post_status(&ws_id, &format_summary(&result), "info", Some(timings.done_ms))?;
+            let detail =
+                serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string());
+            gui.append_message(&ws_id, &detail)?;
+        }
+        TaskEnd::Cancelled => {
+            // What it reconciled before the stop is kept: not a failure.
+            gui.post_status(&ws_id, "Reconcile cancelled.", "info", Some(timings.done_ms))?;
+        }
+    }
+    Ok(())
+}
+
+/// How a task the GUI waited for ended, when it did not fail.
+pub(crate) enum TaskEnd {
+    /// `done`, with the task's `result`.
+    Done(Value),
+    /// `cancelled`, at the user's request (doc "Cancelling a task").
+    Cancelled,
+}
+
+/// Polls task `task_id` of `repo` until it is over. Live progress belongs to
+/// the task bar, which polls `GET /tasks` itself, so nothing is posted per
+/// poll. A failed task — or one the daemon no longer knows (evicted, or a
+/// daemon started again meanwhile: polled on, it would answer 404 for ever) —
+/// is the error, posted in the status bar.
+pub(crate) async fn wait_task(
+    gui: &GuiState,
+    daemon: &DaemonProxy,
+    ws_id: &str,
+    repo: &str,
+    task_id: &str,
+    timings: &Timings,
+    what: &str,
+) -> Result<TaskEnd, String> {
+    let fail = |message: String| {
+        let _ = gui.post_status(ws_id, &message, "error", Some(timings.error_ms));
+        Err(message)
+    };
     loop {
-        let response = daemon
-            .request("GET", &format!("/repos/{repo}/tasks/{task_id}"), None)
-            .await
-            .inspect_err(|error| {
-                let _ = gui.post_status(&ws_id, error, "error", Some(timings.error_ms));
-            })?;
+        let response =
+            match daemon.request("GET", &format!("/repos/{repo}/tasks/{task_id}"), None).await {
+                Ok(response) => response,
+                Err(error) => return fail(error),
+            };
         let task = &response.body;
+        if response.status != 200 {
+            let status = response.status;
+            return fail(crate::daemon_proxy::error_message(task, || {
+                format!("{what}: reading its task failed ({status})")
+            }));
+        }
         match task["status"].as_str() {
-            Some("done") => {
-                let result = &task["result"];
-                gui.post_status(&ws_id, &format_summary(result), "info", Some(timings.done_ms))?;
-                let detail =
-                    serde_json::to_string_pretty(result).unwrap_or_else(|_| result.to_string());
-                gui.append_message(&ws_id, &detail)?;
-                return Ok(());
-            }
+            Some("done") => return Ok(TaskEnd::Done(task["result"].clone())),
+            Some("cancelled") => return Ok(TaskEnd::Cancelled),
             Some("failed") => {
-                let message =
-                    crate::daemon_proxy::error_message(task, || "reconcile failed".to_string());
-                gui.post_status(&ws_id, &message, "error", Some(timings.error_ms))?;
-                return Err(message);
+                return fail(crate::daemon_proxy::error_message(task, || format!("{what} failed")))
             }
-            _ => {
-                // Live progress is shown by the dedicated task bar (it polls
-                // GET /tasks), so the reconcile flow itself posts nothing per
-                // poll — only the initial "Reconciling…" and the final summary.
-                tokio::time::sleep(timings.poll).await;
-            }
+            _ => tokio::time::sleep(timings.poll).await,
         }
     }
 }

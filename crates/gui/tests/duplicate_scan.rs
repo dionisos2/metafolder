@@ -50,8 +50,14 @@ async fn spawn_stub(start: (u16, Value), polls: Vec<Value>) -> (String, Stub) {
             get(|State(stub): State<Stub>| async move {
                 *stub.poll_count.lock().unwrap() += 1;
                 let mut polls = stub.polls.lock().unwrap();
-                let body = if polls.len() > 1 { polls.remove(0) } else { polls[0].clone() };
-                Json(body)
+                let mut body = if polls.len() > 1 { polls.remove(0) } else { polls[0].clone() };
+                // `_status` stands for the HTTP status of the answer (200 without).
+                let status = body
+                    .as_object_mut()
+                    .and_then(|o| o.remove("_status"))
+                    .and_then(|s| s.as_u64())
+                    .unwrap_or(200);
+                (StatusCode::from_u16(status as u16).unwrap(), Json(body))
             }),
         )
         .with_state(stub.clone());
@@ -236,6 +242,25 @@ async fn test_a_cancelled_scan_is_not_a_failure() {
         ctx.last_status(),
         ("Duplicate scan cancelled; what it found is kept.".into(), "info".into(), json!(222))
     );
+}
+
+/// A task the daemon no longer knows — evicted, or a daemon started again
+/// meanwhile — ends the wait with an error: polling it again can only answer
+/// the same 404, for ever.
+#[tokio::test]
+async fn test_a_task_the_daemon_no_longer_knows_ends_the_wait() {
+    let gone = json!({"_status": 404, "error": "no such task: t1"});
+    let (url, stub) = spawn_stub(accepted(), vec![json!({"status": "running"}), gone]).await;
+    let ctx = setup(&url);
+
+    let error = tokio::time::timeout(Duration::from_secs(5), ctx.run(None, false))
+        .await
+        .expect("the wait ends")
+        .unwrap_err();
+
+    assert!(error.contains("no such task"), "error: {error}");
+    assert_eq!(ctx.last_status(), (error, "error".into(), json!(111)));
+    assert_eq!(*stub.poll_count.lock().unwrap(), 2);
 }
 
 #[tokio::test]

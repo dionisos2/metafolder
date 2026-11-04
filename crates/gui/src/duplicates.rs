@@ -7,7 +7,7 @@
 //! — live progress belongs to the task bar, which polls `GET /tasks` itself.
 
 use crate::daemon_proxy::DaemonProxy;
-use crate::reconcile::Timings;
+use crate::reconcile::{TaskEnd, Timings};
 use crate::state::GuiState;
 use serde_json::Value;
 use std::sync::Arc;
@@ -65,45 +65,36 @@ pub async fn run(
         .ok_or_else(|| "duplicate scan: missing task_id in response".to_string())?
         .to_string();
 
-    loop {
-        let response = daemon
-            .request("GET", &format!("/repos/{repo}/tasks/{task_id}"), None)
-            .await
-            .inspect_err(|error| {
-                let _ = gui.post_status(&ws_id, error, "error", Some(timings.error_ms));
-            })?;
-        let task = &response.body;
-        match task["status"].as_str() {
-            Some("done") => {
-                let result = &task["result"];
-                gui.post_status(&ws_id, &format_summary(result), "info", Some(timings.done_ms))?;
-                let detail =
-                    serde_json::to_string_pretty(result).unwrap_or_else(|_| result.to_string());
-                gui.append_message(&ws_id, &detail)?;
-                return Ok(());
-            }
-            Some("failed") => {
-                let message = crate::daemon_proxy::error_message(task, || {
-                    "duplicate scan failed".to_string()
-                });
-                gui.post_status(&ws_id, &message, "error", Some(timings.error_ms))?;
-                return Err(message);
-            }
-            Some("cancelled") => {
-                // Cancellation is not a failure: the scan keeps the hashes it
-                // computed and the groups it wrote (doc "The duplicate scan"), so say so rather
-                // than shout.
-                gui.post_status(
-                    &ws_id,
-                    "Duplicate scan cancelled; what it found is kept.",
-                    "info",
-                    Some(timings.done_ms),
-                )?;
-                return Ok(());
-            }
-            _ => tokio::time::sleep(timings.poll).await,
+    let end = crate::reconcile::wait_task(
+        &gui,
+        &daemon,
+        &ws_id,
+        &repo,
+        &task_id,
+        &timings,
+        "duplicate scan",
+    )
+    .await?;
+    match end {
+        TaskEnd::Done(result) => {
+            gui.post_status(&ws_id, &format_summary(&result), "info", Some(timings.done_ms))?;
+            let detail =
+                serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string());
+            gui.append_message(&ws_id, &detail)?;
+        }
+        TaskEnd::Cancelled => {
+            // Cancellation is not a failure: the scan keeps the hashes it
+            // computed and the groups it wrote (doc "The duplicate scan"), so say
+            // so rather than shout.
+            gui.post_status(
+                &ws_id,
+                "Duplicate scan cancelled; what it found is kept.",
+                "info",
+                Some(timings.done_ms),
+            )?;
         }
     }
+    Ok(())
 }
 
 #[tauri::command]
