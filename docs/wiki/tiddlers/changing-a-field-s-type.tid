@@ -18,7 +18,7 @@ retype is one logged write, so `mf log undo` takes it back. Reserved names
 
 !! How values convert
 
-* ''To `string`'' — always, losslessly, by the value's canonical text: numbers and booleans as text, dates as ISO-8601, `ref`/`refbase` as a 32-hex uuid, `tree_ref` as `<parent-hex>/<name>` (`/<name>` for a root), `externalref` as `<repo-hex>:<metarecord-hex>`.
+* ''To `string`'' — always, by the value's canonical text: numbers and booleans as text, dates as ISO-8601, `ref`/`refbase` as a 32-hex uuid, `tree_ref` as `<parent-hex>/<name>` (`/<name>` for a root), `externalref` as `<repo-hex>:<metarecord-hex>`. Losslessly, with two exceptions the text cannot carry: a date's milliseconds and an instant before 1970 (ISO-8601 here has whole seconds from the epoch on), and a name that is not UTF-8, which becomes its shown form, `%XX` escapes included ([[Tree names]]) — converting back reads those escapes as characters.
 * ''From `string`'' — by parsing that same form (surrounding spaces ignored). `string` is the hub: to reinterpret a value as another reference type, go through it.
 * ''Between scalars'' — `int`, `float`, `bool` and `datetime` convert between each other (a float to an int truncates; a bool is `0`/`1`; a date is its Unix milliseconds; a number is true unless zero), except a `bool` to a `datetime`.
 * ''Between `tree_ref` and `hierarchy_ref''' — as they are: every tree is a hierarchy ([[Hierarchy references]]). Back to `tree_ref`, a node keeps its first parent and the others fall back, being second positions.

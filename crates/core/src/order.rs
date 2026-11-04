@@ -77,6 +77,12 @@ fn last_number(name: &str) -> Option<(String, String, i64)> {
     Some((name[..start].to_string(), name[end..].to_string(), number))
 }
 
+/// `anchor_pos + (value − anchor_value)`, or `None` when it does not fit an
+/// `i64` (a 19-digit number in a name, metadata at the ends of the range).
+fn offset(anchor_pos: i64, value: i64, anchor_value: i64) -> Option<i64> {
+    anchor_pos.checked_add(value.checked_sub(anchor_value)?)
+}
+
 /// Assigns positions to the `items` that lack one, per the module algorithm.
 /// Returns only the items to write (those with `existing == None`), sorted by
 /// position then key for a stable output.
@@ -100,7 +106,11 @@ pub fn assign_positions(items: &[Item], threshold: i64) -> Vec<Assignment> {
         let anchor_pos = maxpos + 1;
         let anchor_val = items[meta_idx[0]].meta.unwrap();
         for &i in &meta_idx {
-            let pos = anchor_pos + (items[i].meta.unwrap() - anchor_val);
+            // A value too far from the anchor to be a position is left to the
+            // date phase rather than wrapped around.
+            let Some(pos) = offset(anchor_pos, items[i].meta.unwrap(), anchor_val) else {
+                continue;
+            };
             placed[i] = Some(pos);
             maxpos = maxpos.max(pos);
         }
@@ -159,7 +169,7 @@ pub fn assign_positions(items: &[Item], threshold: i64) -> Vec<Assignment> {
         let (anchor_pos, anchor_num) = if c.anchored {
             (c.anchor_pos, num(c.anchor))
         } else {
-            let ap = maxpos + 1;
+            let ap = maxpos.saturating_add(1);
             placed[c.anchor] = Some(ap);
             maxpos = maxpos.max(ap);
             (ap, num(c.anchor))
@@ -168,7 +178,7 @@ pub fn assign_positions(items: &[Item], threshold: i64) -> Vec<Assignment> {
             if placed[i].is_some() {
                 continue;
             }
-            let pos = anchor_pos + (num(i) - anchor_num);
+            let Some(pos) = offset(anchor_pos, num(i), anchor_num) else { continue };
             placed[i] = Some(pos);
             maxpos = maxpos.max(pos);
         }
@@ -182,7 +192,7 @@ pub fn assign_positions(items: &[Item], threshold: i64) -> Vec<Assignment> {
         key(a).cmp(&key(b))
     });
     for i in leftovers {
-        maxpos += 1;
+        maxpos = maxpos.saturating_add(1);
         placed[i] = Some(maxpos);
     }
 
@@ -392,6 +402,33 @@ mod tests {
     /// in these tests) for order-free assertions.
     fn positions(assignments: &[Assignment]) -> std::collections::HashMap<String, i64> {
         assignments.iter().map(|a| (a.key.clone(), a.position)).collect()
+    }
+
+    #[test]
+    fn a_number_too_large_to_place_is_left_to_the_date_phase() {
+        // A 19-digit number (a nanosecond timestamp) next to small ones: its
+        // position would overflow, so it is placed after the others instead.
+        let mut big = item("a9223372036854775807", "a9223372036854775807", None, None);
+        big.btime = Some(5);
+        let mut placed = item("x", "x", None, None);
+        placed.existing = Some(100);
+        let items = vec![placed, item("a1", "a1", None, None), item("a2", "a2", None, None), big];
+        let pos = positions(&assign_positions(&items, DEFAULT_MAX_GAP));
+        assert_eq!((pos["a1"], pos["a2"]), (101, 102));
+        assert_eq!(pos["a9223372036854775807"], 103);
+    }
+
+    #[test]
+    fn metadata_too_far_apart_to_place_is_left_to_the_date_phase() {
+        let items = vec![
+            item("low", "low", Some(i64::MIN), None),
+            item("mid", "mid", Some(0), None),
+            item("high", "high", Some(i64::MAX), None),
+        ];
+        let pos = positions(&assign_positions(&items, DEFAULT_MAX_GAP));
+        assert_eq!(pos["low"], 1);
+        // The anchor is the lowest; what overflows from it goes after.
+        assert!(pos["mid"] > 1 && pos["high"] > 1, "{pos:?}");
     }
 
     #[test]

@@ -73,12 +73,16 @@ pub fn ms_from_systemtime(t: SystemTime) -> i64 {
 /// to 1, so `2017` and `2027-01` mean `2017-01-01` and `2027-01-01`).
 /// Returns `None` on a malformed string.
 pub fn iso_to_ms(s: &str) -> Option<i64> {
-    let s = s.trim().trim_end_matches('Z');
+    let s = s.trim();
+    let s = s.strip_suffix('Z').unwrap_or(s);
     let (date, time) = s.split_once(['T', ' ']).unwrap_or((s, "00:00:00"));
     let mut d = date.split('-');
     let year: i64 = d.next()?.parse().ok()?;
     let month: i64 = d.next().map_or(Ok(1), str::parse).ok()?;
     let day: i64 = d.next().map_or(Ok(1), str::parse).ok()?;
+    if d.next().is_some() {
+        return None;
+    }
     // Bound the year so `days_from_civil` and the scaling below stay within
     // `i64` (a huge value would otherwise panic in debug / wrap in release);
     // this range covers every realistic file timestamp and date literal.
@@ -92,6 +96,9 @@ pub fn iso_to_ms(s: &str) -> Option<i64> {
     let hour: i64 = t.next()?.parse().ok()?;
     let min: i64 = t.next().unwrap_or("0").parse().ok()?;
     let sec: i64 = t.next().unwrap_or("0").parse().ok()?;
+    if t.next().is_some() {
+        return None;
+    }
     // Allow second 60 for a leap second; reject everything else out of range.
     if !(0..=23).contains(&hour) || !(0..=59).contains(&min) || !(0..=60).contains(&sec) {
         return None;
@@ -119,6 +126,15 @@ fn days_in_month(year: i64, month: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_date_with_a_component_too_many_is_refused() {
+        // A typo is not a date: the extra part must not be dropped silently.
+        for bad in ["2024-03-15-99", "2024-03-15T10:30:00:99", "2024-03-15T10:30:00Z1"] {
+            assert_eq!(iso_to_ms(bad), None, "{bad}");
+        }
+        assert!(iso_to_ms("2024-03-15T10:30:00Z").is_some());
+    }
 
     #[test]
     fn civil_from_days_epoch() {

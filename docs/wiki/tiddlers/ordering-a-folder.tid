@@ -31,7 +31,7 @@ compacted.
 
 # ''Metadata'' — children with an integer ordering field (`--meta`, default `mfr_meta_track`), sorted by it: the first at `next`, the others at `first + (value − first value)`; ties share a position.
 # ''Name pattern'' — children named `<prefix><number><suffix>`, grouped by identical prefix and suffix (the ''last'' run of digits is the number). A group needs two members and a smallest consecutive gap of at most `--max-gap` (default 1000 — beyond, the number is an id or a hash, not an order). A member already positioned pins the group; otherwise its lowest number goes at `next`, the others at `anchor + (number − anchor number)`.
-# ''Creation date'' — what is left, by `mfr_btime` (missing last, then by name), each at `next`.
+# ''Creation date'' — what is left, by `mfr_btime` (missing last, then by name), each at `next`. A child the first two would place beyond what a position can hold (a 19-digit number in its name, metadata at the ends of the integer range) is among them.
 
 !! In the GUI
 
