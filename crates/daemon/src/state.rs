@@ -1093,6 +1093,31 @@ fn let_go(repo: Arc<RepoState>) {
     drop(handles);
 }
 
+/// Unloads `repo`, whose root went away, listing it as lost — if it is still
+/// the one loaded under `uuid`. The hook calling this runs on a thread of its
+/// own: by then a `load` that found the root lost may have put the
+/// repository back, and that one stays.
+fn unload_lost(
+    repos: &Mutex<HashMap<Uuid, Arc<RepoState>>>,
+    lost: &Mutex<HashMap<Uuid, LostRepo>>,
+    uuid: Uuid,
+    repo: &std::sync::Weak<RepoState>,
+) {
+    let removed = {
+        let mut repos = repos.lock_recover();
+        match repos.get(&uuid) {
+            Some(current) if std::ptr::eq(Arc::as_ptr(current), repo.as_ptr()) => {
+                repos.remove(&uuid)
+            }
+            _ => None,
+        }
+    };
+    let Some(repo) = removed else { return };
+    let entry = LostRepo { info: repo.info(), message: repo.root_lost_message() };
+    lost.lock_recover().insert(uuid, entry);
+    let_go(repo);
+}
+
 /// The identity of the directory at `root` (`st_dev`, `st_ino`), following a
 /// symlinked root as the repository does; `None` when it cannot be read.
 fn root_identity_of(root: &Path) -> Option<(u64, u64)> {
@@ -1391,14 +1416,12 @@ impl AppState {
         // would keep both alive — and the store locked — after the state is gone.
         let repos = Arc::downgrade(&self.repos);
         let lost = Arc::downgrade(&self.lost);
+        let this = Arc::downgrade(&repo_state);
         let _ = repo_state.on_root_lost.set(Box::new(move || {
-            let (repos, lost) = (repos.clone(), lost.clone());
+            let (repos, lost, this) = (repos.clone(), lost.clone(), this.clone());
             std::thread::spawn(move || {
                 let (Some(repos), Some(lost)) = (repos.upgrade(), lost.upgrade()) else { return };
-                let Some(repo) = repos.lock_recover().remove(&uuid) else { return };
-                let entry = LostRepo { info: repo.info(), message: repo.root_lost_message() };
-                lost.lock_recover().insert(uuid, entry);
-                let_go(repo);
+                unload_lost(&repos, &lost, uuid, &this);
             });
         }));
         // A lost repository of the same uuid is this one back; one of the same
@@ -1780,5 +1803,47 @@ mod tests {
         let (_, backend, budget, _) = answered.expect("the watch view waited for the placement");
         assert_eq!(backend, "blocking");
         assert!(budget);
+    }
+
+    /// The hook a lost root sets off runs on a thread of its own, so it can
+    /// come after a `load` that found the root lost has already put the
+    /// repository back (doc "When the root moves"): it must unload the one that
+    /// fired it, never whatever holds the uuid by then.
+    #[test]
+    fn a_lost_root_unloads_only_the_repository_that_lost_it() {
+        let settings = crate::daemon_config::parse_config(
+            include_str!("../default-config/config.toml"),
+            std::path::Path::new("shipped"),
+        )
+        .unwrap()
+        .settings;
+        let state = AppState::new(settings);
+        let dir = |tag: &str| {
+            let root = std::env::temp_dir()
+                .join("metafolder-tests")
+                .join(format!("mf_state_lost_{tag}_{}", Uuid::new_v4()));
+            crate::repo::seed_test_config(&root);
+            root
+        };
+        let (old_root, new_root) = (dir("old"), dir("new"));
+        let old_uuid = state.init_repo(&old_root, None, None, false).unwrap();
+        let new_uuid = state.init_repo(&new_root, None, None, false).unwrap();
+        let old = state.repos.lock_recover().remove(&old_uuid).unwrap();
+        // The repository loaded back under the uuid, as far as the map can tell.
+        let back = state.repo(new_uuid).unwrap();
+        state.repos.lock_recover().insert(old_uuid, Arc::clone(&back));
+
+        unload_lost(&state.repos, &state.lost, old_uuid, &Arc::downgrade(&old));
+
+        let still = state.repos.lock_recover().get(&old_uuid).cloned();
+        let lost = state.lost.lock_recover().contains_key(&old_uuid);
+        state.repos.lock_recover().remove(&old_uuid);
+        drop((back, old));
+        state.unload_repo(new_uuid).unwrap();
+        let _ = std::fs::remove_dir_all(&old_root);
+        let _ = std::fs::remove_dir_all(&new_root);
+
+        assert!(still.is_some(), "the repository loaded back was unloaded");
+        assert!(!lost, "the repository loaded back was listed lost");
     }
 }
