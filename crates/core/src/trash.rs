@@ -632,14 +632,7 @@ pub fn move_path(from: &Path, to: &Path) -> io::Result<()> {
         Ok(()) => Ok(()),
         // EXDEV (18 on Linux): source and destination are on different mounts,
         // so rename cannot work — copy the bytes over and delete the source.
-        Err(e) if e.raw_os_error() == Some(18) => {
-            if crate::fsentry::is_real_dir(from) {
-                copy_tree(from, to)?;
-                std::fs::remove_dir_all(from)
-            } else {
-                copy_across(from, to)
-            }
-        }
+        Err(e) if e.raw_os_error() == Some(18) => copy_across(from, to),
         Err(e) => Err(e),
     }
 }
@@ -672,8 +665,7 @@ fn copy_entry(from: &Path, to: &Path) -> io::Result<()> {
 }
 
 /// Recreates `from` at `to` as a link to the same target (unix). Elsewhere there
-/// is no portable link to recreate, so the bytes are copied — the platform
-/// fallback [`copy_across`] already takes for the same reason.
+/// is no portable link to recreate, so the bytes are copied.
 fn copy_symlink(from: &Path, to: &Path) -> io::Result<()> {
     #[cfg(unix)]
     {
@@ -735,23 +727,18 @@ fn remove_path(path: &Path) {
     }
 }
 
-/// Copy-then-delete, the cross-device fallback for [`move_path`].
-///
-/// `fs::copy` preserves permissions but *not* the modification time, so a
-/// cross-device trash/restore round-trip would otherwise re-stamp the file. We
-/// carry the mtime over best-effort, keeping a restored file's timestamp
-/// truthful (on the same filesystem the rename in [`move_path`] preserves it for
-/// free). A symlink hitting this path is dereferenced by `fs::copy` — the rare
-/// cross-device + symlink combination; same-filesystem moves keep the link.
+/// Copy-then-delete, the cross-device fallback for [`move_path`]: it moves what
+/// the rename would have, so each entry goes through [`copy_entry`] — a
+/// directory whole, a symlink as the link (a link to a directory, or a broken
+/// one, used to fail here, `fs::copy` following it), and a regular file with its
+/// modification time, which `fs::copy` alone would re-stamp.
 fn copy_across(from: &Path, to: &Path) -> io::Result<()> {
-    let mtime = std::fs::symlink_metadata(from).and_then(|m| m.modified());
-    std::fs::copy(from, to)?;
-    if let Ok(t) = mtime {
-        if let Ok(f) = std::fs::OpenOptions::new().write(true).open(to) {
-            let _ = f.set_modified(t);
-        }
+    copy_entry(from, to)?;
+    if crate::fsentry::is_real_dir(from) {
+        std::fs::remove_dir_all(from)
+    } else {
+        std::fs::remove_file(from)
     }
-    std::fs::remove_file(from)
 }
 
 // ── Daemon-side re-link orchestration ────────────────────────────────────────
@@ -1720,6 +1707,44 @@ mod tests {
             "the blob is the symlink itself, not a copy of the target"
         );
         fs::remove_dir_all(&base).ok();
+    }
+
+    /// The cross-device fallback moves a symlink as the link, like the rename
+    /// it stands in for: a link to a directory, or a broken one, used to fail
+    /// (`fs::copy` follows the link), and a link to a file came back as a copy
+    /// of its target.
+    #[cfg(unix)]
+    #[test]
+    fn copy_across_moves_a_symlink_as_the_link() {
+        let dir = tmp();
+        fs::create_dir(dir.join("target_dir")).unwrap();
+        fs::write(dir.join("target_file"), b"bytes").unwrap();
+        for (link, target) in
+            [("to_dir", "target_dir"), ("to_file", "target_file"), ("broken", "missing")]
+        {
+            let from = dir.join(link);
+            let to = dir.join(format!("{link}.moved"));
+            std::os::unix::fs::symlink(target, &from).unwrap();
+            copy_across(&from, &to).unwrap();
+            assert!(fs::symlink_metadata(&from).is_err(), "{link}: the source is gone");
+            assert!(fs::symlink_metadata(&to).unwrap().file_type().is_symlink(), "{link}");
+            assert_eq!(fs::read_link(&to).unwrap(), Path::new(target), "{link}");
+        }
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A directory crosses whole, the source removed.
+    #[test]
+    fn copy_across_moves_a_directory() {
+        let dir = tmp();
+        let from = dir.join("d");
+        fs::create_dir_all(from.join("sub")).unwrap();
+        fs::write(from.join("sub/f"), b"x").unwrap();
+        let to = dir.join("d.moved");
+        copy_across(&from, &to).unwrap();
+        assert!(fs::symlink_metadata(&from).is_err());
+        assert_eq!(fs::read(to.join("sub/f")).unwrap(), b"x");
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
