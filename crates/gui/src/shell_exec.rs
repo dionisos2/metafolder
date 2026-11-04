@@ -10,6 +10,8 @@
 
 use crate::state::workspace::{ShellLine, ShellPlace};
 use crate::state::GuiState;
+use std::ffi::{OsStr, OsString};
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -60,8 +62,18 @@ pub async fn run_in(
         .ok()
         .map(|dir| dir.join(format!("shell-cwd-{}-{task_id}", std::process::id())));
     let line = match &cwd_file {
-        Some(file) => format!("trap 'pwd > {}' EXIT; {command_line}", shell_quote(file)),
-        None => command_line.clone(),
+        Some(file) => {
+            // The trap's action is one word: the file, quoted inside it, then
+            // that action quoted as a whole.
+            let mut action = OsString::from("pwd > ");
+            action.push(shell_quote(file));
+            let mut line = OsString::from("trap ");
+            line.push(shell_quote(Path::new(&action)));
+            line.push(" EXIT; ");
+            line.push(&command_line);
+            line
+        }
+        None => OsString::from(&command_line),
     };
     let mut command = Command::new("sh");
     command.arg("-c").arg(&line);
@@ -107,11 +119,12 @@ pub async fn run_in(
     let _ = out_task.await;
     let _ = err_task.await;
     if let Some(file) = cwd_file {
-        let left = std::fs::read_to_string(&file).unwrap_or_default();
+        // Bytes: the directory's name need not be text (doc "Tree names").
+        let left = std::fs::read(&file).unwrap_or_default();
         let _ = std::fs::remove_file(&file);
-        let left = left.strip_suffix('\n').unwrap_or(&left);
+        let left = left.strip_suffix(b"\n").unwrap_or(&left);
         if !left.is_empty() {
-            gui.set_shell_cd(&ws_id, PathBuf::from(left), place.selection)?;
+            gui.set_shell_cd(&ws_id, PathBuf::from(OsStr::from_bytes(left)), place.selection)?;
         }
     }
 
@@ -217,9 +230,18 @@ pub async fn shell_cwd(
     Ok(cwd_of(&app.gui, &app.daemon, &ws_id).await.map(|dir| dir.to_string_lossy().into_owned()))
 }
 
-/// `path` as one single-quoted `sh` word.
-pub(crate) fn shell_quote(path: &Path) -> String {
-    format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
+/// `path` as one single-quoted `sh` word, at its exact bytes: a name that is
+/// not text is still that name (doc "Tree names").
+pub(crate) fn shell_quote(path: &Path) -> OsString {
+    let mut quoted = vec![b'\''];
+    for &byte in path.as_os_str().as_bytes() {
+        match byte {
+            b'\'' => quoted.extend_from_slice(b"'\\''"),
+            byte => quoted.push(byte),
+        }
+    }
+    quoted.push(b'\'');
+    OsString::from_vec(quoted)
 }
 
 /// Clears the running indicator for a workspace when dropped, so it is removed
@@ -261,8 +283,19 @@ async fn forward(
     reader: impl tokio::io::AsyncRead + Unpin,
     to_stderr: bool,
 ) {
-    let mut lines = BufReader::new(reader).lines();
-    while let Ok(Some(line)) = lines.next_line().await {
+    // Read as bytes, what is not text in a line shown as U+FFFD: reading it
+    // as text would stop at the first such line, and the pipe, closed, would cut
+    // the script off at its next write.
+    let mut reader = BufReader::new(reader);
+    let mut bytes = Vec::new();
+    loop {
+        bytes.clear();
+        match reader.read_until(b'\n', &mut bytes).await {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {}
+        }
+        let text = String::from_utf8_lossy(&bytes);
+        let line = text.strip_suffix('\n').unwrap_or(&text);
         let kind = if to_stderr {
             eprintln!("{line}");
             ShellLine::Stderr
@@ -270,7 +303,7 @@ async fn forward(
             println!("{line}");
             ShellLine::Stdout
         };
-        let _ = gui.append_shell(&ws_id, &run, kind, &line);
+        let _ = gui.append_shell(&ws_id, &run, kind, line);
     }
 }
 
@@ -522,6 +555,37 @@ mod tests {
         let log = gui.shell_log("ws-1").unwrap();
         let last = log.last().unwrap();
         assert_eq!((last.kind, last.text.as_str()), (ShellLine::Status, "exit 3"));
+    }
+
+    /// A line that is not text is shown escaped, and what follows it still
+    /// reaches the log: the reading goes on, and the script is not cut off by
+    /// a closed pipe (as the persistent shell does).
+    #[tokio::test]
+    async fn test_output_that_is_not_text_does_not_stop_the_reading() {
+        let gui = gui();
+        let line = "printf 'caf\\351\\n'; echo after; printf 'err\\351\\n' >&2; echo late >&2";
+        run_to_completion(gui.clone(), "ws-1".into(), line.into()).await.unwrap();
+        let log = gui.shell_log("ws-1").unwrap();
+        let lines: Vec<(ShellLine, &str)> = log.iter().map(|e| (e.kind, e.text.as_str())).collect();
+        assert!(lines.contains(&(ShellLine::Stdout, "caf\u{fffd}")), "{lines:?}");
+        assert!(lines.contains(&(ShellLine::Stdout, "after")), "{lines:?}");
+        assert!(lines.contains(&(ShellLine::Stderr, "late")), "{lines:?}");
+        assert!(lines.iter().all(|l| l.0 != ShellLine::Status), "no failure: {lines:?}");
+    }
+
+    /// A `cd` into a directory whose name is not text is kept, at its bytes.
+    #[tokio::test]
+    async fn test_a_cd_into_a_name_that_is_not_text_carries_over() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = scratch("bytes");
+        let raw = dir.join(std::ffi::OsStr::from_bytes(b"caf\xe9"));
+        std::fs::create_dir(&raw).unwrap();
+        let gui = gui();
+        run_in(gui.clone(), "ws-1".into(), "cd caf*".into(), None, Some(dir.clone()))
+            .await
+            .unwrap();
+        assert_eq!(gui.shell_place("ws-1").unwrap().cd, Some(raw));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// A disposable directory under `$TMPDIR/metafolder-tests/`, removed by

@@ -50,7 +50,9 @@ pub fn fs_read_dir(path: TreePath) -> Result<Vec<DirEntry>, String> {
             name: to_handle(Path::new(&entry.file_name())).display().into_owned(),
             path: to_handle(&entry_path),
             is_dir: entry.file_type().map(|t| t.is_dir()).unwrap_or(false),
-            escaped: is_escaped(&entry_path),
+            // The name's own bytes: a folder that is not text holds names
+            // that are.
+            escaped: is_escaped(Path::new(&entry.file_name())),
         });
     }
     // By the name shown, then by bytes: two names can show alike.
@@ -388,6 +390,21 @@ mod tests {
 
         assert!(fs_exists(link.clone()), "the link itself is on disk");
         assert!(fs_stat(link.clone()).is_err(), "…while stat follows it to nothing");
+    }
+
+    /// Only a name that is not text is marked, not every name of a folder
+    /// whose own name is not.
+    #[cfg(unix)]
+    #[test]
+    fn test_only_the_name_marks_a_row() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join(OsStr::from_bytes(b"caf\xe9"));
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::write(folder.join("plain.txt"), b"x").unwrap();
+        let entries = fs_read_dir(to_handle(&folder)).unwrap();
+        let listed: Vec<_> = entries.iter().map(|e| (e.name.as_str(), e.escaped)).collect();
+        assert_eq!(listed, [("plain.txt", false)]);
     }
 
     /// A name that is not text is listed with its exact handle, and acting on

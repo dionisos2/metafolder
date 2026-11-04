@@ -60,7 +60,7 @@ struct Session {
     /// Taken for the whole of a line: the next waits its turn.
     events: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<Event>>>,
     /// What the shell is to read before the first line (see [`start`]).
-    boot: Mutex<Option<String>>,
+    boot: Mutex<Option<Vec<u8>>>,
     /// The run output is attributed to: the line running, or the last one
     /// (a background job printing later).
     run: Arc<Mutex<String>>,
@@ -161,9 +161,9 @@ impl ShellSessions {
         // Where the line runs, when the selection moved the shell since the
         // last line (a `cd` of its own otherwise left it where it is).
         let cd = match place.cd {
-            Some(_) => String::new(),
+            Some(_) => Vec::new(),
             None => working_dir(&place, root.as_deref())
-                .map(|dir| format!("; cd -- {}", shell_quote(&dir)))
+                .map(|dir| [b"; cd -- ", shell_quote(&dir).as_bytes()].concat())
                 .unwrap_or_default(),
         };
         let label = match context {
@@ -178,15 +178,21 @@ impl ShellSessions {
         // at once rather than waiting for the rest of a construct. Its input
         // is its FIFO, opened (and said so on fd 3) before it runs.
         let boot = session.boot.lock().unwrap_or_else(|e| e.into_inner()).take();
-        let script = format!(
-            "{boot}export METAFOLDER_GUI_TASK={task}; {label}{cd}; exec {{__mf_in}}<{fifo}; \
-             printf 'in\\0\\0' >&3\neval {line} <&$__mf_in\n__mf_done\n",
-            boot = boot.unwrap_or_default(),
-            task = quote(task_id),
-            line = quote(command_line),
-            fifo = shell_quote(&fifo),
-        );
-        let sent = session.stdin.lock().await.write_all(script.as_bytes()).await;
+        // Bytes: a directory's name need not be text (doc "Tree names").
+        let script = [
+            boot.unwrap_or_default().as_slice(),
+            format!("export METAFOLDER_GUI_TASK={task}; {label}", task = quote(task_id)).as_bytes(),
+            &cd,
+            b"; exec {__mf_in}<",
+            shell_quote(&fifo).as_bytes(),
+            format!(
+                "; printf 'in\\0\\0' >&3\neval {line} <&$__mf_in\n__mf_done\n",
+                line = quote(command_line)
+            )
+            .as_bytes(),
+        ]
+        .concat();
+        let sent = session.stdin.lock().await.write_all(&script).await;
 
         let (mut out, mut err, mut status) = (false, false, None);
         let mut exited = None;
@@ -417,19 +423,23 @@ fn start(
     let rc = match rc {
         Some(rc) => {
             let rc = shell_quote(rc);
-            format!("[ -r {rc} ] && . {rc}; ")
+            let rc = rc.as_bytes();
+            [b"[ -r ", rc, b" ] && . ", rc, b"; "].concat()
         }
-        None => String::new(),
+        None => Vec::new(),
     };
     // One line, prompts dropped on it: the rc file sets its own, which the
     // shell would print before reading the next line. Then `__mf_done`: the end
     // marks (`\036` is the `\x1e` of [`DONE`]), then the status record.
-    let boot = format!(
-        "exec 2>&4 4>&-; {rc}PS1= PS2= PS0=; unset PROMPT_COMMAND HISTFILE; set +H +o history\n\
-         __mf_done() {{ local s=$?; exec {{__mf_in}}<&-; printf '\\036mf-done\\n'; \
-         printf '\\036mf-done\\n' >&2; printf '%s\\0%s\\0' \"$s\" \"$PWD\" >&3; }}\n\
-         trap 'printf \"%s\\0%s\\0\" \"$?\" \"$PWD\" >&3' EXIT\n"
-    );
+    let boot = [
+        b"exec 2>&4 4>&-; ".as_slice(),
+        &rc,
+        b"PS1= PS2= PS0=; unset PROMPT_COMMAND HISTFILE; set +H +o history\n\
+         __mf_done() { local s=$?; exec {__mf_in}<&-; printf '\\036mf-done\\n'; \
+         printf '\\036mf-done\\n' >&2; printf '%s\\0%s\\0' \"$s\" \"$PWD\" >&3; }\n\
+         trap 'printf \"%s\\0%s\\0\" \"$?\" \"$PWD\" >&3' EXIT\n",
+    ]
+    .concat();
     let (tx, rx) = mpsc::unbounded_channel();
     let run = Arc::new(Mutex::new(task_id.to_string()));
     let alive = Arc::new(AtomicBool::new(true));
@@ -789,6 +799,26 @@ mod tests {
             dir.0.to_string_lossy().into_owned(),
         );
         assert_eq!(runs(&gui), [vec![out(&sub)], vec![out(&here)], vec![out(&here)]]);
+    }
+
+    /// A selected folder whose name is not text is where the next line runs,
+    /// at its bytes.
+    #[tokio::test]
+    async fn test_the_selection_moves_the_shell_to_a_name_that_is_not_text() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = scratch("bytes");
+        let raw = dir.0.join(std::ffi::OsStr::from_bytes(b"caf\xe9"));
+        std::fs::create_dir(&raw).unwrap();
+        let gui = gui();
+        gui.set_var("ws-1", "selected_paths", json!([dir.0.join("sub")])).unwrap();
+        run(&gui, "true", None).await;
+        let handle = metafolder_core::metarecord::TreePath::from_path(&raw);
+        gui.set_var("ws-1", "selected_paths", json!([handle])).unwrap();
+        run(&gui, "true", None).await;
+        assert_eq!(gui.shell_place("ws-1").unwrap().cd, Some(raw));
+        let errors: Vec<_> =
+            runs(&gui).concat().into_iter().filter(|l| l.0 != ShellLine::Stdout).collect();
+        assert_eq!(errors, []);
     }
 
     /// Each line is passed its own context, and none when it has none.
