@@ -273,6 +273,16 @@ async fn test_loading_a_duplicate_name_is_a_conflict() {
     let (_, repos) = request(&app, "GET", "/repos", None).await;
     assert_eq!(repos.as_array().unwrap().len(), 1);
 
+    // And the refusal created nothing: the same root takes another name.
+    let (status, body) = request(
+        &app,
+        "POST",
+        "/repos/init",
+        Some(json!({"root": root_b.to_str().unwrap(), "name": "Other"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "a refused init left a repository behind: {body}");
+
     std::fs::remove_dir_all(root_a).unwrap();
     std::fs::remove_dir_all(root_b).unwrap();
 }

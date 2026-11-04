@@ -1280,8 +1280,18 @@ impl AppState {
         name: Option<&str>,
         system: bool,
     ) -> Result<Uuid, ApiError> {
+        // Before anything is written: a refused name must leave no repository
+        // behind, or the same root could not be initialised under another one.
+        // A root that does not resolve is `init_repository`'s to report.
+        if let Some(name) = name
+            .map(str::to_string)
+            .or_else(|| root.canonicalize().ok().map(|root| repo::default_name(&root)))
+        {
+            self.ensure_name_available(&name)?;
+        }
         let opened = repo::init_repository(root, metafolder, name, system)?;
         let uuid = opened.config.repo_uuid;
+        // Again: a load of the same name may have registered meanwhile.
         self.ensure_name_available(&opened.config.name)?;
         let repo_state = Arc::new(RepoState::from_opened_with(opened, &self.settings));
         repo_state.load_config()?;

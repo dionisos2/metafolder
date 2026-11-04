@@ -140,6 +140,14 @@ pub enum RepoLocator {
     Metafolder(PathBuf),
 }
 
+/// The name a repository initialised at the canonical `root` without one
+/// takes: its directory's name.
+pub fn default_name(root: &Path) -> String {
+    root.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "repository".to_string())
+}
+
 /// Initialises a new repository: creates `.metafolder/` (at `metafolder`
 /// when given — external database — otherwise inside `root`), writes
 /// `config.json`, creates the database schema and the filesystem root metarecord.
@@ -188,13 +196,7 @@ pub fn init_repository(
     std::fs::create_dir_all(&internal_dir)
         .with_context(|| format!("Failed to create {internal_dir:?}"))?;
 
-    let name = match name {
-        Some(name) => name.to_string(),
-        None => root
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "repository".to_string()),
-    };
+    let name = name.map_or_else(|| default_name(&root), str::to_string);
     let mut config = RepoConfig::new(root.clone(), name);
     config.set_root(root, &metafolder_dir);
     config.system = system;
