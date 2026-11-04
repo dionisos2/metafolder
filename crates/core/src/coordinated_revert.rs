@@ -201,7 +201,8 @@ pub fn decide_move(
 /// the record is trashed, a recovery hint is noted.
 ///
 /// A trash entry covers the step's metarecord when it *is* the entry's
-/// metarecord, or a descendant recorded in its subtree (a trashed directory):
+/// metarecord, or a descendant its subtree records as taken (a trashed
+/// directory; an ancestor recorded for context is not in the blob):
 /// restoring the directory blob brings back the whole subtree's content at
 /// once, whichever order the cascade's ops are reverted in. For a file the
 /// watcher saw go, the entry must also hold the version the record had before
@@ -237,13 +238,16 @@ pub fn decide_deleted(
     let pos = entries.iter().position(|e| {
         let is_top = e.metarecord.as_deref() == Some(entity)
             && (by_metarecord_only || version.is_some_and(|v| e.version == Some(v)));
-        let is_descendant =
-            e.metarecord.as_deref() != Some(entity) && e.subtree.iter().any(|n| n.uuid == entity);
+        // Only what the blob took: the subtree also records the ancestors,
+        // for context, and their content is not in this blob.
+        let is_descendant = e.metarecord.as_deref() != Some(entity)
+            && e.subtree.iter().any(|n| n.trashed && n.uuid == entity);
         is_top || is_descendant
     });
     if let Some(pos) = pos {
         let id = entries[pos].id.clone();
-        let covered: Vec<String> = entries[pos].subtree.iter().map(|n| n.uuid.clone()).collect();
+        let covered: Vec<String> =
+            entries[pos].subtree.iter().filter(|n| n.trashed).map(|n| n.uuid.clone()).collect();
         match trash.restore(&id) {
             Ok(path) => {
                 entries.remove(pos);
@@ -514,6 +518,7 @@ pub fn revert(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::trash::TrashedNode;
     use std::cell::RefCell;
 
     /// A front end that never asks and remembers what it was told.
@@ -1061,6 +1066,87 @@ mod tests {
             assert!(!file.exists(), "the file stays in the trash");
             assert_eq!(entries.len(), 1);
         }
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    fn node(uuid: &str, parent: Option<&str>, name: &str, trashed: bool) -> TrashedNode {
+        TrashedNode {
+            uuid: uuid.into(),
+            parent: parent.map(str::to_owned),
+            name: name.into(),
+            fields: None,
+            trashed,
+        }
+    }
+
+    // A trash entry records the ancestors of what it took, for context
+    // (`trashed = false`): they are not in its blob. Undoing the deletion of
+    // such an ancestor must restore the ancestor's own entry, never the blob
+    // of a file trashed under it earlier.
+    #[test]
+    fn deleted_step_ignores_an_entry_that_only_names_it_as_an_ancestor() {
+        let base = scratch("del_ancestor");
+        let trash = TrashDir::new(base.join("trash"));
+        let dir = base.join("a");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("f"), b"f").unwrap();
+        std::fs::write(dir.join("g"), b"g").unwrap();
+        let file_entry =
+            trash.trash_path(&dir.join("f"), Reason::Manual, None, Some("f".into()), None).unwrap();
+        trash
+            .attach_subtree(
+                &file_entry.id,
+                vec![node("f", Some("a"), "f", true), node("a", Some("root"), "a", false)],
+            )
+            .unwrap();
+        let dir_entry =
+            trash.trash_path(&dir, Reason::Manual, None, Some("a".into()), None).unwrap();
+        trash
+            .attach_subtree(
+                &dir_entry.id,
+                vec![node("a", Some("root"), "a", true), node("g", Some("a"), "g", true)],
+            )
+            .unwrap();
+        let mut entries = trash.entries().unwrap();
+        let mut restored = HashSet::new();
+        let op = json!({"op_type": "delete_metarecord", "entity_uuid": "a",
+                        "filesystem": {"action": "restore_content"}});
+        let skip =
+            decide_deleted(&op, &trash, &mut entries, &mut restored, &Quiet::default(), true)
+                .unwrap();
+        assert!(!skip);
+        assert_eq!(std::fs::read(dir.join("g")).unwrap(), b"g", "the directory's own blob is back");
+        assert!(!dir.join("f").exists(), "the file trashed on its own stays in the trash");
+        assert!(trash.entry(&file_entry.id).is_ok(), "its entry is untouched");
+        assert!(!restored.contains("f"));
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    // What a restored blob brings back is what it took: an ancestor recorded
+    // for context is not marked restored, so a later step for it still looks
+    // for its own content.
+    #[test]
+    fn a_restored_blob_marks_only_what_it_took_as_restored() {
+        let base = scratch("del_marks");
+        let trash = TrashDir::new(base.join("trash"));
+        let dir = base.join("a");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("f"), b"f").unwrap();
+        let e =
+            trash.trash_path(&dir.join("f"), Reason::Manual, None, Some("f".into()), None).unwrap();
+        trash
+            .attach_subtree(
+                &e.id,
+                vec![node("f", Some("a"), "f", true), node("a", Some("root"), "a", false)],
+            )
+            .unwrap();
+        let mut entries = trash.entries().unwrap();
+        let mut restored = HashSet::new();
+        let op = json!({"op_type": "delete_metarecord", "entity_uuid": "f",
+                        "filesystem": {"action": "restore_content"}});
+        decide_deleted(&op, &trash, &mut entries, &mut restored, &Quiet::default(), true).unwrap();
+        assert!(restored.contains("f"));
+        assert!(!restored.contains("a"), "{restored:?}");
         std::fs::remove_dir_all(&base).ok();
     }
 }

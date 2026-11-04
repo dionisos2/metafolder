@@ -38,7 +38,10 @@ that revert — an ordinary-looking deletion; the daemon follows their
 The entry is found by the ''metarecord'' it holds, never by an id recorded on
 the operation: an undo consumes the entry and a redo makes a new one, so a
 recorded id would name an entry that no longer exists. There can never be two
-live entries for one metarecord. When none holds it — the trash was pruned — the
+live entries for one metarecord. ''Holding'' means taken: a capture also names
+the ancestors of what it took ([[Trash on-disk layout]]), and their content is not
+in its blob — undoing the trashing of a directory restores the directory's entry,
+never that of a file trashed from it earlier. When none holds it — the trash was pruned — the
 operation is left out of the revert and the bytes stay gone, with a note saying
 so: an undo is never blocked by content you chose to discard.
 
