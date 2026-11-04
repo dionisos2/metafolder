@@ -38,7 +38,8 @@ sit anywhere in a result ordered by uuid.
 A reference must have a counterpart to be written on the other side ([[Ref translation during sync]]). So the linking phase follows the `ref` fields of every
 record it is going to sync: a target outside the scope, with no position and no
 link, is linked to a bare record created for it — that link is the only memory of
-the correspondence. A target with a position needs nothing: it is found, or made,
+the correspondence. Such a target is synced in its turn, so its own `ref` fields
+are followed too, as far as the references go. A target with a position needs nothing: it is found, or made,
 by its path when the reference is written. Only the fields the diff writes are
 followed ([[What sync copies]]): a reference held in another `mfr_*` field is
 never synced, so nothing is made for it ([[Duplicates and sync]]).

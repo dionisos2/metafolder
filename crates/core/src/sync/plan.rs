@@ -408,40 +408,39 @@ fn linking_phase(
         creates.push((end_a, end_b));
     }
 
-    // Referential closure (doc "Ref translation during sync"): every in-scope,
-    // to-be-synced record's `ref` targets must be translatable. A target that is
-    // out of scope, has no TreeRef identity, and is not yet linked is
-    // materialised on the other side (bare + link) — the link is the only memory
-    // of the correspondence. Identity targets need nothing here: the run
-    // resolves them by path at translation.
-    for &rec in &scope_a_all {
-        if !(linked_a.contains(&rec) || planned_a.contains(&rec)) {
-            continue; // skipped record → not synced
-        }
-        for y in ref_targets(ctx, &reads, a, rec)? {
-            if linked_a.contains(&y)
-                || planned_a.contains(&y)
-                || !identity_paths_in(ctx, &reads, a, y)?.is_empty()
-            {
-                continue;
+    // Referential closure (doc "Matching records across repositories"): every
+    // record to be synced must have its `ref` targets translatable. A target
+    // that has no TreeRef identity and is not yet linked is materialised on the
+    // other side (bare + link) — the link is the only memory of the
+    // correspondence. Identity targets need nothing here: the run resolves them
+    // by path at translation. A target linked this way is synced in turn, so its
+    // own references are followed too: a worklist, not one pass over the scope.
+    for (side, scope) in [(Side::A, &scope_a_all), (Side::B, &scope_b_all)] {
+        let (repo, linked, planned) = match side {
+            Side::A => (a, &linked_a, &mut planned_a),
+            Side::B => (b, &linked_b, &mut planned_b),
+        };
+        let mut work: std::collections::VecDeque<Uuid> = scope
+            .iter()
+            .copied()
+            .filter(|rec| linked.contains(rec) || planned.contains(rec)) // else not synced
+            .collect();
+        while let Some(rec) = work.pop_front() {
+            for y in ref_targets(ctx, &reads, repo, rec)? {
+                if linked.contains(&y)
+                    || planned.contains(&y)
+                    || !identity_paths_in(ctx, &reads, repo, y)?.is_empty()
+                {
+                    continue;
+                }
+                let end = existing_end(ctx, &reads, repo, y)?;
+                creates.push(match side {
+                    Side::A => (end, bare_end(b)),
+                    Side::B => (bare_end(a), end),
+                });
+                planned.insert(y);
+                work.push_back(y);
             }
-            creates.push((existing_end(ctx, &reads, a, y)?, bare_end(b)));
-            planned_a.insert(y);
-        }
-    }
-    for &rec in &scope_b_all {
-        if !(linked_b.contains(&rec) || planned_b.contains(&rec)) {
-            continue;
-        }
-        for y in ref_targets(ctx, &reads, b, rec)? {
-            if linked_b.contains(&y)
-                || planned_b.contains(&y)
-                || !identity_paths_in(ctx, &reads, b, y)?.is_empty()
-            {
-                continue;
-            }
-            creates.push((bare_end(a), existing_end(ctx, &reads, b, y)?));
-            planned_b.insert(y);
         }
     }
 

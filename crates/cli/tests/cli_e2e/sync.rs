@@ -942,6 +942,42 @@ fn test_sync_run_external_divergence_reported() {
 }
 
 #[test]
+fn test_sync_closes_over_references_transitively() {
+    // X (in scope) refs person, who refs org; neither has a position nor is in
+    // scope. The closure links person, so person is synced: its own ref has to
+    // reach a counterpart too (doc "Matching records across repositories").
+    let (a, _adir) = tracked_repo("ttrans_a", &[("doc.txt", b"x")]);
+    let (b, _bdir) = tracked_repo("ttrans_b", &[]);
+    let xa = query_one(&a, "mfr_path:value = \"doc.txt\"");
+    let org_a = create_metarecord(&a, &["name:string=acme"]);
+    let person_a = create_metarecord(&a, &["name:string=alice", &format!("employer:ref={org_a}")]);
+    assert_ok(&mf(&[
+        "-u",
+        &a,
+        "metarecord",
+        "-i",
+        &xa,
+        "field",
+        "add",
+        &format!("author:ref={person_a}"),
+    ]));
+
+    let intents = write_intents(
+        "ttrans",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
+    let run = mf(&["sync", "run", &a, &b, "--yes"]);
+    assert_ok(&run);
+    assert!(!run.stderr.contains("no counterpart"), "nothing left out: {}", run.stderr);
+
+    let org_b = query_one(&b, r#"name = "acme""#);
+    let person_b = query_one(&b, r#"name = "alice""#);
+    let employer = field_value_of(&b, &person_b, "employer");
+    assert_eq!(employer.as_deref(), Some(org_b.as_str()), "the second ref is translated");
+}
+
+#[test]
 fn test_sync_run_translates_ref() {
     // A file X refs an abstract record; both are materialised in B and X_B's ref
     // is translated to person_B (the linked counterpart), not left dangling.
