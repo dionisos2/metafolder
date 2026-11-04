@@ -61,12 +61,22 @@ pub fn with_query(path: &str, query: &[(&str, String)]) -> String {
         out.push(if i == 0 { '?' } else { '&' });
         out.push_str(key);
         out.push('=');
-        for byte in value.bytes() {
-            if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
-                out.push(byte as char);
-            } else {
-                out.push_str(&format!("%{byte:02X}"));
-            }
+        out.push_str(&segment(value));
+    }
+    out
+}
+
+/// `text` as one segment of a URL path: everything but the RFC 3986
+/// unreserved characters percent-encoded. A field name is free text, and in a
+/// route (`…/fields/:name`) a space, `/`, `?`, `#` or `%` would otherwise make
+/// the URL invalid or name another resource.
+pub fn segment(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
         }
     }
     out
@@ -123,6 +133,13 @@ mod tests {
             {"name": "twin", "repo_uuid": "0123456789abcdef0123456789abcde1"},
             {"name": "broken", "repo_uuid": "not-a-uuid"},
         ])
+    }
+
+    #[test]
+    fn a_segment_keeps_the_unreserved_and_encodes_the_rest() {
+        assert_eq!(segment("rating_2-x.y~z"), "rating_2-x.y~z");
+        assert_eq!(segment("my note/a?b#c%d"), "my%20note%2Fa%3Fb%23c%25d");
+        assert_eq!(segment("été"), "%C3%A9t%C3%A9");
     }
 
     #[test]

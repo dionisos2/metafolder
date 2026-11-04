@@ -469,9 +469,10 @@ impl<'a> Run<'a> {
         let key = self.key(op, side);
         let path = with_query(
             &format!(
-                "/repos/{}/metarecords/{}/fields/{name}",
+                "/repos/{}/metarecords/{}/fields/{}",
                 key.0.as_simple(),
-                key.1.as_simple()
+                key.1.as_simple(),
+                crate::daemon_client::segment(name)
             ),
             &[("expected_version", self.known[&key].version.to_string())],
         );

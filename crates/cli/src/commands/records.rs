@@ -348,6 +348,13 @@ pub fn metarecord_set(
     Ok(0)
 }
 
+/// The route of one field of one metarecord. The name is free text, so it is
+/// encoded as a path segment: a space or a `/` must not change the field meant.
+fn field_url(base: &str, uuid: Uuid, name: &str) -> String {
+    let name = metafolder_core::daemon_client::segment(name);
+    format!("{base}/metarecords/{}/fields/{name}", uuid.as_simple())
+}
+
 /// `mf metarecord <sel> field set <spec>...` — replace all rows of a field
 /// (one or several values, multi-map) on the selected metarecord(s).
 pub fn field_set(
@@ -377,12 +384,7 @@ pub fn field_set(
         Target::Entry(uuid) => {
             let mut body = json!({"force": force});
             value_field(&mut body);
-            ctx.client.request(
-                "PUT",
-                &format!("{base}/metarecords/{}/fields/{name}", uuid.as_simple()),
-                &[],
-                Some(&body),
-            )?;
+            ctx.client.request("PUT", &field_url(&base, uuid, &name), &[], Some(&body))?;
         }
         Target::Predicate(query) => {
             let mut body = json!({"query": query, "name": name, "force": force});
@@ -429,8 +431,7 @@ pub fn field_get(
             )
         }
     };
-    let got =
-        ctx.client.get(&format!("{base}/metarecords/{}/fields/{name}", uuid.as_simple()), &[])?;
+    let got = ctx.client.get(&field_url(&base, uuid, name), &[])?;
     let Some(target) = resolve else {
         for value in got["values"].as_array().into_iter().flatten() {
             if let Some(line) = raw_value_line(value) {
@@ -516,7 +517,7 @@ pub fn field_unset(ctx: &Ctx, selector: &str, name: &str, force: bool) -> Result
         Target::Entry(uuid) => {
             ctx.client.request(
                 "DELETE",
-                &format!("{base}/metarecords/{}/fields/{name}", uuid.as_simple()),
+                &field_url(&base, uuid, name),
                 &[],
                 Some(&json!({"force": force})),
             )?;

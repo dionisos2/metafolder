@@ -805,6 +805,31 @@ fn test_sync_run_resync_propagates_field() {
     );
 }
 
+/// A field name is free text: one holding a space or a `/` is synced like any
+/// other, though the run writes it through a URL path.
+#[test]
+fn test_sync_run_propagates_a_field_whose_name_is_not_a_url_segment() {
+    let (a, _adir) = tracked_repo("urlname_a", &[("doc.txt", b"x")]);
+    let (b, _bdir) = tracked_repo("urlname_b", &[("doc.txt", b"x")]);
+    let intents = write_intents(
+        "urlname",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
+    assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
+
+    let doc = "mfr_path:value = \"doc.txt\"";
+    for spec in ["my note:string=v", "a/b:string=w"] {
+        assert_ok(&mf(&["-u", &a, "metarecord", "-q", doc, "field", "add", spec]));
+    }
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
+    let run = mf(&["sync", "run", &a, &b, "--yes"]);
+    assert_ok(&run);
+    let got = mf(&["-u", &b, "metarecord", "-q", doc, "get", "--select", "my note,a/b", "--tsv"]);
+    assert_ok(&got);
+    assert_eq!(got.stdout.trim(), "v\tw", "{}{}", run.stdout, run.stderr);
+}
+
 /// A tag of several parents syncs as the same node, by its path, and the side
 /// holding it under fewer parents gains the others (doc "Hierarchy
 /// references"): a path the target lacks is a parent to add, not another

@@ -1070,3 +1070,28 @@ fn test_duplicate_list_sort_and_limit() {
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);
     assert!(out.stderr.contains("unknown sort order 'sideways'"), "stderr: {}", out.stderr);
 }
+
+/// A field name is free text: through `-i`, it travels in the URL path, where
+/// a space, `/`, `?`, `#` or `%` must not change which field is meant.
+#[test]
+fn test_a_field_name_with_url_characters_is_the_field_named() {
+    let (repo, _root) = init_repo("field_name_url");
+    let uuid = create_metarecord(&repo, &["keep:int=1"]);
+    for name in ["my note", "a/b", "q?x", "h#1", "p%20c"] {
+        let spec = format!("{name}:string=v");
+        let set = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", &spec]);
+        assert_ok(&set);
+        let get = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "get", name]);
+        assert_ok(&get);
+        assert_eq!(get.stdout.trim(), "v", "{name:?}");
+        let unset = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "unset", name]);
+        assert_ok(&unset);
+    }
+    let entry = &get_entries(&repo, &uuid)[0];
+    let names: Vec<&str> =
+        entry["fields"].as_array().unwrap().iter().filter_map(|f| f["name"].as_str()).collect();
+    assert!(
+        names.iter().all(|n| *n == "keep" || n.starts_with("mfr_") || n.starts_with("mf_")),
+        "every field was unset: {names:?}"
+    );
+}

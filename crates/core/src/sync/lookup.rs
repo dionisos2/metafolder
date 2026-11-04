@@ -137,7 +137,7 @@ pub fn tree_paths(
         "/repos/{}/metarecords/{}/fields/{}/resolve-tree",
         repo.as_simple(),
         record.as_simple(),
-        field
+        crate::daemon_client::segment(field)
     ))?;
     Ok(paths_in(&resp["paths"]))
 }

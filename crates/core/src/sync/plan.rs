@@ -1120,7 +1120,7 @@ fn identity_paths_in(
             "/repos/{}/metarecords/{}/fields/{}/resolve-tree",
             repo.as_simple(),
             record.as_simple(),
-            field
+            crate::daemon_client::segment(&field)
         ))?;
         for path in lookup::paths_in(&resp["paths"]) {
             out.push((field.clone(), path));

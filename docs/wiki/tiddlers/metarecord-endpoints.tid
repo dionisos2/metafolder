@@ -30,7 +30,10 @@ The whole-record `PUT` is a literal overwrite: fields not listed go, `mfr_*` and
 `mf_*` included — a careless one untracks a file. Read the metarecord first to keep
 what should stay. The single-record writes (the refresh included) take `?expected_version=`
 ([[Conditional writes]]). A reserved name needs `force` ([[Reserved fields]]); a
-schema violation is a `400` with a `violations` array ([[Delta validation]]).
+schema violation is a `400` with a `violations` array ([[Delta validation]]). A field
+name is free text, so `:name` is percent-encoded as a path segment (`my%20note`,
+`a%2Fb`): unencoded, a space makes the URL invalid and a `/`, `?` or `#` names another
+route.
 
 !! Bulk create
 
