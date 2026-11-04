@@ -589,6 +589,10 @@ impl Forest {
     }
 }
 
+/// One forest's memoised keys: a metarecord's key at its first position, or
+/// `None` when it has none.
+type ForestKeys = HashMap<Uuid, Option<Arc<str>>>;
+
 /// Resolver handing out the full-path *sort keys* of a forest's nodes
 /// ([`PATH_KEY_SEP`]), for the duration of one query.
 ///
@@ -603,7 +607,7 @@ pub struct SortKeys<'a> {
     store: &'a dyn Rows,
     /// A metarecord's key at its first position, memoised per field: a node
     /// of two forests has a key in each.
-    firsts: RefCell<HashMap<String, HashMap<Uuid, Option<Arc<str>>>>>,
+    firsts: RefCell<HashMap<String, ForestKeys>>,
     /// The first read error, which leaves keys missing.
     error: RefCell<Option<anyhow::Error>>,
 }
