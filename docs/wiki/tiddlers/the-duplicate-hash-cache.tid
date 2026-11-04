@@ -18,7 +18,13 @@ records, together with the hashes, the state they were computed from:
 * `mfr_hash_size` — its size at hash time.
 
 A stored hash is trusted only when ''both'' still match the live `stat`;
-otherwise it is recomputed. Both are needed: the modification time alone misses a
+otherwise it is recomputed.
+
+One stamp covers both hashes, so it must describe both. When the scan writes a
+hash under a stamp the other hash was not taken under, that other hash is
+cleared: a file changed since its last scan gets its partial hash again, and its
+old full hash goes, rather than passing, under the new stamp, for the new
+content's. Kept, it grouped the file with copies of what it used to be. Both are needed: the modification time alone misses a
 rewrite that preserves it, and `mfr_size` cannot serve because a reconcile
 updates it without touching the hashes. The watcher, when it sees a file's
 content change, clears the hashes, their stamp and the file's group link.

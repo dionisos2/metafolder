@@ -339,6 +339,70 @@ fn a_scoped_scan_only_looks_inside_its_subtree() {
     assert_eq!(group_of(&repo, resolve(&repo, "/outside/c.txt")), None);
 }
 
+#[test]
+fn a_scoped_scan_keeps_a_group_whose_twin_is_outside_its_subtree() {
+    // A full scan groups inside/a with outside/b. A scan of `inside` alone sees
+    // `a` with no twin in its subtree: that is not proof `a` has no twin.
+    let (repo, root) = setup("scope_twin");
+    write_file(&root, "inside/a.txt", b"spanning bytes");
+    write_file(&root, "outside/b.txt", b"spanning bytes");
+    populate_and_scan(&repo);
+    let a = resolve(&repo, "/inside/a.txt");
+    let b = resolve(&repo, "/outside/b.txt");
+    let group = group_of(&repo, a).expect("the full scan groups them");
+
+    let inside = resolve(&repo, "/inside");
+    let opts = ScanOptions { scope: Some(inside), ..ScanOptions::default() };
+    duplicates::scan(&repo, &opts).unwrap();
+
+    assert_eq!(group_of(&repo, a), Some(group), "a still has its twin");
+    assert_eq!(group_of(&repo, b), Some(group));
+    assert_eq!(field_value(&repo, group, "mfr_duplicate_count"), Some(Value::Int(2)));
+}
+
+#[test]
+fn a_scoped_scan_counts_the_members_outside_its_subtree() {
+    let (repo, root) = setup("scope_count");
+    write_file(&root, "inside/a.txt", b"three of a kind");
+    write_file(&root, "inside/b.txt", b"three of a kind");
+    write_file(&root, "outside/c.txt", b"three of a kind");
+    populate_and_scan(&repo);
+    let a = resolve(&repo, "/inside/a.txt");
+    let group = group_of(&repo, a).unwrap();
+    assert_eq!(field_value(&repo, group, "mfr_duplicate_count"), Some(Value::Int(3)));
+
+    let inside = resolve(&repo, "/inside");
+    let opts = ScanOptions { scope: Some(inside), ..ScanOptions::default() };
+    duplicates::scan(&repo, &opts).unwrap();
+
+    assert_eq!(group_of(&repo, resolve(&repo, "/outside/c.txt")), Some(group));
+    assert_eq!(field_value(&repo, group, "mfr_duplicate_count"), Some(Value::Int(3)));
+    assert_eq!(field_value(&repo, group, "mfr_duplicate_reclaimable"), Some(Value::Int(30)));
+}
+
+#[test]
+fn a_scoped_scan_recounts_a_group_it_took_a_member_out_of() {
+    // `a` grows out of its size class: the scoped scan never looks at `b` and
+    // `c` again, but the group they stay in has one member less.
+    let (repo, root) = setup("scope_recount");
+    write_file(&root, "inside/a.txt", b"three of a kind");
+    write_file(&root, "outside/b.txt", b"three of a kind");
+    write_file(&root, "outside/c.txt", b"three of a kind");
+    populate_and_scan(&repo);
+    let a = resolve(&repo, "/inside/a.txt");
+    let group = group_of(&repo, a).unwrap();
+    std::fs::write(root.join("inside/a.txt"), b"no longer one of them").unwrap();
+
+    let inside = resolve(&repo, "/inside");
+    let opts = ScanOptions { scope: Some(inside), ..ScanOptions::default() };
+    duplicates::scan(&repo, &opts).unwrap();
+
+    assert_eq!(group_of(&repo, a), None);
+    assert_eq!(group_of(&repo, resolve(&repo, "/outside/b.txt")), Some(group));
+    assert_eq!(field_value(&repo, group, "mfr_duplicate_count"), Some(Value::Int(2)));
+    assert_eq!(field_value(&repo, group, "mfr_duplicate_reclaimable"), Some(Value::Int(15)));
+}
+
 // ── Progress and cancellation ────────────────────────────────────────────────
 
 #[test]
@@ -472,6 +536,69 @@ fn a_file_changed_after_it_was_hashed_is_not_grouped() {
     assert_eq!((group_of(&repo, a), group_of(&repo, b)), (None, None));
     assert!(group_of(&repo, resolve(&repo, "/c.bin")).is_some());
     assert_eq!(result.groups, 1);
+}
+
+/// Rewrites `rel` with `content`, its mtime moved `secs` ahead so its stamp
+/// changes whatever the filesystem's granularity.
+fn rewrite(root: &Path, rel: &str, content: &[u8], secs: u64) {
+    let path = root.join(rel);
+    std::fs::write(&path, content).unwrap();
+    let later = std::time::SystemTime::now() + std::time::Duration::from_secs(secs);
+    std::fs::File::options().write(true).open(&path).unwrap().set_modified(later).unwrap();
+}
+
+#[test]
+fn a_hash_stored_under_an_older_stamp_is_not_trusted_under_a_newer_one() {
+    // Nothing watches here (the stamp is what makes the cache safe then). `a`
+    // changes after a scan hashed it whole; the next scan recomputes only its
+    // partial hash, which no longer matches its old twin `b`. The stored full
+    // hash still describes the old content, and must not pass for the new one's
+    // under the new stamp: a later scan would reuse it, missing `a`'s new twin
+    // `c` and grouping `a` with copies of what it used to be.
+    let (repo, root) = setup("stale_full");
+    write_file(&root, "a.bin", &[1u8; 9000]);
+    write_file(&root, "b.bin", &[1u8; 9000]);
+    populate_and_scan(&repo);
+    let (a, b) = (resolve(&repo, "/a.bin"), resolve(&repo, "/b.bin"));
+    assert!(group_of(&repo, a).is_some());
+
+    rewrite(&root, "a.bin", &[2u8; 9000], 10);
+    duplicates::scan(&repo, &ScanOptions::default()).unwrap();
+    assert_eq!(group_of(&repo, a), None);
+
+    write_file(&root, "c.bin", &[2u8; 9000]);
+    write_file(&root, "d.bin", &[1u8; 9000]);
+    reconcile::reconcile(&repo).unwrap();
+    duplicates::scan(&repo, &ScanOptions::default()).unwrap();
+    let c = resolve(&repo, "/c.bin");
+    assert_ne!(group_of(&repo, a), group_of(&repo, b), "a is no copy of b any more");
+    assert_eq!(group_of(&repo, a), group_of(&repo, c));
+    assert!(group_of(&repo, c).is_some(), "a and c are identical");
+}
+
+#[test]
+fn a_partial_hash_taken_before_a_change_is_not_kept_under_the_new_stamp() {
+    // `a` changes between its partial and its full hash, in one scan: the full
+    // hash is of the new content, the reused partial of the old. Stored under
+    // the new stamp, the partial would hide `a`'s new twin from every later scan.
+    let (repo, root) = setup("stale_partial");
+    write_file(&root, "a.bin", &[1u8; 9000]);
+    write_file(&root, "b.bin", &[1u8; 9000]);
+    populate_and_scan(&repo);
+    let a = resolve(&repo, "/a.bin");
+    // The change lands at the full phase's first tick, after the partial phase.
+    scan_ticking(&repo, &ScanOptions::default(), |phase, n| {
+        if phase == "full" && n == 1 {
+            rewrite(&root, "a.bin", &[2u8; 9000], 10);
+        }
+    });
+
+    write_file(&root, "c.bin", &[2u8; 9000]);
+    reconcile::reconcile(&repo).unwrap();
+    duplicates::scan(&repo, &ScanOptions::default()).unwrap();
+    let c = resolve(&repo, "/c.bin");
+    assert!(group_of(&repo, c).is_some(), "a and c are identical");
+    assert_eq!(group_of(&repo, a), group_of(&repo, c));
 }
 
 #[test]

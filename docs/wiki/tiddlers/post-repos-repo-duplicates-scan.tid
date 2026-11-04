@@ -13,7 +13,7 @@ Body, all optional:
 |!Key |!Default |!Meaning |
 |`min_size` |`1` |files smaller than this are skipped (`1` excludes empty files) |
 |`rehash` |`false` |ignore every stored hash and recompute |
-|`metarecord` |— |32-hex: scan only that metarecord's subtree |
+|`metarecord` |— |32-hex: scan only that metarecord's subtree (its files' twins may lie outside it) |
 
 The task's result is a summary, never a listing:
 

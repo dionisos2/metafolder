@@ -11,7 +11,18 @@ candidates before the next, more expensive one:
 # ''size'' — every candidate file ([[What counts as a duplicate]]) is partitioned by `mfr_size`, and size classes of one are dropped. This is by far the biggest cut, so it is made on `(uuid, size)` alone, before anything heavier is built; only the survivors get a path resolved (and with it the offline-volume guard).
 # ''partial'' — each survivor gets its `mfr_partial_hash`, reused when a stored one is still valid ([[The duplicate hash cache]]). Within a size class, a partial hash that occurs once eliminates its file.
 # ''full'' — the files still in play get `mfr_full_hash`; files sharing (size, full hash) form a group. Size classes are processed ''largest first'', and each class's groups are written as it completes: a cancelled scan leaves a correct partial result holding the most valuable groups.
-# ''prune'' — reached only when the others completed: removes the link from records no longer members, and deletes groups left with fewer than two. A cancelled scan skips it, so stale groups survive until the next complete run. A scan restricted to a subtree prunes only there.
+# ''prune'' — reached only when the others completed: removes the link from records no longer members, and deletes groups left with fewer than two. A cancelled scan skips it, so stale groups survive until the next complete run. A scan restricted to a subtree prunes only there; a group it took a member out of, and did not write, is recounted.
+
+!! A scan restricted to a subtree
+
+The subtree decides which files the scan is ''about'', not where their twins may
+be. A file inside it is compared with every file of its size, inside or out: a
+copy outside is still a copy, and a group spanning the boundary keeps its outside
+members and its true count. Leaving them out made a scan of one folder dissolve
+the group of a file whose only twin lay elsewhere, and recount a group of three
+as two. So the size phase keeps the sizes occurring inside the subtree, with every
+file of those sizes; a set of twins wholly outside it is dropped before it is
+hashed whole, and never recorded.
 
 !! What it reads
 

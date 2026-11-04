@@ -100,8 +100,13 @@ struct Candidate {
     size: i64,
     /// `"<dev>:<ino>"` when the file has more than one name.
     inode: Option<String>,
+    /// Inside the scan's scope (always, for an unrestricted scan). A file
+    /// outside it is a candidate only as a possible twin of one inside.
+    in_scope: bool,
     /// Filled by the partial phase, then the full phase.
     partial: Option<String>,
+    /// The `(mtime_ms, size)` the partial hash was taken under.
+    partial_stamp: Option<(i64, i64)>,
     full: Option<String>,
     /// The `(mtime_ms, size)` the file had when its full hash was taken: what
     /// it must still have for the hash to place it in a group.
@@ -150,6 +155,14 @@ pub fn scan_reported(
     // most of them away a moment later.
     let total = files.len() as u64;
     reporter.progress("size", Some(0), Some(total));
+    // A scope restricts which files the scan is *about*, not where their twins
+    // may be: a file inside it is compared with every file of its size, inside
+    // or out, so a twin outside is still found and counted. Only the sizes
+    // occurring inside the scope matter.
+    let in_scope = |uuid: &Uuid| scope.as_ref().is_none_or(|s| s.contains(uuid));
+    let scoped_sizes: Option<HashSet<i64>> = scope
+        .as_ref()
+        .map(|_| files.iter().filter(|(uuid, _)| in_scope(uuid)).map(|(_, size)| *size).collect());
     let mut by_size: HashMap<i64, Vec<Uuid>> = HashMap::new();
     for (i, (uuid, size)) in files.into_iter().enumerate() {
         if i % PROGRESS_STEP == 0 {
@@ -161,12 +174,12 @@ pub fn scan_reported(
         if size < opts.min_size {
             continue;
         }
-        if scope.as_ref().is_some_and(|s| !s.contains(&uuid)) {
+        if scoped_sizes.as_ref().is_some_and(|sizes| !sizes.contains(&size)) {
             continue;
         }
         by_size.entry(size).or_default().push(uuid);
     }
-    by_size.retain(|_, members| members.len() > 1);
+    by_size.retain(|_, members| members.len() > 1 && members.iter().any(in_scope));
 
     // Only now, for the survivors, the per-file work: a path (and with it the
     // offline-volume guard, which needs one).
@@ -188,7 +201,9 @@ pub fn scan_reported(
                 rel,
                 size,
                 inode: inodes.get(&uuid).cloned(),
+                in_scope: in_scope(&uuid),
                 partial: None,
+                partial_stamp: None,
                 full: None,
                 stamp: None,
             });
@@ -197,7 +212,7 @@ pub fn scan_reported(
         // offline volume. Dropping it is an economy rather than a correction:
         // the partial-hash phase eliminates a lone member anyway, but only
         // after opening the file and reading 8 KiB of it for nothing.
-        if members.len() > 1 {
+        if members.len() > 1 && members.iter().any(|m| m.in_scope) {
             classes.push((size, members));
         }
     }
@@ -238,11 +253,25 @@ pub fn scan_reported(
             }
             done += 1;
             match hash_step(&root, member, &stored, opts, Fingerprint::Partial) {
-                Ok(Step::Reused(hash, _)) => member.partial = Some(hash),
+                Ok(Step::Reused(hash, stamp)) => {
+                    member.partial = Some(hash);
+                    member.partial_stamp = Some(stamp);
+                }
                 Ok(Step::Computed(hash, stamp)) => {
                     result.hashed_partial += 1;
-                    writes.hashes.push((member.uuid, "mfr_partial_hash", hash.clone(), stamp));
+                    // A stored full hash taken under another stamp describes
+                    // other content: it must not pass for this one's.
+                    let stored_stamp = stored.get(&member.uuid).and_then(|e| e.stamp);
+                    let stale = (stored_stamp != Some(stamp)).then_some("mfr_full_hash");
+                    writes.hashes.push(HashWrite {
+                        uuid: member.uuid,
+                        field: "mfr_partial_hash",
+                        hash: hash.clone(),
+                        stamp,
+                        stale,
+                    });
                     member.partial = Some(hash);
+                    member.partial_stamp = Some(stamp);
                 }
                 Err(_) => result.skipped += 1,
             }
@@ -251,6 +280,7 @@ pub fn scan_reported(
         // Within a size class, a partial hash occurring once eliminates its
         // file: nothing else can be identical to it.
         retain_shared(members, |m| m.partial.clone());
+        retain_reaching_scope(members);
     }
     classes.retain(|(_, members)| members.len() > 1);
 
@@ -280,7 +310,16 @@ pub fn scan_reported(
                 Ok(Step::Computed(hash, stamp)) => {
                     result.hashed_full += 1;
                     hashed_bytes += size;
-                    writes.hashes.push((member.uuid, "mfr_full_hash", hash.clone(), stamp));
+                    // The file changed since its partial hash was taken: that
+                    // hash is of the old content, and goes.
+                    let stale = (member.partial_stamp != Some(stamp)).then_some("mfr_partial_hash");
+                    writes.hashes.push(HashWrite {
+                        uuid: member.uuid,
+                        field: "mfr_full_hash",
+                        hash: hash.clone(),
+                        stamp,
+                        stale,
+                    });
                     member.full = Some(hash);
                     member.stamp = Some(stamp);
                 }
@@ -289,6 +328,7 @@ pub fn scan_reported(
             writes.flush_when_due(&mut result)?;
         }
         retain_shared(&mut members, |m| m.full.clone());
+        retain_reaching_scope(&mut members);
         // This class's groups go out with the next write, not at the end: a
         // cancelled scan keeps the largest groups it found.
         if !members.is_empty() {
@@ -311,8 +351,8 @@ pub fn scan_reported(
 struct Writes<'a> {
     repo: &'a RepoState,
     context: crate::log::WriteContext,
-    /// Computed hashes: `(record, field, hash, the stamp it was taken under)`.
-    hashes: Vec<(Uuid, &'static str, String, (i64, i64))>,
+    /// Computed hashes, in the order they were computed.
+    hashes: Vec<HashWrite>,
     /// Completed size classes, their members sharing a full hash with another.
     classes: Vec<(i64, Vec<Candidate>)>,
     /// The records placed in a group, and the groups written, by every write
@@ -348,19 +388,21 @@ impl Writes<'_> {
     ) -> Result<(), ApiError> {
         let repo = self.repo;
         let mut hashes = std::mem::take(&mut self.hashes);
-        // In key order: a take then dirties a slice of the store's pages, not
+        // In record order: a take then dirties a slice of the store's pages, not
         // pages all over it — a commit's cost is the pages it writes, and
         // unsorted, 25 takes cost 3.7 s of commits on 50 000 files, 1.8 s sorted.
-        hashes.sort_by_key(|(uuid, field, ..)| (*uuid, *field));
+        // A stable sort, so one record's hashes are written in the order they
+        // were taken, and the stamp left is the last one's.
+        hashes.sort_by_key(|h| h.uuid);
         let mut hashes = hashes.into_iter().peekable();
         loop {
             let mut conn =
                 metafolder_core::slowlog::timed("wait:conn", || repo.conn.lock_recover());
             let held = Instant::now();
             let mut writer = repo.writer(&mut *conn, self.context.clone())?;
-            while let Some((uuid, field, hash, stamp)) = hashes.next() {
-                if crate::store::Rows::version(writer.store(), uuid)?.is_some() {
-                    write_hash(&mut writer, uuid, field, &hash, stamp)?;
+            while let Some(h) = hashes.next() {
+                if crate::store::Rows::version(writer.store(), h.uuid)?.is_some() {
+                    write_hash(&mut writer, &h)?;
                 }
                 if held.elapsed() >= self.hold && hashes.peek().is_some() {
                     break;
@@ -402,6 +444,7 @@ impl Writes<'_> {
                 }
             }
             retain_shared(&mut kept, |m| m.full.clone());
+            retain_reaching_scope(&mut kept);
             write_class_groups(
                 &mut writer,
                 size,
@@ -493,21 +536,32 @@ fn hash_step(
     Ok(Step::Computed(hash, live))
 }
 
-/// Writes a computed hash and the stamp it was computed under, together, so a
-/// stamp can never describe a hash that is not there.
-fn write_hash(
-    writer: &mut Writer,
+/// One computed hash waiting to be written.
+struct HashWrite {
     uuid: Uuid,
-    name: &str,
-    hash: &str,
-    (mtime, size): (i64, i64),
-) -> Result<(), ApiError> {
+    field: &'static str,
+    hash: String,
+    /// The `(mtime_ms, size)` it was taken under.
+    stamp: (i64, i64),
+    /// The other hash, when the one stored was not taken under `stamp`.
+    stale: Option<&'static str>,
+}
+
+/// Writes a computed hash and the stamp it was computed under, together, so a
+/// stamp can never describe a hash that is not there — and clears the other
+/// hash when it was taken under another stamp, so a stamp never vouches for a
+/// hash of other content (doc "The duplicate hash cache").
+fn write_hash(writer: &mut Writer, h: &HashWrite) -> Result<(), ApiError> {
+    let (mtime, size) = h.stamp;
     for (field, value) in [
-        (name, Value::String(hash.to_string())),
+        (h.field, Value::String(h.hash.clone())),
         ("mfr_hash_mtime", Value::DateTime(mtime)),
         ("mfr_hash_size", Value::Int(size)),
     ] {
-        writer.set_field_as(OpType::FileModified, uuid, field, value).map_err(ApiError::from)?;
+        writer.set_field_as(OpType::FileModified, h.uuid, field, value).map_err(ApiError::from)?;
+    }
+    if let Some(stale) = h.stale {
+        writer.clear_field_as(OpType::FileModified, h.uuid, stale).map_err(ApiError::from)?;
     }
     Ok(())
 }
@@ -528,6 +582,15 @@ fn retain_shared(members: &mut Vec<Candidate>, key: impl Fn(&Candidate) -> Optio
         }
     }
     members.retain(|m| key(m).is_some_and(|k| counts.get(&k).copied().unwrap_or(0) > 1));
+}
+
+/// Keeps only the members sharing their full hash (or, before it, their partial
+/// one) with a member inside the scope: a set of twins wholly outside it is not
+/// the scan's to record.
+fn retain_reaching_scope(members: &mut Vec<Candidate>) {
+    let key = |m: &Candidate| m.full.clone().or_else(|| m.partial.clone());
+    let reaching: HashSet<String> = members.iter().filter(|m| m.in_scope).filter_map(key).collect();
+    members.retain(|m| key(m).is_some_and(|k| reaching.contains(&k)));
 }
 
 /// Bytes freed by reducing a group to a single file: its size times the number
@@ -670,7 +733,9 @@ fn write_class_groups(
                 rel: m.rel.clone(),
                 size: m.size,
                 inode: m.inode.clone(),
+                in_scope: m.in_scope,
                 partial: None,
+                partial_stamp: None,
                 full: None,
                 stamp: None,
             })
@@ -788,6 +853,11 @@ fn prune_groups(
             .map(|(owner, _)| *owner)
             .collect();
         if members.len() > 1 {
+            // Still a group, but not one this scan wrote: a scoped scan took
+            // a member out, and the counters must say so.
+            if group.count != Some(members.len() as i64) {
+                refresh_group(writer, OpType::FileModified, group.uuid).map_err(ApiError::from)?;
+            }
             continue;
         }
         for member in members {

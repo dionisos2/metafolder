@@ -23,7 +23,7 @@ unchanged repository writes nothing. Options:
 
 * `--min-size <size>` — skip files smaller than this (a human size, as for `mf trash prune -s`: `100mb`, `1g`, `512k`); by default only empty files are skipped.
 * `--rehash` — ignore every stored hash and recompute ([[The duplicate hash cache]]).
-* `--metarecord <uuid>` — scan only that metarecord's subtree.
+* `--metarecord <uuid>` — scan only that metarecord's subtree: the duplicates of its files, wherever their twins are ([[The duplicate scan]]).
 * `--no-wait` — print the task id and return (follow it with `mf task`).
 
 In the GUI, `mf:duplicate scan` (<<cmd "mf:duplicate">>, or the ''Scan'' button of
