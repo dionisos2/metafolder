@@ -168,6 +168,10 @@ mod pairs_as_map {
 #[derive(Debug, Default)]
 pub struct Timeline {
     phases: Vec<Phase>,
+    /// The exact time spent in each phase, `phases`' order: summed whole and
+    /// rounded to `ms` once, at the end, so a phase run many times under a
+    /// millisecond each still adds up.
+    spent: Vec<std::time::Duration>,
     /// The phases currently running, innermost last: `(index into `phases`,
     /// when this occurrence started, the reads counted by then)`.
     open: Vec<(usize, Instant, u64)>,
@@ -201,6 +205,7 @@ impl Timeline {
                     depth,
                     reads: 0,
                 });
+                self.spent.push(std::time::Duration::ZERO);
                 self.phases.len() - 1
             }
         };
@@ -220,9 +225,8 @@ impl Timeline {
     pub fn end_counted(&mut self, token: usize, at: Instant, reads: u64) {
         while self.open.len() > token {
             let (index, started, read_before) = self.open.pop().expect("len > token ⇒ non-empty");
-            let phase = &mut self.phases[index];
-            phase.ms += at.saturating_duration_since(started).as_millis() as u64;
-            phase.reads += reads.saturating_sub(read_before);
+            self.spent[index] += at.saturating_duration_since(started);
+            self.phases[index].reads += reads.saturating_sub(read_before);
         }
     }
 
@@ -241,6 +245,9 @@ impl Timeline {
     /// [`Self::finish_at`], with the reads counted by the operation's end.
     pub fn finish_counted(mut self, at: Instant, reads: u64) -> Vec<Phase> {
         self.end_counted(0, at, reads);
+        for (phase, spent) in self.phases.iter_mut().zip(&self.spent) {
+            phase.ms = spent.as_millis() as u64;
+        }
         self.phases
     }
 
@@ -1026,6 +1033,22 @@ mod tests {
         assert_eq!(phases.len(), 1);
         assert_eq!(phases[0].count, 3);
         assert_eq!(phases[0].ms, 150);
+    }
+
+    #[test]
+    fn test_a_phase_repeated_under_a_millisecond_each_is_not_lost() {
+        // A reconcile resolves each file in a fraction of a millisecond: 1000
+        // of them are 600 ms of resolving, not 0 — the time is summed before
+        // it is rounded.
+        let t0 = Instant::now();
+        let mut tl = Timeline::new();
+        for i in 0..1000 {
+            let at = t0 + Duration::from_micros(i * 1000);
+            let tok = tl.begin("resolve", at);
+            tl.end(tok, at + Duration::from_micros(600));
+        }
+        let phases = tl.finish_at(t0 + Duration::from_secs(1));
+        assert_eq!((phases[0].ms, phases[0].count), (600, 1000));
     }
 
     #[test]

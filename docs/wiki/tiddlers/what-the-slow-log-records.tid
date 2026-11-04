@@ -36,7 +36,9 @@ A phase is a named span declared by the code that runs it. Durations are
 ''inclusive'' — a phase containing another counts its time too — and `depth` says
 how deeply it is nested. Occurrences of one name are summed, `count` saying how
 many: a write validating the schema once per metarecord reports one
-`validate.schema` of 2.4 s with `count: 900`. Phases keep the order they first
+`validate.schema` of 2.4 s with `count: 900`. The exact times are summed and the
+total rounded to the millisecond, so a phase run often but briefly — a reconcile's
+`resolve`, a fraction of a millisecond per file — adds up rather than reading 0. Phases keep the order they first
 appeared in, so they retell the operation. Time outside every top-level phase is
 not padded with an "other": a gap that matters is a missing instrumentation site,
 and naming it would hide that. Each phase also carries its `reads`, inclusive
