@@ -662,6 +662,13 @@ fn test_mount_list_and_forget() {
     assert!(out.stdout.contains("/photos"), "stdout: {}", out.stdout);
     assert!(out.stdout.contains("label:PHOTOS"), "stdout: {}", out.stdout);
 
+    // `forget` takes the mount point's uuid, never a query that would
+    // un-declare every mount point it matches.
+    let out = mf(&["-u", &repo, "mount", "forget", "mfr_mount IS PRESENT", "-y"]);
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    let out = mf(&["-u", &repo, "mount", "list"]);
+    assert!(out.stdout.contains("label:PHOTOS"), "still declared: {}", out.stdout);
+
     // `forget` un-declares it: the directory becomes an ordinary one again.
     let out = mf(&["-u", &repo, "mount", "forget", &uuid, "-y"]);
     assert_ok(&out);

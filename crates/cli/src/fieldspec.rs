@@ -23,9 +23,13 @@ pub fn parse_field_spec(spec: &str) -> Result<(String, Value), String> {
         }
         ("string", Some(v)) => Value::String(unquote(v).to_string()),
         ("int", Some(v)) => Value::Int(v.parse().map_err(|_| format!("invalid int value: '{v}'"))?),
-        ("float", Some(v)) => {
-            Value::Float(v.parse().map_err(|_| format!("invalid float value: '{v}'"))?)
-        }
+        ("float", Some(v)) => Value::Float(
+            v.parse::<f64>()
+                .ok()
+                // JSON has no NaN or infinity: one would travel as `null`.
+                .filter(|f| f.is_finite())
+                .ok_or_else(|| format!("invalid float value: '{v}' (a finite number)"))?,
+        ),
         ("bool", Some(v)) => match v {
             "true" => Value::Bool(true),
             "false" => Value::Bool(false),
@@ -156,6 +160,15 @@ mod tests {
     #[test]
     fn test_float_invalid() {
         err("score:float=x");
+    }
+
+    /// JSON has no NaN or infinity: such a value would reach the daemon as
+    /// `null`, refused with a message about a type.
+    #[test]
+    fn test_float_must_be_finite() {
+        for v in ["NaN", "nan", "inf", "-inf", "infinity", "1e999"] {
+            err(&format!("score:float={v}"));
+        }
     }
 
     #[test]

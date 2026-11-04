@@ -70,6 +70,14 @@ pub(crate) fn eq_to_dsl(specs: &[String]) -> Result<String, CliError> {
         let field_spec =
             if key.contains(':') { spec.clone() } else { format!("{key}:string={val}") };
         let (name, value) = fieldspec::parse_field_spec(&field_spec).map_err(CliError::Usage)?;
+        // The name is written into the query as it is: one the language
+        // cannot spell would be read as more of the query, or not parse.
+        if !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            return Err(CliError::Usage(format!(
+                "invalid --eq '{spec}': the field name must be letters, digits and '_' \
+                 (a query can write no other)"
+            )));
+        }
         clauses.push(format!("({name} = {})", value_to_dsl(&value)?));
     }
     Ok(clauses.join(" AND "))

@@ -12,7 +12,7 @@ Usage: mf log [COMMAND]
 
 Commands:
   list    Display the history, by label
-  head    Print the id of the newest operation (what `undo --after` takes)
+  head    Print the id of the newest operation
   show    Show full details of one label (a label id, or HEAD for the newest operation's)
   undo    Undo a label of your newest change still standing (none named: list them)
   redo    Take back the undos of a label of the newest undo still standing (none named: list them)

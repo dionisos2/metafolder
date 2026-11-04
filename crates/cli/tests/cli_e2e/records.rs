@@ -878,7 +878,12 @@ fn test_cli_primitives_eq_tsv_resolve() {
     let davis = create_metarecord(&repo, &["type:string=person", "name:string=Davis"]);
     let rec = create_metarecord(
         &repo,
-        &[&format!("author:ref={coltrane}"), &format!("author:ref={davis}")],
+        &[
+            &format!("author:ref={coltrane}"),
+            &format!("author:ref={davis}"),
+            // A string that happens to read as a uuid: still no reference.
+            &format!("title:string={davis}"),
+        ],
     );
 
     // --eq: safe exact match (no DSL interpolation) → the Coltrane uuid only.
@@ -912,6 +917,13 @@ fn test_cli_primitives_eq_tsv_resolve() {
     let mut names: Vec<&str> = out.stdout.lines().collect();
     names.sort();
     assert_eq!(names, vec!["Coltrane", "Davis"]);
+
+    // A value that is not a ref is no record to resolve: left out, not taken
+    // for a uuid.
+    let out =
+        mf(&["-u", &repo, "metarecord", "-i", &rec, "field", "get", "title", "--resolve", "name"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout, "", "{}", out.stderr);
 }
 
 #[test]

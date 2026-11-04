@@ -287,7 +287,7 @@ fn metarecord_get_without_a_selector_honours_sort_and_select() {
 #[test]
 fn log_head_prints_the_head_operation_id() {
     // The primitive a script needs to go back: the newest operation right now,
-    // in the form `mf log undo --after` takes.
+    // as `mf log prune --id` and `mf log revert --op` take it.
     let (repo, _root) = init_repo("loghead");
 
     let before = mf(&["-u", &repo, "log", "head"]);

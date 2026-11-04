@@ -30,7 +30,7 @@ context has a label of its own, named after what it called:
 `mf log show <id>` (or `HEAD`, the newest operation's label) prints the label — its name,
 description and the labels it is nested in — and each of its own operations with its
 values before and after; `--raw` the JSON. A `tree_ref` value shows its name, not a
-resolved path. `mf log head` prints the newest operation's id — what `mf log undo
---after` takes.
+resolved path. `mf log head` prints the newest operation's id — a point to compare with
+later, or what `mf log revert --op` takes; going back is done by label ([[Undo and redo]]).
 
 In the GUI: the [[log panel]], down to what each operation changed.

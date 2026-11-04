@@ -499,7 +499,7 @@ enum LogCommand {
         #[arg(long)]
         all: bool,
     },
-    /// Print the id of the newest operation (what `undo --after` takes)
+    /// Print the id of the newest operation
     Head,
     /// Show full details of one label (a label id, or HEAD for the newest operation's)
     Show {

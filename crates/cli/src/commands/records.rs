@@ -446,6 +446,7 @@ pub fn field_get(
         .as_array()
         .into_iter()
         .flatten()
+        .filter(|v| v["type"] == "ref")
         .filter_map(|v| v["value"].as_str().map(str::to_string))
         .collect();
     if refs.is_empty() {

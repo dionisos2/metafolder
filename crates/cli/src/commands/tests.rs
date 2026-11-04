@@ -73,6 +73,17 @@ fn test_eq_to_dsl_types_and_and_join() {
     assert_eq!(eq_to_dsl(&["seen:bool=true".into()]).unwrap(), "(seen = true)");
 }
 
+/// The name goes into the query as it is, so it must be one the language can
+/// write: anything else is refused, never read as more of the query.
+#[test]
+fn test_eq_to_dsl_refuses_a_name_the_language_cannot_write() {
+    for spec in ["x IS PRESENT) OR (y=v", "my note=v", "a-b:int=1", "=v"] {
+        let err = eq_to_dsl(&[spec.into()]).expect_err(spec);
+        assert_eq!(err.exit_code(), 2, "{spec}");
+    }
+    assert_eq!(eq_to_dsl(&["été_2=v".into()]).unwrap(), "(été_2 = \"v\")");
+}
+
 #[test]
 fn test_eq_to_dsl_escapes_injection() {
     // A value carrying quotes/backslashes cannot break out of the string.

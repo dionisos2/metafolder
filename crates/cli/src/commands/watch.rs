@@ -32,6 +32,13 @@ pub fn mount_list(ctx: &Ctx, raw_json: bool) -> Result<i32, CliError> {
 /// `mfr_mount`). Its subtree stops being frozen, so a volume that is *not*
 /// coming back leaves ordinary orphans behind, which `mf orphan` then reports.
 pub fn mount_forget(ctx: &Ctx, uuid: &str, yes: bool) -> Result<i32, CliError> {
+    // A uuid, checked: as a selector a query would un-declare every mount
+    // point it matched.
+    let uuid = Uuid::parse_str(uuid)
+        .map_err(|_| CliError::Usage(format!("invalid metarecord UUID: '{uuid}'")))?
+        .as_simple()
+        .to_string();
+    let uuid = uuid.as_str();
     if !yes {
         let prompt = format!(
             "Forget the mount point {uuid}? Its subtree stops being protected \

@@ -32,16 +32,23 @@ fn quote(arg: &str) -> String {
     }
 }
 
-/// The query a command acts on, when it names one (`-q`/`--query`, or `-s`
-/// for a simplified one): what its label's description says.
+/// The query a command acts on, when it names one (`-q`/`--query`, in any
+/// spelling clap takes): what its label's description says. `-s` is a flag
+/// saying how to read it, and takes no text of its own.
 pub fn query_of(args: &[String]) -> Option<String> {
     let mut it = args.iter();
     while let Some(arg) = it.next() {
+        if arg == "--" {
+            return None;
+        }
+        if matches!(arg.as_str(), "-q" | "--query") {
+            return it.next().cloned();
+        }
         if let Some(q) = arg.strip_prefix("--query=") {
             return Some(q.to_string());
         }
-        if matches!(arg.as_str(), "-q" | "--query" | "-s" | "--simplified") {
-            return it.next().cloned();
+        if let Some(q) = arg.strip_prefix("-q") {
+            return Some(q.strip_prefix('=').unwrap_or(q).to_string());
         }
     }
     None
@@ -139,10 +146,19 @@ mod tests {
             Some("a = 1")
         );
         assert_eq!(query_of(&args(&["--query=b", "get"])).as_deref(), Some("b"));
+        // `-s` is a flag of `-q`, before or after it: it takes no text.
         assert_eq!(
-            query_of(&args(&["tag", "-s", "photos", "add", "x"])).as_deref(),
+            query_of(&args(&["tag", "-s", "-q", "photos", "add", "x"])).as_deref(),
             Some("photos")
         );
+        assert_eq!(
+            query_of(&args(&["tag", "-q", "photos", "-s", "add"])).as_deref(),
+            Some("photos")
+        );
+        assert_eq!(query_of(&args(&["metarecord", "-qa = 1", "get"])).as_deref(), Some("a = 1"));
+        assert_eq!(query_of(&args(&["metarecord", "-q=a = 1"])).as_deref(), Some("a = 1"));
+        // After `--`, an argument is no option.
+        assert_eq!(query_of(&args(&["tag", "-i", "x", "add", "--", "-q"])), None);
         assert_eq!(query_of(&args(&["metarecord", "add"])), None);
     }
 }

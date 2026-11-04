@@ -361,11 +361,9 @@ fn op_breakdown(ops: &[&Json]) -> String {
 
 // ── mf log show ───────────────────────────────────────────────────────────────
 
-/// `mf log head` — the id of the newest operation, one line.
-///
-/// The primitive for going back to a known point: it is what `mf log undo
-/// --after` takes, so a script can note where it was, write, and return there.
-/// `0` on an empty history.
+/// `mf log head` — the id of the newest operation, one line; `0` on an empty
+/// history. A point to compare with later (`mf log revert --op` takes an
+/// operation id); going back is done by label (doc "Undo and redo by label").
 pub fn log_head(ctx: &Ctx) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let resp = ctx.client.get(&format!("{base}/log/since"), &[])?;
