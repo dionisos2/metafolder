@@ -37,7 +37,11 @@ break the correlation below. The flush checks eligibility again anyway.
 
 While the buffer holds a rename or a removal of a directory carrying a rule (or of an
 ancestor of one), filtering against the old positions would drop events the flush would
-keep — so filtering stops until a flush that drained that event has committed. A change
+keep — so filtering stops until a flush that drained that event has committed. The
+watches wait for it too: such a batch hands the source its departures only (an arrival
+judged against the old positions would be watched by rules it does not carry — a moved
+excluded directory watched whole), and the flush that drained it places the watch set
+again, once the rules are re-read. A change
 of `mf_watch`/`mf_ignore` applies from the next ingest batch; events already dropped are
 not revisited.
 

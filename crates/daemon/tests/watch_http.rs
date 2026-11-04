@@ -616,3 +616,79 @@ async fn an_exhausted_watch_budget_marks_the_subtrees_it_left_out() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["watch_budget"]["exceeded_dirs"], json!(3), "{body}");
 }
+
+/// Starts a reconcile and waits for it to finish.
+async fn reconcile(app: &Router, repo: &str) {
+    let (status, body) = request(app, "POST", &format!("/repos/{repo}/reconcile"), None).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "reconcile start failed: {body}");
+    let task_id = body["task_id"].as_str().unwrap().to_string();
+    for _ in 0..400 {
+        let (_, body) = request(app, "GET", &format!("/repos/{repo}/tasks/{task_id}"), None).await;
+        if body["status"] == "done" {
+            return;
+        }
+        assert_ne!(body["status"], "failed", "reconcile failed: {body}");
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("reconcile did not finish");
+}
+
+/// A directory carrying a rule keeps it when moved, and the watches placed for
+/// its arrival follow the rule it carries — not the rules of the path it
+/// arrived at, which knew nothing of it yet.
+#[tokio::test]
+async fn a_moved_directory_is_watched_by_the_rules_it_carries() {
+    let app =
+        routes::build(std::sync::Arc::new(common::watching_state_on(common::Regime::Inotify)));
+    let root = TempDir::new("watch_moved_rule");
+    std::fs::create_dir_all(root.join("big/inner")).unwrap();
+    std::fs::create_dir_all(root.join("private/inner")).unwrap();
+    let repo = init_repo(&app, &root).await;
+    let root_uuid = root_metarecord(&app, &repo).await;
+    put_field(&app, &repo, &root_uuid, "mf_watch", json!({"type": "bool", "value": true})).await;
+    reconcile(&app, &repo).await;
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/watch/exceeded"),
+        Some(json!({"path": "/big", "exceeded": true})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (_, private) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/tree/resolve-path"),
+        Some(json!({"field": "mfr_path", "path": "/private"})),
+    )
+    .await;
+    let private = private["uuid"].as_str().expect("/private is tracked").to_string();
+    put_field(&app, &repo, &private, "mf_watch", json!({"type": "bool", "value": false})).await;
+
+    std::fs::rename(root.join("big"), root.join("big2")).unwrap();
+    std::fs::rename(root.join("private"), root.join("private2")).unwrap();
+
+    // Once the moves are recorded, each rule is at its new path.
+    let mut body = Value::Null;
+    for _ in 0..200 {
+        (_, body) = check_paths(&app, &repo, json!({"paths": ["/big2", "/private2"]})).await;
+        if result_for(&body, "/big2")["reason"] == "excluded"
+            && result_for(&body, "/private2")["reason"] == "untracked"
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert_eq!(result_for(&body, "/big2")["reason"], json!("excluded"), "{body}");
+    assert_eq!(result_for(&body, "/private2")["reason"], json!("untracked"), "{body}");
+
+    let (_, body) = check_paths(
+        &app,
+        &repo,
+        json!({"paths": ["/big2", "/big2/inner", "/private2", "/private2/inner"]}),
+    )
+    .await;
+    for path in ["/big2", "/big2/inner", "/private2", "/private2/inner"] {
+        assert_eq!(result_for(&body, path)["watched"], json!(false), "{path}: {body}");
+    }
+}

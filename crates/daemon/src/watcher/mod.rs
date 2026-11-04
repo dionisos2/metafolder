@@ -688,10 +688,31 @@ fn ingest(
     // (recursive watching is re-implemented here per-directory, so unlike
     // notify's own recursive mode this must be done by hand). The executor's
     // `scan_dir` ingests any content already inside a new directory; here we only
-    // register the inotify watches for its *future* events.
+    // register the inotify watches for its *future* events. A batch that moves
+    // a rule hands over its departures only: an arrival judged now would be
+    // judged by the rules of the path it arrived at, which do not know yet
+    // what it carries (an excluded subtree would be watched whole). The flush
+    // that applies the batch places the watches again.
     if let Some(source) = source {
-        source.maintain(repo, root, internal_dir, &events);
+        if touching {
+            source.maintain(repo, root, internal_dir, &departures(&events));
+        } else {
+            source.maintain(repo, root, internal_dir, &events);
+        }
     }
+}
+
+/// The departures among `events`: a whole move counts as the departure of
+/// its source.
+fn departures(events: &[(FsEvent, Option<i64>)]) -> Vec<(FsEvent, Option<i64>)> {
+    events
+        .iter()
+        .filter_map(|(ev, tracker)| match ev {
+            FsEvent::Remove(_) | FsEvent::RenameFrom(_) => Some((ev.clone(), *tracker)),
+            FsEvent::Rename(from, _) => Some((FsEvent::RenameFrom(from.clone()), None)),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The rule index the ingest thread filters with, and whether it may drop

@@ -700,7 +700,14 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
             // The batch is committed: re-read the rules at the new HEAD, and let
             // the ingest thread trust them for what this flush drained.
             match repo.watch_rules(&conn) {
-                Ok(_) => repo.rules_covered(touch_mark),
+                // A batch that moved a rule moved what it governs: the watch
+                // set is placed again, as after a write to a rule (doc "Event
+                // batching") — the arrival's watches were left to this.
+                Ok(_) => {
+                    if repo.rules_covered(touch_mark) {
+                        repo.refresh_watches(&conn);
+                    }
+                }
                 Err(err) => crate::diagnostics::warn_for(
                     "executor",
                     format!("could not re-read the watch rules after a flush: {err:#}"),

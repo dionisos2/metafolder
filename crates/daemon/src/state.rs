@@ -480,9 +480,13 @@ impl RepoState {
 
     /// A flush that read `mark` before draining has committed, and the rules
     /// were re-read after it: the touching events it counted are in them.
-    pub fn rules_covered(&self, mark: u64) {
+    /// Whether the flush drained any — it may have moved a rule, and the
+    /// watches placed since then were placed against the old ones.
+    pub fn rules_covered(&self, mark: u64) -> bool {
         let mut slot = self.watch_rules.lock_recover();
+        let drained = mark > slot.covered;
         slot.covered = slot.covered.max(mark);
+        drained
     }
 
     /// The repository's forest lookups. A copy: they hold nothing but the
