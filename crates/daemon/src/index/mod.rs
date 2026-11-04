@@ -76,6 +76,12 @@ pub struct QueryRoots<'a> {
     /// [`Unsupported`] with a [`Gap::State`]: a daemon bug (the serving path
     /// always hands one in), reported as one.
     pub keys: Option<&'a crate::forest::SortKeys<'a>>,
+    /// The query as the client sent it, which a page's cursor is bound to
+    /// (doc "Pagination and sorting") — not the query evaluated, whose
+    /// forest leaves were rewritten into the sets they match now: a set that
+    /// grows between two pages must not void the cursor. `None` binds it to
+    /// the query evaluated.
+    pub cursor_query: Option<&'a Query>,
 }
 
 impl QueryRoots<'_> {
@@ -509,7 +515,7 @@ impl Eval<'_> {
         roots: Option<&QueryRoots<'_>>,
     ) -> Result<(Vec<Uuid>, Option<String>), Unsupported> {
         use std::cmp::Ordering;
-        let guard = page_guard(q, sort);
+        let guard = page_guard(roots.and_then(|r| r.cursor_query).unwrap_or(q), sort);
         let after: Option<SortEntry> = match cursor {
             None => None,
             Some(c) => {

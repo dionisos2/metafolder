@@ -125,8 +125,8 @@ fn path_leaf_matches(
                 uuids: cache.osm_path_matches_with(store, field, terms).map_err(ApiError::from)?,
             },
         };
-        // Sorted for the same reason the `:path` walk sorts: the cursor is
-        // bound to a hash of the rewritten query.
+        // Sorted as the `:path` walk sorts: the rewrite is deterministic
+        // (doc "How queries are evaluated").
         if let Query::UuidIn { uuids } = &mut rewritten {
             uuids.sort_unstable();
         }

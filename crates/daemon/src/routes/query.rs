@@ -266,8 +266,9 @@ fn run_query_filter(
     // forest says they match. The preparation must be a function of the query
     // *shape* alone: the list asks for `count` on the first page only, and if
     // that changed what is prepared, page 1 and page 2 would be evaluating
-    // different queries and would reject each other's cursor (which is bound to
-    // a hash of the rewritten query).
+    // different queries. The cursor is bound to the query as sent
+    // (`cursor_query` below), so a rewritten set that grows between two pages
+    // does not void it (doc "How queries are evaluated").
     let engine = engine(conn)?;
     crate::query_validate::validate_query_types(&body.query, &|f| engine.value_type(f))?;
     let index = engine.eval();
@@ -277,6 +278,7 @@ fn run_query_filter(
     // forest (doc "Pagination and sorting", doc "The forest in the store").
     let sort_keys = crate::forest::SortKeys::new(conn);
     roots.keys = Some(&sort_keys);
+    roots.cursor_query = Some(&body.query);
     // The preparation above (path seeds, forest leaves) can be the heavy phase
     // on a large repo; if a Stop landed during it, don't start the evaluation.
     if cancel() {

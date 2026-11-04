@@ -53,5 +53,6 @@ are stable against metarecords added or removed in the part already read; a
 metarecord whose sort value changes between two pages may come twice or be skipped,
 which keyset pagination over live data accepts.
 
-The hash covers the query ''as the daemon rewrote it'', so that rewrite must be
-deterministic ([[How queries are evaluated]]).
+The hash covers the query as the client sent it, not as the daemon rewrote it: the
+sets a rewritten leaf matches may grow between two pages without voiding the cursor
+([[How queries are evaluated]]).

@@ -2,7 +2,7 @@ title: How queries are evaluated
 tags: [[Query engine]]
 kind: reference
 audience: dev
-summary: One evaluator over the store's bitmaps, no SQL and no fallback; two leaves are rewritten against the forest first, deterministically; a naive oracle checks it.
+summary: One evaluator over the store's bitmaps, no SQL and no fallback; two leaves are rewritten against the forest first, the cursor bound to the query sent; a naive oracle checks it.
 
 A query is ''not'' compiled to SQL. Every operand is answered from the store's derived
 key spaces — bitmaps of dense ids, value partitions, the forest's positions — and rows
@@ -21,16 +21,21 @@ The steps of one request (`routes::run_query_filter`), each a phase of the slow 
 
 Each request reads one snapshot of the store; nothing is resident between requests.
 
-!! The rewrite must be deterministic
+!! The cursor is bound to the query sent
 
-The cursor is bound to a hash of the query ''as rewritten'', and the rewrite runs
-again for every page. A rewrite that returns the same set in a different order makes
-page 2's cursor look like another query's: `400 invalid cursor`. It happened — three
-of the four exits of the `osm` path resolution built their answer in a `HashSet`, and
-a two-word finder search died on its second page. Any new rewrite must return a
-stably ordered result, and be tested by "two calls, same output"
-(`tests/index_oracle.rs::resolving_index_leaves_is_deterministic`) rather than by one
-pagination test, which exercised only one of the four exits.
+A page's cursor is bound to a hash of the query ''as the client sent it'', not as
+rewritten ([[Pagination and sorting]]). The rewrite runs again for every page and
+answers with the sets that match ''now'': bound to it, a cursor died whenever that set
+changed — a file arriving while the finder paged a two-word search answered page 2
+with `400 invalid cursor` (November 2026,
+`tests/query_http.rs::test_a_rewritten_query_s_cursor_survives_a_new_match`). Before
+that, the same `400` came from a rewrite returning its set in another order: three of
+the four exits of the `osm` path resolution built their answer in a `HashSet`.
+
+The rewrite is still deterministic, and held to it by "two calls, same output"
+(`tests/index_oracle.rs::resolving_forest_leaves_is_deterministic`): a set in a
+stable order keeps the evaluation reproducible, though the cursor no longer depends on
+it. The evaluator takes the client's query as `QueryRoots::cursor_query`.
 
 !! The oracle
 

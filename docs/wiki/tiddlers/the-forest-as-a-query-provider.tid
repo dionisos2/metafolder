@@ -23,7 +23,7 @@ Rewriting a forest leaf does not walk the whole forest when it can help it:
 * an `osm` path starts from the ''anchors'' of its last term, verifies each anchor's path, and takes its subtree, which the evaluator expands from its descendant bitmap; the anchors are first cut to the folders of an earlier, rarer term when that is cheaper;
 * what is left — an unanchored regex over paths, a last term ending with the separator — walks the stored forest.
 
-The rewrite must be deterministic: the cursor is bound to a hash of the rewritten
-query ([[How queries are evaluated]]). A field with no forest is the benign case: the
+The rewrite is deterministic — a set in a stable order —, though a page's cursor is
+bound to the query the client sent, not to the rewrite ([[How queries are evaluated]]). A field with no forest is the benign case: the
 leaf matches nothing, and the rewrite says so. `tests/path_aspect.rs` and
 `tests/index_oracle.rs` hold it to the oracle; `tests/kv_cost.rs` to its bounds.

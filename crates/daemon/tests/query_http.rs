@@ -1267,10 +1267,10 @@ async fn test_multi_term_osm_path_paginates() {
     // A multi-term OSM path is not indexable as such:
     // `forest_query::resolve_path_leaves` rewrites the leaf into the `UuidIn`
     // set it matches, and the index serves that. The rewrite runs again on every
-    // page, so the *set it produces must be stable* — the cursor guard hashes
-    // the rewritten query, and a set that comes back in a different order makes
-    // page 2 look like a cursor from some other query, so the user gets a 400
-    // halfway through a search.
+    // page: once, its set came back in another order and the cursor, then bound
+    // to the rewritten query, made page 2 a 400 halfway through a search. It is
+    // bound to the query as sent now (doc "How queries are evaluated"), and the
+    // rewrite kept deterministic.
     let (app, repo, root) = setup("osmpage").await;
 
     let node = |parent: Option<&str>, name: &str| {
@@ -1310,6 +1310,46 @@ async fn test_multi_term_osm_path_paginates() {
     seen.dedup();
     assert_eq!(seen.len(), 10, "every ep*.mkv should be paged through exactly once");
 
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn test_a_rewritten_query_s_cursor_survives_a_new_match() {
+    // The cursor does not expire, and pages are stable against metarecords
+    // added in the part already read (doc "Pagination and sorting"). A query
+    // whose leaf the forest rewrites into a set must keep that promise when
+    // the set grows between two pages: a file arriving while the finder pages
+    // is no reason for a 400.
+    let (app, repo, root) = setup("osmgrow").await;
+    let node = |parent: Option<&str>, name: &str| {
+        json!([{"name": "loc", "value": {"type": "tree_ref",
+                "value": {"parent": parent, "name": name}}}])
+    };
+    let top = create(&app, &repo, node(None, "root")).await;
+    let sci = create(&app, &repo, node(Some(&top), "science")).await;
+    for i in 0..4 {
+        create(&app, &repo, node(Some(&sci), &format!("ep{i}.mkv"))).await;
+    }
+    for query in [
+        json!({"type": "osm", "field": "loc", "terms": ["sci", "ep"], "mode": "path"}),
+        json!({"type": "matches", "field": "loc", "aspect": "path", "pattern": "^root/sci"}),
+    ] {
+        let uri = format!("/repos/{repo}/query");
+        let (status, page1) =
+            request(&app, "POST", &uri, Some(json!({"query": query, "limit": 2}))).await;
+        assert_eq!(status, StatusCode::OK, "{page1}");
+        let cursor = page1["next_cursor"].as_str().expect("a second page").to_string();
+        create(&app, &repo, node(Some(&sci), &format!("ep{}.mkv", 10 + query.to_string().len())))
+            .await;
+        let (status, page2) = request(
+            &app,
+            "POST",
+            &uri,
+            Some(json!({"query": query, "limit": 2, "cursor": cursor})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "page 2 of {query} after a new match: {page2}");
+    }
     std::fs::remove_dir_all(root).unwrap();
 }
 
