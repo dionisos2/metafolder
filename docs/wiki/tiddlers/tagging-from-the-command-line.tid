@@ -6,7 +6,8 @@ summary: mf tag add, deny, mixed and remove over any selection — one file, a q
 `mf tag` takes a selector before its verb, like `mf metarecord` ([[Selectors]]): `-i`
 one metarecord, `-q` a query (`-s` for simplified text), or `--eq name[:type]=value`
 (repeatable, AND-ed: an exact match with no DSL quoting to get wrong). A tag is named by
-its path.
+its path: surrounding spaces and slashes are dropped (`/musique/jazz/` is `musique/jazz`),
+and a path with an empty name in it (`musique//jazz`) is refused, writing nothing.
 
 ```
 mf tag -i 3f2a… add musique/jazz
@@ -18,7 +19,9 @@ mf tag -i 3f2a… remove musique/jazz
 
 The second line tags a whole folder's content; `=>*` would include the folder itself
 ([[Following references]]). A tag missing from the vocabulary is created on the first
-`add`, `deny` or `mixed` that names it, ancestors included.
+`add`, `deny` or `mixed` that names it, ancestors included. Created under a tag of
+several parents ([[Hierarchy references]]), it is under every one of them at once: adding
+it drops the negatives on the ancestors by each path.
 
 Each verb prints how many records it changed: gained the ref for `add`, `deny` and
 `mixed`, lost it for `remove`. `0` means nothing needed writing — the tag was already

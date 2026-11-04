@@ -337,7 +337,7 @@ impl<'a> TagBatch<'a> {
         if let Some(uuid) = vocab.name2uuid.get(path) {
             return uuid.clone();
         }
-        let (parent, leaf) = match parent(path) {
+        let (parent_uuid, leaf) = match parent(path) {
             Some(parent_path) => {
                 (json!(self.ensure_entry(vocab, parent_path)), &path[parent_path.len() + 1..])
             }
@@ -347,11 +347,21 @@ impl<'a> TagBatch<'a> {
         self.ops.push(json!({"op": "create", "uuid": uuid, "fields": [
             {"name": self.cfg.type_field, "value": {"type": "string", "value": self.cfg.entry_type}},
             {"name": self.cfg.path_field, "value": {"type": vocab.path_type,
-                "value": {"parent": parent, "name": leaf}}},
+                "value": {"parent": parent_uuid, "name": leaf}}},
         ]}));
-        vocab.name2uuid.insert(path.to_string(), uuid.clone());
-        vocab.paths.insert(uuid.clone(), vec![path.to_string()]);
-        vocab.names.push(path.to_string());
+        // Under a parent of several paths, the new entry has one path below
+        // each of them: its ancestors are those of every one.
+        let paths: Vec<String> = match parent(path) {
+            Some(parent_path) => {
+                vocab.paths_of(parent_path).iter().map(|p| format!("{p}/{leaf}")).collect()
+            }
+            None => vec![path.to_string()],
+        };
+        for p in &paths {
+            vocab.name2uuid.insert(p.clone(), uuid.clone());
+            vocab.names.push(p.clone());
+        }
+        vocab.paths.insert(uuid.clone(), paths);
         uuid
     }
 
@@ -392,6 +402,20 @@ impl<'a> TagBatch<'a> {
     }
 }
 
+/// The tag path as typed, without surrounding spaces nor slashes (`/a/b/` is
+/// `a/b`), or an error when it names no tag or has an empty name in it: a
+/// tag's name is never empty, so `a//b` is a typo rather than three tags.
+fn normalize(path: &str) -> Result<String, DaemonError> {
+    let path = path.trim().trim_matches('/');
+    if path.is_empty() {
+        return Err(DaemonError::local("no tag named"));
+    }
+    if path.split('/').any(|name| name.trim().is_empty()) {
+        return Err(DaemonError::local(format!("tag path {path:?} has an empty name in it")));
+    }
+    Ok(path.to_string())
+}
+
 /// Writes `answer` about the tag at `path` onto the records `query` (a Query IR,
 /// as JSON) selects, rewriting them as doc "Tag subsumption" says — in one
 /// write. Returns how many records gained the answer (lost the tag, for
@@ -416,6 +440,8 @@ pub fn apply(
     answer: Answer,
     path: &str,
 ) -> Result<u64, DaemonError> {
+    let path = normalize(path)?;
+    let path = path.as_str();
     let mut vocab = Vocab::load(client, repo, cfg)?;
     let mut batch = TagBatch::new(cfg, query.clone());
     let counted = match answer {
@@ -696,6 +722,44 @@ mod tests {
         assert_eq!(negatives.len(), 3);
         for uuid in [MARATON, SPORT, EVENT] {
             assert!(negatives.iter().any(|n| n == uuid), "{uuid} in {negatives:?}");
+        }
+    }
+
+    #[test]
+    fn a_tag_created_under_a_tag_of_two_parents_reaches_the_ancestors_of_both() {
+        // jazz hangs under musique and genre: a new tag under it is under both.
+        const GENRE: &str = "44444444444444444444444444444444";
+        let stub = Stub::new(json!({
+            MUSIQUE: ["musique"],
+            GENRE: ["genre"],
+            JAZZ: ["musique/jazz", "genre/jazz"],
+        }));
+        apply(&stub, "r", &shipped_config(), &sel(), Answer::Add, "musique/jazz/bebop").unwrap();
+        let ops = stub.ops();
+        let removed: Vec<_> = summary(&ops)
+            .into_iter()
+            .filter(|(op, f, _)| op == "remove" && f == "negative_tag")
+            .map(|(_, _, target)| target)
+            .collect();
+        for uuid in [JAZZ, MUSIQUE, GENRE] {
+            assert!(removed.iter().any(|r| r == uuid), "{uuid} in {removed:?}");
+        }
+    }
+
+    #[test]
+    fn a_tag_path_is_trimmed_of_its_slashes_and_spaces() {
+        let stub = music();
+        apply(&stub, "r", &shipped_config(), &sel(), Answer::Add, " /musique/jazz/ ").unwrap();
+        assert_eq!(summary(&stub.ops()[..1]), vec![t("add", "tag", JAZZ)]);
+    }
+
+    #[test]
+    fn a_tag_path_without_a_name_is_refused_and_writes_nothing() {
+        for path in ["", " / ", "musique//jazz"] {
+            let stub = music();
+            let err = apply(&stub, "r", &shipped_config(), &sel(), Answer::Add, path).unwrap_err();
+            assert!(err.message.contains("tag"), "{path:?}: {}", err.message);
+            assert!(stub.batches.borrow().is_empty(), "{path:?}");
         }
     }
 
