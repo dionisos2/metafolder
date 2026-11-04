@@ -1,46 +1,46 @@
 //! `mf gui`: thin client over the GUI scripting HTTP API (doc
 //! "GUI scripting endpoints"). Plain-text output designed for shell scripts.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value as Json};
 
 use crate::client::{CliError, Client};
 
-const DEFAULT_GUI_URL: &str = "http://127.0.0.1:7524";
-
 /// Resolves the GUI base URL: the explicit value (`--gui-url` /
-/// `METAFOLDER_GUI_URL`) wins, then the `gui-port` of the first readable GUI
-/// `config.toml` among `candidates`, then the default port.
-pub fn base_url(explicit: Option<String>, candidates: &[PathBuf]) -> String {
+/// `METAFOLDER_GUI_URL`) wins, else the `gui-port` of the GUI's `config.toml`
+/// — the file the GUI itself starts from. No port is kept here (doc "No
+/// runtime fallback"): that file missing or malformed, or without `gui-port`,
+/// is a usage error naming it.
+pub fn base_url(explicit: Option<String>, config: Option<&Path>) -> Result<String, CliError> {
     if let Some(url) = explicit {
-        return url;
+        return Ok(url);
     }
-    for path in candidates {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            if let Some(port) = gui_port_from_config(&content) {
-                return format!("http://127.0.0.1:{port}");
-            }
-        }
-    }
-    DEFAULT_GUI_URL.to_string()
+    let path = config.ok_or_else(|| {
+        CliError::Usage(
+            "cannot determine the GUI configuration file: set HOME or use --gui-url".into(),
+        )
+    })?;
+    let content = metafolder_core::config::read_required(path).map_err(CliError::Usage)?;
+    let port = gui_port_from_config(&content)
+        .map_err(|e| CliError::Usage(format!("in {}: {e}", path.display())))?;
+    Ok(format!("http://127.0.0.1:{port}"))
 }
 
-/// The `gui-port` setting from a GUI `config.toml` (the same file the GUI
-/// reads); `None` when absent or not a valid port.
-fn gui_port_from_config(content: &str) -> Option<u16> {
-    let table: toml::Table = toml::from_str(content).ok()?;
-    table.get("gui-port")?.as_integer()?.try_into().ok()
+/// The `gui-port` setting of a GUI `config.toml`, or why there is none.
+fn gui_port_from_config(content: &str) -> Result<u16, String> {
+    let table: toml::Table = toml::from_str(content).map_err(|e| e.to_string())?;
+    let port = table.get("gui-port").ok_or("missing key `gui-port`")?;
+    port.as_integer()
+        .and_then(|n| u16::try_from(n).ok())
+        .ok_or_else(|| format!("`gui-port` is not a port: {port}"))
 }
 
 /// The GUI config file location (doc "Configuration"):
-/// `~/.config/metafolder/gui/config.toml`. The GUI no longer writes a
-/// `gui.port` discovery file — its port lives in this config.
-pub fn config_path_candidates() -> Vec<PathBuf> {
-    metafolder_core::config::crate_config_dir("gui")
-        .map(|dir| dir.join("config.toml"))
-        .into_iter()
-        .collect()
+/// `~/.config/metafolder/gui/config.toml`. The GUI writes no port discovery
+/// file — its port lives in this config.
+pub fn config_path() -> Option<PathBuf> {
+    metafolder_core::config::crate_config_dir("gui").map(|dir| dir.join("config.toml"))
 }
 
 pub struct GuiCtx {
@@ -437,23 +437,47 @@ pub fn prompt(
 mod tests {
     use super::*;
 
+    fn config_file(content: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join("metafolder-tests");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("mf_gui_cfg_{}.toml", uuid::Uuid::new_v4()));
+        std::fs::write(&path, content).unwrap();
+        path
+    }
+
     #[test]
     fn test_base_url_explicit_wins() {
-        let url = base_url(Some("http://127.0.0.1:9999".into()), &[]);
+        let url = base_url(Some("http://127.0.0.1:9999".into()), None).unwrap();
         assert_eq!(url, "http://127.0.0.1:9999");
     }
 
     #[test]
-    fn test_base_url_reads_gui_port_from_the_first_existing_config() {
-        let dir = std::env::temp_dir()
-            .join("metafolder-tests")
-            .join(format!("mf_gui_cfg_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let missing = dir.join("missing/config.toml");
-        let present = dir.join("config.toml");
-        std::fs::write(&present, "gui-port = 7600\n").unwrap();
-        assert_eq!(base_url(None, &[missing, present]), "http://127.0.0.1:7600");
-        std::fs::remove_dir_all(&dir).unwrap();
+    fn test_base_url_reads_the_gui_port_of_the_gui_config() {
+        let path = config_file("gui-port = 7600\n");
+        assert_eq!(base_url(None, Some(&path)).unwrap(), "http://127.0.0.1:7600");
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    /// No port in the code (doc "No runtime fallback"): a GUI configuration
+    /// missing, malformed or without `gui-port` is a usage error naming it.
+    #[test]
+    fn test_base_url_has_no_built_in_port() {
+        let missing = PathBuf::from("/nonexistent/config.toml");
+        let err = base_url(None, Some(&missing)).unwrap_err();
+        assert_eq!(err.exit_code(), 2);
+        assert!(err.message().contains("/nonexistent/config.toml"), "{}", err.message());
+
+        for content in ["daemon-port = 7523\n", "gui-port = \"x\"\n", "gui-port = 70000\n", "= ="] {
+            let path = config_file(content);
+            let err = base_url(None, Some(&path)).unwrap_err();
+            assert_eq!(err.exit_code(), 2, "{content}");
+            assert!(err.message().contains(&path.display().to_string()), "{}", err.message());
+            if content.contains("port") {
+                assert!(err.message().contains("gui-port"), "{content}: {}", err.message());
+            }
+            std::fs::remove_file(&path).unwrap();
+        }
+        assert_eq!(base_url(None, None).unwrap_err().exit_code(), 2);
     }
 
     #[test]
@@ -470,23 +494,5 @@ mod tests {
     #[test]
     fn test_query_nothing_published_is_none_not_match_all() {
         assert_eq!(query_text(&Json::Null), None);
-    }
-
-    #[test]
-    fn test_base_url_falls_back_to_the_default_port() {
-        let bogus = PathBuf::from("/nonexistent/config.toml");
-        assert_eq!(base_url(None, &[bogus]), "http://127.0.0.1:7524");
-    }
-
-    #[test]
-    fn test_base_url_ignores_a_config_without_a_gui_port() {
-        let dir = std::env::temp_dir()
-            .join("metafolder-tests")
-            .join(format!("mf_gui_bad_cfg_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let no_port = dir.join("config.toml");
-        std::fs::write(&no_port, "daemon-url = \"http://127.0.0.1:7523\"\n").unwrap();
-        assert_eq!(base_url(None, &[no_port]), "http://127.0.0.1:7524");
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

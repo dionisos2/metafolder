@@ -1843,7 +1843,7 @@ fn dispatch_duplicate(ctx: &Ctx, command: Option<DuplicateCommand>) -> CmdResult
 }
 
 fn dispatch_gui(gui_url: Option<String>, command: GuiCommand) -> CmdResult {
-    let url = gui::base_url(gui_url, &gui::config_path_candidates());
+    let url = gui::base_url(gui_url, gui::config_path().as_deref())?;
     let gui_ctx = GuiCtx::new(&url);
     match command {
         GuiCommand::Status => gui::status(&gui_ctx),
