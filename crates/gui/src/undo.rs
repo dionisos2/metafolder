@@ -32,7 +32,14 @@ async fn selection(
 ) -> Result<Option<Selection>, String> {
     for limit in [undo::WINDOW, undo::WIDE_WINDOW] {
         let path = format!("/repos/{repo}/log?limit={limit}");
-        let log = daemon.request("GET", &path, None).await?.body;
+        let response = daemon.request("GET", &path, None).await?;
+        // A refusal is the daemon's error, never an empty log.
+        if response.status != 200 {
+            return Err(crate::daemon_proxy::error_message(&response.body, || {
+                format!("reading the log failed with status {}", response.status)
+            }));
+        }
+        let log = response.body;
         let found = if redo { undo::redo_from_log(&log) } else { undo::undo_from_log(&log) };
         if found.is_some() || !undo::window_exhausted(&log, limit) {
             return Ok(found);

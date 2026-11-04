@@ -287,3 +287,24 @@ async fn test_undo_of_a_change_in_several_labels_names_them() {
         [json!({"target": {"label_id": 2, "only": "changes"}})]
     );
 }
+
+/// A log the daemon refuses to read is its error, not "nothing to undo".
+#[tokio::test]
+async fn test_a_log_the_daemon_refuses_is_an_error() {
+    let router = axum::Router::new().route(
+        "/repos/{repo}/log",
+        get(|| async {
+            (StatusCode::NOT_FOUND, Json(json!({"error": "Repository not found: cafe"})))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let (gui, daemon, ws, notifier) = setup(&url);
+
+    let error = undo::navigate(gui, daemon, ws, false, None, timeouts()).await.unwrap_err();
+
+    assert_eq!(error, "Repository not found: cafe");
+    let statuses = notifier.payloads(events::STATUS_MESSAGE);
+    assert!(statuses.iter().all(|p| p["text"] != "Nothing to undo."), "{statuses:?}");
+}
