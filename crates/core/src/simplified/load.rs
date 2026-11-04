@@ -64,6 +64,41 @@ mod tests {
     }
 
     #[test]
+    fn a_quoted_tag_value_keeps_its_slashes_in_a_term_but_splits_on_spaces() {
+        // doc "Tag syntax in simplified queries": the quotes reach the DSL's
+        // `osm` string as is, and the DSL splits that string on whitespace.
+        let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
+        let terms = |input: &str| match crate::dsl::parse_query(&expand(&g, input).unwrap()) {
+            Ok(crate::query::Query::Follows {
+                target: crate::query::FollowTarget::Condition(osm),
+                ..
+            }) => match *osm {
+                crate::query::Query::Osm { terms, .. } => terms,
+                other => panic!("not an osm: {other:?}"),
+            },
+            other => panic!("not a follow: {other:?}"),
+        };
+        assert_eq!(terms(r#"#"music/jazz""#), ["music/jazz"]);
+        assert_eq!(terms(r#"#"jeux video""#), ["jeux", "video"]);
+        assert_eq!(terms("#jeux/video"), ["jeux", "video"]);
+    }
+
+    #[test]
+    fn deep_nesting_is_an_error_not_a_stack_overflow() {
+        // A test thread has the smallest stack expansion runs on (2 MiB, like a
+        // tokio blocking thread: the GUI's sync plan), and a debug build the
+        // largest frames: the recursion bound must hold there.
+        let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
+        for input in ["(".repeat(100_000), "! ".repeat(100_000) + "a=1"] {
+            let err = expand(&g, &input).expect_err("too deep to expand");
+            assert!(err.contains("recursion limit"), "unexpected error: {err}");
+        }
+        // Ordinary nesting still expands.
+        let nested = format!("{}a=1{}", "(".repeat(16), ")".repeat(16));
+        expand(&g, &nested).unwrap();
+    }
+
+    #[test]
     fn default_grammar_supports_all_comparison_operators() {
         let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
         assert_eq!(expand(&g, "rating>3").unwrap(), "rating > 3");

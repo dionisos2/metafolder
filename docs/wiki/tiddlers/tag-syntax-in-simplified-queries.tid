@@ -21,8 +21,11 @@ stays an `OR`.
 
 In `#X`, a `/` separates ordered-substring terms rather than anchoring a path:
 `#mu/ja` matches a path holding `mu` then `ja`, in order, not necessarily contiguous nor
-from the root ([[Ordered substring matching]]). A quoted value is one contiguous term:
-`#"jeux video"`. A word may hold any letter, accented or not, so `#écriture` needs no
+from the root ([[Ordered substring matching]]). A quoted value is the `osm` term string
+as is: a `/` stays inside its term, which then crosses the separator contiguously
+(`#"music/jazz"`), but whitespace still separates terms — `#"jeux video"` is `jeux` then
+`video`, like `#jeux/video` (the DSL splits an `osm` string on whitespace, so no term
+holds a space). A word may hold any letter, accented or not, so `#écriture` needs no
 quotes ([[Simplified grammar notation]]). `#=` and `##=` take an unquoted slash-path. The three sigils are
 distinct tokens, so their order in the grammar does not matter.
 

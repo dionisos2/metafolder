@@ -50,7 +50,8 @@ predicate =
   # the tag path, so you can name a leaf without its ancestors (`#jazz`). A `/`
   # is an osm term separator, not a path anchor — `#a/b` matches a path with `a`
   # then `b` in order (not necessarily contiguous or root-anchored). Quote a
-  # value to match one contiguous substring (`#"jeux video"`). `#=P` / `##=P`
+  # value to keep a `/` inside a term (`#"music/jazz"`, one contiguous term);
+  # spaces still separate terms (`#"jeux video"` = `jeux` then `video`). `#=P` / `##=P`
   # anchor the *full* path from the root: `#=` its subtree, `##=` that exact
   # node; an unquoted slash-path is fine (`#=musique/jazz`). Distinct tokens
   # under maximal munch (`#` vs `#=` vs `##=` vs `#!`), so their order is
@@ -90,7 +91,7 @@ tagfield = "tag"          => tag
 
 # Tag path values. `tagpath` keeps the slashes (a real path); `tagosm` turns
 # them into osm term separators (spaces). A quoted string is passed through
-# verbatim (one contiguous term / an exact path with spaces).
+# verbatim (an exact path with spaces; for osm, terms split on its spaces only).
 tagpath = v:STRING       => $v
         | ps:WORD ++ "/" => {join("/", $ps)}
 tagosm  = v:STRING       => $v

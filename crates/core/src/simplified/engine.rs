@@ -11,9 +11,14 @@ use super::grammar::{Expr, Grammar, Item, RepeatKind};
 use super::lexer::{lex, Tok};
 use super::template::{parse_template, render, Capture, Captures};
 
-/// Guards against runaway recursion (e.g. an unvalidated left-recursive
-/// grammar) so a bad grammar errors instead of overflowing the stack.
-const MAX_DEPTH: usize = 1000;
+/// Guards against runaway recursion — an unvalidated left-recursive grammar,
+/// or input nested deeper than any human writes (`((((…`, `! ! ! …`) — so it
+/// errors instead of overflowing the stack. Counted in productions entered,
+/// several per nesting level (the shipped grammar spends six on a parenthesis),
+/// and sized for the smallest stack expansion runs on: a 2 MiB thread (a tokio
+/// blocking thread: the GUI's sync plan) in a debug build, where 1000 overflowed
+/// at about 70 parentheses.
+const MAX_DEPTH: usize = 256;
 
 /// Expands simplified-language `input` to normal DSL text using `grammar`.
 /// Relative-date rules read the current time via the template `now()`.
@@ -499,7 +504,7 @@ number = n:NUMBER "MB" => {num($n) * 1048576}
             expand(&g, "##=domaine/divertissement").unwrap(),
             r#"tag -> (path = "domaine/divertissement")"#
         );
-        // A quoted value is a single osm term (contiguous substring).
+        // A quoted value keeps its slash inside one osm term (contiguous substring).
         assert_eq!(expand(&g, r#"#"music/jazz""#).unwrap(), r#"tag -> (osm(path, "music/jazz"))"#);
         // Accented letters are word material, as in the normal DSL: no quotes
         // needed.

@@ -42,3 +42,9 @@ A missing or malformed file is an error when a client loads it — there is no f
 to a built-in grammar ([[No runtime fallback]]); an empty file is malformed, having
 no `query` production. The DSL needs no grammar and is unaffected either way.
 Expansion errors carry the position in the simplified input.
+
+Expansion itself enters at most ''256 productions deep'' ("recursion limit exceeded"):
+the engine is recursive, so depth is stack, and the bound is sized for the smallest
+stack it runs on. Each nesting level of the input costs as many productions as the
+chain that leads back to `query` — six for a parenthesis in the shipped grammar, so
+about forty nested parentheses.
