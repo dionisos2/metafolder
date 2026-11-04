@@ -295,7 +295,8 @@ pub(super) fn format_reconcile(resp: &Json) -> String {
     let candidates = resp["candidates"].as_array().unwrap_or(&empty);
     if !candidates.is_empty() {
         out.push_str(
-            "\n\nCandidates (confirm with: mf set <uuid> 'mfr_path:tree_ref=<parent_uuid>/<name>' --force):",
+            "\n\nCandidates (confirm with: mf metarecord -i <uuid> field set \
+             'mfr_path:tree_ref=<parent_uuid>/<name>' -f):",
         );
         for candidate in candidates {
             out.push_str(&format!(

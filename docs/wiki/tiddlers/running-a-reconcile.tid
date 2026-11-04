@@ -14,7 +14,7 @@ It prints a summary and the candidate list:
 ```
 created: 2  moved: 1
 
-Candidates (confirm with: mf set <uuid> 'mfr_path:tree_ref=<parent_uuid>/<name>' --force):
+Candidates (confirm with: mf metarecord -i <uuid> field set 'mfr_path:tree_ref=<parent_uuid>/<name>' -f):
   abc…  /music/jazz/old.mp3
       → /music2/jazz_copy.mp3   (partial_hash)
       → /backup/unknown.mp3     (size)

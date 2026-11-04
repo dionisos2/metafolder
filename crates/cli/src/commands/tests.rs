@@ -122,7 +122,13 @@ fn test_format_reconcile_with_candidates() {
         }],
     });
     let text = format_reconcile(&resp);
-    assert!(text.starts_with("created: 2  moved: 1\n\nCandidates (confirm with: mf set"));
+    // The command a candidate is confirmed with is one `mf` has: a forced
+    // write of the one field (`mf set` is long gone, and `mf metarecord set`
+    // would replace every field of the record).
+    assert!(text.starts_with(
+        "created: 2  moved: 1\n\nCandidates (confirm with: mf metarecord -i <uuid> field set \
+         'mfr_path:tree_ref=<parent_uuid>/<name>' -f):"
+    ));
     assert!(text.contains("\n  abc00000000000000000000000000001  /music/jazz/old.mp3"));
     assert!(text.contains("\n      → /music2/jazz_copy.mp3   (partial_hash)"));
     assert!(text.contains("\n      → /backup/unknown.mp3   (size)"));

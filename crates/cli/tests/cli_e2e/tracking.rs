@@ -586,3 +586,21 @@ fn test_orphan_clear_asks_before_clearing() {
     assert_ok(&out);
     assert!(out.stdout.contains("cleared 1"), "stdout: {}", out.stdout);
 }
+
+/// The command `mf reconcile` gives for confirming a candidate is a real one:
+/// a forced write of `mfr_path` alone, which moves the record and keeps its
+/// other fields.
+#[test]
+fn test_the_reconcile_hint_confirms_a_candidate() {
+    let (repo, root) = init_repo("hint");
+    std::fs::write(root.join("new.txt"), b"x").unwrap();
+    let uuid = create_metarecord(&repo, &["mfr_path:tree_ref=/old.txt", "rating:int=4", "-f"]);
+    let root_uuid = mf(&["-u", &repo, "uuid", root.to_str().unwrap()]).stdout.trim().to_string();
+    let spec = format!("mfr_path:tree_ref={root_uuid}/new.txt");
+    let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", &spec, "-f"]);
+    assert_ok(&out);
+    let at = mf(&["-u", &repo, "uuid", root.join("new.txt").to_str().unwrap()]);
+    assert_eq!(at.stdout.trim(), uuid);
+    let rating = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "get", "rating"]);
+    assert_eq!(rating.stdout.trim(), "4");
+}
