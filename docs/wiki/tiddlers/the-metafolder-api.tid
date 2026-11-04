@@ -123,7 +123,8 @@ panel's ([[User commands]]). Where a key applies is said by the binding, not by
 the command.
 
 `addKeybinding(invocation, combo, {when?, textInput?, focus?})` ''suggests'' a key:
-it is applied unless `keybindings.toml` already binds that combo in that scope, and
+it is applied unless `keybindings.toml` already binds that combo in that scope (or a
+sequence it starts, or that starts it), and
 it is not written to the file ([[Changing keybindings]]). `when` defaults to the
 panel's type — the key applies while a panel of that type has the focus; the other
 two are those of [[Keybindings]]. `combo` may be a sequence (`g r`).

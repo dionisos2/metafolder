@@ -6,8 +6,8 @@
 //!   shipped bindings and the user's edits are one file, merged by git, and
 //!   the engine has no defaults layer of its own.
 //! - Panel suggestions (`metafolder.addKeybinding`) are weakest: applied
-//!   only when the file has no binding with the same combo and the same
-//!   `when` and `focus` scope.
+//!   only when the file has no binding of the same combo, nor a sequence it
+//!   starts or that starts it, in the same `when` and `focus` scope.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -817,8 +817,8 @@ impl KeybindingSet {
         Self::from_sources(source, "")
     }
 
-    /// `metafolder.addKeybinding` — applied only when no configured
-    /// binding has the same combo and the same `when` scope.
+    /// `metafolder.addKeybinding` — applied only when it clashes with no
+    /// binding in its place (`taken`).
     pub fn add_suggestion(
         &mut self,
         combo: &str,
@@ -827,46 +827,54 @@ impl KeybindingSet {
         text_input: bool,
         focus: Option<&str>,
     ) -> Result<(), String> {
-        let keys = parse_combo(combo)?;
-        let side = field_side(text_input, focus);
-        if self.config.contains_key(&(
-            keys.clone(),
-            when.map(str::to_string),
-            focus.map(str::to_string),
-            side,
-        )) || self.suggestions.iter().any(|s| {
-            s.keys == keys
-                && s.when.as_deref() == when
-                && s.focus.as_deref() == focus
-                && field_side(s.text_input, s.focus.as_deref()) == side
-        }) {
-            return Ok(()); // user/config binding wins; suggestion dropped
-        }
-        self.suggestions.push(CompiledBinding {
-            keys,
+        let suggestion = CompiledBinding {
+            keys: parse_combo(combo)?,
             invocation: invocation.to_string(),
             when: when.map(str::to_string),
             text_input,
             focus: focus.map(str::to_string),
             suggested: true,
-        });
-        Ok(())
+        };
+        if !self.taken(&suggestion) {
+            self.suggestions.push(suggestion);
+        }
+        Ok(()) // otherwise the file's binding, or the first suggestion, wins
+    }
+
+    /// Whether `suggestion` would clash, in its place, with a binding of the
+    /// file or a suggestion already made: the same key on the same side of a
+    /// text field, or a key that starts — or is started by — a sequence there,
+    /// on either side (a key alone runs before any sequence it starts,
+    /// `keymatch.js`). The file always wins, then the first suggestion.
+    fn taken(&self, suggestion: &CompiledBinding) -> bool {
+        let side = field_side(suggestion.text_input, suggestion.focus.as_deref());
+        let starts = |long: &[String], short: &[String]| {
+            long.len() > short.len() && long[..short.len()] == *short
+        };
+        let clashes =
+            |keys: &[String], when: &Option<String>, focus: &Option<String>, other_side| {
+                *when == suggestion.when
+                    && *focus == suggestion.focus
+                    && ((keys == suggestion.keys.as_slice() && other_side == side)
+                        || starts(keys, &suggestion.keys)
+                        || starts(&suggestion.keys, keys))
+            };
+        self.config
+            .keys()
+            .any(|(keys, when, focus, other_side)| clashes(keys, when, focus, *other_side))
+            || self.suggestions.iter().any(|s| {
+                clashes(&s.keys, &s.when, &s.focus, field_side(s.text_input, s.focus.as_deref()))
+            })
     }
 
     /// This set with the suggestions `previous` held, each applied under the
-    /// usual rule (a configured binding of the same combo and scope wins). The
+    /// usual rule (`taken`: the file wins). The
     /// file is read again when a binding is edited or the configuration
     /// reloaded; the suggestions are not in it, and the panels that made them
     /// are not mounted a second time.
     pub fn with_suggestions_of(mut self, previous: &KeybindingSet) -> Self {
         for suggestion in &previous.suggestions {
-            let key = (
-                suggestion.keys.clone(),
-                suggestion.when.clone(),
-                suggestion.focus.clone(),
-                field_side(suggestion.text_input, suggestion.focus.as_deref()),
-            );
-            if !self.config.contains_key(&key) {
+            if !self.taken(suggestion) {
                 self.suggestions.push(suggestion.clone());
             }
         }
@@ -1769,6 +1777,38 @@ vars.y = ","
         assert_eq!(x.len(), 1);
         assert_eq!(x[0].invocation, "mine");
         assert!(table.iter().any(|b| b.keys == ["y"] && b.invocation == "my-panel:back"));
+    }
+
+    #[test]
+    fn test_a_suggestion_never_hides_a_sequence_of_the_file() {
+        // A key alone runs before any sequence it starts (`keymatch.js`): a
+        // suggested `g` would make the file's `g r` unreachable.
+        let file = r#""g r" = { command = "mine" }"#;
+        let mut set = KeybindingSet::from_source(file).unwrap();
+        set.add_suggestion("g", "my-panel:go", None, false, None).unwrap();
+        // Nor is a sequence the file's key starts any use: it could never run.
+        set.add_suggestion("g r x", "my-panel:far", None, false, None).unwrap();
+        let table = set.compiled();
+        assert_eq!(table.len(), 1, "{table:?}");
+        assert_eq!(table[0].invocation, "mine");
+
+        // The same when the file gains the sequence after the suggestion.
+        let mut set = KeybindingSet::from_source("").unwrap();
+        set.add_suggestion("g", "my-panel:go", None, false, None).unwrap();
+        let reread = KeybindingSet::from_source(file).unwrap().with_suggestions_of(&set);
+        let table = reread.compiled();
+        assert_eq!(table.len(), 1, "{table:?}");
+        assert_eq!(table[0].invocation, "mine");
+    }
+
+    #[test]
+    fn test_a_suggestion_never_hides_another_suggestion() {
+        let mut set = KeybindingSet::from_source("").unwrap();
+        set.add_suggestion("g r", "my-panel:first", None, false, None).unwrap();
+        set.add_suggestion("g", "my-panel:second", None, false, None).unwrap();
+        let table = set.compiled();
+        assert_eq!(table.len(), 1, "{table:?}");
+        assert_eq!(table[0].invocation, "my-panel:first");
     }
 
     #[test]

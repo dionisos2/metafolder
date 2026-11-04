@@ -99,8 +99,9 @@ And a text field keeps its own keys: the command input's list and completion
 
 A panel type that is not shipped with the GUI, and the user's `gui/commands.js` ([[User commands]]),
 can ''suggest'' a key for their commands (`metafolder.addKeybinding`). A suggestion
-applies only where the file has no binding for the same key in the same place: the
-file always wins. Suggestions are not written to the file. The built-in panels
+applies only where the file has no binding for the same key in the same place, nor a
+sequence the key starts or that starts it there (a key alone runs before any sequence
+it starts): the file always wins, then the first suggestion made. Suggestions are not written to the file. The built-in panels
 suggest nothing — all their keys are in the file, where they can be seen and
 changed.
 
