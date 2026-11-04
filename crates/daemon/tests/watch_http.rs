@@ -609,4 +609,10 @@ async fn an_exhausted_watch_budget_marks_the_subtrees_it_left_out() {
     let jazz = result_for(&body, "/music/jazz");
     assert_eq!(jazz["watched"], json!(false), "{jazz}");
     assert_eq!(jazz["excluded_by"], json!("/music"), "{jazz}");
+
+    // And the status counts what was marked: the mark's write settles like any
+    // other, so the count is not the one the placement saw before it.
+    let (status, body) = request(&app, "GET", &format!("/repos/{repo}/watch"), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["watch_budget"]["exceeded_dirs"], json!(3), "{body}");
 }

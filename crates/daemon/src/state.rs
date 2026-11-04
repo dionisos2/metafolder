@@ -633,8 +633,11 @@ impl RepoState {
     pub fn record_watch_frontier(&self, frontier: &[crate::relpath::RelPath]) {
         let mut conn = self.conn.lock_recover();
         let cache = self.tree();
-        if let Err(err) = write_watch_frontier(self, &mut conn, &cache, &self.config.root, frontier)
-        {
+        // Settled like any other write: the rule index learns the new
+        // exclusions, and the placement it sets off counts them.
+        let written = write_watch_frontier(self, &mut conn, &cache, &self.config.root, frontier)
+            .and_then(|effects| self.settle(&**conn, &effects));
+        if let Err(err) = written {
             crate::diagnostics::warn(
                 "watcher",
                 format!("could not record the watch frontier: {err:#}"),
@@ -1098,14 +1101,15 @@ fn root_identity_of(root: &Path) -> Option<(u64, u64)> {
 }
 
 /// Writes `mfr_watch_exceeded = true` on each subtree root of `frontier`,
-/// creating the directory's metarecord when it has none yet.
+/// creating the directory's metarecord when it has none yet. Returns what the
+/// write did, for the caller to settle.
 fn write_watch_frontier(
     repo: &RepoState,
     conn: &mut dyn crate::store::Database,
     cache: &Forest,
     root: &Path,
     frontier: &[crate::relpath::RelPath],
-) -> anyhow::Result<()> {
+) -> anyhow::Result<crate::log::WriteEffects> {
     let mut writer = repo.writer(conn, crate::log::WriteContext::new("watch budget"))?;
     // By exact bytes: a name that is not UTF-8 resolved through its display
     // made a phantom directory named after the escape (doc "Tree names").
@@ -1140,7 +1144,9 @@ fn write_watch_frontier(
             metafolder_core::metarecord::Value::Bool(true),
         )?;
     }
-    writer.commit()
+    let effects = writer.effects();
+    writer.commit()?;
+    Ok(effects)
 }
 
 /// Background machinery of a loaded repository. Held by the RepoState so it
