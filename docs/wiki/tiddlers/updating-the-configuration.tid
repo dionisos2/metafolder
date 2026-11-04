@@ -25,6 +25,7 @@ The first time, it creates the repository: every shipped default committed on
 
 Afterwards:
 
+# It refuses, changing nothing, while you are working in the repository by hand: a merge left unfinished, or a branch other than `main` checked out. Either would otherwise have its working tree committed onto `main` as your edits — conflict markers, or the other branch's files over yours. Finish (`git commit`) or give up (`git merge --abort`), or `git checkout main`, and run it again.
 # It builds the shipped tree and commits it on `default`, if it changed.
 # If `main` already contains `default`, there is nothing to do: your working tree is left alone, uncommitted edits included.
 # Otherwise it commits your uncommitted edits on `main` first, as a "user edits" commit — one conflict point, and an exact restore.

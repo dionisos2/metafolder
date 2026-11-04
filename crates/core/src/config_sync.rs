@@ -265,6 +265,7 @@ pub(crate) fn update(
     files: &BTreeMap<PathBuf, Vec<u8>>,
 ) -> Result<SyncOutcome, String> {
     let repo = git2::Repository::open(config_dir).map_err(gerr)?;
+    refuse_unless_on_main(&repo, config_dir)?;
 
     let new_default_tree = build_tree(&repo, files)?;
     let old_default =
@@ -371,6 +372,28 @@ pub(crate) fn update(
     repo.checkout_head(Some(&mut forced_checkout())).map_err(gerr)?;
 
     Ok(SyncOutcome { updated: true, user_edits_committed, ..Default::default() })
+}
+
+/// Refuses to touch a repository the user is working in by hand: a merge
+/// left unfinished ([`conflict_help`] tells how to run one), or another branch
+/// checked out. Both would have their working tree committed onto `main` as
+/// "user edits" — conflict markers, or the other branch's files over the
+/// user's — and a merge would lose its state.
+fn refuse_unless_on_main(repo: &git2::Repository, config_dir: &Path) -> Result<(), String> {
+    let dir = config_dir.display();
+    if repo.state() != git2::RepositoryState::Clean {
+        return Err(format!(
+            "{dir} has a git operation in progress (a merge left unfinished?): finish it \
+             ('git commit') or give it up ('git merge --abort'), then run this again"
+        ));
+    }
+    let head = repo.find_reference("HEAD").map_err(gerr)?;
+    if head.symbolic_target().ok().flatten() != Some("refs/heads/main") {
+        return Err(format!(
+            "{dir} is not on its 'main' branch: 'git checkout main' there, then run this again"
+        ));
+    }
+    Ok(())
 }
 
 fn working_tree_dirty(repo: &git2::Repository) -> Result<bool, String> {
@@ -806,6 +829,65 @@ vars.target-new = "n"
         let second = sync(&source, &config).unwrap();
         assert_eq!(second.conflict, Some(vec![PathBuf::from("gui/style.css")]));
         assert_eq!(read(&config, "gui/style.css").as_deref(), Some("user-line\n"));
+    }
+
+    /// A merge of `default` into `main` started by hand, as [`conflict_help`]
+    /// says, and left with its conflict.
+    fn start_manual_merge(config: &Path) {
+        let repo = git2::Repository::open(config).unwrap();
+        let default = repo.find_reference("refs/heads/default").unwrap();
+        let annotated = repo.reference_to_annotated_commit(&default).unwrap();
+        repo.merge(&[&annotated], None, None).unwrap();
+        assert!(repo.index().unwrap().has_conflicts());
+    }
+
+    #[test]
+    fn a_merge_left_unfinished_by_hand_is_not_committed_over() {
+        let area = scratch();
+        let (source, config) = (area.join("src"), area.join("cfg"));
+        make_source(&source, &[("gui/style.css", "line1\n")]);
+        sync(&source, &config).unwrap();
+        fs::write(config.join("gui/style.css"), "user-line\n").unwrap();
+        make_source(&source, &[("gui/style.css", "ship-line\n")]);
+        assert!(sync(&source, &config).unwrap().conflict.is_some());
+
+        start_manual_merge(&config);
+        let main_before =
+            git2::Repository::open(&config).unwrap().refname_to_id("refs/heads/main").unwrap();
+        let marked = read(&config, "gui/style.css").unwrap();
+        assert!(marked.contains("<<<<<<<"), "{marked}");
+
+        let err = sync(&source, &config).unwrap_err();
+        assert!(err.contains("merge"), "{err}");
+        let repo = git2::Repository::open(&config).unwrap();
+        assert_eq!(repo.state(), git2::RepositoryState::Merge, "the merge is still the user's");
+        assert_eq!(repo.refname_to_id("refs/heads/main").unwrap(), main_before);
+        assert_eq!(read(&config, "gui/style.css").unwrap(), marked);
+    }
+
+    #[test]
+    fn a_working_tree_on_another_branch_is_not_committed_onto_main() {
+        let area = scratch();
+        let (source, config) = (area.join("src"), area.join("cfg"));
+        make_source(&source, &[("gui/style.css", "v1\n"), ("gui/a.toml", "a1\n")]);
+        sync(&source, &config).unwrap();
+        fs::write(config.join("gui/a.toml"), "a-user\n").unwrap();
+        make_source(&source, &[("gui/style.css", "v2\n"), ("gui/a.toml", "a1\n")]);
+        sync(&source, &config).unwrap();
+        assert_eq!(read(&config, "gui/a.toml").as_deref(), Some("a-user\n"));
+
+        // The user looks at the shipped version.
+        let repo = git2::Repository::open(&config).unwrap();
+        repo.set_head("refs/heads/default").unwrap();
+        repo.checkout_head(Some(&mut forced_checkout())).unwrap();
+
+        make_source(&source, &[("gui/style.css", "v3\n"), ("gui/a.toml", "a1\n")]);
+        let err = sync(&source, &config).unwrap_err();
+        assert!(err.contains("main"), "{err}");
+        let main = repo.find_reference("refs/heads/main").unwrap().peel_to_commit().unwrap();
+        let blob = main.tree().unwrap().get_path(Path::new("gui/a.toml")).unwrap();
+        let content = repo.find_blob(blob.id()).unwrap().content().to_vec();
+        assert_eq!(content, b"a-user\n", "the user's edit stays on main");
     }
 
     #[test]
