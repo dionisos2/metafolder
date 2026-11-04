@@ -39,7 +39,22 @@ resync) — so each subscriber hears of it under its own root, and a repository 
 both mounts receives the second path too, which it drops as above. Under inotify each
 repository has a watch of its own on the inode.
 
-Not covered: a later mount showing ''more'' than an earlier one (the earlier one is a
-part of it, reached twice). `tests/watch_mounts.rs` drives one drive at two points of a
-repository and in two repositories, under both sources.
+!! Not covered: a later mount showing more
+
+A mount showing ''more'' than one made before it is not a second mount, and the part
+they share is reached twice. A drive's `photos` directory bound at `/repo/p`, then the
+whole drive mounted at `/repo/d`: `/repo/d` is walked and watched — most of it is
+reached nowhere else — and so is `/repo/d/photos`, which shows what `/repo/p` shows.
+Each photo then has two records, one at each path. The same goes for the root's own
+filesystem bound into the repository from above the root (`/` bound at `/repo/rootfs`
+reaches the repository again inside it).
+
+The duplicate is an ordinary directory inside a mount, not a mount point, and a second
+mount is a mount point of the table: there is nothing to mark it by. Kept as a limit
+(the case is rare), not handled: mount the larger part first — the drive at `/repo/d`,
+then `photos` at `/repo/p` is the covered order — or leave the smaller one out of the
+repository (`mf_watch = false` on it, or an `mf_ignore` pattern).
+
+`tests/watch_mounts.rs` drives one drive at two points of a repository and in two
+repositories, under both sources.
 
