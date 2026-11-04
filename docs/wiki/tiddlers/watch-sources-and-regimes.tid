@@ -41,7 +41,11 @@ Both regimes share the eligibility filter, the hard skip of `.metafolder/interna
 writes must not feed back into the stream; the rest of `.metafolder/` is ordinary
 content), offline subtrees, batching and event semantics. The vocabulary too:
 `mf_watch`/`mf_ignore` say what should be covered, `mfr_watch_exceeded` says "leave this
-subtree uncovered" in both. Only the budget's own answers are budget-only:
+subtree uncovered" in both: the budget regime places no watch there, the coverage regime
+drops what happens there. In both, what is left uncovered is what is ''beneath'' the
+directory carrying it: the directory itself is an entry of a covered one, so its own
+creation, removal or move is recorded (a moved excluded directory keeps its metarecord
+and its exclusion). Only the budget's own answers are budget-only:
 `watch_budget` and `watched_dirs` (both `null` under coverage), and the `unwatched`
 reason of a watch check.
 

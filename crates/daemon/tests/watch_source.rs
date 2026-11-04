@@ -270,6 +270,31 @@ fn test_an_excluded_subtree_is_not_recorded_under_the_coverage_source() {
     std::fs::remove_dir_all(root).ok();
 }
 
+#[test]
+fn test_an_excluded_directory_s_own_move_is_recorded_under_the_coverage_source() {
+    // The excluded directory is an entry of a covered one: the budget regime
+    // sees its move through the parent's watch, and so must the coverage
+    // regime — only what is *beneath* it is left uncovered.
+    let socket = dead_socket();
+    let (repo, root) = setup("excluded_own_move", fanotify_settings(&socket));
+    write_file(&root, "dir/x", b"x");
+    mark_exceeded(&repo, "/dir");
+    let dir = resolve(&repo, "/dir").expect("the excluded directory is tracked");
+    std::fs::rename(root.join("dir"), root.join("moved")).unwrap();
+
+    let _broker = FakeBroker::start(
+        socket,
+        vec![ServerMsg::Event {
+            event: Event::Rename { from: wire(&root, "dir"), to: wire(&root, "moved") },
+        }],
+    );
+
+    let executor = executor::spawn(&repo, Duration::from_millis(25));
+    let _handle = watcher::start(&repo, executor.pinger()).unwrap();
+    wait_for("the excluded directory to follow its move", || resolve(&repo, "/moved") == Some(dir));
+    std::fs::remove_dir_all(root).ok();
+}
+
 /// A stand-in broker that accepts any number of connections, answers each
 /// handshake, and reports what happened to them: `accepted` counts the
 /// connections, `closed` the ones the client ended.

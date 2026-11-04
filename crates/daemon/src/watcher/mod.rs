@@ -757,12 +757,14 @@ fn drop_ineligible(
 
 /// The coverage-regime filter for `mfr_watch_exceeded`: events under an
 /// excluded subtree are dropped, and a move across the boundary keeps only its
-/// visible side.
+/// visible side. *Under*: the excluded directory itself is an entry of a
+/// covered one, whose watch reports it in the budget regime — so its own
+/// creation, removal or move is kept here too.
 fn drop_excluded(
     rules: &WatchRules,
     events: &[(FsEvent, Option<i64>)],
 ) -> Vec<(FsEvent, Option<i64>)> {
-    let is_excluded = |p: &RelPath| rules.exceeded_by(p).is_some();
+    let is_excluded = |p: &RelPath| rules.exceeded_by(&p.parent()).is_some();
     let mut out = Vec::with_capacity(events.len());
     for (ev, tracker) in events {
         let kept = match ev {
