@@ -195,12 +195,13 @@ pub fn watch_status(ctx: &Ctx, raw_json: bool) -> Result<i32, CliError> {
 // ── Watch check (doc "Checking whether a path is watched") ────────────────────────────
 
 /// Repo-root-relative form (leading slash, `""` is the root) of a CLI path
-/// argument (`mf watch check`, `mf uuid`): an existing path is canonicalised and made relative to the
+/// argument (`mf watch check`, `mf uuid`): an existing entry (a symlink itself, not its
+/// target) is made absolute and relative to the
 /// repository root; a leading-slash path that is gone from disk is taken as
 /// already repo-root-relative (an orphan's stale path). Anything else is a
 /// usage error.
 pub(super) fn path_arg_rel(root: &Path, raw: &str) -> Result<String, CliError> {
-    if let Ok(abs) = std::fs::canonicalize(raw) {
+    if let Ok(abs) = metafolder_core::fsentry::entry_path(Path::new(raw)) {
         let rel = repo_rel(root, &abs)?;
         return Ok(if rel.is_empty() { String::new() } else { format!("/{rel}") });
     }
@@ -233,7 +234,7 @@ impl PathArg {
 
 /// [`path_arg_rel`], keeping the exact bytes of a path found on disk.
 pub(super) fn path_arg(root: &Path, raw: &str) -> Result<PathArg, CliError> {
-    if let Ok(abs) = std::fs::canonicalize(raw) {
+    if let Ok(abs) = metafolder_core::fsentry::entry_path(Path::new(raw)) {
         return Ok(PathArg::Exact(super::trash::repo_path(root, &abs)?));
     }
     path_arg_rel(root, raw).map(PathArg::Typed)

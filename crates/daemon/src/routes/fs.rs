@@ -864,8 +864,8 @@ pub(super) fn path_in_repo(
     repo_state: &RepoState,
     path: &std::path::Path,
 ) -> Result<crate::relpath::RelPath, ApiError> {
-    let abs = path
-        .canonicalize()
+    // The entry itself: a symlink is recorded as the link, not its target.
+    let abs = metafolder_core::fsentry::entry_path(path)
         .map_err(|_| ApiError::bad_request(format!("path does not exist: {path:?}")))?;
     let rel_path = abs.strip_prefix(&repo_state.config.root).map_err(|_| {
         ApiError::bad_request(format!(

@@ -8,6 +8,11 @@ directory without the watcher or a reconcile: its `mfr_path` and stat fields are
 from disk, in one write, beside whatever `fields` the request carries
 ([[Metarecord endpoints]]).
 
+The path names an entry itself: a symlink there is recorded as the link — as the
+reconcile walk records it — never as its target, broken or outside the repository
+alike. Only a link in the directory part of the path is followed. `mf trash`, `mf uuid`,
+`mf watch check`, `mf ignore -d` and `mf order` read a path argument the same way.
+
 !! Recorded, not followed
 
 The new metarecord gets `mf_watch = false` unless `fields` sets `mf_watch` itself. That

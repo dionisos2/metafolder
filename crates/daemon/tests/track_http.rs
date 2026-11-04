@@ -369,6 +369,35 @@ async fn test_create_at_path_refuses_a_recorded_path() {
     assert!(body["error"].as_str().unwrap().contains("/a.txt"), "{body}");
 }
 
+/// A symlink is recorded as the link — an entry like any other — never as its
+/// target: a link to a recorded file is not "already recorded", and a broken
+/// link or one pointing outside the repository is recorded all the same.
+#[cfg(unix)]
+#[tokio::test]
+async fn test_create_at_path_records_a_symlink_itself() {
+    let (app, repo, root) = setup("atpath-link").await;
+    std::fs::write(root.join("target.txt"), b"t").unwrap();
+    let (status, target) =
+        create_at(&app, &repo, json!({"path": root.join("target.txt"), "fields": []})).await;
+    assert_eq!(status, StatusCode::OK, "{target}");
+    for (name, points_at) in
+        [("link.txt", "target.txt"), ("broken", "nowhere"), ("out", "/etc/hostname")]
+    {
+        std::os::unix::fs::symlink(points_at, root.join(name)).unwrap();
+        let (status, body) =
+            create_at(&app, &repo, json!({"path": root.join(name), "fields": []})).await;
+        assert_eq!(status, StatusCode::OK, "{name}: {body}");
+        assert_eq!(
+            uuid_at(&app, &repo, &format!("/{name}")).await,
+            body["uuid"].as_str().map(String::from)
+        );
+    }
+    assert_eq!(
+        uuid_at(&app, &repo, "/target.txt").await,
+        target["uuid"].as_str().map(String::from)
+    );
+}
+
 /// Missing parent directories are refused and listed, root first, unless the
 /// caller asks for them; then they are created as plain scaffolding — no
 /// `mf_watch` of their own, so a watched ancestor still covers them.

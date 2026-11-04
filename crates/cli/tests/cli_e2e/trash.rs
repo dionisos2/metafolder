@@ -162,6 +162,30 @@ fn test_trash_add_moves_a_tracked_file() {
     assert!(out.stdout.contains("doc.txt") && out.stdout.contains("manual"));
 }
 
+/// A symbolic link is trashed as the link, never its target (doc "What
+/// trashing does"): the path names the link, not what it points at.
+#[test]
+fn test_trash_add_takes_a_symlink_not_its_target() {
+    let (repo, root) = init_repo("trashadd_link");
+    let target = root.join("target.txt");
+    std::fs::write(&target, b"data").unwrap();
+    let link = root.join("link.txt");
+    std::os::unix::fs::symlink("target.txt", &link).unwrap();
+    for path in [&target, &link] {
+        let out = mf(&["-u", &repo, "metarecord", "add", "--path", path.to_str().unwrap()]);
+        assert_ok(&out);
+    }
+    let link_uuid = mf(&["-u", &repo, "uuid", link.to_str().unwrap()]);
+    assert_ok(&link_uuid);
+
+    let out = mf(&["-u", &repo, "trash", "-f", link.to_str().unwrap()]);
+    assert_ok(&out);
+    assert!(link.symlink_metadata().is_err(), "the link went to the trash");
+    assert_eq!(std::fs::read(&target).unwrap(), b"data", "its target stayed");
+    let entries = repo_trash(&root).entries().unwrap();
+    assert_eq!(entries[0].metarecord.as_deref(), Some(link_uuid.stdout.trim()));
+}
+
 #[test]
 fn test_trash_add_rejects_an_untracked_file() {
     let (repo, root) = init_repo("trashadd_untracked");

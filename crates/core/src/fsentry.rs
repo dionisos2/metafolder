@@ -27,6 +27,23 @@ pub fn is_real_dir(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_dir())
 }
 
+/// The absolute, canonical path of the entry `path` names: its directory
+/// resolved, its own name kept. `canonicalize` would follow a symlink there and
+/// name its target — the wrong file to trash, record or look up, the link being
+/// an ordinary tracked entry. A broken link is found; nothing at `path` is an
+/// error. A path ending in `..` (or the root) names no single entry to keep
+/// and is canonicalised whole.
+pub fn entry_path(path: &Path) -> std::io::Result<std::path::PathBuf> {
+    std::fs::symlink_metadata(path)?;
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => {
+            let parent = if parent.as_os_str().is_empty() { Path::new(".") } else { parent };
+            Ok(parent.canonicalize()?.join(name))
+        }
+        _ => path.canonicalize(),
+    }
+}
+
 /// `root` joined with `rel`, a repository-relative path as `resolve-tree`
 /// returns it (leading `/` optional), or `None` when one of its pieces is not a
 /// path component — empty, `.`, `..`, or holding a NUL — so the result can
@@ -91,6 +108,34 @@ mod tests {
             .join(format!("mf-fsentry-{}", uuid::Uuid::new_v4().as_simple()));
         std::fs::create_dir_all(&p).unwrap();
         p
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn entry_path_names_a_link_not_its_target() {
+        let dir = tmp().canonicalize().unwrap();
+        std::fs::write(dir.join("target"), b"x").unwrap();
+        std::os::unix::fs::symlink("target", dir.join("link")).unwrap();
+        std::os::unix::fs::symlink("nowhere", dir.join("broken")).unwrap();
+        std::fs::create_dir(dir.join("sub")).unwrap();
+        std::os::unix::fs::symlink(&dir, dir.join("sub/up")).unwrap();
+
+        assert_eq!(entry_path(&dir.join("link")).unwrap(), dir.join("link"));
+        assert_eq!(entry_path(&dir.join("broken")).unwrap(), dir.join("broken"));
+        // A link in the directory part is resolved: only the last name is kept.
+        assert_eq!(entry_path(&dir.join("sub/up/link")).unwrap(), dir.join("link"));
+        assert_eq!(entry_path(&dir.join("sub/..")).unwrap(), dir);
+        assert_eq!(entry_path(&dir.join("sub/.")).unwrap(), dir.join("sub"));
+        assert!(entry_path(&dir.join("missing")).is_err());
+        assert!(entry_path(&dir.join("broken/x")).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn entry_path_resolves_a_bare_name_against_the_working_directory() {
+        let cwd = std::env::current_dir().unwrap().canonicalize().unwrap();
+        let name = std::fs::read_dir(&cwd).unwrap().next().unwrap().unwrap().file_name();
+        assert_eq!(entry_path(Path::new(&name)).unwrap(), cwd.join(&name));
     }
 
     #[test]

@@ -43,7 +43,7 @@ pub(super) fn resolve_ignore_target(
     let root = info["root"]
         .as_str()
         .ok_or_else(|| CliError::Op("daemon did not report the repo root".into()))?;
-    let abs = path.canonicalize().map_err(|e| CliError::Op(format!("{}: {e}", path.display())))?;
+    let abs = entry_path(path)?;
     let rel = repo_path(Path::new(root), &abs)?;
     // The repository root has no parent directory, so the exact-path lookup
     // cannot find it: `-d <root>` must resolve like an omitted `-d`.

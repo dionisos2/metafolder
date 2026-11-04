@@ -35,6 +35,13 @@ pub(super) fn repo_path(
         .ok_or_else(|| CliError::Op(format!("{} is outside the repository", abs.display())))
 }
 
+/// The absolute path of the entry a path argument names — a symlink's own,
+/// not its target's ([`metafolder_core::fsentry::entry_path`]).
+pub(super) fn entry_path(path: &Path) -> Result<PathBuf, CliError> {
+    metafolder_core::fsentry::entry_path(path)
+        .map_err(|e| CliError::Op(format!("{}: {e}", path.display())))
+}
+
 /// Repo-relative path (`"a/b"`) of `abs` under `root`, dropping any non-normal
 /// components.
 pub(super) fn repo_rel(root: &Path, abs: &Path) -> Result<String, CliError> {
@@ -60,7 +67,8 @@ pub fn trash_add(ctx: &Ctx, path: &Path, force: bool) -> Result<i32, CliError> {
         .as_str()
         .ok_or_else(|| CliError::Op("daemon did not report the repo root".into()))?;
     let trash = trash_dir_of(&info)?;
-    let abs = path.canonicalize().map_err(|e| CliError::Op(format!("{}: {e}", path.display())))?;
+    // The entry itself: a symlink goes to the trash as the link, not its target.
+    let abs = entry_path(path)?;
     let rel = repo_path(Path::new(root), &abs)?;
 
     let repo = repo_id(ctx)?;
