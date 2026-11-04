@@ -422,12 +422,18 @@ pub(super) struct OrphansClearBody {
     /// The metarecords to orphan — typically the uuids a prior scan returned.
     #[serde(default)]
     uuids: Vec<String>,
+    /// The version each record must still be at (by uuid): any other makes the
+    /// call a `409` that writes nothing.
+    #[serde(default)]
+    expected_versions: std::collections::HashMap<String, u64>,
 }
 
 /// `POST /repos/:repo/orphans/clear`: orphan the given metarecords whose file is
 /// still gone — snapshot `mfr_path_old`, set `mfr_path` to `Nothing`, cascade to
 /// descendants (doc "Orphan scan"). Re-verifies each against the
-/// disk, so a since-recreated file is skipped. Returns `{cleared}`.
+/// disk, so a since-recreated file is skipped; fenced by `expected_versions`
+/// when given. Returns `{cleared, orphaned}` — `orphaned` every record the write
+/// orphaned, descendants included.
 pub(super) async fn orphans_clear(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
@@ -436,10 +442,17 @@ pub(super) async fn orphans_clear(
     let repo_uuid = parse_uuid(&repo)?;
     let Json(body) = payload?;
     let uuids = body.uuids.iter().map(|s| parse_uuid(s)).collect::<Result<Vec<_>, _>>()?;
+    let expected = body
+        .expected_versions
+        .iter()
+        .map(|(u, v)| Ok((parse_uuid(u)?, *v)))
+        .collect::<Result<std::collections::HashMap<_, _>, ApiError>>()?;
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
-        let cleared = orphans::clear_orphans(repo_state, &uuids)?;
-        Ok(Json(json!({ "cleared": cleared })))
+        let done = orphans::clear_orphans_fenced(repo_state, &uuids, &expected)?;
+        let orphaned: Vec<String> =
+            done.orphaned.iter().map(|u| u.as_simple().to_string()).collect();
+        Ok(Json(json!({ "cleared": done.cleared, "orphaned": orphaned })))
     })
     .await
 }

@@ -8,6 +8,14 @@ different values ([[Change detection in sync]]): a field, the position
 (`mfr_path`), a file's content (`mfr_content`) or its mode (`mfr_permissions`). At
 the first sync of a link, two different values are a conflict.
 
+One change on one side only is a conflict too: a directory gone on one side
+(orphaned, [[Orphans]]) whose counterpart holds what the first side never had — a
+record placed under it with no link of the pair. Carried over, its going would send
+that content to the trash with it, so it is put as a conflict on `mfr_path`: keeping
+the gone side orphans the other directory and everything under it, keeping the
+other side gives the first its directory back (empty: what it holds are records of
+their own).
+
 !! Deciding
 
 The plan decides each conflict when it writes it, by the first of:

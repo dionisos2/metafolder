@@ -735,18 +735,7 @@ impl<'a> Run<'a> {
             _ => Value::Nothing,
         };
         if target == Value::Nothing {
-            if let Some((rel, abs)) = old {
-                if let Some(why) = self.put(op, loser, "mfr_path_old", &[Value::String(rel)])? {
-                    return Ok(Outcome::Skipped(why));
-                }
-                if let Some(why) = self.put(op, loser, "mfr_path", &[Value::Nothing])? {
-                    return Ok(Outcome::Skipped(why));
-                }
-                content::trash_occupant(self.trash(loser), &abs)?;
-            } else if let Some(why) = self.put(op, loser, "mfr_path", &[Value::Nothing])? {
-                return Ok(Outcome::Skipped(why));
-            }
-            return Ok(Outcome::Done);
+            return self.orphan(op, loser, old.map(|(_, abs)| abs), all);
         }
         if let Some(why) = self.put(op, loser, "mfr_path", &[target])? {
             return Ok(Outcome::Skipped(why));
@@ -773,6 +762,64 @@ impl<'a> Run<'a> {
             Some(why) => Outcome::Skipped(why),
             None => Outcome::Done,
         })
+    }
+
+    /// Orphans `side`'s record as the watcher would on seeing its file go
+    /// (doc "What sync copies"): the file to the trash, then the daemon's
+    /// orphaning — `mfr_path_old` kept, `mfr_path` emptied, for the record and
+    /// everything placed under it, in one write fenced by the version the run
+    /// expects. What that write left is what the run knows of each record it
+    /// orphaned, so a descendant's own op finds it done, not changed.
+    fn orphan(
+        &mut self,
+        op: &Op,
+        side: Side,
+        file: Option<PathBuf>,
+        all: &[Op],
+    ) -> Result<Outcome, CliError> {
+        let key = self.key(op, side);
+        match self.known[&key].get("mfr_path") {
+            Some(Value::TreeRef { .. }) => {}
+            Some(Value::Nothing) => return Ok(Outcome::Done), // orphaned with its parent
+            _ => {
+                // Never placed: nothing to orphan, only the value to carry.
+                return Ok(match self.put(op, side, "mfr_path", &[Value::Nothing])? {
+                    Some(why) => Outcome::Skipped(why),
+                    None => Outcome::Done,
+                });
+            }
+        }
+        if let Some(abs) = file {
+            content::trash_occupant(self.trash(side), &abs)?;
+        }
+        let hex = key.1.as_simple().to_string();
+        let body = json!({
+            "uuids": [hex],
+            "expected_versions": { hex.clone(): self.known[&key].version },
+        });
+        let resp = match self
+            .ctx
+            .client
+            .post(&format!("/repos/{}/orphans/clear", key.0.as_simple()), &body)
+        {
+            Ok(resp) => resp,
+            Err(e) if refused(&e) => return Ok(Outcome::Skipped(format!("orphan: {}", e.message))),
+            Err(e) => return Err(e.into()),
+        };
+        let ends: HashSet<Uuid> = all.iter().map(|o| o.record(side)).collect();
+        let orphaned = resp["orphaned"].as_array().into_iter().flatten();
+        for u in orphaned.filter_map(|u| u.as_str().and_then(|s| Uuid::parse_str(s).ok())) {
+            if ends.contains(&u) {
+                if let Some(rec) = lookup::get_record(self.ctx, key.0, u)? {
+                    self.known.insert((key.0, u), rec);
+                }
+            }
+        }
+        if resp["cleared"].as_u64() == Some(1) {
+            Ok(Outcome::Done)
+        } else {
+            Ok(Outcome::Skipped(format!("{} is still on disk", key.1.as_simple())))
+        }
     }
 
     /// Gives the other side `from`'s mode (best-effort: a filesystem without

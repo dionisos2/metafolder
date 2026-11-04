@@ -1079,3 +1079,97 @@ fn test_sync_run_translates_ref() {
     assert_eq!(author.as_deref(), Some(person_b.as_str()), "author ref translated to person_b");
     assert_ne!(person_b, person_a, "distinct local uuids");
 }
+
+/// Syncs `dir/f.txt` from A to B, then deletes `dir` in A behind its watcher and
+/// orphans it there. Returns the two repos, their roots' guards and the intents.
+fn a_directory_gone_in_a(prefix: &str) -> (String, TempDir, String, TempDir, TempFile) {
+    let (a, adir) = tracked_repo(&format!("{prefix}_a"), &[("dir/f.txt", b"x")]);
+    let (b, bdir) = tracked_repo(&format!("{prefix}_b"), &[]);
+    let intents = write_intents(
+        prefix,
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type IS PRESENT'\n"),
+    );
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
+    assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
+    assert!(repo_root_of(&b).join("dir/f.txt").exists());
+    let dir_a = query_one(&a, "mfr_path:value = \"dir\"");
+    let unwatch = ["-u", &a, "metarecord", "-i", &dir_a, "field", "set", "mf_watch:bool=false"];
+    assert_ok(&mf(&[&unwatch[..], &["--force"]].concat()));
+    std::fs::remove_dir_all(adir.join("dir")).unwrap();
+    assert_ok(&mf(&["-u", &a, "orphan", "clear", "--yes"]));
+    (a, adir, b, bdir, intents)
+}
+
+/// A record's `mfr_path_old`, and whether its `mfr_path` is `nothing`.
+fn orphaned_at(repo: &str, uuid: &str) -> (Option<String>, bool) {
+    let got = mf(&["-u", repo, "metarecord", "-i", uuid, "get", "--select", "*"]);
+    assert_ok(&got);
+    let m: serde_json::Value = serde_json::from_str(&got.stdout).unwrap();
+    let fields = m[0]["fields"].as_array().unwrap();
+    let value = |name: &str| fields.iter().find(|f| f["name"] == name).map(|f| f["value"].clone());
+    let old = value("mfr_path_old").and_then(|v| v["value"].as_str().map(String::from));
+    (old, value("mfr_path").is_some_and(|v| v["type"] == "nothing"))
+}
+
+#[test]
+fn test_sync_orphans_a_directory_gone_on_the_other_side_in_one_run() {
+    // The watcher orphans a deleted directory with all it holds in one cascade;
+    // carried over, the other side's directory and its file are orphaned the same
+    // way, in one run — not the directory refused while its file is placed.
+    let (a, _adir, b, _bdir, intents) = a_directory_gone_in_a("sorph");
+    let dir_b = query_one(&b, "mfr_path:value = \"dir\"");
+    let f_b = query_one(&b, "mfr_path:value = \"f.txt\"");
+
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
+    let run = mf(&["sync", "run", &a, &b, "--yes"]);
+    assert_ok(&run);
+    assert!(!run.stderr.contains("skipped"), "nothing skipped: {}", run.stderr);
+
+    assert!(!repo_root_of(&b).join("dir").exists(), "the directory went to the trash");
+    assert_eq!(orphaned_at(&b, &dir_b), (Some("/dir".into()), true));
+    assert_eq!(orphaned_at(&b, &f_b), (Some("/dir/f.txt".into()), true));
+    let again = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
+    assert_ok(&again);
+    assert!(again.stdout.contains("operations: 0"), "all committed: {}", again.stdout);
+}
+
+#[test]
+fn test_sync_a_directory_gone_holding_content_of_the_other_side_s_own_is_a_conflict() {
+    // B holds under the directory a file A never had: the directory's going is
+    // put as a conflict on its position (doc "Sync conflicts").
+    for (winner, prefix) in [("a", "sorpa"), ("b", "sorpb")] {
+        let (a, adir, b, _bdir, intents) = a_directory_gone_in_a(prefix);
+        let broot = repo_root_of(&b);
+        std::fs::write(broot.join("dir/only_b.txt"), b"b").unwrap();
+        assert_ok(&mf(&["-u", &b, "reconcile"]));
+        let only_b = query_one(&b, "mfr_path:value = \"only_b.txt\"");
+        let prefer = format!("prefer:{}", if winner == "a" { &a } else { &b });
+
+        let plan = mf(&[
+            "sync",
+            "plan",
+            &a,
+            &b,
+            "--intents",
+            intents.to_str().unwrap(),
+            "--on-conflict",
+            &prefer,
+        ]);
+        assert_ok(&plan);
+        let shown = mf(&["sync", "show", &a, &b, "--conflicts"]);
+        assert!(shown.stdout.contains("[mfr_path]"), "a position conflict: {}", shown.stdout);
+        let run = mf(&["sync", "run", &a, &b, "--yes"]);
+        assert_ok(&run);
+        assert!(!run.stderr.contains("skipped"), "nothing skipped: {}", run.stderr);
+
+        if winner == "a" {
+            // Gone: B's own file goes to the trash with the directory.
+            assert!(!broot.join("dir").exists());
+            assert_eq!(orphaned_at(&b, &only_b), (Some("/dir/only_b.txt".into()), true));
+        } else {
+            // Kept: B's own file stays, and A gets the directory back.
+            assert!(broot.join("dir/only_b.txt").exists());
+            assert!(adir.join("dir").is_dir(), "A's directory is back");
+        }
+    }
+}

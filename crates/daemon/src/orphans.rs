@@ -68,13 +68,43 @@ pub fn scan_orphans(repo: &RepoState) -> Result<Vec<OrphanEntry>, ApiError> {
 /// skipped, so a stale scan never orphans a since-recreated file. All changes go
 /// in one write. Returns how many top-level records were orphaned.
 pub fn clear_orphans(repo: &RepoState, uuids: &[Uuid]) -> Result<usize, ApiError> {
+    Ok(clear_orphans_fenced(repo, uuids, &HashMap::new())?.cleared)
+}
+
+/// What [`clear_orphans_fenced`] did.
+pub struct Cleared {
+    /// How many of the given records were orphaned.
+    pub cleared: usize,
+    /// Every record the write orphaned: those, and their descendants.
+    pub orphaned: Vec<Uuid>,
+}
+
+/// [`clear_orphans`], fenced: a record of `expected` whose version is not the
+/// one given makes the whole call a `409` that writes nothing (doc "Conditional
+/// writes").
+pub fn clear_orphans_fenced(
+    repo: &RepoState,
+    uuids: &[Uuid],
+    expected: &HashMap<Uuid, u64>,
+) -> Result<Cleared, ApiError> {
     let mut conn = repo.conn.lock_recover();
     let cache = repo.tree();
     let root = repo.config.root.clone();
     let mut dirs: HashMap<PathBuf, DirState> = HashMap::new();
     let offline = crate::mount::offline(&conn, &cache, &root)?;
     let mut writer = repo.writer(&mut conn, crate::log::current_context().named("orphan clear"))?;
+    for (&uuid, &version) in expected {
+        let current = crate::store::Rows::version(writer.store(), uuid)?;
+        if current != Some(version) {
+            return Err(ApiError::conflict(format!(
+                "expected_version {version} of {} but current is {}",
+                uuid.as_simple(),
+                current.map_or("absent".to_string(), |v| v.to_string())
+            )));
+        }
+    }
     let mut cleared = 0;
+    let mut orphaned = Vec::new();
 
     for &uuid in uuids {
         let Some(rel) = cache.rel_path_of(writer.store(), uuid)? else {
@@ -107,12 +137,13 @@ pub fn clear_orphans(repo: &RepoState, uuids: &[Uuid]) -> Result<usize, ApiError
             // an orphan is no longer a live duplicate, and the group it leaves is
             // re-counted (doc "Duplicate groups").
             crate::duplicates::leave_group(&mut writer, OpType::FileDeleted, u)?;
+            orphaned.push(u);
         }
         cleared += 1;
     }
 
     metafolder_core::slowlog::timed("commit", || writer.commit())?;
-    Ok(cleared)
+    Ok(Cleared { cleared, orphaned })
 }
 
 /// Whether a directory could be read, was missing, or was unreadable — the three

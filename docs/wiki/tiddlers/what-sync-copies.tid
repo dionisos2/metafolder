@@ -19,7 +19,7 @@ the disk is made to agree:
 * ''Content'' — a file's bytes (its mtime carried over), a symlink as a symlink to the same target ([[Symbolic links]]), a directory as a directory: never its children, which are records of their own.
 * ''Position'' — a rename or a move of the file to the other side's path; parents are moved before children, and a directory's move carries what it holds. A parent that is not linked is found — or made — by its path.
 * ''Mode'' — the permission bits, best-effort: a filesystem without Unix modes keeps its own.
-* ''A file gone'' on one side while its record stays (an orphan, [[Orphans]]) — the other side's file goes to the trash and its record is orphaned too, its old path kept in `mfr_path_old`, as the watcher would have done. The other way round, a record with no file that gets the other side's position also gets its content.
+* ''A file gone'' on one side while its record stays (an orphan, [[Orphans]]) — the other side's file goes to the trash and its record is orphaned too, its old path kept in `mfr_path_old`, as the watcher would have done: a directory with all it holds, in one write (`POST /repos/:repo/orphans/clear`, fenced by the version the run expects). A directory that holds there what the gone side never had is a conflict instead ([[Sync conflicts]]). The other way round, a record with no file that gets the other side's position also gets its content.
 
 Owner and group (`mfr_uid`, `mfr_gid`) and the birth time stay local: sync never
 changes them, and they are never compared.

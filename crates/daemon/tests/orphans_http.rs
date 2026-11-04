@@ -156,3 +156,93 @@ async fn mark_then_delete_by_query_over_http() {
         request(&app, "GET", &format!("/repos/{repo}/metarecords/{}", uuids[0]), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "the orphan metarecord is gone");
 }
+
+/// A directory's clearing orphans what it holds in the same write, and says
+/// which records it wrote — what `mf sync run` needs to know the versions it left
+/// (doc "Orphan scan").
+#[tokio::test]
+async fn clear_lists_every_record_its_cascade_orphaned() {
+    let (app, repo, root) = setup("cascade").await;
+    std::fs::create_dir(root.join("dir")).unwrap();
+    std::fs::write(root.join("dir/f.txt"), b"data").unwrap();
+    let mut uuids = Vec::new();
+    for rel in ["dir", "dir/f.txt"] {
+        let abs = root.join(rel);
+        let (status, body) = request(
+            &app,
+            "POST",
+            &format!("/repos/{repo}/metarecords"),
+            Some(json!({"path": abs.to_str().unwrap(), "fields": []})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "create at path failed: {body}");
+        uuids.push(body["uuid"].as_str().unwrap().to_string());
+    }
+    std::fs::remove_dir_all(root.join("dir")).unwrap();
+
+    let (status, cleared) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/orphans/clear"),
+        Some(json!({ "uuids": [uuids[0]] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "clear failed: {cleared}");
+    assert_eq!(cleared["cleared"], 1);
+    let mut orphaned: Vec<String> = cleared["orphaned"]
+        .as_array()
+        .expect("the orphaned records")
+        .iter()
+        .map(|u| u.as_str().unwrap().to_string())
+        .collect();
+    orphaned.sort();
+    let mut expected = uuids.clone();
+    expected.sort();
+    assert_eq!(orphaned, expected);
+    let (_, child) =
+        request(&app, "GET", &format!("/repos/{repo}/metarecords/{}", uuids[1]), None).await;
+    assert_eq!(
+        field(&child, "mfr_path_old"),
+        Some(&json!({"type": "string", "value": "/dir/f.txt"}))
+    );
+}
+
+/// With `expected_versions`, a record written since it was read makes the whole
+/// call a `409` that writes nothing (doc "Conditional writes").
+#[tokio::test]
+async fn clear_with_a_stale_expected_version_writes_nothing() {
+    let (app, repo, root) = setup("fenced").await;
+    std::fs::write(root.join("gone.txt"), b"data").unwrap();
+    let abs = root.join("gone.txt");
+    let (_, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords"),
+        Some(json!({"path": abs.to_str().unwrap(), "fields": []})),
+    )
+    .await;
+    let uuid = body["uuid"].as_str().unwrap().to_string();
+    let version = body["version"].as_u64().unwrap();
+    std::fs::remove_file(&abs).unwrap();
+
+    let (status, answer) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/orphans/clear"),
+        Some(json!({ "uuids": [uuid], "expected_versions": { &uuid: version + 1 } })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{answer}");
+    let (_, entry) = request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
+    assert_eq!(field(&entry, "mfr_path_old"), None, "nothing written");
+
+    let (status, answer) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/orphans/clear"),
+        Some(json!({ "uuids": [uuid], "expected_versions": { &uuid: version } })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["cleared"], 1);
+}

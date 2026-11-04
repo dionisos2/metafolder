@@ -560,6 +560,9 @@ struct Planner<'a> {
     /// The existing links *and* the planned ones, so a reference to a record
     /// this plan links translates already.
     tr: Translator<'a>,
+    /// The links the pair already has — not the planned ones, whose records the
+    /// run has yet to make.
+    linked: LinkTable,
     names: HashMap<Uuid, String>,
     roots: HashMap<Uuid, PathBuf>,
 }
@@ -572,7 +575,8 @@ impl<'a> Planner<'a> {
         on_conflict: Option<&'a str>,
         linked: &'a LinkingResult,
     ) -> Result<Self, CliError> {
-        let mut links = LinkTable::from_rows(&lookup::read_links(ctx, pair)?);
+        let existing = LinkTable::from_rows(&lookup::read_links(ctx, pair)?);
+        let mut links = existing.clone();
         for (end_a, end_b) in &linked.creates {
             links.insert(end_a.record, end_b.record);
         }
@@ -593,6 +597,7 @@ impl<'a> Planner<'a> {
             on_conflict,
             reads: &linked.reads,
             tr: Translator::new(ctx, pair, links, false),
+            linked: existing,
             names,
             roots,
         })
@@ -680,6 +685,11 @@ impl<'a> Planner<'a> {
                         ops.push(OpSpec::new("copy", end_a, end_b).from(Some(from)));
                         ops.push(OpSpec::new("chmod", end_a, end_b).from(Some(from)));
                     }
+                } else if !model::has_real_path(src) && self.holds_unlinked(dst)? {
+                    // Gone on one side, it holds on the other what the first never
+                    // had: its going is the user's call (doc "Sync conflicts").
+                    conflicts.push(("mfr_path".into(), pa, pb));
+                    ops.push(OpSpec::new("move", end_a, end_b));
                 } else {
                     ops.push(OpSpec::new("move", end_a, end_b).from(Some(from)));
                 }
@@ -753,6 +763,39 @@ impl<'a> Planner<'a> {
             ops.push(op);
         }
         Ok(Some(ops))
+    }
+
+    /// Whether something placed under `end`'s record in its filesystem forest
+    /// has no link of the pair yet — content the other side never had, which
+    /// orphaning `end` would send to the trash with it.
+    fn holds_unlinked(&self, end: &End) -> Result<bool, CliError> {
+        let side = if end.repo == self.pair.a { Side::A } else { Side::B };
+        let query = json!({
+            "type": "follows_transitive",
+            "field": "mfr_path",
+            "target": {"type": "uuid_in", "uuids": [end.record.as_simple().to_string()]},
+        });
+        let base = format!("/repos/{}/query", end.repo.as_simple());
+        let mut cursor: Option<String> = None;
+        loop {
+            let mut body = json!({"query": query, "select": [], "limit": self.ctx.page_size});
+            if let Some(c) = &cursor {
+                body["cursor"] = json!(c);
+            }
+            let resp = self.ctx.client.post(&base, &body)?;
+            for r in resp["results"].as_array().into_iter().flatten() {
+                let Some(u) = r["uuid"].as_str().and_then(|s| Uuid::parse_str(s).ok()) else {
+                    continue;
+                };
+                if self.linked.other(side, u).is_none() {
+                    return Ok(true);
+                }
+            }
+            match resp["next_cursor"].as_str() {
+                Some(c) => cursor = Some(c.to_string()),
+                None => return Ok(false),
+            }
+        }
     }
 
     /// A conflict's values as the user reads them, one string each: a
