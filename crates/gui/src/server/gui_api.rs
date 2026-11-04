@@ -285,7 +285,13 @@ async fn lookup_record_by_path(
     else {
         return Value::Null;
     };
-    let Some(relative) = path.strip_prefix(root).map(|p| p.trim_start_matches('/')) else {
+    // Component by component: `/repo2/x` is not under `/repo`.
+    let Some(relative) = std::path::Path::new(path)
+        .strip_prefix(root)
+        .ok()
+        .and_then(|relative| relative.to_str())
+        .map(|relative| relative.trim_end_matches('/'))
+    else {
         return Value::Null;
     };
     // Query in the daemon's tree convention (doc "Field aspects"):

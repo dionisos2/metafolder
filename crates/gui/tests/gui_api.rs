@@ -374,6 +374,25 @@ async fn test_slot_show_target_top_level_folder_resolves_metarecord() {
     );
 }
 
+/// A path beside the repository whose name starts like the root's
+/// (`/tmp/stub2/…` next to `/tmp/stub`) is not in the repository: it names no
+/// metarecord, and no query is sent for `/2/…`.
+#[tokio::test]
+async fn test_slot_show_target_of_a_path_beside_the_root_has_no_metarecord() {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let url = spawn_recording_daemon(seen.clone()).await;
+    let ctx = setup_with_daemon(&url).await;
+    let ws = ctx.gui.create_workspace(Some("feedfacefeedfacefeedfacefeedface".into()));
+    ctx.gui.tab_assign(&ws, SlotId::Left).unwrap();
+
+    let target = gui_api::slot_show_target(&ctx.gui, &ctx.daemon, "left", Some("/tmp/stub2/x"))
+        .await
+        .unwrap();
+
+    assert_eq!(target["selection"]["selected_metarecord"], Value::Null);
+    assert!(seen.lock().unwrap().is_empty(), "queried {:?}", seen.lock().unwrap());
+}
+
 /// An EMPTY path clears the selection instead of leaving the previous one on
 /// screen. A shipped script shows the entry it is asking about with one
 /// `mf gui view left viewer --path <abs>` per question, and an entry may have no
