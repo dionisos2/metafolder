@@ -397,6 +397,12 @@ fn is_operator(tok: &Tok) -> bool {
     )
 }
 
+/// Whether a token after a name makes that name a field: an operator, or the
+/// `:` of an aspect, which only ever follows a field.
+fn follows_a_field(tok: &Tok) -> bool {
+    is_operator(tok) || *tok == Tok::Colon
+}
+
 /// The four aspect names, as the DSL spells them (doc "Field aspects").
 fn aspect_from_name(name: &str) -> Option<Aspect> {
     match name {
@@ -434,14 +440,22 @@ impl Parser {
     }
 
     /// Every nested sub-query — a parenthesised group, a follow target, a
-    /// `same()` argument — re-enters here, so this is the one place the depth
-    /// bound has to be enforced.
+    /// `same()` argument — re-enters here; `NOT`, which nests without a
+    /// parenthesis, goes through [`Self::nested`] too.
     fn or_expr(&mut self) -> Result<Query, String> {
+        self.nested(Self::or_expr_inner)
+    }
+
+    /// Runs `parse` one level deeper, the one place the depth bound is enforced.
+    fn nested(
+        &mut self,
+        parse: impl FnOnce(&mut Self) -> Result<Query, String>,
+    ) -> Result<Query, String> {
         if self.depth >= MAX_DEPTH {
             return Err(format!("query too deeply nested (maximum {MAX_DEPTH} levels)"));
         }
         self.depth += 1;
-        let out = self.or_expr_inner();
+        let out = parse(self);
         self.depth -= 1;
         out
     }
@@ -486,7 +500,8 @@ impl Parser {
     fn unary(&mut self) -> Result<Query, String> {
         if self.peek() == Some(&Tok::Not) {
             self.next();
-            Ok(Query::Not { operand: Box::new(self.unary()?) })
+            let operand = self.nested(Self::unary)?;
+            Ok(Query::Not { operand: Box::new(operand) })
         } else {
             self.atom()
         }
@@ -514,13 +529,13 @@ impl Parser {
         }
     }
 
-    /// A bare UUID atom: a 32-hex token *not* followed by an operator (one
-    /// followed by one is a field name that happens to be 32 hex characters
+    /// A bare UUID atom: a 32-hex token *not* followed by an operator or an
+    /// aspect's `:` (one followed by one is a field name that happens to be 32 hex characters
     /// long, so `abcdef…ab = 3` keeps working). Same one-token lookahead as
     /// `peek_osm_call`.
     fn peek_uuid_atom(&self) -> Option<uuid::Uuid> {
         let Some(Tok::Hex(text)) = self.peek() else { return None };
-        if self.tokens.get(self.pos + 1).is_some_and(is_operator) {
+        if self.tokens.get(self.pos + 1).is_some_and(follows_a_field) {
             return None;
         }
         uuid::Uuid::try_parse(text).ok()
@@ -741,7 +756,7 @@ impl Parser {
     fn predicate(&mut self) -> Result<Query, String> {
         let field = match self.next() {
             Some(Tok::Ident(name)) => {
-                if looks_like_truncated_uuid(&name) && !self.peek().is_some_and(is_operator) {
+                if looks_like_truncated_uuid(&name) && !self.peek().is_some_and(follows_a_field) {
                     return Err(truncated_uuid_error(&name));
                 }
                 name
@@ -1637,6 +1652,18 @@ mod tests {
     }
 
     #[test]
+    fn test_a_hex_looking_field_name_takes_an_aspect() {
+        // An aspect follows a field name only, never a UUID: the ':' says
+        // "field" as surely as an operator does.
+        for name in ["abcdefabcdefabcdefabcdefabcdefab", "deadbeef"] {
+            assert_eq!(
+                ok(&format!("{name}:value = 3")),
+                Query::Eq { field: name.into(), value: Value::Int(3), aspect: Aspect::Value }
+            );
+        }
+    }
+
+    #[test]
     fn test_quoted_uuid_is_not_an_atom() {
         // One canonical spelling: the bare 32-hex form. A bare string stays a
         // parse error, and the message points at the right form.
@@ -1979,6 +2006,17 @@ mod tests {
 
         // The bound is generous: ordinary nesting still parses.
         let deep = format!("{}a = 1{}", "(".repeat(32), ")".repeat(32));
+        ok(&deep);
+    }
+
+    #[test]
+    fn a_long_chain_of_not_is_rejected_not_fatal() {
+        // `NOT` nests without a parenthesis: each one is a level of the query
+        // (and of the parser's stack) all the same.
+        let err = err(&format!("{}a = 1", "NOT ".repeat(100_000)));
+        assert!(err.contains("nested"), "unexpected error: {err}");
+
+        let deep = format!("{}a = 1", "NOT ".repeat(32));
         ok(&deep);
     }
 }
