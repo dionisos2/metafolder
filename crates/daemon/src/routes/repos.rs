@@ -21,9 +21,10 @@ pub(super) struct SlowLogParams {
     since_ms: Option<i64>,
     min_ms: Option<u64>,
     id: Option<String>,
+    op: Option<String>,
 }
 
-/// `GET /repos/:repo/slow?limit=&since_ms=&min_ms=&id=` — the repository's
+/// `GET /repos/:repo/slow?limit=&since_ms=&min_ms=&id=&op=` — the repository's
 /// slow-operation log (doc "Slow log"), both sources merged, newest first.
 pub(super) async fn slow_log(
     State(state): State<Arc<AppState>>,
@@ -33,8 +34,12 @@ pub(super) async fn slow_log(
     let repo_uuid = parse_uuid(&repo)?;
     let dir = slow_log_dir(&state, repo_uuid)?;
     let limit = params.limit.unwrap_or(slowlog::DEFAULT_READ_LIMIT).min(slowlog::MAX_READ_LIMIT);
-    let filter =
-        slowlog::Filter { since_ms: params.since_ms, min_ms: params.min_ms, id: params.id };
+    let filter = slowlog::Filter {
+        since_ms: params.since_ms,
+        min_ms: params.min_ms,
+        id: params.id,
+        op: params.op,
+    };
     let (entries, truncated) =
         tokio::task::spawn_blocking(move || slowlog::read(&dir, limit, &filter))
             .await

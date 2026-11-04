@@ -11,5 +11,6 @@ options.
 `--since` takes the durations of `mf trash prune -d` (`30m`, `2h`, `7d`), `--min`
 the same durations for the entries that took at least that long (`mf slow --min 60s`:
 only what took a minute, however far back — the daemon filters before `--limit`
-cuts), `--op` keeps the entries whose operation contains a substring, `--json`
+cuts), `--op` keeps the entries whose operation contains a substring (before `--limit`
+too), `--json`
 prints the raw entries one per line.

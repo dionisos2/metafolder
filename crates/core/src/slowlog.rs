@@ -329,6 +329,8 @@ pub struct Filter {
     pub min_ms: Option<u64>,
     /// Whose [`Entry::id`] starts with this.
     pub id: Option<String>,
+    /// Whose operation contains this.
+    pub op: Option<String>,
 }
 
 impl Filter {
@@ -336,6 +338,7 @@ impl Filter {
         self.since_ms.is_none_or(|since| e.at_ms >= since)
             && self.min_ms.is_none_or(|min| e.ms >= min)
             && self.id.as_deref().is_none_or(|prefix| e.id().starts_with(prefix))
+            && self.op.as_deref().is_none_or(|needle| e.op.contains(needle))
     }
 }
 
@@ -1199,6 +1202,19 @@ mod tests {
                 .map(|e| e.op)
                 .collect();
         assert_eq!(ops, vec!["new"]);
+    }
+
+    /// `op` is filtered before the limit cuts: an older entry of the operation
+    /// asked for is found past newer ones of another.
+    #[test]
+    fn test_op_filters_before_the_limit() {
+        let dir = tmp();
+        let sink = Sink::new(&dir, "daemon");
+        sink.append(&entry(1000, "daemon", "POST /repos/:repo/reconcile", 3000));
+        sink.append(&entry(2000, "daemon", "POST /repos/:repo/query", 3000));
+        let filter = Filter { op: Some("reconcile".into()), ..Filter::default() };
+        let ops: Vec<String> = read(&dir, 1, &filter).0.into_iter().map(|e| e.op).collect();
+        assert_eq!(ops, vec!["POST /repos/:repo/reconcile"]);
     }
 
     #[test]

@@ -21,6 +21,10 @@ pub fn slow_list(
         // found without paging past every short one since.
         query.push(("min_ms", ms.to_string()));
     }
+    if let Some(needle) = op {
+        // Before the limit too, like `min_ms`.
+        query.push(("op", needle.to_string()));
+    }
     if let Some(text) = since {
         // The same durations `mf trash prune -d` takes (1y, 30d, 12h).
         let ms = metafolder_core::date::now_ms() - crate::trash::parse_duration(text)?;
@@ -33,7 +37,7 @@ pub fn slow_list(
     let entries: Vec<_> = entries
         .into_iter()
         .filter(|e| op.is_none_or(|needle| e.op.contains(needle)))
-        // Again here: a daemon older than `min_ms` ignores it silently.
+        // Again here, as for `op`: a daemon older than `min_ms` ignores it silently.
         .filter(|e| min_ms.is_none_or(|ms| e.ms as i64 >= ms))
         .collect();
     if entries.is_empty() {

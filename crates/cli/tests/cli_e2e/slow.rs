@@ -36,6 +36,12 @@ fn test_slow_lists_the_log_newest_first_and_clears_it() {
     assert!(out.stdout.contains("\"op\":\"POST /repos/:repo/query\""), "{}", out.stdout);
     assert!(out.stdout.contains(&format!("\"id\":\"{}\"", slow.id())), "{}", out.stdout);
 
+    // So is `--op`: the GUI entry, older, is found past the newer query.
+    let out = mf(&["-u", &repo, "slow", "list", "--op", "metarecords", "--limit", "1", "--json"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.lines().count(), 1, "{}", out.stdout);
+    assert!(out.stdout.contains("\"op\":\"GET /repos/:repo/metarecords/:uuid\""), "{}", out.stdout);
+
     // `--min` keeps what took at least that long — applied before `--limit`, so
     // an old long operation is found without scrolling past the short ones.
     let out = mf(&["-u", &repo, "slow", "list", "--min", "3s", "--limit", "1", "--json"]);
