@@ -27,5 +27,7 @@ There is no listing endpoint: the groups are read with `POST /query`
 
 Everything duplicate detection added to the wire was additive — this endpoint, a
 task kind, `mfr_*` fields, the `same` query — so it needed no `API_VERSION` bump.
-A newer client talking to an older daemon gets a `400`/`404`, which it should
-report as "this daemon does not support duplicate detection".
+A newer client talking to an older daemon gets a `404` with no error of the daemon's
+own (the route is not there), which it reports as "this daemon does not support
+duplicate detection". A `404` the daemon explains — an unknown repository, a
+`metarecord` not found — is that error, and is shown as it is.

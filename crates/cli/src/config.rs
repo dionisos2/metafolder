@@ -72,6 +72,12 @@ fn parse_config(contents: &str) -> Result<CliConfig, String> {
     Ok(CliConfig { settings: raw.settings, repo: raw.repo, tag: raw.tag })
 }
 
+/// The shipped configuration, for tests that need one.
+#[cfg(test)]
+pub(crate) fn shipped() -> CliConfig {
+    parse_config(include_str!("../default-config/config.toml")).expect("the shipped file parses")
+}
+
 /// Reads and validates the configuration file. A missing or malformed file
 /// is an error.
 pub fn read_config(path: &Path) -> Result<CliConfig, String> {

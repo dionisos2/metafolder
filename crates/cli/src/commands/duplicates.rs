@@ -144,8 +144,8 @@ pub fn orphan_relink(
     let base = ctx.repo_base()?;
     let started = ctx
         .client
-        .request("POST", &format!("{base}/orphans/relink"), &[], Some(&json!({})))
-        .map_err(unsupported_daemon)?;
+        .request_daemon("POST", &format!("{base}/orphans/relink"), Some(&json!({})))
+        .map_err(|e| unsupported_daemon(ctx, e))?;
     let task_id = started["task_id"]
         .as_str()
         .ok_or_else(|| CliError::Op("relink: daemon did not return a task id".into()))?
@@ -188,8 +188,8 @@ pub fn duplicate_scan(
     }
     let started = ctx
         .client
-        .request("POST", &format!("{base}/duplicates/scan"), &[], Some(&body))
-        .map_err(unsupported_daemon)?;
+        .request_daemon("POST", &format!("{base}/duplicates/scan"), Some(&body))
+        .map_err(|e| unsupported_daemon(ctx, e))?;
     let task_id = started["task_id"]
         .as_str()
         .ok_or_else(|| CliError::Op("duplicate scan: daemon did not return a task id".into()))?
@@ -209,14 +209,17 @@ pub fn duplicate_scan(
 
 /// A daemon that predates duplicate detection answers 404 on the endpoint.
 /// `API_VERSION` is deliberately not bumped for it (the change is additive), so
-/// the clear message has to come from here.
-pub(super) fn unsupported_daemon(error: CliError) -> CliError {
-    match &error {
-        CliError::Op(message) if message.contains("404") || message.contains("not found") => {
-            CliError::Op("this daemon does not support duplicate detection".into())
-        }
-        _ => error,
+/// the clear message has to come from here. Only a 404 the daemon gives no
+/// reason for is the missing route: one it explains — an unknown repository, a
+/// metarecord not found — is passed on as it is.
+pub(super) fn unsupported_daemon(
+    ctx: &Ctx,
+    error: metafolder_core::daemon_client::DaemonError,
+) -> CliError {
+    if error.status == Some(404) && error.message == ctx.client.unexplained(404) {
+        return CliError::Op("this daemon does not support duplicate detection".into());
     }
+    CliError::Op(error.message)
 }
 
 pub(super) fn format_duplicate_scan(resp: &Json) -> String {

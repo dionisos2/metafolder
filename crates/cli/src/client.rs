@@ -181,11 +181,15 @@ impl Client {
         if response.status().is_success() {
             return Ok(body);
         }
-        let message = body["error"]
-            .as_str()
-            .map(str::to_string)
-            .unwrap_or_else(|| format!("{} returned HTTP {code}", self.peer));
+        let message =
+            body["error"].as_str().map(str::to_string).unwrap_or_else(|| self.unexplained(code));
         Err((Some(code), message))
+    }
+
+    /// The message of an error status that came without a reason of the
+    /// peer's own (`{"error": …}`): typically a route it does not have.
+    pub fn unexplained(&self, code: u16) -> String {
+        format!("{} returned HTTP {code}", self.peer)
     }
 
     pub fn get(&self, path: &str, query: &[(&str, String)]) -> Result<Json, CliError> {
@@ -198,12 +202,12 @@ impl Client {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::io::{Read, Write};
 
     /// Answers one request on a loopback port with `status` and `body`.
-    fn serve_once(status: &str, body: String) -> String {
+    pub(crate) fn serve_once(status: &str, body: String) -> String {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let status = status.to_string();

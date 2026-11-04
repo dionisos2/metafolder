@@ -237,3 +237,23 @@ fn format_age_picks_the_coarsest_unit() {
     assert_eq!(format_age(now - 4 * 86_400_000), "4d ago");
     assert_eq!(format_age(now + 60_000), "0s ago", "a clock ahead is not negative");
 }
+
+// ── unsupported_daemon ─────────────────────────────────────────────────────────
+
+/// A daemon without the duplicate routes answers a bare 404: that is the old
+/// daemon. A 404 carrying the daemon's own reason is that reason.
+#[test]
+fn test_only_an_unexplained_404_is_an_old_daemon() {
+    let repo = "0123456789abcdef0123456789abcdef";
+    let scan = |status: &str, body: &str| {
+        let url = crate::client::tests::serve_once(status, body.to_string());
+        let ctx =
+            Ctx::with_client(Client::new(&url), None, Some(repo.into()), &crate::config::shipped());
+        duplicate_scan(&ctx, 0, false, None, false, true, 10).unwrap_err().message().to_string()
+    };
+    assert_eq!(scan("404 Not Found", ""), "this daemon does not support duplicate detection");
+    assert_eq!(
+        scan("404 Not Found", r#"{"error":"Repository not found: x"}"#),
+        "Repository not found: x"
+    );
+}

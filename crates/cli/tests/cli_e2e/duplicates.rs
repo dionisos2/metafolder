@@ -750,3 +750,18 @@ fn test_sync_show_renders_plan_status() {
         files.stdout
     );
 }
+
+/// A repository the daemon does not know is said to be unknown — not taken
+/// for a daemon too old to scan for duplicates, which a 404 *without* an
+/// error of the daemon's own means.
+#[test]
+fn test_a_scan_of_an_unknown_repository_says_so() {
+    let unknown = uuid::Uuid::new_v4().as_simple().to_string();
+    for args in [&["duplicate", "scan"][..], &["orphan", "relink"][..]] {
+        let mut full = vec!["-u", unknown.as_str()];
+        full.extend_from_slice(args);
+        let out = mf(&full);
+        assert_eq!(out.code, 1, "{args:?}: {}", out.stderr);
+        assert!(out.stderr.contains("Repository not found"), "{args:?}: {}", out.stderr);
+    }
+}
