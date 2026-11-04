@@ -736,11 +736,14 @@ export async function mount(root, metafolder) {
       task = /** @type {{status: string, error?: string|null, result?: unknown}} */ (
         await daemon.call('GET', `/repos/${repo}/tasks/${started.task_id}`)
       );
-      if (task.status === 'done' || task.status === 'failed') break;
+      // Stopped from the task bar, a task ends `cancelled` and is evicted soon
+      // after: polled on, it would only answer "no such task".
+      if (['done', 'failed', 'cancelled'].includes(task.status)) break;
       await new Promise((resolve) => setTimeout(resolve, 300));
     }
     if (task.status === 'failed') throw new Error(task.error || 'reconcile failed');
-    void statusBar.message(`Reconcile done: ${JSON.stringify(task.result)}`, statusMessageMs);
+    if (task.status === 'cancelled') void statusBar.message('Reconcile cancelled.', statusMessageMs);
+    else void statusBar.message(`Reconcile done: ${JSON.stringify(task.result)}`, statusMessageMs);
     await load();
     await dirty(mf);
   }
