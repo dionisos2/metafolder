@@ -978,6 +978,75 @@ fn test_sync_closes_over_references_transitively() {
 }
 
 #[test]
+fn test_sync_closes_over_the_references_of_a_record_linked_by_its_path() {
+    // The scope is A's files; B's doc.txt is linked to A's by its path, so it is
+    // synced though no intent selects it. Its ref to a record with no position
+    // has to reach a counterpart in A all the same.
+    let (a, _adir) = tracked_repo("tpath_a", &[("doc.txt", b"x")]);
+    let (b, _bdir) = tracked_repo("tpath_b", &[("doc.txt", b"x")]);
+    let xb = query_one(&b, "mfr_path:value = \"doc.txt\"");
+    let person_b = create_metarecord(&b, &["name:string=alice"]);
+    assert_ok(&mf(&[
+        "-u",
+        &b,
+        "metarecord",
+        "-i",
+        &xb,
+        "field",
+        "add",
+        &format!("author:ref={person_b}"),
+    ]));
+
+    let intents = write_intents(
+        "tpath",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
+    let run = mf(&["sync", "run", &a, &b, "--yes"]);
+    assert_ok(&run);
+    assert!(!run.stderr.contains("no counterpart"), "nothing left out: {}", run.stderr);
+
+    let xa = query_one(&a, "mfr_path:value = \"doc.txt\"");
+    let person_a = query_one(&a, r#"name = "alice""#);
+    assert_eq!(field_value_of(&a, &xa, "author").as_deref(), Some(person_a.as_str()));
+}
+
+#[test]
+fn test_sync_closes_over_the_references_of_a_linked_record_out_of_scope() {
+    // An existing link is synced when either record is in scope: B's record,
+    // which no intent selects, gains a ref that must reach A.
+    let (a, _adir) = tracked_repo("tout_a", &[("doc.txt", b"x")]);
+    let (b, _bdir) = tracked_repo("tout_b", &[]);
+    let intents = write_intents(
+        "tout",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
+    assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
+
+    let xb = query_one(&b, "mfr_path:value = \"doc.txt\"");
+    let person_b = create_metarecord(&b, &["name:string=alice"]);
+    assert_ok(&mf(&[
+        "-u",
+        &b,
+        "metarecord",
+        "-i",
+        &xb,
+        "field",
+        "add",
+        &format!("author:ref={person_b}"),
+    ]));
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
+    let run = mf(&["sync", "run", &a, &b, "--yes"]);
+    assert_ok(&run);
+    assert!(!run.stderr.contains("no counterpart"), "nothing left out: {}", run.stderr);
+
+    let xa = query_one(&a, "mfr_path:value = \"doc.txt\"");
+    let person_a = query_one(&a, r#"name = "alice""#);
+    assert_eq!(field_value_of(&a, &xa, "author").as_deref(), Some(person_a.as_str()));
+}
+
+#[test]
 fn test_sync_run_translates_ref() {
     // A file X refs an abstract record; both are materialised in B and X_B's ref
     // is translated to person_B (the linked counterpart), not left dangling.

@@ -415,16 +415,38 @@ fn linking_phase(
     // correspondence. Identity targets need nothing here: the run resolves them
     // by path at translation. A target linked this way is synced in turn, so its
     // own references are followed too: a worklist, not one pass over the scope.
-    for (side, scope) in [(Side::A, &scope_a_all), (Side::B, &scope_b_all)] {
+    //
+    // What is synced is both records of every link planned or kept in scope,
+    // not the scope: a record the other side's scope linked by its path, or the
+    // far record of an existing link, is synced though no intent selects it.
+    let in_scope = |l: &LinkRow| scope_a.contains(&l.record_a) || scope_b.contains(&l.record_b);
+    let mut synced_a: Vec<Uuid> = creates.iter().map(|(end_a, _)| end_a.record).collect();
+    let mut synced_b: Vec<Uuid> = creates.iter().map(|(_, end_b)| end_b.record).collect();
+    for l in links.iter().filter(|l| in_scope(l)) {
+        synced_a.push(l.record_a);
+        synced_b.push(l.record_b);
+    }
+    for (side, mut synced) in [(Side::A, synced_a), (Side::B, synced_b)] {
         let (repo, linked, planned) = match side {
             Side::A => (a, &linked_a, &mut planned_a),
             Side::B => (b, &linked_b, &mut planned_b),
         };
-        let mut work: std::collections::VecDeque<Uuid> = scope
-            .iter()
-            .copied()
-            .filter(|rec| linked.contains(rec) || planned.contains(rec)) // else not synced
-            .collect();
+        // A bare endpoint does not exist yet: it holds nothing to follow.
+        synced.retain(|rec| linked.contains(rec) || planned.contains(rec));
+        synced.sort();
+        synced.dedup();
+        // The records outside the scope, in bulk: read once here, then again
+        // from memory by the existing links' pass.
+        let unread: Vec<Uuid> =
+            synced.iter().copied().filter(|rec| !reads.preloaded.contains(&(repo, *rec))).collect();
+        reads.preload(ctx, repo, &unread);
+        let mut work: std::collections::VecDeque<Uuid> = std::collections::VecDeque::new();
+        for rec in synced {
+            // A deleted record is a deletion to propagate, with nothing to follow.
+            if reads.record_opt(ctx, repo, rec)?.is_some() {
+                work.push_back(rec);
+            }
+        }
         while let Some(rec) = work.pop_front() {
             for y in ref_targets(ctx, &reads, repo, rec)? {
                 if linked.contains(&y)

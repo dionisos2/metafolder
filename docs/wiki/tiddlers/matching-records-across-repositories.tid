@@ -36,7 +36,9 @@ sit anywhere in a result ordered by uuid.
 !! Closing over references
 
 A reference must have a counterpart to be written on the other side ([[Ref translation during sync]]). So the linking phase follows the `ref` fields of every
-record it is going to sync: a target outside the scope, with no position and no
+record it is going to sync — both records of each link it plans or keeps, including
+the one no intent selected: the record the other side's scope was linked to by its
+path, or the far record of an existing link in scope. A target outside the scope, with no position and no
 link, is linked to a bare record created for it — that link is the only memory of
 the correspondence. Such a target is synced in its turn, so its own `ref` fields
 are followed too, as far as the references go. A target with a position needs nothing: it is found, or made,
