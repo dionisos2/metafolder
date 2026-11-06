@@ -223,6 +223,14 @@ describe('the command target directory', () => {
     expect(rel).toBe('');
   });
 
+  test('a folder shown whose name is not text is refused, never another folder', async () => {
+    // `/home/u/music/caf\xe9`: the file manager holds it exactly (doc "Tree names").
+    const fmDir = { text: '/home/u/music/caf\uFFFD', bytes: '2f686f6d652f752f6d757369632f636166e9' };
+    const options = { call: call({ u1: ['/live'] }, 'dir'), repo: 'r', repoRoot: '/home/u/music', fmDir, selected: { uuid: 'u1' } };
+    await expect(targetDir(options)).rejects.toThrow('not text');
+    await expect(orderTargetDir({ ...options, selected: null })).rejects.toThrow('not text');
+  });
+
   test('a selected directory targets itself', async () => {
     const rel = await targetDir({
       call: call({ u1: ['/live'] }, 'dir'),

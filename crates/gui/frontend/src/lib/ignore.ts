@@ -81,8 +81,9 @@ export interface TargetDirOptions {
   repo: string;
   /** Absolute path of the repository root. */
   repoRoot: string;
-  /** Absolute path of the file manager's current directory, when one is open. */
-  fmDir: string | null;
+  /** Absolute path of the file manager's current directory, when one is open:
+   *  its wire form (doc "Tree names"), `{text, bytes}` for a name not text. */
+  fmDir: string | Metafolder.WirePath | null;
   /** The workspace's selected metarecord, when any. */
   selected: { uuid: string } | null;
 }
@@ -105,9 +106,15 @@ export async function orderTargetDir(opts: TargetDirOptions): Promise<string | n
 }
 
 /** The file manager's current directory, repo-root-relative; null when none is
- *  open or it lies outside the repository. */
+ *  open or it lies outside the repository. One whose path is not text is
+ *  refused: these commands name a folder by its text, and falling back to
+ *  another would write on a folder the user is not looking at. */
 function fmRelDir({ repoRoot, fmDir }: TargetDirOptions): string | null {
-  return fmDir ? relativeToRoot(repoRoot, fmDir) : null;
+  if (fmDir === null || fmDir === '') return null;
+  if (typeof fmDir !== 'string') {
+    throw new Error(`the folder shown, ${fmDir.text}, has a name that is not text: it cannot be named here`);
+  }
+  return relativeToRoot(repoRoot, fmDir);
 }
 
 /** The selected metarecord's directory: itself when it is one, its parent

@@ -207,7 +207,7 @@ async function targetDirContext(
   ws: string | null,
 ): Promise<TargetDirOptions> {
   const fmDir = ws
-    ? await invoke<string | null>("ws_get_var", {
+    ? await invoke<unknown>("ws_get_var", {
         wsId: ws,
         key: "file-manager:dir",
       })
@@ -222,7 +222,9 @@ async function targetDirContext(
     call: daemonJson,
     repo,
     repoRoot: await repoRoot(repo),
-    fmDir: typeof fmDir === "string" ? fmDir : null,
+    // Exact (doc "Tree names"): a folder that is not text is refused there,
+    // not taken for no folder.
+    fmDir: isWirePath(fmDir) ? fmDir : null,
     selected: selected?.uuid ? { uuid: selected.uuid } : null,
   };
 }
