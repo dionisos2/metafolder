@@ -182,8 +182,9 @@ export interface Question {
 }
 
 /** Maps an `input-wait-changed` payload to the `ui.questions` state: each
- *  question with a generic label when it gave none. Pure, so it is
- *  unit-tested. */
+ *  question with a generic label when it gave none, and each of its keys once
+ *  — a script may name one twice, and the bar shows one keycap per key. Pure,
+ *  so it is unit-tested. */
 export function questionsState(payload: {
   questions?: {
     id: number;
@@ -196,7 +197,7 @@ export function questionsState(payload: {
   return (payload.questions ?? []).map((q) => ({
     id: q.id,
     prompt: q.prompt || 'Waiting for input',
-    keys: q.keys ?? [],
+    keys: [...new Set(q.keys ?? [])],
     workspace: q.workspace ?? null,
     task: q.task ?? null,
   }));

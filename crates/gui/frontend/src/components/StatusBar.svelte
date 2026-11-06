@@ -12,14 +12,21 @@
   // nobody is always shown.
   const question = $derived(activeQuestion());
 
-  // Pending key sequence: one entry per continuation, sorted by keys.
+  // Pending key sequence: one entry per continuation, sorted by keys. A
+  // continuation bound to the same command in two scopes (a global binding and
+  // a panel's) is one entry: they say the same thing.
   const keyHints = $derived.by(() => {
     const pending = store.ui.pendingKeys;
     if (!pending) return null;
-    const hints = pending.candidates.map((c) => ({
-      keys: c.keys.slice(pending.prefix.length).join(' '),
-      invocation: c.invocation,
-    }));
+    const hints = pending.candidates
+      .map((c) => ({
+        keys: c.keys.slice(pending.prefix.length).join(' '),
+        invocation: c.invocation,
+      }))
+      .filter(
+        (hint, index, all) =>
+          all.findIndex((o) => o.keys === hint.keys && o.invocation === hint.invocation) === index,
+      );
     hints.sort((a, b) => a.keys.localeCompare(b.keys));
     return { prefix: pending.prefix.join(' '), hints };
   });
@@ -28,7 +35,7 @@
 {#if keyHints}
   <div class="key-hints" data-help-topic="keybindings">
     <span class="prefix">{keyHints.prefix}</span>
-    {#each keyHints.hints as hint (hint.keys + hint.invocation)}
+    {#each keyHints.hints as hint (`${hint.keys}\n${hint.invocation}`)}
       <span class="hint"><span class="keys">{hint.keys}</span> {hint.invocation}</span>
     {/each}
     <span class="hint dim">escape cancels</span>
