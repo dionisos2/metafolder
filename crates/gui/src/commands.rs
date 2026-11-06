@@ -11,7 +11,7 @@ use crate::keybindings::{
 };
 use crate::state::layout::{LayoutView, SlotId};
 use crate::state::workspace::{MessageEntry, ShellEntry, WorkspaceInfo};
-use crate::state::GuiState;
+use crate::state::{GuiState, Question};
 use metafolder_core::sync::MutexExt;
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -892,13 +892,45 @@ pub fn script_keys_toggle(app: AppHandle) -> bool {
     enabled
 }
 
+/// What `script:stop` acts on (doc "script:stop").
+#[derive(Debug, PartialEq, Eq)]
+enum StopTarget {
+    /// The script of this run id.
+    Script(String),
+    /// A question owned by no script: its wait is closed.
+    Close(u64),
+    /// The question named is already over: nothing is left to stop.
+    Nothing,
+}
+
+/// The target of a `script:stop`: run `task` when named, else the script
+/// asking `question` — the one on screen, which the shell names. With
+/// neither, nothing is on screen to stop: refused, as a question of a
+/// workspace out of sight is not the one meant.
+fn stop_target(
+    questions: &[Question],
+    task: Option<String>,
+    question: Option<u64>,
+) -> Result<StopTarget, String> {
+    if let Some(task) = task {
+        return Ok(StopTarget::Script(task));
+    }
+    let Some(id) = question else {
+        return Err("no script is asking a question here: name the run to stop (script-N)".into());
+    };
+    Ok(match questions.iter().find(|q| q.id == id) {
+        Some(Question { task: Some(task), .. }) => StopTarget::Script(task.clone()),
+        Some(_) => StopTarget::Close(id),
+        None => StopTarget::Nothing,
+    })
+}
+
 /// `script:stop [<task>]` and `script:kill [<task>]` — end a running script:
 /// escape, resp. ctrl+escape, during its question, or a manual invocation. The
 /// first asks (`SIGTERM`), the second kills (`SIGKILL`, `kill = true`). With no
-/// run id it is the script asking question `question` — the one on screen,
-/// which the shell names (the first one, with neither). A question owned by
-/// nobody has no script to end: the wait is closed instead, so the GUI never
-/// keeps a bar for an answer that will never come.
+/// run id it is the script asking question `question` (`stop_target`). A
+/// question owned by nobody has no script to end: the wait is closed instead,
+/// so the GUI never keeps a bar for an answer that will never come.
 #[tauri::command]
 pub fn script_stop(
     app: AppHandle,
@@ -908,24 +940,19 @@ pub fn script_stop(
 ) -> Result<(), String> {
     use crate::shell_exec::Stop;
     let how = if kill.unwrap_or(false) { Stop::Kill } else { Stop::Terminate };
-    let asked = app.gui.questions().into_iter().find(|q| question.is_none_or(|id| q.id == id));
-    let task = task.or_else(|| asked.as_ref().and_then(|q| q.task.clone()));
-    match task {
-        Some(task) => {
+    match stop_target(&app.gui.questions(), task, question)? {
+        StopTarget::Script(task) => {
             if crate::shell_exec::stop_script(&app.gui, &task, how) {
                 Ok(())
             } else {
                 Err(format!("no running script '{task}' to stop"))
             }
         }
-        None => {
-            // Nothing to signal: just release whoever is waiting.
-            match asked {
-                Some(q) => app.input.close(q.id),
-                None => app.input.close_all(),
-            }
+        StopTarget::Close(id) => {
+            app.input.close(id);
             Ok(())
         }
+        StopTarget::Nothing => Ok(()),
     }
 }
 
@@ -1177,6 +1204,52 @@ pub fn config_reload(app: AppHandle, what: String) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn question(id: u64, workspace: &str, task: Option<&str>) -> Question {
+        Question {
+            id,
+            keys: vec!["y".into()],
+            prompt: None,
+            workspace: Some(workspace.into()),
+            task: task.map(Into::into),
+        }
+    }
+
+    /// Nothing on screen asks: a question of another workspace is not the
+    /// one meant, and no wait is closed — every script's prompts would be.
+    #[test]
+    fn test_stopping_with_no_question_on_screen_targets_nothing() {
+        let asked = [question(1, "ws-2", Some("script-1"))];
+        assert!(stop_target(&asked, None, None).is_err());
+        assert!(stop_target(&[], None, None).is_err());
+    }
+
+    /// The question on screen was answered as the key was pressed: there is
+    /// nothing left to stop, and the other waits stay.
+    #[test]
+    fn test_stopping_a_question_already_over_targets_nothing() {
+        let asked = [question(1, "ws-2", Some("script-1"))];
+        assert_eq!(stop_target(&asked, None, Some(7)).unwrap(), StopTarget::Nothing);
+    }
+
+    #[test]
+    fn test_stopping_targets_the_script_asking_the_question_named() {
+        let asked = [question(1, "ws-2", Some("script-1")), question(2, "ws-1", Some("script-2"))];
+        assert_eq!(
+            stop_target(&asked, None, Some(2)).unwrap(),
+            StopTarget::Script("script-2".into())
+        );
+        assert_eq!(
+            stop_target(&asked, Some("script-9".into()), None).unwrap(),
+            StopTarget::Script("script-9".into())
+        );
+    }
+
+    #[test]
+    fn test_stopping_a_question_nobody_asks_closes_it() {
+        let asked = [question(4, "ws-1", None)];
+        assert_eq!(stop_target(&asked, None, Some(4)).unwrap(), StopTarget::Close(4));
+    }
 
     #[test]
     fn test_a_named_target_resolves_to_itself() {
