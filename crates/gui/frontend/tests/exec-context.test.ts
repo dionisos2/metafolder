@@ -186,3 +186,23 @@ describe('a shell line dispatched in a context', () => {
     ]);
   });
 });
+
+describe('the API of a block run elsewhere', () => {
+  test('reads the same settings as the command that runs it', async () => {
+    const { deps } = recordingDeps();
+    const mf = createUserCommandApi(deps, {
+      guiServer: 'http://127.0.0.1:7524',
+      sessionToken: 'token',
+      context: () => FOCUSED,
+      panelSettings: { 'confirm-trash': true, 'status-message-ms': 1234 },
+    }) as unknown as {
+      settings: { confirmTrash: boolean; statusMessageMs: number };
+      withContext<T>(context: ExecContext, body: (mf: never) => Promise<T>): Promise<T>;
+    };
+    const inner = await mf.withContext({ ws: 'ws-2', slot: 'right' }, async (m) => {
+      return (m as unknown as typeof mf).settings;
+    });
+    expect(inner).toEqual(mf.settings);
+    expect(inner.confirmTrash).toBe(true);
+  });
+});

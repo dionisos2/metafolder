@@ -249,7 +249,11 @@ export function createUserCommandApi(
  */
 function contextMembers(
   deps: PanelApiDeps,
-  server: { guiServer: string; sessionToken: string },
+  server: {
+    guiServer: string;
+    sessionToken: string;
+    panelSettings?: Record<string, number | boolean>;
+  },
   context: () => ExecContext,
   invoke: PanelApiDeps['invoke'] = deps.invoke,
 ) {
@@ -260,6 +264,8 @@ function contextMembers(
     return createUserCommandApi(deps, {
       guiServer: server.guiServer,
       sessionToken: server.sessionToken,
+      // The same `mf.settings` as the API that runs the block.
+      panelSettings: server.panelSettings,
       context: () => bound,
     });
   };
