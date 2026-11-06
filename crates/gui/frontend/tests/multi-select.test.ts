@@ -85,6 +85,27 @@ function stubDaemon(existing: Set<string>) {
   };
 }
 
+/** A command's transaction over `ws` (doc "Command transactions"): what the
+ *  command writes is held, and each variable reaches the workspace once, with
+ *  its final value, when the command ends — so a write it overwrote is never
+ *  announced. */
+function commandOf(ws: ReturnType<typeof stubWorkspace>) {
+  const held = new Map<string, unknown>();
+  return {
+    mf: {
+      workspace: {
+        set: async (key: string, value: unknown) => {
+          held.set(key, value);
+        },
+      },
+    } as unknown as MetafolderApi,
+    async end() {
+      for (const [key, value] of held) await ws.api.set(key, value);
+      ws.deliverAll();
+    },
+  };
+}
+
 describe('createMultiSelect', () => {
   test('toggle checks then unchecks one metarecord', async () => {
     const ws = stubWorkspace();
@@ -109,6 +130,21 @@ describe('createMultiSelect', () => {
     expect(selection.values()).toEqual(['a', 'b']);
     ws.deliverEcho();
     expect(selection.values()).toEqual(['a', 'b']);
+  });
+
+  test('a write its command overwrote awaits no echo', async () => {
+    const ws = stubWorkspace();
+    const selection = createMultiSelect({ workspace: ws.api, daemon: stubDaemon(new Set()) });
+    await selection.load();
+    const command = commandOf(ws);
+    await selection.toggle('a', command.mf);
+    await selection.toggle('b', command.mf);
+    await command.end();
+    expect(selection.values()).toEqual(['a', 'b']);
+    // ['a'] was never announced: the same state set elsewhere later is not
+    // mistaken for its echo.
+    ws.externalSet('selected_metarecords', ['a']);
+    expect(selection.values()).toEqual(['a']);
   });
 
   test('an external change is adopted and re-rendered', async () => {
@@ -247,6 +283,18 @@ describe('createPathSelect', () => {
     await paths.toggle('/r/b');
     ws.deliverAll();
     expect(paths.values()).toEqual(['/r/a', '/r/b']);
+  });
+
+  test('a write its command overwrote awaits no echo', async () => {
+    const ws = stubWorkspace();
+    const paths = createPathSelect({ workspace: ws.api, fs: stubFs(new Set()) });
+    await paths.load();
+    const command = commandOf(ws);
+    await paths.toggle('/r/a', command.mf);
+    await paths.toggle('/r/b', command.mf);
+    await command.end();
+    ws.externalSet(KEY, ['/r/a']);
+    expect(paths.values()).toEqual(['/r/a']);
   });
 
   test('an external change is adopted', async () => {

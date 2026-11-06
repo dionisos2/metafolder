@@ -167,7 +167,10 @@ export function createPathSelect({ workspace, fs, render = () => {} }) {
 // while a change made by another panel or a script must be adopted at once. So
 // every write remembers its payload until that payload comes back: an echo
 // matching a pending write is ours and is dropped (the mirror already holds
-// it), anything else is external and is taken.
+// it), anything else is external and is taken. The echoes come back in the
+// order of the writes, and a command announces each variable once, with its
+// final value (doc "Command transactions"): the echo of one write settles the
+// writes before it too, which will never echo.
 /**
  * @param {Metafolder.Workspace} workspace @param {string} key
  * @param {() => void} render
@@ -177,8 +180,8 @@ function createMirror(workspace, key, render) {
   let values = new Map();
   /** @type {string|null} the repository the selection belongs to */
   let repo = null;
-  /** @type {Map<string, number>} payload JSON → writes still awaiting their echo */
-  const pending = new Map();
+  /** @type {string[]} the payload JSON of each write still awaiting its echo, in write order */
+  const pending = [];
 
   /** @param {unknown} value @returns {Value[]} */
   const strings = (value) =>
@@ -188,33 +191,28 @@ function createMirror(workspace, key, render) {
   /** @param {Value[]} list */
   const keyed = (list) => new Map(list.map((v) => [pathKey(v), v]));
 
-  /** @param {string} json */
-  function dropPending(json) {
-    const left = (pending.get(json) ?? 1) - 1;
-    if (left > 0) pending.set(json, left);
-    else pending.delete(json);
-  }
-
   /** Publishes `list` as the new state, through `mf` when a command run
    *  makes the change. @param {Value[]} list @param {MetafolderApi} [mf] */
   async function write(list, mf) {
     const json = JSON.stringify(list);
-    pending.set(json, (pending.get(json) ?? 0) + 1);
+    pending.push(json);
     values = keyed(list);
     render();
     try {
       await (mf?.workspace ?? workspace).set(key, list);
     } catch (error) {
-      dropPending(json); // no echo is coming for a write that never landed
+      // No echo is coming for a write that never landed.
+      const at = pending.lastIndexOf(json);
+      if (at >= 0) pending.splice(at, 1);
       throw error;
     }
   }
 
   workspace.onChange(key, (value) => {
     const list = strings(value);
-    const json = JSON.stringify(list);
-    if (pending.has(json)) {
-      dropPending(json);
+    const at = pending.indexOf(JSON.stringify(list));
+    if (at >= 0) {
+      pending.splice(0, at + 1);
       return; // our own write echoing back: the mirror already holds it
     }
     values = keyed(list);
