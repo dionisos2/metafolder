@@ -280,7 +280,19 @@
     panelFunctions.delete(key);
     instance.host.remove();
     instances.delete(key);
+    // An instance made again under this key is told it is visible afresh.
+    visibleSlots.delete(key);
   }
+
+  // A closed workspace's instances go at once, not at the next frame: its
+  // number is reused by the next workspace opened, which must not inherit them
+  // — and no frame comes while the window is minimised.
+  $effect(() => {
+    const live = new Set(store.workspaces.map((w) => w.id));
+    for (const [key, instance] of instances) {
+      if (!live.has(instance.wsId)) teardown(key, instance);
+    }
+  });
 
   // Slot bodies shrink/grow when the command input or a second status bar
   // appear: follow their geometry, not just layout events.
