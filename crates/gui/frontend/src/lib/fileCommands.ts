@@ -12,6 +12,7 @@
 import {
   baseName,
   dedupeName,
+  entryName,
   isWithin,
   joinPath,
   parentDir,
@@ -134,6 +135,7 @@ export async function runFileCommand(
       const typed = rest.length > 0 ? rest.join(' ') : await ops.ask('Rename to:', old);
       const next = (typed ?? '').trim();
       if (!next || next === old) return;
+      entryName(next);
       await ops.move(path, joinPath(parentDir(path), next));
       await ops.status(`Renamed to ${next}`);
       await after(ops, fns, next);
@@ -159,6 +161,7 @@ export async function runFileCommand(
       const typed = words.length > 0 ? words.join(' ') : await ops.ask(`New ${kind} name:`);
       const newName = (typed ?? '').trim();
       if (!newName) return;
+      entryName(newName);
       const path = joinPath(dir, newName);
       if (kind === 'folder') await ops.mkdir(path);
       else await ops.createFile(path);

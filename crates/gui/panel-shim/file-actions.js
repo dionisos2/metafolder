@@ -129,6 +129,19 @@ export function joinPath(dir, name) {
   return pathOfBytes(out);
 }
 
+/**
+ * `typed` as the name of an entry of a folder (doc "File commands": a file is
+ * renamed in its folder, created there): a `/`, `.` or `..` would land it
+ * elsewhere, so it is refused.
+ * @param {string} typed @returns {string}
+ */
+export function entryName(typed) {
+  if (typed.includes('/') || typed === '.' || typed === '..') {
+    throw new Error(`not a name: "${typed}" (a name in the folder, without /)`);
+  }
+  return typed;
+}
+
 /** Splits a filename into [stem, extension-including-dot]; a leading dot is a
  *  hidden marker, not an extension. @param {string} name @returns {[string, string]} */
 export function splitExt(name) {
@@ -297,7 +310,7 @@ async function renamePath(metafolder, path, onChanged, statusMs) {
   const next = (prompt('Rename to:', current) ?? '').trim();
   if (!next || next === current) return;
   try {
-    await fs.move(path, joinPath(parentDir(path), next));
+    await fs.move(path, joinPath(parentDir(path), entryName(next)));
   } catch (error) {
     await statusBar.error(error, errorMs(metafolder));
     return;

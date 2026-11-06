@@ -115,6 +115,20 @@ describe('file: commands — what they do', () => {
     ).rejects.toThrow('folder / file');
   });
 
+  test('a name is one entry of the folder: never a path out of it', async () => {
+    for (const name of ['sub/b.txt', '../b.txt', '..', '.', 'a/']) {
+      const o = ops();
+      await expect(
+        runFileCommand('file:rename', { paths: () => ['/r/d/a.txt'] }, [name], o),
+      ).rejects.toThrow('not a name');
+      await expect(
+        runFileCommand('file:new', { directory: () => '/r/d' }, ['file', name], o),
+      ).rejects.toThrow('not a name');
+      expect(o.move).not.toHaveBeenCalled();
+      expect(o.createFile).not.toHaveBeenCalled();
+    }
+  });
+
   test('a panel showing no folder has nowhere to create or paste', async () => {
     await expect(
       runFileCommand('file:new', { directory: () => null }, ['file'], ops()),

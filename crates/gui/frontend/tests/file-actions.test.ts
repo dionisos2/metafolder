@@ -181,6 +181,20 @@ describe('file-actions shared operations', () => {
     expect(statusBar).toBeDefined();
   });
 
+  test('Rename to a name with a / says so and moves nothing out of the folder', async () => {
+    const { metafolder, fs, statusBar } = mockMf();
+    vi.stubGlobal('prompt', vi.fn(() => '../renamed.txt'));
+    const menu = fileMenuItems({ metafolder, repo: 'r', path: '/dir/a.txt', isDir: false });
+    item(menu, 'Rename…').action!();
+    await vi.waitFor(() =>
+      expect(statusBar.error).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringContaining('not a name') }),
+        2000,
+      ),
+    );
+    expect(fs.move).not.toHaveBeenCalled();
+  });
+
   test('Copy full path copies the absolute path to the clipboard', async () => {
     const writeText = vi.fn(async () => {});
     vi.stubGlobal('navigator', { clipboard: { writeText } });

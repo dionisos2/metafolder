@@ -14,9 +14,9 @@ first argument, `self` or a panel type, and it designates what they work on.
 
 |!Command |!Works on |!What it does |
 |[[file:trash]] |the files |sends them to the trash, their metarecords with them ([[Trash]]); to the desktop's when no repository holds them ([[The desktop trash]]) |
-|[[file:rename]] |the one file |renames it in its folder; the name is asked, the current one to edit |
+|[[file:rename]] |the one file |renames it in its folder; the name is asked, the current one to edit — a name with a `/`, or `.` / `..`, is refused: it would move the file elsewhere |
 |[[file:record]] |the files |gives each its metarecord, `mf_watch = false` ([[Recording a path]]) |
-|[[file:new]] `folder`/`file` |the folder |creates a folder or an empty file there; the name is asked |
+|[[file:new]] `folder`/`file` |the folder |creates a folder or an empty file there; the name is asked, refused as `file:rename`'s |
 |[[clipboard:paste]] |the file or folder under the cursor |copies — or moves, after a cut — the file clipboard inside the folder, or beside the file |
 
 * ''The files'' are what the panel provides as `paths`: the checked ones when some are — in the file manager, those checked without a metarecord too ([[Cross-panel selection]]) —, else the one under the cursor — in the [[file-manager panel]] and the [[metarecord-list panel]] — or the file shown, in the [[viewer panel]] and the [[metarecord-detail panel]]. The file manager's `.` and `..` rows are none.
