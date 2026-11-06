@@ -279,7 +279,7 @@ async function runIgnore(
 /** `ignore:list`: the installed presets and the target's active set, in the
  *  message panel (read-only, so it is also the safe way to look before
  *  applying). */
-async function listIgnore(ws: string | null): Promise<void> {
+async function listIgnore(ws: string | null, slot: ExecContext["slot"]): Promise<void> {
   const context = await ignoreContext(ws);
   if (!context) return;
   if (!ws) return;
@@ -309,12 +309,7 @@ async function listIgnore(ws: string | null): Promise<void> {
         : `Patterns governing ${here} (inherited from ${source}):`,
   );
   for (const pattern of effective.patterns) lines.push(`  ${pattern}`);
-  if (needsPanel(store.layout, ws, "message")) {
-    await invoke("panel_set_type", {
-      slot: store.layout.focused,
-      panelType: "message",
-    });
-  }
+  await surfacePanel({ ws, slot }, "message");
   await invoke("append_message", { wsId: ws, text: lines.join("\n") });
 }
 
@@ -460,7 +455,7 @@ async function openWith(commandLine: string, ws: string | null): Promise<void> {
     await status("no file or folder is selected");
     return;
   }
-  await runShell([program, ...files.map(shellQuote)].join(" "));
+  await runShell([program, ...files.map(shellQuote)].join(" "), { ws });
 }
 
 registerArgs("file:open-with", [
@@ -600,17 +595,13 @@ async function offerWorkContext(ws: string, repoName: string): Promise<void> {
 
 /** Runs an installed script, surfacing its output in the shell panel exactly
  *  as a `!` command does. */
-async function runScript(path: string, ws: string | null): Promise<void> {
-  if (needsPanel(store.layout, ws, "shell")) {
-    await invoke("panel_set_type", {
-      slot: store.layout.focused,
-      panelType: "shell",
-    });
-  }
+async function runScript(path: string, context: ExecContext): Promise<void> {
+  await surfacePanel(context, "shell");
   // A script's writes are one label in the log, its commands' nested in it
   // (doc "Labels and contexts").
   await runShell(`bash ${shellQuote(path)}`, {
     label: `script ${path.split("/").pop() ?? path}`,
+    ws: context.ws,
   });
 }
 
@@ -1012,15 +1003,19 @@ export async function setFullscreen(on: boolean): Promise<void> {
   }
 }
 
-/** Runs a shell line in the focused workspace. `typed`: a line the user typed
+/** Runs a shell line in workspace `ws` (the command's, the focused one by
+ *  default). `typed`: a line the user typed
  *  (after `!` or in the shell panel), run with their shell configuration;
  *  anything else — a script, a program opened on a file — runs in a plain
  *  `sh`, whatever that configuration says (doc "shell panel"). */
 export async function runShell(
   commandLine: string,
-  { label, typed = false }: { label?: string; typed?: boolean } = {},
+  {
+    label,
+    typed = false,
+    ws = focusedWs(),
+  }: { label?: string; typed?: boolean; ws?: string | null } = {},
 ): Promise<void> {
-  const ws = focusedWs();
   if (!ws) return;
   try {
     await invoke("run_shell", {
@@ -1046,6 +1041,19 @@ export function needsPanel(
   const shows = (slot: LayoutView["left"]) =>
     slot.visible && slot.workspace_id === ws && slot.panel_type === panelType;
   return !(shows(layout.left) || shows(layout.right));
+}
+
+/** Surfaces the output of a command run in `context`: its slot switches to
+ *  `panelType` unless a visible slot of its workspace already shows one — and
+ *  only when that slot shows the workspace: a command run in a workspace out
+ *  of sight leaves the screen alone, its output kept in the workspace's log. */
+async function surfacePanel(
+  context: ExecContext,
+  panelType: string,
+): Promise<void> {
+  if (!needsPanel(store.layout, context.ws, panelType)) return;
+  if (slotPayload(context.slot).workspace_id !== context.ws) return;
+  await invoke("panel_set_type", { slot: context.slot, panelType });
 }
 
 /** Data sources for `%`-placeholder expansion, reading the selection from the
@@ -1271,7 +1279,7 @@ export async function dispatch(
       (!parsed.name.startsWith("macro:") &&
         shouldLogCommand(store.commands, parsed.name)));
   if ("shell" in parsed) {
-    const ws = focusedWs();
+    const { ws } = context;
     const expanded = await expandShellPlaceholders(
       parsed.shell,
       shellExpandDeps(ws),
@@ -1280,15 +1288,8 @@ export async function dispatch(
       await status(expanded.error);
       return { ok: false, error: expanded.error };
     }
-    // Surface the output: switch the focused slot to the shell panel unless
-    // one is already visible in this workspace.
-    if (needsPanel(store.layout, ws, "shell")) {
-      await invoke("panel_set_type", {
-        slot: store.layout.focused,
-        panelType: "shell",
-      });
-    }
-    await runShell(expanded.value, { typed: true });
+    await surfacePanel(context, "shell");
+    await runShell(expanded.value, { typed: true, ws });
     // Recorded once it has run: the user who sees its effect may stop the
     // recording while the settler still waits.
     if (recorded) macros.record(`!${parsed.shell}`, [], new Set());
@@ -1585,7 +1586,10 @@ async function runCommand(
     }
     case "workspace:close":
       if (!confirmClosing(ws ?? null)) return true;
-      await invoke("workspace_close");
+      // The context's workspace, which a command may have moved to
+      // (`mf.withContext`): the focused one only without a context.
+      if (ws) await invoke("workspace_close_ws", { wsId: ws });
+      else await invoke("workspace_close");
       return true;
     case "workspace:rename": {
       // The name was collected by dispatch (inline or in the minibuffer); as
@@ -1792,7 +1796,7 @@ async function runCommand(
       return true;
     }
     case "ignore:list":
-      await listIgnore(ws);
+      await listIgnore(ws, context.slot);
       return true;
     case "mf:order":
       await runOrder(ws);
@@ -1876,7 +1880,7 @@ async function runCommand(
         );
         return true;
       }
-      await runScript(path, ws);
+      await runScript(path, context);
       return true;
     }
     case "find:open":

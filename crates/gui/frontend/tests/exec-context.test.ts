@@ -164,3 +164,25 @@ describe('a builtin dispatched in a context', () => {
     ]);
   });
 });
+
+describe('workspace:close dispatched in a context', () => {
+  test('closes that workspace, not the focused one', async () => {
+    tauri.length = 0;
+    const context: ExecContext = { ws: 'ws-2', slot: 'right' };
+    expect(await dispatch('workspace:close', context)).toEqual({ ok: true });
+    const closes = tauri.filter((c) => c.cmd.startsWith('workspace_close'));
+    expect(closes).toEqual([{ cmd: 'workspace_close_ws', args: { wsId: 'ws-2' } }]);
+  });
+});
+
+describe('a shell line dispatched in a context', () => {
+  test('runs in that workspace, not the focused one', async () => {
+    tauri.length = 0;
+    const context: ExecContext = { ws: 'ws-2', slot: 'right' };
+    expect(await dispatch('!echo hi', context)).toEqual({ ok: true });
+    const runs = tauri.filter((c) => c.cmd === 'run_shell');
+    expect(runs).toEqual([
+      { cmd: 'run_shell', args: { wsId: 'ws-2', commandLine: 'echo hi', label: null, typed: true } },
+    ]);
+  });
+});
