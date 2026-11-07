@@ -10,3 +10,4 @@ summary: Take a panel to its top level (self / a panel type)
 !! Default keys
 
 * ``alt+home`` → ``cursor:root self``
+* ``g h`` → ``cursor:root self``

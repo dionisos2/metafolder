@@ -10,7 +10,7 @@ summary: The keys used and left at each level
 |``c`` |starts 4 keys (``{clipboard}``) |
 |``e`` |starts 5 keys (``{item}``) |
 |``f`` |``cursor:find self select``; ``metarecord-list:focus finder`` (in ``metarecord-list``) |
-|``g`` |starts 11 keys (``{go}``) |
+|``g`` |starts 12 keys (``{go}``) |
 |``h`` |starts 4 keys (``{help}``) |
 |``i`` |starts 28 keys (``{target-here}``) |
 |``l`` |``hints:open`` |
@@ -35,7 +35,7 @@ summary: The keys used and left at each level
 !! Level 2
 
 |!With |!Used |!Left |
-|Shift |11: ``e`` ``f`` ``m`` ``x`` ``enter`` ``backspace`` ``delete`` ``up`` ``down`` ``left`` ``right`` |47: ``a`` ``b`` ``c`` ``d`` ``g`` ``h`` ``i`` ``j`` ``k`` ``l`` ``n`` ``o`` ``p`` ``q`` ``r`` ``s`` ``t`` ``u`` ``v`` ``w`` ``y`` ``z`` ``,`` ``-`` ``=`` ``escape`` ``tab`` ``space`` ``home`` ``end`` ``pageup`` ``pagedown`` ``plus`` ``insert`` ``menu`` ``f1`` ``f2`` ``f3`` ``f4`` ``f5`` ``f6`` ``f7`` ``f8`` ``f9`` ``f10`` ``f11`` ``f12`` |
+|Shift |12: ``e`` ``f`` ``m`` ``x`` ``enter`` ``backspace`` ``delete`` ``space`` ``up`` ``down`` ``left`` ``right`` |46: ``a`` ``b`` ``c`` ``d`` ``g`` ``h`` ``i`` ``j`` ``k`` ``l`` ``n`` ``o`` ``p`` ``q`` ``r`` ``s`` ``t`` ``u`` ``v`` ``w`` ``y`` ``z`` ``,`` ``-`` ``=`` ``escape`` ``tab`` ``home`` ``end`` ``pageup`` ``pagedown`` ``plus`` ``insert`` ``menu`` ``f1`` ``f2`` ``f3`` ``f4`` ``f5`` ``f6`` ``f7`` ``f8`` ``f9`` ``f10`` ``f11`` ``f12`` |
 |Alone, needing Shift on a layout |13: ``0`` ``1`` ``2`` ``3`` ``4`` ``5`` ``6`` ``7`` ``8`` ``9`` ``/`` ``:`` ``!`` |9: ``.`` ``;`` ``*`` ``(`` ``)`` ``"`` ``$`` ``%`` ``?`` |
 |Ctrl |32: ``a`` ``c`` ``d`` ``e`` ``f`` ``g`` ``h`` ``k`` ``l`` ``m`` ``n`` ``o`` ``p`` ``q`` ``r`` ``s`` ``t`` ``u`` ``v`` ``w`` ``x`` ``y`` ``z`` ``,`` ``-`` ``enter`` ``escape`` ``tab`` ``up`` ``down`` ``pageup`` ``pagedown`` |26: ``b`` ``i`` ``j`` ``=`` ``backspace`` ``delete`` ``space`` ``left`` ``right`` ``home`` ``end`` ``plus`` ``insert`` ``menu`` ``f1`` ``f2`` ``f3`` ``f4`` ``f5`` ``f6`` ``f7`` ``f8`` ``f9`` ``f10`` ``f11`` ``f12`` |
 |Alt |5: ``up`` ``down`` ``left`` ``right`` ``home`` |53: ``a`` ``b`` ``c`` ``d`` ``e`` ``f`` ``g`` ``h`` ``i`` ``j`` ``k`` ``l`` ``m`` ``n`` ``o`` ``p`` ``q`` ``r`` ``s`` ``t`` ``u`` ``v`` ``w`` ``x`` ``y`` ``z`` ``,`` ``-`` ``=`` ``enter`` ``escape`` ``backspace`` ``delete`` ``tab`` ``space`` ``end`` ``pageup`` ``pagedown`` ``plus`` ``insert`` ``menu`` ``f1`` ``f2`` ``f3`` ``f4`` ``f5`` ``f6`` ``f7`` ``f8`` ``f9`` ``f10`` ``f11`` ``f12`` |

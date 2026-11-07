@@ -53,7 +53,7 @@ change. The ''entries'' are not watched — a file another program creates appea
 * <<key "panel:open other metarecord-detail" Shift+Enter>> — show the entry's metarecord in the [[metarecord-detail panel]]; refused on an entry no metarecord records.
 * The buttons at the start of a row ([[Opening a row]]) — `↘` on a folder enters it; `↗` on a file, or on `.`, shows it in the viewer panel; `ⓘ` in the detail panel (greyed when untracked).
 * <<key "cursor:parent self" "Backspace or ←">>, or ''↑ up'' — the parent directory.
-* <<key "cursor:root self" "Alt+Home">>, or the root button — the repository root while ''constrain to repo root'' is checked; `/` when it is not, or when the workspace has no repository, and the button then reads ''root''.
+* <<key "cursor:root self" "Alt+Home">> (or `g h`), or the root button — the repository root while ''constrain to repo root'' is checked; `/` when it is not, or when the workspace has no repository, and the button then reads ''root''.
 * <<key "cursor:find self select" f>> — jump to an entry of this directory by name ([[Jumping to an entry]]).
 * <<key "cursor:find self walk" "Shift+f">> — walk down by name: a directory found is entered and the question asked again, a file found is selected (`shift+Enter` stops on a directory).
 * <<key "folder:open files here" "g d">> — a folder you use often and lately, from anywhere ([[Frecent folders]]). Each folder the panel goes into counts as a view of it.
@@ -76,7 +76,7 @@ when it has one. The panels beside it follow — a [[viewer panel]] previews the
 
 <<key "file-manager:select toggle" Space>> checks the row,
 `file-manager:select all` every entry of the directory, and
-<<key "file-manager:select none" "Ctrl+Shift+a">> unchecks everything. A tracked row is
+<<key "file-manager:select none" "Shift+Space">> (or Ctrl+Shift+a) unchecks everything. A tracked row is
 checked by its metarecord — the set [[metarecord-list panel]] gathers and the bulk
 operations act on —, an untracked one by its path: the file operations take it, the
 field operations cannot until it is recorded ([[Cross-panel selection]]). The footer

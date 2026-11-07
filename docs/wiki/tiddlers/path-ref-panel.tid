@@ -34,7 +34,7 @@ loading pages of children until it is among them.
 |<<key "panel:open other metarecord-detail" Shift+Enter>>, or the `ⓘ` button of a row |show the node in the [[metarecord-detail panel]] of the other slot |
 |the `↗` button of a row |show the node's file in the [[viewer panel]] of the other slot (`mfr_path` tree only) |
 |<<key "cursor:parent self" "Backspace or ←">> |back to its parent |
-|<<key "cursor:root self" "Alt+Home">> |back to the roots |
+|<<key "cursor:root self" "Alt+Home">>, `g h` |back to the roots |
 |<<key "cursor:find self select" f>> |jump to a child by name, among those loaded ([[Jumping to an entry]]) |
 |<<key "cursor:find self walk" "Shift+f">> |walk down by name: a node with children is gone into and the question asked again, a leaf is selected (`shift+Enter` stops on a node) |
 |<<key "view:refresh self" "Ctrl+r">> |read the fields and the children again |

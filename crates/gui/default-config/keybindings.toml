@@ -101,7 +101,8 @@ vars.index = "i"
 "ctrl+e" = { command = "editing:goto line-end", text-input = true }
 "ctrl+k" = { command = "editing:clear-line-end", text-input = true }
 # Ctrl+A goes to the start of the line while typing, and checks every row of
-# a list otherwise; Ctrl+Shift+A unchecks them.
+# a list otherwise; Ctrl+Shift+A unchecks them, and so does Shift+Space (Space
+# checks one).
 "ctrl+a" = [
   { command = "editing:goto line-start", text-input = true },
   { command = "metarecord-list:select all", when = "metarecord-list" },
@@ -421,11 +422,16 @@ vars.index = "i"
   { command = "metarecord-list:focus finder clear", when = "metarecord-list" },
 ]
 
-# Space toggles in place: check a row, play or pause.
+# Space toggles in place: check a row, play or pause; Shift+Space unchecks
+# every row.
 "space" = [
   { command = "metarecord-list:select toggle", when = "metarecord-list" },
   { command = "file-manager:select toggle", when = "file-manager" },
   { command = "viewer:play-pause", when = "viewer" },
+]
+"shift+space" = [
+  { command = "metarecord-list:select none", when = "metarecord-list" },
+  { command = "file-manager:select none", when = "file-manager" },
 ]
 
 # ── Go to (g): a picker, so here by default ──────────────────────────────────
@@ -464,6 +470,8 @@ vars.index = "i"
 "{target-here} {go} s" = { command = "metarecord-list:folder here" }
 "{target-other} {go} s" = { command = "metarecord-list:folder other" }
 "{target-new} {go} s" = { command = "metarecord-list:folder new" }
+# The top of the panel — the root folder, a forest's roots —, as Alt+Home.
+"{go} h" = { command = "cursor:root self" }
 
 # ── Help (h) ─────────────────────────────────────────────────────────────────
 
