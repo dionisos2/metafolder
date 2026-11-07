@@ -58,6 +58,10 @@ export interface PanelFunctions {
   /** Zooms the panel: `in`, `out` or `reset`. Every panel has it — the shell's
    *  panel host provides it (a CSS zoom of the panel), not the panel's code. */
   zoom?: (direction: string) => unknown;
+  /** Scrolls the panel's content: `up`, `down`, to the `top` or the `bottom`.
+   *  Provided by the panel host, as `zoom`: what the cursor commands do in a
+   *  panel without a cursor. */
+  scroll?: (to: ScrollTo) => unknown;
   /** Goes up one level: the parent directory, node or label. */
   parent?: () => unknown;
   /** Goes to the top: the root directory, the roots of a forest. */
@@ -80,12 +84,29 @@ export interface PanelFunctions {
   reveal?: (name: string) => unknown;
 }
 export type FunctionName = keyof PanelFunctions;
+export type ScrollTo = 'up' | 'down' | 'top' | 'bottom';
+
+/** Where each cursor command scrolls a panel without a cursor (doc "Generic
+ *  panel commands"): its keys still move through what it shows. */
+const SCROLLS: Record<string, ScrollTo> = {
+  'cursor:next': 'down',
+  'cursor:prev': 'up',
+  'cursor:first': 'top',
+  'cursor:last': 'bottom',
+};
+
+/** Whether `name`, lacking what it needs in a panel providing `provided`,
+ *  scrolls it instead. */
+function scrollsInstead(name: string, provided: ReadonlySet<string> | undefined): boolean {
+  return name in SCROLLS && provided?.has('scroll') === true;
+}
 
 /** What a panel provides (`metafolder.provide`, `Metafolder.PanelFunctions`)
  *  and the host adds (`zoom`): each function takes first the API of the run
  *  calling it, as a command handler does (doc "Command transactions"). */
 export type ProvidedFunctions = Metafolder.PanelFunctions & {
   zoom?(mf: Metafolder.Api, direction: string): unknown;
+  scroll?(mf: Metafolder.Api, to: ScrollTo): unknown;
 };
 
 /** `provided`, each function bound to the API `mf`. */
@@ -163,10 +184,10 @@ export function missingFunctions(
 }
 
 /** Whether a key bound to `invocation` fires where `panelType` has the focus:
- *  a generic command fires only for a panel providing what it needs, so the
- *  shipped `j` on `cursor:next self` passes through to a panel without a
- *  cursor (the help scrolls) instead of answering "not implemented". Any other
- *  command always applies. `provided(type)` is what that panel type provides,
+ *  a generic command fires only for a panel providing what it needs — or, for
+ *  a cursor command, the `scroll` its host provides —, so a key bound to
+ *  `cursor:find self` passes through to a panel without rows instead of
+ *  answering "not implemented". Any other command always applies. `provided(type)` is what that panel type provides,
  *  undefined when it provides nothing. */
 export function appliesHere(
   invocation: string,
@@ -178,7 +199,8 @@ export function appliesHere(
   if (needed === null) return true;
   const type = panel === SELF ? panelType : (panel ?? null);
   if (!type) return false;
-  return missingFunctions(provided(type), needed).length === 0;
+  const has = provided(type);
+  return missingFunctions(has, needed).length === 0 || scrollsInstead(name, has);
 }
 
 /** The provided function names of `functions`. */
@@ -245,7 +267,12 @@ export async function runGeneric(
   if (name === 'view:zoom' && !ZOOM_DIRECTIONS.includes(rest[0] ?? '')) {
     throw new Error(`unknown zoom "${rest[0] ?? ''}" (${ZOOM_DIRECTIONS.join(' / ')})`);
   }
-  if (missingFunctions(providedNames(functions), needed).length > 0) {
+  const has = providedNames(functions);
+  if (missingFunctions(has, needed).length > 0 && scrollsInstead(name, has)) {
+    await functions.scroll!(SCROLLS[name]);
+    return;
+  }
+  if (missingFunctions(has, needed).length > 0) {
     const what = name === 'cursor:find' && rest[0] === 'walk' ? `${name} walk` : name;
     throw new Error(`${what} is not implemented for the ${panelType} panel`);
   }

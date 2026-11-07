@@ -21,12 +21,14 @@
   import { createPanelApi, type PanelApiInstance } from './api';
   import { createPanelArgSource } from './argSource';
   import { setFindRootProvider } from './roots';
+  import { scrollPanel } from './panelScroll';
   import {
     bindFunctions,
     nextZoom,
     providedNames,
     setFunctionProvider,
     type ProvidedFunctions,
+    type ScrollTo,
   } from '../panelFunctions';
   import { helpCursorSheet } from '../cursor';
   import type { CommandDef, ExecContext, SlotId } from '../types';
@@ -203,17 +205,19 @@
       zoomSheet: new CSSStyleSheet(),
     };
     instances.set(key, instance);
-    // Every panel can be zoomed: the host provides `zoom` before the panel
-    // provides anything, and a panel's own `provide` merges over it.
+    // Every panel can be zoomed, and scrolled by the cursor keys when it has
+    // no cursor: the host provides `zoom` and `scroll` before the panel
+    // provides anything, and a panel's own `provide` merges over them.
     const zoom = async (mf: MetafolderApi, direction: string) => {
       const value = nextZoom(instance.zoom, direction);
       applyZoom(instance, value);
       await mf.workspace.set(zoomVar(panelType), value);
     };
-    panelFunctions.set(key, { ...panelFunctions.get(key), zoom });
+    const scroll = (_mf: MetafolderApi, to: ScrollTo) => scrollPanel(shadow, to);
+    panelFunctions.set(key, { ...panelFunctions.get(key), zoom, scroll });
     providedByType.set(
       panelType,
-      new Set([...(providedByType.get(panelType) ?? []), 'zoom']),
+      new Set([...(providedByType.get(panelType) ?? []), 'zoom', 'scroll']),
     );
     void invoke('ws_get_var', { wsId, key: zoomVar(panelType) }).then((value) =>
       applyZoom(instance, value),

@@ -4,3 +4,5 @@ kind: reference
 summary: Move a panel's cursor up one row (self / a panel type)
 
 Moves the cursor of a panel up one row, stopping on the first: of the focused panel with `self`, of the panel type named otherwise ([[Generic panel commands]]).
+
+In a panel without a cursor it scrolls what the panel shows a few lines up instead ([[Generic panel commands]]).

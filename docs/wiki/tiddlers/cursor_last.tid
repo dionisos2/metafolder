@@ -4,3 +4,5 @@ kind: reference
 summary: Move a panel's cursor to the last row (self / a panel type)
 
 Moves the cursor of a panel onto its last row — the last one ''loaded'' in a paged list such as the [[metarecord-list panel]] or the [[path-ref panel]] ([[Generic panel commands]]).
+
+In a panel without a cursor it scrolls what the panel shows to the bottom instead ([[Generic panel commands]]).

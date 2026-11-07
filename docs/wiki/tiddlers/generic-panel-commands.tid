@@ -22,10 +22,20 @@ the shell runs on a few functions the panel provides:
 |<<cmd "view:refresh">> |reads what the panel shows again |`refresh` |
 |<<cmd "view:zoom">> `in`/`out`/`reset` |zooms the whole panel, kept per workspace |`zoom` — every panel has it: the shell provides it |
 |<<cmd "clipboard:copy">>, <<cmd "clipboard:cut">> |puts the files the panel designates in the file clipboard ([[Global GUI variables]]) |`paths` |
-|<<cmd "clipboard:paste">> |puts it at the file or folder under the cursor ([[File commands]]) |`pasteTarget` |
+|<<cmd "clipboard:paste">> |puts it in the folder holding the selection ([[File commands]]) |`pasteTarget` |
 
 With no row under the cursor, `next` and `prev` both land on the first row, and
 none of them moves past either end. An empty list is left alone.
+
+!!! A panel without a cursor scrolls
+
+In a panel that has no cursor — the [[workspace-info panel]], the [[message panel]],
+the [[shell panel]]… — `cursor:next`, `cursor:prev`, `cursor:first` and `cursor:last`
+scroll what it shows instead: a few lines down or up, to the top, to the bottom. The
+function is `scroll`, which the shell provides to every panel as it does `zoom`: it
+scrolls the element of the panel whose content overflows, the largest one if there
+are several. A panel is never focused in the page — the focus is its slot's
+([[Panel slots and layout]]) —, so an arrow key left to the browser would scroll nothing.
 
 !! Which panel
 
@@ -38,10 +48,10 @@ A script names the panel it drives (`mf gui command "cursor:next trash"`), so
 what it does does not depend on where the focus happens to be.
 
 A panel that lacks a function the command needs answers with an error:
-`cursor:next is not implemented for the message panel`. A ''key'' bound to the
+`cursor:find is not implemented for the message panel`. A ''key'' bound to the
 command does not get that far: a binding fires only where its command applies,
-so in a panel without a cursor the key passes through as if it were not bound
-([[Keybindings]]).
+so in a panel without rows to find in the key passes through as if it were not
+bound ([[Keybindings]]).
 
 A panel whose rows are not always rows can still have a cursor at all times:
 the [[help panel]]'s rows are the results of a search while it lists some, and

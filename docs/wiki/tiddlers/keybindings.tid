@@ -77,10 +77,10 @@ The find bar is the exception: it searches as it is typed too, and its `Enter` a
 `Shift+Enter` step through the matches ([[Find in a panel]]).
 
 A binding also applies only where its ''command'' can run. A generic command —
-`cursor:next self`, run on the focused panel's cursor ([[Generic panel commands]])
-— cannot run in a panel without a cursor, so there its key is not bound at all and
-does what it would do unbound: `↓` is one general binding, yet the help still
-scrolls with it.
+`cursor:find self`, run on the focused panel's rows ([[Generic panel commands]])
+— cannot run in a panel without rows, so there its key is not bound at all and
+does what it would do unbound. `↓` is one general binding on `cursor:next self`,
+which in a panel without a cursor scrolls it instead.
 
 One key can have only one binding in a given place: the same key, `when` and `focus`.
 

@@ -136,6 +136,39 @@ describe('appliesHere — whether a key bound to a generic command fires', () =>
   });
 });
 
+// A panel without a cursor still moves with the cursor keys: the view scrolls,
+// through the `scroll` every panel host provides (as it does `zoom`).
+describe('a panel without a cursor scrolls', () => {
+  const provided = (type: string) =>
+    ({
+      'workspace-info': new Set(['zoom', 'scroll']),
+      trash: new Set(['index', 'count', 'select', 'zoom', 'scroll']),
+    })[type];
+
+  test('the cursor keys apply to it', () => {
+    for (const verb of ['next', 'prev', 'first', 'last']) {
+      expect(appliesHere(`cursor:${verb} self`, 'workspace-info', provided)).toBe(true);
+    }
+    // …but not the commands that need rows to act on.
+    expect(appliesHere('cursor:find self select', 'workspace-info', provided)).toBe(false);
+    expect(appliesHere('cursor:descend self', 'workspace-info', provided)).toBe(false);
+  });
+
+  test('next, prev, first and last scroll down, up, to the top and the bottom', async () => {
+    const scroll = vi.fn();
+    for (const verb of ['next', 'prev', 'first', 'last']) await run(`cursor:${verb}`, { scroll });
+    expect(scroll.mock.calls).toEqual([['down'], ['up'], ['top'], ['bottom']]);
+  });
+
+  test('a panel with a cursor moves it, and does not scroll', async () => {
+    const scroll = vi.fn();
+    const { fns, state } = list(3, 0);
+    await run('cursor:next', { ...fns, scroll });
+    expect(state.at).toBe(1);
+    expect(scroll).not.toHaveBeenCalled();
+  });
+});
+
 describe('runGeneric — moving the cursor', () => {
   test('next moves one row down', async () => {
     const { fns, state } = list(5, 1);

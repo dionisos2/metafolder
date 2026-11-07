@@ -4,3 +4,5 @@ kind: reference
 summary: Move a panel's cursor to the first row (self / a panel type)
 
 Moves the cursor of a panel onto its first row — in the [[log panel]], the newest; in the [[recent panel]], the most recent ([[Generic panel commands]]).
+
+In a panel without a cursor it scrolls what the panel shows to the top instead ([[Generic panel commands]]).
