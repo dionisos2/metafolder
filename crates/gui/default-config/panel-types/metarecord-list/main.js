@@ -475,7 +475,8 @@ export async function mount(root, metafolder) {
               index === cursorIndex && 'cursor',
               selection.has(metarecord.uuid) && 'checked',
             ],
-            onclick: () => setCursor(metafolder, index),
+            onclick: (/** @type {MouseEvent} */ event) => void clickRow(event, index),
+            onmousedown: keepTextUnselected,
           },
           el('td', { class: 'open-cell' }, rowOpenButtons(index)),
           shownColumns().map((column) => el('td', {}, cellText(column, metarecord))),
@@ -494,7 +495,8 @@ export async function mount(root, metafolder) {
               index === cursorIndex && 'cursor',
               selection.has(metarecord.uuid) && 'checked',
             ],
-            onclick: () => setCursor(metafolder, index),
+            onclick: (/** @type {MouseEvent} */ event) => void clickRow(event, index),
+            onmousedown: keepTextUnselected,
           },
           thumbnail(metafolder.guiServer, pathsOf(metarecord)[0], {
             isDir: isDirMetarecord(metarecord),
@@ -581,6 +583,32 @@ export async function mount(root, metafolder) {
       return;
     }
     await cursor.move(cursorIndex, mf);
+  }
+
+  /** A click on row `index` (doc "Cross-panel selection"): it moves the
+   *  cursor there; with Ctrl it also checks the row, or unchecks it; with
+   *  Shift it checks every row from the cursor to it, on top of what is
+   *  checked. @param {MouseEvent} event @param {number} index */
+  async function clickRow(event, index) {
+    const metarecord = metarecords[index];
+    if (!metarecord) return;
+    if (event.shiftKey) {
+      const from = cursorIndex < 0 ? index : cursorIndex;
+      const [low, high] = from < index ? [from, index] : [index, from];
+      await selection.add(
+        metarecords.slice(low, high + 1).map((e) => e.uuid),
+        metafolder,
+      );
+    } else if (event.ctrlKey || event.metaKey) {
+      await selection.toggle(metarecord.uuid, metafolder);
+    }
+    await setCursor(metafolder, index);
+  }
+
+  /** Shift+click checks a range: the browser must not select text for it.
+   *  @param {MouseEvent} event */
+  function keepTextUnselected(event) {
+    if (event.shiftKey) event.preventDefault();
   }
 
   /** @param {MetafolderApi} mf */

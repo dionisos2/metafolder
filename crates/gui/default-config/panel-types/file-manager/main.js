@@ -471,7 +471,11 @@ export async function mount(root, metafolder) {
               hot && 'hot',
               item.escaped && 'escaped-name',
             ],
-            onclick: () => select(metafolder, index),
+            onclick: (/** @type {MouseEvent} */ event) => void clickRow(event, index),
+            // Shift+click checks a range: the browser must not select text for it.
+            onmousedown: (/** @type {MouseEvent} */ event) => {
+              if (event.shiftKey) event.preventDefault();
+            },
             oncontextmenu: (/** @type {MouseEvent} */ event) => rowMenu(event, index),
             ...(title && { title }),
           },
@@ -650,6 +654,34 @@ export async function mount(root, metafolder) {
     const uuid = trackedPaths.get(item.path);
     if (uuid) await selection.toggle(uuid, mf);
     else await checkedPaths.toggle(item.path, mf);
+  }
+
+  /** A click on row `index` (doc "Cross-panel selection"): it moves the
+   *  cursor there; with Ctrl it also checks the row, or unchecks it, as Space
+   *  does; with Shift it checks every entry from the cursor to it — not the
+   *  "." / ".." rows, which are navigation — on top of what is checked.
+   *  @param {MouseEvent} event @param {number} index */
+  async function clickRow(event, index) {
+    const item = listing[index];
+    if (!item) return;
+    if (event.shiftKey) {
+      const from = cursorIndex < 0 ? index : cursorIndex;
+      const [low, high] = from < index ? [from, index] : [index, from];
+      /** @type {string[]} */
+      const uuids = [];
+      /** @type {Path[]} */
+      const paths = [];
+      for (const entry of listing.slice(Math.max(low, syntheticCount), high + 1)) {
+        const uuid = trackedPaths.get(entry.path);
+        if (uuid) uuids.push(uuid);
+        else paths.push(entry.path);
+      }
+      await selection.add(uuids, metafolder);
+      await checkedPaths.add(paths, metafolder);
+    } else if (event.ctrlKey || event.metaKey) {
+      await toggleRow(metafolder, item);
+    }
+    await select(metafolder, index);
   }
 
   /** @param {MetafolderApi} mf */

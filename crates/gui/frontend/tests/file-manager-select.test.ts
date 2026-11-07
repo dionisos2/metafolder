@@ -249,6 +249,34 @@ describe('checking metarecords from the file manager', () => {
     expect(untracked()).toEqual(['/repo/music/plain.txt']);
   });
 
+  /** A click on row `index`, with the modifiers given. */
+  async function click(shadow: ShadowRoot, index: number, init: MouseEventInit = {}) {
+    rows(shadow)[index].dispatchEvent(new MouseEvent('click', { bubbles: true, ...init }));
+    await settle();
+  }
+
+  test('Ctrl+click checks the row, tracked or not, and unchecks it; a click checks nothing', async () => {
+    const { selected, untracked, shadow } = await mountFileManager();
+    await click(shadow, 2);
+    expect(selected()).toEqual([]);
+    await click(shadow, 3, { ctrlKey: true }); // song.mp3
+    await click(shadow, 4, { ctrlKey: true }); // plain.txt
+    expect(selected()).toEqual(['u-song']);
+    expect(untracked()).toEqual(['/repo/music/plain.txt']);
+    expect(rows(shadow)[4].classList.contains('cursor')).toBe(true);
+    await click(shadow, 3, { ctrlKey: true });
+    expect(selected()).toEqual([]);
+  });
+
+  test('Shift+click checks the entries from the cursor to the one clicked, not "." or ".."', async () => {
+    const { api, selected, untracked, shadow } = await mountFileManager();
+    await moveTo(api, 0); // "."
+    await click(shadow, 3, { shiftKey: true }); // song.mp3
+    expect(selected()).toEqual(['u-dir1', 'u-song']);
+    expect(untracked()).toEqual([]);
+    expect(rows(shadow)[3].classList.contains('cursor')).toBe(true);
+  });
+
   test('select none clears the whole selection', async () => {
     const { handlers, selected, untracked } = await mountFileManager({
       selected_metarecords: ['u-song'],

@@ -66,7 +66,7 @@ Besides the one highlighted metarecord, a workspace has a ''set'' of checked one
 what the bulk operations act on (the ''Checked selection'' target of
 `metarecord:bulk`, [[Editing metarecords in the GUI]]), and what [[mf gui selected]] prints for a script.
 
-* <<key "metarecord-list:select toggle" Space>> checks or unchecks the row, in `metarecord-list` and in `file-manager` alike; so does ''Add to the selection'' in a row's right-click menu. A file-manager row is checked through its metarecord, or by its path when it has none (below).
+* <<key "metarecord-list:select toggle" Space>> checks or unchecks the row, in `metarecord-list` and in `file-manager` alike; so does ''Add to the selection'' in a row's right-click menu, and so does a ''Ctrl+click'' on the row. A ''Shift+click'' checks every row from the cursor to the one clicked — in the file manager, its entries, not `.` and `..` —, on top of what is checked. Both move the cursor there, as a plain click does, which checks nothing. A file-manager row is checked through its metarecord, or by its path when it has none (below).
 * ''It survives changing the list'': a checked metarecord stays checked when the query or the finder moves on, so a set can be gathered from several lists — and from the file manager — before anything acts on it. `select all` checks every loaded row ''on top of'' what is checked; `select none` (<<key "metarecord-list:select none" "Shift+Space">>, or Ctrl+Shift+a) empties it.
 * Only a metarecord that no longer ''exists'' — deleted or trashed, from anywhere, the command line included — leaves it, when a panel next reloads its rows: it could never be shown or unchecked again.
 * It holds metarecords of the workspace's one repository.

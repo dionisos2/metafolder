@@ -74,7 +74,7 @@ The row under the cursor is the workspace's selection: its path, and its metarec
 when it has one. The panels beside it follow — a [[viewer panel]] previews the file,
 [[metarecord-detail panel]] shows its fields ([[Cross-panel selection]]).
 
-<<key "file-manager:select toggle" Space>> checks the row,
+<<key "file-manager:select toggle" Space>> or a Ctrl+click checks the row, a Shift+click every entry from the cursor to it,
 `file-manager:select all` every entry of the directory, and
 <<key "file-manager:select none" "Shift+Space">> (or Ctrl+Shift+a) unchecks everything. A tracked row is
 checked by its metarecord — the set [[metarecord-list panel]] gathers and the bulk

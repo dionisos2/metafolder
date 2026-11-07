@@ -272,6 +272,31 @@ describe('the checked selection across lists', () => {
     expect(checked).toEqual([false, true]);
   });
 
+  /** A click on row `index`, with the modifiers given. */
+  async function click(shadow: ShadowRoot, index: number, init: MouseEventInit = {}) {
+    rows(shadow)[index].dispatchEvent(new MouseEvent('click', { bubbles: true, ...init }));
+    await settle();
+  }
+
+  test('a click moves the cursor and checks nothing; Ctrl+click checks the row, and unchecks it', async () => {
+    const harness = await mountList({});
+    await click(harness.shadow, 1);
+    expect(harness.selected()).toEqual([]);
+    await click(harness.shadow, 0, { ctrlKey: true });
+    expect(harness.selected()).toEqual(['u-a']);
+    expect(rows(harness.shadow)[0].classList.contains('cursor')).toBe(true);
+    await click(harness.shadow, 0, { ctrlKey: true });
+    expect(harness.selected()).toEqual([]);
+  });
+
+  test('Shift+click checks every row from the cursor to the one clicked', async () => {
+    // u-c, checked in another list, stays checked.
+    const harness = await mountList({ selected_metarecords: ['u-c'] });
+    await click(harness.shadow, 1, { shiftKey: true }); // the cursor is on row 0
+    expect(harness.selected()).toEqual(['u-c', 'u-a', 'u-b']);
+    expect(rows(harness.shadow)[1].classList.contains('cursor')).toBe(true);
+  });
+
   test('select none clears the whole selection', async () => {
     const { handlers, selected } = await mountList({ selected_metarecords: ['u-a', 'u-z'] });
     await handlers.get('metarecord-list:select')!('none');
