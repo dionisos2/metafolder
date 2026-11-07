@@ -241,8 +241,8 @@ registerArgs("cursor:find", [
 registerArgs("panel:focus", [
   {
     name: "slot",
-    prompt: () => "Focus which slot? (next / left / right / cycle)",
-    complete: () => ["next", "left", "right", "cycle"],
+    prompt: () => "Focus which slot? (next / left / right)",
+    complete: () => ["next", "left", "right"],
   },
 ]);
 

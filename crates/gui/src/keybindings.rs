@@ -311,9 +311,7 @@ pub fn key_level(chord: &str) -> Option<u8> {
 // `command-input:focus` is listed bare so both of its modes are covered: the
 // match below also accepts an invocation that pre-fills arguments, and a script
 // must be unable to take over `!` any more than `:`.
-// `panel:focus cycle` (F6) walks to the question and back from it.
-const RESERVED_COMMANDS: [&str; 3] =
-    ["command-input:focus", "script-keys:toggle", "panel:focus cycle"];
+const RESERVED_COMMANDS: [&str; 2] = ["command-input:focus", "script-keys:toggle"];
 
 /// The combos a script's `mf gui input` may not await: whatever opens the
 /// command input, whatever toggles the script keys, `escape` (which always
@@ -2405,15 +2403,14 @@ vars.y = ","
 ":" = { command = "command-input:focus command" }
 "ctrl+p" = { command = "command-input:focus command" }
 "tab" = { command = "script-keys:toggle" }
-"f6" = { command = "panel:focus cycle" }
+"f6" = { command = "script-keys:toggle" }
 "o" = { command = "panel:focus next" }
 "y" = { command = "metarecord-list:next" }
 "g g" = { command = "metarecord-list:goto-top" }
 "#;
         let set = KeybindingSet::from_sources(defaults, "").unwrap();
         let reserved = reserved_combos(&set.compiled());
-        // F6 walks to the question and back from it: it is a way out too.
-        // `panel:focus next` is not — it moves between the panels only.
+        // `panel:focus next` is no way out: it moves between the panels only.
         assert_eq!(
             reserved,
             vec![":", "backspace", "ctrl+escape", "ctrl+p", "escape", "f6", "tab"]

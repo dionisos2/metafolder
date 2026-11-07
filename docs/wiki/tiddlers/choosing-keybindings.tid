@@ -78,7 +78,7 @@ Two conventions are left out on purpose: `j`/`k` (the arrows do it, and they wou
 cost two letters) and `n`/`p` for next and previous.
 
 Tab moves between the elements of a panel, as in a browser; it never changes panel
-— `o` and F6 do.
+— `o` does.
 
 !! What costs more
 

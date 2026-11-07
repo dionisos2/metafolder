@@ -42,11 +42,9 @@ seen before every panel and global binding, so a script offering `y`, `n` and `s
 never in conflict with an `n` bound in the panel underneath — and that panel cannot be
 used meanwhile. A key typed in a text field is text, and reaches neither.
 
-The ''script keys'' checkbox in the question bar gives them back
-(`script-keys:toggle`), and so does
-<<key "panel:focus cycle" F6>>, which walks the left panel, the right one and the
-question in turn: on the question the keys are the script's, on a panel they are
-the panel's. Unticked, every key means
+The ''script keys'' checkbox in the question bar gives them back, and so does
+<<key "script-keys:toggle" F6>>, which takes them again the next time; neither
+moves the focus from the panel it is on. Unticked, every key means
 again what it means in the panel; the question stays, its keys struck through, and
 is answered with `answer:send`, or by ticking the box again. The choice holds from
 one question to the next, but every ''new'' run starts with its keys live: a script is
@@ -62,11 +60,10 @@ refused (`400`) before it is shown.
 |Ctrl+Escape |kills it |
 |Backspace |goes back: answers `back` |
 |<<key "command-input:focus command clear" ":">>, <<key "command-input:focus bash" "!">> |open the command input |
-|`script-keys:toggle` |flips the script keys (no key by default) |
-|<<key "panel:focus cycle" F6>> |walks the panels and the question |
+|<<key "script-keys:toggle" F6>> |flips the script keys |
 
 Escape, Ctrl+Escape and Backspace are reserved as such; the others are whatever keys
-are bound to `command-input:focus`, `script-keys:toggle` and `panel:focus cycle`, so
+are bound to `command-input:focus` and `script-keys:toggle`, so
 rebinding those moves
 the reservation with them ([[Keybindings]]).
 

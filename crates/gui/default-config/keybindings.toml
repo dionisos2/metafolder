@@ -78,11 +78,11 @@ vars.index = "i"
 "shift+x" = { command = "command-input:focus command" }
 "!" = { command = "command-input:focus bash" }
 
-# The other panel; F6 walks the panels and a script's question (doc "Script
-# sessions"), whose keys it takes and gives back. Tab is left to the panels.
+# The other panel; Tab is left to the panels. F6 takes a script's keys and
+# gives them back (doc "Script sessions").
 "o" = { command = "panel:focus next" }
 "l" = { command = "hints:open" }
-"f6" = { command = "panel:focus cycle" }
+"f6" = { command = "script-keys:toggle" }
 
 # Macros (doc "Macros"), on Emacs's keys.
 "f3" = { command = "macro:toggle-recording" }

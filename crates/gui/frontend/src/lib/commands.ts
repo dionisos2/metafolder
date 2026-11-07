@@ -7,7 +7,6 @@ import { confirmClosing } from "./unsavedEdits";
 import { recordPath } from "../../../panel-shim/file-actions.js";
 import { pathText } from "../../../panel-shim/ui.js";
 import { type FileOps } from "./fileCommands";
-import { cycleStep } from "./focusCycle";
 import { bindView, completionLabels } from "./completions";
 import type {
   CompletionItem,
@@ -924,23 +923,6 @@ function fileOps(ws: string, context: ExecContext): FileOps {
   };
 }
 
-/** `panel:focus cycle` (F6): the left panel, the right one, the script's
- *  question when one awaits keys, and round again (`cycleStep`). */
-async function focusCycle(): Promise<void> {
-  const step = cycleStep({
-    split: store.layout.left.visible && store.layout.right.visible,
-    focused: store.layout.focused,
-    question: (activeQuestion()?.keys.length ?? 0) > 0,
-    scriptKeys: store.ui.scriptKeys,
-  });
-  if (step.scriptKeys !== undefined && step.scriptKeys !== store.ui.scriptKeys) {
-    await invoke("script_keys_toggle");
-  }
-  if (step.focus !== undefined) await invoke("focus_slot", { slot: step.focus });
-}
-
-
-
 // ── Dispatch ───────────────────────────────────────────────────────────
 
 /** Posts a status message on the focused workspace's status bar (and so to
@@ -1700,12 +1682,11 @@ async function runCommand(
       // keybinding can reach a slot without knowing which one holds the focus.
       if (args[0] === undefined || args[0] === "next")
         await invoke("panel_focus_next");
-      else if (args[0] === "cycle") await focusCycle();
       else if (args[0] === "left" || args[0] === "right")
         await invoke("focus_slot", { slot: args[0] });
       else
         await status(
-          `unknown slot: "${args[0]}" (expected next / left / right / cycle)`,
+          `unknown slot: "${args[0]}" (expected next / left / right)`,
         );
       return true;
     case "panel:open": {
