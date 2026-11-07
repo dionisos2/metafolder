@@ -157,6 +157,15 @@ async function mountPanel(pages: number, options: { displayed?: boolean; echoLat
       api.listeners.get('selected_metarecord')?.({ uuid, repo: 'r' });
       await new Promise((r) => setTimeout(r, 0));
     },
+    /** A variable written under the list by someone else — a saved workspace
+     *  loaded here (doc "Saved workspaces"). */
+    writeElsewhere: async (key: string, value: unknown) => {
+      api.store.set(key, value);
+      api.listeners.get(key)?.(value);
+      await new Promise((r) => setTimeout(r, 0));
+    },
+    headerWidths: () =>
+      [...shadow.querySelectorAll<HTMLElement>('#header-row th')].map((th) => th.style.width),
     cursorRow: () => [...shadow.querySelectorAll('#rows tr')].findIndex((tr) => tr.classList.contains('cursor')),
     provide: api.provide,
     /** `cursor:next` on the list (doc "Generic panel commands"). */
@@ -186,6 +195,17 @@ describe('a selection made elsewhere', () => {
 
     await p.next();
     expect(p.selected()).toBe('m4');
+  });
+
+  test('column widths written under a mounted list are applied (a layout loaded here)', async () => {
+    const p = await mountPanel(1);
+    expect(p.headerWidths().some((w) => w !== '')).toBe(false);
+    // The first shown column's spec, as the header names it (th 0 is the
+    // open buttons').
+    const th = [...p.shadow.querySelectorAll<HTMLElement>('#header-row th')][1];
+    const name = th.textContent?.replace(/ [▲▼]$/, '') ?? '';
+    await p.writeElsewhere('metarecord-list:column-widths', { [name]: 123 });
+    expect(p.headerWidths()[1]).toBe('123px');
   });
 
   test('the late echo of the list’s own selection does not pull the cursor back', async () => {

@@ -44,6 +44,18 @@ function configuredColumns(spec, key) {
 }
 
 /**
+ * The `metarecord-list:column-widths` variable as the panel uses it: column
+ * spec → px; anything else (unset, stale, hand-edited) is no widths at all.
+ * @param {unknown} value @returns {Record<string, number>}
+ */
+function asWidths(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter(([, px]) => typeof px === 'number' && px > 0),
+  );
+}
+
+/**
  * A column spec, as ./columns.js parses it.
  * @typedef {import('/__columns.js').Column} Column
  *
@@ -1343,6 +1355,12 @@ export async function mount(root, metafolder) {
     if (queryRan) void fetchPage(true);
   });
   workspace.onChange('metarecord-list:mode', applyMode);
+  // Written under the mounted list by a saved layout loaded here (doc "Saved
+  // workspaces"), or echoed back from a resize of its own.
+  workspace.onChange('metarecord-list:column-widths', (value) => {
+    widths = asWidths(value);
+    renderHeader();
+  });
   workspace.onChange('metarecord-list:finder-fields', (value) => {
     finderFields = Array.isArray(value) && value.length ? value : defaultFinderFields.slice();
     updateFinderFieldsLabel();
@@ -1353,9 +1371,7 @@ export async function mount(root, metafolder) {
   // Adopt the checked selection (shared with the file manager, kept across
   // list changes) before the first fetch can repaint the rows.
   await selection.load();
-  widths = /** @type {Record<string, number>} */ (
-    (await workspace.get('metarecord-list:column-widths')) ?? {}
-  );
+  widths = asWidths(await workspace.get('metarecord-list:column-widths'));
   pageSize = sanitizePageSize(await workspace.get('metarecord-list:page-size'));
   applyMode(await workspace.get('metarecord-list:mode'));
 
