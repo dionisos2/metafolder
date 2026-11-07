@@ -290,6 +290,36 @@ describe('file-manager going up', () => {
   });
 });
 
+// The root is the repo root while navigation is constrained to it, and the
+// machine's otherwise (doc "file-manager panel").
+describe('file-manager root', () => {
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = () => {};
+  });
+
+  test('cursor:root, the constraint off, goes to / and the button says so', async () => {
+    const s = stub('r', { 'file-manager:dir': '/repo/sub' });
+    await mount(s);
+    const box = s.root.getElementById('constrain') as HTMLInputElement;
+    box.checked = false;
+    box.dispatchEvent(new Event('change'));
+    await settle();
+    expect(s.root.getElementById('goto-root')?.textContent).toBe('root');
+    await generic(s.api.provide, 'cursor:root');
+    await settle();
+    expect(s.root.getElementById('current-path')?.textContent).toBe('/');
+  });
+
+  test('cursor:root, the constraint on, goes to the repo root', async () => {
+    const s = stub('r', { 'file-manager:dir': '/repo/sub' });
+    await mount(s);
+    expect(s.root.getElementById('goto-root')?.textContent).toBe('repo root');
+    await generic(s.api.provide, 'cursor:root');
+    await settle();
+    expect(s.root.getElementById('current-path')?.textContent).toBe('/repo');
+  });
+});
+
 describe('file-manager location variables', () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = () => {}; // jsdom has no scrollIntoView

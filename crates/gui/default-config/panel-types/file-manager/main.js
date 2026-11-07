@@ -918,18 +918,22 @@ export async function mount(root, metafolder) {
     return items;
   }
 
-  // Jump to "the root": the repository's when one is active, the filesystem's
-  // otherwise — with no repo there is no repo root to name, and the panel is
-  // then a plain disk browser, where "/" is the only root there is.
+  // "The root": the repository's while navigation is constrained to it, the
+  // filesystem's otherwise — with no repo there is no repo root to name, and
+  // unconstrained the panel is a plain disk browser, where "/" is the only
+  // root there is.
+  /** @returns {Path} */
+  function rootDir() {
+    return constrainToRoot && repoRoot !== null ? repoRoot : '/';
+  }
   /** @param {MetafolderApi} mf */
   async function gotoRoot(mf) {
-    await open(mf, repoRoot ?? '/');
+    await open(mf, rootDir());
   }
 
-  // Which root the button offers, so it never promises a repo root that the
-  // panel has no repository for.
+  // Which root the button offers, so it never promises a root it does not go to.
   function renderRootButton() {
-    gotoRootButton.textContent = repoRoot === null ? 'root' : 'repo root';
+    gotoRootButton.textContent = constrainToRoot && repoRoot !== null ? 'repo root' : 'root';
   }
 
   // ── The location is the state (doc "Cross-panel selection") ─────────────
@@ -1015,6 +1019,7 @@ export async function mount(root, metafolder) {
     if (constrainToRoot && repoRoot !== null && !insideRoot(dir)) {
       constrainToRoot = false;
       constrainBox.checked = false;
+      renderRootButton();
     }
     if (currentDir === null || !samePath(dir, currentDir)) await open(metafolder, dir, cursor);
     else if (cursor) await selectByName(metafolder, cursor);
@@ -1134,6 +1139,7 @@ export async function mount(root, metafolder) {
   async function setConstrain(mf, checked) {
     constrainToRoot = checked;
     constrainBox.checked = checked;
+    renderRootButton();
     if (currentDir !== null) await open(mf, currentDir);
   }
   constrainBox.addEventListener('change', () => void setConstrain(metafolder, constrainBox.checked));
@@ -1222,7 +1228,7 @@ export async function mount(root, metafolder) {
     handler: (mf, where) => activate(mf, cursorIndex, where),
   });
   // Up one level, and to the top, on `cursor:parent` / `cursor:root` (doc
-  // "Generic panel commands"): the root is the repo root, or / with no repo.
+  // "Generic panel commands"): the root is the repo root while constrained to it, / otherwise.
   metafolder.provide({ parent: goUp, root: gotoRoot });
   // The `file:` commands (doc "File commands") create in the folder shown and
   // put the cursor on what they made; a paste lands at the row under the
