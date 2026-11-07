@@ -66,14 +66,14 @@ function item(items: unknown[], label: string): MenuItem {
 }
 
 describe('file-actions shared operations', () => {
-  test('Copy fills the clipboard; Paste copies each entry into a directory target', async () => {
+  test('Copy fills the clipboard; Paste on a folder copies each entry beside it', async () => {
     const { metafolder, fs } = mockMf();
     const onChanged = vi.fn();
-    const src = fileMenuItems({ metafolder, repo: 'r', path: '/dir/a.txt', isDir: false, onChanged });
+    const src = fileMenuItems({ metafolder, repo: 'r', path: '/dir/a.txt', onChanged });
     item(src, 'Copy').action!();
     expect(metafolder.global.current('clipboard')).toEqual({ paths: ['/dir/a.txt'], mode: 'copy' });
 
-    const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst', isDir: true, onChanged });
+    const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst/sub', onChanged });
     item(dst, 'Paste').action!();
     await vi.waitFor(() => expect(fs.copy).toHaveBeenCalledWith('/dir/a.txt', '/dst/a.txt'));
     await vi.waitFor(() => expect(onChanged).toHaveBeenCalled());
@@ -83,25 +83,25 @@ describe('file-actions shared operations', () => {
     // Another workspace's panel copied: the global variable holds it, and
     // Paste is offered here at once, from the shell's copy.
     const { metafolder } = mockMf();
-    const menuBefore = fileMenuItems({ metafolder, repo: 'r', path: '/dst', isDir: true });
+    const menuBefore = fileMenuItems({ metafolder, repo: 'r', path: '/dst/sub' });
     expect(item(menuBefore, 'Paste').disabled).toBe(true);
     await metafolder.global.set('clipboard', { paths: ['/a/one.txt'], mode: 'copy' });
-    const menuAfter = fileMenuItems({ metafolder, repo: 'r', path: '/dst', isDir: true });
+    const menuAfter = fileMenuItems({ metafolder, repo: 'r', path: '/dst/sub' });
     expect(item(menuAfter, 'Paste').disabled).toBe(false);
     item(menuAfter, 'Cut').action!();
     expect(metafolder.global.set).toHaveBeenLastCalledWith('clipboard', {
-      paths: ['/dst'],
+      paths: ['/dst/sub'],
       mode: 'cut',
     });
   });
 
   test('Cut then Paste moves and clears the clipboard', async () => {
     const { metafolder, fs } = mockMf();
-    const src = fileMenuItems({ metafolder, repo: 'r', path: '/dir/a.txt', isDir: false });
+    const src = fileMenuItems({ metafolder, repo: 'r', path: '/dir/a.txt' });
     item(src, 'Cut').action!();
     expect(metafolder.global.current('clipboard')).toEqual({ paths: ['/dir/a.txt'], mode: 'cut' });
 
-    const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst', isDir: true });
+    const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst/sub' });
     item(dst, 'Paste').action!();
     await vi.waitFor(() => expect(fs.move).toHaveBeenCalledWith('/dir/a.txt', '/dst/a.txt'));
     await vi.waitFor(() => expect(metafolder.global.current('clipboard')).toBeNull());
@@ -110,7 +110,7 @@ describe('file-actions shared operations', () => {
   test('Paste into itself is refused via statusBar.error with the error timeout', async () => {
     const { metafolder, statusBar, fs } = mockMf();
     void metafolder.global.set('clipboard', { paths: ['/dst'], mode: 'cut' });
-    const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst', isDir: true });
+    const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst/sub' });
     item(dst, 'Paste').action!();
     await vi.waitFor(() =>
       expect(statusBar.error).toHaveBeenCalledWith(expect.stringContaining('into itself'), 2000),
@@ -125,7 +125,7 @@ describe('file-actions shared operations', () => {
       }),
     });
     void metafolder.global.set('clipboard', { paths: ['/x/y.txt'], mode: 'copy' });
-    const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst', isDir: true });
+    const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst/sub' });
     item(dst, 'Paste').action!();
     await vi.waitFor(() => expect(statusBar.error).toHaveBeenCalledWith(expect.any(Error), 2000));
   });
@@ -133,14 +133,14 @@ describe('file-actions shared operations', () => {
   test('Paste of a folder copied onto itself lands beside it', async () => {
     const { metafolder, fs } = mockMf(undefined, { readDir: vi.fn(async () => [{ name: 'd' }]) });
     void metafolder.global.set('clipboard', { paths: ['/dir/d'], mode: 'copy' });
-    const menu = fileMenuItems({ metafolder, repo: 'r', path: '/dir/d', isDir: true });
+    const menu = fileMenuItems({ metafolder, repo: 'r', path: '/dir/d' });
     item(menu, 'Paste').action!();
     await vi.waitFor(() => expect(fs.copy).toHaveBeenCalledWith('/dir/d', '/dir/d copy'));
   });
 
   test('Paste with an empty clipboard reports it and does nothing', async () => {
     const { metafolder, statusBar, fs } = mockMf();
-    const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst', isDir: true });
+    const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst/sub' });
     item(dst, 'Paste').action!();
     await vi.waitFor(() =>
       expect(statusBar.message).toHaveBeenCalledWith('clipboard is empty', expect.any(Number)),
@@ -151,7 +151,7 @@ describe('file-actions shared operations', () => {
   test('Paste of two entries reports the plural count', async () => {
     const { metafolder, statusBar, fs } = mockMf();
     void metafolder.global.set('clipboard', { paths: ['/a/one.txt', '/a/two.txt'], mode: 'copy' });
-    const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst', isDir: true });
+    const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst/sub' });
     item(dst, 'Paste').action!();
     await vi.waitFor(() => expect(fs.copy).toHaveBeenCalledTimes(2));
     expect(statusBar.message).toHaveBeenCalledWith('Pasted 2 items', expect.any(Number));
@@ -160,8 +160,8 @@ describe('file-actions shared operations', () => {
   test('Paste onto a file target lands in the file’s parent directory', async () => {
     const { metafolder, fs } = mockMf();
     void metafolder.global.set('clipboard', { paths: ['/a/one.txt'], mode: 'copy' });
-    // isDir=false → the paste target is the parent of the clicked file.
-    const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst/here.txt', isDir: false });
+    // A file: the paste lands in the folder holding it.
+    const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst/here.txt' });
     item(dst, 'Paste').action!();
     await vi.waitFor(() => expect(fs.copy).toHaveBeenCalledWith('/a/one.txt', '/dst/one.txt'));
   });
@@ -169,7 +169,7 @@ describe('file-actions shared operations', () => {
   test('Rename prompts and moves to the new name; a blank answer is a no-op', async () => {
     const { metafolder, fs, statusBar } = mockMf();
     vi.stubGlobal('prompt', vi.fn(() => 'renamed.txt'));
-    const menu = fileMenuItems({ metafolder, repo: 'r', path: '/dir/a.txt', isDir: false });
+    const menu = fileMenuItems({ metafolder, repo: 'r', path: '/dir/a.txt' });
     item(menu, 'Rename…').action!();
     await vi.waitFor(() => expect(fs.move).toHaveBeenCalledWith('/dir/a.txt', '/dir/renamed.txt'));
 
@@ -184,7 +184,7 @@ describe('file-actions shared operations', () => {
   test('Rename to a name with a / says so and moves nothing out of the folder', async () => {
     const { metafolder, fs, statusBar } = mockMf();
     vi.stubGlobal('prompt', vi.fn(() => '../renamed.txt'));
-    const menu = fileMenuItems({ metafolder, repo: 'r', path: '/dir/a.txt', isDir: false });
+    const menu = fileMenuItems({ metafolder, repo: 'r', path: '/dir/a.txt' });
     item(menu, 'Rename…').action!();
     await vi.waitFor(() =>
       expect(statusBar.error).toHaveBeenCalledWith(
@@ -199,14 +199,14 @@ describe('file-actions shared operations', () => {
     const writeText = vi.fn(async () => {});
     vi.stubGlobal('navigator', { clipboard: { writeText } });
     const { metafolder } = mockMf();
-    const menu = fileMenuItems({ metafolder, repo: 'r', path: '/dir/a.txt', name: 'a.txt', isDir: false });
+    const menu = fileMenuItems({ metafolder, repo: 'r', path: '/dir/a.txt', name: 'a.txt' });
     item(menu, 'Copy full path').action!();
     await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith('/dir/a.txt'));
   });
 
   test('Copy full path is offered for a directory too', () => {
     const { metafolder } = mockMf();
-    const menu = fileMenuItems({ metafolder, repo: 'r', path: '/dir/sub', isDir: true });
+    const menu = fileMenuItems({ metafolder, repo: 'r', path: '/dir/sub' });
     expect(labels(menu)).toContain('Copy full path');
   });
 
@@ -214,7 +214,7 @@ describe('file-actions shared operations', () => {
     // So the menu and the key cannot drift apart (doc "Deleting an item"):
     // the question, when there is one, is item:delete's.
     const { metafolder, trash, workspace, commands } = mockMf();
-    const menu = fileMenuItems({ metafolder, repo: 'r', path: '/dir/a.txt', name: 'a.txt', isDir: false });
+    const menu = fileMenuItems({ metafolder, repo: 'r', path: '/dir/a.txt', name: 'a.txt' });
     item(menu, 'Move to trash').action!();
     await vi.waitFor(() => expect(commands.invoke).toHaveBeenCalledWith(['item:delete']));
     expect(workspace.set).toHaveBeenCalledWith('selected_paths', ['/dir/a.txt']);
@@ -223,7 +223,7 @@ describe('file-actions shared operations', () => {
 
   test('Open with… publishes the clicked path, then runs the file:open-with builtin', async () => {
     const { metafolder, workspace, commands } = mockMf();
-    const menu = fileMenuItems({ metafolder, repo: 'r', path: '/dir/a.txt', name: 'a.txt', isDir: false });
+    const menu = fileMenuItems({ metafolder, repo: 'r', path: '/dir/a.txt', name: 'a.txt' });
     expect(labels(menu)).toContain('Open with…');
 
     item(menu, 'Open with…').action!();
@@ -238,7 +238,7 @@ describe('file-actions shared operations', () => {
   test('the default menu falls back to metarecords:dirty when no onChanged is given', async () => {
     const { metafolder, fs, workspace } = mockMf();
     void metafolder.global.set('clipboard', { paths: ['/a/one.txt'], mode: 'copy' });
-    const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst', isDir: true });
+    const dst = fileMenuItems({ metafolder, repo: 'r', path: '/dst/sub' });
     item(dst, 'Paste').action!();
     await vi.waitFor(() => expect(fs.copy).toHaveBeenCalled());
     await vi.waitFor(() =>
@@ -285,15 +285,11 @@ describe('fileActionsProvider', () => {
     expect(provider(event({ mfPath: '' }))).toEqual([]);
   });
 
-  test('builds the file menu for the tagged row, reading isdir "1"/"0"/unset', () => {
+  test('builds the file menu for the tagged row', () => {
     const { metafolder } = mockMf();
     const provider = fileActionsProvider(metafolder, () => 'r');
-    for (const mfIsdir of ['1', '0', undefined]) {
-      const dataset: Record<string, string> = { mfPath: '/dir/a.txt', mfName: 'a.txt' };
-      if (mfIsdir !== undefined) dataset.mfIsdir = mfIsdir;
-      const items = provider(event(dataset));
-      expect(items.map((i) => (i === '-' ? '-' : (i as { label: string }).label))).toContain('Cut');
-    }
+    const items = provider(event({ mfPath: '/dir/a.txt', mfName: 'a.txt' }));
+    expect(items.map((i) => (i === '-' ? '-' : (i as { label: string }).label))).toContain('Cut');
   });
 });
 
@@ -412,7 +408,7 @@ describe('rowActionsProvider', () => {
   test('a file-backed row publishes the selection and offers metarecord + file items', () => {
     const { metafolder, workspace } = mockMf();
     const provider = rowActionsProvider(metafolder, () => 'r');
-    const items = provider(event({ mfUuid: 'abc', mfPath: '/dir/a.txt', mfIsdir: '0', mfName: 'a.txt' }));
+    const items = provider(event({ mfUuid: 'abc', mfPath: '/dir/a.txt', mfName: 'a.txt' }));
     expect(workspace.set).toHaveBeenCalledWith('selected_metarecord', { uuid: 'abc', repo: 'r' });
     expect(workspace.set).toHaveBeenCalledWith('selected_paths', ['/dir/a.txt']);
     const l = labels(items);
@@ -432,7 +428,7 @@ describe('rowActionsProvider', () => {
   test('a file row with no uuid falls back to the file section only', () => {
     const { metafolder, workspace } = mockMf();
     const provider = rowActionsProvider(metafolder, () => 'r');
-    const items = provider(event({ mfPath: '/dir/a.txt', mfIsdir: '0' }));
+    const items = provider(event({ mfPath: '/dir/a.txt' }));
     expect(workspace.set).not.toHaveBeenCalledWith('selected_metarecord', expect.anything());
     expect(labels(items)).toContain('Cut');
     expect(labels(items)).not.toContain('Copy UUID');

@@ -208,7 +208,7 @@ describe('file-manager filesystem operations', () => {
     expect(fs.move).not.toHaveBeenCalled();
   });
 
-  test('paste with the cursor on a folder goes inside it, even with others checked', async () => {
+  test('paste with the cursor on a folder goes beside it, in the folder shown', async () => {
     const { api, fs, global } = await mount('repo-1', {
       vars: { selected_metarecords: ['u-a'] },
     });
@@ -216,7 +216,7 @@ describe('file-manager filesystem operations', () => {
     await cursor(api.provide, 'first');
     await cursor(api.provide, 'next'); // dir1: a repository's root has no ".."
     await generic(api.provide, 'clipboard:paste');
-    expect(fs.copy).toHaveBeenCalledWith('/x/new.txt', '/dir1/new.txt');
+    expect(fs.copy).toHaveBeenCalledWith('/x/new.txt', '/new.txt');
   });
 
   test('paste with the cursor on "." goes into the folder shown', async () => {

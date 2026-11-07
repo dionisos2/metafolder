@@ -38,7 +38,7 @@ export function formatViewedAge(iso, now = Date.now()) {
 
 /**
  * @typedef {{ uuid: string, viewedAt: string, score: number, label: string, name: string,
- *   relPath: string, absPaths: string[], isDir: boolean }} Row
+ *   relPath: string, absPaths: string[] }} Row
  *
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder
  */
@@ -88,7 +88,6 @@ export function mount(root, metafolder) {
             ...(row.absPaths[0]
               ? {
                   'data-mf-path': row.absPaths[0],
-                  'data-mf-isdir': row.isDir ? '1' : '0',
                   'data-mf-name': row.name || baseName(row.absPaths[0]),
                 }
               : {}),
@@ -175,7 +174,6 @@ export function mount(root, metafolder) {
         name: rec === undefined ? '' : fieldText(rec, 'name'),
         relPath: relPaths[0] ?? '',
         absPaths,
-        isDir: rec !== undefined && fieldText(rec, 'mfr_type') === 'dir',
       };
     });
     arrange();

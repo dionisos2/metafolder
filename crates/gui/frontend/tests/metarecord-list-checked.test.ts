@@ -8,7 +8,7 @@
 // what cannot be shown or unchecked any more.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { cursor, generic } from './support/cursor';
+import { cursor, generic, provided } from './support/cursor';
 import { globalStub } from './support/global';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -329,6 +329,12 @@ describe('copying to the file clipboard', () => {
     await cursor(api.provide, 'next');
     await generic(api.provide, 'clipboard:copy');
     expect(global.current('clipboard')).toEqual({ paths: ['/repo/B'], mode: 'copy' });
+  });
+
+  test('a paste lands in the folder holding the row under the cursor', async () => {
+    const { api } = await mountWithFiles({ selected_metarecords: ['u-b'] });
+    await cursor(api.provide, 'first');
+    expect(await provided(api.provide).pasteTarget?.()).toBe('/repo');
   });
 
   test('with metarecords checked, all their files, whatever the cursor', async () => {

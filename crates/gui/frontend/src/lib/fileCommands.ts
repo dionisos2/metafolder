@@ -4,7 +4,7 @@
 // under its cursor — or the folder it shows — `directory` — and the command
 // does the rest, so renaming a file is the same command in the file manager,
 // the list and the viewer. `clipboard:paste` lives here with them: it works on
-// the file or folder under the panel's cursor — `pasteTarget`.
+// the folder holding what is under the panel's cursor — `pasteTarget`.
 //
 // Pure apart from `FileOps`, what the shell hands in: the filesystem, the trash,
 // the questions and the status bar.
@@ -16,7 +16,6 @@ import {
   isWithin,
   joinPath,
   parentDir,
-  pasteDir,
   trashedMessage,
 } from '../../../panel-shim/file-actions.js';
 import { pathText, samePath } from '../../../panel-shim/ui.js';
@@ -58,7 +57,7 @@ export interface FileFunctions {
    *  a metarecord. */
   recordable?: () => Path[] | Promise<Path[]>;
   directory?: () => Path | null | Promise<Path | null>;
-  /** The file or folder `clipboard:paste` lands at. */
+  /** The folder `clipboard:paste` lands in: the one holding the selection. */
   pasteTarget?: () => Path | null | Promise<Path | null>;
   refresh?: () => unknown;
   /** Puts the cursor on the entry `name` of the folder shown. */
@@ -172,9 +171,8 @@ export async function runFileCommand(
     case 'clipboard:paste': {
       const clip = await ops.clipboard();
       if (!clip || clip.paths.length === 0) throw new Error('clipboard is empty');
-      const at = (await fns.pasteTarget?.()) ?? null;
-      if (at === null) throw new Error('no folder here');
-      const dir = await pasteDir(ops, at, undefined, clip);
+      const dir = (await fns.pasteTarget?.()) ?? null;
+      if (dir === null) throw new Error('no folder here');
       const taken = await takenNames(ops, dir);
       let pasted = 0;
       let last: string | null = null;

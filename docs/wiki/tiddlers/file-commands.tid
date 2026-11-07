@@ -17,11 +17,11 @@ first argument, `self` or a panel type, and it designates what they work on.
 |[[file:rename]] |the one file |renames it in its folder; the name is asked, the current one to edit — a name with a `/`, or `.` / `..`, is refused: it would move the file elsewhere |
 |[[file:record]] |the files |gives each its metarecord, `mf_watch = false` ([[Recording a path]]) |
 |[[file:new]] `folder`/`file` |the folder |creates a folder or an empty file there; the name is asked, refused as `file:rename`'s |
-|[[clipboard:paste]] |the file or folder under the cursor |copies — or moves, after a cut — the file clipboard inside the folder, or beside the file |
+|[[clipboard:paste]] |the folder holding the selection |copies — or moves, after a cut — the file clipboard into it, beside the file or folder under the cursor |
 
 * ''The files'' are what the panel provides as `paths`: the checked ones when some are — in the file manager, those checked without a metarecord too ([[Cross-panel selection]]) —, else the one under the cursor — in the [[file-manager panel]] and the [[metarecord-list panel]] — or the file shown, in the [[viewer panel]] and the [[metarecord-detail panel]]. The file manager's `.` and `..` rows are none.
 * ''The folder'' is what the panel provides as `directory`: the one the file manager shows. Elsewhere there is none, and `file:new` is refused.
-* ''The file or folder under the cursor'' is what the panel provides as `pasteTarget`: the row under the cursor in the [[file-manager panel]] and the [[metarecord-list panel]] — whatever is checked, since a paste usually follows a move away from what was copied —, the file shown in the [[viewer panel]] and the [[metarecord-detail panel]]. In the file manager `.` is the folder shown and `..` its parent.
+* ''The folder holding the selection'' is what the panel provides as `pasteTarget`: the folder the [[file-manager panel]] shows, whatever row the cursor is on; the folder holding the row under the cursor in the [[metarecord-list panel]] — whatever is checked, since a paste usually follows a move away from what was copied —, and the file shown in the [[viewer panel]] and the [[metarecord-detail panel]]. A folder under the cursor is never pasted into: a paste does the same whatever the row is (to put files inside a folder, open it first).
 
 A key bound to one of them applies only where the panel provides what it needs
 ([[Keybindings]]). After a change the panel reads its content again and, when

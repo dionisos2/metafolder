@@ -452,9 +452,7 @@ export async function mount(root, metafolder) {
     return rel === '' ? repoRootPath : `${repoRootPath}/${rel}`;
   }
 
-  // `data-mf-*` attributes for the shared right-click file menu. isDir is left
-  // unset (a node may be a directory or a leaf file), so the menu probes when
-  // pasting.
+  // `data-mf-*` attributes for the shared right-click file menu.
   /** @param {Node} child @returns {Record<string, string>} */
   function fileRowAttrs(child) {
     const abs = nodeFile(child);

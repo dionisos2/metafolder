@@ -208,7 +208,7 @@ fn register_builtins(registry: &CommandRegistry) {
         ("file:new", "Create a folder or a file in the folder a panel shows (self / a panel type)", true),
         (
             "clipboard:paste",
-            "Paste the file clipboard at a panel's file or folder, under its cursor (self / a panel type)",
+            "Paste the file clipboard in the folder holding a panel's selection (self / a panel type)",
             true,
         ),
         (

@@ -5,7 +5,7 @@ import { byId, el, messageOf, openButton, pathText, valueEl } from '/__ui.js';
 import { createListCursor } from '/__list-cursor.js';
 import { createTypePicker, widgetFor, createPickRunner } from '/__value-widget.js';
 import { loadSchema as loadSharedSchema, schemaTypes, templateFields } from '/__schema-template.js';
-import { fileMenuItems, metarecordMenuItems } from '/__file-actions.js';
+import { fileMenuItems, metarecordMenuItems, parentDir } from '/__file-actions.js';
 import { createAnnotator } from './annotations.js';
 import { createNavHistory } from './nav-history.js';
 import { createNotes } from './notes.js';
@@ -942,9 +942,10 @@ export async function mount(root, metafolder) {
       const value = await mf.workspace.get('selected_paths');
       return Array.isArray(value) ? value.filter((path) => typeof path === 'string') : [];
     },
+    // A paste lands in the folder holding the file shown.
     pasteTarget: async (mf) => {
       const value = await mf.workspace.get('selected_paths');
-      return Array.isArray(value) && typeof value[0] === 'string' ? value[0] : null;
+      return Array.isArray(value) && typeof value[0] === 'string' ? parentDir(value[0]) : null;
     },
   });
   metafolder.provide({

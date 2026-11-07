@@ -13,7 +13,7 @@ import {
   composeQuery,
   composeQueryText,
 } from '/__finder.js';
-import { clipboardPaths, fileMenuItems, metarecordMenuItems } from '/__file-actions.js';
+import { clipboardPaths, fileMenuItems, metarecordMenuItems, parentDir } from '/__file-actions.js';
 import { attachHistory } from '/__history.js';
 import { createListCursor } from '/__list-cursor.js';
 import { createCatchup } from '/__watcher-settle.js';
@@ -951,10 +951,12 @@ export async function mount(root, metafolder) {
         const metarecord = metarecords[cursorIndex];
         return metarecord ? pathsOf(metarecord) : [];
       }),
-    // `clipboard:paste`: the row under the cursor, whatever is checked.
+    // `clipboard:paste`: the folder holding the row under the cursor,
+    // whatever is checked.
     pasteTarget: () => {
       const metarecord = metarecords[cursorIndex];
-      return (metarecord && pathsOf(metarecord)[0]) ?? null;
+      const path = metarecord && pathsOf(metarecord)[0];
+      return path ? parentDir(path) : null;
     },
   });
   // Only forward: the list grows as it scrolls, it does not paginate back.
@@ -1234,7 +1236,6 @@ export async function mount(root, metafolder) {
           metafolder,
           repo,
           path: paths[0],
-          isDir: isDirMetarecord(target),
           onChanged: () => void workspace.set('metarecords:dirty', Date.now()),
         }),
       );

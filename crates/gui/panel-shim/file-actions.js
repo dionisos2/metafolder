@@ -18,7 +18,7 @@
 // menu the list does.
 
 import { copyText } from '/__menu.js';
-import { datasetPath, pathBytes, pathOfBytes, pathText, samePath } from '/__ui.js';
+import { datasetPath, pathBytes, pathOfBytes, pathText } from '/__ui.js';
 
 /** @typedef {import('/__ui.js').WirePath} WirePath */
 
@@ -229,40 +229,19 @@ function errorMs(metafolder) {
   return metafolder.settings.statusErrorMs;
 }
 
-/** The directory a paste lands in: the target itself when it is a directory,
- *  otherwise its parent. When `isDir` is unknown, probe by listing. A folder
- *  copied and pasted on itself lands beside itself: there is nothing else it
- *  can mean (doc "File commands").
- *  @param {{ readDir(path: WirePath): Promise<unknown> }} fs @param {WirePath} path
- *  @param {boolean|undefined} isDir @param {{ paths: WirePath[], mode: string }} clip
- *  @returns {Promise<WirePath>} */
-export async function pasteDir(fs, path, isDir, clip) {
-  if (clip.mode === 'copy' && clip.paths.length === 1 && samePath(clip.paths[0], path)) {
-    return parentDir(path);
-  }
-  if (isDir === true) return path;
-  if (isDir === false) return parentDir(path);
-  try {
-    await fs.readDir(path);
-    return path;
-  } catch {
-    return parentDir(path);
-  }
-}
-
 /**
- * @param {MetafolderApi} metafolder @param {WirePath} targetPath
- * @param {boolean|undefined} isDir @param {() => void|Promise<void>} onChanged
- * @param {number} statusMs
+ * Pastes the clipboard in `dir`: the folder holding the entry the menu was
+ * opened on, a folder or not — never inside it (doc "File commands").
+ * @param {MetafolderApi} metafolder @param {WirePath} dir
+ * @param {() => void|Promise<void>} onChanged @param {number} statusMs
  */
-async function pasteInto(metafolder, targetPath, isDir, onChanged, statusMs) {
+async function pasteInto(metafolder, dir, onChanged, statusMs) {
   const { fs, statusBar } = metafolder;
   const cb = await getClipboard(metafolder);
   if (!cb || cb.paths.length === 0) {
     void statusBar.message('clipboard is empty', 3000);
     return;
   }
-  const dir = await pasteDir(fs, targetPath, isDir, cb);
   /** @type {string[]} */
   let existing;
   try {
@@ -366,14 +345,14 @@ async function openWithExternal(metafolder, path) {
 
 /**
  * The Open-with / Cut / Copy / Paste / Rename / Move-to-trash menu
- * items for a metarecord's file at `path`. `isDir` (when known) picks the paste target;
- * `onChanged` is called after any successful mutation.
+ * items for a metarecord's file at `path`. Paste lands beside it, in the folder
+ * holding it; `onChanged` is called after any successful mutation.
  *
  * @param {{ metafolder: MetafolderApi, repo?: string, path: WirePath,
- *   name?: string, isDir?: boolean, onChanged?: () => void|Promise<void> }} args
+ *   name?: string, onChanged?: () => void|Promise<void> }} args
  * @returns {Metafolder.MenuItem[]}
  */
-export function fileMenuItems({ metafolder, path, name, isDir, onChanged }) {
+export function fileMenuItems({ metafolder, path, name, onChanged }) {
   const { statusBar } = metafolder;
   const statusMs = metafolder.settings.statusMessageMs;
   const label = name || pathText(baseName(path));
@@ -412,7 +391,7 @@ export function fileMenuItems({ metafolder, path, name, isDir, onChanged }) {
       label: 'Paste',
       command: 'clipboard:paste self',
       disabled: !hasClipboard(metafolder),
-      action: () => void pasteInto(metafolder, path, isDir, nudge, statusMs),
+      action: () => void pasteInto(metafolder, parentDir(path), nudge, statusMs),
     },
     {
       label: 'Rename…',
@@ -491,7 +470,7 @@ export function metarecordMenuItems({
  * A ready-made `contextMenu.addDefaultItems` provider: on right-click it walks
  * the event's composed path for the nearest element tagged with a
  * `data-mf-path` (its absolute OS path), and offers the file actions for it.
- * Rows also read `data-mf-isdir` ("1"/"0") and `data-mf-name` when set. Returns
+ * Rows also read `data-mf-name` when set. Returns
  * no items when there is no active repo or the click was not on a file row.
  *
  * @param {MetafolderApi} metafolder
@@ -506,14 +485,7 @@ export function fileActionsProvider(metafolder, getRepo) {
       const dataset = /** @type {HTMLElement} */ (node)?.dataset;
       const path = dataset ? datasetPath(dataset, 'mfPath') : undefined;
       if (path !== undefined && pathText(path) !== '') {
-        const isDir = dataset.mfIsdir === '1' ? true : dataset.mfIsdir === '0' ? false : undefined;
-        return fileMenuItems({
-          metafolder,
-          repo,
-          path,
-          name: dataset.mfName,
-          isDir,
-        });
+        return fileMenuItems({ metafolder, repo, path, name: dataset.mfName });
       }
     }
     return [];
@@ -524,7 +496,7 @@ export function fileActionsProvider(metafolder, getRepo) {
  * A `contextMenu.addDefaultItems` provider for a panel whose rows ARE
  * metarecords: it walks the event's composed path for the nearest element
  * tagged with a `data-mf-uuid` (and, when file-backed, `data-mf-path` +
- * `data-mf-isdir`/`data-mf-name`), publishes that row as the selection
+ * `data-mf-name`), publishes that row as the selection
  * (`selected_metarecord` / `selected_paths`) so the reveal commands act on the
  * right-clicked row rather than the keyboard cursor, and returns the metarecord
  * section followed by the file section (when file-backed). A row that carries a
@@ -557,7 +529,6 @@ export function rowActionsProvider(metafolder, getRepo) {
         items.push(...metarecordMenuItems({ metafolder, uuid, hasFile }));
       }
       if (hasFile) {
-        const isDir = dataset.mfIsdir === '1' ? true : dataset.mfIsdir === '0' ? false : undefined;
         // No separator to push: orderMenu derives one at the category boundary.
         items.push(
           ...fileMenuItems({
@@ -565,7 +536,6 @@ export function rowActionsProvider(metafolder, getRepo) {
             repo,
             path: /** @type {WirePath} */ (path),
             name: dataset.mfName,
-            isDir,
           }),
         );
       }

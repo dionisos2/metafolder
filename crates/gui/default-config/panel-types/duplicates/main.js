@@ -128,7 +128,6 @@ export function mount(root, metafolder) {
                 ...(row.member.absPath
                   ? {
                       'data-mf-path': row.member.absPath,
-                      'data-mf-isdir': '0',
                       'data-mf-name': baseName(row.member.absPath),
                     }
                   : {}),

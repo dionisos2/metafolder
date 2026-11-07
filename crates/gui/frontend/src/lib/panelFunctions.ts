@@ -72,8 +72,8 @@ export interface PanelFunctions {
   /** The folder the panel shows, where `file:new` works; null when it shows
    *  none right now. */
   directory?: () => Metafolder.WirePath | null | Promise<Metafolder.WirePath | null>;
-  /** The file or folder `clipboard:paste` lands at: the one under the cursor,
-   *  whatever is checked; null when there is none. */
+  /** The folder `clipboard:paste` lands in: the one holding what is under
+   *  the cursor, whatever is checked; null when there is none. */
   pasteTarget?: () => Metafolder.WirePath | null | Promise<Metafolder.WirePath | null>;
   /** Puts the cursor on the entry `name` of the folder shown — the one a
    *  `file:` command just made. */

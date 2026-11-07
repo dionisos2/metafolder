@@ -491,8 +491,9 @@ declare namespace Metafolder {
     /** The folder the panel shows, where `file:new` works; null when it shows
      *  none right now (doc "File commands"). */
     directory?(mf: Api): WirePath | null | Promise<WirePath | null>;
-    /** The file or folder `clipboard:paste` lands at: the one under the cursor,
-     *  whatever is checked; null when there is none (doc "File commands"). */
+    /** The folder `clipboard:paste` lands in: the one holding what is under
+     *  the cursor, whatever is checked — never a folder under the cursor —;
+     *  null when there is none (doc "File commands"). */
     pasteTarget?(mf: Api): WirePath | null | Promise<WirePath | null>;
     /** Puts the cursor on the entry `name` of the folder shown — what a
      *  `file:` command just made. */

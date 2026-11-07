@@ -146,7 +146,7 @@ describe('file: commands — what they do', () => {
     }),
   });
 
-  test('paste copies the clipboard into the selected folder, or moves it and empties it', async () => {
+  test('paste copies the clipboard into the folder the panel names, or moves it and empties it', async () => {
     const copied = ops(clipboard('copy', '/x/a.txt'));
     await runFileCommand('clipboard:paste', { pasteTarget: () => '/r' }, [], copied);
     expect(copied.copy).toHaveBeenCalledWith('/x/a.txt', '/r/a copy 2.txt');
@@ -158,15 +158,17 @@ describe('file: commands — what they do', () => {
     expect(cut.clearClipboard).toHaveBeenCalled();
   });
 
-  test('paste on a selected file lands in the folder holding it', async () => {
-    const o = ops({ ...clipboard('copy', '/x/b.txt'), ...filesAre('/r/a.txt') });
-    await runFileCommand('clipboard:paste', { pasteTarget: () => '/r/a.txt' }, [], o);
+  test('the folder named is where the paste lands, a folder in it or not', async () => {
+    // The panel names the folder holding its selection: nothing is listed to
+    // tell a folder from a file, and nothing lands inside a folder.
+    const o = ops({ ...clipboard('copy', '/x/b.txt'), ...filesAre() });
+    await runFileCommand('clipboard:paste', { pasteTarget: () => '/r' }, [], o);
     expect(o.copy).toHaveBeenCalledWith('/x/b.txt', '/r/b.txt');
   });
 
-  test('a folder copied and pasted on itself lands beside it, under a free name', async () => {
+  test('a folder copied and pasted beside itself gets a free name', async () => {
     const o = ops({ ...clipboard('copy', '/r/d'), readDir: vi.fn(async () => [{ name: 'd' }]) });
-    await runFileCommand('clipboard:paste', { pasteTarget: () => '/r/d' }, [], o);
+    await runFileCommand('clipboard:paste', { pasteTarget: () => '/r' }, [], o);
     expect(o.copy).toHaveBeenCalledWith('/r/d', '/r/d copy');
   });
 

@@ -799,11 +799,8 @@ export async function mount(root, metafolder) {
         label: 'Paste',
         command: 'clipboard:paste self',
         disabled: !hasClipboard(metafolder),
-        // Here is the folder shown, whatever the cursor is on: the "." row.
-        action: () => {
-          void select(metafolder, 0);
-          void fileCommand('clipboard:paste');
-        },
+        // Into the folder shown, as a paste always is here.
+        action: () => void fileCommand('clipboard:paste'),
       },
       { header: 'Directory' },
       { label: 'New folder…', command: 'file:new self folder', action: () => void fileCommand('file:new', 'folder') },
@@ -1231,11 +1228,11 @@ export async function mount(root, metafolder) {
   // "Generic panel commands"): the root is the repo root while constrained to it, / otherwise.
   metafolder.provide({ parent: goUp, root: gotoRoot });
   // The `file:` commands (doc "File commands") create in the folder shown and
-  // put the cursor on what they made; a paste lands at the row under the
-  // cursor, "." being the folder shown.
+  // put the cursor on what they made; a paste lands in the folder holding the
+  // row under the cursor, which is always the folder shown.
   metafolder.provide({
     directory: () => currentDir,
-    pasteTarget: () => listing[cursorIndex]?.path ?? currentDir,
+    pasteTarget: () => currentDir,
     reveal: async (mf, name) => {
       const index = listing.findIndex((item) => item.name === name);
       if (index >= 0) await select(mf, index);

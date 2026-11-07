@@ -1781,7 +1781,11 @@ export async function mount(root, metafolder) {
   // commands"): the workspace's selection, which this panel follows.
   metafolder.provide({
     paths: (mf) => selectedPathsOf(mf),
-    pasteTarget: async (mf) => (await selectedPathsOf(mf))[0] ?? null,
+    // A paste lands in the folder holding the file shown.
+    pasteTarget: async (mf) => {
+      const path = (await selectedPathsOf(mf))[0];
+      return path === undefined ? null : parentDir(path);
+    },
   });
 
   // A change told while the first read is under way is newer than its answer.
