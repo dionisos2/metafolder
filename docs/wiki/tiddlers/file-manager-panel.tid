@@ -66,7 +66,9 @@ highlight instead.
 ''constrain to repo root'' (<<key "file-manager:toggle root" "v r">>, checked at
 first) keeps the browsing inside the repository: going above its root is refused, and
 the root has no `..` row. Unchecked, the whole disk is reachable. Without a
-repository the box is disabled.
+repository the box is disabled. It holds for the workspace, not only for this panel:
+a paste from any panel that would land outside the root asks first while it is
+checked ([[File commands]]).
 
 !! The selection
 
@@ -148,6 +150,7 @@ click then starts with ''Pick this folder'', which confirms without a key.
 |!Variable |!Holds |
 |`file-manager:dir` |the directory shown — what the `ignore:*` commands take as their target |
 |`file-manager:cursor` |the name of the entry highlighted in it, or `null` |
+|`file-manager:constrain` |''constrain to repo root'': `false` unchecked, anything else — unset among it — checked |
 
 The two are the panel's ''location'', not a record of it: written by a command, a
 script or another panel, the panel goes there — at once when it is on screen, when it
@@ -159,5 +162,10 @@ overlaps one of the panel's own moves: begun before it, it finds where the panel
 ''was'' — following it sent a double-click into a folder straight back to the
 parent — so it is dropped, and the variables re-read once the move's writes are done.
 
-The view settings — the root constraint, hidden files, the activity or operations order — are
-not variables: they are the panel's, for the session.
+The root constraint is a variable because another panel needs it: a paste out of the
+root asks first while it is checked ([[File commands]]). The panel writes it when the
+box changes — a click, `file-manager:toggle root`, a location outside the root
+unchecking it —, reads it at start and follows a write, so two file managers of a
+workspace share it. It is not saved with the workspace. The other view settings —
+hidden files, the activity or operations order — are not variables: they are the
+panel's, for the session.

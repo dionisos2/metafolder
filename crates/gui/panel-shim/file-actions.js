@@ -229,19 +229,52 @@ function errorMs(metafolder) {
   return metafolder.settings.statusErrorMs;
 }
 
+/** The workspace variable the file manager publishes its ''constrain to repo
+ *  root'' box in (doc "file-manager panel"): `false` once unchecked, anything
+ *  else — unset among them — meaning constrained, as the box is at first. */
+export const CONSTRAIN_VAR = 'file-manager:constrain';
+
+/** The question a paste asks before landing in `dir`, outside `root`, the
+ *  repository root navigation is constrained to (doc "File commands"); null
+ *  when it lands inside it, or nothing constrains it.
+ *  @param {WirePath} dir @param {WirePath|null} root @returns {string|null} */
+export function leavingRootQuestion(dir, root) {
+  if (root === null || pathText(root) === '' || isWithin(dir, root)) return null;
+  return `Paste outside the repository root, into ${pathText(dir)}?`;
+}
+
+/** The root of `repo` while the workspace's navigation is constrained to it,
+ *  else null. @param {MetafolderApi} metafolder @param {string|undefined} repo
+ *  @returns {Promise<WirePath|null>} */
+async function constrainedRoot(metafolder, repo) {
+  if (!repo) return null;
+  if ((await metafolder.workspace.get(CONSTRAIN_VAR)) === false) return null;
+  return (await metafolder.daemon.repoRoot(repo)) || null;
+}
+
 /**
  * Pastes the clipboard in `dir`: the folder holding the entry the menu was
- * opened on, a folder or not — never inside it (doc "File commands").
- * @param {MetafolderApi} metafolder @param {WirePath} dir
+ * opened on, a folder or not — never inside it (doc "File commands"). Out of
+ * the repository root while navigation is constrained to it, it asks first.
+ * @param {MetafolderApi} metafolder @param {string|undefined} repo @param {WirePath} dir
  * @param {() => void|Promise<void>} onChanged @param {number} statusMs
  */
-async function pasteInto(metafolder, dir, onChanged, statusMs) {
+async function pasteInto(metafolder, repo, dir, onChanged, statusMs) {
   const { fs, statusBar } = metafolder;
   const cb = await getClipboard(metafolder);
   if (!cb || cb.paths.length === 0) {
     void statusBar.message('clipboard is empty', 3000);
     return;
   }
+  let root;
+  try {
+    root = await constrainedRoot(metafolder, repo);
+  } catch (error) {
+    await statusBar.error(error, errorMs(metafolder));
+    return;
+  }
+  const question = leavingRootQuestion(dir, root);
+  if (question !== null && !confirm(question)) return;
   /** @type {string[]} */
   let existing;
   try {
@@ -345,14 +378,14 @@ async function openWithExternal(metafolder, path) {
 
 /**
  * The Open-with / Cut / Copy / Paste / Rename / Move-to-trash menu
- * items for a metarecord's file at `path`. Paste lands beside it, in the folder
- * holding it; `onChanged` is called after any successful mutation.
+ * items for a metarecord's file at `path`, in `repo`. Paste lands beside it, in
+ * the folder holding it; `onChanged` is called after any successful mutation.
  *
  * @param {{ metafolder: MetafolderApi, repo?: string, path: WirePath,
  *   name?: string, onChanged?: () => void|Promise<void> }} args
  * @returns {Metafolder.MenuItem[]}
  */
-export function fileMenuItems({ metafolder, path, name, onChanged }) {
+export function fileMenuItems({ metafolder, repo, path, name, onChanged }) {
   const { statusBar } = metafolder;
   const statusMs = metafolder.settings.statusMessageMs;
   const label = name || pathText(baseName(path));
@@ -391,7 +424,7 @@ export function fileMenuItems({ metafolder, path, name, onChanged }) {
       label: 'Paste',
       command: 'clipboard:paste self',
       disabled: !hasClipboard(metafolder),
-      action: () => void pasteInto(metafolder, parentDir(path), nudge, statusMs),
+      action: () => void pasteInto(metafolder, repo, parentDir(path), nudge, statusMs),
     },
     {
       label: 'Rename…',

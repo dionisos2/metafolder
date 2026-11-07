@@ -23,6 +23,7 @@ function ops(over: Partial<Record<keyof FileOps, ReturnType<typeof vi.fn>>> = {}
     clearClipboard: vi.fn(async () => {}),
     status: vi.fn(async () => {}),
     changed: vi.fn(async () => {}),
+    constrainedRoot: vi.fn(async () => null),
     ...over,
   } as never;
 }
@@ -188,6 +189,36 @@ describe('file: commands — what they do', () => {
     await expect(
       runFileCommand('clipboard:paste', { pasteTarget: () => null }, [], ops(clipboard('copy', '/x/a'))),
     ).rejects.toThrow('no folder here');
+  });
+
+  test('a paste out of the repository root asks first while navigation is constrained to it', async () => {
+    // The root metarecord's row: the folder holding it is outside the repository.
+    const declined = ops({
+      ...clipboard('copy', '/r/a.txt'),
+      constrainedRoot: vi.fn(async () => '/r'),
+      confirm: vi.fn(async () => false),
+    });
+    await runFileCommand('clipboard:paste', { pasteTarget: () => '/' }, [], declined);
+    expect(declined.confirm).toHaveBeenCalledWith(
+      'Paste outside the repository root, into /?',
+      true,
+    );
+    expect(declined.copy).not.toHaveBeenCalled();
+
+    const accepted = ops({ ...clipboard('copy', '/r/a.txt'), constrainedRoot: vi.fn(async () => '/r') });
+    await runFileCommand('clipboard:paste', { pasteTarget: () => '/' }, [], accepted);
+    expect(accepted.copy).toHaveBeenCalledWith('/r/a.txt', '/a copy 2.txt');
+  });
+
+  test('a paste inside the root, or unconstrained, asks nothing', async () => {
+    const inside = ops({ ...clipboard('copy', '/x/a.txt'), constrainedRoot: vi.fn(async () => '/r') });
+    await runFileCommand('clipboard:paste', { pasteTarget: () => '/r/sub' }, [], inside);
+    expect(inside.confirm).not.toHaveBeenCalled();
+    expect(inside.copy).toHaveBeenCalled();
+    const free = ops(clipboard('copy', '/r/a.txt'));
+    await runFileCommand('clipboard:paste', { pasteTarget: () => '/' }, [], free);
+    expect(free.confirm).not.toHaveBeenCalled();
+    expect(free.copy).toHaveBeenCalled();
   });
 
   test('paste puts the cursor on what it made, only in the folder shown', async () => {

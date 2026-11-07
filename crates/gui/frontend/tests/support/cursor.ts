@@ -47,6 +47,8 @@ export function stubFileOps(api: StubApi): FileOps {
     clearClipboard: async () => void (await api.global?.set('clipboard', null)),
     status: async (text) => void (await api.statusBar?.message?.(text)),
     changed: async () => void (await api.workspace?.set?.('metarecords:dirty', Date.now())),
+    // No repository root constrains these panels' pastes: file-commands' tests ask.
+    constrainedRoot: async () => null,
   };
 }
 

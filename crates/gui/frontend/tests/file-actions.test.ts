@@ -23,6 +23,8 @@ type MenuItem = { label: string; action?: () => void; disabled?: boolean; comman
 function mockMf(
   settings: Record<string, number> | undefined = { statusMessageMs: 1000, statusErrorMs: 2000 },
   fsOverrides: Record<string, unknown> = {},
+  vars: Record<string, unknown> = {},
+  root = '/',
 ) {
   const statusBar = { message: vi.fn(async () => {}), error: vi.fn(async () => {}) };
   const fs = {
@@ -36,7 +38,11 @@ function mockMf(
     ...fsOverrides,
   };
   const trash = { trashPath: vi.fn(async () => ({ name: 'a.txt', desktop: false })) };
-  const workspace = { set: vi.fn(async () => {}) };
+  const workspace = {
+    set: vi.fn(async () => {}),
+    get: vi.fn(async (key: string) => vars[key]),
+  };
+  const daemon = { repoRoot: vi.fn(async () => root) };
   const commands = { invoke: vi.fn(async (_invocation?: string) => {}) };
   const global = globalStub();
   const metafolder = {
@@ -46,6 +52,7 @@ function mockMf(
     workspace,
     global,
     commands,
+    daemon,
     settings,
   } as unknown as MetafolderApi;
   return { metafolder, statusBar, fs, trash, workspace, global, commands };
@@ -136,6 +143,32 @@ describe('file-actions shared operations', () => {
     const menu = fileMenuItems({ metafolder, repo: 'r', path: '/dir/d' });
     item(menu, 'Paste').action!();
     await vi.waitFor(() => expect(fs.copy).toHaveBeenCalledWith('/dir/d', '/dir/d copy'));
+  });
+
+  test('Paste out of the repository root asks first while the file manager is constrained to it', async () => {
+    const { metafolder, fs } = mockMf(undefined, {}, {}, '/dir');
+    void metafolder.global.set('clipboard', { paths: ['/dir/a.txt'], mode: 'copy' });
+    const asked = vi.fn(() => false);
+    vi.stubGlobal('confirm', asked);
+    // The repository root's own row: its folder is the root's parent.
+    item(fileMenuItems({ metafolder, repo: 'r', path: '/dir' }), 'Paste').action!();
+    await vi.waitFor(() =>
+      expect(asked).toHaveBeenCalledWith('Paste outside the repository root, into /?'),
+    );
+    expect(fs.copy).not.toHaveBeenCalled();
+    asked.mockReturnValue(true);
+    item(fileMenuItems({ metafolder, repo: 'r', path: '/dir' }), 'Paste').action!();
+    await vi.waitFor(() => expect(fs.copy).toHaveBeenCalledWith('/dir/a.txt', '/a.txt'));
+  });
+
+  test('Paste out of the root asks nothing once the constraint is unchecked', async () => {
+    const { metafolder, fs } = mockMf(undefined, {}, { 'file-manager:constrain': false }, '/dir');
+    void metafolder.global.set('clipboard', { paths: ['/dir/a.txt'], mode: 'copy' });
+    const asked = vi.fn(() => false);
+    vi.stubGlobal('confirm', asked);
+    item(fileMenuItems({ metafolder, repo: 'r', path: '/dir' }), 'Paste').action!();
+    await vi.waitFor(() => expect(fs.copy).toHaveBeenCalledWith('/dir/a.txt', '/a.txt'));
+    expect(asked).not.toHaveBeenCalled();
   });
 
   test('Paste with an empty clipboard reports it and does nothing', async () => {

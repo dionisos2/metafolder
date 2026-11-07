@@ -45,6 +45,7 @@ import {
 } from '/__activity.js';
 import { fetchMounts, offlineMountFor, relativeTo, unavailableLabel } from '/__mounts.js';
 import {
+  CONSTRAIN_VAR,
   setClipboard,
   hasClipboard,
   clipboardPaths,
@@ -1046,9 +1047,8 @@ export async function mount(root, metafolder) {
    *  @param {Path} dir @param {string|null} cursor */
   async function showLocation(dir, cursor) {
     if (constrainToRoot && repoRoot !== null && !insideRoot(dir)) {
-      constrainToRoot = false;
-      constrainBox.checked = false;
-      renderRootButton();
+      applyConstrain(false);
+      await metafolder.workspace.set(CONSTRAIN_VAR, false);
     }
     if (currentDir === null || !samePath(dir, currentDir)) await open(metafolder, dir, cursor);
     else if (cursor) await selectByName(metafolder, cursor);
@@ -1162,15 +1162,30 @@ export async function mount(root, metafolder) {
     },
   });
 
+  // The box is the workspace's `file-manager:constrain` (doc "File manager
+  // panel"): a paste from another panel reads it to ask before leaving the
+  // root (doc "File commands"). Unset is checked, as the box is at first.
+  /** @param {boolean} checked */
+  function applyConstrain(checked) {
+    constrainToRoot = checked;
+    constrainBox.checked = checked;
+    renderRootButton();
+  }
   // Re-list the current directory so the ".." row (dis)appears immediately when
   // the constraint is toggled at the repo root.
   /** @param {MetafolderApi} mf @param {boolean} checked */
   async function setConstrain(mf, checked) {
-    constrainToRoot = checked;
-    constrainBox.checked = checked;
-    renderRootButton();
+    applyConstrain(checked);
+    await mf.workspace.set(CONSTRAIN_VAR, checked);
     if (currentDir !== null) await open(mf, currentDir);
   }
+  // Written elsewhere — another file manager of the workspace, a script.
+  workspace.onChange(CONSTRAIN_VAR, (value) => {
+    const checked = value !== false;
+    if (checked === constrainToRoot) return; // our own write coming back
+    applyConstrain(checked);
+    if (currentDir !== null) void open(metafolder, currentDir);
+  });
   constrainBox.addEventListener('change', () => void setConstrain(metafolder, constrainBox.checked));
   // Re-list the current directory so the dot-entries (dis)appear immediately.
   /** @param {MetafolderApi} mf @param {boolean} shown */
@@ -1360,7 +1375,7 @@ export async function mount(root, metafolder) {
       internalDir = null;
       placeholderElement.textContent = 'No active repository — browsing the disk.';
     }
-    renderRootButton();
+    applyConstrain((await workspace.get(CONSTRAIN_VAR)) !== false);
     // Where the variables say — a command, a value picker (the repos panel's
     // folder picker starts from the typed path) or a forked workspace put it
     // there — else the repo root, else /.

@@ -15,6 +15,7 @@ import {
   entryName,
   isWithin,
   joinPath,
+  leavingRootQuestion,
   parentDir,
   trashedMessage,
 } from '../../../panel-shim/file-actions.js';
@@ -38,7 +39,7 @@ export interface FileOps {
   record(path: Path): Promise<boolean>;
   /** Asks before a trashing; true to go ahead. One file is asked about
    *  unless the user switched the question off, `many` always (doc
-   *  "Confirming a trashing"). */
+   *  "Confirming a trashing"): any other question is asked as `many`. */
   confirm(question: string, many: boolean): Promise<boolean>;
   /** Asks for a text in the command input; null when given up. */
   ask(question: string, initial?: string): Promise<string | null>;
@@ -48,6 +49,9 @@ export interface FileOps {
   status(text: string): Promise<void>;
   /** Tells the other panels the files changed (`metarecords:dirty`). */
   changed(): Promise<void>;
+  /** The active repository's root while the workspace's navigation is
+   *  constrained to it (`file-manager:constrain`), else null. */
+  constrainedRoot(): Promise<Path | null>;
 }
 
 /** The functions of the panel a `file:` command runs on. */
@@ -173,6 +177,9 @@ export async function runFileCommand(
       if (!clip || clip.paths.length === 0) throw new Error('clipboard is empty');
       const dir = (await fns.pasteTarget?.()) ?? null;
       if (dir === null) throw new Error('no folder here');
+      // Out of the root the browsing is constrained to: only once asked.
+      const leaving = leavingRootQuestion(dir, await ops.constrainedRoot());
+      if (leaving !== null && !(await ops.confirm(leaving, true))) return;
       const taken = await takenNames(ops, dir);
       let pasted = 0;
       let last: string | null = null;

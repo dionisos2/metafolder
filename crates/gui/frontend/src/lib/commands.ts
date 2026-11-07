@@ -4,7 +4,7 @@
 
 import { isWirePath, wirePaths } from "./treePath";
 import { confirmClosing } from "./unsavedEdits";
-import { recordPath } from "../../../panel-shim/file-actions.js";
+import { CONSTRAIN_VAR, recordPath } from "../../../panel-shim/file-actions.js";
 import { pathText } from "../../../panel-shim/ui.js";
 import { type FileOps } from "./fileCommands";
 import { bindView, completionLabels } from "./completions";
@@ -893,6 +893,17 @@ function fileOps(ws: string, context: ExecContext): FileOps {
       });
       if (answer === null) return null;
       return typeof answer === "string" ? answer : answer.value;
+    },
+    constrainedRoot: async () => {
+      const active = repoOf(ws);
+      if (!active) return null;
+      const constrained = await invoke<unknown>("ws_get_var", {
+        wsId: ws,
+        key: CONSTRAIN_VAR,
+        txn: context.txn,
+      });
+      if (constrained === false) return null;
+      return (await repoRoot(active)) || null;
     },
     clipboard: async () => {
       const value = await invoke<{ paths: string[]; mode: "copy" | "cut" } | null>(

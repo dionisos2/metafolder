@@ -320,6 +320,39 @@ describe('file-manager root', () => {
   });
 });
 
+// The box is published as `file-manager:constrain`, for the other panels' paste
+// (doc "File commands"), and follows that variable.
+describe('file-manager root constraint variable', () => {
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = () => {};
+  });
+
+  test('unchecking the box, or leaving the root, writes it', async () => {
+    const s = stub('r', { 'file-manager:dir': '/repo/sub' });
+    await mount(s);
+    const box = s.root.getElementById('constrain') as HTMLInputElement;
+    box.checked = false;
+    box.dispatchEvent(new Event('change'));
+    await settle();
+    expect(s.setVar).toHaveBeenCalledWith('file-manager:constrain', false);
+
+    const away = stub('r', { 'file-manager:dir': '/elsewhere' });
+    await mount(away);
+    expect(away.setVar).toHaveBeenCalledWith('file-manager:constrain', false);
+  });
+
+  test('the variable sets the box, at mount and while mounted', async () => {
+    const s = stub('r', { 'file-manager:dir': '/repo', 'file-manager:constrain': false });
+    await mount(s);
+    const box = s.root.getElementById('constrain') as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    expect(s.root.getElementById('goto-root')?.textContent).toBe('root');
+    await push(s, { 'file-manager:constrain': true });
+    expect(box.checked).toBe(true);
+    expect(s.root.getElementById('goto-root')?.textContent).toBe('repo root');
+  });
+});
+
 describe('file-manager location variables', () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = () => {}; // jsdom has no scrollIntoView
