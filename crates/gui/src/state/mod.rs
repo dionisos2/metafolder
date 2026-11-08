@@ -310,6 +310,30 @@ impl Inner {
         Emit { layout: true, ..emit }
     }
 
+    /// Writes `writes` into the workspaces, then `globals` into the global GUI
+    /// variables, and returns their announcements — every one written before
+    /// any is announced, each once in the order given. A workspace not there
+    /// is skipped: a caller to whom that is an error checks it first, under the
+    /// same lock.
+    fn apply(&mut self, writes: Vec<(String, Held)>, globals: Held) -> Announced {
+        let mut announced = Vec::new();
+        for (key, value) in globals {
+            self.globals.insert(key.clone(), value.clone());
+            announced.push((events::GLOBAL_VAR_CHANGED, json!({ "key": key, "value": value })));
+        }
+        for (ws_id, vars) in writes {
+            let Ok(ws) = self.workspace_mut(&ws_id) else { continue };
+            for (key, value) in vars {
+                ws.vars.insert(key.clone(), value.clone());
+                announced.push((
+                    events::WORKSPACE_VAR_CHANGED,
+                    json!({ "workspace_id": ws_id, "key": key, "value": value }),
+                ));
+            }
+        }
+        announced
+    }
+
     fn layout_view(&self) -> LayoutView {
         let payload = |slot: &Slot| SlotPayload {
             visible: slot.visible,
@@ -763,6 +787,20 @@ impl GuiState {
         value
     }
 
+    /// The one way variables are written (see [`Inner::apply`]), announced
+    /// at once. Direct sends and a transaction's delivery alike.
+    fn write(&self, inner: &mut Inner, writes: Vec<(String, Held)>, globals: Held) {
+        let announced = inner.apply(writes, globals);
+        self.announce(announced);
+    }
+
+    /// Announces what [`Inner::apply`] wrote, in its order.
+    fn announce(&self, announced: Announced) {
+        for (event, payload) in announced {
+            self.notifier.emit(event, payload);
+        }
+    }
+
     // ── Read accessors ───────────────────────────────────────────────────
 
     pub fn workspaces(&self) -> Vec<WorkspaceInfo> {
@@ -817,6 +855,21 @@ impl GuiState {
         }
         Ok(vars)
     }
+}
+
+/// Writes into one store, each variable in the order first written.
+type Held = Vec<(String, Value)>;
+
+/// The events announcing variable writes, in their order.
+type Announced = Vec<(&'static str, Value)>;
+
+/// Refuses a write naming `active_repo`: a standard variable (doc "Workspace
+/// variables"), but set at the workspace's creation and never changed.
+fn refuse_fixed(vars: &Map<String, Value>) -> Result<(), String> {
+    if vars.contains_key("active_repo") {
+        return Err("active_repo is set at workspace creation and cannot change".into());
+    }
+    Ok(())
 }
 
 /// The selection a `cd` is recorded under: both halves of it, since a panel

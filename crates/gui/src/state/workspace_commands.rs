@@ -100,20 +100,10 @@ impl GuiState {
     /// the one channel between workspaces (doc "Workspaces"). All or nothing:
     /// `active_repo`, fixed at creation, refuses the whole send.
     pub fn send_vars(&self, ws_id: &str, vars: Map<String, Value>) -> Result<(), String> {
-        if vars.contains_key("active_repo") {
-            return Err("active_repo is set at workspace creation and cannot change".into());
-        }
+        refuse_fixed(&vars)?;
         let mut inner = self.lock();
-        let ws = inner.workspace_mut(ws_id)?;
-        for (key, value) in &vars {
-            ws.vars.insert(key.clone(), value.clone());
-        }
-        for (key, value) in vars {
-            self.notifier.emit(
-                events::WORKSPACE_VAR_CHANGED,
-                json!({ "workspace_id": ws_id, "key": key, "value": value }),
-            );
-        }
+        inner.workspace(ws_id)?;
+        self.write(&mut inner, vec![(ws_id.to_string(), vars.into_iter().collect())], Vec::new());
         Ok(())
     }
 
@@ -324,15 +314,6 @@ impl GuiState {
     }
 
     pub fn set_var(&self, ws_id: &str, key: &str, value: Value) -> Result<(), String> {
-        if key == "active_repo" {
-            return Err("active_repo is set at workspace creation and cannot change".into());
-        }
-        let mut inner = self.lock();
-        inner.workspace_mut(ws_id)?.vars.insert(key.to_string(), value.clone());
-        self.notifier.emit(
-            events::WORKSPACE_VAR_CHANGED,
-            json!({ "workspace_id": ws_id, "key": key, "value": value }),
-        );
-        Ok(())
+        self.send_vars(ws_id, Map::from_iter([(key.to_string(), value)]))
     }
 }

@@ -5,9 +5,8 @@
 
 use super::layout::SlotId;
 use super::{Emit, GuiState, Inner};
-use crate::events;
 use crate::saved_workspaces::{Kind, SavedWorkspace, Slots, FORMAT_VERSION};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value};
 
 /// The standard variables a work save holds (doc "Workspace variables"): the
 /// selection, in every form.
@@ -93,17 +92,18 @@ impl GuiState {
             }
         }
         vars.retain(|(key, _)| !NEVER_SAVED.contains(&key.as_str()));
-        let written = self.mutate(|inner| {
-            let ws = inner.workspace_mut(ws_id)?;
+        // The variables are announced after the layout: the panels they are
+        // for are the ones the layout shows.
+        let announced = self.mutate(|inner| {
+            let ws = inner.workspace(ws_id)?;
             if apply == Apply::LayoutVars {
                 vars.retain(|(key, _)| ws.vars.get(key).is_none());
             }
-            for (key, value) in &vars {
-                ws.vars.insert(key.clone(), value.clone());
-            }
+            let announced = inner.apply(vec![(ws_id.to_string(), vars)], Vec::new());
             if apply == Apply::LayoutVars {
-                return Ok((vars, Emit::NONE));
+                return Ok((announced, Emit::NONE));
             }
+            let ws = inner.workspace_mut(ws_id)?;
             for (slot, panel_type) in
                 [(SlotId::Left, &saved.slots.left), (SlotId::Right, &saved.slots.right)]
             {
@@ -114,14 +114,9 @@ impl GuiState {
             }
             ws.split = saved.slots.shown >= 2;
             inner.show_saved_panels(ws_id)?;
-            Ok((vars, Emit::BOTH))
+            Ok((announced, Emit::BOTH))
         })?;
-        for (key, value) in written {
-            self.notifier.emit(
-                events::WORKSPACE_VAR_CHANGED,
-                json!({ "workspace_id": ws_id, "key": key, "value": value }),
-            );
-        }
+        self.announce(announced);
         Ok(())
     }
 }
@@ -192,7 +187,9 @@ impl Inner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::events;
     use crate::notifier::RecordingNotifier;
+    use serde_json::json;
     use std::sync::Arc;
 
     fn state() -> (Arc<RecordingNotifier>, GuiState) {

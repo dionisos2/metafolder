@@ -4,8 +4,7 @@
 //! written like the workspace variables, in the same command transactions.
 
 use super::GuiState;
-use crate::events;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value};
 
 impl GuiState {
     /// One global GUI variable; `null` when it was never set.
@@ -25,12 +24,7 @@ impl GuiState {
     /// Writes several global GUI variables, every one before any is announced.
     pub fn send_globals(&self, vars: Map<String, Value>) {
         let mut inner = self.lock();
-        for (key, value) in &vars {
-            inner.globals.insert(key.clone(), value.clone());
-        }
-        for (key, value) in vars {
-            self.notifier.emit(events::GLOBAL_VAR_CHANGED, json!({ "key": key, "value": value }));
-        }
+        self.write(&mut inner, Vec::new(), vars.into_iter().collect());
     }
 }
 

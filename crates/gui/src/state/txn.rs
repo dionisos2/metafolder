@@ -7,15 +7,11 @@
 //! holding its id, reads and writes the workspaces directly.
 
 use super::workspace::Vars;
-use super::GuiState;
-use crate::events;
+use super::{GuiState, Held};
 use metafolder_core::sync::MutexExt;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
-
-/// Held writes into one store, each variable in the order first written.
-type Held = Vec<(String, Value)>;
 
 /// One open transaction.
 #[derive(Default)]
@@ -66,9 +62,7 @@ impl GuiState {
     /// `send_vars` within transaction `txn`: held until it flushes or ends.
     /// Refused as a direct send would be — all or nothing.
     pub fn txn_send(&self, txn: u64, ws_id: &str, vars: Map<String, Value>) -> Result<(), String> {
-        if vars.contains_key("active_repo") {
-            return Err("active_repo is set at workspace creation and cannot change".into());
-        }
+        super::refuse_fixed(&vars)?;
         self.lock().workspace(ws_id)?;
         let mut txns = self.txns.lock_recover();
         let Some(txn) = self.open(&mut txns, txn)? else {
@@ -196,32 +190,14 @@ impl GuiState {
         }
     }
 
-    /// Writes `writes` into the workspaces and the global GUI variables, every
-    /// one before any is announced. A workspace closed meanwhile is skipped.
-    /// True when there was any.
+    /// Writes what a transaction held (see [`GuiState::write`]). A workspace
+    /// closed meanwhile is skipped. True when there was any.
     fn deliver(&self, (writes, globals): (Vec<(String, Held)>, Held)) -> bool {
         if writes.is_empty() && globals.is_empty() {
             return false;
         }
         let mut inner = self.lock();
-        let mut announced = Vec::new();
-        for (key, value) in globals {
-            inner.globals.insert(key.clone(), value.clone());
-            announced.push((events::GLOBAL_VAR_CHANGED, json!({ "key": key, "value": value })));
-        }
-        for (ws_id, vars) in writes {
-            let Ok(ws) = inner.workspace_mut(&ws_id) else { continue };
-            for (key, value) in vars {
-                ws.vars.insert(key.clone(), value.clone());
-                announced.push((
-                    events::WORKSPACE_VAR_CHANGED,
-                    json!({ "workspace_id": ws_id, "key": key, "value": value }),
-                ));
-            }
-        }
-        for (event, payload) in announced {
-            self.notifier.emit(event, payload);
-        }
+        self.write(&mut inner, writes, globals);
         true
     }
 }

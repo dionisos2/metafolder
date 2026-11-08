@@ -347,12 +347,7 @@ pub fn ws_set_var(
     txn: Option<u64>,
 ) -> Result<(), String> {
     match txn {
-        Some(txn) => {
-            if key == "active_repo" {
-                return Err("active_repo is set at workspace creation and cannot change".into());
-            }
-            app.gui.txn_send(txn, &ws_id, Map::from_iter([(key, value)]))
-        }
+        Some(txn) => app.gui.txn_send(txn, &ws_id, Map::from_iter([(key, value)])),
         None => app.gui.set_var(&ws_id, &key, value),
     }
 }
