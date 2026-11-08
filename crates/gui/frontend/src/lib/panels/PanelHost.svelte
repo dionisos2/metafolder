@@ -20,6 +20,7 @@
   import { currentStyle, focusedWs, refreshCommands, slotPayload, store } from '../store.svelte';
   import { createPanelApi, type PanelApiInstance } from './api';
   import { createPanelArgSource } from './argSource';
+  import { createPanelLifecycle, type PanelLifecycle } from './lifecycle';
   import { setFindRootProvider } from './roots';
   import { scrollPanel } from './panelScroll';
   import {
@@ -48,7 +49,8 @@
     host: HTMLDivElement;
     shadow: ShadowRoot;
     apiInst: PanelApiInstance;
-    cleanup: (() => void) | null;
+    /** Its mount and teardown, in whichever order they end. */
+    life: PanelLifecycle;
     mounted: Promise<void>;
     /** The panel's zoom (`view:zoom`), applied by `zoomSheet`. */
     zoom: number;
@@ -199,7 +201,7 @@
       host,
       shadow,
       apiInst,
-      cleanup: null,
+      life: createPanelLifecycle(),
       mounted: undefined!,
       zoom: 1,
       zoomSheet: new CSSStyleSheet(),
@@ -258,9 +260,10 @@
       }
       shadow.append(body);
       const mod = await import(/* @vite-ignore */ `${base}/panel/${panelType}/main.js${bust}`);
-      const ret = await mod.mount(shadow, instance.apiInst.api);
-      instance.cleanup = typeof ret === 'function' ? ret : null;
-      void invoke('panel_ready', { wsId: instance.wsId, panelType });
+      // Torn down while its files were on their way: it does not start.
+      if (!instance.life.alive()) return;
+      instance.life.mounted(await mod.mount(shadow, instance.apiInst.api));
+      if (instance.life.alive()) void invoke('panel_ready', { wsId: instance.wsId, panelType });
     } catch (error) {
       // Error boundary: a panel that fails to load shows its error and does
       // not break the shell (no iframe/process isolation any more).
@@ -272,11 +275,7 @@
   }
 
   function teardown(key: string, instance: PanelInstance) {
-    try {
-      instance.cleanup?.();
-    } catch {
-      /* a panel's cleanup must not block teardown */
-    }
+    instance.life.dispose();
     for (const handlerKey of [...panelHandlers.keys()]) {
       if (handlerKey.startsWith(`${key}|`)) panelHandlers.delete(handlerKey);
     }

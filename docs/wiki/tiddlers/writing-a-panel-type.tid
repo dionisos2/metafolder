@@ -72,7 +72,10 @@ For each panel it creates, the shell (`PanelHost.svelte`):
 
 `mount` may be async, and may return a function: the shell calls it when the panel
 is destroyed, to remove what the panel attached outside its root — a listener on
-`document`, a subscription to the change feed. An error thrown by `mount`, or a file
+`document`, a subscription to the change feed. A panel destroyed before its
+`main.js` arrived (its workspace closed meanwhile) is never mounted, and one
+destroyed while an async `mount` runs has the function called as soon as `mount`
+returns it. An error thrown by `mount`, or a file
 that cannot be loaded, is caught: the panel shows `panel "<type>" failed to load`
 with the error, and the rest of the GUI goes on.
 
