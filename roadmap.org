@@ -9,11 +9,6 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 Every deferred or proposed note, to be gone through one by one: build it, keep
 it deferred, or drop it.
 
-** Query cost model
-doc "Query cost model": =POST /query/explain=, saying without running a query
-what its work decomposes into. Entirely unimplemented (=POST /query/profile=
-answers the measured half).
-
 ** Future task extensions
 doc "Future task extensions": an explicit acknowledgement freeing a result
 early; query progress with real counts.

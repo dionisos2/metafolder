@@ -1,0 +1,30 @@
+title: Why there is no query explain
+tags: [[Query engine]]
+kind: rationale
+audience: dev
+summary: No endpoint estimates a query's cost before running it: a client bounds a query with timeout_ms or a cancel, and measures it after with /query/profile — dropped in November 2026.
+
+A client cannot tell before sending a query whether it will take a millisecond or a
+minute. A `POST /query/explain` was proposed to say so without running it: the query's
+work as counts per provider (the forest, the derived key spaces, the rows), turned into
+a duration range by constants in the daemon configuration, with an estimated match
+count. It was dropped in November 2026.
+
+''The need is covered otherwise.'' What matters where a query sits in a loop with a
+human in it — a script with a live counter, a panel opening on whatever was typed — is
+not being stuck behind it, and that is already answered: `timeout_ms`, a cancel or a
+hang-up stops a query within a few hundred keys ([[Query limits]]). Where the time went
+is measured after the fact, exactly, by `POST /query/profile` and `mf slow replay`
+([[Diagnosing a slow operation]]).
+
+''An estimate costs a lot and stays an estimate.'' The match count, on which most terms
+depend, cannot be known without value distributions the store does not keep, nor a
+subtree's size without walking it; durations need constants calibrated per machine. To
+be trustworthy it would have to be computed by the code that prepares and plans the
+query, not by a parallel classifier — two implementations of one decision is the shape
+that has produced real bugs here ([[Query validation]]) — which threads a pricing
+through the whole engine.
+
+''Describe, do not refuse'' still holds: the daemon refuses no shape for being
+unindexed ([[Query limits]] sets bounds on size, not on shape). A client that wants a
+budget sets one.
