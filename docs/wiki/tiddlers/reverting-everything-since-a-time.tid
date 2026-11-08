@@ -2,14 +2,46 @@ title: Reverting everything since a time
 tags: [[The operation log]]
 kind: reference
 audience: dev
-status: deferred
-summary: "Rollback" as a choice of set: revert every operation of the user's written since a time, onto the current state — deferred (user, October 2026).
+summary: A rollback is a choice of set: the user's operations written after the time and still standing — changes, and reverts of older operations — reverted onto the current state.
 
-With the log a sequence ([[The operation log]]), going "back to this morning" is no longer
-a navigation but one more revert: every operation of the user's — not the watcher's —
-written since T and still standing, reverted onto the current state, newest first. The
-daemon already has what it takes: `last_op_at_or_before` finds the operation at a time,
-and a revert takes any set of operations.
+With the log a sequence ([[The operation log]]), going "back to this morning" is not a
+navigation but one more revert ([[Reverting onto the current state]]): the target
+`{"since": T}` (Unix ms; `target_since=` on the plan, [[Revert endpoints]]). Asked of
+the user in [[Rollback]]. Proposed with the log's redesign, deferred by the user on 12
+October 2026, built on 8 November 2026.
 
-Deferred by the user (12 October 2026, "plus tard"): nothing in daily use needs it yet.
-When it is built, the name "rollback" may be reused for it.
+!! The cut
+
+The daemon finds the newest operation written at or before T (`last_op_at_or_before`, a
+binary search over the ids); everything after it is "since". No operation at or before T
+is a `404`: the state then is not known. Retention trims each origin apart ([[Automatic retention]]), so the check is on the whole log, not the user's operations alone: a user
+history trimmed past T while the watcher's reaches further back is not detected — with
+the default budgets (a million user operations, 50 000 of the watcher's) it does not happen.
+
+!! The set
+
+Of the operations after the cut, `revert::since` keeps those that:
+
+* are not the watcher's (`origin = watcher`), as undo does ([[The undo selection]]) — a trashing and a reconcile are the user's;
+* still stand — no standing revert of them, resolved along the chain;
+* are either an ordinary change, or a revert of an operation ''at or before the cut'' — an undo of older work, or a redo of an older undo. Reverting it brings that work back, or undoes it again, as it stood at T.
+
+A revert of an operation written ''after'' the cut is left out: either it still stands and
+its target does not (the two cancel, nothing of either was there at T), or it was itself
+reverted and does not stand. Hence "changes" alone (`only: changes`) would not do: an undo
+since T of an older change would stay, and the state would not be T's.
+
+This was the choice put to the user (8 November 2026): "the state at T", over "your changes
+since T" only.
+
+!! What it writes
+
+One revert, in the request's context or a label of its own named after the time (`rollback to
+2026-11-08T09:00:00Z`); undoing that label takes the rollback back like any other. `unknown` operations in
+the set fail it, as any revert of one does.
+
+!! Cost
+
+The cut costs a few keys; the set reads every operation since — the watcher's included,
+then dropped — and the reverters of each kept one. A rollback over a large reconcile reads
+it whole. It is an explicit, rare command; nothing bounds it.

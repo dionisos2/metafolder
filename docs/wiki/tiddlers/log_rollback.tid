@@ -1,0 +1,6 @@
+title: log:rollback
+tags: [[GUI command]] [[Event log]]
+kind: reference
+summary: Go back to a time: revert the changes you made since (not the watcher's)
+
+The GUI's rollback: asks for the time when none is given, confirms how much goes back, then reverts it as `mf log rollback` does ([[Rollback]]).

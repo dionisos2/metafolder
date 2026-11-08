@@ -571,14 +571,10 @@ async fn test_commit_may_narrow_the_set_but_not_widen_it() {
     assert_eq!(skipped[0]["reason"], "client_skipped");
 }
 
-/// A real file move, so the plan carries a `move` action with the two paths the
-/// client has to `mv` between.
-#[tokio::test]
-async fn test_reverting_a_file_move_plans_the_mv() {
-    let (app, repo, root) = setup("fs_move").await;
-    // Track the root, ignoring `.metafolder/` so only our file is seen.
+/// Tracks the root, ignoring `.metafolder/` so only the test's files are seen.
+async fn watch_root(app: &Router, repo: &str) {
     let (_, roots) = request(
-        &app,
+        app,
         "POST",
         &format!("/repos/{repo}/query"),
         Some(json!({"query": {"type": "is_present", "field": "mf_watch"}})),
@@ -586,19 +582,27 @@ async fn test_reverting_a_file_move_plans_the_mv() {
     .await;
     let root_uuid = roots[0].as_str().unwrap().to_string();
     request(
-        &app,
+        app,
         "PUT",
         &format!("/repos/{repo}/metarecords/{root_uuid}/fields/mf_ignore"),
         Some(json!({"value": {"type": "string", "value": r"\.metafolder(/.*)?$"}})),
     )
     .await;
     request(
-        &app,
+        app,
         "PUT",
         &format!("/repos/{repo}/metarecords/{root_uuid}/fields/mf_watch"),
         Some(json!({"value": {"type": "bool", "value": true}})),
     )
     .await;
+}
+
+/// A real file move, so the plan carries a `move` action with the two paths the
+/// client has to `mv` between.
+#[tokio::test]
+async fn test_reverting_a_file_move_plans_the_mv() {
+    let (app, repo, root) = setup("fs_move").await;
+    watch_root(&app, &repo).await;
 
     std::fs::write(root.join("old.txt"), b"content").unwrap();
     reconcile(&app, &repo).await;
@@ -1004,4 +1008,153 @@ async fn test_two_concurrent_endings_end_the_revert_once() {
         let written = log["operations"].as_array().unwrap().len() - operations_before;
         assert_eq!(written, usize::from(ended[0].0 == "commit"), "{second}: written once: {log}");
     }
+}
+
+// ── Back to a time (doc "Reverting everything since a time") ────────────────
+
+/// The log's operations, oldest first.
+async fn log_ops(app: &Router, repo: &str) -> Vec<Value> {
+    let (status, body) = request(app, "GET", &format!("/repos/{repo}/log"), None).await;
+    assert_eq!(status, StatusCode::OK, "log failed: {body}");
+    body["operations"].as_array().unwrap().clone()
+}
+
+/// A time at or after every operation written so far, and before every one
+/// written next: the clock is let move on past it.
+async fn now_between(app: &Router, repo: &str) -> i64 {
+    let t = log_ops(app, repo).await.last().unwrap()["timestamp"].as_i64().unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    t
+}
+
+/// The newest operation's id.
+async fn head_op(app: &Router, repo: &str) -> i64 {
+    log_ops(app, repo).await.last().unwrap()["id"].as_i64().unwrap()
+}
+
+fn int(v: i64) -> Value {
+    json!({"type": "int", "value": v})
+}
+
+#[tokio::test]
+async fn test_since_reverts_every_change_written_after_the_time() {
+    let (app, repo, _root) = setup("since_changes").await;
+    let uuid = create(&app, &repo, json!([{"name": "rating", "value": int(1)}])).await;
+    let t = now_between(&app, &repo).await;
+    set_field(&app, &repo, &uuid, "rating", int(2)).await;
+    set_field(&app, &repo, &uuid, "rating", int(3)).await;
+    let other = create(&app, &repo, json!([{"name": "rating", "value": int(9)}])).await;
+
+    let (status, body) = revert(&app, &repo, json!({"target": {"since": t}})).await;
+    assert_eq!(status, StatusCode::OK, "revert failed: {body}");
+    assert_eq!(body["reverted_operations"].as_array().unwrap().len(), 3, "{body}");
+    assert_eq!(field_of(&app, &repo, &uuid, "rating").await.unwrap()["value"], 1);
+    let (status, _) =
+        request(&app, "GET", &format!("/repos/{repo}/metarecords/{other}"), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "the metarecord created since should be gone");
+}
+
+/// What was done and undone since the time is left alone; an undo since the
+/// time of a change made before it is reverted — the change comes back, as
+/// it stood at the time.
+#[tokio::test]
+async fn test_since_goes_back_to_the_state_at_the_time() {
+    let (app, repo, _root) = setup("since_state").await;
+    let uuid = create(&app, &repo, json!([{"name": "a", "value": int(1)}])).await;
+    set_field(&app, &repo, &uuid, "b", int(1)).await;
+    let b_set = head_op(&app, &repo).await;
+    let t = now_between(&app, &repo).await;
+
+    // After the time: b's earlier set undone; a set and undone.
+    let (status, body) = revert(&app, &repo, json!({"target": {"op_ids": [b_set]}})).await;
+    assert_eq!(status, StatusCode::OK, "undo of b failed: {body}");
+    let b_undo = head_op(&app, &repo).await;
+    set_field(&app, &repo, &uuid, "a", int(2)).await;
+    let a_set = head_op(&app, &repo).await;
+    let (status, body) = revert(&app, &repo, json!({"target": {"op_ids": [a_set]}})).await;
+    assert_eq!(status, StatusCode::OK, "undo of a failed: {body}");
+    assert_eq!(field_of(&app, &repo, &uuid, "b").await, None);
+
+    let (status, body) = revert(&app, &repo, json!({"target": {"since": t}})).await;
+    assert_eq!(status, StatusCode::OK, "revert failed: {body}");
+    assert_eq!(body["reverted_operations"], json!([b_undo]), "{body}");
+    assert_eq!(field_of(&app, &repo, &uuid, "a").await.unwrap()["value"], 1);
+    assert_eq!(field_of(&app, &repo, &uuid, "b").await.unwrap()["value"], 1);
+}
+
+/// A redo since the time of an undo made before it is reverted: the change
+/// is undone again, as it was at the time.
+#[tokio::test]
+async fn test_since_reverts_a_redo_of_an_earlier_undo() {
+    let (app, repo, _root) = setup("since_redo").await;
+    let uuid = create(&app, &repo, json!([{"name": "a", "value": int(1)}])).await;
+    set_field(&app, &repo, &uuid, "a", int(2)).await;
+    let a_set = head_op(&app, &repo).await;
+    let (status, body) = revert(&app, &repo, json!({"target": {"op_ids": [a_set]}})).await;
+    assert_eq!(status, StatusCode::OK, "undo failed: {body}");
+    let undo = head_op(&app, &repo).await;
+    let t = now_between(&app, &repo).await;
+    let (status, body) = revert(&app, &repo, json!({"target": {"op_ids": [undo]}})).await;
+    assert_eq!(status, StatusCode::OK, "redo failed: {body}");
+    assert_eq!(field_of(&app, &repo, &uuid, "a").await.unwrap()["value"], 2);
+
+    let (status, body) = revert(&app, &repo, json!({"target": {"since": t}})).await;
+    assert_eq!(status, StatusCode::OK, "revert failed: {body}");
+    assert_eq!(field_of(&app, &repo, &uuid, "a").await.unwrap()["value"], 1);
+}
+
+/// The watcher's operations since the time stay: they describe the disk. (A
+/// reconcile is not one of them: the user asked for it, as undo sees it.)
+#[tokio::test]
+async fn test_since_leaves_the_watchers_operations() {
+    let (app, repo, root) = setup("since_watcher").await;
+    watch_root(&app, &repo).await;
+    std::fs::write(root.join("old.txt"), b"x").unwrap();
+    reconcile(&app, &repo).await;
+    let t = now_between(&app, &repo).await;
+    std::fs::rename(root.join("old.txt"), root.join("new.txt")).unwrap();
+    wait_for_file_moved(&app, &repo).await;
+    let watched: Vec<Value> = log_ops(&app, &repo)
+        .await
+        .into_iter()
+        .filter(|o| o["timestamp"].as_i64().unwrap() > t)
+        .collect();
+    assert!(watched.iter().all(|o| o["origin"] == "watcher"), "{watched:?}");
+
+    let (status, body) = revert(&app, &repo, json!({"target": {"since": t}})).await;
+    assert_eq!(status, StatusCode::OK, "revert failed: {body}");
+    assert_eq!(body["reverted_operations"], json!([]), "{body}");
+    assert_eq!(body["label"], Value::Null, "nothing to revert writes nothing");
+    assert!(root.join("new.txt").exists());
+}
+
+#[tokio::test]
+async fn test_since_before_the_log_begins_is_not_found() {
+    let (app, repo, _root) = setup("since_too_old").await;
+    let (status, body) = revert(&app, &repo, json!({"target": {"since": 0}})).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+}
+
+#[tokio::test]
+async fn test_since_names_its_label_and_has_a_plan() {
+    let (app, repo, _root) = setup("since_plan").await;
+    let uuid = create(&app, &repo, json!([{"name": "a", "value": int(1)}])).await;
+    let t = now_between(&app, &repo).await;
+    set_field(&app, &repo, &uuid, "a", int(2)).await;
+    let a_set = head_op(&app, &repo).await;
+
+    let (status, body) = plan(&app, &repo, &format!("target_since={t}")).await;
+    assert_eq!(status, StatusCode::OK, "plan failed: {body}");
+    let ids: Vec<i64> =
+        body["operations"].as_array().unwrap().iter().map(|o| o["id"].as_i64().unwrap()).collect();
+    assert_eq!(ids, vec![a_set]);
+    let (status, _) = plan(&app, &repo, &format!("target_since={t}&only=changes")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "only narrows a label_id target");
+
+    let (status, body) = revert(&app, &repo, json!({"target": {"since": t}})).await;
+    assert_eq!(status, StatusCode::OK, "revert failed: {body}");
+    let label = body["label"].as_i64().unwrap();
+    let (_, label) = request(&app, "GET", &format!("/repos/{repo}/labels/{label}"), None).await;
+    let name = label["name"].as_str().unwrap();
+    assert!(name.starts_with("rollback to "), "{name}");
 }

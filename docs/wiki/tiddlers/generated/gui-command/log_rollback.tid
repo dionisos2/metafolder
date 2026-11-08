@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/log:rollback
+catalog: GUI command
+target: log:rollback
+summary: Go back to a time: revert the changes you made since (not the watcher's)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

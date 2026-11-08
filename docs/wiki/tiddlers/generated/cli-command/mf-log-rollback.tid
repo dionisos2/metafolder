@@ -1,0 +1,35 @@
+title: $:/mf/gen/CLI command/mf log rollback
+catalog: CLI command
+target: mf log rollback
+summary: Go back to a time: revert your changes since then (not the watcher's)
+
+!! Reference
+
+```
+Go back to a time: revert your changes since then (not the watcher's)
+
+Usage: mf log rollback [OPTIONS] <ARGS>...
+
+Arguments:
+  <ARGS>...
+          [plan] TIME: a duration ago (30m, 2h, 1d), ISO-8601 in UTC, or @<unix-ms>
+
+Options:
+      --metadata-only
+          Leave out the operations needing a filesystem action
+
+      --on-move-available <ON_MOVE_AVAILABLE>
+          Policy when the file is present: apply|skip|abort|ask (default apply)
+
+      --on-move-unavailable <ON_MOVE_UNAVAILABLE>
+          Policy when the file is missing: apply|skip|abort|ask (default ask)
+
+      --force
+          Skip the confirmation prompt
+
+      --silent
+          Suppress informational output
+
+  -h, --help
+          Print help
+```

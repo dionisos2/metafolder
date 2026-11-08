@@ -96,8 +96,8 @@ pub fn undo_run(
     };
     let target = RevertTarget {
         label_id: Some(label),
-        op_ids: Vec::new(),
         only: Some(if redo { "undos" } else { "changes" }),
+        ..Default::default()
     };
     if plan_only {
         return revert_plan(ctx, target);
@@ -507,6 +507,16 @@ fn parse_timestamp(s: &str) -> Result<i64, CliError> {
     })
 }
 
+/// Parses `mf log rollback`'s time ([`date::time_ago`]).
+pub fn parse_time_ago(s: &str, now: i64) -> Result<i64, CliError> {
+    date::time_ago(s, now).ok_or_else(|| {
+        CliError::Usage(format!(
+            "invalid time '{s}' (a duration ago like 30m, 2h or 1d; ISO-8601 like \
+             2017-03-15T10:00, in UTC; or '@<unix-ms>')"
+        ))
+    })
+}
+
 /// `YYYY-MM-DD HH:MM` (UTC) from Unix ms.
 fn fmt_minute(ms: i64) -> String {
     let (y, mo, d, h, mi, _) = date::ms_to_civil(ms);
@@ -568,17 +578,28 @@ mod tests {
         assert!(parse_timestamp("@notanumber").is_err());
         assert!(parse_timestamp("not-a-date").is_err());
     }
+
+    /// `mf log rollback` takes what `date::time_ago` reads, and refuses the rest
+    /// as a usage error.
+    #[test]
+    fn a_rollback_time_is_a_timestamp_or_a_duration_ago() {
+        let now = 1_700_000_000_000;
+        assert_eq!(parse_time_ago("2h", now).unwrap(), now - 2 * 3_600_000);
+        assert!(matches!(parse_time_ago("yesterday", now), Err(CliError::Usage(_))));
+    }
 }
 
 // ── `mf log revert` (doc "Reverting a label") ──────────────────────────────
 
 /// What to revert: a label — its children's operations included — an
-/// explicit list of operations, or, omitted, the label of the newest
-/// operation.
+/// explicit list of operations, what going back to a time takes, or,
+/// omitted, the label of the newest operation.
 #[derive(Clone, Default)]
 pub struct RevertTarget {
     pub label_id: Option<i64>,
     pub op_ids: Vec<i64>,
+    /// Unix ms: back to the state at that time (doc "Rollback").
+    pub since: Option<i64>,
     /// With a label: only its standing `changes` (undo) or `undos` (redo).
     pub only: Option<&'static str>,
 }
@@ -589,7 +610,9 @@ impl RevertTarget {
     }
 
     fn body(&self) -> Json {
-        if !self.op_ids.is_empty() {
+        if let Some(t) = self.since {
+            json!({"since": t})
+        } else if !self.op_ids.is_empty() {
             json!({"op_ids": self.op_ids})
         } else {
             let mut target = match self.label_id {
@@ -604,7 +627,9 @@ impl RevertTarget {
     }
 
     fn describe(&self) -> String {
-        if !self.op_ids.is_empty() {
+        if let Some(t) = self.since {
+            format!("back to {} UTC", fmt_second(t))
+        } else if !self.op_ids.is_empty() {
             let ids: Vec<String> = self.op_ids.iter().map(|i| format!("op {i}")).collect();
             ids.join(", ")
         } else {

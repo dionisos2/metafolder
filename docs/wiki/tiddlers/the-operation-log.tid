@@ -13,16 +13,16 @@ panel as a tree of labels ([[log panel]]). Each step that changed the store's la
 ''emptied the log'' of an older store rather than converting it — the metarecords kept —
 which the user chose ([[Persisted format changes]]).
 
-Two things were left for later, by the user's decision: the GUI's ''work context''
-([[The GUI's work context]], built since, 17 October 2026), and ''"rollback" as "revert
-everything since T"'' ([[Reverting everything since a time]]). Renaming or describing a
+Two things were left for later, by the user's decision, and built since: the GUI's ''work
+context'' ([[The GUI's work context]], 17 October 2026), and ''"rollback" as "revert
+everything since T"'' ([[Reverting everything since a time]], 8 November 2026). Renaming or describing a
 label after the fact is not built either.
 
 !! The model
 
 * The log is a sequence of operations, numbered in the order they were written. There is no parent, no HEAD to move, no branch: the log only grows, and shrinks only by retention.
 * Each operation keeps what it found and what it wrote (the before/after snapshots of today). What it wrote is ''descriptive'': it says what the operation did, it is never a condition for undoing it.
-* There is ''one mechanism'': reverting a set of operations, which applies each one's inverse to the ''current'' state ([[Reverting onto the current state]]). Undo, redo, "back to this morning", a script's going back: each is a choice of set, nothing more. The name "rollback" may be reused for "revert everything since T".
+* There is ''one mechanism'': reverting a set of operations, which applies each one's inverse to the ''current'' state ([[Reverting onto the current state]]). Undo, redo, "back to this morning" ([[Rollback]]), a script's going back: each is a choice of set, nothing more.
 * Operations are grouped by ''labels'' — named, described, nested — instead of revisions ([[Labels and contexts]]). A transaction stays one request; a label groups what belongs together, across as many requests as it takes.
 * Undo and redo target a label of the newest operation, chosen by the user when there are several ([[Undo and redo by label]]).
 
@@ -40,7 +40,7 @@ a promise to keep a global state that the log no longer knows how to rebuild.
 !! What went
 
 * HEAD's navigation, the history tree and its branches; LCA and navigation paths; `mode=active`/`mode=tree` on `GET /log`; `prune linearize`; `mf log list --tree`/`--graph` and the log panel's graph.
-* The coordinated step-by-step navigation and its lock (`/rollback/*`, `mf log rollback`, `log:rollback`); the file side of a revert stays.
+* The coordinated step-by-step navigation and its lock (`/rollback/*`, the navigating `mf log rollback` and `log:rollback` — names since reused for going back to a time, [[Rollback]]); the file side of a revert stays.
 * The dependency analysis: `with_dependents`, "blocked by".
 * Revisions, as a grouping and as a word: `rev_id`, `/log/revisions/:id`, labels set on a revision afterwards (`PATCH`, `log:mark`), the "labelled revision is a retention floor" rule.
 * Restoring a past ''global'' state. Nothing in daily use needs it; the watcher's work makes it a state that never really existed on disk anyway.

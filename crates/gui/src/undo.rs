@@ -1,6 +1,7 @@
 //! `log:undo` / `log:redo` (doc "Log commands in the GUI", doc "Undo
 //! and redo by label"): undo a label of the newest change the *user* made to
-//! the active repository, and take a label of the newest undo back.
+//! the active repository, and take a label of the newest undo back. And
+//! `log:rollback` (doc "Rollback"): go back to the state at a time.
 //!
 //! The selection is [`metafolder_core::undo`]'s, shared with `mf log
 //! undo`/`redo`: the labels the newest change still standing (the newest undo)
@@ -243,4 +244,100 @@ pub async fn log_revert(
     .await?;
     response["notes"] = json!(notes);
     Ok(response)
+}
+
+// ── log:rollback (doc "Rollback") ───────────────────────────────────────────
+
+/// `YYYY-MM-DD HH:MM:SS UTC` — how a rollback names its time.
+fn utc_second(ms: i64) -> String {
+    let (y, mo, d, h, mi, s) = metafolder_core::date::ms_to_civil(ms);
+    format!("{y:04}-{mo:02}-{d:02} {h:02}:{mi:02}:{s:02} UTC")
+}
+
+/// What going back to `time` (as [`metafolder_core::date::time_ago`] reads
+/// it) would take, for the shell to confirm: `{"since", "operations",
+/// "changed", "files"}` — the time in Unix ms, how many operations it
+/// reverts, how many of them overwrite a later write, and whether files move.
+pub async fn rollback_plan(
+    gui: &GuiState,
+    daemon: &DaemonProxy,
+    ws_id: &str,
+    time: &str,
+) -> Result<Value, String> {
+    let repo = gui.active_repo(ws_id)?;
+    let now = metafolder_core::date::now_ms();
+    let since = metafolder_core::date::time_ago(time, now).ok_or_else(|| {
+        format!(
+            "invalid time \"{time}\": a duration ago (30m, 2h, 1d), ISO-8601 in UTC \
+             (2026-11-08T09:00), or @<unix-ms>"
+        )
+    })?;
+    let path = format!("/repos/{repo}/revert/plan?target_since={since}");
+    let response = daemon.request("GET", &path, None).await?;
+    if response.status != 200 {
+        return Err(crate::daemon_proxy::error_message(&response.body, || {
+            format!("reading the rollback's plan failed with status {}", response.status)
+        }));
+    }
+    let ops = response.body["operations"].as_array().cloned().unwrap_or_default();
+    let changed = ops.iter().filter(|op| !op["changed_since"].is_null()).count();
+    Ok(json!({
+        "since": since,
+        "operations": ops.len(),
+        "changed": changed,
+        "files": response.body["requires_lock"] == json!(true),
+    }))
+}
+
+/// Goes back to the state at `since` (Unix ms): reverts the user's changes
+/// written since, onto the current state, files included — the shell has
+/// confirmed what [`rollback_plan`] said.
+pub async fn rollback(
+    gui: Arc<GuiState>,
+    daemon: Arc<DaemonProxy>,
+    ws_id: String,
+    since: i64,
+    timeouts: crate::commands::StatusTimeouts,
+) -> Result<(), String> {
+    let repo = gui.active_repo(&ws_id)?;
+    let target = json!({"since": since});
+    let result = blocking(&daemon, &repo, move |repo, ui| {
+        let request = RevertRequest { target: &target, metadata_only: false };
+        coordinated_revert::revert_unplanned(repo, &request, &GUI_POLICIES, ui)
+    })
+    .await;
+    let (response, notes) = match result {
+        Ok(done) => done,
+        Err(message) => return report(&gui, &ws_id, &message, &timeouts),
+    };
+    let count = response["reverted_operations"].as_array().map(|a| a.len()).unwrap_or(0);
+    let summary = match response["label"].as_i64() {
+        None => "Nothing was reverted.".to_string(),
+        Some(_) => format!(
+            "Rolled back to {} ({count} operations) — the daemon's own operations were left \
+             in place.",
+            utc_second(since)
+        ),
+    };
+    finish(&gui, &ws_id, &with_notes(summary, &notes), &timeouts)
+}
+
+/// The shell's `log:rollback`, first half: [`rollback_plan`].
+#[tauri::command]
+pub async fn log_rollback_plan(
+    app: tauri::State<'_, Arc<crate::commands::App>>,
+    ws_id: String,
+    time: String,
+) -> Result<Value, String> {
+    rollback_plan(&app.gui, &app.daemon, &ws_id, &time).await
+}
+
+/// The shell's `log:rollback`, once confirmed: [`rollback`].
+#[tauri::command]
+pub async fn log_rollback(
+    app: tauri::State<'_, Arc<crate::commands::App>>,
+    ws_id: String,
+    since: i64,
+) -> Result<(), String> {
+    rollback(app.gui.clone(), app.daemon.clone(), ws_id, since, app.status_timeouts()).await
 }

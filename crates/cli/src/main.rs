@@ -574,6 +574,27 @@ enum LogCommand {
         #[arg(long)]
         silent: bool,
     },
+    /// Go back to a time: revert your changes since then (not the watcher's)
+    Rollback {
+        /// [plan] TIME: a duration ago (30m, 2h, 1d), ISO-8601 in UTC, or @<unix-ms>
+        #[arg(num_args = 1..=2, required = true)]
+        args: Vec<String>,
+        /// Leave out the operations needing a filesystem action
+        #[arg(long = "metadata-only")]
+        metadata_only: bool,
+        /// Policy when the file is present: apply|skip|abort|ask (default apply)
+        #[arg(long = "on-move-available")]
+        on_move_available: Option<String>,
+        /// Policy when the file is missing: apply|skip|abort|ask (default ask)
+        #[arg(long = "on-move-unavailable")]
+        on_move_unavailable: Option<String>,
+        /// Skip the confirmation prompt
+        #[arg(long)]
+        force: bool,
+        /// Suppress informational output
+        #[arg(long)]
+        silent: bool,
+    },
     /// Permanently remove operations from the history (irreversible)
     Prune {
         #[command(subcommand)]
@@ -1739,7 +1760,7 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
                     "give a label id or --op, not both".into(),
                 ));
             }
-            let target = log::RevertTarget { label_id, op_ids: op, only: None };
+            let target = log::RevertTarget { label_id, op_ids: op, ..Default::default() };
             let policies = log::MovePolicies {
                 on_available: on_move_available
                     .as_deref()
@@ -1752,6 +1773,34 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
                     .transpose()?
                     .unwrap_or(log::Policy::Ask),
             };
+            let opts =
+                log::RevertOpts { metadata_only, force, confirm_moves: true, silent, policies };
+            if is_plan {
+                log::revert_plan(ctx, target)
+            } else {
+                log::revert_run(ctx, target, &opts)
+            }
+        }
+        Some(LogCommand::Rollback {
+            args,
+            metadata_only,
+            on_move_available,
+            on_move_unavailable,
+            force,
+            silent,
+        }) => {
+            let (is_plan, time) = match args.as_slice() {
+                [plan, time] if plan == "plan" => (true, time),
+                [time] => (false, time),
+                _ => {
+                    return Err(metafolder_cli::client::CliError::Usage(
+                        "usage: mf log rollback [plan] TIME".into(),
+                    ))
+                }
+            };
+            let since = log::parse_time_ago(time, metafolder_core::date::now_ms())?;
+            let target = log::RevertTarget { since: Some(since), ..Default::default() };
+            let policies = move_policies(on_move_available, on_move_unavailable)?;
             let opts =
                 log::RevertOpts { metadata_only, force, confirm_moves: true, silent, policies };
             if is_plan {

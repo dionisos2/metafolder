@@ -4,14 +4,18 @@
 use super::*;
 use std::collections::HashSet;
 
-/// The set of operations to revert: a label's — its children's included —
-/// or an explicit list.
+/// The set of operations to revert: a label's — its children's included —,
+/// an explicit list, or what going back to a time takes.
 #[derive(Deserialize)]
 pub(super) struct RevertTarget {
     #[serde(default)]
     label_id: Option<serde_json::Value>,
     #[serde(default)]
     op_ids: Option<Vec<i64>>,
+    /// Unix ms: back to the state at that time (doc "Reverting everything
+    /// since a time").
+    #[serde(default)]
+    since: Option<i64>,
     /// With `label_id`: only its standing `changes` (an undo) or its standing
     /// `undos` (a redo) — doc "Undo and redo by label".
     #[serde(default)]
@@ -32,6 +36,8 @@ pub(super) struct RevertPlanParams {
     #[serde(default)]
     target_op_ids: Option<String>,
     #[serde(default)]
+    target_since: Option<i64>,
+    #[serde(default)]
     only: Option<String>,
 }
 
@@ -41,6 +47,25 @@ fn resolve_revert_target(
     head: Option<i64>,
     target: &RevertTarget,
 ) -> Result<Vec<crate::log::OpRow>, ApiError> {
+    if target.since.is_some() && (target.label_id.is_some() || target.op_ids.is_some()) {
+        return Err(ApiError::bad_request(
+            "the target needs exactly one of label_id, op_ids or since",
+        ));
+    }
+    if let Some(t) = target.since {
+        if target.only.is_some() {
+            return Err(ApiError::bad_request("only narrows a label_id target"));
+        }
+        // The log must reach back to the time: what was written before its
+        // first operation is not known, so neither is the state then.
+        let cut = conn.last_op_at_or_before(t)?.ok_or_else(|| {
+            ApiError::not_found(format!(
+                "the log does not reach back to {}: its oldest operation is newer",
+                metafolder_core::date::iso8601_from_ms(t)
+            ))
+        })?;
+        return Ok(crate::revert::since(conn, cut)?);
+    }
     let ops = match (&target.label_id, &target.op_ids) {
         (Some(label), None) => {
             let label_id = match label {
@@ -95,7 +120,9 @@ fn resolve_revert_target(
             ops
         }
         _ => {
-            return Err(ApiError::bad_request("the target needs exactly one of label_id or op_ids"))
+            return Err(ApiError::bad_request(
+                "the target needs exactly one of label_id, op_ids or since",
+            ))
         }
     };
     Ok(ops)
@@ -103,6 +130,9 @@ fn resolve_revert_target(
 
 /// The name of the label a revert opens when the request names none.
 fn revert_name(target: &RevertTarget) -> String {
+    if let Some(t) = target.since {
+        return format!("rollback to {}", metafolder_core::date::iso8601_from_ms(t));
+    }
     match (&target.label_id, &target.op_ids) {
         (Some(label), _) => {
             let what = match target.only.as_deref() {
@@ -238,6 +268,7 @@ pub(super) async fn revert_plan(
             Err(_) => serde_json::Value::String(s.clone()),
         }),
         op_ids,
+        since: params.target_since,
         only: params.only,
     };
     with_repo(&state, repo_uuid, move |repo_state| {

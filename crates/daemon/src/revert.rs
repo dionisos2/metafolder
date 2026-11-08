@@ -98,6 +98,27 @@ pub fn narrow(log: &dyn Log, ops: Vec<OpRow>, only: Only) -> Result<Vec<OpRow>> 
     Ok(out)
 }
 
+/// What going back to the state after operation `cut` takes (doc "Reverting
+/// everything since a time"): of the operations written after it, the
+/// user's — not the watcher's — still standing that are either a change, or
+/// a revert of an operation from before the cut (an undo or a redo of
+/// earlier work: reverting it brings that work back as it stood). A revert
+/// of an operation written after the cut is left alone: the two cancel out,
+/// or the revert is itself undone, and either way nothing of it was there at
+/// the cut.
+pub fn since(log: &dyn Log, cut: i64) -> Result<Vec<OpRow>> {
+    let mut memo = std::collections::HashMap::new();
+    let mut out = Vec::new();
+    for op in log.ops_after(cut)? {
+        let keep = op.origin.as_deref() != Some(crate::log::ORIGIN_WATCHER)
+            && op.reverts_op_id.is_none_or(|target| target <= cut);
+        if keep && standing(log, op.id, &mut memo)? {
+            out.push(op);
+        }
+    }
+    Ok(out)
+}
+
 /// Whether `op` still stands: no revert of it stands. Resolved along the whole
 /// chain — a revert that was itself reverted undoes nothing any more (doc
 /// "Why undo and redo do not oscillate").

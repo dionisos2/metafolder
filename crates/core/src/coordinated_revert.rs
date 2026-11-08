@@ -360,10 +360,14 @@ pub fn trash_recovery_hint(entries: &[TrashEntry], metarecord: &str) -> Option<S
 
 // ── Revert ───────────────────────────────────────────────────────────────────
 
-/// The query-parameter form of a revert target (`{"label_id": N|"head"}` or
-/// `{"op_ids": [...]}`), for `GET /revert/plan`.
+/// The query-parameter form of a revert target (`{"label_id": N|"head"}`,
+/// `{"op_ids": [...]}` or `{"since": ms}`), for `GET /revert/plan`.
 pub fn revert_query(target: &Json) -> Vec<(&'static str, String)> {
     let mut q = Vec::new();
+    if let Some(t) = target["since"].as_i64() {
+        q.push(("target_since", t.to_string()));
+        return q;
+    }
     match target["op_ids"].as_array().filter(|ids| !ids.is_empty()) {
         Some(ids) => {
             let ids: Vec<String> =
@@ -392,7 +396,7 @@ pub fn revert_plan(repo: &Repo<'_>, target: &Json) -> Result<Json, RevertError> 
 
 /// A revert to write.
 pub struct RevertRequest<'r> {
-    /// `{"label_id": N|"head"}` or `{"op_ids": [...]}`.
+    /// `{"label_id": N|"head"}`, `{"op_ids": [...]}` or `{"since": ms}`.
     pub target: &'r Json,
     /// Leave out the operations needing a file action instead of performing it.
     pub metadata_only: bool,
@@ -569,6 +573,10 @@ mod tests {
         assert_eq!(
             revert_query(&json!({"label_id": 7, "only": "changes"})),
             vec![("target_label_id", "7".to_string()), ("only", "changes".to_string())]
+        );
+        assert_eq!(
+            revert_query(&json!({"since": 1700000000000_i64})),
+            vec![("target_since", "1700000000000".to_string())]
         );
     }
 

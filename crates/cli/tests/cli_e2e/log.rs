@@ -725,3 +725,47 @@ fn test_undo_offers_the_context_and_takes_it_back_whole() {
     let rating = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "get", "rating"]);
     assert!(rating.stdout.contains('2'), "{}", rating.stdout);
 }
+
+// ── mf log rollback (doc "Rollback") ─────────────────────────────────────────
+
+/// The newest operation's timestamp, as `@<ms>`, once the clock has moved past it.
+fn now_after_head(repo: &str) -> String {
+    let out = mf(&["-u", repo, "log", "show", "HEAD", "--raw"]);
+    assert_ok(&out);
+    let body: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+    let t = body["operations"].as_array().unwrap().last().unwrap()["timestamp"].as_i64().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    format!("@{t}")
+}
+
+#[test]
+fn test_log_rollback_goes_back_to_the_time() {
+    let (repo, _root) = init_repo("rollback");
+    let uuid = create_metarecord(&repo, &["rating:int=3"]);
+    let t = now_after_head(&repo);
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=7"]));
+
+    let out = mf(&["-u", &repo, "log", "rollback", "plan", &t]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("2 operation(s)."), "stdout: {}", out.stdout);
+    assert_eq!(rating_of(&repo, &uuid), 7, "a plan writes nothing");
+
+    let out = mf(&["-u", &repo, "log", "rollback", &t, "--force"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("Reverted"), "stdout: {}", out.stdout);
+    assert_eq!(rating_of(&repo, &uuid), 3);
+
+    let out = mf(&["-u", &repo, "log", "rollback", &t, "--force"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("nothing to revert"), "stdout: {}", out.stdout);
+}
+
+#[test]
+fn test_log_rollback_needs_a_time() {
+    let (repo, _root) = init_repo("rollback_usage");
+    let out = mf(&["-u", &repo, "log", "rollback"]);
+    assert_eq!(out.code, 2, "stderr: {}", out.stderr);
+    let out = mf(&["-u", &repo, "log", "rollback", "yesterday"]);
+    assert_eq!(out.code, 2, "stderr: {}", out.stderr);
+}

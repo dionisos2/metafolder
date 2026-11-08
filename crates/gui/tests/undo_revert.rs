@@ -3,7 +3,7 @@
 //! daemon's revert API (`core::coordinated_revert`). Tests run a stub daemon on an
 //! ephemeral port.
 
-use axum::extract::State;
+use axum::extract::{RawQuery, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -25,6 +25,8 @@ struct Stub {
     reverts: Arc<Mutex<Vec<Value>>>,
     /// Body served by GET /repos/:repo/revert/plan.
     revert_plan: Arc<Mutex<Value>>,
+    /// Query strings of the received GET /repos/:repo/revert/plan calls.
+    plan_queries: Arc<Mutex<Vec<String>>>,
     /// Whether POST /repos/:repo/revert refuses (500).
     revert_refused: Arc<Mutex<bool>>,
 }
@@ -35,6 +37,7 @@ async fn spawn_stub(log: Value) -> (String, Stub) {
         reverts: Arc::new(Mutex::new(Vec::new())),
         revert_plan: Arc::new(Mutex::new(json!({"requires_lock": false,
                                                 "operations": [{"id": 9}]}))),
+        plan_queries: Arc::new(Mutex::new(Vec::new())),
         revert_refused: Arc::new(Mutex::new(false)),
     };
     let router = axum::Router::new()
@@ -51,7 +54,8 @@ async fn spawn_stub(log: Value) -> (String, Stub) {
         )
         .route(
             "/repos/{repo}/revert/plan",
-            get(|State(stub): State<Stub>| async move {
+            get(|State(stub): State<Stub>, RawQuery(query): RawQuery| async move {
+                stub.plan_queries.lock().unwrap().push(query.unwrap_or_default());
                 Json(stub.revert_plan.lock().unwrap().clone())
             }),
         )
@@ -307,4 +311,45 @@ async fn test_a_log_the_daemon_refuses_is_an_error() {
     assert_eq!(error, "Repository not found: cafe");
     let statuses = notifier.payloads(events::STATUS_MESSAGE);
     assert!(statuses.iter().all(|p| p["text"] != "Nothing to undo."), "{statuses:?}");
+}
+
+// ── log:rollback (doc "Rollback") ───────────────────────────────────────────
+
+/// The plan names how much going back takes, so the shell can confirm it.
+#[tokio::test]
+async fn test_a_rollback_plan_counts_what_it_would_revert() {
+    let (url, stub) = spawn_stub(user_log()).await;
+    *stub.revert_plan.lock().unwrap() = json!({"requires_lock": true, "operations": [
+        {"id": 3, "changed_since": null}, {"id": 4, "changed_since": {"op_id": 5}}]});
+    let (gui, daemon, ws, _) = setup(&url);
+
+    let plan = undo::rollback_plan(&gui, &daemon, &ws, "@5").await.unwrap();
+
+    assert_eq!(plan, json!({"since": 5, "operations": 2, "changed": 1, "files": true}));
+    assert_eq!(stub.plan_queries.lock().unwrap().as_slice(), ["target_since=5"]);
+}
+
+#[tokio::test]
+async fn test_a_rollback_to_a_time_that_is_none_is_refused() {
+    let (url, stub) = spawn_stub(user_log()).await;
+    let (gui, daemon, ws, _) = setup(&url);
+
+    let error = undo::rollback_plan(&gui, &daemon, &ws, "yesterday").await.unwrap_err();
+
+    assert!(error.contains("invalid time"), "{error}");
+    assert!(stub.plan_queries.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn test_a_rollback_reverts_since_the_time_and_marks_dirty() {
+    let (url, stub) = spawn_stub(user_log()).await;
+    let (gui, daemon, ws, notifier) = setup(&url);
+
+    undo::rollback(gui.clone(), daemon, ws.clone(), 5, timeouts()).await.unwrap();
+
+    assert_eq!(stub.reverts.lock().unwrap().as_slice(), [json!({"target": {"since": 5}})]);
+    assert_ne!(gui.get_var(&ws, "metarecords:dirty").unwrap(), Value::Null);
+    let (text, kind, _) = last_status(&notifier);
+    assert!(text.starts_with("Rolled back to 1970-01-01 00:00:00 UTC (1 operations)"), "{text}");
+    assert_eq!(kind, "info");
 }

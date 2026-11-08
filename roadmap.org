@@ -9,11 +9,6 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 Every deferred or proposed note, to be gone through one by one: build it, keep
 it deferred, or drop it.
 
-** Reverting everything since a time
-doc "Reverting everything since a time": revert every operation of the user's
-written since a time, onto the current state — the part of the event log's
-redesign left for later (user, October 2026).
-
 ** Collapsing a revert to one operation per cell
 doc "Collapsing a revert to one operation per cell": write one operation per
 cell instead of one per reverted operation.

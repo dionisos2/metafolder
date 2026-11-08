@@ -34,6 +34,12 @@ than breaking them.
   (`check-deps.sh --headless`). It still needs `node`, which renders the documentation.
 
 ### Added
+- **`mf log rollback <time>` and `log:rollback`: back to how things stood at a
+  time.** `2h`, `1d`, an ISO-8601 date in UTC or `@<ms>`: every change you made
+  since — your undos and redos of older work included — is reverted onto the
+  current state; the watcher's operations stay. `plan` previews it; it is one
+  revert, undone like any other. The daemon's revert takes the target
+  `{"since": ms}` (`target_since=` on the plan) (doc "Rollback").
 - **`gui/user-commands.js`, the file for your own GUI commands.** Loaded after
   `commands.js`, which now holds only the GUI's commands written in JavaScript:
   a shipped change to it merges without touching what you added. Its commands

@@ -123,6 +123,30 @@ fn days_in_month(year: i64, month: u32) -> u32 {
     }
 }
 
+/// A point in time as a person names it going back (doc "Rollback"): a
+/// duration back from `now` — a count and a unit, `s`, `m`, `h` or `d`
+/// (`30m`, `2h`) —, `@<unix-ms>`, or ISO-8601 in UTC ([`iso_to_ms`]). A bare
+/// number stays a year: a duration always carries its unit. `None` when it
+/// is none of these.
+pub fn time_ago(s: &str, now: i64) -> Option<i64> {
+    let s = s.trim();
+    if let Some(raw) = s.strip_prefix('@') {
+        return raw.trim().parse().ok();
+    }
+    let unit_ms: i64 = match s.chars().last()? {
+        's' => 1_000,
+        'm' => 60_000,
+        'h' => 3_600_000,
+        'd' => 86_400_000,
+        _ => return iso_to_ms(s),
+    };
+    let count = &s[..s.len() - 1];
+    if count.is_empty() || !count.bytes().all(|b| b.is_ascii_digit()) {
+        return iso_to_ms(s);
+    }
+    Some(now.saturating_sub(count.parse::<i64>().ok()?.saturating_mul(unit_ms)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,5 +315,23 @@ mod tests {
         // 2021-01-01T01:02:03Z
         let ms = 1_609_459_200_000 + (3600 + 2 * 60 + 3) * 1000;
         assert_eq!(ms_to_civil(ms), (2021, 1, 1, 1, 2, 3));
+    }
+
+    /// A rollback's time (doc "Rollback"): a duration back from now, raw
+    /// milliseconds, or ISO-8601 in UTC.
+    #[test]
+    fn a_time_ago_is_a_duration_raw_ms_or_iso() {
+        let now = 1_700_000_000_000;
+        assert_eq!(time_ago("30s", now), Some(now - 30_000));
+        assert_eq!(time_ago("90m", now), Some(now - 90 * 60_000));
+        assert_eq!(time_ago(" 2h ", now), Some(now - 2 * 3_600_000));
+        assert_eq!(time_ago("1d", now), Some(now - 86_400_000));
+        assert_eq!(time_ago("@42", now), Some(42));
+        assert_eq!(time_ago("2026-11-08T09:00", now), iso_to_ms("2026-11-08T09:00"));
+        // A bare number is a year, as everywhere else — never a duration.
+        assert_eq!(time_ago("2017", now), iso_to_ms("2017"));
+        assert_eq!(time_ago("2x", now), None);
+        assert_eq!(time_ago("h", now), None);
+        assert_eq!(time_ago("@x", now), None);
     }
 }

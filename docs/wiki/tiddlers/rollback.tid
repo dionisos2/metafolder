@@ -1,0 +1,40 @@
+title: Rollback
+tags: [[Event log]]
+kind: guide
+aliases: rollback
+summary: mf log rollback <time> (log:rollback) goes back to how your metadata stood at a time — 2h ago, this morning — by reverting what you changed since; the watcher's work stays.
+
+```
+mf -n music log rollback plan 2h              # what going back two hours takes — nothing written
+mf -n music log rollback 2h                   # do it
+mf -n music log rollback 2026-11-08T09:00     # ISO-8601, in UTC
+mf -n music log rollback @1794170000000       # raw Unix milliseconds
+```
+
+In the GUI: `log:rollback 2h`, or `log:rollback` alone and the time is asked.
+
+The time is a ''duration back from now'' — a count and a unit, `s`, `m`, `h` or `d` (`30m`,
+`2h`, `1d`) —, an ISO-8601 date in ''UTC'' as `mf log list --since` takes it, or `@` and
+Unix milliseconds. A bare number is a year (`2026`), never a duration.
+
+''What goes back.'' Everything ''you'' wrote after that time and that still stands is
+reverted onto the current state, newest first — the command line's writes, the GUI's,
+your scripts', trashings and reconciles. The watcher's operations stay where they are: they
+record what really happened on disk ([[Why undo does not step HEAD back]]). Your undos and
+redos count as well: an undo you made since of an older change is taken back, so that
+change comes back as it stood at the time; something done and undone since is left alone.
+The precise rule: [[Reverting everything since a time]].
+
+A rollback is one more revert, written in a label of its own (`rollback to
+2026-11-08T09:00:00Z`): undoing it — <<key "log:undo" Ctrl+z>> or `mf log undo` — puts
+back what it took ([[Undo and redo]]).
+
+''Before it writes.'' `plan` lists the operations and names any later write a revert
+would overwrite; without `--force`, the CLI asks before overwriting one, and before moving
+files ([[Reverting a label]] — the same options: `--metadata-only`, `--on-move-available`,
+`--on-move-unavailable`, `--silent`). The GUI's confirmation says how many operations go
+back, how many overwrite a later change, and whether files move; then it asks nothing, as
+for any revert ([[Log commands in the GUI]]).
+
+A time older than the log's oldest operation is refused: what was written before it is no
+longer known ([[Automatic retention]]). With nothing written since, nothing is done.

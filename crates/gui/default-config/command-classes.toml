@@ -209,6 +209,7 @@
 
 # ── The log ──────────────────────────────────────────────────────────────────
 "log:revert" = "B"
+"log:rollback" = "D"
 "log:revert op" = "C"
 "log:revert label" = "C"
 "log:toggle" = "C"

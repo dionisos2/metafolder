@@ -165,6 +165,11 @@ fn register_builtins(registry: &CommandRegistry) {
         ("log:undo", "Undo a label of the newest change you made (asked when there are several)", true),
         ("log:redo", "Take back a label of the newest undo (asked when there are several)", true),
         (
+            "log:rollback",
+            "Go back to a time: revert the changes you made since (not the watcher's)",
+            true,
+        ),
+        (
             "context:set",
             "Open a work context on the active repository: every later change is written in it",
             true,
@@ -711,6 +716,8 @@ pub fn run(options: Options) {
             work_context::context_resume,
             undo::log_candidates,
             undo::log_revert,
+            undo::log_rollback_plan,
+            undo::log_rollback,
             commands::answer_send,
             commands::pick_start,
             commands::pick_confirm,

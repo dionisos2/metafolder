@@ -1,0 +1,6 @@
+title: mf log rollback
+tags: [[CLI command]] [[Event log]]
+kind: reference
+summary: Go back to a time: revert your changes since then (not the watcher's)
+
+Goes back to the state at a time — `2h`, an ISO-8601 date in UTC, `@<ms>` — by reverting what you wrote since onto the current state; `plan` previews it ([[Rollback]]).

@@ -32,7 +32,8 @@ completion, innermost first.
 ''Redo'' is the same over the newest undo that still stands: its labels are offered, and
 redoing one reverts its undos — whatever the watcher wrote in between. Pressed again, it
 takes back the undo before. A new change of yours clears what could be redone; it
-re-applies undos only — not arbitrary history (that is `mf log revert`). Undo and redo
+re-applies undos only — not arbitrary history (that is `mf log revert`; going back to a
+time is `mf log rollback`, [[Rollback]]). Undo and redo
 compose: undo, redo, undo lands where the first undo did ([[Why undo and redo do not oscillate]]).
 
 `plan` with a label shows what the revert would write, and writes nothing. With nothing to

@@ -333,6 +333,14 @@ registerArgs("file:open-with", [
   },
 ]);
 
+registerArgs("log:rollback", [
+  {
+    name: "time",
+    prompt: () =>
+      "Go back to when? (30m, 2h, 1d ago; 2026-11-08T09:00 in UTC; @<unix-ms>)",
+  },
+]);
+
 registerArgs("context:set", [
   {
     name: "name",
@@ -427,6 +435,45 @@ async function undoOrRedo(
     }
   }
   await invoke("log_navigate", { wsId: ws, redo, label });
+}
+
+/** What `log_rollback_plan` answers: the time read, how many operations
+ *  going back reverts, how many overwrite a later write, whether files move. */
+interface RollbackPlan {
+  since: number;
+  operations: number;
+  changed: number;
+  files: boolean;
+}
+
+/** `log:rollback <time>` (doc "Rollback"): back to the state at a time —
+ *  the changes you made since reverted onto the current state, the watcher's
+ *  left. Confirmed first: it may take back a whole afternoon. */
+async function rollback(ws: string, time: string): Promise<void> {
+  let plan: RollbackPlan;
+  try {
+    plan = await invoke<RollbackPlan>("log_rollback_plan", { wsId: ws, time });
+  } catch (error) {
+    await status(String(error));
+    return;
+  }
+  if (plan.operations === 0) {
+    await status(`Nothing to roll back since ${time}.`, "info");
+    return;
+  }
+  const also =
+    plan.changed > 0
+      ? `, ${plan.changed} of them overwriting a later change`
+      : "";
+  const files = plan.files ? ", moving files on disk" : "";
+  const when = new Date(plan.since).toISOString().replace(".000Z", "Z");
+  if (
+    !confirm(
+      `Go back to ${when} — revert ${plan.operations} operation(s)${also}${files}?`,
+    )
+  )
+    return;
+  await invoke("log_rollback", { wsId: ws, since: plan.since });
 }
 
 const applyIgnore: Builtin = async (args, context, name) => {
@@ -524,6 +571,11 @@ export const repositoryBuiltins: Builtins = {
   },
   "log:undo": undoOrRedoLabel,
   "log:redo": undoOrRedoLabel,
+  "log:rollback": async (args, context) => {
+    // The time was collected by dispatch.
+    const { ws } = context;
+    if (ws) await rollback(ws, args.join(" ").trim());
+  },
   "file:open-with": async (args, context) => {
     // The `program` argument was collected by dispatch (completing over the
     // configured list); the whole tail is the command line, so `gimp -n` and
