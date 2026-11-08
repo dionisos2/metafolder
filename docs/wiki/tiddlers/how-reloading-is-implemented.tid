@@ -13,6 +13,6 @@ summary: config:reload swaps what Rust holds and pushes what the shell mirrors; 
 * ''`commands`'' — Rust only checks that the file can be read. Importing the module is the shell's part, done by the frontend's `config:reload` case after the Rust command returned ([[Why user commands are JavaScript]]).
 
 The list of targets exists twice: `RELOAD_TARGETS` in Rust, which resolves the
-argument, and in `frontend/src/lib/commands.ts`, which completes it. Neither can see
+argument, and in `frontend/src/lib/builtins/repository.ts`, which completes it. Neither can see
 the other when compiling, so a Rust test reads the TypeScript source and compares
 the two.

@@ -1275,7 +1275,7 @@ mod tests {
     /// reads the frontend source.
     #[test]
     fn test_the_frontend_offers_the_same_reload_targets() {
-        let source = include_str!("../frontend/src/lib/commands.ts");
+        let source = include_str!("../frontend/src/lib/builtins/repository.ts");
         let line = source
             .lines()
             .find(|l| l.contains("const RELOAD_TARGETS"))
