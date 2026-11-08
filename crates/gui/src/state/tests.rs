@@ -44,6 +44,22 @@ fn test_payloads_read_back_are_the_last_announced() {
     assert_eq!(state.questions_payload()["questions"][0]["id"], json!(7));
 }
 
+#[test]
+fn test_a_new_run_turning_the_script_keys_back_on_says_so() {
+    // The shell mirrors the flag: a run that turns it back on while a
+    // question is up, the checkbox unticked, must tell it.
+    let (notifier, state) = state();
+    state.set_script_keys(false);
+    notifier.clear();
+    state.script_begin("script-1", "ws-1", "a.sh");
+    let pushed = notifier.payloads(events::INPUT_WAIT_CHANGED);
+    assert_eq!(pushed.last().map(|p| p["script_keys"].clone()), Some(json!(true)));
+    // Already on: nothing to say.
+    notifier.clear();
+    state.script_begin("script-2", "ws-1", "b.sh");
+    assert!(notifier.payloads(events::INPUT_WAIT_CHANGED).is_empty());
+}
+
 // ── Workspaces ───────────────────────────────────────────────────────
 
 #[test]

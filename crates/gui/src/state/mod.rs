@@ -453,7 +453,10 @@ impl GuiState {
         );
         // A new run always starts with its keys live: the checkbox is a choice
         // about the script being answered, not a lasting handicap for the next.
-        self.set_script_keys(true);
+        // The shell mirrors the flag, so turning it back on is announced.
+        if !self.script_keys.swap(true, Ordering::Relaxed) {
+            self.push_questions();
+        }
         self.emit_scripts();
     }
 
@@ -472,7 +475,6 @@ impl GuiState {
         self.scripts.lock_recover().get(task_id).and_then(|t| t.pid)
     }
 
-    /// Whether run `task_id` is the one blocked on the current question.
     /// Whether a script's awaited keys currently reach the script.
     pub fn script_keys_enabled(&self) -> bool {
         self.script_keys.load(Ordering::Relaxed)
