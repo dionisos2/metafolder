@@ -26,6 +26,6 @@ field: a later write is overwritten, and the plan says so first ([[Reverting ont
 
 <<list-kind reference>>
 
-!! Open questions
+!! Why
 
-<<list-kind question>>
+<<list-kind rationale>>

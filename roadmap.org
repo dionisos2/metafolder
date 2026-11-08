@@ -9,10 +9,6 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 Every deferred or proposed note, to be gone through one by one: build it, keep
 it deferred, or drop it.
 
-** Collapsing a revert to one operation per cell
-doc "Collapsing a revert to one operation per cell": write one operation per
-cell instead of one per reverted operation.
-
 ** Query cost model
 doc "Query cost model": =POST /query/explain=, saying without running a query
 what its work decomposes into. Entirely unimplemented (=POST /query/profile=
