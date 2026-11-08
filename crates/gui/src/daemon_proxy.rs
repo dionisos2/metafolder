@@ -41,6 +41,18 @@ struct HealthOutcome {
     daemon_api: Option<u32>,
 }
 
+impl HealthOutcome {
+    /// The `daemon-health-changed` payload announcing this outcome.
+    fn payload(&self) -> Value {
+        json!({
+            "connected": self.reachable,
+            "compatible": self.compatible,
+            "daemon_api_version": self.daemon_api,
+            "gui_api_version": metafolder_core::API_VERSION,
+        })
+    }
+}
+
 pub struct DaemonProxy {
     client: reqwest::Client,
     base_url: Mutex<String>,
@@ -461,17 +473,16 @@ impl DaemonProxy {
         let mut health = self.health.lock_recover();
         if *health != Some(outcome) {
             *health = Some(outcome);
-            gui.notify(
-                events::DAEMON_HEALTH_CHANGED,
-                json!({
-                    "connected": outcome.reachable,
-                    "compatible": outcome.compatible,
-                    "daemon_api_version": outcome.daemon_api,
-                    "gui_api_version": metafolder_core::API_VERSION,
-                }),
-            );
+            gui.notify(events::DAEMON_HEALTH_CHANGED, outcome.payload());
         }
         outcome.reachable
+    }
+
+    /// The `daemon-health-changed` payload of the last probe; `None` before
+    /// the first. What the shell starts from: the first probe is announced
+    /// before the WebView listens, and a later one only announces a change.
+    pub fn health_payload(&self) -> Option<Value> {
+        self.health.lock_recover().map(|outcome| outcome.payload())
     }
 }
 

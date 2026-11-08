@@ -571,7 +571,7 @@ async fn test_a_question_installs_no_keybinding() {
 
     // The checkbox still flips the flag the question bar shows.
     ctx.gui.set_script_keys(false);
-    metafolder_gui::server::gui_api::push_questions(&ctx.gui);
+    ctx.gui.push_questions();
     let payload = ctx.notifier.payloads(events::INPUT_WAIT_CHANGED).last().unwrap().clone();
     assert_eq!(payload["script_keys"], false);
     assert_eq!(payload["questions"].as_array().unwrap().len(), 1, "the question stays on screen");

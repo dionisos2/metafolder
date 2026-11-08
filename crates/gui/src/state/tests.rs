@@ -27,6 +27,23 @@ fn test_initial_state() {
     assert_eq!(state.focused_workspace_id().as_deref(), Some("ws-1"));
 }
 
+#[test]
+fn test_payloads_read_back_are_the_last_announced() {
+    // The shell reads them at startup: what was announced before it listened
+    // is not announced again.
+    let (notifier, state) = state();
+    assert_eq!(state.script_tasks_payload(), json!({ "tasks": [] }));
+    assert_eq!(state.questions_payload(), json!({ "questions": [], "script_keys": true }));
+    state.script_begin("script-1", "ws-1", "a.sh");
+    state.add_question(Question { id: 7, workspace: Some("ws-1".into()), ..Default::default() });
+    state.push_questions();
+    let tasks = notifier.payloads(events::SCRIPT_TASK_CHANGED);
+    assert_eq!(Some(state.script_tasks_payload()), tasks.last().cloned());
+    let questions = notifier.payloads(events::INPUT_WAIT_CHANGED);
+    assert_eq!(Some(state.questions_payload()), questions.last().cloned());
+    assert_eq!(state.questions_payload()["questions"][0]["id"], json!(7));
+}
+
 // ── Workspaces ───────────────────────────────────────────────────────
 
 #[test]

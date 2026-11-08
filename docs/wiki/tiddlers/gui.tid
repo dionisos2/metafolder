@@ -30,7 +30,10 @@ A Tauri v2 application: a Rust side and the system's web view (WebKit2GTK on
 Linux). The Rust side owns every piece of state — workspaces, layout, workspace
 variables, keybindings, the command registry — and the shell, written in Svelte,
 only mirrors it through events; the scripting API and the window therefore always
-agree. Panel types are plain HTML and JavaScript, with no build step, and run in
+agree. An event is sent once, on a change, so the shell listens before it reads
+the state it starts from — the daemon's health, the scripts' questions and tasks
+included, whose first announcement comes before the web view is up — and applies
+what arrives during the read over it. Panel types are plain HTML and JavaScript, with no build step, and run in
 the shell's own page, each in its shadow root.
 
 <<list-kind reference>>

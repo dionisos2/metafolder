@@ -573,61 +573,73 @@ export function flashStatus(text: string) {
   if (ws) showStatus(ws, { text, kind: 'info', timeout_ms: null });
 }
 
-export async function initStore() {
-  const initial = await invoke<InitialState>('get_initial_state');
-  store.workspaces = initial.workspaces;
-  store.layout = initial.layout;
-  store.keytable = initial.keybindings;
-  store.commands = initial.commands;
-  store.panelTypes = initial.panel_types;
-  store.guiPort = initial.gui_port;
-  store.sessionToken = initial.session_token;
-  store.pageSizes = initial.page_sizes;
-  store.panelSettings = initial.panel_settings;
-  store.panelDefaults = initial.panel_defaults;
-  store.daemonUrl = initial.daemon_url;
-  applyStyle(initial.style_css);
+type HealthPayload = {
+  connected: boolean;
+  compatible?: boolean;
+  daemon_api_version?: number | null;
+  gui_api_version?: number | null;
+};
 
-  await listen<{ workspaces: WorkspaceInfo[] }>('workspaces-changed', (event) => {
+function applyHealth(payload: HealthPayload) {
+  store.daemonConnected = payload.connected;
+  // `compatible` only carries meaning while connected; treat a reachable
+  // daemon with no verdict as compatible (nothing to warn about).
+  store.daemonCompatible = !payload.connected || payload.compatible !== false;
+  store.daemonApiVersion = payload.daemon_api_version ?? null;
+  store.guiApiVersion = payload.gui_api_version ?? null;
+}
+
+type QuestionsPayload = Parameters<typeof questionsState>[0] & { script_keys?: boolean };
+
+function applyQuestions(payload: QuestionsPayload) {
+  store.ui.questions = questionsState(payload);
+  store.ui.scriptKeys = payload.script_keys ?? true;
+}
+
+/**
+ * Mirrors the Rust state: listens first, then reads it. An event the Rust side
+ * announces is announced once, so a read taken before the listeners would miss
+ * what changes in between; and one arriving while the read is in flight may be
+ * newer than it. The events are therefore held until the read is applied, then
+ * replayed over it in order — each carries a whole state (or appends), so the
+ * last one wins as it would have.
+ */
+export async function initStore() {
+  let held: (() => void)[] | null = [];
+  const on = <T>(name: string, handler: (event: { payload: T }) => void) =>
+    listen<T>(name, (event) => {
+      if (held) held.push(() => handler(event));
+      else handler(event);
+    });
+
+  await on<{ workspaces: WorkspaceInfo[] }>('workspaces-changed', (event) => {
     store.workspaces = event.payload.workspaces;
     settlePrompts();
   });
   // The command list no longer depends on the focused panel (every
   // registered command is listed); panels registering new commands
   // refresh it through the bridge's onCommandsChanged.
-  await listen<LayoutView>('layout-changed', (event) => {
+  await on<LayoutView>('layout-changed', (event) => {
     store.layout = event.payload;
     settlePrompts();
   });
-  await listen<{ bindings: Binding[] }>('keybindings-changed', (event) => {
+  await on<{ bindings: Binding[] }>('keybindings-changed', (event) => {
     store.keytable = event.payload.bindings;
   });
-  await listen<{ workspace_id: string } & StatusMessage>('status-message', (event) => {
+  await on<{ workspace_id: string } & StatusMessage>('status-message', (event) => {
     const { workspace_id, ...message } = event.payload;
     showStatus(workspace_id, message);
   });
-  await listen<{ css: string }>('style-changed', (event) => {
+  await on<{ css: string }>('style-changed', (event) => {
     applyStyle(event.payload.css);
   });
-  await listen<{
-    connected: boolean;
-    compatible?: boolean;
-    daemon_api_version?: number | null;
-    gui_api_version?: number | null;
-  }>('daemon-health-changed', (event) => {
-    store.daemonConnected = event.payload.connected;
-    // `compatible` only carries meaning while connected; treat a reachable
-    // daemon with no verdict as compatible (nothing to warn about).
-    store.daemonCompatible = !event.payload.connected || event.payload.compatible !== false;
-    store.daemonApiVersion = event.payload.daemon_api_version ?? null;
-    store.guiApiVersion = event.payload.gui_api_version ?? null;
-  });
+  await on<HealthPayload>('daemon-health-changed', (event) => applyHealth(event.payload));
   // A script's `POST /gui/prompt`: the command input takes the question, but
   // only while the workspace it is asked in is on screen — the input focuses
   // itself on its own when the prompt is (or becomes) visible, so nothing here
   // steals the keyboard for a question the user cannot see. One prompt per
   // workspace: the others wait parked for theirs (doc "Script sessions").
-  await listen<{
+  await on<{
     id: number;
     prompt: string;
     completions?: string[];
@@ -654,26 +666,14 @@ export async function initStore() {
     });
   });
   // A script prompt whose wait ended elsewhere (timeout, script gone).
-  await listen<{ id: number }>('prompt-ended', (event) => {
+  await on<{ id: number }>('prompt-ended', (event) => {
     dropPrompt(event.payload.id);
   });
   // The scripts' `POST /gui/input` waits: keep each question in a dedicated
   // bar, never on the status line where an error would overwrite it.
-  await listen<{
-    questions?: {
-      id: number;
-      prompt?: string | null;
-      keys?: string[];
-      workspace?: string | null;
-      task?: string | null;
-    }[];
-    script_keys?: boolean;
-  }>('input-wait-changed', (event) => {
-    store.ui.questions = questionsState(event.payload);
-    store.ui.scriptKeys = event.payload.script_keys ?? true;
-  });
+  await on<QuestionsPayload>('input-wait-changed', (event) => applyQuestions(event.payload));
   // Running shell scripts: drive the loading indicator in the task bar.
-  await listen<{ tasks?: ScriptTask[] }>('script-task-changed', (event) => {
+  await on<{ tasks?: ScriptTask[] }>('script-task-changed', (event) => {
     store.ui.scriptTasks = scriptTasksState(event.payload);
   });
   // An external POST /gui/command: run it through the very same dispatch()
@@ -698,10 +698,28 @@ export async function initStore() {
       confirmations: questions,
     });
   };
-  await listen<CommandRequest>(
-    'command-requested',
-    (event) => void onCommandRequested(event),
-  );
+  await on<CommandRequest>('command-requested', (event) => void onCommandRequested(event));
+
+  const initial = await invoke<InitialState>('get_initial_state');
+  store.workspaces = initial.workspaces;
+  store.layout = initial.layout;
+  store.keytable = initial.keybindings;
+  store.commands = initial.commands;
+  store.panelTypes = initial.panel_types;
+  store.guiPort = initial.gui_port;
+  store.sessionToken = initial.session_token;
+  store.pageSizes = initial.page_sizes;
+  store.panelSettings = initial.panel_settings;
+  store.panelDefaults = initial.panel_defaults;
+  store.daemonUrl = initial.daemon_url;
+  applyStyle(initial.style_css);
+  if (initial.daemon_health) applyHealth(initial.daemon_health);
+  applyQuestions(initial.questions);
+  store.ui.scriptTasks = scriptTasksState(initial.script_tasks);
+
+  const replay = held;
+  held = null;
+  for (const apply of replay) apply();
 
   // Tell the panels about the changes they did not make (watcher, reconcile,
   // other clients) via the daemon's change feed.

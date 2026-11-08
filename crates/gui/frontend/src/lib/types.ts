@@ -80,5 +80,25 @@ export interface InitialState {
   panel_defaults: Record<string, Record<string, unknown>>;
   /** Session token (doc "Session tokens") for the GUI server's protected routes. */
   session_token: string;
+  /** The last `daemon-health-changed` payload; null before the first probe. */
+  daemon_health: {
+    connected: boolean;
+    compatible?: boolean;
+    daemon_api_version?: number | null;
+    gui_api_version?: number | null;
+  } | null;
+  /** The last `input-wait-changed` payload. */
+  questions: {
+    questions?: {
+      id: number;
+      prompt?: string | null;
+      keys?: string[];
+      workspace?: string | null;
+      task?: string | null;
+    }[];
+    script_keys?: boolean;
+  };
+  /** The last `script-task-changed` payload. */
+  script_tasks: { tasks?: import('./store.svelte').ScriptTask[] };
 }
 

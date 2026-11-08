@@ -112,6 +112,14 @@ pub struct InitialState {
     /// Session token (doc "Session tokens"): the shell attaches it to requests to the GUI
     /// server's protected routes (`/fsraw`, `/thumbnail`, `/__media-probe`).
     pub session_token: String,
+    /// The last `daemon-health-changed` payload; `null` before the first probe.
+    /// The events below were announced before the shell listened, and are
+    /// announced again only on a change.
+    pub daemon_health: Option<Value>,
+    /// The last `input-wait-changed` payload.
+    pub questions: Value,
+    /// The last `script-task-changed` payload.
+    pub script_tasks: Value,
 }
 
 #[tauri::command]
@@ -129,6 +137,9 @@ pub fn get_initial_state(app: AppHandle) -> Result<InitialState, String> {
         panel_settings: app.panel_settings.clone(),
         panel_defaults: app.panel_defaults.clone(),
         session_token: app.gui_token.to_string(),
+        daemon_health: app.daemon.health_payload(),
+        questions: app.gui.questions_payload(),
+        script_tasks: app.gui.script_tasks_payload(),
     })
 }
 
@@ -888,7 +899,7 @@ pub fn answer_send(app: AppHandle, value: String, id: Option<u64>) -> Result<(),
 #[tauri::command]
 pub fn script_keys_toggle(app: AppHandle) -> bool {
     let enabled = app.gui.set_script_keys(!app.gui.script_keys_enabled());
-    crate::server::gui_api::push_questions(&app.gui);
+    app.gui.push_questions();
     enabled
 }
 

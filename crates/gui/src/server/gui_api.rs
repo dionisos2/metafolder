@@ -511,21 +511,6 @@ pub struct InputBody {
     timeout_ms: Option<u64>,
 }
 
-/// Broadcasts the live questions — at most one per workspace — and the script
-/// keys flag, so the frontend shows the question bar of the workspace on
-/// screen with the right checkbox state (doc "Script sessions").
-///
-/// No keybinding is installed for the awaited keys: the shell gives them to
-/// the question on screen before any binding, and a binding in the table would
-/// also fire for a question put away in another workspace and answer it
-/// unseen.
-pub fn push_questions(gui: &GuiState) {
-    gui.notify(
-        events::INPUT_WAIT_CHANGED,
-        json!({ "questions": gui.questions(), "script_keys": gui.script_keys_enabled() }),
-    );
-}
-
 /// The workspace a wait belongs to: the one the asking script is in (doc
 /// "Script sessions"). `None` for a wait with no run id (or one the GUI never
 /// launched): such a wait belongs to nobody and is always shown.
@@ -568,7 +553,7 @@ impl Drop for WaitGuard<'_> {
         self.state.input.end(self.id);
         if self.question {
             self.state.gui.remove_question(self.id);
-            push_questions(&self.state.gui);
+            self.state.gui.push_questions();
         } else {
             self.state.gui.notify(events::PROMPT_ENDED, json!({ "id": self.id }));
         }
@@ -610,7 +595,7 @@ pub async fn post_input(
         workspace,
         task: body.task.clone(),
     });
-    push_questions(&state.gui);
+    state.gui.push_questions();
     let _guard = WaitGuard::begin(&state, id, body.task.clone(), true);
 
     let outcome = match body.timeout_ms {

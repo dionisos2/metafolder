@@ -127,6 +127,19 @@ async fn test_transport_error_is_err() {
 }
 
 #[tokio::test]
+async fn test_health_payload_is_the_last_one_emitted() {
+    // The shell reads it at startup: the first probe is announced before the
+    // WebView listens, and a probe only announces a change.
+    let (notifier, gui) = gui_with_notifier();
+    let proxy = DaemonProxy::new("http://127.0.0.1:1".into());
+    assert_eq!(proxy.health_payload(), None);
+    assert!(!proxy.check_health(&gui).await);
+    let emitted = notifier.payloads(events::DAEMON_HEALTH_CHANGED);
+    assert_eq!(proxy.health_payload(), emitted.last().cloned());
+    assert_eq!(proxy.health_payload().unwrap()["connected"], json!(false));
+}
+
+#[tokio::test]
 async fn test_health_transitions_emit_events() {
     let (url, _) = spawn_stub().await;
     let (notifier, gui) = gui_with_notifier();

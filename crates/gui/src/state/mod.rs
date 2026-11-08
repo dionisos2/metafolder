@@ -644,7 +644,9 @@ impl GuiState {
         (shown(&layout.left), shown(&layout.right))
     }
 
-    fn emit_scripts(&self) {
+    /// The `script-task-changed` payload: the scripts running now. What the
+    /// shell starts from, as well as what every change announces.
+    pub fn script_tasks_payload(&self) -> Value {
         let tasks: Vec<Value> = self
             .scripts
             .lock_recover()
@@ -662,7 +664,28 @@ impl GuiState {
                 })
             })
             .collect();
-        self.notifier.emit(events::SCRIPT_TASK_CHANGED, json!({ "tasks": tasks }));
+        json!({ "tasks": tasks })
+    }
+
+    fn emit_scripts(&self) {
+        self.notifier.emit(events::SCRIPT_TASK_CHANGED, self.script_tasks_payload());
+    }
+
+    /// The `input-wait-changed` payload: the questions up and the script keys
+    /// flag, so the frontend shows the question bar of the workspace on screen
+    /// with the right checkbox state (doc "Script sessions").
+    pub fn questions_payload(&self) -> Value {
+        json!({ "questions": self.questions(), "script_keys": self.script_keys_enabled() })
+    }
+
+    /// Announces [`Self::questions_payload`].
+    ///
+    /// No keybinding is installed for the awaited keys: the shell gives them to
+    /// the question on screen before any binding, and a binding in the table would
+    /// also fire for a question put away in another workspace and answer it
+    /// unseen.
+    pub fn push_questions(&self) {
+        self.notifier.emit(events::INPUT_WAIT_CHANGED, self.questions_payload());
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
