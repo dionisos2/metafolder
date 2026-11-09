@@ -22,8 +22,14 @@ than breaking them.
 
 - **Each repository is reindexed once when it is first opened** by this version: the
   store gains a histogram per number and date field, counts of rows by bucket kept up
-  to date by every write and held by `mf repo check`, from which the query planner will
-  estimate a range (doc "Planner statistics"). Nothing reads them yet.
+  to date by every write and held by `mf repo check`, from which the query planner
+  estimates a range (doc "Query planner").
+
+- **The query planner reads the histograms.** A range bounded by a folder walks the
+  range when that is cheaper than checking the folder's files one by one, and the scans
+  of an `and` run narrowest first: a range of 1 % in a folder of a fifth of the
+  repository read 6 440 keys, now no more than its two operands; `mfr_size > 900000`
+  below a folder of `L`, cold, went from ≈ 1.3 s to ≈ 0.1 s (doc "Query planner").
 
 - **`README.md` is generated from the wiki note `README`** and is now only an entry
   page: what the project is for and how to start. `scripts/dev/doc check` fails when

@@ -624,7 +624,7 @@ fn sized(n: usize, in_big: usize) -> (KvStore, TempDir) {
     (kv, dir)
 }
 
-/// The cold measurement of November 2026 (doc "Planner statistics"): a range
+/// The cold measurement of November 2026 (doc "Query planner"): a range
 /// holding 1 % of the repository, bounded by a folder holding a fifth of it.
 /// Probing the folder's files reads a few scattered keys each; walking the
 /// range reads its own rows. The `and` must cost no more than its operands
@@ -650,7 +650,7 @@ fn a_narrow_range_in_a_wide_folder_walks_the_range() {
 }
 
 /// Two scans, a name pattern every file holds and a range holding 1 % of
-/// them (doc "Planner statistics", the order of an `and`): the range is the
+/// them (doc "Query planner", the order of an `and`): the range is the
 /// narrower, by its histogram, so it is evaluated first and the pattern checks
 /// its records only — in either order of the query.
 #[test]

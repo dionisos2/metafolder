@@ -1,4 +1,4 @@
-//! The per-field histograms (doc "Planner statistics"): a count of rows per
+//! The per-field histograms (doc "Query planner"): a count of rows per
 //! bucket of an ordered field's value keys, kept as a derived key space, and
 //! the range estimate the planner reads from them — exact but for the bucket
 //! the operand falls in.

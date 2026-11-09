@@ -283,7 +283,7 @@ impl KvSource<'_> {
     }
 
     /// How many rows of `field` the comparison `op value` holds, from the
-    /// field's histogram (doc "Planner statistics"): exact but for the
+    /// field's histogram (doc "Query planner"): exact but for the
     /// operand's bucket, whose rows may fall either side. Reads the buckets
     /// on the comparison's side of the operand, not the rows. `None` for an
     /// operand of a type that has no histogram (a text, a bool, a
@@ -326,7 +326,7 @@ impl KvSource<'_> {
     }
 
     /// Whether a comparison checks the `candidates` on their own rows rather
-    /// than walk its range (`plan::probes`; doc "Planner statistics"). The
+    /// than walk its range (`plan::probes`; doc "Query planner"). The
     /// walk reads the field's holders for a `!=` or a text range; an ordered
     /// comparison of a number or a date reads the rows its histogram gives
     /// the range, at most, but a value with a posting as its posting. Each

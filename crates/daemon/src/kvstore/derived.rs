@@ -113,7 +113,7 @@ pub(super) fn referrers_prefix(field: &str, target: &[u8; 16]) -> Vec<u8> {
 /// the value partition, of one width per type, so comparing a bucket with an
 /// operand's says whether all of its rows are below, above, or undecided.
 /// `None` for the types without a histogram: a text, a bool, a reference
-/// (doc "Planner statistics", Open).
+/// (doc "Query planner", Open).
 pub(crate) fn hist_bucket(key: &[u8]) -> Option<Vec<u8>> {
     match key.first() {
         Some(1) => Some(key[..3].to_vec()),

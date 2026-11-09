@@ -2,8 +2,7 @@
 //! makes before reading, kept in one place. It is deliberately minimal — no
 //! cost model of the whole query: each choice is a fixed rule on what the
 //! query's shape says, or on exact counts the store already holds (a field's
-//! holders, a candidate set's size, a range's rows by its histogram — doc
-//! "Planner statistics").
+//! holders, a candidate set's size, a range's rows by its histogram).
 //!
 //! Two choices live here:
 //!
@@ -63,7 +62,7 @@ pub(crate) fn is_scan(q: &Query) -> bool {
 /// the intersection so far, so the narrow ones leave the wide ones few
 /// candidates to check. `estimate` is asked only when there are two scans to
 /// order. The order depends on the data, the answer does not: an `and`
-/// commutes (doc "Planner statistics").
+/// commutes (doc "Query planner").
 pub(crate) fn and_order<'q>(
     operands: impl IntoIterator<Item = &'q Query>,
     estimate: impl Fn(&Query) -> u64,

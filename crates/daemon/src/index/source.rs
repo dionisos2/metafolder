@@ -68,7 +68,7 @@ pub trait Source {
 
     /// How many rows of `field` satisfy the ordered comparison `op value`, at
     /// most — an estimate read from a histogram, not from the rows (doc
-    /// "Planner statistics"). `None` when the source keeps none for it.
+    /// "Query planner"). `None` when the source keeps none for it.
     fn range_estimate(&self, _field: &str, _op: CmpOp, _value: &Value) -> Option<u64> {
         None
     }

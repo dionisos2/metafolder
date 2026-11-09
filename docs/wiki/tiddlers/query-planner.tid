@@ -2,70 +2,129 @@ title: Query planner
 tags: [[Query engine]]
 kind: reference
 audience: dev
-summary: A minimal planner, oriented to the store: the scans of an AND run last on its running intersection, and a few candidates are checked on their own rows instead of walking a field.
+aliases: [[Planner statistics]]
+summary: A minimal planner, oriented to the store: exact per-field histograms kept as a derived key space, and a cost model that tells a scattered read from a contiguous one, decide whether a scan probes its candidates or walks its range, and in which order the scans of an AND run.
 
 The original indexing design had an ''adaptive planner'' choosing an access path per
 operand. It was taken off the roadmap in September 2026: in the resident engine each
-operand had exactly one way to be answered, so there was nothing to choose.
+operand had exactly one way to be answered, so there was nothing to choose. On the
+key-value store an operand can again be answered several ways — a posting or a walk of
+the value partition, a per-candidate check or a scan of distinct values, a fetch or an
+ordered walk. So a planner "may be useful again — to be seen" (user, September 2026):
+minimal and oriented to the store, one cost choice at a time, from what profiling
+finds. It was built in October 2026 (`index/plan.rs`) on fixed rules; the cold
+measurements of November 2026 showed one of them wrong by twenty, and statistics
+replaced it (user decision, 9 November 2026).
 
-On the key-value store an operand can again be answered several ways — a posting or a
-walk of the value partition, a per-candidate check or a scan of distinct values, a
-fetch or an ordered walk — and small cost choices are already made, each by a fixed
-rule on exact counts: fetch versus walk ([[Sorting and postings]]), lazy text checks
-([[Text search in the store]]), `osm` anchors cut to a rarer term's folders
-([[The forest in the store]]), reading versus walking by uuid order.
-
-So a planner "may be useful again — to be seen" (user, September 2026): minimal and
-oriented to the store — one cost choice at a time, from what profiling finds — not the
-old design, whose SQL-specific parts are obsolete and whose ambition was probably too
-great. The local choices above are not a violation of anything.
+No cost model of the whole query: each choice is a rule on the query's shape, on an
+exact count the store holds, or on a histogram's estimate. Other local choices live
+with what they choose for: fetch or walk for a sorted page ([[Sorting and postings]]),
+lazy text checks ([[Text search in the store]]), the anchors of an `osm` path
+([[The forest in the store]]).
 
 !! What the planner decides
 
-It was built in October 2026 (`index/plan.rs`). No cost model of the whole query: each
-choice is a rule on the query's shape, on an exact count the store already holds, or
-(since November 2026) on a histogram's estimate.
+* ''The order of an `and`'' (`plan::and_order`, `Eval::scan_estimate`). Its operands answered from a bitmap or a posting — presence, equality, `in`, a subtree, a follow, `uuid_in` — are evaluated first, in the query's order; then the ''scans'' — `matches`, `osm direct`, `!=` and the ordered comparisons —, the narrowest first, ties in the query's order, each handed the running intersection as its candidates. A scan's estimate is, for an ordered comparison of a number or a date, its histogram's `at_most` (`Source::range_estimate`); for any other, its field's holders. The estimates are read only when two scans are to be ordered. Once the intersection is empty, nothing more is evaluated.
+* ''Probe or walk'' (`plan::probes`, `KvSource::probes`). A scan given candidates checks their own rows (a ''probe'') when that costs less than walking its range. A probe costs `PROBE_KEYS` (4) keys per candidate — its uuid, its rows of the field, the miss of one that holds none —, each weighed `SCATTERED` (4) contiguous keys. The walk of a `!=` or a text predicate costs the field's holders; of an ordered comparison of a number or a date, the range's `at_most` rows, less the rows of the values in the range that have a posting, plus two keys each — a posted value is walked as its posting (`range_walk`, read from the postings' own keys). The histogram is read only once the holders leave the choice open. Each row is decided by its key, as the walk decides it, so the two cannot answer differently (`tests/index_oracle.rs`).
 
-Measured cold (November 2026), the "probe or walk" rule chose wrong by twenty, and
-statistics are to replace the fixed rules: [[Planner statistics]] (proposed; probe or
-walk and the order of an `and` now read them).
+A scan is never put before the bitmaps, however narrow: a bitmap is read whole today,
+handed candidates or not, and a scan handed them reads no more than its own walk, so
+evaluating it first could only cost more (Open below).
 
-* ''The order of an `and`.'' Its operands answered from a bitmap or a posting — presence,
-  equality, `in`, a subtree, a follow, `uuid_in` — are evaluated first, in the query's
-  order; the ''scans'' last: `matches`, `osm direct`, `!=` and the ordered comparisons, each
-  handed the running intersection as its candidates, the narrowest first by its estimate
-  ([[Planner statistics]]). Once the intersection is empty, nothing more is evaluated.
-  The order depends on the data, so a page may be served by another path than the one
-  before it if the data changed between them; it gets the same ''results'', since an
-  `and` commutes.
-* ''Probe or walk.'' A scan given candidates checks their own rows (a uuid and the
-  field's rows each, about four keys, scattered: weighed four times a walked key —
-  `plan::probes`) when that costs less than the walk; otherwise it walks the field's
-  values. The walk of a `!=` or a text predicate is priced at the field's holders; an
-  ordered comparison of a number or a date at the rows its histogram gives the range, a
-  value with a posting counted as its posting ([[Planner statistics]]). Each row is
-  decided by its key, as the walk decides it, so the two cannot answer differently
-  (`tests/index_oracle.rs`).
+What it bought, by key count (`tests/kv_cost.rs`):
 
-What this bought: a range on a field whose values are all distinct — a name, a size, a
-date — has no posting to take whole, and walking it read a key per holder. Beside a
-folder, `size > 1000000` read the whole field (16 109 keys on 16 000 records); it now
-reads the folder (`tests/kv_cost.rs`, `a_range_on_distinct_values_costs_the_narrow_operand`).
+* `size > 1000000` beside a folder read the whole field (16 109 keys on 16 000 records), now the folder (`a_range_on_distinct_values_costs_the_narrow_operand`);
+* a range holding 1 % of the repository, in a folder holding a fifth: 6 440 keys, now no more than the two operands alone (`a_narrow_range_in_a_wide_folder_walks_the_range`);
+* a pattern every file holds and that range: 32 327 keys pattern first, 644 range first; now 644 in either order (`of_two_scans_the_narrower_goes_first`).
 
-The page's choices — fetch or walk, how far a walk may go — stay with the sort
-([[Sorting and postings]]); the anchors of an `osm` path with the forest
-([[The forest in the store]]).
+!! The plan depends on the data, the answer does not
+
+Choosing differently never answers differently: an `and` commutes, and a probe and a
+walk decide each row by the same key. So the plan may depend on the data without
+breaking a paginated session — the cursor is tied to the query sent
+([[How queries are evaluated]]). Every page gets the same ''results''; it may get them
+by another path if the data changed between pages.
+
+!! The statistics
+
+''Exact, maintained like an index'' — a derived key space ([[Store tables]]), written
+in each write's own transaction by `KvTxn::derive_row`, rebuilt by `reindex`, compared
+by `check` — rather than sampled and refreshed, which would drift and make plans
+depend on when the sample was taken.
+
+* ''A histogram per ordered field'': a count of rows per ''bucket'', a bucket being a prefix of the value key (`kvstore/derived.rs`, `value_key`, `hist_bucket`), so that buckets are contiguous ranges of the partition and a range's estimate is the sum of the buckets it covers, exact but for the one the operand falls in. The prefix width is per type:
+** a number is an order-preserving `f64` (`num_key`): its first 16 bits are the sign, the exponent and 4 bits of mantissa — buckets of 1/16 of an octave, log-scaled, which suits sizes and counts; `int` and `float` share the type tag, so one histogram;
+** a date is milliseconds in an `i64` (`dt_key`): the first 16 bits are 9 000 years wide, so a date bucket keeps the first 34 bits — buckets of 2^30 ms, ≈ 12 days —, the rest of the fifth byte cleared;
+** a text or a tree name: ''not kept'' (Open below) — its estimate is its field's holders.
+* ''Set sizes'' are known exactly already: a field's holders (`present`), a posting, a subtree's descendants, a candidate set.
+
+Only the populated buckets are stored, in the table `hist`: a key `field · bucket` →
+count of rows (a record holding a value twice counts twice). A row written or removed
+changes one count: one key put more per row change of a number or a date. `mf repo
+check` compares each count to what the rows derive (`check_histograms`);
+`DERIVED_VERSION` 6 brought the table, so an older store is reindexed when it opens.
+
+''The estimate'', `KvSource::range_rows(field, op, value)`: the rows the comparison
+holds, as `at_least` (the buckets wholly inside) and `at_most` (those and the operand's
+bucket). It reads the buckets on the comparison's side of the operand — one key past
+every value —, not the rows. A field has one type ([[One value type per field name]])
+and an operand of another is refused ([[Comparisons]]), so the histogram of the
+operand's type is the field's. Tested against a count of the rows themselves, after
+writes, edits, deletions and a reindex (`tests/kv_histogram.rs`).
+
+!! The cost model
+
+A cardinality is not a cost: a probe's keys are a candidate's rows, then the next one's,
+far apart in the file; a walk's are a hundred to a page. The model prices a plan in
+''contiguous'' and ''scattered'' key reads: a walk, its rows, contiguous; a probe, its
+keys per candidate, scattered; a bitmap, a key per 65 536 ids. One weight serves warm
+and cold — the plan should be good cold, where the time is. The weight 4 is a first
+value from the profile below (≈ 13 walked keys per probed candidate cold, ≈ 16 warm),
+not yet calibrated by a `--cold` run on a neutral machine.
+
+!! What showed it
+
+[[The timed regression suite]]'s `--cold` pass on `L` (100 000 files), and the same
+queries cold by hand after the statistics (the same machine, three runs each):
+
+|!Scenario |!Keys after |!Cold before |!Cold after |
+|`query.size_range_in_folder` — `mfr_size > 900000` below `/dir0/dir1` |11 760 |1 270–1 390 ms |87–111 ms |
+|`query.size_range` — the same range over the repository |11 786 |80–92 ms |84–113 ms |
+|`query.subtree_range_text` — a subtree, `rating > 4` and a name pattern |3 044 |1 270–1 320 ms |310–378 ms |
+|`query.finder` |5 045 |390–420 ms |441–661 ms |
+
+Bounding a range by a folder made it fifteen times ''slower'': 18 983 candidates × 4 =
+75 932 < 100 000 holders of `mfr_size`, so the rule then — probe when the candidates
+cost less than the field's holders — probed, reading 38 815 scattered keys (27 ms warm,
+1.5 s cold), where the walk reads the 11 785 rows ''inside the range''.
+`subtree_range_text` was the same case on `rating`. What is left of it is its text leaf
+on the forest's names, checked on the page; of the finder, the `osm` path's resolution
+in the forest before the index runs — neither a plan's choice.
 
 !! Measured and not built
 
 Two choices were weighed against measurements and left out; they need not be measured
 again unless the repositories grow by an order of magnitude. Both were weighed warm, a
-random read priced at ≈ 2 µs; re-measured cold on 9 November 2026 (`L`, 105 000 nodes,
-the store evicted before each of three runs — [[Planner statistics]], how the
-measurements were taken), where a scattered read costs ≈ 120 µs, both still hold.
+random read priced at ≈ 2 µs, then re-measured cold on 9 November 2026 (`L`, 105 000
+nodes), where a scattered read costs ≈ 120 µs: both still hold.
 
-* ''An unsorted page under a large subtree.'' `follows_transitive` reads the root's whole descendant bitmap where a page wants a hundred ids. Measured 7 October 2026 (`query.folder` against `query.page` of [[The timed regression suite]], a folder holding the whole repository): +0.08 ms on 21 000 nodes, +0.4 ms on 105 000, about 4 ms extrapolated to a million. The alternative — a per-candidate ancestry check stopping at the page — costs ≈ 100 × depth × 2 µs ≈ 1 ms, so it loses below roughly 300 000 nodes, and its walk cannot be budgeted without the subtree's size, which the store does not keep. ''Cold'': `/dir0` (104 999 files) 47–62 ms against 44–51 ms for the plain page, 251 keys against 247 — the descendant bitmap is a few contiguous keys. The ancestry check would read ≈ 100 × depth scattered keys, ≈ 36 ms at a depth of 3: it loses by more cold than warm.
-* ''A two-term `osm` path whose earlier term is common'' (the bench's finder): ≈ 5 ms on 105 000 nodes, nearly all of it each anchor's ancestry (≈ 2 µs a random read). No bitmap formulation was found cheaper on that shape. ''Cold'': `dir1 file12` 577–688 ms, 4 805 keys read resolving it before the index runs; the single term `file12`, which the index serves natively, 421–438 ms for 3 350 keys. So the order-sensitive part costs ≈ 1.4 times the name search itself, and both are the price of ≈ 1 100 scattered nodes (1 111 names hold `file12`, as many `dir1`; 111 paths match). The bitmap formulation — the anchors within the descendants of the nodes naming the earlier term — reads those 1 111 `dir1` nodes and a descendant key each: no fewer keys, as scattered. What would help cold is locality, not another formulation (Open in [[Planner statistics]]).
+* ''An unsorted page under a large subtree.'' `follows_transitive` reads the root's whole descendant bitmap where a page wants a hundred ids. Warm (7 October 2026, `query.folder` against `query.page`, a folder holding the whole repository): +0.08 ms on 21 000 nodes, +0.4 ms on 105 000, about 4 ms extrapolated to a million. The alternative — a per-candidate ancestry check stopping at the page — costs ≈ 100 × depth × 2 µs ≈ 1 ms, so it loses below roughly 300 000 nodes, and its walk cannot be budgeted without the subtree's size, which the store does not keep. Cold: `/dir0` (104 999 files) 47–62 ms against 44–51 ms for the plain page, 251 keys against 247; the ancestry check would read ≈ 100 × depth scattered keys, ≈ 36 ms at a depth of 3 — it loses by more cold than warm.
+* ''A two-term `osm` path whose earlier term is common'' (the bench's finder): ≈ 5 ms warm on 105 000 nodes, nearly all of it each anchor's ancestry. Cold: `dir1 file12` 577–688 ms, 4 805 keys read before the index runs; the single term `file12`, which the index serves natively, 421–438 ms for 3 350 keys. The order-sensitive part costs ≈ 1.4 times the name search itself, and both are the price of ≈ 1 100 scattered nodes (1 111 names hold `file12`, as many `dir1`; 111 paths match). The bitmap formulation — the anchors within the descendants of the nodes naming the earlier term — reads those 1 111 `dir1` nodes and a descendant key each: no fewer keys, as scattered.
 
 [[The session scenario]] (a day of GUI use on 50 000 files) showed no query over its
 budget: every list, finder and folder step under 1 s on a neutral machine.
+
+!! Open
+
+* Whether a text histogram is worth its keys (a text range is rarer than a numeric one), and the names of a forest likewise. Not kept for now: a string row costs no more to write than before. The date width was settled at 34 bits without a measurement of what a date range typically spans.
+* Whether a bitmap handed few candidates should read only its chunks holding them (a set is a key per 65 536 dense ids, a chunk up to 8 KB) — never more keys than reading it whole, in the same key order. Then a scan of very few rows would be worth evaluating before the bitmaps. Nothing to gain at the sizes measured (100 000 records: two chunks a set); 16 chunks at a million, about 150 at ten. Not built (user, 9 November 2026).
+* An `or`, an `and` or an `in` nested in an `and` hands its candidates down to its own scans, yet is ordered as a bitmap, first.
+* Whether the name search of a finder can be made local: cold, an `osm` path on `L` costs ≈ 0.4–0.7 s, the rows of ≈ 1 100 nodes each a scattered read. Neither the order of a plan nor another formulation reads fewer of them.
+* Whether the probe weight should depend on how scattered the candidates are (one folder after a forest-order reindex, against ids spread over the repository).
+
+!! How the measurements were taken
+
+* `scripts/dev/bench.sh --cold --big` (`--filter query.` to narrow); the generated `L` lives in `target/bench-data/L`.
+* Keys per phase: a daemon of its own on another port, `./target/release/metafolder-daemon --port 7631 --config crates/daemon/default-config/config.toml`, the requests authorised by `Authorization: Bearer $(cat $XDG_RUNTIME_DIR/metafolder/daemon.token)`, then `POST /repos/load` and `POST /repos/:repo/query/profile` with the query's body. Cold by hand: unload, `fsync` and `posix_fadvise(DONTNEED)` on `.metafolder/internal/kv/data.mdb`, load, wait for `GET /repos/:repo` to say `ready`.
+* Stop that daemon by its pid, never with `pkill -f` on a pattern the stopping command itself contains.
+* Tests count keys (`tests/kv_cost.rs`, `KvStore::reads()`), never a duration ([[Tests that fail under load]]).
