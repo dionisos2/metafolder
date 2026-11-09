@@ -9,6 +9,7 @@
 #   scripts/dev/bench.sh --filter log.    # only the scenarios whose id starts with log.
 #   scripts/dev/bench.sh --no-history     # measure and compare, record nothing
 #   scripts/dev/bench.sh --report         # print the recorded history, measure nothing
+#   scripts/dev/bench.sh --cold           # the reads, with the store out of the page cache
 #   scripts/dev/bench.sh --debug          # measure the debug build (its own history)
 #
 # What it does: builds the daemon in release, generates (or reuses) the

@@ -15,6 +15,7 @@ scripts/dev/bench.sh --filter log.    # only the scenarios whose name starts wit
 scripts/dev/bench.sh --tolerance 0.5  # the threshold, as a fraction (default 0.30)
 scripts/dev/bench.sh --no-history     # measure and compare, record nothing
 scripts/dev/bench.sh --report         # print the recorded history, measure nothing
+scripts/dev/bench.sh --cold           # the reads, with the store out of the page cache
 scripts/dev/bench.sh --debug          # measure the debug build (a history of its own)
 ```
 
@@ -114,6 +115,25 @@ is included because memory the allocator keeps is only visible the first time. W
 
 It is coarse — its noise floor is 8 MiB — and is not there to size a working set
 but to see the day a query materialises what it should have streamed.
+
+!! Cold
+
+Every other number here is ''warm'': a warm-up run, then five, so the store's pages
+are in the page cache and the disk is never measured. The cold numbers are the ones
+a user meets — the first query on a repository the cache let go of — and they are two
+orders of magnitude apart (`query.size_range`: 0.6 ms warm, 65 ms cold on `M`).
+
+`--cold` measures the reads — the `query.` and `log.` scenarios, `metarecord.get`,
+`tree.resolve_page`; not the writes nor `repo.load` — each as a series of its own,
+`cold.<scenario>`. Before each of the five runs, and with no warm-up, the repository
+is unloaded (a page a process maps stays cached), its `data.mdb` evicted from the
+page cache with `posix_fadvise(DONTNEED)` — no root needed, and no other file
+touched —, loaded again, and waited for by its `ready` state rather than a query.
+What the load itself reads is warm, as it is for a user.
+
+A cold number is a number of the disk: an SSD and a spinning disk differ by far more
+than any change of code, and any other reader of the disk moves it. Run it on a
+neutral machine — and compare it only with its own history.
 
 !! Where the data comes from
 

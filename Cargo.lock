@@ -2198,6 +2198,7 @@ dependencies = [
  "metafolder-core",
  "metafolder-daemon",
  "reqwest",
+ "rustix",
  "serde",
  "serde_json",
  "tokio",

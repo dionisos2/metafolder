@@ -16,6 +16,8 @@ metafolder-core = { path = "../core" }
 metafolder-daemon = { path = "../daemon" }
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
+# `posix_fadvise`, which the cold pass evicts a store's pages with.
+rustix = { version = "1", features = ["fs"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4", "serde"] }

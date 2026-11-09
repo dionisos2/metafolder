@@ -697,6 +697,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args> {
             "--api" => parsed.regression.api = true,
             "--no-history" => parsed.regression.no_history = true,
             "--report" => parsed.regression.report = true,
+            "--cold" => parsed.regression.cold = true,
             "--filter" => {
                 parsed.regression.filter = Some(it.next().context("--filter needs a prefix")?)
             }
@@ -888,6 +889,7 @@ mod args_tests {
     fn the_known_options_still_parse() {
         let parsed = parse(&["regression", "--big", "--quick", "--filter", "log"]).unwrap();
         assert!(parsed.regression.big && parsed.regression.quick);
+        assert!(parse(&["regression", "--cold"]).unwrap().regression.cold);
         assert_eq!(parsed.regression.filter.as_deref(), Some("log"));
         let parsed = parse(&["--small", "a", "--big", "b"]).unwrap();
         assert_eq!(parsed.big, Some(PathBuf::from("b")));

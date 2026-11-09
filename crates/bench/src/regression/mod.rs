@@ -47,6 +47,8 @@ pub struct Options {
     pub no_history: bool,
     /// Print the history and exit.
     pub report: bool,
+    /// Measure the reads with the store's pages out of the page cache.
+    pub cold: bool,
     pub tolerance: f64,
 }
 
@@ -60,6 +62,7 @@ impl Default for Options {
             filter: None,
             no_history: false,
             report: false,
+            cold: false,
             tolerance: history::DEFAULT_TOLERANCE,
         }
     }
@@ -404,6 +407,76 @@ where
     Ok((history::median(&values), min, mem))
 }
 
+// ─── Cold ─────────────────────────────────────────────────────────────────────
+
+/// Whether `--cold` measures a scenario: the reads. A write or a load pays for
+/// what it touches already, and repeated cold would measure the disk's writes.
+fn cold_applies(id: &str) -> bool {
+    id.starts_with("query.")
+        || id.starts_with("log.")
+        || matches!(id, "metarecord.get" | "tree.resolve_page")
+}
+
+/// Drops the pages of `file` from the page cache (`posix_fadvise` with
+/// `DONTNEED`), without root and without touching any other file. Only the
+/// pages no process maps go: the repository must be unloaded first.
+fn evict(file: &Path) -> Result<()> {
+    let f = std::fs::File::open(file).with_context(|| format!("open {}", file.display()))?;
+    rustix::fs::fadvise(&f, 0, None, rustix::fs::Advice::DontNeed)
+        .with_context(|| format!("evict {} from the page cache", file.display()))
+}
+
+/// Loads the repository at `dir` and waits until it is ready, asking only its
+/// state — a query would read pages the measurement wants cold.
+async fn load_ready(url: &str, dir: &Path) -> Result<Uuid> {
+    let v: serde_json::Value = client()
+        .post(format!("{url}/repos/load"))
+        .json(&json!({ "root": dir }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let repo: Uuid = v["repo_uuid"].as_str().context("missing repo_uuid")?.parse()?;
+    let deadline = Instant::now() + Duration::from_secs(900);
+    loop {
+        let info: serde_json::Value =
+            client().get(format!("{url}/repos/{repo}")).send().await?.json().await?;
+        if info["ready"] == json!(true) {
+            return Ok(repo);
+        }
+        if Instant::now() > deadline {
+            anyhow::bail!("{} is still loading after 15 minutes", dir.display());
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// `(median, min)` in milliseconds of `id` run cold: before each run the
+/// repository is unloaded, its store evicted from the page cache, and loaded
+/// again — what a load reads is warm, the rest is read from the disk. No
+/// warm-up run: it would warm what is measured.
+async fn measure_cold(id: &str, ctx: &Ctx) -> Result<(f64, f64)> {
+    let store = ctx
+        .dir
+        .join(".metafolder")
+        .join(metafolder_daemon::repo::INTERNAL_DIR)
+        .join(metafolder_daemon::repo::KV_DIR)
+        .join("data.mdb");
+    let mut values = Vec::with_capacity(RUNS);
+    for _ in 0..RUNS {
+        post(&format!("{}/repos/{}/unload", ctx.url, ctx.repo), &json!({})).await?;
+        evict(&store)?;
+        let repo = load_ready(&ctx.url, &ctx.dir).await?;
+        anyhow::ensure!(repo == ctx.repo, "{} came back as another repository", ctx.dir.display());
+        let t = Instant::now();
+        run_scenario(id, ctx).await.with_context(|| format!("scenario {id}, cold"))?;
+        values.push(ms(t.elapsed()));
+    }
+    let min = values.iter().copied().fold(f64::INFINITY, f64::min);
+    Ok((history::median(&values), min))
+}
+
 // ─── The run ──────────────────────────────────────────────────────────────────
 
 pub async fn run(opts: &Options) -> Result<i32> {
@@ -493,7 +566,15 @@ pub async fn run(opts: &Options) -> Result<i32> {
                     continue;
                 }
             }
-            let (median, min, mem) = measure(id, &ctx, daemon.pid()).await?;
+            if opts.cold && !cold_applies(id) {
+                continue;
+            }
+            let (median, min, mem) = if opts.cold {
+                let (median, min) = measure_cold(id, &ctx).await?;
+                (median, min, None)
+            } else {
+                measure(id, &ctx, daemon.pid()).await?
+            };
             let record = |scenario: String, unit: &str, median: f64, min: f64| Record {
                 at: now.clone(),
                 commit: commit.clone(),
@@ -510,7 +591,9 @@ pub async fn run(opts: &Options) -> Result<i32> {
                 min,
                 runs: RUNS,
             };
-            records.push(record((*id).to_string(), "ms", median, min));
+            // A cold measurement is a series of its own, under its own name.
+            let name = if opts.cold { format!("cold.{id}") } else { (*id).to_string() };
+            records.push(record(name, "ms", median, min));
             // Memory has a series of its own, under its own name.
             if let Some(mib) = mem {
                 records.push(record(format!("mem.{id}"), "MiB", mib, mib));
@@ -960,5 +1043,32 @@ mod growth_tests {
         ];
         let flagged: Vec<String> = growth(&records).into_iter().map(|f| f.0).collect();
         assert_eq!(flagged, ["api.query.page"]);
+    }
+}
+
+#[cfg(test)]
+mod cold_tests {
+    use super::*;
+
+    /// The cold pass measures the reads — a write or a load already pays
+    /// for what it touches, and repeating one cold would measure the disk's
+    /// writes — and every scenario is classified.
+    #[test]
+    fn the_cold_pass_measures_the_reads_only() {
+        let cold: Vec<&str> = SCENARIOS.iter().copied().filter(|id| cold_applies(id)).collect();
+        assert!(cold.contains(&"query.size_range") && cold.contains(&"log.window_ops"));
+        assert!(cold.contains(&"metarecord.get") && cold.contains(&"tree.resolve_page"));
+        for writer in ["metarecord.write", "tree.write", "repo.load"] {
+            assert!(!cold.contains(&writer), "{writer} is not measured cold");
+        }
+    }
+
+    /// A store that is not there is an error naming it, not a silently warm
+    /// measurement.
+    #[test]
+    fn evicting_a_missing_store_names_it() {
+        let missing = std::env::temp_dir().join("metafolder-bench-no-such-store/data.mdb");
+        let err = evict(&missing).unwrap_err();
+        assert!(format!("{err:#}").contains("metafolder-bench-no-such-store"), "{err:#}");
     }
 }
