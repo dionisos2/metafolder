@@ -7,8 +7,9 @@ summary: Exact per-field histograms kept as a derived key space, and a cost mode
 
 The [[Query planner]] was built without statistics, on the belief that the cost
 choices left were minor. The cold measurements of November 2026 showed otherwise
-(user decision, 9 November 2026: build the statistics). This note is the design; it
-is not built.
+(user decision, 9 November 2026: build the statistics). This note is the design.
+''Built so far: the histogram and its estimate'' (step 1, November 2026); the planner
+does not read them yet — steps 2 on are not built.
 
 !! What showed it
 
@@ -64,14 +65,25 @@ in each write's own transaction by `KvTxn::derive_row`, rebuilt by `reindex`, co
 by `check` — rather than sampled and refreshed, which would drift and make plans
 depend on when the sample was taken.
 
-* ''A histogram per ordered field'': a count of rows per ''bucket'', a bucket being a prefix of the value key (`kvstore/derived.rs`, `value_key`), so that buckets are contiguous ranges of the partition and a range's estimate is the sum of the buckets it covers, exact but for the two at its ends. The prefix width is per type, as each key encodes:
-** a number is an order-preserving `f64` (`num_key`): its first 16 bits are the sign, the exponent and 4 bits of mantissa — buckets of 1/16 of an octave, log-scaled, which suits sizes and counts;
-** a date is milliseconds in an `i64` (`dt_key`): the first 16 bits are 9 000 years wide, so a date bucket needs about the first 34 bits (2^30 ms, ≈ 12 days) — to settle;
-** a text, its first two bytes; a tree name, likewise after the parent.
+* ''A histogram per ordered field'': a count of rows per ''bucket'', a bucket being a prefix of the value key (`kvstore/derived.rs`, `value_key`, `hist_bucket`), so that buckets are contiguous ranges of the partition and a range's estimate is the sum of the buckets it covers, exact but for the one the operand falls in. The prefix width is per type, as each key encodes:
+** a number is an order-preserving `f64` (`num_key`): its first 16 bits are the sign, the exponent and 4 bits of mantissa — buckets of 1/16 of an octave, log-scaled, which suits sizes and counts; `int` and `float` share the type tag, so one histogram;
+** a date is milliseconds in an `i64` (`dt_key`): the first 16 bits are 9 000 years wide, so a date bucket keeps the first 34 bits — buckets of 2^30 ms, ≈ 12 days —, the rest of the fifth byte cleared;
+** a text, its first two bytes; a tree name, likewise after the parent — ''not kept'' (Open below): an estimate for a text operand answers that it does not know.
 * ''Set sizes'' are mostly known exactly already: a field's holders (`present`), a posting, a subtree's descendants, a candidate set. They need no new key space, only to be read where the plan is made.
 
-Only the populated buckets are stored: a key `field · bucket` → count. A row written or
-removed changes one count: one key put more per row change of an ordered field.
+Only the populated buckets are stored, in the table `hist` ([[Store tables]]): a key
+`field · bucket` → count of rows (a record holding a value twice counts twice). A row
+written or removed changes one count: one key put more per row change of a number or a
+date (`KvTxn::derive_row`). `mf repo check` compares each count to what the rows derive
+(`check_histograms`); `DERIVED_VERSION` 6 brought the table, so an older store is
+reindexed when it opens.
+
+''The estimate'', `KvSource::range_rows(field, op, value)`: the rows of the operand's
+type that the comparison holds, as `at_least` (the buckets wholly inside) and `at_most`
+(those and the operand's bucket). It reads the buckets on the comparison's side of the
+operand — one key past every value —, not the rows. A `!=` also holds the field's rows
+of other types, which no histogram counts. Tested against a count of the rows
+themselves, after writes, edits, deletions and a reindex (`tests/kv_histogram.rs`).
 
 !! The cost model
 
@@ -101,7 +113,7 @@ run on a neutral machine (the user's).
 
 !! Open
 
-* The date bucket width, and whether a text histogram is worth its keys (a text range is rarer than a numeric one).
+* Whether a text histogram is worth its keys (a text range is rarer than a numeric one), and the names of a forest likewise. Not kept for now: a string row costs no more to write than before. The date width was settled at 34 bits without a measurement of what a date range typically spans.
 * Whether the probe weight should depend on how scattered the candidates are (one folder after a forest-order reindex, against ids spread over the repository).
 * A field of mixed types (`int` and `string` rows): the buckets of each type tag are separate ranges already, since the tag leads the key.
 

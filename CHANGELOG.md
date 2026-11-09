@@ -14,6 +14,11 @@ than breaking them.
 ## [Unreleased]
 
 ### Changed
+- **Each repository is reindexed once when it is first opened** by this version: the
+  store gains a histogram per number and date field, counts of rows by bucket kept up
+  to date by every write and held by `mf repo check`, from which the query planner will
+  estimate a range (doc "Planner statistics"). Nothing reads them yet.
+
 - **`README.md` is generated from the wiki note `README`** and is now only an entry
   page: what the project is for and how to start. `scripts/dev/doc check` fails when
   it differs from the note.

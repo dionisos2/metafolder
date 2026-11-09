@@ -71,7 +71,7 @@ pub mod memory;
 mod source;
 mod table;
 
-pub use source::KvSource;
+pub use source::{KvSource, RangeRows};
 use table::{Db, Wtxn};
 
 /// The parent key of a forest root: the zero uuid, which no metarecord has.
@@ -103,6 +103,7 @@ struct Tables {
     parts: Db,
     kids: Db,
     grams: Db,
+    hist: Db,
 }
 
 impl Tables {
@@ -110,7 +111,7 @@ impl Tables {
     fn open(env: &Env<WithoutTls>) -> Result<Tables> {
         // In `Tables`' order. heed hands a database out for good (`'static`)
         // only once the transaction that created it has committed.
-        const NAMES: [&str; 23] = [
+        const NAMES: [&str; 24] = [
             "meta",
             "metarecords",
             "field_cells",
@@ -134,6 +135,7 @@ impl Tables {
             "parts",
             "kids",
             "grams",
+            "hist",
         ];
         let w = env.write_txn()?;
         let created = env.create_databases_and_commit(w, |dbo, w| -> heed::Result<_> {
@@ -141,13 +143,13 @@ impl Tables {
             for name in NAMES {
                 dbs.push(dbo.create_database::<Bytes, Bytes>(w, Some(name))?);
             }
-            let dbs: [_; 23] = dbs.try_into().expect("one database per name");
+            let dbs: [_; 24] = dbs.try_into().expect("one database per name");
             Ok(CommitOrAbort::<_, ()>::Commit(dbs))
         })?;
         let dbs = created.commit().expect("the databases are committed");
         let mut index = 0..;
         let dbs = dbs.map(|db| Db::new(db, index.next().expect("unbounded")));
-        let [meta, metarecords, cells, row_owner, by_field, field_types, forest, ops, snaps, ops_by_label, ops_by_entity, labels, label_kids, label_keys, reverted_by, watcher_ops, user_ops, ids, uuids, sets, parts, kids, grams] =
+        let [meta, metarecords, cells, row_owner, by_field, field_types, forest, ops, snaps, ops_by_label, ops_by_entity, labels, label_kids, label_keys, reverted_by, watcher_ops, user_ops, ids, uuids, sets, parts, kids, grams, hist] =
             dbs;
         Ok(Tables {
             meta,
@@ -173,11 +175,12 @@ impl Tables {
             parts,
             kids,
             grams,
+            hist,
         })
     }
 
     /// Every table, in the order of their indexes (see [`table::Change`]).
-    fn all(&self) -> [Db; 23] {
+    fn all(&self) -> [Db; 24] {
         [
             self.meta,
             self.metarecords,
@@ -202,6 +205,7 @@ impl Tables {
             self.parts,
             self.kids,
             self.grams,
+            self.hist,
         ]
     }
 }

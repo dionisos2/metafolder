@@ -9,7 +9,8 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 doc "Planner statistics" (proposed, user decision 9 November 2026): exact
 per-field histograms as a derived key space, a cost model telling scattered
 from contiguous reads, then probe-or-walk and the order of an =and= from them.
-Its steps are in the note; start with the histogram.
+Its steps are in the note. The histogram and its estimate are built (step 1);
+next, probe or walk from them (step 2).
 
 * To discuss
 Every deferred or proposed note, to be gone through one by one: build it, keep

@@ -26,8 +26,8 @@ use roaring::{MultiOps, RoaringBitmap};
 use uuid::Uuid;
 
 use super::derived::{
-    self, dense, id_of, long_prefix, part_prefix, read_set, text_key, type_tag, value_key, MULTI,
-    NAME, TARGET, VALUE,
+    self, dense, hist_bucket, hist_key, id_of, long_prefix, part_prefix, read_set, text_key,
+    type_tag, value_key, MULTI, NAME, TARGET, VALUE,
 };
 use super::{dec_row, name_key, uuid_of, KvStore, Tables};
 use crate::index::keys::{sort_rep, CmpOp, SortRep};
@@ -57,6 +57,16 @@ impl KvStore {
             store_reads: &self.reads,
         })
     }
+}
+
+/// How many rows of a field a comparison holds, as its histogram bounds it
+/// ([`KvSource::range_rows`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RangeRows {
+    /// The rows of the buckets wholly inside the comparison.
+    pub at_least: u64,
+    /// Those and every row of the bucket the operand falls in.
+    pub at_most: u64,
 }
 
 /// How a field's values compare, by value type.
@@ -270,6 +280,51 @@ impl KvSource<'_> {
             Ok(out)
         };
         self.ok(read(), RoaringBitmap::new())
+    }
+
+    /// How many rows of `field`, of the operand's type, the comparison `op
+    /// value` holds, from the field's histogram (doc "Planner statistics"):
+    /// exact but for the operand's bucket, whose rows may fall either side.
+    /// Reads the buckets on the comparison's side of the operand, not the
+    /// rows. `None` for an operand of a type that has no histogram (a text,
+    /// a bool, a reference); a field holding no row of the operand's type
+    /// gives zero — what an ordered comparison finds there, though a `!=`
+    /// also holds the rows of the field's other types, which no histogram
+    /// counts.
+    pub fn range_rows(&self, field: &str, op: CmpOp, value: &Value) -> Option<RangeRows> {
+        let operand = hist_bucket(&value_key(value)?)?;
+        let tag = operand[0];
+        let region = hist_key(field, &[tag]);
+        let end = hist_key(field, &[tag + 1]);
+        let at = hist_key(field, &operand);
+        let range: (Bound<&[u8]>, Bound<&[u8]>) = match op {
+            CmpOp::Eq => (Bound::Included(&at), Bound::Included(&at)),
+            CmpOp::Neq => (Bound::Included(&region), Bound::Excluded(&end)),
+            CmpOp::Lt | CmpOp::Lte => (Bound::Included(&region), Bound::Included(&at)),
+            CmpOp::Gt | CmpOp::Gte => (Bound::Included(&at), Bound::Excluded(&end)),
+        };
+        let read = || -> Result<RangeRows> {
+            let (mut sure, mut edge, mut keys) = (0, 0, 0);
+            for entry in self.t.hist.range(&self.r, &range)? {
+                let (k, v) = entry?;
+                self.read_keys(1)?;
+                keys += 1;
+                let rows = super::from_be(v) as u64;
+                let bucket = &k[region.len() - 1..];
+                match bucket.cmp(&operand[..]) {
+                    std::cmp::Ordering::Equal => edge += rows,
+                    ord if op.matches_ordering(ord) => sure += rows,
+                    _ => {}
+                }
+            }
+            if keys == 0 {
+                // The seek that found nothing.
+                self.read_keys(1)?;
+            }
+            Ok(RangeRows { at_least: sure, at_most: sure + edge })
+        };
+        let estimate = read();
+        self.ok(estimate.map(Some), None)
     }
 
     /// A whole set; a read per chunk of 65 536 ids it spans.

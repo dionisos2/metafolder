@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use metafolder_core::metarecord::Value;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CmpOp {
     Eq,
     Neq,
@@ -19,7 +19,7 @@ pub enum CmpOp {
 }
 
 impl CmpOp {
-    pub(crate) fn matches_ordering(self, ord: std::cmp::Ordering) -> bool {
+    pub fn matches_ordering(self, ord: std::cmp::Ordering) -> bool {
         use std::cmp::Ordering::*;
         match self {
             CmpOp::Lt => ord == Less,

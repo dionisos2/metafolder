@@ -10,6 +10,7 @@
 //! | parts | field · partition · key · dense id   | rows (count)             |
 //! | kids  | parent uuid · field · dense id       | rows (count)             |
 //! | grams | field · trigram · chunk              | a roaring bitmap         |
+//! | hist  | field · bucket                       | rows (count)             |
 //!
 //! A *set* is a bitmap of dense ids cut in chunks of 65 536 ids (the high 16
 //! bits), so a write rewrites one chunk and a read unions a few: the universe,
@@ -22,6 +23,10 @@
 //! it is a parent in without a scan. A value held by [`POSTING_MIN`] records
 //! or more also gets a *posting*: its holders as one set, so an equality on a
 //! frequent value reads a key per 65 536 holders, not one per holder.
+//! A number's or a date's row also counts in its field's *histogram*: rows
+//! per bucket, a bucket being a prefix of the value key ([`hist_bucket`]), so
+//! the planner estimates a range by summing a few counts (doc "Planner
+//! statistics").
 //!
 //! Every row change goes through [`KvTxn::derive_row`], every metarecord
 //! creation and removal through [`KvTxn::derive_created`] /
@@ -43,8 +48,9 @@ use crate::store::Rows;
 
 /// The format of the derived key spaces. A store stamped with another (or
 /// none: a store from before they existed) is reindexed when it opens. 5:
-/// descendant bitmaps for every forest (4 kept `mfr_path`'s only).
-pub(super) const DERIVED_VERSION: i64 = 5;
+/// descendant bitmaps for every forest (4 kept `mfr_path`'s only); 6: the
+/// histograms.
+pub(super) const DERIVED_VERSION: i64 = 6;
 
 /// Set kinds.
 pub(super) const UNIVERSE: u8 = 0;
@@ -97,6 +103,32 @@ pub(super) fn descendants_prefix(field: &str, node: &[u8; 16]) -> Vec<u8> {
 /// The key of the referrers of `target` in `field`, without its chunk.
 pub(super) fn referrers_prefix(field: &str, target: &[u8; 16]) -> Vec<u8> {
     [&[REFERRERS][..], &name_key(field), target].concat()
+}
+
+/// The histogram bucket of a value key: the prefix of it that rows are
+/// counted under — for a number (an order-preserving `f64`) its type tag and
+/// first 16 bits, the sign, the exponent and 4 bits of mantissa: 1/16 of an
+/// octave; for a date (milliseconds) its tag and first 34 bits, about twelve
+/// days, the rest of the last byte cleared. Buckets are contiguous ranges of
+/// the value partition, of one width per type, so comparing a bucket with an
+/// operand's says whether all of its rows are below, above, or undecided.
+/// `None` for the types without a histogram: a text, a bool, a reference
+/// (doc "Planner statistics", Open).
+pub(crate) fn hist_bucket(key: &[u8]) -> Option<Vec<u8>> {
+    match key.first() {
+        Some(1) => Some(key[..3].to_vec()),
+        Some(3) => {
+            let mut b = key[..6].to_vec();
+            b[5] &= 0xC0;
+            Some(b)
+        }
+        _ => None,
+    }
+}
+
+/// The key of a bucket of `field`'s histogram.
+pub(super) fn hist_key(field: &str, bucket: &[u8]) -> Vec<u8> {
+    [&name_key(field)[..], bucket].concat()
 }
 
 /// The two tables of chunked bitmaps, as the transaction's chunk cache
@@ -594,6 +626,9 @@ impl KvTxn<'_> {
         if let Some(k) = value_key(value) {
             self.bump(self.t.parts, &part_key(field, VALUE, &k, id), delta)?;
             self.derive_posting(field, &k, id)?;
+            if let Some(bucket) = hist_bucket(&k) {
+                self.bump(self.t.hist, &hist_key(field, &bucket), delta)?;
+            }
         }
         if let Some(k) = name_part_key(value) {
             self.bump(self.t.parts, &part_key(field, NAME, &k, id), delta)?;
@@ -779,7 +814,7 @@ impl KvTxn<'_> {
         self.cached_chunks.borrow_mut().clear();
         let mut w = self.txn.borrow_mut();
         let t = self.t;
-        for db in [t.ids, t.uuids, t.sets, t.parts, t.kids, t.grams] {
+        for db in [t.ids, t.uuids, t.sets, t.parts, t.kids, t.grams, t.hist] {
             db.clear(&mut w)?;
         }
         Ok(())
@@ -899,7 +934,8 @@ impl KvStore {
         let mut diff = Diff::default();
 
         let mut sums = Sums::new();
-        self.walk_entries(&r, &mut diff, &mut |side, entry| {
+        let mut hist = Histograms::new();
+        self.walk_entries(&r, &mut diff, Some(&mut hist), &mut |side, entry| {
             sums.add(side, &entry);
             Ok(())
         })?;
@@ -908,12 +944,13 @@ impl KvStore {
             let mut detail = Detail::new(wanted);
             // The first pass already said what it found outside the entries.
             let mut said = Diff::default();
-            self.walk_entries(&r, &mut said, &mut |side, entry| {
+            self.walk_entries(&r, &mut said, None, &mut |side, entry| {
                 detail.add(&self.t, &r, side, &entry)
             })?;
             detail.report(&mut diff);
         }
         self.check_postings(&r, &mut diff)?;
+        self.check_histograms(&r, hist, &mut diff)?;
         Ok(diff.lines)
     }
 
@@ -921,10 +958,13 @@ impl KvStore {
     /// entry the derived tables hold ([`Side::Got`]), postings aside, handed
     /// to `sink` one at a time. What cannot be an entry — a metarecord with
     /// no dense id, an id the two mappings disagree on — goes to `diff`.
+    /// `hist`, when given, gets the histograms the rows derive: a count per
+    /// bucket, not an entry per row, small enough to be held.
     fn walk_entries(
         &self,
         r: &RoTxn<'_>,
         diff: &mut Diff,
+        mut hist: Option<&mut Histograms>,
         sink: &mut dyn FnMut(Side, Entry<'_>) -> Result<()>,
     ) -> Result<()> {
         let t = &self.t;
@@ -987,6 +1027,9 @@ impl KvStore {
                 group = Group { uuid, id, field: row.name.clone(), ..Group::default() };
             }
             if let Some(key) = value_key(&row.value) {
+                if let (Some(hist), Some(bucket)) = (hist.as_deref_mut(), hist_bucket(&key)) {
+                    *hist.entry(hist_key(&row.name, &bucket)).or_default() += 1;
+                }
                 *group.parts.entry((VALUE, key)).or_default() += 1;
             }
             if let Some(key) = name_part_key(&row.value) {
@@ -1209,6 +1252,39 @@ impl KvStore {
         }
         if run.1 > 0 {
             required(&run.0, run.1, diff)?;
+        }
+        Ok(())
+    }
+}
+
+/// The histograms a check derives from the rows: rows per [`hist_key`].
+type Histograms = BTreeMap<Vec<u8>, i64>;
+
+impl KvStore {
+    /// The histograms, against what the rows derive (`expected`), bucket by
+    /// bucket.
+    fn check_histograms(&self, r: &RoTxn<'_>, expected: Histograms, diff: &mut Diff) -> Result<()> {
+        let show = |key: &[u8]| -> Result<String> {
+            let (name, bucket) = unesc(key)?;
+            Ok(format!("({:?}, {bucket:?})", String::from_utf8_lossy(&name)))
+        };
+        let mut expected = expected.into_iter().peekable();
+        for entry in self.t.hist.iter(r)? {
+            let (k, v) = entry?;
+            let got = from_be(v);
+            while let Some((want_k, want)) = expected.next_if(|(want_k, _)| want_k[..] < *k) {
+                diff.push(format!("histogram missing: {}: {want}", show(&want_k)?));
+            }
+            match expected.next_if(|(want_k, _)| want_k[..] == *k) {
+                Some((_, want)) if want == got => {}
+                Some((_, want)) => {
+                    diff.push(format!("histogram of {}: {got} rows, expected {want}", show(k)?))
+                }
+                None => diff.push(format!("histogram unexpected: {}: {got}", show(k)?)),
+            }
+        }
+        for (want_k, want) in expected {
+            diff.push(format!("histogram missing: {}: {want}", show(&want_k)?));
         }
         Ok(())
     }
@@ -1458,6 +1534,7 @@ mod tests {
                 Field::new("kind", Value::String("text".into())),
                 Field::new("title", Value::String(format!("title number {i}"))),
                 Field::new("link", Value::Ref(folder)),
+                Field::new("size", Value::Int(i as i64 * 1_000)),
             ])
             .unwrap();
         }
@@ -1621,6 +1698,57 @@ mod tests {
         });
         let diff = store.check_derived().unwrap();
         assert!(has(&diff, "posting unexpected: "), "{}", some(&diff));
+    }
+
+    #[test]
+    fn test_a_histogram_is_required_and_exact() {
+        let (store, _dir) = populated();
+        let key = first_key(&store, |t| &t.hist, &name_key("size"));
+
+        // A count off by one.
+        let n = {
+            let r = store.env.read_txn().unwrap();
+            from_be(store.t.hist.get(&r, &key).unwrap().unwrap())
+        };
+        tamper(&store, |t, w| {
+            t.hist.put(w, &key, &be(n + 1)).unwrap();
+        });
+        let diff = store.check_derived().unwrap();
+        assert!(has(&diff, "histogram of "), "{}", some(&diff));
+
+        // A bucket gone.
+        tamper(&store, |t, w| {
+            t.hist.delete(w, &key).unwrap();
+        });
+        let diff = store.check_derived().unwrap();
+        assert!(has(&diff, "histogram missing: "), "{}", some(&diff));
+
+        // A bucket nothing fills.
+        let bogus =
+            [&name_key("size")[..], &hist_bucket(&value_key(&Value::Int(-7)).unwrap()).unwrap()]
+                .concat();
+        tamper(&store, |t, w| {
+            t.hist.put(w, &key, &be(n)).unwrap();
+            t.hist.put(w, &bogus, &be(3)).unwrap();
+        });
+        let diff = store.check_derived().unwrap();
+        assert_eq!(diff.len(), 1, "{}", some(&diff));
+        assert!(has(&diff, "histogram unexpected: "), "{}", some(&diff));
+    }
+
+    #[test]
+    fn test_a_bucket_is_a_prefix_of_the_value_key() {
+        // A number: its type tag and 16 bits; a date: its tag and 34 bits,
+        // the rest of its fifth byte cleared; none for another type.
+        let n = value_key(&Value::Int(900_000)).unwrap();
+        assert_eq!(hist_bucket(&n).unwrap(), n[..3].to_vec());
+        let d = value_key(&Value::DateTime(1_700_000_000_000)).unwrap();
+        let b = hist_bucket(&d).unwrap();
+        assert_eq!(b.len(), 6);
+        assert_eq!(b[..5], d[..5]);
+        assert_eq!(b[5], d[5] & 0xC0);
+        assert_eq!(hist_bucket(&value_key(&Value::String("x".into())).unwrap()), None);
+        assert_eq!(hist_bucket(&value_key(&Value::Bool(true)).unwrap()), None);
     }
 
     #[test]

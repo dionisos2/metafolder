@@ -253,6 +253,27 @@ fn a_store_of_the_previous_derived_format_is_reindexed_when_it_opens() {
     check(&store);
 }
 
+/// A store of format 5, from before the histograms (doc "Planner
+/// statistics"), is reindexed when it opens and gains them.
+#[test]
+fn a_store_from_before_the_histograms_gains_them_when_it_opens() {
+    let (mut store, dir) = open();
+    populate(&mut store);
+    drop(store);
+    {
+        let env = common::kv::raw_env(dir.path());
+        let hist = common::kv::open_raw(&env, "hist");
+        let meta = common::kv::open_raw(&env, "meta");
+        let mut w = env.write_txn().unwrap();
+        assert!(hist.len(&w).unwrap() > 0, "`size`, `ratio` and `at` have buckets");
+        hist.clear(&mut w).unwrap();
+        meta.put(&mut w, b"derived", &5u64.to_be_bytes()).unwrap();
+        w.commit().unwrap();
+    }
+    let store = KvStore::open(dir.path()).unwrap();
+    check(&store);
+}
+
 /// The dense ids, in id order, as the uuids they map.
 fn in_id_order(store: &KvStore, uuids: &[Uuid]) -> Vec<Uuid> {
     use metafolder_daemon::index::Source;

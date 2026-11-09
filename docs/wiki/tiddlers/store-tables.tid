@@ -55,6 +55,7 @@ Computed from the primary tables, read by the query evaluator through `KvSource`
 |`parts` |field · partition · key · dense id |rows (count) |
 |`kids` |parent uuid · field · dense id |rows (count) |
 |`grams` |field · trigram · chunk |a roaring bitmap of dense ids |
+|`hist` |field · bucket |rows (count) |
 
 ''Dense ids'' come first: each metarecord gets a small integer, allocated in
 discovery order and never reused. Bitmaps hold these ids, not uuids. The files of one
@@ -88,7 +89,9 @@ value points at — its referent, or its parent).
 
 `kids` is the forest keyed by parent first, so a metarecord arriving or leaving finds
 the fields it is a parent in without a scan. `grams` holds one bitmap per trigram of a
-field's texts ([[Text search in the store]]).
+field's texts ([[Text search in the store]]). `hist` counts a number's or a date's rows per bucket,
+a bucket being a fixed-width prefix of the value key: the histograms the planner
+estimates a range from ([[Planner statistics]]).
 
 Every row change goes through one primitive (`derive_row`), every metarecord creation
 and removal through two others (`derive_created`, `derive_removed`) — reverts
