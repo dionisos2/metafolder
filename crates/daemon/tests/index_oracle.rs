@@ -111,6 +111,16 @@ impl Oracle {
         assert_eq!(got, want, "divergence on {q:?}");
     }
 
+    /// Asserts `q` is refused with a 400 before either engine evaluates it —
+    /// by the shared type validation, and so by the oracle.
+    fn check_refused(&self, q: &Query) {
+        let index = Index(&self.conn);
+        let err = query_validate::validate_query_types(q, &|f| index.value_type(f))
+            .expect_err(&format!("{q:?} must be refused"));
+        assert_eq!(err.status, 400, "{q:?}");
+        assert!(query_exec::execute(&self.conn, q, &[], None, None).is_err(), "{q:?}");
+    }
+
     /// Asserts the evaluator agrees with the oracle on the *ordered*, limited
     /// result of `q` (comparison is order-sensitive — a `Vec`, not a set).
     fn check_sorted(&mut self, q: &Query, by: &[(&str, bool)], limit: Option<usize>) {
@@ -452,7 +462,7 @@ fn in_is_the_or_of_its_eq() {
 
     let in_ = |values: Vec<Value>| Query::In { field: "tag".into(), values, aspect: Aspect::Raw };
     o.check(&in_(vec![s("jazz"), s("blues")]));
-    o.check(&in_(vec![s("live"), Value::Int(3), s("rock")])); // a mismatched operand
+    o.check_refused(&in_(vec![s("live"), Value::Int(3), s("rock")])); // a mismatched operand
     o.check(&in_(vec![s("rock")])); // empty
     o.check(&in_(vec![])); // no value: nothing
     o.check(&not(in_(vec![s("jazz")])));
@@ -463,7 +473,7 @@ fn in_is_the_or_of_its_eq() {
 #[test]
 fn categorical_string_neq_multimap() {
     // {jazz, live} must match Neq("jazz") via the "live" row; {jazz} alone
-    // must not. A type-mismatched operand differs from every row.
+    // must not. A type-mismatched operand is refused.
     let mut o = Oracle::new();
     o.create(vec![Field::new("tag", s("jazz")), Field::new("tag", s("live"))]);
     o.create(vec![Field::new("tag", s("jazz"))]);
@@ -472,7 +482,7 @@ fn categorical_string_neq_multimap() {
     o.check(&neq("tag", s("jazz")));
     o.check(&neq("tag", s("blues")));
     o.check(&neq("tag", s("rock")));
-    o.check(&neq("tag", Value::Int(1))); // mismatched type: all differ
+    o.check_refused(&neq("tag", Value::Int(1)));
 }
 
 #[test]
@@ -582,9 +592,9 @@ fn bsi_datetime_ranges() {
     o.check(&lte("added", pivot.clone()));
     o.check(&gt("added", pivot.clone()));
     o.check(&gte("added", pivot));
-    // Mismatched operand family: int vs a datetime field → empty / present.
-    o.check(&eq("added", i(0)));
-    o.check(&neq("added", i(0)));
+    // Mismatched operand family: int vs a datetime field is refused.
+    o.check_refused(&eq("added", i(0)));
+    o.check_refused(&neq("added", i(0)));
 }
 
 // ── Boolean algebra ─────────────────────────────────────────────────────────
@@ -673,9 +683,9 @@ fn reverse_tree_eq_by_value_and_by_name() {
     o.check(&eq_as("loc", s("b"), Aspect::Value));
     o.check(&eq_as("loc", s("root"), Aspect::Value));
     o.check(&Query::Neq { field: "loc".into(), value: s("b"), aspect: Aspect::Value });
-    // Mismatched: an int operand on a tree_ref field.
-    o.check(&eq("loc", i(0)));
-    o.check(&neq("loc", i(0)));
+    // Mismatched: an int operand on a tree_ref field is refused.
+    o.check_refused(&eq("loc", i(0)));
+    o.check_refused(&neq("loc", i(0)));
 }
 
 #[test]
@@ -1648,6 +1658,83 @@ fn path_aspect_leaves_are_resolved_by_the_forest() {
     }
 }
 
+/// A comparison is same-type (doc "Comparisons"): an operand of another type
+/// than the field's is a 400, refused before either engine runs — numbers
+/// being one domain, a string naming a node on a forest, and a field with no
+/// data having no type to hold the operand to.
+#[test]
+fn an_operand_of_another_type_than_the_field_is_refused() {
+    let mut o = Oracle::new();
+    let root = o.create(vec![Field::new("loc", Value::TreeRef { parent: None, name: "".into() })]);
+    o.create(vec![
+        Field::new("loc", Value::TreeRef { parent: Some(root), name: "a".into() }),
+        Field::new("tag", s("2024")),
+        Field::new("size", i(5)),
+        Field::new("ratio", Value::Float(0.5)),
+        Field::new("at", Value::DateTime(1_700_000_000_000)),
+        Field::new("seen", Value::Bool(true)),
+    ]);
+    let index = Index(&o.conn);
+    let types = |q: &Query| query_validate::validate_query_types(q, &|f| index.value_type(f));
+    let cmp = |op: &str, field: &str, value: Value| -> Query {
+        let (field, aspect) = (field.to_string(), Aspect::Raw);
+        match op {
+            "=" => Query::Eq { field, value, aspect },
+            "!=" => Query::Neq { field, value, aspect },
+            "<" => Query::Lt { field, value, aspect },
+            "<=" => Query::Lte { field, value, aspect },
+            ">" => Query::Gt { field, value, aspect },
+            _ => Query::Gte { field, value, aspect },
+        }
+    };
+
+    let refused = [
+        ("tag", i(2024)),
+        ("size", s("5")),
+        ("size", Value::DateTime(0)),
+        ("at", s("2024-01-01")),
+        ("at", i(5)),
+        ("ratio", s("x")),
+    ];
+    for (field, value) in &refused {
+        for op in ["=", "!=", "<", "<=", ">", ">="] {
+            let q = cmp(op, field, value.clone());
+            let err = types(&q).expect_err(&format!("{q:?} must be a 400"));
+            assert_eq!(err.status, 400);
+            assert!(err.message.contains(field), "{}", err.message);
+            assert!(query_exec::execute(&o.conn, &q, &[], None, None).is_err(), "{q:?}");
+        }
+        let q = Query::In {
+            field: field.to_string(),
+            values: vec![value.clone()],
+            aspect: Aspect::Raw,
+        };
+        assert!(types(&q).is_err(), "{q:?} must be a 400");
+    }
+    // The hint names the fix for the likeliest slip, a bare number on a text.
+    let err = types(&cmp("=", "tag", i(2024))).unwrap_err().message;
+    assert!(err.contains("string") && err.contains("int"), "{err}");
+    let err = types(&cmp("=", "seen", s("yes"))).unwrap_err().message;
+    assert!(err.contains("bool"), "{err}");
+
+    let accepted = [
+        cmp("=", "size", Value::Float(5.0)),
+        cmp(">", "ratio", i(0)),
+        cmp("=", "tag", s("2024")),
+        cmp("<", "at", Value::DateTime(0)),
+        cmp("=", "seen", Value::Bool(true)),
+        // A string names a node of a forest.
+        cmp("=", "loc", s("/a")),
+        // No data: no type to refuse the operand by.
+        cmp(">", "nowhere", s("x")),
+    ];
+    for q in &accepted {
+        assert!(types(q).is_ok(), "{q:?} must be accepted: {:?}", types(q).err());
+    }
+    let q = Query::Eq { field: "loc".into(), value: s("a"), aspect: Aspect::Value };
+    assert!(types(&q).is_ok());
+}
+
 #[test]
 fn a_path_leaf_on_a_non_tree_field_is_refused_before_any_engine() {
     // `:path` on a field that is not a forest is a 400, made by the shared type
@@ -1797,7 +1884,6 @@ fn a_comparison_checked_on_its_candidates_answers_like_the_walk() {
         ("name", s("file")),
         ("at", dt("2026-01-01T00:00:16Z")),
         ("flag", Value::Bool(true)),
-        ("size", s("x")),
     ];
     for (field, value) in cases {
         let ops: &[fn(&str, Value) -> Query] =

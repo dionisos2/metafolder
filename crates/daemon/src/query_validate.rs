@@ -60,18 +60,18 @@ pub fn validate_query_types(
         }
         Query::Eq { field, value, aspect } | Query::Neq { field, value, aspect } => {
             check_aspect(field, *aspect, ReadKind::Equality, type_of)?;
-            check_operand(field, *aspect, value)
+            check_operand(field, *aspect, value, type_of)
         }
         Query::In { field, values, aspect } => {
             check_aspect(field, *aspect, ReadKind::Equality, type_of)?;
-            values.iter().try_for_each(|value| check_operand(field, *aspect, value))
+            values.iter().try_for_each(|value| check_operand(field, *aspect, value, type_of))
         }
         Query::Lt { field, value, aspect }
         | Query::Lte { field, value, aspect }
         | Query::Gt { field, value, aspect }
         | Query::Gte { field, value, aspect } => {
             check_aspect(field, *aspect, ReadKind::Ordered, type_of)?;
-            check_operand(field, *aspect, value)
+            check_operand(field, *aspect, value, type_of)
         }
         Query::Matches { field, aspect, .. } => {
             check_aspect(field, *aspect, ReadKind::Regex, type_of)
@@ -149,16 +149,45 @@ fn check_aspect(
     }
 }
 
-/// The `:path` aspect assembles a string, so it compares against one.
-fn check_operand(field: &str, aspect: Aspect, value: &Value) -> Result<(), ApiError> {
+/// A comparison is same-type (doc "Comparisons"): its operand must be of the
+/// field's type — `int` and `float` being one domain —, or a string naming a
+/// node on a forest. The `:path` aspect assembles a string, and `:parent` and
+/// `:value` on a forest read a path and a name, so they compare against one.
+/// A field with no data has no type to hold the operand to. Anything else
+/// could only ever match nothing — or, under `!=`, everything —, so it is
+/// refused as the mistake it almost always is.
+fn check_operand(
+    field: &str,
+    aspect: Aspect,
+    value: &Value,
+    type_of: &dyn Fn(&str) -> Option<String>,
+) -> Result<(), ApiError> {
     if aspect == Aspect::Path && !matches!(value, Value::String(_)) {
-        let _ = field;
         return Err(ApiError::bad_request(format!(
             "the ':path' aspect compares against a string, got {}",
             value.type_str()
         )));
     }
-    Ok(())
+    let Some(stored) = type_of(field) else { return Ok(()) };
+    let operand = value.type_str();
+    let numeric = |t: &str| t == "int" || t == "float";
+    let fits = if metafolder_core::metarecord::is_position_type(&stored) {
+        operand == "string" || (aspect == Aspect::Raw && operand == stored)
+    } else {
+        operand == stored || (numeric(operand) && numeric(&stored))
+    };
+    if fits {
+        return Ok(());
+    }
+    let hint = match (stored.as_str(), value) {
+        ("string", Value::Int(n)) => format!(" — quote it to compare a text: \"{n}\""),
+        ("string", Value::Float(f)) => format!(" — quote it to compare a text: \"{f}\""),
+        ("datetime", Value::String(_)) => " — a date is written @\"2024-01-01\"".to_string(),
+        _ => String::new(),
+    };
+    Err(ApiError::bad_request(format!(
+        "'{field}' holds {stored} values, but the operand is {operand}{hint}"
+    )))
 }
 
 /// Upper bound on the number of nodes in a single query. A safety valve

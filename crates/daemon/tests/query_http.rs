@@ -1592,7 +1592,6 @@ async fn test_in_answers_what_the_or_of_its_eq_answers() {
     let s = |v: &str| json!({"type": "string", "value": v});
     for (field, aspect, values, non_empty) in [
         ("genre", "raw", vec![s("jazz"), s("blues"), s("nope")], true),
-        ("genre", "raw", vec![s("jazz"), json!({"type": "int", "value": 3})], true),
         ("rating", "raw", vec![json!({"type": "int", "value": 3})], true),
         ("loc", "path", vec![s("top/a"), s("top/a/c"), s("top/zz")], true),
         ("loc", "value", vec![s("b"), s("c")], true),
@@ -1624,6 +1623,19 @@ async fn test_in_answers_what_the_or_of_its_eq_answers() {
         if non_empty {
             assert!(!got.as_array().unwrap().is_empty(), "a vacuous comparison: {in_q}");
         }
+    }
+    // An operand of another type than the field's is a 400, through `in` as
+    // through `=` (doc "Comparisons").
+    for q in [
+        json!({"type": "in", "field": "genre",
+               "values": [s("jazz"), {"type": "int", "value": 3}]}),
+        json!({"type": "eq", "field": "genre", "value": {"type": "int", "value": 3}}),
+        json!({"type": "gt", "field": "rating", "value": s("2")}),
+    ] {
+        let (status, body) =
+            request(&app, "POST", &format!("/repos/{repo}/query"), Some(json!({"query": q}))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{q}: {body}");
+        assert!(body["error"].as_str().unwrap().contains("holds"), "{body}");
     }
 }
 

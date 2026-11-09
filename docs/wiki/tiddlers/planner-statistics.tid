@@ -78,11 +78,12 @@ date (`KvTxn::derive_row`). `mf repo check` compares each count to what the rows
 (`check_histograms`); `DERIVED_VERSION` 6 brought the table, so an older store is
 reindexed when it opens.
 
-''The estimate'', `KvSource::range_rows(field, op, value)`: the rows of the operand's
-type that the comparison holds, as `at_least` (the buckets wholly inside) and `at_most`
+''The estimate'', `KvSource::range_rows(field, op, value)`: the rows the comparison
+holds, as `at_least` (the buckets wholly inside) and `at_most`
 (those and the operand's bucket). It reads the buckets on the comparison's side of the
-operand — one key past every value —, not the rows. A `!=` also holds the field's rows
-of other types, which no histogram counts. Tested against a count of the rows
+operand — one key past every value —, not the rows. A field has one type
+([[One value type per field name]]) and an operand of another is refused
+([[Comparisons]]), so the histogram of the operand's type is the field's. Tested against a count of the rows
 themselves, after writes, edits, deletions and a reindex (`tests/kv_histogram.rs`).
 
 !! The cost model
@@ -115,7 +116,6 @@ run on a neutral machine (the user's).
 
 * Whether a text histogram is worth its keys (a text range is rarer than a numeric one), and the names of a forest likewise. Not kept for now: a string row costs no more to write than before. The date width was settled at 34 bits without a measurement of what a date range typically spans.
 * Whether the probe weight should depend on how scattered the candidates are (one folder after a forest-order reindex, against ids spread over the repository).
-* A field of mixed types (`int` and `string` rows): the buckets of each type tag are separate ranges already, since the tag leads the key.
 
 !! How the measurements were taken
 

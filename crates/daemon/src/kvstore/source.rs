@@ -6,9 +6,9 @@
 //! A field's values are, at bottom, a partition "key → ids", and each
 //! comparison a union of the buckets whose key satisfies it — one key, all but
 //! one, a range. The partitions are ordered key spaces ([`super::derived`]) and
-//! a comparison is a range read. The type tag leading every value key handles
-//! an operand of another type without a special case: it matches no key, so
-//! `=` finds nothing and `!=` every row.
+//! a comparison is a range read. An operand of another type than the field's
+//! is refused before evaluation (doc "Comparisons"); the type tag leading
+//! every value key keeps one that reached here from matching any key.
 //!
 //! A read error cannot surface through the trait, whose answers are bitmaps:
 //! the first one is kept, answers go empty from there, and
@@ -282,15 +282,13 @@ impl KvSource<'_> {
         self.ok(read(), RoaringBitmap::new())
     }
 
-    /// How many rows of `field`, of the operand's type, the comparison `op
-    /// value` holds, from the field's histogram (doc "Planner statistics"):
-    /// exact but for the operand's bucket, whose rows may fall either side.
-    /// Reads the buckets on the comparison's side of the operand, not the
-    /// rows. `None` for an operand of a type that has no histogram (a text,
-    /// a bool, a reference); a field holding no row of the operand's type
-    /// gives zero — what an ordered comparison finds there, though a `!=`
-    /// also holds the rows of the field's other types, which no histogram
-    /// counts.
+    /// How many rows of `field` the comparison `op value` holds, from the
+    /// field's histogram (doc "Planner statistics"): exact but for the
+    /// operand's bucket, whose rows may fall either side. Reads the buckets
+    /// on the comparison's side of the operand, not the rows. `None` for an
+    /// operand of a type that has no histogram (a text, a bool, a
+    /// reference). The operand is of the field's type: another is refused
+    /// before evaluation (doc "Comparisons").
     pub fn range_rows(&self, field: &str, op: CmpOp, value: &Value) -> Option<RangeRows> {
         let operand = hist_bucket(&value_key(value)?)?;
         let tag = operand[0];

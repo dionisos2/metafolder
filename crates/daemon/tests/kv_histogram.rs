@@ -176,9 +176,6 @@ fn operands() -> Vec<(&'static str, Value)> {
         ("at", Value::DateTime(-60 * 365 * day)),
         ("at", Value::DateTime(i64::MAX)),
         ("at", Value::DateTime(i64::MIN)),
-        // An operand of another type than the field's: no row compares.
-        ("at", Value::Int(5)),
-        ("size", Value::DateTime(0)),
         // A field nothing holds.
         ("nobody", Value::Int(5)),
     ]

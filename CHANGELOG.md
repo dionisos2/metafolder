@@ -14,6 +14,12 @@ than breaking them.
 ## [Unreleased]
 
 ### Changed
+- **A comparison whose operand is not of the field's type is refused with `400`**
+  (`=`, `!=`, `in`, `<`, `<=`, `>`, `>=`) instead of silently matching nothing — or,
+  under `!=`, every holder. `tag=2024` on a text field now says to write `"2024"`, a
+  string compared with a date says to write `@"2024-01-01"`. Numbers stay one domain,
+  and a string still names a node on a `tree_ref` (doc "Comparisons").
+
 - **Each repository is reindexed once when it is first opened** by this version: the
   store gains a histogram per number and date field, counts of rows by bucket kept up
   to date by every write and held by `mf repo check`, from which the query planner will
