@@ -419,9 +419,12 @@ fn cold_applies(id: &str) -> bool {
 
 /// Drops the pages of `file` from the page cache (`posix_fadvise` with
 /// `DONTNEED`), without root and without touching any other file. Only the
-/// pages no process maps go: the repository must be unloaded first.
+/// pages no process maps go: the repository must be unloaded first. Only the
+/// clean ones too — a repository generated just now was written without a
+/// sync, and its dirty pages would stay — so the file is synced first.
 fn evict(file: &Path) -> Result<()> {
     let f = std::fs::File::open(file).with_context(|| format!("open {}", file.display()))?;
+    f.sync_data().with_context(|| format!("sync {}", file.display()))?;
     rustix::fs::fadvise(&f, 0, None, rustix::fs::Advice::DontNeed)
         .with_context(|| format!("evict {} from the page cache", file.display()))
 }

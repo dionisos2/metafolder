@@ -128,7 +128,8 @@ orders of magnitude apart (`query.size_range`: 0.6 ms warm, 65 ms cold on `M`).
 `cold.<scenario>`. Before each of the five runs, and with no warm-up, the repository
 is unloaded (a page a process maps stays cached), its `data.mdb` evicted from the
 page cache with `posix_fadvise(DONTNEED)` — no root needed, and no other file
-touched —, loaded again, and waited for by its `ready` state rather than a query.
+touched; synced first, since it drops only clean pages and a repository generated
+just now was written without a sync —, loaded again, and waited for by its `ready` state rather than a query.
 What the load itself reads is warm, as it is for a user.
 
 A cold number is a number of the disk: an SSD and a spinning disk differ by far more
