@@ -35,5 +35,9 @@ sorted walk hands a posted value's holders over as one run, and a page sorted on
 field of ten values costs about the page over the density of its ties, however large
 the repository.
 
-Still linear: a range over a numeric or date field with many distinct values
-(`mfr_size > 1 MB`), which a bit-sliced index would serve — deferred.
+A range over a numeric or date field with many distinct values (`mfr_size > 1 MB`)
+reads its rows inside the range, contiguously, or probes its candidates when a narrower
+operand gives few ([[Query planner]]). A ''bit-sliced index'', a bitmap per bit of the
+value, would answer it in a fixed number of bitmaps however wide the range — and rewrite
+up to 64 of them on each value change. It was ''dropped'' (user, November 2026): cold on
+100 000 files, a range holding 12 % of them reads 11 786 keys in about 100 ms.

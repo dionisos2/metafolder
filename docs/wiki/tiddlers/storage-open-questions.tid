@@ -1,9 +1,0 @@
-title: Storage open questions
-tags: Storage
-kind: question
-audience: dev
-status: deferred
-summary: Readers that do not wait for writers, and numeric ranges.
-
-* ''Readers that do not wait'' for a long write ([[Storage safety]]) — deferred by decision.
-* ''Numeric ranges'' over a field with many distinct values are linear; a bit-sliced index would serve them ([[Sorting and postings]]).

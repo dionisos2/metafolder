@@ -41,7 +41,7 @@ surprises. The encoding is chosen from the field's one value type
 bitmaps (target → sources) for references and trees, and — in the resident design — a
 bit-sliced index for numeric and date ranges. The store keeps the first two as value
 partitions and postings ([[Sorting and postings]]); a bit-sliced index for numeric
-ranges is deferred there.
+ranges was dropped there.
 
 Counts are ''exact'' and free: the result is a bitmap before it is counted, which is
 what took the count wall away. Approximate counts, once proposed, were never needed.

@@ -104,8 +104,8 @@ const SCENARIOS: &[&str] = &[
     "query.negation",
     "query.combined_sorted",
     "query.size_range_in_folder",
-    // The same range over the whole repository: the linear case a bit-sliced
-    // index would serve, measured before deciding to build one.
+    // The same range over the whole repository: it reads the rows inside the
+    // range (a bit-sliced index, which would not, was dropped).
     "query.size_range",
     // One metarecord, and one write (which pays for its derived key spaces).
     "metarecord.get",

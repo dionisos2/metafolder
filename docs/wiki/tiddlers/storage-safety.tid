@@ -59,5 +59,6 @@ LMDB lets readers work past a writer, but here a query still takes the repositor
 lock, as every read did before: its snapshot borrows the store behind that lock. So a
 read waits for a long write. Letting reads open their snapshot without the lock needs
 the map's growth to exclude open readers — LMDB resizes only with no transaction open
-in the process ([[Writes and atomicity]]). ''Deferred by decision'' (September 2026):
-operations stay sequential for now.
+in the process ([[Writes and atomicity]]). ''Dropped'' (user, November 2026, after a
+deferral in September): operations stay sequential, the concurrency that readers past
+a writer would bring being likelier to cause trouble than to remove any.
