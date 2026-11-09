@@ -325,6 +325,53 @@ impl KvSource<'_> {
         self.ok(estimate.map(Some), None)
     }
 
+    /// Whether a comparison checks the `candidates` on their own rows rather
+    /// than walk its range (`plan::probes`; doc "Planner statistics"). The
+    /// walk reads the field's holders for a `!=` or a text range; an ordered
+    /// comparison of a number or a date reads the rows its histogram gives
+    /// the range, at most, but a value with a posting as its posting. Each
+    /// count is read only while the choice is still open, and none for no
+    /// candidate, which costs nothing to probe.
+    fn probes(&self, candidates: &RoaringBitmap, field: &str, op: CmpOp, value: &Value) -> bool {
+        let n = candidates.len();
+        if n == 0 || !plan::probes(n, self.present(field).len()) {
+            return n == 0;
+        }
+        if op == CmpOp::Neq {
+            return true;
+        }
+        match (self.range_rows(field, op, value), value_key(value)) {
+            (Some(e), Some(key)) if plan::probes(n, e.at_most) => {
+                plan::probes(n, self.range_walk(field, op, &key, e.at_most))
+            }
+            (Some(_), _) => false,
+            (None, _) => true,
+        }
+    }
+
+    /// The keys walking `field op key` reads, from the `rows` the histogram
+    /// gives the range: the values held often enough to have a posting are
+    /// read as their postings (a key for the value, a key per chunk), not a
+    /// key per holder. An upper bound still — a posted holder counts a row,
+    /// and the operand's bucket counts whole.
+    fn range_walk(&self, field: &str, op: CmpOp, key: &[u8], rows: u64) -> u64 {
+        let read = || -> Result<u64> {
+            let prefix = [&[derived::POSTINGS][..], &name_key(field)].concat();
+            let (mut posted, mut keys) = (0, 0);
+            for entry in self.t.sets.prefix_iter(&self.r, &prefix)? {
+                let (k, v) = entry?;
+                self.read_keys(1)?;
+                let value = &k[prefix.len()..k.len() - 2];
+                if value.first() == key.first() && op.matches_ordering(value.cmp(key)) {
+                    posted += derived::decode_set(v)?.len();
+                    keys += 2;
+                }
+            }
+            Ok(rows.saturating_sub(posted) + keys)
+        };
+        self.ok(read(), rows)
+    }
+
     /// A whole set; a read per chunk of 65 536 ids it spans.
     fn set(&self, kind: u8, field: Option<&str>) -> RoaringBitmap {
         let bm = self.ok(read_set(&self.t, &self.r, kind, field), RoaringBitmap::new());
@@ -1008,11 +1055,10 @@ impl Source for KvSource<'_> {
         }
         let key = value_key(value);
         // A few candidates are checked on their own rows, where a walk would
-        // read a key per holder of a range (an equality reads one value's
+        // read a key per row of the range (an equality reads one value's
         // posting or run: it is never probed). Each row is decided by its key,
         // as the walk decides it.
-        let probe = restrict
-            .filter(|r| op != CmpOp::Eq && plan::probes(r.len(), self.present(field).len()));
+        let probe = restrict.filter(|r| op != CmpOp::Eq && self.probes(r, field, op, value));
         match op {
             CmpOp::Eq => Ok(key.map(|k| self.equal(field, &k, value)).unwrap_or_default()),
             CmpOp::Neq if probe.is_some() => {

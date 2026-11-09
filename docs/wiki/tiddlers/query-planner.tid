@@ -27,7 +27,8 @@ whole query: each choice is a fixed rule on the query's shape, or on an exact co
 store already holds.
 
 Measured cold (November 2026), the "probe or walk" rule chose wrong by twenty, and
-statistics are to replace the fixed rules: [[Planner statistics]] (proposed).
+statistics are to replace the fixed rules: [[Planner statistics]] (proposed; probe or
+walk now reads them).
 
 * ''The order of an `and`.'' Its operands answered from a bitmap or a posting — presence,
   equality, `in`, a subtree, a follow, `uuid_in` — are evaluated first, in the query's
@@ -36,9 +37,12 @@ statistics are to replace the fixed rules: [[Planner statistics]] (proposed).
   nothing more is evaluated. The order is a property of the shape, so every page of a
   paginated session is served the same way.
 * ''Probe or walk.'' A scan given candidates checks their own rows (a uuid and the
-  field's rows each, about four keys) when there are fewer than a quarter of the field's
-  holders; otherwise it walks the field's values. Each row is decided by its key, as
-  the walk decides it, so the two cannot answer differently
+  field's rows each, about four keys, scattered: weighed four times a walked key —
+  `plan::probes`) when that costs less than the walk; otherwise it walks the field's
+  values. The walk of a `!=` or a text predicate is priced at the field's holders; an
+  ordered comparison of a number or a date at the rows its histogram gives the range, a
+  value with a posting counted as its posting ([[Planner statistics]]). Each row is
+  decided by its key, as the walk decides it, so the two cannot answer differently
   (`tests/index_oracle.rs`).
 
 What this bought: a range on a field whose values are all distinct — a name, a size, a

@@ -8,8 +8,8 @@ summary: Exact per-field histograms kept as a derived key space, and a cost mode
 The [[Query planner]] was built without statistics, on the belief that the cost
 choices left were minor. The cold measurements of November 2026 showed otherwise
 (user decision, 9 November 2026: build the statistics). This note is the design.
-''Built so far: the histogram and its estimate'' (step 1, November 2026); the planner
-does not read them yet — steps 2 on are not built.
+''Built so far: the histogram, its estimate, and probe or walk from them'' (steps 1
+and 2, November 2026); steps 3 on are not built.
 
 !! What showed it
 
@@ -99,6 +99,20 @@ The weight of a scattered read against a contiguous one is calibrated with `--co
 not guessed; the warm weight is close to 1. One weight is used for both — the plan
 should be good cold, where the time is; a weight that makes it worse warm is to be
 measured, not assumed.
+
+''Probe or walk'', as built (`KvSource::probes`, `index/plan.rs`): a probe costs
+`PROBE_KEYS` (4) keys per candidate, each weighed `SCATTERED` (4) contiguous keys; the
+walk of an ordered comparison of a number or a date costs the range's `at_most` rows,
+less the rows of the values in the range that have a posting, plus two keys each — a
+posted value is walked as its posting (`range_walk`, read from the postings' own keys).
+Without the correction, a range over a field of few values (a rating) was priced at its
+rows and probed where its walk reads five postings. A `!=` and a text predicate keep the
+field's holders. The histogram is read only once the holders leave the choice open. The
+weight 4 is a first value from the profile above (≈ 13 walked keys per probed candidate
+cold, ≈ 16 warm), not a calibration: the `--cold` run settles it. Tested by
+`tests/kv_cost.rs`, `a_narrow_range_in_a_wide_folder_walks_the_range` (a fifth of the
+repository in the folder, 1 % in the range: 6 440 keys before, now no more than the two
+operands alone).
 
 !! Steps
 

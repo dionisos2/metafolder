@@ -1,8 +1,9 @@
 //! The query planner (doc "Query planner"): the cost choices the evaluator
 //! makes before reading, kept in one place. It is deliberately minimal — no
-//! statistics, no cost model of the whole query: each choice is a fixed rule
-//! on what the query's shape says, or on exact counts the store already
-//! holds (a field's holders, a candidate set's size).
+//! cost model of the whole query: each choice is a fixed rule on what the
+//! query's shape says, or on exact counts the store already holds (a field's
+//! holders, a candidate set's size, a range's rows by its histogram — doc
+//! "Planner statistics").
 //!
 //! Two choices live here:
 //!
@@ -18,15 +19,22 @@
 
 use metafolder_core::query::{OsmMode, Query};
 
-/// What probing one candidate costs, in keys of a partition walk: its uuid,
-/// its rows of the field, and the miss of a candidate that holds none.
-const PROBE_COST: u64 = 4;
+/// The keys probing one candidate reads: its uuid, its rows of the field, and
+/// the miss of a candidate that holds none.
+const PROBE_KEYS: u64 = 4;
+
+/// What a scattered key read costs against a contiguous one (doc "Planner
+/// statistics", the cost model): a probe's keys are a candidate's rows, then
+/// the next one's, far apart in the file; a walk's are a hundred to a page.
+/// A first value, from the profile of November 2026 — about 13 walked keys
+/// per probed candidate cold, 16 warm —, to be calibrated with `--cold`.
+const SCATTERED: u64 = 4;
 
 /// Whether `candidates` records are checked on their own rows rather than by
-/// walking a field `holders` records hold a value of — a walk reads about a
-/// key per holder, a probe a few per candidate.
-pub(crate) fn probes(candidates: u64, holders: u64) -> bool {
-    candidates.saturating_mul(PROBE_COST) < holders
+/// a walk reading `walked` contiguous keys — a key per row walked, where a
+/// probe reads a few scattered ones per candidate.
+pub(crate) fn probes(candidates: u64, walked: u64) -> bool {
+    candidates.saturating_mul(PROBE_KEYS * SCATTERED) < walked
 }
 
 /// Whether an operand is a *scan*: answered by walking a field's values,
@@ -92,7 +100,7 @@ mod tests {
     #[test]
     fn a_few_candidates_are_probed() {
         assert!(probes(100, 16_000));
-        assert!(!probes(4_000, 16_000));
+        assert!(!probes(1_000, 16_000));
         assert!(!probes(u64::MAX, u64::MAX));
     }
 }

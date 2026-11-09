@@ -597,3 +597,53 @@ fn a_case_insensitive_repository_still_resolves_another_case() {
     let (found, _) = resolve_reads(200, false, "/D0/FILE000123.TXT");
     assert!(found.is_none(), "a case-sensitive one does not");
 }
+
+/// `n` files of distinct sizes, `in_big` of them in the folder `/big` and the
+/// rest in `/rest`, the sizes spread over both folders.
+fn sized(n: usize, in_big: usize) -> (KvStore, TempDir) {
+    let dir = TempDir::new("kv-cost-sized");
+    let mut kv = KvStore::open(dir.path()).unwrap();
+    let mut w = Writer::begin(&mut kv, None).unwrap();
+    let tree = |parent: Option<Uuid>, name: &str| {
+        Field::new("loc", Value::TreeRef { parent, name: name.into() })
+    };
+    let root = w.create_metarecord(vec![tree(None, "")]).unwrap().uuid;
+    let big = w.create_metarecord(vec![tree(Some(root), "big")]).unwrap().uuid;
+    let rest = w.create_metarecord(vec![tree(Some(root), "rest")]).unwrap().uuid;
+    for i in 0..n {
+        let folder = if i < in_big { big } else { rest };
+        let size = ((i * 7_919) % n) as i64 * 64;
+        w.create_metarecord(vec![
+            tree(Some(folder), &format!("file{i:06}.txt")),
+            Field::new("size", Value::Int(size)),
+        ])
+        .unwrap();
+    }
+    w.commit().unwrap();
+    (kv, dir)
+}
+
+/// The cold measurement of November 2026 (doc "Planner statistics"): a range
+/// holding 1 % of the repository, bounded by a folder holding a fifth of it.
+/// Probing the folder's files reads a few scattered keys each; walking the
+/// range reads its own rows. The `and` must cost no more than its operands
+/// evaluated alone — the range walked, the folder listed.
+#[test]
+fn a_narrow_range_in_a_wide_folder_walks_the_range() {
+    let n = 16_000;
+    let (kv, _dir) = sized(n, 3_200);
+    let folder = Query::FollowsTransitive {
+        field: "loc".into(),
+        target: FollowTarget::Path("/big".into()),
+        inclusive: false,
+    };
+    let range = int(gt, "size", (n as i64 - n as i64 / 100) * 64);
+    let (_, alone_range) = reads(&kv, &range, &[], true);
+    let (_, alone_folder) = reads(&kv, &folder, &[], true);
+    let (found, both) = reads(&kv, &and(vec![folder, range]), &[], true);
+    assert!(found > 0);
+    assert!(
+        both <= alone_range + alone_folder + 50,
+        "{both} keys, against {alone_range} for the range and {alone_folder} for the folder"
+    );
+}
