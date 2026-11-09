@@ -114,6 +114,24 @@ cold, ≈ 16 warm), not a calibration: the `--cold` run settles it. Tested by
 repository in the folder, 1 % in the range: 6 440 keys before, now no more than the two
 operands alone).
 
+''Profiled after step 2'' (cold by hand on `L`, the machine of the table above, three
+runs each, keys from `query/profile`):
+
+|!Query |!Keys |!Cold |
+|`query.size_range_in_folder` |11 760 |87–111 ms (was 1 270–1 390) |
+|`query.size_range` |11 786 |84–113 ms |
+|`query.subtree_range_text` |3 044 |310–378 ms (was 1 270–1 320) |
+|  — the subtree and `rating > 4` alone |2 064 |56–59 ms |
+|  — the subtree and the name pattern alone |5 868 |397–456 ms |
+|`query.finder` |5 045, 4 805 of them in `prepare` |441–661 ms |
+|  — its `osm` on the path alone |5 037 |472–639 ms |
+
+The range in a folder now costs the range. What is left of `subtree_range_text` is
+its text leaf on the forest's names, checked on the page ([[Query planner]], the leaves
+that wait), and the finder's is the `osm` path's resolution in the forest before the
+index runs (`forest_query`) — neither an `and`'s order: its operands are already
+evaluated subtree first, then the range, the text last.
+
 !! Steps
 
 Each one ends with a commit, cost assertions by key count (`tests/kv_cost.rs`,
@@ -122,7 +140,7 @@ run on a neutral machine (the user's).
 
 # ''The histogram'' as a derived key space: maintained in `derive_row`, rebuilt by `reindex`, compared by `check_derived`, `DERIVED_VERSION` bumped (a store of the previous format is reindexed when it opens — its migration, doc "Persisted format changes"). An estimate function `range_rows(field, op, value)`, tested against an exact count on the oracle's data. Measure `metarecord.write` and `tree.write` before and after.
 # ''Probe or walk'' from the estimate and the cost model, replacing `PROBE_COST` against the holders for the ordered comparisons (`kvstore/source.rs`, `compare`; the text scan at `source.rs:740` keeps the holders, which a pattern does read). Test: the case above reads no more than the walk (`/dir0/dir1` and `mfr_size > 900000` on a generated repository: ≤ the range's keys plus the subtree's).
-# ''The order of an `and''' by estimated selectivity, scans still last unless a scan's estimate is the smallest. Profile `query.subtree_range_text` and `query.finder` cold first, to know what they read.
+# ''The order of an `and''' by estimated selectivity, scans still last unless a scan's estimate is the smallest. Profile `query.subtree_range_text` and `query.finder` cold first, to know what they read. Profiled (above): neither is slowed by the order.
 # ''Re-measure what was "measured and not built"'' in [[Query planner]]: those conclusions were drawn warm, pricing a random read at ≈ 2 µs; cold, it is about a hundred times that.
 # Update [[Query planner]] (statistics, the model, the restated determinism) and drop its "no statistics" — or merge this note into it.
 
