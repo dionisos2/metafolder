@@ -86,8 +86,8 @@ fn a_text_scan_counts_the_candidates_it_checks() {
 
 #[test]
 fn a_scan_probing_the_running_intersection_counts_it() {
-    let (kv, uuids, _dir) = repository(10_000);
-    // 400 candidates against 10 000 holders: checked on their own rows.
+    let (kv, uuids, _dir) = repository(30_000);
+    // 400 candidates against 30 000 holders: checked on their own rows.
     let some = Query::UuidIn { uuids: uuids[..400].to_vec() };
     for (phase, scan) in [
         ("scanning name", matches("7")),

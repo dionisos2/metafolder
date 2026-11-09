@@ -35,8 +35,8 @@ const RUNS: usize = 3;
 /// million, so about 2 000, 8 000 and 32 000 files hold more.
 const THRESHOLDS: [i64; 3] = [980_000, 920_000, 680_000];
 /// The probe's candidate counts: all of them probed — `c × PROBE_KEYS ×
-/// SCATTERED` stays below the 100 000 holders of `mfr_size` up to a weight of 5.
-const CANDIDATES: [usize; 3] = [500, 1_500, 4_500];
+/// SCATTERED` stays below the 100 000 holders of `mfr_size` up to a weight of 13.
+const CANDIDATES: [usize; 3] = [300, 900, 1_800];
 /// The folder whose files are the close candidates (18 983 files on `L`).
 const FOLDER: &str = "/dir0/dir1";
 

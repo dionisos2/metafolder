@@ -25,7 +25,7 @@ lazy text checks ([[Text search in the store]]), the anchors of an `osm` path
 !! What the planner decides
 
 * ''The order of an `and`'' (`plan::and_order`, `Eval::scan_estimate`). Its operands answered from a bitmap or a posting — presence, equality, `in`, a subtree, a follow, `uuid_in` — are evaluated first, in the query's order; then the ''scans'' — `matches`, `osm direct`, `!=` and the ordered comparisons —, the narrowest first, ties in the query's order, each handed the running intersection as its candidates. A scan's estimate is, for an ordered comparison of a number or a date, its histogram's `at_most` (`Source::range_estimate`); for any other, its field's holders. The estimates are read only when two scans are to be ordered. Once the intersection is empty, nothing more is evaluated.
-* ''Probe or walk'' (`plan::probes`, `KvSource::probes`). A scan given candidates checks their own rows (a ''probe'') when that costs less than walking its range. A probe costs `PROBE_KEYS` (4) keys per candidate — its uuid, its rows of the field, the miss of one that holds none —, each weighed `SCATTERED` (4) contiguous keys. The walk of a `!=` or a text predicate costs the field's holders; of an ordered comparison of a number or a date, the range's `at_most` rows, less the rows of the values in the range that have a posting, plus two keys each — a posted value is walked as its posting (`range_walk`, read from the postings' own keys). The histogram is read only once the holders leave the choice open. Each row is decided by its key, as the walk decides it, so the two cannot answer differently (`tests/index_oracle.rs`).
+* ''Probe or walk'' (`plan::probes`, `KvSource::probes`). A scan given candidates checks their own rows (a ''probe'') when that costs less than walking its range. A probe costs `PROBE_KEYS` (4) keys per candidate — its uuid, its rows of the field, the miss of one that holds none —, each weighed `SCATTERED` (12) contiguous keys. The walk of a `!=` or a text predicate costs the field's holders; of an ordered comparison of a number or a date, the range's `at_most` rows, less the rows of the values in the range that have a posting, plus two keys each — a posted value is walked as its posting (`range_walk`, read from the postings' own keys). The histogram is read only once the holders leave the choice open. Each row is decided by its key, as the walk decides it, so the two cannot answer differently (`tests/index_oracle.rs`).
 
 A scan is never put before the bitmaps, however narrow: a bitmap is read whole today,
 handed candidates or not, and a scan handed them reads no more than its own walk, so
@@ -87,12 +87,13 @@ milliseconds against candidates), for candidates spread over the repository and 
 the files of one folder, and prints the weight (`regression/calibrate.rs`). It prints
 and records nothing: the number is the machine's.
 
-The weight 4 was a first value, from a profile read wrongly. The first calibration (9
-November 2026, the machine of the tables below, not neutral) measured 3.5 µs a walked
-key and 184 µs a spread candidate — 52 walked keys, a weight of 13 —, 213 µs a
-candidate of one folder — 60 walked keys, 15. A probe reads ≈ 2 keys a candidate, not
-`PROBE_KEYS`' 4: each is a page of its own cold. Candidates of one folder are no
-cheaper on `L` than spread ones.
+''`SCATTERED` is 12'', calibrated on 9 November 2026 on a neutral machine: 3.4 µs a
+walked key, 159 µs a candidate spread over the repository — 47 walked keys, a weight
+of 11.7 —, 119 µs a candidate of one folder — 35 walked keys, 8.7. The spread case is
+the general one, and the plan should not probe where only locality would make it pay.
+The weight was 4 before, a first value from a profile read wrongly: the planner probed
+about three times too often. A probe reads ≈ 2 keys a candidate, not `PROBE_KEYS`' 4,
+but each is a page of its own cold.
 
 !! What showed it
 
@@ -124,7 +125,7 @@ under a large subtree, a two-term `osm` path: [[Planner choices measured and not
 * Whether a bitmap handed few candidates should read only its chunks holding them (a set is a key per 65 536 dense ids, a chunk up to 8 KB) — never more keys than reading it whole, in the same key order. Then a scan of very few rows would be worth evaluating before the bitmaps. Nothing to gain at the sizes measured (100 000 records: two chunks a set); 16 chunks at a million, about 150 at ten. Not built (user, 9 November 2026).
 * An `or`, an `and` or an `in` nested in an `and` hands its candidates down to its own scans, yet is ordered as a bitmap, first.
 * Whether the name search of a finder can be made local: cold, an `osm` path on `L` costs ≈ 0.4–0.7 s, the rows of ≈ 1 100 nodes each a scattered read. Neither the order of a plan nor another formulation reads fewer of them ([[Planner choices measured and not built]]).
-* Whether the probe weight should depend on how scattered the candidates are: on `L`, the files of one folder cost as much as candidates spread over the repository (the first calibration) — whether that holds of a forest-order reindex is not measured.
+* Whether the probe weight should depend on how scattered the candidates are: on `L`, a candidate of one folder costs ≈ 75 % of a spread one (8.7 against 11.7). One weight for both is kept until a case shows the difference matters.
 
 !! How the measurements were taken
 
