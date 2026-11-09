@@ -5,6 +5,12 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 =status: deferred= or =proposed= (=scripts/dev/doc ls --status deferred=; doc
 "Version scope and non-goals").
 
+* Planner statistics
+doc "Planner statistics" (proposed, user decision 9 November 2026): exact
+per-field histograms as a derived key space, a cost model telling scattered
+from contiguous reads, then probe-or-walk and the order of an =and= from them.
+Its steps are in the note; start with the histogram.
+
 * To discuss
 Every deferred or proposed note, to be gone through one by one: build it, keep
 it deferred, or drop it.

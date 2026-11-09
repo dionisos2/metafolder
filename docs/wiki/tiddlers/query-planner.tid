@@ -26,6 +26,9 @@ It was built in October 2026 (`index/plan.rs`). No statistics and no cost model 
 whole query: each choice is a fixed rule on the query's shape, or on an exact count the
 store already holds.
 
+Measured cold (November 2026), the "probe or walk" rule chose wrong by twenty, and
+statistics are to replace the fixed rules: [[Planner statistics]] (proposed).
+
 * ''The order of an `and`.'' Its operands answered from a bitmap or a posting — presence,
   equality, `in`, a subtree, a follow, `uuid_in` — are evaluated first, in the query's
   order; the ''scans'' last: `matches`, `osm direct`, `!=` and the ordered comparisons, each

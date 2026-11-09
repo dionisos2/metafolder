@@ -1,0 +1,112 @@
+title: Planner statistics
+tags: [[Query engine]]
+kind: reference
+audience: dev
+status: proposed
+summary: Exact per-field histograms kept as a derived key space, and a cost model that tells a scattered read from a contiguous one, so that the planner chooses from what an operand will read rather than from the query's shape.
+
+The [[Query planner]] was built without statistics, on the belief that the cost
+choices left were minor. The cold measurements of November 2026 showed otherwise
+(user decision, 9 November 2026: build the statistics). This note is the design; it
+is not built.
+
+!! What showed it
+
+[[The timed regression suite]]'s `--cold` pass (`cold.<scenario>`, the store evicted
+from the page cache before each run) on the `L` size, 100 000 files:
+
+|!Scenario |!Cold |
+|`query.size_range` — `mfr_size > 900000` over the repository |80–92 ms |
+|`query.size_range_in_folder` — the same range below `/dir0/dir1` |''1 270–1 390 ms'' |
+|`query.subtree_range_text` — a subtree, `rating > 4` and a name pattern |''1 270–1 320 ms'' |
+|`query.finder` |390–420 ms |
+|`query.page`, `query.folder` — the cold floor of a first page |≈ 60 ms |
+
+Bounding a range by a folder made it fifteen times ''slower''. Profiled
+(`POST /repos/:repo/query/profile` on `L`):
+
+|!Query |!Keys read |!Warm |!Cold |
+|`mfr_size > 900000` |11 785 |1 ms |70 ms |
+|`/dir0/dir1` (18 983 files) and `mfr_size > 900000` |''38 815'' |27 ms |''1 514 ms'' |
+
+''Probe or walk'' (`index/plan.rs`, `probes`) probed: 18 983 candidates × `PROBE_COST`
+(4) = 75 932 < 100 000 holders of `mfr_size`. The rule prices the walk at the field's
+''holders'', which is the cost of a `!=` or a pattern — but a range walk reads only
+the rows ''inside the range'', here 11 785. So the choice was wrong even counted in
+keys, three times; and cold it was wrong by twenty, because a probe's keys are
+scattered over the file (a candidate's rows, then the next one's) where a walk's are
+contiguous (about a hundred per page). `query.subtree_range_text` is presumed to be
+the same case (not yet profiled).
+
+!! Why statistics rather than a bounded walk
+
+The narrow repair is adaptive: walk the range, and switch to probing once the walk has
+read `candidates × PROBE_COST` keys — never worse than twice the better side, no state
+kept. It mends this one choice, after paying for part of the wrong side. Statistics
+inform every choice the planner makes or could make:
+
+* ''probe or walk'', decided before reading;
+* ''the order of an `and`'' — today by shape only (bitmaps first, scans last, in the query's order); with cardinalities, the most selective operand first, each handed the intersection so far;
+* ''fetch or walk'' for a sorted page ([[Sorting and postings]]), which already estimates, from little.
+
+Choosing differently never answers differently: an `and` commutes, and a probe and a
+walk decide each row by the same key (`tests/index_oracle.rs`). So the plan may depend on
+the data without breaking a paginated session — the reason the order was kept a
+property of the shape ([[How queries are evaluated]]: the cursor is tied to the
+query sent; [[Query planner]]). That property must be restated, not lost: every page
+gets the same ''results''; it may get them by another path if the data changed between
+pages.
+
+!! The statistics
+
+''Exact, maintained like an index'' — a derived key space ([[Store tables]]), written
+in each write's own transaction by `KvTxn::derive_row`, rebuilt by `reindex`, compared
+by `check` — rather than sampled and refreshed, which would drift and make plans
+depend on when the sample was taken.
+
+* ''A histogram per ordered field'': a count of rows per ''bucket'', a bucket being a prefix of the value key (`kvstore/derived.rs`, `value_key`), so that buckets are contiguous ranges of the partition and a range's estimate is the sum of the buckets it covers, exact but for the two at its ends. The prefix width is per type, as each key encodes:
+** a number is an order-preserving `f64` (`num_key`): its first 16 bits are the sign, the exponent and 4 bits of mantissa — buckets of 1/16 of an octave, log-scaled, which suits sizes and counts;
+** a date is milliseconds in an `i64` (`dt_key`): the first 16 bits are 9 000 years wide, so a date bucket needs about the first 34 bits (2^30 ms, ≈ 12 days) — to settle;
+** a text, its first two bytes; a tree name, likewise after the parent.
+* ''Set sizes'' are mostly known exactly already: a field's holders (`present`), a posting, a subtree's descendants, a candidate set. They need no new key space, only to be read where the plan is made.
+
+Only the populated buckets are stored: a key `field · bucket` → count. A row written or
+removed changes one count: one key put more per row change of an ordered field.
+
+!! The cost model
+
+A cardinality is not a cost: the 38 815 keys above took 27 ms warm and 1.5 s cold. The
+model prices a plan in ''contiguous'' and ''scattered'' key reads:
+
+* a walk of a range: its estimated rows, contiguous;
+* a probe: per candidate, a scattered read (its uuid, then its rows of the field) — the candidates are in dense-id order, so after a forest-order reindex the rows of one folder's records are close ([[Checking and reindexing a repository]]), which a weight may later reflect;
+* a bitmap: a key per 65 536 ids.
+
+The weight of a scattered read against a contiguous one is calibrated with `--cold`,
+not guessed; the warm weight is close to 1. One weight is used for both — the plan
+should be good cold, where the time is; a weight that makes it worse warm is to be
+measured, not assumed.
+
+!! Steps
+
+Each one ends with a commit, cost assertions by key count (`tests/kv_cost.rs`,
+`KvStore::reads()`, never a duration — doc "Tests that fail under load") and a `--cold`
+run on a neutral machine (the user's).
+
+# ''The histogram'' as a derived key space: maintained in `derive_row`, rebuilt by `reindex`, compared by `check_derived`, `DERIVED_VERSION` bumped (a store of the previous format is reindexed when it opens — its migration, doc "Persisted format changes"). An estimate function `range_rows(field, op, value)`, tested against an exact count on the oracle's data. Measure `metarecord.write` and `tree.write` before and after.
+# ''Probe or walk'' from the estimate and the cost model, replacing `PROBE_COST` against the holders for the ordered comparisons (`kvstore/source.rs`, `compare`; the text scan at `source.rs:740` keeps the holders, which a pattern does read). Test: the case above reads no more than the walk (`/dir0/dir1` and `mfr_size > 900000` on a generated repository: ≤ the range's keys plus the subtree's).
+# ''The order of an `and''' by estimated selectivity, scans still last unless a scan's estimate is the smallest. Profile `query.subtree_range_text` and `query.finder` cold first, to know what they read.
+# ''Re-measure what was "measured and not built"'' in [[Query planner]]: those conclusions were drawn warm, pricing a random read at ≈ 2 µs; cold, it is about a hundred times that.
+# Update [[Query planner]] (statistics, the model, the restated determinism) and drop its "no statistics" — or merge this note into it.
+
+!! Open
+
+* The date bucket width, and whether a text histogram is worth its keys (a text range is rarer than a numeric one).
+* Whether the probe weight should depend on how scattered the candidates are (one folder after a forest-order reindex, against ids spread over the repository).
+* A field of mixed types (`int` and `string` rows): the buckets of each type tag are separate ranges already, since the tag leads the key.
+
+!! How the measurements were taken
+
+* `scripts/dev/bench.sh --cold --big` (`--filter query.` to narrow); the generated `L` lives in `target/bench-data/L`.
+* Keys per phase: a daemon of its own on another port, `./target/release/metafolder-daemon --port 7631 --config crates/daemon/default-config/config.toml`, the requests authorised by `Authorization: Bearer $(cat $XDG_RUNTIME_DIR/metafolder/daemon.token)`, then `POST /repos/load` and `POST /repos/:repo/query/profile` with the query's body. Cold by hand: unload, `fsync` and `posix_fadvise(DONTNEED)` on `.metafolder/internal/kv/data.mdb`, load, wait for `GET /repos/:repo` to say `ready`.
+* Stop that daemon by its pid, never with `pkill -f` on a pattern the stopping command itself contains.
