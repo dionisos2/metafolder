@@ -142,9 +142,10 @@ the query read 32 327 keys pattern first and 644 range first; it reads 644 in ei
 order (`tests/kv_cost.rs`, `of_two_scans_the_narrower_goes_first`).
 
 The step said "scans still last unless a scan's estimate is the smallest". A scan is not
-put before the bitmaps even then: a bitmap costs the same handed candidates or not, and a
-scan handed them reads no more than its own walk (probe or walk chooses the cheaper), so
-evaluating it first could only cost more. What is left open: an `or`, an `and` or an
+put before the bitmaps even then: a bitmap is read whole today, handed candidates or not,
+and a scan handed them reads no more than its own walk (probe or walk chooses the
+cheaper), so evaluating it first could only cost more. That holds of how a bitmap is
+read, not of what it could be (Open below). What is left open: an `or`, an `and` or an
 `in` nested in the `and` hands its candidates down to its own scans, yet is ordered as a
 bitmap, first.
 
@@ -163,6 +164,7 @@ run on a neutral machine (the user's).
 !! Open
 
 * Whether a text histogram is worth its keys (a text range is rarer than a numeric one), and the names of a forest likewise. Not kept for now: a string row costs no more to write than before. The date width was settled at 34 bits without a measurement of what a date range typically spans.
+* Whether a bitmap handed few candidates should read only its chunks holding them (a set is a key per 65 536 dense ids, a chunk up to 8 KB) — never more keys than reading it whole, in the same key order. Then a scan of very few rows would be worth evaluating before the bitmaps. Nothing to gain at the sizes measured (100 000 records: two chunks a set); 16 chunks at a million, about 150 at ten. Not built (user, 9 November 2026).
 * Whether the probe weight should depend on how scattered the candidates are (one folder after a forest-order reindex, against ids spread over the repository).
 
 !! How the measurements were taken
