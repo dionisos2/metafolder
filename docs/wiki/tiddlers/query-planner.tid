@@ -78,9 +78,21 @@ A cardinality is not a cost: a probe's keys are a candidate's rows, then the nex
 far apart in the file; a walk's are a hundred to a page. The model prices a plan in
 ''contiguous'' and ''scattered'' key reads: a walk, its rows, contiguous; a probe, its
 keys per candidate, scattered; a bitmap, a key per 65 536 ids. One weight serves warm
-and cold — the plan should be good cold, where the time is. The weight 4 is a first
-value from the profile below (≈ 13 walked keys per probed candidate cold, ≈ 16 warm),
-not yet calibrated by a `--cold` run on a neutral machine.
+and cold — the plan should be good cold, where the time is.
+
+''Calibrating it'': `scripts/dev/bench.sh --calibrate-planner` measures, cold on `L`,
+the slope of a walk (`mfr_size > t` at three thresholds: milliseconds against keys) and
+of a probe (`uuid_in(c) and mfr_size > -1`, less `uuid_in(c)` alone, at three `c`:
+milliseconds against candidates), for candidates spread over the repository and for
+the files of one folder, and prints the weight (`regression/calibrate.rs`). It prints
+and records nothing: the number is the machine's.
+
+The weight 4 was a first value, from a profile read wrongly. The first calibration (9
+November 2026, the machine of the tables below, not neutral) measured 3.5 µs a walked
+key and 184 µs a spread candidate — 52 walked keys, a weight of 13 —, 213 µs a
+candidate of one folder — 60 walked keys, 15. A probe reads ≈ 2 keys a candidate, not
+`PROBE_KEYS`' 4: each is a page of its own cold. Candidates of one folder are no
+cheaper on `L` than spread ones.
 
 !! What showed it
 
@@ -112,7 +124,7 @@ under a large subtree, a two-term `osm` path: [[Planner choices measured and not
 * Whether a bitmap handed few candidates should read only its chunks holding them (a set is a key per 65 536 dense ids, a chunk up to 8 KB) — never more keys than reading it whole, in the same key order. Then a scan of very few rows would be worth evaluating before the bitmaps. Nothing to gain at the sizes measured (100 000 records: two chunks a set); 16 chunks at a million, about 150 at ten. Not built (user, 9 November 2026).
 * An `or`, an `and` or an `in` nested in an `and` hands its candidates down to its own scans, yet is ordered as a bitmap, first.
 * Whether the name search of a finder can be made local: cold, an `osm` path on `L` costs ≈ 0.4–0.7 s, the rows of ≈ 1 100 nodes each a scattered read. Neither the order of a plan nor another formulation reads fewer of them ([[Planner choices measured and not built]]).
-* Whether the probe weight should depend on how scattered the candidates are (one folder after a forest-order reindex, against ids spread over the repository).
+* Whether the probe weight should depend on how scattered the candidates are: on `L`, the files of one folder cost as much as candidates spread over the repository (the first calibration) — whether that holds of a forest-order reindex is not measured.
 
 !! How the measurements were taken
 

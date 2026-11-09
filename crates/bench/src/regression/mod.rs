@@ -11,6 +11,7 @@
 //! cost something.
 
 pub mod api;
+pub mod calibrate;
 pub mod history;
 pub mod memory;
 pub mod real;
@@ -49,6 +50,8 @@ pub struct Options {
     pub report: bool,
     /// Measure the reads with the store's pages out of the page cache.
     pub cold: bool,
+    /// Measure the query planner's scattered-read weight instead (`calibrate`).
+    pub calibrate_planner: bool,
     pub tolerance: f64,
 }
 
@@ -63,6 +66,7 @@ impl Default for Options {
             no_history: false,
             report: false,
             cold: false,
+            calibrate_planner: false,
             tolerance: history::DEFAULT_TOLERANCE,
         }
     }
@@ -489,6 +493,9 @@ pub async fn run(opts: &Options) -> Result<i32> {
 
     if opts.report {
         return report(&history_path);
+    }
+    if opts.calibrate_planner {
+        return calibrate::run().await;
     }
 
     let (commit, dirty) = git_state(&root);

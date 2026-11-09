@@ -10,6 +10,8 @@
 #   scripts/dev/bench.sh --no-history     # measure and compare, record nothing
 #   scripts/dev/bench.sh --report         # print the recorded history, measure nothing
 #   scripts/dev/bench.sh --cold           # the reads, with the store out of the page cache
+#   scripts/dev/bench.sh --calibrate-planner  # the query planner's scattered-read weight,
+#                                         # cold on L (a neutral machine; prints, records nothing)
 #   scripts/dev/bench.sh --debug          # measure the debug build (its own history)
 #
 # What it does: builds the daemon in release, generates (or reuses) the
@@ -36,7 +38,7 @@ args=()
 for arg in "$@"; do
     case "$arg" in
         --debug) profile=debug ;;
-        -h|--help) sed -n '2,28p' "$0" | sed 's/^# \?//'; exit 0 ;;
+        -h|--help) sed -n '2,30p' "$0" | sed 's/^# \?//'; exit 0 ;;
         *) args+=("$arg") ;;
     esac
 done

@@ -659,7 +659,8 @@ data, gui:
   --small DIR, --big DIR    the two data folders
 
 regression:
-  --quick, --big, --real, --api, --no-history, --report
+  --quick, --big, --real, --api, --no-history, --report, --cold
+  --calibrate-planner       the query planner's scattered-read weight, cold on L
   --filter PREFIX, --tolerance FRACTION
 
 session:
@@ -698,6 +699,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args> {
             "--no-history" => parsed.regression.no_history = true,
             "--report" => parsed.regression.report = true,
             "--cold" => parsed.regression.cold = true,
+            "--calibrate-planner" => parsed.regression.calibrate_planner = true,
             "--filter" => {
                 parsed.regression.filter = Some(it.next().context("--filter needs a prefix")?)
             }
@@ -890,6 +892,9 @@ mod args_tests {
         let parsed = parse(&["regression", "--big", "--quick", "--filter", "log"]).unwrap();
         assert!(parsed.regression.big && parsed.regression.quick);
         assert!(parse(&["regression", "--cold"]).unwrap().regression.cold);
+        assert!(
+            parse(&["regression", "--calibrate-planner"]).unwrap().regression.calibrate_planner
+        );
         assert_eq!(parsed.regression.filter.as_deref(), Some("log"));
         let parsed = parse(&["--small", "a", "--big", "b"]).unwrap();
         assert_eq!(parsed.big, Some(PathBuf::from("b")));

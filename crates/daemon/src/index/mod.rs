@@ -22,6 +22,7 @@
 
 pub mod keys;
 pub(crate) mod plan;
+pub use plan::{PROBE_KEYS, SCATTERED};
 pub mod source;
 
 use std::borrow::Cow;

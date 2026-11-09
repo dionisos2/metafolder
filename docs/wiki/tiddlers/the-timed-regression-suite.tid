@@ -16,6 +16,7 @@ scripts/dev/bench.sh --tolerance 0.5  # the threshold, as a fraction (default 0.
 scripts/dev/bench.sh --no-history     # measure and compare, record nothing
 scripts/dev/bench.sh --report         # print the recorded history, measure nothing
 scripts/dev/bench.sh --cold           # the reads, with the store out of the page cache
+scripts/dev/bench.sh --calibrate-planner  # the query planner's scattered-read weight, cold on L
 scripts/dev/bench.sh --debug          # measure the debug build (a history of its own)
 ```
 

@@ -20,14 +20,15 @@ use metafolder_core::query::{OsmMode, Query};
 
 /// The keys probing one candidate reads: its uuid, its rows of the field, and
 /// the miss of a candidate that holds none.
-const PROBE_KEYS: u64 = 4;
+pub const PROBE_KEYS: u64 = 4;
 
 /// What a scattered key read costs against a contiguous one (doc "Planner
 /// statistics", the cost model): a probe's keys are a candidate's rows, then
 /// the next one's, far apart in the file; a walk's are a hundred to a page.
 /// A first value, from the profile of November 2026 — about 13 walked keys
-/// per probed candidate cold, 16 warm —, to be calibrated with `--cold`.
-const SCATTERED: u64 = 4;
+/// per probed candidate cold, 16 warm —, to be calibrated by
+/// `scripts/dev/bench.sh --calibrate-planner` on a neutral machine.
+pub const SCATTERED: u64 = 4;
 
 /// Whether `candidates` records are checked on their own rows rather than by
 /// a walk reading `walked` contiguous keys — a key per row walked, where a
