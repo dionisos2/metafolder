@@ -245,6 +245,15 @@ pub fn reindex_repo(ctx: &Ctx) -> Result<i32, CliError> {
     Ok(0)
 }
 
+/// `mf repo compact`: prints the store file's size before and after.
+pub fn compact_repo(ctx: &Ctx) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let done = ctx.client.request("POST", &format!("{base}/compact"), &[], None)?;
+    let size = |key: &str| metafolder_core::progress::human_size(done[key].as_u64().unwrap_or(0));
+    println!("compacted: {} → {}", size("before"), size("after"));
+    Ok(0)
+}
+
 /// `mf repo unload`: unloads the repository from the daemon (`POST …/unload`),
 /// printing its UUID. A repository not loaded (404) or in a coordinated revert
 /// (409) is reported as an error.

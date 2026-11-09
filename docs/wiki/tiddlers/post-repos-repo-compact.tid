@@ -1,0 +1,9 @@
+title: POST /repos/:repo/compact
+tags: [[HTTP endpoint]] [[Repository endpoints]]
+kind: reference
+audience: dev
+summary: Rewrites a repository's store without its free pages.
+
+[[Compacting a repository]].
+
+Bodies, answers and errors: [[Repository endpoints]].

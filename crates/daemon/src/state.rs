@@ -904,6 +904,27 @@ impl RepoState {
             .map_err(|e| ApiError::internal(format!("reindex failed: {e:#}")))
     }
 
+    /// Rewrites the store without its free pages (`mf repo compact`, doc
+    /// "Compacting a repository"), holding the repository throughout. A store
+    /// that could not be opened again takes the repository out of service:
+    /// it would answer from an empty stand-in.
+    pub fn compact_store(&self) -> Result<crate::kvstore::Compacted, ApiError> {
+        let mut conn = metafolder_core::slowlog::timed("wait:conn", || self.conn.lock_recover());
+        let kv = conn
+            .as_kv_mut()
+            .ok_or_else(|| ApiError::bad_request("this store cannot be compacted".to_string()))?;
+        kv.compact().map_err(|e| {
+            if let Some(closed) = e.downcast_ref::<crate::kvstore::StoreClosed>() {
+                self.take_out_of_service(Some(closed.to_string()));
+                return ApiError::internal(format!("compact failed: {e:#}"));
+            }
+            match e.downcast_ref::<crate::error::DomainError>() {
+                Some(_) => ApiError::from(e),
+                None => ApiError::internal(format!("compact failed: {e:#}")),
+            }
+        })
+    }
+
     /// Makes the repository usable: [`Self::warmup`], then [`Self::activate`],
     /// then declares it ready — the *whole* load, in the one order that is not
     /// a special case. Until it is ready the repository refuses its data

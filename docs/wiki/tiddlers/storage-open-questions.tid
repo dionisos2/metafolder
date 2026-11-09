@@ -3,8 +3,7 @@ tags: Storage
 kind: question
 audience: dev
 status: deferred
-summary: Free space after a bulk load, readers that do not wait for writers, and numeric ranges.
+summary: Readers that do not wait for writers, and numeric ranges.
 
-* ''Space.'' A bulk load leaves freed pages in the file (438 → 274 MB used on one run); a compacting copy after a large import would reclaim them — a backup already is one.
 * ''Readers that do not wait'' for a long write ([[Storage safety]]) — deferred by decision.
 * ''Numeric ranges'' over a field with many distinct values are linear; a bit-sliced index would serve them ([[Sorting and postings]]).

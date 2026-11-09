@@ -1,5 +1,5 @@
-//! Store maintenance over HTTP (doc "Storage"): `check`, `reindex`, backups by
-//! request and when due, and `restore`.
+//! Store maintenance over HTTP (doc "Storage"): `check`, `reindex`,
+//! `compact`, backups by request and when due, and `restore`.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -84,6 +84,37 @@ async fn check_and_reindex() {
     let (status, body) = request(&app, "POST", &format!("/repos/{repo}/query"), Some(query)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body, json!([kept]), "answers after a reindex");
+}
+
+/// `POST /repos/:repo/compact` rewrites the store without its free pages and
+/// answers both sizes; the repository answers and writes as before — but not
+/// while it is held in memory (doc "Compacting a repository").
+#[tokio::test]
+async fn compact() {
+    let (app, repo, _root, _state) = setup("compact").await;
+    let tag = json!([{"name": "tag", "value": {"type": "string", "value": "kept"}}]);
+    let kept = create(&app, &repo, tag.clone()).await;
+
+    let (status, body) = request(&app, "POST", &format!("/repos/{repo}/compact"), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (before, after) = (body["before"].as_u64().unwrap(), body["after"].as_u64().unwrap());
+    assert!(0 < after && after <= before, "{body}");
+    let later = create(&app, &repo, tag).await;
+    let query = json!({"query": {"type": "eq", "field": "tag",
+                                 "value": {"type": "string", "value": "kept"}},
+                       "sort": [{"field": "mfr_uuid"}]});
+    let (status, body) = request(&app, "POST", &format!("/repos/{repo}/query"), Some(query)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let mut both = vec![kept, later];
+    both.sort();
+    assert_eq!(body, json!(both), "answers and writes after a compact");
+
+    let held = json!({"in_memory": true});
+    let (status, body) = request(&app, "POST", &format!("/repos/{repo}/memory"), Some(held)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = request(&app, "POST", &format!("/repos/{repo}/compact"), None).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(body["error"].as_str().unwrap().contains("held in memory"), "{body}");
 }
 
 /// `POST /repos/:repo/backup` takes a verified backup — by default under

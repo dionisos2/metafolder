@@ -1,0 +1,18 @@
+title: $:/mf/gen/CLI command/mf repo compact
+catalog: CLI command
+target: mf repo compact
+summary: Rewrite the selected repository's store without its free pages
+
+!! Reference
+
+```
+Rewrite the selected repository's store without its free pages
+
+A large import or deletion leaves freed pages in the store's file, which LMDB reuses but never gives back. This rewrites the file without them (a copy, checked, then swapped in) and prints its size before and after. The repository waits for it to finish; refused while it is held in memory.
+
+Usage: mf repo compact
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+```

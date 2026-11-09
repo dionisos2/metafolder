@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/:repo/compact
+catalog: HTTP endpoint
+target: POST /repos/:repo/compact
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``compact_repo`` |

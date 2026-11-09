@@ -1,0 +1,52 @@
+title: Compacting a repository
+tags: Storage
+kind: guide
+aliases: compact
+summary: mf repo compact rewrites a repository's store without the pages a large import or deletion freed, which LMDB reuses but never gives back to the disk.
+
+```
+mf -n music repo compact     # prints "compacted: 438.0 MiB → 274.0 MiB"
+```
+
+!! When to use it
+
+A store's file never shrinks by itself: the pages a write frees are reused by the
+next writes, not returned to the filesystem. After a bulk load, a large import or
+the deletion of much of a repository, the file can be far larger than what it holds
+(438 MB for 274 MB used, measured on one bulk load). `compact` gives that room back.
+On a store that only grows, it gains little.
+
+What it does not shrink: the operation log, which keeps what each operation changed
+— a deleted metarecord's rows included — until retention drops it ([[Automatic retention]],
+[[The operation log]]).
+
+!! What it does
+
+It writes LMDB's compacting copy of the store beside it (`kv/compact.partial/`),
+opens that copy and checks it as a backup is checked — a store damaged since its last
+check fails here and is left as it is —, then closes the store, renames the copy over
+its file, and opens it again. The file is at every instant the old store or the new
+one, whole: a crash leaves one of them, and a leftover `compact.partial/` is removed
+by the next compact.
+
+A backup is a compacting copy too ([[Backups and restore]]); `compact` is the same
+copy put in the store's place, without unloading the repository.
+
+!! Cost
+
+It reads the whole store twice — the copy, then its check — and holds the repository
+throughout: queries, writes and the watcher's flushes on it wait until it finishes, as
+for a reindex ([[Checking and reindexing a repository]]). It must: a write between the
+copy and the swap would be lost. It needs free space for the copy, about the size of
+what the store holds.
+
+!! What it refuses
+
+* A repository held in memory ([[Holding a repository in memory]]), `409`: the copy in memory is the store read; let go of it first, compact, then hold it again.
+* A copy that does not check clean: nothing is changed, the error names the first problem; `mf repo check` then tells more.
+
+If the store cannot be opened again after the swap — the file is whole, but the
+system refused to map it — the repository is taken out of service and listed as lost
+with that reason (`GET /repos?lost=true`): loading it again opens the compacted store.
+
+HTTP: [[POST /repos/:repo/compact]].

@@ -1,0 +1,9 @@
+title: mf repo compact
+tags: [[CLI command]] Storage
+kind: reference
+summary: Rewrite the selected repository's store without its free pages
+
+Gives back to the disk the pages a large import or deletion freed: the store is
+copied without them, the copy checked, then put in its place; prints the file's size
+before and after. The repository waits for it to finish; refused while it is held in
+memory ([[Compacting a repository]]).

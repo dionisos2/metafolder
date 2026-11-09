@@ -285,7 +285,6 @@ fn a_reindex_numbers_the_records_in_forest_order() {
         Field::new("hier", tree(Some(tag), "rock")),
         Field::new("loc", tree(Some(a), "x.txt")),
     ]);
-    drop(create);
     w.commit().unwrap();
 
     store.reindex().unwrap();
@@ -338,4 +337,57 @@ fn a_reindex_gathers_a_scattered_folder_into_runs() {
         after * 10 < before,
         "the sets shrink from {before} bytes to a tenth at most, got {after}"
     );
+}
+
+/// A compact rewrites the store without its free pages — here those of a
+/// bulk load mostly deleted again — and the store goes on serving and
+/// writing, in its own file (doc "Compacting a repository").
+#[test]
+fn a_compact_shrinks_the_file_and_keeps_the_store_whole() {
+    use metafolder_daemon::index::Source;
+    let (mut store, dir) = open();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    let uuids: Vec<Uuid> = (0..3000)
+        .map(|n| {
+            let text = format!("a text long enough to fill pages, number {n:05}, ").repeat(8);
+            w.create_metarecord(vec![Field::new("title", Value::String(text))]).unwrap().uuid
+        })
+        .collect();
+    w.commit().unwrap();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    for &u in &uuids[100..] {
+        w.delete_metarecord(u).unwrap();
+    }
+    w.commit().unwrap();
+    let file = dir.path().join("data.mdb");
+    let before = std::fs::metadata(&file).unwrap().len();
+
+    let compacted = store.compact().unwrap();
+    assert_eq!(compacted.before, before);
+    assert_eq!(compacted.after, std::fs::metadata(&file).unwrap().len(), "the store's own file");
+    // The log keeps the deleted records' snapshots: a third goes, not all.
+    assert!(
+        compacted.after * 3 < before * 2,
+        "{before} bytes shrink by a third, to {}",
+        compacted.after
+    );
+    check(&store);
+    assert_eq!(store.source().unwrap().universe().len(), 100);
+    assert!(store.metarecord(uuids[7]).unwrap().is_some());
+
+    // Still a store: it writes, and reopens with what it wrote.
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    let late =
+        w.create_metarecord(vec![Field::new("title", Value::String("late".into()))]).unwrap().uuid;
+    w.commit().unwrap();
+    drop(store);
+    let store = KvStore::open(dir.path()).unwrap();
+    check(&store);
+    assert!(store.metarecord(late).unwrap().is_some());
+    let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| !["data.mdb", "lock.mdb", "daemon.lock"].contains(&n.as_str()))
+        .collect();
+    assert!(leftovers.is_empty(), "nothing left beside the store: {leftovers:?}");
 }

@@ -143,6 +143,8 @@ pub const SCENARIOS: &[Scenario] = &[
     s("api.orphans.clear", &[(P, "/repos/:repo/orphans/clear")]),
     whole("api.repo.check", &[(P, "/repos/:repo/check")]),
     whole("api.repo.reindex", &[(P, "/repos/:repo/reindex")]),
+    // Copies the whole store, checks the copy, swaps it in.
+    whole("api.repo.compact", &[(P, "/repos/:repo/compact")]),
     // Reads the whole store in, then lets go of it.
     whole("api.repo.memory", &[(P, "/repos/:repo/memory")]),
     whole("api.repo.backup", &[(P, "/repos/:repo/backup")]),
@@ -541,6 +543,7 @@ pub async fn run(id: &str, c: &Ctx) -> Result<()> {
         }
         "api.repo.check" => drop(post(&format!("{base}/check"), json!({})).await?),
         "api.repo.reindex" => drop(post(&format!("{base}/reindex"), json!({})).await?),
+        "api.repo.compact" => drop(post(&format!("{base}/compact"), json!({})).await?),
         "api.repo.memory" => {
             post(&format!("{base}/memory"), json!({"in_memory": true})).await?;
             post(&format!("{base}/memory"), json!({"in_memory": false})).await?;

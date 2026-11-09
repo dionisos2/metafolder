@@ -46,6 +46,20 @@ fn test_repo_check_reports_damage_and_reindex_repairs_it() {
     assert_eq!(out.stdout.trim(), "ok");
 }
 
+/// `mf repo compact` prints the store's size before and after; the
+/// repository answers after it.
+#[test]
+fn test_repo_compact_prints_both_sizes() {
+    let (repo, _root) = init_repo("compact");
+    let uuid = create_metarecord(&repo, &["note:string=kept"]);
+    let out = mf(&["-u", &repo, "repo", "compact"]);
+    assert_ok(&out);
+    assert!(out.stdout.starts_with("compacted: ") && out.stdout.contains(" → "), "{}", out.stdout);
+    let listed = mf(&["-u", &repo, "metarecord", "get"]);
+    assert_ok(&listed);
+    assert!(listed.stdout.contains(&uuid), "{}", listed.stdout);
+}
+
 /// `mf repo restore --from DIR` puts a named backup back (not the most recent
 /// one); `--metafolder DIR` addresses the repository by its `.metafolder`.
 #[test]

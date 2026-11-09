@@ -302,6 +302,20 @@ pub(super) async fn reindex_repo(
     .await
 }
 
+/// `POST /repos/:repo/compact` — rewrites the store without its free pages
+/// (`mf repo compact`); answers the file's size before and after, in bytes.
+pub(super) async fn compact_repo(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let done = repo_state.compact_store()?;
+        Ok(Json(json!({"before": done.before, "after": done.after})))
+    })
+    .await
+}
+
 #[derive(Deserialize)]
 pub(super) struct MemoryBody {
     in_memory: bool,

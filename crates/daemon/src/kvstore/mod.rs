@@ -225,6 +225,30 @@ pub struct KvStore {
     /// Where the copy is, shared with whoever reports it, so that reading it
     /// never waits on the store.
     resident: memory::ResidencyHandle,
+    /// Whether each commit is synced: what the store is opened again with
+    /// after a [`KvStore::compact`].
+    durable: bool,
+}
+
+/// A [`KvStore::compact`] that closed the store and could not open it again:
+/// the store now reads an empty stand-in, and its repository must be taken
+/// out of service — the file itself is whole, and a load opens it.
+#[derive(Debug)]
+pub struct StoreClosed(pub String);
+
+impl std::fmt::Display for StoreClosed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for StoreClosed {}
+
+/// What a [`KvStore::compact`] did: the store file's size before and after.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Compacted {
+    pub before: u64,
+    pub after: u64,
 }
 
 /// A directory that removes itself when dropped, for the unit tests' stores.
@@ -594,6 +618,7 @@ impl KvStore {
             reads: Default::default(),
             memory: None,
             resident: Default::default(),
+            durable,
         };
         if layout != Some(LAYOUT) {
             store.migrate_layout().context("migrate the key-value store's rows")?;
@@ -1428,6 +1453,97 @@ impl KvStore {
             self.memory = Some(memory::Memory::new(disk, disk_t, dir, held, on_lost));
         }
         Ok(self.resident.get().expect("held above"))
+    }
+
+    /// Rewrites the store without its free pages (doc "Compacting a
+    /// repository"): LMDB's compacting copy, written beside the store,
+    /// opened and checked, then renamed over it — the file is at every
+    /// instant the old store or the new one, whole. `&mut self`: no
+    /// transaction is open, so nothing written meanwhile can be lost.
+    ///
+    /// Refused while the store is held in memory: the copy there is the one
+    /// read, and letting go of it first leaves one store to compact.
+    pub fn compact(&mut self) -> Result<Compacted> {
+        if self.memory.is_some() {
+            return Err(DomainError::Conflict(
+                "the repository is held in memory; let go of it first (repos:toggle-memory), \
+                 then compact"
+                    .into(),
+            )
+            .into());
+        }
+        let file = self.dir.join("data.mdb");
+        let size = |p: &Path| std::fs::metadata(p).map(|m| m.len());
+        let before = size(&file).with_context(|| format!("read {}", file.display()))?;
+        let copy = self.dir.join("compact.partial");
+        let swap = self.dir.join("compact.swap");
+        let cleanup = || {
+            let _ = std::fs::remove_dir_all(&copy);
+            let _ = std::fs::remove_dir_all(&swap);
+        };
+        cleanup();
+
+        // The copy, checked as a backup is: a page damaged in the store
+        // would otherwise replace it silently.
+        let checked = (|| -> Result<()> {
+            std::fs::create_dir_all(&copy).with_context(|| format!("create {}", copy.display()))?;
+            self.env
+                .copy_to_path(copy.join("data.mdb"), heed::CompactionOption::Enabled)
+                .context("copy the key-value store")?;
+            let problems = KvStore::open_with(&copy, INITIAL_MAP, false)
+                .context("open the compacted copy")?
+                .check_derived()
+                .context("check the compacted copy")?;
+            if let Some(first) = problems.first() {
+                bail!(
+                    "the compacted copy does not check clean — the store may be damaged; it was \
+                     left as it is ({} problem(s), first: {first})",
+                    problems.len()
+                );
+            }
+            Ok(())
+        })();
+        if let Err(e) = checked {
+            cleanup();
+            return Err(e);
+        }
+
+        // The store's environment is closed before the file is replaced and
+        // opened again; meanwhile an empty one stands in, which nothing reads
+        // (`&mut self`).
+        let map_size = self.env.info().map_size;
+        std::fs::create_dir_all(&swap).with_context(|| format!("create {}", swap.display()))?;
+        let stand_in = open_env(&swap, INITIAL_MAP, false)?;
+        let stand_in_t = Tables::open(&stand_in)?;
+        let old = std::mem::replace(&mut self.env, stand_in);
+        self.t = stand_in_t;
+        old.prepare_for_closing().wait();
+        let renamed = std::fs::rename(copy.join("data.mdb"), &file)
+            .with_context(|| format!("move the compacted copy to {}", file.display()))
+            .and_then(|()| {
+                std::fs::File::open(&self.dir)
+                    .and_then(|d| d.sync_all())
+                    .with_context(|| format!("sync {}", self.dir.display()))
+            });
+        // Opened again whether the rename was made or not: the file is one
+        // store or the other.
+        let reopened = open_env(&self.dir, map_size, self.durable)
+            .and_then(|env| Ok((Tables::open(&env)?, env)));
+        let (t, env) = match reopened {
+            Ok(reopened) => reopened,
+            Err(e) => {
+                return Err(StoreClosed(format!(
+                    "the store could not be opened again after compacting it: {e:#}; load the \
+                     repository again"
+                ))
+                .into())
+            }
+        };
+        self.t = t;
+        std::mem::replace(&mut self.env, env).prepare_for_closing().wait();
+        cleanup();
+        renamed?;
+        Ok(Compacted { before, after: size(&file)? })
     }
 
     /// Lets go of the copy in memory: the store is read on disk again, and

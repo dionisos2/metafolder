@@ -383,6 +383,14 @@ enum RepoCommand {
     /// The repair for the index problems `mf repo check` reports; nothing can
     /// be lost by it. The repository waits for it to finish.
     Reindex,
+    /// Rewrite the selected repository's store without its free pages
+    ///
+    /// A large import or deletion leaves freed pages in the store's file,
+    /// which LMDB reuses but never gives back. This rewrites the file without
+    /// them (a copy, checked, then swapped in) and prints its size before and
+    /// after. The repository waits for it to finish; refused while it is
+    /// held in memory.
+    Compact,
     /// Take a backup of the selected repository and print where it went
     ///
     /// A consistent copy of its store (taken while the daemon runs) with its
@@ -1396,6 +1404,7 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
             RepoCommand::Root => commands::print_repo_root(ctx),
             RepoCommand::Check => commands::check_repo(ctx),
             RepoCommand::Reindex => commands::reindex_repo(ctx),
+            RepoCommand::Compact => commands::compact_repo(ctx),
             RepoCommand::Backup { to } => commands::backup_repo(ctx, to.as_deref()),
             RepoCommand::Restore { from, path, metafolder } => {
                 commands::restore_repo(ctx, from.as_deref(), path.as_deref(), metafolder.as_deref())
