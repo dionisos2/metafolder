@@ -22,20 +22,22 @@ great. The local choices above are not a violation of anything.
 
 !! What the planner decides
 
-It was built in October 2026 (`index/plan.rs`). No statistics and no cost model of the
-whole query: each choice is a fixed rule on the query's shape, or on an exact count the
-store already holds.
+It was built in October 2026 (`index/plan.rs`). No cost model of the whole query: each
+choice is a rule on the query's shape, on an exact count the store already holds, or
+(since November 2026) on a histogram's estimate.
 
 Measured cold (November 2026), the "probe or walk" rule chose wrong by twenty, and
 statistics are to replace the fixed rules: [[Planner statistics]] (proposed; probe or
-walk now reads them).
+walk and the order of an `and` now read them).
 
 * ''The order of an `and`.'' Its operands answered from a bitmap or a posting — presence,
   equality, `in`, a subtree, a follow, `uuid_in` — are evaluated first, in the query's
   order; the ''scans'' last: `matches`, `osm direct`, `!=` and the ordered comparisons, each
-  handed the running intersection as its candidates. Once the intersection is empty,
-  nothing more is evaluated. The order is a property of the shape, so every page of a
-  paginated session is served the same way.
+  handed the running intersection as its candidates, the narrowest first by its estimate
+  ([[Planner statistics]]). Once the intersection is empty, nothing more is evaluated.
+  The order depends on the data, so a page may be served by another path than the one
+  before it if the data changed between them; it gets the same ''results'', since an
+  `and` commutes.
 * ''Probe or walk.'' A scan given candidates checks their own rows (a uuid and the
   field's rows each, about four keys, scattered: weighed four times a walked key —
   `plan::probes`) when that costs less than the walk; otherwise it walks the field's

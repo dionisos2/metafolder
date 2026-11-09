@@ -1019,6 +1019,10 @@ impl Source for KvSource<'_> {
         }
     }
 
+    fn range_estimate(&self, field: &str, op: CmpOp, value: &Value) -> Option<u64> {
+        self.range_rows(field, op, value).map(|e| e.at_most)
+    }
+
     fn compare(
         &self,
         field: &str,

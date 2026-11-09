@@ -8,9 +8,9 @@
 //! Two choices live here:
 //!
 //! * the order in which the operands of an `and` are evaluated — the ones
-//!   answered from a bitmap or a posting first, the *scans* last, each
-//!   handed the running intersection as its candidates (and none evaluated
-//!   once that intersection is empty);
+//!   answered from a bitmap or a posting first, the *scans* last, the
+//!   narrowest first, each handed the running intersection as its candidates
+//!   (and none evaluated once that intersection is empty);
 //! * whether a scan reads its candidates' own rows (a *probe*) or walks the
 //!   field's partition.
 //!
@@ -57,11 +57,23 @@ pub(crate) fn is_scan(q: &Query) -> bool {
 }
 
 /// The operands of an `and` in the order they are evaluated: the others
-/// first, the scans last, each part in the query's own order — a property of
-/// the query's shape, so every page of a paginated session is served the
-/// same way.
-pub(crate) fn and_order<'q>(operands: impl IntoIterator<Item = &'q Query>) -> Vec<&'q Query> {
-    let (scans, rest): (Vec<&Query>, Vec<&Query>) = operands.into_iter().partition(|o| is_scan(o));
+/// first, in the query's order — a bitmap or a posting, which candidates
+/// would not make cheaper —, then the scans, the narrowest by `estimate` (the
+/// rows it may answer) first, ties in the query's order: each scan is handed
+/// the intersection so far, so the narrow ones leave the wide ones few
+/// candidates to check. `estimate` is asked only when there are two scans to
+/// order. The order depends on the data, the answer does not: an `and`
+/// commutes (doc "Planner statistics").
+pub(crate) fn and_order<'q>(
+    operands: impl IntoIterator<Item = &'q Query>,
+    estimate: impl Fn(&Query) -> u64,
+) -> Vec<&'q Query> {
+    let (mut scans, rest): (Vec<&Query>, Vec<&Query>) =
+        operands.into_iter().partition(|o| is_scan(o));
+    if scans.len() > 1 {
+        // A stable sort: ties keep the query's order.
+        scans.sort_by_cached_key(|q| estimate(q));
+    }
     rest.into_iter().chain(scans).collect()
 }
 
@@ -86,8 +98,31 @@ mod tests {
     #[test]
     fn scans_come_last_in_their_own_order() {
         let ops = [gt(), eq(), text(), Query::IsPresent { field: "a".into(), aspect: Aspect::Raw }];
-        let order = and_order(&ops);
+        let order = and_order(&ops, |_| 0);
         assert_eq!(order, vec![&ops[1], &ops[3], &ops[0], &ops[2]]);
+    }
+
+    fn gt_on(field: &str) -> Query {
+        Query::Gt { field: field.into(), value: Value::Int(1), aspect: Aspect::Raw }
+    }
+
+    #[test]
+    fn scans_go_narrowest_first_ties_in_their_own_order() {
+        let ops = [text(), gt_on("a"), eq(), gt_on("b"), gt_on("c")];
+        let estimate = |q: &Query| match q {
+            Query::Gt { field, .. } if field == "a" => 500,
+            Query::Gt { field, .. } if field == "b" => 10,
+            _ => 500,
+        };
+        let order = and_order(&ops, estimate);
+        assert_eq!(order, vec![&ops[2], &ops[3], &ops[0], &ops[1], &ops[4]]);
+    }
+
+    #[test]
+    fn a_single_scan_needs_no_estimate() {
+        let ops = [gt(), eq()];
+        let order = and_order(&ops, |_| panic!("no estimate for a single scan"));
+        assert_eq!(order, vec![&ops[1], &ops[0]]);
     }
 
     #[test]

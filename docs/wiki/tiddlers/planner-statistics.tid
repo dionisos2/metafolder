@@ -8,8 +8,8 @@ summary: Exact per-field histograms kept as a derived key space, and a cost mode
 The [[Query planner]] was built without statistics, on the belief that the cost
 choices left were minor. The cold measurements of November 2026 showed otherwise
 (user decision, 9 November 2026: build the statistics). This note is the design.
-''Built so far: the histogram, its estimate, and probe or walk from them'' (steps 1
-and 2, November 2026); steps 3 on are not built.
+''Built so far: the histogram, its estimate, probe or walk and the order of an `and`
+from them'' (steps 1 to 3, November 2026); steps 4 and 5 are not built.
 
 !! What showed it
 
@@ -47,7 +47,7 @@ kept. It mends this one choice, after paying for part of the wrong side. Statist
 inform every choice the planner makes or could make:
 
 * ''probe or walk'', decided before reading;
-* ''the order of an `and`'' — today by shape only (bitmaps first, scans last, in the query's order); with cardinalities, the most selective operand first, each handed the intersection so far;
+* ''the order of an `and`'' — by shape only before step 3 (bitmaps first, scans last, in the query's order); with cardinalities, the most selective operand first, each handed the intersection so far;
 * ''fetch or walk'' for a sorted page ([[Sorting and postings]]), which already estimates, from little.
 
 Choosing differently never answers differently: an `and` commutes, and a probe and a
@@ -131,6 +131,22 @@ its text leaf on the forest's names, checked on the page ([[Query planner]], the
 that wait), and the finder's is the `osm` path's resolution in the forest before the
 index runs (`forest_query`) — neither an `and`'s order: its operands are already
 evaluated subtree first, then the range, the text last.
+
+''The order of an `and`'', as built (`plan::and_order`, `Eval::scan_estimate`): the
+operands answered from a bitmap or a posting first, in the query's order, then the
+scans, the narrowest first — an ordered comparison of a number or a date by its
+histogram's `at_most` (`Source::range_estimate`), a `!=`, a pattern or a text range by
+its field's holders —, ties in the query's order. The estimates are read only when two
+scans are to be ordered. Of a pattern every file holds and a range holding 1 % of them,
+the query read 32 327 keys pattern first and 644 range first; it reads 644 in either
+order (`tests/kv_cost.rs`, `of_two_scans_the_narrower_goes_first`).
+
+The step said "scans still last unless a scan's estimate is the smallest". A scan is not
+put before the bitmaps even then: a bitmap costs the same handed candidates or not, and a
+scan handed them reads no more than its own walk (probe or walk chooses the cheaper), so
+evaluating it first could only cost more. What is left open: an `or`, an `and` or an
+`in` nested in the `and` hands its candidates down to its own scans, yet is ordered as a
+bitmap, first.
 
 !! Steps
 

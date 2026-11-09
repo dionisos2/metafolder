@@ -598,7 +598,7 @@ fn a_case_insensitive_repository_still_resolves_another_case() {
     assert!(found.is_none(), "a case-sensitive one does not");
 }
 
-/// `n` files of distinct sizes, `in_big` of them in the folder `/big` and the
+/// `n` files of distinct sizes and names, `in_big` of them in the folder `/big` and the
 /// rest in `/rest`, the sizes spread over both folders.
 fn sized(n: usize, in_big: usize) -> (KvStore, TempDir) {
     let dir = TempDir::new("kv-cost-sized");
@@ -615,6 +615,7 @@ fn sized(n: usize, in_big: usize) -> (KvStore, TempDir) {
         let size = ((i * 7_919) % n) as i64 * 64;
         w.create_metarecord(vec![
             tree(Some(folder), &format!("file{i:06}.txt")),
+            Field::new("name", Value::String(format!("file{i:06}.txt"))),
             Field::new("size", Value::Int(size)),
         ])
         .unwrap();
@@ -645,5 +646,29 @@ fn a_narrow_range_in_a_wide_folder_walks_the_range() {
     assert!(
         both <= alone_range + alone_folder + 50,
         "{both} keys, against {alone_range} for the range and {alone_folder} for the folder"
+    );
+}
+
+/// Two scans, a name pattern every file holds and a range holding 1 % of
+/// them (doc "Planner statistics", the order of an `and`): the range is the
+/// narrower, by its histogram, so it is evaluated first and the pattern checks
+/// its records only — in either order of the query.
+#[test]
+fn of_two_scans_the_narrower_goes_first() {
+    let n = 16_000;
+    let (kv, _dir) = sized(n, 0);
+    let range = int(gt, "size", (n as i64 - n as i64 / 100) * 64);
+    let text = matches("name", "file");
+    let (in_range, alone_range) = reads(&kv, &range, &[], true);
+    let (_, alone_text) = reads(&kv, &text, &[], true);
+    let (found, text_first) = reads(&kv, &and(vec![text.clone(), range.clone()]), &[], true);
+    let (_, range_first) = reads(&kv, &and(vec![range, text]), &[], true);
+    assert_eq!(found, in_range);
+    assert_eq!(text_first, range_first, "the order of the query does not matter");
+    let probed = 4 * in_range as u64;
+    assert!(
+        text_first <= alone_range + probed + 50,
+        "{text_first} keys, against {alone_range} for the range, {probed} to probe its \
+         records, {alone_text} for the pattern alone"
     );
 }

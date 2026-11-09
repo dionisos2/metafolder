@@ -454,7 +454,7 @@ impl Eval<'_> {
     ) -> Result<(RoaringBitmap, Residual<'q, 'k>), Unsupported> {
         let _stage = crate::progress::stage("filtering");
         let mut acc: Option<RoaringBitmap> = None;
-        for operand in plan::and_order(rest.iter().copied()) {
+        for operand in plan::and_order(rest.iter().copied(), |q| self.scan_estimate(q)) {
             if acc.as_ref().is_some_and(RoaringBitmap::is_empty) {
                 break;
             }
@@ -1445,6 +1445,33 @@ impl Eval<'_> {
         Ok(self.expand_subtrees(field, seeds, true))
     }
 
+    /// The rows a scan may answer, for the order of an `and`
+    /// ([`plan::and_order`]): an ordered comparison's from its field's
+    /// histogram where the source keeps one, any other scan's the holders of
+    /// its field — a `!=` or a pattern can answer them all.
+    fn scan_estimate(&self, q: &Query) -> u64 {
+        let ordered = |field: &str, op: CmpOp, value: &Value, aspect: &Aspect| {
+            matches!(aspect, Aspect::Raw | Aspect::Value)
+                .then(|| self.src.range_estimate(field, op, value))
+                .flatten()
+        };
+        let (field, estimate) = match q {
+            Query::Lt { field, value, aspect } => (field, ordered(field, CmpOp::Lt, value, aspect)),
+            Query::Lte { field, value, aspect } => {
+                (field, ordered(field, CmpOp::Lte, value, aspect))
+            }
+            Query::Gt { field, value, aspect } => (field, ordered(field, CmpOp::Gt, value, aspect)),
+            Query::Gte { field, value, aspect } => {
+                (field, ordered(field, CmpOp::Gte, value, aspect))
+            }
+            Query::Neq { field, .. } | Query::Matches { field, .. } | Query::Osm { field, .. } => {
+                (field, None)
+            }
+            _ => return self.src.id_count(),
+        };
+        estimate.unwrap_or_else(|| self.src.present(field).len())
+    }
+
     /// `And`, in the planner's order ([`plan::and_order`]): the operands that
     /// are pure bitmap work go first, and the running intersection is then
     /// handed to the scans — text predicates, `!=` and ranges — as their
@@ -1461,7 +1488,7 @@ impl Eval<'_> {
             return Err(unsupported("'and'/'or' need an operand"));
         }
         let mut acc: Option<RoaringBitmap> = restrict.cloned();
-        for operand in plan::and_order(operands) {
+        for operand in plan::and_order(operands, |q| self.scan_estimate(q)) {
             // Nothing left to intersect with: what follows cannot add a match.
             if acc.as_ref().is_some_and(RoaringBitmap::is_empty) {
                 break;
