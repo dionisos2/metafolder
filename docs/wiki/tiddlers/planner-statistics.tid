@@ -9,7 +9,8 @@ The [[Query planner]] was built without statistics, on the belief that the cost
 choices left were minor. The cold measurements of November 2026 showed otherwise
 (user decision, 9 November 2026: build the statistics). This note is the design.
 ''Built so far: the histogram, its estimate, probe or walk and the order of an `and`
-from them'' (steps 1 to 3, November 2026); steps 4 and 5 are not built.
+from them'' (steps 1 to 3, November 2026); the "measured and not built" re-measured
+cold (step 4: both hold, [[Query planner]]); step 5 is not done.
 
 !! What showed it
 
@@ -158,13 +159,14 @@ run on a neutral machine (the user's).
 # ''The histogram'' as a derived key space: maintained in `derive_row`, rebuilt by `reindex`, compared by `check_derived`, `DERIVED_VERSION` bumped (a store of the previous format is reindexed when it opens — its migration, doc "Persisted format changes"). An estimate function `range_rows(field, op, value)`, tested against an exact count on the oracle's data. Measure `metarecord.write` and `tree.write` before and after.
 # ''Probe or walk'' from the estimate and the cost model, replacing `PROBE_COST` against the holders for the ordered comparisons (`kvstore/source.rs`, `compare`; the text scan at `source.rs:740` keeps the holders, which a pattern does read). Test: the case above reads no more than the walk (`/dir0/dir1` and `mfr_size > 900000` on a generated repository: ≤ the range's keys plus the subtree's).
 # ''The order of an `and''' by estimated selectivity, scans still last unless a scan's estimate is the smallest. Profile `query.subtree_range_text` and `query.finder` cold first, to know what they read. Profiled (above): neither is slowed by the order.
-# ''Re-measure what was "measured and not built"'' in [[Query planner]]: those conclusions were drawn warm, pricing a random read at ≈ 2 µs; cold, it is about a hundred times that.
+# ''Re-measure what was "measured and not built"'' in [[Query planner]]: those conclusions were drawn warm, pricing a random read at ≈ 2 µs; cold, it is about a hundred times that. Done 9 November 2026: ≈ 120 µs a scattered read cold, and both conclusions hold.
 # Update [[Query planner]] (statistics, the model, the restated determinism) and drop its "no statistics" — or merge this note into it.
 
 !! Open
 
 * Whether a text histogram is worth its keys (a text range is rarer than a numeric one), and the names of a forest likewise. Not kept for now: a string row costs no more to write than before. The date width was settled at 34 bits without a measurement of what a date range typically spans.
 * Whether a bitmap handed few candidates should read only its chunks holding them (a set is a key per 65 536 dense ids, a chunk up to 8 KB) — never more keys than reading it whole, in the same key order. Then a scan of very few rows would be worth evaluating before the bitmaps. Nothing to gain at the sizes measured (100 000 records: two chunks a set); 16 chunks at a million, about 150 at ten. Not built (user, 9 November 2026).
+* Whether the name search of a finder can be made local: cold, an `osm` path on `L` costs ≈ 0.4–0.7 s, the rows of ≈ 1 100 nodes each a scattered read (≈ 120 µs). Neither the order of a plan nor another formulation reads fewer of them ([[Query planner]], measured and not built).
 * Whether the probe weight should depend on how scattered the candidates are (one folder after a forest-order reindex, against ids spread over the repository).
 
 !! How the measurements were taken

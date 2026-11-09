@@ -10,8 +10,8 @@ doc "Planner statistics" (proposed, user decision 9 November 2026): exact
 per-field histograms as a derived key space, a cost model telling scattered
 from contiguous reads, then probe-or-walk and the order of an =and= from them.
 Its steps are in the note. The histogram, its estimate, probe or walk and the
-order of an =and= from them are built (steps 1–3); next, re-measure cold what was
-"measured and not built" (step 4).
+order of an =and= from them are built (steps 1–3), the "measured and not built"
+re-measured cold (step 4: both hold); next, update doc "Query planner" (step 5).
 
 * To discuss
 Every deferred or proposed note, to be gone through one by one: build it, keep
