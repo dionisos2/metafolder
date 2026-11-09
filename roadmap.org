@@ -11,8 +11,7 @@ it deferred, or drop it.
 
 ** Storage open questions
 doc "Storage open questions": readers that never block on KV (operations stay
-sequential — decided September 2026), a KV bit-sliced index, page checksums,
-a cold cache.
+sequential — decided September 2026), a KV bit-sliced index, the free space a bulk load leaves.
 
 ** Cross-machine sync
 doc "Cross-machine sync": the remote =.metafolder/= brought local for the sync

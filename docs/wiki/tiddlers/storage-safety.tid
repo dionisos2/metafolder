@@ -30,8 +30,8 @@ library's system calls, so a stray write in the process cannot reach the file.
 LMDB has no page checksums. A damaged page makes part of the store unreadable — all
 of it, for a page near the root — or silently wrong. The defence is a backup, taken
 weekly by default (`auto-backup-days`) and checked when taken
-([[Backups and restore]]); whether to trade for a store with checksums is an open
-question ([[Storage open questions]]).
+([[Backups and restore]]); why that, rather than a store with checksums, is in
+[[Why a key-value store]].
 
 !! Network filesystems
 

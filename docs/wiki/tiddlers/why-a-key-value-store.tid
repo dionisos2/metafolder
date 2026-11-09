@@ -25,6 +25,16 @@ mature, a C library), `redb` (the same model in pure Rust, slower reads, page
 checksums), `fjall` (an LSM tree, better writes, worse point reads) — the workload is
 read-dominated with writes in bursts that batch well: LMDB.
 
+!! Why not `redb` for its checksums
+
+`redb`'s page checksums would turn a bad sector into a detected error rather than a
+silently wrong page. They were weighed again in November 2026 and not taken (user
+decision): they detect a damage, they do not repair it, so the repair is a backup
+either way — and a backup is already taken weekly and checked when taken, a damaged
+store failing its new backup rather than replacing a good one ([[Backups and restore]]).
+What checksums would add is the moment of detection; the price is slower reads on
+every query and a migration of every store.
+
 The measurements that decided it are in [[How the storage backend was built]]: on the
 same records, the disk store beat the resident engine on every gesture — by one to
 three orders of magnitude on sorts and text, because a sort stopped at the page and

@@ -3,10 +3,8 @@ tags: Storage
 kind: question
 audience: dev
 status: deferred
-summary: Page checksums, a cold cache, and readers that do not wait for writers.
+summary: Free space after a bulk load, readers that do not wait for writers, and numeric ranges.
 
-* ''LMDB or `redb`.'' `redb` has page checksums, which would turn a bad sector into a detected error rather than a silently wrong page; whether that is worth its slower reads.
-* ''A cold cache.'' Whether to warm the hot key spaces (the forest, `kids`, presence, postings) at every load with `madvise(WILLNEED)`, and what that costs on a store larger than memory. On demand, the whole store is read in and locked: [[Holding a repository in memory]].
 * ''Space.'' A bulk load leaves freed pages in the file (438 → 274 MB used on one run); a compacting copy after a large import would reclaim them — a backup already is one.
 * ''Readers that do not wait'' for a long write ([[Storage safety]]) — deferred by decision.
 * ''Numeric ranges'' over a field with many distinct values are linear; a bit-sliced index would serve them ([[Sorting and postings]]).
