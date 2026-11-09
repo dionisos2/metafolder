@@ -57,9 +57,15 @@ Computed from the primary tables, read by the query evaluator through `KvSource`
 |`grams` |field · trigram · chunk |a roaring bitmap of dense ids |
 
 ''Dense ids'' come first: each metarecord gets a small integer, allocated in
-discovery order, never renumbered, never reused. Bitmaps hold these ids, not uuids.
-The files of one folder mostly get consecutive ids, so a folder's bitmaps compress to
-a few runs.
+discovery order and never reused. Bitmaps hold these ids, not uuids. The files of one
+folder mostly get consecutive ids, so a folder's bitmaps compress to a few runs.
+
+Moves and late discoveries scatter a subtree's ids over the years; `mf repo reindex`
+gathers them again ([[Checking and reindexing a repository]]). It numbers the
+metarecords in ''forest order'' — each forest walked depth first, a folder's
+children by name, the forest of the most positions first — then those in no forest,
+in discovery order. A record comes at its first position, so after a reindex every
+subtree of the largest forest is one run of ids.
 
 A ''set'' is a bitmap cut in chunks of 65 536 ids (the high 16 bits), one key per
 chunk: a write rewrites one chunk, a read unions a few. The kinds:

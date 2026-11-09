@@ -12,7 +12,7 @@ it deferred, or drop it.
 ** Storage open questions
 doc "Storage open questions": readers that never block on KV (operations stay
 sequential — decided September 2026), a KV bit-sliced index, page checksums,
-id locality over time, a cold cache.
+a cold cache.
 
 ** Cross-machine sync
 doc "Cross-machine sync": the remote =.metafolder/= brought local for the sync

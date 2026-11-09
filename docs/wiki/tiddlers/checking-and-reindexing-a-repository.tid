@@ -32,6 +32,10 @@ Run `reindex` when `check` reports an index problem. You do not need it after an
 upgrade: a store whose indexes are of an older format is reindexed automatically
 when it is opened ([[Persisted format changes]]).
 
+`reindex` also renumbers the metarecords in forest order, so a repository whose
+folders were moved around for years gets each subtree's ids consecutive again
+([[Store tables]]): its folder bitmaps shrink back to a few runs.
+
 !! What check reports, and the repair
 
 `check` prints `ok` on a healthy store. Otherwise it prints one line per problem (a

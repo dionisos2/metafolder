@@ -252,3 +252,90 @@ fn a_store_of_the_previous_derived_format_is_reindexed_when_it_opens() {
     let store = KvStore::open(dir.path()).unwrap();
     check(&store);
 }
+
+/// The dense ids, in id order, as the uuids they map.
+fn in_id_order(store: &KvStore, uuids: &[Uuid]) -> Vec<Uuid> {
+    use metafolder_daemon::index::Source;
+    let src = store.source().unwrap();
+    let mut by_id: Vec<(u32, Uuid)> = uuids.iter().map(|&u| (src.id(u).unwrap(), u)).collect();
+    by_id.sort();
+    by_id.into_iter().map(|(_, u)| u).collect()
+}
+
+/// A reindex numbers the metarecords in forest order — depth first, a
+/// folder's children by name, the largest forest first — so that a subtree's
+/// ids are consecutive however its records were discovered; the records
+/// outside every forest come last (doc "Store tables").
+#[test]
+fn a_reindex_numbers_the_records_in_forest_order() {
+    let (mut store, _dir) = open();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    let mut create = |fields: Vec<Field>| w.create_metarecord(fields).unwrap().uuid;
+    // Discovered out of tree order: a loose record first, the deep file
+    // before its siblings' folder.
+    let loose = create(vec![Field::new("title", Value::String("loose".into()))]);
+    let root = create(vec![Field::new("loc", tree(None, ""))]);
+    let b = create(vec![Field::new("loc", tree(Some(root), "b"))]);
+    let b_file = create(vec![Field::new("loc", tree(Some(b), "z.txt"))]);
+    let a = create(vec![Field::new("loc", tree(Some(root), "a"))]);
+    let a_file = create(vec![Field::new("loc", tree(Some(a), "y.txt"))]);
+    // A smaller forest, and a record placed in both.
+    let tag = create(vec![Field::new("hier", tree(None, "music"))]);
+    let both = create(vec![
+        Field::new("hier", tree(Some(tag), "rock")),
+        Field::new("loc", tree(Some(a), "x.txt")),
+    ]);
+    drop(create);
+    w.commit().unwrap();
+
+    store.reindex().unwrap();
+    check(&store);
+    let all = [loose, root, b, b_file, a, a_file, tag, both];
+    assert_eq!(
+        in_id_order(&store, &all),
+        vec![root, a, both, a_file, b, b_file, tag, loose],
+        "`loc` (6 positions) depth first by name, then `hier`, then the rest"
+    );
+}
+
+/// The bytes the `sets` table holds, values only.
+fn sets_bytes(dir: &std::path::Path) -> usize {
+    let env = common::kv::raw_env(dir);
+    let sets = common::kv::open_raw(&env, "sets");
+    let r = env.read_txn().unwrap();
+    sets.iter(&r).unwrap().map(|e| e.unwrap().1.len()).sum()
+}
+
+/// Twenty folders discovered interleaved — a file of each in turn — get
+/// scattered ids; a reindex makes each folder's ids one run, and the stored
+/// bitmaps keep runs as runs, so the `sets` table shrinks to a fraction
+/// (doc "Store tables").
+#[test]
+fn a_reindex_gathers_a_scattered_folder_into_runs() {
+    let (mut store, dir) = open();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    let root = w.create_metarecord(vec![Field::new("loc", tree(None, ""))]).unwrap().uuid;
+    let dirs: Vec<Uuid> = (0..20)
+        .map(|i| {
+            w.create_metarecord(vec![Field::new("loc", tree(Some(root), &format!("d{i}")))])
+                .unwrap()
+                .uuid
+        })
+        .collect();
+    for n in 0..4000 {
+        w.create_metarecord(vec![Field::new("loc", tree(Some(dirs[n % 20]), &format!("f{n:04}")))])
+            .unwrap();
+    }
+    w.commit().unwrap();
+    drop(store);
+    let before = sets_bytes(dir.path());
+    let mut store = KvStore::open(dir.path()).unwrap();
+    store.reindex().unwrap();
+    check(&store);
+    drop(store);
+    let after = sets_bytes(dir.path());
+    assert!(
+        after * 10 < before,
+        "the sets shrink from {before} bytes to a tenth at most, got {after}"
+    );
+}

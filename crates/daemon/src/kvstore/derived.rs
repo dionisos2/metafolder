@@ -448,11 +448,15 @@ impl KvTxn<'_> {
     /// Writes the chunks the transaction changed.
     pub(super) fn flush_sets(&self) -> Result<()> {
         let mut w = self.txn.borrow_mut();
-        for (k, bm) in self.sets.borrow_mut().drain() {
+        for (k, mut bm) in self.sets.borrow_mut().drain() {
             let db = if k[0] == SETS { self.t.sets } else { self.t.grams };
             if bm.is_empty() {
                 db.delete(&mut w, &k[1..])?;
             } else {
+                // Stored with run containers where they are smaller, so
+                // consecutive ids — a folder after a reindex — take a few
+                // bytes per run (doc "Store tables").
+                bm.optimize();
                 let mut bytes = Vec::with_capacity(bm.serialized_size());
                 bm.serialize_into(&mut bytes)?;
                 db.put(&mut w, &k[1..], &bytes)?;
@@ -784,10 +788,59 @@ impl KvTxn<'_> {
 
 // ── Rebuilding and checking ─────────────────────────────────────────────────
 
+/// The positioned metarecords in forest order: each forest walked depth
+/// first from its roots, a node's children in key order (their name bytes),
+/// the forest of the most positions first (ties by field name). A record
+/// comes at its first position; a subtree's ids then follow one another, so
+/// its bitmaps compress to a few runs however its records were discovered
+/// (doc "Store tables").
+fn forest_order(t: &Tables, r: &RoTxn<'_>) -> Result<Vec<Uuid>> {
+    // Each forest's key prefix (its field name, terminated) and its size.
+    let mut forests: Vec<(Vec<u8>, u64)> = Vec::new();
+    for e in t.forest.iter(r)? {
+        let (k, _) = e?;
+        // The field's end is its `00 00` terminator (an escaped `00` is
+        // followed by `FF`).
+        let end = (0..k.len().saturating_sub(1))
+            .find(|&i| k[i] == 0 && k[i + 1] == 0)
+            .context("a forest key without its field")?;
+        match forests.last_mut() {
+            Some((prefix, n)) if prefix[..] == k[..end + 2] => *n += 1,
+            _ => forests.push((k[..end + 2].to_vec(), 1)),
+        }
+    }
+    forests.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+
+    let mut order = Vec::new();
+    for (field, _) in &forests {
+        // Per forest: a node of several parents (`hierarchy_ref`) is walked
+        // once.
+        let mut walked = BTreeSet::new();
+        let mut stack = vec![super::ROOT];
+        while let Some(node) = stack.pop() {
+            if node != super::ROOT {
+                order.push(uuid_of(&node));
+            }
+            let mut children = Vec::new();
+            for e in t.forest.prefix_iter(r, &[&field[..], &node].concat())? {
+                let (_, v) = e?;
+                let child: [u8; 16] = v[..16].try_into().expect("a 16-byte uuid");
+                if walked.insert(child) {
+                    children.push(child);
+                }
+            }
+            // Depth first: the first child's subtree before the second's.
+            stack.extend(children.into_iter().rev());
+        }
+    }
+    Ok(order)
+}
+
 impl KvStore {
     /// Derives every derived key space again from the primary data, in one
-    /// transaction. Dense ids follow discovery order: the order of each
-    /// metarecord's first row (then the metarecords without rows).
+    /// transaction. Dense ids follow forest order ([`forest_order`]), then,
+    /// for the metarecords in no forest, discovery order: the order of each
+    /// one's first row (then the metarecords without rows).
     pub fn reindex(&mut self) -> Result<()> {
         let txn = KvTxn::new(self)?;
         txn.clear_derived()?;
@@ -796,6 +849,11 @@ impl KvStore {
             let r = txn.txn.borrow();
             let mut seen = BTreeSet::new();
             let mut order = Vec::new();
+            for u in forest_order(&txn.t, &r)? {
+                if seen.insert(u) {
+                    order.push(u);
+                }
+            }
             for entry in txn.t.row_owner.iter(&r)? {
                 let u = uuid_of(entry?.1);
                 if seen.insert(u) {
