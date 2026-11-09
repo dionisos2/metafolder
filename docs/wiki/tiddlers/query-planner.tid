@@ -103,23 +103,15 @@ in the forest before the index runs — neither a plan's choice.
 
 !! Measured and not built
 
-Two choices were weighed against measurements and left out; they need not be measured
-again unless the repositories grow by an order of magnitude. Both were weighed warm, a
-random read priced at ≈ 2 µs, then re-measured cold on 9 November 2026 (`L`, 105 000
-nodes), where a scattered read costs ≈ 120 µs: both still hold.
-
-* ''An unsorted page under a large subtree.'' `follows_transitive` reads the root's whole descendant bitmap where a page wants a hundred ids. Warm (7 October 2026, `query.folder` against `query.page`, a folder holding the whole repository): +0.08 ms on 21 000 nodes, +0.4 ms on 105 000, about 4 ms extrapolated to a million. The alternative — a per-candidate ancestry check stopping at the page — costs ≈ 100 × depth × 2 µs ≈ 1 ms, so it loses below roughly 300 000 nodes, and its walk cannot be budgeted without the subtree's size, which the store does not keep. Cold: `/dir0` (104 999 files) 47–62 ms against 44–51 ms for the plain page, 251 keys against 247; the ancestry check would read ≈ 100 × depth scattered keys, ≈ 36 ms at a depth of 3 — it loses by more cold than warm.
-* ''A two-term `osm` path whose earlier term is common'' (the bench's finder): ≈ 5 ms warm on 105 000 nodes, nearly all of it each anchor's ancestry. Cold: `dir1 file12` 577–688 ms, 4 805 keys read before the index runs; the single term `file12`, which the index serves natively, 421–438 ms for 3 350 keys. The order-sensitive part costs ≈ 1.4 times the name search itself, and both are the price of ≈ 1 100 scattered nodes (1 111 names hold `file12`, as many `dir1`; 111 paths match). The bitmap formulation — the anchors within the descendants of the nodes naming the earlier term — reads those 1 111 `dir1` nodes and a descendant key each: no fewer keys, as scattered.
-
-[[The session scenario]] (a day of GUI use on 50 000 files) showed no query over its
-budget: every list, finder and folder step under 1 s on a neutral machine.
+Two choices were weighed against measurements, warm then cold, and left out — a page
+under a large subtree, a two-term `osm` path: [[Planner choices measured and not built]].
 
 !! Open
 
 * Whether a text histogram is worth its keys (a text range is rarer than a numeric one), and the names of a forest likewise. Not kept for now: a string row costs no more to write than before. The date width was settled at 34 bits without a measurement of what a date range typically spans.
 * Whether a bitmap handed few candidates should read only its chunks holding them (a set is a key per 65 536 dense ids, a chunk up to 8 KB) — never more keys than reading it whole, in the same key order. Then a scan of very few rows would be worth evaluating before the bitmaps. Nothing to gain at the sizes measured (100 000 records: two chunks a set); 16 chunks at a million, about 150 at ten. Not built (user, 9 November 2026).
 * An `or`, an `and` or an `in` nested in an `and` hands its candidates down to its own scans, yet is ordered as a bitmap, first.
-* Whether the name search of a finder can be made local: cold, an `osm` path on `L` costs ≈ 0.4–0.7 s, the rows of ≈ 1 100 nodes each a scattered read. Neither the order of a plan nor another formulation reads fewer of them.
+* Whether the name search of a finder can be made local: cold, an `osm` path on `L` costs ≈ 0.4–0.7 s, the rows of ≈ 1 100 nodes each a scattered read. Neither the order of a plan nor another formulation reads fewer of them ([[Planner choices measured and not built]]).
 * Whether the probe weight should depend on how scattered the candidates are (one folder after a forest-order reindex, against ids spread over the repository).
 
 !! How the measurements were taken
