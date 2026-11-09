@@ -89,7 +89,7 @@ const SCENARIOS: &[&str] = &[
     // a subtree, a range and a text; a negation; a page of a combination
     // sorted on a value of ten distinct values. The last one is a known gap —
     // a range over a high-cardinality number on a KV repository reads its
-    // matches one by one (doc "Storage", deferred "KV bit-sliced index").
+    // matches one by one (doc "Sorting and postings").
     "query.finder",
     "query.wide_and_rare",
     "query.rare_and_wide",
@@ -97,6 +97,9 @@ const SCENARIOS: &[&str] = &[
     "query.negation",
     "query.combined_sorted",
     "query.size_range_in_folder",
+    // The same range over the whole repository: the linear case a bit-sliced
+    // index would serve, measured before deciding to build one.
+    "query.size_range",
     // One metarecord, and one write (which pays for its derived key spaces).
     "metarecord.get",
     "metarecord.write",
@@ -266,6 +269,14 @@ async fn run_scenario(id: &str, ctx: &Ctx) -> Result<()> {
                 subtree(&ctx.folder),
                 {"type": "gt", "field": "mfr_size", "value": {"type": "int", "value": 900_000}},
             ]});
+            post(
+                &format!("{url}/repos/{repo}/query"),
+                &json!({"query": q, "limit": 100, "count": true}),
+            )
+            .await?;
+        }
+        "query.size_range" => {
+            let q = json!({"type": "gt", "field": "mfr_size", "value": {"type": "int", "value": 900_000}});
             post(
                 &format!("{url}/repos/{repo}/query"),
                 &json!({"query": q, "limit": 100, "count": true}),

@@ -49,6 +49,7 @@ purpose, rather than comparing two different things silently.
 |`query.negation` |`not kind = "photo"` in a subtree |
 |`query.combined_sorted` |a page of three combined operands, sorted on a field of ten values |
 |`query.size_range_in_folder` |a subtree and `mfr_size > 900000` — a known gap, below |
+|`query.size_range` |`mfr_size > 900000` over the whole repository — the same gap, unbounded |
 |`metarecord.get` |one metarecord by uuid: the point read everything else is built on |
 |`metarecord.write` |one field write, derived key spaces included |
 |`tree.resolve_page` |the paths of a hundred metarecords — what a listing resolves per page |
@@ -57,7 +58,7 @@ purpose, rather than comparing two different things silently.
 
 * `log.whole` is ''expected'' to grow with the log — it reads all of it. It is measured so that the day it grows faster than the log, the number says so.
 * The `query.` scenarios after `query.folder` combine operands of different types, which is what the bitmaps are for: a combination should cost about its narrowest operand. They were added when a search no single-operand scenario exercised took twenty seconds on a real repository; their counterparts without a clock are in `kv_cost.rs`.
-* `query.size_range_in_folder` measures a known gap: a range over a number of many distinct values reads its matches one by one ([[Sorting and postings]]).
+* `query.size_range_in_folder` and `query.size_range` measure a known gap: a range over a number of many distinct values reads its matches one by one ([[Sorting and postings]]).
 * `tree.write` moves a position in a forest of its own, so it measures the ''upkeep'' and not the size of the tree: updating one position costs the position, anything whole-forest costs the repository, and the two differ on the larger sizes while looking alike on the small one ([[The forest in the store]]). Each run writes a different name — rewriting the same one would move nothing.
 * `repo.load` is the only scenario that is not one request: the load answers as soon as the uuid is known and finishes in the background, so "loaded" means "answers a query" ([[Creating and loading a repository]]). The store's pages stay in the operating system's cache across the unload: it measures the work, not the disk.
 
