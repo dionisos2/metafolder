@@ -40,17 +40,25 @@ pub(super) async fn run_query(
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     // Register an observation-only task (doc "Tasks"): the result travels with
-    // this response, so the task carries no result payload and its counts stay
-    // unknown (the heavy part is one opaque evaluation). Registered here, before
-    // the blocking work, so that a client hanging up cancels it.
+    // this response, so the task carries no result payload; its progress is the
+    // evaluator's phases (doc "Task status and progress"). Registered here,
+    // before the blocking work, so that a client hanging up cancels it.
     let repo = state.ready_repo(repo_uuid)?;
     let task = repo.tasks.start(TaskKind::Query);
     let _hang_up = CancelOnHangUp { repo: Arc::downgrade(&repo), task };
+    // The evaluation's phases and its scans' counts become the task's progress
+    // (doc "Task status and progress"). `Weak` for the same reason as above.
+    let reporting = Arc::downgrade(&repo);
     drop(repo);
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.tasks.mark_running(task);
         repo_state.tasks.set_progress(task, "querying", None, None);
-        let outcome = run_query_inner(repo_state, &body, task);
+        let sink: crate::progress::Sink = Box::new(move |phase, done, total| {
+            if let Some(repo) = reporting.upgrade() {
+                repo.tasks.set_progress(task, phase, done, total);
+            }
+        });
+        let outcome = crate::progress::run(sink, || run_query_inner(repo_state, &body, task));
         // A cancel request stops the query (in its loops, or between its
         // phases), surfacing here as an error: record the task as `cancelled`
         // (not `failed`) and report it as a 409 to the waiting client.
@@ -273,7 +281,10 @@ fn run_query_filter(
     crate::query_validate::validate_query_types(&body.query, &|f| engine.value_type(f))?;
     let index = engine.eval();
 
-    let (mut roots, indexed_query) = prepare_indexed_query(conn, cache, &index, &body.query)?;
+    let (mut roots, indexed_query) = {
+        let _stage = crate::progress::stage("preparing");
+        prepare_indexed_query(conn, cache, &index, &body.query)?
+    };
     // Full-path sort keys for a `tree_ref` sort key, rebuilt from the store's
     // forest (doc "Pagination and sorting", doc "The forest in the store").
     let sort_keys = crate::forest::SortKeys::new(conn);
@@ -387,6 +398,7 @@ fn run_query_pass(
                     }
                     SelectSpec::Fields(list) => Some(list.clone()),
                 };
+                let _stage = crate::progress::stage("assembling");
                 slowlog::timed("assemble", || {
                     crate::query_result::assemble_selected(
                         &conn,

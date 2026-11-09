@@ -452,6 +452,7 @@ impl Eval<'_> {
         roots: Option<&QueryRoots>,
         keys: &'k crate::forest::SortKeys<'k>,
     ) -> Result<(RoaringBitmap, Residual<'q, 'k>), Unsupported> {
+        let _stage = crate::progress::stage("filtering");
         let mut acc: Option<RoaringBitmap> = None;
         for operand in plan::and_order(rest.iter().copied()) {
             if acc.as_ref().is_some_and(RoaringBitmap::is_empty) {
@@ -515,6 +516,7 @@ impl Eval<'_> {
         roots: Option<&QueryRoots<'_>>,
     ) -> Result<(Vec<Uuid>, Option<String>), Unsupported> {
         use std::cmp::Ordering;
+        let _stage = crate::progress::stage("paging");
         let guard = page_guard(roots.and_then(|r| r.cursor_query).unwrap_or(q), sort);
         let after: Option<SortEntry> = match cursor {
             None => None,
@@ -1017,6 +1019,7 @@ impl Eval<'_> {
     /// (an unresolved path, a pattern that will not compile, a comparison the
     /// encoding cannot answer), never of the node type.
     fn eval(&self, q: &Query, roots: Option<&QueryRoots>) -> Result<RoaringBitmap, Unsupported> {
+        let _stage = crate::progress::stage("filtering");
         self.eval_within(q, roots, None)
     }
 

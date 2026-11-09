@@ -517,7 +517,15 @@ impl KvSource<'_> {
         field: &str,
         holds: &dyn Fn(&Value) -> bool,
     ) -> RoaringBitmap {
-        ids.iter().filter(|&id| self.values(id, field).iter().any(holds)).collect()
+        // The candidates checked one by one: what a query's progress counts
+        // (doc "Task status and progress").
+        let mut done = crate::progress::counting(ids.len());
+        ids.iter()
+            .filter(|&id| {
+                done.tick();
+                self.values(id, field).iter().any(holds)
+            })
+            .collect()
     }
 
     // ── The schema check's candidates (doc "Schema") ────────────────────────
@@ -723,18 +731,14 @@ impl KvSource<'_> {
         literals: &[String],
         restrict: Option<&RoaringBitmap>,
     ) -> RoaringBitmap {
+        let _stage = crate::progress::stage(format!("scanning {field}"));
         let text = |v: &Value| text_of(v).is_some_and(|t| keep(&t));
         if let Some(candidates) = self.text_candidates(field, literals, restrict) {
             return self.having(candidates, field, &text);
         }
         if let Some(r) = restrict {
             if plan::probes(r.len(), self.present(field).len()) {
-                return r
-                    .iter()
-                    .filter(|&id| {
-                        self.values(id, field).iter().filter_map(text_of).any(|t| keep(&t))
-                    })
-                    .collect();
+                return self.having(r.clone(), field, &text);
             }
         }
         let region: &[u8] = if part == VALUE { &[2] } else { &[] };
@@ -922,6 +926,7 @@ impl Source for KvSource<'_> {
         value: &Value,
         restrict: Option<&RoaringBitmap>,
     ) -> Result<RoaringBitmap, Unsupported> {
+        let _stage = crate::progress::stage(format!("comparing {field}"));
         let Some(kind) = self.kind(field) else { return Ok(RoaringBitmap::new()) };
         // A string operand on a forest compares the names.
         if let (Kind::Reference { tree: true }, Value::String(s)) = (kind, value) {

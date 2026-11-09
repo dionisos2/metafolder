@@ -1,0 +1,21 @@
+title: Why a finished task is not deleted by its reader
+tags: Tasks
+kind: rationale
+audience: dev
+summary: No client can delete a finished task to free its result early: what a task keeps is a few counts for 10 seconds, and a reader deleting it would take the outcome from the others — dropped in November 2026.
+
+A `DELETE` of a finished task was proposed, for a client that wants the memory back
+before the retention time. It was dropped in November 2026.
+
+''There is nothing to free.'' A finished task stays 10 seconds ([[Task registry and retention]]),
+and only three kinds attach a result, the others answering theirs in the response
+([[Task endpoints]]): a reconcile's counts and similarity candidates, a duplicate
+scan's six counts, a relink's three — a few kilobytes at most.
+
+''It would undo what makes reads safe.'' Reading a task never removes it, so that
+several observers each read the same outcome: the GUI's task bar shows every task,
+not only its own, and would answer a `404` for a reconcile `mf` deleted the moment it
+read it. No client can know that nobody else still wants a task.
+
+Should a kind ever keep a large result, the answer is to bound it or serve it apart,
+not to let a reader decide for the others.

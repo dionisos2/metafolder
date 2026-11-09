@@ -9,10 +9,6 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 Every deferred or proposed note, to be gone through one by one: build it, keep
 it deferred, or drop it.
 
-** Future task extensions
-doc "Future task extensions": an explicit acknowledgement freeing a result
-early; query progress with real counts.
-
 ** Storage open questions
 doc "Storage open questions": readers that never block on KV (operations stay
 sequential — decided September 2026), a KV bit-sliced index, page checksums,

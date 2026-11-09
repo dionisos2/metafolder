@@ -34,6 +34,10 @@ than breaking them.
   (`check-deps.sh --headless`). It still needs `node`, which renders the documentation.
 
 ### Added
+- **A running query shows where it is.** Its task reports the evaluator's phase —
+  `preparing`, `filtering`, `scanning <field>`, `comparing <field>`, `paging`,
+  `assembling` — instead of a bare `querying`, and a scan checking candidates one by
+  one counts them, so the task bar draws a bar for it.
 - **`mf log rollback <time>` and `log:rollback`: back to how things stood at a
   time.** `2h`, `1d`, an ISO-8601 date in UTC or `@<ms>`: every change you made
   since — your undos and redos of older work included — is reverted onto the

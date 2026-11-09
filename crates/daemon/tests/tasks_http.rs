@@ -152,6 +152,35 @@ async fn query_registers_an_observable_task() {
     assert!(query_task["total"].is_null());
 }
 
+/// The query's own phases reach its task (doc "Task status and progress"): a
+/// finished query shows the last one it entered, here the assembly of the rows
+/// it selected — not the "querying" it was registered with.
+#[tokio::test]
+async fn a_query_task_shows_the_phase_it_reached() {
+    let (app, _state, repo, _root) = app_with_repo("queryphase");
+    let mut seen = std::collections::HashSet::new();
+    for (body, phase) in [
+        (serde_json::json!({"query": {"type": "is_present", "field": "mfr_path"}}), "paging"),
+        (
+            serde_json::json!({"query": {"type": "is_present", "field": "mfr_path"}, "select": "*"}),
+            "assembling",
+        ),
+    ] {
+        let (status, _) = post(&app, &format!("/repos/{repo}/query"), body).await;
+        assert_eq!(status, StatusCode::OK);
+        let (_, tasks) = request(&app, "GET", &format!("/repos/{repo}/tasks")).await;
+        let latest = tasks
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["kind"] == "query" && !seen.contains(&t["id"]))
+            .cloned()
+            .expect("this query's task");
+        seen.insert(latest["id"].clone());
+        assert_eq!(latest["phase"], phase, "{latest}");
+    }
+}
+
 /// Seeds a repo with a two-write log (root entry + one metarecord) and returns
 /// the metarecord uuid; enough history to prune or roll back against.
 async fn seed_history(app: &Router, repo: &str) -> String {

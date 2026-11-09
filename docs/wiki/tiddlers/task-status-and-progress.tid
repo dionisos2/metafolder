@@ -23,8 +23,7 @@ The same shape for every kind:
 
 `phase` is a short, kind-specific label; `done` and `total` may each be `null` when
 the amount of work is unknown. A client shows a bar when both are known and
-`total > 0`, and a spinner labelled with the phase otherwise. A query usually
-reports no counts at all: its heavy part is one opaque evaluation.
+`total > 0`, and a spinner labelled with the phase otherwise.
 
 The duplicate scan's phases are in [[The duplicate scan]]; its `full` phase is the
 only one of any kind that counts ''bytes'', and a client formatting counts should
@@ -49,3 +48,22 @@ The walk is a pure traversal — reading directories and their entries' types, n
 reports progress by depth. Once it is done the path list is known, so every later
 phase, starting with the expensive `stat` pass, has an exact total and a
 determinate bar.
+
+!! The phases of a query
+
+A query's task reads `querying` until its work starts, then the phase the evaluator
+is in — reported from inside it (`crate::progress`), so a long query shows where its
+time goes while it runs:
+
+|!Phase |!Counts |
+|`preparing` |no counts: resolving paths and the forest's leaves ([[How queries are evaluated]]) |
+|`filtering` |no counts: the bitmap work between the scans |
+|`scanning <field>` |the candidates a text predicate checks one by one: those its literals leave in the text index, or the running intersection it probes ([[Query planner]]) |
+|`comparing <field>` |likewise, for a `!=` or an ordered comparison probing the running intersection |
+|`paging` |no counts: sorting, walking, fetching the page |
+|`assembling` |no counts: reading the selected rows |
+
+A scan walking a field's distinct values instead reports its phase without counts:
+the number of keys it will read is not known beforehand. A counted phase reports
+`0/total` on entry and every 256 candidates; a nested phase ending hands the phase
+back to the one it ran in. A finished query keeps the last phase it entered.
