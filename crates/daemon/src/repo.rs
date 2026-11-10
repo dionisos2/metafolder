@@ -52,18 +52,19 @@ impl std::fmt::Debug for OpenedRepo {
 /// a probe file in `internal/` — which answers for the root only when both are
 /// on the same filesystem; otherwise the repository counts as case-sensitive
 /// until a load finds an entry.
-fn probe_case_insensitive(root: &Path, internal_dir: &Path) -> bool {
+fn probe_case_insensitive(root: &Path, internal_dir: &Path, repo: uuid::Uuid) -> bool {
     if let Some(answer) = probe_root_entries(root) {
         return answer;
     }
     if !same_filesystem(root, internal_dir) {
-        crate::diagnostics::warn(
+        crate::diagnostics::warn_for(
             "repo",
             format!(
                 "cannot probe the case sensitivity of {}: it is empty and .metafolder is on \
                  another filesystem; treated as case-sensitive until a load finds an entry",
                 root.display()
             ),
+            repo,
         );
         return false;
     }
@@ -206,7 +207,7 @@ pub fn init_repository(
         Box::new(crate::kvstore::KvStore::open(&internal_dir.join(KV_DIR))?);
     create_root_entry(&mut conn)?;
 
-    let case_insensitive = probe_case_insensitive(&config.root, &internal_dir);
+    let case_insensitive = probe_case_insensitive(&config.root, &internal_dir, config.repo_uuid);
     Ok(OpenedRepo { config, conn, metafolder_dir, case_insensitive })
 }
 
@@ -363,7 +364,7 @@ pub fn load_repository(locator: RepoLocator) -> Result<OpenedRepo> {
     crate::borrow::refuse_if_borrowed(&metafolder_dir)?;
     let case_insensitive = {
         let _p = Phase::begin(&who, "probe case sensitivity");
-        probe_case_insensitive(&config.root, &internal_dir)
+        probe_case_insensitive(&config.root, &internal_dir, config.repo_uuid)
     };
     Ok(OpenedRepo { config, conn, metafolder_dir, case_insensitive })
 }

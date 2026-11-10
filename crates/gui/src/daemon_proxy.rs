@@ -425,27 +425,14 @@ impl DaemonProxy {
         if lines.is_empty() {
             return;
         }
-        // Routed by repository. A daemon-wide line (no `repo`) concerns every
-        // workspace and goes to each message log. A line *about* a repository —
-        // a flush, a watch it could not place — goes only to the workspaces on
-        // that repository: with two repositories loaded, A's flushes used to
-        // fill B's message panel, which is noise indistinguishable from B's own.
-        let workspaces = gui.workspaces();
+        // Routed by repository: a daemon-wide line (no `repo`) goes to every
+        // workspace, a line about a repository only to the workspaces on it —
+        // and nowhere when no workspace is on it (`diagnostics::recipients`).
+        let workspaces: Vec<(String, Option<String>)> =
+            gui.workspaces().into_iter().map(|w| (w.id, w.active_repo)).collect();
         for line in &lines {
-            let mut shown = false;
-            for workspace in &workspaces {
-                if line.concerns(workspace.active_repo.as_deref()) {
-                    let _ = gui.append_message(&workspace.id, &line.text);
-                    shown = true;
-                }
-            }
-            // Nowhere to route it: a repository loaded with no workspace on it.
-            // Showing it everywhere is better than dropping it — an error about
-            // a repository nobody is looking at is exactly the one worth seeing.
-            if !shown {
-                for workspace in &workspaces {
-                    let _ = gui.append_message(&workspace.id, &line.text);
-                }
+            for id in crate::diagnostics::recipients(line, &workspaces) {
+                let _ = gui.append_message(id, &line.text);
             }
         }
     }

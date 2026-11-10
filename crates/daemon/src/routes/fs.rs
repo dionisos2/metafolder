@@ -502,6 +502,7 @@ pub(super) async fn full_reconcile(
     let context = task_context("reconcile");
     tokio::task::spawn_blocking(move || {
         let _context = crate::log::enter_context(context);
+        let _repo = crate::diagnostics::in_repo(repo_state.uuid());
         repo_state.tasks.mark_running(task_id);
         let progress = |phase: &str, done: Option<u64>, total: Option<u64>| {
             crate::tasks::log_step(phase);
@@ -608,6 +609,7 @@ pub(super) async fn duplicates_scan(
     let context = task_context("duplicate scan");
     tokio::task::spawn_blocking(move || {
         let _context = crate::log::enter_context(context);
+        let _repo = crate::diagnostics::in_repo(repo_state.uuid());
         repo_state.tasks.mark_running(task_id);
         let progress = |phase: &str, done: Option<u64>, total: Option<u64>| {
             crate::tasks::log_step(phase);
@@ -745,6 +747,7 @@ pub(super) async fn orphans_relink(
     let context = task_context("orphan relink");
     tokio::task::spawn_blocking(move || {
         let _context = crate::log::enter_context(context);
+        let _repo = crate::diagnostics::in_repo(repo_state.uuid());
         repo_state.tasks.mark_running(task_id);
         let progress = |phase: &str, done: Option<u64>, total: Option<u64>| {
             crate::tasks::log_step(phase);

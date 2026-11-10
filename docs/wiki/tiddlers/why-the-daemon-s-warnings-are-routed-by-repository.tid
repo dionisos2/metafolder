@@ -2,7 +2,7 @@ title: Why the daemon's warnings are routed by repository
 tags: [[Connection to the daemon]]
 kind: rationale
 audience: dev
-summary: A flush on one repository has no business in the message log of another; a warning about a repository nobody looks at is shown everywhere rather than dropped.
+summary: A flush on one repository has no business in the message log of another, nor in any log when no workspace is on that repository.
 
 Each entry of the daemon's diagnostics feed carries a `repo` field. For a long time
 no emitter filled it, and the GUI appended every line to every workspace, calling
@@ -16,10 +16,11 @@ So the daemon says which repository a line is about — the watcher and the exec
 a failed automatic backup — and the GUI routes by it (`crates/gui/src/diagnostics.rs`:
 `Line::concerns`).
 
-Two rules follow:
+Three rules follow:
 
-* ''A line about a repository no workspace shows is shown everywhere''. An error about a repository nobody is looking at is precisely the one worth seeing; dropping it would hide it.
-* ''A new diagnostic about a repository uses the `_for` variant'' (`diagnostics::warn_for(scope, message, repo)`, and `info_for`, `error_for`). The plain `warn`/`info`/`error` are for what is genuinely about the whole daemon.
+* ''A line about a repository no workspace shows goes nowhere in the GUI'' (user's decision, Nov. 2026). It used to be shown everywhere, on the ground that an error about a repository nobody looks at is the one worth seeing; in practice a loaded repository with no workspace on it — the demonstration one, one borrowed for a sync — filled every message panel with its flushes. The line stays in the daemon's feed (`GET /diagnostics`) and on its stderr (`crates/gui/src/diagnostics.rs`: `recipients`).
+* ''A new diagnostic about a repository uses the `_for` variant'' (`diagnostics::warn_for(scope, message, repo)`, and `info_for`, `error_for`) when the repository is at hand.
+* ''Deep code uses the plain `warn`/`info`/`error`, inside a repository scope.'' The placement walk, a reconcile's directory listing, a metadata parser, the forest's arbitration know no repository, yet run for one. `diagnostics::in_repo(uuid)` returns a guard under which the plain variants of that thread name the repository; it is entered where the daemon starts working for one — `with_repo` (every request on a repository), the detached tasks of `routes/fs.rs`, the executor's flush, the watcher's ingest thread, `RepoState::warm`, `load_config` and `refresh_watches`. A diagnostic outside every scope is daemon-wide. The guard is not `Send`, so it cannot be held across an `.await`. Work moved to a thread of its own must enter the scope again: a thread-local does not follow it.
 
 Filling the field needed no `API_VERSION` bump: it was already in the JSON, always
 `null`; giving it a value changes no shape.

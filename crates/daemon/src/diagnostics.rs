@@ -147,16 +147,54 @@ pub fn record(level: Level, scope: &str, message: impl Into<String>, repo: Optio
     }
 }
 
+// The plain variants are about the repository this thread is working for, if
+// any (see [`in_repo`]): the placement walk, a reconcile, a metadata parser are
+// deep code that knows no repository, yet run on behalf of one. Outside every
+// scope a diagnostic is daemon-wide.
+
 pub fn info(scope: &str, message: impl Into<String>) {
-    record(Level::Info, scope, message, None);
+    record(Level::Info, scope, message, current_repo());
 }
 
 pub fn warn(scope: &str, message: impl Into<String>) {
-    record(Level::Warning, scope, message, None);
+    record(Level::Warning, scope, message, current_repo());
 }
 
 pub fn error(scope: &str, message: impl Into<String>) {
-    record(Level::Error, scope, message, None);
+    record(Level::Error, scope, message, current_repo());
+}
+
+thread_local! {
+    static REPO: std::cell::Cell<Option<Uuid>> = const { std::cell::Cell::new(None) };
+}
+
+fn current_repo() -> Option<String> {
+    REPO.with(|repo| repo.get()).map(|uuid| uuid.as_simple().to_string())
+}
+
+/// Until the guard drops, the plain `info`/`warn`/`error` of this thread are
+/// about `repo`. Entered where the daemon starts working for one repository —
+/// a request on it, its executor's flush, its watcher, its load — so that a
+/// warning from code below names it and the GUI routes it to that repository's
+/// workspaces only (doc "Why the daemon's warnings are routed by repository").
+///
+/// The guard is not `Send`: it cannot be held across an `.await` and leak the
+/// scope onto another task sharing the thread.
+pub fn in_repo(repo: Uuid) -> RepoScope {
+    let outer = REPO.with(|cell| cell.replace(Some(repo)));
+    RepoScope { outer, _not_send: std::marker::PhantomData }
+}
+
+#[must_use = "the scope ends when the guard is dropped"]
+pub struct RepoScope {
+    outer: Option<Uuid>,
+    _not_send: std::marker::PhantomData<*const ()>,
+}
+
+impl Drop for RepoScope {
+    fn drop(&mut self) {
+        REPO.with(|cell| cell.set(self.outer));
+    }
 }
 
 // The `_for` variants carry the repository the diagnostic is about. Readers use
@@ -284,5 +322,43 @@ mod tests {
         record_n(&mut feed, 3);
         assert_eq!(feed.head(), 3);
         assert!(feed.since(feed.head(), 10).entries.is_empty());
+    }
+
+    /// The repository the global feed recorded `message` with.
+    fn recorded_repo(message: &str) -> Option<Option<String>> {
+        read(0, CAPACITY).entries.into_iter().rev().find(|e| e.message == message).map(|e| e.repo)
+    }
+
+    #[test]
+    fn test_a_plain_diagnostic_inside_a_repo_scope_names_that_repo() {
+        // The watcher's placement, a reconcile's walk, a metadata parser: deep
+        // code that knows no repository, run on behalf of one. Without the
+        // scope its warnings looked daemon-wide and reached every workspace.
+        let repo = Uuid::new_v4();
+        let message = format!("scoped {repo}");
+        {
+            let _scope = in_repo(repo);
+            warn("test", message.clone());
+        }
+        assert_eq!(recorded_repo(&message), Some(Some(repo.as_simple().to_string())));
+    }
+
+    #[test]
+    fn test_a_repo_scope_ends_with_its_guard_and_restores_the_outer_one() {
+        let (outer, inner) = (Uuid::new_v4(), Uuid::new_v4());
+        let (in_inner, in_outer, outside) =
+            (format!("inner {inner}"), format!("outer {outer}"), format!("none {inner}"));
+        {
+            let _outer = in_repo(outer);
+            {
+                let _inner = in_repo(inner);
+                info("test", in_inner.clone());
+            }
+            error("test", in_outer.clone());
+        }
+        warn("test", outside.clone());
+        assert_eq!(recorded_repo(&in_inner), Some(Some(inner.as_simple().to_string())));
+        assert_eq!(recorded_repo(&in_outer), Some(Some(outer.as_simple().to_string())));
+        assert_eq!(recorded_repo(&outside), Some(None));
     }
 }

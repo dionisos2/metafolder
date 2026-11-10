@@ -34,6 +34,20 @@ impl Line {
     }
 }
 
+/// The workspaces, as `(id, active repository)`, whose message log `line` goes
+/// to: those it [concerns](Line::concerns). A line about a repository no
+/// workspace is on goes nowhere — a loaded repository nobody looks at (the
+/// demonstration one, one borrowed for a sync) would otherwise fill every
+/// message panel with its flushes (doc "Why the daemon's warnings are routed by
+/// repository"). It is still in the daemon's feed and on its stderr.
+pub fn recipients<'a>(line: &Line, workspaces: &'a [(String, Option<String>)]) -> Vec<&'a str> {
+    workspaces
+        .iter()
+        .filter(|(_, active)| line.concerns(active.as_deref()))
+        .map(|(id, _)| id.as_str())
+        .collect()
+}
+
 /// One page of the feed, turned into the lines to append, plus where to resume.
 ///
 /// `since` is returned unchanged when the page carries no usable cursor, so a
@@ -119,6 +133,22 @@ mod tests {
         let wide = Line { repo: None, text: "x".into() };
         assert!(wide.concerns(Some("aaaa")));
         assert!(wide.concerns(None));
+    }
+
+    #[test]
+    fn test_a_line_about_a_repo_no_workspace_shows_goes_nowhere() {
+        // Decision of the user (Nov. 2026): a repository loaded with no
+        // workspace on it — the demonstration one, one borrowed for a sync —
+        // filled every message panel with its flushes. Its lines stay in the
+        // daemon's feed and stderr; no workspace is about it.
+        let workspaces = [("w1".to_string(), Some("aaaa".to_string())), ("w2".to_string(), None)];
+        let other = Line { repo: Some("bbbb".into()), text: "x".into() };
+        assert!(recipients(&other, &workspaces).is_empty());
+
+        let own = Line { repo: Some("aaaa".into()), text: "x".into() };
+        assert_eq!(recipients(&own, &workspaces), vec!["w1"]);
+        let wide = Line { repo: None, text: "x".into() };
+        assert_eq!(recipients(&wide, &workspaces), vec!["w1", "w2"]);
     }
 
     #[test]

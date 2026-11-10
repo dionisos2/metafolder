@@ -327,6 +327,7 @@ where
     // ends on the one thread that runs it (doc "Slow log").
     let info = REQUEST.try_with(|info| info.clone()).ok();
     tokio::task::spawn_blocking(move || {
+        let _repo = crate::diagnostics::in_repo(repo.uuid());
         let _context = info.as_ref().map(|info| {
             crate::log::enter_context(crate::log::WriteContext::of_request(
                 info.label,

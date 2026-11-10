@@ -249,6 +249,7 @@ pub fn start(repo: &Arc<RepoState>, pinger: ExecutorPinger) -> Result<WatcherHan
                 return; // Repository unloaded.
             };
             let source = source_weak.upgrade();
+            let _scope = crate::diagnostics::in_repo(repo.uuid());
             ingest(&repo, &ingest_root, &ingest_internal, &pinger, source.as_deref(), events);
         }
     });

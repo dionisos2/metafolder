@@ -591,9 +591,10 @@ fn maintain_watches(
         let rules = match repo.watch_rules(&conn) {
             Ok(rules) => rules,
             Err(err) => {
-                crate::diagnostics::warn(
+                crate::diagnostics::warn_for(
                     "watcher",
                     format!("reading the watch rules failed: {err:#}"),
+                    repo.uuid(),
                 );
                 return;
             }
@@ -692,6 +693,7 @@ impl Source {
 
         let cb_root = root.clone();
         let cb_internal = internal_dir.clone();
+        let cb_repo = repo.uuid();
         let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             // Runs on notify's event-loop thread: translate and hand off, never
             // block (see the module documentation).
@@ -702,7 +704,11 @@ impl Source {
                         let _ = tx.send(events); // The ingest thread is gone: unloaded.
                     }
                 }
-                Err(err) => crate::diagnostics::error("watcher", format!("backend error: {err}")),
+                Err(err) => crate::diagnostics::error_for(
+                    "watcher",
+                    format!("backend error: {err}"),
+                    cb_repo,
+                ),
             }
         })
         .context("Failed to create the filesystem watcher")?;

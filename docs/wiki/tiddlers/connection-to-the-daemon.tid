@@ -36,9 +36,9 @@ The `info` level arrives too: it is how each watcher flush says what it applied
 ([[What a flush reports]]) — the answer to ''why did something just happen when I
 did nothing?''. When the feed lost entries before they were read, a line says so.
 
-A line about a repository goes to the workspaces on that repository only; a line
-about none, to every workspace; a line about a repository no workspace shows, to
-every workspace too ([[Why the daemon's warnings are routed by repository]]).
+A line about a repository goes to the workspaces on that repository only, and to none
+when no workspace is on it; a line about none, to every workspace
+([[Why the daemon's warnings are routed by repository]]).
 
 The GUI starts reading from the beginning of the feed, so the first poll brings what
 the daemon said before the GUI was up — why a repository failed to load, say. It

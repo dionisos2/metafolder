@@ -1636,6 +1636,7 @@ pub fn spawn(repo: &Arc<RepoState>, quiet: Duration) -> ExecutorHandle {
                         let Some(repo) = repo.upgrade() else {
                             return; // Repository unloaded.
                         };
+                        let _scope = crate::diagnostics::in_repo(repo.uuid());
                         if let Err(err) = flush_pending(&repo) {
                             crate::diagnostics::error_for(
                                 "executor",

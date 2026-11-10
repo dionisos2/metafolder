@@ -579,6 +579,7 @@ impl RepoState {
     /// or a repository being torn down). `conn` is the already-locked
     /// connection.
     pub fn refresh_watches(&self, conn: &dyn crate::store::Store) -> usize {
+        let _scope = crate::diagnostics::in_repo(self.uuid());
         // The ingest filter reads the published rules: a write that restored
         // or took away a rule without settling must not leave it filtering
         // against the old ones.
@@ -655,9 +656,10 @@ impl RepoState {
         let written = write_watch_frontier(self, &mut conn, &cache, &self.config.root, frontier)
             .and_then(|effects| self.settle(&**conn, &effects));
         if let Err(err) = written {
-            crate::diagnostics::warn(
+            crate::diagnostics::warn_for(
                 "watcher",
                 format!("could not record the watch frontier: {err:#}"),
+                self.uuid(),
             );
         }
     }
@@ -781,6 +783,7 @@ impl RepoState {
     /// offending constraint, instead of surfacing later as a warmup that
     /// happens to have failed on a repository already registered.
     pub fn load_config(&self) -> Result<(), ApiError> {
+        let _scope = crate::diagnostics::in_repo(self.uuid());
         let who = self.name();
         crate::repo::refuse_legacy_config(&self.metafolder_dir, &self.config)
             .map_err(|e| ApiError::bad_request(format!("{e:#}")))?;
@@ -946,6 +949,7 @@ impl RepoState {
     /// `progress` reports `(phase, done, total)` for the load progress bar; it
     /// is a no-op for the synchronous callers (startup auto-load, `init`).
     pub fn warm(self: &Arc<Self>, progress: ProgressFn) -> Result<(), ApiError> {
+        let _scope = crate::diagnostics::in_repo(self.uuid());
         let _ = self.this.set(Arc::downgrade(self));
         self.warmup(progress)?;
         self.activate()?;
