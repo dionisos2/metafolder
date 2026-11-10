@@ -42,6 +42,8 @@ mod schema;
 mod sync;
 mod tree;
 
+pub(crate) use query::resolve_query_uuids;
+
 use self::{
     fs::*, history::*, query::*, records::*, repos::*, revert::*, schema::*, sync::*, tree::*,
 };
@@ -124,6 +126,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/{repo}/tasks/{task}/cancel", post(cancel_task))
         .route("/repos/{repo}/reconcile", post(full_reconcile))
         .route("/repos/{repo}/duplicates/scan", post(duplicates_scan))
+        .route("/repos/{repo}/hash", post(hash_files))
         .route("/repos/{repo}/mounts", get(mounts))
         .route("/repos/{repo}/watch", get(watch_status))
         .route("/repos/{repo}/watch/pause", post(watch_pause))

@@ -103,6 +103,31 @@ enum Command {
         #[command(subcommand)]
         command: Option<DuplicateCommand>,
     },
+    /// Compute the content hashes of the files a query selects
+    ///
+    /// The partial and full hash of each file, with the `stat` stamp they were
+    /// taken under; a stored hash whose stamp still matches is reused. Files
+    /// marked `mf_hash` keep theirs fresh on their own; this computes them for
+    /// any set, now.
+    Hash {
+        /// DSL query selecting the metarecords whose files to hash
+        query: String,
+        /// Treat the query as simplified-language text and expand it first
+        #[arg(short = 's', long = "simplified")]
+        simplified: bool,
+        /// Ignore every stored hash and recompute
+        #[arg(long = "rehash")]
+        rehash: bool,
+        /// Print the raw JSON summary
+        #[arg(long = "json")]
+        json: bool,
+        /// Print the task id and return instead of waiting
+        #[arg(long = "no-wait")]
+        no_wait: bool,
+        /// Milliseconds between task polls
+        #[arg(long = "poll-interval", value_name = "MS")]
+        poll_interval: Option<u64>,
+    },
     /// Mount points: list the repository's removable volumes, or forget one
     ///
     /// A directory that is a mount point is marked with `mfr_mount` by the
@@ -1510,6 +1535,19 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
             MountCommand::Forget { uuid, yes } => commands::mount_forget(ctx, &uuid, yes),
         },
         Command::Duplicate { command } => dispatch_duplicate(ctx, command),
+        Command::Hash { query, simplified, rehash, json, no_wait, poll_interval } => {
+            commands::hash(
+                ctx,
+                &commands::HashArgs {
+                    query: &query,
+                    simplified,
+                    rehash,
+                    raw_json: json,
+                    no_wait,
+                    poll_interval_ms: poll_interval.unwrap_or(ctx.reconcile_poll_interval_ms),
+                },
+            )
+        }
         Command::Orphan { command } => match command.unwrap_or(OrphanCommand::List) {
             OrphanCommand::List => commands::orphan_list(ctx),
             OrphanCommand::Detect => commands::orphan_detect(ctx),

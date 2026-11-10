@@ -38,5 +38,8 @@ granularity on some filesystems and can be set backwards (`touch -t`,
 `rsync --times`, an archive extraction), so a same-second, same-size rewrite
 slips through. `mf duplicate scan --rehash` ignores every stored hash.
 
+<<cmd "mf hash">> writes the same fields under the same rule, for the files a query
+selects ([[Content hashes kept fresh]]).
+
 `mf duplicate clear` leaves the cache alone: it is valid, expensive to rebuild,
 and useful to reconcile and sync on its own.

@@ -11,6 +11,7 @@ pub mod fingerprint;
 pub mod forest;
 pub mod forest_query;
 pub mod fs_meta;
+pub mod hashing;
 pub mod index;
 pub mod interrupt;
 pub mod kvstore;

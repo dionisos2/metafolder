@@ -911,3 +911,35 @@ fn test_a_scan_of_an_unknown_repository_says_so() {
         assert!(out.stderr.contains("Repository not found"), "{args:?}: {}", out.stderr);
     }
 }
+
+// ── mf hash (doc "Content hashes kept fresh") ───────────────────────────────────
+
+#[test]
+fn test_hash_computes_then_reuses_the_selected_files_hashes() {
+    let (repo, _dir) = tracked_repo("hashcli", &[("a.txt", b"alpha"), ("b.txt", b"beta")]);
+
+    let first = mf(&["-u", &repo, "hash", r#"mfr_type = "file""#]);
+    assert_ok(&first);
+    assert!(first.stdout.contains("hashed: 2"), "summary: {}", first.stdout);
+
+    let again = mf(&["-u", &repo, "hash", r#"mfr_type = "file""#]);
+    assert_ok(&again);
+    assert!(again.stdout.contains("hashed: 0"), "summary: {}", again.stdout);
+    assert!(again.stdout.contains("reused: 2"), "summary: {}", again.stdout);
+
+    let rehash = mf(&["-u", &repo, "hash", "--rehash", "--json", r#"mfr_type = "file""#]);
+    assert_ok(&rehash);
+    let json: serde_json::Value = serde_json::from_str(rehash.stdout.trim()).unwrap();
+    assert_eq!(json["hashed"], 2, "json: {json}");
+
+    let a = query_one(&repo, "mfr_size = 5");
+    assert!(field_value_of(&repo, &a, "mfr_full_hash").is_some(), "the hash is stored");
+}
+
+#[test]
+fn test_hash_takes_the_simplified_language() {
+    let (repo, _dir) = tracked_repo("hashsimple", &[("a.txt", b"alpha")]);
+    let out = mf(&["-u", &repo, "hash", "-s", "mfr_type=file"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("hashed: 1"), "summary: {}", out.stdout);
+}

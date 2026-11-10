@@ -193,6 +193,8 @@ fn print_pretty(value: &Json) {
 
 mod duplicates;
 pub use duplicates::*;
+mod hash;
+pub use hash::*;
 mod ignore;
 pub use ignore::*;
 mod orphans;

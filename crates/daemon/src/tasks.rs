@@ -93,6 +93,9 @@ pub enum TaskKind {
     /// and cancellable: hashes are committed in batches, so stopping keeps the
     /// expensive work already done.
     Duplicates,
+    /// Hashing the files a query selects (`POST …/hash`, doc "Content hashes
+    /// kept fresh"). Cancellable, keeping what was computed.
+    Hash,
     Query,
     Flush,
     /// The background half of loading a repository (`RepoState::warm`): its
@@ -123,6 +126,7 @@ impl TaskKind {
         match self {
             TaskKind::Reconcile => "reconcile",
             TaskKind::Duplicates => "duplicates",
+            TaskKind::Hash => "hash",
             TaskKind::Query => "query",
             TaskKind::Flush => "flush",
             TaskKind::Load => "load",

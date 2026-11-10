@@ -704,6 +704,65 @@ pub(super) async fn duplicates_scan(
 }
 
 #[derive(Deserialize)]
+pub(super) struct HashBody {
+    /// The metarecords whose files to hash.
+    query: MetaQuery,
+    /// Ignore every stored hash and recompute.
+    #[serde(default)]
+    rehash: bool,
+}
+
+/// `POST /repos/:repo/hash`: hashes every file the query selects as a
+/// background task (doc "Content hashes kept fresh"). `202 Accepted` with the
+/// task id; the summary (`hashed`, `reused`, `skipped`) is read from
+/// `GET …/tasks/:id`. A malformed query is refused at once (`400`); a
+/// concurrent hash task with `409`.
+pub(super) async fn hash_files(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<HashBody>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    crate::query_validate::validate_query(&body.query)?;
+    crate::query_validate::check_query_size(&body.query)?;
+    let repo_state = state.ready_repo(repo_uuid)?;
+    repo_state.ensure_writable()?;
+    let task_id = repo_state.tasks.start_unique(TaskKind::Hash).ok_or_else(|| {
+        ApiError::conflict("a hash task is already in progress for this repository")
+    })?;
+    let opts = crate::hashing::HashOptions { rehash: body.rehash };
+    let context = task_context("hash");
+    tokio::task::spawn_blocking(move || {
+        let _context = crate::log::enter_context(context);
+        let _repo = crate::diagnostics::in_repo(repo_state.uuid());
+        repo_state.tasks.mark_running(task_id);
+        let progress = |phase: &str, done: Option<u64>, total: Option<u64>| {
+            repo_state.tasks.set_progress(task_id, phase, done, total);
+        };
+        let cancel = || repo_state.tasks.is_cancel_requested(task_id);
+        let outcome = crate::tasks::logged(&repo_state.slowlog, TaskKind::Hash, task_id, || {
+            crate::hashing::hash_query_reported(
+                &repo_state,
+                &body.query,
+                &opts,
+                &crate::tasks::Reporter::new(&progress, &cancel),
+            )
+        });
+        match outcome {
+            Ok(result) => {
+                let value = serde_json::to_value(result).expect("hash result serialization");
+                repo_state.tasks.finish(task_id, Some(value));
+            }
+            Err(_) if cancel() => repo_state.tasks.mark_cancelled(task_id),
+            Err(e) => repo_state.tasks.fail(task_id, &e.message),
+        }
+    });
+
+    Ok((StatusCode::ACCEPTED, Json(json!({"task_id": hex(task_id)}))).into_response())
+}
+
+#[derive(Deserialize)]
 pub(super) struct WatchExceededBody {
     /// Repo-root-relative path of the directory, leading `/`.
     path: String,

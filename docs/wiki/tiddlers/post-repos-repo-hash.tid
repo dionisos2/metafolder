@@ -1,0 +1,26 @@
+title: POST /repos/:repo/hash
+tags: [[HTTP endpoint]] [[File fingerprint]]
+kind: reference
+audience: dev
+summary: Hashes every file a query selects, as a background task; the result is a summary.
+
+Asynchronous, like the duplicate scan: `202 Accepted` with `{"task_id": "<32hex>"}`,
+`400` for a malformed query (refused before any task), `409 Conflict` when a hash
+task is already pending or running for this repository. Follow it through the
+[[Task endpoints]]; it is cancellable, and what was computed before the cancel is
+written.
+
+|!Key |!Default |!Meaning |
+|`query` |required |the metarecords whose files to hash, as `POST /query` takes it |
+|`rehash` |`false` |ignore every stored hash and recompute |
+
+The task's result:
+
+```
+{"hashed": 412, "reused": 5128, "skipped": 3}
+```
+
+`skipped` counts the files that could not be read, or changed while they were. The
+hashes are written with their stamp, and only where they differ from what is stored
+([[mf hash]], [[Content hashes kept fresh]]). Additive on the wire, like duplicate
+detection: no `API_VERSION` bump.

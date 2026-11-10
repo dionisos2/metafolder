@@ -1,0 +1,37 @@
+title: $:/mf/gen/CLI command/mf hash
+catalog: CLI command
+target: mf hash
+summary: Compute the content hashes of the files a query selects
+
+!! Reference
+
+```
+Compute the content hashes of the files a query selects
+
+The partial and full hash of each file, with the `stat` stamp they were taken under; a stored hash whose stamp still matches is reused. Files marked `mf_hash` keep theirs fresh on their own; this computes them for any set, now.
+
+Usage: mf hash [OPTIONS] <QUERY>
+
+Arguments:
+  <QUERY>
+          DSL query selecting the metarecords whose files to hash
+
+Options:
+  -s, --simplified
+          Treat the query as simplified-language text and expand it first
+
+      --rehash
+          Ignore every stored hash and recompute
+
+      --json
+          Print the raw JSON summary
+
+      --no-wait
+          Print the task id and return instead of waiting
+
+      --poll-interval <MS>
+          Milliseconds between task polls
+
+  -h, --help
+          Print help (see a summary with '-h')
+```

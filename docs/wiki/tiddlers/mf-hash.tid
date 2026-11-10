@@ -1,0 +1,20 @@
+title: mf hash
+tags: [[CLI command]] [[File fingerprint]]
+kind: reference
+summary: Compute the content hashes of the files a query selects
+
+Starts a hash task and follows it to the end, printing how many files were hashed,
+reused or skipped. Every ''file'' the query selects gets its partial and full hash
+with the `stat` stamp they were taken under; a directory or a symlink has none, and
+a file under an offline volume is left frozen. A stored hash whose stamp still
+matches the file is reused, unless `--rehash`; a file that changed while it was read
+is skipped rather than given a hash of no state it was in.
+
+```
+mf hash 'mfr_path ->* "/photos"'
+mf hash -s 'mfr_type=file' --rehash
+```
+
+Files marked with <<cmd "mf_hash">> keep their hash fresh on their own; this
+computes hashes for any set, at once ([[Content hashes kept fresh]]). The hashes are
+the ones the duplicate scan reuses ([[The duplicate hash cache]]).

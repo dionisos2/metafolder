@@ -19,6 +19,7 @@ Commands:
   trash       Trash-bin: safely trash a file, or restore/prune (default: list)
   orphan      Orphans: list metarecords whose file is gone, or clear them (default: list)
   duplicate   Duplicates: list the groups of byte-identical files, or scan for them
+  hash        Compute the content hashes of the files a query selects
   mount       Mount points: list the repository's removable volumes, or forget one
   watch       Watcher ingestion: show, pause or resume the recording of filesystem events, and check whether a path is watched
   metarecord  Metarecord operations: `mf metarecord [selector] <verb>`

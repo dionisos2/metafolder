@@ -206,7 +206,7 @@ fn prepare_indexed_query<'a>(
 /// page. Shares [`prepare_indexed_query`] so these writes get the same bitmap
 /// acceleration as reads; an unsupported shape is reported by [`index_gap`],
 /// there being nothing else to ask.
-pub(super) fn resolve_query_uuids(
+pub(crate) fn resolve_query_uuids(
     conn: &dyn crate::store::Store,
     cache: &crate::forest::Forest,
     query: &MetaQuery,
