@@ -9,13 +9,6 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 Every deferred or proposed note, to be gone through one by one: build it, keep
 it deferred, or drop it.
 
-** Unknown occupant of a sync destination
-Agreed with the user (10 November 2026): a copy or a move whose destination
-holds an entry the run does not know — not the old version of the linked
-file, as its record's stamp says — is not started: the operation is skipped
-as impossible and the link left uncommitted. A known old version still goes
-to the trash. Today =place_content= and =relocate= trash any occupant.
-
 ** Rework the linking phase
 The linking phase is to be discussed again as a whole (user, 10 November
 2026). It takes over two points of doc "Sync open questions": records without

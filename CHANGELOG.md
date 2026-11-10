@@ -59,6 +59,12 @@ than breaking them.
   record. The run holds the path's events across the two steps (`POST …/watch/hold`,
   `…/watch/release`); `mf watch status` lists a path a dead run left held, and
   `mf watch release` lets it go (doc "Running a sync").
+- **A sync no longer replaces an entry it does not know.** A copy whose destination
+  holds anything but the version its record last saw (kind, size, mtime, symlink
+  target) — a file rewritten since and not yet seen — is not made, nor is a move whose
+  new name is taken: the operation is skipped, the entry left as it is and the link
+  left for the next plan. A move across file systems now goes through the unfinished
+  copy like any copy (doc "Running a sync").
 - **`make install` and `make install-headless` work on a fresh clone.** npm
   dependencies are installed by `npm ci` at the workspace root, from the root lock.
 - **`make install-headless` no longer requires the GUI toolkit**

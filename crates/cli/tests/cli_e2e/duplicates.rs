@@ -627,6 +627,85 @@ fn test_sync_a_flush_between_trash_and_rename_keeps_the_linked_record() {
     assert_eq!(query_one(&b, "mfr_path:value = \"doc.txt\""), linked, "the same record");
 }
 
+/// Holds (or releases) `path`'s events in `repo`'s watcher: what is written
+/// there meanwhile stays unseen, as by a watcher that has not flushed yet.
+fn watch_hold(repo: &str, what: &str, path: &str) {
+    let daemon = metafolder_cli::client::Client::new(daemon_url());
+    let body = serde_json::json!({"paths": [path]});
+    daemon.request_daemon("POST", &format!("/repos/{repo}/watch/{what}"), Some(&body)).unwrap();
+}
+
+/// A destination rewritten since its record last saw it is not the version
+/// the copy may replace: the copy is not made, the bytes stay, nothing goes
+/// to the trash, and the link is left for the next plan (doc "Running a sync").
+#[test]
+fn test_sync_a_copy_leaves_a_destination_rewritten_unseen() {
+    let (a, _adir) = tracked_repo("unseen_a", &[("doc.txt", b"first")]);
+    let (b, _bdir) = tracked_repo("unseen_b", &[]);
+    let intents = write_intents(
+        "unseen",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
+    sync_pair(&a, &b, &intents, &[]);
+    echo(&b);
+    assert_eq!(link_states(&a, &b), ["in_sync"]);
+
+    std::fs::write(repo_root_of(&a).join("doc.txt"), b"second, longer").unwrap();
+    echo(&a);
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
+    watch_hold(&b, "hold", "/doc.txt");
+    std::fs::write(repo_root_of(&b).join("doc.txt"), b"edited in b").unwrap();
+    let run = mf(&["sync", "run", &a, &b, "--yes"]);
+    watch_hold(&b, "release", "/doc.txt");
+    assert_ok(&run);
+
+    assert!(run.stderr.contains("does not know"), "{}", run.stderr);
+    assert_eq!(std::fs::read(repo_root_of(&b).join("doc.txt")).unwrap(), b"edited in b");
+    let trash = mf(&["-u", &b, "trash", "list"]);
+    assert!(!trash.stdout.contains("sync"), "nothing was trashed: {}", trash.stdout);
+    echo(&b);
+    assert_eq!(link_states(&a, &b), ["conflict"], "both sides changed, as they did");
+}
+
+/// A move whose new name is taken is not made, and the record keeps its
+/// position: whatever holds the name is no version of the moved file.
+#[test]
+fn test_sync_a_move_onto_a_taken_name_is_not_made() {
+    let (a, _adir) = tracked_repo("taken_a", &[("a.txt", b"content")]);
+    let (b, _bdir) = tracked_repo("taken_b", &[]);
+    let intents = write_intents(
+        "taken",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
+    sync_pair(&a, &b, &intents, &[]);
+    echo(&b);
+    let linked = query_one(&b, "mfr_path:value = \"a.txt\"");
+
+    // Renamed on A with its watcher off, the test writing the position itself.
+    let root_a_uuid =
+        mf(&["-u", &a, "metarecord", "-q", "mf_watch = true", "get"]).stdout.trim().to_string();
+    let unwatch = ["-u", &a, "metarecord", "-i", &root_a_uuid, "field", "set"];
+    assert_ok(&mf(&[&unwatch[..], &["mf_watch:bool=false"]].concat()));
+    let xa = query_one(&a, "mfr_path:value = \"a.txt\"");
+    let root_a = repo_root_of(&a);
+    std::fs::rename(root_a.join("a.txt"), root_a.join("c.txt")).unwrap();
+    let position = format!("mfr_path:tree_ref={root_a_uuid}/c.txt");
+    assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "field", "set", &position, "-f"]));
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
+    assert_eq!(plan_ops(&a, &b, "move").len(), 1, "a move to c.txt");
+    watch_hold(&b, "hold", "/c.txt");
+    let root_b = repo_root_of(&b);
+    std::fs::write(root_b.join("c.txt"), b"someone else's").unwrap();
+    let run = mf(&["sync", "run", &a, &b, "--yes"]);
+    watch_hold(&b, "release", "/c.txt");
+    assert_ok(&run);
+
+    assert!(run.stderr.contains("does not know"), "{}", run.stderr);
+    assert_eq!(std::fs::read(root_b.join("a.txt")).unwrap(), b"content");
+    assert_eq!(std::fs::read(root_b.join("c.txt")).unwrap(), b"someone else's");
+    assert_eq!(query_one(&b, "mfr_path:value = \"a.txt\""), linked, "the record stays put");
+}
+
 /// Both sides edit the same file: a content conflict, decided by policy.
 #[test]
 fn test_sync_content_conflict_is_decided_by_policy() {

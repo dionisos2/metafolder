@@ -10,6 +10,79 @@ use crate::trash::{Reason, TrashDir};
 
 use super::SyncError;
 
+/// What a step expects of an entry on disk: its `mfr_*` content stamp, as its
+/// record holds it ([`super::model::stamp`] over [`super::model::CONTENT_STAMP`]).
+pub type Stamp = std::collections::BTreeMap<String, crate::metarecord::Value>;
+
+/// The content stamp of the entry at `path`, read as the daemon reads it
+/// (doc "File metadata fields"): its kind, size, mtime and, for a symlink, its
+/// target — never following a symlink.
+pub fn disk_stamp(path: &Path) -> Result<Stamp, SyncError> {
+    use crate::metarecord::Value;
+    let meta = std::fs::symlink_metadata(path).map_err(|e| op_err("stat", path, e))?;
+    let kind = match kind_of(path)? {
+        Kind::File => "file",
+        Kind::Dir => "dir",
+        Kind::Symlink => "symlink",
+    };
+    let mut stamp = Stamp::new();
+    stamp.insert("mfr_type".into(), Value::String(kind.into()));
+    stamp.insert("mfr_size".into(), Value::Int(meta.len() as i64));
+    if let Ok(mtime) = meta.modified() {
+        let ms = crate::date::ms_from_systemtime(mtime);
+        stamp.insert("mfr_mtime".into(), Value::DateTime(ms));
+    }
+    if kind == "symlink" {
+        let target = std::fs::read_link(path).map_err(|e| op_err("read", path, e))?;
+        let target = Value::String(target.to_string_lossy().into_owned());
+        stamp.insert("mfr_symlink_target".into(), target);
+    }
+    Ok(stamp)
+}
+
+/// Fails unless `dst` is free or holds the version `known` describes — the
+/// one its record last saw, which a step may replace (it goes to the trash).
+/// Anything else there — written since and not yet seen, or the file of
+/// another — is no version of what the step writes: it is left as it is, and
+/// the step not made (doc "Running a sync").
+fn ensure_known(dst: &Path, known: Option<&Stamp>) -> Result<(), SyncError> {
+    if !path_present(dst) {
+        return Ok(());
+    }
+    let is_known = match known {
+        Some(known) => stamp_matches(&disk_stamp(dst)?, known),
+        None => false,
+    };
+    if is_known {
+        return Ok(());
+    }
+    Err(SyncError::Op(format!(
+        "{} holds an entry this run does not know (not the version its record last saw); \
+         left as it is",
+        dst.display()
+    )))
+}
+
+/// Whether what is on disk is the version a record's stamp describes. A
+/// directory is its kind alone: its size and mtime follow its children, each a
+/// record of its own. An mtime is compared to the second, as the wire carries
+/// it (`YYYY-MM-DDTHH:MM:SSZ`).
+fn stamp_matches(disk: &Stamp, known: &Stamp) -> bool {
+    use crate::metarecord::Value;
+    let dir = Value::String("dir".into());
+    if disk.get("mfr_type") == Some(&dir) {
+        return known.get("mfr_type") == Some(&dir);
+    }
+    let to_the_second = |stamp: &Stamp| -> Stamp {
+        let mut stamp = stamp.clone();
+        if let Some(Value::DateTime(ms)) = stamp.get_mut("mfr_mtime") {
+            *ms -= ms.rem_euclid(1000);
+        }
+        stamp
+    };
+    to_the_second(disk) == to_the_second(known)
+}
+
 fn op_err(what: &str, path: &Path, e: impl std::fmt::Display) -> SyncError {
     SyncError::Op(format!("cannot {what} {}: {e}", path.display()))
 }
@@ -119,10 +192,11 @@ pub trait Hold {
 pub fn place_content(
     src: &Path,
     dst: &Path,
+    known: Option<&Stamp>,
     trash: &TrashDir,
     hold: &dyn Hold,
 ) -> Result<(), SyncError> {
-    place_content_with(src, dst, trash, hold, &crate::trash::copy_path)
+    place_content_with(src, dst, known, trash, hold, &crate::trash::copy_path)
 }
 
 /// [`place_content`], copying with `copy` — a seam for the tests, which stop
@@ -136,6 +210,7 @@ pub fn place_content(
 fn place_content_with(
     src: &Path,
     dst: &Path,
+    known: Option<&Stamp>,
     trash: &TrashDir,
     hold: &dyn Hold,
     copy: &dyn Fn(&Path, &Path) -> std::io::Result<()>,
@@ -144,6 +219,7 @@ fn place_content_with(
     if kind == Kind::Dir && path_present(dst) && kind_of(dst)? == Kind::Dir {
         return Ok(());
     }
+    ensure_known(dst, known)?;
     if let Some(parent) = dst.parent() {
         std::fs::create_dir_all(parent).map_err(|e| op_err("create", parent, e))?;
     }
@@ -161,14 +237,20 @@ fn place_content_with(
         return std::fs::rename(&unfinished, dst).map_err(|e| op_err("rename", &unfinished, e));
     }
     hold.hold(dst)?;
-    let replaced = trash_occupant(trash, dst).and_then(|()| {
-        hooks::BETWEEN_TRASH_AND_RENAME.with(|hook| {
-            if let Some(hook) = &*hook.borrow() {
-                hook(dst);
-            }
+    // Checked again: the transfer took time, and what was known before it
+    // may have been rewritten during it.
+    let replaced =
+        ensure_known(dst, known).and_then(|()| trash_occupant(trash, dst)).and_then(|()| {
+            hooks::BETWEEN_TRASH_AND_RENAME.with(|hook| {
+                if let Some(hook) = &*hook.borrow() {
+                    hook(dst);
+                }
+            });
+            std::fs::rename(&unfinished, dst).map_err(|e| op_err("rename", &unfinished, e))
         });
-        std::fs::rename(&unfinished, dst).map_err(|e| op_err("rename", &unfinished, e))
-    });
+    if replaced.is_err() {
+        let _ = remove_unfinished(&unfinished);
+    }
     // Released whatever happened: a path left held keeps its events from
     // ever being applied.
     let released = hold.release(dst);
@@ -205,17 +287,80 @@ fn remove_unfinished(unfinished: &Path) -> Result<(), SyncError> {
     .map_err(|e| op_err("remove", unfinished, e))
 }
 
-/// Moves the entry at `old` to `new` (rename, or copy-then-remove across
-/// filesystems); an entry already at `new` goes to the trash first.
-pub fn relocate(old: &Path, new: &Path, trash: &TrashDir) -> Result<(), SyncError> {
+/// Moves the entry at `old` to `new`, a free name: whatever holds `new` is no
+/// version of the moved entry, so the move is not made (doc "Running a
+/// sync"). Across file systems the move is a copy, written beside `new` like
+/// any copy and renamed onto it once whole; only then is `old` removed.
+pub fn relocate(old: &Path, new: &Path) -> Result<(), SyncError> {
+    relocate_with(old, new, &|o, n| std::fs::rename(o, n), &crate::trash::copy_path)
+}
+
+/// [`relocate`], renaming with `rename` and copying with `copy` — seams for
+/// the tests, which make a rename cross file systems and stop a copy.
+fn relocate_with(
+    old: &Path,
+    new: &Path,
+    rename: &dyn Fn(&Path, &Path) -> std::io::Result<()>,
+    copy: &dyn Fn(&Path, &Path) -> std::io::Result<()>,
+) -> Result<(), SyncError> {
     if old == new {
         return Ok(());
     }
+    ensure_free(Some(old), new)?;
     if let Some(parent) = new.parent() {
         std::fs::create_dir_all(parent).map_err(|e| op_err("create", parent, e))?;
     }
-    trash_occupant(trash, new)?;
-    crate::trash::move_path(old, new).map_err(|e| op_err("move", old, e))
+    match rename(old, new) {
+        Ok(()) => return Ok(()),
+        // EXDEV (18 on Linux): the two names are on different file systems.
+        Err(e) if e.raw_os_error() == Some(18) => {}
+        Err(e) => return Err(op_err("move", old, e)),
+    }
+    let unfinished = unfinished_path(new);
+    remove_unfinished(&unfinished)?;
+    let placed = copy(old, &unfinished)
+        .map_err(|e| op_err("write", new, e))
+        .and_then(|()| ensure_known(new, None))
+        .and_then(|()| {
+            std::fs::rename(&unfinished, new).map_err(|e| op_err("rename", &unfinished, e))
+        });
+    if let Err(e) = placed {
+        let _ = remove_unfinished(&unfinished);
+        return Err(e);
+    }
+    if crate::fsentry::is_real_dir(old) {
+        std::fs::remove_dir_all(old)
+    } else {
+        std::fs::remove_file(old)
+    }
+    .map_err(|e| op_err("remove", old, e))
+}
+
+/// Fails unless `new` is a name the entry at `old` (when it has one) may be
+/// moved to: free, or `old` itself under another spelling — a name differing
+/// only by case, on a file system that ignores it.
+pub fn ensure_free(old: Option<&Path>, new: &Path) -> Result<(), SyncError> {
+    if old.is_some_and(|old| old == new || same_entry(old, new)) {
+        return Ok(());
+    }
+    ensure_known(new, None)
+}
+
+/// Whether two names lead to the same entry, not following a symlink.
+fn same_entry(x: &Path, y: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        match (std::fs::symlink_metadata(x), std::fs::symlink_metadata(y)) {
+            (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+            _ => false,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (x, y);
+        false
+    }
 }
 
 /// Sets `path`'s mode from its `mfr_permissions` form (`"0644"`). Best-effort:
@@ -294,12 +439,13 @@ mod tests {
         let trash = TrashDir::new(d.join("trash"));
         std::fs::write(d.join("f"), b"new").unwrap();
         std::fs::write(d.join("old"), b"old").unwrap();
+        let old = disk_stamp(&d.join("old")).unwrap();
         let rec = Recorder(Default::default());
-        place_content(&d.join("f"), &d.join("old"), &trash, &rec).unwrap();
+        place_content(&d.join("f"), &d.join("old"), Some(&old), &trash, &rec).unwrap();
         assert_eq!(*rec.0.borrow(), ["hold, old", "release, new"]);
 
         let rec = Recorder(Default::default());
-        place_content(&d.join("f"), &d.join("free"), &trash, &rec).unwrap();
+        place_content(&d.join("f"), &d.join("free"), None, &trash, &rec).unwrap();
         assert!(rec.0.borrow().is_empty(), "nothing to replace, nothing to hold");
         std::fs::remove_dir_all(d).ok();
     }
@@ -313,18 +459,19 @@ mod tests {
         std::fs::write(d.join("f"), b"new").unwrap();
         std::os::unix::fs::symlink("somewhere/else", d.join("l")).unwrap();
         std::fs::write(d.join("old"), b"old").unwrap();
+        let old = disk_stamp(&d.join("old")).unwrap();
 
-        place_content(&d.join("f"), &d.join("old"), &trash, &NoHold).unwrap();
+        place_content(&d.join("f"), &d.join("old"), Some(&old), &trash, &NoHold).unwrap();
         assert_eq!(std::fs::read(d.join("old")).unwrap(), b"new");
         assert_eq!(trash.entries().unwrap().len(), 1, "the old bytes are in the trash");
 
-        place_content(&d.join("l"), &d.join("sub/l2"), &trash, &NoHold).unwrap();
+        place_content(&d.join("l"), &d.join("sub/l2"), None, &trash, &NoHold).unwrap();
         assert_eq!(
             std::fs::read_link(d.join("sub/l2")).unwrap(),
             std::path::Path::new("somewhere/else"),
             "a symlink stays a symlink"
         );
-        place_content(&d.join("src"), &d.join("sub/newdir"), &trash, &NoHold).unwrap();
+        place_content(&d.join("src"), &d.join("sub/newdir"), None, &trash, &NoHold).unwrap();
         assert!(d.join("sub/newdir").is_dir(), "an empty directory is made");
         std::fs::remove_dir_all(d).ok();
     }
@@ -348,13 +495,21 @@ mod tests {
         let trash = TrashDir::new(d.join("trash"));
         std::fs::write(d.join("f"), b"the whole new content").unwrap();
         std::fs::write(d.join("old"), b"old").unwrap();
+        let old = disk_stamp(&d.join("old")).unwrap();
 
         let half_then_fail = |_: &Path, to: &Path| -> std::io::Result<()> {
             std::fs::write(to, b"the whole")?;
             Err(std::io::Error::other("stopped"))
         };
-        assert!(place_content_with(&d.join("f"), &d.join("old"), &trash, &NoHold, &half_then_fail)
-            .is_err());
+        assert!(place_content_with(
+            &d.join("f"),
+            &d.join("old"),
+            Some(&old),
+            &trash,
+            &NoHold,
+            &half_then_fail
+        )
+        .is_err());
         assert_eq!(std::fs::read(d.join("old")).unwrap(), b"old", "the destination is untouched");
         assert!(trash.entries().unwrap().is_empty(), "nothing was trashed for a copy not made");
         std::fs::remove_dir_all(d).ok();
@@ -371,11 +526,11 @@ mod tests {
         std::os::unix::fs::symlink("somewhere/else", d.join("l")).unwrap();
 
         std::fs::write(unfinished_path(&d.join("copy")), b"half of an older try").unwrap();
-        place_content(&d.join("f"), &d.join("copy"), &trash, &NoHold).unwrap();
+        place_content(&d.join("f"), &d.join("copy"), None, &trash, &NoHold).unwrap();
         assert_eq!(std::fs::read(d.join("copy")).unwrap(), b"new");
 
         std::os::unix::fs::symlink("stale", unfinished_path(&d.join("link"))).unwrap();
-        place_content(&d.join("l"), &d.join("link"), &trash, &NoHold).unwrap();
+        place_content(&d.join("l"), &d.join("link"), None, &trash, &NoHold).unwrap();
         assert_eq!(std::fs::read_link(d.join("link")).unwrap(), Path::new("somewhere/else"));
 
         let left: Vec<_> = std::fs::read_dir(&d)
@@ -385,6 +540,174 @@ mod tests {
             .collect();
         assert!(left.is_empty(), "no unfinished copy is left: {left:?}");
         assert!(trash.entries().unwrap().is_empty(), "a leftover is not trashed: it is the run's");
+        std::fs::remove_dir_all(d).ok();
+    }
+
+    fn unfinished_in(d: &Path) -> Vec<std::ffi::OsString> {
+        let mut found = Vec::new();
+        for e in std::fs::read_dir(d).unwrap() {
+            let e = e.unwrap();
+            if is_unfinished(&e.file_name()) {
+                found.push(e.file_name());
+            }
+        }
+        found
+    }
+
+    /// A stamp is read as the daemon reads it: kind, size, mtime, and a
+    /// symlink's target.
+    #[cfg(unix)]
+    #[test]
+    fn the_disk_stamp_is_kind_size_mtime_and_target() {
+        use crate::metarecord::Value;
+        let d = dir("stamp");
+        std::fs::write(d.join("f"), b"four").unwrap();
+        let t = std::time::UNIX_EPOCH + std::time::Duration::from_millis(1_000_000_123);
+        std::fs::File::options().write(true).open(d.join("f")).unwrap().set_modified(t).unwrap();
+        let s = disk_stamp(&d.join("f")).unwrap();
+        assert_eq!(s["mfr_type"], Value::String("file".into()));
+        assert_eq!(s["mfr_size"], Value::Int(4));
+        assert_eq!(s["mfr_mtime"], Value::DateTime(1_000_000_123));
+        assert!(!s.contains_key("mfr_symlink_target"));
+        std::os::unix::fs::symlink("some/where", d.join("l")).unwrap();
+        let l = disk_stamp(&d.join("l")).unwrap();
+        assert_eq!(l["mfr_type"], Value::String("symlink".into()));
+        assert_eq!(l["mfr_symlink_target"], Value::String("some/where".into()));
+        std::fs::remove_dir_all(d).ok();
+    }
+
+    /// A record's mtime reaches the run to the second: a file is still the
+    /// version it describes when only the milliseconds differ.
+    #[test]
+    fn an_mtime_is_compared_to_the_second() {
+        use crate::metarecord::Value;
+        let d = dir("second");
+        std::fs::write(d.join("f"), b"four").unwrap();
+        let t = std::time::UNIX_EPOCH + std::time::Duration::from_millis(1_000_000_123);
+        std::fs::File::options().write(true).open(d.join("f")).unwrap().set_modified(t).unwrap();
+        let mut known = disk_stamp(&d.join("f")).unwrap();
+        known.insert("mfr_mtime".into(), Value::DateTime(1_000_000_000));
+        assert!(ensure_known(&d.join("f"), Some(&known)).is_ok());
+        known.insert("mfr_mtime".into(), Value::DateTime(999_999_000));
+        assert!(ensure_known(&d.join("f"), Some(&known)).is_err(), "another second");
+        std::fs::remove_dir_all(d).ok();
+    }
+
+    /// An entry at the destination that is not the version its record knows —
+    /// written since, unseen — is not replaced, and the copy is not even
+    /// started (doc "Running a sync").
+    #[test]
+    fn an_unknown_occupant_is_left_and_the_copy_not_started() {
+        let d = dir("unknown");
+        let trash = TrashDir::new(d.join("trash"));
+        std::fs::write(d.join("f"), b"new").unwrap();
+        std::fs::write(d.join("old"), b"old").unwrap();
+        let known = disk_stamp(&d.join("old")).unwrap();
+        std::fs::write(d.join("old"), b"rewritten, unseen").unwrap();
+
+        let copied = std::cell::Cell::new(false);
+        let copy = |from: &Path, to: &Path| {
+            copied.set(true);
+            crate::trash::copy_path(from, to)
+        };
+        let err =
+            place_content_with(&d.join("f"), &d.join("old"), Some(&known), &trash, &NoHold, &copy)
+                .unwrap_err();
+        assert!(err.message().contains("does not know"), "{}", err.message());
+        assert!(!copied.get(), "no transfer for a copy that cannot land");
+        assert_eq!(std::fs::read(d.join("old")).unwrap(), b"rewritten, unseen");
+        assert!(trash.entries().unwrap().is_empty());
+
+        let err = place_content(&d.join("f"), &d.join("old"), None, &trash, &NoHold).unwrap_err();
+        assert!(err.message().contains("does not know"), "nothing was expected there");
+        assert_eq!(std::fs::read(d.join("old")).unwrap(), b"rewritten, unseen");
+        std::fs::remove_dir_all(d).ok();
+    }
+
+    /// The destination is checked again once the copy is whole: what changed
+    /// there during the transfer is left, and so is nothing of the copy.
+    #[test]
+    fn an_occupant_changed_during_the_copy_is_left() {
+        let d = dir("during");
+        let trash = TrashDir::new(d.join("trash"));
+        std::fs::write(d.join("f"), b"new").unwrap();
+        std::fs::write(d.join("old"), b"old").unwrap();
+        let known = disk_stamp(&d.join("old")).unwrap();
+        let dst = d.join("old");
+        let copy_while_edited = |from: &Path, to: &Path| {
+            std::fs::write(&dst, b"edited during the copy")?;
+            crate::trash::copy_path(from, to)
+        };
+        let err = place_content_with(
+            &d.join("f"),
+            &d.join("old"),
+            Some(&known),
+            &trash,
+            &NoHold,
+            &copy_while_edited,
+        )
+        .unwrap_err();
+        assert!(err.message().contains("does not know"), "{}", err.message());
+        assert_eq!(std::fs::read(d.join("old")).unwrap(), b"edited during the copy");
+        assert!(trash.entries().unwrap().is_empty());
+        assert!(unfinished_in(&d).is_empty(), "the copy is removed");
+        std::fs::remove_dir_all(d).ok();
+    }
+
+    /// A move lands only on a free name: whatever holds it is no version of
+    /// the moved file.
+    #[test]
+    fn a_move_onto_an_occupied_name_is_not_made() {
+        let d = dir("move");
+        std::fs::write(d.join("a"), b"moved").unwrap();
+        std::fs::write(d.join("b"), b"someone else").unwrap();
+        let err = relocate(&d.join("a"), &d.join("b")).unwrap_err();
+        assert!(err.message().contains("does not know"), "{}", err.message());
+        assert_eq!(std::fs::read(d.join("a")).unwrap(), b"moved");
+        assert_eq!(std::fs::read(d.join("b")).unwrap(), b"someone else");
+
+        relocate(&d.join("a"), &d.join("sub/c")).unwrap();
+        assert!(!d.join("a").exists());
+        assert_eq!(std::fs::read(d.join("sub/c")).unwrap(), b"moved");
+        std::fs::remove_dir_all(d).ok();
+    }
+
+    /// Across file systems a move is a copy, written beside the destination
+    /// like any copy: one stopped half-way leaves both names as they were.
+    #[test]
+    fn a_move_across_file_systems_goes_through_the_unfinished_copy() {
+        let d = dir("across");
+        std::fs::write(d.join("a"), b"the whole content").unwrap();
+        let exdev = |_: &Path, _: &Path| Err(std::io::Error::from_raw_os_error(18));
+        let half_then_fail = |_: &Path, to: &Path| -> std::io::Result<()> {
+            std::fs::write(to, b"the whole")?;
+            Err(std::io::Error::other("stopped"))
+        };
+        assert!(relocate_with(&d.join("a"), &d.join("b"), &exdev, &half_then_fail).is_err());
+        assert_eq!(std::fs::read(d.join("a")).unwrap(), b"the whole content");
+        assert!(!d.join("b").exists(), "no truncated file at the destination");
+        assert!(unfinished_in(&d).is_empty());
+
+        let copy_into_unfinished = |from: &Path, to: &Path| {
+            assert!(is_unfinished(to.file_name().unwrap()), "{}", to.display());
+            crate::trash::copy_path(from, to)
+        };
+        relocate_with(&d.join("a"), &d.join("b"), &exdev, &copy_into_unfinished).unwrap();
+        assert!(!d.join("a").exists(), "the source is removed once the copy is in place");
+        assert_eq!(std::fs::read(d.join("b")).unwrap(), b"the whole content");
+        assert!(unfinished_in(&d).is_empty());
+
+        // A name taken during the copy is left as it is, the source too.
+        std::fs::write(d.join("c"), b"again").unwrap();
+        let dst = d.join("taken");
+        let copy_while_taken = |from: &Path, to: &Path| {
+            std::fs::write(&dst, b"arrived meanwhile")?;
+            crate::trash::copy_path(from, to)
+        };
+        assert!(relocate_with(&d.join("c"), &dst, &exdev, &copy_while_taken).is_err());
+        assert_eq!(std::fs::read(&dst).unwrap(), b"arrived meanwhile");
+        assert_eq!(std::fs::read(d.join("c")).unwrap(), b"again");
+        assert!(unfinished_in(&d).is_empty());
         std::fs::remove_dir_all(d).ok();
     }
 }

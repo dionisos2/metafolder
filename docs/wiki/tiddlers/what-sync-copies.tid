@@ -25,7 +25,9 @@ Owner and group (`mfr_uid`, `mfr_gid`) and the birth time stay local: sync never
 changes them, and they are never compared.
 
 ''Nothing is destroyed'': whatever a sync overwrites, replaces or removes on disk
-goes to that repository's trash first, with the reason `sync` ([[Trash]]).
+goes to that repository's trash first, with the reason `sync` ([[Trash]]). What it
+overwrites is only ever the version the record last saw: an entry it does not know
+is never replaced ([[Running a sync]]).
 
 !! Content an outside tool owns
 

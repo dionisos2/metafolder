@@ -39,6 +39,25 @@ reconcile, nor by the scan of a directory that arrived whole —: what a stopped
 under it is the run's own, and the next copy to that destination writes over it. A
 directory needs no such step: making it is one operation.
 
+!! An entry the run does not know
+
+A copy replaces only the version of the file its record last saw: what the
+destination holds must have the record's stamp — kind, size, mtime (to the second, as
+the wire carries it), symlink target; a directory, its kind alone. Anything else —
+bytes rewritten since and not yet seen by the watcher, a file that came meanwhile —
+is no version of what the copy writes, and replacing it would lose it to the trash
+without anyone having asked. The copy is then not made: the destination is checked
+before the transfer, and again once the copy is whole, inside the hold. The operation
+is skipped with the reason, the entry left as it is, the unfinished copy removed, and
+the link left uncommitted — the next plan sees the change, often a conflict.
+
+A move lands only on a free name: whatever holds it is never a version of the moved
+file. The new name is checked before the record's position is written, so a move
+skipped for it leaves the record where its file is; a name differing only by case,
+on a file system that ignores it, is the file itself. Across file systems a move is a
+copy: written beside the new name like any copy, renamed onto it once whole, and only
+then is the old name removed.
+
 !! Versions
 
 The run knows, for each record it touches, the version it expects: the plan's

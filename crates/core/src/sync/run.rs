@@ -24,7 +24,7 @@ use crate::trash::TrashDir;
 
 use super::content;
 use super::lookup::{self, LinkTable, Pair, Translator};
-use super::model::{self, Decision, Side, Snapshot, CONTENT_FIELD};
+use super::model::{self, Decision, Side, Snapshot, CONTENT_FIELD, CONTENT_STAMP};
 use super::plan::{check_schemas_identical, find_repo_by_name};
 use super::{canonical_pair, resolve_pair, SyncCtx as Ctx, SyncError as CliError};
 
@@ -510,6 +510,26 @@ impl<'a> Run<'a> {
             .transpose()
     }
 
+    /// Where a record at `position` (an `mfr_path` value of `side`) would be
+    /// on disk; `None` when its parent has no path.
+    fn path_at(&self, side: Side, position: &Value) -> Result<Option<PathBuf>, CliError> {
+        let Value::TreeRef { parent: Some(parent), name } = position else {
+            return Ok(None);
+        };
+        let repo = self.repo(side);
+        let Some(dir) = lookup::mfr_path_of(self.ctx, repo, *parent)? else {
+            return Ok(None);
+        };
+        let dir = crate::fsentry::join_tree(&self.roots[&repo], &dir).ok_or_else(|| {
+            CliError::Op(format!("{:?} is not a path under the root", dir.display()))
+        })?;
+        if !name.is_component(false) {
+            return Ok(None);
+        }
+        let name = crate::metarecord::TreePath::from_bytes(name.as_bytes().to_vec());
+        Ok(Some(dir.join(name.to_path_buf())))
+    }
+
     fn trash(&self, side: Side) -> &TrashDir {
         &self.trashes[&self.repo(side)]
     }
@@ -692,7 +712,10 @@ impl<'a> Run<'a> {
         }
         let hold =
             WatchHold { ctx: self.ctx, repo: self.repo(to), root: &self.roots[&self.repo(to)] };
-        if let Err(e) = content::place_content(&src, &dst, self.trash(to), &hold) {
+        // What `dst` may hold to be replaced: the version its record last saw
+        // (doc "Running a sync").
+        let known = model::stamp(self.record(op, to), CONTENT_STAMP);
+        if let Err(e) = content::place_content(&src, &dst, Some(&known), self.trash(to), &hold) {
             return Ok(Outcome::Skipped(e.message().to_string()));
         }
         Ok(match self.refresh(op, to)? {
@@ -701,8 +724,8 @@ impl<'a> Run<'a> {
         })
     }
 
-    /// Gives the loser the winner's position: renames its file there (what
-    /// occupies the destination goes to the trash), or — when the winner's
+    /// Gives the loser the winner's position: renames its file there — a free
+    /// name only, a taken one skips the move (doc "Running a sync") —, or — when the winner's
     /// file is gone — sends the loser's to the trash and leaves its record
     /// where the watcher would, orphaned (doc "Orphans"). A loser with no file
     /// gets the winner's content.
@@ -731,6 +754,14 @@ impl<'a> Run<'a> {
         if target == Value::Nothing {
             return self.orphan(op, loser, old.map(|(_, abs)| abs), all);
         }
+        // A taken name is checked before the position is written: the record
+        // then stays where its file is.
+        if let Some(new) = self.path_at(loser, &target)? {
+            let present = old.as_ref().map(|(_, abs)| abs.as_path()).filter(|p| path_present(p));
+            if let Err(e) = content::ensure_free(present, &new) {
+                return Ok(Outcome::Skipped(e.message().to_string()));
+            }
+        }
         if let Some(why) = self.put(op, loser, "mfr_path", &[target])? {
             return Ok(Outcome::Skipped(why));
         }
@@ -738,12 +769,12 @@ impl<'a> Run<'a> {
             return Ok(Outcome::Skipped("the new position has no path".into()));
         };
         let moved = match old.filter(|(_, abs)| path_present(abs)) {
-            Some((_, abs)) => content::relocate(&abs, &new, self.trash(loser)),
+            Some((_, abs)) => content::relocate(&abs, &new),
             None => match self.abs_path(op, winner)? {
                 Some((_, src)) if path_present(&src) => {
                     let repo = self.repo(loser);
                     let hold = WatchHold { ctx: self.ctx, repo, root: &self.roots[&repo] };
-                    content::place_content(&src, &new, self.trash(loser), &hold)
+                    content::place_content(&src, &new, None, self.trash(loser), &hold)
                 }
                 _ => Ok(()),
             },
