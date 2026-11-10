@@ -181,10 +181,22 @@ impl Drop for RepoState {
 }
 
 impl RepoState {
-    /// Absolute path of `.metafolder/internal/` — the only part of the
-    /// repository excluded from tracking (watcher and reconcile).
+    /// Absolute path of `.metafolder/internal/` — the part of the
+    /// repository excluded from tracking (watcher and reconcile, through
+    /// [`Self::untracked`]).
     pub fn internal_dir(&self) -> PathBuf {
         self.metafolder_dir.join(repo::INTERNAL_DIR)
+    }
+
+    /// What the watcher and reconcile never track: [`Self::internal_dir`],
+    /// and for a borrowed copy the remote's `internal/` too, which sits in
+    /// the root it watches (doc "Cross-machine sync").
+    pub fn untracked(&self) -> crate::untracked::Untracked {
+        let own = crate::untracked::Untracked::new(self.internal_dir());
+        match &self.config.borrowed {
+            Some(b) => own.with(b.metafolder.join(repo::INTERNAL_DIR)),
+            None => own,
+        }
     }
 
     /// Builds a `RepoState`, applying the tunable daemon settings (log
@@ -372,6 +384,7 @@ impl RepoState {
             lost_reason: self.lost_message.get().cloned(),
             in_memory: self.residency.get().and_then(|handle| handle.get()),
             ready: self.is_ready(),
+            borrowed_from: self.config.borrowed.as_ref().map(|b| b.metafolder.clone()),
         }
     }
 
@@ -585,7 +598,7 @@ impl RepoState {
             return 0;
         };
         let placement =
-            watcher.refresh(conn, &self.tree(), &self.config.root, &self.internal_dir(), cap);
+            watcher.refresh(conn, &self.tree(), &self.config.root, &self.untracked(), cap);
         if !placement.frontier.is_empty() {
             // Not here: every caller holds the store's lock (`conn` is its
             // guard), and recording is a write that takes it — a deadlock of the
@@ -1259,6 +1272,9 @@ pub struct RepoInfo {
     /// its data endpoints answer `503`, so a client offers to open it only
     /// once this is true.
     pub ready: bool,
+    /// For a borrowed copy, the remote `.metafolder/` it is given back to
+    /// (doc "Cross-machine sync"); `null` otherwise.
+    pub borrowed_from: Option<PathBuf>,
 }
 
 /// A repository unloaded because its root went away: what is still said about
@@ -1586,6 +1602,71 @@ impl AppState {
         Ok((uuid, restored))
     }
 
+    /// Borrows a repository of another machine (`mf repo borrow`, doc
+    /// "Cross-machine sync"): marked there, copied to `req.to`, and the copy
+    /// loaded and warmed. A borrow that cannot load leaves nothing behind.
+    pub fn borrow_repo(&self, req: crate::borrow::BorrowRequest) -> Result<Uuid, ApiError> {
+        let (_, remote, config) = crate::borrow::remote_of(&req)?;
+        // A load of a uuid already loaded answers the one loaded.
+        if self.repos.lock_recover().contains_key(&config.repo_uuid) {
+            return Err(ApiError::conflict(format!(
+                "a repository with the uuid of '{}' is already loaded here",
+                config.name
+            )));
+        }
+        let copy = crate::borrow::borrow(&req)?;
+        match self.load_repo(RepoLocator::Metafolder(copy.clone())) {
+            Ok(uuid) => match self.repo(uuid).and_then(|r| r.warm(&|_, _, _| {})) {
+                Ok(()) => Ok(uuid),
+                Err(e) => {
+                    let _ = self.release(uuid);
+                    crate::borrow::undo(&remote, &copy);
+                    Err(e)
+                }
+            },
+            Err(e) => {
+                crate::borrow::undo(&remote, &copy);
+                Err(e)
+            }
+        }
+    }
+
+    /// Gives a borrowed copy back (`mf repo give-back`, doc "Cross-machine
+    /// sync"): released, sent home, deleted. Refused, and left loaded, when it
+    /// is no copy or its remote is no longer marked as lent to it; loaded back
+    /// when the sending fails. Answers the remote `.metafolder/`.
+    pub fn give_back_repo(&self, repo_uuid: Uuid) -> Result<PathBuf, ApiError> {
+        let repo_state = self.repo(repo_uuid)?;
+        let local = repo_state.metafolder_dir.clone();
+        let Some(borrowed) = repo_state.config.borrowed.clone() else {
+            return Err(ApiError::bad_request(format!(
+                "'{}' is not a borrowed copy",
+                repo_state.name()
+            )));
+        };
+        drop(repo_state);
+        crate::borrow::check_still_borrowed(&local, &borrowed)?;
+        // A sync plan the copy hosts is loaded from inside it, and goes with it.
+        let inside: Vec<Uuid> = self
+            .repos
+            .lock_recover()
+            .iter()
+            .filter(|(uuid, r)| **uuid != repo_uuid && r.metafolder_dir.starts_with(&local))
+            .map(|(uuid, _)| *uuid)
+            .collect();
+        for uuid in inside {
+            self.release(uuid)?;
+        }
+        self.release(repo_uuid)?;
+        match crate::borrow::give_back(&local) {
+            Ok(remote) => Ok(remote),
+            Err(e) => {
+                let _ = self.reload(RepoLocator::Metafolder(local));
+                Err(e.into())
+            }
+        }
+    }
+
     /// Loads a repository back and warms it before it answers.
     fn reload(&self, locator: RepoLocator) -> Result<(), ApiError> {
         let uuid = self.load_repo(locator)?;
@@ -1770,7 +1851,7 @@ mod tests {
             _conn: &dyn crate::store::Store,
             _cache: &Forest,
             _root: &Path,
-            _internal_dir: &Path,
+            _internal_dir: &crate::untracked::Untracked,
             _cap: Option<usize>,
         ) -> Placement {
             let _ = self.entered.lock_recover().send(());
@@ -1787,7 +1868,7 @@ mod tests {
             &self,
             _repo: &RepoState,
             _root: &Path,
-            _internal_dir: &Path,
+            _internal_dir: &crate::untracked::Untracked,
             _events: &[(crate::executor::FsEvent, Option<i64>)],
         ) {
         }

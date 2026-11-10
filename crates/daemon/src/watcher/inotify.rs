@@ -247,7 +247,7 @@ pub fn compute_watched_dirs_timed(
     conn: &dyn crate::store::Store,
     cache: &Forest,
     root: &Path,
-    internal_dir: &Path,
+    internal_dir: &crate::untracked::Untracked,
     cap: Option<usize>,
 ) -> WatchPlan {
     let start = std::time::Instant::now();
@@ -323,7 +323,7 @@ pub fn compute_watched_dirs_within(
     conn: &dyn crate::store::Store,
     cache: &Forest,
     root: &Path,
-    internal_dir: &Path,
+    internal_dir: &crate::untracked::Untracked,
     cap: Option<usize>,
     within: &[PathBuf],
 ) -> WatchPlan {
@@ -441,7 +441,7 @@ fn watch_exceeded_overrides(conn: &dyn crate::store::Store, cache: &Forest) -> H
 /// The mutable state of one placement walk, kept together so the descent takes
 /// an argument list a person can read.
 struct Walk<'a> {
-    internal_dir: &'a Path,
+    internal_dir: &'a crate::untracked::Untracked,
     offline: &'a crate::mount::OfflineMounts,
     overrides: &'a HashSet<String>,
     /// Directories never entered: the mount points beneath an uncovered one
@@ -488,7 +488,7 @@ fn collect_from(root: &Path, base: RelPath, excluded: bool, rules: &WatchRules, 
         };
         for entry in crate::reconcile::readable_entries(&abs, entries, "watcher") {
             let path = entry.path();
-            if path == *walk.internal_dir || walk.stop_at.contains(&path) {
+            if walk.internal_dir.is(&path) || walk.stop_at.contains(&path) {
                 continue;
             }
             // `file_type` comes from the dir entry (no stat, no symlink follow):
@@ -542,7 +542,7 @@ fn collect_from(root: &Path, base: RelPath, excluded: bool, rules: &WatchRules, 
 fn maintain_watches(
     repo: &RepoState,
     root: &Path,
-    internal_dir: &Path,
+    internal_dir: &crate::untracked::Untracked,
     source: &Source,
     events: &[(FsEvent, Option<i64>)],
 ) {
@@ -681,7 +681,7 @@ impl Source {
         within: Option<Vec<PathBuf>>,
     ) -> Result<Arc<Self>> {
         let root = repo.config.root.clone();
-        let internal_dir = repo.internal_dir();
+        let internal_dir = repo.untracked();
 
         let inner = Arc::new(Source {
             watcher: Mutex::new(None),
@@ -725,7 +725,7 @@ impl crate::watcher::Source for Source {
         conn: &dyn crate::store::Store,
         cache: &Forest,
         root: &Path,
-        internal_dir: &Path,
+        internal_dir: &crate::untracked::Untracked,
         cap: Option<usize>,
     ) -> Placement {
         let within = self.within.lock_recover().clone();
@@ -787,7 +787,7 @@ impl crate::watcher::Source for Source {
         &self,
         repo: &RepoState,
         root: &Path,
-        internal_dir: &Path,
+        internal_dir: &crate::untracked::Untracked,
         events: &[(FsEvent, Option<i64>)],
     ) {
         maintain_watches(repo, root, internal_dir, self, events);
@@ -851,7 +851,7 @@ mod tests {
                 &self.conn,
                 &self.cache,
                 &self.root,
-                &internal,
+                &internal.clone().into(),
                 None,
                 &within,
             )
@@ -861,7 +861,13 @@ mod tests {
         fn plan(&mut self, cap: Option<usize>) -> super::WatchPlan {
             let internal = self.internal_dir();
             let root = self.root.clone();
-            compute_watched_dirs_timed(&self.conn, &self.cache, &root, &internal, cap)
+            compute_watched_dirs_timed(
+                &self.conn,
+                &self.cache,
+                &root,
+                &internal.clone().into(),
+                cap,
+            )
         }
 
         /// Gives `rel` (repo-root-relative, leading `/`) a metarecord carrying

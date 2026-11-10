@@ -465,3 +465,38 @@ fn test_daemon_error_goes_to_stderr() {
     assert!(out.stderr.starts_with("error:"), "stderr: {}", out.stderr);
     assert!(out.stdout.is_empty());
 }
+
+/// `mf repo borrow` copies a repository named by its (mounted) root to a new
+/// directory and loads the copy, printing its uuid; `mf repo give-back` sends
+/// it home and prints where. The repository then loads at home again, with
+/// what was written in the copy.
+#[test]
+fn test_repo_borrow_and_give_back() {
+    let (repo, root) = init_repo("borrow");
+    create_metarecord(&repo, &["note:string=home"]);
+    assert_ok(&mf(&["-u", &repo, "repo", "unload"]));
+    let here = temp_dir("borrow_here");
+    let to = here.join("copy");
+    let out = mf(&[
+        "repo",
+        "borrow",
+        root.to_str().unwrap(),
+        "--to",
+        to.to_str().unwrap(),
+        "--name",
+        "borrowed-copy",
+    ]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), repo, "prints the uuid");
+    assert!(out.stderr.contains("mf repo give-back"), "{}", out.stderr);
+    create_metarecord(&repo, &["note:string=away"]);
+
+    let out = mf(&["-n", "borrowed-copy", "repo", "give-back"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains(".metafolder"), "{}", out.stdout);
+    assert!(!to.exists(), "the copy is gone");
+    assert_ok(&mf(&["repo", "load", root.to_str().unwrap()]));
+    let out = mf(&["-u", &repo, "metarecord", "-q", "note IS PRESENT", "get"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.lines().count(), 2, "{}", out.stdout);
+}

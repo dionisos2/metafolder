@@ -365,7 +365,7 @@ pub(super) async fn watch_check(
                 &cache,
                 &rules,
                 &repo_state.config.root,
-                repo_state.internal_dir().as_path(),
+                &repo_state.untracked(),
                 coverage,
                 &rels,
                 &on_disk,

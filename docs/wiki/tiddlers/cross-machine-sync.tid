@@ -1,21 +1,72 @@
 title: Cross-machine sync
 tags: Sync
-kind: reference
-status: deferred
-summary: Syncing with a repository on another machine is not built: both repositories must be loaded in one daemon, and a store may not live on a network filesystem.
+kind: guide
+aliases: borrow borrowing give-back
+summary: To sync with a repository of another machine, mount its files, borrow it — its .metafolder copied here and loaded, the remote locked — sync, then give it back.
 
-Every sync primitive needs both repositories loaded in the same daemon
-([[Sync endpoints]]), and a repository's store is refused on a network filesystem
-([[Storage safety]]): mounting a remote repository over SSHFS and loading it is not
-an option.
+Every sync primitive needs both repositories loaded in one daemon
+([[Sync endpoints]]), and a store is refused on a network filesystem
+([[Storage safety]]): a repository mounted from another machine cannot be loaded
+where it is. It is ''borrowed'' instead: its `.metafolder/` copied to this machine,
+the copy loaded and synced like any repository, then sent back.
 
-The way proposed (September 2026) is to bring the remote repository's store over for
-the sync:
+!! Doing it
 
-# copy the remote `.metafolder/` to the local disk, as an external `.metafolder` whose root is the mount of the remote files — its roots rewritten, its store copied consistently (`mf repo backup`);
-# sync against that local copy, as against any loaded repository;
-# send the synced `.metafolder/` back, replacing the remote one.
+```
+sshfs other:/data/photos /mnt/other-photos          # the remote's files, mounted
+mf repo borrow /mnt/other-photos --to ~/borrowed/photos --name photos@other
+mf sync plan photos photos@other … ; mf sync run …   # as with any pair ([[Syncing two repositories]])
+mf -n photos@other repo give-back
+```
 
-Nothing may write to the remote repository in between, or step 3 loses it: the copy
-would hold a lock on the remote — a marker its daemon refuses to load past, lifted by
-step 3. Neither the commands nor that lock exist.
+* `mf repo borrow ROOT --to DIR` takes the remote's root as mounted here, and `--metafolder` too when its `.metafolder/` is not inside it. `--to` must be a new directory, on a local disk. It prints the repository's uuid.
+* The copy is an external `.metafolder/` ([[Network and special filesystems]]) whose root is the mount: every file the sync reads or writes on that side goes through the mount, and a file it overwrites goes to the copy's trash — across the network, and back with the copy.
+* `--name` loads it under another name: names are unique among loaded repositories, and a repository synced across machines often bears the same on both.
+* `mf repo give-back` (on the copy) unloads it, checks its store, sends it home and deletes it. It prints the remote's `.metafolder/`.
+
+!! What travels
+
+The borrow copies `config.json`, `config/` and `internal/` but for its backups, the
+stores a restore set aside and its sync plans (`backups/`, `pre-restore-*`, `plan-*`),
+which stay at home, and the lock files of each store. The copy writes its own `config.json`: the remote's, its root
+the mount, renamed when asked, and `borrowed` naming the remote `.metafolder/`
+([[Repository layout on disk]]).
+
+The give-back sends ''`internal/` alone'' — the store, the pair stores the repository
+hosts ([[The sync database]]), the trash, the slow log —, never `config.json` nor
+`config/`: the remote keeps its own name, root and configuration. Each entry is written
+beside the remote's under a temporary name (`.returning`), then swapped in; an entry the
+copy no longer has is removed. A sync plan the copy hosts ([[The sync plan]]) is a
+repository loaded from inside it: the give-back unloads it, and does not send it — the
+next `mf sync plan` makes a new one. The mark goes last, so an interrupted give-back leaves
+the remote still marked and the copy still there: giving back again completes it.
+
+The copy never tracks the remote's `internal/`, although it sits inside the root the
+copy watches: it is excluded like the copy's own (`RepoState::untracked`).
+
+!! The lock
+
+While borrowed, the remote holds `internal/borrowed.json` — who borrowed it, when, into
+which copy —, and its own daemon refuses to load it (`409`), saying so. Nothing may write
+to the remote store meanwhile, or the give-back would lose it.
+
+A daemon's `flock` on a store ([[The repository lock]]) cannot be seen across a network
+mount, so a daemon that holds a store also says so in `internal/kv/daemon.holder` — its
+host, pid and since when —, removed when it lets go. A borrow refuses a repository whose
+holder file is there: unload it on its machine first. A crash leaves the file behind;
+`--force` borrows past it, once you know that daemon is gone.
+
+The borrow writes its mark, then reads the holder; a load takes the lock, writes the
+holder, then reads the mark: of a borrow and a load that race, one sees the other. That
+holds as far as the mount shows each write to the other side at once — an `sshfs` mount
+caches attributes for a few seconds, so do not borrow a repository being loaded there.
+
+The give-back is refused (`409`) when the remote's mark no longer names this copy: the
+borrow was broken there, and the remote may have been written since. The copy stays
+loaded.
+
+!! When it goes wrong
+
+* ''The copy is lost'' (its disk, a deletion): the remote stays marked. Delete `internal/borrowed.json` on the remote by hand — the refusal names it —, and what was written in the copy is lost with it. Nothing else changed on the remote: its store is as it was when borrowed.
+* ''The remote's files changed meanwhile'' on its own machine: its daemon was not watching them. Run `mf reconcile` there after the give-back, as after any time unwatched ([[Freezing metadata by not watching]]).
+* ''The copy no longer checks clean'': the give-back sends nothing. Load it, `mf repo reindex` it, and give it back again ([[Checking and reindexing a repository]]).

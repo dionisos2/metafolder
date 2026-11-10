@@ -178,7 +178,7 @@ impl Source {
         let root = std::fs::canonicalize(&repo.config.root).with_context(|| {
             format!("cannot resolve the repository root {:?}", repo.config.root)
         })?;
-        let internal_dir = repo.internal_dir();
+        let internal_dir = repo.untracked();
 
         // The handshake is synchronous: a load that wanted fanotify either
         // knows it is covered, or falls back (or fails) with the reason.
@@ -310,7 +310,7 @@ fn subscribe(socket: &Path, root: &Path) -> Result<(BufReader<UnixStream>, Vec<p
 fn pump(
     reader: BufReader<UnixStream>,
     root: &Path,
-    internal_dir: &Path,
+    internal_dir: &crate::untracked::Untracked,
     repo: &Uuid,
     tx: &Sender<Vec<(FsEvent, Option<i64>)>>,
     on_gaps: &dyn Fn(&[proto::Gap]),
@@ -356,7 +356,11 @@ fn pump(
 /// the daemon's own hard skip (`.metafolder/internal/`, handled by
 /// [`relative`]) — a rename that lands outside it degrades to its one-sided
 /// form, exactly as a move out of the watched tree does.
-fn translate(root: &Path, internal_dir: &Path, event: &Event) -> Vec<(FsEvent, Option<i64>)> {
+fn translate(
+    root: &Path,
+    internal_dir: &crate::untracked::Untracked,
+    event: &Event,
+) -> Vec<(FsEvent, Option<i64>)> {
     let rel = |p: &proto::WirePath| relative(root, internal_dir, p.as_path());
     match event {
         Event::Create { path } => {
@@ -400,7 +404,7 @@ impl crate::watcher::Source for Source {
         conn: &dyn crate::store::Store,
         cache: &Forest,
         root: &Path,
-        internal_dir: &Path,
+        internal_dir: &crate::untracked::Untracked,
         cap: Option<usize>,
     ) -> Placement {
         // Coverage is the kernel's: one mark per filesystem holds the tree,
@@ -440,7 +444,7 @@ impl crate::watcher::Source for Source {
         &self,
         repo: &RepoState,
         root: &Path,
-        internal_dir: &Path,
+        internal_dir: &crate::untracked::Untracked,
         events: &[(FsEvent, Option<i64>)],
     ) {
         // Coverage does not follow the tree's shape; the watches inside the
@@ -525,7 +529,7 @@ mod tests {
             let root = root.clone();
             let internal = internal.clone();
             std::thread::spawn(move || {
-                pump(reader, &root, &internal, &Uuid::nil(), &tx, &|_| {});
+                pump(reader, &root, &internal.clone().into(), &Uuid::nil(), &tx, &|_| {});
             });
         }
         let mut out = Vec::new();

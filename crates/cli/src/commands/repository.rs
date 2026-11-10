@@ -237,6 +237,41 @@ pub fn restore_repo(
     Ok(0)
 }
 
+/// `mf repo borrow ROOT --to DIR [--metafolder DIR] [--name NAME] [--force]`:
+/// prints the uuid of the copy loaded, and on stderr where it is and how it
+/// goes back (doc "Cross-machine sync").
+pub fn borrow_repo(
+    ctx: &Ctx,
+    root: &Path,
+    to: &Path,
+    metafolder: Option<&Path>,
+    name: Option<&str>,
+    force: bool,
+) -> Result<i32, CliError> {
+    let mut body = json!({"root": absolutize(root)?, "to": absolutize(to)?, "force": force});
+    if let Some(dir) = metafolder {
+        body["metafolder"] = json!(absolutize(dir)?);
+    }
+    if let Some(name) = name {
+        body["name"] = json!(name);
+    }
+    let resp = ctx.client.request("POST", "/repos/borrow", &[], Some(&body))?;
+    println!("{}", resp["repo_uuid"].as_str().unwrap_or_default());
+    eprintln!(
+        "borrowed into {}; send it home with `mf repo give-back`",
+        resp["metafolder"].as_str().unwrap_or_default()
+    );
+    Ok(0)
+}
+
+/// `mf repo give-back`: prints the remote `.metafolder/` the copy went back to.
+pub fn give_back_repo(ctx: &Ctx) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let resp = ctx.client.request("POST", &format!("{base}/give-back"), &[], None)?;
+    println!("{}", resp["metafolder"].as_str().unwrap_or_default());
+    Ok(0)
+}
+
 /// `mf repo reindex`.
 pub fn reindex_repo(ctx: &Ctx) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;

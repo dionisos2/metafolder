@@ -15,5 +15,10 @@ cause: another metafolder daemon is using the repository. Waiting would be
 pointless — the lock belongs to a live daemon. A transient holder, such as a child
 process that inherited the descriptor for an instant, is waited out for a second.
 
+While it holds the lock, the daemon also writes `internal/kv/daemon.holder` — its host,
+pid and since when —, removed before the lock is let go. A `flock` is not seen across a
+network mount, and a borrow from another machine reads that file instead
+([[Cross-machine sync]]); a crash leaves it behind, which only a borrow minds.
+
 The lock is released by an unload, or by the process ending. For the tasks not to
 keep it held past an unload, see [[Why background tasks hold a weak reference]].

@@ -1,0 +1,18 @@
+title: $:/mf/gen/CLI command/mf repo give-back
+catalog: CLI command
+target: mf repo give-back
+summary: Send the selected borrowed copy home, and delete it
+
+!! Reference
+
+```
+Send the selected borrowed copy home, and delete it
+
+Its store is checked, then copied back over the remote's (the remote keeps its config.json, configuration and backups), and the mark is lifted. Refused when the remote is no longer marked as lent to this copy. Prints the remote's .metafolder.
+
+Usage: mf repo give-back
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+```

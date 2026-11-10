@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/borrow
+catalog: HTTP endpoint
+target: POST /repos/borrow
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``borrow_repo`` |

@@ -1,0 +1,10 @@
+title: mf repo borrow
+tags: [[CLI command]] Sync
+kind: reference
+summary: Borrow a repository of another machine, through a mount of its files
+
+Copies the `.metafolder/` of a repository mounted from another machine to `--to`, a new
+local directory, marks the remote borrowed, and loads the copy — under `--name` when the
+remote's name is already loaded here. Refused while the remote's own daemon has it
+loaded, unless `--force` overrides a holder file a crash left. `mf repo give-back` sends
+it home ([[Cross-machine sync]]).

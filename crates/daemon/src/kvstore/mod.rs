@@ -218,6 +218,10 @@ pub struct KvStore {
     /// "Holding a repository in memory"): `env` and `t` are then the copy's.
     /// Before `_lock`: the store on disk closes before its lock is let go.
     memory: Option<memory::Memory>,
+    /// Says who holds the store, for a borrow that cannot see the lock across
+    /// a network mount (doc "Cross-machine sync"). Before `_lock`: removed
+    /// before the lock is let go.
+    _holder: crate::borrow::HolderGuard,
     /// Held for the store's lifetime: one daemon per repository.
     _lock: File,
     /// Where the store lives: the free space of its filesystem is the room
@@ -608,6 +612,7 @@ impl KvStore {
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
         }
+        let holder = crate::borrow::HolderGuard::write(dir)?;
         let env = open_env(dir, map_size, durable)?;
         let t = Tables::open(&env)?;
         let (derived, layout) = {
@@ -617,6 +622,7 @@ impl KvStore {
         let mut store = KvStore {
             env,
             t,
+            _holder: holder,
             _lock: lock,
             dir: dir.to_path_buf(),
             reads: Default::default(),

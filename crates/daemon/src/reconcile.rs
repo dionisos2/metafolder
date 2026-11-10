@@ -128,7 +128,7 @@ pub fn reconcile_full_reported(
     let mut result = ReconcileResult::default();
 
     // Step 2 — pure walk: collect eligible paths (no stat), BFS by depth.
-    let internal_dir = repo.internal_dir();
+    let internal_dir = repo.untracked();
     // The rule index (doc "The watch rule index"): the walk's
     // eligibility questions read nothing from the store.
     let rules = repo.watch_rules(writer.store())?;
@@ -558,7 +558,7 @@ pub fn reconcile_metarecord_reported(
     // even though `exists()` follows it to nothing (see the orphan scan above).
     if metafolder_core::fsentry::path_present(&abs_base) {
         paths.push(base_rel.clone()); // The subtree root itself.
-        paths.extend(walk(&root, &repo.internal_dir(), &base_rel, &rules, &offline, reporter)?);
+        paths.extend(walk(&root, &repo.untracked(), &base_rel, &rules, &offline, reporter)?);
     }
     let mut fs_paths = stat_paths(&root, &paths, reporter);
     if reporter.is_cancelled() {
@@ -655,7 +655,7 @@ pub fn reconcile_metarecord_reported(
 #[allow(clippy::too_many_arguments)]
 fn walk(
     root: &Path,
-    internal_dir: &Path,
+    internal_dir: &crate::untracked::Untracked,
     base: &RelPath,
     rules: &WatchRules,
     offline: &crate::mount::OfflineMounts,
@@ -692,7 +692,7 @@ fn walk(
                 // A POSIX name is a byte string, and the daemon tracks such a
                 // file like any other (doc "Tree names").
                 let name = TreeName::from_bytes(file_name_bytes(&entry.file_name()));
-                if entry.path() == internal_dir {
+                if internal_dir.is(&entry.path()) {
                     continue;
                 }
                 let rel = dir.child(name);

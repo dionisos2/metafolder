@@ -12,18 +12,21 @@ summary: What .metafolder/ holds — config.json and its fields, the config/ dir
   gui/history/<zone>   the GUI's input histories (written by the GUI)
   gui/context          the GUI's work context in force, if any (written by the GUI)
   internal/            never tracked
-    kv/                the key-value store (LMDB data.mdb, daemon.lock)
+    kv/                the key-value store (LMDB data.mdb, daemon.lock, daemon.holder)
     trash/             the trash-bin (blobs and their index)
     slow/              the slow-operation log
     backups/           the backups (auto/, manual-<time>/)
+    borrowed.json      while borrowed by another machine ([[Cross-machine sync]])
     …                  the per-pair sync databases, the case probe
 ```
 
 `internal/` is excluded from tracking by absolute path, in the watcher and in
-reconcile alike; everything else in `.metafolder/` is trackable content — the GUI's
+reconcile alike — and, for a borrowed copy, the remote's `internal/` too, inside the root
+it watches; everything else in `.metafolder/` is trackable content — the GUI's
 [[input histories|Input history]] included. The
 store ([[Storage]]) is refused on a network filesystem ([[Storage safety]]). `internal/kv/daemon.lock` is held with
-`flock` for as long as a daemon has the repository loaded.
+`flock` for as long as a daemon has the repository loaded, and `internal/kv/daemon.holder`
+says which daemon ([[The repository lock]]).
 
 !! config.json
 
@@ -37,6 +40,7 @@ store ([[Storage]]) is refused on a network filesystem ([[Storage safety]]). `in
 |`log_retention_watcher_ops` |integer |optional: how many of the watcher's operations the log keeps, overriding the daemon's setting (`0`: all) ([[Automatic retention]]) |
 |`log_retention_user_ops` |integer |optional: how many of every other operation the log keeps, overriding the daemon's setting (`0`: all) |
 |`system` |bool |a repository the daemon uses internally (a sync plan repository): hidden from `GET /repos` unless `?all=true` |
+|`borrowed` |object |optional: a borrowed copy of a repository of another machine — `{"metafolder"}`, the remote `.metafolder/` through this machine's mount, where `mf repo give-back` sends it ([[Cross-machine sync]]) |
 |`storage` |string |the store holding the data: the key-value store. Absent means a SQLite repository from before September 2026, which is refused at load ([[How the storage backend was built]]) |
 
 It is JSON, not TOML, because it is written by the daemon, not by you: it is

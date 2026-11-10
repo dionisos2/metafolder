@@ -409,6 +409,41 @@ pub(super) async fn restore_repo(
     Ok(restored_json(uuid, restored))
 }
 
+/// `POST /repos/borrow {root, metafolder?, to, name?, force?}` — borrows a
+/// repository of another machine through a mount of its files, and loads the
+/// copy (doc "Cross-machine sync").
+pub(super) async fn borrow_repo(
+    State(state): State<Arc<AppState>>,
+    payload: Result<Json<crate::borrow::BorrowRequest>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(body) = payload?;
+    let uuid = tokio::task::spawn_blocking({
+        let state = state.clone();
+        move || state.borrow_repo(body)
+    })
+    .await
+    .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))??;
+    let info = state.repo(uuid)?.info();
+    Ok(Json(json!({
+        "repo_uuid": hex(uuid),
+        "metafolder": info.internal_dir.parent(),
+        "borrowed_from": info.borrowed_from,
+    })))
+}
+
+/// `POST /repos/:repo/give-back` — sends a borrowed copy home and deletes it
+/// (doc "Cross-machine sync").
+pub(super) async fn give_back_repo(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    let remote = tokio::task::spawn_blocking(move || state.give_back_repo(repo_uuid))
+        .await
+        .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))??;
+    Ok(Json(json!({"repo_uuid": hex(repo_uuid), "metafolder": remote})))
+}
+
 #[derive(Deserialize)]
 pub(super) struct LoadBody {
     #[serde(default)]

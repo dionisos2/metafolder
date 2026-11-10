@@ -83,7 +83,7 @@ pub(crate) trait Source: Send + Sync {
         conn: &dyn crate::store::Store,
         cache: &Forest,
         root: &Path,
-        internal_dir: &Path,
+        internal_dir: &crate::untracked::Untracked,
         cap: Option<usize>,
     ) -> Placement;
     /// How many directories are covered right now.
@@ -107,7 +107,7 @@ pub(crate) trait Source: Send + Sync {
         &self,
         repo: &RepoState,
         root: &Path,
-        internal_dir: &Path,
+        internal_dir: &crate::untracked::Untracked,
         events: &[(FsEvent, Option<i64>)],
     );
 }
@@ -207,7 +207,7 @@ impl WatcherHandle {
         conn: &dyn crate::store::Store,
         cache: &Forest,
         root: &Path,
-        internal_dir: &Path,
+        internal_dir: &crate::untracked::Untracked,
         cap: Option<usize>,
     ) -> Placement {
         self.source.refresh(conn, cache, root, internal_dir, cap)
@@ -216,7 +216,7 @@ impl WatcherHandle {
 
 pub fn start(repo: &Arc<RepoState>, pinger: ExecutorPinger) -> Result<WatcherHandle> {
     let root = repo.config.root.clone();
-    let internal_dir = repo.internal_dir();
+    let internal_dir = repo.untracked();
 
     // The ingest thread does everything that can block — the database enqueue
     // and the coverage maintenance for new directories. It ends when the sender
@@ -382,7 +382,7 @@ pub fn explain_watched(
     cache: &Forest,
     rules: &WatchRules,
     root: &Path,
-    internal_dir: &Path,
+    internal_dir: &crate::untracked::Untracked,
     coverage: Coverage<'_>,
     rel_paths: &[RelPath],
     on_disk: &[bool],
@@ -434,7 +434,7 @@ fn explain_watched_one(
     cache: &Forest,
     rules: &WatchRules,
     root: &Path,
-    internal_dir: &Path,
+    internal_dir: &crate::untracked::Untracked,
     coverage: Coverage<'_>,
     rel_path: &RelPath,
     is_dir: bool,
@@ -466,7 +466,7 @@ fn explain_watched_one(
         // directory is (a pattern matched the directory alone, so the walk
         // pruned it and the file beneath can never be reached).
         (WatchedReason::Untracked, None, None)
-    } else if cover_abs.starts_with(internal_dir) {
+    } else if internal_dir.covers(&cover_abs) {
         (WatchedReason::Internal, None, None)
     } else {
         let mounts = offline.get_or_insert_with(|| {
@@ -525,11 +525,11 @@ fn covered_by_tree(
     cache: &Forest,
     rules: &WatchRules,
     root: &Path,
-    internal_dir: &Path,
+    internal_dir: &crate::untracked::Untracked,
     cover: &RelPath,
     offline: &mut Option<crate::mount::OfflineMounts>,
 ) -> bool {
-    if cover.to_abs(root).starts_with(internal_dir) {
+    if internal_dir.covers(&cover.to_abs(root)) {
         return false;
     }
     let cover_shown = cover.display();
@@ -547,8 +547,12 @@ fn covered_by_tree(
 /// each component's exact bytes — a POSIX name need not be UTF-8, and such a
 /// file is watched like any other (doc "Tree names"). None for
 /// paths outside the root, under `.metafolder/internal/`, or for the root.
-fn relative(root: &Path, internal_dir: &Path, abs: &Path) -> Option<RelPath> {
-    if abs.starts_with(internal_dir) {
+fn relative(
+    root: &Path,
+    internal_dir: &crate::untracked::Untracked,
+    abs: &Path,
+) -> Option<RelPath> {
+    if internal_dir.covers(abs) {
         return None;
     }
     let rel = abs.strip_prefix(root).ok()?;
@@ -570,7 +574,7 @@ fn relative(root: &Path, internal_dir: &Path, abs: &Path) -> Option<RelPath> {
 /// locks, no database, no watch calls — it runs on notify's event-loop thread.
 fn translate(
     root: &Path,
-    internal_dir: &Path,
+    internal_dir: &crate::untracked::Untracked,
     event: notify::Event,
 ) -> Vec<(FsEvent, Option<i64>)> {
     use notify::event::{ModifyKind, RenameMode};
@@ -637,7 +641,7 @@ fn translate(
 fn ingest(
     repo: &RepoState,
     root: &Path,
-    internal_dir: &Path,
+    internal_dir: &crate::untracked::Untracked,
     pinger: &ExecutorPinger,
     source: Option<&dyn Source>,
     events: Vec<(FsEvent, Option<i64>)>,
@@ -875,7 +879,7 @@ mod tests {
                 &self.cache,
                 &rules,
                 &self.root,
-                &internal,
+                &internal.clone().into(),
                 coverage,
                 paths,
                 &on_disk,
@@ -915,8 +919,12 @@ mod tests {
         /// build it from what they see.
         fn rel(&self, under_root: &str) -> super::RelPath {
             let internal = self.internal_dir();
-            relative(&self.root, &internal, &self.root.join(under_root.trim_start_matches('/')))
-                .unwrap()
+            relative(
+                &self.root,
+                &internal.clone().into(),
+                &self.root.join(under_root.trim_start_matches('/')),
+            )
+            .unwrap()
         }
     }
 
@@ -1094,7 +1102,7 @@ mod tests {
     fn test_relative_skips_internal_dir_only() {
         let root = Path::new("/repo");
         let internal = Path::new("/repo/.metafolder/internal");
-        let rel = |p: &str| relative(root, internal, Path::new(p)).map(|r| r.display());
+        let rel = |p: &str| relative(root, &internal.into(), Path::new(p)).map(|r| r.display());
 
         assert_eq!(rel("/repo/a.txt").as_deref(), Some("/a.txt"));
         assert_eq!(
@@ -1113,7 +1121,7 @@ mod tests {
         // internal/ directory is excluded, by absolute path.
         let root = Path::new("/");
         let internal = Path::new("/home/.metafolder/internal");
-        let rel = |p: &str| relative(root, internal, Path::new(p)).map(|r| r.display());
+        let rel = |p: &str| relative(root, &internal.into(), Path::new(p)).map(|r| r.display());
 
         assert_eq!(rel("/etc/hosts").as_deref(), Some("/etc/hosts"));
         assert_eq!(

@@ -1,0 +1,34 @@
+title: $:/mf/gen/CLI command/mf repo borrow
+catalog: CLI command
+target: mf repo borrow
+summary: Borrow a repository of another machine, through a mount of its files
+
+!! Reference
+
+```
+Borrow a repository of another machine, through a mount of its files
+
+Its .metafolder is copied to --to, a new local directory, and the copy loaded: sync it with your repositories as with any other. The remote is marked borrowed meanwhile, and its own daemon refuses to load it; one that has it loaded refuses the borrow. `mf repo give-back` sends the copy home. Prints the repository's uuid.
+
+Usage: mf repo borrow [OPTIONS] --to <TO> <ROOT>
+
+Arguments:
+  <ROOT>
+          The remote repository's root, as mounted here (sshfs, NFS…)
+
+Options:
+      --to <TO>
+          A new local directory to hold the copy's .metafolder
+
+      --metafolder <METAFOLDER>
+          The remote's .metafolder, when it is not inside its root
+
+      --name <NAME>
+          The copy's name here (default: the remote's), for a name already loaded
+
+      --force
+          Borrow past a holder file a crash of the remote daemon left
+
+  -h, --help
+          Print help (see a summary with '-h')
+```

@@ -1,4 +1,5 @@
 pub mod backup;
+pub mod borrow;
 pub mod config;
 pub mod daemon_config;
 pub mod diagnostics;
@@ -38,6 +39,7 @@ pub mod state;
 pub mod store;
 pub mod sync;
 pub mod tasks;
+pub mod untracked;
 pub mod version;
 pub mod watch_activity;
 pub mod watcher;

@@ -24,6 +24,10 @@ external one:
 mf repo init /mnt/nas/photos --metafolder ~/metafolder/photos
 ```
 
+A repository whose `.metafolder/` is on another machine — its own, in the standard
+form — cannot be loaded through the mount; to sync with it, borrow it
+([[Cross-machine sync]]).
+
 What a remote root costs:
 
 * ''Watching'' may see nothing: inotify reports only the changes made through this machine's mount, never those made by the server or another client. A `mf reconcile` catches up ([[Reconcile]]).

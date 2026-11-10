@@ -162,7 +162,7 @@ fn the_watcher_places_no_watch_inside_an_offline_mount() {
     let vol = resolve(&repo, "/vol").unwrap();
     declare_mount(&repo, vol, "uuid:1234-ABCD");
 
-    let internal = repo.internal_dir();
+    let internal = repo.untracked();
     let dirs = {
         let conn = repo.conn.lock().unwrap();
         let cache = repo.tree();

@@ -9,10 +9,6 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 Every deferred or proposed note, to be gone through one by one: build it, keep
 it deferred, or drop it.
 
-** Cross-machine sync
-doc "Cross-machine sync": the remote =.metafolder/= brought local for the sync
-and sent back, the remote locked meanwhile (a network filesystem is refused).
-
 ** Sync open questions
 doc "Sync open questions": the batch-size defaults, matching records without a
 position, the content changes a stamp cannot see.

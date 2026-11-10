@@ -150,6 +150,8 @@ pub const SCENARIOS: &[Scenario] = &[
     whole("api.repo.backup", &[(P, "/repos/:repo/backup")]),
     whole("api.repo.restore", &[(P, "/repos/:repo/restore")]),
     whole("api.repo.restore_by_root", &[(P, "/repos/restore")]),
+    // Copies the whole store out and back (doc "Cross-machine sync").
+    whole("api.repo.borrow", &[(P, "/repos/borrow"), (P, "/repos/:repo/give-back")]),
     s("api.repo.reload", &[(P, "/repos/:repo/unload"), (P, "/repos/load")]),
     s("api.repo.init", &[(P, "/repos/init")]),
     // Reads the whole log to find what lies outside the target's subtree.
@@ -558,6 +560,14 @@ pub async fn run(id: &str, c: &Ctx) -> Result<()> {
         }
         "api.repo.restore_by_root" => {
             post(&format!("{url}/repos/restore"), json!({"root": c.dir, "from": c.backup})).await?;
+            wait_serving(base).await?;
+        }
+        "api.repo.borrow" => {
+            let to = c.dir.with_file_name(next_name("bench-borrow-"));
+            post(&format!("{base}/unload"), json!({})).await?;
+            post(&format!("{url}/repos/borrow"), json!({"root": c.dir, "to": to})).await?;
+            post(&format!("{base}/give-back"), json!({})).await?;
+            post(&format!("{url}/repos/load"), json!({"root": c.dir})).await?;
             wait_serving(base).await?;
         }
         "api.repo.reload" => {

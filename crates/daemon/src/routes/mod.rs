@@ -61,6 +61,8 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/{repo}/compact", post(compact_repo))
         .route("/repos/{repo}/memory", post(set_repo_memory))
         .route("/repos/load", post(load_repo))
+        .route("/repos/borrow", post(borrow_repo))
+        .route("/repos/{repo}/give-back", post(give_back_repo))
         .route("/repos/known", get(known_repos))
         .route("/repos/{repo}", get(get_repo).patch(rename_repo))
         .route("/repos/{repo}/unload", post(unload_repo))

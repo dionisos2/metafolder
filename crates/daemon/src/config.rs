@@ -73,6 +73,17 @@ pub struct RepoConfig {
     /// the choice existed — is SQLite, which is refused at load.
     #[serde(default)]
     pub storage: Storage,
+    /// A borrowed copy of a repository of another machine (doc "Cross-machine
+    /// sync"): where it came from, to give it back. Absent for any other.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub borrowed: Option<Borrowed>,
+}
+
+/// Where a borrowed copy came from (`config.json`'s `borrowed`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Borrowed {
+    /// The remote `.metafolder/`, through this machine's mount of it.
+    pub metafolder: PathBuf,
 }
 
 impl RepoConfig {
@@ -90,6 +101,7 @@ impl RepoConfig {
             log_retention_user_ops: None,
             system: false,
             storage: Storage::Kv,
+            borrowed: None,
         }
     }
 

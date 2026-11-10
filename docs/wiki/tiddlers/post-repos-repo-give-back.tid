@@ -1,0 +1,9 @@
+title: POST /repos/:repo/give-back
+tags: [[HTTP endpoint]] [[Repository endpoints]]
+kind: reference
+audience: dev
+summary: Sends a borrowed copy home, unloaded, and deletes it.
+
+[[Cross-machine sync]].
+
+Bodies, answers and errors: [[Repository endpoints]].

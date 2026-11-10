@@ -51,6 +51,16 @@ than breaking them.
   (`check-deps.sh --headless`). It still needs `node`, which renders the documentation.
 
 ### Added
+- **Syncing with a repository of another machine: `mf repo borrow` and `mf repo
+  give-back`.** Through a mount of its files (sshfs…), the remote's `.metafolder/` is
+  copied to a local directory and loaded from there, to sync like any repository; the
+  remote is marked borrowed meanwhile, and its own daemon refuses to load it. The
+  give-back sends the copy's `internal/` home — the remote keeps its name, configuration
+  and backups — and lifts the mark. A daemon now says which process holds a store
+  (`internal/kv/daemon.holder`), so that a borrow refuses a repository loaded on its
+  machine (doc "Cross-machine sync"; `POST /repos/borrow`, `POST /repos/:repo/give-back`,
+  `borrowed_from` in `GET /repos`).
+
 - **A running query shows where it is.** Its task reports the evaluator's phase —
   `preparing`, `filtering`, `scanning <field>`, `comparing <field>`, `paging`,
   `assembling` — instead of a bare `querying`, and a scan checking candidates one by

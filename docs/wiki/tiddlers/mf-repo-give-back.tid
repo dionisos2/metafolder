@@ -1,0 +1,9 @@
+title: mf repo give-back
+tags: [[CLI command]] Sync
+kind: reference
+summary: Send the selected borrowed copy home, and delete it
+
+Checks the copy's store, copies its `internal/` back over the remote's — the remote keeps
+its own `config.json`, configuration and backups —, lifts the mark and deletes the copy.
+Refused, the copy kept and loaded, when the remote is no longer marked as lent to it
+([[Cross-machine sync]]).

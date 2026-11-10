@@ -358,6 +358,9 @@ pub fn load_repository(locator: RepoLocator) -> Result<OpenedRepo> {
         let _p = Phase::begin(&who, "open the key-value store");
         Box::new(crate::kvstore::KvStore::open(&internal_dir.join(KV_DIR))?)
     };
+    // After the store is held, so that its holder file is written: a borrow
+    // marks the repository, then reads the holder (doc "Cross-machine sync").
+    crate::borrow::refuse_if_borrowed(&metafolder_dir)?;
     let case_insensitive = {
         let _p = Phase::begin(&who, "probe case sensitivity");
         probe_case_insensitive(&config.root, &internal_dir)

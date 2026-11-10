@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/:repo/give-back
+catalog: HTTP endpoint
+target: POST /repos/:repo/give-back
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``give_back_repo`` |

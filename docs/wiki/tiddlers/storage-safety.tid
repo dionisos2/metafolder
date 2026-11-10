@@ -39,7 +39,9 @@ LMDB does not support NFS, SMB, SSHFS and the like. A `.metafolder/` on one is
 refused at `init` and at load, its filesystem type read from `/proc/self/mountinfo`:
 NFS, CIFS/SMB, 9p, the cluster filesystems, and FUSE only for its remote kinds (a
 local drive through `fuse.ntfs-3g` is not refused). The files may stay on the share:
-only `.metafolder/` must be local — an external one ([[Network and special filesystems]]).
+only `.metafolder/` must be local — an external one ([[Network and special filesystems]]);
+a repository of another machine is borrowed, its `.metafolder/` copied here
+([[Cross-machine sync]]).
 Where the mount table cannot be read, nothing is refused.
 
 !! Indexes

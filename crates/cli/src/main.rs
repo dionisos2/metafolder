@@ -422,6 +422,37 @@ enum RepoCommand {
         #[arg(long)]
         metafolder: Option<PathBuf>,
     },
+    /// Borrow a repository of another machine, through a mount of its files
+    ///
+    /// Its .metafolder is copied to --to, a new local directory, and the copy
+    /// loaded: sync it with your repositories as with any other. The remote is
+    /// marked borrowed meanwhile, and its own daemon refuses to load it; one
+    /// that has it loaded refuses the borrow. `mf repo give-back` sends the
+    /// copy home. Prints the repository's uuid.
+    Borrow {
+        /// The remote repository's root, as mounted here (sshfs, NFS…)
+        root: PathBuf,
+        /// A new local directory to hold the copy's .metafolder
+        #[arg(long)]
+        to: PathBuf,
+        /// The remote's .metafolder, when it is not inside its root
+        #[arg(long)]
+        metafolder: Option<PathBuf>,
+        /// The copy's name here (default: the remote's), for a name already
+        /// loaded
+        #[arg(long)]
+        name: Option<String>,
+        /// Borrow past a holder file a crash of the remote daemon left
+        #[arg(long)]
+        force: bool,
+    },
+    /// Send the selected borrowed copy home, and delete it
+    ///
+    /// Its store is checked, then copied back over the remote's (the remote
+    /// keeps its config.json, configuration and backups), and the mark is
+    /// lifted. Refused when the remote is no longer marked as lent to this
+    /// copy. Prints the remote's .metafolder.
+    GiveBack,
 }
 
 /// Shared arguments for the `add`/`remove`/`set` ignore verbs.
@@ -1406,6 +1437,15 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
             RepoCommand::Reindex => commands::reindex_repo(ctx),
             RepoCommand::Compact => commands::compact_repo(ctx),
             RepoCommand::Backup { to } => commands::backup_repo(ctx, to.as_deref()),
+            RepoCommand::Borrow { root, to, metafolder, name, force } => commands::borrow_repo(
+                ctx,
+                &root,
+                &to,
+                metafolder.as_deref(),
+                name.as_deref(),
+                force,
+            ),
+            RepoCommand::GiveBack => commands::give_back_repo(ctx),
             RepoCommand::Restore { from, path, metafolder } => {
                 commands::restore_repo(ctx, from.as_deref(), path.as_deref(), metafolder.as_deref())
             }

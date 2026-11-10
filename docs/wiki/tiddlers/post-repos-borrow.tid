@@ -1,0 +1,9 @@
+title: POST /repos/borrow
+tags: [[HTTP endpoint]] [[Repository endpoints]]
+kind: reference
+audience: dev
+summary: Borrows a repository of another machine through a mount of its files, and loads the copy.
+
+[[Cross-machine sync]].
+
+Bodies, answers and errors: [[Repository endpoints]].
