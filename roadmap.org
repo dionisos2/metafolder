@@ -9,9 +9,30 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 Every deferred or proposed note, to be gone through one by one: build it, keep
 it deferred, or drop it.
 
+** Partial copies in a sync run
+A copy writes straight at its final path (=sync/content.rs= →
+=trash::copy_file=): a run stopped in the middle of one leaves a truncated file,
+which the next plan likely sees as a content conflict instead of a copy to
+redo. To confirm by a test, then write beside it and rename over.
+
+** Rework the linking phase
+The linking phase is to be discussed again as a whole (user, 10 November
+2026). It takes over two points of doc "Sync open questions": records without
+a position (exact twin only), and a file moved before its first sync (synced
+as a new file).
+
+** Content hashes kept fresh
+Accepted direction (user, 10 November 2026), design to settle: a command to
+compute =mfr_full_hash= for a set of files; a way to mark files whose hash is
+kept fresh, the watcher recomputing it on =Modify= instead of dropping it and
+reconcile computing it when absent; sync comparing the two sides' hashes when
+both hold a fresh one (snapshot keeping each side's), which also spares the
+byte comparison. Open: how a file is marked (=mfr_*= is reserved); a stored
+hash is trusted on its mtime and size, so without the watcher the same-second
+rewrite stays unseen.
+
 ** Sync open questions
-doc "Sync open questions": the batch-size defaults, matching records without a
-position, the content changes a stamp cannot see.
+doc "Sync open questions": the batch-size defaults (to measure).
 
 ** Configuration open questions
 doc "Configuration open questions": installing without a source checkout, a
