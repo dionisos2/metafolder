@@ -1,0 +1,44 @@
+title: Content hashes kept fresh
+tags: Sync [[File fingerprint]]
+kind: reference
+status: deferred
+summary: Files marked with mf_hash keep their full hash current — recomputed in the background after each change, computed by reconcile or mf hash when missing — and sync compares two fresh hashes instead of the bytes, seeing a same-second rewrite the stamp misses.
+
+Decided (user, 10 November 2026), not built yet. A file's full hash
+(`mfr_full_hash`, [[File fingerprint]]) is today computed only when a duplicate scan
+or an orphan's search needs it, and the watcher's `Modify` drops it. Some files are
+worth more: their hash kept current lets sync tell two contents apart without
+reading them, and see a rewrite their stamp does not show.
+
+!! Marking
+
+`mf_hash` (`bool`) marks the files whose hash is kept fresh. Like `mf_watch` and
+`mf_sync` it is inherited down the `mfr_path` tree: the nearest ancestor that sets
+it wins, so one directory marks everything under it and a subdirectory set to
+`false` opts out. It is an `mf_*` field ([[Reserved fields]]): written without
+`force`, and synced, so the two sides of a link agree on it.
+
+!! Computing it
+
+* `mf hash QUERY` computes the partial and the full hash of each file the query selects, marked or not, reusing a stored hash whose stamp still matches ([[The duplicate hash cache]]); `--rehash` ignores them.
+* The watcher, on a `Modify` of a marked file, clears its hashes as today and hands it to a ''background worker'' — even when its size and mtime did not move, which is the rewrite the stamp misses. The worker hashes outside the write lock and writes the hashes with their stamp only if the file's `stat` did not change while it read; otherwise the next event hands it over again. Until then the file has no hash, and sync compares bytes.
+* Reconcile computes the hash of a marked file that has none, or whose stamp no longer matches.
+
+!! Fresh
+
+A stored full hash is ''fresh'' when its stamp (`mfr_hash_mtime`, `mfr_hash_size`)
+matches the record's `mfr_mtime` and `mfr_size`. Freshness is judged on the record,
+as every stamp of sync is ([[Change detection in sync]]).
+
+!! What sync does with it
+
+* The snapshot keeps, per side, the fresh full hash it agreed on, beside the stamp.
+* A side's content changed when its stamp moved, ''or'' when it holds a fresh hash that differs from the one its side of the snapshot holds.
+* Two sides holding a fresh hash are equal when the hashes are; otherwise the bytes are compared, as today. A snapshot from before this has no hash: the stamp alone decides, then the bytes.
+
+An xxHash3-64 collision between two different contents is the accepted risk of
+[[Why duplicates are not compared byte by byte]].
+
+Without the watcher — a subtree whose watching is off, a daemon that was not running —
+nothing hands the file over: the stored hash stays trusted on its mtime and size,
+and a same-second, same-size rewrite stays unseen, as it does for duplicates.

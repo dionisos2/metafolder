@@ -10,14 +10,10 @@ Every deferred or proposed note, to be gone through one by one: build it, keep
 it deferred, or drop it.
 
 ** Content hashes kept fresh
-Accepted direction (user, 10 November 2026), design to settle: a command to
-compute =mfr_full_hash= for a set of files; a way to mark files whose hash is
-kept fresh, the watcher recomputing it on =Modify= instead of dropping it and
-reconcile computing it when absent; sync comparing the two sides' hashes when
-both hold a fresh one (snapshot keeping each side's), which also spares the
-byte comparison. Open: how a file is marked (=mfr_*= is reserved); a stored
-hash is trusted on its mtime and size, so without the watcher the same-second
-rewrite stays unseen.
+Designed (user, 10 November 2026): doc "Content hashes kept fresh". To build,
+one commit each: =mf_hash= and its inheritance; =mf hash QUERY=; the
+background worker fed by the watcher; reconcile computing missing hashes; sync
+comparing fresh hashes (snapshot keeping each side's).
 
 ** Configuration open questions
 doc "Configuration open questions": installing without a source checkout, a
