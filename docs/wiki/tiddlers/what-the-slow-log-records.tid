@@ -58,6 +58,10 @@ synonym:
 |`write.trash_delete` |deleting the metarecords of a trashing |
 |`validate.schema` |schema validation of a write |
 |`commit` |committing the transaction (the store's `fsync`) |
+|`commit.checks` |inside `commit`: the forest and value-type checks deferred to the end of the write |
+|`commit.log` |inside `commit`: writing the operation log's last rows and trimming it to its retention |
+|`commit.derived` |inside `commit`: writing back the derived index sets the write changed |
+|`commit.store` |inside `commit`: the store's own commit — dirty pages, the free-page list, the `fsync`; for a repository held in memory, the disk's commit then the copy's |
 |`rules.load` |re-reading the watch-rule index after HEAD moved |
 |`disk.stat` |a watch check's stat of each path, before it takes the store handle |
 |`explain` |a watch check's verdicts, under the store handle |

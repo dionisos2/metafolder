@@ -1211,10 +1211,16 @@ impl<'c> Writer<'c> {
 
     /// Flushes the remaining buffered operations, writes the final HEAD and
     /// commits the transaction.
+    ///
+    /// Each part is a phase of its own, inside the caller's `commit`, so a
+    /// commit of seconds says which part took them (doc "What the slow log records").
     pub fn commit(mut self) -> Result<()> {
-        self.check_forest_integrity()?;
-        self.check_deferred_types()?;
-        self.check_deferred_trees()?;
+        metafolder_core::slowlog::timed("commit.checks", || -> Result<()> {
+            self.check_forest_integrity()?;
+            self.check_deferred_types()?;
+            self.check_deferred_trees()
+        })?;
+        let log = metafolder_core::slowlog::phase("commit.log");
         if self.flushed == 0 && self.pending.is_empty() {
             // Nothing was written: drop the label it opened, leave HEAD alone.
             if self.opened_label {
@@ -1230,6 +1236,7 @@ impl<'c> Writer<'c> {
                 self.tx.trim(self.retention, first)?;
             }
         }
+        drop(log);
         self.tx.commit()
     }
 

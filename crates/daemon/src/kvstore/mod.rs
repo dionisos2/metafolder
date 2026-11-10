@@ -1705,12 +1705,17 @@ impl<'e> KvTxn<'e> {
 
     /// Writes what the transaction still holds in memory, and commits.
     fn finish(self) -> Result<()> {
-        self.flush_sets()?;
+        metafolder_core::slowlog::timed("commit.derived", || self.flush_sets())?;
         let (txn, changes) = self.txn.into_inner().into_parts();
-        match (self.memory, changes) {
-            (Some(memory), Some(changes)) => memory.commit(txn, &changes)?,
-            _ => txn.commit().context("Failed to commit write transaction")?,
-        }
+        // The store's own commit: writing the dirty pages, the free-page list,
+        // and the fsync.
+        metafolder_core::slowlog::timed("commit.store", || -> Result<()> {
+            match (self.memory, changes) {
+                (Some(memory), Some(changes)) => memory.commit(txn, &changes)?,
+                _ => txn.commit().context("Failed to commit write transaction")?,
+            }
+            Ok(())
+        })?;
         // Every write commits here: an operation that never did is a read,
         // held to its own threshold in the slow-operation log.
         metafolder_core::slowlog::mark_write();

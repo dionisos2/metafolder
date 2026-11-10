@@ -367,6 +367,13 @@ async fn test_a_field_write_reports_the_phases_of_a_write() {
         .expect("the write must be logged");
     assert!(phase(&entry, "wait:conn").is_some(), "{entry:?}");
     assert!(phase(&entry, "commit").is_some(), "the WAL fsync lands here: {entry:?}");
+    // A commit of seconds has to say which of its parts took them: the
+    // checks, the log, the derived indexes, or the store's own commit — its
+    // fsync, and the free pages it reuses.
+    for part in ["commit.checks", "commit.log", "commit.derived", "commit.store"] {
+        let p = phase(&entry, part).unwrap_or_else(|| panic!("no {part}: {entry:?}"));
+        assert!(p.depth > phase(&entry, "commit").unwrap().depth, "{part} is inside commit");
+    }
     assert_eq!(context(&entry, "updated"), Some("1"));
     assert_eq!(context(&entry, "field"), Some("rating"));
 }
