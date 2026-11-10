@@ -20,15 +20,29 @@ Three rules follow:
 
 * ''A line about a repository no workspace shows goes nowhere in the GUI'' (user's decision, Nov. 2026). It used to be shown everywhere, on the ground that an error about a repository nobody looks at is the one worth seeing; in practice a loaded repository with no workspace on it — the demonstration one, one borrowed for a sync — filled every message panel with its flushes. The line stays in the daemon's feed (`GET /diagnostics`) and on its stderr (`crates/gui/src/diagnostics.rs`: `recipients`).
 * ''A new diagnostic about a repository uses the `_for` variant'' (`diagnostics::warn_for(scope, message, repo)`, and `info_for`, `error_for`) when the repository is at hand.
-* ''Deep code uses the plain `warn`/`info`/`error`, inside a repository scope.'' The placement walk, a reconcile's directory listing, a metadata parser, the forest's arbitration know no repository, yet run for one. `diagnostics::in_repo(uuid)` returns a guard under which the plain variants of that thread name the repository; it is entered where the daemon starts working for one — `with_repo` (every request on a repository), the detached tasks of `routes/fs.rs`, the executor's flush, the watcher's ingest thread, `RepoState::warm`, `load_config` and `refresh_watches`. A diagnostic outside every scope is daemon-wide. The guard is not `Send`, so it cannot be held across an `.await`. Work moved to a thread of its own must enter the scope again: a thread-local does not follow it.
+* ''Deep code uses the plain `warn`/`info`/`error`, inside a repository scope.'' The placement walk, a reconcile's directory listing, a metadata parser, the forest's arbitration know no repository, yet run for one. `diagnostics::in_repo(uuid)` returns a guard under which the plain variants of that thread name the repository; it is entered where the daemon starts working for one — `with_repo` (every request that works on a repository's store), the detached tasks of `routes/fs.rs`, the executor's flush, the watcher's ingest thread, `RepoState::warm`, `load_config` and `refresh_watches`. A diagnostic outside every scope is daemon-wide. The guard is not `Send`, so it cannot be held across an `.await`. Work moved to a thread of its own must enter the scope again: a thread-local does not follow it.
 
-The routes on a repository that do not go through `with_repo` (audited Nov. 2026)
-reach none of that deep code: the watch pause, resume and activity routes, the
-repository's info, rename and tasks touch memory or its configuration only; init,
-load, restore, borrow and give-back load through `warm`; unload stops threads; the
-sync routes read two stores and the pair's database, and resolve no path. A new
-route that reaches a reconcile, a placement, a path resolution or a metadata parser
-off `with_repo` enters `in_repo` itself, as the detached tasks of `routes/fs.rs` do.
+!! Routes on a repository that need no scope
+
+Every route on a repository is about it, but not every one goes through
+`with_repo`. That helper is for work on the repository's store: it refuses
+a repository still loading (`503`), runs the work on a blocking thread, where it may
+wait for the store's lock without holding up the async runtime, times it for the
+slow log, and enters the repository scope. Reading a metarecord
+(`GET /repos/:repo/records/:uuid`) needs all four; a query needs the scope too, since
+a path predicate can make the forest warn that a name denotes two files.
+
+A route that does not touch the store has no use for it, and enters no scope
+because it emits no diagnostic (audited Nov. 2026):
+
+* `watch/pause`, `watch/resume` and the watch activity routes flip a flag or read counters in memory. `watch/pause` even must not wait for the store: it has to answer while the flush it stops holds the lock ([[Pausing the watcher]]).
+* The repository's info, rename and tasks read memory or write its configuration.
+* Init, load, restore, borrow and give-back load the repository through `warm`, which enters the scope itself; unload stops its threads.
+* The sync routes, on a pair of repositories, read two stores and the pair's database, and resolve no path. A diagnostic of theirs would have to name its repository explicitly.
+
+A route that comes to reach a reconcile, a watch placement, a path resolution or a
+metadata parser off `with_repo` enters `in_repo` itself, as the detached tasks of
+`routes/fs.rs` do; one that emits a warning of its own uses `warn_for`.
 
 Filling the field needed no `API_VERSION` bump: it was already in the JSON, always
 `null`; giving it a value changes no shape.
