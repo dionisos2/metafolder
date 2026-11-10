@@ -17,9 +17,9 @@ made on a guess would then sync one over the other. Only equality says nothing i
 lost. The cost is a duplicate when a field was edited on one side before the first
 sync.
 
-A correspondence you want is given a position: a `tree_ref` field holding the same
-path on both sides links the two records whatever their other fields
-([[TreeRef forest]]). Or <<cmd "mf sync link">> names the pair by hand.
+A correspondence you want is given a position: a `tree_ref` or `hierarchy_ref`
+field holding the same path on both sides links the two records whatever their
+other fields ([[TreeRef forest]], [[Hierarchy references]]). Or <<cmd "mf sync link">> names the pair by hand.
 
 !! No equal content
 
