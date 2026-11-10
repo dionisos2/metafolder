@@ -707,10 +707,15 @@ impl<'a> Planner<'a> {
         if both_placed {
             let changed =
                 |rec: &MetaRecord, side, names| model::stamp_changed(rec, &snap, side, names);
+            // Two fresh hashes say whether the contents are equal without
+            // reading them (doc "Content hashes kept fresh").
             let content = model::decide_aspect(
-                changed(&a, Side::A, CONTENT_STAMP),
-                changed(&b, Side::B, CONTENT_STAMP),
-                || self.content_equal(end_a, end_b),
+                model::content_changed(&a, &snap, Side::A),
+                model::content_changed(&b, &snap, Side::B),
+                || match model::equal_by_hash(&a, &b) {
+                    Some(equal) => Ok(equal),
+                    None => self.content_equal(end_a, end_b),
+                },
             )?;
             match content {
                 Decision::Propagate { from } => {

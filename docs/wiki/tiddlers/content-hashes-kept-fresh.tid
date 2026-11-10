@@ -1,12 +1,11 @@
 title: Content hashes kept fresh
 tags: Sync [[File fingerprint]]
 kind: reference
-status: deferred
 summary: Files marked with mf_hash keep their full hash current — recomputed in the background after each change, computed by reconcile or mf hash when missing — and sync compares two fresh hashes instead of the bytes, seeing a same-second rewrite the stamp misses.
 
-Decided (user, 10 November 2026), not built yet. A file's full hash
-(`mfr_full_hash`, [[File fingerprint]]) is today computed only when a duplicate scan
-or an orphan's search needs it, and the watcher's `Modify` drops it. Some files are
+Decided by the user on 10 November 2026. A file's full hash
+(`mfr_full_hash`, [[File fingerprint]]) is otherwise computed only when a duplicate
+scan or an orphan's search needs it, and the watcher's `Modify` drops it. Some files are
 worth more: their hash kept current lets sync tell two contents apart without
 reading them, and see a rewrite their stamp does not show.
 
@@ -36,7 +35,9 @@ as every stamp of sync is ([[Change detection in sync]]).
 
 * The snapshot keeps, per side, the fresh full hash it agreed on, beside the stamp.
 * A side's content changed when its stamp moved, ''or'' when it holds a fresh hash that differs from the one its side of the snapshot holds.
-* Two sides holding a fresh hash are equal when the hashes are; otherwise the bytes are compared, as today. A snapshot from before this has no hash: the stamp alone decides, then the bytes.
+* Two sides holding a fresh hash are equal when the hashes are, and no byte is read; otherwise the bytes are compared. A snapshot from before this has no hash: the stamp alone decides, then the bytes.
+* Freshness is exact because a `datetime` crosses the wire to the millisecond ([[Value types]]): at the second, a hash taken before a rewrite of the same second would pass for the new content's.
+* After a run copies a marked file, the worker writes the destination's hash, which moves its record's version once more: the next plan finds nothing to do for that link but record it again.
 
 An xxHash3-64 collision between two different contents is the accepted risk of
 [[Why duplicates are not compared byte by byte]].

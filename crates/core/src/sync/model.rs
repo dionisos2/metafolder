@@ -66,6 +66,40 @@ pub fn is_synced_field(name: &str) -> bool {
 /// sync").
 pub const CONTENT_STAMP: &[&str] = &["mfr_type", "mfr_size", "mfr_mtime", "mfr_symlink_target"];
 
+/// A file's full content hash (doc "Content hashes kept fresh"): kept by the
+/// snapshot per side when fresh, and compared instead of the bytes.
+pub const FULL_HASH: &str = "mfr_full_hash";
+
+/// The record's full hash when it is *fresh* — stamped with the very stat
+/// (`mfr_mtime`, `mfr_size`) the record holds, to the millisecond —, `None`
+/// otherwise.
+pub fn fresh_hash(rec: &MetaRecord) -> Option<&str> {
+    let Some(Value::String(hash)) = rec.get(FULL_HASH) else { return None };
+    let stamped = |of: &str, by: &str| matches!(rec.get(of), Some(v) if Some(v) == rec.get(by));
+    (stamped("mfr_hash_mtime", "mfr_mtime") && stamped("mfr_hash_size", "mfr_size"))
+        .then_some(hash.as_str())
+}
+
+/// Whether `rec`'s content changed since the snapshot: its stamp moved, or it
+/// holds a fresh hash other than the one its side of the snapshot holds — a
+/// rewrite of the same size within the same mtime, which the stamp misses. A
+/// side with no hash, now or in the snapshot, is judged on its stamp alone.
+pub fn content_changed(rec: &MetaRecord, snap: &Snapshot, side: Side) -> bool {
+    if stamp_changed(rec, snap, side, CONTENT_STAMP) {
+        return true;
+    }
+    match (fresh_hash(rec), snap.side(side).get(FULL_HASH)) {
+        (Some(now), Some(Value::String(then))) => now != then,
+        _ => false,
+    }
+}
+
+/// Whether two records hold the same content, when both hold a fresh hash:
+/// then the hashes say it, and no byte is read. `None` when either has none.
+pub fn equal_by_hash(a: &MetaRecord, b: &MetaRecord) -> Option<bool> {
+    Some(fresh_hash(a)? == fresh_hash(b)?)
+}
+
 /// The stat field that says whether a file's *mode* changed on one side.
 pub const MODE_STAMP: &[&str] = &["mfr_permissions"];
 
@@ -425,6 +459,9 @@ pub fn next_snapshot(
     for (side, rec) in [(Side::A, a), (Side::B, b)] {
         next.sides[side.index()] = stamp(rec, CONTENT_STAMP);
         next.sides[side.index()].extend(stamp(rec, MODE_STAMP));
+        if let Some(hash) = fresh_hash(rec) {
+            next.sides[side.index()].insert(FULL_HASH.into(), Value::String(hash.into()));
+        }
     }
     Ok(next)
 }
@@ -635,6 +672,59 @@ mod tests {
         old.sides[0].insert("mfr_mtime".into(), Value::DateTime(40_250));
         assert!(stamp_changed(&rec_at(40_300), &old, Side::A, CONTENT_STAMP));
         assert!(!stamp_changed(&rec_at(40_250), &old, Side::A, CONTENT_STAMP));
+    }
+
+    /// A file of `size` bytes modified at `mtime`, with a full hash `hash`
+    /// stamped `(hash_mtime, size)`.
+    fn hashed(hash: &str, mtime: i64, hash_mtime: i64) -> MetaRecord {
+        rec(&[
+            ("mfr_type", s("file")),
+            ("mfr_size", Value::Int(3)),
+            ("mfr_mtime", Value::DateTime(mtime)),
+            ("mfr_full_hash", s(hash)),
+            ("mfr_hash_mtime", Value::DateTime(hash_mtime)),
+            ("mfr_hash_size", Value::Int(3)),
+        ])
+    }
+
+    #[test]
+    fn a_hash_is_fresh_only_under_the_stat_its_record_holds() {
+        assert_eq!(fresh_hash(&hashed("aa", 40_250, 40_250)), Some("aa"));
+        assert_eq!(fresh_hash(&hashed("aa", 40_250, 40_100)), None, "taken before the change");
+        let unhashed = rec(&[("mfr_size", Value::Int(3)), ("mfr_mtime", Value::DateTime(1))]);
+        assert_eq!(fresh_hash(&unhashed), None);
+    }
+
+    #[test]
+    fn the_snapshot_keeps_each_sides_fresh_hash() {
+        let a = hashed("aa", 40_250, 40_250);
+        let b = hashed("aa", 50_000, 49_000);
+        let next = next_snapshot(&a, &b, &Snapshot::default(), &no_links()).unwrap();
+        assert_eq!(next.side(Side::A).get(FULL_HASH), Some(&s("aa")));
+        assert_eq!(next.side(Side::B).get(FULL_HASH), None, "a stale hash is not kept");
+    }
+
+    #[test]
+    fn a_fresh_hash_sees_a_change_the_stamp_misses() {
+        let then = hashed("aa", 40_250, 40_250);
+        let old = next_snapshot(&then, &then, &Snapshot::default(), &no_links()).unwrap();
+        assert!(!content_changed(&then, &old, Side::A));
+        // Rewritten within the same millisecond-stamp, its hash taken again.
+        assert!(content_changed(&hashed("bb", 40_250, 40_250), &old, Side::A));
+        // No fresh hash now: the stamp alone decides, and it did not move.
+        assert!(!content_changed(&hashed("bb", 40_250, 40_100), &old, Side::A));
+        // A snapshot from before the hashes were kept: the stamp alone too.
+        let mut legacy = old.clone();
+        legacy.sides[0].remove(FULL_HASH);
+        assert!(!content_changed(&hashed("bb", 40_250, 40_250), &legacy, Side::A));
+    }
+
+    #[test]
+    fn two_fresh_hashes_decide_equality_without_the_bytes() {
+        let a = hashed("aa", 40_250, 40_250);
+        assert_eq!(equal_by_hash(&a, &hashed("aa", 9_000, 9_000)), Some(true));
+        assert_eq!(equal_by_hash(&a, &hashed("bb", 9_000, 9_000)), Some(false));
+        assert_eq!(equal_by_hash(&a, &hashed("aa", 9_000, 8_000)), None, "one is stale");
     }
 
     #[test]

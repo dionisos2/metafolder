@@ -1232,3 +1232,47 @@ fn test_sync_a_directory_gone_holding_content_of_the_other_side_s_own_is_a_confl
         }
     }
 }
+
+/// A rewrite that keeps the size and the mtime is invisible to the stamp; a
+/// fresh hash on both sides sees it, and the run carries it over (doc "Content
+/// hashes kept fresh").
+#[test]
+fn test_sync_run_carries_a_rewrite_only_the_hash_sees() {
+    let (a, _adir) = tracked_repo("unseen_a", &[("doc.txt", b"alpha")]);
+    let (b, _bdir) = tracked_repo("unseen_b", &[("doc.txt", b"alpha")]);
+    for repo in [&a, &b] {
+        let root = mf(&["-u", repo, "metarecord", "-q", "mfr_path:value = \"\"", "get"]);
+        assert_ok(&root);
+        let root = root.stdout.trim().to_string();
+        assert_ok(&mf(&[
+            "-u",
+            repo,
+            "metarecord",
+            "-i",
+            &root,
+            "field",
+            "set",
+            "mf_hash:bool=true",
+        ]));
+        assert_ok(&mf(&["-u", repo, "hash", r#"mfr_type = "file""#]));
+    }
+    let intents = write_intents(
+        "unseen",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
+    assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
+
+    // Same size, mtime put back: the stamp says nothing changed.
+    let path = repo_root_of(&a).join("doc.txt");
+    let when = std::fs::metadata(&path).unwrap().modified().unwrap();
+    std::fs::write(&path, b"omega").unwrap();
+    std::fs::File::options().write(true).open(&path).unwrap().set_modified(when).unwrap();
+    // What the worker does after the watcher's event, done here at once.
+    assert_ok(&mf(&["-u", &a, "hash", "--rehash", r#"mfr_type = "file""#]));
+
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
+    assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
+    let content = std::fs::read(repo_root_of(&b).join("doc.txt")).unwrap();
+    assert_eq!(content, b"omega", "the rewrite reached B");
+}

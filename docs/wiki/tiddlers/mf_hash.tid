@@ -11,5 +11,5 @@ written without `force` and synced like any `mf_*` field, so the two sides of a 
 agree on it.
 
 A marked file is hashed again in the background after each change the watcher sees,
-and reconcile hands over those without a fresh hash; sync's use of the hash is still
-being built.
+and reconcile hands over those without a fresh hash; sync then compares two fresh
+hashes instead of the bytes, and sees a rewrite the stamp misses.

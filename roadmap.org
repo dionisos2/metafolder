@@ -9,12 +9,6 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 Every deferred or proposed note, to be gone through one by one: build it, keep
 it deferred, or drop it.
 
-** Content hashes kept fresh
-Designed (user, 10 November 2026): doc "Content hashes kept fresh". To build,
-one commit each: =mf_hash= and its inheritance; =mf hash QUERY=; the
-background worker fed by the watcher; reconcile computing missing hashes; sync
-comparing fresh hashes (snapshot keeping each side's).
-
 ** Configuration open questions
 doc "Configuration open questions": installing without a source checkout, a
 sync racing an editor, leaving a conflicted merge to your own git tools.
