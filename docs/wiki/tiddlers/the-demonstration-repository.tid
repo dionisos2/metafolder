@@ -31,10 +31,11 @@ reconciled, which brings in the files and their embedded metadata
 music.
 
 Then `scripts/dev/demo/metadata.sh` gives the files what Camille would have: a
-tag hierarchy (`lieu/europe/islande`, `nature/animal/oiseau`,
-`art/peinture/impressionnisme`, `musique/baroque`…), a denied tag (the wallpapers show
-no animal), ratings and comments. Each of its steps writes under a label named as she
-would name it — "Classer les photos de voyage", "Noter les favoris" — so the
+tag hierarchy (`place/europe/iceland`, `nature/animal/bird`,
+`art/painting/impressionism`, `music/baroque`…), a denied tag (the wallpapers show
+no animal), ratings and comments, in English like the README the screenshots
+illustrate (the home's own file names stay French). Each of its steps writes under a
+label named as she would name it — "Sort the travel photos", "Rate the favourites" — so the
 [[log panel]] reads as a story and a step can be undone in front of an audience
 ([[Labels and contexts]]). The commands are given the daemon's port and the
 repository through the environment, never on their command line, which a label
@@ -73,5 +74,5 @@ photos, not necessarily in the same places.
 !! Pitfalls
 
 * The GUI reuses the id of a closed workspace. The empty workspace the GUI starts with is closed once, from the script's own shell, after the first view exists: closed from inside a view's `$(…)`, the variable saying it was closed is lost, and the next view's close takes the new workspace that got the id back.
-* `workspace:send` takes a value as is: quoting it (`"'#=lieu'"`) sends the quotes, which the simplified grammar refuses.
+* `workspace:send` takes a value as is: quoting it (`"'#=place'"`) sends the quotes, which the simplified grammar refuses.
 * The divider between the slots can only be dragged; a drag sent with `xdotool` moves it but also selects text across both panels. The views keep the default halves.

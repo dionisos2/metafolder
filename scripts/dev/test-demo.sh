@@ -42,13 +42,13 @@ assert_not "demo: nothing is written into the source" test -e "$SOURCE/.metafold
 assert_eq "demo: the repository is named after the persona" camille "$DEMO_NAME"
 
 tags=$(df_mf tag list | cut -f1)
-for tag in lieu/europe/islande lieu/asie/japon/kyoto art/peinture/impressionnisme \
-    nature/animal/oiseau musique/romantique film/animation document/facture; do
+for tag in place/europe/iceland place/asia/japan/kyoto art/painting/impressionism \
+    nature/animal/bird music/romantic film/animation document/invoice; do
     assert_contains "demo: the tag $tag exists" "$tags" "$tag"
 done
 
-assert_eq "demo: every photo of Iceland is tagged" 8 "$(count '#=lieu/europe/islande')"
-assert_eq "demo: Kyoto is under Japan" 6 "$(count '##=lieu/asie/japon/kyoto')"
+assert_eq "demo: every photo of Iceland is tagged" 8 "$(count '#=place/europe/iceland')"
+assert_eq "demo: Kyoto is under Japan" 6 "$(count '##=place/asia/japan/kyoto')"
 assert "demo: some files are rated" test "$(count 'rating>=4')" -gt 3
 assert "demo: some files carry a comment" test "$(count 'comment?')" -gt 0
 assert "demo: a wallpaper is denied an animal" test "$(count 'negative_tag #=nature/animal')" -gt 0
@@ -56,7 +56,7 @@ assert "demo: a wallpaper is denied an animal" test "$(count 'negative_tag #=nat
 # `mf log` lists the innermost labels, the commands; the step is the label they
 # are nested in, which `mf log show` names.
 assert_contains "demo: the steps are labelled for the log" \
-    "$(df_mf log show HEAD 2>/dev/null)" "Annoter quelques fichiers"
+    "$(df_mf log show HEAD 2>/dev/null)" "Comment on a few files"
 assert_not "demo: no label shows the throwaway daemon's port" \
     grep -q -- "-p $DF_PORT" <<<"$(df_mf log list --all 2>/dev/null)"
 

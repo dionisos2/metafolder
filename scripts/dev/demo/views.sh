@@ -56,7 +56,7 @@ view_photos() {
     local ws
     ws=$(view_workspace Photos metarecord-list viewer) || return 1
     send "$ws" metarecord-list:mode grid
-    send "$ws" metarecord-list:query '#=lieu'
+    send "$ws" metarecord-list:query '#=place'
 }
 
 # The tag hierarchy walked down to nature/animal, and the files under it with
@@ -77,7 +77,7 @@ view_tags() {
 # it, the files annotated in the last step.
 view_log() {
     local ws
-    ws=$(view_workspace Historique metarecord-list log) || return 1
+    ws=$(view_workspace History metarecord-list log) || return 1
     send "$ws" metarecord-list:columns '["mfr_path:value","comment","rating"]'
     send "$ws" metarecord-list:query 'comment?'
 }

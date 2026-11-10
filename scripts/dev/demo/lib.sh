@@ -9,7 +9,7 @@
 #       watched and reconciled, then scripts/dev/demo/metadata.sh applied.
 #
 # The steps write under labels of their own: the log the demonstration shows
-# names "Suivre le dossier personnel", never the throwaway daemon's command line.
+# names "Track the home folder", never the throwaway daemon's command line.
 
 DEMO_NAME=camille
 _DEMO_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -23,7 +23,7 @@ demo_mf() {
 demo_build_repo() {
     local source=$1 db=$2 label
     demo_mf repo init --name "$DEMO_NAME" --metafolder "$db" "$source" >/dev/null || return 1
-    label=$(demo_mf label begin "Suivre le dossier personnel") || return 1
+    label=$(demo_mf label begin "Track the home folder") || return 1
     METAFOLDER_LABEL=$label demo_mf metarecord -q 'mfr_path = ""' field set mf_watch:bool=true \
         >/dev/null || return 1
     METAFOLDER_LABEL=$label demo_mf reconcile >/dev/null || return 1
