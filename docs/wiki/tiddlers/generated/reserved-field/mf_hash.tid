@@ -1,0 +1,9 @@
+title: $:/mf/gen/Reserved field/mf_hash
+catalog: Reserved field
+target: mf_hash
+summary: Whether the full hash of the files under it is kept fresh.
+
+!! Reference
+
+|!Type |`bool` |
+|!Written by |you; the daemon reads it |

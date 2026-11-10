@@ -331,6 +331,31 @@ fn test_mf_sync_inherits_with_nearest_ancestor_override() {
     assert_eq!(of(&f, x), "internal", "absent everywhere ⇒ internal");
 }
 
+// ── mf_hash inheritance (doc "mf_hash") ─────────────────────────────────────────
+
+#[test]
+fn test_mf_hash_inherits_with_nearest_ancestor_override() {
+    use metafolder_daemon::eligibility::mf_hash_of;
+    let mut f = Fixture::new(true);
+    // /photos keeps its hashes fresh, /photos/cache opts out; /notes.txt is
+    // marked on its own; /other has no marker.
+    let photos = f.entry(f.root, "photos", vec![Field::new("mf_hash", Value::Bool(true))]);
+    let cache = f.entry(photos, "cache", vec![Field::new("mf_hash", Value::Bool(false))]);
+    let trip = f.entry(photos, "trip", vec![]);
+    let img = f.entry(trip, "a.jpg", vec![]);
+    let thumb = f.entry(cache, "t.jpg", vec![]);
+    let notes = f.entry(f.root, "notes.txt", vec![Field::new("mf_hash", Value::Bool(true))]);
+    let other = f.entry(f.root, "other", vec![]);
+    let x = f.entry(other, "x", vec![]);
+
+    let of = |f: &Fixture, uuid| mf_hash_of(&f.conn, uuid).unwrap();
+    assert!(of(&f, photos));
+    assert!(of(&f, img), "inherited from /photos");
+    assert!(!of(&f, thumb), "nearest ancestor wins");
+    assert!(of(&f, notes), "set on the file itself");
+    assert!(!of(&f, x), "absent everywhere ⇒ not marked");
+}
+
 // ── Explain: the reasoned form of the algorithm (doc "Eligibility") ──
 
 #[test]

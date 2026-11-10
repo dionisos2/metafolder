@@ -1,0 +1,14 @@
+title: mf_hash
+tags: [[Reserved field]] [[File fingerprint]]
+kind: reference
+summary: Marks the files whose full hash is kept fresh; inherited down mfr_path, off by default.
+
+`true` marks a file, or everything under a directory, as worth a full hash kept
+current ([[Content hashes kept fresh]]); `false` opts a subtree out again. Like
+`mf_watch` it is inherited down the `mfr_path` tree: the nearest ancestor that sets
+it, the record itself included, wins, and a record with none is not marked. It is
+written without `force` and synced like any `mf_*` field, so the two sides of a link
+agree on it.
+
+The mark is recorded and inherited; what it starts — the hashing after a change,
+reconcile's, sync's use of the hash — is still being built.

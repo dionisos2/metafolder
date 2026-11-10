@@ -35,6 +35,7 @@ pub const RESERVED_FIELDS: &[ReservedField] = &[
         "A type of the metarecord, checked by the schema; one row per type.",
     ),
     field("mf_sync", "string", "Whether metafolder or another tool owns this content during sync."),
+    field("mf_hash", "bool", "Whether the full hash of the files under it is kept fresh."),
     // The fields of a file.
     field("mfr_path", "tree_ref", "A file's position in the filesystem's tree."),
     field("mfr_type", "string", "What the path is: file, dir or symlink."),
@@ -137,7 +138,7 @@ mod tests {
 
     #[test]
     fn the_known_mf_fields_are_writable_and_others_refused() {
-        for name in ["mf_watch", "mf_ignore", "mf_schema", "mf_sync"] {
+        for name in ["mf_watch", "mf_ignore", "mf_schema", "mf_sync", "mf_hash"] {
             assert!(check_writable(name, false).is_ok(), "{name}");
         }
         assert!(check_writable("mf_wacth", false).is_err());

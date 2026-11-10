@@ -12,7 +12,7 @@ reading them, and see a rewrite their stamp does not show.
 
 !! Marking
 
-`mf_hash` (`bool`) marks the files whose hash is kept fresh. Like `mf_watch` and
+<<cmd "mf_hash">> (`bool`) marks the files whose hash is kept fresh. Like `mf_watch` and
 `mf_sync` it is inherited down the `mfr_path` tree: the nearest ancestor that sets
 it wins, so one directory marks everything under it and a subdirectory set to
 `false` opts out. It is an `mf_*` field ([[Reserved fields]]): written without

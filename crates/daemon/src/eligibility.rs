@@ -86,22 +86,45 @@ pub struct EffectiveIgnore {
 /// The effective `mf_sync` mode of a metarecord (doc "mf_sync"): the value of
 /// the nearest ancestor (including the record itself) that defines `mf_sync`,
 /// defaulting to `internal` when none does. `external` means an external tool
-/// owns the content; anything else (incl. absent) is `internal`. Walked up the
-/// record's own `mfr_path` ancestors, never through a path's text (doc "Tree
-/// names").
+/// owns the content; anything else (incl. absent) is `internal`.
 pub fn mf_sync_of(conn: &dyn Store, uuid: uuid::Uuid) -> Result<String> {
+    let nearest = nearest_on_path(conn, uuid, |node| {
+        Ok(Rows::string_fields(conn, node, "mf_sync")?.into_iter().next())
+    })?;
+    Ok(match nearest {
+        Some(v) if v == "external" => v,
+        _ => "internal".to_string(),
+    })
+}
+
+/// Whether a metarecord's full hash is kept fresh (doc "mf_hash"): the
+/// `mf_hash` of the nearest ancestor (including the record itself) that sets
+/// it, `false` when none does.
+pub fn mf_hash_of(conn: &dyn Store, uuid: uuid::Uuid) -> Result<bool> {
+    Ok(nearest_on_path(conn, uuid, |node| Rows::bool_field(conn, node, "mf_hash"))?
+        .unwrap_or(false))
+}
+
+/// The first value `read` finds walking up from `uuid` (itself included) along
+/// its own `mfr_path` ancestors — never through a path's text (doc "Tree
+/// names") — or `None` when no node holds one.
+fn nearest_on_path<T>(
+    conn: &dyn Store,
+    uuid: uuid::Uuid,
+    read: impl Fn(uuid::Uuid) -> Result<Option<T>>,
+) -> Result<Option<T>> {
     let mut cur = Some(uuid);
     for _ in 0..crate::log::MAX_TREE_DEPTH {
         let Some(node) = cur else { break };
-        if let Some(v) = Rows::string_fields(conn, node, "mf_sync")?.into_iter().next() {
-            return Ok(if v == "external" { v } else { "internal".to_string() });
+        if let Some(v) = read(node)? {
+            return Ok(Some(v));
         }
         cur = Rows::rows_named(conn, node, "mfr_path")?
             .into_iter()
             .find_map(|r| r.value.position().map(|(p, _)| p))
             .flatten();
     }
-    Ok("internal".to_string())
+    Ok(None)
 }
 
 /// Evaluates eligibility for `rel_path` (repo-root-relative, `/`-separated,

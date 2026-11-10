@@ -48,6 +48,7 @@ misdetected MIME type, settling an `mfr_path` conflict the watcher cannot.
 |<<cmd "mf_ignore">> |`string` |an ignore pattern, one row per pattern ([[Ignore presets]]) |
 |<<cmd "mf_schema">> |`string` |the metarecord's types, one row per type ([[Schema]]) |
 |<<cmd "mf_sync">> |`string` |`internal` (default) or `external`: whether metafolder or another tool owns this content during sync; inherited down `mfr_path` |
+|<<cmd "mf_hash">> |`bool` |whether the full hash of the files under it is kept fresh — inherited down `mfr_path`, off by default ([[Content hashes kept fresh]]) |
 
 A duplicate group is a metarecord the daemon creates with no file behind it
 (`mf_schema = duplicate_group`), carrying <<cmd "mfr_content_hash">>, <<cmd "mfr_content_size">>,
