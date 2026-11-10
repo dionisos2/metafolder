@@ -47,7 +47,9 @@ A file's bytes and its mode are not fields both sides hold the same way: each si
 has its own size, mtime and mode, and the snapshot keeps them ''per side''. A side's
 content changed when its `mfr_type`, `mfr_size`, `mfr_mtime` or
 `mfr_symlink_target` differs from what that side held at the last sync; its mode,
-when `mfr_permissions` does. A side with no recorded stamp has changed.
+when `mfr_permissions` does. A side with no recorded stamp has changed. An mtime the
+snapshot holds to the whole second — written before a `datetime` crossed the wire to
+the millisecond, November 2026 — matches any millisecond of that second.
 
 Only then are the contents compared: the same kind, and for a file the same bytes
 (sizes first, then read until the first difference); two directories are equal, two

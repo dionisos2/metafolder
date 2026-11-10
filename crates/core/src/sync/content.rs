@@ -65,8 +65,8 @@ fn ensure_known(dst: &Path, known: Option<&Stamp>) -> Result<(), SyncError> {
 
 /// Whether what is on disk is the version a record's stamp describes. A
 /// directory is its kind alone: its size and mtime follow its children, each a
-/// record of its own. An mtime is compared to the second, as the wire carries
-/// it (`YYYY-MM-DDTHH:MM:SSZ`).
+/// record of its own. An mtime is compared to the second: the wire carried no
+/// more until November 2026, and the guard stays as lenient.
 fn stamp_matches(disk: &Stamp, known: &Stamp) -> bool {
     use crate::metarecord::Value;
     let dir = Value::String("dir".into());

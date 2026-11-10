@@ -352,7 +352,20 @@ pub fn stamp_changed(rec: &MetaRecord, snap: &Snapshot, side: Side, names: &[&st
     if !names.iter().any(|n| held.contains_key(*n)) {
         return true;
     }
-    names.iter().any(|n| rec.get(n) != held.get(*n))
+    names.iter().any(|n| !same_stamp_value(rec.get(n), held.get(*n)))
+}
+
+/// Whether a record's stamp value is the one a snapshot holds. A datetime
+/// crossed the wire to the second until November 2026, so a snapshot of then
+/// holds a whole second: it matches any millisecond of that second — the
+/// precision it was taken with. One written since compares exactly.
+fn same_stamp_value(now: Option<&Value>, held: Option<&Value>) -> bool {
+    match (now, held) {
+        (Some(Value::DateTime(now)), Some(Value::DateTime(held))) if held.rem_euclid(1000) == 0 => {
+            now.div_euclid(1000) == held.div_euclid(1000)
+        }
+        _ => now == held,
+    }
 }
 
 /// The three-way decision for an aspect sync does not equalize field by field
@@ -605,6 +618,23 @@ mod tests {
         let a2 = rec(&[("mfr_size", Value::Int(4)), ("mfr_mtime", Value::DateTime(11))]);
         assert!(stamp_changed(&a2, &old, Side::A, CONTENT_STAMP));
         assert!(stamp_changed(&a, &Snapshot::default(), Side::A, CONTENT_STAMP), "never recorded");
+    }
+
+    #[test]
+    fn an_mtime_snapshotted_to_the_second_still_matches_its_milliseconds() {
+        // Before November 2026 a datetime crossed the wire to the second, so a
+        // snapshot holds `…:40Z` for a file whose record now says `…:40.250Z`.
+        let rec_at = |ms| rec(&[("mfr_size", Value::Int(3)), ("mfr_mtime", Value::DateTime(ms))]);
+        let mut old = Snapshot::default();
+        old.sides[0].insert("mfr_size".into(), Value::Int(3));
+        old.sides[0].insert("mfr_mtime".into(), Value::DateTime(40_000));
+        assert!(!stamp_changed(&rec_at(40_250), &old, Side::A, CONTENT_STAMP));
+        assert!(stamp_changed(&rec_at(41_250), &old, Side::A, CONTENT_STAMP), "another second");
+
+        // A snapshot written to the millisecond compares to the millisecond.
+        old.sides[0].insert("mfr_mtime".into(), Value::DateTime(40_250));
+        assert!(stamp_changed(&rec_at(40_300), &old, Side::A, CONTENT_STAMP));
+        assert!(!stamp_changed(&rec_at(40_250), &old, Side::A, CONTENT_STAMP));
     }
 
     #[test]

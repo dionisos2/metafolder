@@ -42,8 +42,8 @@ directory needs no such step: making it is one operation.
 !! An entry the run does not know
 
 A copy replaces only the version of the file its record last saw: what the
-destination holds must have the record's stamp — kind, size, mtime (to the second, as
-the wire carries it), symlink target; a directory, its kind alone. Anything else —
+destination holds must have the record's stamp — kind, size, mtime (to the second, the
+precision the wire had until November 2026), symlink target; a directory, its kind alone. Anything else —
 bytes rewritten since and not yet seen by the watcher, a file that came meanwhile —
 is no version of what the copy writes, and replacing it would lose it to the trash
 without anyone having asked. The copy is then not made: the destination is checked

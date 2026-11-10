@@ -9,12 +9,16 @@ summary: The ten value types, what each holds, and their JSON form.
 |`int` |a 64-bit signed integer |a number |
 |`float` |a 64-bit float |a number |
 |`bool` |true or false |a boolean |
-|`datetime` |an instant, stored as Unix milliseconds (UTC) |an ISO-8601 string, `YYYY-MM-DDTHH:MM:SSZ` |
+|`datetime` |an instant, stored as Unix milliseconds (UTC) |an ISO-8601 string to the millisecond, `YYYY-MM-DDTHH:MM:SS.mmmZ` — `YYYY-MM-DDTHH:MM:SSZ` on a whole second; a longer fraction is read to the millisecond |
 |`ref` |another metarecord of the same repository |its uuid |
 |`tree_ref` |a position in a named tree: a parent and a name |`{"parent": <uuid or null>, "name": …}` |
 |`hierarchy_ref` |a position in a hierarchy, one row per parent ([[Hierarchy references]]) |`{"parent": <uuid or null>, "name": …}` |
 |`refbase` |a repository |its uuid |
 |`externalref` |a metarecord of another repository |`{"repo": <uuid>, "metarecord": <uuid>}` |
+
+A `datetime` crossed the wire to the second until `API_VERSION` 26 (November 2026),
+so a client could not tell two instants of one second apart — two stamps of a file,
+for one; it loses nothing now.
 
 Every value travels as `{"type": "<type>", "value": …}`, uuids as 32 lowercase hex
 characters without hyphens (the hyphenated form is accepted on input).

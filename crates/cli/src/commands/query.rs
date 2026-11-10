@@ -47,7 +47,9 @@ pub(super) fn value_to_dsl(value: &Value) -> Result<String, CliError> {
         Value::Int(n) => n.to_string(),
         Value::Float(f) => f.to_string(),
         Value::Bool(b) => b.to_string(),
-        Value::DateTime(ms) => format!("@\"{}\"", metafolder_core::date::iso8601_from_ms(*ms)),
+        Value::DateTime(ms) => {
+            format!("@\"{}\"", metafolder_core::date::iso8601_exact_from_ms(*ms))
+        }
         _ => {
             return Err(CliError::Usage(
                 "--eq supports string/int/float/bool/datetime values only".into(),

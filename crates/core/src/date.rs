@@ -50,10 +50,23 @@ pub fn ms_to_civil(ms: i64) -> (i64, u32, u32, u64, u64, u64) {
 
 /// Formats Unix milliseconds as an ISO-8601 UTC datetime
 /// (`YYYY-MM-DDTHH:MM:SSZ`). Negative inputs (pre-epoch) clamp to the epoch.
-/// Sub-second precision is dropped (the format has no fractional part).
+/// Sub-second precision is dropped: this is for showing a time to a person; a
+/// `datetime` value crosses the wire as [`iso8601_exact_from_ms`].
 pub fn iso8601_from_ms(ms: i64) -> String {
     let (y, mo, d, h, mi, s) = ms_to_civil(ms);
     format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z")
+}
+
+/// Formats Unix milliseconds as an ISO-8601 UTC datetime that loses nothing:
+/// `YYYY-MM-DDTHH:MM:SS.mmmZ`, or `YYYY-MM-DDTHH:MM:SSZ` for a whole second.
+/// The wire form of a `datetime` value (doc "Value types"); [`iso8601_from_ms`]
+/// is for showing a time to a person.
+pub fn iso8601_exact_from_ms(ms: i64) -> String {
+    let (y, mo, d, h, mi, s) = ms_to_civil(ms);
+    match ms.max(0) % 1000 {
+        0 => format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z"),
+        frac => format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}.{frac:03}Z"),
+    }
 }
 
 /// Formats a [`SystemTime`] as an ISO-8601 UTC datetime
@@ -95,7 +108,19 @@ pub fn iso_to_ms(s: &str) -> Option<i64> {
     let mut t = time.split(':');
     let hour: i64 = t.next()?.parse().ok()?;
     let min: i64 = t.next().unwrap_or("0").parse().ok()?;
-    let sec: i64 = t.next().unwrap_or("0").parse().ok()?;
+    // The seconds may carry a fraction, read to the millisecond (the rest of
+    // a longer one is dropped).
+    let sec = t.next().unwrap_or("0");
+    let (sec, frac) = match sec.split_once('.') {
+        Some((sec, frac)) => (sec, Some(frac)),
+        None => (sec, None),
+    };
+    let sec: i64 = sec.parse().ok()?;
+    let millis: i64 = match frac {
+        None => 0,
+        Some(f) if f.is_empty() || !f.bytes().all(|b| b.is_ascii_digit()) => return None,
+        Some(f) => format!("{:0<3}", &f[..f.len().min(3)]).parse().ok()?,
+    };
     if t.next().is_some() {
         return None;
     }
@@ -104,7 +129,10 @@ pub fn iso_to_ms(s: &str) -> Option<i64> {
         return None;
     }
     let days = days_from_civil(year, month as u32, day as u32);
-    days.checked_mul(SECS_PER_DAY)?.checked_add(hour * 3600 + min * 60 + sec)?.checked_mul(1000)
+    days.checked_mul(SECS_PER_DAY)?
+        .checked_add(hour * 3600 + min * 60 + sec)?
+        .checked_mul(1000)?
+        .checked_add(millis)
 }
 
 /// Whether `year` is a leap year in the proleptic Gregorian calendar.
@@ -150,6 +178,31 @@ pub fn time_ago(s: &str, now: i64) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_exact_form_keeps_the_milliseconds_when_there_are_some() {
+        assert_eq!(iso8601_exact_from_ms(1_000_123), "1970-01-01T00:16:40.123Z");
+        assert_eq!(iso8601_exact_from_ms(1_000_007), "1970-01-01T00:16:40.007Z");
+        assert_eq!(iso8601_exact_from_ms(1_000_000), "1970-01-01T00:16:40Z", "a whole second");
+    }
+
+    #[test]
+    fn a_fraction_of_a_second_is_read_to_the_millisecond() {
+        assert_eq!(iso_to_ms("1970-01-01T00:16:40.123Z"), Some(1_000_123));
+        assert_eq!(iso_to_ms("1970-01-01T00:16:40.1Z"), Some(1_000_100));
+        assert_eq!(iso_to_ms("1970-01-01T00:16:40.123456789Z"), Some(1_000_123), "truncated");
+        assert_eq!(iso_to_ms("1970-01-01T00:16:40Z"), Some(1_000_000));
+        for bad in ["1970-01-01T00:16:40.Z", "1970-01-01T00:16:40.12aZ", "1970-01-01T00:16.5:40Z"] {
+            assert_eq!(iso_to_ms(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_exact_form_reads_back_as_it_was() {
+        for ms in [0, 999, 1_000, 1_700_000_000_001, 1_700_000_000_999] {
+            assert_eq!(iso_to_ms(&iso8601_exact_from_ms(ms)), Some(ms), "{ms}");
+        }
+    }
 
     #[test]
     fn a_date_with_a_component_too_many_is_refused() {

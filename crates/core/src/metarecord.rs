@@ -64,14 +64,16 @@ pub mod hex_uuid_vec {
 }
 
 /// Serde helper for `DateTime`: stored internally as Unix milliseconds (UTC),
-/// but encoded on the JSON wire as an ISO-8601 string (`YYYY-MM-DDTHH:MM:SSZ`)
-/// for readability. Deserialization rejects a non-parsable datetime string.
+/// but encoded on the JSON wire as an ISO-8601 string for readability —
+/// `YYYY-MM-DDTHH:MM:SS.mmmZ`, the fraction left out on a whole second, so
+/// nothing is lost. Deserialization reads either, and rejects a non-parsable
+/// datetime string.
 pub mod iso_ms {
     use crate::date;
     use serde::{Deserialize, Deserializer, Serializer};
 
     pub fn serialize<S: Serializer>(ms: &i64, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&date::iso8601_from_ms(*ms))
+        s.serialize_str(&date::iso8601_exact_from_ms(*ms))
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<i64, D::Error> {
@@ -711,7 +713,7 @@ impl Value {
             Value::Int(n) => n.to_string(),
             Value::Float(f) => f.to_string(),
             Value::Bool(b) => b.to_string(),
-            Value::DateTime(ms) => crate::date::iso8601_from_ms(*ms),
+            Value::DateTime(ms) => crate::date::iso8601_exact_from_ms(*ms),
             Value::Ref(u) => u.as_simple().to_string(),
             Value::RefBase(u) => u.as_simple().to_string(),
             Value::TreeRef { parent, name } | Value::HierarchyRef { parent, name } => {
@@ -859,6 +861,14 @@ mod tree_path_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_datetime_crosses_the_wire_to_the_millisecond() {
+        let v = Value::DateTime(1_700_000_000_123);
+        let json = serde_json::to_value(&v).unwrap();
+        assert_eq!(json["value"], "2023-11-14T22:13:20.123Z");
+        assert_eq!(serde_json::from_value::<Value>(json).unwrap(), v);
+    }
 
     fn roundtrip(v: &Value) -> Value {
         let json = serde_json::to_string(v).expect("serialization failed");
