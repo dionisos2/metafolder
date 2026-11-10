@@ -54,6 +54,11 @@ than breaking them.
   destination, which the next plan took for a change of that side and turned into a
   conflict. A copy is written beside, as `<name>.metafolder-unfinished-sync`, and renamed
   into place once whole; such a name is never tracked (doc "Running a sync").
+- **A watcher flush between the trash and the rename of a sync's copy no longer
+  orphans the linked record**, which made the link a conflict and the copy a new
+  record. The run holds the path's events across the two steps (`POST …/watch/hold`,
+  `…/watch/release`); `mf watch status` lists a path a dead run left held, and
+  `mf watch release` lets it go (doc "Running a sync").
 - **`make install` and `make install-headless` work on a fresh clone.** npm
   dependencies are installed by `npm ci` at the workspace root, from the root lock.
 - **`make install-headless` no longer requires the GUI toolkit**

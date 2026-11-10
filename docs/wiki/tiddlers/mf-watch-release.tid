@@ -1,0 +1,10 @@
+title: mf watch release
+tags: [[CLI command]] Watcher Sync
+kind: reference
+summary: Let the events of held paths be applied — what a sync run that died while replacing a file left held
+
+A sync run holds the path of a file it replaces, from the trash of the old one to
+the rename of the new one ([[Running a sync]]); a run that died in between leaves the
+path held, listed as `held` by `mf watch status`, its events waiting. `mf watch release
+PATH…` lets those go; with no path, every held path. Release only when no sync is
+running: a run's own hold lasts the time of a rename.

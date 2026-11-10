@@ -152,6 +152,36 @@ fn read_settings(ctx: &Ctx, plan_base: &str) -> Result<RunSettings, CliError> {
     Ok(RunSettings { host: field_str(&fields, "plan_host").and_then(|h| Uuid::parse_str(&h).ok()) })
 }
 
+/// Holds a destination's events in its repository's watcher while the run
+/// replaces it (doc "Running a sync"), by its path under the root.
+struct WatchHold<'a> {
+    ctx: &'a Ctx<'a>,
+    repo: Uuid,
+    root: &'a std::path::Path,
+}
+
+impl WatchHold<'_> {
+    fn send(&self, what: &str, dst: &std::path::Path) -> Result<(), CliError> {
+        let path = crate::fsentry::tree_path_under(self.root, dst).ok_or_else(|| {
+            CliError::Op(format!("{} is not under the repository's root", dst.display()))
+        })?;
+        self.ctx.client.post(
+            &format!("/repos/{}/watch/{what}", self.repo.as_simple()),
+            &json!({"paths": [path]}),
+        )?;
+        Ok(())
+    }
+}
+
+impl content::Hold for WatchHold<'_> {
+    fn hold(&self, dst: &std::path::Path) -> Result<(), CliError> {
+        self.send("hold", dst)
+    }
+    fn release(&self, dst: &std::path::Path) -> Result<(), CliError> {
+        self.send("release", dst)
+    }
+}
+
 /// Aggregates external-record content/path divergences by subtree (the
 /// top-level path component) — never one line per file. Returns
 /// `(subtree, count)` pairs, sorted; empty when there is nothing to report.
@@ -660,7 +690,9 @@ impl<'a> Run<'a> {
         if !path_present(&src) {
             return Ok(Outcome::Skipped(format!("{} is not on disk", src.display())));
         }
-        if let Err(e) = content::place_content(&src, &dst, self.trash(to)) {
+        let hold =
+            WatchHold { ctx: self.ctx, repo: self.repo(to), root: &self.roots[&self.repo(to)] };
+        if let Err(e) = content::place_content(&src, &dst, self.trash(to), &hold) {
             return Ok(Outcome::Skipped(e.message().to_string()));
         }
         Ok(match self.refresh(op, to)? {
@@ -709,7 +741,9 @@ impl<'a> Run<'a> {
             Some((_, abs)) => content::relocate(&abs, &new, self.trash(loser)),
             None => match self.abs_path(op, winner)? {
                 Some((_, src)) if path_present(&src) => {
-                    content::place_content(&src, &new, self.trash(loser))
+                    let repo = self.repo(loser);
+                    let hold = WatchHold { ctx: self.ctx, repo, root: &self.roots[&repo] };
+                    content::place_content(&src, &new, self.trash(loser), &hold)
                 }
                 _ => Ok(()),
             },

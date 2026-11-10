@@ -2,12 +2,14 @@ title: Watcher endpoints
 tags: Watcher
 kind: reference
 audience: dev
-summary: GET /watch and pause/resume, watch check, the activity counts, the exceeded subtrees — the watcher's HTTP surface.
+summary: GET /watch and pause/resume, hold/release, watch check, the activity counts, the exceeded subtrees — the watcher's HTTP surface.
 
 |!Route |!Does |
 |<<cmd "GET /repos/:repo/watch">> |the watch status (below) |
 |<<cmd "POST /repos/:repo/watch/pause">> |pauses ingestion, stopping the flush in progress; answers the status |
 |<<cmd "POST /repos/:repo/watch/resume">> |resumes and pings the executor; answers the status |
+|<<cmd "POST /repos/:repo/watch/hold">> |`{"paths": [...]}` — strings or `{text, bytes}`, each with its leading slash — keeps their events buffered until released ([[Running a sync]]); answers the status |
+|<<cmd "POST /repos/:repo/watch/release">> |`{"paths": [...]}` releases those, `{}` every held path, and pings the executor; answers the status |
 |<<cmd "POST /repos/:repo/watch/check">> |`{"paths": [...]}` (≤ 1000) → one verdict per path ([[Checking whether a path is watched]]). Each path is taken at its exact bytes: a string's own, or the `bytes` of a `{text, bytes}` object for a path that is not text — never a reading of an escape ([[Tree names]]); its verdict's `path` echoes it in the same form |
 |<<cmd "POST /repos/:repo/watch/activity">> |`{"paths": [...]}` (≤ 1000) → `{"since_ms", "total", "total_operations", "results": [{"path", "events", "operations"}]}` |
 |<<cmd "GET /repos/:repo/watch/activity">> `?path=&limit=&sort=` |one path's counts and its busiest direct children (default the root, 50), ranked by `sort` = `events` (default) or `operations` |
@@ -16,19 +18,19 @@ summary: GET /watch and pause/resume, watch check, the activity counts, the exce
 |<<cmd "POST /repos/:repo/watch/exceeded">> |`{"path": "/dir", "exceeded": true}` sets it (always allowed), `false` clears it (`409` without headroom, budget regime) |
 
 ```
-{"paused": true, "pending_events": 12043, "quiet_period_ms": 2000, "backend": "inotify",
+{"paused": true, "held_paths": ["/photos/a.jpg"], "pending_events": 12043, "quiet_period_ms": 2000, "backend": "inotify",
  "backend_reason": "no broker at /run/metafolder/watchd.sock", "watched_dirs": 22838,
  "watch_budget": {"limit": 524288, "share": 50, "cap": 262144, "starved": false, "exceeded_dirs": 3},
  "uncovered": null}
 ```
 
-* `paused` — in memory: a reload or restart starts unpaused. `pending_events` — events in the buffer, exact, read without the repository's lock, so it answers while the flush being stopped holds it.
+* `paused` — in memory: a reload or restart starts unpaused. `held_paths` — in memory too, never expiring: a path a sync run holds while it replaces the file, or one a run that died left held, which `mf watch release` lets go. `pending_events` — events in the buffer, held ones included, exact, read without the repository's lock, so it answers while the flush being stopped holds it.
 * `quiet_period_ms` — so a client that just changed the disk itself (the GUI renaming or trashing a file) schedules its re-read from it, not from a guess.
 * `backend`, `backend_reason` ([[Watch sources and regimes]]); `watched_dirs` and `watch_budget` are `null` under coverage ([[The watch budget]]).
 * `uncovered` — under coverage, the mounts the broker cannot cover, `{"mounts": [{"path", "reason"}], "watched_dirs"}`, else `null` ([[Uncovered mounts]]).
 * The whole view answers while the watches are being placed: the placement (a walk of every eligible directory, seconds on a large tree, the last step of a load) runs without the lock this route takes.
 
-Pausing and resuming are idempotent (`200`, nothing changes). The check's answer carries,
+Pausing and resuming are idempotent (`200`, nothing changes), and so are holding a held path and releasing a free one. The check's answer carries,
 per path: `watched`, `reason`, `watched_dir` (the directory the answer was computed
 against), the path's own eligibility dry run (`eligible`, `eligibility_reason`,
 `watch_scope`, `ignore_source`, `pattern`) and its directory's (`dir_…`), `excluded_by`

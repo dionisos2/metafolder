@@ -556,6 +556,77 @@ fn test_sync_propagates_a_content_change() {
     assert!(trash.stdout.contains("sync"), "{}", trash.stdout);
 }
 
+/// The watcher flushing between the moment a copy's old entry went to the
+/// trash and the moment the copy takes its name: its departure, applied alone,
+/// orphaned the linked record, so the run's refresh was refused, the link left
+/// uncommitted with both sides changed — a conflict — and the copy arrived as
+/// a new record. The run holds the path's events across that window (doc
+/// "Running a sync").
+#[test]
+fn test_sync_a_flush_between_trash_and_rename_keeps_the_linked_record() {
+    let (a, _adir) = tracked_repo("window_a", &[("doc.txt", b"first")]);
+    let (b, _bdir) = tracked_repo("window_b", &[]);
+    let intents = write_intents(
+        "window",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
+    sync_pair(&a, &b, &intents, &[]);
+    echo(&b);
+    assert_eq!(link_states(&a, &b), ["in_sync"]);
+    let linked = query_one(&b, "mfr_path:value = \"doc.txt\"");
+
+    std::fs::write(repo_root_of(&a).join("doc.txt"), b"second, longer").unwrap();
+    echo(&a);
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
+
+    let daemon = metafolder_cli::client::Client::new(daemon_url());
+    fn events_at(daemon: &metafolder_cli::client::Client, repo: &str, path: &str) -> u64 {
+        let body = serde_json::json!({"paths": [path]});
+        let out =
+            daemon.request_daemon("POST", &format!("/repos/{repo}/watch/activity"), Some(&body));
+        out.unwrap()["results"][0]["events"].as_u64().unwrap()
+    }
+    let before = events_at(&daemon, &b, "/doc.txt");
+    // Wait, inside the window, until the watcher has received the departure
+    // and flushed everything it may: the record is then orphaned — or the
+    // path held, so that nothing was applied to it.
+    let repo = b.clone();
+    let flushed_inside_the_window = move |_: &std::path::Path| {
+        let daemon = metafolder_cli::client::Client::new(daemon_url());
+        for _ in 0..1500 {
+            let watch =
+                daemon.request_daemon("GET", &format!("/repos/{repo}/watch"), None).unwrap();
+            let received = events_at(&daemon, &repo, "/doc.txt") > before;
+            let drained = watch["pending_events"].as_u64() == Some(0);
+            let held =
+                watch["held_paths"].as_array().is_some_and(|h| h.iter().any(|p| p == "/doc.txt"));
+            let at_path = ["-u", &repo, "metarecord", "-q", "mfr_path:value = \"doc.txt\"", "get"];
+            let orphaned = mf(&at_path).stdout.trim().is_empty();
+            if received && (held || (drained && orphaned)) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        panic!("the watcher neither flushed nor held the departure");
+    };
+    metafolder_core::sync::content::hooks::BETWEEN_TRASH_AND_RENAME
+        .with(|h| *h.borrow_mut() = Some(Box::new(flushed_inside_the_window)));
+    let ctx = metafolder_core::sync::SyncCtx {
+        client: &daemon,
+        prompter: &SilentPrompter,
+        page_size: 500,
+    };
+    let ran = metafolder_core::sync::run::run(&ctx, &a, &b, true);
+    metafolder_core::sync::content::hooks::BETWEEN_TRASH_AND_RENAME
+        .with(|h| *h.borrow_mut() = None);
+    ran.expect("run");
+
+    assert_eq!(std::fs::read(repo_root_of(&b).join("doc.txt")).unwrap(), b"second, longer");
+    echo(&b);
+    assert_eq!(link_states(&a, &b), ["in_sync"]);
+    assert_eq!(query_one(&b, "mfr_path:value = \"doc.txt\""), linked, "the same record");
+}
+
 /// Both sides edit the same file: a content conflict, decided by policy.
 #[test]
 fn test_sync_content_conflict_is_decided_by_policy() {

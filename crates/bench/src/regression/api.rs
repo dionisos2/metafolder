@@ -116,6 +116,11 @@ pub const SCENARIOS: &[Scenario] = &[
         "api.watch.pause_resume",
         &[(P, "/repos/:repo/watch/pause"), (P, "/repos/:repo/watch/resume")],
     ),
+    // What a sync run does around each file it replaces (doc "Running a sync").
+    s(
+        "api.watch.hold_release",
+        &[(P, "/repos/:repo/watch/hold"), (P, "/repos/:repo/watch/release")],
+    ),
     // A rule changed: the watch set is recomputed, a walk of the watched
     // folders (doc "Watch and ignore fields").
     whole("api.watch.exceeded_set", &[(P, "/repos/:repo/watch/exceeded")]),
@@ -481,6 +486,11 @@ pub async fn run(id: &str, c: &Ctx) -> Result<()> {
         "api.watch.pause_resume" => {
             post(&format!("{base}/watch/pause"), json!({})).await?;
             post(&format!("{base}/watch/resume"), json!({})).await?;
+        }
+        "api.watch.hold_release" => {
+            let paths = json!({"paths": ["/held.txt"]});
+            post(&format!("{base}/watch/hold"), paths.clone()).await?;
+            post(&format!("{base}/watch/release"), paths).await?;
         }
         "api.watch.exceeded_set" => {
             let exceeded = next_seq() % 2 == 0;

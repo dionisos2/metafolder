@@ -100,12 +100,29 @@ pub fn is_unfinished(name: &std::ffi::OsStr) -> bool {
     bytes.len() > UNFINISHED_SUFFIX.len() && bytes.ends_with(UNFINISHED_SUFFIX.as_bytes())
 }
 
+/// Keeps the watcher of `dst`'s repository from applying `dst`'s events while
+/// its old entry is replaced (doc "Running a sync"): applied between the trash
+/// and the rename, the old file's departure would orphan its record, and the
+/// copy would then arrive as another one.
+pub trait Hold {
+    /// Holds `dst`'s events until [`Hold::release`].
+    fn hold(&self, dst: &Path) -> Result<(), SyncError>;
+    /// Lets `dst`'s held events be applied.
+    fn release(&self, dst: &Path) -> Result<(), SyncError>;
+}
+
 /// Makes `dst` hold what `src` holds: the same bytes (and mtime) for a file,
 /// the same target for a symlink, a directory for a directory — never its
 /// children, which are records of their own. What `dst` held before goes to the
-/// trash, unless it is the directory a directory needs.
-pub fn place_content(src: &Path, dst: &Path, trash: &TrashDir) -> Result<(), SyncError> {
-    place_content_with(src, dst, trash, &crate::trash::copy_path)
+/// trash, unless it is the directory a directory needs; replacing it is held
+/// by `hold`.
+pub fn place_content(
+    src: &Path,
+    dst: &Path,
+    trash: &TrashDir,
+    hold: &dyn Hold,
+) -> Result<(), SyncError> {
+    place_content_with(src, dst, trash, hold, &crate::trash::copy_path)
 }
 
 /// [`place_content`], copying with `copy` — a seam for the tests, which stop
@@ -114,11 +131,13 @@ pub fn place_content(src: &Path, dst: &Path, trash: &TrashDir) -> Result<(), Syn
 /// A file or a symlink is written to its [`unfinished_path`] first — over
 /// what a stopped run may have left there, which is the run's own — and only
 /// once whole does `dst`'s old entry go to the trash and the copy take its
-/// name. A copy that fails is removed and leaves `dst` as it was.
+/// name, both inside a hold of `dst`. A copy that fails is removed and leaves
+/// `dst` as it was.
 fn place_content_with(
     src: &Path,
     dst: &Path,
     trash: &TrashDir,
+    hold: &dyn Hold,
     copy: &dyn Fn(&Path, &Path) -> std::io::Result<()>,
 ) -> Result<(), SyncError> {
     let kind = kind_of(src)?;
@@ -138,8 +157,41 @@ fn place_content_with(
         let _ = remove_unfinished(&unfinished);
         return Err(op_err("write", dst, e));
     }
-    trash_occupant(trash, dst)?;
-    std::fs::rename(&unfinished, dst).map_err(|e| op_err("rename", &unfinished, e))
+    if !path_present(dst) {
+        return std::fs::rename(&unfinished, dst).map_err(|e| op_err("rename", &unfinished, e));
+    }
+    hold.hold(dst)?;
+    let replaced = trash_occupant(trash, dst).and_then(|()| {
+        hooks::BETWEEN_TRASH_AND_RENAME.with(|hook| {
+            if let Some(hook) = &*hook.borrow() {
+                hook(dst);
+            }
+        });
+        std::fs::rename(&unfinished, dst).map_err(|e| op_err("rename", &unfinished, e))
+    });
+    // Released whatever happened: a path left held keeps its events from
+    // ever being applied.
+    let released = hold.release(dst);
+    replaced.and(released)
+}
+
+/// Seams for the tests that must act at one precise point of a copy.
+#[doc(hidden)]
+pub mod hooks {
+    use std::cell::RefCell;
+    use std::path::Path;
+
+    /// A hook on a destination path.
+    pub type PathHook = Box<dyn Fn(&Path)>;
+
+    thread_local! {
+        /// Called with the destination once its old entry went to the trash and
+        /// before the copy takes its name — where a watcher flush once orphaned
+        /// the linked record (doc "Running a sync"). Per thread: a test sets it
+        /// around the run it drives in-process, and other tests are not touched.
+        pub static BETWEEN_TRASH_AND_RENAME: RefCell<Option<PathHook>> =
+            const { RefCell::new(None) };
+    }
 }
 
 /// Removes what a stopped run left at `unfinished`, if anything: a symlink
@@ -207,6 +259,51 @@ mod tests {
         std::fs::remove_dir_all(d).ok();
     }
 
+    /// What the tests pass when nothing watches the directory.
+    struct NoHold;
+    impl Hold for NoHold {
+        fn hold(&self, _: &Path) -> Result<(), SyncError> {
+            Ok(())
+        }
+        fn release(&self, _: &Path) -> Result<(), SyncError> {
+            Ok(())
+        }
+    }
+
+    /// Records the hold and the release around what the destination sees.
+    struct Recorder(std::cell::RefCell<Vec<String>>);
+    impl Hold for Recorder {
+        fn hold(&self, dst: &Path) -> Result<(), SyncError> {
+            let old = std::fs::read(dst).unwrap();
+            self.0.borrow_mut().push(format!("hold, {}", String::from_utf8(old).unwrap()));
+            Ok(())
+        }
+        fn release(&self, dst: &Path) -> Result<(), SyncError> {
+            let new = std::fs::read(dst).unwrap();
+            self.0.borrow_mut().push(format!("release, {}", String::from_utf8(new).unwrap()));
+            Ok(())
+        }
+    }
+
+    /// The destination's old entry going to the trash and the copy taking its
+    /// name happen inside a hold, so that no flush applies the departure alone
+    /// (doc "Running a sync"); a free destination needs none.
+    #[test]
+    fn the_replacement_of_an_entry_is_held_and_released() {
+        let d = dir("hold");
+        let trash = TrashDir::new(d.join("trash"));
+        std::fs::write(d.join("f"), b"new").unwrap();
+        std::fs::write(d.join("old"), b"old").unwrap();
+        let rec = Recorder(Default::default());
+        place_content(&d.join("f"), &d.join("old"), &trash, &rec).unwrap();
+        assert_eq!(*rec.0.borrow(), ["hold, old", "release, new"]);
+
+        let rec = Recorder(Default::default());
+        place_content(&d.join("f"), &d.join("free"), &trash, &rec).unwrap();
+        assert!(rec.0.borrow().is_empty(), "nothing to replace, nothing to hold");
+        std::fs::remove_dir_all(d).ok();
+    }
+
     #[cfg(unix)]
     #[test]
     fn content_is_placed_by_kind_and_what_was_there_is_trashed() {
@@ -217,17 +314,17 @@ mod tests {
         std::os::unix::fs::symlink("somewhere/else", d.join("l")).unwrap();
         std::fs::write(d.join("old"), b"old").unwrap();
 
-        place_content(&d.join("f"), &d.join("old"), &trash).unwrap();
+        place_content(&d.join("f"), &d.join("old"), &trash, &NoHold).unwrap();
         assert_eq!(std::fs::read(d.join("old")).unwrap(), b"new");
         assert_eq!(trash.entries().unwrap().len(), 1, "the old bytes are in the trash");
 
-        place_content(&d.join("l"), &d.join("sub/l2"), &trash).unwrap();
+        place_content(&d.join("l"), &d.join("sub/l2"), &trash, &NoHold).unwrap();
         assert_eq!(
             std::fs::read_link(d.join("sub/l2")).unwrap(),
             std::path::Path::new("somewhere/else"),
             "a symlink stays a symlink"
         );
-        place_content(&d.join("src"), &d.join("sub/newdir"), &trash).unwrap();
+        place_content(&d.join("src"), &d.join("sub/newdir"), &trash, &NoHold).unwrap();
         assert!(d.join("sub/newdir").is_dir(), "an empty directory is made");
         std::fs::remove_dir_all(d).ok();
     }
@@ -256,7 +353,8 @@ mod tests {
             std::fs::write(to, b"the whole")?;
             Err(std::io::Error::other("stopped"))
         };
-        assert!(place_content_with(&d.join("f"), &d.join("old"), &trash, &half_then_fail).is_err());
+        assert!(place_content_with(&d.join("f"), &d.join("old"), &trash, &NoHold, &half_then_fail)
+            .is_err());
         assert_eq!(std::fs::read(d.join("old")).unwrap(), b"old", "the destination is untouched");
         assert!(trash.entries().unwrap().is_empty(), "nothing was trashed for a copy not made");
         std::fs::remove_dir_all(d).ok();
@@ -273,11 +371,11 @@ mod tests {
         std::os::unix::fs::symlink("somewhere/else", d.join("l")).unwrap();
 
         std::fs::write(unfinished_path(&d.join("copy")), b"half of an older try").unwrap();
-        place_content(&d.join("f"), &d.join("copy"), &trash).unwrap();
+        place_content(&d.join("f"), &d.join("copy"), &trash, &NoHold).unwrap();
         assert_eq!(std::fs::read(d.join("copy")).unwrap(), b"new");
 
         std::os::unix::fs::symlink("stale", unfinished_path(&d.join("link"))).unwrap();
-        place_content(&d.join("l"), &d.join("link"), &trash).unwrap();
+        place_content(&d.join("l"), &d.join("link"), &trash, &NoHold).unwrap();
         assert_eq!(std::fs::read_link(d.join("link")).unwrap(), Path::new("somewhere/else"));
 
         let left: Vec<_> = std::fs::read_dir(&d)

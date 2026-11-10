@@ -66,10 +66,31 @@ pub fn pending_count(repo: &RepoState) -> usize {
     repo.pending.lock_recover().len()
 }
 
-/// Takes the whole buffer for a flush. Events buffered while the flush runs
-/// land in the now-empty buffer and are picked up by the next round.
+/// Takes the buffer for a flush — all of it but the events of a held path
+/// (doc "Running a sync"), which stay, in order, until released; so does the
+/// other half of a held rename, which could not be fused back otherwise.
+/// Events buffered while the flush runs land in the buffer and are picked up
+/// by the next round.
 fn take_pending(repo: &RepoState) -> Vec<(FsEvent, Option<i64>)> {
-    std::mem::take(&mut *repo.pending.lock_recover())
+    let held = repo.held_paths();
+    let mut pending = repo.pending.lock_recover();
+    if held.is_empty() {
+        return std::mem::take(&mut *pending);
+    }
+    let held: HashSet<RelPath> = held.into_iter().collect();
+    let touches = |ev: &FsEvent| {
+        crate::watch_activity::event_paths(ev).into_iter().any(|p| {
+            std::iter::successors(Some(p.clone()), |a| (!a.is_root()).then(|| a.parent()))
+                .any(|a| held.contains(&a))
+        })
+    };
+    let cookies: HashSet<i64> =
+        pending.iter().filter(|(ev, _)| touches(ev)).filter_map(|(_, c)| *c).collect();
+    let (kept, taken): (Vec<_>, Vec<_>) = std::mem::take(&mut *pending)
+        .into_iter()
+        .partition(|(ev, c)| touches(ev) || c.is_some_and(|c| cookies.contains(&c)));
+    *pending = kept;
+    taken
 }
 
 /// Puts a batch back at the head of the buffer, in order, after a flush that

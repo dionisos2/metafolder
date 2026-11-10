@@ -274,6 +274,71 @@ fn test_a_directory_scan_skips_an_unfinished_sync_copy() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+// ── Held paths (doc "Running a sync") ─────────────────────────────────────────
+
+/// A sync run replacing a linked file sends the old one to the trash, then
+/// renames its copy in: a flush between the two applied the departure alone
+/// and orphaned the record. A held path's events stay buffered, the others
+/// are applied; once released, the departure finds the file back and the
+/// record keeps its identity.
+#[test]
+fn test_a_held_path_s_events_wait_for_its_release() {
+    let (repo, root, _) = setup("held");
+    write_file(&root, "doc.txt", b"old");
+    write_file(&root, "other.txt", b"x");
+    enqueue(&repo, &[FsEvent::Create("/doc.txt".into()), FsEvent::Create("/other.txt".into())]);
+    executor::flush_pending(&repo).unwrap();
+    let linked = resolve(&repo, "/doc.txt").expect("tracked");
+
+    repo.hold_paths(&["/doc.txt".into()]);
+    assert_eq!(repo.held_paths(), vec!["/doc.txt".into()]);
+    std::fs::remove_file(root.join("doc.txt")).unwrap();
+    std::fs::remove_file(root.join("other.txt")).unwrap();
+    enqueue(&repo, &[FsEvent::RenameFrom("/doc.txt".into()), FsEvent::Remove("/other.txt".into())]);
+    executor::flush_pending(&repo).unwrap();
+    assert_eq!(resolve(&repo, "/doc.txt"), Some(linked), "the held departure waits");
+    assert!(resolve(&repo, "/other.txt").is_none(), "what is not held is applied");
+    assert_eq!(executor::pending_count(&repo), 1, "the held event stays buffered");
+
+    write_file(&root, "doc.txt", b"new content");
+    enqueue(&repo, &[FsEvent::RenameTo("/doc.txt".into())]);
+    repo.release_paths(Some(&["/doc.txt".into()]));
+    assert!(repo.held_paths().is_empty());
+    executor::flush_pending(&repo).unwrap();
+    assert_eq!(executor::pending_count(&repo), 0);
+    assert_eq!(resolve(&repo, "/doc.txt"), Some(linked), "the same record, refreshed");
+}
+
+/// The other half of a rename follows a held one: split by the hold, the pair
+/// could never be fused back into one move.
+#[test]
+fn test_a_rename_half_of_a_held_path_holds_its_other_half() {
+    let (repo, root, _) = setup("held_pair");
+    write_file(&root, "doc.txt", b"x");
+    enqueue(&repo, &[FsEvent::Create("/doc.txt".into())]);
+    executor::flush_pending(&repo).unwrap();
+
+    repo.hold_paths(&["/doc.txt".into()]);
+    enqueue_tracked(
+        &repo,
+        &[
+            (FsEvent::RenameFrom("/doc.txt".into()), Some(7)),
+            (FsEvent::RenameTo("/moved.txt".into()), Some(7)),
+        ],
+    );
+    executor::flush_pending(&repo).unwrap();
+    assert_eq!(executor::pending_count(&repo), 2, "both halves wait");
+}
+
+/// Releasing with no path names releases every held path.
+#[test]
+fn test_releasing_nothing_named_releases_everything() {
+    let (repo, _root, _) = setup("held_all");
+    repo.hold_paths(&["/a".into(), "/b".into()]);
+    repo.release_paths(None);
+    assert!(repo.held_paths().is_empty());
+}
+
 #[test]
 fn test_ineligible_paths_are_ignored() {
     let (repo, root, root_uuid) = setup("ignored");

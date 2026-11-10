@@ -18,7 +18,19 @@ watcher's event for the file finds it rather than creating a second one ([[Event
 A file or a symlink is never written at its destination: the run writes it beside,
 under the destination's name followed by `.metafolder-unfinished-sync`, and only once
 it is whole does the old entry go to the trash and the copy take its name, by a
-rename. A run stopped half-way thus leaves the destination as it was. A truncated file
+rename. A run stopped half-way thus leaves the destination as it was.
+
+Those two steps are ''held'': the run asks the destination's watcher to keep the
+path's events buffered (`POST …/watch/hold`) before the trash, and releases them
+after the rename, whatever happened (`POST …/watch/release`, [[Watcher endpoints]]).
+Without it, a flush falling between the two — likely under load, the trash writing
+its index — applied the old file's departure alone: the record was orphaned, the
+run's refresh refused, the link left with both sides changed, a conflict, and the
+copy arrived as a new record. Held, the departure is applied once the new file is
+there, and finds it: the record keeps its identity. Nothing is dropped — a real change
+made meanwhile is applied after the release. A hold does not expire: a run that died
+inside one leaves the path in `mf watch status`, and `mf watch release` lets it go; a
+reload of the repository releases everything. A truncated file
 there would read, at the next plan, as a change of that side too, and become a conflict
 on `mfr_content` instead of a copy to redo ([[Change detection in sync]]).
 

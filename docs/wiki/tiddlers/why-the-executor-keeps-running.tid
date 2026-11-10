@@ -16,3 +16,9 @@ the user, a coordinated revert (whose writes are refused while it runs) — is h
 `expected_version` fence, with no lock between the sync and anything else. The run's
 own file operations do not trip it: they refresh their records themselves
 ([[Suppressing sync's echoes]]).
+
+The one thing a run holds is narrower: the events of a single path, while it trashes
+the file there and renames its copy in — so that the old file's departure is not
+applied before the new one has its name ([[Running a sync]]). Those events are kept,
+not dropped, and applied at the release; every other path, and that one before and
+after, goes through the running executor and the version fence as above.

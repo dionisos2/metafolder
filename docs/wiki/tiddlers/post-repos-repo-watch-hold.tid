@@ -1,0 +1,7 @@
+title: POST /repos/:repo/watch/hold
+tags: [[HTTP endpoint]] [[Watcher endpoints]]
+kind: reference
+audience: dev
+summary: Keeps the events of some paths buffered until they are released — what a sync run does while it replaces a file.
+
+Bodies, answers and errors: [[Watcher endpoints]].

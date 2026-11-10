@@ -1020,6 +1020,16 @@ enum WatchCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Let the events of held paths be applied — what a sync run that died
+    /// while replacing a file left held
+    Release {
+        /// The held paths (absolute filesystem paths, or repo-root-relative with
+        /// a leading slash); every held path when none is given
+        paths: Vec<String>,
+        /// Print the raw JSON response body
+        #[arg(long)]
+        json: bool,
+    },
     /// How many watcher events arrived under a directory since the load, how
     /// many operations they wrote, and under which of its children — walk down
     /// from / to find the noise
@@ -1471,6 +1481,7 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
                 WatchCommand::Check { paths, json } => commands::watch_check(ctx, &paths, json),
                 WatchCommand::Pause { json } => commands::watch_pause(ctx, json),
                 WatchCommand::Resume { json } => commands::watch_resume(ctx, json),
+                WatchCommand::Release { paths, json } => commands::watch_release(ctx, &paths, json),
                 WatchCommand::Activity { path, limit, by_operations, reset, json } => {
                     commands::watch_activity(
                         ctx,

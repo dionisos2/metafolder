@@ -1,0 +1,7 @@
+title: POST /repos/:repo/watch/release
+tags: [[HTTP endpoint]] [[Watcher endpoints]]
+kind: reference
+audience: dev
+summary: Lets the held events of some paths — or of every held path — be applied.
+
+Bodies, answers and errors: [[Watcher endpoints]].

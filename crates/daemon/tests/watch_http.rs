@@ -82,6 +82,41 @@ async fn watch_reports_running_and_pause_resume_flip_it() {
     assert_eq!(body["paused"], json!(false));
 }
 
+/// A sync run holds the path of a file it is replacing, and releases it once
+/// the new one has its name (doc "Running a sync"); the held paths show in the
+/// watch status, and a release naming nothing clears them all — what a run
+/// that died before its release leaves to `mf watch release`.
+#[tokio::test]
+async fn hold_and_release_show_in_the_watch_status() {
+    let app = routes::build(std::sync::Arc::new(AppState::new(common::settings())));
+    let root = TempDir::new("watch_hold");
+    let repo = init_repo(&app, &root).await;
+
+    let (_, body) = request(&app, "GET", &format!("/repos/{repo}/watch"), None).await;
+    assert_eq!(body["held_paths"], json!([]));
+
+    let hold = json!({"paths": ["/b/doc.txt", "/a.txt"]});
+    let (status, body) =
+        request(&app, "POST", &format!("/repos/{repo}/watch/hold"), Some(hold)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["held_paths"], json!(["/a.txt", "/b/doc.txt"]));
+
+    let release = json!({"paths": ["/a.txt"]});
+    let (status, body) =
+        request(&app, "POST", &format!("/repos/{repo}/watch/release"), Some(release)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["held_paths"], json!(["/b/doc.txt"]));
+
+    let (status, body) =
+        request(&app, "POST", &format!("/repos/{repo}/watch/release"), Some(json!({}))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["held_paths"], json!([]));
+
+    let bad = json!({"paths": ["a.txt"]});
+    let (status, _) = request(&app, "POST", &format!("/repos/{repo}/watch/hold"), Some(bad)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "a path is repo-root-relative, with its slash");
+}
+
 #[tokio::test]
 async fn watch_on_an_unknown_repository_is_404() {
     let app = routes::build(std::sync::Arc::new(AppState::new(common::settings())));

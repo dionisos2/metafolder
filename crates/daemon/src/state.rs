@@ -133,6 +133,12 @@ pub struct RepoState {
     /// stopping a flush, and by `POST /watch/pause`. In memory like the task
     /// registry: a reload or a restart starts ingesting again.
     pub ingestion_paused: std::sync::atomic::AtomicBool,
+    /// Paths whose events the executor keeps buffered until they are released
+    /// (doc "Running a sync"): a sync run holds a linked file it is replacing,
+    /// so that no flush applies the old file's departure before the new one
+    /// takes its name. In memory: a reload releases everything; nothing
+    /// expires on its own, a run that died is cleared by `mf watch release`.
+    held_paths: Mutex<std::collections::BTreeSet<crate::relpath::RelPath>>,
     /// Where this repository's slow operations are written (doc "Slow log").
     /// Held per repository because the log lives inside it, and shared as an
     /// `Arc` because every instrumented path takes a clone.
@@ -247,6 +253,7 @@ impl RepoState {
             orphan_cascade_limit: settings.orphan_cascade_limit,
             log_retention,
             ingestion_paused: std::sync::atomic::AtomicBool::new(false),
+            held_paths: Mutex::new(std::collections::BTreeSet::new()),
             slowlog,
             root_identity,
             root_lost: std::sync::atomic::AtomicBool::new(false),
@@ -542,6 +549,34 @@ impl RepoState {
             Some(id) => self.tasks.request_cancel(id) == crate::tasks::CancelOutcome::Requested,
             None => false,
         }
+    }
+
+    /// Holds `paths`: their events stay buffered until released.
+    pub fn hold_paths(&self, paths: &[crate::relpath::RelPath]) {
+        self.held_paths.lock_recover().extend(paths.iter().cloned());
+    }
+
+    /// Releases `paths` — every held path for `None` — and pings the executor,
+    /// so what they held is applied after the usual quiet period.
+    pub fn release_paths(&self, paths: Option<&[crate::relpath::RelPath]>) {
+        {
+            let mut held = self.held_paths.lock_recover();
+            match paths {
+                Some(paths) => paths.iter().for_each(|p| {
+                    held.remove(p);
+                }),
+                None => held.clear(),
+            }
+        }
+        let handles = self.handles.lock_recover();
+        if let Some(handles) = handles.as_ref() {
+            handles.executor.pinger().ping();
+        }
+    }
+
+    /// The held paths, in order.
+    pub fn held_paths(&self) -> Vec<crate::relpath::RelPath> {
+        self.held_paths.lock_recover().iter().cloned().collect()
     }
 
     /// Resumes ingestion and pings the executor, so what accumulated while

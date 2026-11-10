@@ -128,6 +128,8 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/{repo}/watch", get(watch_status))
         .route("/repos/{repo}/watch/pause", post(watch_pause))
         .route("/repos/{repo}/watch/resume", post(watch_resume))
+        .route("/repos/{repo}/watch/hold", post(watch_hold))
+        .route("/repos/{repo}/watch/release", post(watch_release))
         .route("/repos/{repo}/watch/exceeded", get(watch_exceeded_list).post(watch_exceeded_set))
         .route("/repos/{repo}/watch/check", post(watch_check))
         .route("/repos/{repo}/watch/activity", get(watch_activity_children).post(watch_activity_of))

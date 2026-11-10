@@ -125,6 +125,13 @@ fn watch_view(repo_state: &RepoState) -> serde_json::Value {
     };
     json!({
         "paused": repo_state.is_ingestion_paused(),
+        // The paths whose events wait for a release (doc "Running a sync"),
+        // each in the wire form of a path: a string, or `{text, bytes}`.
+        "held_paths": repo_state
+            .held_paths()
+            .iter()
+            .map(|p| metafolder_core::metarecord::TreePath::from_bytes(p.to_bytes()))
+            .collect::<Vec<_>>(),
         "pending_events": crate::executor::pending_count(repo_state),
         // How long after the filesystem goes quiet a change is recorded — what
         // a client re-reads after, having just changed the disk itself.
@@ -174,6 +181,65 @@ pub(super) async fn watch_resume(
     let repo_uuid = parse_uuid(&repo)?;
     let repo_state = state.repo(repo_uuid)?;
     repo_state.resume_ingestion();
+    Ok(Json(watch_view(&repo_state)))
+}
+
+#[derive(Deserialize)]
+pub(super) struct HeldPathsBody {
+    /// Each a string or `{text, bytes}`, repo-root-relative with its leading
+    /// slash. For a release, absent means every held path.
+    #[serde(default)]
+    paths: Option<Vec<metafolder_core::metarecord::TreePath>>,
+}
+
+/// The body's paths as the executor names them, each checked to be
+/// repo-root-relative.
+fn held_rel_paths(
+    paths: &[metafolder_core::metarecord::TreePath],
+) -> Result<Vec<crate::relpath::RelPath>, ApiError> {
+    paths
+        .iter()
+        .map(|path| {
+            if !path.as_bytes().starts_with(b"/") || path.as_bytes() == b"/" {
+                return Err(ApiError::bad_request(format!(
+                    "path must be repo-root-relative with a leading slash: {:?}",
+                    path.display()
+                )));
+            }
+            Ok(crate::relpath::RelPath::from_bytes(path.as_bytes()))
+        })
+        .collect()
+}
+
+/// `POST /repos/:repo/watch/hold`: keeps the events of these paths buffered
+/// until they are released (doc "Running a sync"). A sync run holds a file it
+/// replaces across the trash and the rename. In memory, off `with_repo`, like
+/// the pause: it must answer while a flush holds the connection.
+pub(super) async fn watch_hold(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<HeldPathsBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(body) = payload?;
+    let repo_state = state.repo(parse_uuid(&repo)?)?;
+    let paths = held_rel_paths(body.paths.as_deref().unwrap_or_default())?;
+    repo_state.hold_paths(&paths);
+    Ok(Json(watch_view(&repo_state)))
+}
+
+/// `POST /repos/:repo/watch/release`: releases these paths — every held one
+/// when the body names none — and lets the executor apply what they held.
+pub(super) async fn watch_release(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<HeldPathsBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(body) = payload?;
+    let repo_state = state.repo(parse_uuid(&repo)?)?;
+    match body.paths.as_deref() {
+        Some(paths) => repo_state.release_paths(Some(&held_rel_paths(paths)?)),
+        None => repo_state.release_paths(None),
+    }
     Ok(Json(watch_view(&repo_state)))
 }
 

@@ -76,6 +76,16 @@ pub(super) fn print_watch(resp: &serde_json::Value, raw_json: bool) -> Result<i3
     for line in uncovered_lines(resp) {
         println!("{line}");
     }
+    // A path a sync run holds while it replaces the file — or that a run
+    // which died left held: its events wait (doc "Running a sync").
+    for path in resp["held_paths"].as_array().into_iter().flatten() {
+        let shown = serde_json::from_value::<metafolder_core::metarecord::TreePath>(path.clone())
+            .map(|p| p.display().into_owned())
+            .unwrap_or_else(|_| path.to_string());
+        println!(
+            "held      \t{shown}\t(its events wait: `mf watch release` if no sync is running)"
+        );
+    }
     // A budget in trouble adds its own lines, so neither condition passes
     // unnoticed (doc "The watch budget").
     let budget = &resp["watch_budget"];
@@ -453,6 +463,25 @@ pub(super) fn format_watch_activity(resp: &Json) -> String {
 pub fn watch_pause(ctx: &Ctx, raw_json: bool) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let resp = ctx.client.post(&format!("{base}/watch/pause"), &json!({}))?;
+    print_watch(&resp, raw_json)
+}
+
+pub fn watch_release(ctx: &Ctx, paths: &[String], raw_json: bool) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let body = if paths.is_empty() {
+        json!({})
+    } else {
+        let info = ctx.repo_info()?;
+        let root = info["root"]
+            .as_str()
+            .ok_or_else(|| CliError::Op("daemon did not report the repo root".into()))?;
+        let rels = paths
+            .iter()
+            .map(|raw| path_arg(Path::new(root), raw).map(|arg| arg.to_wire()))
+            .collect::<Result<Vec<_>, _>>()?;
+        json!({ "paths": rels })
+    };
+    let resp = ctx.client.post(&format!("{base}/watch/release"), &body)?;
     print_watch(&resp, raw_json)
 }
 

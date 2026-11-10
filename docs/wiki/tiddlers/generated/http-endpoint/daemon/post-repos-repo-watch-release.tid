@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/:repo/watch/release
+catalog: HTTP endpoint
+target: POST /repos/:repo/watch/release
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``watch_release`` |

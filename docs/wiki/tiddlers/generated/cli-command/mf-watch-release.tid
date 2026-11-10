@@ -1,0 +1,23 @@
+title: $:/mf/gen/CLI command/mf watch release
+catalog: CLI command
+target: mf watch release
+summary: Let the events of held paths be applied — what a sync run that died while replacing a file left held
+
+!! Reference
+
+```
+Let the events of held paths be applied — what a sync run that died while replacing a file left held
+
+Usage: mf watch release [OPTIONS] [PATHS]...
+
+Arguments:
+  [PATHS]...
+          The held paths (absolute filesystem paths, or repo-root-relative with a leading slash); every held path when none is given
+
+Options:
+      --json
+          Print the raw JSON response body
+
+  -h, --help
+          Print help
+```

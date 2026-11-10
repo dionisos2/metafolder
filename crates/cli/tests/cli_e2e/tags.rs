@@ -603,6 +603,31 @@ fn test_watch_status_pause_and_resume() {
     assert!(out.stdout.starts_with("running"), "stdout: {}", out.stdout);
 }
 
+/// A path a sync run held and never released — the run died between its hold
+/// and its release — shows in `watch status`, and `watch release` lets its
+/// events go (doc "Running a sync").
+#[test]
+fn test_watch_release_clears_what_a_run_left_held() {
+    let (repo, _root) = init_repo("watchheld");
+    let client = metafolder_cli::client::Client::new(daemon_url());
+    let hold = serde_json::json!({"paths": ["/a.txt", "/b.txt"]});
+    client.request_daemon("POST", &format!("/repos/{repo}/watch/hold"), Some(&hold)).unwrap();
+
+    let out = mf(&["-u", &repo, "watch"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("held      \t/a.txt"), "stdout: {}", out.stdout);
+    assert!(out.stdout.contains("held      \t/b.txt"), "stdout: {}", out.stdout);
+
+    let out = mf(&["-u", &repo, "watch", "release", "/a.txt"]);
+    assert_ok(&out);
+    assert!(!out.stdout.contains("/a.txt"), "stdout: {}", out.stdout);
+    assert!(out.stdout.contains("held      \t/b.txt"), "stdout: {}", out.stdout);
+
+    let out = mf(&["-u", &repo, "watch", "release"]);
+    assert_ok(&out);
+    assert!(!out.stdout.contains("held"), "stdout: {}", out.stdout);
+}
+
 /// A repository left on inotify says why, in `watch status` itself: which
 /// broker was probed and what it answered (or that none did).
 #[test]
