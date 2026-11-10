@@ -24,7 +24,7 @@ it wins, so one directory marks everything under it and a subdirectory set to
 * The watcher hands a marked file to a ''background worker'' when it creates its record, or on a `Modify`. When the size or mtime moved, it clears the hashes first, as for any file. When they did not, it keeps them — an echo must not destroy them ([[Watcher pitfalls]]) — and the worker reads the file anyway: that is the same-second, same-size rewrite the stamp misses. The worker hashes with the store free and writes the hashes with their stamp only when the file's `stat` did not move while it read, and is the stat its record holds — a record that has not caught up with its file is left to the event that will hand the file over again — and only where they differ: an unchanged file moves no version. Until then a changed file has no hash, and sync compares bytes.
 * Re-reading a record's file (`POST …/refresh`, which sync runs after each file it writes, [[Refreshing a record]]) hands it over too.
 * The queue is in memory, like the watcher's buffer: a restart loses it, and reconcile hands the files over again.
-* Reconcile computes the hash of a marked file that has none, or whose stamp no longer matches.
+* Reconcile, once its write is committed, hands over every marked file of its scope that has no fresh hash (below) — never hashing under its own lock.
 
 !! Fresh
 

@@ -311,3 +311,53 @@ fn a_file_its_record_has_not_caught_up_with_is_left_to_its_event() {
     hashing::drain(&repo).unwrap();
     assert_eq!(field_value(&repo, a, "mfr_full_hash"), None);
 }
+
+// ── Reconcile hands over what has no fresh hash ──────────────────────────────────
+
+#[test]
+fn reconcile_hands_over_a_marked_file_without_a_hash() {
+    let (repo, root) = setup("reconcile_missing");
+    write_file(&root, "a.txt", b"alpha");
+    write_file(&root, "plain/b.txt", b"beta");
+    reconcile::reconcile(&repo).unwrap();
+    mark(&repo, "/", true);
+    mark(&repo, "/plain", false);
+
+    reconcile::reconcile(&repo).unwrap();
+    hashing::drain(&repo).unwrap();
+    assert_hashed(&repo, &root, "/a.txt");
+    let b = resolve(&repo, "/plain/b.txt");
+    assert_eq!(field_value(&repo, b, "mfr_full_hash"), None, "unmarked: left alone");
+}
+
+#[test]
+fn reconcile_hands_over_a_marked_file_whose_hash_is_stale() {
+    // Rewritten while nothing watched: the refresh moves the record's stat,
+    // and the stored hash no longer describes it.
+    let (repo, root) = setup("reconcile_stale");
+    write_file(&root, "a.txt", b"alpha");
+    reconcile::reconcile(&repo).unwrap();
+    mark(&repo, "/", true);
+    hash(&repo, r#"mfr_type = "file""#, false);
+
+    write_file(&root, "a.txt", b"alpha, rewritten unwatched");
+    reconcile::reconcile_full(&repo, None, false, false, true).unwrap();
+    hashing::drain(&repo).unwrap();
+    assert_hashed(&repo, &root, "/a.txt");
+}
+
+#[test]
+fn a_scoped_reconcile_hands_over_its_subtree_only() {
+    let (repo, root) = setup("reconcile_scoped");
+    write_file(&root, "in/a.txt", b"alpha");
+    write_file(&root, "out/b.txt", b"beta");
+    reconcile::reconcile(&repo).unwrap();
+    mark(&repo, "/", true);
+
+    let scope = resolve(&repo, "/in");
+    reconcile::reconcile_metarecord(&repo, scope, false, false, false).unwrap();
+    hashing::drain(&repo).unwrap();
+    assert_hashed(&repo, &root, "/in/a.txt");
+    let b = resolve(&repo, "/out/b.txt");
+    assert_eq!(field_value(&repo, b, "mfr_full_hash"), None, "outside the scope");
+}

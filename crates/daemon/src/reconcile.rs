@@ -484,6 +484,9 @@ pub fn reconcile_full_reported(
     }
 
     metafolder_core::slowlog::timed("commit", || writer.commit())?;
+    // Once committed: the worker reads the stat this reconcile wrote (doc
+    // "Content hashes kept fresh").
+    repo.hash_queue.push(crate::hashing::needing_hash(&*conn, &cache, None)?);
     Ok(result)
 }
 
@@ -636,6 +639,9 @@ pub fn reconcile_metarecord_reported(
     }
 
     metafolder_core::slowlog::timed("commit", || writer.commit())?;
+    // Once committed: the worker reads the stat this reconcile wrote (doc
+    // "Content hashes kept fresh").
+    repo.hash_queue.push(crate::hashing::needing_hash(&*conn, &cache, Some(uuid))?);
     Ok(result)
 }
 

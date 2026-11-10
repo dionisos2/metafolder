@@ -10,5 +10,6 @@ it, the record itself included, wins, and a record with none is not marked. It i
 written without `force` and synced like any `mf_*` field, so the two sides of a link
 agree on it.
 
-A marked file is hashed again in the background after each change the watcher sees;
-reconcile's part and sync's use of the hash are still being built.
+A marked file is hashed again in the background after each change the watcher sees,
+and reconcile hands over those without a fresh hash; sync's use of the hash is still
+being built.

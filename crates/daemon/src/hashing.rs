@@ -3,6 +3,7 @@
 //! taken under, reusing a stored hash its stamp still vouches for (doc "The
 //! duplicate hash cache").
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -329,6 +330,94 @@ fn job_for(
         return Ok(None);
     };
     Ok(Some(Job { uuid, rel, recorded }))
+}
+
+/// The marked files — of `scope`'s subtree, or the whole repository — whose
+/// full hash is missing or not fresh: no stored hash stamped with the stat
+/// their record holds. What reconcile hands over to the worker. Nothing is
+/// read past the `mf_hash` rows when no record sets the field.
+pub fn needing_hash(
+    conn: &dyn crate::store::Store,
+    cache: &crate::forest::Forest,
+    scope: Option<Uuid>,
+) -> anyhow::Result<Vec<Uuid>> {
+    if !Rows::field_rows(conn, "mf_hash")?.iter().any(|(_, r)| r.value == Value::Bool(true)) {
+        return Ok(Vec::new());
+    }
+    let files: Vec<Uuid> = match scope {
+        None => crate::store::Questions::tracked_files_with_size(conn)?
+            .into_iter()
+            .map(|(uuid, _)| uuid)
+            .collect(),
+        Some(root) => {
+            let mut all = cache.descendants(conn, "mfr_path", root)?;
+            all.push(root);
+            let mut files = Vec::new();
+            for uuid in all {
+                if Rows::string_fields(conn, uuid, "mfr_type")?.first().map(String::as_str)
+                    == Some("file")
+                {
+                    files.push(uuid);
+                }
+            }
+            files
+        }
+    };
+    let mut marks = MarkMemo::default();
+    let mut out = Vec::new();
+    for uuid in files {
+        if !marks.marked(conn, uuid)? {
+            continue;
+        }
+        let stored_full = Rows::string_fields(conn, uuid, "mfr_full_hash")?;
+        let stamp = Rows::rows_named(conn, uuid, "mfr_hash_mtime")?
+            .into_iter()
+            .find_map(|r| match r.value {
+                Value::DateTime(ms) => Some(ms),
+                _ => None,
+            })
+            .zip(Rows::int_field(conn, uuid, "mfr_hash_size")?);
+        let fresh =
+            !stored_full.is_empty() && stamp.is_some() && stamp == recorded_stat(conn, uuid)?;
+        if !fresh {
+            out.push(uuid);
+        }
+    }
+    Ok(out)
+}
+
+/// [`crate::eligibility::mf_hash_of`] over many records: each ancestor's
+/// answer is kept, so a whole tree costs one read per node rather than one walk
+/// per file.
+#[derive(Default)]
+struct MarkMemo(HashMap<Uuid, bool>);
+
+impl MarkMemo {
+    fn marked(&mut self, conn: &dyn crate::store::Store, uuid: Uuid) -> anyhow::Result<bool> {
+        let mut chain = Vec::new();
+        let mut cur = Some(uuid);
+        let mut answer = false;
+        for _ in 0..crate::log::MAX_TREE_DEPTH {
+            let Some(node) = cur else { break };
+            if let Some(&known) = self.0.get(&node) {
+                answer = known;
+                break;
+            }
+            chain.push(node);
+            if let Some(own) = Rows::bool_field(conn, node, "mf_hash")? {
+                answer = own;
+                break;
+            }
+            cur = Rows::rows_named(conn, node, "mfr_path")?
+                .into_iter()
+                .find_map(|r| r.value.position().map(|(p, _)| p))
+                .flatten();
+        }
+        for node in chain {
+            self.0.insert(node, answer);
+        }
+        Ok(answer)
+    }
 }
 
 /// How long the worker's computed hashes wait before it writes them.
