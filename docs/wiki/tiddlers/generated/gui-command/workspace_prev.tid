@@ -9,5 +9,5 @@ summary: Move to the previous workspace (`slot`: the focused slot only)
 
 !! Default keys
 
-* ``ctrl+pageup`` → ``workspace:prev``
+* ``ctrl+left`` → ``workspace:prev``
 * ``ctrl+shift+tab`` → ``workspace:prev``

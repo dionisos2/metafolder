@@ -2265,6 +2265,35 @@ vars.y = ","
         assert!(registry.list().iter().any(|c| c.name == "panel:toggle"));
     }
 
+    #[test]
+    fn test_shipped_ctrl_shift_keys_have_an_easier_alias() {
+        // A Ctrl+Shift chord is hard to reach: each shipped one runs, in the
+        // same place, through another key too (doc "Choosing keybindings").
+        let defaults = include_str!("../default-config/keybindings.toml");
+        let table = KeybindingSet::from_sources(defaults, "").unwrap().compiled();
+        let chord = |b: &CompiledBinding| b.keys.len() == 1 && b.keys[0].starts_with("ctrl+shift+");
+        for b in table.iter().filter(|b| chord(b)) {
+            assert!(
+                table.iter().any(|o| !chord(o)
+                    && o.invocation == b.invocation
+                    && o.when == b.when
+                    && o.focus == b.focus),
+                "{:?} → {} has no alias",
+                b.keys,
+                b.invocation
+            );
+        }
+        assert!(table.iter().any(|b| b.keys == ["p", "f"]
+            && b.when.as_deref() == Some("file-manager")
+            && b.invocation == "file:new self folder"));
+        // Ctrl+arrows move between workspaces; Ctrl+PageUp/PageDown no longer.
+        for (key, invocation) in [("ctrl+right", "workspace:next"), ("ctrl+left", "workspace:prev")]
+        {
+            assert!(table.iter().any(|b| b.keys == [key] && b.invocation == invocation), "{key}");
+        }
+        assert!(table.iter().all(|b| b.keys != ["ctrl+pageup"] && b.keys != ["ctrl+pagedown"]));
+    }
+
     // ── Checking a new binding ───────────────────────────────────────────
 
     fn place(combo: &str, when: Option<&str>, focus: Option<&str>) -> BindingPlace {

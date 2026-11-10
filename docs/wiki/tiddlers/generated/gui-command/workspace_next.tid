@@ -9,5 +9,5 @@ summary: Move to the next workspace (`slot`: the focused slot only)
 
 !! Default keys
 
-* ``ctrl+pagedown`` → ``workspace:next``
+* ``ctrl+right`` → ``workspace:next``
 * ``ctrl+tab`` → ``workspace:next``

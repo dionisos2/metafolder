@@ -74,6 +74,10 @@ What every program does has the key it has everywhere: Ctrl+c, Ctrl+z, Ctrl+f,
 Ctrl+q quits, Ctrl+r and F5 read again, F2 renames, F11 is full screen, F12 the
 developer tools, Ctrl+Tab the next tab. The rules add an alias where the common key
 breaks them — `:` for the command input needs Shift on bépo and AZERTY, hence `x`.
+A Ctrl+Shift chord is hard to reach, so each one shipped has an easier alias in the
+same place (`test_shipped_ctrl_shift_keys_have_an_easier_alias`): Ctrl+y redoes,
+Ctrl+Left and Ctrl+Right change workspace — Ctrl+PageUp/PageDown, the browsers' keys,
+were found awkward and dropped —, Shift+Space unchecks, `p f` makes a folder.
 Two conventions are left out on purpose: `j`/`k` (the arrows do it, and they would
 cost two letters) and `n`/`p` for next and previous.
 

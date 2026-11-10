@@ -17,7 +17,7 @@ summary: The keys used and left at each level
 |``m`` |starts 19 keys (``{record}``) |
 |``n`` |starts 29 keys (``{target-new}``) |
 |``o`` |``panel:focus next`` |
-|``p`` |starts 28 keys (``{panel}``), in ``config``, ``duplicates``, ``file-manager``, ``help``, ``keybindings``, ``keybindings-variables``, ``log``, ``metarecord-detail``, ``metarecord-list``, ``path-ref``, ``shell``, ``sync``, ``viewer`` only |
+|``p`` |starts 29 keys (``{panel}``), in ``config``, ``duplicates``, ``file-manager``, ``help``, ``keybindings``, ``keybindings-variables``, ``log``, ``metarecord-detail``, ``metarecord-list``, ``path-ref``, ``shell``, ``sync``, ``viewer`` only |
 |``t`` |starts 18 keys (``{panels}``) |
 |``v`` |starts 21 keys (``{view}``) |
 |``w`` |starts 4 keys (``{workspaces}``) |
@@ -37,7 +37,7 @@ summary: The keys used and left at each level
 |!With |!Used |!Left |
 |Shift |12: ``e`` ``f`` ``m`` ``x`` ``enter`` ``backspace`` ``delete`` ``space`` ``up`` ``down`` ``left`` ``right`` |46: ``a`` ``b`` ``c`` ``d`` ``g`` ``h`` ``i`` ``j`` ``k`` ``l`` ``n`` ``o`` ``p`` ``q`` ``r`` ``s`` ``t`` ``u`` ``v`` ``w`` ``y`` ``z`` ``,`` ``-`` ``=`` ``escape`` ``tab`` ``home`` ``end`` ``pageup`` ``pagedown`` ``plus`` ``insert`` ``menu`` ``f1`` ``f2`` ``f3`` ``f4`` ``f5`` ``f6`` ``f7`` ``f8`` ``f9`` ``f10`` ``f11`` ``f12`` |
 |Alone, needing Shift on a layout |13: ``0`` ``1`` ``2`` ``3`` ``4`` ``5`` ``6`` ``7`` ``8`` ``9`` ``/`` ``:`` ``!`` |9: ``.`` ``;`` ``*`` ``(`` ``)`` ``"`` ``$`` ``%`` ``?`` |
-|Ctrl |32: ``a`` ``c`` ``d`` ``e`` ``f`` ``g`` ``h`` ``k`` ``l`` ``m`` ``n`` ``o`` ``p`` ``q`` ``r`` ``s`` ``t`` ``u`` ``v`` ``w`` ``x`` ``y`` ``z`` ``,`` ``-`` ``enter`` ``escape`` ``tab`` ``up`` ``down`` ``pageup`` ``pagedown`` |26: ``b`` ``i`` ``j`` ``=`` ``backspace`` ``delete`` ``space`` ``left`` ``right`` ``home`` ``end`` ``plus`` ``insert`` ``menu`` ``f1`` ``f2`` ``f3`` ``f4`` ``f5`` ``f6`` ``f7`` ``f8`` ``f9`` ``f10`` ``f11`` ``f12`` |
+|Ctrl |32: ``a`` ``c`` ``d`` ``e`` ``f`` ``g`` ``h`` ``k`` ``l`` ``m`` ``n`` ``o`` ``p`` ``q`` ``r`` ``s`` ``t`` ``u`` ``v`` ``w`` ``x`` ``y`` ``z`` ``,`` ``-`` ``enter`` ``escape`` ``tab`` ``up`` ``down`` ``left`` ``right`` |26: ``b`` ``i`` ``j`` ``=`` ``backspace`` ``delete`` ``space`` ``home`` ``end`` ``pageup`` ``pagedown`` ``plus`` ``insert`` ``menu`` ``f1`` ``f2`` ``f3`` ``f4`` ``f5`` ``f6`` ``f7`` ``f8`` ``f9`` ``f10`` ``f11`` ``f12`` |
 |Alt |5: ``up`` ``down`` ``left`` ``right`` ``home`` |53: ``a`` ``b`` ``c`` ``d`` ``e`` ``f`` ``g`` ``h`` ``i`` ``j`` ``k`` ``l`` ``m`` ``n`` ``o`` ``p`` ``q`` ``r`` ``s`` ``t`` ``u`` ``v`` ``w`` ``x`` ``y`` ``z`` ``,`` ``-`` ``=`` ``enter`` ``escape`` ``backspace`` ``delete`` ``tab`` ``space`` ``end`` ``pageup`` ``pagedown`` ``plus`` ``insert`` ``menu`` ``f1`` ``f2`` ``f3`` ``f4`` ``f5`` ``f6`` ``f7`` ``f8`` ``f9`` ``f10`` ``f11`` ``f12`` |
 |Ctrl+Alt |0: — |58: ``a`` ``b`` ``c`` ``d`` ``e`` ``f`` ``g`` ``h`` ``i`` ``j`` ``k`` ``l`` ``m`` ``n`` ``o`` ``p`` ``q`` ``r`` ``s`` ``t`` ``u`` ``v`` ``w`` ``x`` ``y`` ``z`` ``,`` ``-`` ``=`` ``enter`` ``escape`` ``backspace`` ``delete`` ``tab`` ``space`` ``up`` ``down`` ``left`` ``right`` ``home`` ``end`` ``pageup`` ``pagedown`` ``plus`` ``insert`` ``menu`` ``f1`` ``f2`` ``f3`` ``f4`` ``f5`` ``f6`` ``f7`` ``f8`` ``f9`` ``f10`` ``f11`` ``f12`` |
 

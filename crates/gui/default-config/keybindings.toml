@@ -199,9 +199,9 @@ vars.index = "i"
 "8" = { command = "workspace:goto 8" }
 "9" = { command = "workspace:goto 9" }
 "ctrl+tab" = { command = "workspace:next" }
-"ctrl+pagedown" = { command = "workspace:next" }
+"ctrl+right" = { command = "workspace:next" }
 "ctrl+shift+tab" = { command = "workspace:prev" }
-"ctrl+pageup" = { command = "workspace:prev" }
+"ctrl+left" = { command = "workspace:prev" }
 "ctrl+t" = { command = "workspace:new" }
 "ctrl+w" = { command = "workspace:close" }
 "ctrl+s" = [
@@ -528,7 +528,9 @@ vars.index = "i"
 "{target-other} {panel} {list}" = { command = "path-ref:list-refs other", when = "path-ref" }
 "{target-new} {panel} {list}" = { command = "path-ref:list-refs new", when = "path-ref" }
 
+# Ctrl+Shift+N as in every file manager, and `p f` (folder) easier to reach.
 "ctrl+shift+n" = { command = "file:new self folder", when = "file-manager" }
+"{panel} f" = { command = "file:new self folder", when = "file-manager" }
 "f2" = { command = "file:rename self" }
 "ctrl+h" = { command = "file-manager:toggle hidden", when = "file-manager" }
 

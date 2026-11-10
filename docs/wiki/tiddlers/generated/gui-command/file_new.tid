@@ -10,4 +10,5 @@ summary: Create a folder or a file in the folder a panel shows (self / a panel t
 !! Default keys
 
 * ``ctrl+shift+n`` → ``file:new self folder`` (in the ``file-manager`` panel)
+* ``p f`` → ``file:new self folder`` (in the ``file-manager`` panel)
 * ``p shift+c`` → ``file:new self file`` (in the ``file-manager`` panel)

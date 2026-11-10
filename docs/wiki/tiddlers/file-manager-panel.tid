@@ -99,7 +99,7 @@ tracked, outside the repository root or inside `internal/`.
 These are the [[File commands]], run on this panel's files and folder.
 
 |!Key |!Does |
-|<<key "file:new self folder" Ctrl+Shift+n>>, <<key "file:new self file" "p C">> |create a folder, an empty file — the name is asked |
+|<<key "file:new self folder" "p f">> (or Ctrl+Shift+n), <<key "file:new self file" "p C">> |create a folder, an empty file — the name is asked |
 |<<key "file:rename self" F2>> |rename the entry |
 |<<key "clipboard:copy self" Ctrl+c>>, <<key "clipboard:cut self" Ctrl+x>> |copy, cut the checked entries, or the one under the cursor ([[Generic panel commands]]) |
 |<<key "clipboard:paste self" Ctrl+v>> |paste into the directory shown, whatever row the cursor is on |
