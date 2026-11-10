@@ -22,14 +22,14 @@ The plan asks for the occupants by set, not per record: `tree/resolve-paths`, up
 
 ''Content is never what matches'': a file moved on one side before it was ever
 linked is matched by its new path. When that duplicates it, delete the copy you do
-not want in one repository; the next sync carries that deletion over.
+not want in one repository; the next sync carries that deletion over. Why: [[Why records are matched only by position]].
 
 !! Without a position
 
 A record with no position field (an abstract record, an orphan whose path is
 gone) is linked to the one record of the other side with ''exactly'' the same
 fields — `mfr_*` fields and references aside —, that has no position and no link
-either. None, or more than one: a bare record. The other side is searched to the
+either. None, or more than one: a bare record. A field edited on one side before the first sync defeats the match; to link such records, give them a position or link them by hand. The other side is searched to the
 end of its pages, stopping at the second match: the one record that qualifies can
 sit anywhere in a result ordered by uuid.
 

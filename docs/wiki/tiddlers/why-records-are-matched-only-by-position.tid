@@ -1,0 +1,32 @@
+title: Why records are matched only by position
+tags: Sync
+kind: rationale
+summary: Sync never links two records on a similarity of fields or on equal content: a small difference can carry a different meaning, and a file's place can be what matters — a correspondence you want is given a position, or made by hand.
+
+The linking phase finds a record's counterpart by its position — the path of each
+of its `tree_ref` and `hierarchy_ref` fields —, and a record with no position only
+by an exact twin ([[Matching records across repositories]]). Two looser matches were
+considered, and dropped (user, November 2026): there is no better rule to find.
+
+!! No similarity of fields
+
+A record without a position could be linked to the one most like it on the other
+side. But two records that differ a little are not two versions of one record: a
+small difference — a date, a tag — can carry a very different meaning, and a link
+made on a guess would then sync one over the other. Only equality says nothing is
+lost. The cost is a duplicate when a field was edited on one side before the first
+sync.
+
+A correspondence you want is given a position: a `tree_ref` field holding the same
+path on both sides links the two records whatever their other fields
+([[TreeRef forest]]). Or <<cmd "mf sync link">> names the pair by hand.
+
+!! No equal content
+
+A file moved on one side before its first sync could be found again by its bytes at
+its old place on the other side. But a file's place is often what matters: two
+identical configuration files written for two different programs are two different
+files, and matching them by content would merge them. So the file is matched by its
+new path and synced as a new file; the old one stays. The duplicate is easy to see
+afterwards ([[Duplicates]]): delete the copy you do not want in one repository, and
+the next sync carries the deletion over.
