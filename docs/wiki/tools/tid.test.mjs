@@ -383,6 +383,13 @@ describe('wikitextToMarkdown', () => {
     );
   });
 
+  test('an image of the wiki becomes a Markdown image, its path from the repository root', () => {
+    assert.equal(
+      wikitextToMarkdown('[img[The list|images/list.png]]\n\n[img[images/log.png]]\n'),
+      '![The list](docs/wiki/images/list.png)\n\n![](docs/wiki/images/log.png)\n',
+    );
+  });
+
   test('code is left alone, inline and fenced', () => {
     const src = "`''a'' [[b]]`\n\n```\n!! not a heading\n# not a list\n''x'' //y//\n```\n";
     assert.equal(wikitextToMarkdown(src), src);

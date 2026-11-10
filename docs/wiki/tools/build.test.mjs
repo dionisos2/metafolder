@@ -20,6 +20,8 @@ summary: Root.
 
 See [[Trash]], and press <<key "trash:restore" Enter>>. Grammar:
 
+[img[The list|images/shot.png]]
+
 <<live grammar>>
 `,
   'trash.tid': `title: Trash
@@ -78,6 +80,8 @@ function build() {
   fs.cpSync(path.join(WIKI, 'tiddlers', 'system'), path.join(tiddlers, 'system'), { recursive: true });
   fs.copyFileSync(path.join(WIKI, 'tiddlywiki.info'), path.join(root, 'wiki', 'tiddlywiki.info'));
   for (const [f, src] of Object.entries(NOTES)) fs.writeFileSync(path.join(tiddlers, f), src);
+  fs.mkdirSync(path.join(root, 'wiki', 'images'));
+  fs.writeFileSync(path.join(root, 'wiki', 'images', 'shot.png'), 'not really a png');
   for (const [f, src] of Object.entries(GENERATED)) {
     fs.writeFileSync(path.join(tiddlers, 'generated', 'gui-command', f), src);
   }
@@ -96,6 +100,7 @@ test('one page per hand-written note, named by its slug, and nothing stale', () 
   assert.deepEqual(fs.readdirSync(out).sort(), [
     'documentation.html',
     'gui-command.html',
+    'images',
     'index.json',
     'restoring-from-the-trash.html',
     'trash.html',
@@ -109,6 +114,12 @@ test('links become help-page links, keys and live zones panel hooks', () => {
   assert.match(html, /<span data-mf-key="trash:restore">Enter<\/span>/);
   assert.match(html, /<div data-mf-live="grammar"><\/div>/);
   assert.doesNotMatch(html, /tc-tiddlylink|href="#/);
+});
+
+test('the images of the wiki are copied beside the pages, which name them by a relative path', () => {
+  assert.equal(read('images/shot.png'), 'not really a png');
+  assert.match(read('documentation.html'), /<img[^>]* src="images\/shot\.png"/);
+  assert.match(read('documentation.html'), /<img[^>]* (alt|title)="The list"/);
 });
 
 test('no block element ends up inside a paragraph', () => {

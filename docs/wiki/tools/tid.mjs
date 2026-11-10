@@ -354,12 +354,19 @@ export function scriptTiddler(relPath, src) {
 const README_NOTE = 'README';
 const README_TITLE = 'metafolder';
 
-const INLINE = /(`[^`\n]*`)|\[\[([^\]]+?)\]\]|(https?:\/\/[^\s)]+)|''(.+?)''|\/\/(.+?)\/\//g;
+const INLINE = /(`[^`\n]*`)|\[\[([^\]]+?)\]\]|(https?:\/\/[^\s)]+)|''(.+?)''|\/\/(.+?)\/\/|\[img\[([^\]]+?)\]\]/g;
 
 /** One line of text, its code and addresses left alone. @param {string} line @returns {string} */
 function inlineToMarkdown(line) {
-  return line.replace(INLINE, (_, code, link, url, bold, italic) => {
+  return line.replace(INLINE, (_, code, link, url, bold, italic, image) => {
     if (code !== undefined) return code;
+    if (image !== undefined) {
+      // `[img[alt|images/x.png]]`: the path is relative to docs/wiki/, where
+      // the help build finds the images too.
+      const bar = image.indexOf('|');
+      const alt = bar === -1 ? '' : image.slice(0, bar);
+      return `![${alt}](docs/wiki/${image.slice(bar + 1).trim()})`;
+    }
     if (url !== undefined) return url;
     if (bold !== undefined) return `**${inlineToMarkdown(bold)}**`;
     if (italic !== undefined) return `*${inlineToMarkdown(italic)}*`;

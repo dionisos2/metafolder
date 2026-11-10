@@ -184,6 +184,13 @@ export async function mount(root, metafolder) {
           grammar.textContent = `(could not load the grammar: ${error})`;
         });
     }
+    // Images: a page names its own by a path relative to the documentation
+    // (`images/x.png`), which the panel's document would resolve against
+    // itself.
+    for (const img of content.querySelectorAll('img[src]')) {
+      const src = img.getAttribute('src') ?? '';
+      if (!/^[a-z][a-z0-9+.-]*:|^\//i.test(src)) img.setAttribute('src', `${wikiBase}/${src}`);
+    }
     // In-page links between help pages: <a data-help-page="id">.
     for (const link of content.querySelectorAll('a[data-help-page]')) {
       link.addEventListener('click', (event) => {

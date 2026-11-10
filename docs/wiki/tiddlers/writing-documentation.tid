@@ -46,8 +46,13 @@ The file is named after the title's identifier (`scripts/dev/doc new` picks it).
 !! The wikitext that is allowed
 
 Headings (`!!`), paragraphs, lists, tables, code blocks, inline code, `''bold''`,
-`//italic//`, `[[links]]`, and the project's procedures. No widget, no raw HTML, no
-definition: `scripts/dev/doc check` refuses them outside `system/`.
+`//italic//`, `[[links]]`, images, and the project's procedures. No widget, no raw
+HTML, no definition: `scripts/dev/doc check` refuses them outside `system/`.
+
+An image is a file of `docs/wiki/images/`, shown with `[img[what it shows|images/name.png]]`:
+the path is relative to `docs/wiki/`, the build copies the directory beside the
+pages, the help panel reads it from there and the README from the repository
+([[The demonstration repository]] makes the screenshots).
 
 |!Procedure |!Gives |
 |`<<cmd "name">>` |a link to a command's note, in code form |

@@ -93,6 +93,23 @@ beforeEach(() => {
   );
 });
 
+describe('images', () => {
+  test('an image of a page is read from the documentation, not from the panel', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.endsWith('/index.json')) return new Response(JSON.stringify(MANIFEST));
+        return new Response('<p><img src="images/shot.png"><img src="https://example.org/a.png"></p>');
+      }),
+    );
+    const { content, show } = await mountHelp();
+    await show('gui');
+    const [own, external] = [...content.querySelectorAll('img')];
+    expect(own.getAttribute('src')).toBe('http://gui/docs/images/shot.png');
+    expect(external.getAttribute('src')).toBe('https://example.org/a.png');
+  });
+});
+
 describe('the search box history', () => {
   test('help:apply records the text', async () => {
     const { input, run, append } = await mountHelp('repo-uuid');

@@ -65,6 +65,10 @@ export function build(wikiDir, outDir) {
         });
       }
       fs.writeFileSync(path.join(outDir, 'index.json'), `${JSON.stringify(index, null, 2)}\n`);
+      // The images a note shows (`[img[images/x.png]]`) keep their relative
+      // path: the help panel resolves it against where it reads the pages.
+      const images = path.join(wikiDir, 'images');
+      if (fs.existsSync(images)) fs.cpSync(images, path.join(outDir, 'images'), { recursive: true });
       resolve(index.length);
     });
   });

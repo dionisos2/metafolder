@@ -13,6 +13,22 @@ still change between versions without notice. What you have stored is kept: a ch
 an on-disk format comes with its conversion ([Persisted format changes](docs/wiki/tiddlers/persisted-format-changes.tid)). This project
 has been built predominantly with [Claude Code](https://claude.com/claude-code).
 
+## What it looks like
+
+The photos of three trips, found by their tag, as thumbnails beside a preview:
+
+![The metarecord list as a grid of photos, beside the file viewer](docs/wiki/images/demo-photos.png)
+
+The tag hierarchy, and the files tagged with an animal of any kind, with their ratings and comments:
+
+![The tag tree beside the list of the files it tags](docs/wiki/images/demo-tags.png)
+
+Every change is kept in the log, step by step, and any step can be undone:
+
+![The annotated files beside the log of the steps that wrote them](docs/wiki/images/demo-log.png)
+
+The files shown are free (photographs mostly under CC BY-SA, so are these screenshots); their authors and licences are listed in `docs/wiki/images/CREDITS.md`.
+
 ## Installing
 
 ```
