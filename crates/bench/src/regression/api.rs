@@ -141,6 +141,7 @@ pub const SCENARIOS: &[Scenario] = &[
     whole("api.task.reconcile", &[(P, "/repos/:repo/reconcile"), (G, "/repos/:repo/tasks/:task")]),
     s("api.task.cancel", &[(P, "/repos/:repo/tasks/:task/cancel")]),
     whole("api.task.duplicates", &[(P, "/repos/:repo/duplicates/scan")]),
+    whole("api.task.hash", &[(P, "/repos/:repo/hash")]),
     whole("api.task.relink", &[(P, "/repos/:repo/orphans/relink")]),
     // ── The whole repository ───────────────────────────────────────────────
     whole("api.orphans.scan", &[(P, "/repos/:repo/orphans/scan")]),
@@ -546,6 +547,11 @@ pub async fn run(id: &str, c: &Ctx) -> Result<()> {
             wait_task(base, &task_id).await?;
         }
         "api.task.duplicates" => drop(task(base, "duplicates/scan", json!({})).await?),
+        "api.task.hash" => {
+            let files = json!({"type": "eq", "field": "mfr_type",
+                               "value": {"type": "string", "value": "file"}});
+            drop(task(base, "hash", json!({"query": files})).await?)
+        }
         "api.task.relink" => drop(task(base, "orphans/relink", json!({})).await?),
 
         "api.orphans.scan" => drop(post(&format!("{base}/orphans/scan"), json!({})).await?),

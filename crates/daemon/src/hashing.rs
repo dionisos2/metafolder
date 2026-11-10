@@ -214,7 +214,7 @@ fn flush(
         let mut conn = metafolder_core::slowlog::timed("wait:conn", || repo.conn.lock_recover());
         let held = Instant::now();
         let mut writer = repo.writer(&mut *conn, context.clone())?;
-        while let Some((uuid, h)) = items.next() {
+        for (uuid, h) in items.by_ref() {
             write_hashes(&mut writer, uuid, &h)?;
             if held.elapsed() >= HOLD {
                 break;
