@@ -64,4 +64,8 @@ field.
 A rewrite that keeps the size and the mtime is not seen by the stamp — the same
 blind spot as the watcher's ([[Event semantics]]); `mf reconcile` does not see it
 either. A file marked <<cmd "mf_hash">> under a running watcher gets its hash read
-again, and the rewrite is seen by the hash.
+again, and the rewrite is seen by the hash. The rest of the blind spot is accepted:
+with an mtime to the millisecond, a change that keeps both is all but impossible
+short of a tool restoring the mtime on purpose, and closing it would mean hashing
+every changed file on both sides — the cost the planner avoids by comparing bytes
+only when a stamp moved.

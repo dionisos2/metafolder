@@ -59,6 +59,11 @@ git commit --no-edit
 `git merge --abort` gives up and puts everything back. Once the merge is
 committed, `main` contains `default`: there is nothing left to run.
 
+The conflicted merge is not left in place for you to resolve: conflict markers
+break the files they sit in, and a malformed configuration file is a hard startup
+error ([[No runtime fallback]]). Restoring `main` keeps metafolder running on your
+version until you choose to merge.
+
 !! Going back to a default
 
 Reverting a file to its shipped version is a git operation:
