@@ -14,6 +14,11 @@ than breaking them.
 ## [Unreleased]
 
 ### Changed
+- **`mf sync run` commits each link on its own**, as soon as it is synced, instead of
+  by batches. The intents file's `[settings]` (`commit-batch-size`,
+  `transfer-batch-size`) is gone: a file that still has it is refused, naming the keys
+  to delete (doc "Why a run commits each link on its own").
+
 - **A comparison whose operand is not of the field's type is refused with `400`**
   (`=`, `!=`, `in`, `<`, `<=`, `>`, `>=`) instead of silently matching nothing — or,
   under `!=`, every holder. `tag=2024` on a text field now says to write `"2024"`, a

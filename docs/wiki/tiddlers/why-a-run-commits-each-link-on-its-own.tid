@@ -1,0 +1,31 @@
+title: Why a run commits each link on its own
+tags: Sync
+kind: rationale
+audience: dev
+summary: A run commits each link as soon as it is synced, not by batches: what a stop makes the next plan redo is a comparison, never a transfer, and batching saved one write per link among several — batches removed in November 2026.
+
+A run takes the links one at a time, parents first: the link's metadata, then its
+files, then its `POST …/links/commit` ([[Running a sync]]). A link stopped half-way
+is left uncommitted; every link before it is committed.
+
+!! What batches were for
+
+Until November 2026 a run grouped its links in batches — at most
+`commit-batch-size` links (50), fewer once they held `transfer-batch-size` copies
+(20), both set in the intents file's `[settings]` — and committed each batch at once.
+The idea was to trade the cost of a commit against the work a crash makes the next
+run redo, a transfer being the slow part.
+
+Neither half held:
+
+* ''A transfer is never redone''. A successful operation leaves the plan at once,
+  whatever its batch; what an uncommitted link costs the next `mf sync plan` is to
+  see both sides' stamps moved and compare the two files' bytes — equal, nothing to
+  copy ([[Change detection in sync]]). A batch only made more links pay that reading.
+* ''A commit is one write among several''. Each operation already writes the plan
+  repository to leave it, and each sync writes the records it changes: one commit more per link
+  does not change the order of a run's writes.
+
+So a run commits each link on its own, and an intents file that still has
+`[settings]` is refused, naming the keys to remove ([[The intents file]]). The
+`links/commit` endpoint still takes a list ([[Sync endpoints]]).

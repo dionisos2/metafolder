@@ -15,7 +15,7 @@ use crate::daemon_client::with_query;
 use crate::dsl;
 use crate::metarecord::{MetaRecord, TreePath, Value};
 
-use super::intents::{self, Intents, Settings};
+use super::intents::{self, Intents};
 use super::lookup::{self, LinkRow, LinkTable, Pair, Translator};
 use super::model::{self, Decision, Side, Snapshot, CONTENT_FIELD, CONTENT_STAMP, MODE_STAMP};
 use super::{
@@ -101,7 +101,7 @@ pub fn run(
         ops.push(OpSpec::new("drop-link", end_a, end_b));
     }
 
-    write_settings(ctx, &plan, &intents.settings, host_uuid)?;
+    write_settings(ctx, &plan, host_uuid)?;
     for op in &ops {
         write_op(ctx, &plan, op)?;
     }
@@ -964,19 +964,11 @@ fn write_op(ctx: &Ctx, plan: &PlanRepo, op: &OpSpec) -> Result<(), CliError> {
     Ok(())
 }
 
-/// Records what the run needs besides the ops — the intents file's
-/// `[settings]`, and the host chosen for the pair's sync database — in the plan
-/// repo: a metarecord without `plan_kind`, so no op.
-fn write_settings(
-    ctx: &Ctx,
-    plan: &PlanRepo,
-    settings: &Settings,
-    host: Uuid,
-) -> Result<(), CliError> {
-    let int = |n: usize| json!({"type": "int", "value": n});
+/// Records what the run needs besides the ops — the host chosen for the
+/// pair's sync database — in the plan repo: a metarecord without `plan_kind`,
+/// so no op.
+fn write_settings(ctx: &Ctx, plan: &PlanRepo, host: Uuid) -> Result<(), CliError> {
     let fields = vec![
-        json!({"name": "plan_commit_batch_size", "value": int(settings.commit_batch_size)}),
-        json!({"name": "plan_transfer_batch_size", "value": int(settings.transfer_batch_size)}),
         json!({"name": "plan_host", "value": {"type": "string", "value": host.as_simple().to_string()}}),
     ];
     ctx.client.post(&format!("{}/metarecords", plan.base), &json!({"fields": fields}))?;
@@ -1590,10 +1582,6 @@ mod tests {
                 simplified: false,
             }],
             conflict: Vec::new(),
-            settings: crate::sync::intents::Settings {
-                commit_batch_size: 100,
-                transfer_batch_size: 100,
-            },
         };
         linking_phase(&ctx, a, b, &intents).expect("linking phase runs");
         let reads = client.calls.borrow().len();
@@ -1642,10 +1630,6 @@ mod tests {
                     simplified: false,
                 }],
                 conflict: Vec::new(),
-                settings: crate::sync::intents::Settings {
-                    commit_batch_size: 100,
-                    transfer_batch_size: 100,
-                },
             };
             let out = linking_phase(&ctx, a, b, &intents).expect("linking phase runs");
             let mut links: Vec<(Uuid, Uuid)> =

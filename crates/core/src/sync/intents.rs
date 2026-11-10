@@ -1,7 +1,7 @@
 //! The `mf sync plan` intents file (doc "The intents file"): a TOML document
-//! declaring the sync **scope** (directional link queries) and a few policies
-//! (ordered conflict rules, batch sizes). Parsing is pure and offline — no
-//! daemon involvement.
+//! declaring the sync **scope** (directional link queries) and its policies
+//! (ordered conflict rules). Parsing is pure and offline — no daemon
+//! involvement.
 
 use serde::Deserialize;
 
@@ -18,9 +18,6 @@ pub struct Intents {
     /// Ordered conflict rules; first match wins (doc "Sync conflicts").
     #[serde(default)]
     pub conflict: Vec<ConflictRule>,
-    /// Optional tuning.
-    #[serde(default)]
-    pub settings: Settings,
 }
 
 /// One directional scope entry: `query` runs on `repo` (one of the pair) only.
@@ -81,52 +78,40 @@ pub fn parse_policy(s: &str) -> Result<Policy, CliError> {
     }
 }
 
-/// Optional `[settings]`: how `mf sync run` batches its work (doc "How a run
-/// is batched").
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Settings {
-    /// At most this many links per batch — one `POST …/links/commit` each.
-    #[serde(rename = "commit-batch-size", default = "default_commit_batch")]
-    pub commit_batch_size: usize,
-    /// A batch closes once its links hold this many content transfers.
-    #[serde(rename = "transfer-batch-size", default = "default_transfer_batch")]
-    pub transfer_batch_size: usize,
-}
-
-fn default_commit_batch() -> usize {
-    50
-}
-
-fn default_transfer_batch() -> usize {
-    20
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Settings {
-            commit_batch_size: default_commit_batch(),
-            transfer_batch_size: default_transfer_batch(),
-        }
-    }
-}
-
 /// Parses and validates the intents TOML. Rejects an empty scope (nothing to
-/// sync), an unknown key, a batch size of zero, and an invalid conflict policy.
+/// sync), an unknown key, the removed `[settings]`, and an invalid conflict
+/// policy.
 pub fn parse_intents(text: &str) -> Result<Intents, CliError> {
+    let table: toml::Table =
+        toml::from_str(text).map_err(|e| CliError::Usage(format!("invalid intents file: {e}")))?;
+    if let Some(settings) = table.get("settings") {
+        return Err(removed_settings(settings));
+    }
     let intents: Intents =
         toml::from_str(text).map_err(|e| CliError::Usage(format!("invalid intents file: {e}")))?;
     if intents.scope.is_empty() {
         return Err(CliError::Usage("the intents file declares no [[intents]] scope entry".into()));
-    }
-    if intents.settings.commit_batch_size == 0 || intents.settings.transfer_batch_size == 0 {
-        return Err(CliError::Usage("a batch size must be at least 1".into()));
     }
     // Validate every policy eagerly so a typo fails at parse time, not mid-run.
     for rule in &intents.conflict {
         rule.parsed_policy()?;
     }
     Ok(intents)
+}
+
+/// `[settings]` held the batch sizes of a run, which now commits each link on
+/// its own (doc "Why a run commits each link on its own"): a file that still
+/// has the section is told what to remove, key by key.
+fn removed_settings(settings: &toml::Value) -> CliError {
+    let keys: Vec<&str> = match settings.as_table() {
+        Some(t) => t.keys().map(String::as_str).collect(),
+        None => Vec::new(),
+    };
+    CliError::Usage(format!(
+        "invalid intents file: [settings] was removed (a run commits each link on its own); \
+         delete the section{}",
+        if keys.is_empty() { String::new() } else { format!(" and its keys: {}", keys.join(", ")) }
+    ))
 }
 
 #[cfg(test)]
@@ -153,14 +138,10 @@ mod tests {
 
         [[conflict]]
         policy = "ask"
-
-        [settings]
-        commit-batch-size    = 25
-        transfer-batch-size  = 10
     "#;
 
     #[test]
-    fn parses_scope_conflicts_and_settings() {
+    fn parses_scope_and_conflicts() {
         let it = parse_intents(FULL).unwrap();
         assert_eq!(it.scope.len(), 2);
         assert_eq!(it.scope[0].repo, "laptop");
@@ -171,17 +152,6 @@ mod tests {
         assert_eq!(it.conflict[0].field.as_deref(), Some("rating"));
         assert_eq!(it.conflict[0].parsed_policy().unwrap(), Policy::Prefer("laptop".into()));
         assert_eq!(it.conflict[2].parsed_policy().unwrap(), Policy::Ask);
-
-        assert_eq!(it.settings.commit_batch_size, 25);
-        assert_eq!(it.settings.transfer_batch_size, 10);
-    }
-
-    #[test]
-    fn settings_default_when_absent() {
-        let it = parse_intents("[[intents]]\nrepo='a'\nquery='x'\n").unwrap();
-        assert_eq!(it.settings.commit_batch_size, 50);
-        assert_eq!(it.settings.transfer_batch_size, 20);
-        assert!(it.conflict.is_empty());
     }
 
     #[test]
@@ -214,12 +184,19 @@ mod tests {
         assert!(err.message().contains("similarity-threshold"), "{}", err.message());
     }
 
+    /// A run commits each link on its own: the batch sizes are gone, and a file
+    /// still setting one is told so by name rather than refused as a mere typo.
     #[test]
-    fn a_zero_batch_size_is_refused() {
-        let err =
-            parse_intents("[[intents]]\nrepo='a'\nquery='x'\n[settings]\ncommit-batch-size = 0\n")
-                .unwrap_err();
-        assert!(err.message().contains("batch size"), "{}", err.message());
+    fn a_batch_size_is_refused_as_removed() {
+        for key in ["commit-batch-size", "transfer-batch-size"] {
+            let err = parse_intents(&format!(
+                "[[intents]]\nrepo='a'\nquery='x'\n[settings]\n{key} = 50\n"
+            ))
+            .unwrap_err();
+            let message = err.message();
+            assert!(message.contains(key), "{message}");
+            assert!(message.contains("removed"), "{message}");
+        }
     }
 
     #[test]

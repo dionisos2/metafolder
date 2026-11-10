@@ -31,9 +31,6 @@ byte comparison. Open: how a file is marked (=mfr_*= is reserved); a stored
 hash is trusted on its mtime and size, so without the watcher the same-second
 rewrite stays unseen.
 
-** Sync open questions
-doc "Sync open questions": the batch-size defaults (to measure).
-
 ** Configuration open questions
 doc "Configuration open questions": installing without a source checkout, a
 sync racing an editor, leaving a conflicted merge to your own git tools.

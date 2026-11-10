@@ -2,13 +2,7 @@ title: Sync open questions
 tags: Sync
 kind: question
 status: deferred
-summary: The batch-size defaults, the matching of records without a position, and the content changes a stamp cannot see.
-
-!! Batch sizes
-
-`commit-batch-size` (50) and `transfer-batch-size` (20) were never measured
-([[How a run is batched]]). A benchmark would trade the cost of a commit — a disk
-sync — against the work a crash makes the next run redo.
+summary: The matching of records without a position or moved before their first sync, and the content changes a stamp cannot see.
 
 !! Records without a position
 

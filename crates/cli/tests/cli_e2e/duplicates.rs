@@ -648,20 +648,16 @@ fn test_sync_drops_a_link_whose_records_are_both_gone() {
     assert!(link_states(&a, &b).is_empty(), "the dead link is gone");
 }
 
-/// `[settings]` batch the run: `commit-batch-size = 1` commits each link on
-/// its own.
+/// A run commits each link on its own, as soon as it is synced: a stop
+/// costs no other link's work (doc "Why a run commits each link on its own").
 #[test]
-fn test_sync_run_commits_in_batches() {
-    let (a, _ar) = init_repo("batch_a");
-    let (b, _br) = init_repo("batch_b");
+fn test_sync_run_commits_each_link_on_its_own() {
+    let (a, _ar) = init_repo("each_a");
+    let (b, _br) = init_repo("each_b");
     create_metarecord(&a, &["kind:string=x", "n:int=1"]);
     create_metarecord(&a, &["kind:string=x", "n:int=2"]);
-    let intents = write_intents(
-        "batch",
-        &format!(
-            "[[intents]]\nrepo = '{a}'\nquery = 'kind = \"x\"'\n[settings]\ncommit-batch-size = 1\n"
-        ),
-    );
+    let intents =
+        write_intents("each", &format!("[[intents]]\nrepo = '{a}'\nquery = 'kind = \"x\"'\n"));
     assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
     let commits = std::cell::Cell::new(0);
     let fire = |method: &str, path: &str| {

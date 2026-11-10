@@ -6,7 +6,7 @@ summary: mf sync run carries the plan out — links, then each link's metadata b
 !! Order
 
 # The `create-link` ops: bare records are created at the uuid the plan gave them, then the links. Every reference written afterwards may lead to one.
-# The links, parents first (by the depth of their path), in batches ([[How a run is batched]]). In each batch: every `sync`, then every `copy`, `move`, `chmod`; then the batch is committed.
+# The links, parents first (by the depth of their path), one at a time: its `sync`, then its `copy`, `move`, `chmod`; then the link is committed ([[Why a run commits each link on its own]]).
 # The `delete` and `drop-link` ops.
 
 ''Metadata gates the disk'': a link's files are touched only once its `sync` went

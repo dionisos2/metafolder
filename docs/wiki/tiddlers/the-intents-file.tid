@@ -1,7 +1,7 @@
 title: The intents file
 tags: Sync
 kind: reference
-summary: The TOML file a sync plan reads: one query per repository naming what to link, the rules that decide conflicts, the run's batch sizes.
+summary: The TOML file a sync plan reads: one query per repository naming what to link, and the rules that decide conflicts.
 
 ```
 [[intents]]
@@ -13,10 +13,6 @@ simplified = false                      # true: expand the simplified grammar fi
 field  = "rating"                       # optional
 query  = 'mfr_path ->* "/photos"'       # optional, tested on either record
 policy = "prefer:nas"                   # ask | skip | prefer:<repo>
-
-[settings]
-commit-batch-size   = 50
-transfer-batch-size = 20
 ```
 
 ''`[[intents]]`'' — the scope. Each entry's query runs on its own repository only:
@@ -32,9 +28,8 @@ rule matches when its `field` (if given) is the conflicting field and its `query
 with no rule matching, the plan asks ([[Sync conflicts]]). `prefer:` names a
 repository, never `a` or `b`.
 
-''`[settings]`'' — how the run batches its work ([[How a run is batched]]). The
-plan records them for the run, which does not read the file.
-
-Any other key is refused, and so is a batch size of 0. There is no similarity
-threshold: records are matched by path, exactly, so a file that still has
-`similarity-threshold` is told it is not a key rather than having it ignored.
+Any other key is refused. A `[settings]` section, which held the run's batch sizes
+until November 2026, is refused naming the keys to remove: a run commits each link
+on its own ([[Why a run commits each link on its own]]). There is no similarity
+threshold either: records are matched by path, exactly, so a file that still has
+`similarity-threshold` is told so rather than having it ignored.

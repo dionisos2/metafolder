@@ -34,8 +34,8 @@ One metarecord per operation, with these fields:
 |`delete` |carries a deletion over ([[Deletion propagation]]) |
 |`drop-link` |removes a link whose two records are both gone |
 
-A metarecord without `plan_kind` records what the run needs besides: the batch
-sizes and the host ([[How a run is batched]]).
+A metarecord without `plan_kind` records what the run needs besides: the host
+chosen for the sync database.
 
 !! What a link gets
 

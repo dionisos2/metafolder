@@ -56,7 +56,7 @@ impl RunReport {
     }
 }
 
-/// The per-link ops of a plan, by kind, in the order a batch runs them:
+/// The per-link ops of a plan, by kind, in the order a link runs them:
 /// metadata first, then the disk (doc "Running a sync").
 const LINK_PHASES: [&str; 4] = ["sync", "copy", "move", "chmod"];
 
@@ -91,8 +91,9 @@ pub fn run(ctx: &Ctx, repo_a: &str, repo_b: &str, yes: bool) -> Result<RunReport
     }
     run.reload_links()?;
 
-    // Then the links, in batches: each batch's metadata, then its disk
-    // operations, then one commit — so a crash costs at most one batch.
+    // Then the links, parents first, each on its own: its metadata, then its
+    // disk operations, then its commit — so a stop costs no other link's work
+    // (doc "Why a run commits each link on its own").
     let mut by_link: HashMap<(Uuid, Uuid), Vec<&Op>> = HashMap::new();
     for op in ops.iter().filter(|o| LINK_PHASES.contains(&o.kind.as_str())) {
         by_link.entry(op.link()).or_default().push(op);
@@ -105,17 +106,15 @@ pub fn run(ctx: &Ctx, repo_a: &str, repo_b: &str, yes: bool) -> Result<RunReport
         depth.insert(*key, run.depth(*key)?);
     }
     keys.sort_by_key(|k| depth[k]);
-    for batch in batches(&keys, &by_link, settings.commit_batch, settings.transfer_batch) {
+    for key in &keys {
         for kind in LINK_PHASES {
-            for key in &batch {
-                for op in by_link[key].iter().filter(|o| o.kind == kind) {
-                    let outcome = run.link_op(op, &ops)?;
-                    run.settle(op, outcome)?;
-                }
+            for op in by_link[key].iter().filter(|o| o.kind == kind) {
+                let outcome = run.link_op(op, &ops)?;
+                run.settle(op, outcome)?;
             }
         }
         run.refresh_created()?;
-        run.commit(&batch, &ops)?;
+        run.commit(key, &ops)?;
     }
 
     // Deletions last.
@@ -132,47 +131,16 @@ pub fn run(ctx: &Ctx, repo_a: &str, repo_b: &str, yes: bool) -> Result<RunReport
     })
 }
 
-/// Splits the links into batches of at most `links` links, closing a batch
-/// early once it holds `transfers` content transfers: a batch is what a crash
-/// can cost, and a transfer is the slow part to redo (doc "How a run is
-/// batched").
-fn batches(
-    keys: &[(Uuid, Uuid)],
-    by_link: &HashMap<(Uuid, Uuid), Vec<&Op>>,
-    links: usize,
-    transfers: usize,
-) -> Vec<Vec<(Uuid, Uuid)>> {
-    let mut out: Vec<Vec<(Uuid, Uuid)>> = Vec::new();
-    let mut current: Vec<(Uuid, Uuid)> = Vec::new();
-    let mut copies = 0;
-    for key in keys {
-        current.push(*key);
-        copies += by_link[key].iter().filter(|o| o.kind == "copy").count();
-        if current.len() >= links.max(1) || copies >= transfers.max(1) {
-            out.push(std::mem::take(&mut current));
-            copies = 0;
-        }
-    }
-    if !current.is_empty() {
-        out.push(current);
-    }
-    out
-}
-
 /// What the plan recorded besides its ops.
 struct RunSettings {
-    commit_batch: usize,
-    transfer_batch: usize,
     /// The repository to hold the pair's sync database, should the run create
     /// it (`mf sync plan --host`).
     host: Option<Uuid>,
 }
 
-/// The settings the plan recorded (doc "How a run is batched"); the defaults
-/// for a plan from before they were recorded.
+/// The settings the plan recorded.
 fn read_settings(ctx: &Ctx, plan_base: &str) -> Result<RunSettings, CliError> {
-    let defaults = super::intents::Settings::default();
-    let query = json!({"type": "is_present", "field": "plan_commit_batch_size"});
+    let query = json!({"type": "is_present", "field": "plan_host"});
     let resp = ctx
         .client
         .post(&format!("{plan_base}/query"), &json!({"query": query, "select": "*", "limit": 1}))?;
@@ -181,14 +149,7 @@ fn read_settings(ctx: &Ctx, plan_base: &str) -> Result<RunSettings, CliError> {
         .and_then(|r| r.first())
         .and_then(|m| m["fields"].as_array().cloned())
         .unwrap_or_default();
-    let size = |name: &str, default: usize| {
-        field_u64(&fields, name).map(|n| n as usize).filter(|n| *n > 0).unwrap_or(default)
-    };
-    Ok(RunSettings {
-        commit_batch: size("plan_commit_batch_size", defaults.commit_batch_size),
-        transfer_batch: size("plan_transfer_batch_size", defaults.transfer_batch_size),
-        host: field_str(&fields, "plan_host").and_then(|h| Uuid::parse_str(&h).ok()),
-    })
+    Ok(RunSettings { host: field_str(&fields, "plan_host").and_then(|h| Uuid::parse_str(&h).ok()) })
 }
 
 /// Aggregates external-record content/path divergences by subtree (the
@@ -938,49 +899,36 @@ impl<'a> Run<'a> {
         Ok(())
     }
 
-    /// Records each link of the batch the run synced: the versions it expects
-    /// — never re-read — and the snapshot of what the two sides now agree on
+    /// Records the link once the run synced it: the versions it expects —
+    /// never re-read — and the snapshot of what the two sides now agree on
     /// (doc "The sync database"). A link with a skipped op, or one still
     /// disagreeing, is left for the next plan.
-    fn commit(&mut self, batch: &[(Uuid, Uuid)], all: &[Op]) -> Result<(), CliError> {
-        let mut commits = Vec::new();
-        let mut committed = Vec::new();
-        for key in batch {
-            if !self.synced.contains(key) || self.unsettled.contains(key) || self.held.contains(key)
-            {
-                continue;
-            }
-            let Some(link) = self.link_uuids.get(key).copied() else { continue };
-            let (Some(a), Some(b)) =
-                (self.known.get(&(self.pair.a, key.0)), self.known.get(&(self.pair.b, key.1)))
-            else {
-                continue;
-            };
-            let body = self.ctx.client.get(&format!(
-                "{}/links/{}",
-                self.pair.prefix(),
-                link.as_simple()
-            ))?;
-            let old = Snapshot::from_wire(
-                body["snapshot"].as_array().map(Vec::as_slice).unwrap_or_default(),
-            );
-            let snap = model::next_snapshot(a, b, &old, &self.look)?;
-            commits.push(json!({
-                "link": link.as_simple().to_string(),
-                "version_a": a.version,
-                "version_b": b.version,
-                "snapshot": snap.to_wire(),
-            }));
-            committed.push(*key);
-        }
-        if commits.is_empty() {
+    fn commit(&mut self, key: &(Uuid, Uuid), all: &[Op]) -> Result<(), CliError> {
+        if !self.synced.contains(key) || self.unsettled.contains(key) || self.held.contains(key) {
             return Ok(());
         }
+        let Some(link) = self.link_uuids.get(key).copied() else { return Ok(()) };
+        let (Some(a), Some(b)) =
+            (self.known.get(&(self.pair.a, key.0)), self.known.get(&(self.pair.b, key.1)))
+        else {
+            return Ok(());
+        };
+        let body =
+            self.ctx.client.get(&format!("{}/links/{}", self.pair.prefix(), link.as_simple()))?;
+        let old =
+            Snapshot::from_wire(body["snapshot"].as_array().map(Vec::as_slice).unwrap_or_default());
+        let snap = model::next_snapshot(a, b, &old, &self.look)?;
+        let commit = json!({
+            "link": link.as_simple().to_string(),
+            "version_a": a.version,
+            "version_b": b.version,
+            "snapshot": snap.to_wire(),
+        });
         self.ctx
             .client
-            .post(&format!("{}/links/commit", self.pair.prefix()), &json!({"commits": commits}))?;
+            .post(&format!("{}/links/commit", self.pair.prefix()), &json!({"commits": [commit]}))?;
         // The conflicts of a committed link were consumed by its sync.
-        for op in all.iter().filter(|o| o.kind == "conflict" && committed.contains(&o.link())) {
+        for op in all.iter().filter(|o| o.kind == "conflict" && o.link() == *key) {
             prune_op(self.ctx, &self.plan_base, op.plan_uuid)?;
         }
         Ok(())
