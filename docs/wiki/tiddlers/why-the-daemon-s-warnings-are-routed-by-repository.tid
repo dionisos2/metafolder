@@ -22,5 +22,13 @@ Three rules follow:
 * ''A new diagnostic about a repository uses the `_for` variant'' (`diagnostics::warn_for(scope, message, repo)`, and `info_for`, `error_for`) when the repository is at hand.
 * ''Deep code uses the plain `warn`/`info`/`error`, inside a repository scope.'' The placement walk, a reconcile's directory listing, a metadata parser, the forest's arbitration know no repository, yet run for one. `diagnostics::in_repo(uuid)` returns a guard under which the plain variants of that thread name the repository; it is entered where the daemon starts working for one — `with_repo` (every request on a repository), the detached tasks of `routes/fs.rs`, the executor's flush, the watcher's ingest thread, `RepoState::warm`, `load_config` and `refresh_watches`. A diagnostic outside every scope is daemon-wide. The guard is not `Send`, so it cannot be held across an `.await`. Work moved to a thread of its own must enter the scope again: a thread-local does not follow it.
 
+The routes on a repository that do not go through `with_repo` (audited Nov. 2026)
+reach none of that deep code: the watch pause, resume and activity routes, the
+repository's info, rename and tasks touch memory or its configuration only; init,
+load, restore, borrow and give-back load through `warm`; unload stops threads; the
+sync routes read two stores and the pair's database, and resolve no path. A new
+route that reaches a reconcile, a placement, a path resolution or a metadata parser
+off `with_repo` enters `in_repo` itself, as the detached tasks of `routes/fs.rs` do.
+
 Filling the field needed no `API_VERSION` bump: it was already in the JSON, always
 `null`; giving it a value changes no shape.
