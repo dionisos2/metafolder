@@ -1,0 +1,77 @@
+title: The demonstration repository
+tags: Development
+kind: guide
+audience: dev
+aliases: demo screenshots
+summary: scripts/dev/demo.sh turns the demonstration home into a tagged, rated repository of a throwaway daemon, shown in a real GUI — to explore it, record a video, or remake the README's screenshots.
+
+The README shows the GUI on files that look like someone's, not on test fixtures.
+Those files are a home of their own, `/home/metafolder_user`: "Camille Martin", a
+fictitious user, with photos of three trips, paintings, music, free films, manuals,
+invoices, a cluttered downloads folder, projects with their `.git` and `__pycache__`.
+Everything in it is free; its `LISEZMOI.md` says what each folder is for, its
+`CRÉDITS.md` who made each file and under which licence. The home is local to the
+machine it was assembled on: it is not in the repository, and the scripts below say
+so and stop where it is missing (`--source` names another).
+
+```
+scripts/dev/demo.sh [--unsandboxed] gui                     # explore it, record a video
+scripts/dev/demo.sh [--unsandboxed] screenshots [OUT_DIR]   # remake docs/wiki/images/demo-*.png
+scripts/dev/test-demo.sh                                    # every metadata step found its files
+```
+
+!! What it builds
+
+A daemon of its own (the fixture of [[Testing shipped scripts]]: private token
+directory, shipped configuration, ephemeral port), and on it a repository named
+`camille` over the home, with its database outside it (`mf repo init --metafolder`):
+the home belongs to another user and stays untouched. The root is watched and
+reconciled, which brings in the files and their embedded metadata
+([[Embedded metadata]]): EXIF dates and GPS of the photos, artist and album of the
+music.
+
+Then `scripts/dev/demo/metadata.sh` gives the files what Camille would have: a
+tag hierarchy (`lieu/europe/islande`, `nature/animal/oiseau`,
+`art/peinture/impressionnisme`, `musique/baroque`…), a denied tag (the wallpapers show
+no animal), ratings and comments. Each of its steps writes under a label named as she
+would name it — "Classer les photos de voyage", "Noter les favoris" — so the
+[[log panel]] reads as a story and a step can be undone in front of an audience
+([[Labels and contexts]]). The commands are given the daemon's port and the
+repository through the environment, never on their command line, which a label
+records.
+
+Each step counts the files it names before writing: a line that finds nothing stops
+the script. A home reorganised under it fails there, in `test-demo.sh`, rather than as
+an empty tag nobody notices on a screenshot. The count is taken before the write, not
+from it, because a write that changes nothing (a tag an earlier line already gave)
+counts no record.
+
+`metadata.sh` talks to whatever daemon `mf` reaches, so it also runs in the
+demonstration account itself, against that user's own daemon, once the home is a
+repository there: the way to record a video on the real desktop of that user.
+
+!! The GUI
+
+Both modes start a real `metafolder-gui` on a private copy of the installed
+configuration, as [[Testing the GUI end to end]] does: the user's keybindings and
+commands do not show.
+
+* `gui` opens it on your display, on the repository, until its window is closed. It prints how to reach its daemon and the GUI with `mf`, to drive it during a recording.
+* `screenshots` runs it on a private X server, `Xvfb`, at 1440 × 900, and builds each view of `scripts/dev/demo/views.sh` in a workspace of its own: the trips' photos as a grid beside a preview, the tag tree walked down to `nature/animal` beside the files it tags, the annotated files beside the log.
+
+A view is built by commands and workspace variables only — no click, no key, nothing
+at coordinates — so a change of style changes the picture, never what it shows. A
+capture is taken once the screen stops changing: two identical captures in a row, since
+the thumbnails load after the commands return, for a time no duration bounds. The PNG
+is reduced to 256 colours, a quarter of the size. `CRÉDITS.md` is copied beside the
+screenshots as `CREDITS.md`: the photos they show are mostly under CC BY-SA, and the
+screenshots with them.
+
+The order of the rows is the daemon's, not sorted: a second run shows the same
+photos, not necessarily in the same places.
+
+!! Pitfalls
+
+* The GUI reuses the id of a closed workspace. The empty workspace the GUI starts with is closed once, from the script's own shell, after the first view exists: closed from inside a view's `$(…)`, the variable saying it was closed is lost, and the next view's close takes the new workspace that got the id back.
+* `workspace:send` takes a value as is: quoting it (`"'#=lieu'"`) sends the quotes, which the simplified grammar refuses.
+* The divider between the slots can only be dragged; a drag sent with `xdotool` moves it but also selects text across both panels. The views keep the default halves.
