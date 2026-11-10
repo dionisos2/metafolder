@@ -1112,6 +1112,11 @@ mod tests {
         );
         assert_eq!(rel("/repo/.metafolder/internal/db.sqlite"), None);
         assert_eq!(rel("/repo/.metafolder/internal/db.sqlite-wal"), None);
+        assert_eq!(
+            rel("/repo/a.txt.metafolder-unfinished-sync"),
+            None,
+            "a sync copy not yet whole"
+        );
         assert_eq!(rel("/elsewhere/x"), None);
         assert_eq!(rel("/repo"), None);
     }

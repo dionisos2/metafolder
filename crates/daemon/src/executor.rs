@@ -950,6 +950,12 @@ impl Apply<'_, '_> {
                 // events — and so is the progress report, or this one event
                 // would look like a hang.
                 self.check_cancelled()?;
+                // A sync run's copy, not yet renamed over its destination: the
+                // watcher never reports one, and the scan must not meet it
+                // either (doc "Running a sync").
+                if metafolder_core::sync::content::is_unfinished(&entry.file_name()) {
+                    continue;
+                }
                 ingested += 1;
                 (self.report)(FlushProgress::Scanning { dir: rel, ingested });
                 // A POSIX name is a byte string; such a file is ingested like

@@ -42,7 +42,7 @@ change of design, to be decided as such, with its note rewritten.
 * Only the watcher, the orphan commands and a manual `force` write set `mfr_path` to `nothing`; reconcile never does, it leaves the stale path ([[Reconcile]], [[Orphans]]; semgrep `mf-mfr-path-nothing-outside-watcher`).
 * The watcher and a reconcile must reach the same state from the same filesystem history ([[Testing the watcher]]).
 * Whether a path is there is asked of the entry itself, never through a symlink: a broken link is an ordinary tracked file ([[Symbolic links]]; semgrep `mf-path-exists-follows-symlinks`).
-* `.metafolder/internal/` is the only part of a repository excluded from tracking ([[Repository layout on disk]]).
+* `.metafolder/internal/` and the copies a sync run has not finished (`*.metafolder-unfinished-sync`) are the only parts of a repository excluded from tracking ([[Repository layout on disk]], [[Running a sync]]).
 
 !! The daemon and its stores
 

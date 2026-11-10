@@ -725,6 +725,40 @@ fn test_sync_run_creates_file_in_target() {
     assert!(again.stdout.contains("nothing to run"), "second run is a no-op: {}", again.stdout);
 }
 
+/// A run stopped in the middle of a copy left its unfinished copy beside the
+/// destination: the next run writes over it and renames it into place, and
+/// the leftover is never tracked (doc "Running a sync").
+#[test]
+fn test_sync_run_overwrites_the_unfinished_copy_a_stopped_run_left() {
+    let (a, _adir) = tracked_repo("unfinished_a", &[("hello.txt", b"world")]);
+    let (b, _bdir) = tracked_repo("unfinished_b", &[]);
+    let root_b = repo_root_of(&b);
+    let leftover = root_b.join("hello.txt.metafolder-unfinished-sync");
+    std::fs::write(&leftover, b"wor").unwrap();
+    let intents = write_intents(
+        "unfinished",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
+    assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
+
+    assert_eq!(std::fs::read(root_b.join("hello.txt")).unwrap(), b"world");
+    assert!(!leftover.exists(), "the unfinished copy became hello.txt");
+    let status = mf(&["sync", "status", &a, &b]);
+    assert!(status.stdout.contains("in_sync"), "link in sync: {}", status.stdout);
+    assert_ok(&mf(&["-u", &b, "reconcile"]));
+    let none = mf(&[
+        "-u",
+        &b,
+        "metarecord",
+        "-q",
+        "mfr_path:value = \"hello.txt.metafolder-unfinished-sync\"",
+        "get",
+    ]);
+    assert_ok(&none);
+    assert!(none.stdout.trim().is_empty(), "the leftover is untracked: {}", none.stdout);
+}
+
 /// The filesystem root of a loaded repo (from `mf repo list`).
 pub(super) fn repo_root_of(repo: &str) -> PathBuf {
     let list = mf(&["repo", "list", "--all"]);

@@ -257,6 +257,23 @@ fn test_create_directory_scans_its_existing_contents() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// A sync run makes a directory, then writes its files beside their names
+/// until whole: the scan of the new directory can meet one half-written, and
+/// must not track it (doc "Running a sync").
+#[test]
+fn test_a_directory_scan_skips_an_unfinished_sync_copy() {
+    let (repo, root, _) = setup("dirscan_unfinished");
+    write_file(&root, "photos/a.jpg", b"a");
+    write_file(&root, "photos/b.jpg.metafolder-unfinished-sync", b"half");
+    enqueue(&repo, &[FsEvent::Create("/photos".into())]);
+    executor::flush_pending(&repo).unwrap();
+
+    assert!(resolve(&repo, "/photos/a.jpg").is_some());
+    assert!(resolve(&repo, "/photos/b.jpg.metafolder-unfinished-sync").is_none());
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn test_ineligible_paths_are_ignored() {
     let (repo, root, root_uuid) = setup("ignored");

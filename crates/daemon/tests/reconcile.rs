@@ -307,6 +307,21 @@ fn test_reconcile_skips_internal_even_when_metafolder_is_tracked() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// A copy a sync run left unfinished (a crash before its rename) is never
+/// tracked: it is the run's, and the next copy to that path overwrites it.
+#[test]
+fn test_reconcile_skips_an_unfinished_sync_copy() {
+    let (repo, root) = setup("unfinished");
+    write_file(&root, "a.txt", b"whole");
+    write_file(&root, "a.txt.metafolder-unfinished-sync", b"half");
+
+    let result = run(&repo);
+    assert_eq!(result.created, 1, "a.txt only");
+    assert!(resolve(&repo, "/a.txt.metafolder-unfinished-sync").is_none());
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 // ── Orphans stay stale ────────────────────────────────────────────────────────
 
 #[test]

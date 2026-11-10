@@ -39,7 +39,8 @@ ineligible directory until it is back ([[Offline subtrees]]).
 Both regimes share the eligibility filter, the hard skip of `.metafolder/internal/`
 (matched by absolute path, since `.metafolder/` may live anywhere — the daemon's own
 writes must not feed back into the stream; the rest of `.metafolder/` is ordinary
-content), offline subtrees, batching and event semantics. The vocabulary too:
+content), the skip of a sync run's unfinished copies ([[Running a sync]]), offline
+subtrees, batching and event semantics. The vocabulary too:
 `mf_watch`/`mf_ignore` say what should be covered, `mfr_watch_exceeded` says "leave this
 subtree uncovered" in both: the budget regime places no watch there, the coverage regime
 drops what happens there. In both, what is left uncovered is what is ''beneath'' the

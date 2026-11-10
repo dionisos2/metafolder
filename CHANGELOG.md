@@ -50,6 +50,10 @@ than breaking them.
   the workspace's artifacts. Run `cargo hakari generate` after changing a dependency.
 
 ### Fixed
+- **A sync run stopped in the middle of a copy no longer leaves a truncated file** at the
+  destination, which the next plan took for a change of that side and turned into a
+  conflict. A copy is written beside, as `<name>.metafolder-unfinished-sync`, and renamed
+  into place once whole; such a name is never tracked (doc "Running a sync").
 - **`make install` and `make install-headless` work on a fresh clone.** npm
   dependencies are installed by `npm ci` at the workspace root, from the root lock.
 - **`make install-headless` no longer requires the GUI toolkit**

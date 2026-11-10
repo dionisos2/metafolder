@@ -13,6 +13,20 @@ summary: mf sync run carries the plan out — links, then each link's metadata b
 through. A record a sync creates exists at its path before its file does, so the
 watcher's event for the file finds it rather than creating a second one ([[Event semantics]]).
 
+!! Writing a copy
+
+A file or a symlink is never written at its destination: the run writes it beside,
+under the destination's name followed by `.metafolder-unfinished-sync`, and only once
+it is whole does the old entry go to the trash and the copy take its name, by a
+rename. A run stopped half-way thus leaves the destination as it was. A truncated file
+there would read, at the next plan, as a change of that side too, and become a conflict
+on `mfr_content` instead of a copy to redo ([[Change detection in sync]]).
+
+A name ending in `.metafolder-unfinished-sync` is never tracked — by the watcher, by
+reconcile, nor by the scan of a directory that arrived whole —: what a stopped run left
+under it is the run's own, and the next copy to that destination writes over it. A
+directory needs no such step: making it is one operation.
+
 !! Versions
 
 The run knows, for each record it touches, the version it expects: the plan's
