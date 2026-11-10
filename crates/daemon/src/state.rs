@@ -116,6 +116,9 @@ pub struct RepoState {
     /// separate from `conn`: counting is on the ingest path and reading it must
     /// answer while a flush holds the connection.
     pub watch_activity: Mutex<crate::watch_activity::WatchActivity>,
+    /// The files waiting for their hash to be refreshed (doc "Content hashes
+    /// kept fresh"), filled by the flush and reconcile, drained by the worker.
+    pub hash_queue: crate::hashing::HashQueue,
     /// The rule index (doc "The watch rule index") and how far the
     /// ingest filter may trust it. Behind its own lock, held for a pointer copy:
     /// the ingest thread reads it without ever waiting for the connection.
@@ -249,6 +252,7 @@ impl RepoState {
                 metafolder_core::date::now_ms(),
                 crate::watch_activity::DEFAULT_CAP,
             )),
+            hash_queue: crate::hashing::HashQueue::default(),
             watch_rules: Mutex::new(RulesSlot::default()),
             orphan_cascade_limit: settings.orphan_cascade_limit,
             log_retention,
@@ -1076,11 +1080,12 @@ impl RepoState {
         }
         let quiet = self.watch_quiet_period;
         let executor = crate::executor::spawn(self, quiet);
+        let hasher = crate::hashing::spawn_worker(self);
         let watcher = {
             let _p = Phase::begin(&who, "start the watcher");
             crate::watcher::start(self, executor.pinger())?
         };
-        *self.handles.lock_recover() = Some(RepoHandles { watcher, executor });
+        *self.handles.lock_recover() = Some(RepoHandles { watcher, executor, hasher });
         // Before the placement: a drive plugged in meanwhile is a change.
         crate::mount::follow::register(self);
 
@@ -1264,6 +1269,7 @@ fn write_watch_frontier(
 pub struct RepoHandles {
     pub watcher: crate::watcher::WatcherHandle,
     pub executor: crate::executor::ExecutorHandle,
+    pub hasher: crate::hashing::WorkerHandle,
 }
 
 pub struct AppState {

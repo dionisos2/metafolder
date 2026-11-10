@@ -69,6 +69,16 @@ fn revisions(repo: &RepoState) -> i64 {
     metafolder_daemon::store::Log::counts(&*conn).unwrap().1
 }
 
+fn operations(repo: &RepoState) -> i64 {
+    let conn = repo.conn.lock().unwrap();
+    metafolder_daemon::store::Log::counts(&*conn).unwrap().0
+}
+
+fn version_of(repo: &RepoState, uuid: Uuid) -> Option<u64> {
+    let conn = repo.conn.lock().unwrap();
+    metafolder_daemon::store::Rows::version(&*conn, uuid).unwrap()
+}
+
 fn query(text: &str) -> metafolder_core::query::Query {
     metafolder_core::dsl::parse_query(text).unwrap()
 }
@@ -183,4 +193,121 @@ fn a_file_gone_from_disk_is_skipped() {
 
     let result = hash(&repo, r#"mfr_type = "file""#, false);
     assert_eq!(result, HashResult { hashed: 0, reused: 0, skipped: 1 });
+}
+
+// ── The background worker (doc "Content hashes kept fresh") ──────────────────────
+//
+// The worker thread only calls `hashing::drain`; the tests call it themselves,
+// right after the flush, so nothing waits on time.
+
+use metafolder_daemon::executor::{self, FsEvent};
+
+fn mark(repo: &RepoState, rel: &str, on: bool) {
+    let uuid = if rel == "/" { root_uuid(repo) } else { resolve(repo, rel) };
+    set_field(repo, uuid, "mf_hash", Value::Bool(on));
+}
+
+fn flush_and_drain(repo: &RepoState, events: &[FsEvent]) {
+    for ev in events {
+        executor::enqueue(repo, ev.clone(), None);
+    }
+    executor::flush_pending(repo).unwrap();
+    hashing::drain(repo).unwrap();
+}
+
+fn mtime_of(root: &Path, rel: &str) -> std::time::SystemTime {
+    std::fs::metadata(root.join(rel.trim_start_matches('/'))).unwrap().modified().unwrap()
+}
+
+/// Rewrites `rel` with `content` and puts its mtime back: the same size and the
+/// same mtime, which the stamp cannot tell from no change at all.
+fn rewrite_unseen(root: &Path, rel: &str, content: &[u8]) {
+    let when = mtime_of(root, rel);
+    write_file(root, rel, content);
+    let path = root.join(rel.trim_start_matches('/'));
+    std::fs::File::options().write(true).open(path).unwrap().set_modified(when).unwrap();
+}
+
+#[test]
+fn a_marked_file_modified_gets_its_hash_back() {
+    let (repo, root) = setup("worker_modify");
+    write_file(&root, "a.txt", b"alpha");
+    reconcile::reconcile(&repo).unwrap();
+    mark(&repo, "/", true);
+
+    write_file(&root, "a.txt", b"alpha, now longer");
+    flush_and_drain(&repo, &[FsEvent::ModifyData("/a.txt".into())]);
+    assert_hashed(&repo, &root, "/a.txt");
+}
+
+#[test]
+fn an_unmarked_file_modified_gets_no_hash() {
+    let (repo, root) = setup("worker_unmarked");
+    write_file(&root, "a.txt", b"alpha");
+    write_file(&root, "keep/b.txt", b"beta");
+    reconcile::reconcile(&repo).unwrap();
+    mark(&repo, "/", true);
+    mark(&repo, "/keep", false);
+
+    write_file(&root, "keep/b.txt", b"beta, now longer");
+    flush_and_drain(&repo, &[FsEvent::ModifyData("/keep/b.txt".into())]);
+    let b = resolve(&repo, "/keep/b.txt");
+    assert_eq!(field_value(&repo, b, "mfr_full_hash"), None, "opted out");
+}
+
+#[test]
+fn a_file_created_under_a_marked_directory_is_hashed() {
+    let (repo, root) = setup("worker_create");
+    std::fs::create_dir_all(root.join("d")).unwrap();
+    reconcile::reconcile(&repo).unwrap();
+    mark(&repo, "/d", true);
+
+    write_file(&root, "d/new.txt", b"fresh content");
+    flush_and_drain(&repo, &[FsEvent::Create("/d/new.txt".into())]);
+    assert_hashed(&repo, &root, "/d/new.txt");
+}
+
+#[test]
+fn a_same_size_same_second_rewrite_is_seen_by_the_hash() {
+    let (repo, root) = setup("worker_unseen");
+    write_file(&root, "a.txt", b"alpha");
+    reconcile::reconcile(&repo).unwrap();
+    mark(&repo, "/", true);
+    hash(&repo, r#"mfr_type = "file""#, false);
+
+    rewrite_unseen(&root, "a.txt", b"omega");
+    flush_and_drain(&repo, &[FsEvent::ModifyData("/a.txt".into())]);
+    assert_hashed(&repo, &root, "/a.txt");
+}
+
+#[test]
+fn an_echo_of_unchanged_content_keeps_the_hash_and_the_version() {
+    let (repo, root) = setup("worker_echo");
+    write_file(&root, "a.txt", b"alpha");
+    reconcile::reconcile(&repo).unwrap();
+    mark(&repo, "/", true);
+    hash(&repo, r#"mfr_type = "file""#, false);
+    let a = resolve(&repo, "/a.txt");
+    let (version, ops) = (version_of(&repo, a), operations(&repo));
+
+    flush_and_drain(&repo, &[FsEvent::ModifyData("/a.txt".into())]);
+    assert_eq!(operations(&repo), ops, "nothing changed, nothing written");
+    assert_eq!(version_of(&repo, a), version);
+    assert_hashed(&repo, &root, "/a.txt");
+}
+
+#[test]
+fn a_file_its_record_has_not_caught_up_with_is_left_to_its_event() {
+    // Changed on disk, its event not flushed yet: a hash stamped with the new
+    // stat would sit on a record still describing the old one.
+    let (repo, root) = setup("worker_lag");
+    write_file(&root, "a.txt", b"alpha");
+    reconcile::reconcile(&repo).unwrap();
+    mark(&repo, "/", true);
+    let a = resolve(&repo, "/a.txt");
+
+    write_file(&root, "a.txt", b"alpha, now longer");
+    repo.hash_queue.push([a]);
+    hashing::drain(&repo).unwrap();
+    assert_eq!(field_value(&repo, a, "mfr_full_hash"), None);
 }

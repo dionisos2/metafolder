@@ -665,6 +665,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
                 rules: rules.clone(),
                 cancel: &cancel,
                 ignored: 0,
+                to_hash: Vec::new(),
             };
             // What each event of the group wrote, for the activity counter.
             let mut written: Vec<(Vec<RelPath>, u64)> = Vec::new();
@@ -699,7 +700,10 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
             // Read before the commit moves the writer out of `apply`.
             ignored += apply.ignored;
             rules = apply.rules.clone();
+            let to_hash = std::mem::take(&mut apply.to_hash);
             metafolder_core::slowlog::timed("commit", || apply.writer.commit())?;
+            // Only once committed: the worker reads the stat this group wrote.
+            repo.hash_queue.push(to_hash);
             if wrote {
                 revisions += 1;
             }
@@ -826,6 +830,10 @@ struct Apply<'a, 'c> {
     /// buffer and is only filtered here — which is how a flush ends up writing
     /// nothing at all. Counted so the summary can say so.
     ignored: usize,
+    /// The marked files whose content this group may have changed: handed to
+    /// the hash worker once the group is committed (doc "Content hashes kept
+    /// fresh").
+    to_hash: Vec<Uuid>,
 }
 
 /// Which of the departures `open` (still tracked, alike to `arrival` by the
@@ -1057,7 +1065,21 @@ impl Apply<'_, '_> {
             Value::TreeRef { parent: Some(parent), name: name.clone() },
         )];
         fields.extend(stat);
-        self.writer.create_metarecord(fields)?;
+        let created = self.writer.create_metarecord(fields)?;
+        self.hand_over_if_marked(created.uuid)?;
+        Ok(())
+    }
+
+    /// Hands a file to the hash worker when its hash is kept fresh (doc
+    /// "Content hashes kept fresh"). Asked here, where the store is already in
+    /// hand, rather than by the worker for every file a flush touched.
+    fn hand_over_if_marked(&mut self, uuid: Uuid) -> Result<()> {
+        let store = self.writer.store();
+        let file = Rows::string_fields(store, uuid, "mfr_type")?.first().map(String::as_str)
+            == Some("file");
+        if file && crate::eligibility::mf_hash_of(store, uuid)? {
+            self.to_hash.push(uuid);
+        }
         Ok(())
     }
 
@@ -1439,7 +1461,11 @@ impl Apply<'_, '_> {
                 && new_of("mfr_mtime").is_some()
         };
         if unchanged {
-            return Ok(());
+            // The stat cannot tell a same-second, same-size rewrite from an
+            // echo: the hashes stay (an echo must not destroy them, doc
+            // "Watcher pitfalls"), and the worker reads the file again, writing
+            // only if its content did change.
+            return self.hand_over_if_marked(uuid);
         }
         for field in &stat {
             if matches!(field.name.as_str(), "mfr_size" | "mfr_mtime" | "mfr_inode") {
@@ -1463,7 +1489,7 @@ impl Apply<'_, '_> {
             self.writer.clear_field_as(OpType::FileModified, uuid, name)?;
         }
         crate::duplicates::leave_group(&mut self.writer, OpType::FileModified, uuid)?;
-        Ok(())
+        self.hand_over_if_marked(uuid)
     }
 
     /// `Modify(Metadata)`: refresh attributes; hashes stay valid.

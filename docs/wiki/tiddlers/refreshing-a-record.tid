@@ -4,7 +4,6 @@ kind: reference
 summary: POST …/refresh makes one record agree with its file now, with the watcher's semantics, so the watcher's own event for the same change writes nothing.
 audience: dev
 
-
 <<cmd "POST /repos/:repo/metarecords/:uuid/refresh">> `[?expected_version=<n>]`
 stats the file at the record's path and writes, in one write, every stat field
 that differs from the stored one ([[File metadata fields]]). When the size or the
@@ -23,6 +22,10 @@ period later and move the version the client had just recorded.
 It differs from the watcher's refresh in one way: it writes the ''whole'' stat set
 (`mfr_type`, `mfr_permissions`, …), not only the size and mtime — a record created
 before its file exists has none of them yet.
+
+A file marked <<cmd "mf_hash">> is then handed to the hash worker, which writes its
+hashes afresh — a second write, after the answer, that moves the version again
+when the content changed ([[Content hashes kept fresh]]).
 
 It is a single-record write: `?expected_version=` fences it ([[Conditional writes]]).
 A record with no path, or no entry on disk at it, is a `400`; nothing is written.

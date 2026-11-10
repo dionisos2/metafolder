@@ -230,3 +230,238 @@ fn flush(
     }
     Ok(())
 }
+
+// ── Keeping marked files' hashes fresh ────────────────────────────────────────
+
+/// The files waiting for the background worker to hash them (doc "Content
+/// hashes kept fresh"): each once, in the order they were handed over. In
+/// memory, like the watcher's buffer: a restart loses it, and a file left
+/// without a hash has its bytes compared by sync until reconcile hands it over
+/// again.
+#[derive(Default)]
+pub struct HashQueue {
+    inner: std::sync::Mutex<QueueInner>,
+    /// Wakes the worker thread, once it runs.
+    wake: std::sync::Mutex<Option<std::sync::mpsc::Sender<WorkerMsg>>>,
+}
+
+#[derive(Default)]
+struct QueueInner {
+    order: std::collections::VecDeque<Uuid>,
+    queued: std::collections::HashSet<Uuid>,
+}
+
+impl HashQueue {
+    /// Hands files over, and wakes the worker.
+    pub fn push(&self, uuids: impl IntoIterator<Item = Uuid>) {
+        let mut pushed = false;
+        {
+            let mut inner = self.inner.lock_recover();
+            for uuid in uuids {
+                if inner.queued.insert(uuid) {
+                    inner.order.push_back(uuid);
+                    pushed = true;
+                }
+            }
+        }
+        if pushed {
+            if let Some(tx) = self.wake.lock_recover().as_ref() {
+                let _ = tx.send(WorkerMsg::Wake);
+            }
+        }
+    }
+
+    fn pop(&self) -> Option<Uuid> {
+        let mut inner = self.inner.lock_recover();
+        let uuid = inner.order.pop_front()?;
+        inner.queued.remove(&uuid);
+        Some(uuid)
+    }
+
+    /// How many files wait.
+    pub fn len(&self) -> usize {
+        self.inner.lock_recover().order.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// What the worker learns from its file, under the lock: where it is, and the
+/// stat its record holds.
+struct Job {
+    uuid: Uuid,
+    rel: RelPath,
+    /// The record's `(mfr_mtime, mfr_size)`: what a hash must be stamped with
+    /// to be fresh.
+    recorded: (i64, i64),
+}
+
+/// The record's `(mfr_mtime, mfr_size)`, when it holds both.
+fn recorded_stat(conn: &dyn crate::store::Store, uuid: Uuid) -> anyhow::Result<Option<(i64, i64)>> {
+    let mtime =
+        Rows::rows_named(conn, uuid, "mfr_mtime")?.into_iter().find_map(|r| match r.value {
+            Value::DateTime(ms) => Some(ms),
+            _ => None,
+        });
+    Ok(mtime.zip(Rows::int_field(conn, uuid, "mfr_size")?))
+}
+
+/// Reads what hashing `uuid` needs, or `None` when there is nothing to do: a
+/// record gone, no longer a marked file, or with no path.
+fn job_for(
+    conn: &dyn crate::store::Store,
+    cache: &crate::forest::Forest,
+    uuid: Uuid,
+) -> anyhow::Result<Option<Job>> {
+    if Rows::version(conn, uuid)?.is_none() {
+        return Ok(None);
+    }
+    if Rows::string_fields(conn, uuid, "mfr_type")?.first().map(String::as_str) != Some("file") {
+        return Ok(None);
+    }
+    if !crate::eligibility::mf_hash_of(conn, uuid)? {
+        return Ok(None);
+    }
+    let (Some(rel), Some(recorded)) = (cache.rel_path_of(conn, uuid)?, recorded_stat(conn, uuid)?)
+    else {
+        return Ok(None);
+    };
+    Ok(Some(Job { uuid, rel, recorded }))
+}
+
+/// How long the worker's computed hashes wait before it writes them.
+const WORKER_COMMIT_EVERY: Duration = Duration::from_secs(1);
+
+/// Hashes every file waiting in the queue, and writes each hash whose stamp
+/// is the stat its record holds — a record that has not caught up with its
+/// file yet is left to the event that will hand the file over again. The
+/// hashing itself runs with the store free. Returns how many files got a hash
+/// written. What the worker thread runs; tests call it directly.
+pub fn drain(repo: &RepoState) -> anyhow::Result<usize> {
+    drain_while(repo, || true)
+}
+
+/// [`drain`], leaving the queue after the file in hand as soon as `keep_going`
+/// says so — the worker stops once the repository is being unloaded.
+fn drain_while(repo: &RepoState, keep_going: impl Fn() -> bool) -> anyhow::Result<usize> {
+    let root = repo.config.root.clone();
+    let mut context = crate::log::current_context().named("hash");
+    let mut pending: Vec<(Uuid, Hashes)> = Vec::new();
+    let mut written = 0usize;
+    let mut opened = Instant::now();
+    loop {
+        if !keep_going()
+            || repo.is_revert_locked()
+            || !repo.root_present()
+            || repo.ensure_writable().is_err()
+        {
+            // Left queued: the next hand-over wakes the worker again.
+            break;
+        }
+        let Some(uuid) = repo.hash_queue.pop() else { break };
+        let job = {
+            let conn = metafolder_core::slowlog::timed("wait:conn", || repo.conn.lock_recover());
+            job_for(&*conn, &repo.tree(), uuid)?
+        };
+        let Some(job) = job else { continue };
+        // Always read afresh: the worker is handed a file because its content
+        // may have changed under a stamp that did not move.
+        if let Outcome::Computed(h) = hash_file(&job.rel.to_abs(&root), None, true) {
+            if h.stamp == job.recorded {
+                pending.push((job.uuid, h));
+            }
+        }
+        if opened.elapsed() >= WORKER_COMMIT_EVERY {
+            written += write_fresh(repo, &mut pending, &mut context)?;
+            opened = Instant::now();
+        }
+    }
+    written += write_fresh(repo, &mut pending, &mut context)?;
+    Ok(written)
+}
+
+/// Writes the worker's hashes, each only if its record still holds the stat it
+/// was stamped with. Returns how many were written.
+fn write_fresh(
+    repo: &RepoState,
+    pending: &mut Vec<(Uuid, Hashes)>,
+    context: &mut WriteContext,
+) -> anyhow::Result<usize> {
+    if pending.is_empty() {
+        return Ok(0);
+    }
+    let mut conn = metafolder_core::slowlog::timed("wait:conn", || repo.conn.lock_recover());
+    let mut writer = repo.writer(&mut *conn, context.clone())?;
+    let mut written = 0;
+    for (uuid, h) in std::mem::take(pending) {
+        if recorded_stat(writer.store(), uuid)? == Some(h.stamp) {
+            write_hashes(&mut writer, uuid, &h)?;
+            written += 1;
+        }
+    }
+    if writer.op_count() > 0 {
+        *context = WriteContext::In(writer.label_id());
+    }
+    writer.commit()?;
+    Ok(written)
+}
+
+enum WorkerMsg {
+    Wake,
+    Shutdown,
+}
+
+/// The background worker's thread; dropping it stops the thread once the file
+/// in hand is done.
+pub struct WorkerHandle {
+    tx: std::sync::mpsc::Sender<WorkerMsg>,
+    join: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for WorkerHandle {
+    fn drop(&mut self) {
+        let _ = self.tx.send(WorkerMsg::Shutdown);
+        if let Some(join) = self.join.take() {
+            // The worker itself may hold the last reference to the repository,
+            // and drop it here: it cannot wait for its own end.
+            if join.thread().id() != std::thread::current().id() {
+                let _ = join.join();
+            }
+        }
+    }
+}
+
+/// Starts the worker of `repo`: it drains the queue each time files are handed
+/// over. A Weak reference, like the executor's: the repository owns the
+/// handle, and an `Arc` here would keep it alive forever.
+pub fn spawn_worker(repo: &std::sync::Arc<RepoState>) -> WorkerHandle {
+    let (tx, rx) = std::sync::mpsc::channel::<WorkerMsg>();
+    *repo.hash_queue.wake.lock_recover() = Some(tx.clone());
+    let weak = std::sync::Arc::downgrade(repo);
+    let join = std::thread::spawn(move || loop {
+        match rx.recv() {
+            Err(_) | Ok(WorkerMsg::Shutdown) => return,
+            Ok(WorkerMsg::Wake) => {
+                let Some(repo) = weak.upgrade() else { return };
+                let _scope = crate::diagnostics::in_repo(repo.uuid());
+                // Only while someone else holds the repository: once it is
+                // unloaded, this reference is the last, and the queue is left.
+                let held = || weak.strong_count() > 1;
+                if let Err(err) = drain_while(&repo, held) {
+                    crate::diagnostics::error_for(
+                        "hashing",
+                        format!("hashing failed: {err:#}"),
+                        repo.uuid(),
+                    );
+                }
+            }
+        }
+    });
+    // Whatever was handed over before the thread existed.
+    if !repo.hash_queue.is_empty() {
+        let _ = tx.send(WorkerMsg::Wake);
+    }
+    WorkerHandle { tx, join: Some(join) }
+}

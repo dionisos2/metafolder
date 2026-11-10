@@ -107,3 +107,48 @@ async fn a_malformed_query_is_refused_before_any_task() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "got {body}");
 }
+
+/// Polls the record until it holds a full hash; `None` when it never does.
+async fn await_full_hash(app: &Router, repo: &str, uuid: &str) -> Option<String> {
+    for _ in 0..1000 {
+        let (_, record) =
+            request(app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
+        let hash = record["fields"].as_array().and_then(|fields| {
+            fields
+                .iter()
+                .find(|f| f["name"] == "mfr_full_hash")
+                .map(|f| f["value"]["value"].clone())
+        });
+        if let Some(Value::String(h)) = hash {
+            return Some(h);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    None
+}
+
+#[tokio::test]
+async fn a_refreshed_marked_file_is_handed_to_the_worker() {
+    // What a sync run does right after copying a file over its destination.
+    let (app, repo, root) = setup("refresh").await;
+    std::fs::write(root.join("a.txt"), b"some bytes").unwrap();
+    let abs = root.join("a.txt");
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords"),
+        Some(json!({"path": abs.to_str().unwrap(),
+                    "fields": [{"name": "mf_hash", "value": {"type": "bool", "value": true}}]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "create at path failed: {body}");
+    let uuid = body["uuid"].as_str().expect("a uuid").to_string();
+
+    std::fs::write(&abs, b"other bytes, longer").unwrap();
+    let (status, body) =
+        request(&app, "POST", &format!("/repos/{repo}/metarecords/{uuid}/refresh"), None).await;
+    assert_eq!(status, StatusCode::OK, "refresh failed: {body}");
+
+    let expected = metafolder_daemon::fingerprint::full_hash(&abs).unwrap();
+    assert_eq!(await_full_hash(&app, &repo, &uuid).await, Some(expected));
+}

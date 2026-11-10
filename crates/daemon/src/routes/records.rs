@@ -499,20 +499,24 @@ pub(super) async fn refresh_record(
     let repo_state = state.repo(repo_uuid)?;
     let root = repo_state.config.root.clone();
     let cache = repo_state.tree();
-    write_record_checked(&state, repo_uuid, uuid, ev.expected_version, move |writer| {
-        ensure_exists(writer.store(), uuid)?;
-        let Some(rel) = cache.rel_path_of(writer.store(), uuid)? else {
-            return Err(ApiError::bad_request(format!("metarecord {uuid} has no path")));
-        };
-        let abs = rel.to_abs(&root);
-        if !metafolder_core::fsentry::path_present(&abs) {
-            return Err(ApiError::bad_request(format!("nothing on disk at {}", rel.display())));
-        }
-        crate::executor::refresh_from_disk(writer, &root, uuid, &abs)?;
-        Ok(Vec::new())
-    })
-    .await
-    .map(Json)
+    let record =
+        write_record_checked(&state, repo_uuid, uuid, ev.expected_version, move |writer| {
+            ensure_exists(writer.store(), uuid)?;
+            let Some(rel) = cache.rel_path_of(writer.store(), uuid)? else {
+                return Err(ApiError::bad_request(format!("metarecord {uuid} has no path")));
+            };
+            let abs = rel.to_abs(&root);
+            if !metafolder_core::fsentry::path_present(&abs) {
+                return Err(ApiError::bad_request(format!("nothing on disk at {}", rel.display())));
+            }
+            crate::executor::refresh_from_disk(writer, &root, uuid, &abs)?;
+            Ok(Vec::new())
+        })
+        .await?;
+    // Once committed. The worker leaves it alone unless it is a marked file
+    // (doc "Content hashes kept fresh"); an unchanged one costs it a read.
+    repo_state.hash_queue.push([uuid]);
+    Ok(Json(record))
 }
 
 #[derive(Deserialize)]
