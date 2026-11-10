@@ -408,7 +408,11 @@ fn a_compact_shrinks_the_file_and_keeps_the_store_whole() {
     let leftovers: Vec<_> = std::fs::read_dir(dir.path())
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-        .filter(|n| !["data.mdb", "lock.mdb", "daemon.lock"].contains(&n.as_str()))
+        // The holder file is the open store's, like its locks (doc "Cross-machine sync").
+        .filter(|n| {
+            !["data.mdb", "lock.mdb", "daemon.lock", metafolder_daemon::borrow::HOLDER_FILE]
+                .contains(&n.as_str())
+        })
         .collect();
     assert!(leftovers.is_empty(), "nothing left beside the store: {leftovers:?}");
 }
