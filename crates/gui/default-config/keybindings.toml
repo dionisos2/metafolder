@@ -202,7 +202,7 @@ vars.index = "i"
 "ctrl+right" = { command = "workspace:next" }
 "ctrl+shift+tab" = { command = "workspace:prev" }
 "ctrl+left" = { command = "workspace:prev" }
-"ctrl+t" = { command = "workspace:new" }
+"ctrl+t" = { command = "workspace:new self-repo" }
 "ctrl+w" = { command = "workspace:close" }
 "ctrl+s" = [
   { command = "workspace:save" },
@@ -212,7 +212,7 @@ vars.index = "i"
 "ctrl+o" = { command = "workspace:open here" }
 # Ctrl+D duplicates the workspace.
 "ctrl+d" = { command = "workspace:fork" }
-"{workspaces} {create}" = { command = "workspace:new" }
+"{workspaces} {create}" = { command = "workspace:new self-repo" }
 "{workspaces} {open}" = { command = "workspace:open here" }
 "{target-new} {workspaces} {open}" = { command = "workspace:open new" }
 "{workspaces} {rename}" = { command = "workspace:rename" }

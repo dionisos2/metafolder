@@ -968,7 +968,7 @@ scenario_layout() {
     assert_eq "workspace fork: on the same repository" "$DF_REPO" \
         "$(gui_status "s['workspaces'][-1]['active_repo']")"
 
-    run workspace:new
+    run workspace:new self-repo
     assert_eq "workspace new: a new tab" $((n0 + 2)) "$(ws_count)"
 
     run workspace:goto 1
@@ -1828,7 +1828,7 @@ scenario_close_layout() {
     local single split
     single=$WS
     run panel:unsplit
-    run workspace:new
+    run workspace:new self-repo
     split=$(slot_ws left)
     run panel:split
     run panel:focus right
@@ -1839,7 +1839,7 @@ scenario_close_layout() {
     assert "close layout: the focus is on the shown slot" focused_shows "$single"
 
     run panel:split
-    run workspace:new
+    run workspace:new self-repo
     split=$(slot_ws left)
     run workspace:close
     assert_eq "close layout: a split one comes back split" \
@@ -2597,7 +2597,7 @@ scenario_saved_workspaces() {
 
     run workspace:set-default tri
     run workspace:send "$WS" metarecord-list:query note=other
-    run workspace:new
+    run workspace:new self-repo
     new=$(slot_ws left)
     WS=$new
     assert "saved: workspace:new made a workspace" test "$new" != "$ws1"

@@ -10,7 +10,7 @@ use crate::keybindings::{
     BindingCheck, CompiledBinding, EntryDraft, EntryPlace, FileEntry, KeybindingSet, Variable,
 };
 use crate::state::layout::{LayoutView, SlotId};
-use crate::state::workspace::{MessageEntry, ShellEntry, WorkspaceInfo};
+use crate::state::workspace::{MessageEntry, NewWorkspaceRepo, ShellEntry, WorkspaceInfo};
 use crate::state::{GuiState, Question};
 use metafolder_core::sync::MutexExt;
 use serde::Serialize;
@@ -146,17 +146,16 @@ pub fn get_initial_state(app: AppHandle) -> Result<InitialState, String> {
 // ── Workspaces ───────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn workspace_new(
-    app: AppHandle<'_>,
-    active_repo: Option<String>,
-) -> Result<String, String> {
-    // Resolve the repo's human name so the new tab is auto-named after it;
-    // no repo means the focused workspace's repo (and name) are inherited.
-    let repo_name = match &active_repo {
-        Some(uuid) => app.daemon.repo_name(uuid).await,
-        None => None,
+pub async fn workspace_new(app: AppHandle<'_>, repo: String) -> Result<String, String> {
+    // `self-repo`, `none` or a repo uuid (doc "workspace:new"). A named
+    // repo's human name is resolved so the new tab is auto-named after it;
+    // `self-repo` inherits the focused workspace's repo and name.
+    let repo = NewWorkspaceRepo::parse(&repo)?;
+    let repo_name = match &repo {
+        NewWorkspaceRepo::Repo(uuid) => app.daemon.repo_name(uuid).await,
+        _ => None,
     };
-    let id = app.gui.workspace_new_named(active_repo, repo_name);
+    let id = app.gui.workspace_new_named(repo, repo_name);
     // A workspace taking the repository opens on its default (doc "Saved
     // workspaces").
     crate::saved_workspaces::apply_default_or_tell(&app.gui, &app.daemon, &id, Apply::Whole).await;

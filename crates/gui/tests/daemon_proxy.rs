@@ -8,6 +8,7 @@ use axum::Json;
 use metafolder_gui::daemon_proxy::DaemonProxy;
 use metafolder_gui::events;
 use metafolder_gui::notifier::RecordingNotifier;
+use metafolder_gui::state::workspace::NewWorkspaceRepo;
 use metafolder_gui::state::GuiState;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -280,7 +281,7 @@ async fn test_reconcile_run_posts_status_and_logs() {
     .await
     .is_err());
 
-    let ws = gui.workspace_new(Some("abc123".into()));
+    let ws = gui.workspace_new(NewWorkspaceRepo::Repo("abc123".into()));
     notifier.clear();
     metafolder_gui::reconcile::run(gui.clone(), proxy, ws.clone(), Default::default())
         .await
@@ -326,7 +327,7 @@ async fn spawn_reconcile_task_stub(status: u16, task: Value) -> String {
 async fn test_a_cancelled_reconcile_ends_the_run() {
     let url = spawn_reconcile_task_stub(200, json!({"id": "t1", "status": "cancelled"})).await;
     let (notifier, gui) = gui_with_notifier();
-    let ws = gui.workspace_new(Some("abc123".into()));
+    let ws = gui.workspace_new(NewWorkspaceRepo::Repo("abc123".into()));
     let run = metafolder_gui::reconcile::run(
         gui.clone(),
         Arc::new(DaemonProxy::new(url)),
@@ -350,7 +351,7 @@ async fn test_a_cancelled_reconcile_ends_the_run() {
 async fn test_a_reconcile_task_the_daemon_no_longer_knows_ends_the_run() {
     let url = spawn_reconcile_task_stub(404, json!({"error": "no such task: t1"})).await;
     let (_, gui) = gui_with_notifier();
-    let ws = gui.workspace_new(Some("abc123".into()));
+    let ws = gui.workspace_new(NewWorkspaceRepo::Repo("abc123".into()));
     let run = metafolder_gui::reconcile::run(
         gui.clone(),
         Arc::new(DaemonProxy::new(url)),

@@ -24,8 +24,8 @@ without one — the one the GUI starts with — takes the repository picked in t
 workspace. A selection or a variable naming a metarecord of the first repository
 therefore can never end up read against another.
 
-`workspace:new` opens the new workspace on the focused workspace's repository
-unless it is given another one.
+[[workspace:new]] says which repository its workspace opens on: `self-repo` for the
+focused workspace's, `none` for none, or a uuid.
 
 !! Creating, copying, writing into one
 
@@ -57,7 +57,7 @@ the theme's `--mf-tab-focused` and `--mf-tab-unfocused`).
 
 <<key "workspace:next" "Ctrl+Tab">> (or Ctrl+Right) and <<key "workspace:prev" "Ctrl+Shift+Tab">> (or Ctrl+Left) move to the next and
 previous tab, wrapping round; <<key "workspace:goto 1" 1>> to <<key "workspace:goto 9" 9>>
-go to a tab by its position; <<key "workspace:new" ctrl+t>> opens one and
+go to a tab by its position; <<key "workspace:new self-repo" ctrl+t>> opens one on the same repository and
 <<key "workspace:close" ctrl+w>> closes the focused one. All of them move ''both''
 panels together, so the two slots never drift apart unnoticed.
 

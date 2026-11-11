@@ -9,5 +9,5 @@ summary: Create a workspace and show it in both slots
 
 !! Default keys
 
-* ``ctrl+t`` → ``workspace:new``
-* ``w c`` → ``workspace:new``
+* ``ctrl+t`` → ``workspace:new self-repo``
+* ``w c`` → ``workspace:new self-repo``

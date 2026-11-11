@@ -10,9 +10,9 @@ import type { Builtins } from "./types";
 
 export const workspaceBuiltins: Builtins = {
   "workspace:new": async (args) => {
-    // Optional parameter: the repo UUID of the new workspace
-    // (used by the repos panel).
-    await invoke("workspace_new", { activeRepo: args[0] ?? null });
+    // `self-repo`, `none` or a repo uuid, read by the GUI state (doc
+    // "workspace:new").
+    await invoke("workspace_new", { repo: args[0] });
   },
   "workspace:fork": async (_args, context) => {
     // A copy of the context's workspace, in a new tab (doc "Workspaces").

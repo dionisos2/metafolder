@@ -5,7 +5,7 @@ aliases: keybinding keys shortcuts shortcut bindings sequence combo
 summary: A key runs a command: every binding is a line of one file, restricted if need be to a panel type, to one text field, or to when nothing is being typed.
 
 A ''keybinding'' maps a key — or a sequence of keys — to a command invocation,
-arguments included: `ctrl+t` to `workspace:new`, `t l` to
+arguments included: `ctrl+t` to `workspace:new self-repo`, `t l` to
 `panel:open here metarecord-list`. Nothing else is behind a key, so whatever a key
 does can also be typed in [[the command input|The command input]], clicked or sent
 by a script ([[Commands]]). Why the shipped keys are where they are is told in

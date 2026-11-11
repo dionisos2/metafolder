@@ -189,6 +189,7 @@ mod tests {
     use super::*;
     use crate::events;
     use crate::notifier::RecordingNotifier;
+    use crate::state::workspace::NewWorkspaceRepo;
     use serde_json::json;
     use std::sync::Arc;
 
@@ -387,7 +388,7 @@ mod tests {
         let saved = source.snapshot_saved("ws-1", Kind::Layout, &[], &[]).unwrap();
         let (_, state) = state();
         state.adopt_repo("ws-1", "repo-1").unwrap();
-        let other = state.workspace_new(Some("repo-1".into()));
+        let other = state.workspace_new(NewWorkspaceRepo::Repo("repo-1".into()));
         state.apply_saved("ws-1", &saved, Apply::Whole).unwrap();
         // ws-1 is not on screen: the window is left alone.
         assert_eq!(state.layout().left.workspace_id.as_deref(), Some(other.as_str()));

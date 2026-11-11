@@ -135,6 +135,23 @@ describe('the other builtins that take arguments', () => {
     }
   });
 
+  test('workspace:new asks which repository, and passes the answer on', async () => {
+    const done = dispatch('workspace:new');
+
+    await settle();
+    expect(store.ui.promptText).toBe('On which repository? (self-repo / none, or its uuid)');
+    expect(store.ui.promptCompletions).toEqual(['self-repo', 'none']);
+    await answer('none');
+
+    expect(await done).toEqual({ ok: true });
+    expect(invoked).toContainEqual({ cmd: 'workspace_new', args: { repo: 'none' } });
+  });
+
+  test('workspace:new self-repo asks nothing', async () => {
+    expect(await dispatch('workspace:new self-repo')).toEqual({ ok: true });
+    expect(invoked).toContainEqual({ cmd: 'workspace_new', args: { repo: 'self-repo' } });
+  });
+
   test('workspace:goto asks which workspace and completes over them', async () => {
     store.workspaces = [
       { id: 'ws-1', name: 'music', active_repo: null, repo_name: null },
@@ -269,7 +286,7 @@ describe('an optional trailing argument is never asked for', () => {
   });
 
   test('the builtins with a documented bare form act immediately', async () => {
-    for (const invocation of ['workspace:next', 'workspace:prev', 'workspace:new', 'script:stop']) {
+    for (const invocation of ['workspace:next', 'workspace:prev', 'script:stop']) {
       const done = dispatch(invocation);
       await settle();
       expect(store.ui.promptText).toBeNull();
@@ -289,5 +306,7 @@ describe('an optional trailing argument is never asked for', () => {
     expect(promptsForInput('help:open')).toBe(false);
     expect(promptsForInput('help:command')).toBe(true);
     expect(promptsForInput('script:stop')).toBe(false);
+    expect(promptsForInput('workspace:new')).toBe(true);
+    expect(promptsForInput('workspace:new self-repo')).toBe(false);
   });
 });

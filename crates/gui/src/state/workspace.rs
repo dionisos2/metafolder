@@ -7,6 +7,34 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// The repository `workspace:new` opens its workspace on — its argument
+/// (doc "workspace:new").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NewWorkspaceRepo {
+    /// `self-repo`: the focused workspace's repository, or none when it has none.
+    SelfRepo,
+    /// `none`: no repository, whatever the focused workspace holds.
+    None,
+    /// A repository's uuid.
+    Repo(String),
+}
+
+impl NewWorkspaceRepo {
+    /// `self-repo`, `none`, or anything else as a repository uuid. `self`
+    /// alone is refused: it names the focused panel elsewhere (doc "Generic
+    /// panel commands"), so it would say nothing here.
+    pub fn parse(arg: &str) -> Result<Self, String> {
+        match arg.trim() {
+            "self-repo" => Ok(Self::SelfRepo),
+            "none" => Ok(Self::None),
+            "" | "self" => Err(format!(
+                "workspace:new takes self-repo, none or a repository uuid, not `{arg}`"
+            )),
+            uuid => Ok(Self::Repo(uuid.to_string())),
+        }
+    }
+}
+
 pub struct Workspace {
     pub id: String,
     pub name: String,

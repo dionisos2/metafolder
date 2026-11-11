@@ -92,7 +92,7 @@ fn test_load_keybindings_reads_the_single_file_as_the_full_set() {
     // The shipped file carries the default binding.
     let set = config.load_keybindings().unwrap();
     let t = set.compiled().into_iter().find(|b| b.keys == ["ctrl+t"]).unwrap();
-    assert_eq!(t.invocation, "workspace:new");
+    assert_eq!(t.invocation, "workspace:new self-repo");
 }
 
 #[test]
@@ -109,7 +109,9 @@ fn test_set_user_keybinding_upserts_and_persists() {
     let reloaded = config.load_keybindings().unwrap();
     let compiled = reloaded.compiled();
     assert!(compiled.iter().any(|b| b.keys == ["alt+t"] && b.invocation == "panel:split"));
-    assert!(compiled.iter().any(|b| b.keys == ["ctrl+t"] && b.invocation == "workspace:new"));
+    assert!(compiled
+        .iter()
+        .any(|b| b.keys == ["ctrl+t"] && b.invocation == "workspace:new self-repo"));
 }
 
 #[test]
@@ -186,7 +188,9 @@ fn test_save_keybinding_entry_checks_the_command_and_the_key() {
     assert!(error.contains("workspace:new"), "{error}");
     let reread = config.load_keybindings().unwrap().compiled();
     assert!(reread.iter().all(|b| b.keys != ["alt+t"]));
-    assert!(reread.iter().any(|b| b.keys == ["ctrl+t"] && b.invocation == "workspace:new"));
+    assert!(reread
+        .iter()
+        .any(|b| b.keys == ["ctrl+t"] && b.invocation == "workspace:new self-repo"));
 
     let saved =
         config.save_keybinding_entry(&current, KNOWN, &line(&alt_t, "panel:split"), None).unwrap();

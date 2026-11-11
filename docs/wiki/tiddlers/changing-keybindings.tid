@@ -53,7 +53,7 @@ the panel would suggest it again.
 binding, or a list of them when the key does different things in different places:
 
 ```
-"ctrl+t" = { command = "workspace:new" }
+"ctrl+t" = { command = "workspace:new self-repo" }
 "ctrl+a" = { command = "editing:goto line-start", text-input = true }
 
 "shift+r" = [

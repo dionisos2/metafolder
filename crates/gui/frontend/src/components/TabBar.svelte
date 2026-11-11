@@ -94,7 +94,7 @@
       {/if}
     </button>
   {/each}
-  <button class="tab new-tab" title="workspace:new" onclick={() => void dispatch('workspace:new')}>+</button>
+  <button class="tab new-tab" title="workspace:new self-repo" onclick={() => void dispatch('workspace:new self-repo')}>+</button>
 </nav>
 
 <style>

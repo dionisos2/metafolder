@@ -3,4 +3,12 @@ tags: [[GUI command]] Workspaces
 kind: reference
 summary: Create a workspace and show it in both slots
 
-Creates a workspace and shows it in both slots, on the repository given as argument (its uuid) or, with none, on the focused workspace's — the repos panel passes the one you picked. The new workspace starts with a single panel. See [[Workspaces]].
+`workspace:new <repo>` creates a workspace and shows it in both slots, on the repository its argument names:
+
+|`self-repo` |the focused workspace's repository — none when it has none. <<key "workspace:new self-repo" ctrl+t>>, `w c` and the tab bar's ''+'' run this |
+|`none` |no repository, whatever the focused workspace holds: a workspace like the one the GUI starts with, which takes the repository picked next in the [[repos panel]] |
+|a uuid |that repository |
+
+The argument is required: typed bare, the command asks for it, completing `self-repo` and `none` ([[Interactive command arguments]]). It is `self-repo` and not `self`, which names the focused panel in the [[Generic panel commands]] — as `self-focus` names the focused field ([[Input history]]): each says which focused thing it means. `self` alone is refused.
+
+The new workspace starts with a single panel. See [[Workspaces]].

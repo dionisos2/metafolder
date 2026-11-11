@@ -1824,7 +1824,7 @@ vars.y = ","
         let defaults = include_str!("../default-config/keybindings.toml");
         let set = KeybindingSet::from_sources(defaults, "").unwrap();
         let table = set.compiled();
-        assert!(table.iter().any(|b| b.invocation == "workspace:new"));
+        assert!(table.iter().any(|b| b.invocation == "workspace:new self-repo"));
         assert!(table.iter().any(|b| b.keys == [":"]));
         // `x` is the command input from an empty line (doc "Choosing keybindings"),
         // `:` its alias; shift+x keeps the line being typed.

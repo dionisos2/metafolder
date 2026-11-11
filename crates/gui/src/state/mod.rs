@@ -25,7 +25,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use workspace::{
-    MessageEntry, ShellEntry, ShellLine, ShellPlace, StatusEntry, Workspace, WorkspaceInfo,
+    MessageEntry, NewWorkspaceRepo, ShellEntry, ShellLine, ShellPlace, StatusEntry, Workspace,
+    WorkspaceInfo,
 };
 
 /// Default panel type shown when a workspace is first displayed: `repos`

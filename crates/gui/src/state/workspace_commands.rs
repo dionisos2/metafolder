@@ -41,28 +41,24 @@ impl GuiState {
         })
     }
 
-    /// `workspace:new` — creates a workspace and shows it in both slots.
-    /// Without an explicit repo, the focused workspace's repo is inherited:
-    /// staying on the same repo is the expected default, and switching
-    /// costs the same single action either way.
-    pub fn workspace_new(&self, active_repo: Option<String>) -> String {
-        self.workspace_new_named(active_repo, None)
+    /// `workspace:new` — creates a workspace and shows it in both slots, on
+    /// the repository its argument names (doc "workspace:new"): `self-repo`
+    /// inherits the focused workspace's, `none` takes none.
+    pub fn workspace_new(&self, repo: NewWorkspaceRepo) -> String {
+        self.workspace_new_named(repo, None)
     }
 
     /// [`workspace_new`](Self::workspace_new) carrying the repository's human
-    /// name (resolved
-    /// by the caller from the daemon) so the workspace is auto-named after it.
-    /// When no repo is given the focused workspace's repo *and* its name are
-    /// both inherited, so an inherited tab is numbered under the same base.
-    pub fn workspace_new_named(
-        &self,
-        active_repo: Option<String>,
-        repo_name: Option<String>,
-    ) -> String {
+    /// name (resolved by the caller from the daemon) so the workspace is
+    /// auto-named after it. With `self-repo` the focused workspace's repo
+    /// *and* its name are both inherited, so an inherited tab is numbered
+    /// under the same base.
+    pub fn workspace_new_named(&self, repo: NewWorkspaceRepo, repo_name: Option<String>) -> String {
         self.update(|inner| {
-            let (active_repo, repo_name) = match active_repo {
-                Some(repo) => (Some(repo), repo_name),
-                None => inner
+            let (active_repo, repo_name) = match repo {
+                NewWorkspaceRepo::Repo(repo) => (Some(repo), repo_name),
+                NewWorkspaceRepo::None => (None, None),
+                NewWorkspaceRepo::SelfRepo => inner
                     .slot(inner.focused)
                     .workspace
                     .as_deref()

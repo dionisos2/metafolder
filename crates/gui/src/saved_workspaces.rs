@@ -14,6 +14,7 @@ use serde_json::{json, Map, Value};
 
 use crate::daemon_proxy::DaemonProxy;
 use crate::state::saved::Apply;
+use crate::state::workspace::NewWorkspaceRepo;
 use crate::state::GuiState;
 
 /// The format written; a file of a newer one is refused, not misread
@@ -359,7 +360,7 @@ pub async fn open(
         Target::New => {
             let repo = gui.active_repo(ws_id)?;
             let repo_name = daemon.repo_name(&repo).await;
-            gui.workspace_new_named(Some(repo), repo_name)
+            gui.workspace_new_named(NewWorkspaceRepo::Repo(repo), repo_name)
         }
     };
     gui.apply_saved(&into, &saved, Apply::Whole)?;

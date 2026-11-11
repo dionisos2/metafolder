@@ -91,11 +91,14 @@ registerArgs("editing:goto", [
   },
 ]);
 
+// `self-repo` and not `self`: `self` is the focused panel, `self-focus` the
+// focused field, `self-repo` the focused workspace's repository (doc
+// "workspace:new").
 registerArgs("workspace:new", [
   {
     name: "repo",
-    optional: true,
-    prompt: () => "On which repository? (empty: none)",
+    prompt: () => "On which repository? (self-repo / none, or its uuid)",
+    complete: () => ["self-repo", "none"],
   },
 ]);
 

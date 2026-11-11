@@ -10,6 +10,7 @@ use metafolder_gui::notifier::RecordingNotifier;
 use metafolder_gui::saved_workspaces::{self as saved, Kind, Target};
 use metafolder_gui::state::layout::SlotId;
 use metafolder_gui::state::saved::Apply;
+use metafolder_gui::state::workspace::NewWorkspaceRepo;
 use metafolder_gui::state::GuiState;
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -121,7 +122,7 @@ async fn test_the_default_is_loaded_whole_or_its_layout_variables_only() {
     save_work(&gui, &daemon, "tri").await;
     saved::set_default_of(&gui, &daemon, "ws-1", "tri").await.unwrap();
 
-    let whole = gui.workspace_new(Some(REPO.into()));
+    let whole = gui.workspace_new(NewWorkspaceRepo::Repo(REPO.into()));
     let applied = saved::apply_default(&gui, &daemon, &whole, Apply::Whole).await.unwrap();
     assert_eq!(applied.as_deref(), Some("tri"));
     assert_eq!(gui.get_var(&whole, "metarecord-list:query").unwrap(), json!("jpg"));
@@ -135,7 +136,7 @@ async fn test_the_default_is_loaded_whole_or_its_layout_variables_only() {
 #[tokio::test]
 async fn test_no_default_and_no_repository_load_nothing() {
     let (_root, _metafolder, gui, daemon) = setup().await;
-    let ws = gui.workspace_new(Some(REPO.into()));
+    let ws = gui.workspace_new(NewWorkspaceRepo::Repo(REPO.into()));
     assert_eq!(saved::apply_default(&gui, &daemon, &ws, Apply::Whole).await.unwrap(), None);
     let bare = gui.create_workspace(None);
     assert_eq!(saved::apply_default(&gui, &daemon, &bare, Apply::Whole).await.unwrap(), None);
