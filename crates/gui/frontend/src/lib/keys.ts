@@ -30,6 +30,7 @@ import {
 import { describeKeyStep } from './describeKey';
 import { menuKey } from './menuKeys';
 import { historyApplies } from './historyCommands';
+import { datalistTakesKey } from './datalistEnter';
 import { appliesHere, functionProvider } from './panelFunctions';
 import type { SlotId } from './types';
 
@@ -201,6 +202,9 @@ export function installKeys() {
         );
         return;
       }
+      // Enter on a suggestion highlighted in a field's drop-down picks it: the
+      // browser's key, not `editing:validate`'s (doc "Keybindings").
+      if (datalistTakesKey(target, combo)) return;
       // setBindings resets the sequence buffer: only on real changes.
       if (store.keytable !== lastTable) {
         matcher.setBindings(store.keytable);

@@ -50,7 +50,7 @@
 #   with no scenario, runs them all: undo-redo duplicates duplicate-keep duplicate-walk orphans trash remove
 #   field-keys reconcile ignore sync repos list tag-query folder-list panel-txn reveal layout script
 #   script-workspaces errors picker refs hierarchy hierarchy-form prompt history
-#   keybindings validate-keys open-with tab-close close-layout pick-button suggested-key config-files walk open-viewers
+#   keybindings keybindings-pick validate-keys open-with tab-close close-layout pick-button suggested-key config-files walk open-viewers
 #   edit-text slideshow context-menu open-tree-node shell-line shell-cwd repos-memory help-keys help-cursor hints zoom order user-commands
 #   settle macro clipboard saved-workspaces, and
 #   devtools last (it takes the inspector the clicking scenarios drive).
@@ -82,7 +82,7 @@ done
 # fails — forty tries of four seconds each.
 [ ${#SCENARIOS[@]} -gt 0 ] \
     || SCENARIOS=(undo-redo duplicates duplicate-keep duplicate-walk orphans trash remove field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script script-workspaces
-        errors picker refs hierarchy hierarchy-form prompt history keybindings validate-keys open-with tab-close close-layout
+        errors picker refs hierarchy hierarchy-form prompt history keybindings keybindings-pick validate-keys open-with tab-close close-layout
         pick-button suggested-key walk open-viewers edit-text slideshow context-menu open-tree-node shell-line shell-cwd repos-memory
         help-keys help-cursor zoom refresh order user-commands settle macro paste clipboard saved-workspaces devtools)
 
@@ -1094,6 +1094,25 @@ scenario_script() {
     run script:run no-such-script
     status_is "script run: an unknown script is refused" error \
         'no installed script matches "no-such-script" (mf script lists them*'
+}
+
+# In the keybindings form, Enter on a suggestion highlighted in the command's
+# drop-down fills the field and keeps it; Enter again leaves it (doc "Keybindings").
+scenario_keybindings_pick() {
+    needs_keyboard keybindings-pick || return 0
+    new_repo keybindings-pick
+    run panel:open here keybindings
+    command_ok "keybindings pick: panel open"
+    run keybindings:focus key
+    keys Tab
+    assert "keybindings pick: the command field has the focus" until_ok 10 focused '#command'
+    typed "status:cle"
+    keys Down Return
+    assert "keybindings pick: Enter fills the field with the suggestion" \
+        until_ok 10 reads "status:clear" '#command'
+    assert "keybindings pick: and keeps the focus there" focused '#command'
+    keys Return
+    assert "keybindings pick: Enter again leaves the field" until_ok 10 no_field
 }
 
 # A question belongs to the workspace it is asked in, one per workspace (doc
