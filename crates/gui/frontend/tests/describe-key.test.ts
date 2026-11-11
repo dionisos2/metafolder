@@ -28,7 +28,7 @@ const table: Binding[] = [
   b(['t', 'd'], 'panel:open here metarecord-detail'),
   b(['ctrl+x'], '!echo hi'),
   b(['z'], 'panel:toggle fullscreen'),
-  b(['ctrl+enter'], 'metarecord-list:apply finder', null, false, 'finder'),
+  b(['ctrl+enter'], 'metarecord-list:apply-query', null, false, 'finder'),
   b(['ctrl+g'], 'metarecord-list:toggle mode', 'metarecord-list', false, 'columns'),
   b(['e'], 'global:one'),
   b(['e'], 'panel:one', 'metarecord-list'),
@@ -129,7 +129,7 @@ describe('describeKeyStep — a key that runs nothing', () => {
       reported: true,
       message:
         'Ctrl+Enter is not bound to any command here ' +
-        '(elsewhere: metarecord-list:apply finder in the finder widget)',
+        '(elsewhere: metarecord-list:apply-query in the finder widget)',
     });
   });
 

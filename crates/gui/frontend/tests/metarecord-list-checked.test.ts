@@ -241,7 +241,7 @@ describe('the checked selection across lists', () => {
     // match — but they were checked and stay checked.
     const queryInput = harness.shadow.querySelector('#query-input') as HTMLInputElement;
     queryInput.value = 'other';
-    await harness.handlers.get('metarecord-list:apply')!('simplified');
+    await harness.handlers.get('metarecord-list:apply-query')!();
     await settle();
     expect(harness.selected()).toEqual(['u-a', 'u-b']);
     // The new list is on screen, its own row not checked.

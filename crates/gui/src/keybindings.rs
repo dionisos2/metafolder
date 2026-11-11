@@ -1242,14 +1242,13 @@ mod tests {
         assert_eq!(finder.invocation, "metarecord-list:next");
 
         // Overriding the focus-scoped one leaves the when-scoped one intact.
-        let user =
-            r#""down" = { command = "metarecord-list:apply finder stay", focus = "finder" }"#;
+        let user = r#""down" = { command = "metarecord-list:apply-query stay", focus = "finder" }"#;
         let set = KeybindingSet::from_sources(defaults, user).unwrap();
         let downs: Vec<_> = set.compiled().into_iter().filter(|b| b.keys == ["down"]).collect();
         assert_eq!(downs.len(), 2);
         assert_eq!(
             downs.iter().find(|b| b.focus.as_deref() == Some("finder")).unwrap().invocation,
-            "metarecord-list:apply finder stay"
+            "metarecord-list:apply-query stay"
         );
         assert_eq!(
             downs.iter().find(|b| b.when.as_deref() == Some("metarecord-list")).unwrap().invocation,
@@ -1938,10 +1937,10 @@ vars.y = ","
                 .map(|b| b.invocation.clone())
         };
         for (focus, apply) in [
-            ("finder", "metarecord-list:apply finder"),
-            ("simplified", "metarecord-list:apply simplified"),
-            ("normal", "metarecord-list:apply normal"),
-            ("columns", "metarecord-list:apply columns"),
+            ("finder", "metarecord-list:apply-query"),
+            ("simplified", "metarecord-list:apply-query"),
+            ("normal", "metarecord-list:apply-query"),
+            ("columns", "metarecord-list:apply-query"),
             ("search", "help:apply search"),
         ] {
             assert_eq!(at(defaults, "enter", focus).as_deref(), Some(apply));
@@ -1963,11 +1962,11 @@ vars.y = ","
                 r#"vars.validate-stay = "shift+enter""#,
                 r#"vars.validate-stay = "ctrl+shift+j""#,
             );
-        assert_eq!(at(&moved, "ctrl+j", "finder").as_deref(), Some("metarecord-list:apply finder"));
+        assert_eq!(at(&moved, "ctrl+j", "finder").as_deref(), Some("metarecord-list:apply-query"));
         assert_eq!(at(&moved, "ctrl+j", "filter").as_deref(), Some("editing:validate"));
         assert_eq!(
             at(&moved, "ctrl+shift+j", "simplified").as_deref(),
-            Some("metarecord-list:apply simplified stay")
+            Some("metarecord-list:apply-query stay")
         );
         assert_eq!(at(&moved, "enter", "finder"), None);
         assert_eq!(at(&moved, "enter", "find").as_deref(), Some("find:next"));

@@ -278,33 +278,41 @@ describe('zone commands', () => {
     expect(p.shadow.activeElement).toBe(p.query);
   });
 
-  test('apply leaves the zone; `stay` keeps the focus in it', async () => {
+  test('apply-query leaves the zone; `stay` keeps the focus in it', async () => {
     // Both behaviours of a zone's Enter are one verb with a modifier, not two verbs.
     const p = await mountPanel();
 
     p.finder.focus();
-    await p.invoke('metarecord-list:apply', 'finder', 'stay');
+    await p.invoke('metarecord-list:apply-query', 'stay');
     expect(p.shadow.activeElement).toBe(p.finder);
 
-    await p.invoke('metarecord-list:apply', 'finder');
+    await p.invoke('metarecord-list:apply-query');
     expect(p.shadow.activeElement).not.toBe(p.finder);
   });
 
-  test('apply on an unfocused zone does not steal or drop the focus', async () => {
+  test('apply-query commits every field at once, whichever has the focus', async () => {
     const p = await mountPanel();
-    p.query.focus();
+    p.finder.value = 'jazz';
+    p.query.value = '#=rock';
+    p.normal.value = 'rating > 3';
+    p.columns.value = 'label,  rating';
+    p.columns.focus();
 
-    await p.invoke('metarecord-list:apply', 'columns');
+    await p.invoke('metarecord-list:apply-query');
 
-    expect(p.shadow.activeElement).toBe(p.query);
+    expect(p.vars.get('metarecord-list:finder')).toBe('jazz');
+    expect(p.vars.get('metarecord-list:query')).toBe('#=rock');
+    expect(p.vars.get('metarecord-list:normal-query')).toBe('rating > 3');
+    expect(p.vars.get('metarecord-list:columns')).toEqual(['label', 'rating']);
+    expect(p.columns.value).toBe('label rating');
   });
 
-  test('applying the columns records them, as the field then shows them', async () => {
+  test('applying records the columns, as the field then shows them', async () => {
     const p = await mountPanel();
     p.columns.value = 'label,  rating';
-    await p.invoke('metarecord-list:apply', 'columns');
+    await p.invoke('metarecord-list:apply-query');
     p.columns.value = 'label';
-    await p.invoke('metarecord-list:apply', 'columns');
+    await p.invoke('metarecord-list:apply-query');
     await vi.waitFor(async () => {
       await historyOf(p.columns)!.prev();
       expect(p.columns.value).toBe('label rating');
@@ -410,7 +418,7 @@ describe('zone commands', () => {
     p.finder.focus();
 
     await p.invoke('metarecord-list:insert', 'simplified', '#=jazz', 'stay');
-    await p.invoke('metarecord-list:apply', 'simplified');
+    await p.invoke('metarecord-list:apply-query', 'stay');
 
     expect(p.vars.get('metarecord-list:query')).toBe('#=jazz');
     expect(p.shadow.activeElement).toBe(p.finder);

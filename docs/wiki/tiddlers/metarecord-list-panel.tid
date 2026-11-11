@@ -20,7 +20,11 @@ empty list everything.
 * The ''normal DSL'' takes the query language itself ([[Writing queries]]) and is AND-ed with the simplified query: `(<expansion>) AND (<normal DSL>)` is what is sent to the daemon. So a filter is added in either language without giving up what the other holds — a folder listed by `metarecord-list:folder` is narrowed with a tag typed in the simplified field ([[Why the two query fields are AND-ed]]).
 
 `Enter` in any of them applies and leaves the field, so that the panel's keys work
-again; <<key "metarecord-list:apply finder stay" Shift+Enter>> applies and stays. An
+again; <<key "metarecord-list:apply-query stay" Shift+Enter>> applies and stays, and
+<<key "metarecord-list:apply-query" "p p">> applies from outside the fields. Applying
+is always the whole query, whichever field it comes from: the finder, both queries and
+the columns are taken as they are, and the query is run once
+([[metarecord-list:apply-query]]). An
 error is shown under the field it comes from — the simplified query's (its
 expansion, or the parse of that expansion) under the simplified query, the normal
 DSL's under the normal DSL. The finder, the simplified query and the
@@ -53,7 +57,8 @@ ask for two. `folder:open` always replaces.
 !! Columns
 
 The ''columns'' field below the queries chooses what the table shows; ''Apply'' or
-`Enter` redraws it, without asking the daemon again for the rows. Columns are
+`Enter` redraws it — and, like the queries' ''Apply'', applies the whole query and runs
+it. Columns are
 separated by spaces or commas, and an empty field brings the configured ones back. A
 column that does not parse is reported under the field and the previous columns stay.
 
@@ -156,6 +161,6 @@ is dropped, and the variables re-read once the writes are done (as in the
 workspace's variables therefore shows the same list ([[Cross-panel selection]]).
 
 `metarecord-list:insert <zone> <text>` writes into one of the four fields (`finder`,
-`simplified`, `normal`, `columns`) at the caret, and `metarecord-list:apply <zone>`
-runs it; each takes a final `stay` to leave the focus where it is. A command of yours
+`simplified`, `normal`, `columns`) at the caret, and `metarecord-list:apply-query`
+runs the whole query; each takes a final `stay` to leave the focus where it is. A command of yours
 that writes a query and runs it is those two in a row ([[User commands]]).

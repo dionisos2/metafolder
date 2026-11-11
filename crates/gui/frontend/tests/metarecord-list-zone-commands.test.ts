@@ -12,16 +12,18 @@ function setup() {
   const host = document.createElement('div');
   const root = host.attachShadow({ mode: 'open' });
   const input = document.createElement('input');
-  root.append(input);
+  // A field of the panel that is not a zone (the bulk-edit form, say).
+  const other = document.createElement('input');
+  root.append(input, other);
   document.body.append(host);
   const zone = {
     input,
-    apply: vi.fn(async () => {}),
     clear: vi.fn(async () => {
       input.value = '';
     }),
   };
   const clearAll = vi.fn(async () => {});
+  const applyQuery = vi.fn(async () => {});
   registerZoneCommands({
     commands: {
       register: async (name: string, spec: Spec) => void registered.set(name, spec),
@@ -29,11 +31,12 @@ function setup() {
     root,
     zones: { simplified: zone },
     clearAll,
+    applyQuery,
   });
   // The API of the run, which the zone functions are handed.
   const mf = {};
   const run = (name: string, ...args: string[]) => registered.get(name)!.handler(mf, ...args);
-  return { run, zone, input, root, clearAll };
+  return { run, zone, input, other, root, clearAll, applyQuery, registered };
 }
 
 describe('the zone commands', () => {
@@ -55,12 +58,33 @@ describe('the zone commands', () => {
     expect(root.activeElement).not.toBe(input);
   });
 
-  test('apply commits the zone and gives up its focus', async () => {
-    const { run, zone, input, root } = setup();
+  test('apply-query applies the whole panel and gives up a zone\'s focus', async () => {
+    const { run, applyQuery, input, root } = setup();
     input.focus();
-    await run('metarecord-list:apply', 'simplified');
-    expect(zone.apply).toHaveBeenCalled();
+    await run('metarecord-list:apply-query');
+    expect(applyQuery).toHaveBeenCalledTimes(1);
     expect(root.activeElement).not.toBe(input);
+  });
+
+  test('apply-query stay keeps the focus in the zone', async () => {
+    const { run, applyQuery, input, root } = setup();
+    input.focus();
+    await run('metarecord-list:apply-query', 'stay');
+    expect(applyQuery).toHaveBeenCalledTimes(1);
+    expect(root.activeElement).toBe(input);
+  });
+
+  test('apply-query leaves a focus held outside the zones alone', async () => {
+    const { run, other, root } = setup();
+    other.focus();
+    await run('metarecord-list:apply-query');
+    expect(root.activeElement).toBe(other);
+  });
+
+  test('apply-query refuses another modifier, and there is no per-zone apply', async () => {
+    const { run, registered } = setup();
+    await expect(run('metarecord-list:apply-query', 'nope')).rejects.toThrow(/expected stay/);
+    expect(registered.has('metarecord-list:apply')).toBe(false);
   });
 
   test('clear-all goes to the panel', async () => {

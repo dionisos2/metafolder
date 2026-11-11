@@ -441,8 +441,8 @@ describe('installUserCommands', () => {
       },
     };
     const withInvoke = withTopLevelInvoke(api);
-    await withInvoke.invoke(['metarecord-list:apply', 'simplified']);
-    expect(calls).toEqual([['metarecord-list:apply', 'simplified']]);
+    await withInvoke.invoke(['metarecord-list:apply-query', 'stay']);
+    expect(calls).toEqual([['metarecord-list:apply-query', 'stay']]);
   });
 
   test('runUserCommand reports an unknown name rather than pretending', async () => {
@@ -977,7 +977,7 @@ describe('collectArgs', () => {
 
   // An optional trailing argument: supplied inline it is used, omitted it is
   // simply absent — the command falls back to its default rather than stopping
-  // to ask. `metarecord-list:apply <zone> [stay]`, `log:revert [what]`.
+  // to ask. `metarecord-list:apply-query [stay]`, `log:revert [what]`.
   const stay = (): ArgSpec => ({
     name: 'stay',
     optional: true,

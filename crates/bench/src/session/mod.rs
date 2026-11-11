@@ -372,14 +372,14 @@ impl Session {
     }
 }
 
-/// The list's search zones run their query on `apply`.
+/// The list's search zones run their query on `apply-query`.
 async fn list_search(s: &Session, zone: &str, text: &str) -> Result<()> {
     s.command(&format!("metarecord-list:focus {zone} clear"), None).await?;
     // Quoted: an unquoted text is split into words, its last one taken for the
     // `stay` modifier.
     let quoted = format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""));
     s.command(&format!("metarecord-list:insert {zone} {quoted} stay"), None).await?;
-    s.command(&format!("metarecord-list:apply {zone} stay"), None).await
+    s.command("metarecord-list:apply-query stay", None).await
 }
 
 /// When a step that redraws a panel is done for the user.

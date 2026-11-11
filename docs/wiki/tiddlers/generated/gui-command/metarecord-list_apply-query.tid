@@ -1,0 +1,20 @@
+title: $:/mf/gen/GUI command/metarecord-list:apply-query
+catalog: GUI command
+target: metarecord-list:apply-query
+summary: Metarecord list: apply the query and the columns
+
+!! Reference
+
+* Defined by the ``metarecord-list`` panel
+
+!! Default keys
+
+* ``enter`` → ``metarecord-list:apply-query`` (while ``columns`` is focused)
+* ``enter`` → ``metarecord-list:apply-query`` (while ``finder`` is focused)
+* ``enter`` → ``metarecord-list:apply-query`` (while ``normal`` is focused)
+* ``enter`` → ``metarecord-list:apply-query`` (while ``simplified`` is focused)
+* ``p p`` → ``metarecord-list:apply-query`` (in the ``metarecord-list`` panel)
+* ``shift+enter`` → ``metarecord-list:apply-query stay`` (while ``columns`` is focused)
+* ``shift+enter`` → ``metarecord-list:apply-query stay`` (while ``finder`` is focused)
+* ``shift+enter`` → ``metarecord-list:apply-query stay`` (while ``normal`` is focused)
+* ``shift+enter`` → ``metarecord-list:apply-query stay`` (while ``simplified`` is focused)

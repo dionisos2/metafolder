@@ -61,11 +61,11 @@ describe('resolve', () => {
   test('forget drops that instance only', () => {
     const { source, focus } = setup();
     source.register('ws-1|metarecord-detail', 'metarecord:bulk', [spec('a')]);
-    source.register('ws-1|metarecord-list', 'metarecord-list:apply', [spec('b')]);
+    source.register('ws-1|metarecord-list', 'metarecord-list:apply-query', [spec('b')]);
     source.register('ws-2|metarecord-detail', 'metarecord:bulk', [spec('c')]);
     source.forget('ws-1|metarecord-detail');
     expect(source.resolve('metarecord:bulk')).toBeUndefined();
-    expect(source.resolve('metarecord-list:apply')?.[0].name).toBe('b');
+    expect(source.resolve('metarecord-list:apply-query')?.[0].name).toBe('b');
     focus('ws-2');
     expect(source.resolve('metarecord:bulk')?.[0].name).toBe('c');
   });

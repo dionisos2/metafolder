@@ -290,7 +290,7 @@ export function createQueryEditor({ root, metafolder, history, normalHistory, on
     await mf.workspace.set(SHOW_EXPANSION, expansionShown);
   }
 
-  // Validating is a keybinding on these names: `metarecord-list:apply <zone>`.
+  // Validating is a keybinding on these names: `metarecord-list:apply-query`.
   queryInput.dataset.mfFocus = 'simplified';
   normalInput.dataset.mfFocus = 'normal';
   queryInput.addEventListener('input', scheduleLivePreview);

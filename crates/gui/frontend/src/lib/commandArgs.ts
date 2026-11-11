@@ -30,7 +30,7 @@ export interface ArgSpec {
   /** Whether the argument may simply be left out. An optional argument is
    *  used when the invocation supplies it and skipped — never prompted for —
    *  when it does not, so the command falls back to its default:
-   *  `metarecord-list:apply finder` leaves the zone, `… finder stay` does not.
+   *  `metarecord-list:apply-query` leaves the zone, `… stay` does not.
    *  Only a trailing run of arguments can sensibly be optional, since they are
    *  filled positionally. */
   optional?: boolean;

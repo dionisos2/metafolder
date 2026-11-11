@@ -920,10 +920,10 @@ export async function mount(root, metafolder) {
   const detachScroll = pager.attach(scroll);
 
   byId(root, 'query-apply').addEventListener('click', () => {
-    void commands.invoke(['metarecord-list:apply', 'simplified']);
+    void commands.invoke(['metarecord-list:apply-query']);
   });
   byId(root, 'columns-apply').addEventListener('click', () => {
-    void commands.invoke(['metarecord-list:apply', 'columns']);
+    void commands.invoke(['metarecord-list:apply-query']);
   });
   // ── Finder (quick OSM filter) ─────────────────────────────────────────────
 
@@ -937,11 +937,10 @@ export async function mount(root, metafolder) {
    *  A fetch still in flight for an earlier term is aborted and the query
    *  re-run once it unwinds (`fetchPage`), so the list ends on the current
    *  input without polling for it. */
-  /** @param {MetafolderApi} mf @param {{record?: boolean}} [options] */
-  async function applyFinder(mf, { record = false } = {}) {
+  /** @param {MetafolderApi} mf */
+  async function applyFinder(mf) {
     clearTimeout(finderTimer);
     queryRan = true;
-    if (record) finderHistory.push(finderInput.value.trim());
     finderText = finderInput.value;
     await mf.workspace.set('metarecord-list:finder', finderText);
     await fetchPage(true, mf);
@@ -1025,9 +1024,6 @@ export async function mount(root, metafolder) {
   const ZONES = {
     finder: {
       input: finderInput,
-      // The explicit re-run also records the text in the finder's input
-      // history; the debounced keystroke path does not.
-      apply: (mf) => applyFinder(mf, { record: true }),
       clear: async (mf) => {
         finderInput.value = '';
         // A live filter: clearing it re-runs at once, widening the result.
@@ -1036,24 +1032,41 @@ export async function mount(root, metafolder) {
     },
     simplified: {
       input: editor.simplifiedInput,
-      apply: (mf) => editor.apply(mf),
       clear: () => editor.clearSimplified(),
     },
     normal: {
       input: editor.normalInput,
-      apply: (mf) => editor.apply(mf),
       clear: () => editor.clearNormal(),
     },
     columns: {
       input: columnsInput,
-      apply: (mf) => applyColumns(mf),
       clear: () => {
         columnsInput.value = '';
       },
     },
   };
 
-  registerZoneCommands({ commands, root, zones: ZONES, clearAll: clearAllQueries });
+  /** `apply-query`: every zone committed — the columns redrawn, the finder's
+   *  text and both queries recorded in their histories and variables — and the
+   *  query run once. A column that does not parse is reported under its field
+   *  and does not hold the query back.
+   *  @param {MetafolderApi} mf */
+  async function applyWholeQuery(mf) {
+    await applyColumns(mf);
+    clearTimeout(finderTimer);
+    finderHistory.push(finderInput.value.trim());
+    finderText = finderInput.value;
+    await mf.workspace.set('metarecord-list:finder', finderText);
+    await editor.apply(mf); // runs the query, the finder included
+  }
+
+  registerZoneCommands({
+    commands,
+    root,
+    zones: ZONES,
+    clearAll: clearAllQueries,
+    applyQuery: applyWholeQuery,
+  });
 
   // Canned queries: each puts its DSL in the normal zone, so it stays
   // visible, editable and composable rather than being a mode — the whole

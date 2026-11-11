@@ -339,20 +339,20 @@ vars.index = "i"
 # A field that filters or searches: validate and leave it, or validate and stay
 # (doc "Keybindings"). A `filter` runs as it is typed, so it only has to be recorded and left.
 "{validate}" = [
-  { command = "metarecord-list:apply finder", focus = "finder" },
-  { command = "metarecord-list:apply simplified", focus = "simplified" },
-  { command = "metarecord-list:apply normal", focus = "normal" },
-  { command = "metarecord-list:apply columns", focus = "columns" },
+  { command = "metarecord-list:apply-query", focus = "finder" },
+  { command = "metarecord-list:apply-query", focus = "simplified" },
+  { command = "metarecord-list:apply-query", focus = "normal" },
+  { command = "metarecord-list:apply-query", focus = "columns" },
   { command = "help:apply search", focus = "search" },
   { command = "editing:validate", focus = "filter" },
   { command = "editing:validate", focus = "key" },
   { command = "editing:validate", focus = "command" },
 ]
 "{validate-stay}" = [
-  { command = "metarecord-list:apply finder stay", focus = "finder" },
-  { command = "metarecord-list:apply simplified stay", focus = "simplified" },
-  { command = "metarecord-list:apply normal stay", focus = "normal" },
-  { command = "metarecord-list:apply columns stay", focus = "columns" },
+  { command = "metarecord-list:apply-query stay", focus = "finder" },
+  { command = "metarecord-list:apply-query stay", focus = "simplified" },
+  { command = "metarecord-list:apply-query stay", focus = "normal" },
+  { command = "metarecord-list:apply-query stay", focus = "columns" },
   { command = "help:apply search stay", focus = "search" },
 ]
 "down" = [
@@ -517,6 +517,7 @@ vars.index = "i"
 "{panel} {open}" = { command = "sync:plan", when = "sync" }
 "{panel} shift+{open}" = { command = "sync:open", when = "sync" }
 "{panel} {run}" = [
+  { command = "metarecord-list:apply-query", when = "metarecord-list" },
   { command = "viewer:restart", when = "viewer" },
   { command = "sync:run", when = "sync" },
 ]

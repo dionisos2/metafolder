@@ -5,7 +5,7 @@ summary: The metarecord-list panel type
 
 !! Commands
 
-* ``metarecord-list:apply`` — Metarecord list: apply a zone's content
+* ``metarecord-list:apply-query`` — Metarecord list: apply the query and the columns
 * ``metarecord-list:clear-all`` — Metarecord list: empty the search fields and list everything
 * ``metarecord-list:focus`` — Metarecord list: focus a zone
 * ``metarecord-list:insert`` — Metarecord list: insert text into a zone

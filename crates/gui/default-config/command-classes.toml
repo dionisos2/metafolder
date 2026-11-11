@@ -123,7 +123,7 @@
 "metarecord-list:focus finder clear" = "B"
 "metarecord-list:focus normal clear" = "C"
 "metarecord-list:clear-all" = "C"
-"metarecord-list:apply" = "A"
+"metarecord-list:apply-query" = "A"
 "metarecord-list:select" = "B"
 "metarecord-list:select toggle" = "A"
 "metarecord-list:toggle" = "D"

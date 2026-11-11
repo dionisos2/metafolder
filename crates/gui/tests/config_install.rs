@@ -310,6 +310,8 @@ fn test_search_field_editing_keybindings() {
     assert_eq!(mlist(&["p", "q"]).as_deref(), Some("metarecord-list:focus normal"));
     assert_eq!(mlist(&["p", "shift+q"]).as_deref(), Some("metarecord-list:focus normal clear"));
     assert_eq!(mlist(&["p", "u"]).as_deref(), Some("metarecord-list:clear-all"));
+    // `p p` (run) applies the fields from outside them, as Enter does inside.
+    assert_eq!(mlist(&["p", "p"]).as_deref(), Some("metarecord-list:apply-query"));
     // No single letter of the list is a field operation any more.
     for letter in ["s", "q", "c"] {
         assert!(find(&[letter]).is_empty(), "{letter}: {:?}", find(&[letter]));
@@ -321,12 +323,12 @@ fn test_search_field_editing_keybindings() {
         .iter()
         .find(|b| b.keys == ["enter"] && b.focus.as_deref() == Some("finder"))
         .map(|b| b.invocation.clone());
-    assert_eq!(enter_finder.as_deref(), Some("metarecord-list:apply finder"));
+    assert_eq!(enter_finder.as_deref(), Some("metarecord-list:apply-query"));
     let shift_enter_finder = compiled
         .iter()
         .find(|b| b.keys == ["shift+enter"] && b.focus.as_deref() == Some("finder"))
         .map(|b| b.invocation.clone());
-    assert_eq!(shift_enter_finder.as_deref(), Some("metarecord-list:apply finder stay"));
+    assert_eq!(shift_enter_finder.as_deref(), Some("metarecord-list:apply-query stay"));
 }
 
 #[test]
