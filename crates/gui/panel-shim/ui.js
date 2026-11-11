@@ -326,6 +326,61 @@ export function isPositionType(type) {
 }
 
 /**
+ * The Query IR matching the direct children of a node in `field`'s tree. The
+ * node is addressed by a `uuid_in` sub-query (Follows matches metarecords whose
+ * direct parent is in the set), which avoids building path strings and so is
+ * robust to names containing "/". The roots of a tree are not reachable this
+ * way (their parent is the root sentinel, not a real metarecord) — they come
+ * from `GET …/tree/roots` instead.
+ *
+ * @param {string} field @param {string} parentUuid
+ */
+export function childrenQuery(field, parentUuid) {
+  return { type: 'follows', field, target: { type: 'uuid_in', uuids: [parentUuid] } };
+}
+
+/**
+ * The single name a metarecord bears in `field`'s tree (the first position row
+ * of that field — a node of a hierarchy bears one name on all its rows), or
+ * null when it carries no such position.
+ *
+ * @param {Metafolder.Metarecord|null|undefined} metarecord
+ * @param {string} field
+ * @returns {string|null}
+ */
+export function treeNameOf(metarecord, field) {
+  for (const f of metarecord?.fields ?? []) {
+    if (f.name !== field) continue;
+    if (f.value.type === 'tree_ref' || f.value.type === 'hierarchy_ref') {
+      return pathText(f.value.value.name);
+    }
+  }
+  return null;
+}
+
+/**
+ * The tree whose children the viewer shows for a metarecord that has no file
+ * (doc "viewer panel"): `preferred` — the field chosen in `path-ref` — when the
+ * metarecord is placed in it, else the first field it is placed in. Never
+ * `mfr_path`: a metarecord placed there is a file, and shows its file.
+ *
+ * @param {Metafolder.Metarecord|null|undefined} metarecord
+ * @param {unknown} preferred
+ * @returns {string|null}
+ */
+export function nodeFieldOf(metarecord, preferred) {
+  /** @type {string[]} */
+  const placed = [];
+  for (const f of metarecord?.fields ?? []) {
+    if (f.name !== 'mfr_path' && isPositionType(f.value.type) && !placed.includes(f.name)) {
+      placed.push(f.name);
+    }
+  }
+  if (typeof preferred === 'string' && placed.includes(preferred)) return preferred;
+  return placed[0] ?? null;
+}
+
+/**
  * Display form of a Value ({type, value} JSON, doc "Value types"). `value` is
  * absent for `nothing` (explicit absence), which renders as ∅.
  *

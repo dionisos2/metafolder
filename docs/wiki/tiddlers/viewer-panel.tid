@@ -7,8 +7,9 @@ summary: A preview of the selected file — image, video, audio, PDF, text — o
 Open it with `panel:open here viewer` (<<key "panel:open here viewer" "t f">>). It shows
 the file the workspace has selected, and follows the selection: move the cursor in
 [[metarecord-list panel]] or [[file-manager panel]] beside it and the preview changes
-([[Cross-panel selection]]). The file need not be tracked. With nothing selected it
-says ''No file selected''.
+([[Cross-panel selection]]). The file need not be tracked. A metarecord with no
+file but a place in another tree — a tag — shows its children instead
+(below). With nothing selected it says ''No file selected''.
 
 When the selection changes, the path bar names the new file at once. Reading it
 usually takes milliseconds, and the previous file stays shown meanwhile, so walking a
@@ -72,6 +73,32 @@ is on disk now: the panel is not told when a file's content changes, only when t
 selection does ([[Generic panel commands]]). A medium goes back behind its poster, its
 position kept. Unsaved changes in a text file are dropped only if you agree.
 Playing the medium from the start is <<key "viewer:restart" "p p">>.
+
+!! A node of a tree
+
+A selected metarecord that has no file, but a position in a `tree_ref` or
+`hierarchy_ref` field other than `mfr_path` — a tag in its hierarchy
+([[Hierarchy references]]) —, shows its ''children'' in that tree, as a grid of
+tiles like a folder's: a child with a file of its own has its thumbnail, the others a
+🏷 glyph. They come in the tree's order, a page (`[page-size]`) at a time, more on
+scroll; a node without any says ''no children''. The path bar names the field and the
+node's path — its first one, for a node of several parents.
+
+The tree is the one the [[path-ref panel]] of the workspace explores
+(`path-ref:field`, [[Workspace variables]]) when the node is in it, else the first
+field the metarecord is placed in; changing it in `path-ref` changes it here.
+
+Clicking a tile goes into that child, without changing the selection, and
+<<key "viewer:back" Backspace>> or ''←'' comes back up — as far as the selected node,
+which has no "up" here: the [[path-ref panel]] is the tree's explorer.
+
+A metarecord that has a file shows its file, whatever trees it is in besides
+`mfr_path`.
+
+The panel follows a selected metarecord that moves ''alone'' — following a reference
+in the [[metarecord-detail panel]], or a list going from one tag to the next, its
+paths staying empty — only while it shows no file: a file shown is kept
+([[Workspace variables]]).
 
 !! Zoom
 

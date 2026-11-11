@@ -1,7 +1,7 @@
 title: $:/mf/gen/GUI command/viewer:back
 catalog: GUI command
 target: viewer:back
-summary: File: go up one level (out of a listing, or to the containing folder)
+summary: File: go up one level (out of a listing, to the containing folder, or to the node gone into)
 
 !! Reference
 

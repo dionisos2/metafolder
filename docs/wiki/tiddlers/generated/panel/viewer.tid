@@ -5,7 +5,7 @@ summary: The viewer panel type
 
 !! Commands
 
-* ``viewer:back`` — File: go up one level (out of a listing, or to the containing folder)
+* ``viewer:back`` — File: go up one level (out of a listing, to the containing folder, or to the node gone into)
 * ``viewer:focus`` — Viewer: give the keyboard to the text being edited, editing it if it was not
 * ``viewer:page`` — File: go to a page of the document
 * ``viewer:play`` — File: play one file after another — the checked selection or the query shown (selection / query / stop) [shuffle] [loop]

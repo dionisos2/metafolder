@@ -6,14 +6,17 @@
 
 import {
   byId,
+  childrenQuery,
   el,
   isBytePath,
   looksLikeText,
   messageOf,
+  nodeFieldOf,
   pathQuery,
   pathText,
   samePath,
   thumbnail,
+  treeNameOf,
 } from '/__ui.js';
 
 /** A path, exact (doc "Tree names"): shown by its text, acted on as it is.
@@ -178,6 +181,14 @@ export async function mount(root, metafolder) {
    *  directory's listing, overriding the selection until it changes.
    *  null = follow the selection. */
   let localPath = null;
+  // A selection with no file but a place in a tree — a tag in its hierarchy —
+  // shows that node's children (doc "viewer panel").
+  // `nodeTrail` is the walk below the selected node, each click on a child one
+  // step further; `shownNode` what the path bar names, once read.
+  /** @type {{uuid: string, name: string}[]} */
+  let nodeTrail = [];
+  /** @type {{field: string, path: string}|null} */
+  let shownNode = null;
   // Bumped on every renderViewer() call so a previous render's pending async
   // work (notably the media stall timer / probe) cannot write into the viewer
   // after the shown path has changed.
@@ -548,6 +559,13 @@ export async function mount(root, metafolder) {
   // selected path.
   function navigateBack() {
     if (holdingChanges()) return;
+    if (localPath === null && paths.length === 0) {
+      // Up the walk below the selected node; the node itself has no "up".
+      if (nodeTrail.length === 0) return;
+      nodeTrail = nodeTrail.slice(0, -1);
+      rerender();
+      return;
+    }
     const target = backTarget(localPath, paths[activeIndex]);
     if (!target.move) return;
     localPath = target.path;
@@ -555,7 +573,16 @@ export async function mount(root, metafolder) {
   }
 
   function renderPathBar() {
-    pathBar.hidden = paths.length === 0 && localPath === null;
+    if (paths.length === 0 && localPath === null) {
+      pathBar.hidden = shownNode === null;
+      if (shownNode === null) return;
+      pathBar.replaceChildren(
+        ...(nodeTrail.length > 0 ? [el('button', { class: 'nav', onclick: navigateBack }, '←')] : []),
+        el('span', { class: 'node-field' }, shownNode.field),
+        el('span', {}, shownNode.path),
+      );
+      return;
+    }
     /** @type {HTMLElement[]} */
     const children = [];
     if (localPath !== null) {
@@ -787,6 +814,123 @@ export async function mount(root, metafolder) {
     await appendWindow(); // first window
     dirFooter.hidden = false;
     detachDirScroll = pager.attach(grid);
+  }
+
+  /**
+   * The children of the selected metarecord in a tree other than `mfr_path`,
+   * as a grid like a folder's — or false when it is placed in none, so the
+   * caller says there is no file. The tree is the one chosen in `path-ref`
+   * when the node is in it (doc "viewer panel").
+   *
+   * @param {number} generation @returns {Promise<boolean>}
+   */
+  async function renderNode(generation) {
+    const current = () => generation === renderGeneration;
+    const sel = selected;
+    if (sel === null) return false;
+    const { repo } = sel;
+    /** @type {string|null} */
+    let field;
+    /** @type {string} */
+    let label;
+    try {
+      const metarecord = (await daemon.metarecords(repo, [sel.uuid])).get(sel.uuid);
+      field = nodeFieldOf(metarecord, await workspace.get('path-ref:field'));
+      if (!current()) return true;
+      if (field === null) return false;
+      const resolved = (await daemon.treePaths(repo, field, [sel.uuid]))[sel.uuid] ?? [];
+      label = resolved.length > 0 ? pathText(resolved[0]) : (treeNameOf(metarecord, field) ?? '');
+    } catch (error) {
+      if (current()) placeholder(`cannot read the node: ${messageOf(error)}`);
+      return true;
+    }
+    if (!current()) return true;
+    const tree = field;
+    shownNode = { field: tree, path: [label, ...nodeTrail.map((n) => n.name)].join('/') };
+    renderPathBar();
+    const parent = nodeTrail.at(-1)?.uuid ?? sel.uuid;
+    /** @type {string|null} */
+    let repoRoot = null;
+    /** @type {string|null} */
+    let nextCursor = null;
+    /** @type {number|null} */
+    let total = null;
+    let rendered = 0;
+    const grid = el('div', { class: 'dir-grid' });
+
+    /** @param {Metafolder.Metarecord} child @param {Path|undefined} file */
+    const tile = (child, file) => {
+      const name = treeNameOf(child, tree) ?? child.uuid.slice(0, 8);
+      return el(
+        'button',
+        {
+          class: 'tile',
+          title: name,
+          onclick: () => {
+            nodeTrail = [...nodeTrail, { uuid: child.uuid, name }];
+            rerender();
+          },
+        },
+        el(
+          'span',
+          { class: 'thumb' },
+          thumbnail(metafolder.guiServer, file ?? null, {
+            fileGlyph: '🏷',
+            glyphClass: 'glyph',
+            token: metafolder.sessionToken,
+          }),
+        ),
+        el('span', { class: 'name' }, name),
+      );
+    };
+
+    const loadPage = async () => {
+      const result = await daemon.query(repo, {
+        query: childrenQuery(tree, parent),
+        select: '*',
+        sort: [{ field: tree }],
+        limit: dirPage,
+        ...(nextCursor === null ? { count: true } : { cursor: nextCursor }),
+      });
+      // A child with a file shows its thumbnail: one read for the page.
+      const files = await daemon.treePaths(repo, 'mfr_path', result.uuids);
+      if (repoRoot === null && Object.values(files).some((p) => p.length > 0)) {
+        repoRoot = await daemon.repoRoot(repo);
+      }
+      if (!current()) return;
+      nextCursor = result.nextCursor;
+      total ??= result.total;
+      const root = repoRoot;
+      grid.append(
+        ...result.records.map((child) => {
+          const rel = files[child.uuid]?.[0];
+          return tile(child, rel === undefined || root === null ? undefined : underRoot(root, rel));
+        }),
+      );
+      rendered += result.records.length;
+      dirFooter.textContent = pager.footerText();
+    };
+    const pager = createPagedList({
+      loaded: () => rendered,
+      total: () => total,
+      hasMore: () => nextCursor !== null,
+      loadMore: loadPage,
+    });
+    try {
+      await loadPage();
+    } catch (error) {
+      if (current()) placeholder(`cannot read the children: ${messageOf(error)}`);
+      return true;
+    }
+    if (!current()) return true;
+    if (rendered === 0) {
+      placeholder('no children');
+      return true;
+    }
+    viewer.replaceChildren(grid);
+    dirFooter.hidden = false;
+    detachDirScroll = pager.attach(grid);
+    return true;
   }
 
   // Text preview. Fetches only the first `textPreviewLimit` bytes (the GUI
@@ -1066,10 +1210,15 @@ export async function mount(root, metafolder) {
     revokeStaticGif();
     const path = viewedPath();
     if (!path) {
-      placeholder('No file selected');
       slideStep(generation, 'skip');
+      if (await renderNode(generation)) return;
+      if (generation !== renderGeneration) return;
+      shownNode = null;
+      renderPathBar();
+      placeholder('No file selected');
       return;
     }
+    shownNode = null;
     // The file may be on a volume that is not plugged in. Saying "no preview
     // available" there would leave the user guessing why a file the database
     // knows about will not open (doc "Unmounted volumes in the GUI").
@@ -1184,6 +1333,7 @@ export async function mount(root, metafolder) {
       : [];
     activeIndex = 0;
     localPath = null;
+    nodeTrail = [];
     // Read the metarecord that goes with these paths: every panel that
     // publishes selected_paths sets selected_metarecord first (null when the
     // file is untracked), so the canonical state already holds the matching
@@ -1202,13 +1352,33 @@ export async function mount(root, metafolder) {
     }
     const repo = await workspace.get('active_repo');
     activeRepo = typeof repo === 'string' && repo !== '' ? repo : null;
-    // Record the view in the repo's recently-viewed list (GUI-side, no daemon
-    // write) when the selection points at a tracked metarecord — only on an
-    // actual change, so re-selecting the same file does not churn the list.
+    touchRecent();
+    metafolder.whenVisible(rerender);
+  }
+
+  // Record the view in the repo's recently-viewed list (GUI-side, no daemon
+  // write) when the selection points at a tracked metarecord — only on an
+  // actual change, so re-selecting the same file does not churn the list.
+  function touchRecent() {
     if (selected?.uuid && selected.uuid !== lastViewedUuid) {
       lastViewedUuid = selected.uuid;
       void metafolder.recent.touch(selected.repo, selected.uuid);
     }
+  }
+
+  // The selected metarecord moved alone — a reference followed in
+  // metarecord-detail, or a list going from one tag to another, whose paths
+  // stay empty. A file shown is kept (doc "Workspace variables"); with no file,
+  // the node shown follows the selection.
+  /** @param {unknown} value the `selected_metarecord` workspace variable */
+  function followNode(value) {
+    if (paths.length > 0 || localPath !== null || holdingChanges()) return;
+    // A slideshow moves to a file, its paths written next: showing the
+    // metarecord meanwhile would tell it to skip what has no file.
+    if (show) return;
+    selected =/** @type {Selected|null} */ (value ?? null);
+    nodeTrail = [];
+    touchRecent();
     metafolder.whenVisible(rerender);
   }
 
@@ -1365,7 +1535,7 @@ export async function mount(root, metafolder) {
   });
 
   void commands.register('viewer:back', {
-    label: 'File: go up one level (out of a listing, or to the containing folder)',
+    label: 'File: go up one level (out of a listing, to the containing folder, or to the node gone into)',
     handler: navigateBack,
   });
 
@@ -1813,6 +1983,13 @@ export async function mount(root, metafolder) {
   workspace.onChange('selected_paths', (value) => {
     toldOfChange = true;
     void update(value);
+  });
+  workspace.onChange('selected_metarecord', followNode);
+  // The tree path-ref explores is the one a node is shown in, when it is there.
+  workspace.onChange('path-ref:field', () => {
+    if (paths.length > 0 || localPath !== null) return;
+    nodeTrail = [];
+    metafolder.whenVisible(rerender);
   });
   const initialPaths = await workspace.get('selected_paths');
   if (!toldOfChange) await update(initialPaths);

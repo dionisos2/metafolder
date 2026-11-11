@@ -58,5 +58,7 @@ folder one `mf gui view left viewer --path` at a time (`gui-tag-folder.sh`) othe
 ran a whole session one answer behind.
 
 A panel may move `selected_metarecord` ''alone'' — following a reference in
-`metarecord-detail` does — and the [[viewer panel]] deliberately ignores that, keeping the
-file it was showing.
+`metarecord-detail` does — and the [[viewer panel]] deliberately ignores that while it
+shows a file, keeping it. With no file shown it follows: a selection that has no path
+leaves `selected_paths` empty from one metarecord to the next, so the metarecord alone
+says which node's children to show (decided with the user in November 2026).

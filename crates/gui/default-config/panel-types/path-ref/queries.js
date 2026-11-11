@@ -2,18 +2,8 @@
 // daemon access — unit-tested in frontend/tests/path-ref-queries.test.js.
 
 import { dslString } from '/__finder.js';
-import { pathText } from '/__ui.js';
-
-// The Query IR matching the direct children of a node in `field`'s forest. The
-// node is addressed by a `uuid_in` sub-query (Follows matches metarecords whose
-// TreeRef direct parent is in the set), which avoids building path strings and
-// so is robust to names containing "/". The forest *roots* are not reachable
-// this way (their parent is the root sentinel, not a real metarecord) — they
-// come from `GET …/tree/roots` instead.
-/** @param {string} field @param {string} parentUuid */
-export function childrenQuery(field, parentUuid) {
-  return { type: 'follows', field, target: { type: 'uuid_in', uuids: [parentUuid] } };
-}
+// The children query and a node's name are shared with the viewer panel.
+export { childrenQuery, treeNameOf } from '/__ui.js';
 
 // The display / query path of a forest node, from the ordered node names on the
 // path from a forest root to it. Matches the daemon's `paths_of` convention
@@ -28,24 +18,6 @@ export function childrenQuery(field, parentUuid) {
 export function treeRefPath(names) {
   if (names.length === 0) return '';
   return names[0] === '' ? `/${names.slice(1).join('/')}` : names.join('/');
-}
-
-// The single name component a metarecord contributes to `field`'s forest (the
-// first position row of that field — a node of a hierarchy bears one name on
-// all its rows), or null when it carries no such position.
-/**
- * @param {Metafolder.Metarecord|null|undefined} metarecord
- * @param {string} field
- * @returns {string|null}
- */
-export function treeNameOf(metarecord, field) {
-  for (const f of metarecord?.fields ?? []) {
-    if (f.name !== field) continue;
-    if (f.value.type === 'tree_ref' || f.value.type === 'hierarchy_ref') {
-      return pathText(f.value.value.name);
-    }
-  }
-  return null;
 }
 
 // The DSL selecting the metarecords whose `refField` (a Ref field) points into
