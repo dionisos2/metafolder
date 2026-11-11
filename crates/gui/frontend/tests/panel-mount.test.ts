@@ -46,7 +46,7 @@ function shadowFor(panelType: string): ShadowRoot {
   return shadow;
 }
 
-const VIEW = { entries: [], variables: [], unbound: [], classes_error: null };
+const VIEW = { entries: [], variables: [], unbound: [], reserved: [], classes_error: null };
 
 /** A metafolder API that answers everything with an empty result. */
 function stubApi(panelType: string, overrides: Record<string, unknown> = {}) {
