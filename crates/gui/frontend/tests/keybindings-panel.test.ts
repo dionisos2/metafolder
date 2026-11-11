@@ -81,7 +81,7 @@ const UNBOUND = [
 
 const RESERVED = [
   { keys: ['shift+escape'], command: 'script:stop', label: 'Stop the script', class: 'B' },
-  { keys: ['ctrl+escape'], command: 'script:kill', label: 'Kill the script', class: 'D' },
+  { keys: ['ctrl+escape'], command: 'script:kill', label: 'Kill the script', class: 'C' },
 ];
 
 const COMMANDS = [
@@ -262,8 +262,8 @@ describe('keybindings panel', () => {
     await typeIn('command', 'script:kill');
     expect(commandsShown()).toEqual([expect.stringContaining('script:kill')]);
     await typeIn('command', '');
-    classButton('B').click();
-    expect(commandsShown()).toEqual([expect.stringContaining('script:kill')]);
+    classButton('C').click();
+    expect(commandsShown()).toEqual([expect.stringContaining('script:stop')]);
   });
 
   test('a class switched off hides its commands', async () => {
@@ -271,14 +271,12 @@ describe('keybindings panel', () => {
     classButton('A').click();
     expect(classButton('A').getAttribute('aria-pressed')).toBe('false');
     expect(shown()).not.toContain('x');
-    // D and ✕ alone: the commands with no key are what is left — and a key
-    // of a script question running a command of class D, which shows it is
-    // classed wrong.
+    // D and ✕ alone: the commands with no key are what is left — a key of a
+    // script question has a key, so it is of none of them.
     for (const c of ['B', 'C', 'none']) classButton(c).click();
     const texts = rows().map((r) => r.text);
-    expect(texts).toHaveLength(3);
+    expect(texts).toHaveLength(2);
     expect(texts.join(' ')).toContain('log:prune');
-    expect(texts.join(' ')).toContain('script:kill');
     classButton('X').click();
     expect(rows().map((r) => r.text).join(' ')).not.toContain('log:prune');
   });

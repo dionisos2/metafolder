@@ -65,7 +65,7 @@
 # ── Scripts and macros ───────────────────────────────────────────────────────
 "script:run" = "B"
 "script:stop" = "B"
-"script:kill" = "D"
+"script:kill" = "C"
 "script-keys:toggle" = "B"
 "answer:send" = "D"
 "macro:toggle-recording" = "B"
