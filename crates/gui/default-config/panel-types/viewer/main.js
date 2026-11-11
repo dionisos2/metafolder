@@ -57,6 +57,12 @@ import { editableText, encodeEdited } from './textedit.js';
 // What the media poster says, before the volume note it may carry.
 const POSTER_HINT = '\u25b6 play (space) \u2014 the player loads on demand';
 
+// How long the previous file may stay under the new path before the panel says
+// it is loading: long enough that walking a list never flashes the note, short
+// enough that a slow read does not pass the previous file off as the new one
+// (the grace of the "working" indicator, doc "Status bar and task bar").
+const LOADING_GRACE_MS = 300;
+
 /** A value of `[panel-defaults.viewer]` the panel cannot use stops it, and it
  *  shows the error (doc "No runtime fallback").
  *  @param {string} key @param {string} expected @param {unknown} got */
@@ -1022,9 +1028,23 @@ export async function mount(root, metafolder) {
 
   async function renderViewer() {
     if (holdingChanges()) return;
+    const generation = ++renderGeneration;
+    // The path bar already names the next file: past the grace, the previous
+    // one must not stay under it while this one is read.
+    const loading = setTimeout(() => {
+      if (generation === renderGeneration) placeholder('Loading…');
+    }, LOADING_GRACE_MS);
+    try {
+      await drawViewer(generation);
+    } finally {
+      clearTimeout(loading);
+    }
+  }
+
+  /** @param {number} generation */
+  async function drawViewer(generation) {
     textShown = null;
     textToolbar.hidden = true;
-    const generation = ++renderGeneration;
     // Release any media from the previous view before showing the next one.
     teardownMedia();
     // Tear down any previous directory grid (scroll listener + footer); only

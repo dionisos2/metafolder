@@ -10,6 +10,12 @@ the file the workspace has selected, and follows the selection: move the cursor 
 ([[Cross-panel selection]]). The file need not be tracked. With nothing selected it
 says ''No file selected''.
 
+When the selection changes, the path bar names the new file at once. Reading it
+usually takes milliseconds, and the previous file stays shown meanwhile, so walking a
+list does not flash. A read still running after 300 ms — the daemon busy with
+another call — replaces it with ''Loading…'': the preview never passes one file off
+under another's path.
+
 It was called the `file` panel until October 2026: `file:` now names the commands
 that act on files from any panel, and the viewer's own commands are `viewer:…`.
 
