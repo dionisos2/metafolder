@@ -7,7 +7,8 @@ use crate::command_registry::{CommandDef, CommandRegistry};
 use crate::config::ConfigDir;
 use crate::daemon_proxy::{DaemonProxy, ProxyResponse};
 use crate::keybindings::{
-    BindingCheck, CompiledBinding, EntryDraft, EntryPlace, FileEntry, KeybindingSet, Variable,
+    command_rows, BindingCheck, CompiledBinding, EntryDraft, EntryPlace, FileEntry, KeybindingSet,
+    ReservedKey, UnboundCommand, Variable,
 };
 use crate::state::layout::{LayoutView, SlotId};
 use crate::state::workspace::{MessageEntry, NewWorkspaceRepo, ShellEntry, WorkspaceInfo};
@@ -501,21 +502,14 @@ pub struct EntryView {
     pub class: Option<Class>,
 }
 
-/// A command no key runs, with its class: what the panel lists under class D
-/// and ✕, and every other command bound nowhere.
-#[derive(Serialize)]
-pub struct UnboundCommand {
-    pub name: String,
-    pub label: String,
-    pub class: Option<Class>,
-}
-
 /// What the keybindings panel shows (doc "keybindings panel").
 #[derive(Serialize)]
 pub struct KeybindingView {
     pub entries: Vec<EntryView>,
     pub variables: Vec<Variable>,
     pub unbound: Vec<UnboundCommand>,
+    /// The keys a script's question takes, with the command each runs.
+    pub reserved: Vec<ReservedKey>,
     /// Why `command-classes.toml` could not be read, if it could not: the
     /// rest is shown, unclassed.
     pub classes_error: Option<String>,
@@ -531,19 +525,8 @@ fn keybinding_view(app: &App, set: &KeybindingSet) -> KeybindingView {
         .into_iter()
         .map(|entry| EntryView { class: classes.class_of(&entry.command), entry })
         .collect();
-    let bound: std::collections::HashSet<String> = set
-        .compiled()
-        .iter()
-        .filter_map(|b| b.invocation.split_whitespace().next().map(str::to_string))
-        .collect();
-    let unbound = app
-        .registry
-        .list()
-        .into_iter()
-        .filter(|c| !bound.contains(&c.name))
-        .map(|c| UnboundCommand { class: classes.class_of(&c.name), name: c.name, label: c.label })
-        .collect();
-    KeybindingView { entries, variables: set.variables(), unbound, classes_error }
+    let (unbound, reserved) = command_rows(app.registry.list(), &classes, set);
+    KeybindingView { entries, variables: set.variables(), unbound, reserved, classes_error }
 }
 
 /// Swaps in `set`, pushes it to every document, and returns the panel's view.

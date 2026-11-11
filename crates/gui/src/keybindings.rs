@@ -9,6 +9,8 @@
 //!   only when the file has no binding of the same combo, nor a sequence it
 //!   starts or that starts it, in the same `when` and `focus` scope.
 
+use crate::command_classes::{Class, CommandClasses};
+use crate::command_registry::CommandDef;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -313,6 +315,81 @@ pub fn key_level(chord: &str) -> Option<u8> {
 // must be unable to take over `!` any more than `:`.
 const RESERVED_COMMANDS: [&str; 2] = ["command-input:focus", "script-keys:toggle"];
 
+/// A key a script's question takes for itself, whatever the file binds to it:
+/// no line of `keybindings.toml`, but what the question bar runs while the
+/// script keys are ticked (doc "Script sessions"). The frontend's
+/// `inputWaitAction` acts on the same keys.
+#[derive(Debug, Clone, Copy)]
+pub struct QuestionKey {
+    pub combo: &'static str,
+    pub invocation: &'static str,
+}
+
+/// The keys of a script's question: escape gives the script keys back,
+/// shift+escape stops the script, ctrl+escape kills it, backspace answers
+/// "back" — the way out of an answer already given.
+pub const QUESTION_KEYS: [QuestionKey; 4] = [
+    QuestionKey { combo: "escape", invocation: "script-keys:toggle" },
+    QuestionKey { combo: "shift+escape", invocation: "script:stop" },
+    QuestionKey { combo: "ctrl+escape", invocation: "script:kill" },
+    QuestionKey { combo: "backspace", invocation: "answer:send back" },
+];
+
+/// A command no key runs, with its class: what the keybindings panel lists
+/// under class D and ✕, and every other command bound nowhere.
+#[derive(Serialize)]
+pub struct UnboundCommand {
+    pub name: String,
+    pub label: String,
+    pub class: Option<Class>,
+}
+
+/// A key a script's question takes, as the keybindings panel lists it beside
+/// the command it runs (doc "keybindings panel").
+#[derive(Serialize)]
+pub struct ReservedKey {
+    pub keys: Vec<String>,
+    pub command: String,
+    pub label: String,
+    pub class: Option<Class>,
+}
+
+/// The rows of the keybindings panel that are no line of the file: the
+/// commands no key runs, and the keys of a script's question. A command one
+/// of those keys runs has a key, so it is not among the first.
+pub fn command_rows(
+    commands: Vec<CommandDef>,
+    classes: &CommandClasses,
+    set: &KeybindingSet,
+) -> (Vec<UnboundCommand>, Vec<ReservedKey>) {
+    let first_word = |invocation: &str| invocation.split_whitespace().next().map(str::to_string);
+    let bound: std::collections::HashSet<String> = set
+        .compiled()
+        .iter()
+        .filter_map(|b| first_word(&b.invocation))
+        .chain(QUESTION_KEYS.iter().filter_map(|k| first_word(k.invocation)))
+        .collect();
+    let label_of = |invocation: &str| {
+        let name = first_word(invocation).unwrap_or_default();
+        commands.iter().find(|c| c.name == name).map(|c| c.label.clone()).unwrap_or_default()
+    };
+    let reserved = QUESTION_KEYS
+        .iter()
+        .map(|k| ReservedKey {
+            keys: vec![k.combo.to_string()],
+            command: k.invocation.to_string(),
+            label: label_of(k.invocation),
+            class: classes.class_of(k.invocation),
+        })
+        .collect();
+    let unbound = commands
+        .into_iter()
+        .filter(|c| !bound.contains(&c.name))
+        .map(|c| UnboundCommand { class: classes.class_of(&c.name), name: c.name, label: c.label })
+        .collect();
+    (unbound, reserved)
+}
+
 /// The combos a script's `mf gui input` may not await: whatever opens the
 /// command input, whatever toggles the script keys, `escape` (which gives the
 /// script keys back), `shift+escape` (which always stops the script),
@@ -330,7 +407,7 @@ pub fn reserved_combos(compiled: &[CompiledBinding]) -> Vec<String> {
                     .any(|c| b.invocation == *c || b.invocation.starts_with(&format!("{c} ")))
         })
         .map(|b| b.keys[0].clone())
-        .chain(["escape", "shift+escape", "ctrl+escape", "backspace"].map(str::to_string))
+        .chain(QUESTION_KEYS.iter().map(|k| k.combo.to_string()))
         .collect();
     combos.sort();
     combos.dedup();
@@ -2485,6 +2562,75 @@ vars.y = ","
         assert!(!is_reserved(&reserved, "y"));
         // Garbage is not reserved: the caller reports it as a malformed key.
         assert!(!is_reserved(&reserved, "ctrl+"));
+    }
+
+    fn def(name: &str, label: &str) -> CommandDef {
+        CommandDef { name: name.into(), label: label.into(), owner: None, reveal: false, log: true }
+    }
+
+    /// The keys a script's question reserves are listed with their commands
+    /// (doc "keybindings panel"), and a command one of them runs is not one
+    /// "no key runs".
+    #[test]
+    fn test_the_keybinding_view_lists_the_question_keys() {
+        let set = KeybindingSet::from_sources(r#""f6" = { command = "script-keys:toggle" }"#, "")
+            .unwrap();
+        let classes =
+            CommandClasses::parse("\"script:stop\" = \"B\"\n\"answer:send\" = \"D\"\n").unwrap();
+        let defs = vec![
+            def("script:stop", "Stop the script"),
+            def("script:kill", "Kill the script"),
+            def("script-keys:toggle", "Toggle the script keys"),
+            def("answer:send", "Answer the question"),
+            def("log:prune", "Prune the log"),
+        ];
+        let (unbound, reserved) = command_rows(defs, &classes, &set);
+        let names: Vec<&str> = unbound.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["log:prune"]);
+        let rows: Vec<(Vec<String>, &str, &str, Option<Class>)> = reserved
+            .iter()
+            .map(|r| (r.keys.clone(), r.command.as_str(), r.label.as_str(), r.class))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                (vec!["escape".to_string()], "script-keys:toggle", "Toggle the script keys", None),
+                (
+                    vec!["shift+escape".to_string()],
+                    "script:stop",
+                    "Stop the script",
+                    Some(Class::B)
+                ),
+                (vec!["ctrl+escape".to_string()], "script:kill", "Kill the script", None),
+                (
+                    vec!["backspace".to_string()],
+                    "answer:send back",
+                    "Answer the question",
+                    Some(Class::D)
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_question_keys_name_the_command_they_run() {
+        // The keys a script's question reserves are no line of the file, but
+        // the keybindings panel shows them beside the commands they run
+        // (doc "keybindings panel"), and the reserved set is made of them.
+        let keys: Vec<(&str, &str)> =
+            QUESTION_KEYS.iter().map(|k| (k.combo, k.invocation)).collect();
+        assert_eq!(
+            keys,
+            vec![
+                ("escape", "script-keys:toggle"),
+                ("shift+escape", "script:stop"),
+                ("ctrl+escape", "script:kill"),
+                ("backspace", "answer:send back"),
+            ]
+        );
+        let set = KeybindingSet::from_sources("", "").unwrap();
+        let reserved = reserved_combos(&set.compiled());
+        assert!(QUESTION_KEYS.iter().all(|k| reserved.contains(&k.combo.to_string())));
     }
 
     #[test]

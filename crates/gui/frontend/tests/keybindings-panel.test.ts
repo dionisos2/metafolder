@@ -79,6 +79,11 @@ const UNBOUND = [
   { name: 'reconcile:run', label: 'Reconcile the repository', class: 'D' },
 ];
 
+const RESERVED = [
+  { keys: ['shift+escape'], command: 'script:stop', label: 'Stop the script', class: 'B' },
+  { keys: ['ctrl+escape'], command: 'script:kill', label: 'Kill the script', class: 'D' },
+];
+
 const COMMANDS = [
   { name: 'workspace:new', label: 'New workspace', owner: null },
   { name: 'find:open', label: 'Find text', owner: null },
@@ -95,6 +100,7 @@ type View = {
   entries: Entry[];
   variables: typeof VARIABLES;
   unbound: typeof UNBOUND;
+  reserved: typeof RESERVED;
   classes_error: string | null;
 };
 
@@ -110,6 +116,7 @@ async function mountPanel(
     entries: [...ENTRIES],
     variables: VARIABLES,
     unbound: UNBOUND,
+    reserved: RESERVED,
     classes_error: null,
     ...options.view,
   };
@@ -230,16 +237,48 @@ describe('keybindings panel', () => {
     expect(row('x').text).toContain('A');
   });
 
+  test('the keys a script question takes are listed with their command, read-only', async () => {
+    const { rows, button } = await mountPanel();
+    const texts = rows().map((r) => r.text);
+    // After the lines of the file, before the commands with no key.
+    const stop = texts.findIndex((t) => t.includes('script:stop'));
+    expect(stop).toBeGreaterThan(texts.findIndex((t) => t.includes('e2e:ping')));
+    expect(stop).toBeLessThan(texts.findIndex((t) => t.includes('log:prune')));
+    const row = rows()[stop];
+    expect(row.keys).toBe('shift+escape');
+    expect(row.text).toContain('Stop the script');
+    expect(row.text).toContain('script question');
+    // No line of the file: nothing to edit, nothing to remove.
+    expect(row.tr.querySelector('input, select')).toBeNull();
+    expect(button(row.tr, 'Remove')).toBeUndefined();
+  });
+
+  test('the keys a script question takes are filtered like the lines', async () => {
+    const { typeIn, rows, classButton } = await mountPanel();
+    const commandsShown = () => rows().map((r) => r.text).filter((t) => t.includes('script:'));
+    await typeIn('source', 'shift+esc');
+    expect(commandsShown()).toEqual([expect.stringContaining('script:stop')]);
+    await typeIn('source', '');
+    await typeIn('command', 'script:kill');
+    expect(commandsShown()).toEqual([expect.stringContaining('script:kill')]);
+    await typeIn('command', '');
+    classButton('B').click();
+    expect(commandsShown()).toEqual([expect.stringContaining('script:kill')]);
+  });
+
   test('a class switched off hides its commands', async () => {
     const { classButton, shown, rows } = await mountPanel();
     classButton('A').click();
     expect(classButton('A').getAttribute('aria-pressed')).toBe('false');
     expect(shown()).not.toContain('x');
-    // D and ✕ alone: the commands with no key are what is left.
+    // D and ✕ alone: the commands with no key are what is left — and a key
+    // of a script question running a command of class D, which shows it is
+    // classed wrong.
     for (const c of ['B', 'C', 'none']) classButton(c).click();
     const texts = rows().map((r) => r.text);
-    expect(texts).toHaveLength(2);
+    expect(texts).toHaveLength(3);
     expect(texts.join(' ')).toContain('log:prune');
+    expect(texts.join(' ')).toContain('script:kill');
     classButton('X').click();
     expect(rows().map((r) => r.text).join(' ')).not.toContain('log:prune');
   });

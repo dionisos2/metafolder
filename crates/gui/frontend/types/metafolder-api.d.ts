@@ -298,11 +298,22 @@ declare namespace Metafolder {
     uses: number;
   }
 
+  /** A key a script's question takes, with the command it runs there. */
+  interface ReservedKey {
+    keys: string[];
+    command: string;
+    label: string;
+    class: CommandClass | null;
+  }
+
   interface KeybindingView {
     entries: FileEntry[];
     variables: KeybindingVariable[];
     /** The commands no key runs. */
     unbound: { name: string; label: string; class: CommandClass | null }[];
+    /** The keys a script's question takes, which are no line of the file
+     *  (doc "Script sessions"). */
+    reserved: ReservedKey[];
     /** Why `command-classes.toml` could not be read, if it could not. */
     classes_error: string | null;
   }

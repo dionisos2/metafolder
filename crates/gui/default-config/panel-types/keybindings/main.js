@@ -2,7 +2,9 @@
 // doc "Changing keybindings"). One row per line of the file: its key as the
 // file writes it — variables left in —, `when`, `focus` and
 // `text-input`, all editable in place, beside the keys it really binds; then the
-// commands no key runs, bound in place the same way. The class buttons keep the commands of the
+// commands no key runs, bound in place the same way; between them, read-only,
+// the keys a script's question takes, which are no line of the file (doc
+// "Script sessions"). The class buttons keep the commands of the
 // classes pressed (doc "Command classes"). The variables have their own panel
 // (doc "keybindings-variables panel").
 //
@@ -103,7 +105,7 @@ export async function mount(root, metafolder) {
   const count = byId(root, 'count');
   const tbody = byId(root, 'bindings');
   /** @type {Metafolder.KeybindingView} */
-  let view = { entries: [], variables: [], unbound: [], classes_error: null };
+  let view = { entries: [], variables: [], unbound: [], reserved: [], classes_error: null };
   /** @type {Map<string, Metafolder.CommandDef>} */
   let commands = new Map();
   /** What `when` and `focus` can be. @type {string[]} */
@@ -146,27 +148,41 @@ export async function mount(root, metafolder) {
   }
 
   /** The rows the class buttons and the form select: the key's lines first,
-   *  then the command's, then the command's with no key.
-   *  @returns {({entry: Metafolder.FileEntry} | {unbound: Metafolder.KeybindingView['unbound'][number]})[]} */
+   *  then the command's, then the keys of a script's question, then the
+   *  commands with no key.
+   *  @returns {({entry: Metafolder.FileEntry} | {reserved: Metafolder.ReservedKey} | {unbound: Metafolder.KeybindingView['unbound'][number]})[]} */
   function shownRows() {
     /** @param {Metafolder.CommandClass|null} c */
     const shownClass = (c) => shownClasses.has(classKey(c));
     const entries = view.entries.filter((e) => shownClass(e.class));
+    const reserved = view.reserved.filter((r) => shownClass(r.class));
     const unbound = view.unbound.filter((c) => shownClass(c.class));
-    const typedKey = source.value.trim() !== '';
+    const typed = source.value.trim();
     const typedCommand = command.value.trim().toLowerCase();
-    if (!typedKey && typedCommand === '') {
-      return [...entries.map((entry) => ({ entry })), ...unbound.map((c) => ({ unbound: c }))];
+    if (typed === '' && typedCommand === '') {
+      return [
+        ...entries.map((entry) => ({ entry })),
+        ...reserved.map((r) => ({ reserved: r })),
+        ...unbound.map((c) => ({ unbound: c })),
+      ];
     }
-    const byKey = typedKey ? entries.filter(matchesKey) : [];
+    const byKey = typed !== '' ? entries.filter(matchesKey) : [];
     const byCommand =
       typedCommand === ''
         ? []
         : entries.filter((e) => !byKey.includes(e) && e.command.toLowerCase().includes(typedCommand));
+    // A reserved key has no variable: `{` finds none of them.
+    const chords = typed.split(/\s+/).filter(Boolean).map(normalizeChord);
+    const reservedShown = reserved.filter(
+      (r) =>
+        (typed !== '' && !typed.includes('{') && keysStartWith(r.keys, chords)) ||
+        (typedCommand !== '' && r.command.toLowerCase().includes(typedCommand)),
+    );
     const unboundShown =
       typedCommand === '' ? [] : unbound.filter((c) => c.name.toLowerCase().includes(typedCommand));
     return [
       ...[...byKey, ...byCommand].map((entry) => ({ entry })),
+      ...reservedShown.map((r) => ({ reserved: r })),
       ...unboundShown.map((c) => ({ unbound: c })),
     ];
   }
@@ -367,12 +383,33 @@ export async function mount(root, metafolder) {
     );
   }
 
+  /** A key a script's question takes: no line of the file, so nothing of it
+   *  is edited here (doc "Script sessions"). @param {Metafolder.ReservedKey} reserved */
+  function reservedRow(reserved) {
+    const title = 'taken by a script question while the script keys are ticked: not a line of the file';
+    return el(
+      'tr',
+      { class: 'reserved', title },
+      el('td', { class: 'class' }, classLabel(reserved.class)),
+      el('td', { class: 'source' }, reserved.keys.join(' ')),
+      el('td', { class: 'keys' }, keycaps(reserved.keys)),
+      el(
+        'td',
+        { class: 'command' },
+        el('code', {}, reserved.command),
+        el('div', { class: 'label' }, reserved.label),
+      ),
+      el('td', { class: 'when', colspan: 3 }, 'reserved: script question'),
+      el('td', { class: 'actions' }),
+    );
+  }
+
   function renderTable() {
     const rows = shownRows();
-    const total = view.entries.length + view.unbound.length;
+    const total = view.entries.length + view.reserved.length + view.unbound.length;
     count.textContent =
       rows.length === total
-        ? `${view.entries.length} lines · ${view.unbound.length} commands with no key`
+        ? `${view.entries.length} lines · ${view.reserved.length} reserved keys · ${view.unbound.length} commands with no key`
         : `${rows.length} of ${total}`;
     // Sized to the longest value written, not to what the table leaves over:
     // long key lists elsewhere in the row would shrink a field until its text no
@@ -390,7 +427,13 @@ export async function mount(root, metafolder) {
     sizeChoices('when', whenChoices);
     sizeChoices('focus', focusChoices);
     tbody.replaceChildren(
-      ...rows.map((row) => ('entry' in row ? entryRow(row.entry) : unboundRow(row.unbound))),
+      ...rows.map((row) =>
+        'entry' in row
+          ? entryRow(row.entry)
+          : 'reserved' in row
+            ? reservedRow(row.reserved)
+            : unboundRow(row.unbound),
+      ),
     );
   }
 

@@ -1,7 +1,7 @@
 title: keybindings panel
 tags: Panel [[Panel types]] [[Customising the GUI]] Keybindings
 kind: reference
-summary: The editor of keybindings.toml: one row per line of the file, its key, when, focus, target and text-input edited in place beside the keys it binds, the commands no key runs, and a filter by class.
+summary: The editor of keybindings.toml: one row per line of the file, its key, when, focus, target and text-input edited in place beside the keys it binds, the keys a script question takes, the commands no key runs, and a filter by class.
 
 Open it with `panel:open here keybindings` (<<key "panel:open here keybindings" "t k k">>).
 It edits `gui/keybindings.toml` ([[Changing keybindings]]) — what used to be the lower
@@ -16,7 +16,7 @@ form.
 
 The list has one row per ''line'' of the file — one binding of a key, as the file
 writes it —, in the order of the file, then the keys suggested by a panel or by
-`commands.js`, then the commands no key runs. Each row shows:
+`commands.js`, then the keys a script's question takes, then the commands no key runs. Each row shows:
 
 * its [[class|Command classes]], `?` when `command-classes.toml` gives it none;
 * its key ''as written'', variables left in (`{go} l`), and its `when`, `focus` and `target` — drop-downs — and `text-input` — the checkbox `⌨` ([[Keybindings]]): a change is checked as it is made, ''Enter'' in any of them or the row's ''Save'', which a changed row shows, saves the line as they say, ''Escape'' gives the old values back. ''Enter'' then leaves the field, unless the line is refused: the field keeps the keyboard, to correct it;
@@ -28,6 +28,13 @@ A line saved in place stays where it is in the file when it keeps its key and it
 scope; else the old line goes and the new one is written at the end. ''Remove'' removes
 the line, every key it binds. To change its command, remove it and write it again in
 the form, or edit the file.
+
+A key a script's question takes — Escape, Shift+Escape (`script:stop`),
+Ctrl+Escape (`script:kill`), Backspace (`answer:send back`) — is no line of the file:
+the question bar runs it while the script keys are ticked, whatever the file binds
+there ([[Script sessions]]). Its row says `reserved: script question` and has no field
+to edit nor ''Remove''; the key typed in the form finds it, and so does the command.
+The command it runs is not among those with no key.
 
 A command with no key has the same fields, its key field empty (`no key`): a key typed
 there and ''Enter'' bind it.
