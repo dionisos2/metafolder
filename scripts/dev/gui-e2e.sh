@@ -49,7 +49,7 @@
 # Usage:  scripts/dev/gui-e2e.sh [--unsandboxed] [--keep-logs] [scenario...]
 #   with no scenario, runs them all: undo-redo duplicates duplicate-keep duplicate-walk orphans trash remove
 #   field-keys reconcile ignore sync repos list tag-query folder-list panel-txn reveal layout script
-#   script-workspaces errors picker refs hierarchy hierarchy-form prompt history
+#   script-escape script-workspaces errors picker refs hierarchy hierarchy-form prompt history
 #   keybindings keybindings-pick validate-keys open-with tab-close close-layout pick-button suggested-key config-files walk open-viewers
 #   edit-text slideshow context-menu open-tree-node shell-line shell-cwd repos-memory help-keys help-cursor hints zoom order user-commands
 #   settle macro clipboard saved-workspaces, and
@@ -81,7 +81,7 @@ done
 # inspector the clicking scenarios drive (webview.mjs), and every click after it
 # fails — forty tries of four seconds each.
 [ ${#SCENARIOS[@]} -gt 0 ] \
-    || SCENARIOS=(undo-redo duplicates duplicate-keep duplicate-walk orphans trash remove field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script script-workspaces
+    || SCENARIOS=(undo-redo duplicates duplicate-keep duplicate-walk orphans trash remove field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script script-escape script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings keybindings-pick validate-keys open-with tab-close close-layout
         pick-button suggested-key walk open-viewers edit-text slideshow context-menu open-tree-node shell-line shell-cwd repos-memory
         help-keys help-cursor zoom refresh order user-commands settle macro paste clipboard saved-workspaces devtools)
@@ -1094,6 +1094,39 @@ scenario_script() {
     run script:run no-such-script
     status_is "script run: an unknown script is refused" error \
         'no installed script matches "no-such-script" (mf script lists them*'
+}
+
+# Escape gives a script's keys back, Shift+Escape stops it (doc "Script
+# sessions"); and the question bar floats over the panels, which keep their size
+# while it comes and goes (doc "Status bar and task bar").
+scenario_script_escape() {
+    needs_keyboard script-escape || return 0
+    new_repo script-escape
+    local runner before
+    show_panel left metarecord-list view:refresh metarecord-list
+    leave_fields
+    before=$(webview bounds '[data-slot-body=left]')
+
+    mfg command --timeout-ms 60000 script:run e2e-ask >/dev/null 2>&1 &
+    runner=$!
+    assert "script escape: the script asks" until_ok 20 asking
+    assert "script escape: the question bar is shown" until_ok 10 shows '.input-wait'
+    assert_eq "script escape: the panel keeps its size under the question" \
+        "$before" "$(webview bounds '[data-slot-body=left]')"
+
+    keys Escape
+    assert "script escape: Escape gives the keys back" \
+        until_ok 10 says "script keys disabled"
+    assert "script escape: the script still asks" asking
+
+    run script-keys:toggle
+    keys shift+Escape
+    assert "script escape: Shift+Escape stops the script" until_ok 10 not_asking
+    wait "$runner"
+    assert_not "script escape: no answer was given" \
+        grep -q "e2e-ask: got" <<<"$(mfg status-bar --workspace "$WS")"
+    assert_eq "script escape: the panel has its size back, unchanged" \
+        "$before" "$(webview bounds '[data-slot-body=left]')"
 }
 
 # In the keybindings form, Enter on a suggestion highlighted in the command's

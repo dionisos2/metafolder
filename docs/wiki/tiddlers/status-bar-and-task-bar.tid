@@ -21,16 +21,25 @@ it. The durations a message carries — `status-message-ms`, `status-error-ms` i
 [[GUI configuration]], `timeout_ms` of `POST /gui/message` — no longer hide
 anything.
 
-Two bars can appear just above it, so that a status message never covers them: the
+Two bars can appear above it, so that a status message never covers them: the
 continuations of a key sequence being typed, and the question a running script is
 asking, with the keys it accepts.
 
+!! Bars that float over the panels
+
+Above the [[command input|The command input]], whatever comes and goes — the find
+bar, the task bar, these two bars, and the command input's candidates — ''floats over
+the bottom of the panels'' instead of pushing them up. A panel keeps its size whatever
+shows or hides around it: a script's question disappears and comes back between two
+answers, a task bar entry comes and goes with every task, and each made every panel
+jump. The price is that a bar covers the last rows of the panels while it is shown.
+
 !! The task bar
 
-Just above the status bar, and only while there is something in it, the task bar
-shows what is in flight. It is not tied to a workspace, except for scripts.
+Above the command input, and only while there is something in it, the task bar shows
+what is in flight. It is not tied to a workspace, except for scripts.
 
-* ''Daemon tasks'' — every pending or running task of every loaded repository, whoever started it, the command line included: a bar when the task knows its amount of work, a spinner otherwise, labelled with its kind and phase ([[Following a task]]). The GUI asks the daemon every 300 ms, and shows a task only once it has run for a second: a watcher flush lasts milliseconds and fires whenever a watched file is touched, and showing it would make every panel jump for work nobody asked to see — what a flush did goes to the message log instead ([[What a flush reports]]).
+* ''Daemon tasks'' — every pending or running task of every loaded repository, whoever started it, the command line included: a bar when the task knows its amount of work, a spinner otherwise, labelled with its kind and phase ([[Following a task]]). The GUI asks the daemon every 300 ms, and shows a task only once it has run for a second: a watcher flush lasts milliseconds and fires whenever a watched file is touched, and showing it would flash a bar for work nobody asked to see — what a flush did goes to the message log instead ([[What a flush reports]]).
 * ''Scripts'' — a `!` command, a `script:run` script or a `file:open-with` program, for as long as it runs, labelled by its name. It spins while working, and gains a progress bar when the script reports its counts through [[mf gui progress]], with a phase naming the current step. While the script waits for an answer it stops spinning and says ''your answer'': working and waiting for you must never look alike. A script's entry belongs to the workspaces the script owns, and is hidden with them ([[Script sessions]]).
 * ''A daemon call you are waiting on'' — see below.
 

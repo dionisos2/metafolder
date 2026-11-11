@@ -11,6 +11,7 @@
   import FindBar from './components/FindBar.svelte';
   import HintLayer from './components/HintLayer.svelte';
   import StatusBar from './components/StatusBar.svelte';
+  import PromptBars from './components/PromptBars.svelte';
   import TaskBar from './components/TaskBar.svelte';
   import PanelHost from './lib/panels/PanelHost.svelte';
 
@@ -98,10 +99,18 @@
           <Slot id="right" />
         {/if}
       </div>
-      <FindBar />
-      <CommandInput />
-      <TaskBar />
-      <StatusBar />
+      <div class="bottom">
+        <!-- The bars that come and go float over the bottom of the panels
+             instead of pushing them up: a panel keeps its size whatever shows
+             or hides around it (doc "Status bar and task bar"). -->
+        <div class="floating">
+          <FindBar />
+          <TaskBar />
+          <PromptBars />
+        </div>
+        <CommandInput />
+        <StatusBar />
+      </div>
     {/if}
   </div>
   <PanelHost />
@@ -127,6 +136,20 @@
     flex: 1;
     display: grid;
     min-height: 0;
+  }
+  .bottom {
+    flex: none;
+    position: relative;
+  }
+  /* Above the panel layer (z-index 10), which covers the slots. */
+  .floating {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 100%;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
   }
   .divider {
     cursor: col-resize;

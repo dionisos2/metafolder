@@ -540,6 +540,7 @@
 <style>
   .command-input {
     flex: none;
+    position: relative;
     background: var(--mf-bg-raised, #26262e);
     border-top: 1px solid var(--mf-bg, #1e1e24);
   }
@@ -576,7 +577,16 @@
     opacity: 0.7;
     white-space: nowrap;
   }
+  /* Over the bottom of the panels, and over the bars floating there: the list
+     comes and goes as it is typed, and must not resize the panels. */
   .suggestions {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 100%;
+    z-index: 30;
+    background: var(--mf-bg-raised, #26262e);
+    border-top: 1px solid var(--mf-accent, #4c56c4);
     list-style: none;
     margin: 0;
     padding: 2px 0;
