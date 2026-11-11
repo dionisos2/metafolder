@@ -6,4 +6,12 @@ summary: Scan the active repository for byte-identical files (mf duplicate scan)
 !! Reference
 
 * Defined by the shell (a builtin)
-* No default key
+
+!! Default keys
+
+* ``e e k`` → ``mf:duplicate keep selection``
+* ``e e t`` → ``mf:duplicate trash selection``
+* ``e q k`` → ``mf:duplicate keep query``
+* ``e q t`` → ``mf:duplicate trash query``
+* ``shift+e k`` → ``mf:duplicate keep selection``
+* ``shift+e t`` → ``mf:duplicate trash selection``

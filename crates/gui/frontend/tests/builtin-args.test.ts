@@ -125,7 +125,7 @@ describe('the other builtins that take arguments', () => {
       ['panel:focus', 'Focus which slot? (next / left / right)', 'right'],
       ['editing:goto', 'Move the cursor where? (line-start / line-end)', 'line-end'],
       ['command-input:focus', 'Which mode? (command / bash)', 'bash'],
-      ['mf:duplicate', 'Which operation? (scan)', 'scan'],
+      ['mf:duplicate', 'Which operation? (scan / keep / trash)', 'scan'],
     ] as const) {
       const done = dispatch(invocation);
       await settle();

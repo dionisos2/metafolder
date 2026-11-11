@@ -630,6 +630,14 @@ vars.index = "i"
 "shift+{item} {run}" = { command = "viewer:play selection" }
 "{item} {item} {run}" = { command = "viewer:play selection" }
 "{item} {query-verb} {run}" = { command = "viewer:play query" }
+# Duplicate copies by a rule (doc "Deleting duplicate copies"): keep those the
+# checked ones or the query hold, or trash them where a twin is elsewhere.
+"shift+{item} {keep}" = { command = "mf:duplicate keep selection" }
+"{item} {item} {keep}" = { command = "mf:duplicate keep selection" }
+"{item} {query-verb} {keep}" = { command = "mf:duplicate keep query" }
+"shift+{item} t" = { command = "mf:duplicate trash selection" }
+"{item} {item} t" = { command = "mf:duplicate trash selection" }
+"{item} {query-verb} t" = { command = "mf:duplicate trash query" }
 
 # ── Tags (,) ─────────────────────────────────────────────────────────────────
 

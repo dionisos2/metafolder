@@ -230,6 +230,8 @@
 "trash:prune all" = "X"
 "recent:set-sort" = "C"
 "mf:duplicate" = "D"
+"mf:duplicate keep" = "C"
+"mf:duplicate trash" = "C"
 
 # ── Sync ─────────────────────────────────────────────────────────────────────
 "sync:status" = "C"

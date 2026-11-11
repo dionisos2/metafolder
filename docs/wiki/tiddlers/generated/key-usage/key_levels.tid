@@ -8,7 +8,7 @@ summary: The keys used and left at each level
 |!Letter |!For |
 |``b`` |starts 28 keys (``{target-other}``) |
 |``c`` |starts 4 keys (``{clipboard}``) |
-|``e`` |starts 5 keys (``{item}``) |
+|``e`` |starts 9 keys (``{item}``) |
 |``f`` |``cursor:find self select``; ``metarecord-list:focus finder`` (in ``metarecord-list``) |
 |``g`` |starts 12 keys (``{go}``) |
 |``h`` |starts 4 keys (``{help}``) |

@@ -262,8 +262,16 @@ registerArgs("panel:open", [
 registerArgs("mf:duplicate", [
   {
     name: "operation",
-    prompt: () => "Which operation? (scan)",
-    complete: () => ["scan"],
+    prompt: () => "Which operation? (scan / keep / trash)",
+    complete: () => ["scan", "keep", "trash"],
+  },
+  {
+    // What `keep` keeps, or `trash` gives up (doc "Deleting duplicate copies").
+    name: "source",
+    prompt: (prior) =>
+      `${prior[0] === "keep" ? "Keep" : "Trash"} the copies of what? (query / selection)`,
+    complete: () => ["query", "selection"],
+    when: (prior) => prior[0] === "keep" || prior[0] === "trash",
   },
 ]);
 

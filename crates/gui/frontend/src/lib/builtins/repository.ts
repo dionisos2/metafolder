@@ -22,6 +22,7 @@ import { focusedWs, store, workspaceById } from "../store.svelte";
 import { isWirePath } from "../treePath";
 import type { ExecContext, WorkContext } from "../types";
 import { daemonWork } from "../working";
+import { trashCopies } from "../duplicateCopies";
 import type { Builtin, Builtins } from "./types";
 
 /** A daemon round-trip through the proxy, throwing the daemon's error on >=400. */
@@ -519,8 +520,16 @@ export const repositoryBuiltins: Builtins = {
   },
   "mf:duplicate": async (args, context) => {
     const { ws } = context;
+    if (args[0] === "keep" || args[0] === "trash") {
+      // The GUI half of `mf duplicate keep` / `trash` (doc "Deleting
+      // duplicate copies"), over the list's query or the checked metarecords.
+      const repo = repoOf(ws);
+      if (!ws || !repo) await status("no active repository");
+      else await trashCopies(ws, repo, args[0], args[1] ?? "");
+      return;
+    }
     if (args[0] !== "scan") {
-      await status(`unknown operation: "${args[0] ?? ""}" (expected scan)`);
+      await status(`unknown operation: "${args[0] ?? ""}" (expected scan, keep or trash)`);
       return;
     }
     // The GUI half of `mf duplicate scan` (doc "duplicates panel"). Options

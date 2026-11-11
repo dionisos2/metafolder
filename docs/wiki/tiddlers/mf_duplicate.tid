@@ -1,9 +1,25 @@
 title: mf:duplicate
 tags: [[GUI command]] Duplicates
 kind: reference
-summary: Scan the active repository for byte-identical files (mf duplicate scan)
+summary: Scan the active repository for byte-identical files, or keep or trash copies by a query (mf duplicate scan / keep / trash)
 
 `mf:duplicate scan` is the GUI half of `mf duplicate scan`: the whole-repository
 scan, with the task bar's progress ([[Finding duplicates]]). Its options stay on
 the command line. A cancelled scan is an outcome, not an error: what it found is
 kept.
+
+`mf:duplicate keep <query|selection>` and `mf:duplicate trash <query|selection>` are
+the GUI halves of <<cmd "mf duplicate keep">> and <<cmd "mf duplicate trash">>
+([[Deleting duplicate copies]]), over what the [[metarecord-list panel]] shows —
+its effective query, finder and simplified query included — or over the checked
+metarecords. An empty selection is nothing to do; it never falls back on the query.
+The question names every copy, its groups and the space reclaimed, and is always
+asked.
+
+|!Over |!Keep |!Trash |
+|the list's query |<<key "mf:duplicate keep query" "e q k">> |<<key "mf:duplicate trash query" "e q t">> |
+|the checked metarecords |<<key "mf:duplicate keep selection" "e e k">> |<<key "mf:duplicate trash selection" "e e t">> |
+
+The list is where the rule is built and checked before it acts: on a copy in the
+[[duplicates panel]], <<key "metarecord-list:folder other" "b g s">> lists its folder
+beside, and <<key "mf:duplicate keep query" "e q k">> keeps what that list shows.

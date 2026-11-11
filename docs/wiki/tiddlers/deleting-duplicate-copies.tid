@@ -37,6 +37,10 @@ So a group is touched only when the query splits it, and never loses its last co
 a group with several copies in what is kept keeps them all. Both list the copies,
 their groups and the space reclaimed before asking, and `--dry-run` stops there.
 
+In the GUI, <<cmd "mf:duplicate">> `keep` and `trash` take the query the
+[[metarecord-list panel]] shows, or the checked metarecords: build the rule in a
+list, read what it holds, then run it (<<key "mf:duplicate keep query" "e q k">>).
+
 !! What follows
 
 The copies go to the [[Trash]], so a mistake is recoverable
