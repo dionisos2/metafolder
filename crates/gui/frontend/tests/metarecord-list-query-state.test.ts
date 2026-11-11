@@ -153,6 +153,9 @@ async function mountPanel(vars: Record<string, unknown>) {
     queryInput: shadow.getElementById('query-input') as HTMLInputElement,
     normalInput: shadow.getElementById('normal-input') as HTMLInputElement,
     normalEditor: shadow.getElementById('normal-editor') as HTMLElement,
+    finderInput: shadow.getElementById('finder-input') as HTMLInputElement,
+    columnsInput: shadow.getElementById('columns-input') as HTMLInputElement,
+    store,
   };
 }
 
@@ -260,3 +263,62 @@ describe('metarecord-list query variables', () => {
   });
 });
 
+// `apply-query` applies every field, but a run of the query is only worth it
+// when the query is what changed: columns alone are a redraw.
+describe('metarecord-list:apply-query', () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('[]', { status: 200 })),
+    );
+    document.body.replaceChildren();
+  });
+
+  const apply = async (p: Awaited<ReturnType<typeof mountPanel>>) => {
+    await handlers.get('metarecord-list:apply-query')!(p.api as never);
+    await settle();
+  };
+
+  test('only the columns changed: they are redrawn, the query is not run', async () => {
+    const p = await mountPanel(showing('rating > 3'));
+    p.calls.length = 0;
+    p.columnsInput.value = 'label rating';
+    await apply(p);
+    expect(ranQueries(p.calls)).toEqual([]);
+    expect(p.store.get('metarecord-list:columns')).toEqual(['label', 'rating']);
+  });
+
+  test('columns that do not parse do not run the query either', async () => {
+    const p = await mountPanel(showing('rating > 3'));
+    p.calls.length = 0;
+    p.columnsInput.value = 'a>b>c';
+    await apply(p);
+    expect(ranQueries(p.calls)).toEqual([]);
+  });
+
+  test('nothing changed: the query runs again, as a refresh', async () => {
+    const p = await mountPanel(showing('rating > 3'));
+    p.calls.length = 0;
+    await apply(p);
+    expect(ranQueries(p.calls)).toEqual(['rating > 3']);
+  });
+
+  test('a query and the columns changed: the query runs, once', async () => {
+    const p = await mountPanel(showing('rating > 3'));
+    p.calls.length = 0;
+    p.columnsInput.value = 'label rating';
+    p.normalInput.value = 'rating > 4';
+    await apply(p);
+    expect(ranQueries(p.calls)).toEqual(['rating > 4']);
+    expect(p.store.get('metarecord-list:columns')).toEqual(['label', 'rating']);
+  });
+
+  test('the finder not yet run counts as a change of the query', async () => {
+    const p = await mountPanel(showing('rating > 3'));
+    p.calls.length = 0;
+    p.columnsInput.value = 'label rating';
+    p.finderInput.value = 'jazz'; // typed, its debounced run not yet fired
+    await apply(p);
+    expect(ranQueries(p.calls)).toHaveLength(1);
+  });
+});

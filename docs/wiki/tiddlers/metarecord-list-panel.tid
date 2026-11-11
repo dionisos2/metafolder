@@ -57,8 +57,9 @@ ask for two. `folder:open` always replaces.
 !! Columns
 
 The ''columns'' field below the queries chooses what the table shows; ''Apply'' or
-`Enter` redraws it — and, like the queries' ''Apply'', applies the whole query and runs
-it. Columns are
+`Enter` applies the whole query, like the queries' ''Apply'': when the columns are
+all that changed, the table is only redrawn, without asking the daemon again for the
+rows ([[metarecord-list:apply-query]]). Columns are
 separated by spaces or commas, and an empty field brings the configured ones back. A
 column that does not parse is reported under the field and the previous columns stay.
 

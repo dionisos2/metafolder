@@ -3,6 +3,8 @@ tags: [[GUI command]] Metarecord
 kind: reference
 summary: Metarecord list: apply the query and the columns
 
-Applies everything the fields of the [[metarecord-list panel]] hold at once — the finder, the simplified query, the normal DSL and the columns — and runs the query once: the three search fields are a single query, shown in the chosen columns, so there is nothing to apply one field at a time. Each field's text is recorded in its history. A column that does not parse is reported under its field, the previous columns kept, and the query still runs.
+Applies everything the fields of the [[metarecord-list panel]] hold at once — the finder, the simplified query, the normal DSL and the columns — and runs the query once: the three search fields are a single query, shown in the chosen columns, so there is nothing to apply one field at a time. Each field's text is recorded in its history. A column that does not parse is reported under its field, the previous columns kept, and the query still runs when it changed.
+
+What runs depends on what changed since the last apply. The columns alone: they are redrawn, and the daemon is not asked again for the rows, which are the same. The finder or a query: the query runs. Nothing: the query runs again — applying an unchanged list is asking for a refresh, as `Ctrl+r` does.
 
 Run from a field, it leaves it, so that the panel's keys work again; a final `stay` keeps the focus in it. A focus held elsewhere is never taken away. `Enter` in a field runs it, `Shift+Enter` with `stay`, and `p p` from outside the fields.

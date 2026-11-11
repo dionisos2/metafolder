@@ -308,6 +308,9 @@ export function createQueryEditor({ root, metafolder, history, normalHistory, on
     normalInput,
     recompute: recomputeQuery,
     apply: applyQuery,
+    /** Whether the zones hold something other than what was last applied. */
+    changed: () =>
+      !sameQueryState({ query: queryInput.value, normal: normalInput.value }, appliedState),
     show: showQuery,
     clear: clearQueries,
     toggleExpansion,

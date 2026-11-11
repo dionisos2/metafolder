@@ -1046,13 +1046,30 @@ export async function mount(root, metafolder) {
     },
   };
 
+  /** Whether the columns field holds other columns than those drawn (one
+   *  that does not parse counts: it is an attempt to change them). */
+  function columnsChanged() {
+    try {
+      const parsed = parseColumns(columnsInput.value);
+      const next = parsed.length > 0 ? parsed : defaultColumns;
+      return next.map((c) => c.spec).join(' ') !== columns.map((c) => c.spec).join(' ');
+    } catch {
+      return true;
+    }
+  }
+
   /** `apply-query`: every zone committed — the columns redrawn, the finder's
    *  text and both queries recorded in their histories and variables — and the
    *  query run once. A column that does not parse is reported under its field
-   *  and does not hold the query back.
+   *  and does not hold the query back. When the columns are all that changed,
+   *  they are only redrawn: the rows are the same. When nothing changed, the
+   *  query runs again — applying it then is asking for a refresh.
    *  @param {MetafolderApi} mf */
   async function applyWholeQuery(mf) {
+    const queryChanged = editor.changed() || finderInput.value !== finderText;
+    const onlyColumns = columnsChanged() && !queryChanged;
     await applyColumns(mf);
+    if (onlyColumns) return;
     clearTimeout(finderTimer);
     finderHistory.push(finderInput.value.trim());
     finderText = finderInput.value;
