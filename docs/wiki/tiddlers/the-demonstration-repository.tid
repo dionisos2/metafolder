@@ -62,8 +62,13 @@ commands do not show.
 
 A view is built by commands and workspace variables only — no click, no key, nothing
 at coordinates — so a change of style changes the picture, never what it shows. A
-capture is taken once the screen stops changing: two identical captures in a row, since
-the thumbnails load after the commands return, for a time no duration bounds. The PNG
+capture is taken once the screen stops changing, since the thumbnails load after the
+commands return, for a time no duration bounds: once the repository runs no task,
+then after a command (which resolves only once no panel read is in flight,
+[[When a command has finished]]), when the screen has not changed for 2 s. Two
+identical captures half a second apart were not enough: a slow daemon call holds
+every read of the panels, the screen holds still meanwhile, and a README shipped a
+grid with blank thumbnails beside a viewer still showing the previous file. The PNG
 is reduced to 256 colours, a quarter of the size. `CRÉDITS.md` is copied beside the
 screenshots as `CREDITS.md`: the photos they show are mostly under CC BY-SA, and the
 screenshots with them.

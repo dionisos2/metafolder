@@ -34,18 +34,41 @@ view_workspace() {
 # send <workspace> <variable> <value> — writes a workspace variable.
 send() { mfg command workspace:send "$1" "$2" "$3" >/dev/null; }
 
+# daemon_idle — waits (up to a minute) until the repository runs no task:
+# while one runs, the panels' reads queue behind it and the screen holds still
+# on a half-drawn view.
+daemon_idle() {
+    for _ in $(seq 1 120); do
+        [ "$(demo_mf task list --json 2>/dev/null | tr -d '[:space:]')" = "[]" ] && return 0
+        sleep 0.5
+    done
+    echo "warning: the daemon is still running a task" >&2
+}
+
 # capture <file> — the screen, once it has stopped changing: thumbnails and
-# previews load after the commands return, for a time no duration bounds. Two
-# identical captures in a row are taken as settled.
+# previews load after the commands return, for a time no duration bounds.
+# The daemon idle, then a command (which resolves only once no read of a panel
+# is in flight, doc "When a command has finished"), then the screen unchanged
+# for 2 s: a pause of 0.5 s was seen to catch a frozen, half-drawn view (the
+# viewer still on the previous file, thumbnails missing) while a slow daemon
+# call held every read of the panels.
 capture() {
-    local file=$1 previous="" current
-    for _ in $(seq 1 60); do
+    local file=$1 previous="" current stable=0
+    daemon_idle
+    mfg command status:clear >/dev/null || return 1
+    for _ in $(seq 1 120); do
         import -window root "$file.tmp.png" || return 1
         current=$(magick "$file.tmp.png" -depth 8 rgba:- | sha256sum)
-        [ "$current" = "$previous" ] && break
+        if [ "$current" = "$previous" ]; then
+            stable=$((stable + 1))
+            [ "$stable" -ge 4 ] && break
+        else
+            stable=0
+        fi
         previous=$current
         sleep 0.5
     done
+    [ "$stable" -ge 4 ] || echo "warning: $file: the screen never settled" >&2
     # 256 colours: a quarter of the size, the thumbnails barely changed.
     magick "$file.tmp.png" -strip -colors 256 -define png:compression-level=9 "$file" || return 1
     rm -f "$file.tmp.png"
