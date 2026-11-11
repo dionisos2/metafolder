@@ -47,7 +47,7 @@
 # a killed process writes no coverage profile.
 #
 # Usage:  scripts/dev/gui-e2e.sh [--unsandboxed] [--keep-logs] [scenario...]
-#   with no scenario, runs them all: undo-redo duplicates orphans trash remove
+#   with no scenario, runs them all: undo-redo duplicates duplicate-keep orphans trash remove
 #   field-keys reconcile ignore sync repos list tag-query folder-list panel-txn reveal layout script
 #   script-workspaces errors picker refs hierarchy hierarchy-form prompt history
 #   keybindings validate-keys open-with tab-close close-layout pick-button suggested-key config-files walk open-viewers
@@ -81,7 +81,7 @@ done
 # inspector the clicking scenarios drive (webview.mjs), and every click after it
 # fails — forty tries of four seconds each.
 [ ${#SCENARIOS[@]} -gt 0 ] \
-    || SCENARIOS=(undo-redo duplicates orphans trash remove field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script script-workspaces
+    || SCENARIOS=(undo-redo duplicates duplicate-keep orphans trash remove field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings validate-keys open-with tab-close close-layout
         pick-button suggested-key walk open-viewers edit-text slideshow context-menu open-tree-node shell-line shell-cwd repos-memory
         help-keys help-cursor zoom refresh order user-commands settle macro paste clipboard saved-workspaces devtools)
@@ -442,6 +442,54 @@ scenario_duplicates() {
     # Not --last 1: the repository's watcher may report its start after the scan.
     assert_contains "duplicate scan: the detail is in the log" \
         "$(mfg messages --workspace "$WS" --last 5)" '"groups": 1'
+}
+
+# mf:duplicate keep|trash (doc "Deleting duplicate copies"): the rule is built
+# in the metarecord list — a copy's folder, as `b g s` lists it — and kept by
+# what the list shows; then a checked copy is trashed where a twin is elsewhere.
+scenario_duplicate_keep() {
+    new_repo dup-keep
+    mkdir -p "$REPO_DIR/keep" "$REPO_DIR/other" "$REPO_DIR/third"
+    printf 'the a bytes\n' >"$REPO_DIR/keep/a.txt"
+    printf 'the a bytes\n' >"$REPO_DIR/other/a.txt"
+    printf 'the b bytes\n' >"$REPO_DIR/other/b.txt"
+    printf 'the b bytes\n' >"$REPO_DIR/third/b.txt"
+    local kept b f
+    for f in keep other third; do record "$REPO_DIR/$f" >/dev/null; done
+    kept=$(record "$REPO_DIR/keep/a.txt")
+    for f in other/a.txt third/b.txt; do record "$REPO_DIR/$f" >/dev/null; done
+    b=$(record "$REPO_DIR/other/b.txt")
+    run mf:duplicate scan
+    status_is "duplicate keep: two groups found" info "Duplicates: 2 groups, 4 files, *"
+
+    show_panel left metarecord-list view:refresh metarecord-list
+    run view:refresh metarecord-list
+    run workspace:send "$WS" selected_metarecord "{\"uuid\":\"$kept\",\"repo\":\"$DF_REPO\"}"
+    run metarecord-list:folder here
+    until_ok 5 query_is 'mfr_path -> "/keep"' || die "duplicate keep: the list never showed /keep"
+
+    answering no mf:duplicate keep query
+    assert_contains "duplicate keep: names the copy" "$LAST_QUESTIONS" "/other/a.txt"
+    assert_contains "duplicate keep: counts the groups" "$LAST_QUESTIONS" "in 1 group,"
+    assert_not "duplicate keep: not the other group" grep -q b.txt <<<"$LAST_QUESTIONS"
+    assert "duplicate keep: refused, the copy stays" test -e "$REPO_DIR/other/a.txt"
+
+    answering yes mf:duplicate keep query
+    command_ok "duplicate keep: the command resolves"
+    status_is "duplicate keep: says so" info "Trashed 1 duplicate copy"
+    assert_not "duplicate keep: the twin is gone" test -e "$REPO_DIR/other/a.txt"
+    assert "duplicate keep: the kept copy stays" test -e "$REPO_DIR/keep/a.txt"
+    assert "duplicate keep: the other group is whole" \
+        test -e "$REPO_DIR/other/b.txt" -a -e "$REPO_DIR/third/b.txt"
+
+    run mf:duplicate keep query
+    status_is "duplicate keep: then nothing is left to trash" info "No duplicate copy to trash"
+
+    run workspace:send "$WS" selected_metarecords "[\"$b\"]"
+    answering yes mf:duplicate trash selection
+    status_is "duplicate trash: the checked copy" info "Trashed 1 duplicate copy"
+    assert_not "duplicate trash: it is gone" test -e "$REPO_DIR/other/b.txt"
+    assert "duplicate trash: its twin stays" test -e "$REPO_DIR/third/b.txt"
 }
 
 scenario_orphans() {
