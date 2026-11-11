@@ -6,7 +6,7 @@ summary: The duplicates panel type
 !! Commands
 
 * ``duplicates:activate`` — Duplicates: unfold the group / show the copy (here / other / new)
-* ``duplicates:keep`` — Duplicates: keep the copy under the cursor, trash the others
+* ``duplicates:keep`` — Duplicates: keep the copy under the cursor, trash the others (walk: group by group)
 * ``duplicates:toggle-group`` — Duplicates: expand or collapse the group under the cursor
 
 !! Generic commands

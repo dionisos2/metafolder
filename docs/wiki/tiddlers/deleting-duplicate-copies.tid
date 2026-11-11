@@ -17,6 +17,17 @@ In the [[duplicates panel]], both deletions act on the row under the cursor:
 Keeping one asks first, always, since it touches several files; trashing one
 asks unless the question is switched off ([[Confirming a trashing]]).
 
+!! Group by group
+
+<<key "duplicates:keep walk" "p shift+k">> walks the groups from the one under the
+cursor, in the panel's order: each in turn is unfolded and the command input asks
+which copy to keep, completing over its paths. Naming one trashes the others,
+without the dialog — the copy named is the choice, as the cursor is for
+<<key "duplicates:keep" "p k">> — then the next group is asked about; `skip` keeps a
+group whole and folds it. `Escape` ends the walk, which stops too on a trashing that
+fails, and after the last group. As in <<key "cursor:find self walk" "Shift+f">>,
+the cursor is the walk's only state: run it again and it goes on from there.
+
 !! Every group, by a query
 
 <<cmd "mf duplicate keep">> keeps the copies a query matches: in each group with

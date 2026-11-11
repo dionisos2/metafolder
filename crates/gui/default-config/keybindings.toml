@@ -532,6 +532,7 @@ vars.index = "i"
 "{panel} {revert}" = { command = "log:revert", when = "log" }
 "{panel} shift+{revert}" = { command = "log:revert label", when = "log" }
 "{panel} {keep}" = { command = "duplicates:keep", when = "duplicates" }
+"{panel} shift+{keep}" = { command = "duplicates:keep walk", when = "duplicates" }
 "{panel} {list}" = { command = "path-ref:list-refs other", when = "path-ref" }
 "{target-here} {panel} {list}" = { command = "path-ref:list-refs here", when = "path-ref" }
 "{target-other} {panel} {list}" = { command = "path-ref:list-refs other", when = "path-ref" }

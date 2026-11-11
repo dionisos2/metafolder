@@ -225,6 +225,7 @@
 "duplicates:activate" = "A"
 "duplicates:toggle-group" = "B"
 "duplicates:keep" = "B"
+"duplicates:keep walk" = "C"
 "trash:restore" = "B"
 "trash:prune" = "C"
 "trash:prune all" = "X"

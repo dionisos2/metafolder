@@ -31,7 +31,14 @@ function shadowFor(): ShadowRoot {
   return shadow;
 }
 
-type Handler = (arg?: unknown) => unknown;
+type Handler = (...args: unknown[]) => unknown;
+type ArgSpec = {
+  name: string;
+  optional?: boolean;
+  when?: (prior: string[]) => boolean;
+  prompt: (prior: string[]) => string | Promise<string>;
+  complete?: (partial: string, prior: string[]) => string[] | Promise<string[]>;
+};
 type Call = { method: string; path: string; body: unknown };
 
 const int = (value: number): Metafolder.Value => ({ type: 'int', value });
@@ -50,8 +57,13 @@ function group(uuid: string, size: number, count: number, reclaimable: number) {
   };
 }
 
-/** A member: its path (resolved separately) and its inode when hard-linked. */
-type Member = { uuid: string; path: string; inode?: string };
+/** A member: its path (resolved separately), its inode when hard-linked, and
+ *  its group when the test holds several (else it is in every group). */
+type Member = { uuid: string; path: string; inode?: string; group?: string };
+
+/** The members of group `uuid`. */
+const membersOf = (members: Member[], uuid: string | undefined) =>
+  members.filter((m) => m.group === undefined || m.group === uuid);
 
 function daemonStub(calls: Call[], groups: unknown[], members: Member[], failLoad = false) {
   return async (method: string, path: string, body: unknown) => {
@@ -60,10 +72,10 @@ function daemonStub(calls: Call[], groups: unknown[], members: Member[], failLoa
     if (path.endsWith('/query/fields/resolve-tree')) {
       return Object.fromEntries(members.map((m) => [m.uuid, [m.path]]));
     }
-    const query = (body as { query?: { field?: string } })?.query;
+    const query = (body as { query?: { field?: string; value?: { value?: string } } })?.query;
     if (query?.field === 'mfr_duplicate_group') {
       return {
-        results: members.map((m) => ({
+        results: membersOf(members, query.value?.value).map((m) => ({
           uuid: m.uuid,
           fields: m.inode ? [{ name: 'mfr_inode', value: str(m.inode) }] : [],
         })),
@@ -86,6 +98,7 @@ type Options = {
 
 function stubApi(
   handlers: Map<string, Handler>,
+  argSpecs: Map<string, ArgSpec[]>,
   calls: Call[],
   groups: unknown[],
   members: Member[],
@@ -93,20 +106,30 @@ function stubApi(
 ) {
   const noop = () => {};
   const store = new Map<string, unknown>(options.noRepo ? [] : [['active_repo', 'r']]);
-  const statusBar = { message: vi.fn(async () => {}), error: vi.fn(async () => {}) };
+  const statusBar = {
+    message: vi.fn(async (_text: string, _ms?: number) => {}),
+    error: vi.fn(async (_error: unknown) => {}),
+  };
   const setVar = vi.fn(async (key: string, value: unknown) => void store.set(key, value));
   // The daemon's side of a trashing: the member leaves its group, which is
   // re-counted, and dissolved with a single copy left.
   const trashPath = vi.fn(async (_repo: string, path: string) => {
     if (options.trashFails?.includes(path)) throw new Error(`cannot trash ${path}`);
     const at = members.findIndex((m) => `/repo${m.path}` === path);
-    if (at >= 0) members.splice(at, 1);
-    const first = groups[0] as { fields: { name: string; value: Metafolder.Value }[] } | undefined;
-    if (first && members.length < 2) groups.splice(0, 1);
-    else if (first) {
+    const left = at >= 0 ? members.splice(at, 1)[0] : undefined;
+    type Rec = { uuid: string; fields: { name: string; value: Metafolder.Value }[] };
+    const all = groups as Rec[];
+    const index = left?.group === undefined ? 0 : all.findIndex((g) => g.uuid === left.group);
+    const owner = all[index];
+    const remaining = membersOf(members, owner?.uuid);
+    if (owner && remaining.length < 2) {
+      groups.splice(index, 1);
+      // Dissolved: the survivor's link goes with the group.
+      if (left?.group !== undefined) for (const m of remaining) members.splice(members.indexOf(m), 1);
+    } else if (owner) {
       // In place: `field()` memoizes a record's index of its fields.
-      const count = first.fields.find((f) => f.name === 'mfr_duplicate_count');
-      if (count) count.value = int(members.length);
+      const count = owner.fields.find((f) => f.name === 'mfr_duplicate_count');
+      if (count) count.value = int(remaining.length);
     }
     return 'trash-id';
   });
@@ -151,8 +174,9 @@ function stubApi(
       },
       provide: vi.fn(),
       commands: {
-        register: async (name: string, spec: { handler: Handler }) => {
+        register: async (name: string, spec: { handler: Handler; args?: ArgSpec[] }) => {
           handlers.set(name, spec.handler);
+          argSpecs.set(name, spec.args ?? []);
           return null;
         },
         invoke: vi.fn((_line: string): null => null),
@@ -180,8 +204,16 @@ function stubApi(
 async function mountPanel(groups: unknown[], members: Member[], options: Options = {}) {
   const shadow = shadowFor();
   const handlers = new Map<string, Handler>();
+  const argSpecs = new Map<string, ArgSpec[]>();
   const calls: Call[] = [];
-  const { api, statusBar, setVar, trashPath } = stubApi(handlers, calls, groups, members, options);
+  const { api, statusBar, setVar, trashPath } = stubApi(
+    handlers,
+    argSpecs,
+    calls,
+    groups,
+    members,
+    options,
+  );
   const mod = await import('../../default-config/panel-types/duplicates/main.js');
   // `mount` is synchronous here and returns the panel's cleanup, not a promise.
   mod.mount(shadow, withRuns(api) as never);
@@ -194,8 +226,19 @@ async function mountPanel(groups: unknown[], members: Member[], options: Options
     if (!h) throw new Error(`command not registered: ${command}`);
     await h(...args);
   };
+  /** Asks argument `name` of `command` as the command input would, after
+   *  `prior`: its question, then its candidates. */
+  const ask = async (command: string, name: string, prior: string[]) => {
+    const spec = argSpecs.get(command)?.find((a) => a.name === name);
+    if (!spec) throw new Error(`no argument ${name} for ${command}`);
+    const prompt = await spec.prompt(prior);
+    const candidates = spec.complete ? await spec.complete('', prior) : [];
+    return { prompt, candidates };
+  };
   return {
     shadow,
+    argSpecs,
+    ask,
     api,
     calls,
     statusBar,
@@ -533,5 +576,154 @@ describe('duplicates panel, the harder paths', () => {
   test('the panel has no trash command of its own: Delete is item:delete', async () => {
     const p = await mountPanel([group('g1', 10, 2, 10)], []);
     await expect(p.invoke('duplicates:trash')).rejects.toThrow('not registered');
+  });
+});
+
+// `duplicates:keep walk` (doc "Deleting duplicate copies"): from the group
+// under the cursor, each group in turn asks which copy to keep, trashes the
+// others, and asks again about the next — the cursor is the walk's state, as
+// the directory is `cursor:find self walk`'s.
+describe('duplicates panel, keep walk', () => {
+  beforeEach(() => {
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    document.body.replaceChildren();
+  });
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+
+  /** Three groups of two copies, worst reclaimable first. */
+  const three = () => ({
+    groups: [group('g1', 30, 2, 30), group('g2', 20, 2, 20), group('g3', 10, 2, 10)],
+    members: [
+      { uuid: 'a1', path: '/a/one.bin', group: 'g1' },
+      { uuid: 'a2', path: '/b/one.bin', group: 'g1' },
+      { uuid: 'b1', path: '/a/two.bin', group: 'g2' },
+      { uuid: 'b2', path: '/b/two.bin', group: 'g2' },
+      { uuid: 'c1', path: '/a/three.bin', group: 'g3' },
+      { uuid: 'c2', path: '/b/three.bin', group: 'g3' },
+    ],
+  });
+  const trashed = (p: { trashPath: { mock: { calls: unknown[][] } } }) =>
+    p.trashPath.mock.calls.map((c) => c[1]);
+
+  test('walk is an optional mode of keep, and only a walk asks for a copy', async () => {
+    const { groups, members } = three();
+    const p = await mountPanel(groups, members);
+    const [mode, copy] = p.argSpecs.get('duplicates:keep')!;
+    expect(mode.optional).toBe(true);
+    expect(await mode.complete!('', [])).toEqual(['walk']);
+    expect(copy.when!(['walk'])).toBe(true);
+    expect(copy.when!([])).toBe(false);
+  });
+
+  test('the question unfolds the first group and offers its copies, or a skip', async () => {
+    const { groups, members } = three();
+    const p = await mountPanel(groups, members);
+    const { prompt, candidates } = await p.ask('duplicates:keep', 'copy', ['walk']);
+    expect(prompt).toContain('group 1 of 3');
+    expect(candidates).toEqual(['/a/one.bin', '/b/one.bin', 'skip']);
+    expect(p.rows()).toHaveLength(5); // g1 unfolded, the others folded
+    expect(p.cursorRow()?.textContent).toContain('g1-hash');
+  });
+
+  test('a walk starts from the group under the cursor', async () => {
+    const { groups, members } = three();
+    const p = await mountPanel(groups, members);
+    await p.invoke('cursor:next');
+    await p.invoke('cursor:next'); // onto g2
+    const { prompt, candidates } = await p.ask('duplicates:keep', 'copy', ['walk']);
+    expect(prompt).toContain('group 2 of 3');
+    expect(candidates).toEqual(['/a/two.bin', '/b/two.bin', 'skip']);
+  });
+
+  test('naming a copy trashes the others without a dialog, and asks about the next group', async () => {
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal('confirm', confirm);
+    const { groups, members } = three();
+    const p = await mountPanel(groups, members);
+    await p.ask('duplicates:keep', 'copy', ['walk']);
+    await p.invoke('duplicates:keep walk /b/one.bin');
+    await tick();
+
+    expect(trashed(p)).toEqual(['/repo/a/one.bin']);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(p.cursorRow()?.textContent).toContain('g2-hash');
+    expect(p.api.commands.invoke).toHaveBeenCalledWith(['duplicates:keep', 'walk']);
+    const { prompt } = await p.ask('duplicates:keep', 'copy', ['walk']);
+    expect(prompt).toContain('group 1 of 2'); // g1 dissolved
+  });
+
+  test('skip trashes nothing, folds the group and goes on to the next', async () => {
+    const { groups, members } = three();
+    const p = await mountPanel(groups, members);
+    await p.ask('duplicates:keep', 'copy', ['walk']);
+    await p.invoke('duplicates:keep walk skip');
+    await tick();
+
+    expect(trashed(p)).toEqual([]);
+    expect(p.rows()).toHaveLength(3);
+    expect(p.cursorRow()?.textContent).toContain('g2-hash');
+    expect(p.api.commands.invoke).toHaveBeenCalledWith(['duplicates:keep', 'walk']);
+    const { prompt } = await p.ask('duplicates:keep', 'copy', ['walk']);
+    expect(prompt).toContain('group 2 of 3');
+  });
+
+  test('after the last group the walk stops and says so', async () => {
+    const { groups, members } = three();
+    const p = await mountPanel(groups, members);
+    await p.invoke('cursor:last'); // g3
+    await p.ask('duplicates:keep', 'copy', ['walk']);
+    await p.invoke('duplicates:keep walk /a/three.bin');
+    await tick();
+
+    expect(trashed(p)).toEqual(['/repo/b/three.bin']);
+    expect(p.api.commands.invoke).not.toHaveBeenCalled();
+    expect(p.statusBar.message.mock.calls.at(-1)?.[0]).toContain('every group walked');
+  });
+
+  test('a name that is no copy of the group trashes nothing and stops the walk', async () => {
+    const { groups, members } = three();
+    const p = await mountPanel(groups, members);
+    await p.ask('duplicates:keep', 'copy', ['walk']);
+    await p.invoke('duplicates:keep walk /a/two.bin');
+    await tick();
+
+    expect(trashed(p)).toEqual([]);
+    expect(p.statusBar.error).toHaveBeenCalled();
+    expect(p.api.commands.invoke).not.toHaveBeenCalled();
+  });
+
+  test('a failed trashing stops the walk on its group', async () => {
+    const { groups, members } = three();
+    const p = await mountPanel(groups, members, { trashFails: ['/repo/a/one.bin'] });
+    await p.ask('duplicates:keep', 'copy', ['walk']);
+    await p.invoke('duplicates:keep walk /b/one.bin');
+    await tick();
+
+    expect(p.statusBar.error).toHaveBeenCalled();
+    expect(p.api.commands.invoke).not.toHaveBeenCalled();
+    expect(p.cursorRow()?.textContent).toContain('g1-hash');
+  });
+
+  test('with no group, the walk says there is nothing to walk', async () => {
+    const p = await mountPanel([], []);
+    const { prompt, candidates } = await p.ask('duplicates:keep', 'copy', ['walk']);
+    expect(prompt).toContain('No duplicate group');
+    expect(candidates).toEqual([]);
+    await p.invoke('duplicates:keep walk skip');
+    expect(p.api.commands.invoke).not.toHaveBeenCalled();
+  });
+
+  test('keep without walk still keeps the copy under the cursor, asking first', async () => {
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal('confirm', confirm);
+    const { groups, members } = three();
+    const p = await mountPanel(groups, members);
+    await p.invoke('cursor:next');
+    await p.invoke('duplicates:toggle-group');
+    await tick();
+    await p.invoke('cursor:next'); // /a/one.bin
+    await p.invoke('duplicates:keep');
+    expect(confirm).toHaveBeenCalled();
+    expect(trashed(p)).toEqual(['/repo/b/one.bin']);
   });
 });

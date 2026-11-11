@@ -23,6 +23,9 @@ import { rowActionsProvider, baseName } from '/__file-actions.js';
 
 const GROUP_QUERY = { type: 'eq', field: 'mf_schema', value: { type: 'string', value: 'duplicate_group' } };
 const PAGE = 200;
+/** The answer of `duplicates:keep walk` that keeps a group whole. A copy's
+ *  path starts with `/`, so it cannot be one. */
+const WALK_SKIP = 'skip';
 
 /** The first value of `name` on a selected-fields record, as a number.
  *  @param {Metafolder.Metarecord} rec @param {string} name */
@@ -286,12 +289,63 @@ export function mount(root, metafolder) {
     await trashMembers(mf, others);
   }
 
+  /** The group a walk asks about: the one under the cursor, else the first —
+   *  unfolded, the cursor on its row. `null` with no group left. */
+  async function walkGroup() {
+    const group = rows[cursorIndex]?.group ?? groups[0];
+    if (!group) return null;
+    if (!group.expanded || group.members === null) {
+      group.expanded = true;
+      if (group.members === null) await loadMembers(group);
+      render();
+    }
+    await select(
+      metafolder,
+      rows.findIndex((row) => row.group === group && row.member === null),
+    );
+    return group;
+  }
+
+  /** `duplicates:keep walk <copy>`: keep `copy` in the group under the cursor,
+   *  trash its others — no dialog, the copy named is the choice — or `skip` it;
+   *  then put the cursor on the next group and ask again. The cursor is the
+   *  walk's only state; Escape at the question ends it.
+   *  @param {MetafolderApi} mf @param {string} copy */
+  async function keepWalk(mf, copy) {
+    const group = rows[cursorIndex]?.group;
+    if (!group) {
+      await statusBar.message('No duplicate group to walk', statusMessageMs);
+      return;
+    }
+    const next = groups[groups.indexOf(group) + 1]?.uuid ?? null;
+    if (copy === WALK_SKIP) {
+      group.expanded = false;
+      render();
+    } else {
+      const kept = (group.members ?? []).find((m) => m.path === copy);
+      if (!kept) {
+        await statusBar.error(`no copy "${copy}" in this group`);
+        return;
+      }
+      const others = (group.members ?? []).filter((m) => m !== kept);
+      if (others.length > 0 && !(await trashMembers(mf, others))) return;
+    }
+    const at = rows.findIndex((row) => row.group.uuid === next && row.member === null);
+    if (next === null || at < 0) {
+      await statusBar.message('Duplicates: every group walked', statusMessageMs);
+      return;
+    }
+    await select(mf, at);
+    void mf.commands.invoke(['duplicates:keep', 'walk']);
+  }
+
   /** Trashes `victims` one by one, then reads the groups again. A failure
-   *  stops the run — the ones already trashed still left the group.
+   *  stops the run — the ones already trashed still left the group. Whether
+   *  every one went.
    *  @param {MetafolderApi} mf @param {Member[]} victims */
   async function trashMembers(mf, victims) {
     const r = repo;
-    if (r === null) return;
+    if (r === null) return false;
     /** @type {Member[]} */
     const gone = [];
     for (const victim of victims) {
@@ -307,7 +361,7 @@ export function mount(root, metafolder) {
         break;
       }
     }
-    if (gone.length === 0) return;
+    if (gone.length === 0) return false;
     await load();
     await statusBar.message(
       `Trashed ${gone.length} cop${gone.length === 1 ? 'y' : 'ies'} — restore from the trash panel`,
@@ -315,6 +369,7 @@ export function mount(root, metafolder) {
     );
     ownNudge = Date.now();
     await mf.workspace.set('metarecords:dirty', ownNudge);
+    return gone.length === victims.length;
   }
 
   async function load() {
@@ -409,8 +464,35 @@ export function mount(root, metafolder) {
     handler: (mf, where) => open(mf, where),
   });
   void commands.register('duplicates:keep', {
-    label: 'Duplicates: keep the copy under the cursor, trash the others',
-    handler: (mf) => keepThisOne(mf),
+    label: 'Duplicates: keep the copy under the cursor, trash the others (walk: group by group)',
+    args: [
+      {
+        name: 'mode',
+        optional: true,
+        prompt: () => 'Keep how? (walk)',
+        complete: () => ['walk'],
+      },
+      {
+        // Asked of each group in turn (doc "Deleting duplicate copies").
+        name: 'copy',
+        when: (/** @type {string[]} */ prior) => prior[0] === 'walk',
+        prompt: async () => {
+          const group = await walkGroup();
+          if (!group) return 'No duplicate group to walk (Escape)';
+          const at = groups.indexOf(group) + 1;
+          return (
+            `Keep which copy? (group ${at} of ${groups.length}, ` +
+            `${formatSize(group.reclaimable)} reclaimable — or ${WALK_SKIP})`
+          );
+        },
+        complete: async () => {
+          const group = await walkGroup();
+          return group ? [...(group.members ?? []).map((m) => m.path), WALK_SKIP] : [];
+        },
+      },
+    ],
+    handler: (mf, mode, copy) =>
+      mode === 'walk' ? keepWalk(mf, copy ?? '') : keepThisOne(mf),
   });
 
   // Right-click a member row: this panel's own choice of survivor first (it is

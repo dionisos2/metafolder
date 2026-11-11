@@ -17,7 +17,7 @@ summary: The keys used and left at each level
 |``m`` |starts 19 keys (``{record}``) |
 |``n`` |starts 29 keys (``{target-new}``) |
 |``o`` |``panel:focus next`` |
-|``p`` |starts 29 keys (``{panel}``), in ``config``, ``duplicates``, ``file-manager``, ``help``, ``keybindings``, ``keybindings-variables``, ``log``, ``metarecord-detail``, ``metarecord-list``, ``path-ref``, ``shell``, ``sync``, ``viewer`` only |
+|``p`` |starts 30 keys (``{panel}``), in ``config``, ``duplicates``, ``file-manager``, ``help``, ``keybindings``, ``keybindings-variables``, ``log``, ``metarecord-detail``, ``metarecord-list``, ``path-ref``, ``shell``, ``sync``, ``viewer`` only |
 |``t`` |starts 18 keys (``{panels}``) |
 |``v`` |starts 21 keys (``{view}``) |
 |``w`` |starts 4 keys (``{workspaces}``) |
