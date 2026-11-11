@@ -10,8 +10,9 @@ summary: Open a panel type here, in the other slot, or in a new workspace
 * `other` — for the same workspace, in the other slot, opening it if it was hidden and taking it over if it showed another workspace — what the `↗` button of a `metarecord-list` row does ([[Cross-panel selection]]);
 * `new` — in a new workspace, a copy of this one ([[workspace:fork]]), so the panel opens on the same state.
 
-It is refused when the other visible slot already shows that type for the same
-workspace. See [[Panel types]].
+When the other visible slot already shows that type for the same workspace, the
+two slots swap their panel types instead: the type asked for comes to the target
+slot, and the other slot takes the one the target showed. See [[Panel types]].
 
 !! Opening a viewer of the selection
 

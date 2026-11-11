@@ -30,7 +30,7 @@
     try {
       await invoke('panel_set_type', { slot: id, panelType });
     } catch (error) {
-      // Rejection (e.g. same type in both slots): report it (no widget state to
+      // Rejection (e.g. no workspace in the slot): report it (no widget state to
       // restore — the header just keeps showing the current type).
       const ws = focusedWs();
       if (ws) {

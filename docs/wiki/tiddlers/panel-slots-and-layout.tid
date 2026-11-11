@@ -11,9 +11,10 @@ with its own panel type — a list on the left, the detail of its selection on t
 right, sharing that workspace's variables — or two different workspaces.
 
 One workspace cannot show the same panel type in both slots: each workspace has one
-instance of each panel type. Asking for it ([[panel:open]]) is refused; a slot that
-would get it falls back to `metarecord-detail`, or to no panel at all, the header
-then asking for one.
+instance of each panel type. Asking for it ([[panel:open]]) swaps the two slots'
+panel types, as `panel:swap` would; a slot that would get it otherwise — a split, a
+workspace coming back — falls back to `metarecord-detail`, or to no panel at all,
+the header then asking for one.
 
 The ''focused'' slot has a coloured border (the theme's `--mf-focus-border`) and
 receives the keys. <<key "panel:focus next" o>> moves the focus to the other slot; a

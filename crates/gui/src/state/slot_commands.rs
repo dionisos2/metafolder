@@ -136,8 +136,9 @@ impl GuiState {
     }
 
     /// `panel:open here` — switches the panel type displayed in a slot.
-    /// Rejected when the other slot already shows the same panel type of
-    /// the same workspace (one instance per (workspace, panel type)).
+    /// When the other slot already shows that panel type of the same
+    /// workspace, the two slots swap their types instead (one instance per
+    /// (workspace, panel type); doc "Panel slots and layout").
     pub fn set_panel_type(&self, slot_id: SlotId, panel_type: &str) -> Result<(), String> {
         self.mutate(|inner| {
             let ws_id = inner
@@ -151,16 +152,18 @@ impl GuiState {
             let collides = other.workspace.as_deref() == Some(ws_id.as_str())
                 && other.panel_type.as_deref() == Some(panel_type);
             if collides {
-                if other.visible {
-                    return Err(format!(
-                        "'{panel_type}' is already displayed for this workspace in the other panel"
-                    ));
-                }
-                // The other slot is hidden but remembers this same (workspace,
-                // panel type): drop its assignment so revealing it later cannot
-                // duplicate the panel (one instance per (workspace, panel type)).
-                inner.slot_mut(other_id).panel_type = None;
-                inner.workspace_mut(&ws_id)?.last_panel.remove(&other_id);
+                // Visible, the other slot takes the type this one showed (a
+                // swap). Hidden, it only remembers this same (workspace, panel
+                // type): it is dropped so revealing it later cannot duplicate
+                // the panel (one instance per (workspace, panel type)).
+                let given =
+                    if other.visible { inner.slot(slot_id).panel_type.clone() } else { None };
+                let last_panel = &mut inner.workspace_mut(&ws_id)?.last_panel;
+                match &given {
+                    Some(given) => last_panel.insert(other_id, given.clone()),
+                    None => last_panel.remove(&other_id),
+                };
+                inner.slot_mut(other_id).panel_type = given;
             }
 
             inner.slot_mut(slot_id).panel_type = Some(panel_type.to_string());

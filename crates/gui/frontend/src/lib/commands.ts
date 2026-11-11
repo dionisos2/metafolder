@@ -358,7 +358,7 @@ export async function runShell(
 
 /** Whether surfacing output should switch the focused slot to `panelType`:
  *  true unless some visible slot of `ws` already shows it (which also avoids
- *  the "two visible slots, same type" rejection). */
+ *  swapping the two slots, what asking for a type the other slot shows does). */
 export function needsPanel(
   layout: LayoutView,
   ws: string | null,

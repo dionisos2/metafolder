@@ -683,13 +683,19 @@ fn test_set_panel_type_switches_and_remembers() {
 }
 
 #[test]
-fn test_set_panel_type_rejects_same_type_for_same_workspace_in_both_slots() {
+fn test_set_panel_type_swaps_with_the_other_slot_showing_that_type() {
     let (_, state) = state();
     state.panel_split().unwrap();
     state.tab_assign("ws-1", SlotId::Right).unwrap();
-    // Left already shows ws-1 as "repos".
-    assert!(state.set_panel_type(SlotId::Right, "repos").is_err());
     state.set_panel_type(SlotId::Right, "log").unwrap();
+    // Left shows ws-1 as "repos": asking for it on the right swaps the two.
+    state.set_panel_type(SlotId::Right, "repos").unwrap();
+    let layout = state.layout();
+    assert_eq!(layout.right.panel_type.as_deref(), Some("repos"));
+    assert_eq!(layout.left.panel_type.as_deref(), Some("log"));
+    // Remembered as such: unsplitting and splitting again keeps the swap.
+    state.tab_assign("ws-1", SlotId::Left).unwrap();
+    assert_eq!(state.layout().left.panel_type.as_deref(), Some("log"));
 }
 
 #[test]
