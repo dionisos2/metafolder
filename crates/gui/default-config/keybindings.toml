@@ -14,7 +14,7 @@
 # - a key is a character, typed the same on bépo, AZERTY and QWERTY: letters,
 #   `, - =`, named keys; never AltGr, a dead key or an accented letter;
 # - a single letter is for what is done all the time (`x` command input, `o`
-#   other panel, `f` find); every other letter starts a domain (`g` go to,
+#   other panel, `f` find, or the panel's main text field); every other letter starts a domain (`g` go to,
 #   `v` view, `p` the panel's actions, `m` metarecords, `,` tags…), and the
 #   second letter is a verb from one table (a add, s set, r remove, u unset…);
 # - the shortcuts every program has (ctrl+c, ctrl+z, F5…) are kept as well;
@@ -408,10 +408,18 @@ vars.index = "i"
 "alt+right" = { command = "help:forward", when = "help" }
 
 # Find: `f` a row by its name, shift+f walking down into it; `/` as in most
-# programs. In the list, `f` is its finder field, and shift+f empties it.
+# programs. In the list, `f` is its finder field, and shift+f empties it. In a
+# panel with no rows to find, `f` is its main text field, the one `p e` edits,
+# and shift+f empties it as `p E` does.
 "f" = [
   { command = "cursor:find self select" },
   { command = "metarecord-list:focus finder", when = "metarecord-list" },
+  { command = "viewer:focus text", when = "viewer" },
+  { command = "help:focus search", when = "help" },
+  { command = "shell:focus line", when = "shell" },
+  { command = "keybindings:focus key", when = "keybindings" },
+  { command = "config:focus filter", when = "config" },
+  { command = "keybindings-variables:focus filter", when = "keybindings-variables" },
 ]
 "/" = [
   { command = "cursor:find self select" },
@@ -420,6 +428,7 @@ vars.index = "i"
 "shift+f" = [
   { command = "cursor:find self walk" },
   { command = "metarecord-list:focus finder clear", when = "metarecord-list" },
+  { command = "help:focus search clear", when = "help" },
 ]
 
 # Space toggles in place: check a row, play or pause; Shift+Space unchecks

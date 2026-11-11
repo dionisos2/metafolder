@@ -9,5 +9,7 @@ summary: Help: focus the search box (clear: empty it first)
 
 !! Default keys
 
+* ``f`` → ``help:focus search`` (in the ``help`` panel)
 * ``p e`` → ``help:focus search`` (in the ``help`` panel)
 * ``p shift+e`` → ``help:focus search clear`` (in the ``help`` panel)
+* ``shift+f`` → ``help:focus search clear`` (in the ``help`` panel)

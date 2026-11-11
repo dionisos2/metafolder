@@ -2266,6 +2266,33 @@ vars.y = ","
     }
 
     #[test]
+    fn test_shipped_f_focuses_the_panel_field_where_there_is_no_row_to_find() {
+        // doc "Choosing keybindings": `f` is find, or the panel's main text
+        // field — the one `p e` edits — where the panel has no rows to find.
+        // The list keeps its finder on `f`, its query field on `p e`.
+        let defaults = include_str!("../default-config/keybindings.toml");
+        let table = KeybindingSet::from_sources(defaults, "").unwrap().compiled();
+        let run = |keys: &[&str], panel: &str| {
+            table
+                .iter()
+                .find(|b| b.keys == keys && b.when.as_deref() == Some(panel))
+                .map(|b| b.invocation.clone())
+        };
+        for panel in ["viewer", "help", "shell", "keybindings", "config", "keybindings-variables"] {
+            let edit = run(&["p", "e"], panel);
+            assert!(edit.is_some(), "p e runs nothing in {panel}");
+            assert_eq!(run(&["f"], panel), edit, "f in {panel}");
+        }
+        assert_eq!(run(&["f"], "metarecord-list").as_deref(), Some("metarecord-list:focus finder"));
+        // shift+f, as `p E`: the same field, emptied.
+        assert_eq!(run(&["shift+f"], "help").as_deref(), Some("help:focus search clear"));
+        assert_eq!(
+            run(&["shift+f"], "metarecord-list").as_deref(),
+            Some("metarecord-list:focus finder clear")
+        );
+    }
+
+    #[test]
     fn test_shipped_ctrl_shift_keys_have_an_easier_alias() {
         // A Ctrl+Shift chord is hard to reach: each shipped one runs, in the
         // same place, through another key too (doc "Choosing keybindings").

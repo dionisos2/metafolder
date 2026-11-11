@@ -9,7 +9,7 @@ summary: The keys used and left at each level
 |``b`` |starts 28 keys (``{target-other}``) |
 |``c`` |starts 4 keys (``{clipboard}``) |
 |``e`` |starts 9 keys (``{item}``) |
-|``f`` |``cursor:find self select``; ``metarecord-list:focus finder`` (in ``metarecord-list``) |
+|``f`` |``cursor:find self select``; ``config:focus filter`` (in ``config``); ``help:focus search`` (in ``help``); ``keybindings:focus key`` (in ``keybindings``); ``keybindings-variables:focus filter`` (in ``keybindings-variables``); ``metarecord-list:focus finder`` (in ``metarecord-list``); ``shell:focus line`` (in ``shell``); ``viewer:focus text`` (in ``viewer``) |
 |``g`` |starts 12 keys (``{go}``) |
 |``h`` |starts 4 keys (``{help}``) |
 |``i`` |starts 28 keys (``{target-here}``) |

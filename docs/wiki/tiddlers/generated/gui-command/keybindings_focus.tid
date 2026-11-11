@@ -9,4 +9,5 @@ summary: Keybindings: focus the key field of the form
 
 !! Default keys
 
+* ``f`` → ``keybindings:focus key`` (in the ``keybindings`` panel)
 * ``p e`` → ``keybindings:focus key`` (in the ``keybindings`` panel)

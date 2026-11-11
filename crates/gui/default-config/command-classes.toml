@@ -45,10 +45,10 @@
 "pick:cancel" = "B"
 "devtools:open" = "C"
 "config:reload" = "D"
-"config:focus" = "B"
-"keybindings:focus" = "B"
+"config:focus" = "A"
+"keybindings:focus" = "A"
 "keybindings:save" = "B"
-"keybindings-variables:focus" = "B"
+"keybindings-variables:focus" = "A"
 "daemon:set-url" = "D"
 
 # ── Help ─────────────────────────────────────────────────────────────────────
@@ -59,8 +59,8 @@
 "help:apply" = "B"
 "help:back" = "B"
 "help:forward" = "B"
-"help:focus" = "B"
-"help:focus search clear" = "C"
+"help:focus" = "A"
+"help:focus search clear" = "B"
 
 # ── Scripts and macros ───────────────────────────────────────────────────────
 "script:run" = "B"
@@ -74,7 +74,7 @@
 "macro:save" = "D"
 
 # ── Shell, messages, context ─────────────────────────────────────────────────
-"shell:focus" = "B"
+"shell:focus" = "A"
 "shell:clear" = "C"
 "message:clear" = "D"
 "context:set" = "D"
@@ -203,7 +203,7 @@
 "viewer:restart" = "C"
 "viewer:play" = "C"
 "viewer:toggle-edit" = "C"
-"viewer:focus" = "B"
+"viewer:focus" = "A"
 "viewer:save" = "B"
 "viewer:reload" = "X"
 

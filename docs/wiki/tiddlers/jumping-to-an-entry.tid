@@ -51,3 +51,7 @@ provides `descend`.
 `metarecord-list` provides no entries. Its rows come from a query, not from a list
 already loaded, so the same key (<<key "metarecord-list:focus finder clear" "Shift+f">>) edits its
 finder: the same question, asked of the daemon.
+
+A panel with no rows at all — help, the shell, the viewer, the configuration
+panels — gives `f` to its main text field instead, the one `p e` edits
+([[Choosing keybindings]]).

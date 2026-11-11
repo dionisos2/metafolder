@@ -9,4 +9,5 @@ summary: Viewer: give the keyboard to the text being edited, editing it if it wa
 
 !! Default keys
 
+* ``f`` → ``viewer:focus text`` (in the ``viewer`` panel)
 * ``p e`` → ``viewer:focus text`` (in the ``viewer`` panel)

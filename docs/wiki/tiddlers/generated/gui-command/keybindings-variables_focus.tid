@@ -9,4 +9,5 @@ summary: Keybindings variables: focus the filter
 
 !! Default keys
 
+* ``f`` → ``keybindings-variables:focus filter`` (in the ``keybindings-variables`` panel)
 * ``p e`` → ``keybindings-variables:focus filter`` (in the ``keybindings-variables`` panel)

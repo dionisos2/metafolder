@@ -41,6 +41,13 @@ Every command falls in a class, by how often it is used — written in
 A ''single letter'' is spent only on class A: `x` the command input, `o` the other
 panel, `f` find, `l` the hints, Space. Every other letter starts a ''domain''.
 
+`f` is find where the panel has rows to find ([[Jumping to an entry]]), the
+finder in the list; in a panel with none, it is the panel's main text field —
+the one `p e` edits: help's search, the shell's line, the viewer's text, the
+filters of the configuration panels —, so that this field, reached all the
+time, is one key away. Shift+f empties it, as `p E` does. `p e` stays, as the
+domain and verb every panel has.
+
 !! A domain, then a verb
 
 The first key names a domain — what the command is about — and the second a verb,

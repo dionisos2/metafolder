@@ -9,4 +9,5 @@ summary: Config: focus the filter of the files
 
 !! Default keys
 
+* ``f`` → ``config:focus filter`` (in the ``config`` panel)
 * ``p e`` → ``config:focus filter`` (in the ``config`` panel)
