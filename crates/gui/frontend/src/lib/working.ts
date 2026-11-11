@@ -127,6 +127,21 @@ export const foregroundWork = {
 /** How long a daemon task must have been in flight before the bar shows it. */
 export const TASK_GRACE_MS = 1000;
 
+/** The daemon tasks of `repos` only — the repositories of the workspaces on
+ *  screen. A task matters where its repository is in use, since only there do
+ *  actions queue behind it; a workspace on another repository works normally.
+ *  UUIDs compare with dashes stripped and case folded, as `active_repo` may be
+ *  dashed while the daemon lists hex. Pure, so it is unit-tested (doc "Status
+ *  bar and task bar"). */
+export function tasksOfRepos<T extends { repo_uuid: string }>(
+  tasks: T[],
+  repos: (string | null)[],
+): T[] {
+  const norm = (uuid: string) => uuid.replace(/-/g, '').toLowerCase();
+  const wanted = new Set(repos.filter((r): r is string => r !== null).map(norm));
+  return tasks.filter((t) => wanted.has(norm(t.repo_uuid)));
+}
+
 /**
  * The tasks old enough to show, in the order the daemon listed them.
  *

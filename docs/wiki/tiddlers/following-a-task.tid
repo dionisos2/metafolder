@@ -22,14 +22,15 @@ returns; `mf task show <id>` then tells you how it went.
 
 !! In the GUI
 
-The ''task bar'', below the panels, lists every pending or running task of every
-loaded repository — a bar when the task knows its amount of work, a spinner
+The ''task bar'', below the panels, lists every pending or running task of the
+repositories the workspaces on screen have open — a bar when the task knows its amount of work, a spinner
 labelled with its phase otherwise — and hides when there is none. A task appears
 only once it has run for a second: a watcher flush lasts milliseconds and fires
 whenever a watched file is touched, and showing it would make the panels jump
 for work nobody asked to see (what a flush did is reported in the `message`
-panel instead). Since it polls the daemon, it shows any task, not only the GUI's
-own, and reopening the GUI mid-reconcile resumes showing it ([[Status bar and task bar]]).
+panel instead). Since it polls the daemon, it shows any task on those repositories, not
+only the GUI's own, and reopening the GUI mid-reconcile resumes showing it ([[Status bar and task bar]]).
+Every repository's tasks, on screen or not, are in the repos panel.
 
 The [[repos panel]] lists each repository's active tasks under it, with a
 ''Stop'' button for those that can be stopped ([[Cancelling a task]]).

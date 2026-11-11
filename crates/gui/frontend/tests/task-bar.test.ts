@@ -5,7 +5,7 @@
 // for work nobody asked to see (doc "Following a task").
 
 import { describe, expect, test } from 'vitest';
-import { settledTasks, TASK_GRACE_MS } from '../src/lib/working';
+import { settledTasks, TASK_GRACE_MS, tasksOfRepos } from '../src/lib/working';
 
 function task(id: string) {
   return { id, kind: 'flush' };
@@ -57,5 +57,33 @@ describe('settledTasks', () => {
       'a',
       'b',
     ]);
+  });
+});
+
+// A daemon task matters where its repository is in use: only there do actions
+// queue behind it. A workspace on another repository works normally and has no
+// use for it (doc "Status bar and task bar").
+describe('tasksOfRepos', () => {
+  const t = (id: string, repo_uuid: string) => ({ id, repo_uuid });
+
+  test('keeps only the tasks of the given repositories', () => {
+    const tasks = [t('a', 'r1'), t('b', 'r2'), t('c', 'r1')];
+    expect(tasksOfRepos(tasks, ['r1']).map((x) => x.id)).toEqual(['a', 'c']);
+  });
+
+  test('no repository on screen shows no task', () => {
+    expect(tasksOfRepos([t('a', 'r1')], [])).toEqual([]);
+    expect(tasksOfRepos([t('a', 'r1')], [null])).toEqual([]);
+  });
+
+  test('a dashed uuid matches the same one in hex form', () => {
+    const dashed = '0123abcd-0000-4000-8000-00000000beef';
+    const hex = dashed.replace(/-/g, '');
+    expect(tasksOfRepos([t('a', hex)], [dashed]).map((x) => x.id)).toEqual(['a']);
+    expect(tasksOfRepos([t('a', dashed)], [hex]).map((x) => x.id)).toEqual(['a']);
+  });
+
+  test('uuids compare regardless of case', () => {
+    expect(tasksOfRepos([t('a', 'ABCD')], ['abcd']).map((x) => x.id)).toEqual(['a']);
   });
 });

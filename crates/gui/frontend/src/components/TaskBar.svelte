@@ -3,12 +3,19 @@
   // GET /tasks (all loaded repos) and shows running/pending tasks with a
   // determinate progress bar when counts are known, a spinner otherwise.
   // Kept separate from the status bar so progress never saturates it. These
-  // tasks are blocking, so surfacing them repo-wide (not only GUI-launched
-  // ones) is the point.
+  // tasks are blocking, so surfacing them whoever launched them (not only
+  // GUI-launched ones) is the point — but only for the repositories of the
+  // workspaces on screen, the ones whose actions queue behind them.
   import { onMount } from 'svelte';
   import { invoke } from '../lib/ipc';
-  import { ownedByVisible, scriptIndicator, store, visibleWorkspaces } from '../lib/store.svelte';
-  import { daemonWork, settledTasks, type WorkingState } from '../lib/working';
+  import {
+    ownedByVisible,
+    scriptIndicator,
+    store,
+    visibleWorkspaces,
+    workspaceById,
+  } from '../lib/store.svelte';
+  import { daemonWork, settledTasks, tasksOfRepos, type WorkingState } from '../lib/working';
 
   interface Task {
     id: string;
@@ -20,7 +27,16 @@
     repo_uuid: string;
   }
 
-  let tasks = $state<Task[]>([]);
+  // Every settled task of every loaded repository, as polled; what is shown is
+  // narrowed to the visible workspaces' repositories below, so switching a slot
+  // shows a task at once rather than at the next poll's grace.
+  let allTasks = $state<Task[]>([]);
+  const tasks = $derived(
+    tasksOfRepos(
+      allTasks,
+      visibleWorkspaces().map((ws) => workspaceById(ws)?.active_repo ?? null),
+    ),
+  );
   const POLL_MS = 300;
 
   // When each in-flight task was first seen, so a task too short to be worth
@@ -42,10 +58,10 @@
         res.status === 200 && Array.isArray(res.body)
           ? (res.body as Task[]).filter((t) => t.status === 'running' || t.status === 'pending')
           : [];
-      tasks = settledTasks(firstSeen, active, Date.now());
+      allTasks = settledTasks(firstSeen, active, Date.now());
     } catch {
       firstSeen.clear();
-      tasks = [];
+      allTasks = [];
     }
   }
 

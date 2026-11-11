@@ -37,9 +37,10 @@ jump. The price is that a bar covers the last rows of the panels while it is sho
 !! The task bar
 
 Above the command input, and only while there is something in it, the task bar shows
-what is in flight. It is not tied to a workspace, except for scripts.
+what is in flight for the workspaces on screen: a daemon task shows for the
+repositories those workspaces have open, a script for the workspaces it owns.
 
-* ''Daemon tasks'' — every pending or running task of every loaded repository, whoever started it, the command line included: a bar when the task knows its amount of work, a spinner otherwise, labelled with its kind and phase ([[Following a task]]). The GUI asks the daemon every 300 ms, and shows a task only once it has run for a second: a watcher flush lasts milliseconds and fires whenever a watched file is touched, and showing it would flash a bar for work nobody asked to see — what a flush did goes to the message log instead ([[What a flush reports]]).
+* ''Daemon tasks'' — every pending or running task of the repositories the visible workspaces have open, whoever started it, the command line included. A task of another repository is not shown: only where its repository is in use do actions wait behind it, and a workspace on another repository works normally (the [[repos panel]] and `mf task list --all` still list every one). Each is drawn as a bar when the task knows its amount of work, a spinner otherwise, labelled with its kind and phase ([[Following a task]]). The GUI asks the daemon every 300 ms, and shows a task only once it has run for a second: a watcher flush lasts milliseconds and fires whenever a watched file is touched, and showing it would flash a bar for work nobody asked to see — what a flush did goes to the message log instead ([[What a flush reports]]).
 * ''Scripts'' — a `!` command, a `script:run` script or a `file:open-with` program, for as long as it runs, labelled by its name. It spins while working, and gains a progress bar when the script reports its counts through [[mf gui progress]], with a phase naming the current step. While the script waits for an answer it stops spinning and says ''your answer'': working and waiting for you must never look alike. A script's entry belongs to the workspaces the script owns, and is hidden with them ([[Script sessions]]).
 * ''A daemon call you are waiting on'' — a request this GUI sent and whose answer has not come back yet; see below for how it differs from a daemon task.
 
@@ -64,7 +65,7 @@ The two entries look alike but are seen from opposite sides:
 |!|!Daemon task |!Daemon call you are waiting on |
 |what it is |a unit of work in the daemon's task registry ([[Task kinds]]) |one HTTP request of ''this'' GUI, sent and not yet answered |
 |who sees it |the daemon; the GUI learns of it by polling |the GUI itself, without asking the daemon |
-|whose |anyone's: the command line, another GUI, the watcher |only this GUI's own, made because you acted |
+|whose |anyone's: the command line, another GUI, the watcher — on a repository a visible workspace has open |only this GUI's own, made because you acted |
 |does the GUI wait |not necessarily: an asynchronous task (a reconcile, a scan) answers its request at once and runs on |yes: until it returns, the actions behind it are stuck |
 |label |the task's kind and phase, with its progress |`<METHOD> <path>`, a spinner, no progress |
 
