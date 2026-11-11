@@ -189,7 +189,7 @@ export const scriptsBuiltins: Builtins = {
     );
   },
   "script:stop": async (args) => {
-    // Escape during a question, or a manual invocation: end the run (and the
+    // Shift+escape during a question, or a manual invocation: end the run (and the
     // question with it). No argument = the script asking the question on
     // screen.
     await invoke("script_stop", {

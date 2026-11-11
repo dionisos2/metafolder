@@ -377,15 +377,16 @@ _mf_gui_arrow_for() { # <letter> -> its arrow key, or nothing
 # also awaits its arrow key, and the pressed arrow is folded back onto the
 # letter — so a caller's `case` only ever deals with y/n/m/s and its quit key.
 #
-# `escape` is NOT a key a script may await: the GUI keeps it to stop the script
+# `escape` and `shift+escape` are NOT keys a script may await: the GUI keeps
+# escape to give the script keys back, and shift+escape to stop the script
 # outright, whatever keys the script grabbed (doc "Script sessions"), and
 # refuses a wait that asks for it. A script with cleanup to do offers `q`
 # instead — by convention the quit key of every shipped script.
 #     case "$(mf_gui_ask_answer "$msg" y n m s q)" in ...
 #
 # `backspace` is reserved the same way, and always resolves the wait with the
-# value `back`: the way out of an answer *already given*, where escape is the
-# way out of the run. What going back means is the script's business — only it
+# value `back`: the way out of an answer *already given*, where shift+escape is
+# the way out of the run. What going back means is the script's business — only it
 # knows what its last answer wrote — so a script that supports it lists `u`
 # (undo) among its letters and gets `u` here. One that does not simply asks the
 # same question again, so the key is never a silent no-op and never lands in a
@@ -440,7 +441,7 @@ mf_gui_ask() {
         err=$(mktemp 2>/dev/null) || err=""
     fi
     # `mf gui input` fails on a timeout, a closed GUI, or a 409 (another wait
-    # still holds the lock). All three end the run like Escape does — but the
+    # still holds the lock). All three end the run like a stop does — but the
     # reason must NOT be swallowed: silently answering "escape" is exactly what
     # made a script look like it "just stopped" for no reason.
     #

@@ -15,7 +15,7 @@ the tag yet, shows it, and waits for a key:
   y / →  -> the file HAS the tag      (mf tag add)
   n / ←  -> the file does NOT have it (mf tag deny)
   s / ↓  -> skip this file
-  Escape -> stop
+  Shift+Escape -> stop
 
 The tag model (entries + tag/negative_tag refs, TreeRef `path` hierarchy,
 subsumption) is owned by `mf tag`; this script is just the display + y/n loop.

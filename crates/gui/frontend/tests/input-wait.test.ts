@@ -60,13 +60,23 @@ describe('inputWaitAction (what a key does while a question is up)', () => {
     expect(inputWaitAction(wait, true, 'n')).toEqual({ kind: 'answer', value: 'n' });
   });
 
-  it('stops the asking script on escape, which no script can await', () => {
-    expect(inputWaitAction(wait, true, 'escape')).toEqual({ kind: 'stop', task: 'script-3' });
-    // A wait nobody owns has no script to stop: the question is closed instead.
+  it('gives the script keys back on escape, without ending the run', () => {
+    // Escape was the stop, which read as "close this bar" and ended runs by
+    // surprise: it now only hands the keys back (doc "Script sessions").
+    expect(inputWaitAction(wait, true, 'escape')).toEqual({ kind: 'keys-off' });
     expect(inputWaitAction({ keys: ['y'], task: null }, true, 'escape')).toEqual({
+      kind: 'keys-off',
+    });
+  });
+
+  it('stops the asking script on shift+escape, which no script can await', () => {
+    expect(inputWaitAction(wait, true, 'shift+escape')).toEqual({ kind: 'stop', task: 'script-3' });
+    // A wait nobody owns has no script to stop: the question is closed instead.
+    expect(inputWaitAction({ keys: ['y'], task: null }, true, 'shift+escape')).toEqual({
       kind: 'stop',
       task: null,
     });
+    expect(inputWaitAction(wait, false, 'shift+escape')).toBeNull();
   });
 
   it('kills the asking script on ctrl+escape, for one that ignores the stop', () => {

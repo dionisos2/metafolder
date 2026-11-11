@@ -502,10 +502,10 @@ async fn test_progress_updates_running_script() {
 #[tokio::test]
 async fn test_input_wait_refuses_the_reserved_keys() {
     // A script may not take the user's ways out of its own question (doc
-    // "Script sessions"): escape, the command input, F6 (which walks to the
+    // "Script sessions"): escape, shift+escape, the command input, F6 (which walks to the
     // question and back). Tab is no longer one: it is left to the panels.
     let ctx = setup().await;
-    for key in ["escape", "ctrl+escape", ":", "x", "f6"] {
+    for key in ["escape", "shift+escape", "ctrl+escape", ":", "x", "f6"] {
         let (status, body) =
             request(&ctx.router, "POST", "/gui/input", Some(json!({"keys": ["y", key]}))).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "'{key}' should be refused");

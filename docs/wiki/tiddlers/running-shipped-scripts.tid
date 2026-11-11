@@ -41,7 +41,7 @@ the GUI for what it was not given — a tag, a folder, which set to act on
 
 * Its output, and its exit code when not zero, go to the shell log of the workspace it was launched from; the focused slot switches to the [[shell panel]] unless that workspace already shows it.
 * It shows in the task bar under its file name, spinning while it works and still while it waits for you ([[Status bar and task bar]]).
-* Its questions appear in a bar above the status line, and Escape stops it — Ctrl+Escape kills one that would not stop ([[Script sessions]]).
+* Its questions appear in a bar above the status line, and Shift+Escape stops it — Ctrl+Escape kills one that would not stop; Escape alone only gives its keys back to the GUI ([[Script sessions]]).
 * A script that fails says so in red on the status bar of the workspace it was launched from: ''gui-tag-folder.sh failed (exit 1)''.
 * A script you stopped says ''gui-tag-folder.sh stopped'' (or ''killed'') there, not in red: a stop you asked for is not a failure.
 
@@ -55,5 +55,5 @@ bash ~/.config/metafolder/scripts/gui-tag-folder.sh music/jazz 'mfr_path =>* "/a
 
 They are installed without the execute bit, hence `bash`. Started this way a script is
 not known to the GUI: no task-bar entry, and its questions belong to no workspace, so
-they stay on screen whatever tab is shown. Escape cannot stop it — it closes the
+they stay on screen whatever tab is shown. Shift+Escape cannot stop it — it closes the
 question instead, which every shipped script takes as ''stop''.

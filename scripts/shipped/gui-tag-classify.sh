@@ -8,7 +8,7 @@
 #
 #   y / →  -> the file HAS the tag       (mf tag add)
 #   n / ←  -> the file does NOT have it  (mf tag deny)
-#   Escape -> stop
+#   Shift+Escape -> stop
 #
 # The tag flags (doc "Tag flags") change the questions: an `always` tag is
 # added without one, unless it is answered or under a negative; the children of

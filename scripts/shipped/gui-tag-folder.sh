@@ -413,7 +413,7 @@ apply_rest() { # <uuid> <y|n|s> <count>
 # How the walk ended: "" = still going, "user" = stopped, anything else is an
 # ERROR MESSAGE. The two must stay apart: bash disables `set -e` wherever a
 # failure is tested, so a failed `mf tag` inside a handler would otherwise be
-# indistinguishable from Escape and end the run with a cheerful "stopped."
+# indistinguishable from Shift+Escape and end the run with a cheerful "stopped."
 STOP=""
 SKIPPED=0
 WARNED_SKIP=0
@@ -573,7 +573,7 @@ done
 
 mf_gui_progress --done "$TOTAL" --total "$TOTAL"
 
-# The markers are offered for cleanup on every exit that can still ask. Escape
+# The markers are offered for cleanup on every exit that can still ask. Shift+Escape
 # kills the script, so nothing runs there; that is fine.
 if [ "$MARKERS" -gt 0 ]; then
     case "$(mf_gui_ask_answer \

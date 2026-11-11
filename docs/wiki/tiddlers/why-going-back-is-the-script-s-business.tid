@@ -14,8 +14,8 @@ live in the same place.
 `backspace` joined `escape` and the keys of `command-input:focus` and
 `script-keys:toggle` among the reserved combos (`keybindings.rs`, `reserved_combos`):
 `POST /gui/input` refuses a wait that asks for it. So no script can take the key for
-something else, and it means the same thing in every script — like Escape. But where
-Escape ends the ''run'', Backspace ends nothing: the shell resolves the wait with the
+something else, and it means the same thing in every script — like Shift+Escape. But
+where Shift+Escape ends the ''run'', Backspace ends nothing: the shell resolves the wait with the
 value `back` (`inputWaitAction` in `store.svelte.ts`).
 
 !! The meaning is the script's

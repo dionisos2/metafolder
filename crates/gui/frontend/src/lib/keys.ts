@@ -184,8 +184,8 @@ export function installKeys() {
       // a text input is focused, though — there the key is text the user is
       // typing (the temporary answer bindings are text_input=false likewise).
       // Turning the script keys off at the question bar's checkbox gives every
-      // key back to the panels; escape always stops the asking script, and
-      // ctrl+escape kills it.
+      // key back to the panels, and so does escape; shift+escape always stops
+      // the asking script, and ctrl+escape kills it.
       const action = textInput
         ? null
         : inputWaitAction(activeQuestion(), store.ui.scriptKeys, combo);
@@ -195,7 +195,9 @@ export function installKeys() {
         void dispatch(
           action.kind === 'answer'
             ? `answer:send ${action.value}`
-            : `script:${action.kind}${action.task ? ` ${action.task}` : ''}`,
+            : action.kind === 'keys-off'
+              ? 'script-keys:toggle'
+              : `script:${action.kind}${action.task ? ` ${action.task}` : ''}`,
         );
         return;
       }

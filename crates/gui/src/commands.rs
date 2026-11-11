@@ -932,7 +932,7 @@ fn stop_target(
 }
 
 /// `script:stop [<task>]` and `script:kill [<task>]` — end a running script:
-/// escape, resp. ctrl+escape, during its question, or a manual invocation. The
+/// shift+escape, resp. ctrl+escape, during its question, or a manual invocation. The
 /// first asks (`SIGTERM`), the second kills (`SIGKILL`, `kill = true`). With no
 /// run id it is the script asking question `question` (`stop_target`). A
 /// question owned by nobody has no script to end: the wait is closed instead,

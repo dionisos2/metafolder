@@ -677,7 +677,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stop_script_kills_the_run_and_its_children() {
-        // Escape during a question must actually end the script (doc
+        // Shift+Escape during a question must actually end the script (doc
         // "Script sessions"): the whole process group dies, so the `mf gui
         // input` child blocked on the question goes with it.
         let notifier = Arc::new(RecordingNotifier::new());

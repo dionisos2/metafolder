@@ -2,7 +2,7 @@ title: Script sessions
 tags: [[Scripting the GUI]]
 kind: reference
 aliases: scripting question script-keys [[script keys]]
-summary: What a running script is to the GUI — the workspaces it owns, its question bar, the keys it borrows and gives back, the four keys it can never take, and how it is stopped.
+summary: What a running script is to the GUI — the workspaces it owns, its question bar, the keys it borrows and gives back, the keys it can never take, and how it is stopped.
 
 
 A ''script session'' is a process driving the GUI through `mf gui`
@@ -42,9 +42,11 @@ seen before every panel and global binding, so a script offering `y`, `n` and `s
 never in conflict with an `n` bound in the panel underneath — and that panel cannot be
 used meanwhile. A key typed in a text field is text, and reaches neither.
 
-The ''script keys'' checkbox in the question bar gives them back, and so does
-<<key "script-keys:toggle" F6>>, which takes them again the next time; neither
-moves the focus from the panel it is on. Unticked, every key means
+The ''script keys'' checkbox in the question bar gives them back, and so do
+Escape and <<key "script-keys:toggle" F6>>, which takes them again the next time;
+none moves the focus from the panel it is on. Escape only ever gives them back: it
+reads as "close this", and ending a run on it, as it once did, stopped scripts by
+surprise. Unticked, every key means
 again what it means in the panel; the question stays, its keys struck through, and
 is answered with `answer:send`, or by ticking the box again. The choice holds from
 one question to the next, but every ''new'' run starts with its keys live: a script is
@@ -52,17 +54,18 @@ never deprived, without anyone noticing, of the answers it waits for.
 
 !! Reserved keys
 
-Six keys are yours, and a script cannot take them. A question asking for one is
+Seven keys are yours, and a script cannot take them. A question asking for one is
 refused (`400`) before it is shown.
 
 |!Key |!Does |
-|Escape |stops the asking script |
+|Escape |gives the script keys back |
+|Shift+Escape |stops the asking script |
 |Ctrl+Escape |kills it |
 |Backspace |goes back: answers `back` |
 |<<key "command-input:focus command clear" ":">>, <<key "command-input:focus bash" "!">> |open the command input |
 |<<key "script-keys:toggle" F6>> |flips the script keys |
 
-Escape, Ctrl+Escape and Backspace are reserved as such; the others are whatever keys
+Escape, Shift+Escape, Ctrl+Escape and Backspace are reserved as such; the others are whatever keys
 are bound to `command-input:focus` and `script-keys:toggle`, so
 rebinding those moves
 the reservation with them ([[Keybindings]]).
@@ -70,8 +73,8 @@ the reservation with them ([[Keybindings]]).
 There are two ways to end a run, and they are two commands — the GUI never turns the
 first into the second by itself:
 
-* ''Escape'' (<<cmd "script:stop">>) ''asks'': the script's whole process group gets `SIGTERM`. A script may trap it to finish what it is doing — a bash `EXIT` trap runs — and the command blocked on the question dies with the group, which releases the question. A script that ignores the signal goes on running.
-* ''Ctrl+Escape'' (<<cmd "script:kill">>) ''kills'': the group gets `SIGKILL`. Nothing of the script runs any more; a temporary file or a half-done step is left as it is. For a script that did not end on Escape. Some desktops keep Ctrl+Escape for themselves: `script:kill` in the command input does the same.
+* ''Shift+Escape'' (<<cmd "script:stop">>) ''asks'': the script's whole process group gets `SIGTERM`. A script may trap it to finish what it is doing — a bash `EXIT` trap runs — and the command blocked on the question dies with the group, which releases the question. A script that ignores the signal goes on running.
+* ''Ctrl+Escape'' (<<cmd "script:kill">>) ''kills'': the group gets `SIGKILL`. Nothing of the script runs any more; a temporary file or a half-done step is left as it is. For a script that did not end on Shift+Escape. Some desktops keep Ctrl+Escape for themselves: `script:kill` in the command input does the same.
 
 Either way the GUI cleans up what is its own to clean, once the script is gone: it
 closes the workspaces the script opened, and gives each slot that was showing one of
@@ -110,7 +113,7 @@ question away instead of leaving it over unrelated panels, and brings up the
 question of the workspace switched to, if it has one: two scripts can each wait in
 their own workspace.
 
-* The keys follow the bar: while the question is put away its keys are not borrowed, and neither Escape nor Ctrl+Escape ends a script whose question is off screen.
+* The keys follow the bar: while the question is put away its keys are not borrowed, and neither Shift+Escape nor Ctrl+Escape ends a script whose question is off screen.
 * A prompt put away gives the command input back — its own prompt, its draft, its history, Enter running commands — or the prompt of the workspace now on screen; what was typed as an answer is kept, and comes back with the focus when its workspace returns.
 * The script keeps waiting throughout. Nothing is cancelled by looking elsewhere.
 * A question whose workspace has been closed belongs to no workspace any more, and is shown everywhere.
@@ -129,5 +132,5 @@ stands as still as a blocked one ([[Status bar and task bar]]).
 
 * A script you stopped is reported as ''stopped'' (''killed'', after Ctrl+Escape) on the status bar of the workspace it was launched from, and `[stopped]` in its shell log ([[shell panel]]) — not as a failure.
 * A script that exits with an error is reported in red on the status bar of the workspace it was launched from, with its name and exit code, besides the `[exit N]` line of that workspace's shell log. Its output goes there too — not to a scratch workspace it opened, which is gone by then.
-* A question that could not be ''asked'' — the GUI closed, a timeout, another question already up — ends the shipped scripts with the reason on the status bar, instead of being read as an Escape.
+* A question that could not be ''asked'' — the GUI closed, a timeout, another question already up — ends the shipped scripts with the reason on the status bar, instead of being read as a stop.
 * A script killed while it waits releases its question: the next one is not refused for the rest of the session.

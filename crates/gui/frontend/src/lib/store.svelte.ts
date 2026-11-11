@@ -420,12 +420,15 @@ export function activeQuestion(): Question | null {
 /** What a pressed key does while a script's question is up, before the normal
  *  keybindings get a look at it (doc "Script sessions"):
  *
+ *  - `escape` — gives the script keys back, as `script-keys:toggle` does: the
+ *    question stays, struck through, and the run goes on. Escape reads as
+ *    "close this", so it must not end a run by surprise.
+ *  - `shift+escape` — always stops the asking script. No script can await it
+ *    (the GUI refuses a wait asking for a reserved key), so it is the one way
+ *    out that is guaranteed to work, whatever keys the script grabbed. A
+ *    script that needs to clean up offers its own quit key (`q` by convention).
  *  - `ctrl+escape` — always kills the asking script, for one that ignored
  *    the stop.
- *  - `escape` — always stops the asking script. No script can await it (the
- *    GUI refuses a wait asking for a reserved key), so it is the one way out
- *    that is guaranteed to work, whatever keys the script grabbed. A
- *    script that needs to clean up offers its own quit key (`q` by convention).
  *  - an awaited key — answers the script.
  *  - anything else, or the script keys turned off at the checkbox — null: the
  *    key falls through to the ordinary bindings (the panel's own `y` again).
@@ -442,15 +445,17 @@ export function inputWaitAction(
   combo: string | null,
 ):
   | { kind: 'answer'; value: string }
+  | { kind: 'keys-off' }
   | { kind: 'stop'; task: string | null }
   | { kind: 'kill'; task: string | null }
   | null {
   if (!wait || !combo || !scriptKeys) return null;
-  if (combo === 'escape') return { kind: 'stop', task: wait.task };
-  // The second way out of the run, for a script the stop did not end: escape
-  // asks (SIGTERM), ctrl+escape kills (SIGKILL). Reserved like escape.
+  if (combo === 'escape') return { kind: 'keys-off' };
+  // The two ways out of the run: shift+escape asks (SIGTERM), ctrl+escape
+  // kills (SIGKILL), for a script the stop did not end. Reserved like escape.
+  if (combo === 'shift+escape') return { kind: 'stop', task: wait.task };
   if (combo === 'ctrl+escape') return { kind: 'kill', task: wait.task };
-  // The way *back* out of a question, next to escape's way out of the run
+  // The way *back* out of a question, next to shift+escape's way out of the run
   // (doc "Script sessions"). Reserved like escape — a script cannot await
   // the key — but it resolves the wait rather than ending the run: only the
   // script knows what undoing its last answer means, so it is told, and one
