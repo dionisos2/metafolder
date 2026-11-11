@@ -41,7 +41,7 @@ what is in flight. It is not tied to a workspace, except for scripts.
 
 * ''Daemon tasks'' — every pending or running task of every loaded repository, whoever started it, the command line included: a bar when the task knows its amount of work, a spinner otherwise, labelled with its kind and phase ([[Following a task]]). The GUI asks the daemon every 300 ms, and shows a task only once it has run for a second: a watcher flush lasts milliseconds and fires whenever a watched file is touched, and showing it would flash a bar for work nobody asked to see — what a flush did goes to the message log instead ([[What a flush reports]]).
 * ''Scripts'' — a `!` command, a `script:run` script or a `file:open-with` program, for as long as it runs, labelled by its name. It spins while working, and gains a progress bar when the script reports its counts through [[mf gui progress]], with a phase naming the current step. While the script waits for an answer it stops spinning and says ''your answer'': working and waiting for you must never look alike. A script's entry belongs to the workspaces the script owns, and is hidden with them ([[Script sessions]]).
-* ''A daemon call you are waiting on'' — see below.
+* ''A daemon call you are waiting on'' — a request this GUI sent and whose answer has not come back yet; see below for how it differs from a daemon task.
 
 !! A daemon call you are waiting on
 
@@ -56,5 +56,23 @@ behind it. It appears only once a call has lasted 300 ms, so the fast majority n
 make it flicker, and it names the ''oldest'' call still running — the one actually
 waited on. The GUI's background polls (the change feed, the task bar's own) have
 nobody waiting on them and are not counted.
+
+!!! Not the same thing as a daemon task
+
+The two entries look alike but are seen from opposite sides:
+
+|!|!Daemon task |!Daemon call you are waiting on |
+|what it is |a unit of work in the daemon's task registry ([[Task kinds]]) |one HTTP request of ''this'' GUI, sent and not yet answered |
+|who sees it |the daemon; the GUI learns of it by polling |the GUI itself, without asking the daemon |
+|whose |anyone's: the command line, another GUI, the watcher |only this GUI's own, made because you acted |
+|does the GUI wait |not necessarily: an asynchronous task (a reconcile, a scan) answers its request at once and runs on |yes: until it returns, the actions behind it are stuck |
+|label |the task's kind and phase, with its progress |`<METHOD> <path>`, a spinner, no progress |
+
+They often show together, each telling half of the story:
+
+* a reconcile started from the GUI: its `POST …/reconcile` returns at once, so there is only the ''task'' — nothing is blocked;
+* a query that arrives during that reconcile: the query waits its turn ([[Task concurrency]]), so the ''call'' `POST …/query` says what is stuck, and the reconcile ''task'' says why;
+* a slow query on a large repository: both — the `query` task, registered so that others see the repository is busy, and the call this GUI waits on;
+* a slow write or settling call that is no task at all: only the ''call''.
 
 <<list-kind reference>>
