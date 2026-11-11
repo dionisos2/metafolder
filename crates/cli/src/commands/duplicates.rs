@@ -268,3 +268,140 @@ pub fn duplicate_clear(ctx: &Ctx, yes: bool) -> Result<i32, CliError> {
     println!("cleared {count} group(s)");
     Ok(0)
 }
+
+/// Which copies `mf duplicate keep` / `trash` send to the trash (doc "Deleting
+/// duplicate copies").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CopiesToTrash {
+    /// The copies outside the query, in the groups with a copy inside it.
+    KeepMatching,
+    /// The copies inside the query, in the groups with a copy outside it.
+    TrashMatching,
+}
+
+/// The query selecting the copies to trash, given the user's query `q`. Each
+/// trashed copy has a twin the same run leaves alone, so no group loses its
+/// last copy — the query itself guarantees it.
+pub(super) fn copies_to_trash(mode: CopiesToTrash, q: Json) -> Json {
+    let not = |q: Json| json!({"type": "not", "operand": q});
+    let same =
+        |target: Json| json!({"type": "same_as", "field": "mfr_duplicate_group", "target": target});
+    match mode {
+        CopiesToTrash::KeepMatching => {
+            json!({"type": "and", "operands": [same(q.clone()), not(q)]})
+        }
+        CopiesToTrash::TrashMatching => {
+            json!({"type": "and", "operands": [q.clone(), same(not(q))]})
+        }
+    }
+}
+
+pub struct CopiesArgs<'a> {
+    pub mode: CopiesToTrash,
+    pub query: &'a str,
+    pub simplified: bool,
+    pub dry_run: bool,
+    pub yes: bool,
+}
+
+/// `mf duplicate keep` / `mf duplicate trash` — the copies a query keeps or
+/// gives up, across every group, through the trash.
+pub fn duplicate_copies(ctx: &Ctx, args: &CopiesArgs) -> Result<i32, CliError> {
+    let predicate =
+        if args.simplified { expand_simplified(args.query)? } else { args.query.to_string() };
+    let victims = copies_to_trash(args.mode, parse_dsl(&predicate)?);
+    let info = ctx.repo_info()?;
+    let root = info["root"]
+        .as_str()
+        .ok_or_else(|| CliError::Op("daemon did not report the repo root".into()))?;
+    let base = ctx.repo_base()?;
+
+    let mut found = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let mut body = json!({
+            "query": victims,
+            "select": ["mfr_duplicate_group", "mfr_size", "mfr_inode"],
+            "limit": ctx.page_size,
+        });
+        if let Some(c) = &cursor {
+            body["cursor"] = json!(c);
+        }
+        let resp = ctx.client.post(&format!("{base}/query"), &body)?;
+        found.extend(resp["results"].as_array().cloned().unwrap_or_default());
+        match resp["next_cursor"].as_str() {
+            Some(c) => cursor = Some(c.to_string()),
+            None => break,
+        }
+    }
+    if found.is_empty() {
+        println!("No duplicate copy to trash.");
+        return Ok(0);
+    }
+    let resolved = ctx
+        .client
+        .post(&format!("{base}/query/fields/resolve-tree"), &json!({"query": victims}))?;
+
+    let field = |rec: &Json, name: &str| -> Option<Json> {
+        rec["fields"]
+            .as_array()
+            .and_then(|fields| fields.iter().find(|f| f["name"] == name))
+            .map(|f| f["value"]["value"].clone())
+    };
+    let mut copies = Vec::new();
+    let mut groups = std::collections::BTreeSet::new();
+    let mut reclaimable = 0u64;
+    for rec in &found {
+        let Some(uuid) = rec["uuid"].as_str() else { continue };
+        let Some(path) =
+            metafolder_core::sync::lookup::paths_in(&resolved[uuid]).into_iter().next()
+        else {
+            continue;
+        };
+        if let Some(group) = field(rec, "mfr_duplicate_group") {
+            groups.insert(group.to_string());
+        }
+        // A name sharing its inode frees nothing once trashed.
+        if field(rec, "mfr_inode").is_none() {
+            reclaimable += field(rec, "mfr_size").and_then(|s| s.as_u64()).unwrap_or(0);
+        }
+        copies.push((path, uuid.to_string()));
+    }
+    copies.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+
+    for (path, _) in &copies {
+        println!("  {}", path.display());
+    }
+    let n = copies.len();
+    let g = groups.len();
+    println!(
+        "{n} cop{} in {g} group{}; up to {} reclaimed once the trash is pruned",
+        if n == 1 { "y" } else { "ies" },
+        if g == 1 { "" } else { "s" },
+        format_size(reclaimable),
+    );
+    if args.dry_run {
+        return Ok(0);
+    }
+    if !args.yes && !confirm("Move these copies to the trash? [y/N] ")? {
+        println!("Aborted.");
+        return Ok(0);
+    }
+
+    let trash = trash_dir_of(&info)?;
+    let repo = repo_id(ctx)?;
+    let mut trashed = 0;
+    for (path, uuid) in &copies {
+        let abs = metafolder_core::fsentry::join_tree(Path::new(root), path).ok_or_else(|| {
+            CliError::Op(format!("not a path in the repository: {}", path.display()))
+        })?;
+        // A failure stops the run: the copies already trashed have left their
+        // groups, and a rerun plans afresh from what is left.
+        trash_tracked(ctx, &trash, &repo, &abs, uuid, false).map_err(|e| {
+            CliError::Op(format!("{} (after trashing {trashed} of {n})", e.message()))
+        })?;
+        trashed += 1;
+    }
+    println!("trashed {trashed} cop{}", if trashed == 1 { "y" } else { "ies" });
+    Ok(0)
+}

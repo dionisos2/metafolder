@@ -4,8 +4,9 @@ kind: reference
 summary: Each set of identical files is a metarecord its members point at; its counters stay true as copies leave.
 
 Each set of identical files is a ''metarecord of its own'', not a field repeated
-on the files: a group can be queried, sorted and counted, and could one day carry
-a decision of its own ("the copy I keep"). It is the same modelling as
+on the files: a group can be queried, sorted and counted. It carries no user data,
+and is deleted once it is not needed: a decision such as "the copy I keep" is a field
+of the file, which outlives the group ([[Deleting duplicate copies]]). It is the same modelling as
 [[Hierarchical tags]]. It has no `mfr_path`: an abstract record, like a tag.
 
 |!Field |!Type |!Meaning |

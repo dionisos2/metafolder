@@ -1,0 +1,31 @@
+title: $:/mf/gen/CLI command/mf duplicate trash
+catalog: CLI command
+target: mf duplicate trash
+summary: Trash the copies a query matches, where a twin exists outside it
+
+!! Reference
+
+```
+Trash the copies a query matches, where a twin exists outside it
+
+In every group with a copy outside the query, the copies matching it go to the trash; a group wholly inside the query is left alone, so no group loses its last copy. Lists the copies and asks first.
+
+Usage: mf duplicate trash [OPTIONS] <QUERY>
+
+Arguments:
+  <QUERY>
+          DSL query selecting the copies to trash (e.g. `mfr_path ->* "/old"`)
+
+Options:
+  -s, --simplified
+          Treat the query as simplified-language text and expand it first
+
+      --dry-run
+          List the copies that would be trashed, and stop
+
+  -y, --yes
+          Skip the confirmation prompt
+
+  -h, --help
+          Print help (see a summary with '-h')
+```

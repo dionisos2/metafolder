@@ -1,0 +1,19 @@
+title: mf duplicate trash
+tags: [[CLI command]] Duplicates
+kind: reference
+summary: Trash the copies a query matches, where a twin exists outside it
+
+In every group with a copy outside the query, every copy matching it goes to the
+trash; a group wholly inside the query is left alone. The copies to trash are the
+query `Q AND same(mfr_duplicate_group, NOT Q)`: each has a twin outside `Q` that the
+run leaves, so no group loses its last copy ([[Deleting duplicate copies]]).
+
+```
+mf duplicate trash 'mfr_path ->* "/downloads"'
+```
+
+It is <<cmd "mf duplicate keep">> of the complement — `keep 'NOT (Q)'` trashes the
+same copies — spelled for the case where the query at hand names what to give up:
+a folder to empty of what is kept elsewhere, or the folder a list shows
+([[mf:duplicate]]). Listing, confirmation, `--dry-run` and a failure mid-run are as
+for `keep`.

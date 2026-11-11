@@ -1,17 +1,43 @@
 title: Deleting duplicate copies
 tags: Duplicates
 kind: guide
-summary: In the duplicates panel, keep the copy under the cursor and trash the others, or trash one copy — your choice, never a heuristic's.
+summary: Keep the copy under the cursor, trash one copy, or keep what a query matches across every group — your choice, never a heuristic's.
 
-Which copy survives is always yours to choose. Nothing picks one for you, and no
-action spans several groups. In the [[duplicates panel]], both deletions act on
-the row under the cursor:
+Which copy survives is always yours to choose: nothing picks one for you — not the
+oldest, not the shortest path. You choose it copy by copy, or you write the rule and
+metafolder applies it to every group.
+
+!! One group at a time
+
+In the [[duplicates panel]], both deletions act on the row under the cursor:
 
 * ''keep this one'' — <<key "duplicates:keep" "p k">>, and the first item of the context menu: trashes every ''other'' copy of the group. The question names every path it will trash, and how much space pruning the trash will then reclaim.
 * ''trash this one'' — <<key "item:delete" Delete>>: that copy alone, as Delete does anywhere else ([[Deleting an item]]). On a group row, Delete deletes the group's own metarecord.
 
 Keeping one asks first, always, since it touches several files; trashing one
 asks unless the question is switched off ([[Confirming a trashing]]).
+
+!! Every group, by a query
+
+<<cmd "mf duplicate keep">> keeps the copies a query matches: in each group with
+such a copy, the others go to the trash. The query is any query — a folder,
+`mfr_path ->* "/photos/sorted"`, or a field you set on the copies to keep,
+`keep = true`, which a later scan leaves alone. <<cmd "mf duplicate trash">> is the
+same with the complement, for a query naming what to give up — a folder to empty of
+what is kept elsewhere.
+
+What is trashed is itself a query, and each copy it holds has a twin the same run
+leaves alone:
+
+|!Command |!Copies trashed |!The twin left |
+|`keep Q` |`same(mfr_duplicate_group, Q) AND NOT Q` |in `Q` |
+|`trash Q` |`Q AND same(mfr_duplicate_group, NOT Q)` |outside `Q` |
+
+So a group is touched only when the query splits it, and never loses its last copy;
+a group with several copies in what is kept keeps them all. Both list the copies,
+their groups and the space reclaimed before asking, and `--dry-run` stops there.
+
+!! What follows
 
 The copies go to the [[Trash]], so a mistake is recoverable
 ([[Restoring from the trash]]); the space is freed when the trash is pruned

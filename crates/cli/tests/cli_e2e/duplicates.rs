@@ -943,3 +943,107 @@ fn test_hash_takes_the_simplified_language() {
     assert_ok(&out);
     assert!(out.stdout.contains("hashed: 1"), "summary: {}", out.stdout);
 }
+
+// ── Trashing copies by a query (doc "Deleting duplicate copies") ──────────────
+
+/// Two folders sharing copies, plus a group with no copy in `keep/` and one
+/// with every copy in `other/`.
+fn keep_and_other(prefix: &str) -> (String, TempDir) {
+    tracked_repo(
+        prefix,
+        &[
+            ("keep/a.txt", b"the a content"),
+            ("other/a.txt", b"the a content"),
+            ("third/a.txt", b"the a content"),
+            ("other/b.txt", b"the b content"),
+            ("third/b.txt", b"the b content"),
+            ("other/c1.txt", b"the c content"),
+            ("other/c2.txt", b"the c content"),
+        ],
+    )
+}
+
+#[test]
+fn test_duplicate_keep_trashes_the_copies_outside_the_query() {
+    let (repo, dir) = keep_and_other("dupkeep");
+    assert_ok(&mf(&["-u", &repo, "duplicate", "scan"]));
+
+    let out = mf(&["-u", &repo, "duplicate", "keep", r#"mfr_path ->* "/keep""#, "-y"]);
+    assert_ok(&out);
+    // Only the group with a copy under keep/ is touched: both of its others go.
+    assert!(dir.join("keep/a.txt").exists(), "the kept copy stays");
+    assert!(!dir.join("other/a.txt").exists(), "trashed: {}", out.stdout);
+    assert!(!dir.join("third/a.txt").exists(), "trashed: {}", out.stdout);
+    // A group with no copy matching the query is left alone, whole.
+    for kept in ["other/b.txt", "third/b.txt", "other/c1.txt", "other/c2.txt"] {
+        assert!(dir.join(kept).exists(), "{kept} untouched");
+    }
+    assert!(out.stdout.contains("trashed 2"), "summary: {}", out.stdout);
+}
+
+#[test]
+fn test_duplicate_trash_empties_the_query_of_copies_kept_elsewhere() {
+    let (repo, dir) = keep_and_other("duptrash");
+    assert_ok(&mf(&["-u", &repo, "duplicate", "scan"]));
+
+    let out = mf(&["-u", &repo, "duplicate", "trash", r#"mfr_path ->* "/other""#, "-y"]);
+    assert_ok(&out);
+    assert!(!dir.join("other/a.txt").exists(), "a twin is outside other/");
+    assert!(!dir.join("other/b.txt").exists(), "a twin is outside other/");
+    // Not the reverse of keep: the copies outside the query all stay.
+    for kept in ["keep/a.txt", "third/a.txt", "third/b.txt"] {
+        assert!(dir.join(kept).exists(), "{kept} untouched");
+    }
+    // Every copy of this group is in other/: trashing them would lose it.
+    assert!(dir.join("other/c1.txt").exists() && dir.join("other/c2.txt").exists());
+    assert!(out.stdout.contains("trashed 2"), "summary: {}", out.stdout);
+}
+
+#[test]
+fn test_duplicate_keep_dry_run_names_the_copies_and_touches_nothing() {
+    let (repo, dir) = keep_and_other("dupkeepdry");
+    assert_ok(&mf(&["-u", &repo, "duplicate", "scan"]));
+
+    let out = mf(&["-u", &repo, "duplicate", "keep", r#"mfr_path ->* "/keep""#, "--dry-run"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("/other/a.txt"), "named: {}", out.stdout);
+    assert!(out.stdout.contains("/third/a.txt"), "named: {}", out.stdout);
+    assert!(!out.stdout.contains("b.txt"), "not named: {}", out.stdout);
+    assert!(out.stdout.contains("1 group"), "groups counted: {}", out.stdout);
+    assert!(dir.join("other/a.txt").exists() && dir.join("third/a.txt").exists());
+}
+
+#[test]
+fn test_duplicate_keep_with_nothing_to_trash_says_so() {
+    let (repo, _dir) = keep_and_other("dupkeepnone");
+    assert_ok(&mf(&["-u", &repo, "duplicate", "scan"]));
+    let out = mf(&["-u", &repo, "duplicate", "keep", r#"mfr_path ->* "/nowhere""#, "-y"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("No duplicate copy to trash"), "{}", out.stdout);
+}
+
+#[test]
+fn test_duplicate_keep_takes_a_simplified_query() {
+    let (repo, dir) = keep_and_other("dupkeepsimple");
+    assert_ok(&mf(&["-u", &repo, "duplicate", "scan"]));
+    // A tag is the field form of the decision (doc "Deleting duplicate copies").
+    let a = query_one(&repo, r#"mfr_path = "/keep/a.txt""#);
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &a, "field", "set", "keep:bool=true"]));
+    let out = mf(&["-u", &repo, "duplicate", "keep", "-s", "keep=true", "-y"]);
+    assert_ok(&out);
+    assert!(!dir.join("other/a.txt").exists() && !dir.join("third/a.txt").exists());
+}
+
+#[test]
+fn test_duplicate_trash_is_keep_of_the_complement() {
+    let (repo, _dir) = keep_and_other("duptrashnot");
+    assert_ok(&mf(&["-u", &repo, "duplicate", "scan"]));
+    let listed = |args: &[&str]| -> Vec<String> {
+        let out = mf(&[&["-u", &repo, "duplicate"], args, &["--dry-run"]].concat());
+        assert_ok(&out);
+        out.stdout.lines().filter(|l| l.starts_with("  ")).map(str::to_string).collect()
+    };
+    let trash = listed(&["trash", r#"mfr_path ->* "/other""#]);
+    assert_eq!(trash.len(), 2);
+    assert_eq!(trash, listed(&["keep", r#"NOT (mfr_path ->* "/other")"#]));
+}

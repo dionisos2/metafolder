@@ -79,6 +79,23 @@ pub fn trash_add(ctx: &Ctx, path: &Path, force: bool) -> Result<i32, CliError> {
             CliError::Op(format!("no metarecord is associated with {}", abs.display()))
         })?;
 
+    let id = trash_tracked(ctx, &trash, &repo, &abs, &uuid, force)?;
+    println!("trashed {} (id {id})", abs.display());
+    Ok(0)
+}
+
+/// Trash the file at `abs`, whose metarecord is `uuid`: the metadata half
+/// through the daemon, then the bytes (doc "What trashing does"). Returns the
+/// trash entry's id.
+pub(super) fn trash_tracked(
+    ctx: &Ctx,
+    trash: &TrashDir,
+    repo: &str,
+    abs: &Path,
+    uuid: &str,
+    force: bool,
+) -> Result<String, CliError> {
+    let client = &ctx.client;
     // Capture first: once the metarecords are gone there is nothing left to
     // read. This takes the target and everything under it — which the trashing
     // deletes — plus its ancestors, which it does not.
@@ -87,18 +104,17 @@ pub fn trash_add(ctx: &Ctx, path: &Path, force: bool) -> Result<i32, CliError> {
         .map_err(trash_daemon_err)?;
     let version = rec["version"].as_u64();
     let subtree =
-        metafolder_core::trash::capture_nodes(client, &repo, &rec).map_err(trash_daemon_err)?;
+        metafolder_core::trash::capture_nodes(client, repo, &rec).map_err(trash_daemon_err)?;
 
     // Then the metadata half, then the bytes (doc "What trashing does"):
     // deleting before moving is what leaves the watcher nothing to orphan when
     // the file disappears.
-    metafolder_core::trash::delete_trashed(client, &repo, &subtree, force)
+    metafolder_core::trash::delete_trashed(client, repo, &subtree, force)
         .map_err(trash_daemon_err)?;
 
-    let entry = trash.trash_path(&abs, Reason::Manual, None, Some(uuid), version)?;
+    let entry = trash.trash_path(abs, Reason::Manual, None, Some(uuid.to_string()), version)?;
     trash.attach_subtree(&entry.id, subtree)?;
-    println!("trashed {} (id {})", abs.display(), entry.id);
-    Ok(0)
+    Ok(entry.id)
 }
 
 /// `mf trash list`: one row per entry, newest first.

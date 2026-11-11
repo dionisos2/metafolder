@@ -1,0 +1,31 @@
+title: $:/mf/gen/CLI command/mf duplicate keep
+catalog: CLI command
+target: mf duplicate keep
+summary: Keep the copies a query matches: trash their twins outside it
+
+!! Reference
+
+```
+Keep the copies a query matches: trash their twins outside it
+
+In every group with a copy matching the query, the copies that do not match go to the trash; a group with no matching copy is left alone, so no group loses its last copy. Lists the copies and asks first.
+
+Usage: mf duplicate keep [OPTIONS] <QUERY>
+
+Arguments:
+  <QUERY>
+          DSL query selecting the copies to keep (e.g. `mfr_path ->* "/photos"`)
+
+Options:
+  -s, --simplified
+          Treat the query as simplified-language text and expand it first
+
+      --dry-run
+          List the copies that would be trashed, and stop
+
+  -y, --yes
+          Skip the confirmation prompt
+
+  -h, --help
+          Print help (see a summary with '-h')
+```

@@ -1,0 +1,20 @@
+title: mf duplicate keep
+tags: [[CLI command]] Duplicates
+kind: reference
+summary: Keep the copies a query matches: trash their twins outside it
+
+In every group with a copy matching the query, every copy that does not match goes
+to the trash; a group with no copy matching it is left alone. The copies to trash
+are themselves a query, `same(mfr_duplicate_group, Q) AND NOT Q`, and each has a twin
+in `Q` that the run leaves, so no group loses its last copy
+([[Deleting duplicate copies]]).
+
+```
+mf duplicate keep 'mfr_path ->* "/photos/sorted"'
+mf duplicate keep -s 'keep=true'
+```
+
+It lists the paths, the number of groups and the space the trash will reclaim once
+pruned, then asks (`-y` skips the question); `--dry-run` stops after the list. A
+failure stops the run, saying how many copies were already trashed: they have left
+their groups, and running it again plans afresh from what remains.

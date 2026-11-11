@@ -98,7 +98,8 @@ enum Command {
     /// The scan writes its conclusion — one `duplicate_group` metarecord per
     /// set, referenced by its members through `mfr_duplicate_group` — so the
     /// listing is an ordinary query and "what else is identical to this file"
-    /// is `same(mfr_duplicate_group, <uuid>)`. Nothing here deletes a file.
+    /// is `same(mfr_duplicate_group, <uuid>)`. `keep` and `trash` send copies to
+    /// the trash by a query, never a group's last one.
     Duplicate {
         #[command(subcommand)]
         command: Option<DuplicateCommand>,
@@ -946,6 +947,42 @@ enum DuplicateCommand {
         /// Milliseconds between task polls
         #[arg(long = "poll-interval", value_name = "MS")]
         poll_interval: Option<u64>,
+    },
+    /// Keep the copies a query matches: trash their twins outside it
+    ///
+    /// In every group with a copy matching the query, the copies that do not
+    /// match go to the trash; a group with no matching copy is left alone, so
+    /// no group loses its last copy. Lists the copies and asks first.
+    Keep {
+        /// DSL query selecting the copies to keep (e.g. `mfr_path ->* "/photos"`)
+        query: String,
+        /// Treat the query as simplified-language text and expand it first
+        #[arg(short = 's', long = "simplified")]
+        simplified: bool,
+        /// List the copies that would be trashed, and stop
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+        /// Skip the confirmation prompt
+        #[arg(short = 'y', long = "yes")]
+        yes: bool,
+    },
+    /// Trash the copies a query matches, where a twin exists outside it
+    ///
+    /// In every group with a copy outside the query, the copies matching it go
+    /// to the trash; a group wholly inside the query is left alone, so no group
+    /// loses its last copy. Lists the copies and asks first.
+    Trash {
+        /// DSL query selecting the copies to trash (e.g. `mfr_path ->* "/old"`)
+        query: String,
+        /// Treat the query as simplified-language text and expand it first
+        #[arg(short = 's', long = "simplified")]
+        simplified: bool,
+        /// List the copies that would be trashed, and stop
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+        /// Skip the confirmation prompt
+        #[arg(short = 'y', long = "yes")]
+        yes: bool,
     },
     /// Delete every duplicate group and every link to one (the hashes are kept)
     Clear {
@@ -1986,6 +2023,26 @@ fn dispatch_duplicate(ctx: &Ctx, command: Option<DuplicateCommand>) -> CmdResult
             )
         }
         DuplicateCommand::Clear { yes } => commands::duplicate_clear(ctx, yes),
+        DuplicateCommand::Keep { query, simplified, dry_run, yes } => commands::duplicate_copies(
+            ctx,
+            &commands::CopiesArgs {
+                mode: commands::CopiesToTrash::KeepMatching,
+                query: &query,
+                simplified,
+                dry_run,
+                yes,
+            },
+        ),
+        DuplicateCommand::Trash { query, simplified, dry_run, yes } => commands::duplicate_copies(
+            ctx,
+            &commands::CopiesArgs {
+                mode: commands::CopiesToTrash::TrashMatching,
+                query: &query,
+                simplified,
+                dry_run,
+                yes,
+            },
+        ),
     }
 }
 
