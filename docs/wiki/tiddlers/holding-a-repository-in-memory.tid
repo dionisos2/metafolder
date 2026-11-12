@@ -39,7 +39,8 @@ copy — `null` for one loaded the ordinary way.
 !! Switching a loaded repository
 
 A loaded repository is held in memory, or let go of, without unloading it:
-''Hold in memory'' / ''Read on disk'' on its row in the [[repos panel]], `repos:toggle-memory [repo]` (the active repository by default) from the keyboard, or
+''Hold in memory'' / ''Read on disk'' on its row in the [[repos panel]], `repos:toggle-memory [repo]` (the active repository by default) from the keyboard,
+[[mf repo toggle-memory]] from a shell, or
 `{"in_memory": true}` / `false` for [[POST /repos/:repo/memory]]. Held, the store is
 copied in as at a load — and, for that while, every other request to the repository
 waits, as it would for the load's `memory` phase. Let go, the copy is removed and the

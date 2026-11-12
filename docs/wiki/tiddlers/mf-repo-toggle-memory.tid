@@ -1,0 +1,9 @@
+title: mf repo toggle-memory
+tags: [[CLI command]] Storage
+kind: reference
+summary: Hold the selected repository in memory, or let go of it
+
+Holds the store of the repository `-n`/`-u` names in memory, or lets go of it if it
+already is, without unloading it — the [[GUI command]] [[repos:toggle-memory]] from a
+shell; prints `held in memory` or `read on disk`. Refused when the store does not fit
+in the room left ([[Holding a repository in memory]]).

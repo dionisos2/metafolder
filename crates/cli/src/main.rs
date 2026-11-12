@@ -391,6 +391,13 @@ enum RepoCommand {
     Known,
     /// Unload the selected repository (stops its watcher, releases its DB lock)
     Unload,
+    /// Hold the selected repository in memory, or let go of it
+    ///
+    /// Without unloading it, as the GUI's `repos:toggle-memory`: a repository
+    /// read on disk is copied into memory, one held in memory is read on disk
+    /// again. Prints "held in memory" or "read on disk". Refused when the
+    /// store does not fit in the room left.
+    ToggleMemory,
     /// Print the selected repository's root (an absolute path)
     Root,
     /// Rename the selected repository and print its UUID
@@ -1504,6 +1511,7 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
             }
             RepoCommand::Known => commands::known_repos(ctx),
             RepoCommand::Unload => commands::unload(ctx),
+            RepoCommand::ToggleMemory => commands::toggle_repo_memory(ctx),
             RepoCommand::Root => commands::print_repo_root(ctx),
             RepoCommand::Check => commands::check_repo(ctx),
             RepoCommand::Reindex => commands::reindex_repo(ctx),

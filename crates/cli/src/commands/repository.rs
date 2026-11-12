@@ -181,6 +181,17 @@ pub fn check_repo(ctx: &Ctx) -> Result<i32, CliError> {
     Ok(1)
 }
 
+/// `mf repo toggle-memory`: holds the repository in memory, or lets go of it
+/// — the opposite of what it is (doc "Holding a repository in memory").
+pub fn toggle_repo_memory(ctx: &Ctx) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let held = !ctx.repo_info()?["in_memory"].is_null();
+    let body = json!({"in_memory": !held});
+    let info = ctx.client.request("POST", &format!("{base}/memory"), &[], Some(&body))?;
+    println!("{}", if info["in_memory"].is_null() { "read on disk" } else { "held in memory" });
+    Ok(0)
+}
+
 /// `mf repo backup [--to DIR]`: prints the backup's directory.
 pub fn backup_repo(ctx: &Ctx, to: Option<&Path>) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;

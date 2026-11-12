@@ -17,6 +17,7 @@ Commands:
   load           Load an existing repository, wait for its warmup and print its UUID
   known          List the repositories the daemon's configuration knows by name, loaded or not (pretty-printed JSON)
   unload         Unload the selected repository (stops its watcher, releases its DB lock)
+  toggle-memory  Hold the selected repository in memory, or let go of it
   root           Print the selected repository's root (an absolute path)
   rename         Rename the selected repository and print its UUID
   check          Check that the selected repository's indexes agree with its data

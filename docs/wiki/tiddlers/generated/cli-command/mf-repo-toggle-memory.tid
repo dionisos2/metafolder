@@ -1,0 +1,18 @@
+title: $:/mf/gen/CLI command/mf repo toggle-memory
+catalog: CLI command
+target: mf repo toggle-memory
+summary: Hold the selected repository in memory, or let go of it
+
+!! Reference
+
+```
+Hold the selected repository in memory, or let go of it
+
+Without unloading it, as the GUI's `repos:toggle-memory`: a repository read on disk is copied into memory, one held in memory is read on disk again. Prints "held in memory" or "read on disk". Refused when the store does not fit in the room left.
+
+Usage: mf repo toggle-memory
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+```

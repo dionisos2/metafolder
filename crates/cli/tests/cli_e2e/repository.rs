@@ -207,6 +207,38 @@ fn test_load_in_memory_holds_the_store_in_memory() {
     assert!(ours["in_memory"]["bytes"].as_u64().unwrap() > 0, "{ours}");
 }
 
+/// `mf repo toggle-memory`, as the GUI's `repos:toggle-memory` (doc
+/// "Holding a repository in memory"): holds a loaded repository in memory,
+/// then lets go of it, without unloading it.
+#[test]
+fn test_toggle_memory_holds_then_lets_go() {
+    let (repo, _root) = init_repo("toggle_mem");
+    let held = |repo: &str| {
+        let out = mf(&["repo", "list"]);
+        assert_ok(&out);
+        let listed: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+        let ours =
+            listed.as_array().unwrap().iter().find(|r| r["repo_uuid"] == repo).unwrap().clone();
+        !ours["in_memory"].is_null()
+    };
+    assert!(!held(&repo));
+    let out = mf(&["-u", &repo, "repo", "toggle-memory"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), "held in memory");
+    assert!(held(&repo));
+    let out = mf(&["-u", &repo, "repo", "toggle-memory"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), "read on disk");
+    assert!(!held(&repo));
+}
+
+#[test]
+fn test_toggle_memory_requires_repo() {
+    let out = mf(&["repo", "toggle-memory"]);
+    assert_eq!(out.code, 2, "stderr: {}", out.stderr);
+    assert!(out.stderr.contains("repository selector"), "stderr: {}", out.stderr);
+}
+
 /// `mf -n NAME repo load` loads a repository the daemon's configuration
 /// knows (doc "Known repositories"); `mf repo known` lists them.
 #[test]
