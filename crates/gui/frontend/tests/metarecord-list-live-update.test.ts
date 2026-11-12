@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { changeFeed, createPanelApi } from '../src/lib/panels/api';
 import { shippedDefaults } from './support/shipped-defaults';
+import { createVisibilityGate } from '../../panel-shim/visibility.js';
 
 const PANEL_DIR = resolvePath(process.cwd(), '../default-config/panel-types/metarecord-list');
 
@@ -183,7 +184,12 @@ function fakeDaemon() {
   };
 }
 
-function setup() {
+/** The panel's visibility: always shown, unless a test hands its own gate. */
+type Gate = { visible: boolean; set: (v: boolean) => void; whenVisible: (fn: () => void) => void };
+
+function setup(
+  visibilityGate: Gate = { visible: true, set: () => {}, whenVisible: (fn: () => void) => fn() },
+) {
   const daemon = fakeDaemon();
   const vars = new Map<string, unknown>([['active_repo', REPO]]);
   const varListeners = new Map<string, ((v: unknown) => void)[]>();
@@ -233,7 +239,7 @@ function setup() {
       pageSize: 100,
       panelDefaults: shippedDefaults(),
       root: {} as ShadowRoot,
-      visibilityGate: { visible: true, set: () => {}, whenVisible: (fn: () => void) => fn() },
+      visibilityGate,
     },
   );
   return { api: instance.api, daemon, invoke };
@@ -346,6 +352,38 @@ describe('metarecord-list live update', () => {
     const after = rows(shadow);
     expect(after.map((r) => r.path)).not.toContain('/docs/report.txt');
     expect(after.every((r) => !r.orphan)).toBe(true);
+  });
+
+  // A hidden list is refreshed once when it comes back, however many changes
+  // arrived meanwhile: each change used to arm a fresh closure, which the
+  // gate could not tell from the last, and the list then re-read its rows —
+  // watch check included — once per change, one after the other.
+  test('changes while hidden refresh the list once when it is shown again', async () => {
+    const gate = createVisibilityGate();
+    gate.set(true);
+    const { api, daemon, invoke } = setup(gate);
+    const shadow = shadowFor();
+    await mountPanel(api, shadow);
+    await settle();
+    const watchChecks = () =>
+      invoke.mock.calls.filter(
+        ([command, args]) =>
+          command === 'daemon_request' &&
+          String((args as { path?: string })?.path).endsWith('/watch/check'),
+      ).length;
+
+    gate.set(false);
+    for (let i = 0; i < 5; i++) {
+      daemon.rename(`notes-${i}.txt`);
+      await api.changes.sync(REPO);
+      await settle();
+    }
+    const before = watchChecks();
+    gate.set(true);
+    await settle();
+
+    expect(watchChecks() - before).toBe(1);
+    expect(rows(shadow).map((r) => r.path)).toContain('/notes-4.txt');
   });
 
   // A symlink whose target is gone is still a file in the folder: the tracked

@@ -242,12 +242,11 @@ export function createQueryEditor({ root, metafolder, history, normalHistory, on
 
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let followTimer;
+  // One function, so the follows armed while hidden run once when shown.
+  const deferredFollow = () => void followQueryVariables();
   function scheduleFollowQueryVariables() {
     clearTimeout(followTimer);
-    followTimer = setTimeout(
-      () => metafolder.whenVisible(() => void followQueryVariables()),
-      0,
-    );
+    followTimer = setTimeout(() => metafolder.whenVisible(deferredFollow), 0);
   }
 
   /** Puts `dsl` in the normal zone, where a query the GUI wrote stays visible

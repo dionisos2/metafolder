@@ -1070,12 +1070,11 @@ export async function mount(root, metafolder) {
 
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let followTimer;
+  // One function, so the follows armed while hidden run once when shown.
+  const deferredFollow = () => void followLocationVariables();
   function scheduleFollowLocation() {
     clearTimeout(followTimer);
-    followTimer = setTimeout(
-      () => metafolder.whenVisible(() => void followLocationVariables()),
-      0,
-    );
+    followTimer = setTimeout(() => metafolder.whenVisible(deferredFollow), 0);
   }
 
   /** The current listing's real entries — the synthetic "." / ".." rows are
@@ -1432,9 +1431,11 @@ export async function mount(root, metafolder) {
   // metarecord↔file link a quiet period after the fs.move, or an external change. The
   // background change-feed poll (and our catch-up nudges above) report it; here
   // we react by re-querying this directory's tracked status.
+  // One function, so the changes that arrive while hidden refresh once.
+  const deferredRefreshTracked = () => void refreshTracked();
   const unsubscribeChanges = changes.subscribe(({ repo: changedRepo }) => {
     if (changedRepo !== repo || currentDir === null) return;
-    metafolder.whenVisible(() => void refreshTracked());
+    metafolder.whenVisible(deferredRefreshTracked);
   });
 
   metafolder.whenVisible(deferredStart);

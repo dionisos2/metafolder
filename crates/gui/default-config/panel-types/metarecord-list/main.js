@@ -1395,10 +1395,13 @@ export async function mount(root, metafolder) {
   // a displayed row: a path spells every ancestor's name, and renaming a
   // directory writes that directory alone — the rows below it, which are what
   // is on screen, are never named by the feed.
+  // One function, armed by every change: the gate runs it once at the next
+  // display, where a fresh closure per change would run once per change.
+  const deferredRefresh = () => void refreshDisplayed();
   const unsubscribeChanges = changes.subscribe(({ repo: changedRepo, uuids }) => {
     if (changedRepo !== repo || metarecords.length === 0) return;
     display.forgetOrphans(uuids); // null: the whole repo may have changed
-    metafolder.whenVisible(() => void refreshDisplayed());
+    metafolder.whenVisible(deferredRefresh);
   });
   /** @param {unknown} value */
   async function onColumnsChanged(value) {

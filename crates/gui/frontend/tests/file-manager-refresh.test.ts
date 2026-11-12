@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { shippedDefaults } from './support/shipped-defaults';
+import { createVisibilityGate } from '../../panel-shim/visibility.js';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/file-manager');
 
@@ -34,7 +35,9 @@ type ChangeCb = (event: { repo: string; uuids: string[] | null }) => void;
 
 const DIR_ENTRIES = [{ name: 'song.mp3', path: '/song.mp3', is_dir: false }];
 
-function stub(repo: string | null) {
+type Gate = ReturnType<typeof createVisibilityGate>;
+
+function stub(repo: string | null, gate?: Gate) {
   const noop = () => {};
   const handlers = new Map<string, Handler>();
   const varListeners = new Map<string, ((v: unknown) => void)[]>();
@@ -58,7 +61,7 @@ function stub(repo: string | null) {
     defaults: shippedDefaults(),
     visible: true,
     onVisibility: noop,
-    whenVisible: (fn: () => void) => fn(),
+    whenVisible: gate ? gate.whenVisible : (fn: () => void) => fn(),
     bench: { measure: (_n: string, fn: () => unknown) => fn(), record: noop },
     daemon: {
       treePaths: async (_repo: string, _field: string, uuids: string[]) =>
@@ -119,8 +122,8 @@ function stub(repo: string | null) {
   return { api, handlers, daemonCall, fireVar, fireChange };
 }
 
-async function mount(repo: string | null) {
-  const s = stub(repo);
+async function mount(repo: string | null, gate?: Gate) {
+  const s = stub(repo, gate);
   const root = shadowRoot();
   const mod = await import('../../default-config/panel-types/file-manager/main.js');
   await mod.mount(root, s.api as never);
@@ -150,6 +153,25 @@ describe('file-manager live refresh', () => {
       'GET',
       expect.stringContaining('/tree/children'),
     );
+  });
+
+  // However many changes arrive while the panel is hidden, it re-reads its
+  // directory once when shown: a fresh closure armed per change used to run
+  // once per change, one after the other.
+  test('changes while hidden re-query the directory once when shown', async () => {
+    const gate = createVisibilityGate();
+    gate.set(true);
+    const { daemonCall, fireChange } = await mount('r1', gate);
+    gate.set(false);
+    for (let i = 0; i < 5; i++) fireChange({ repo: 'r1', uuids: null });
+    await new Promise((r) => setTimeout(r, 0));
+    daemonCall.mockClear();
+
+    gate.set(true);
+    await new Promise((r) => setTimeout(r, 0));
+
+    const children = daemonCall.mock.calls.filter(([, path]) => path.includes('/tree/children'));
+    expect(children).toHaveLength(1);
   });
 
   test('ignores change events for another repo', async () => {
