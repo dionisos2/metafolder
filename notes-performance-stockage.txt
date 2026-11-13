@@ -5,6 +5,85 @@ Points relevés en relisant le fonctionnement du store, en vue d'une refonte.
 Rien n'est mesuré ici : ce sont des lectures du code, à confirmer au bench.
 
 
+REPRISE — à lire en premier dans une nouvelle session (14 nov. 2026)
+=====================================================================
+
+État : conception terminée (sections 0 à 0quater ci-dessous, puis points 1
+à 4), mesures du HDD et repère de la version actuelle faits. L'implémentation
+commence. Tout se fait sur la branche git `storage-redesign` (créée depuis
+main ; commits b1cd5f28 = mode `disk` de metafolder-bench, db369318 =
+scénarios `--storage`). Ne pas fusionner dans main avant que l'utilisateur ait
+validé le résultat au benchmark.
+
+Façon de travailler avec l'utilisateur (il l'a demandé) :
+- expliquer un point à la fois, réponses courtes, attendre son accord ;
+- signaler tout conflit avec une décision déjà prise (wiki ou ce document)
+  avant d'implémenter ;
+- il communique en français ; code, commentaires et wiki en anglais.
+
+Règles du projet à respecter à chaque étape (CLAUDE.md) :
+- lire la note du wiki d'un comportement avant de le changer, la mettre à
+  jour dans le même commit (scripts/dev/doc show "…", doc find …) ;
+- TDD : test qui échoue d'abord ;
+- un commit par étape, construit, vert, `cargo fmt --all` ;
+- tout changement de format persisté livre sa conversion (doc "Persisted
+  format changes") : les index dérivés → incrémenter DERIVED_VERSION
+  (crates/daemon/src/kvstore/derived.rs), reindex automatique à l'ouverture ;
+  les tables primaires → LAYOUT (kvstore/mod.rs) et une conversion ;
+- API_VERSION (core) si un ancien client se comporterait mal (doc "The wire
+  protocol version") ;
+- tests de coût : compter les clés lues (KvStore::reads(), tests
+  crates/daemon/tests/kv_cost.rs, log_cost.rs), jamais de durée ;
+- avant de commiter : cargo test du crate touché, cargo clippy, et à la fin
+  d'une étape scripts/dev/check.sh (~10 min, en arrière-plan, sans sonder).
+
+Plan d'implémentation validé (une étape = un commit au moins) :
+  1. Suppression par `universe` seulement (section 0bis, « Suppression ») :
+     résolution de chemin et clés de forêt vérifient universe, un nouveau
+     fichier du même nom remplace la clé périmée ; compteurs de type par
+     champ (field_types) exacts malgré les lignes périmées ; revert d'une
+     suppression ; questions dérivées des index (doublons, orphelins…)
+     filtrées par universe ; nettoyage des entrées périmées au repli /
+     reindex.
+  2. Trigrammes en deux modes (section « Recherche de texte »).
+  3. Version calculée à la lecture ; journal sans version avant/après.
+  4. Tri par curseur portant le bitmap des multi déjà émis (point 1) ; le
+     curseur reste chez le client.
+  5. Valeurs ref rangées par id dense de la cible ; retrait de la partition
+     `target` (point 2).
+  6. Compteurs de valeurs en bitmaps de bits (present / multi).
+  7. Listes d'événements par champ (sens valeur → ids) + leur repli ;
+     intervalles et tris avec valeurs suivies.
+  8. Listes de masse par partie (sens id → valeurs, numéros d'op, retraits
+     et remplacements enregistrés) + repli + seuil par partie (À RECALCULER
+     avec le repère 0quater : coût marginal 1-2,5 ms par fichier, coût fixe
+     ~2 s par opération).
+  9. Journal des opérations de masse : avant en bitmaps, avant des
+     remplacements complété au repli, résumés par bloc pour l'historique.
+ 10. Repli automatique après ~30 s d'inactivité, une liste à la fois, les
+     plus grosses d'abord ; la GUI signale l'activité au daemon.
+Après chaque étape : suite de régression existante (scripts/dev/bench.sh)
+pour vérifier que rien ne se dégrade. À la fin (ou en cours si
+l'utilisateur le veut) : il relance le benchmark de stockage sur son HDD.
+
+Commandes de mesure :
+- metafolder-bench disk --dir DIR : coûts bruts d'un disque ;
+- scripts/dev/bench.sh --quick --storage --filter storage. --dir /mnt/dd
+  --in-memory --cold : la configuration réelle de l'utilisateur (HDD en
+  /mnt/dd, dépôt en mémoire). C'est LUI qui la lance (son HDD) ; ses
+  résultats arrivent dans benchmarks/history/dionisos_portable.jsonl.
+- Dans le conteneur, /dev/shm ne fait que 63 Mo : --in-memory y est refusé
+  pour S-storage (87 Mo). Tester sans --in-memory ici.
+
+Questions laissées ouvertes :
+- invalider un curseur quand une écriture change l'ordre entre deux pages
+  (important, plus tard) ;
+- retirer les ids de ligne (A.1) seulement si une étape y gagne ;
+- le « plancher » fdatasync mesuré à ~1 ms vient du cache du disque USB :
+  durabilité dépendante du matériel ;
+- `tag_text` 128 ms en mémoire : à revoir avec l'étape 2.
+
+
 0. Contraintes de la refonte (validées avec l'utilisateur, 13 nov. 2026)
 -----------------------------------------------------------------------
 
@@ -296,6 +375,25 @@ Lecture :
 - débit contigu : ~45 Mo/s (64 MiB en 1,4 s) ; 1 MiB ≈ 3,5 lectures
   dispersées. 8 MiB à 342 ms paraît élevé (à remesurer) ;
 - réécrire une valeur LMDB de 1 MiB : ~8 ms (chaude) ; 8 MiB : 150 ms.
+
+0quater. Repère : version actuelle (commit db369318), HDD, en mémoire, à froid
+--------------------------------------------------------------------------
+
+benchmarks/history/dionisos_portable.jsonl, taille S-storage-mem-ext, --cold.
+- Lectures : toutes < 30 ms sauf tag_text 128 ms (vérification par fichier ;
+  le mode trigrammes par valeur la ferait par valeur). Pas de dégradation
+  après la phase de masse (le store actuel n'a pas de listes).
+- Écriture individuelle : tag_add_one 557 ms, delete_one 761 ms,
+  create_file 1126 ms — 2 à 4× le seuil de 300 ms, bien plus que le modèle
+  (~200 ms pour une création) : une écriture touche plus d'endroits que
+  compté (tables du journal, profondeur des arbres).
+- Masse : coût FIXE ~2 s par opération ; coût marginal 1 ms (voisins) à
+  2,5 ms (dispersés) par fichier, pas 12 ms. Le seuil individuel / masse
+  calculé plus haut est donc trop bas (~5× trop bas) : à recalculer avec ces
+  chiffres. Ajouter (valeur nouvelle : trigrammes) > retirer ; supprimer est
+  le plus cher (3,7 à 6,8 s).
+- Pas de mesure supplémentaire (décision utilisateur) : le benchmark sera
+  relancé sur la nouvelle version pour comparer.
 
 1. Tri par parcours d'un champ multivalué : les postings ne servent plus
 ------------------------------------------------------------------------
