@@ -19,8 +19,11 @@
 //! files, runs the benchmarks, and removes the `.metafolder` again on teardown.
 //! The watcher benchmark mutates the files (renames) and undoes it afterwards,
 //! so the folders are left exactly as found.
-#![forbid(unsafe_code)]
+// Unsafe only where a module allows it: `disk` opens an LMDB environment.
+#![deny(unsafe_code)]
 
+#[allow(unsafe_code)]
+mod disk;
 mod gui;
 mod regression;
 mod session;
@@ -654,6 +657,7 @@ Modes:
   attach       drive an already-running GUI; takes scenario names
   regression   the timed regression suite (doc \"The timed regression suite\")
   session      the session scenario (doc \"The session scenario\")
+  disk         raw disk costs: append, scattered and contiguous I/O, LMDB rewrites
 
 data, gui:
   --small DIR, --big DIR    the two data folders
@@ -665,6 +669,10 @@ regression:
 
 session:
   --data DIR, --unsandboxed, --calibrate, --record, --force, --keep
+
+disk:
+  --dir DIR                 a directory on the disk to measure (files removed after)
+  --quick                   small sizes, for a smoke run
 ";
 
 /// The command line, parsed.
@@ -678,6 +686,7 @@ struct Args {
     help: bool,
     regression: regression::Options,
     session: session::Options,
+    disk: disk::Options,
 }
 
 /// Parses `[mode] [--small DIR] [--big DIR] [scenario...]`. mode: data (default),
@@ -692,6 +701,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args> {
                 parsed.big = Some(it.next().context("--big needs a path")?.into())
             }
             // Regression-suite options (doc "The timed regression suite").
+            "--quick" if parsed.mode.as_deref() == Some("disk") => parsed.disk.quick = true,
             "--quick" => parsed.regression.quick = true,
             "--big" => parsed.regression.big = true,
             "--real" => parsed.regression.real = true,
@@ -714,6 +724,8 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args> {
             "--record" => parsed.session.record = true,
             "--force" => parsed.session.force = true,
             "--keep" => parsed.session.keep = true,
+            // Disk options.
+            "--dir" => parsed.disk.dir = Some(it.next().context("--dir needs a path")?.into()),
             "-h" | "--help" => parsed.help = true,
             s if s.starts_with('-') => bail!("unknown option '{s}' (try --help)"),
             s if parsed.mode.is_none() => parsed.mode = Some(s.to_string()),
@@ -730,8 +742,16 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let Args { mode, small, big, scenarios: rest, help, regression: opts, session: session_opts } =
-        parse_args(std::env::args().skip(1))?;
+    let Args {
+        mode,
+        small,
+        big,
+        scenarios: rest,
+        help,
+        regression: opts,
+        session: session_opts,
+        disk: disk_opts,
+    } = parse_args(std::env::args().skip(1))?;
     if help {
         print!("{USAGE}");
         return Ok(());
@@ -751,6 +771,7 @@ async fn main() -> Result<()> {
             }
             Ok(())
         }
+        "disk" => disk::run(&disk_opts),
         "session" => {
             let code = session::run(&session_opts).await?;
             if code != 0 {
@@ -759,7 +780,7 @@ async fn main() -> Result<()> {
             Ok(())
         }
         other => {
-            bail!("unknown mode '{other}' (expected: data | gui | attach | regression | session)")
+            bail!("unknown mode '{other}' (expected: data | gui | attach | regression | session | disk)")
         }
     }
 }
@@ -878,6 +899,15 @@ mod args_tests {
     fn attach_takes_scenario_names() {
         let parsed = parse(&["attach", "one", "two"]).unwrap();
         assert_eq!(parsed.scenarios, ["one", "two"]);
+    }
+
+    #[test]
+    fn disk_takes_the_directory_to_measure() {
+        let parsed = parse(&["disk", "--dir", "/mnt/hdd/x", "--quick"]).unwrap();
+        assert_eq!(parsed.mode.as_deref(), Some("disk"));
+        assert_eq!(parsed.disk.dir, Some(PathBuf::from("/mnt/hdd/x")));
+        assert!(parsed.disk.quick);
+        assert!(error(&["disk", "--dir"]).contains("--dir"));
     }
 
     #[test]

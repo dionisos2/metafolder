@@ -3,7 +3,7 @@ tags: Development
 kind: guide
 audience: dev
 aliases: bench metafolder-bench
-summary: metafolder-bench on real folders — the daemon through mf and HTTP, the watcher, and the GUI's panels phase by phase — and the profiling harness the panels are instrumented with.
+summary: metafolder-bench on real folders — the daemon through mf and HTTP, the watcher, and the GUI's panels phase by phase —, the raw costs of a disk, and the profiling harness the panels are instrumented with.
 
 `metafolder-bench` (`crates/bench`) has four modes. Three of them run on ''real''
 folders and print numbers to read; the fourth, `regression`, is the suite with a
@@ -16,6 +16,7 @@ cargo run -p metafolder-bench               # data: the daemon on both folders
 cargo run -p metafolder-bench -- gui        # the same, then the GUI scenarios (a window opens)
 cargo run -p metafolder-bench -- attach [scenario...]    # drive a GUI already running
 cargo run -p metafolder-bench -- --small DIR --big DIR   # other folders
+cargo run --release -p metafolder-bench -- disk --dir DIR   # the raw costs of the disk DIR is on
 ```
 
 The harness runs the binaries found in `target/release`, and in `target/debug`
@@ -38,6 +39,20 @@ end; the folders are left as found.
 * ''Through `mf`'' — every metarecord, two queries and a second reconcile once each (their cost follows the store); one metarecord, one path and one creation twenty times each (the latency of one call, a process included).
 * ''Over HTTP'' — the same queries limited to a hundred results, ten times each, with no process in the way: the numbers to compare with what a panel's `mf:daemon POST …/query` shows.
 * ''The watcher'' — up to two hundred files renamed in place, the time until every metarecord carries the new name, then the names put back. The quiet period of two seconds is in that number ([[Event batching]]).
+
+!! What `disk` measures
+
+`disk --dir DIR` measures the disk `DIR` is on, without metafolder: the numbers a
+storage design is chosen with, where a hard disk costs by the number of distinct
+places touched rather than by the bytes. It writes its files in `DIR` (a 1 GiB file and
+a small LMDB store) and removes them at the end; `--quick` shrinks everything for a
+smoke run. Each line is the median of a few repetitions:
+
+* ''append'' — a 4 KiB block appended and synced: the floor of a durable write;
+* ''scattered-write'' — 1, 10, 100, 1000 blocks written at random places, then one sync: a commit of that many scattered pages;
+* ''scattered-read'' — the same number of blocks read cold (the file synced and dropped from the page cache, without read-ahead): the pages a write must find first;
+* ''contiguous-read'' — 64 KiB to 64 MiB read cold in one piece;
+* ''lmdb'' — one LMDB value of 8 KiB to 8 MiB rewritten in its own committed transaction.
 
 !! The GUI scenarios
 

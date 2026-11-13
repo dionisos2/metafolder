@@ -1,0 +1,383 @@
+Notes de performance sur le stockage (12 nov. 2026)
+=====================================================
+
+Points relevés en relisant le fonctionnement du store, en vue d'une refonte.
+Rien n'est mesuré ici : ce sont des lectures du code, à confirmer au bench.
+
+
+0. Contraintes de la refonte (validées avec l'utilisateur, 13 nov. 2026)
+-----------------------------------------------------------------------
+
+Démarche : partir des contraintes et fonctionnalités, chercher la solution
+la plus performante, puis s'en écarter seulement pour la simplicité ou la
+sûreté. Objectif : les meilleures performances possibles (pas de seuil fixé).
+
+Critère d'optimisation (utilisateur) : ce qui compte est le temps d'attente
+AU-DELÀ de ~300 ms, sommé sur les opérations — pas le temps total. 100
+opérations à 300 ms valent mieux que 100 à 10 ms suivies d'un blocage de 20 s ;
+mais une grosse opération qui passe de 20 s à 30 s est un problème. Donc :
+ramener chaque petite opération sous ~300 ms, sans alourdir les grosses ni
+créer de blocage différé.
+
+Idée gardée en réserve (pas l'optimisation principale) : un tampon générique
+de changements de clés (map triée en mémoire + journal en ajout seul sur le
+disque, lectures = fusion tampon + LMDB), vidé dans LMDB par petits morceaux
+EN DEHORS des périodes d'activité. Il ramène une petite écriture au plancher
+(un ajout + fsync) sans blocage visible, au prix de la fusion à la lecture et
+d'une double écriture pour les grosses opérations.
+
+A. Ce qu'on stocke
+  1. Metarecords : uuid, version (hash du contenu), multi-map de champs.
+     Id de ligne : NON NÉCESSAIRE. Il ne sert qu'à désigner une ligne pour la
+     modifier ou la supprimer (GET/PATCH/DELETE /fields/:id, mf field
+     get|set|delete <id>, metarecord-detail), et n'est déjà pas stable (un
+     revert donne un nouvel id, l'annulation travaille par valeur). Comme un
+     metarecord n'a jamais deux fois le même (nom, valeur) (doc "No duplicate
+     rows"), une ligne est identifiée par (uuid, nom, valeur). Décision
+     ouverte : le retirer seulement si la solution retenue y gagne (coût :
+     changement d'API, API_VERSION).
+  2. Un seul type par nom de champ.
+  3. Forêts (tree_ref, hierarchy_ref) : sans cycle, profondeur <= 1000, une
+     position par forêt.
+  4. Journal d'opérations réversibles, labels imbriqués, rétention par
+     origine. Indispensable : l'AVANT de chaque ligne. L'après est utile mais
+     pas essentiel (un revert part de la valeur actuelle, pas de l'après).
+
+B. Lectures à servir vite
+  5. Un metarecord par uuid, une ligne par id.
+  6. Filtres : égalité, intervalles, présence/absence, not/and/or, suivi de
+     références.
+  7. Sous-arbre, enfants d'un dossier, résolution d'un chemin.
+  8. Regex et osm sur les textes courts (mfr_path, tags) : rapides, pendant
+     la frappe (peuvent être un peu plus lents que le reste). Textes longs :
+     une recherche longue est acceptable.
+  9. Tri sur tout champ (multivalué compris), pagination par curseur, total
+     exact.
+ 10. Historique d'un metarecord, annulation par label.
+
+C. Écritures à servir
+ 11. Petites écritures interactives (tag, note, suppression).
+ 12. Écritures en masse (premier reconcile, rafales du watcher).
+ 13. Déplacement d'un sous-arbre quelle que soit sa taille.
+ 14. Revert = une écriture comme une autre.
+
+D. Garanties
+ 15. Atomicité : données, journal et index ensemble ou rien.
+ 16. Durabilité de toute écriture répondue (watcher compris : non
+     négociable).
+ 17. Lecteurs non bloqués par l'écrivain : SOUHAITABLE, PAS UNE CONTRAINTE.
+     Un lecteur peut attendre la fin d'une écriture.
+ 18. Les lectures voient des index à jour (pas de retard) : non négociable.
+
+E. Ressources
+ 19. Mémoire non proportionnelle au dépôt (sauf mode en mémoire, choisi).
+ 20. Dépôts jusqu'à quelques millions de fichiers.
+ 21. Le disque dur est un cas à tenir.
+ 22. Plusieurs dépôts chargés à la fois (quelques-uns, pas des centaines).
+
+F. Maintenance
+ 23. Sauvegarde : peut bloquer les écritures (les lectures continuent ; rien
+     ne justifie de bloquer tout le dépôt si les écritures le sont).
+     Restauration, check, reindex, compactage : à garder, sans contrainte de
+     performance particulière.
+
+
+0bis. Direction retenue : opérations de masse par partie (13 nov. 2026)
+--------------------------------------------------------------------
+
+Analyse (modèle de coût HDD = nombre d'endroits distincts touchés) :
+- journal : ajout séquentiel, ~1 endroit ;
+- index champ.valeur → ids denses (bitmaps) : une écriture de masse d'une
+  même valeur y coûte quelques tranches, quel que soit le nombre d'ids ;
+- le sens id → valeurs est le problème : rangé par id, N ids dispersés =
+  N endroits. Les champs à valeurs toutes différentes (mfr_size, mfr_hash…)
+  ne sont jamais écrits en masse : pour eux id → valeurs direct suffit.
+
+Conception :
+- id dense → (champ.valeur.op)* : la forme normale, pour les écritures
+  individuelles. Chaque entrée porte le numéro d'opération global (compteur
+  incrémenté à chaque opération). Les retraits sont enregistrés aussi
+  (champ.valeur.retiré.op), et le remplacement d'un champ entier aussi
+  (champ.remplacé.op : annule tout ce qui est plus ancien pour ce champ).
+- Ids découpés en parties (~64 k ids, bitmap roaring <= 8 Kio par partie).
+  Chaque partie a une liste d'opérations de masse, à la suite :
+  (champ, valeur [ou leurs ids], op, bitmap des ids de la partie).
+- Écriture de masse : un ajout par partie touchée (640 k ids → <= 10 parties).
+- Lecture de X : sa forme normale + la liste de sa partie (lue d'un seul
+  tenant) ; pour chaque (champ, valeur), le numéro d'op le plus récent gagne.
+- Une écriture individuelle ne touche jamais aux listes de masse.
+- mf repo reindex (et peut-être un repli en période d'inactivité) replie les
+  listes dans la forme normale et les vide.
+- Contiguïté : réécrire la partie entière à chaque opération de masse est
+  peut-être acceptable. Sinon (gardé de côté) : listes dans un fichier hors
+  LMDB, zones réservées doublées (1, 2, 4, 8 Mo), entrée écrite au-delà de la
+  longueur officielle + fsync, puis nouvelle longueur commitée dans la
+  transaction LMDB (atomicité).
+
+Suppression (décision utilisateur) : ne mettre à jour que `universe` (plus la
+forme normale du metarecord et le journal). Les entrées d'index des supprimés
+restent ; chaque résultat est filtré par `universe`. Sûr parce qu'un id dense
+n'est jamais réutilisé. Points à traiter (cf. réponse du 13 nov.) : résolution
+de chemin et clés de la forêt, compteurs de type par champ (`field_types`),
+revert d'une suppression, questions dérivées des index (doublons…).
+
+Version d'un metarecord (décision utilisateur) : plus stockée, calculée à la
+lecture depuis le contenu fusionné (forme normale + listes de masse). Usages :
+sync, écritures conditionnelles (?expected_version=), affichage — tous lisent
+un metarecord à la fois. Le journal n'enregistre plus du tout les versions
+avant/après (provenance seulement).
+
+Index par valeur et opérations de masse (validé par l'utilisateur) :
+- Problème : remplacer (ou retirer) un champ en masse demande de retirer
+  chaque id de l'index de son ANCIENNE valeur, donc de la connaître (lire les
+  N metarecords). Aujourd'hui tout est fait metarecord par metarecord
+  (`batch_set` → `set_field_multi` par résultat, routes/query.rs:464), pour
+  ajouter, retirer et remplacer.
+- Solution 1, bitmaps de valeurs : chaque champ a une liste d'événements de
+  masse en attente (op, ajouter v à B / retirer v de B / remplacer par
+  [vals] sur B). bitmap effectif de v = bitmap stocké de v, puis les
+  événements du champ rejoués dans l'ordre : ajouter v → |= B ; retirer v →
+  -= B ; remplacer → -= B puis |= B si v ∈ vals ; autres valeurs ignorées.
+  Un remplacement n'énumère jamais les anciennes valeurs. Coût déplacé à la
+  lecture (un bitmap par événement en attente du champ) ; repli hors
+  activité qui intègre les événements et vide la liste.
+- Solution 2, present/multi : nombre de valeurs par id et par champ, en
+  bitmaps de bits (6 bitmaps jusqu'à 63 valeurs). Ajouter v à B : +1 sur
+  B − effectif(v) ; retirer v de B : −1 sur B ∩ effectif(v) ; remplacer :
+  compte := |vals| sur B. Incrément/décrément par opérations de bitmap
+  (retenue). present = compte > 0, multi = compte >= 2. Exact, coût
+  indépendant de N et du nombre de valeurs distinctes.
+
+- Ordre : sur un champ qui a des événements en attente, les écritures
+  INDIVIDUELLES sont elles aussi ajoutées à la liste du champ (événement d'un
+  seul id), sinon le rejeu appliquerait un événement de masse plus ancien
+  par-dessus. Les bitmaps stockés = état au dernier repli. Repli déclenché
+  aussi par le NOMBRE d'événements. Un champ sans événement en attente écrit
+  directement dans ses bitmaps. Les compteurs present/multi sont mis à jour
+  à chaque écriture, dans l'ordre, jamais rejoués.
+- Intervalles et tris : seuls les champs avec événements en attente sont
+  concernés (pas mfr_size, mfr_mtime…). Intervalle, en un passage avant :
+  les valeurs de l'intervalle qui apparaissent dans un « ajouter » ou un
+  « retirer » des événements sont SUIVIES (bitmap à part) ; les autres sont
+  fusionnées dans G. Remplacer [vals] sur E : G -= E et suivies -= E, puis
+  suivie(v) |= E si v ∈ vals, G |= E si une autre valeur de vals est dans
+  l'intervalle. Ajouter v : suivie(v) |= E. Retirer v : suivie(v) -= E
+  (exact). Résultat = G ∪ suivies. Coût = valeurs de l'intervalle +
+  événements + remplacements × valeurs suivies. (Fusionner tout dans R
+  échoue sur « retirer v » : on ne sait plus qui avait v.)
+- Tri par parcours : bitmap effectif valeur par valeur ; les valeurs qui
+  n'existent que dans la liste sont extraites, triées et fusionnées au
+  parcours. Le problème `multi` (point 1) reste inchangé.
+- Bilan : gros gain sur les grosses écritures, lectures qui se dégradent
+  progressivement avec les événements en attente, reindex (ou repli hors
+  activité) qui réoptimise.
+
+Recherche de texte (trigrammes), validé avec l'utilisateur :
+- Problème : ~20 clés de trigrammes par fichier (nom, mfr_mime, mfr_type),
+  et un nom long en touche beaucoup d'un coup.
+- Principe : les trigrammes ne donnent que des candidats, toujours vérifiés.
+  Un candidat en trop est sans danger, un candidat manquant est une erreur.
+  Retirer/remplacer ne touche donc pas aux trigrammes des anciennes valeurs.
+- Deux modes par champ :
+  * PAR VALEUR (départ de tout champ) : trigramme → valeurs distinctes,
+    mis à jour tout de suite, seulement quand une valeur NOUVELLE apparaît
+    (0 clé dans le cas courant). Pas de liste en attente. Requête :
+    trigrammes → valeurs candidates → vérification par valeur → union des
+    bitmaps de valeurs effectifs (événements de masse compris). Exact, aucun
+    metarecord lu.
+  * PAR METARECORD : trigramme → ids, construits seulement au repli /
+    reindex. Bitmap « en attente » (ids écrits depuis) : 1 clé par écriture.
+    Requête : candidats = (trigrammes ∖ en attente) ∪ en attente, puis
+    vérification par metarecord.
+- Passage au mode par metarecord : quand un trigramme typique désigne trop de
+  valeurs distinctes (chaque valeur candidate = une clé lue, alors que le
+  trigramme par ids donne directement l'union). Critère connu sans calcul :
+  la taille des bitmaps de trigrammes par valeur. Seuil à mesurer. Au
+  passage, en attente = present(champ) (aucun trigramme par metarecord
+  n'existe encore).
+
+Références (ref), validé avec l'utilisateur :
+- « Qui pointe vers T » = bitmap de la valeur T : index par valeur ordinaire
+  (événements de masse, remplacement compris).
+- Suivi `f -> (requête)` : cibles S, puis union des bitmaps des valeurs de S
+  = l'algorithme de l'intervalle avec un ensemble de valeurs quelconque.
+  Coût = |S| + événements + remplacements × valeurs suivies.
+- Dans le store, une valeur ref est rangée sous l'ID DENSE de sa cible (pas
+  son uuid) : plus de traduction id → uuid par cible. L'API garde les uuid.
+
+Forêt, décision utilisateur : positions toujours individuelles ; déplacement
+d'un sous-arbre ~ profondeur avant + après ; suppression = universe (la
+résolution de chemin vérifie universe) ; création : descendants de chaque
+ancêtre mis à jour TOUT DE SUITE (~profondeur clés ; mise en attente jugée
+pas rentable, ~8 clés sur ~25 par création).
+
+Journal, l'« avant » d'une opération de masse sur B (validé) :
+- ajouter v : 2 bitmaps (B, et B ∩ effectif(v) = qui l'avait déjà) ;
+  annuler = retirer v de B − (qui l'avait déjà) ;
+- retirer v : 1 bitmap (B ∩ effectif(v)) ; annuler = ajouter v à ce bitmap ;
+- remplacer [vals] sur B : au moment de l'opération, le journal n'écrit que
+  (remplacer, champ, vals, B). Tant que l'événement est en attente, l'ancien
+  état se recalcule (bitmaps stockés + événements précédents). Le REPLI,
+  juste avant d'intégrer l'événement, écrit l'avant explicite : pour chaque
+  ancienne valeur v présente dans B, (v, bitmap(v) ∩ B). Calcul qui parcourt
+  les valeurs du champ, fait hors activité.
+
+Journal, les autres besoins (validé) :
+- (b) opérations d'un label : index label → ops écrit près de sa fin (label
+  récent), zone chaude, ~0 endroit dispersé ;
+- (c) historique d'un metarecord : PAS de liste rangée avec le metarecord
+  (une opération de masse écrirait N metarecords). Résumés par bloc : tous
+  les N opérations, union des ids touchés (bitmap B des opérations de masse,
+  id des individuelles) écrite en fin de journal ; historique de X = tester
+  X dans chaque résumé, relire les blocs où il apparaît ;
+- (d) rétention : effacement séquentiel du début ; bitmaps et résumés partent
+  avec les opérations. Un remplacement en attente dont l'opération est
+  effacée n'a plus besoin de son avant au repli.
+- Bilan : une écriture touche le journal à 1 endroit séquentiel (+ l'index
+  des labels, zone chaude). Plus de version avant/après.
+
+Journal : une entrée par modification casserait la démarche (opérations de
+masse) ; à optimiser, à reprendre une fois les requêtes analysées.
+
+Implémentation dans une branche à part, le temps de valider que ça marche.
+Mesures HDD : lancées par l'utilisateur (HDD monté de son côté).
+
+Plan (validé avec l'utilisateur) :
+  1. ce que ça implique pour chaque type de requête ;
+  2. mesures sur HDD pour fixer les paramètres (taille des parties, seuil à
+     partir duquel une écriture devient « de masse »…) ;
+  3. benchmark adapté (notamment après beaucoup d'opérations de masse), lancé
+     d'abord sur la version courante comme repère ;
+  4. implémentation et tests.
+
+
+1. Tri par parcours d'un champ multivalué : les postings ne servent plus
+------------------------------------------------------------------------
+
+SOLUTION RETENUE (13 nov. 2026, idée de l'utilisateur) : le curseur porte le
+bitmap des ids déjà émis qui sont dans `multi` (un metarecord à une seule
+valeur n'apparaît qu'une fois dans la partition, jamais en doublon). Le
+parcours part toujours du début et les pages s'enchaînent, donc un id non vu
+est rencontré à sa place (sa plus petite valeur en croissant) : on l'émet ;
+un id vu est un doublon : on l'ignore. Plus AUCUNE lecture des valeurs d'un
+id pendant le parcours (ni pour les valeurs sans posting). Un bloc de posting
+se prend en entier : bloc ∩ résultat − vus. Une page calculée par « lire
+chaque résultat » ajoute aussi ses ids émis au bitmap.
+- Taille du curseur : grandit avec les pages, mais limité aux multi émis
+  (quelques Kio en roaring).
+- Curseur côté daemon (idée utilisateur) : garder le curseur en mémoire du
+  daemon et n'envoyer qu'une référence. CONFLIT avec le principe documenté
+  « nothing is resident between requests » (doc "How queries are
+  evaluated") ; demande aussi une expiration des curseurs, et un redémarrage
+  du daemon les perd. DÉCISION utilisateur : on respecte la règle, le
+  curseur reste chez le client (petit grâce au raffinement multi).
+- IMPORTANT, plus tard : invalider un curseur quand une écriture change
+  l'ordre entre deux pages (le client recommence alors de zéro). Déjà vrai
+  aujourd'hui avec le curseur (valeur, uuid) : une écriture entre deux pages
+  peut créer un doublon ou un manque.
+
+Constat d'origine :
+
+Code : `walk` (crates/daemon/src/kvstore/source.rs:129), appelé par le tri
+par valeurs (crates/daemon/src/index/mod.rs:~700), budget `walk_budget`
+(mod.rs:936).
+
+Le tri par parcours lit la partition `value` du champ dans l'ordre et doit
+vérifier que chaque entrée est la « représentante » de son metarecord (sa
+plus petite valeur en croissant, sa plus grande en décroissant), puisqu'un
+metarecord à plusieurs valeurs apparaît une fois par valeur. Cette
+vérification lit les valeurs du metarecord dans `field_cells` (`one` →
+`representative`).
+
+- Valeur sans posting : une lecture par entrée, pour tout le monde (même pour
+  un metarecord à une seule valeur).
+- Valeur avec posting (>= 64 détenteurs) : les détenteurs hors `multi` sont
+  rendus en bloc (un seul pas) ; ceux dans `multi` sont vérifiés un par un,
+  une lecture chacun.
+
+Problème : sur un champ où presque tous les détenteurs ont plusieurs valeurs
+(les tags, typiquement), une valeur fréquente coûte une lecture par détenteur.
+Comme les détenteurs d'une même valeur ont la même représentante, le parcours
+ne vide sa page qu'au changement de valeur : il traite tous les détenteurs
+de la valeur, jusqu'à épuiser son budget (2 × le coût estimé de la lecture
+de chaque résultat). Il abandonne alors et retombe sur cette lecture de
+chaque résultat : environ une lecture par résultat, alors que le parcours
+était censé coûter environ une page.
+
+Scénario attendu : trier par `tag` un grand ensemble de résultats, quand les
+tags fréquents ont des dizaines de milliers de détenteurs et que chaque
+fichier en porte plusieurs. Le coût devient proportionnel au nombre de
+résultats au lieu de la taille de la page.
+
+Aggravant : l'estimation qui choisit entre parcours et lecture de chaque
+résultat ne compte pas les lectures de représentante, ni les entrées non
+représentantes (doublons) lues sans compter de pas.
+
+À vérifier : kv_cost.rs et la suite de bench ne semblent pas couvrir un tri
+sur un champ presque entièrement dans `multi`.
+
+Pistes (non décidées) :
+- un détenteur hors `multi` (et hors `absent`, cf. `maybe_several`) n'a
+  qu'une valeur : son entrée est forcément sa représentante, pas de lecture
+  nécessaire. Ne règle pas le cas tout-multi, mais supprime les lectures
+  inutiles du régime des valeurs rares ;
+- stocker la représentante elle-même (une partition « sort » par champ :
+  une entrée par metarecord, à sa représentante, min et max), pour que le
+  parcours n'ait plus de doublons ni de vérification ;
+- ou des postings « par représentante » : les détenteurs dont cette valeur
+  est la plus petite.
+
+
+2. Partition `target` redondante
+--------------------------------
+
+Code : crates/daemon/src/kvstore/derived.rs:636 (écriture),
+crates/daemon/src/kvstore/source.rs:1264 (seule lecture,
+`tree_parents_except`).
+
+La clé de `value` commence déjà par l'uuid visé (`04 · cible` pour un `ref`,
+`07 · parent · nom` pour un `tree_ref`), et le bitmap `referrers` répond à
+« qui pointe vers T ». `target` coûte une clé écrite par ligne `ref` /
+`tree_ref` (donc par fichier, via `mfr_path`) pour une seule lecture, qui
+pourrait parcourir `value`. La retirer = changement de format des index
+(incrémenter DERIVED_VERSION, reindex automatique à l'ouverture).
+
+
+3. Suppression lente sur disque dur
+----------------------------------
+
+Mesure de l'utilisateur (HDD) : ~3 s pour supprimer 1 metarecord, ~18 s pour
+150, quelques centaines de pages touchées.
+
+Ce n'est pas le volume (quelques Mo) mais la dispersion : chaque page à un
+endroit différent du disque coûte un déplacement de tête (~5-10 ms), à la
+lecture (page hors du cache) comme à l'écriture des pages copiées
+(copy-on-write : la page et son chemin jusqu'à la racine). 400 pages × ~8 ms
+≈ 3 s. 150 suppressions dans une transaction partagent beaucoup de pages, d'où
+18 s et non 150 × 3 s.
+
+Ce que touche la suppression d'un metarecord (`derive_removed`, `derive_row`,
+crates/daemon/src/kvstore/derived.rs:602), pour chacune de ses ~15 lignes :
+field_cells, row_owner, by_field, field_types, forest ; ops, un snapshot par
+ligne dans snaps, ops_by_entity ; les partitions value/name/target, hist,
+present/absent/multi, posting ; une tranche par trigramme du nom ; kids,
+referrers du parent, descendants de chaque ancêtre ; ids, uuids, universe.
+
+Tables à clé dispersée (le problème sur HDD) : celles dont la clé commence
+par un uuid (field_cells, ops_by_entity, ids) ou par une valeur (parts,
+grams, sets). Tables à clé croissante (op id : ops, snaps) : écritures en fin
+d'arbre, cas favorable ; la rétention efface en début d'arbre.
+
+Contrainte du journal pour toute refonte : chaque changement doit garder
+l'« avant » de chaque ligne (snaps) et rester réversible par les mêmes
+primitives d'écriture.
+
+Non vérifié : la part des lectures (cache froid) et celle des écritures dans
+ces 3 s ; le slow log découpe une opération en phases.
+
+
+4. Imprécision du wiki
+----------------------
+
+doc "Store tables" : la valeur de `field_cells` est « row id · field name ·
+value » (`enc_row`, kvstore/mod.rs:447), pas « field name · value ».
