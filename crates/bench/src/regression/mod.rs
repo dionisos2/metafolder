@@ -15,6 +15,7 @@ pub mod calibrate;
 pub mod history;
 pub mod memory;
 pub mod real;
+pub mod storage;
 pub mod synth;
 
 use std::path::{Path, PathBuf};
@@ -53,6 +54,14 @@ pub struct Options {
     /// Measure the query planner's scattered-read weight instead (`calibrate`).
     pub calibrate_planner: bool,
     pub tolerance: f64,
+    /// Also the storage scenarios, on repositories of their own (`storage`).
+    pub storage: bool,
+    /// Where the storage scenarios generate their repositories.
+    pub dir: Option<PathBuf>,
+    /// The storage scenarios' repositories loaded in memory.
+    pub in_memory: bool,
+    /// How many mass writes the storage scenarios' mass phase applies.
+    pub mass_ops: usize,
 }
 
 impl Default for Options {
@@ -68,6 +77,10 @@ impl Default for Options {
             cold: false,
             calibrate_planner: false,
             tolerance: history::DEFAULT_TOLERANCE,
+            storage: false,
+            dir: None,
+            in_memory: false,
+            mass_ops: 200,
         }
     }
 }
@@ -658,6 +671,42 @@ pub async fn run(opts: &Options) -> Result<i32> {
                 }
             }
             api::teardown(&ctx, &peer).await?;
+        }
+    }
+    // The storage scenarios, on repositories of their own (see `storage`).
+    if opts.storage {
+        let shapes: Vec<&synth::Shape> = if opts.big {
+            storage::SHAPES.iter().chain(std::iter::once(&storage::BIG)).collect()
+        } else {
+            storage::SHAPES.iter().collect()
+        };
+        let cond = storage::Conditions {
+            dir: opts.dir.clone(),
+            in_memory: opts.in_memory,
+            cold: opts.cold,
+            mass_ops: opts.mass_ops,
+        };
+        let record = |scenario: String, size: String, median: f64, min: f64| Record {
+            at: now.clone(),
+            commit: commit.clone(),
+            dirty,
+            machine: machine.clone(),
+            cpu: cpu.clone(),
+            cores,
+            profile: profile.to_string(),
+            rustc: rustc.clone(),
+            scenario,
+            size,
+            unit: "ms".to_string(),
+            median,
+            min,
+            runs: storage::RUNS,
+        };
+        for shape in shapes {
+            records.extend(
+                storage::run(&daemon.url, &root, shape, &cond, opts.filter.as_deref(), &record)
+                    .await?,
+            );
         }
     }
     drop(daemon);

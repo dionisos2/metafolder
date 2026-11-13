@@ -11,6 +11,8 @@ scripts/dev/bench.sh --quick          # the small size only, for a fast answer
 scripts/dev/bench.sh --big            # also the large size (minutes to generate)
 scripts/dev/bench.sh --real           # also copies of the benchmarks/bench_data* folders
 scripts/dev/bench.sh --api            # also a scenario per route of the daemon (the API sweep)
+scripts/dev/bench.sh --storage        # also the storage scenarios (writes, mass writes, reads after)
+scripts/dev/bench.sh --storage --dir /mnt/hdd --in-memory --mass-ops 200   # their conditions
 scripts/dev/bench.sh --filter log.    # only the scenarios whose name starts with log.
 scripts/dev/bench.sh --tolerance 0.5  # the threshold, as a fraction (default 0.30)
 scripts/dev/bench.sh --no-history     # measure and compare, record nothing
@@ -81,6 +83,29 @@ over; on disk because a watch check, a reconcile and an orphan scan read the dis
 scenario that changes something puts it back or changes something new each run, so
 its five repetitions measure the same work; one whose first run does all the work (a
 reconcile, a prune, a clear) measures the steady state after the warm-up.
+
+!! The storage scenarios
+
+`--storage` adds the scenarios a redesign of the store is judged on
+(`crates/bench/src/regression/storage.rs`): the writes, which the rest of the suite
+barely measures, and the reads they could slow down. They run on a repository of their
+own, `S-storage` (20 000 files; `L-storage`, 200 000, with `--big`), ''generated afresh
+on every run'' — they delete, tag and replace —, whose files look like real ones: one
+to four values of a `tag` drawn from 200 (a few held by most files), a `mfr_mime`, a
+`mfr_mtime`.
+
+* ''Reads'' (`storage.metarecord.get`, `storage.query.*`): a page, a page sorted on the multi-valued `tag`, a frequent tag, the files with no tag, a text search on the tags, a combination sorted by date.
+* ''Writes, one metarecord'' (`storage.write.*`): a deletion, a file created in a folder, a tag added.
+* ''Mass writes'' (`storage.mass.<op>.<spread>.<n>`): a tag added, removed (added first, untimed), the tag field replaced, and a deletion, on `neighbours` (consecutive dense ids) or `scattered` (spread over the repository), `small` (100) or `large` (5 000, or a thirtieth of the files). The size the run uses is printed.
+* ''After the mass phase'': `--mass-ops` (200 by default) random adds, removes and replaces of tags on 50 to 500 files, then the reads again as `<id>.after_mass` — what pending mass writes cost a read.
+
+Each scenario is timed three times; a write is never warmed (each run is a new write).
+`--dir DIR` generates the repositories in `DIR` (a hard disk, say) instead of
+`target/bench-data`; `--in-memory` loads them in memory ([[Holding a repository in
+memory]]); `--cold` makes every timed run cold, ''the writes too'': the repository is
+unloaded, its store dropped from the page cache, and loaded again before it. The
+conditions are part of the size label (`S-storage-mem-ext`), so each combination is a
+series of its own.
 
 !! Growth with the repository
 

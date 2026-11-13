@@ -242,6 +242,31 @@ masse) ; à optimiser, à reprendre une fois les requêtes analysées.
 Implémentation dans une branche à part, le temps de valider que ça marche.
 Mesures HDD : lancées par l'utilisateur (HDD monté de son côté).
 
+Repli (décision utilisateur) : automatique, pendant l'inactivité. Après ~30 s
+sans activité, replier UNE liste (partie ou champ), les plus grosses
+d'abord ; si toujours rien une seconde plus tard, la suivante. Pas de taille
+de morceau à fixer. La GUI signale au daemon toute action de l'utilisateur
+(requête « il y a de l'activité »). Un repli qui gêne après 30 s
+d'inactivité est acceptable. (mf repo reindex vide aussi toutes les listes,
+en plus de reconstruire les index et de renuméroter les ids.)
+
+Paramètres de départ (à valider en conditions réelles) :
+- parties de 65 536 ids (une tranche roaring) ;
+- liste de masse d'une partie : réécrite entière dans LMDB à chaque opération
+  de masse (1 MiB ≈ 8 ms + ~31 ms de relecture à froid) ; viser ~1 MiB max ;
+- seuil individuel / masse, décidé PARTIE PAR PARTIE (les ids de B dans
+  chaque partie, connus avant d'écrire) :
+    C/n + N_p × 12 ms  >=  k × (C/n + coût_masse(p))  → masse pour p
+  n = nombre de parties touchées par B ; C = coût commun de l'opération
+  (index par valeur + compteurs + journal, ~55-60 ms pour « ajouter v ») ;
+  individuel ≈ 12 ms par metarecord (lecture froide 9 + écriture 3) ;
+  coût_masse ≈ 10 ms (liste vide) à ~40 ms (liste de 1 MiB) ; k ≈ 2,5
+  (protège du coût de lecture des listes, non borné tant que pas de repli).
+  Donne N >= ~10 pour une partie, ~3 par partie pour 10 parties. Surprenant
+  pour l'utilisateur (il attendait bien plus) : à vérifier sur le prototype.
+  Si les formes normales sont en cache (lecture ~0), l'individuel tombe à
+  ~3 ms par metarecord et le seuil monte d'autant.
+
 Plan (validé avec l'utilisateur) :
   1. ce que ça implique pour chaque type de requête ;
   2. mesures sur HDD pour fixer les paramètres (taille des parties, seuil à
@@ -250,6 +275,27 @@ Plan (validé avec l'utilisateur) :
      d'abord sur la version courante comme repère ;
   4. implémentation et tests.
 
+
+0ter. Mesures du HDD (13 nov. 2026, metafolder-bench disk, /mnt/dd, USB)
+-----------------------------------------------------------------------
+
+append           4 KiB + fdatasync                        1.08 ms
+scattered-write  1 / 10 / 100 / 1000 × 4 KiB + fdatasync  0.45 / 2.71 / 331 / 2951 ms
+scattered-read   1 / 10 / 100 / 1000 × 4 KiB, cold        9.0 / 92 / 888 / 8813 ms
+contiguous-read  64 KiB / 1 / 8 / 64 MiB, cold            9.3 / 31 / 342 / 1400 ms
+lmdb rewrite     8 KiB / 64 KiB / 1 MiB / 8 MiB + commit  1.2 / 1.3 / 7.8 / 149 ms
+
+Lecture :
+- lecture d'un endroit à froid : ~9 ms (déplacement de tête), sans gain de
+  regroupement (chaque lecture attend la précédente) ;
+- écriture d'un endroit : ~3 ms dès 100 endroits (le disque ou le noyau
+  trient les écritures d'un même fsync) ; en dessous de ~10, absorbées par
+  le cache du disque (fdatasync à 0.45-1 ms : impossible physiquement pour un
+  plateau ; disque USB, cache d'écriture probable — à garder en tête pour la
+  durabilité, et le « plancher » mesuré ici est celui du cache) ;
+- débit contigu : ~45 Mo/s (64 MiB en 1,4 s) ; 1 MiB ≈ 3,5 lectures
+  dispersées. 8 MiB à 342 ms paraît élevé (à remesurer) ;
+- réécrire une valeur LMDB de 1 MiB : ~8 ms (chaude) ; 8 MiB : 150 ms.
 
 1. Tri par parcours d'un champ multivalué : les postings ne servent plus
 ------------------------------------------------------------------------

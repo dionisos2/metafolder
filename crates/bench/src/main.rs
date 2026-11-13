@@ -664,6 +664,9 @@ data, gui:
 
 regression:
   --quick, --big, --real, --api, --no-history, --report, --cold
+  --storage                 the storage scenarios, on repositories of their own
+  --dir DIR, --in-memory    where they are generated, and loaded in memory
+  --mass-ops N              the mass writes of their mass phase (default 200)
   --calibrate-planner       the query planner's scattered-read weight, cold on L
   --filter PREFIX, --tolerance FRACTION
 
@@ -724,8 +727,21 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args> {
             "--record" => parsed.session.record = true,
             "--force" => parsed.session.force = true,
             "--keep" => parsed.session.keep = true,
-            // Disk options.
-            "--dir" => parsed.disk.dir = Some(it.next().context("--dir needs a path")?.into()),
+            // The directory measured (disk), or generated in (regression --storage).
+            "--dir" => {
+                let dir: PathBuf = it.next().context("--dir needs a path")?.into();
+                if parsed.mode.as_deref() == Some("regression") {
+                    parsed.regression.dir = Some(dir);
+                } else {
+                    parsed.disk.dir = Some(dir);
+                }
+            }
+            "--storage" => parsed.regression.storage = true,
+            "--in-memory" => parsed.regression.in_memory = true,
+            "--mass-ops" => {
+                parsed.regression.mass_ops =
+                    it.next().context("--mass-ops needs a number")?.parse::<usize>()?
+            }
             "-h" | "--help" => parsed.help = true,
             s if s.starts_with('-') => bail!("unknown option '{s}' (try --help)"),
             s if parsed.mode.is_none() => parsed.mode = Some(s.to_string()),
@@ -908,6 +924,24 @@ mod args_tests {
         assert_eq!(parsed.disk.dir, Some(PathBuf::from("/mnt/hdd/x")));
         assert!(parsed.disk.quick);
         assert!(error(&["disk", "--dir"]).contains("--dir"));
+    }
+
+    #[test]
+    fn regression_takes_the_storage_options() {
+        let parsed = parse(&[
+            "regression",
+            "--storage",
+            "--dir",
+            "/mnt/hdd",
+            "--in-memory",
+            "--mass-ops",
+            "50",
+        ])
+        .unwrap();
+        assert!(parsed.regression.storage && parsed.regression.in_memory);
+        assert_eq!(parsed.regression.dir, Some(PathBuf::from("/mnt/hdd")));
+        assert_eq!(parsed.regression.mass_ops, 50);
+        assert_eq!(parsed.disk.dir, None);
     }
 
     #[test]
