@@ -2,7 +2,8 @@ Notes de performance sur le stockage (12 nov. 2026)
 =====================================================
 
 Points relevés en relisant le fonctionnement du store, en vue d'une refonte.
-Rien n'est mesuré ici : ce sont des lectures du code, à confirmer au bench.
+Les points 1 à 4 sont des lectures du code, non mesurées ; les mesures sont
+dans les sections 0ter (disque) et 0quater (repère de la version actuelle).
 
 
 REPRISE — à lire en premier dans une nouvelle session (14 nov. 2026)
@@ -56,8 +57,9 @@ Plan d'implémentation validé (une étape = un commit au moins) :
      intervalles et tris avec valeurs suivies.
   8. Listes de masse par partie (sens id → valeurs, numéros d'op, retraits
      et remplacements enregistrés) + repli + seuil par partie (À RECALCULER
-     avec le repère 0quater : coût marginal 1-2,5 ms par fichier, coût fixe
-     ~2 s par opération).
+     avec le repère 0quater, opération par opération : le coût fixe et le
+     coût marginal diffèrent beaucoup entre ajouter, retirer, remplacer et
+     supprimer).
   9. Journal des opérations de masse : avant en bitmaps, avant des
      remplacements complété au repli, résumés par bloc pour l'historique.
  10. Repli automatique après ~30 s d'inactivité, une liste à la fois, les
@@ -76,6 +78,13 @@ Commandes de mesure :
   pour S-storage (87 Mo). Tester sans --in-memory ici.
 
 Questions laissées ouvertes :
+- reindex et ids denses (À TRANCHER AVANT L'ÉTAPE 5) : `mf repo reindex`
+  renumérote les ids denses (next_id remis à 1, ordre de la forêt). Or le
+  plan range des ids denses dans des données durables : valeurs ref par id
+  dense de la cible (étape 5), bitmaps « avant » et résumés par bloc du
+  journal (étape 9), bitmap du curseur chez le client (étape 4). Rien ne dit
+  encore ce qu'ils deviennent après un reindex (les réécrire, ou ne plus
+  renuméroter) ;
 - invalider un curseur quand une écriture change l'ordre entre deux pages
   (important, plus tard) ;
 - retirer les ids de ligne (A.1) seulement si une étape y gagne ;
@@ -181,14 +190,15 @@ Conception :
 - Ids découpés en parties (~64 k ids, bitmap roaring <= 8 Kio par partie).
   Chaque partie a une liste d'opérations de masse, à la suite :
   (champ, valeur [ou leurs ids], op, bitmap des ids de la partie).
-- Écriture de masse : un ajout par partie touchée (640 k ids → <= 10 parties).
+- Écriture de masse : un ajout par partie touchée (640 k ids contigus → 10
+  parties ; dispersés, davantage, au plus une par partie du dépôt).
 - Lecture de X : sa forme normale + la liste de sa partie (lue d'un seul
   tenant) ; pour chaque (champ, valeur), le numéro d'op le plus récent gagne.
 - Une écriture individuelle ne touche jamais aux listes de masse.
-- mf repo reindex (et peut-être un repli en période d'inactivité) replie les
-  listes dans la forme normale et les vide.
-- Contiguïté : réécrire la partie entière à chaque opération de masse est
-  peut-être acceptable. Sinon (gardé de côté) : listes dans un fichier hors
+- mf repo reindex et le repli automatique en période d'inactivité (cf.
+  « Repli » plus bas) replient les listes dans la forme normale et les vident.
+- Contiguïté : réécrire la partie entière à chaque opération de masse est le
+  choix de départ (cf. « Paramètres de départ »). Sinon (gardé de côté) : listes dans un fichier hors
   LMDB, zones réservées doublées (1, 2, 4, 8 Mo), entrée écrite au-delà de la
   longueur officielle + fsync, puis nouvelle longueur commitée dans la
   transaction LMDB (atomicité).
@@ -210,7 +220,7 @@ Index par valeur et opérations de masse (validé par l'utilisateur) :
 - Problème : remplacer (ou retirer) un champ en masse demande de retirer
   chaque id de l'index de son ANCIENNE valeur, donc de la connaître (lire les
   N metarecords). Aujourd'hui tout est fait metarecord par metarecord
-  (`batch_set` → `set_field_multi` par résultat, routes/query.rs:464), pour
+  (`batch_set` → `set_field_multi` par résultat, routes/query.rs:476), pour
   ajouter, retirer et remplacer.
 - Solution 1, bitmaps de valeurs : chaque champ a une liste d'événements de
   masse en attente (op, ajouter v à B / retirer v de B / remplacer par
@@ -315,11 +325,8 @@ Journal, les autres besoins (validé) :
 - Bilan : une écriture touche le journal à 1 endroit séquentiel (+ l'index
   des labels, zone chaude). Plus de version avant/après.
 
-Journal : une entrée par modification casserait la démarche (opérations de
-masse) ; à optimiser, à reprendre une fois les requêtes analysées.
-
 Implémentation dans une branche à part, le temps de valider que ça marche.
-Mesures HDD : lancées par l'utilisateur (HDD monté de son côté).
+Mesures HDD : faites par l'utilisateur (HDD monté de son côté), section 0ter.
 
 Repli (décision utilisateur) : automatique, pendant l'inactivité. Après ~30 s
 sans activité, replier UNE liste (partie ou champ), les plus grosses
@@ -347,12 +354,12 @@ Paramètres de départ (à valider en conditions réelles) :
   ~3 ms par metarecord et le seuil monte d'autant.
 
 Plan (validé avec l'utilisateur) :
-  1. ce que ça implique pour chaque type de requête ;
+  1. ce que ça implique pour chaque type de requête — FAIT (ci-dessus) ;
   2. mesures sur HDD pour fixer les paramètres (taille des parties, seuil à
-     partir duquel une écriture devient « de masse »…) ;
+     partir duquel une écriture devient « de masse »…) — FAIT (0ter) ;
   3. benchmark adapté (notamment après beaucoup d'opérations de masse), lancé
-     d'abord sur la version courante comme repère ;
-  4. implémentation et tests.
+     d'abord sur la version courante comme repère — FAIT (0quater) ;
+  4. implémentation et tests — EN COURS (plan en 10 étapes, section REPRISE).
 
 
 0ter. Mesures du HDD (13 nov. 2026, metafolder-bench disk, /mnt/dd, USB)
@@ -387,11 +394,17 @@ benchmarks/history/dionisos_portable.jsonl, taille S-storage-mem-ext, --cold.
   create_file 1126 ms — 2 à 4× le seuil de 300 ms, bien plus que le modèle
   (~200 ms pour une création) : une écriture touche plus d'endroits que
   compté (tables du journal, profondeur des arbres).
-- Masse : coût FIXE ~2 s par opération ; coût marginal 1 ms (voisins) à
-  2,5 ms (dispersés) par fichier, pas 12 ms. Le seuil individuel / masse
-  calculé plus haut est donc trop bas (~5× trop bas) : à recalculer avec ces
-  chiffres. Ajouter (valeur nouvelle : trigrammes) > retirer ; supprimer est
-  le plus cher (3,7 à 6,8 s).
+- Masse (small = 100 metarecords, large = 666 ; fixe et marginal déduits
+  des deux tailles, voisins / dispersés) :
+    ajouter    fixe ~2,1 s        marginal 1,0 / 2,5 ms par fichier
+    retirer    fixe ~0,5-0,8 s    marginal 4,1 / 4,7 ms
+    remplacer  fixe ~3,1-3,5 s    marginal 2,0 / 2,7 ms
+    supprimer  fixe ~3,3-4,6 s    marginal 3,8 / 3,3 ms
+  Le marginal est partout bien sous les 12 ms du modèle, et le coût fixe
+  domine : le seuil individuel / masse calculé plus haut est trop bas, à
+  recalculer opération par opération. Ajouter (valeur nouvelle : trigrammes)
+  > retirer en small seulement ; en large voisins, retirer (3,5 s) dépasse
+  ajouter (2,7 s). Supprimer est le plus cher (3,7 à 6,8 s).
 - Pas de mesure supplémentaire (décision utilisateur) : le benchmark sera
   relancé sur la nouvelle version pour comparer.
 
