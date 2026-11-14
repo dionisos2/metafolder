@@ -585,6 +585,31 @@ fn a_path_pattern_anchored_at_the_end_reads_its_candidates() {
     bounded("anything, then a name", &path_matches("^/d.*/file000123\\.txt$"), &[], true);
 }
 
+/// "Which records hold more than five tags, or fewer than two" is answered
+/// from the count of values each record holds, kept as bitmaps (doc "Store
+/// tables"): on a field where every record holds several values, no record's
+/// rows are read — where each used to be, to be counted.
+#[test]
+fn the_count_questions_read_no_record_on_a_field_of_several_values() {
+    use metafolder_daemon::store::Questions;
+    let cost = |kv: &KvStore| {
+        let before = kv.reads();
+        assert!(Questions::count_over(kv, "tag", 5, 21).unwrap().is_empty());
+        assert!(Questions::count_under(kv, "tag", 2, 21).unwrap().is_empty());
+        assert_eq!(Questions::count_over(kv, "tag", 2, 21).unwrap().len(), 21);
+        assert_eq!(Questions::count_under(kv, "tag", 4, 21).unwrap().len(), 21);
+        kv.reads() - before
+    };
+    let (small, _s) = tagged(2_000);
+    let (large, _l) = tagged(16_000);
+    let (cost_small, cost_large) = (cost(&small), cost(&large));
+    assert!(
+        cost_large <= cost_small + cost_small / 2 + 20,
+        "{cost_small} keys on 2 000 records, {cost_large} on 16 000"
+    );
+    assert!(cost_large < 300, "{cost_large} keys for four questions answered up to 21 records");
+}
+
 /// The keys the schema check's candidate questions read on a healthy
 /// repository, where none of them has an answer worth reading past its limit
 /// (doc "Schema"): files that all hold an `int` `rating`, ten of a rare `kind`.

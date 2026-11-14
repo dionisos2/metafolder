@@ -82,16 +82,35 @@ chunk: a write rewrites one chunk, a read unions a few. The kinds:
 
 |!Kind |!Keyed by |!Holds |
 |universe |— |every metarecord |
-|present |field |the ids holding a value of the field |
+|counts |field · bit |how many values of the field each id holds, one set per bit of the count (below) |
 |absent |field |the ids holding `Nothing` in it |
 |parents |field |on a `tree_ref` field, the ids with a child |
 |referrers |field · target's dense id |the ids pointing at a metarecord — a folder's children, a `ref`'s referrers ([[The forest in the store]]) |
 |descendants |field · node's dense id |every id below a node ([[The forest in the store]]) |
 |postings |field · value key |the holders of a frequent value ([[Sorting and postings]]) |
 |long texts |field |the ids whose text is too long for trigrams ([[Text search in the store]]) |
-|multi |field |the ids holding several rows of the field, which a walk of its values meets more than once ([[Sorting and postings]]) |
 |pending trigrams |field |in a field whose trigrams are kept by metarecord, the ids written since the last fold ([[Text search in the store]]) |
 |reserved |— |the ids given to a uuid something points at and no metarecord has had |
+
+!! The count of values
+
+How many values of a field a record holds is kept as ''one set per bit of the
+count'': a record holding five tags (binary 101) is in the sets of bits 0 and 2. Two
+questions asked all the time are read off them — a record ''holds a value'' when it
+is in any of the sets, and ''holds several'' when it is in any but the first (what a
+sorted walk needs, [[Sorting and postings]]) — and so are the schema check's "more
+than, fewer than so many values" ([[Schema]]), by comparing the counts with the
+bound bit by bit from the highest, without reading a record (`tests/kv_cost.rs`: four
+such questions read 192 144 keys on 16 000 records of three tags each, under 300
+now). A field of single values has one set, as it had one `present` set before
+(November 2026: `present` and `multi` were sets of their own).
+
+Why a count and not two flags: a write to many records at once can keep a count
+without reading any of them. Adding a value to the records that lack it is ''+1'' on
+a set of ids, which on these bitmaps is a carry — a few set operations whatever the
+number of ids — and removing one a borrow; "holds several" cannot be kept that way,
+since whether a record that loses a value still holds several depends on how many it
+had. A `Nothing` row is not a value: it is the `absent` set, beside the count.
 
 A ''partition'' (`parts`) lists a field's rows in the order of a key whose bytes sort
 like the values, so equality, ranges and sorts are range scans. Two per field:

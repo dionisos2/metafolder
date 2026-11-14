@@ -159,6 +159,20 @@ DERIVED_VERSION 8) :
   index dérivés (donc ces clés) ; hors index, seules les valeurs de `forest`
   portent un id dense aujourd'hui (stamp_forest_ids).
 
+ÉTAPE 6 FAITE (14 nov. 2026 ; doc "Store tables", § « The count of
+values » ; tests crates/daemon/tests/kv_counts.rs ; DERIVED_VERSION 9) :
+- ensembles `present` et `multi` supprimés ; à la place sets kind 11 =
+  champ · n° de bit · tranche : un bitmap par bit du compte de valeurs non
+  Nothing (32 bits max, PAS limité à 63 valeurs). present = union des bits,
+  multi = union des bits >= 1. `absent` (ligne Nothing) reste à part.
+- écriture individuelle : compte := nombre de lignes relues (derive_count),
+  bit par bit. Les opérations de bitmap « +1 / −1 / := n sur un ensemble B »
+  (retenue) NE SONT PAS ENCORE ÉCRITES : elles viennent avec l'étape 8, qui
+  est leur seul utilisateur.
+- gain immédiat : les questions du schéma « plus de / moins de n valeurs »
+  se lisent sur les bits (derived::counted_over), sans lire de ligne
+  (192 144 clés → < 300 sur 16 000 fichiers à 3 tags).
+
 Plan d'implémentation validé (une étape = un commit au moins) :
   1. Suppression par `universe` seulement (section 0bis, « Suppression ») :
      résolution de chemin et clés de forêt vérifient universe, un nouveau

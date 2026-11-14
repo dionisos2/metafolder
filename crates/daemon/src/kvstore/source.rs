@@ -27,7 +27,7 @@ use uuid::Uuid;
 
 use super::derived::{
     self, dense, hist_bucket, hist_key, id_of, long_prefix, part_prefix, read_set, text_key,
-    type_tag, value_key, MULTI, NAME, VALUE,
+    type_tag, value_key, NAME, VALUE,
 };
 use super::{dec_row, from_be, name_key, uuid_of, KvStore, Tables};
 use crate::index::keys::{sort_rep, CmpOp, SortRep};
@@ -744,15 +744,44 @@ impl KvSource<'_> {
         Ok(out)
     }
 
-    /// The ids holding a row of `field`, `Nothing` or not.
-    fn holders(&self, field: &str) -> RoaringBitmap {
-        self.set(derived::PRESENT, Some(field)) | self.set(derived::ABSENT, Some(field))
+    /// How many values of `field` each id holds: a set per bit of the count,
+    /// the lowest first (doc "Store tables"). A read per chunk of each.
+    fn counts(&self, field: &str) -> Vec<RoaringBitmap> {
+        let counts = self.ok(derived::read_counts(&self.t, &self.r, field), Vec::new());
+        let keys: u64 =
+            counts.iter().map(|bm| 1 + bm.max().map_or(0, |m| u64::from(m >> 16))).sum();
+        if !self.counted(keys.max(1)) {
+            return Vec::new();
+        }
+        counts
     }
 
-    /// The ids that may hold more than one row of `field`: several values, or
-    /// a `Nothing` beside anything. Every other holder holds exactly one.
-    fn maybe_several(&self, field: &str) -> RoaringBitmap {
-        self.set(MULTI, Some(field)) | self.set(derived::ABSENT, Some(field))
+    /// The ids holding a value of `field`: those of any bit of the counts.
+    fn valued(&self, field: &str) -> RoaringBitmap {
+        self.counts(field).into_iter().fold(RoaringBitmap::new(), |a, b| a | b)
+    }
+
+    /// The ids holding a row of `field`, `Nothing` or not.
+    fn holders(&self, field: &str) -> RoaringBitmap {
+        self.valued(field) | self.set(derived::ABSENT, Some(field))
+    }
+
+    /// The ids holding more than `n` rows of `field` — its values, and the
+    /// `Nothing` row it may hold beside them — read off the counts, no row
+    /// being.
+    fn rows_over(&self, field: &str, n: i64) -> RoaringBitmap {
+        let counts = self.counts(field);
+        let unknown = self.set(derived::ABSENT, Some(field));
+        let Ok(n) = u64::try_from(n) else {
+            return counts.into_iter().fold(unknown, |a, b| a | b);
+        };
+        // With a `Nothing` row, one value less makes as many rows.
+        let mut over = derived::counted_over(&counts, n);
+        over |= match n.checked_sub(1) {
+            Some(less) => derived::counted_over(&counts, less) & &unknown,
+            None => unknown,
+        };
+        over
     }
 
     /// The uuids of up to `limit` of `ids`, and the first read error met.
@@ -782,11 +811,7 @@ impl KvSource<'_> {
     pub(crate) fn wrong_type(&self, field: &str, allowed: &str, limit: i64) -> Result<Vec<Uuid>> {
         let types = self.types_of(field)?;
         if let [only] = types.as_slice() {
-            let ids = if only == allowed {
-                RoaringBitmap::new()
-            } else {
-                self.set(derived::PRESENT, Some(field))
-            };
+            let ids = if only == allowed { RoaringBitmap::new() } else { self.valued(field) };
             return self.uuids_of(ids.iter(), limit);
         }
         let mut out = RoaringBitmap::new();
@@ -811,26 +836,16 @@ impl KvSource<'_> {
 
     /// Up to `limit` metarecords with more than `max` rows of `field`.
     pub(crate) fn count_over(&self, field: &str, max: i64, limit: i64) -> Result<Vec<Uuid>> {
-        let over = if max < 1 {
-            self.holders(field)
-        } else {
-            let ids = self.maybe_several(field);
-            ids.iter().filter(|&id| self.values(id, field).len() as i64 > max).collect()
-        };
-        self.uuids_of(over.iter(), limit)
+        self.uuids_of(self.rows_over(field, max).iter(), limit)
     }
 
-    /// Up to `limit` metarecords holding `field`, with fewer than `min` rows:
-    /// every single-row holder once `min` is 2, then the others counted.
+    /// Up to `limit` metarecords holding `field`, with fewer than `min` rows.
     pub(crate) fn count_under(&self, field: &str, min: i64, limit: i64) -> Result<Vec<Uuid>> {
         if min <= 1 {
             return self.uuids_of(std::iter::empty(), limit);
         }
-        let holders = self.holders(field);
-        let several = &holders & self.maybe_several(field);
-        let single = holders - &several;
-        let counted = several.into_iter().filter(|&id| (self.values(id, field).len() as i64) < min);
-        self.uuids_of(single.iter().chain(counted), limit)
+        let under = self.holders(field) - self.rows_over(field, min - 1);
+        self.uuids_of(under.iter(), limit)
     }
 
     /// Up to `limit` metarecords with no `field` row at all.
@@ -1117,7 +1132,7 @@ impl Source for KvSource<'_> {
     }
 
     fn present(&self, field: &str) -> Cow<'_, RoaringBitmap> {
-        Cow::Owned(self.sift(self.set(derived::PRESENT, Some(field))))
+        Cow::Owned(self.sift(self.valued(field)))
     }
 
     fn absent(&self, field: &str) -> Cow<'_, RoaringBitmap> {
@@ -1540,7 +1555,10 @@ impl Source for KvSource<'_> {
     }
 
     fn several(&self, field: &str) -> RoaringBitmap {
-        self.sift(self.set(MULTI, Some(field)))
+        // Several values: a count of two or more, any bit but the first.
+        let several =
+            self.counts(field).into_iter().skip(1).fold(RoaringBitmap::new(), |a, b| a | b);
+        self.sift(several)
     }
 
     fn walk_values(

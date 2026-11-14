@@ -53,12 +53,12 @@ use crate::store::Rows;
 /// descendant bitmaps for every forest (4 kept `mfr_path`'s only); 6: the
 /// histograms; 7: the trigrams in two modes (doc "Text search in the store");
 /// 8: what points at a metarecord filed under its dense id, and no target
-/// partition.
-pub(super) const DERIVED_VERSION: i64 = 8;
+/// partition; 9: the count of values in place of the `present` and `multi`
+/// sets.
+pub(super) const DERIVED_VERSION: i64 = 9;
 
 /// Set kinds.
 pub(super) const UNIVERSE: u8 = 0;
-pub(super) const PRESENT: u8 = 1;
 pub(super) const ABSENT: u8 = 2;
 pub(super) const PARENTS: u8 = 3;
 
@@ -85,10 +85,72 @@ pub(super) const DESCENDANTS: u8 = 6;
 /// holder — so "a value has a posting" always means "all its ids are in it".
 pub(super) const POSTINGS: u8 = 7;
 
-/// The ids holding several non-`Nothing` rows of a field — the ones whose
-/// sort representative is not simply their value, which a walk of the
-/// values must read one by one.
-pub(super) const MULTI: u8 = 8;
+/// How many non-`Nothing` rows of a field each id holds, as one set per bit
+/// of the count (keyed by field and bit number): the ids holding a value are
+/// those in any of them, the ids holding several those in any but the
+/// first. A count is what a write to many records can keep without reading
+/// one: adding a value to the ids that lack it is an increment, which on
+/// bitmaps is a few set operations whatever the number of ids (doc "Store
+/// tables").
+pub(super) const COUNT: u8 = 11;
+
+/// The bits a count is kept on: no record holds 2³² values of a field.
+pub(super) const COUNT_BITS: u8 = 32;
+
+/// The key of one bit of `field`'s counts, without its chunk.
+pub(super) fn count_prefix(field: &str, bit: u8) -> Vec<u8> {
+    [&[COUNT][..], &name_key(field), &[bit]].concat()
+}
+
+/// `field`'s counts, a set per bit, the lowest first — as many as the
+/// largest count needs.
+pub(super) fn read_counts(t: &Tables, r: &RoTxn<'_>, field: &str) -> Result<Vec<RoaringBitmap>> {
+    let prefix = set_prefix(COUNT, Some(field));
+    let mut out: Vec<RoaringBitmap> = Vec::new();
+    for entry in t.sets.prefix_iter(r, &prefix)? {
+        let (k, v) = entry?;
+        // The bit, then the chunk.
+        if k.len() == prefix.len() + 3 {
+            let bit = k[prefix.len()] as usize;
+            if out.len() <= bit {
+                out.resize(bit + 1, RoaringBitmap::new());
+            }
+            out[bit] |= decode_set(v)?;
+        }
+    }
+    Ok(out)
+}
+
+/// The ids whose count is over `n`, among `counts` ([`read_counts`]): the
+/// counts compared with `n` bit by bit from the highest — an id is over as
+/// soon as it has a bit `n` lacks, having had the same bits until then.
+pub(super) fn counted_over(counts: &[RoaringBitmap], n: u64) -> RoaringBitmap {
+    let mut over = RoaringBitmap::new();
+    // The ids equal to `n` on the bits seen so far; `None`: every id.
+    let mut same: Option<RoaringBitmap> = None;
+    for bit in (0..counts.len().max(64 - n.leading_zeros() as usize)).rev() {
+        let empty = RoaringBitmap::new();
+        let set = counts.get(bit).unwrap_or(&empty);
+        if n >> bit & 1 == 0 {
+            over |= match &same {
+                None => set.clone(),
+                Some(same) => same & set,
+            };
+            same = Some(match same {
+                // "Every id" less a set is not a set: the ids of any count
+                // are those of some bit, which is all that can be over.
+                None => counts.iter().fold(RoaringBitmap::new(), |a, b| a | b) - set,
+                Some(same) => same - set,
+            });
+        } else {
+            same = Some(match same {
+                None => set.clone(),
+                Some(same) => same & set,
+            });
+        }
+    }
+    over
+}
 
 /// In a field whose trigrams are kept by metarecord: the ids written since
 /// the last fold, whose trigrams are not built yet — every text search checks
@@ -913,12 +975,10 @@ impl KvTxn<'_> {
                 self.set_member(PARENTS, Some(field), pid, member)?;
             }
         }
-        let present = rows.iter().any(|r| !matches!(r.value, Value::Nothing));
         let absent = rows.iter().any(|r| matches!(r.value, Value::Nothing));
-        self.set_member(PRESENT, Some(field), id, present)?;
         self.set_member(ABSENT, Some(field), id, absent)?;
         let valued = rows.iter().filter(|r| !matches!(r.value, Value::Nothing)).count();
-        self.set_member(MULTI, Some(field), id, valued > 1)?;
+        self.derive_count(field, id, valued as u64, value, delta)?;
         // Trigrams give candidates, which a search always checks: a text
         // going leaves its own where they are, and only a text coming writes
         // (doc "Text search in the store").
@@ -944,6 +1004,39 @@ impl KvTxn<'_> {
             _ => {}
         }
         Ok(())
+    }
+
+    /// `id` holds `valued` values of `field` now that a row came (`delta` 1)
+    /// or went: its count is written, bit by bit — every bit the count had
+    /// or has, since one that was set may have to go.
+    fn derive_count(
+        &self,
+        field: &str,
+        id: u32,
+        valued: u64,
+        value: &Value,
+        delta: i64,
+    ) -> Result<()> {
+        if matches!(value, Value::Nothing) {
+            return Ok(());
+        }
+        let before = valued.saturating_add_signed(-delta);
+        let bits = 64 - (valued | before).leading_zeros() as u8;
+        anyhow::ensure!(bits <= COUNT_BITS, "{valued} values of '{field}' on one metarecord");
+        for bit in 0..bits {
+            self.chunk_member(SETS, &count_prefix(field, bit), id, valued >> bit & 1 == 1)?;
+        }
+        Ok(())
+    }
+
+    /// The ids holding a value of `field`, as the transaction sees them:
+    /// those of any bit of the counts.
+    fn holders_now(&self, field: &str) -> Result<RoaringBitmap> {
+        let mut out = RoaringBitmap::new();
+        for bit in 0..COUNT_BITS {
+            out |= self.read_chunked(SETS, &count_prefix(field, bit))?;
+        }
+        Ok(out)
     }
 
     /// A field's trigram state, as the transaction has it.
@@ -1014,7 +1107,7 @@ impl KvTxn<'_> {
             state.by_ids = true;
             state.leftovers = true;
             // No trigram is kept by metarecord yet: every holder is pending.
-            let holders = self.read_chunked(SETS, &set_prefix(PRESENT, Some(field)))?;
+            let holders = self.holders_now(field)?;
             self.chunk_apply(SETS, &set_prefix(GRAM_PENDING, Some(field)), &holders, true)?;
         }
         if state != before {
@@ -1666,6 +1759,8 @@ impl KvStore {
             let (space, tag, key) = match kind {
                 REFERRERS => (REFERRER, 0, &rest[..4]),
                 DESCENDANTS => (DESCENDANT, 0, &rest[..4]),
+                // One bit of the counts: a set of its own.
+                COUNT => (SET, COUNT_TAG + rest[0], &rest[..0]),
                 _ => (SET, kind, &rest[..0]),
             };
             for id in decode_set(v)? {
@@ -1851,6 +1946,9 @@ impl Diff {
 /// name its lines give them.
 const SPACES: [&str; 5] = ["set", "referrer", "descendant", "part", "kid"];
 const SET: usize = 0;
+/// The tag of a set holding a bit of the counts ([`COUNT`]): this, plus the
+/// bit's number — past every set kind.
+const COUNT_TAG: u8 = 100;
 const REFERRER: usize = 1;
 const DESCENDANT: usize = 2;
 const PART: usize = 3;
@@ -1969,15 +2067,15 @@ impl Group {
         for target in &self.targets {
             emit(REFERRER, 0, &target.to_be_bytes(), 1)?;
         }
-        let kinds = [
-            (PRESENT, self.valued > 0),
-            (ABSENT, self.absent),
-            (MULTI, self.valued > 1),
-            (LONG_TEXTS, self.long),
-        ];
-        for (kind, holds) in kinds {
+        for (kind, holds) in [(ABSENT, self.absent), (LONG_TEXTS, self.long)] {
             if holds {
                 emit(SET, kind, &[], 1)?;
+            }
+        }
+        // The count of values, a set per bit.
+        for bit in 0..COUNT_BITS {
+            if self.valued >> bit & 1 == 1 {
+                emit(SET, COUNT_TAG + bit, &[], 1)?;
             }
         }
         Ok(())
@@ -2261,7 +2359,7 @@ mod tests {
     #[test]
     fn test_a_lost_set_chunk_is_named_by_its_key_space() {
         let cases: [(&str, Vec<u8>); 3] = [
-            ("set missing: ", set_prefix(PRESENT, Some("kind"))),
+            ("set missing: ", count_prefix("kind", 0)),
             ("descendant missing: ", vec![DESCENDANTS]),
             ("referrer missing: ", vec![REFERRERS]),
         ];
@@ -2379,7 +2477,8 @@ mod tests {
         let mut bytes = Vec::new();
         stray.serialize_into(&mut bytes).unwrap();
         tamper(&store, |t, w| {
-            t.sets.put(w, &set_key(PRESENT, Some("kind"), 61), &bytes).unwrap();
+            let key = [&count_prefix("kind", 0)[..], &61u16.to_be_bytes()].concat();
+            t.sets.put(w, &key, &bytes).unwrap();
         });
         let diff = store.check_derived().unwrap();
         assert!(has(&diff, "set unexpected: "), "{}", some(&diff));
