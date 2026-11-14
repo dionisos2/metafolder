@@ -438,9 +438,15 @@ DÉCOUPAGE de la suppression des ids (un commit chacun, TDD) :
       4 octets → uuid de 16) avant clear_derived, file_records_by_id après
       les derive_created. `Rows::holders` / `field_rows` passent par les
       compteurs (champ · bit) ∪ absent, filtrés par l'univers ; une
-      transaction d'écriture lit les siens (Read::holders). `delete_rows`
-      supprime ligne par ligne (le compte de valeurs d'un champ se recalcule
-      sur les lignes qui restent : supprimer d'un coup le fausse).
+      transaction d'écriture lit les siens (Read::holders).
+      CORRIGÉ APRÈS COUP (remarque de l'utilisateur : « si ça fausse le
+      compte il faut une autre solution ») : derive_count déduisait l'ancien
+      compte par valued − delta, vrai pour UNE ligne seulement ; supprimer
+      plusieurs lignes d'un champ d'un coup laissait des bits périmés. Les
+      appelants passent maintenant le compte d'avant (derive_row(…,
+      count_before)), calculé sur les lignes d'avant l'écriture entière ;
+      delete_rows réécrit le record une seule fois. Test :
+      kv_counts::many_rows_going_at_once_keep_the_counts_exact.
       Mesures : test kv_cost « osm path » : le scan de nom coûte 1 clé par
       candidat au lieu de 2 ; seuil du test de compactage ramené d'un quart
       à un cinquième (le fichier de départ est plus petit).

@@ -1875,6 +1875,11 @@ impl KvStore {
     }
 }
 
+/// How many values — rows that are not `Nothing` — of `field` `rows` hold.
+fn valued_in(rows: &[FieldRow], field: &str) -> u64 {
+    rows.iter().filter(|r| r.name == field && !matches!(r.value, Value::Nothing)).count() as u64
+}
+
 /// A metarecord's rows as an older layout kept them, each with its row id.
 type ConvertedRows = Vec<(i64, FieldRow)>;
 
@@ -1993,13 +1998,15 @@ impl KvTxn<'_> {
     }
 
     /// What a row's going away changes outside its record: its forest
-    /// position, the count of its type, the derived data.
-    fn row_gone(&self, owner: Uuid, row: &FieldRow) -> Result<()> {
+    /// position, the count of its type, the derived data. `before` holds the
+    /// rows the record held before the write that removes this one — one or
+    /// many — which the count of values of the row's field is derived from.
+    fn row_gone(&self, owner: Uuid, row: &FieldRow, before: &[FieldRow]) -> Result<()> {
         if let Some(k) = Self::forest_key(&row.name, &row.value) {
             self.t.forest.delete(&mut self.txn.borrow_mut(), &k)?;
         }
         self.count_type(&row.name, &row.value, -1)?;
-        self.derive_row(owner, &row.name, &row.value, -1)
+        self.derive_row(owner, &row.name, &row.value, -1, valued_in(before, &row.name))
     }
 
     fn forest_key(name: &str, value: &Value) -> Option<Vec<u8>> {
@@ -2185,7 +2192,7 @@ impl WriteTxn for KvTxn<'_> {
             self.t.forest.put(&mut w, k, &key(&[uuid.as_bytes(), &id.to_be_bytes()]))?;
         }
         self.count_type(name, value, 1)?;
-        self.derive_row(uuid, name, value, 1)
+        self.derive_row(uuid, name, value, 1, valued_in(&rows[..rows.len() - 1], name))
     }
 
     fn delete_row(&self, owner: Uuid, name: &str, value: &Value) -> Result<()> {
@@ -2194,19 +2201,23 @@ impl WriteTxn for KvTxn<'_> {
         let Some(at) = rows.iter().position(|r| r.name == name && &r.value == value) else {
             return Ok(());
         };
+        let before = rows.clone();
         let row = rows.remove(at);
         self.put_record(id, &rows)?;
-        self.row_gone(owner, &row)
+        self.row_gone(owner, &row, &before)
     }
 
     fn delete_rows(&self, uuid: Uuid, name: Option<&str>) -> Result<()> {
-        // One row at a time: what a row's going changes in the derived data
-        // (the count of values of its field) is worked out from the rows
-        // that are left.
-        for row in Rows::rows(self, uuid)? {
-            if name.is_none_or(|n| n == row.name) {
-                self.delete_row(uuid, &row.name, &row.value)?;
-            }
+        let Some(id) = self.dense_id(uuid.as_bytes())? else { return Ok(()) };
+        let before = self.record_rows(id)?;
+        let (gone, kept): (Vec<FieldRow>, Vec<FieldRow>) =
+            before.iter().cloned().partition(|row| name.is_none_or(|n| n == row.name));
+        if gone.is_empty() {
+            return Ok(());
+        }
+        self.put_record(id, &kept)?;
+        for row in &gone {
+            self.row_gone(uuid, row, &before)?;
         }
         Ok(())
     }

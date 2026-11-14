@@ -103,3 +103,45 @@ fn a_nothing_row_counts_as_a_row_and_not_as_a_value() {
     assert_eq!(over_under(&store, 0, 2), (sorted(vec![unknown, one]), sorted(vec![unknown, one])));
     assert_eq!(over_under(&store, 1, 1), (vec![], vec![]));
 }
+
+/// Every row of a field going in one write — an unset, a set to fewer values,
+/// a metarecord with a `Nothing` beside its values — leaves the counts as a
+/// rebuild derives them: the bits the old count had and the new one has not
+/// are cleared, however many rows went at once.
+#[test]
+fn many_rows_going_at_once_keep_the_counts_exact() {
+    let (mut store, _dir) = open();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    let a = w.create_metarecord(vec![Field::new("n", Value::Int(1))]).unwrap().uuid;
+    let b = w.create_metarecord(vec![Field::new("n", Value::Int(2))]).unwrap().uuid;
+    let c = w.create_metarecord(vec![Field::new("n", Value::Int(3))]).unwrap().uuid;
+    w.commit().unwrap();
+    for (uuid, n) in [(a, 13), (b, 6), (c, 37)] {
+        set_tags(&mut store, uuid, n);
+    }
+    check(&store);
+
+    // Thirteen values (1101) to one: three bits go.
+    set_tags(&mut store, a, 1);
+    check(&store);
+    assert_eq!(sorted(Questions::count_over(&store, "tag", 1, 1000).unwrap()), sorted(vec![b, c]));
+
+    // Six values and a `Nothing` (110) to none at all.
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    w.append_field(b, "tag", Value::Nothing).unwrap();
+    w.commit().unwrap();
+    check(&store);
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    w.delete_fields_named(b, "tag").unwrap();
+    w.commit().unwrap();
+    check(&store);
+
+    // Thirty-seven (100101) to two (10).
+    set_tags(&mut store, c, 2);
+    check(&store);
+    assert_eq!(
+        sorted(Questions::count_over(&store, "tag", 1, 1000).unwrap()),
+        sorted(vec![c]),
+        "only c holds more than one tag now"
+    );
+}

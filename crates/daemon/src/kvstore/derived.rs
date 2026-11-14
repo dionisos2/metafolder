@@ -940,6 +940,7 @@ impl KvTxn<'_> {
         field: &str,
         value: &Value,
         delta: i64,
+        count_before: u64,
     ) -> Result<()> {
         // A write to many records: its event derives for all of them.
         if self.mass.borrow().as_deref() == Some(field) {
@@ -992,7 +993,7 @@ impl KvTxn<'_> {
         let absent = rows.iter().any(|r| matches!(r.value, Value::Nothing));
         self.set_member(ABSENT, Some(field), id, absent)?;
         let valued = rows.iter().filter(|r| !matches!(r.value, Value::Nothing)).count();
-        self.derive_count(field, id, valued as u64, value, delta)?;
+        self.derive_count(field, id, valued as u64, value, count_before)?;
         // Trigrams give candidates, which a search always checks: a text
         // going leaves its own where they are, and only a text coming writes
         // (doc "Text search in the store").
@@ -1020,21 +1021,21 @@ impl KvTxn<'_> {
         Ok(())
     }
 
-    /// `id` holds `valued` values of `field` now that a row came (`delta` 1)
-    /// or went: its count is written, bit by bit — every bit the count had
-    /// or has, since one that was set may have to go.
+    /// `id` holds `valued` values of `field` now that rows came or went, and
+    /// held `before` of them before the write — however many rows the write
+    /// changed: its count is written, bit by bit — every bit the count had or
+    /// has, since one that was set may have to go.
     fn derive_count(
         &self,
         field: &str,
         id: u32,
         valued: u64,
         value: &Value,
-        delta: i64,
+        before: u64,
     ) -> Result<()> {
         if matches!(value, Value::Nothing) {
             return Ok(());
         }
-        let before = valued.saturating_add_signed(-delta);
         let bits = 64 - (valued | before).leading_zeros() as u8;
         anyhow::ensure!(bits <= COUNT_BITS, "{valued} values of '{field}' on one metarecord");
         for bit in 0..bits {
@@ -1570,7 +1571,8 @@ impl KvStore {
         txn.stamp_forest_ids()?;
         for &uuid in &order {
             for row in Rows::rows(&txn, uuid)? {
-                txn.derive_row(uuid, &row.name, &row.value, 1)?;
+                // Nothing was counted yet: the derived tables were cleared.
+                txn.derive_row(uuid, &row.name, &row.value, 1, 0)?;
             }
         }
         txn.fold_grams()?;
